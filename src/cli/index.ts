@@ -405,6 +405,19 @@ list
 	.command('agents')
 	.description('List all agents')
 	.option('-g, --group <id>', 'Filter by group ID')
+	// Federation's peer flags: left out of --help while the feature is off, refused if passed.
+	.addOption(
+		new Option(
+			'--peer <name>',
+			"List the agents on one Federation peer (an SSH remote's name)"
+		).hideHelp(!encoreFlags.federation)
+	)
+	.addOption(
+		new Option(
+			'--all-peers',
+			'List local agents, then the agents on every SSH remote opted in to Federation'
+		).hideHelp(!encoreFlags.federation)
+	)
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.action(listAgents);
 

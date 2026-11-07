@@ -235,6 +235,21 @@ describe('formatter', () => {
 			expect(result).toContain('Agent Two');
 		});
 
+		it('titles a peer list and tags peer rows with the peer and a peer:id target', () => {
+			const agents: AgentDisplay[] = [
+				{ id: 'h1', name: 'Remote', toolType: 'codex', cwd: '/srv/h1', peer: 'build-box' },
+			];
+
+			const result = formatAgents(agents, undefined, { peer: 'build-box' });
+
+			expect(result).toContain('on peer build-box');
+			expect(result).toContain('@build-box');
+			expect(result).toContain('build-box:h1');
+			expect(formatAgents([], undefined, { peer: 'build-box' })).toContain(
+				'No agents found on peer build-box.'
+			);
+		});
+
 		it('should show group name in title when provided', () => {
 			const agents: AgentDisplay[] = [
 				{

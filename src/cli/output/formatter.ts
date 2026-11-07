@@ -100,17 +100,26 @@ export interface AgentDisplay {
 	groupId?: string;
 	autoRunFolderPath?: string;
 	bookmarked?: boolean;
+	/** Set on an agent a Federation peer's host owns: the peer it lives on. */
+	peer?: string;
 }
 
-export function formatAgents(agents: AgentDisplay[], groupName?: string): string {
+/**
+ * The agent list. `scope.peer` titles a list read from one Federation peer. A row with `peer`
+ * set is tagged with it, and its id line reads `peer:id`, the target the other verbs take.
+ */
+export function formatAgents(
+	agents: AgentDisplay[],
+	groupName?: string,
+	scope: { peer?: string } = {}
+): string {
 	if (agents.length === 0) {
-		return dim('No agents found.');
+		return dim(scope.peer ? `No agents found on peer ${scope.peer}.` : 'No agents found.');
 	}
 
 	const lines: string[] = [];
-	const title = groupName
-		? bold(c('cyan', 'AGENTS')) + dim(` in ${groupName} (${agents.length})`)
-		: bold(c('cyan', 'AGENTS')) + dim(` (${agents.length})`);
+	const where = groupName ? ` in ${groupName}` : scope.peer ? ` on peer ${scope.peer}` : '';
+	const title = bold(c('cyan', 'AGENTS')) + dim(`${where} (${agents.length})`);
 	lines.push(title);
 	lines.push('');
 
@@ -118,11 +127,12 @@ export function formatAgents(agents: AgentDisplay[], groupName?: string): string
 		const name = c('white', agent.name);
 		const toolType = c('green', agent.toolType);
 		const cwd = dim(truncate(agent.cwd, 60));
-		const id = dim(agent.id);
+		const id = dim(agent.peer ? `${agent.peer}:${agent.id}` : agent.id);
 		const autoRun = agent.autoRunFolderPath ? c('yellow', ' [Auto Run]') : '';
 		const bookmark = agent.bookmarked ? c('yellow', ' \u2605') : '';
+		const peer = agent.peer ? c('magenta', ` @${agent.peer}`) : '';
 
-		lines.push(`  ${name}${bookmark} ${toolType}${autoRun}`);
+		lines.push(`  ${name}${bookmark} ${toolType}${autoRun}${peer}`);
 		lines.push(`      ${cwd}`);
 		lines.push(`      ${id}`);
 	}

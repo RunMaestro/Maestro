@@ -157,6 +157,25 @@ export function peerIdFor(remote: SshRemoteConfig, remotes: readonly SshRemoteCo
 	return shared ? remote.id : remote.name;
 }
 
+/** A remote that `--all-peers` visits, with the id it is shown and addressed by. */
+export interface FederationPeer {
+	peer: string;
+	remote: SshRemoteConfig;
+}
+
+/**
+ * Every SSH remote that is opted in to Federation and not disabled, in stored order, with its
+ * peer id. Reads the store only: nothing here dials a remote.
+ */
+export function listFederationPeers(
+	overrides: Partial<Pick<PeerResolverDeps, 'readRemotes'>> = {}
+): FederationPeer[] {
+	const remotes = withDefaults(overrides).readRemotes();
+	return remotes
+		.filter((remote) => remote.federation === true && remote.enabled !== false)
+		.map((remote) => ({ peer: peerIdFor(remote, remotes), remote }));
+}
+
 /**
  * The SSH remote `ref` names: an exact (case-insensitive) name first, then an id or id prefix,
  * like the other remote verbs.
@@ -312,6 +331,18 @@ export async function connectPeer(
 	return { peer, remote, client, lease, release };
 }
 
+/** Every agent the peer's host owns, in host order. A failed read names the peer. */
+export async function listHostAgents(connection: PeerConnection): Promise<AgentRecord[]> {
+	const listed = await connection.client.agents.list();
+	if (listed.ok) return listed.value;
+	throw new PeerResolveError(
+		'connect-failed',
+		`Could not list the agents on peer "${connection.peer}": ${listed.error.message}`,
+		listed.error.code === 'timeout' ? ExitCode.Timeout : ExitCode.NotRunning,
+		connection.peer
+	);
+}
+
 /**
  * Resolve a `peer:agent` target to a connected client plus the host's agent. The agent part
  * matches the way a local one does (`resolveAgentId()`): id, id prefix, exact name, readable name.
@@ -331,18 +362,10 @@ export async function resolvePeerAgent(
 	}
 	const connection = await connectPeer(parsed.peer, overrides);
 	try {
-		const listed = await connection.client.agents.list();
-		if (!listed.ok) {
-			throw new PeerResolveError(
-				'connect-failed',
-				`Could not list the agents on peer "${connection.peer}": ${listed.error.message}`,
-				listed.error.code === 'timeout' ? ExitCode.Timeout : ExitCode.NotRunning,
-				connection.peer
-			);
-		}
+		const agents = await listHostAgents(connection);
 		let agentId: string;
 		try {
-			agentId = resolveAgentId(parsed.agent, listed.value);
+			agentId = resolveAgentId(parsed.agent, agents);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			throw new PeerResolveError(
@@ -353,7 +376,7 @@ export async function resolvePeerAgent(
 				connection.peer
 			);
 		}
-		const agent = listed.value.find((record) => record.id === agentId) as AgentRecord;
+		const agent = agents.find((record) => record.id === agentId) as AgentRecord;
 		return { ...connection, agent };
 	} catch (error) {
 		await connection.release();

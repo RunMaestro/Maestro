@@ -264,10 +264,12 @@ List all session groups
 
 List all agents
 
-| Option             | Description                          | Default |
-| ------------------ | ------------------------------------ | ------- |
-| `-g, --group <id>` | Filter by group ID                   | -       |
-| `--json`           | Output as JSON lines (for scripting) | -       |
+| Option             | Description                                                                   | Default |
+| ------------------ | ----------------------------------------------------------------------------- | ------- |
+| `-g, --group <id>` | Filter by group ID                                                            | -       |
+| `--peer <name>`    | List the agents on one Federation peer (an SSH remote's name)                 | -       |
+| `--all-peers`      | List local agents, then the agents on every SSH remote opted in to Federation | -       |
+| `--json`           | Output as JSON lines (for scripting)                                          | -       |
 
 ## `maestro-cli list playbooks`
 

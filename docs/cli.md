@@ -995,6 +995,10 @@ maestro-cli list agents
 maestro-cli list agents -g <group-id>
 maestro-cli list agents --group <group-id>
 
+# Federation: the agents on one peer, or local agents plus every peer
+maestro-cli list agents --peer build-box
+maestro-cli list agents --all-peers --json
+
 # Show agent details (history, usage stats, cost)
 maestro-cli show agent <agent-id>
 
@@ -2273,6 +2277,12 @@ maestro-cli remote-host start build-box --json
 | --------------------- | ------------------------------------------------ | ------- |
 | `--timeout <seconds>` | Give up on each SSH call after this many seconds | `60`    |
 | `--json`              | Output as JSON (for scripting)                   | -       |
+
+### Agents on a Peer
+
+A peer is an SSH remote that is opted in to Federation and runs a `maestro-cli host`. Its peer name is the remote's name, or the remote's ID when two remotes share a name. `list agents --peer <name>` reads the agents from that host over the SSH forward and prints them with the peer name beside each row. Each ID line reads `peer:agent-id`, the form other verbs take as a target. `list agents --all-peers` prints the local agents, then the agents on every enabled SSH remote opted in to Federation. It visits the peers one after another, never at the same time. With `--json` each row has a `peer` field: the peer name, or `null` for a local agent in an `--all-peers` list.
+
+The host is the only record of its agents: Maestro reads them fresh every time and never writes them to the local agent store. A peer that cannot be reached is an error that names the fix (`maestro-cli remote-host start <peer>` when no host runs). `--all-peers` lists the peers it reaches first, then reports each peer it could not reach on stderr and exits with that failure's code (`3` when a host is down). Both flags belong to the Federation Encore Feature, are left out of `--help` while it is off, and are refused if passed then. Neither combines with `--group`, which filters local agents.
 
 ### One Host Per Data Directory
 

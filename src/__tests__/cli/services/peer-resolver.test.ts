@@ -25,6 +25,8 @@ import {
 	PeerResolveError,
 	connectPeer,
 	findPeerRemote,
+	listFederationPeers,
+	listHostAgents,
 	parsePeerTarget,
 	peerIdFor,
 	resolvePeerAgent,
@@ -193,6 +195,40 @@ describe('peer ids', () => {
 		const deps = depsWith({ remotes: [remoteOf(), remoteOf({ id: 'r2-123456', name: 'gpu' })] });
 		expect(findPeerRemote('GPU', deps).id).toBe('r2-123456');
 		expect(findPeerRemote('r1', deps).name).toBe('buildbox');
+	});
+});
+
+describe('listFederationPeers', () => {
+	it('lists opted-in, enabled remotes in stored order with their peer ids, and dials nothing', () => {
+		const shared = remoteOf({ id: 'r2-123456', name: 'BUILDBOX' });
+		const remotes = [
+			remoteOf(),
+			remoteOf({ id: 'r3-999999', name: 'gpu', federation: false }),
+			remoteOf({ id: 'r4-444444', name: 'off', enabled: false }),
+			remoteOf({ id: 'r5-555555', name: 'plain', federation: undefined }),
+			shared,
+		];
+		expect(listFederationPeers({ readRemotes: () => remotes })).toEqual([
+			{ peer: 'r1-abcdef', remote: remotes[0] },
+			{ peer: 'r2-123456', remote: shared },
+		]);
+	});
+});
+
+describe('listHostAgents', () => {
+	it("returns the host's agents, and names the peer when the read fails", async () => {
+		const connection = await connectPeer('buildbox', depsWith());
+		expect(await listHostAgents(connection)).toEqual(agents);
+
+		const { client } = fakeClient(undefined, {
+			ok: false,
+			error: { code: 'timeout', message: 'No reply.', method: 'agents.list' },
+		});
+		const failing = await connectPeer('buildbox', depsWith({ createClient: vi.fn(() => client) }));
+		const error = await rejection(listHostAgents(failing));
+		expect(error.code).toBe('connect-failed');
+		expect(error.exitCode).toBe(ExitCode.Timeout);
+		expect(error.message).toContain('peer "buildbox"');
 	});
 });
 
