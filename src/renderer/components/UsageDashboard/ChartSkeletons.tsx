@@ -12,33 +12,12 @@
  * - Reduced motion support for accessibility
  */
 
-import React, { memo, useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import type { Theme } from '../../types';
+import { SkeletonBox } from '../ui/SkeletonBox';
 
 interface SkeletonProps {
 	theme: Theme;
-}
-
-/**
- * Base skeleton element with shimmer animation
- */
-function SkeletonBox({
-	theme,
-	className = '',
-	style = {},
-}: SkeletonProps & { className?: string; style?: React.CSSProperties }) {
-	return (
-		<div
-			className={`rounded ${className}`}
-			style={{
-				backgroundColor: theme.colors.border,
-				opacity: 0.3,
-				animation: 'skeleton-shimmer 1.5s ease-in-out infinite',
-				...style,
-			}}
-			data-testid="skeleton-box"
-		/>
-	);
 }
 
 /**

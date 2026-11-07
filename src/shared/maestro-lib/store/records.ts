@@ -82,6 +82,10 @@ export interface ClosedTabRecord extends UnknownFields {
 
 /** One agent, mirroring the persisted fields of the renderer's `Session`. */
 export interface AgentRecord extends UnknownFields {
+	/** Named exclusions override the group and worktree grants. */
+	peerAgents?: import('../../types').PeerAgent[];
+	groupPeerAccess?: import('../../types').PeerAccess;
+	worktreePeerAccess?: import('../../types').PeerAccess;
 	id: string;
 	name: string;
 	/** Provider id (`claude-code`, `codex`, ...). Kept as a string on purpose. */
@@ -110,6 +114,8 @@ export interface AgentRecord extends UnknownFields {
 	customEnvVars?: Record<string, string>;
 	customContextWindow?: number;
 	contextWindowSource?: string;
+	/** Federation: the agent was lifted onto its host. Read it through `readLiftedTo()`. */
+	liftedTo?: import('../agents/lift-pointer').LiftedToPointer;
 }
 
 /** One Left Bar group, mirroring `Group` in `src/shared/types.ts`. */

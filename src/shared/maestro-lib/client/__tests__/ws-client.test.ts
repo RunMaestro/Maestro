@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createWsMaestroClient } from '../ws-client';
-import type { MaestroClient, MaestroEvent, TurnEvent } from '../types';
+import type {
+	MaestroClient,
+	MaestroEvent,
+	TurnEvent,
+	WsMaestroClientTransportOptions,
+} from '../types';
 import { CLI_SECRET, FakeBridge, TOKEN, agentRecord, tabProcessId, type Frame } from './fakeBridge';
 
 const A1 = 'a1';
@@ -39,7 +44,8 @@ describe('createWsMaestroClient', () => {
 		events.flatMap((event) => (event.type === 'turn' ? [event.event] : []));
 	const turnKinds = () => turnEvents().map((event) => event.kind);
 
-	function makeClient(options: Partial<Parameters<typeof createWsMaestroClient>[0]> = {}) {
+	// The explicit-endpoint path is covered in src/__tests__/shared/maestro-lib/client/ws-client-endpoint.test.ts.
+	function makeClient(options: WsMaestroClientTransportOptions = {}) {
 		const created = createWsMaestroClient({
 			userDataDir: bridge.dataDir,
 			requestTimeoutMs: 1000,
@@ -273,6 +279,81 @@ describe('createWsMaestroClient', () => {
 			expect(await client.agents.create({ name: 'A', provider: 'codex', cwd: '/x' })).toMatchObject(
 				{ ok: false, error: { code: 'failed', method: 'agents.create' } }
 			);
+		});
+
+		describe('import', () => {
+			const logs = [{ id: 'l1', timestamp: 1, source: 'user', text: 'hi' }];
+			const input = {
+				agent: { name: ' Lifted ', provider: 'claude-code', cwd: '/srv/app', model: 'opus' },
+				tabs: [
+					{ id: 't1', name: 'Main', agentSessionId: 'sess-1', logs, model: 'sonnet' },
+					{ id: 't2', logs: [] },
+				],
+				activeTabId: 't2',
+				queue: [{ tabId: 't1', text: 'next' }],
+			};
+
+			it('sends the agent in create spelling, the tabs in record spelling, and the queue', async () => {
+				bridge.typed.set(
+					'import_agent',
+					reply('import_agent_result', { sessionId: 'host-agent', queued: 1 })
+				);
+				expect(await client.agents.import(input)).toEqual({
+					ok: true,
+					value: { agentId: 'host-agent', queued: 1 },
+				});
+				expect(bridge.sent('import_agent')[0]).toMatchObject({
+					agent: { name: 'Lifted', toolType: 'claude-code', cwd: '/srv/app', customModel: 'opus' },
+					tabs: [
+						{ id: 't1', name: 'Main', agentSessionId: 'sess-1', logs, customModel: 'sonnet' },
+						{ id: 't2', logs: [] },
+					],
+					activeTabId: 't2',
+					queue: [{ tabId: 't1', text: 'next' }],
+				});
+			});
+
+			it('passes on the notices for queued messages the host did not accept', async () => {
+				bridge.typed.set(
+					'import_agent',
+					reply('import_agent_result', { sessionId: 'h', queued: 0, notices: ['not queued'] })
+				);
+				expect(await client.agents.import(input)).toEqual({
+					ok: true,
+					value: { agentId: 'h', queued: 0, notices: ['not queued'] },
+				});
+			});
+
+			it.each([
+				['no tabs', { ...input, tabs: [] }],
+				['two tabs with one id', { ...input, tabs: [input.tabs[0], input.tabs[0]] }],
+				[
+					'a queued message for a tab it does not bring',
+					{ ...input, queue: [{ tabId: 'tX', text: 'x' }] },
+				],
+				[
+					'an SSH remote',
+					{ ...input, agent: { ...input.agent, ssh: { enabled: true, remoteId: 'r' } } },
+				],
+			])('refuses %s without sending anything', async (_label, bad) => {
+				expect(await client.agents.import(bad as never)).toMatchObject({
+					ok: false,
+					error: { code: 'invalid', method: 'agents.import' },
+				});
+				expect(bridge.sent('import_agent')).toHaveLength(0);
+			});
+
+			it('reports a host refusal with its reason', async () => {
+				bridge.typed.set('import_agent', () => ({
+					type: 'import_agent_result',
+					success: false,
+					error: 'Working directory does not exist: /srv/app',
+				}));
+				expect(await client.agents.import(input)).toMatchObject({
+					ok: false,
+					error: { method: 'agents.import', message: 'Working directory does not exist: /srv/app' },
+				});
+			});
 		});
 
 		it('adds an agent the host announces through sessions:lifecycleSync, and removes one', async () => {
@@ -768,6 +849,48 @@ describe('createWsMaestroClient', () => {
 				background: true,
 			});
 			expect(turnKinds()).toEqual(['started']);
+		});
+
+		it('preserves managed unknown queue receipts and never emits a native start', async () => {
+			const dispatchId = '22222222-2222-4222-8222-222222222222';
+			const admission = { dispatchId, outcome: 'unknown' };
+			bridge.typed.set('enqueue_command', () => ({
+				type: 'enqueue_command_result',
+				success: false,
+				unknown: true,
+				dispatchId,
+				admission,
+			}));
+			expect(await client.turns.send(A1, A1_TAB, { text: 'task', dispatchId })).toMatchObject({
+				ok: false,
+				error: { unknown: true, dispatchId, admission },
+			});
+			expect(bridge.sent('enqueue_command')).toHaveLength(1);
+			expect(bridge.sent('enqueue_command')[0]).toMatchObject({ dispatchId });
+			expect(turnKinds()).toEqual([]);
+		});
+
+		it('propagates a durable managed queue outcome without claiming a native start', async () => {
+			const dispatchId = '22222222-2222-4222-8222-222222222222';
+			const admission = { dispatchId, outcome: 'queued', supervision: 'unavailable' };
+			bridge.typed.set(
+				'enqueue_command',
+				reply('enqueue_command_result', {
+					queued: true,
+					queuedAccepted: true,
+					durable: true,
+					unknown: false,
+					itemId: dispatchId,
+					dispatchId,
+					admission,
+				})
+			);
+			expect(await client.turns.send(A1, A1_TAB, { text: 'task', dispatchId })).toMatchObject({
+				ok: true,
+				value: { status: 'queued', dispatchId, admission, durable: true, itemId: dispatchId },
+			});
+			expect(bridge.sent('enqueue_command')).toHaveLength(1);
+			expect(turnKinds()).toEqual([]);
 		});
 
 		it('reports a queued message with its place in line', async () => {

@@ -47,6 +47,7 @@ import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
 import { LongPressable, longPressMouseEvent } from '../shared/LongPressable';
 import { GroupChatList } from '../GroupChatList';
+import { PeerMirrorSection } from './PeerMirrorSection';
 import { useLiveOverlay, useResizablePanel, useViewportBreakpoint } from '../../hooks';
 import { useGitFileStatus } from '../../contexts/GitStatusContext';
 import { useUIStore } from '../../stores/uiStore';
@@ -2382,6 +2383,13 @@ function SessionListInner(props: SessionListProps) {
 								</button>
 							</div>
 						)}
+
+					{/* FEDERATION PEERS - one group per mirrored peer, read-only. Built from the
+					    peer mirror store, never from local groups, so nothing above sees them.
+					    Primary window only: a peer cannot be claimed by a window. */}
+					{!activeVirtualGrouping && !isSecondaryWindow && !showUnreadAgentsOnly && (
+						<PeerMirrorSection theme={theme} />
+					)}
 
 					{/* Flexible spacer to push group chats to bottom */}
 					<div className="flex-grow min-h-4" />

@@ -1066,7 +1066,7 @@ export class TuiDriver extends EventEmitter {
 	//
 	// Deliberately an ACCUMULATOR with no reset, and statusMode's /usage retry
 	// depends on that. A re-sent /usage appends a second panel rather than
-	// replacing the first, and parseUsage anchors on the LAST `Current session`
+	// replacing the first, and parseUsage anchors on the LAST opening section
 	// header (see sliceToFinalPanel), so the newest panel is what gets read.
 	// Clearing between attempts would look tidier and would break the case where
 	// claude repaints differentially - only the changed cells arrive, carrying no

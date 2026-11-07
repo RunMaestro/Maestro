@@ -1,3 +1,5 @@
+import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
+import type { MentionRouting } from '../../shared/crossAgentContext';
 /**
  * Preload API for cross-agent `@mention` dispatch (Phase 03).
  *
@@ -17,6 +19,27 @@ import type { CrossAgentSendRequest, CrossAgentResponseChunk } from '../../share
  */
 export function createCrossAgentApi() {
 	return {
+		/** Owning desktop queue drain only; the host pins the actual plan. */
+		prepareQueue: (input: {
+			sourceSessionId: string;
+			sourceTabId: string;
+			dispatchId: string;
+		}): Promise<{ generation: string; routing: MentionRouting; targetSessionIds: string[] }> =>
+			ipcRenderer.invoke('cross-agent:prepare-queue', input),
+		onQueueSettled: (
+			handler: (
+				result: ManagedQueueRoutingProgress & {
+					sourceSessionId: string;
+					sourceTabId: string;
+					dispatchId: string;
+				}
+			) => void
+		): (() => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, result: Parameters<typeof handler>[0]) =>
+				handler(result);
+			ipcRenderer.on('cross-agent:queue-settled', wrapped);
+			return () => ipcRenderer.removeListener('cross-agent:queue-settled', wrapped);
+		},
 		/**
 		 * Dispatch a cross-agent request. Non-blocking: the target agent's response
 		 * streams back via {@link onChunk}, correlated by the returned `requestId`.

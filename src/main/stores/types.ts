@@ -11,6 +11,7 @@ import type { MultiWindowState } from '../../shared/window-types';
 import type { QuickChatSettings, QuickChatWindowBounds } from '../../shared/quickChat';
 import type { FloatingWidgetBounds, FloatingWidgetId } from '../../shared/floatingWidgets';
 import type { ThroughputGaugeSettings } from '../../shared/throughputGauge';
+import type { MessagePin } from '../../shared/messagePins';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -258,6 +259,7 @@ export interface ClaudeSessionOriginInfo {
 	sessionName?: string; // User-defined session name from Maestro
 	starred?: boolean; // Whether the session is starred
 	contextUsage?: number; // Last known context window usage percentage (0-100)
+	pinnedMessages?: MessagePin[]; // Messages pinned in the tab (see shared/messagePins.ts)
 }
 
 export interface ClaudeSessionOriginsData {
@@ -269,18 +271,18 @@ export interface ClaudeSessionOriginsData {
 // Agent Session Origins Store (generic, for non-Claude agents)
 // ============================================================================
 
+/** One provider session's record in the generic origins store. */
+export interface AgentSessionOriginRecord {
+	origin?: 'user' | 'auto' | 'relay';
+	sessionName?: string;
+	starred?: boolean;
+	/** Messages pinned in the tab (see shared/messagePins.ts). */
+	pinnedMessages?: MessagePin[];
+}
+
 export interface AgentSessionOriginsData {
-	// Structure: { [agentId]: { [projectPath]: { [sessionId]: { origin, sessionName, starred } } } }
-	origins: Record<
-		string,
-		Record<
-			string,
-			Record<
-				string,
-				{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
-			>
-		>
-	>;
+	// Structure: { [agentId]: { [projectPath]: { [sessionId]: AgentSessionOriginRecord } } }
+	origins: Record<string, Record<string, Record<string, AgentSessionOriginRecord>>>;
 }
 
 // ============================================================================

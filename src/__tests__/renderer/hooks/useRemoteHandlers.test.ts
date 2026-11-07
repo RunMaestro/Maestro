@@ -151,6 +151,17 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 	});
 }
 
+/** An agent whose target tab (`tab-1`) is itself mid-turn. */
+function createBusyTabSession(overrides: Partial<Session> = {}): Session {
+	const base = createMockSession();
+	return createMockSession({
+		inputMode: 'ai',
+		state: 'busy',
+		aiTabs: base.aiTabs.map((tab) => ({ ...tab, state: 'busy' as const })),
+		...overrides,
+	});
+}
+
 function createMockDeps(overrides: Partial<UseRemoteHandlersDeps> = {}): UseRemoteHandlersDeps {
 	return {
 		sessionsRef: { current: [createMockSession()] },
@@ -479,6 +490,34 @@ describe('useRemoteHandlers', () => {
 			);
 		});
 
+		it('carries the existing-tab admission ID to native spawn', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			const tabId = session.aiTabs[0].id;
+			renderHook(() => useRemoteHandlers(createMockDeps({ sessionsRef: { current: [session] } })));
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(c: any[]) => c[0] === 'maestro:remoteCommand'
+			)[1];
+			await act(async () =>
+				handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: session.id,
+							tabId,
+							command: 'work',
+							inputMode: 'ai',
+							pianolaDispatchId: 'dispatch-id',
+						},
+					})
+				)
+			);
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: `${session.id}-ai-${tabId}`,
+					pianolaDispatchId: 'dispatch-id',
+				})
+			);
+		});
+
 		it('dispatches AI commands via spawn', async () => {
 			const session = createMockSession({ inputMode: 'ai' });
 			const deps = createMockDeps({
@@ -757,7 +796,7 @@ describe('useRemoteHandlers', () => {
 			});
 
 			it('does not name a tab for a dispatch that is dropped before it runs', async () => {
-				const session = createMockSession({ inputMode: 'ai', state: 'busy' });
+				const session = createBusyTabSession();
 				await dispatch(createMockDeps({ sessionsRef: { current: [session] } }), 'explain this');
 
 				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
@@ -919,8 +958,8 @@ describe('useRemoteHandlers', () => {
 			expect(window.maestro.process.runCommand).not.toHaveBeenCalled();
 		});
 
-		it('skips AI commands for busy sessions', async () => {
-			const session = createMockSession({ state: 'busy', inputMode: 'ai' });
+		it('skips AI commands when the target tab is mid-turn', async () => {
+			const session = createBusyTabSession();
 			const deps = createMockDeps({
 				sessionsRef: { current: [session] },
 			});
@@ -2197,14 +2236,49 @@ describe('useRemoteHandlers', () => {
 			expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'session-not-found']]);
 		});
 
-		it('reports a busy session as a rejection unless forced', async () => {
-			await dispatchWithReceipt(createMockSession({ inputMode: 'ai', state: 'busy' }), {
+		it('reports a mid-turn target tab as a rejection', async () => {
+			await dispatchWithReceipt(createBusyTabSession(), {
 				sessionId: 'session-1',
 				command: 'test',
 				inputMode: 'ai',
 			});
 
-			expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'session-busy']]);
+			expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'tab-busy']]);
+		});
+
+		it('lets force write into a mid-turn tab (allowConcurrentSend / Cadenza)', async () => {
+			await dispatchWithReceipt(createBusyTabSession(), {
+				sessionId: 'session-1',
+				command: 'test',
+				inputMode: 'ai',
+				force: true,
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			expect(receipts()).toEqual([[RECEIPT_CHANNEL, true, undefined]]);
+		});
+
+		it('runs in an idle tab while another tab of the agent is mid-turn, with no force', async () => {
+			// A busy AGENT only means some tab is working. The idle target tab takes
+			// its own turn in parallel, the same as a desktop tab.
+			const base = createMockSession();
+			const session = createMockSession({
+				inputMode: 'ai',
+				state: 'busy',
+				aiTabs: [
+					{ ...base.aiTabs[0], id: 'tab-busy', state: 'busy' as const },
+					{ ...base.aiTabs[0], id: 'tab-1' },
+				],
+			});
+			await dispatchWithReceipt(session, {
+				sessionId: 'session-1',
+				command: 'parallel turn',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			expect(receipts()).toEqual([[RECEIPT_CHANNEL, true, undefined]]);
 		});
 
 		it('acks a terminal command when it is handed to runCommand', async () => {

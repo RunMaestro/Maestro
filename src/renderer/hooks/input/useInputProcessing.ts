@@ -59,6 +59,7 @@ import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 import { steerQueuedItemOrExplain } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
+import { liftedSendRefusal } from '../../../shared/maestro-lib/agents/lift-pointer';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -437,6 +438,22 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					command: commandText,
 				}).catch((error) => {
 					logger.error('[processInput] Command mode run failed:', undefined, error);
+				});
+				return;
+			}
+
+			// A lifted agent runs on its Federation host now: the local copy keeps its tabs and
+			// transcripts, but a turn here would resume the session the host owns. The draft stays.
+			const liftedRefusal =
+				activeSession.inputMode === 'ai' ? liftedSendRefusal(activeSession) : undefined;
+			if (liftedRefusal) {
+				notifyToast({
+					color: 'yellow',
+					title: 'Message not sent',
+					message: liftedRefusal,
+					dismissible: true,
+					skipCustomNotification: true,
+					skipOsNotification: true,
 				});
 				return;
 			}
@@ -1671,6 +1688,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// argument builders (resumeArgs, readOnlyArgs, etc.) to construct the final args
 						await window.maestro.process.spawn({
 							sessionId: targetSessionId,
+							transcriptBoundaryId: newEntry.id,
 							querySource,
 							toolType: freshSession.toolType,
 							cwd: freshSession.cwd,

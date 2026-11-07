@@ -3,9 +3,10 @@
 // against each other. Run via `npm run docs:verify`. Exits non-zero on any
 // finding.
 //
-//   PATH   every `src/...` path asserted in either file still resolves on
-//          disk. These files are ground truth for every agent session; a stale
-//          path teaches an agent to import from a file that no longer exists.
+//   PATH   every `src/...` path asserted in any root CLAUDE*.md or in
+//          CANONICAL-UTILITIES.md still resolves on disk. These files are
+//          ground truth for every agent session; a stale path teaches an agent
+//          to import from a file that no longer exists.
 //   INDEX  CLAUDE.md's "Commonly-reimplemented functions" list stays an INDEX:
 //          one line per entry, at most MAX_INDEX_LINE characters, and exactly
 //          the same set of titles as CANONICAL-UTILITIES.md.
@@ -15,7 +16,7 @@
 // the list grew from one line per entry to 212KB (about 53K tokens paid on
 // every turn of every conversation) while the full entries next door went
 // stale. Rationale belongs in CANONICAL-UTILITIES.md, which is read on demand.
-import { readFileSync, existsSync, realpathSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, realpathSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -52,11 +53,19 @@ export function verifyDocs(root) {
 	if (existsSync(resolve(root, HEADLESS_DOC))) {
 		texts[HEADLESS_DOC] = readFileSync(resolve(root, HEADLESS_DOC), 'utf8');
 	}
+	// Every CLAUDE*.md at the repo root is loaded into agent context, so each
+	// one is path-checked too. Only CLAUDE.md carries the INDEX.
+	const pathTexts = { ...texts };
+	for (const name of readdirSync(root)
+		.filter((n) => /^CLAUDE.*\.md$/.test(n))
+		.sort()) {
+		pathTexts[name] ??= readFileSync(resolve(root, name), 'utf8');
+	}
 	const findings = [];
 
 	// --- PATH
 	let checkedPaths = 0;
-	for (const [doc, text] of Object.entries(texts)) {
+	for (const [doc, text] of Object.entries(pathTexts)) {
 		const paths = new Set(
 			[...text.matchAll(/`(src\/[A-Za-z0-9_/.-]+\.(?:ts|tsx|md))`/g)].map((m) => m[1])
 		);

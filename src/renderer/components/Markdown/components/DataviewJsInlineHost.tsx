@@ -145,6 +145,12 @@ export class DataviewJsInlineStore {
 		return this.entries.get(expression)?.outcome ?? null;
 	}
 
+	/** Whether `expression` shows an answer while a newer evaluation of it is still owed (an index change). */
+	isRefreshing(expression: string): boolean {
+		const entry = this.entries.get(expression);
+		return !!entry && entry.outcome !== null && !entry.halted && entry.wanted > entry.done;
+	}
+
 	get size(): number {
 		return this.entries.size;
 	}

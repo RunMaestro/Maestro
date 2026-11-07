@@ -88,6 +88,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 - **Path utilities:** `truncatePath()`, `getParentDir()`, `truncateCommand()`, `isAbsolutePath()`, `getBasename()`, `joinPath()` in `src/shared/formatters.ts`
 - **Worktree path comparisons:** `normalizeWorktreePath()`, `isPathAtOrUnderRoot()` in `src/shared/worktreePaths.ts`
+- **Empty transcript creation evidence:** `newEmptyTranscript()`, `consumeEmptyTranscriptCreation()` in `src/shared/sessionTranscript.ts`
 - **An untrusted relative path that must stay inside a root:** `normalizeRootRelativePath()`, `isPathInsideRoot()` in `src/shared/pathContainment.ts`
 - **Whether a path stays inside a root once symlinks resolve (main):** `resolvePathInRealRoot()`, `isPathWithin()`, `foldPathCase()`, `realpathThroughAncestor()` in `src/main/utils/real-path-containment.ts`
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
@@ -129,6 +130,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Sealing a file with the key the OS holds for the app:** `safeStorageSeal(safeStorage)`, `obscuringSeal()`, `SealProvider`, `SafeStorageLike` in `src/main/utils/safe-storage-seal.ts`
 - **Proving a sealed file is the newest one (rollback and deletion):** `createKeyringAnchor(service, account)`, `AnchorStore`, `keyringAnchor()`, `noAnchor()` in `src/main/utils/keyring-anchor.ts`
 - **Writing a Claude session's origin record:** `setClaudeSessionOrigin()`, `mergeClaudeSessionOrigin()` in `src/main/storage/claude-session-origins.ts`
+- **Which store holds a provider session's origin record:** `sessionOriginStoreFor()` in `src/shared/sessionOriginStore.ts`
 - **Recording or reading the User Journey:** `sanitizeJourneyUrl()`, `formatJourneyLine()`, `parseJourneyJsonl()` in `src/shared/userJourney.ts`; `appendJourneyEntry()` in `src/main/user-journey-manager.ts`; `recordJourney()` in `src/renderer/services/userJourney.ts`
 - **What happened around an agent, in time order (the timeline):** `readTimeline()` in `src/shared/maestro-lib/store/read-timeline.ts`; `selectTimelineEvents()`, `formatTimelineLine()`, `timelineFollowUps()` in `src/shared/timeline.ts`; `findHistoryEntries()` in `src/shared/maestro-lib/store/read-history.ts`
 - **A `--since` / `--until` time the user typed (`30m`, `2h`, `1w`, ISO, epoch):** `parseTimeInput()`, `parseDurationInput()` in `src/shared/timeInput.ts`
@@ -160,12 +162,25 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a Claude turn runs the maestro-p TUI or `claude --print`:** `resolveClaudeSpawnModeCore()`, `applyClaudeSpawnDecision()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
 - **Timing out a supervised agent process:** `createIdleWatchdog()` in `src/main/utils/idle-watchdog.ts`, events in `src/main/utils/agent-liveness.ts` (the budget is silence, not wall clock)
 - **A one-shot answer from a cheap model (no tab, no tools):** `window.maestro.context.groomContext()` with `cheapTurn` / `readOnly` / `disableTools` / `timeoutMs`, over `groomContext()` in `src/main/utils/context-groomer.ts`
-- **Whether a working directory can be spawned into:** `unusableCwdReason(cwd)` in `src/main/process-manager/utils/spawnCwd.ts`
+- **Whether a working directory can be spawned into:** `unusableCwdReason(cwd)`, `unusableDirectoryReason(dir, label)` in `src/main/process-manager/utils/spawnCwd.ts`
 - **Whether an agent is working right now (main process):** `isAgentBusy()`, `isAiTabProcessActive()` in `src/main/utils/agent-busy.ts` (never the persisted `state`)
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`
 - **Resuming a provider session a background synopsis may still hold:** `awaitSynopsisWriters()` in `src/main/process-manager/utils/synopsisWriterGate.ts` (already called by `process:spawn`; no per-send-path busy check)
 - **A path handed to a REMOTE shell (`cd`, `ls`, `stat` over SSH):** `shellEscapeRemotePath()` in `src/main/utils/shell-escape.ts` (`shellEscape()` stops `~` from expanding)
 - **SSH connection options (`ssh -o`):** `resolveSshOptions()`, `buildSshOptionArgs()`, `validateSshOption()` in `src/shared/sshOptions.ts`
+- **A one-shot SSH command that must find a binary the user installed:** `wrapRemoteCommandWithPath()` in `src/shared/maestro-lib/launch/ssh-command-builder.ts`
+- **Finding the `maestro-cli host` on an SSH remote (Federation):** `discoverRemoteHost()`, `startRemoteHost()`, `remoteVersionSkew()`, `buildRemoteMaestroCliScript()`, `buildRemoteScriptArgs()` in `src/shared/maestro-lib/client/remote-discovery.ts`
+- **Forwarding a Federation remote's host to the laptop:** `getSshForwardManager().acquire(remote)`, `buildSshForwardArgs()` in `src/shared/maestro-lib/client/ssh-forward.ts`
+- **Which env vars a Federation lift sends:** `planLiftEnv()`, `providerSessionDirSelector()`, `liftSessionDirProblem()` in `src/shared/maestro-lib/agents/lift-env.ts`
+- **A lifted agent's pointer and send refusal (Federation):** `readLiftedTo()`, `liftedSendRefusal()`, `liftedAgentRef()`, `liftedOwnerOfProcess()`, `peerAgentRef()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
+- **Planning a Federation lift (refusals, payload, plan):** `liftRefusal()`, `planAgentLift()`, `liftRemoteCwd()`, `liftSshRemoteId()` in `src/shared/maestro-lib/agents/lift-plan.ts`; `liftBusyReason()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
+- **Running a Federation lift (CLI and desktop Move to Host):** `runLift()`, `formatLiftPlan()`, `LiftRunError`, `providerEnvVarsOf()` in `src/shared/maestro-lib/agents/lift-run.ts`; `liftAgentFromDesktop()` in `src/main/federation/lift.ts`
+- **A `peer:agent` target on the CLI (Federation):** `routeAgentTarget()`, `resolvePeerAgent()`, `withPeerAgent()`, `connectPeer()`, `listHostAgents()`, `listFederationPeers()`, `findPeerRemote()`, `peerIdFor()`, `watchPeerConnection()`, `hostCallError()`, `peerErrorCode()` in `src/cli/services/peer-resolver.ts`
+- **Connecting to a Federation peer's host (CLI and desktop):** `connectPeerClient()`, `federationPeersOf()`, `peerIdFor()`, `peerForwardError()`, `watchPeerConnection()`, `PeerConnectError` in `src/shared/maestro-lib/client/peer-connection.ts`
+- **Driving a Federation peer's agent (CLI and desktop):** `runPeerAgentAction()`, `parsePeerAgentAction()` in `src/shared/maestro-lib/client/peer-actions.ts`; `PeerMirrorService.act()` in `src/main/federation/`
+- **Mirroring a Federation peer in memory (desktop):** `applyPeerEvent()`, `mirrorKey()`, `replacePeerAgents()` in `src/shared/maestro-lib/client/peer-mirror.ts`; `foldLiveTurn()`, `coalesceTurnEvents()` in `src/shared/maestro-lib/client/live-turn.ts`; `getPeerMirrorService()` in `src/main/federation/index.ts`
+- **Showing a Federation peer's mirrored agent (renderer):** `usePeerMirrorStore`, `isMirrorShown()` in `src/renderer/stores/peerMirrorStore.ts`; `buildMirrorViewSession()` in `src/renderer/utils/peerMirrorView.ts`; `gateKeyForMirror()` in `src/renderer/hooks/keyboard/mirrorKeyboardGate.ts`
+- **A loopback port for an SSH local forward:** `availableLocalPort()`, `waitForLocalPort()` in `src/shared/maestro-lib/client/local-port.ts`
 - **Building or delivering the Maestro system prompt:** `assembleMaestroSystemPrompt()` in `src/shared/maestroSystemPrompt.ts`; `applySystemPromptDelivery()` in `src/main/utils/system-prompt-delivery.ts`; `buildMaestroSystemPromptForSession()` in `src/main/utils/maestro-system-prompt.ts`
 - **Expanding `{{INCLUDE:name}}` in a prompt:** `resolvePromptIncludes()`, `findPromptIncludeNames()` in `src/shared/promptIncludes.ts`
 - **The system-prompt envelope for a provider with no `--append-system-prompt`:** `embedSystemPromptInPrompt()`, `stripEmbeddedSystemPrompt()`, `hasEmbeddedSystemPrompt()` in `src/shared/embeddedSystemPrompt.ts` (a wire format; never template it inline)
@@ -182,6 +197,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Serving a runtime to other processes (`maestro-cli host`):** `startRuntimeServer()` in `src/shared/maestro-lib/runtime/server.ts`
 
 #### Providers, accounts, and auth
+
+- **Native Pianola question cores:** `extractQuestionCores()` in `src/shared/pianola/pianola-awaiting-detector.ts`
 
 - **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
 - **Discovering installed Codex skills:** `discoverCodexSkills()` in `src/main/agents/codex-skills.ts`
@@ -243,6 +260,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Reading a past conversation back into a tab:** `loadResumableSession()` in `src/renderer/services/resumableSession.ts`
 - **Storing the closed-tab stack (Cmd+Shift+T):** `projectClosedTabHistory()`, `normalizeStoredClosedTabs()`, `MAX_CLOSED_TAB_HISTORY` in `src/shared/closedTabHistory.ts`; `loadReopenedTabContent()` in `src/renderer/services/reopenedTabContent.ts`
 - **Reading or reopening the closed-tab stack from a script (`maestro-cli tab closed` / `tab reopen`):** `runRemoteClosedTabCommand()`, `listClosedTabs()`, `getClosedTabLabel()` in `src/renderer/services/closedTabCommands.ts`, wire in `src/shared/closedTabCommands.ts`
+- **Pinning a message in a tab (pin button, pin panel, `maestro-cli tab pins`):** `toggleMessagePin()`, `persistTabPins()`, `runRemoteMessagePinCommand()` in `src/renderer/services/messagePins.ts`, over `resolvePinnedRows()`, `findPinForRow()` in `src/shared/messagePins.ts`
 - **Compact, Merge Into, or Send to Agent from a script (`maestro-cli tab compact` / `merge` / `transfer`):** `runRemoteTabContextOp()` in `src/renderer/services/tabContextOps.ts`, wire in `src/shared/tabContextOps.ts`
 - **Forcing a tracked sessions flush from outside App's hook tree:** `flushSessionPersistenceNow()`, `registerSessionPersistenceFlush()` in `src/renderer/services/sessionPersistenceFlush.ts`
 - **Which tab a Quick Chat message goes to:** `decideRoute()`, `parseRouteAnswer()` in `src/shared/quickChatRouting.ts`; `routeQuickChatMessage()`, `reopenClosedConversation()` in `src/renderer/services/quickChatRouter.ts`
@@ -264,6 +282,10 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Parking, waking, dismissing, or rescheduling ONE snooze:** `snoozeTabWithMirror()`, `wakeSnoozeNow()`, `dismissSnoozeNow()`, `rescheduleSnoozeNow()` in `src/renderer/services/snoozeActions.ts`
 
 #### Composer, queue, and transcript
+
+- **Native current-turn observation:** `isCurrentTurnCursor()`, `sameCurrentTurnCursor()`, `composeCurrentTurn()`, `currentTurnMessages()`, `isNativeQuestionRequest()`, `nativeQuestionMessage()` in `src/shared/currentTurn.ts`
+- **Coalescing Pianola scope wakeups:** `PianolaScopeWakeups` in `src/cli/commands/pianola-scope-watch.ts`
+- **Passive Pianola owner selection:** `pianolaOwnerSelectionState()` in `src/shared/pianola/pianola-scope.ts`
 
 - **Command mode (`!`) is STATE, not a text prefix, and it is a LADDER:** the mode is STATE, never a leading `!`: `composerInputStore.aiCommandMode` (`'off' | 'shell' | 'ai'`), read through `isShellCommandMode()`, `isAiCommandMode()`, `normalizeComposerCommandMode()` in `src/renderer/utils/shellCommandInput.ts`
 - **Run a shell command from the chat:** `dispatchShellCommand()`, `runShellCommand()`, `cancelShellCommand()`, `resolveCommandCwd()` in `src/renderer/services/shellCommand.ts`
@@ -384,6 +406,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### UI components and widgets
 
 - **A spinning loading icon:** `<Spinner>` in `src/renderer/components/ui/Spinner.tsx` (never `animate-spin` on an `<svg>`)
+- **A pulsing placeholder bar while content loads:** `<SkeletonBox>` in `src/renderer/components/ui/SkeletonBox.tsx`
 - **Tiny uppercase state chip:** `<MiniBadge>` in `src/renderer/components/ui/MiniBadge.tsx`
 - **A labeled action button in a panel header:** `<HeaderActionButton>` in `src/renderer/components/ui/HeaderActionButton.tsx`
 - **A text box that narrows a list:** `<FilterInput>` in `src/renderer/components/ui/FilterInput.tsx`
@@ -434,6 +457,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **The Dataview vault index (query, status, rebuild, change events):** `DataviewService`, `getDataviewService()` in `src/main/dataview/dataview-service.ts`
 - **Whether a DataviewJS block may run:** `dataviewJsRunPolicy()`, `isTrustedDataviewRoot()` in `src/shared/dataview/trust.ts`; `useDataviewJsRunPolicy()` in `src/renderer/hooks/file/useDataviewJsRunPolicy.ts`
 - **A message from the DataviewJS sandbox:** `parseSandboxMessage(raw, from)` in `src/shared/dataview/sandboxProtocol.ts`
+- **What a Dataview block shows while it computes:** `DataviewSkeleton`, `DataviewRefreshing`, `DataviewInlineRefreshing`, `DataviewCalculatingPill`, `useDataviewRefreshIndicator()` in `src/renderer/components/Markdown/components/DataviewLoading.tsx`
 - **What counts as a wiki link, embed, or file path in markdown text:** `WIKI_LINK_PATTERN`, `IMAGE_EMBED_PATTERN`, `PATH_PATTERN` in `src/shared/fileLinkPatterns.ts`
 
 #### Layout, scroll, sizing, and hook utilities
@@ -616,8 +640,9 @@ Maestro is an Electron desktop app for managing multiple AI coding assistants si
 | `pi`            | Pi              | **Beta**   |
 | `qwen3-coder`   | Qwen3 Coder     | **Beta**   |
 | `terminal`      | Terminal        | Internal   |
+| `gemini-cli`    | Gemini CLI      | Hidden     |
 
-Rows are in picker order (alphabetical by display name); the registry is `AGENT_PICKER_META` in `src/shared/agentMetadata.ts`. `terminal` is internal and never offered.
+Rows are in picker order (alphabetical by display name); the registry is `AGENT_PICKER_META` in `src/shared/agentMetadata.ts`, and the picker default comes from `AGENT_AUTOSELECT_ORDER`. `terminal` is internal and never offered. `gemini-cli` is hidden (superseded by Antigravity, kept for type and back-compat reasons).
 
 See [[CLAUDE-AGENTS.md]] for capabilities and integration details.
 
@@ -645,37 +670,46 @@ npm run test:watch    # Run tests in watch mode
 ```
 src/
 ├── main/                    # Electron main process (Node.js)
-│   ├── index.ts            # Entry point, IPC handlers
+│   ├── index.ts            # Entry point (app lifecycle, window, startup wiring)
+│   ├── ipc/bootstrap/      # setupIpcHandlers(): the live IPC registration
+│   ├── ipc/handlers/       # IPC handler modules (stats, git, playbooks, cue, etc.)
 │   ├── preload/            # Secure IPC bridge (one module per namespace)
-│   ├── process-manager.ts  # Process spawning (PTY + child_process)
-│   ├── agent-*.ts          # Agent detection, capabilities, session storage
-│   ├── cue/               # Maestro Cue event-driven automation engine
+│   ├── process-manager/    # Process spawning (PTY + child_process)
+│   ├── agents/             # Agent definitions, detection, capabilities, model discovery
+│   ├── cue/                # Maestro Cue event-driven automation engine
 │   ├── parsers/            # Per-agent output parsers + error patterns
 │   ├── storage/            # Per-agent session storage implementations
-│   ├── ipc/handlers/       # IPC handler modules (stats, git, playbooks, cue, etc.)
+│   ├── plugins/            # Plugin manager, sandbox, broker, consent
+│   ├── stats/              # Usage stats SQLite (stats-db.ts, schema, aggregations)
+│   ├── web-server/         # WebSocket bridge for web-desktop and the CLI
 │   └── utils/              # Utilities (execFile, ssh-spawn-wrapper, etc.)
 │
 ├── renderer/               # React frontend (desktop)
 │   ├── App.tsx            # Main coordinator
 │   ├── components/        # UI components
 │   ├── hooks/             # Custom React hooks
-│   ├── services/          # IPC wrappers (git.ts, process.ts)
+│   ├── stores/            # Zustand stores (sessions, settings, ui, modal, ...)
+│   ├── services/          # Renderer-side services (shell commands, mentions, ...)
 │   ├── constants/         # Themes, shortcuts, priorities
 │   └── contexts/          # Context providers (LayerStack, etc.)
 │
 ├── web-desktop/            # Browser build of the renderer (WebSocket IPC bridge)
 │
-├── web/                    # PWA assets (public/) + service worker; rest is legacy dead code
+├── web/                    # PWA assets (public/) + utils/serviceWorker.ts; the rest is legacy, unimported
 │
-├── cli/                    # CLI tooling for batch automation
-│   ├── commands/          # CLI command implementations
-│   └── services/          # Playbook and batch processing
+├── cli/                    # maestro-cli: commands/ and services/ (playbooks, batch, spawner)
+│
+├── maestro-p/              # maestro-p TUI wrapper for provider CLIs
 │
 ├── prompts/                # System prompts (editable .md files)
 │
-├── shared/                 # Shared types and utilities
+├── shared/                 # Shared types and utilities (both processes, CLI-safe)
 │
-└── docs/                   # Mintlify documentation (docs.runmaestro.ai)
+├── types/                  # Ambient type declarations
+│
+└── __tests__/              # Vitest suite (mirrors src/ layout)
+
+docs/                       # Mintlify documentation (docs.runmaestro.ai) + docs/agent-guides/
 ```
 
 ---
@@ -684,7 +718,7 @@ src/
 
 | Task                                | Primary Files                                                                                                                                                                 |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Add IPC handler                     | `src/main/index.ts`, `src/main/preload/` (one module per namespace)                                                                                                           |
+| Add IPC handler                     | `src/main/ipc/handlers/` (handler module), `src/main/ipc/bootstrap/index.ts` (`setupIpcHandlers`), `src/main/preload/` (one module per namespace)                             |
 | Add UI component                    | `src/renderer/components/`                                                                                                                                                    |
 | Add browser/mobile touch affordance | `src/renderer/components/`, `src/renderer/utils/touch.ts`, `src/renderer/hooks/utils/` (gate on `isCoarsePointer()`; PWA assets in `src/web/public/`)                         |
 | Add keyboard shortcut               | `src/renderer/constants/shortcuts.ts`, `App.tsx`                                                                                                                              |

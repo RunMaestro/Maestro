@@ -44,6 +44,7 @@ import {
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { agentAlreadyRunningMessage } from '../../../shared/processErrors';
 import {
 	releaseConnectionHeldQueueItems,
@@ -1150,6 +1151,65 @@ describe('useInputProcessing', () => {
 			});
 
 			// Should process because there are staged images
+			expect(mockSetSessions).toHaveBeenCalled();
+		});
+	});
+
+	describe('a lifted agent (Federation)', () => {
+		const liftedTo = { peer: 'build-box', agentId: 'host-1', at: 1 };
+
+		beforeEach(() => {
+			useNotificationStore.setState({ toasts: [] });
+		});
+
+		it('refuses an AI message with a pointer at peer:agentId, spawns nothing, and keeps the draft', async () => {
+			const session = createMockSession({ liftedTo });
+			const deps = createDeps({ activeSession: session, inputValue: 'hello' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(mockSetSessions).not.toHaveBeenCalled();
+			expect(mockSetInputValue).not.toHaveBeenCalled();
+			expect(useNotificationStore.getState().toasts).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						title: 'Message not sent',
+						message: expect.stringContaining('Send to build-box:host-1 instead.'),
+					}),
+				])
+			);
+		});
+
+		it('still runs a terminal command: the local shell is not the lifted conversation', async () => {
+			const session = createMockSession({ inputMode: 'terminal', liftedTo });
+			const deps = createDeps({ activeSession: session, inputValue: 'ls', isAiMode: false });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(mockSetSessions).toHaveBeenCalled();
+			expect(useNotificationStore.getState().toasts).not.toEqual(
+				expect.arrayContaining([expect.objectContaining({ title: 'Message not sent' })])
+			);
+		});
+
+		it('sends normally once the pointer is malformed: a broken record never blocks the user', async () => {
+			const session = createMockSession({
+				liftedTo: { peer: '', agentId: 'host-1', at: 1 },
+			});
+			const deps = createDeps({ activeSession: session, inputValue: 'hello' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
 			expect(mockSetSessions).toHaveBeenCalled();
 		});
 	});
@@ -2478,6 +2538,19 @@ describe('useInputProcessing', () => {
 				'IMPORTANT: You are in read-only/plan mode. Do NOT write a plan file. Instead, return your plan directly to the user in beautiful markdown formatting.'
 			);
 			expect(spawnCall.readOnlyMode).toBe(true);
+			expect(typeof spawnCall.transcriptBoundaryId).toBe('string');
+			const recorded = mockSetSessions.mock.calls
+				.map(([updater]) => (typeof updater === 'function' ? updater([session]) : updater))
+				.flatMap((sessions) =>
+					sessions.flatMap((agent: Session) => agent.aiTabs.flatMap((tab) => tab.logs))
+				);
+			expect(recorded).toContainEqual(
+				expect.objectContaining({
+					id: spawnCall.transcriptBoundaryId,
+					source: 'user',
+					text: 'explain this code',
+				})
+			);
 		});
 
 		it('appends read-only instruction suffix when Auto Run is active without worktree (read-only tab)', async () => {

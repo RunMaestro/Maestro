@@ -1,3 +1,7 @@
+import {
+	flushSessionPersistenceNow,
+	flushSessionTranscriptNow,
+} from '../services/sessionPersistenceFlush';
 import { migrationHoldsTurns } from '../../shared/maestro-lib/translation/session';
 /**
  * agentStore - Zustand store for agent lifecycle orchestration
@@ -35,7 +39,7 @@ import { buildSnapshotKey } from '../../shared/agentCapabilities';
 import { resolveTabPermissionMode } from '../../shared/agentMetadata';
 import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
 import { isAgentAlreadyRunningError } from '../../shared/processErrors';
-import { createTab, getActiveTab } from '../utils/tabHelpers';
+import { createTab, getActiveTab, markTabRunningQueuedItem } from '../utils/tabHelpers';
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
@@ -56,6 +60,8 @@ import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
 import {
 	dispatchCrossAgentMentionsForMessage,
+	dispatchCrossAgentMentions,
+	planCrossAgentMentions,
 	withMentionTurnNotes,
 	type CrossAgentMentionDispatch,
 } from '../services/crossAgentMentions';
@@ -63,6 +69,7 @@ import { filterYoloArgs } from '../utils/agentArgs';
 import {
 	applyQueuedItemAbort,
 	applyQueuedItemDispatchFailure,
+	applyQueuedItemDispatch,
 	applyQueuedItemRelease,
 	clearSpawnCollision,
 	noteSpawnCollision,
@@ -184,6 +191,8 @@ export interface AgentStoreActions {
  * These are mutable values from hooks/refs that can't be imported directly.
  */
 export interface ProcessQueuedItemDeps {
+	/** Host-selected parallel reply step. Does not grant authority without live native proofs. */
+	managedStepId?: string;
 	conductorProfile: string;
 	customAICommands: CustomAICommand[];
 	speckitCommands: SpecKitCommand[];
@@ -229,6 +238,8 @@ function updateSession(sessionId: string, updater: (s: Session) => Session): voi
  * more than once (e.g. during hot reload).
  */
 let snapshotUnsubscribe: (() => void) | null = null;
+// Different drain callers may enter before the owner IPC acknowledges submission.
+const pendingPlainQueueDispatches = new Set<string>();
 
 export const useAgentStore = create<AgentStore>()((set, get) => ({
 	// --- State ---
@@ -391,12 +402,20 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 	},
 
 	processQueuedItem: async (sessionId, item, deps) => {
+		const managedQueue = !!item.pendingAdmissionId;
+		if (managedQueue && item.admissionRelease && !deps.managedStepId) return false; // native in-flight/Unknown barrier, never resend
 		const session = getSession(sessionId);
 		if (!session) {
 			logger.error('[processQueuedItem] Session not found:', undefined, sessionId);
 			return false;
 		}
 
+		if (
+			managedQueue &&
+			!deps.managedStepId &&
+			session.executionQueue.some((row) => row.id === item.id && row.admissionRelease)
+		)
+			return false;
 		if (migrationHoldsTurns(session.providerMigration)) return false;
 
 		// Find the TARGET tab for this queued item (NOT the active tab!)
@@ -450,6 +469,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// skipped: its text is Maestro's own "X replied" note, not something the
 		// user asked for, and the message it continues was named when it was sent.
 		if (
+			!managedQueue &&
 			item.type === 'message' &&
 			item.text?.trim() &&
 			!item.agentContext &&
@@ -466,7 +486,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// the consult replies, or arms a hand-off of its answer; `mentionDispatch`
 		// is what the turn's prompt has to be told about either.
 		let mentionDispatch: CrossAgentMentionDispatch | undefined;
-		if (item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
+		if (!managedQueue && item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
 			mentionDispatch = dispatchCrossAgentMentionsForMessage(
 				item.text,
 				session,
@@ -504,9 +524,60 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// its tabId pinned to the resolved target - `item.tabId` may be undefined
 		// when the item fell back to the active tab. `crossAgentMention` is dropped:
 		// the consult just fired, and an auto-retry of this turn must not re-fire it.
-		noteDispatch(sessionId, { ...item, tabId: targetTab.id, crossAgentMention: undefined }, deps);
+		if (!managedQueue)
+			noteDispatch(sessionId, { ...item, tabId: targetTab.id, crossAgentMention: undefined }, deps);
 
+		const plainQueueKey =
+			managedQueue && !item.crossAgentMention ? item.pendingAdmissionId : undefined;
+		if (plainQueueKey && pendingPlainQueueDispatches.has(plainQueueKey)) return false;
+		if (plainQueueKey) pendingPlainQueueDispatches.add(plainQueueKey);
 		try {
+			if (managedQueue && (item.type !== 'message' || item.agentContext))
+				throw new Error('DispatchQueueRoutingUnsupported');
+			if (managedQueue && item.crossAgentMention && !deps.managedStepId) {
+				if (deps.isCancelled?.()) return false;
+				await flushSessionPersistenceNow(useSessionStore.getState().sessions);
+				const prepared = await window.maestro.crossAgent.prepareQueue({
+					sourceSessionId: sessionId,
+					sourceTabId: targetTab.id,
+					dispatchId: item.pendingAdmissionId!,
+				});
+				updateSessionWith(sessionId, (s) => ({
+					...s,
+					executionQueue: s.executionQueue.map((row) =>
+						row.id === item.id
+							? { ...row, admissionRelease: { generation: prepared.generation } }
+							: row
+					),
+				}));
+				const plan = planCrossAgentMentions(item.text!, sessionId, item.mentionRouting);
+				if (
+					!plan ||
+					plan.routing !== prepared.routing ||
+					plan.targetSessionIds.length !== prepared.targetSessionIds.length ||
+					plan.targetSessionIds.some((id) => !prepared.targetSessionIds.includes(id))
+				)
+					throw new Error('DispatchRoutingRecipientChanged');
+				updateSessionWith(sessionId, (s) => {
+					const current = s.executionQueue.find((row) => row.id === item.id);
+					if (!current) return s;
+					return {
+						...applyQueuedItemRelease(applyQueuedItemDispatch(s, current), targetTab.id),
+						executionQueue: s.executionQueue,
+					};
+				});
+				const starts: Promise<void>[] = [];
+				mentionDispatch = dispatchCrossAgentMentions(
+					plan,
+					item.text!,
+					session,
+					targetTab.id,
+					item.images,
+					{ dispatchId: item.pendingAdmissionId!, generation: prepared.generation, starts }
+				);
+				await Promise.all(starts);
+				if (prepared.routing === 'only' || prepared.routing === 'consult-first') return true; // no local AgentRun, retry snapshot or spawn
+			}
 			// Get agent configuration for this session's tool type
 			const agent = await window.maestro.agents.get(session.toolType);
 			if (!agent) throw new Error(`Agent not found for toolType: ${session.toolType}`);
@@ -539,18 +610,26 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				// A queued message that is the tab's FIRST turn opens a new provider
 				// session, so it carries the New Session Message like a typed one does.
 				// A message queued behind a running turn resumes, and gets nothing.
-				const effectivePrompt = withMentionTurnNotes(
-					takePendingMergedContext(
-						sessionId,
-						targetTab.id,
-						prependNewSessionMessageOnFirstTurn(
-							item.agentContext ? `${item.agentContext}\n\n---\n\n${messagePrompt}` : messagePrompt,
+				const effectivePrompt = managedQueue
+					? prependNewSessionMessageOnFirstTurn(
+							messagePrompt,
 							session.newSessionMessage,
 							tabAgentSessionId
 						)
-					),
-					mentionDispatch
-				);
+					: withMentionTurnNotes(
+							takePendingMergedContext(
+								sessionId,
+								targetTab.id,
+								prependNewSessionMessageOnFirstTurn(
+									item.agentContext
+										? `${item.agentContext}\n\n---\n\n${messagePrompt}`
+										: messagePrompt,
+									session.newSessionMessage,
+									tabAgentSessionId
+								)
+							),
+							mentionDispatch
+						);
 
 				// NOTE: The user-visible log entry for this message is appended by the
 				// caller that dequeued the item (e.g. useAgentListeners onExit,
@@ -580,7 +659,46 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
 					return false;
 				}
-				await window.maestro.process.spawn({
+				if (managedQueue && !item.crossAgentMention) {
+					// Submit the canonical queue card without starting the turn or releasing
+					// its admission hold. Repeated drains reuse this exact boundary; only
+					// the host journal may reconcile an uncertain previous start.
+					updateSessionWith(sessionId, (s) => {
+						const current = s.executionQueue.find((row) => row.id === item.id);
+						if (!current || current.pendingAdmissionId !== item.pendingAdmissionId) return s;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((tab) =>
+								tab.id !== targetTab.id ||
+								tab.logs.some((log) => log.queuedItemId === item.id && log.source === 'user')
+									? tab
+									: { ...tab, logs: markTabRunningQueuedItem(tab, current, s).logs }
+							),
+						};
+					});
+				}
+				const transcriptBoundaryId = getSession(sessionId)
+					?.aiTabs.find((tab) => tab.id === targetTab.id)
+					?.logs.slice()
+					.reverse()
+					.find((log) => log.source === 'user' && log.queuedItemId === item.id)?.id;
+				if (managedQueue) {
+					await flushSessionPersistenceNow(useSessionStore.getState().sessions);
+					if (!item.crossAgentMention) {
+						if (!transcriptBoundaryId) throw new Error('DispatchTranscriptBoundaryUnavailable');
+						await flushSessionTranscriptNow(sessionId, targetTab.id, transcriptBoundaryId);
+					}
+					if (deps.isCancelled?.()) return false;
+				}
+				const spawnResult = await window.maestro.process.spawn({
+					transcriptBoundaryId,
+					...(managedQueue
+						? {
+								pianolaDispatchId: item.pendingAdmissionId,
+								pianolaQueueItemId: item.id,
+								...(deps.managedStepId ? { pianolaQueueStepId: deps.managedStepId } : {}),
+							}
+						: {}),
 					sessionId: targetSessionId,
 					querySource: item.querySource,
 					toolType: session.toolType,
@@ -602,6 +720,23 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
+				if (managedQueue) {
+					if (!spawnResult.success)
+						throw new Error(spawnResult.error ?? 'DispatchNativeStartFailed');
+					if (!spawnResult.pianolaRunId) throw new Error('DispatchCaptureUnknown');
+					updateSessionWith(sessionId, (s) => {
+						const current = s.executionQueue?.find((row) => row.id === item.id);
+						if (!current || current.pendingAdmissionId !== item.pendingAdmissionId) return s;
+						if (item.crossAgentMention)
+							return {
+								...applyQueuedItemDispatch(s, current, false),
+								executionQueue: s.executionQueue,
+							};
+						return spawnResult.pianolaQueueReconciled
+							? { ...s, executionQueue: s.executionQueue.filter((row) => row.id !== item.id) }
+							: applyQueuedItemDispatch(s, current, false);
+					});
+				}
 			} else if (item.type === 'command' && item.command) {
 				// Process a slash command - find matching command
 				// Check user-defined commands first, then agent-discovered commands with prompts
@@ -727,6 +862,21 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			return true;
 		} catch (error: any) {
 			logger.error('[processQueuedItem] Failed to process queued item:', undefined, error);
+			if (managedQueue) {
+				const id = `queue-admission:${item.id}`;
+				const tab = getSession(sessionId)?.aiTabs.find((t) => t.id === item.tabId);
+				if (tab && !tab.logs.some((log) => log.id === id))
+					useSessionStore.getState().addLogToTab(
+						sessionId,
+						{
+							id,
+							source: 'error',
+							text: `Managed queue held: ${error.message ?? String(error)}. Check admission status before retrying.`,
+						},
+						item.tabId
+					);
+				throw error; // host journal owns uncertainty; never recreate/resume this row
+			}
 
 			// This is the ONE owner of dispatch-failure recovery. It used to only do
 			// the bookkeeping half (idle the tab, write an error frame) and leave the
@@ -795,6 +945,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			// rather than strand an outage entry in-flight, and callers that want to
 			// know a send failed (Force Send's toast, the batch loop) read it here.
 			throw error;
+		} finally {
+			if (plainQueueKey) pendingPlainQueueDispatches.delete(plainQueueKey);
 		}
 	},
 

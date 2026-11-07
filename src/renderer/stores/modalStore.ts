@@ -233,6 +233,11 @@ export interface AgentExportModalData {
 	sessionId: string;
 }
 
+/** Move to Host modal (Federation lift): the SSH agent to lift onto its remote's host. */
+export interface MoveToHostModalData {
+	sessionId: string;
+}
+
 /** Import Agent modal: the Left Bar group the imported agents go in. */
 export interface AgentImportModalData {
 	groupId?: string;
@@ -386,6 +391,7 @@ export type ModalId =
 	| 'deleteAgent'
 	| 'agentExport'
 	| 'agentImport'
+	| 'moveToHost'
 	| 'renameInstance'
 	| 'agentError'
 	| 'reauth'
@@ -600,6 +606,7 @@ export interface ModalDataMap {
 	deleteAgent: DeleteAgentModalData;
 	agentExport: AgentExportModalData;
 	agentImport: AgentImportModalData;
+	moveToHost: MoveToHostModalData;
 	/**
 	 * Present when opened from the Left Bar's right-click menu, naming the agent
 	 * to configure. Absent when opened from the header or Settings, where the

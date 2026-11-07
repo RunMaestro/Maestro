@@ -18,9 +18,18 @@
 // restore an agent's closed-tab stack through the closed_tab_command message,
 // which the renderer answers with the shortcut's own reopen function.
 //
+// "tab pins list|add|remove|rename|show" are the CLI half of message pins: the
+// pin button on a message and the pin panel, through message_pin_command.
+//
 // "tab compact", "tab merge" and "tab transfer" are the overlay menu's Context:
 // Compact, Merge Into and Send to Agent, sent as summarize_context,
 // merge_context and transfer_context and run by the menu's own handlers.
+//
+// Federation: "tab new", "tab rename", "tab star" and "tab unstar" take
+// `--agent peer:agent` to act on an agent a peer's host owns. They reach the
+// host over the peer's forward and run the shared `runPeerAgentAction()`, the
+// same function the desktop's mirrored tab strip calls, so nothing here writes
+// a local store. On a peer, <tab-id> resolves against the host's tabs.
 
 import {
 	sendSimpleCommand,
@@ -47,13 +56,35 @@ import {
 	type TabContextOpRequest,
 	type TabContextOpResult,
 } from '../../shared/tabContextOps';
-import { formatSuccess } from '../output/formatter';
+import { formatError, formatSuccess } from '../output/formatter';
 import { nextThinkingMode, type ThinkingMode } from '../../shared/types';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { formatRelativeTime } from '../../shared/formatters';
 import type { ClosedTabCommandRequest, ClosedTabSummary } from '../../shared/closedTabCommands';
+import {
+	MESSAGE_PIN_LAST_TARGETS,
+	type MessagePinCommandRequest,
+	type MessagePinLastTarget,
+	type MessagePinSummary,
+} from '../../shared/messagePinCommands';
 import { resolveAgentId, readActiveAgentId } from '../services/storage';
+import {
+	PeerResolveError,
+	hostCallError,
+	peerAgentRef,
+	peerErrorCode,
+	pickHostTab,
+	routeAgentTarget,
+	withPeerAgent,
+	type PeerTarget,
+} from '../services/peer-resolver';
+import {
+	runPeerAgentAction,
+	type PeerAgentAction,
+	type PeerAgentActionResult,
+} from '../../shared/maestro-lib/client/peer-actions';
+import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 
 interface TabNewOptions {
 	agent: string;
@@ -69,7 +100,85 @@ interface TabMutateOptions {
 	json?: boolean;
 }
 
+/** `--agent` as a peer target, or null for a local agent (and always null while Federation is off). */
+function peerTabTarget(agent: string | undefined): PeerTarget | null {
+	if (!agent) return null;
+	const route = routeAgentTarget(agent);
+	return route.kind === 'peer' ? route.target : null;
+}
+
+/**
+ * Run one tab action on a peer's agent and report it the way the local verb does, plus `peer`.
+ * `build` picks the action from the host's record; a throw there (an unknown tab) is reported
+ * with the agent's `peer:agent` address. Nothing is retried.
+ */
+async function peerTabAction(
+	target: PeerTarget,
+	json: boolean | undefined,
+	build: (agent: AgentRecord) => PeerAgentAction,
+	describe: (result: PeerAgentActionResult) => string
+): Promise<void> {
+	let done: { peer: string; agentId: string; result: PeerAgentActionResult };
+	try {
+		done = await withPeerAgent(target, async ({ agent, client, peer }) => {
+			let action: PeerAgentAction;
+			try {
+				action = build(agent);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				throw new PeerResolveError(
+					'host-failed',
+					`${message} (agent ${peerAgentRef(peer, agent.id)})`,
+					ExitCode.GeneralError,
+					peer
+				);
+			}
+			const ran = await runPeerAgentAction(client, agent, action);
+			if (!ran.ok) throw hostCallError(peer, ran.error);
+			return { peer, agentId: agent.id, result: ran.value };
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const peerError = error instanceof PeerResolveError ? error : undefined;
+		if (json) {
+			console.log(
+				JSON.stringify({
+					success: false,
+					error: message,
+					...(peerError ? { code: peerErrorCode(peerError.code), peer: peerError.peer } : {}),
+				})
+			);
+		} else {
+			console.error(formatError(message));
+		}
+		return exitWith(peerError?.exitCode ?? ExitCode.GeneralError);
+	}
+	const tabId = 'tabId' in done.result ? done.result.tabId : null;
+	if (json) {
+		console.log(JSON.stringify({ success: true, agentId: done.agentId, tabId, peer: done.peer }));
+	} else {
+		console.log(
+			formatSuccess(`${describe(done.result)} on ${peerAgentRef(done.peer, done.agentId)}`)
+		);
+	}
+}
+
 export async function tabNew(options: TabNewOptions): Promise<void> {
+	const peerTarget = peerTabTarget(options.agent);
+	if (peerTarget) {
+		if (options.prompt?.trim()) {
+			failCommand(
+				`--prompt is not available for a peer's agent. Open the tab, then send to it, or use: maestro-cli dispatch ${options.agent} <prompt>`,
+				options.json
+			);
+		}
+		return peerTabAction(
+			peerTarget,
+			options.json,
+			() => ({ kind: 'new-tab' }),
+			(result) => `Opened new tab ${'tabId' in result ? result.tabId : ''}`.trim()
+		);
+	}
 	const sessionId = resolveAgentOrFail(options.agent, options.json);
 	const prompt = options.prompt?.trim();
 	// Keyed by VERB, not by message. `tab new --prompt` sends the same
@@ -159,6 +268,19 @@ export async function tabRename(
 	if (!trimmed) {
 		failCommand('New name must not be empty', options.json);
 	}
+	const peerTarget = peerTabTarget(options.agent);
+	if (peerTarget) {
+		return peerTabAction(
+			peerTarget,
+			options.json,
+			(agent) => ({
+				kind: 'rename-tab',
+				tabId: pickHostTab(agent.aiTabs ?? [], tabId, agent.activeTabId).id,
+				name: trimmed,
+			}),
+			(result) => `Renamed tab ${'tabId' in result ? result.tabId : tabId} to "${trimmed}"`
+		);
+	}
 	await tabAction(tabId, options, (owner) => ({
 		type: 'rename_tab',
 		responseType: 'rename_tab_result',
@@ -172,6 +294,20 @@ export async function tabStar(
 	starred: boolean,
 	options: TabMutateOptions
 ): Promise<void> {
+	const peerTarget = peerTabTarget(options.agent);
+	if (peerTarget) {
+		return peerTabAction(
+			peerTarget,
+			options.json,
+			(agent) => ({
+				kind: 'star-tab',
+				tabId: pickHostTab(agent.aiTabs ?? [], tabId, agent.activeTabId).id,
+				starred,
+			}),
+			(result) =>
+				`${starred ? 'Starred' : 'Unstarred'} tab ${'tabId' in result ? result.tabId : tabId}`
+		);
+	}
 	await tabAction(tabId, options, (owner) => ({
 		type: 'star_tab',
 		responseType: 'star_tab_result',
@@ -857,4 +993,163 @@ export async function tabTransfer(
 	console.log(formatSuccess(`Sent tab ${entry.tabId} to agent ${targetAgentId}`));
 	if (result.newTabId) console.log(`  Tab: ${result.newTabId}`);
 	if (result.queued) console.log('  The agent is busy; the context runs when its turn finishes.');
+}
+
+// ============================================================================
+// Message pins: `tab pins list|add|remove|rename|show`
+// ============================================================================
+// The CLI half of the pin button on a message and the pin panel. Pins live on
+// the tab in the desktop renderer, so every verb goes through the
+// message_pin_command message and is answered with the tab's pins after it ran.
+
+interface TabPinsOptions {
+	/** The AI tab (exact id, unique prefix, or "active"). Default: the active tab. */
+	tab?: string;
+	/** Disambiguates "active": whose active tab. */
+	agent?: string;
+	json?: boolean;
+}
+
+interface TabPinsAddOptions extends TabPinsOptions {
+	/** Pin the newest message of this kind instead of naming one. */
+	last?: string;
+}
+
+interface MessagePinResponse extends SimpleResult {
+	pins?: MessagePinSummary[];
+	pin?: MessagePinSummary;
+	alreadyPinned?: boolean;
+}
+
+/** Resolve the tab, send one pin verb, and hand back the answer, or exit. */
+async function sendMessagePinCommand(
+	options: TabPinsOptions,
+	request: Omit<MessagePinCommandRequest, 'sessionId' | 'tabId'>
+): Promise<{ entry: DesktopTabEntry; result: MessagePinResponse }> {
+	const entry = await resolveContextTab(options.tab, options.agent, options.json);
+	let result: MessagePinResponse;
+	try {
+		result = (await sendSimpleCommand(
+			{ type: 'message_pin_command', sessionId: entry.agentId, tabId: entry.tabId, ...request },
+			'message_pin_command_result'
+		)) as MessagePinResponse;
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
+		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+	}
+	if (!result.success) {
+		failCommand(result.error || errorFrameMessage(result) || 'Pin command failed', options.json);
+	}
+	return { entry, result };
+}
+
+/** One pin, for a human. */
+function describePin(pin: MessagePinSummary): string {
+	const who = pin.source === 'user' ? 'you' : 'agent';
+	const where = pin.loaded ? '' : ', not loaded';
+	return `  ${pin.id}  ${pin.label}  (${who}, ${formatRelativeTime(pin.timestamp)}${where})`;
+}
+
+function printPinsJson(entry: DesktopTabEntry, result: MessagePinResponse): void {
+	console.log(
+		JSON.stringify(
+			{
+				success: true,
+				agentId: entry.agentId,
+				tabId: entry.tabId,
+				...(result.pin ? { pin: result.pin } : {}),
+				...(result.alreadyPinned ? { alreadyPinned: true } : {}),
+				pins: result.pins ?? [],
+			},
+			null,
+			2
+		)
+	);
+}
+
+/** `maestro-cli tab pins list` - a tab's pinned messages, in transcript order. */
+export async function tabPinsList(options: TabPinsOptions): Promise<void> {
+	const { entry, result } = await sendMessagePinCommand(options, { action: 'list' });
+	if (options.json) return printPinsJson(entry, result);
+	const pins = result.pins ?? [];
+	if (pins.length === 0) {
+		console.log(`No pinned messages in tab ${entry.tabId}`);
+		return;
+	}
+	console.log(`Pinned messages in tab ${entry.tabId}:`);
+	for (const pin of pins) console.log(describePin(pin));
+}
+
+/**
+ * `maestro-cli tab pins add [message-id]` - pin a message, named by its
+ * transcript entry id (exact or unique prefix) or by `--last user|agent`.
+ */
+export async function tabPinsAdd(
+	messageId: string | undefined,
+	options: TabPinsAddOptions
+): Promise<void> {
+	const id = messageId?.trim();
+	const last = options.last?.trim().toLowerCase();
+	if (id && last) failCommand('Pass a message id or --last, not both', options.json);
+	if (!id && !last) failCommand('Name a message id, or pass --last user|agent', options.json);
+	if (last && !MESSAGE_PIN_LAST_TARGETS.includes(last as MessagePinLastTarget)) {
+		failCommand(`Invalid --last "${options.last}". Use: user, agent`, options.json);
+	}
+	const { entry, result } = await sendMessagePinCommand(options, {
+		action: 'add',
+		...(id ? { messageId: id } : { last: last as MessagePinLastTarget }),
+	});
+	if (options.json) return printPinsJson(entry, result);
+	const label = result.pin?.label ?? 'message';
+	console.log(
+		formatSuccess(
+			result.alreadyPinned
+				? `Already pinned: "${label}"`
+				: `Pinned "${label}" in tab ${entry.tabId}`
+		)
+	);
+	if (result.pin) console.log(`  Pin: ${result.pin.id}`);
+}
+
+/** `maestro-cli tab pins remove <pin-id>` - unpin one message. */
+export async function tabPinsRemove(pinId: string, options: TabPinsOptions): Promise<void> {
+	const { entry, result } = await sendMessagePinCommand(options, { action: 'remove', pinId });
+	if (options.json) return printPinsJson(entry, result);
+	console.log(formatSuccess(`Unpinned "${result.pin?.label ?? pinId}" from tab ${entry.tabId}`));
+}
+
+/**
+ * `maestro-cli tab pins rename <pin-id> [label...]` - rename a pin. No label
+ * clears the rename, so the pin shows the message's own first line again.
+ */
+export async function tabPinsRename(
+	pinId: string,
+	labelWords: string[] | undefined,
+	options: TabPinsOptions
+): Promise<void> {
+	const label = (labelWords ?? []).join(' ').trim();
+	const { entry, result } = await sendMessagePinCommand(options, {
+		action: 'rename',
+		pinId,
+		label,
+	});
+	if (options.json) return printPinsJson(entry, result);
+	console.log(
+		formatSuccess(
+			label
+				? `Renamed pin to "${result.pin?.label ?? label}"`
+				: `Cleared the pin's name; it shows "${result.pin?.label ?? 'its title'}"`
+		)
+	);
+}
+
+/**
+ * `maestro-cli tab pins show` - open the pin panel over the tab. Moves the
+ * view (selects the agent and the tab), since the panel is only drawn there.
+ */
+export async function tabPinsShow(options: TabPinsOptions): Promise<void> {
+	const { entry, result } = await sendMessagePinCommand(options, { action: 'show' });
+	if (options.json) return printPinsJson(entry, result);
+	const count = result.pins?.length ?? 0;
+	console.log(formatSuccess(`Opened the pin panel on tab ${entry.tabId} (${count} pinned)`));
 }

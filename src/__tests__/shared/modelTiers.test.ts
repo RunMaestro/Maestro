@@ -127,6 +127,17 @@ describe('cheap synopsis turn resumed on its session', () => {
 		});
 	});
 
+	it('keeps the session model on Codex, whose resume writes into the tab thread', () => {
+		// A Codex synopsis is not a leaf: a cheap model would append model-switch
+		// instructions to the tab's own thread. This must hold even if Codex ever
+		// gains a cheap tier row, so only effort drops.
+		expect(cheapResumeTurnSettings('codex', { model: 'gpt-6.1-sol', effort: 'high' })).toEqual({
+			model: 'gpt-6.1-sol',
+			effort: 'low',
+		});
+		expect(cheapResumeTurnSettings('codex')).toEqual({ model: undefined, effort: 'low' });
+	});
+
 	it('works with nothing configured on the session', () => {
 		expect(cheapResumeTurnSettings('claude-code')).toEqual({ model: 'haiku', effort: 'low' });
 		expect(cheapResumeTurnSettings('opencode')).toEqual({ model: undefined, effort: undefined });

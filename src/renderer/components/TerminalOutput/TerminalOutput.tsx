@@ -44,6 +44,9 @@ import { steerJoinsRunningTurn } from '../../utils/logEntries';
 import { LogItem } from './components/LogItem';
 import { OutputSearchBar } from './components/OutputSearchBar';
 import { ScrollToBottomButton } from './components/ScrollToBottomButton';
+import { MessagePinsPanel } from './components/MessagePinsPanel';
+import { toggleMessagePin } from '../../services/messagePins';
+import { resolvePinnedRows } from '../../../shared/messagePins';
 import { useLogItemUiState } from './hooks/useLogItemUiState';
 import { useTerminalOutputSearch } from './hooks/useTerminalOutputSearch';
 import { useTerminalOutputScroll } from './hooks/useTerminalOutputScroll';
@@ -67,6 +70,7 @@ export const TerminalOutput = memo(
 	forwardRef<HTMLDivElement, TerminalOutputProps>((props, ref) => {
 		const {
 			session,
+			readOnly = false,
 			theme,
 			fontFamily,
 			activeFocus: _activeFocus,
@@ -239,6 +243,39 @@ export const TerminalOutput = memo(
 		const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);
 
 		// ============================================================================
+		// Message pins
+		// ============================================================================
+		// Pins resolve against the collapsed rows (one per reply, as drawn), by id
+		// first and then by content, since a reopened tab's rows carry new ids.
+		const pinnedMessages = activeTab?.pinnedMessages;
+		const pinnedRowIds = useMemo(() => {
+			if (!pinnedMessages?.length) return null;
+			const ids = new Set<string>();
+			for (const row of resolvePinnedRows(pinnedMessages, collapsedAll).values()) ids.add(row.id);
+			return ids;
+		}, [pinnedMessages, collapsedAll]);
+		const activeTabIdForPins = activeTab?.id;
+		const handleTogglePin = useCallback(
+			(log: LogEntry) => {
+				if (activeTabIdForPins) toggleMessagePin(session.id, activeTabIdForPins, log);
+			},
+			[session.id, activeTabIdForPins]
+		);
+		const handleShowPins = useCallback(() => {
+			if (activeTabIdForPins) useUIStore.getState().setMessagePinsTabId(activeTabIdForPins);
+		}, [activeTabIdForPins]);
+		const handleJumpToPinRow = useCallback(
+			(rowId: string) => {
+				if (!activeTabIdForPins) return;
+				useUIStore
+					.getState()
+					.setPendingLogJump({ sessionId: session.id, tabId: activeTabIdForPins, logId: rowId });
+			},
+			[session.id, activeTabIdForPins]
+		);
+		const messagePinsShortcut = useSettingsStore((s) => s.shortcuts.toggleMessagePins);
+
+		// ============================================================================
 		// Progressive transcript rendering (issue #1342)
 		// ============================================================================
 		// Mounting every entry of a long transcript in one commit blocked the main
@@ -379,7 +416,8 @@ export const TerminalOutput = memo(
 			filteredLogsLength: filteredLogs.length,
 			onScrollPositionChange,
 			onAtBottomChange,
-			onNearTop: historyBackfill.loadEarlier,
+			// A read-only view has no local provider history to page in.
+			onNearTop: readOnly ? undefined : historyBackfill.loadEarlier,
 		});
 
 		useEffect(() => {
@@ -611,6 +649,20 @@ export const TerminalOutput = memo(
 						onClose={closeSearch}
 					/>
 				)}
+				{/* Pinned messages: floating button top-right, under the search bar when open */}
+				{activeTab && pinnedMessages && pinnedMessages.length > 0 && (
+					<MessagePinsPanel
+						theme={theme}
+						sessionId={session.id}
+						tab={activeTab}
+						rows={collapsedAll}
+						scrollContainerRef={scrollContainerRef}
+						onScrollToBottom={scrollToBottomAndResume}
+						onJumpToRow={handleJumpToPinRow}
+						returnFocusRef={terminalOutputRef}
+						shortcut={messagePinsShortcut}
+					/>
+				)}
 				{/* Prose styles for markdown rendering - injected once at container level for performance */}
 				<style>{proseStyles}</style>
 				{/* Native scroll log list */}
@@ -726,6 +778,9 @@ export const TerminalOutput = memo(
 									onToggleMarkdownEditMode={toggleMarkdownEditMode}
 									onReplayMessage={onReplayMessage}
 									onForkConversation={onForkConversation}
+									isPinned={pinnedRowIds?.has(log.id) ?? false}
+									onTogglePin={readOnly ? undefined : handleTogglePin}
+									onShowPins={handleShowPins}
 									sessionId={session.id}
 									onSessionRecover={onSessionRecover}
 									isRecoveringSession={isRecoveringSession}
@@ -740,7 +795,7 @@ export const TerminalOutput = memo(
 											: undefined
 									}
 									onShowErrorDetails={onShowErrorDetails}
-									onSaveToFile={handleSaveToFile}
+									onSaveToFile={readOnly ? undefined : handleSaveToFile}
 									ghCliAvailable={ghCliAvailable}
 									onPublishGist={onPublishMessageGist}
 									publishedGistUrl={publishedGists[log.id]?.gistUrl}

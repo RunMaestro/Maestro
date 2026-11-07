@@ -42,6 +42,8 @@ import { requestSteerSend } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
+import { isMirrorShown } from '../../stores/peerMirrorStore';
+import { gateKeyForMirror } from './mirrorKeyboardGate';
 
 /**
  * Open the floating media player on whatever it should be showing.
@@ -167,6 +169,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// the store so App does not need to push a live Session object onto this ref.
 			const ctx = keyboardHandlerRef.current;
 			if (!ctx) return;
+			// A Federation mirror on screen hides the local active agent rather than replacing it:
+			// only shortcuts that never touch the active agent may run (allowlist, see the gate).
+			if (isMirrorShown() && gateKeyForMirror(e, ctx) !== 'pass') return;
 			const activeSession = selectActiveSession(useSessionStore.getState());
 
 			// Terminal focus recovery: if a key event reaches this window handler while in
@@ -883,6 +888,18 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.toggleTabStar();
 				trackShortcut('toggleTabStar');
+			} else if (ctx.isShortcut(e, 'toggleMessagePins')) {
+				e.preventDefault();
+				// Only a visible AI transcript draws the pin panel, and only once the
+				// tab has a pin; otherwise the key is a clean no-op.
+				const ref =
+					activeSession && !ctx.activeGroupChatId ? resolveActiveTabRef(activeSession) : null;
+				const tab =
+					ref?.type === 'ai' ? activeSession?.aiTabs.find((t) => t.id === ref.id) : undefined;
+				if (tab?.pinnedMessages?.length) {
+					useUIStore.getState().toggleMessagePins(tab.id);
+					trackShortcut('toggleMessagePins');
+				}
 			} else if (ctx.isShortcut(e, 'openPromptComposer')) {
 				e.preventDefault();
 				// Only act in AI mode - the composer is AI-only. While it's already

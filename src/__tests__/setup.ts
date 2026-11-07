@@ -504,6 +504,8 @@ const mockMaestro = {
 		updateSessionName: vi.fn().mockResolvedValue(undefined),
 		updateSessionStarred: vi.fn().mockResolvedValue(undefined),
 		registerSessionOrigin: vi.fn().mockResolvedValue(undefined),
+		// Message pins mirrored onto the origin record
+		setSessionPins: vi.fn().mockResolvedValue(undefined),
 		// Transcript mirror (starred + snoozed retention)
 		snapshotStarredTranscript: vi.fn().mockResolvedValue(undefined),
 		releaseSnoozedTranscript: vi.fn().mockResolvedValue(undefined),

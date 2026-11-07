@@ -9,10 +9,12 @@ import {
 	buildAgentConfigPatch,
 	buildAgentRecord,
 	buildGroupRecord,
+	buildImportedAgentRecord,
 	buildTabConfigPatch,
 	beginTurnRecord,
 	buildTabRecord,
 	checkAgentCreateInput,
+	checkAgentImportInput,
 	checkAgentName,
 	closeTabRecord,
 	DEFAULT_TAB_DEFAULTS,
@@ -219,6 +221,104 @@ describe('building an agent', () => {
 		expect(tabDefaultsFromSettings({ defaultShowThinking: 'bogus', newTabPlacement: 'x' })).toEqual(
 			DEFAULT_TAB_DEFAULTS
 		);
+	});
+});
+
+describe('importing an agent', () => {
+	const entry = { id: 'l1', timestamp: 5, source: 'user', text: 'hello' };
+	const input = {
+		agent: { name: 'Lifted', provider: 'codex', cwd: '/srv/app', model: 'gpt-x' },
+		tabs: [
+			{ id: 'tA', name: 'Main', agentSessionId: 'sess-A', logs: [entry], createdAt: 7 },
+			{
+				id: 'tB',
+				logs: [],
+				showThinking: 'sticky' as const,
+				saveToHistory: false,
+				effort: 'high',
+			},
+		],
+		activeTabId: 'tB',
+	};
+
+	it('builds the create record with the imported tabs in place of a fresh one', () => {
+		const checked = checkAgentImportInput(input);
+		if (!checked.ok) throw new Error(checked.message);
+		const record = buildImportedAgentRecord(
+			input,
+			checked.value,
+			makeContext(),
+			DEFAULT_TAB_DEFAULTS
+		);
+		expect(record).toMatchObject({
+			name: 'Lifted',
+			toolType: 'codex',
+			cwd: '/srv/app',
+			customModel: 'gpt-x',
+			activeTabId: 'tB',
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'tA' },
+				{ type: 'ai', id: 'tB' },
+			],
+		});
+		expect(record.aiTabs).toEqual([
+			expect.objectContaining({
+				id: 'tA',
+				name: 'Main',
+				agentSessionId: 'sess-A',
+				logs: [entry],
+				createdAt: 7,
+				state: 'idle',
+				saveToHistory: DEFAULT_TAB_DEFAULTS.saveToHistory,
+			}),
+			expect.objectContaining({
+				id: 'tB',
+				agentSessionId: null,
+				name: null,
+				showThinking: 'sticky',
+				saveToHistory: false,
+				customEffort: 'high',
+				state: 'idle',
+			}),
+		]);
+	});
+
+	it('makes the first tab active when the named one is not imported', () => {
+		const other = { ...input, activeTabId: 'nope' };
+		const checked = checkAgentImportInput(other);
+		if (!checked.ok) throw new Error(checked.message);
+		expect(
+			buildImportedAgentRecord(other, checked.value, makeContext(), DEFAULT_TAB_DEFAULTS)
+				.activeTabId
+		).toBe('tA');
+	});
+
+	it('copies the transcript instead of sharing the caller array', () => {
+		const checked = checkAgentImportInput(input);
+		if (!checked.ok) throw new Error(checked.message);
+		const record = buildImportedAgentRecord(
+			input,
+			checked.value,
+			makeContext(),
+			DEFAULT_TAB_DEFAULTS
+		);
+		expect(record.aiTabs?.[0]?.logs).not.toBe(input.tabs[0].logs);
+	});
+
+	it.each([
+		['the create checks', { ...input, agent: { ...input.agent, provider: 'terminal' } }],
+		['no tabs', { ...input, tabs: [] }],
+		['a blank tab id', { ...input, tabs: [{ id: ' ', logs: [] }] }],
+		['a repeated tab id', { ...input, tabs: [input.tabs[0], input.tabs[0]] }],
+		['a tab with no transcript', { ...input, tabs: [{ id: 'tA' }] }],
+		['a queued message for another tab', { ...input, queue: [{ tabId: 'tZ', text: 'x' }] }],
+		['a queued message with no text', { ...input, queue: [{ tabId: 'tA', text: '  ' }] }],
+		[
+			'an SSH remote',
+			{ ...input, agent: { ...input.agent, ssh: { enabled: true, remoteId: 'r' } } },
+		],
+	])('refuses %s', (_label, bad) => {
+		expect(checkAgentImportInput(bad as never)).toMatchObject({ ok: false, code: 'invalid' });
 	});
 });
 
