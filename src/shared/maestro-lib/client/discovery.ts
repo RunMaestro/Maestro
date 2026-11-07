@@ -59,6 +59,22 @@ export interface CliServerInfo {
 	cueLockToken?: string;
 }
 
+/**
+ * The live bridge of a host, as `maestro-cli host endpoint --json` prints it. The wire shape of
+ * that verb: the CLI command builds its report from this type and Federation's remote discovery
+ * (`remote-discovery.ts`) parses into it, so the two cannot drift.
+ */
+export interface HostEndpoint {
+	port: number;
+	/** Path token of the bridge WebSocket. Grants full control of the host. */
+	token: string;
+	/** Sent as the `x-maestro-cli-secret` header. Absent from a host that predates it. */
+	cliSecret?: string;
+	/** Version of the host that wrote the discovery file. */
+	version?: string;
+	pid: number;
+}
+
 /** Maestro's data directory, as every other reader resolves it (`resolveUserDataDir()`). */
 export function getConfigDir(): string {
 	return resolveUserDataDir();

@@ -27,6 +27,7 @@ import {
 	resolveMaestroPaths,
 	setMaestroLibLogger,
 	type HostCueState,
+	type HostEndpoint,
 	type HostStatusReport,
 	type HostStopReply,
 	type HostWork,
@@ -500,16 +501,7 @@ export async function hostStatus(
 // ---------------------------------------------------------------------------
 
 /** What `host endpoint --json` prints: the live bridge of this data directory, or that there is none. */
-export type HostEndpointReport =
-	| { running: false }
-	| {
-			running: true;
-			port: number;
-			token: string;
-			cliSecret?: string;
-			version?: string;
-			pid: number;
-	  };
+export type HostEndpointReport = { running: false } | ({ running: true } & HostEndpoint);
 
 /**
  * Whether only the owner can read the discovery file. The token and the CLI secret in it grant
