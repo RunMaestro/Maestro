@@ -2242,7 +2242,7 @@ Reports the host's pid, uptime, version, the holder of the data directory's lock
 
 ### `host endpoint`
 
-Prints the endpoint of the host serving the data directory, for [Federation](/encore-features) over SSH: a laptop runs `maestro-cli host endpoint --json` on the remote through the SSH remote it already has, and SSH is the authentication. With `--json` it prints `{running, port, token, cliSecret, version, pid}`, or `{running: false}` with exit code `3` when no host is running. Without `--json` it prints the pid, port and version only: the token and the CLI secret never reach a terminal or a log. On macOS and Linux it refuses, and prints neither, when the discovery file (`cli-server.json`) can be read by any user but its owner. The verb is listed in `--help` only while Federation is on.
+Prints the endpoint of the host serving the data directory, for [Federation](/federation) over SSH: a laptop runs `maestro-cli host endpoint --json` on the remote through the SSH remote it already has, and SSH is the authentication. With `--json` it prints `{running, port, token, cliSecret, version, pid}`, or `{running: false}` with exit code `3` when no host is running. Without `--json` it prints the pid, port and version only: the token and the CLI secret never reach a terminal or a log. On macOS and Linux it refuses, and prints neither, when the discovery file (`cli-server.json`) can be read by any user but its owner. The verb is listed in `--help` only while Federation is on.
 
 | Flag                | Description                                       | Default                       |
 | ------------------- | ------------------------------------------------- | ----------------------------- |
@@ -2264,7 +2264,7 @@ Asks the host to stop and waits for its process to exit. With work in flight (a 
 
 ### `remote-host status` and `remote-host start`
 
-Check, and start, the `maestro-cli host` on an SSH remote, for [Federation](/encore-features) over SSH. Both verbs belong to the Federation Encore Feature and are refused while it is off. Both refuse an SSH remote that is not opted in (`update-ssh-remote <id> --federation on`): Maestro never dials a remote without that flag. The `<ssh-remote>` argument is the remote's name or its ID (a unique prefix works).
+Check, and start, the `maestro-cli host` on an SSH remote, for [Federation](/federation) over SSH. Both verbs belong to the Federation Encore Feature and are refused while it is off. Both refuse an SSH remote that is not opted in (`update-ssh-remote <id> --federation on`): Maestro never dials a remote without that flag. The `<ssh-remote>` argument is the remote's name or its ID (a unique prefix works).
 
 `remote-host status` makes one SSH call and reports whether Maestro is installed on the remote (with the fix when it is not), whether a host is running there (its pid, its port on the remote's loopback and its version), and the version skew against this CLI: `none`, `remote-older`, `remote-newer` or `unknown`. It exits `0` with a running host and `3` when no host runs or Maestro is not installed. `remote-host start` runs `maestro-cli host start` on the remote, as the SSH user, when no host is running there, then reports status the same way. It does nothing when a host already runs. The SSH calls run one after the other, never at the same time. Neither verb prints the host's token or CLI secret, with or without `--json`. A timeout exits `5`, and a remote CLI too old to know `host endpoint` exits `4`.
 
