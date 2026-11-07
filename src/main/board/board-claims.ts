@@ -509,12 +509,13 @@ export function boardWorkerCanStart(
 }
 
 /** New Board work requires both gates. Ordinary turns retain already-bound capacity fences.
- * Off-state observation must never open storage; an unbound cold start has no durable view. */
+ * Off-state observation never activates storage; a cold host uses capacity-only readonly evidence. */
 export function createBoardAgentAdmission(
 	settings: EncoreSettingsReader,
 	getDb: () => Database.Database,
 	onError: (error: unknown) => void,
-	getRetainedDb: () => Database.Database | undefined
+	getRetainedDb: () => Database.Database | undefined,
+	readColdCapacity: (agentId: string) => boolean = () => false
 ): (agentId: string, runId?: string) => boolean {
 	return (agentId, runId) => {
 		try {
@@ -525,7 +526,7 @@ export function createBoardAgentAdmission(
 				if (runId !== undefined) return false;
 				// Reading this existing facade observes lifecycle fences, not new activation.
 				const retained = getRetainedDb();
-				return !retained || boardWorkerCanStart(retained, agentId);
+				return retained ? boardWorkerCanStart(retained, agentId) : readColdCapacity(agentId);
 			}
 			return boardWorkerCanStart(getDb(), agentId, runId);
 		} catch (error) {

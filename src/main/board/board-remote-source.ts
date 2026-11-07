@@ -38,8 +38,10 @@ export async function probeBoardRemoteRepository(
 	remoteId: string,
 	root: string,
 	cwd = root,
-	transport = boardRemoteTransport
+	transport = boardRemoteTransport,
+	checkpoint?: () => void
 ): Promise<string> {
+	checkpoint?.();
 	const config = resolveBoardRemote(remoteId, transport);
 	if (
 		!path.posix.isAbsolute(root) ||
@@ -54,19 +56,23 @@ export async function probeBoardRemoteRepository(
 		);
 	const configIdentity = canonicalJson(config);
 	const physical = await transport.shell('pwd -P', config, { cwd, timeoutMs: 10000 }).catch(() => {
+		checkpoint?.();
 		throw new BoardStorageError(
 			'legacy-mapping-missing',
 			'Remote path transport unavailable; revalidate source'
 		);
 	});
+	checkpoint?.();
 	const git = await transport
 		.git(['rev-parse', '--show-toplevel', '--absolute-git-dir'], '', config, cwd)
 		.catch(() => {
+			checkpoint?.();
 			throw new BoardStorageError(
 				'legacy-mapping-missing',
 				'Remote Git transport unavailable; revalidate source'
 			);
 		});
+	checkpoint?.();
 	if (canonicalJson(resolveBoardRemote(remoteId, transport)) !== configIdentity)
 		throw new BoardStorageError(
 			'identity-mismatch',
@@ -87,15 +93,19 @@ export async function readBoardRemoteInput(
 	remoteId: string,
 	root: string,
 	relative: string,
-	transport = boardRemoteTransport
+	transport = boardRemoteTransport,
+	checkpoint?: () => void
 ): Promise<Buffer | null> {
+	checkpoint?.();
 	const config = resolveBoardRemote(remoteId, transport);
 	const result = await transport.read(path.posix.join(root, relative), config).catch(() => {
+		checkpoint?.();
 		throw new BoardStorageError(
 			'legacy-mapping-missing',
 			'Remote source transport unavailable; revalidate source'
 		);
 	});
+	checkpoint?.();
 	if (result.success && typeof result.data === 'string') return Buffer.from(result.data, 'base64');
 	if (result.error === `File not found: ${path.posix.join(root, relative)}`) return null;
 	throw new BoardStorageError(

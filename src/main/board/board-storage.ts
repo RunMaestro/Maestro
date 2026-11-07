@@ -10,7 +10,6 @@ import {
 } from '../../shared/board/commands';
 import { isPathAtOrUnderRoot } from '../../shared/worktreePaths';
 import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { validateAgentProfile, type AgentProfile } from '../../shared/profiles/types';
@@ -39,12 +38,11 @@ import {
 import { hasCycle } from '../../shared/board/graph';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { generateUUID } from '../../shared/uuid';
-import { resolveUserDataDir } from '../../shared/userDataDir';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import { captureException } from '../utils/sentry';
 import { logger } from '../utils/logger';
 import { isPathWithin, foldPathCase } from '../utils/real-path-containment';
-import { assertAdmittedBoardConnection, openBoardDb } from './board-db';
+import { assertAdmittedBoardConnection, boardDbPath, openBoardDb } from './board-db';
 import { isBoardIsolationRequested, requireBoardIsolation } from './board-isolation';
 import {
 	claimBoardCard,
@@ -1401,9 +1399,7 @@ function storage(): BoardStorageFacade {
 		return configuredFacade;
 	}
 	if (configuredFacade) return configuredFacade;
-	return (defaultFacade ??= new BoardStorageFacade(
-		openBoardDb(path.join(resolveUserDataDir(), 'board', 'board.sqlite'))
-	));
+	return (defaultFacade ??= new BoardStorageFacade(openBoardDb(boardDbPath())));
 }
 /** Observe an already-bound lifecycle facade without opening or activating Board storage. */
 export function getExistingBoardStorage(): BoardStorageFacade | undefined {

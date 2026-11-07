@@ -268,6 +268,7 @@ import { isAgentDormant } from '../shared/agentVisibility';
 import { autoDecomposeBoard } from './board/board-decompose';
 import { createBoardNotificationHandlers } from './board/board-notifications';
 import { prepareBoardReviewHandoff } from './board/board-review';
+import { readBoardWorkerCapacity } from './board/board-capacity-reader';
 import { createBoardAgentAdmission } from './board/board-claims';
 import { configureAgentAdmission } from './utils/headless-agent-activity';
 import { startBoardRunPr, startCardPr } from './board/board-pr';
@@ -1801,7 +1802,8 @@ app
 				store,
 				() => getBoardStorage().db,
 				(error) => logger.error(`Board agent admission failed: ${String(error)}`, 'Board'),
-				() => getExistingBoardStorage()?.db
+				() => getExistingBoardStorage()?.db,
+				readBoardWorkerCapacity
 			)
 		);
 		configureBoardRuntimeHost(globalBoardHost.runtimeFor);

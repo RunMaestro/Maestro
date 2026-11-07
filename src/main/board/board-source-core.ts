@@ -1,3 +1,4 @@
+import { requireBoardEnabled } from './board-feature';
 /** Source algorithms over explicit storage, a per-call worker snapshot and an injected SSH transport.
  * Host entry points must admit registries and source identities before calling these operations.
  * This module never opens storage or selects a transport on the caller's behalf. */
@@ -34,8 +35,10 @@ export interface BoardSourceSession {
 export async function discoverLocalBoardSources(
 	storage: BoardStorageFacade,
 	workers: readonly BoardSourceSession[],
-	admission?: { roots: ReadonlySet<string>; assertInputPath: (file: string) => void }
+	admission?: { roots: ReadonlySet<string>; assertInputPath: (file: string) => void },
+	checkpoint: () => void = requireBoardEnabled
 ): Promise<void> {
+	checkpoint();
 	const registered: BoardSourceSession[] = JSON.parse(canonicalJson(workers));
 	const roots = new Set(
 		registered
@@ -48,13 +51,24 @@ export async function discoverLocalBoardSources(
 	const physicalProjectRoots = new Map<string, string>();
 	const projectRootErrors = new Map<string, unknown>();
 	for (const root of roots) {
+		checkpoint();
+		let physical: string | undefined;
 		try {
-			physicalProjectRoots.set(root, await fs.promises.realpath(root));
+			physical = await fs.promises.realpath(root);
 		} catch (error) {
+			if (
+				!['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(
+					(error as NodeJS.ErrnoException).code ?? ''
+				)
+			)
+				throw error;
 			projectRootErrors.set(root, error);
 		}
+		checkpoint();
+		if (physical !== undefined) physicalProjectRoots.set(root, physical);
 	}
 	for (const root of roots) {
+		checkpoint();
 		let physical: string;
 		try {
 			if (projectRootErrors.has(root)) throw projectRootErrors.get(root);
@@ -69,7 +83,8 @@ export async function discoverLocalBoardSources(
 			recordUnresolvedBoardSource(
 				storage,
 				{ location: { kind: 'local' }, path: root },
-				`Board source physical directory unresolved (${code}): ${root}`
+				`Board source physical directory unresolved (${code}): ${root}`,
+				checkpoint
 			);
 			continue;
 		}
@@ -101,22 +116,33 @@ export async function discoverLocalBoardSources(
 			.prepare('SELECT payload_json FROM board_source_locations WHERE source_key=?')
 			.get(sourceKey) as { payload_json: string } | undefined;
 		const read = async (relative: string): Promise<Buffer | null> => {
+			checkpoint();
 			try {
 				const file = path.join(physical, relative);
 				admission?.assertInputPath(file);
-				return await fs.promises.readFile(file);
+				const bytes = await fs.promises.readFile(file);
+				checkpoint();
+				return bytes;
 			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+					checkpoint();
+					return null;
+				}
 				throw error;
 			}
 		};
 		const boardBytes = await read(BOARD_CONFIG_PATH);
 		const profileBytes = await read(PROFILES_CONFIG_PATH);
+		checkpoint();
 		const git = await execGitReadOnly(['rev-parse', '--show-toplevel'], physical);
-		const repository =
-			git.exitCode === 0 && (await fs.promises.realpath(git.stdout.trim())) === physical
-				? { id: `source:${sourceKey}`, workingDirectory: physical, validated: true }
-				: null;
+		checkpoint();
+		let repository: { id: string; workingDirectory: string; validated: boolean } | null = null;
+		if (git.exitCode === 0) {
+			const gitRoot = await fs.promises.realpath(git.stdout.trim());
+			checkpoint();
+			if (gitRoot === physical)
+				repository = { id: `source:${sourceKey}`, workingDirectory: physical, validated: true };
+		}
 		if (
 			boardBytes ||
 			profileBytes ||
@@ -128,18 +154,20 @@ export async function discoverLocalBoardSources(
 			)
 		) {
 			try {
+				checkpoint();
 				applyBoardMigration(
 					storage.db,
 					planBoardMigration({ source, repository, boardBytes, profileBytes, workers: registered }),
-					{ physicalProjectRoots }
+					{ physicalProjectRoots, beforeCommit: checkpoint }
 				);
 			} catch (error) {
 				if (!(error instanceof BoardMigrationError)) throw error;
-				recordUnresolvedBoardSource(storage, source, error.message);
+				recordUnresolvedBoardSource(storage, source, error.message, checkpoint);
 			}
 		} else {
 			storage.db
 				.transaction(() => {
+					checkpoint();
 					if (
 						storage.db
 							.prepare('SELECT 1 FROM board_source_suppressions WHERE source_key=?')
@@ -199,6 +227,7 @@ export async function discoverLocalBoardSources(
 					}
 					if (inserted.changes || repositoryAdded || repaired)
 						storage.db.prepare('UPDATE workspace SET revision=revision+1 WHERE id=1').run();
+					checkpoint();
 				})
 				.immediate();
 		}
@@ -209,8 +238,10 @@ export async function discoverLocalBoardSources(
 export async function discoverRemoteBoardSources(
 	storage: BoardStorageFacade,
 	workers: readonly BoardSourceSession[],
-	remote: BoardRemoteTransport
+	remote: BoardRemoteTransport,
+	checkpoint: () => void = requireBoardEnabled
 ): Promise<void> {
+	checkpoint();
 	// Remote identity is never inferred from a matching local directory.
 	const remoteSources = new Map<
 		string,
@@ -237,6 +268,7 @@ export async function discoverRemoteBoardSources(
 	if (!remoteSources.size) return;
 	const registered: BoardSourceSession[] = JSON.parse(canonicalJson(workers));
 	for (const [sourceKey, source] of remoteSources) {
+		checkpoint();
 		if (
 			storage.db
 				.prepare('SELECT 1 FROM board_source_suppressions WHERE source_key=?')
@@ -249,7 +281,8 @@ export async function discoverRemoteBoardSources(
 		if (existing) continue;
 		let diagnostic: string | undefined;
 		try {
-			await importRemoteBoardSource(storage, source, registered, remote);
+			await importRemoteBoardSource(storage, source, registered, remote, checkpoint);
+			checkpoint();
 			continue;
 		} catch (error) {
 			if (
@@ -260,9 +293,10 @@ export async function discoverRemoteBoardSources(
 				)
 			)
 				throw error;
+			checkpoint();
 			diagnostic = error.message;
 		}
-		recordUnresolvedBoardSource(storage, source, diagnostic);
+		recordUnresolvedBoardSource(storage, source, diagnostic, checkpoint);
 	}
 }
 
@@ -270,11 +304,14 @@ export async function discoverRemoteBoardSources(
 function recordUnresolvedBoardSource(
 	storage: BoardStorageFacade,
 	source: BoardMigrationInput['source'],
-	diagnostic: string
+	diagnostic: string,
+	checkpoint: () => void
 ): void {
+	checkpoint();
 	const sourceKey = boardMigrationSourceKey(source);
 	storage.db
 		.transaction(() => {
+			checkpoint();
 			if (
 				storage.db
 					.prepare('SELECT 1 FROM board_source_suppressions WHERE source_key=?')
@@ -314,6 +351,7 @@ function recordUnresolvedBoardSource(
 				);
 			if (inserted.changes || updated.changes)
 				storage.db.prepare('UPDATE workspace SET revision=revision+1 WHERE id=1').run();
+			checkpoint();
 		})
 		.immediate();
 }
@@ -323,22 +361,35 @@ async function importRemoteBoardSource(
 	storage: BoardStorageFacade,
 	source: { location: { kind: 'ssh'; remoteId: string }; path: string },
 	registered: BoardSourceSession[],
-	remote: BoardRemoteTransport
+	remote: BoardRemoteTransport,
+	checkpoint: () => void = requireBoardEnabled
 ): Promise<void> {
+	checkpoint();
 	const sourceKey = boardMigrationSourceKey(source);
-	await probeBoardRemoteRepository(source.location.remoteId, source.path, source.path, remote);
+	await probeBoardRemoteRepository(
+		source.location.remoteId,
+		source.path,
+		source.path,
+		remote,
+		checkpoint
+	);
+	checkpoint();
 	const boardBytes = await readBoardRemoteInput(
 		source.location.remoteId,
 		source.path,
 		BOARD_CONFIG_PATH,
-		remote
+		remote,
+		checkpoint
 	);
+	checkpoint();
 	const profileBytes = await readBoardRemoteInput(
 		source.location.remoteId,
 		source.path,
 		PROFILES_CONFIG_PATH,
-		remote
+		remote,
+		checkpoint
 	);
+	checkpoint();
 	const repository = {
 		id: `source:${sourceKey}`,
 		workingDirectory: source.path,
@@ -352,7 +403,8 @@ async function importRemoteBoardSource(
 		profileBytes,
 		workers: registered,
 	});
-	applyBoardMigration(storage.db, plan);
+	checkpoint();
+	applyBoardMigration(storage.db, plan, { beforeCommit: checkpoint });
 }
 
 /** Revalidate only the persisted identity. Never reimport changed YAML or clear provenance/fences. */
@@ -360,8 +412,10 @@ export async function executeBoardSourceOperation(
 	command: import('../../shared/board/types').BoardSourceCommand,
 	storage: BoardStorageFacade,
 	workers: readonly BoardSourceSession[],
-	remote: BoardRemoteTransport
+	remote: BoardRemoteTransport,
+	checkpoint: () => void = requireBoardEnabled
 ): Promise<import('../../shared/board/types').BoardSourceResponse> {
+	checkpoint();
 	try {
 		if (!command || typeof command.sourceKey !== 'string' || !command.sourceKey.trim())
 			throw new BoardStorageError('invalid-input', 'Explicit source identity required');
@@ -429,8 +483,10 @@ export async function executeBoardSourceOperation(
 				storage,
 				{ ...source, location: source.location },
 				registered,
-				remote
+				remote,
+				checkpoint
 			);
+			checkpoint();
 			return { ok: true };
 		}
 		let validated = false;
@@ -441,8 +497,10 @@ export async function executeBoardSourceOperation(
 					source.location.remoteId,
 					source.path,
 					source.path,
-					remote
+					remote,
+					checkpoint
 				);
+				checkpoint();
 				validated = true;
 			} else {
 				const physical = fs.realpathSync(source.path);
@@ -452,6 +510,7 @@ export async function executeBoardSourceOperation(
 				)
 					throw new BoardStorageError('identity-mismatch', 'Source physical identity changed');
 				const git = await execGitReadOnly(['rev-parse', '--show-toplevel'], physical);
+				checkpoint();
 				validated =
 					git.exitCode === 0 &&
 					fs.realpathSync(git.stdout.trim()) === physical &&
@@ -465,6 +524,7 @@ export async function executeBoardSourceOperation(
 		// Persist the host observation, including invalidation, without touching migration state.
 		storage.db
 			.transaction(() => {
+				checkpoint();
 				if (
 					storage.db
 						.prepare('SELECT 1 FROM board_source_suppressions WHERE source_key=?')
@@ -502,6 +562,7 @@ export async function executeBoardSourceOperation(
 						})
 					);
 				storage.db.prepare('UPDATE workspace SET revision=revision+1 WHERE id=1').run();
+				checkpoint();
 			})
 			.immediate();
 		if (identityError) throw identityError;

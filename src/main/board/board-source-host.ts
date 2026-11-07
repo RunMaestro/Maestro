@@ -145,7 +145,12 @@ export function refreshBoardSources(): Promise<void> {
 	const roots = admittedSources(registered, remote);
 	if (!registered.length && !roots?.size) return Promise.resolve();
 	if (!pending)
-		pending = discoverBoardSources(getBoardStorage(), registered, remote).finally(() => {
+		pending = discoverBoardSources(
+			getBoardStorage(),
+			registered,
+			remote,
+			requireBoardEnabled
+		).finally(() => {
 			pending = null;
 		});
 	return pending;
@@ -155,8 +160,10 @@ export function refreshBoardSources(): Promise<void> {
 export async function discoverBoardSources(
 	storage: BoardStorageFacade,
 	registered: BoardSourceSession[],
-	remote: BoardRemoteTransport = boardRemoteTransport
+	remote: BoardRemoteTransport = boardRemoteTransport,
+	checkpoint: () => void = requireBoardEnabled
 ): Promise<void> {
+	checkpoint();
 	const admitted = admittedSources(registered, remote);
 	if (admitted) {
 		registered = [
@@ -164,7 +171,8 @@ export async function discoverBoardSources(
 			...[...admitted].map((root) => ({ id: `source:${root}`, dir: root })),
 		];
 	}
-	await discoverRemoteBoardSources(storage, registered, remote);
+	await discoverRemoteBoardSources(storage, registered, remote, checkpoint);
+	checkpoint();
 	await discoverLocalBoardSources(
 		storage,
 		registered,
@@ -175,8 +183,10 @@ export async function discoverBoardSources(
 						assertBoardIsolationPath(requireBoardIsolation(), file);
 					},
 				}
-			: undefined
+			: undefined,
+		checkpoint
 	);
+	checkpoint();
 }
 
 /** Admit the retained process, registries and persisted source identity before running the algorithm. */
@@ -201,5 +211,5 @@ export async function executeBoardSourceCommand(
 		if (!(error instanceof BoardStorageError)) throw error;
 		return { ok: false, error: { code: error.code, message: error.message } };
 	}
-	return executeBoardSourceOperation(command, storage, registered, remote);
+	return executeBoardSourceOperation(command, storage, registered, remote, requireBoardEnabled);
 }

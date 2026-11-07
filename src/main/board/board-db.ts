@@ -2,6 +2,7 @@
 import Database from 'better-sqlite3';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { resolveUserDataDir } from '../../shared/userDataDir';
 import {
 	assertBoardIsolationPath,
 	isBoardIsolationRequested,
@@ -101,6 +102,13 @@ CREATE TABLE card_archives (
 const SOURCES_SCHEMA = `
 CREATE TABLE board_sources (source_key TEXT PRIMARY KEY);
 `;
+
+/** Canonical workspace path; resolving it never creates or opens storage. */
+export function boardDbPath(): string {
+	return isBoardIsolationRequested()
+		? requireBoardIsolation().db
+		: path.join(resolveUserDataDir(), 'board', 'board.sqlite');
+}
 
 /** Explicit path prevents tests or callers from accidentally opening the live workspace. */
 export function openBoardDb(
