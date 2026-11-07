@@ -21,9 +21,11 @@ import {
 	LogOut,
 	MessageCircle,
 	Gauge,
+	GitPullRequest,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { ShortcutHint } from '../ui/ShortcutHint';
+import { useActiveSession } from '../../hooks/session/useActiveSession';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
@@ -53,6 +55,7 @@ export function HamburgerMenuContent({
 	startTour,
 	setMenuOpen,
 }: HamburgerMenuContentProps) {
+	const activeSession = useActiveSession();
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
@@ -260,6 +263,28 @@ export function HamburgerMenuContent({
 				</div>
 				<ShortcutHint theme={theme} keys={shortcuts.processMonitor?.keys ?? []} />
 			</button>
+			{activeSession?.isGitRepo &&
+				activeSession.parentSessionId &&
+				activeSession.worktreeBranch && (
+					<button
+						onClick={() => {
+							openUiSurface('worktree-pr-details');
+							setMenuOpen(false);
+						}}
+						className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+					>
+						<GitPullRequest className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<div className="flex-1">
+							<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+								Worktree PR and CI
+							</div>
+							<div className="text-xs" style={{ color: theme.colors.textDim }}>
+								View pull request status and checks
+							</div>
+						</div>
+						<ShortcutHint theme={theme} keys={shortcuts.viewWorktreePRDetails?.keys ?? []} />
+					</button>
+				)}
 			{encoreFeatures.usageStats && (
 				<button
 					onClick={() => {

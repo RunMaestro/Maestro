@@ -1,3 +1,4 @@
+import { worktreeRetirement } from '../../../git/worktreeRetirement';
 import { ipcMain } from 'electron';
 import { execFileNoThrow } from '../../../utils/execFile';
 import { execGit, execGitReadOnly } from '../../../utils/remote-git';
@@ -20,24 +21,26 @@ export function registerBranchHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('init'),
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
-				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-				// Fail fast if an SSH remote was requested but can't be resolved -
-				// otherwise we'd silently `git init` the wrong (local) directory.
-				if (sshRemoteId && !sshRemote) {
-					return {
-						success: false,
-						error: `SSH remote not found: ${sshRemoteId}`,
-					};
-				}
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
-				const result = await execGit(['init'], cwd, sshRemote, effectiveRemoteCwd);
-				if (result.exitCode !== 0) {
-					return {
-						success: false,
-						error: result.stderr?.trim() || 'git init failed',
-					};
-				}
-				return { success: true };
+				return worktreeRetirement.runFilesystemMutation(sshRemoteId ? [] : [cwd], async () => {
+					const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+					// Fail fast if an SSH remote was requested but can't be resolved -
+					// otherwise we'd silently `git init` the wrong (local) directory.
+					if (sshRemoteId && !sshRemote) {
+						return {
+							success: false,
+							error: `SSH remote not found: ${sshRemoteId}`,
+						};
+					}
+					const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+					const result = await execGit(['init'], cwd, sshRemote, effectiveRemoteCwd);
+					if (result.exitCode !== 0) {
+						return {
+							success: false,
+							error: result.stderr?.trim() || 'git init failed',
+						};
+					}
+					return { success: true };
+				});
 			}
 		)
 	);
@@ -53,64 +56,66 @@ export function registerBranchHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('commitAll'),
 			async (cwd: string, message: string, sshRemoteId?: string, remoteCwd?: string) => {
-				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-				// Fail fast if an SSH remote was requested but can't be resolved -
-				// otherwise we'd silently commit in the wrong (local) directory.
-				if (sshRemoteId && !sshRemote) {
-					return {
-						success: false,
-						committed: false,
-						error: `SSH remote not found: ${sshRemoteId}`,
-					};
-				}
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				return worktreeRetirement.runFilesystemMutation(sshRemoteId ? [] : [cwd], async () => {
+					const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+					// Fail fast if an SSH remote was requested but can't be resolved -
+					// otherwise we'd silently commit in the wrong (local) directory.
+					if (sshRemoteId && !sshRemote) {
+						return {
+							success: false,
+							committed: false,
+							error: `SSH remote not found: ${sshRemoteId}`,
+						};
+					}
+					const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
 
-				// Stage everything first so the porcelain check below reflects the
-				// full pending change set (including untracked files).
-				const addResult = await execGit(['add', '-A'], cwd, sshRemote, effectiveRemoteCwd);
-				if (addResult.exitCode !== 0) {
-					return {
-						success: false,
-						committed: false,
-						error: addResult.stderr?.trim() || 'git add failed',
-					};
-				}
+					// Stage everything first so the porcelain check below reflects the
+					// full pending change set (including untracked files).
+					const addResult = await execGit(['add', '-A'], cwd, sshRemote, effectiveRemoteCwd);
+					if (addResult.exitCode !== 0) {
+						return {
+							success: false,
+							committed: false,
+							error: addResult.stderr?.trim() || 'git add failed',
+						};
+					}
 
-				// Nothing staged → clean tree, nothing to commit. Report success.
-				const statusResult = await execGit(
-					['status', '--porcelain'],
-					cwd,
-					sshRemote,
-					effectiveRemoteCwd
-				);
-				if (statusResult.exitCode === 0 && statusResult.stdout.trim() === '') {
-					return { success: true, committed: false };
-				}
+					// Nothing staged → clean tree, nothing to commit. Report success.
+					const statusResult = await execGit(
+						['status', '--porcelain'],
+						cwd,
+						sshRemote,
+						effectiveRemoteCwd
+					);
+					if (statusResult.exitCode === 0 && statusResult.stdout.trim() === '') {
+						return { success: true, committed: false };
+					}
 
-				const commitResult = await execGit(
-					['commit', '-m', message],
-					cwd,
-					sshRemote,
-					effectiveRemoteCwd
-				);
-				if (commitResult.exitCode !== 0) {
-					return {
-						success: false,
-						committed: false,
-						error:
-							commitResult.stderr?.trim() || commitResult.stdout?.trim() || 'git commit failed',
-					};
-				}
+					const commitResult = await execGit(
+						['commit', '-m', message],
+						cwd,
+						sshRemote,
+						effectiveRemoteCwd
+					);
+					if (commitResult.exitCode !== 0) {
+						return {
+							success: false,
+							committed: false,
+							error:
+								commitResult.stderr?.trim() || commitResult.stdout?.trim() || 'git commit failed',
+						};
+					}
 
-				// Best-effort short hash for feedback/logging; absence is non-fatal.
-				const hashResult = await execGit(
-					['rev-parse', '--short', 'HEAD'],
-					cwd,
-					sshRemote,
-					effectiveRemoteCwd
-				);
-				const commitHash = hashResult.exitCode === 0 ? hashResult.stdout.trim() : undefined;
-				return { success: true, committed: true, commitHash };
+					// Best-effort short hash for feedback/logging; absence is non-fatal.
+					const hashResult = await execGit(
+						['rev-parse', '--short', 'HEAD'],
+						cwd,
+						sshRemote,
+						effectiveRemoteCwd
+					);
+					const commitHash = hashResult.exitCode === 0 ? hashResult.stdout.trim() : undefined;
+					return { success: true, committed: true, commitHash };
+				});
 			}
 		)
 	);
@@ -181,28 +186,33 @@ export function registerBranchHandlers(deps: GitHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('switch'),
 			async (cwd: string, branchName: string, sshRemoteId?: string, remoteCwd?: string) => {
-				// Reject flag-like names so a caller can't pass e.g. "-c new-branch" or "-C"
-				// and have git interpret it as a switch flag. execFile blocks shell
-				// injection but not flag injection.
-				if (
-					typeof branchName !== 'string' ||
-					branchName.length === 0 ||
-					branchName.startsWith('-')
-				) {
+				return worktreeRetirement.runFilesystemMutation(sshRemoteId ? [] : [cwd], async () => {
+					// Reject flag-like names so a caller can't pass e.g. "-c new-branch" or "-C"
+					// and have git interpret it as a switch flag. execFile blocks shell
+					// injection but not flag injection.
+					if (
+						typeof branchName !== 'string' ||
+						branchName.length === 0 ||
+						branchName.startsWith('-')
+					) {
+						return {
+							success: false,
+							stdout: '',
+							stderr: `Invalid branch name: ${branchName}`,
+						};
+					}
+					const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+					if (sshRemoteId && !sshRemote) {
+						return { success: false, stdout: '', stderr: `SSH remote not found: ${sshRemoteId}` };
+					}
+					const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+					const result = await execGit(['switch', branchName], cwd, sshRemote, effectiveRemoteCwd);
 					return {
-						success: false,
-						stdout: '',
-						stderr: `Invalid branch name: ${branchName}`,
+						success: result.exitCode === 0,
+						stdout: result.stdout,
+						stderr: result.stderr,
 					};
-				}
-				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
-				const result = await execGit(['switch', branchName], cwd, sshRemote, effectiveRemoteCwd);
-				return {
-					success: result.exitCode === 0,
-					stdout: result.stdout,
-					stderr: result.stderr,
-				};
+				});
 			}
 		)
 	);
@@ -221,27 +231,29 @@ export function registerBranchHandlers(deps: GitHandlerDependencies): void {
 				sshRemoteId?: string,
 				remoteCwd?: string
 			) => {
-				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-				// The user opted into SSH; silently checking out the local repo
-				// instead would switch the wrong working tree.
-				if (sshRemoteId && !sshRemote) {
-					return { success: false, error: `SSH remote not found: ${sshRemoteId}` };
-				}
-				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
-				const blocker = await branchSwitchBlocker(deps, cwd, sshRemote, effectiveRemoteCwd);
-				if (blocker) return { success: false, error: blocker };
-				const args = createTracking
-					? ['checkout', '-b', branch, '--track', `origin/${branch}`]
-					: ['checkout', branch];
-				const result = await execGit(args, cwd, sshRemote, effectiveRemoteCwd);
-				if (result.exitCode !== 0) {
-					return {
-						success: false,
-						error: result.stderr?.trim() || result.stdout?.trim() || 'git checkout failed',
-					};
-				}
-				// git checkout reports "Switched to branch 'x'" on stderr.
-				return { success: true, output: (result.stderr || result.stdout).trim() };
+				return worktreeRetirement.runFilesystemMutation(sshRemoteId ? [] : [cwd], async () => {
+					const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+					// The user opted into SSH; silently checking out the local repo
+					// instead would switch the wrong working tree.
+					if (sshRemoteId && !sshRemote) {
+						return { success: false, error: `SSH remote not found: ${sshRemoteId}` };
+					}
+					const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+					const blocker = await branchSwitchBlocker(deps, cwd, sshRemote, effectiveRemoteCwd);
+					if (blocker) return { success: false, error: blocker };
+					const args = createTracking
+						? ['checkout', '-b', branch, '--track', `origin/${branch}`]
+						: ['checkout', branch];
+					const result = await execGit(args, cwd, sshRemote, effectiveRemoteCwd);
+					if (result.exitCode !== 0) {
+						return {
+							success: false,
+							error: result.stderr?.trim() || result.stdout?.trim() || 'git checkout failed',
+						};
+					}
+					// git checkout reports "Switched to branch 'x'" on stderr.
+					return { success: true, output: (result.stderr || result.stdout).trim() };
+				});
 			}
 		)
 	);

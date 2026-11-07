@@ -8,6 +8,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { openUiSurface } from '../../../renderer/utils/openUiSurface';
 import { selectModalOpen, useModalStore } from '../../../renderer/stores/modalStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { createMockSession } from '../../helpers/mockSession';
 import { useFeedbackDraftStore } from '../../../renderer/stores/feedbackDraftStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useThroughputGaugeStore } from '../../../renderer/stores/throughputGaugeStore';
@@ -100,4 +102,36 @@ describe('openUiSurface - Encore-gated tabs', () => {
 		expect(result.error).toContain('Cue');
 		expect(selectModalOpen('usageDashboard')(useModalStore.getState())).toBe(false);
 	});
+});
+
+describe('openUiSurface - worktree PR details', () => {
+	afterEach(() => {
+		useModalStore.getState().closeModal('worktreePRDetails');
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+	});
+
+	it('targets the active worktree by id without depending on a mounted row', () => {
+		const session = createMockSession({
+			id: 'worktree',
+			isGitRepo: true,
+			parentSessionId: 'parent',
+			worktreeBranch: 'feat/x',
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		expect(openUiSurface('worktree-pr')).toEqual({ ok: true });
+		expect(useModalStore.getState().modals.get('worktreePRDetails')).toMatchObject({
+			open: true,
+			data: { sessionId: session.id },
+		});
+	});
+
+	it.each([{}, { isGitRepo: true }, { isGitRepo: true, worktreeBranch: 'feat/x' }])(
+		'refuses inapplicable agents (%j)',
+		(overrides) => {
+			const session = createMockSession({ id: 'plain', ...overrides });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			expect(openUiSurface('worktree-pr-details')).toMatchObject({ ok: false });
+			expect(selectModalOpen('worktreePRDetails')(useModalStore.getState())).toBe(false);
+		}
+	);
 });

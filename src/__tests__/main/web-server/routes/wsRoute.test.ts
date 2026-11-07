@@ -14,8 +14,9 @@
  * 7. Client can send messages which are delegated to WebSocketMessageHandler
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WebSocket } from 'ws';
+import { WorktreeRetirement, worktreeRetirement } from '../../../../main/git/worktreeRetirement';
 import { WsRoute, type WsRouteCallbacks } from '../../../../main/web-server/routes/wsRoute';
 import { BroadcastService } from '../../../../main/web-server/services/broadcastService';
 import { bindPairedDeviceAuth } from '../../../../main/web-server/auth/web-login-policy';
@@ -213,6 +214,47 @@ describe('WsRoute', () => {
 		wsRoute.setCallbacks(callbacks);
 		mockFastify = createMockFastify();
 		wsRoute.registerRoute(mockFastify as any);
+	});
+
+	describe('worktree retirement client admission', () => {
+		afterEach(() => vi.restoreAllMocks());
+		it('holds before connection callbacks, retains on error, and releases only on close', () => {
+			const fence = new WorktreeRetirement();
+			vi.spyOn(worktreeRetirement, 'admitClient').mockImplementation((kind) =>
+				fence.admitClient(kind)
+			);
+			const checkout = { path: process.cwd(), head: 'abc', generation: 1 };
+			expect(fence.register(checkout)).toBe(true);
+			const renderer = {};
+			const primary = fence.admitClient('primary');
+			if (!primary.ok) throw new Error(primary.reason);
+			primary.loaded(renderer);
+			vi.mocked(callbacks.onClientConnect).mockImplementation(() => {
+				expect(fence.prepareForRenderer(checkout, renderer).ok).toBe(false);
+			});
+			const socket = createMockConnection();
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(socket, createMockRequest());
+			expect(callbacks.onClientConnect).toHaveBeenCalledOnce();
+			socket.emit('error', new Error('still closing'));
+			expect(fence.prepareForRenderer(checkout, renderer).ok).toBe(false);
+			socket.emit('close', 1000);
+			expect(fence.prepareForRenderer(checkout, renderer).ok).toBe(true);
+		});
+		it('refuses a new socket before initial sync or owner callbacks during preparation', () => {
+			const fence = new WorktreeRetirement();
+			vi.spyOn(worktreeRetirement, 'admitClient').mockImplementation((kind) =>
+				fence.admitClient(kind)
+			);
+			const checkout = { path: process.cwd(), head: 'abc', generation: 1 };
+			expect(fence.register(checkout)).toBe(true);
+			expect(fence.prepare(checkout).ok).toBe(true);
+			const socket = createMockConnection();
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(socket, createMockRequest());
+			expect(socket.close).toHaveBeenCalledWith(1008, expect.stringContaining('retirement'));
+			expect(socket.send).not.toHaveBeenCalled();
+			expect(callbacks.getSessions).not.toHaveBeenCalled();
+			expect(callbacks.onClientConnect).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Route Registration', () => {

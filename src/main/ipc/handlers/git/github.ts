@@ -1,4 +1,15 @@
 import { ipcMain } from 'electron';
+import type {
+	WorktreePullRequestDiscoveryRequest,
+	WorktreePullRequestMergePreflightRequest,
+	WorktreePullRequestMergeRequest,
+} from '../../../../shared/worktreePullRequests';
+import {
+	refreshWorktreePullRequest,
+	invalidateWorktreePullRequest,
+} from '../../../git/worktreePullRequestRefresh';
+import { preflightWorktreePullRequestMerge } from '../../../git/worktreePullRequestMergePreflight';
+import { mergeWorktreePullRequest } from '../../../git/worktreePullRequestMerge';
 import { execFileNoThrow } from '../../../utils/execFile';
 import { logger } from '../../../utils/logger';
 import { withIpcErrorLogging } from '../../../utils/ipcHandler';
@@ -16,6 +27,50 @@ import { LOG_CONTEXT, handlerOpts } from './shared';
  * Register GitHub CLI integration Git IPC handlers: createPR, checkGhCli, createGist.
  */
 export function registerGithubHandlers(): void {
+	ipcMain.handle(
+		'git:discoverWorktreePullRequest',
+		withIpcErrorLogging(
+			handlerOpts('discoverWorktreePullRequest'),
+			async (request: WorktreePullRequestDiscoveryRequest) =>
+				(await refreshWorktreePullRequest(request)).discovery
+		)
+	);
+	ipcMain.handle(
+		'git:refreshWorktreePullRequest',
+		withIpcErrorLogging(
+			handlerOpts('refreshWorktreePullRequest'),
+			(request: WorktreePullRequestDiscoveryRequest) => refreshWorktreePullRequest(request)
+		)
+	);
+	ipcMain.handle(
+		'git:invalidateWorktreePullRequest',
+		withIpcErrorLogging(
+			handlerOpts('invalidateWorktreePullRequest'),
+			async (worktreePath: string) => invalidateWorktreePullRequest(worktreePath)
+		)
+	);
+	ipcMain.handle(
+		'git:preflightWorktreePullRequestMerge',
+		withIpcErrorLogging(
+			handlerOpts('preflightWorktreePullRequestMerge'),
+			(request: WorktreePullRequestMergePreflightRequest) =>
+				preflightWorktreePullRequestMerge(request)
+		)
+	);
+	ipcMain.handle(
+		'git:mergeWorktreePullRequest',
+		withIpcErrorLogging(
+			handlerOpts('mergeWorktreePullRequest'),
+			async (request: WorktreePullRequestMergeRequest) => {
+				try {
+					return await mergeWorktreePullRequest(request);
+				} finally {
+					if (typeof request?.worktreePath === 'string')
+						invalidateWorktreePullRequest(request.worktreePath);
+				}
+			}
+		)
+	);
 	// Create a PR from the worktree branch to a base branch
 	// ghPath parameter allows specifying custom path to gh binary
 	ipcMain.handle(

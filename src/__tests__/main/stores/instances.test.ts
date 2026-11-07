@@ -46,6 +46,7 @@ import {
 	hadRecentInternalWrite,
 	resetInternalWriteTracking,
 } from '../../../main/stores/write-tracker';
+import { worktreeRetirement } from '../../../main/git/worktreeRetirement';
 
 const mockedGetCustomSyncPath = vi.mocked(getCustomSyncPath);
 
@@ -62,6 +63,21 @@ describe('stores/instances', () => {
 	});
 
 	describe('initializeStores', () => {
+		it('restores retirement fences before later stores or startup migrations can run', () => {
+			const restore = vi.spyOn(worktreeRetirement, 'restoreRetirements').mockImplementation(() => {
+				expect(mockStoreConstructorCalls.map((call) => call.name)).toEqual([
+					'maestro-bootstrap',
+					'maestro-settings',
+					'maestro-sessions',
+				]);
+				throw new Error('Invalid retirement recovery identity');
+			});
+			expect(() => initializeStores({ productionDataPath: '/mock/production/path' })).toThrow(
+				'Invalid retirement'
+			);
+			expect(restore).toHaveBeenCalledOnce();
+			expect(mockStoreConstructorCalls).toHaveLength(3);
+		});
 		it('should initialize all stores', () => {
 			const result = initializeStores({ productionDataPath: '/mock/production/path' });
 

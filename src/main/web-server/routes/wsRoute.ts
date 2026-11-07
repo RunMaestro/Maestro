@@ -19,6 +19,7 @@ import { FastifyInstance, FastifyRequest } from 'fastify';
 import { logger } from '../../utils/logger';
 import { hostCallerRuns } from '../../agent-run/caller-identity';
 import { CALLER_RUN_PROOF_HEADER } from '../../../shared/agentDelegation';
+import { worktreeRetirement } from '../../git/worktreeRetirement';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
 import { isWebRequestAuthorized, resolveWebRequestAuth } from '../auth/web-login-policy';
 import {
@@ -153,6 +154,14 @@ export class WsRoute {
 				socket.close(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
 				return;
 			}
+
+			const retirementClient = worktreeRetirement.admitClient('web');
+			if (!retirementClient.ok) {
+				socket.close(WS_CLOSE_POLICY_VIOLATION, retirementClient.reason);
+				return;
+			}
+			// Install before callbacks/initial sync. An error does not prove closure.
+			socket.on('close', retirementClient.release);
 
 			// Extract sessionId from query string if provided (for session-specific subscriptions)
 			const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);

@@ -6,12 +6,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock electron ipcRenderer
 const mockInvoke = vi.fn();
+const mockSend = vi.fn();
 const mockOn = vi.fn();
 const mockRemoveListener = vi.fn();
 
 vi.mock('electron', () => ({
 	ipcRenderer: {
 		invoke: (...args: unknown[]) => mockInvoke(...args),
+		send: (...args: unknown[]) => mockSend(...args),
 		on: (...args: unknown[]) => mockOn(...args),
 		removeListener: (...args: unknown[]) => mockRemoveListener(...args),
 	},
@@ -226,6 +228,40 @@ describe('Git Preload API', () => {
 	});
 
 	describe('createPR', () => {
+		it('passes discovery identity and SSH routing through unchanged', async () => {
+			const request = {
+				worktreePath: '/remote/tree',
+				sshRemoteId: 'remote-1',
+				knownPullRequest: {
+					repository: { host: 'github.com', owner: 'owner', name: 'repo' },
+					number: 42,
+				},
+			};
+			const result = { status: 'unavailable', reason: 'ssh-unsupported', message: 'Unsupported' };
+			mockInvoke.mockResolvedValue(result);
+			expect(await api.discoverWorktreePullRequest(request)).toEqual(result);
+			expect(mockInvoke).toHaveBeenCalledWith('git:discoverWorktreePullRequest', request);
+		});
+		it('forwards merge preflight and mutation requests without changing the target', async () => {
+			const repo = { host: 'github.com', owner: 'owner', name: 'repo' };
+			const request = {
+				worktreePath: '/tree',
+				sshRemoteId: 'remote',
+				target: {
+					identity: { repository: repo, number: 1 },
+					headRepository: repo,
+					headBranch: 'feature',
+					headSha: 'a'.repeat(40),
+					baseBranch: 'rc',
+				},
+			};
+			mockInvoke.mockResolvedValue({ status: 'unavailable', message: 'unsupported' });
+			await api.preflightWorktreePullRequestMerge(request);
+			expect(mockInvoke).toHaveBeenCalledWith('git:preflightWorktreePullRequestMerge', request);
+			const mutation = { ...request, action: { kind: 'enqueue' as const } };
+			await api.mergeWorktreePullRequest(mutation);
+			expect(mockInvoke).toHaveBeenCalledWith('git:mergeWorktreePullRequest', mutation);
+		});
 		it('should invoke git:createPR', async () => {
 			mockInvoke.mockResolvedValue({
 				success: true,
@@ -560,6 +596,53 @@ describe('Git Preload API', () => {
 				'remote-1',
 				'/remote/cwd'
 			);
+		});
+	});
+});
+
+describe('retirement desktop preload protocol', () => {
+	beforeEach(() => vi.clearAllMocks());
+	it('sends only a session id and opaque id for prepare/abort', async () => {
+		const api = createGitApi();
+		await api.prepareWorktreeRetirement('child');
+		await api.abortWorktreeRetirement('opaque');
+		await api.removeWorktreeRetirement('opaque');
+		await api.getWorktreeRetirementRecoveries();
+		await api.cancelWorktreeRetirementRecovery('archive');
+		await api.completeWorktreeRetirementRecovery('archive');
+		expect(mockInvoke.mock.calls).toEqual([
+			['git:prepareWorktreeRetirement', 'child'],
+			['git:abortWorktreeRetirement', 'opaque'],
+			['git:removeWorktreeRetirement', 'opaque'],
+			['git:getWorktreeRetirementRecoveries'],
+			['git:cancelWorktreeRetirementRecovery', 'archive'],
+			['git:completeWorktreeRetirementRecovery', 'archive'],
+		]);
+	});
+	it('restricts replies to the Main-minted protocol channel and unsubscribes listeners', () => {
+		const api = createGitApi();
+		const handler = vi.fn(() => ({ ok: false as const, reason: 'editor open' }));
+		const stop = api.onRetirementRendererRequest(handler);
+		const listener = mockOn.mock.calls[0][1];
+		listener({}, {}, 'settings:set');
+		expect(handler).not.toHaveBeenCalled();
+		expect(mockSend).not.toHaveBeenCalled();
+		listener({}, {}, 'git:retirementRendererRequest:response:unique');
+		expect(mockSend).toHaveBeenCalledWith('git:retirementRendererRequest:response:unique', {
+			ok: false,
+			reason: 'editor open',
+		});
+		stop();
+		expect(mockRemoveListener).toHaveBeenCalledWith('git:retirementRendererRequest', listener);
+	});
+	it('reports preparation failure when the authoritative renderer handler throws', () => {
+		createGitApi().onRetirementRendererRequest(() => {
+			throw new Error('frozen');
+		});
+		mockOn.mock.calls[0][1]({}, {}, 'git:retirementRendererRequest:response:unique');
+		expect(mockSend).toHaveBeenCalledWith('git:retirementRendererRequest:response:unique', {
+			ok: false,
+			reason: 'renderer preparation failed',
 		});
 	});
 });

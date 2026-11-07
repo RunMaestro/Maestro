@@ -43,6 +43,7 @@ import { migrateWindowStateToMultiWindow } from './migrations/multi-window-state
 import { readExistingAgentIds } from '../window-state-persistence';
 import { trackStoreWrites } from './write-tracker';
 import { deferStoreWrites, type DeferredWriteStore } from './deferred-writes';
+import { worktreeRetirement } from '../git/worktreeRetirement';
 
 /**
  * `deserialize` hook for the store named `name` under `cwd`.
@@ -148,6 +149,10 @@ export function initializeStores(options: StoreInitOptions): {
 	);
 	_sessionsWriter = sessionsWriter;
 	_sessionsStore = sessionsWriter.store;
+	// Restore durable fences before migrations, IPC, processes or windows can
+	// admit work. A corrupt recovery identity must never silently lose a lock.
+	const retirements = _sessionsStore.get('worktreeRetirements', []);
+	worktreeRetirement.restoreRetirements(retirements === undefined ? [] : retirements);
 
 	_groupsStore = new Store<GroupsData>({
 		name: 'maestro-groups',

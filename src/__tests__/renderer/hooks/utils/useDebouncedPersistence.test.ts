@@ -189,6 +189,37 @@ describe('useDebouncedPersistence', () => {
 	// initialLoadComplete is set in a finally, so it is true either way, and
 	// flushNow with a snapshot skips it altogether. persistInternal is the one
 	// gate every flush path shares, so the refusal lives there.
+	it('retires an archived id from the debounce baseline while saving unrelated pending edits', async () => {
+		const child = makeSession({ id: 'retired-child' });
+		const other = makeSession({ id: 'other' });
+		seedSessions([child, other]);
+		const view = renderPersistence(makeInitialLoadRef(true));
+		await act(async () => {
+			await view.result.current.flushNow([child, other]);
+		});
+		vi.mocked(window.maestro.sessions.setAll).mockClear();
+		vi.mocked(window.maestro.sessions.setMany).mockClear();
+		await act(async () => {
+			seedSessions([{ ...other, name: 'Unsent unrelated rename' }]);
+			window.dispatchEvent(
+				new CustomEvent(SESSION_PERSISTENCE_BASELINE_EVENT, {
+					detail: { sessions: [], removedIds: [child.id] },
+				})
+			);
+			await view.result.current.flushNow(useSessionStore.getState().sessions);
+		});
+		expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+		const calls = vi.mocked(window.maestro.sessions.setMany).mock.calls;
+		expect(calls.length).toBeGreaterThan(0);
+		for (const [updates, removed, baselines] of calls) {
+			expect(updates.map((s) => s.id)).not.toContain(child.id);
+			expect(removed).not.toContain(child.id);
+			expect(baselines?.map((s) => s.id)).not.toContain(child.id);
+		}
+		expect(calls.at(-1)?.[0][0].name).toBe('Unsent unrelated rename');
+		expect(view.result.current.isPending).toBe(false);
+	});
+
 	describe('queue synchronization during streaming', () => {
 		it('persists a dequeue promptly while another agent keeps streaming', async () => {
 			const item = { id: 'consumed', type: 'message' as const, text: 'Ja bitte', timestamp: 1 };

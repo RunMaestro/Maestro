@@ -77,6 +77,13 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import {
+	worktreeRetirement,
+	WorktreeRetirement,
+	type RetirementToken,
+} from '../../../../main/git/worktreeRetirement';
+import * as remoteGit from '../../../../main/utils/remote-git';
+import * as imageStore from '../../../../main/storage/session-image-store';
+import {
 	configureImageStore,
 	__resetImageStoreCacheForTests,
 } from '../../../../main/storage/session-image-store';
@@ -297,14 +304,18 @@ describe('persistence IPC handlers', () => {
 						},
 					}
 				);
-				mockSessionsStore.get.mockReturnValue([
-					{
-						id: agentId,
-						toolType: 'codex',
-						cwd: process.cwd(),
-						aiTabs: [{ id: 'stream-tab', createdAt: 7, logs: [] }],
-					},
-				]);
+				mockSessionsStore.get.mockImplementation((key, fallback) =>
+					key === 'sessions'
+						? [
+								{
+									id: agentId,
+									toolType: 'codex',
+									cwd: process.cwd(),
+									aiTabs: [{ id: 'stream-tab', createdAt: 7, logs: [] }],
+								},
+							]
+						: fallback
+				);
 				registerSessionCallbacks(server as WebServer, {
 					sessionsStore: deps.sessionsStore,
 					groupsStore: deps.groupsStore,
@@ -514,7 +525,9 @@ describe('persistence IPC handlers', () => {
 					aiTabs: [{ id: 'tab', createdAt: 7, state: 'idle', logs: all.slice(-100) }],
 				},
 			];
-			mockSessionsStore.get.mockReturnValue(sessions);
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? sessions : fallback
+			);
 			const callbacks = {} as {
 				setGetSessionHistoryCallback: Parameters<WebServer['setGetSessionHistoryCallback']>[0];
 				setListDesktopSessionsCallback: Parameters<WebServer['setListDesktopSessionsCallback']>[0];
@@ -806,7 +819,9 @@ describe('persistence IPC handlers', () => {
 				},
 			};
 			current = [session(structuredClone(request.item))];
-			mockSessionsStore.get.mockImplementation((_key, fallback) => current ?? fallback);
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? current : fallback
+			);
 			mockSessionsStore.set.mockImplementation((_key, value) => {
 				current = value;
 			});
@@ -4744,6 +4759,714 @@ describe('persistence IPC handlers', () => {
 		});
 	});
 
+	describe('retirement admission for serialized session persistence', () => {
+		let dir: string;
+		let target: { path: string; head: string; generation: number };
+		let reservation: RetirementToken | undefined;
+		let stored: StoredSession[];
+		let other: string;
+		beforeEach(() => {
+			dir = mkdtempSync(path.join(process.cwd(), '.persistence-retirement-test-'));
+			target = { path: path.join(dir, 'checkout'), head: 'saved-head', generation: 1 };
+			other = path.join(dir, 'other');
+			mkdirSync(target.path);
+			mkdirSync(other);
+			worktreeRetirement.register(target);
+			stored = [{ id: 'target', cwd: target.path } as StoredSession];
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? stored : fallback
+			);
+			mockSessionsStore.set.mockImplementation((key, value) => {
+				if (key === 'sessions') stored = value;
+			});
+		});
+		afterEach(() => {
+			if (reservation) worktreeRetirement.abort(reservation);
+			reservation = undefined;
+			rmSync(dir, { recursive: true, force: true });
+		});
+		function reserve() {
+			const prepared = worktreeRetirement.prepare(target);
+			expect(prepared.ok).toBe(true);
+			if (!prepared.ok) throw new Error(prepared.reason);
+			reservation = prepared.token;
+		}
+		it.each(['confirm', 'release'] as const)(
+			'blocks queue %s while its worktree is reserved',
+			async (operation) => {
+				const item = { id: 'item', tabId: 'chat', pendingAdmissionId: 'pending', type: 'message' };
+				stored = [
+					{
+						...stored[0],
+						aiTabs: [{ id: 'chat', createdAt: 1 }],
+						executionQueue: [item],
+					} as StoredSession,
+				];
+				const request = {
+					agentId: 'target',
+					tabId: 'chat',
+					itemId: 'item',
+					pendingAdmissionId: 'pending',
+					item,
+				};
+				reserve();
+				const commit = vi.fn(() => ({ generation: 'released', guard: () => {} }));
+				const result =
+					operation === 'confirm'
+						? persistence.confirmQueueItem(request)
+						: persistence.releaseQueueItem({ ...request, tabIdentity: { createdAt: 1 } }, commit);
+				await expect(result).rejects.toThrow(/preparing/);
+				expect(mockFlushSessionWrites).not.toHaveBeenCalled();
+				expect(mockSessionsStore.set).not.toHaveBeenCalled();
+				expect(commit).not.toHaveBeenCalled();
+			}
+		);
+
+		describe('token-owned removed registration reconciliation', () => {
+			let git: ReturnType<typeof vi.spyOn>;
+			afterEach(() => git?.mockRestore());
+			async function prepareRemoval(onSessionsPersisted = vi.fn().mockResolvedValue(undefined)) {
+				const common = path.join(other, '.git');
+				const linked = path.join(common, 'worktrees', 'child');
+				mkdirSync(linked, { recursive: true });
+				stored = [
+					{
+						id: 'target',
+						name: 'Saved child',
+						toolType: 'codex',
+						cwd: target.path,
+						projectRoot: target.path,
+						parentSessionId: 'parent',
+						worktreeBranch: 'feature',
+						aiTabs: [{ id: 'chat', logs: [{ id: 'message', text: 'Keep this history' }] }],
+						worktreePullRequest: { number: 123, state: 'merged' },
+					},
+					{ id: 'parent', name: 'Parent', toolType: 'codex', cwd: other, projectRoot: other },
+				];
+				const document: SessionsData = { sessions: stored, activeSessionId: 'target' };
+				mockSessionsStore.get.mockImplementation(
+					(key, fallback) => document[key as keyof SessionsData] ?? fallback
+				);
+				mockSessionsStore.set.mockImplementation((key, value) => {
+					if (typeof key === 'object') Object.assign(document, key);
+					else Object.assign(document, { [key]: value });
+					stored = document.sessions;
+				});
+				const binding = vi.spyOn(worktreeRetirement, 'bindRegistrationSource');
+				registerPersistenceHandlers({
+					settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
+					sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
+					groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+					getWebServer: getWebServerFn,
+					flushSessionWrites: mockFlushSessionWrites,
+					onSessionsPersisted,
+				});
+				const source = binding.mock.calls[0][0];
+				binding.mockRestore();
+				const fence = new WorktreeRetirement();
+				fence.bindRegistrationSource(source);
+				const renderer = {};
+				const client = fence.admitClient('primary');
+				if (!client.ok) throw new Error(client.reason);
+				client.loaded(renderer);
+				const sha = 'a'.repeat(40);
+				git = vi.spyOn(remoteGit, 'execGitReadOnly').mockImplementation(async (args, cwd) => {
+					const stdout =
+						args[0] === 'worktree'
+							? `worktree ${other}\0HEAD ${sha}\0branch refs/heads/rc\0\0worktree ${target.path}\0HEAD ${sha}\0branch refs/heads/feature\0\0`
+							: args[1] === '--show-toplevel'
+								? cwd!
+								: args[1] === '--absolute-git-dir'
+									? cwd === other
+										? common
+										: linked
+									: args[1] === '--git-common-dir'
+										? common
+										: sha;
+					return { stdout, stderr: '', exitCode: 0 };
+				});
+				const prepared = await fence.prepareRegisteredForRenderer('target', renderer);
+				if (!prepared.ok) throw new Error(prepared.reason);
+				return { fence, token: prepared.token, document, source, client, onSessionsPersisted };
+			}
+			it('writes the original intent through the sessions lane before acknowledging removal', async () => {
+				const f = await prepareRemoval();
+				mockSessionsStore.path = path.join(dir, 'sessions.json');
+				const saved = structuredClone(f.document.sessions);
+				let finish!: () => void;
+				let started!: () => void;
+				const reached = new Promise<void>((resolve) => {
+					started = resolve;
+				});
+				mockFlushSessionWrites.mockImplementationOnce(async () => {
+					started();
+					await new Promise<void>((resolve) => {
+						finish = resolve;
+					});
+				});
+				const pending = f.fence.beginRemoval(f.token);
+				await reached;
+				expect(f.document.sessions).toEqual(saved);
+				expect(f.document.worktreeRetirements).toHaveLength(1);
+				expect(f.document.worktreeRetirements![0]).toMatchObject({
+					version: 1,
+					phase: 'removing',
+					archive: { session: saved[0] },
+					parent: saved[1],
+				});
+				f.client.invalidate();
+				expect(f.fence.abort(f.token)).toBe(false);
+				expect(f.fence.complete(f.token)).toBe(false);
+				expect(f.fence.admit([other]).ok).toBe(false);
+				finish();
+				await pending;
+				const id = f.document.worktreeRetirements![0].archive.id;
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toEqual({ ok: true });
+				expect(f.document.retiredWorktrees![0].id).toBe(id);
+				await f.fence.settleRemoval(f.token);
+				expect(f.document.worktreeRetirements![0].phase).toBe('settled');
+				expect(f.fence.complete(f.token)).toBe(true);
+			});
+			it.each(['sessions file', 'app data'])(
+				'rejects %s storage inside the disappearing checkout',
+				async (kind) => {
+					const f = await prepareRemoval();
+					mockSessionsStore.path = path.join(
+						kind === 'sessions file' ? target.path : dir,
+						'sessions.json'
+					);
+					const getPath = vi
+						.spyOn(app, 'getPath')
+						.mockReturnValue(kind === 'app data' ? target.path : dir);
+					try {
+						await expect(f.fence.beginRemoval(f.token)).rejects.toThrow('storage must survive');
+						expect(f.document.worktreeRetirements).toBeUndefined();
+						expect(f.fence.tokenState(f.token)).toBe('removing');
+					} finally {
+						getPath.mockReturnValue('/mock/user/data');
+					}
+				}
+			);
+			it('refuses a changed saved registration before writing a removal intent', async () => {
+				const f = await prepareRemoval();
+				mockSessionsStore.path = path.join(dir, 'sessions.json');
+				f.document.sessions[0] = { ...f.document.sessions[0], name: 'Replaced' };
+				await expect(f.fence.beginRemoval(f.token)).rejects.toThrow('child changed');
+				expect(f.document.worktreeRetirements).toBeUndefined();
+			});
+			it('retains ownership across failed final flushes, retries the same journal id and prevents downgrade', async () => {
+				const f = await prepareRemoval();
+				mockSessionsStore.path = path.join(dir, 'sessions.json');
+				await f.fence.beginRemoval(f.token);
+				const original = structuredClone(f.document.worktreeRetirements![0]);
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toEqual({ ok: true });
+				mockFlushSessionWrites.mockRejectedValueOnce(new Error('disk full'));
+				await expect(f.fence.settleRemoval(f.token)).rejects.toThrow('disk full');
+				expect(f.document.worktreeRetirements![0].phase).toBe('settled');
+				expect(f.fence.complete(f.token)).toBe(false);
+				await f.fence.settleRemoval(f.token);
+				expect(f.document.worktreeRetirements).toHaveLength(1);
+				expect(f.document.worktreeRetirements![0].archive.id).toBe(original.archive.id);
+				await expect(f.source.writeRetirementIntent!(original)).rejects.toThrow('identity changed');
+				expect(f.fence.complete(f.token)).toBe(true);
+			});
+			it('durably cancels only an existing unarchived intent and admits a fresh journal identity', async () => {
+				const f = await prepareRemoval();
+				mockSessionsStore.path = path.join(dir, 'sessions.json');
+				await f.fence.beginRemoval(f.token);
+				const original = structuredClone(f.document.worktreeRetirements![0]);
+				const saved = structuredClone(f.document.sessions);
+				const cancelled = { ...original, phase: 'cancelled' as const };
+				mockFlushSessionWrites.mockRejectedValueOnce(new Error('disk full'));
+				await expect(f.source.writeRetirementIntent!(cancelled)).rejects.toThrow('disk full');
+				expect(f.document.worktreeRetirements![0].phase).toBe('cancelled');
+				await f.source.writeRetirementIntent!(cancelled);
+				await expect(f.source.writeRetirementIntent!(original)).rejects.toThrow('identity changed');
+				await expect(
+					f.source.writeRetirementIntent!({ ...cancelled, phase: 'settled' })
+				).rejects.toThrow('identity changed');
+				const fresh = { ...original, archive: { ...original.archive, id: 'fresh-retirement' } };
+				await expect(
+					f.source.writeRetirementIntent!({ ...fresh, phase: 'cancelled' })
+				).rejects.toThrow('unarchived pending');
+				await f.source.writeRetirementIntent!(fresh);
+				expect(f.document.worktreeRetirements).toHaveLength(2);
+				expect(f.document.sessions).toEqual(saved);
+				expect(f.document.retiredWorktrees).toBeUndefined();
+			});
+			it('refuses cancellation when the registration is missing or already archived', async () => {
+				const f = await prepareRemoval();
+				mockSessionsStore.path = path.join(dir, 'sessions.json');
+				await f.fence.beginRemoval(f.token);
+				const intent = structuredClone(f.document.worktreeRetirements![0]);
+				f.document.retiredWorktrees = [intent.archive];
+				await expect(
+					f.source.writeRetirementIntent!({ ...intent, phase: 'cancelled' })
+				).rejects.toThrow('unarchived pending');
+				f.document.retiredWorktrees = [];
+				f.document.sessions = [intent.parent];
+				await expect(
+					f.source.writeRetirementIntent!({ ...intent, phase: 'cancelled' })
+				).rejects.toThrow('child changed');
+				expect(f.document.worktreeRetirements![0].phase).toBe('removing');
+			});
+			it('durably saves the final frozen chat and PR snapshot before archiving it', async () => {
+				const f = await prepareRemoval();
+				const snapshots = structuredClone(f.document.sessions);
+				snapshots[0].aiTabs[0].logs.push({ id: 'final', text: 'Last idle message' });
+				snapshots[0].worktreePullRequest = { number: 123, state: 'merged', headSha: 'latest' };
+				expect(await f.fence.persistPreparedRegistration(f.token, snapshots)).toMatchObject({
+					ok: true,
+				});
+				expect(await f.fence.revalidateRegistered(f.token)).toEqual({ ok: true });
+				expect(f.fence.commit(f.token)).toBe(true);
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toEqual({ ok: true });
+				expect(f.document.retiredWorktrees?.[0].session.aiTabs[0].logs.at(-1).text).toBe(
+					'Last idle message'
+				);
+				expect(f.document.retiredWorktrees?.[0].session.worktreePullRequest.headSha).toBe('latest');
+			});
+			it.each([
+				'cwd',
+				'projectRoot',
+				'parentSessionId',
+				'worktreeBranch',
+				'toolType',
+				'sshRemoteId',
+			])('rejects a frozen snapshot changing %s', async (field) => {
+				const f = await prepareRemoval();
+				const snapshots = structuredClone(f.document.sessions);
+				snapshots[0][field] = 'forged';
+				expect((await f.fence.persistPreparedRegistration(f.token, snapshots)).ok).toBe(false);
+				expect(mockFlushSessionWrites).not.toHaveBeenCalled();
+			});
+			it('keeps snapshot admission fenced through durable settlement and clones queued payloads', async () => {
+				const f = await prepareRemoval();
+				const snapshots = structuredClone(f.document.sessions);
+				snapshots[0].name = 'Frozen snapshot';
+				let finish!: () => void;
+				mockFlushSessionWrites.mockImplementationOnce(
+					() =>
+						new Promise<void>((resolve) => {
+							finish = resolve;
+						})
+				);
+				const pending = f.fence.persistPreparedRegistration(f.token, snapshots);
+				snapshots[0].name = 'Mutated after submission';
+				await vi.waitFor(() => expect(finish).toBeDefined());
+				expect(f.fence.admit([target.path]).ok).toBe(false);
+				expect(f.document.sessions[0].name).toBe('Frozen snapshot');
+				f.fence.abort(f.token);
+				finish();
+				expect((await pending).ok).toBe(false);
+			});
+			it('does not acknowledge a failed durable snapshot write or permit it after commit', async () => {
+				const f = await prepareRemoval();
+				mockFlushSessionWrites.mockRejectedValueOnce(new Error('ENOSPC'));
+				expect(
+					await f.fence.persistPreparedRegistration(f.token, structuredClone(f.document.sessions))
+				).toMatchObject({ ok: false, reason: 'ENOSPC' });
+				expect(f.fence.tokenState(f.token)).toBe('preparing');
+				f.fence.commit(f.token);
+				expect((await f.fence.persistPreparedRegistration(f.token, f.document.sessions)).ok).toBe(
+					false
+				);
+			});
+			it('expiry during asynchronous image relocation prevents a late snapshot write', async () => {
+				const f = await prepareRemoval();
+				const images = vi.spyOn(imageStore, 'relocateSessionImages');
+				let finish!: () => void;
+				images.mockImplementationOnce(
+					(sessions) =>
+						new Promise((resolve) => {
+							finish = () => resolve({ sessions, relocated: 0 });
+						})
+				);
+				const pending = f.fence.persistPreparedRegistration(f.token, f.document.sessions);
+				await vi.waitFor(() => expect(finish).toBeDefined());
+				f.fence.abort(f.token);
+				finish();
+				expect((await pending).ok).toBe(false);
+				expect(mockFlushSessionWrites).not.toHaveBeenCalled();
+			});
+			it('archives saved chat and PR identity atomically, preserves unrelated changes and selects the parent', async () => {
+				const f = await prepareRemoval();
+				const child = structuredClone(f.document.sessions[0]);
+				const unrelated = {
+					id: 'unrelated',
+					name: 'Newer write',
+					cwd: dir,
+					projectRoot: dir,
+					toolType: 'codex',
+				};
+				await f.source.enqueue(async () => {
+					f.document.sessions.push(unrelated);
+				});
+				expect(f.fence.commit(f.token)).toBe(true);
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toEqual({ ok: true });
+				expect(f.document.sessions).toEqual([expect.objectContaining({ id: 'parent' }), unrelated]);
+				expect(f.document.retiredWorktrees).toEqual([
+					expect.objectContaining({ session: child, head: 'a'.repeat(40), branch: 'feature' }),
+				]);
+				expect(f.document.activeSessionId).toBe('parent');
+				expect(mockSessionsStore.set).toHaveBeenCalledWith(
+					expect.objectContaining({
+						sessions: f.document.sessions,
+						retiredWorktrees: f.document.retiredWorktrees,
+						activeSessionId: 'parent',
+					})
+				);
+				expect(deleteJourneyMock).not.toHaveBeenCalled();
+				expect(f.onSessionsPersisted).toHaveBeenCalledWith([], f.document.sessions, ['target']);
+				expect(f.fence.tokenState(f.token)).toBe('removing');
+			});
+			it('waits behind earlier writes and remains fenced until durable settlement', async () => {
+				const f = await prepareRemoval();
+				let finish!: () => void;
+				const prior = f.source.enqueue(
+					() =>
+						new Promise<void>((resolve) => {
+							finish = resolve;
+						})
+				);
+				await Promise.resolve();
+				f.fence.commit(f.token);
+				let flush!: () => void;
+				mockFlushSessionWrites.mockReturnValueOnce(
+					new Promise<void>((resolve) => {
+						flush = resolve;
+					})
+				);
+				const pending = f.fence.reconcileRemovedRegistration(f.token);
+				await Promise.resolve();
+				expect(mockFlushSessionWrites).not.toHaveBeenCalled();
+				finish();
+				await prior;
+				await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+				expect(f.onSessionsPersisted).not.toHaveBeenCalled();
+				f.client.release();
+				expect(f.fence.abort(f.token)).toBe(false);
+				expect(f.fence.admit([other]).ok).toBe(false);
+				flush();
+				expect(await pending).toEqual({ ok: true });
+			});
+			it.each(['durable write', 'registration callback'])(
+				'retries a failed %s without duplicating the archive or losing later unrelated edits',
+				async (failure) => {
+					const callback = vi.fn().mockResolvedValue(undefined);
+					const f = await prepareRemoval(callback);
+					f.fence.commit(f.token);
+					(failure === 'durable write' ? mockFlushSessionWrites : callback).mockRejectedValueOnce(
+						new Error('retry me')
+					);
+					expect(await f.fence.reconcileRemovedRegistration(f.token)).toEqual({
+						ok: false,
+						reason: 'retry me',
+					});
+					expect(f.fence.abort(f.token)).toBe(false);
+					const retained = structuredClone(f.document.retiredWorktrees);
+					f.document.sessions.push({
+						id: 'other',
+						name: 'Later',
+						cwd: dir,
+						projectRoot: dir,
+						toolType: 'codex',
+					});
+					expect(await f.fence.reconcileRemovedRegistration(f.token)).toEqual({ ok: true });
+					expect(f.document.retiredWorktrees).toEqual(retained);
+					expect(f.document.sessions.map((s) => s.id)).toEqual(['parent', 'other']);
+					const writes = mockFlushSessionWrites.mock.calls.length;
+					expect(await f.fence.reconcileRemovedRegistration(f.token)).toEqual({ ok: true });
+					expect(mockFlushSessionWrites).toHaveBeenCalledTimes(writes);
+				}
+			);
+			it.each(['child', 'parent'])(
+				'refuses a replacement %s registration even at the same path',
+				async (which) => {
+					const f = await prepareRemoval();
+					f.document.sessions[which === 'child' ? 0 : 1].name = 'Replacement';
+					f.fence.commit(f.token);
+					expect(await f.fence.reconcileRemovedRegistration(f.token)).toMatchObject({
+						ok: false,
+						reason: expect.stringContaining('registration changed'),
+					});
+					expect(mockSessionsStore.set).not.toHaveBeenCalled();
+				}
+			);
+			it('rejects a replaced registration source and arbitrary/preparing tokens', async () => {
+				const f = await prepareRemoval();
+				expect(await f.fence.reconcileRemovedRegistration({})).toMatchObject({ ok: false });
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toMatchObject({ ok: false });
+				f.fence.commit(f.token);
+				f.fence.bindRegistrationSource({ ...f.source });
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toMatchObject({ ok: false });
+				expect(mockSessionsStore.set).not.toHaveBeenCalled();
+			});
+			it('refuses late ownership replacement while a durable reconciliation is pending', async () => {
+				const f = await prepareRemoval();
+				f.fence.commit(f.token);
+				mockFlushSessionWrites.mockImplementationOnce(async () => {
+					f.fence.bindRegistrationSource({ ...f.source });
+				});
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toMatchObject({ ok: false });
+				expect(f.fence.tokenState(f.token)).toBe('removing');
+			});
+			it('rejects a replacement child on retry after the archive was staged', async () => {
+				const f = await prepareRemoval();
+				const child = structuredClone(f.document.sessions[0]);
+				f.fence.commit(f.token);
+				mockFlushSessionWrites.mockRejectedValueOnce(new Error('EIO'));
+				await f.fence.reconcileRemovedRegistration(f.token);
+				f.document.sessions.push({ ...child, name: 'Replacement' });
+				mockSessionsStore.set.mockClear();
+				expect(await f.fence.reconcileRemovedRegistration(f.token)).toMatchObject({ ok: false });
+				expect(mockSessionsStore.set).not.toHaveBeenCalled();
+			});
+			it('redirects pending focus and refuses later focus writes to the retired child', async () => {
+				const f = await prepareRemoval();
+				vi.useFakeTimers();
+				try {
+					await handlers.get('sessions:setActiveSessionId')!({}, 'target');
+					f.fence.commit(f.token);
+					await f.fence.reconcileRemovedRegistration(f.token);
+					expect(await handlers.get('sessions:getActiveSessionId')!({})).toBe('parent');
+					await vi.advanceTimersByTimeAsync(500);
+					await handlers.get('sessions:setActiveSessionId')!({}, 'target');
+					await vi.advanceTimersByTimeAsync(500);
+					expect(f.document.activeSessionId).toBe('parent');
+				} finally {
+					vi.useRealTimers();
+				}
+			});
+			it('does not resurrect archived sessions after persistence rebind/restart', async () => {
+				const f = await prepareRemoval();
+				const child = structuredClone(f.document.sessions[0]);
+				f.fence.commit(f.token);
+				await f.fence.reconcileRemovedRegistration(f.token);
+				// Rebinding starts a fresh in-memory tombstone set, as on app startup.
+				registerPersistenceHandlers({
+					settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
+					sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
+					groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+					getWebServer: getWebServerFn,
+					flushSessionWrites: mockFlushSessionWrites,
+				});
+				await handlers.get('sessions:setMany')!({}, [child]);
+				expect(f.document.sessions.some((session) => session.id === child.id)).toBe(false);
+				expect(f.document.retiredWorktrees).toHaveLength(1);
+			});
+		});
+		it('binds trusted ownership reads to the durable session write lane and advances its generation', async () => {
+			const binding = vi.spyOn(worktreeRetirement, 'bindRegistrationSource');
+			registerPersistenceHandlers({
+				settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
+				sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
+				groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+				getWebServer: getWebServerFn,
+				flushSessionWrites: mockFlushSessionWrites,
+			});
+			const source = binding.mock.calls[0][0];
+			binding.mockRestore();
+			const before = source.generation();
+			let finish!: () => void;
+			mockFlushSessionWrites.mockReturnValueOnce(
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+			);
+			const write = handlers.get('sessions:setMany')!({}, [{ ...stored[0], name: 'Updated' }]);
+			await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+			const read = vi.fn(async () => ({
+				sessions: source.read(),
+				generation: source.generation(),
+			}));
+			const pending = source.enqueue(read);
+			await Promise.resolve();
+			expect(read).not.toHaveBeenCalled();
+			finish();
+			await write;
+			expect(await pending).toMatchObject({
+				generation: before + 1,
+				sessions: [{ id: 'target', name: 'Updated', cwd: target.path }],
+			});
+			mockFlushSessionWrites.mockRejectedValueOnce(new Error('EIO'));
+			await expect(
+				handlers.get('sessions:setMany')!({}, [{ ...stored[0], name: 'Retry' }])
+			).rejects.toThrow('EIO');
+			expect(source.generation()).toBe(before + 2);
+		});
+		it.each(['sessions:getAll', 'sessions:getBootstrap', 'sessions:setMany', 'sessions:setAll'])(
+			'%s permits an empty path list while another checkout is reserved',
+			async (channel) => {
+				stored = [];
+				reserve();
+				await expect(handlers.get(channel)!({}, [])).resolves.toEqual(
+					channel.startsWith('sessions:get') ? [] : true
+				);
+			}
+		);
+		it('does not let an empty pending load prevent an unrelated reservation', async () => {
+			stored = [];
+			const read = handlers.get('sessions:getAll')!({});
+			try {
+				reserve();
+			} finally {
+				await read;
+			}
+		});
+		it('rechecks an initially empty removal path list when queued work starts', async () => {
+			let finish!: () => void;
+			mockFlushSessionWrites.mockReturnValueOnce(
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+			);
+			const first = handlers.get('sessions:setMany')!({}, [{ id: 'other', cwd: other }]);
+			await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+			const queued = handlers.get('sessions:setMany')!({}, [], ['late-registration']);
+			const rejected = expect(queued).rejects.toThrow('preparing');
+			stored.push({ id: 'late-registration', cwd: target.path } as StoredSession);
+			try {
+				reserve();
+			} finally {
+				finish();
+				await first;
+				await rejected;
+			}
+			expect(stored.some((session) => session.id === 'late-registration')).toBe(true);
+		});
+		it.each(['sessions:setMany', 'sessions:setAll'])(
+			'%s rejects new registrations and moves in either direction under reservation',
+			async (channel) => {
+				reserve();
+				for (const input of [
+					[{ id: 'new', cwd: target.path }],
+					[{ id: 'target', cwd: other }],
+					[{ id: 'target', cwd: target.path }],
+				]) {
+					await expect(handlers.get(channel)!({}, input)).rejects.toThrow('preparing');
+				}
+				expect(mockSessionsStore.set).not.toHaveBeenCalled();
+				// Unrelated saves continue through the same serialized lane.
+				await expect(handlers.get(channel)!({}, [{ id: 'other', cwd: other }])).resolves.toBe(true);
+				expect(stored.find((session) => session.id === 'target')?.cwd).toBe(target.path);
+			}
+		);
+		it('rejects an explicit removal before backup or persistence', async () => {
+			reserve();
+			await expect(handlers.get('sessions:setMany')!({}, [], ['target'])).rejects.toThrow(
+				'preparing'
+			);
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
+		});
+		it.each(['sessions:setMany', 'sessions:setAll'])(
+			'%s holds admission from receipt through durable flush',
+			async (channel) => {
+				let finish!: () => void;
+				mockFlushSessionWrites.mockReturnValueOnce(
+					new Promise<void>((resolve) => {
+						finish = resolve;
+					})
+				);
+				const write = handlers.get(channel)!({}, [{ ...stored[0], name: 'saved' }]);
+				// No queue microtask has run yet.
+				expect(worktreeRetirement.prepare(target).ok).toBe(false);
+				await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+				expect(worktreeRetirement.prepare(target).ok).toBe(false);
+				finish();
+				await expect(write).resolves.toBe(true);
+				reserve();
+			}
+		);
+		it('admits queued work before its predecessor settles', async () => {
+			let finish!: () => void;
+			mockFlushSessionWrites.mockReturnValueOnce(
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+			);
+			const first = handlers.get('sessions:setMany')!({}, [{ id: 'other', cwd: other }]);
+			await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+			const queued = handlers.get('sessions:setMany')!({}, [{ ...stored[0], name: 'queued' }]);
+			expect(worktreeRetirement.prepare(target).ok).toBe(false);
+			finish();
+			await Promise.all([first, queued]);
+			reserve();
+		});
+		it.each(['sessions:setMany', 'sessions:setAll'])(
+			'%s releases admission on a failed durable write',
+			async (channel) => {
+				mockFlushSessionWrites.mockRejectedValueOnce(
+					Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+				);
+				await expect(handlers.get(channel)!({}, [{ ...stored[0], name: 'retry' }])).resolves.toBe(
+					false
+				);
+				reserve();
+			}
+		);
+		it('serializes a load migration behind pending saves', async () => {
+			let finish!: () => void;
+			mockFlushSessionWrites.mockReturnValueOnce(
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+			);
+			const write = handlers.get('sessions:setMany')!({}, [{ ...stored[0], name: 'new name' }]);
+			await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+			const read = handlers.get('sessions:getAll')!({});
+			expect(worktreeRetirement.prepare(target).ok).toBe(false);
+			finish();
+			await write;
+			await expect(read).resolves.toMatchObject([{ name: 'new name' }]);
+			reserve();
+		});
+		it('holds a load migration until its compacted document reaches disk', async () => {
+			stored[0] = {
+				...stored[0],
+				aiLogs: [
+					{
+						id: 'legacy-tool',
+						metadata: { toolState: { status: 'completed', output: 'x'.repeat(50_000) } },
+					},
+				],
+			};
+			let finish!: () => void;
+			mockFlushSessionWrites.mockReturnValueOnce(
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+			);
+			const read = handlers.get('sessions:getAll')!({});
+			expect(worktreeRetirement.prepare(target).ok).toBe(false);
+			await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+			expect(worktreeRetirement.prepare(target).ok).toBe(false);
+			expect(mockSessionsStore.set).toHaveBeenCalledOnce();
+			finish();
+			await read;
+			reserve();
+		});
+		it('rechecks the authoritative registration after a queued write starts', async () => {
+			let finish!: () => void;
+			mockFlushSessionWrites.mockReturnValueOnce(
+				new Promise<void>((resolve) => {
+					finish = resolve;
+				})
+			);
+			const first = handlers.get('sessions:setMany')!({}, [{ id: 'other', cwd: other }]);
+			await vi.waitFor(() => expect(mockFlushSessionWrites).toHaveBeenCalledOnce());
+			const queued = handlers.get('sessions:setMany')!({}, [{ id: 'moved', cwd: other }]);
+			// Simulate another authoritative registrar changing this id while queued.
+			stored.push({ id: 'moved', cwd: target.path } as StoredSession);
+			reserve();
+			const rejected = expect(queued).rejects.toThrow('preparing');
+			finish();
+			await first;
+			await rejected;
+			expect(stored.find((session) => session.id === 'moved')?.cwd).toBe(target.path);
+		});
+	});
+
 	describe('sessions:getActiveSessionId', () => {
 		it('should return empty string when no active session is set', async () => {
 			mockSessionsStore.get.mockReturnValue('');
@@ -5839,8 +6562,9 @@ describe('persistence IPC handlers', () => {
 			'%s saves a rename after another client closes an unloaded tab',
 			async (channel) => {
 				const afterClose = { ...stored, aiTabs: [stored.aiTabs[0]], snoozedTabs: [] };
-				mockSessionsStore.get.mockReturnValueOnce([stored]).mockReturnValue([afterClose]);
+				mockSessionsStore.get.mockReturnValue([stored]);
 				const [thin] = await handlers.get('sessions:getBootstrap')!({} as any);
+				mockSessionsStore.get.mockReturnValue([afterClose]);
 				await handlers.get(channel)!({} as any, [
 					{
 						...thin,
@@ -5865,7 +6589,7 @@ describe('persistence IPC handlers', () => {
 		it.each(['sessions:setAll', 'sessions:setMany'])(
 			'%s ignores an obsolete deferred agent while saving another agent',
 			async (channel) => {
-				mockSessionsStore.get.mockReturnValueOnce([stored]);
+				mockSessionsStore.get.mockReturnValue([stored]);
 				const [obsolete] = await handlers.get('sessions:getBootstrap')!({} as any);
 				mockSessionsStore.get.mockReturnValue([{ ...stored, id: 'survivor' }]);
 				await handlers.get(channel)!({} as any, [

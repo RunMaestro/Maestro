@@ -268,6 +268,8 @@ export interface ExecStreamingOptions {
 }
 
 export interface ExecStreamingHandle {
+	/** Resolves only after the child and its inherited stdio pipes close. */
+	closed: Promise<void>;
 	/** Resolves once the process exits, with the full captured output. */
 	result: Promise<ExecResult>;
 	/** Terminate the running process. Resolves `result` with exitCode 'SIGTERM'. */
@@ -314,6 +316,7 @@ export function execFileStreaming(
 	child.stdout?.on('data', collect('stdout'));
 	child.stderr?.on('data', collect('stderr'));
 
+	const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
 	const result = new Promise<ExecResult>((resolve) => {
 		// Spawn failures emit both 'error' and 'close'. Prefer the errno from
 		// 'error' (ENOENT, EACCES, ...) over close's platform-specific sentinel
@@ -359,6 +362,7 @@ export function execFileStreaming(
 
 	return {
 		result,
+		closed,
 		cancel: () => {
 			cancelled = true;
 			// SIGTERM to the direct child is not enough: `git push` runs its hooks
