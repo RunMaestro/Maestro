@@ -60,6 +60,7 @@ The `window.maestro` API exposes the following namespaces:
 - `webserver` - getUrl, getConnectedClients
 - `tunnel` - Cloudflare tunnel: isCloudflaredInstalled, start, stop, getStatus
 - `webLogin` - Web Login accounts: listUsers, createUser, setPassword, setDisplayName, setDisabled, deleteUser
+- `federation` - Read-only mirror of Federation peers (desktop-only, memory only): status, peers, snapshot, transcript, reconnect, onEvent (`federation:event`), onReset (`federation:reset`). No service, and `status()` reads `{ enabled: false }`, while the Encore Feature is off
 
 ## Automation
 

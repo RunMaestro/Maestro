@@ -41,6 +41,7 @@ import {
 	registerWebHandlers,
 	registerWebLoginHandlers,
 	registerComputerHistoryHandlers,
+	registerFederationHandlers,
 	registerMaestroRunHandlers,
 	registerDataviewHandlers,
 	registerLeaderboardHandlers,
@@ -129,6 +130,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Computer History - desktop-only, the bridge refuses every
 	// `computerHistory:*` channel (D15). See src/main/ipc/handlers/computerHistory.ts.
 	registerComputerHistoryHandlers();
+
+	// Federation peer mirror - reads and pushes of the desktop's read-only mirror of
+	// its Federation peers. Desktop-only. See src/main/ipc/handlers/federation.ts.
+	registerFederationHandlers();
 
 	// MaestroRun - install, grant walkthrough, and the readiness that gates its
 	// system-prompt section. See src/main/ipc/handlers/maestroRun.ts.

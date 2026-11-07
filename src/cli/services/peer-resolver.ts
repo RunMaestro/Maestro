@@ -19,12 +19,21 @@ import { BridgeConnection } from '../../shared/maestro-lib/client/bridge-connect
 import type { ClientError, MaestroClient } from '../../shared/maestro-lib/client/types';
 import { createWsMaestroClient } from '../../shared/maestro-lib/client/ws-client';
 import {
-	SshForwardError,
 	getSshForwardManager,
 	type ForwardedHostEndpoint,
 	type SshForwardLease,
 } from '../../shared/maestro-lib/client/ssh-forward';
-import { RemoteDiscoveryError } from '../../shared/maestro-lib/client/remote-discovery';
+import {
+	PeerConnectError,
+	connectPeerClient,
+	federationPeersOf,
+	peerAttachError,
+	peerForwardError,
+	peerIdFor,
+	watchPeerConnection,
+	type FederationPeer,
+	type PeerClient,
+} from '../../shared/maestro-lib/client/peer-connection';
 import { peerAgentRef } from '../../shared/maestro-lib/agents/lift-pointer';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../shared/types';
@@ -167,18 +176,8 @@ export function routeAgentTarget(
 	return { kind: 'peer', target: parsed };
 }
 
-/** The id a peer is shown and addressed by: its name, or its id when another remote shares it. */
-export function peerIdFor(remote: SshRemoteConfig, remotes: readonly SshRemoteConfig[]): string {
-	const lower = remote.name.toLowerCase();
-	const shared = remotes.filter((r) => r.name.toLowerCase() === lower).length > 1;
-	return shared ? remote.id : remote.name;
-}
-
-/** A remote that `--all-peers` visits, with the id it is shown and addressed by. */
-export interface FederationPeer {
-	peer: string;
-	remote: SshRemoteConfig;
-}
+/** The id a peer is shown and addressed by, and a remote `--all-peers` visits (shared). */
+export { peerIdFor, type FederationPeer };
 
 /**
  * Every SSH remote that is opted in to Federation and not disabled, in stored order, with its
@@ -187,10 +186,7 @@ export interface FederationPeer {
 export function listFederationPeers(
 	overrides: Partial<Pick<PeerResolverDeps, 'readRemotes'>> = {}
 ): FederationPeer[] {
-	const remotes = withDefaults(overrides).readRemotes();
-	return remotes
-		.filter((remote) => remote.federation === true && remote.enabled !== false)
-		.map((remote) => ({ peer: peerIdFor(remote, remotes), remote }));
+	return federationPeersOf(withDefaults(overrides).readRemotes());
 }
 
 /**
@@ -237,55 +233,13 @@ export function requireFederationRemote(remote: SshRemoteConfig): void {
 	);
 }
 
-/** The peer an error names, and the `remote-host start` line that brings its host up. */
-function startFix(peer: string): string {
-	return `Start it with: maestro-cli remote-host start ${peer}`;
-}
-
-/** Turn a forward failure into an error that names the peer and the fix. */
-function forwardError(peer: string, error: unknown): PeerResolveError {
-	if (error instanceof SshForwardError) {
-		switch (error.code) {
-			case 'not-installed':
-				return new PeerResolveError(
-					'not-installed',
-					`Peer "${peer}" has no usable maestro-cli. ${error.message}`,
-					ExitCode.NotRunning,
-					peer
-				);
-			case 'not-running':
-			case 'host-gone':
-				return new PeerResolveError(
-					'host-down',
-					`No Maestro host is running on peer "${peer}". ${startFix(peer)}`,
-					ExitCode.NotRunning,
-					peer
-				);
-			case 'forward-failed':
-				return new PeerResolveError(
-					'forward-failed',
-					`Could not open the SSH forward to peer "${peer}": ${error.message} ` +
-						`Check it with: maestro-cli remote-host status ${peer}`,
-					ExitCode.NotRunning,
-					peer
-				);
-		}
-	}
-	if (error instanceof RemoteDiscoveryError) {
-		return new PeerResolveError(
-			'forward-failed',
-			`Could not reach peer "${peer}" over SSH: ${error.message} ` +
-				`Check it with: maestro-cli remote-host status ${peer}`,
-			error.code === 'timeout' ? ExitCode.Timeout : ExitCode.NotRunning,
-			peer
-		);
-	}
-	const message = error instanceof Error ? error.message : String(error);
+/** A shared connect failure as the resolver's error, with the exit code a script branches on. */
+function fromConnectError(error: PeerConnectError): PeerResolveError {
 	return new PeerResolveError(
-		'forward-failed',
-		`Could not reach peer "${peer}": ${message} Check it with: maestro-cli remote-host status ${peer}`,
-		ExitCode.NotRunning,
-		peer
+		error.code,
+		error.message,
+		error.timeout ? ExitCode.Timeout : ExitCode.NotRunning,
+		error.peer
 	);
 }
 
@@ -311,47 +265,20 @@ export async function connectPeer(
 	requireFederationRemote(remote);
 	const peer = peerIdFor(remote, deps.readRemotes());
 
-	const lease = deps.acquireForward(remote);
-	let client: MaestroClient | undefined;
-	let released = false;
-	const release = async (): Promise<void> => {
-		if (released) return;
-		released = true;
-		try {
-			await client?.connection.close();
-		} finally {
-			await lease.release();
-		}
-	};
-
+	let opened: PeerClient;
 	try {
-		try {
-			await lease.ready();
-		} catch (error) {
-			throw forwardError(peer, error);
-		}
-		client = deps.createClient(() => lease.ready());
-		const attached = await client.connection.connect();
-		if (!attached.ok) {
-			throw new PeerResolveError(
-				'connect-failed',
-				`The host on peer "${peer}" did not accept the connection: ${attached.error.message} ` +
-					`Check it with: maestro-cli remote-host status ${peer}`,
-				attached.error.code === 'timeout' ? ExitCode.Timeout : ExitCode.NotRunning,
-				peer
-			);
-		}
+		opened = await connectPeerClient(peer, remote, deps);
 	} catch (error) {
-		await release();
-		throw error;
+		throw error instanceof PeerConnectError ? fromConnectError(error) : error;
 	}
+	const { client, lease, release } = opened;
 
 	const withBridge = async <T>(action: (bridge: BridgeConnection) => Promise<T>): Promise<T> => {
 		let endpoint: ForwardedHostEndpoint;
 		try {
 			endpoint = await lease.ready();
 		} catch (error) {
-			throw forwardError(peer, error);
+			throw fromConnectError(peerForwardError(peer, error));
 		}
 		const bridge = deps.createBridge(endpoint);
 		try {
@@ -359,13 +286,7 @@ export async function connectPeer(
 		} catch (error) {
 			bridge.disconnect();
 			const message = error instanceof Error ? error.message : String(error);
-			throw new PeerResolveError(
-				'connect-failed',
-				`The host on peer "${peer}" did not accept the connection: ${message} ` +
-					`Check it with: maestro-cli remote-host status ${peer}`,
-				ExitCode.NotRunning,
-				peer
-			);
+			throw fromConnectError(peerAttachError(peer, message));
 		}
 		try {
 			return await action(bridge);
@@ -434,35 +355,8 @@ export function hostCallError(
 	);
 }
 
-/**
- * Call `onLost` once when the connection to the peer drops: the client loses the host, or the SSH
- * forward goes down or stops. Nothing here reconnects or retries. Returns the unsubscribe.
- */
-export function watchPeerConnection(
-	connection: Pick<PeerConnection, 'client' | 'lease'>,
-	onLost: (reason: string) => void
-): () => void {
-	let fired = false;
-	const fire = (reason: string): void => {
-		if (fired) return;
-		fired = true;
-		onLost(reason);
-	};
-	const offHost = connection.client.events.subscribe(
-		(event) => {
-			if (event.type === 'host.lost') fire(event.reason);
-		},
-		{ types: ['host.lost'] }
-	);
-	const offLease = connection.lease.onChange((state) => {
-		if (state.status === 'down') fire(state.error.message);
-		else if (state.status === 'stopped') fire('The SSH forward stopped.');
-	});
-	return () => {
-		offHost();
-		offLease();
-	};
-}
+/** Call `onLost` once when the connection to the peer drops (shared with the desktop mirror). */
+export { watchPeerConnection };
 
 /**
  * Resolve a `peer:agent` target to a connected client plus the host's agent. The agent part
