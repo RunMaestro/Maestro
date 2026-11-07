@@ -89,7 +89,7 @@ import {
 	cueEngineInspect,
 } from './commands/cue-engine';
 import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './commands/bundle';
-import { hostStart, hostStatus, hostStop } from './commands/host';
+import { hostEndpoint, hostStart, hostStatus, hostStop } from './commands/host';
 import { createAgent } from './commands/create-agent';
 import { duplicateAgent } from './commands/duplicate-agent';
 import { liveStatus, liveOn, liveOff, liveTunnel } from './commands/live';
@@ -1841,6 +1841,20 @@ host
 	.option('--dev', 'Use the development data directory')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => hostStatus(options));
+
+// Federation pairing P1 (#1716): a laptop reads this over SSH. It is hidden from `--help` while
+// Federation is off here, but not refused: the opt-in lives on the laptop that dials in, and
+// a headless host's own settings rarely carry Encore flags. It prints nothing `cat` of the
+// owner-only discovery file would not.
+host
+	.command('endpoint', { hidden: !encoreFlags.federation })
+	.description(
+		"Print this data directory's host endpoint (port, token, CLI secret) for Federation over SSH"
+	)
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option('--json', 'Output as JSON, with the token and the CLI secret')
+	.action((options) => hostEndpoint(options));
 
 host
 	.command('stop')

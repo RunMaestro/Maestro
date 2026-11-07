@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { formatDurationHuman } from '../../shared/duration';
+import { isWindows } from '../../shared/platformDetection';
 import {
 	RUNTIME_LOCK_SPEC,
 	createFileLogger,
@@ -492,6 +493,86 @@ export async function hostStatus(
 		);
 		process.exitCode = ExitCode.NotRunning;
 	}
+}
+
+// ---------------------------------------------------------------------------
+// endpoint
+// ---------------------------------------------------------------------------
+
+/** What `host endpoint --json` prints: the live bridge of this data directory, or that there is none. */
+export type HostEndpointReport =
+	| { running: false }
+	| {
+			running: true;
+			port: number;
+			token: string;
+			cliSecret?: string;
+			version?: string;
+			pid: number;
+	  };
+
+/**
+ * Whether only the owner can read the discovery file. The token and the CLI secret in it grant
+ * full control of the host, so `endpoint` hands them out only while the file is as private as the
+ * writer made it (`0600`). Windows has no mode bits; the per-user AppData ACL does that job there.
+ */
+function discoveryFileIsOwnerOnly(file: string): boolean {
+	if (isWindows()) return true;
+	return (fs.statSync(file).mode & 0o077) === 0;
+}
+
+/**
+ * Print the endpoint of the host serving this data directory: its port, path token, CLI secret,
+ * version and pid. Pairing P1 of Federation (#1716): a laptop runs this over SSH on every connect
+ * and keeps the answer in memory, so SSH is the authentication and nothing is stored on the laptop.
+ * The token and the secret go to stdout under `--json` only, never to a log or an error message.
+ */
+export async function hostEndpoint(
+	options: HostCommandOptions,
+	overrides: Partial<HostCommandDeps> = {}
+): Promise<void> {
+	const deps = { ...defaultDeps, ...overrides };
+	const paths = resolveHostPaths(options);
+	const info = liveHost(paths.userDataDir, deps);
+	if (!info) {
+		const report: HostEndpointReport = { running: false };
+		say(options, report, 'No host is running.');
+		process.exitCode = ExitCode.NotRunning;
+		return;
+	}
+	let ownerOnly: boolean;
+	try {
+		ownerOnly = discoveryFileIsOwnerOnly(paths.cliServerFile);
+	} catch (error) {
+		fail(
+			options,
+			`Could not read the permissions of ${paths.cliServerFile}: ${error instanceof Error ? error.message : String(error)}`
+		);
+		return;
+	}
+	if (!ownerOnly) {
+		fail(
+			options,
+			`${paths.cliServerFile} can be read by other users, so its token is not handed out. ` +
+				`Make it owner-only (chmod 600 "${paths.cliServerFile}"), or restart the host, which rewrites it owner-only.`
+		);
+		return;
+	}
+	const report: HostEndpointReport = {
+		running: true,
+		port: info.port,
+		token: info.token,
+		...(info.cliSecret !== undefined ? { cliSecret: info.cliSecret } : {}),
+		...(info.version !== undefined ? { version: info.version } : {}),
+		pid: info.pid,
+	};
+	// The human form leaves the token and the secret out: a terminal scrollback is a log.
+	say(
+		options,
+		report,
+		`Host endpoint: pid ${info.pid}, port ${info.port}${info.version ? `, version ${info.version}` : ''}. ` +
+			'Run with --json for the token and the CLI secret.'
+	);
 }
 
 // ---------------------------------------------------------------------------

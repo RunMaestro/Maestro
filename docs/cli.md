@@ -2235,6 +2235,16 @@ Reports the host's pid, uptime, version, the holder of the data directory's lock
 | `--dev`             | Use the development data directory | -                             |
 | `--json`            | Output as JSON (for scripting)     | -                             |
 
+### `host endpoint`
+
+Prints the endpoint of the host serving the data directory, for [Federation](/encore-features) over SSH: a laptop runs `maestro-cli host endpoint --json` on the remote through the SSH remote it already has, and SSH is the authentication. With `--json` it prints `{running, port, token, cliSecret, version, pid}`, or `{running: false}` with exit code `3` when no host is running. Without `--json` it prints the pid, port and version only: the token and the CLI secret never reach a terminal or a log. On macOS and Linux it refuses, and prints neither, when the discovery file (`cli-server.json`) can be read by any user but its owner. The verb is listed in `--help` only while Federation is on.
+
+| Flag                | Description                                       | Default                       |
+| ------------------- | ------------------------------------------------- | ----------------------------- |
+| `--data-dir <path>` | Maestro data directory                            | resolved like the desktop app |
+| `--dev`             | Use the development data directory                | -                             |
+| `--json`            | Output as JSON, with the token and the CLI secret | -                             |
+
 ### `host stop`
 
 Asks the host to stop and waits for its process to exit. With work in flight (a chat turn, an Auto Run, a group chat round, a consult, or a Cue run) it refuses, names the work, and exits `1`, unless `--wait` or `--force` says otherwise.

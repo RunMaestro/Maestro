@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	createSignalDrain,
 	formatHostStatus,
+	hostEndpoint,
 	hostLogFilePath,
 	hostStart,
 	hostStatus,
@@ -481,6 +482,81 @@ describe('maestro-cli host', () => {
 			expect(stop).toHaveBeenCalledTimes(1);
 			expect(time.elapsed()).toBe(0);
 		});
+	});
+
+	describe('endpoint', () => {
+		it('prints the live host endpoint, token and secret included, under --json', async () => {
+			publish(process.pid, 4321);
+			await hostEndpoint({ dataDir: dir, json: true }, deps());
+			expect(JSON.parse(out.join('\n'))).toEqual({
+				running: true,
+				port: 4321,
+				token: 't',
+				cliSecret: 's',
+				pid: process.pid,
+			});
+			expect(process.exitCode).toBeUndefined();
+		});
+
+		it('reports the host version when the discovery file has one', async () => {
+			writeCliServerInfoTo(dir, {
+				port: 4000,
+				token: 't',
+				pid: process.pid,
+				startedAt: Date.now(),
+				version: '9.9.9',
+			});
+			await hostEndpoint({ dataDir: dir, json: true }, deps());
+			expect(JSON.parse(out.join('\n'))).toMatchObject({ running: true, version: '9.9.9' });
+		});
+
+		it('keeps the token and the secret out of the human output', async () => {
+			writeCliServerInfoTo(dir, {
+				port: 4000,
+				token: 'tok-SECRET-1',
+				pid: process.pid,
+				startedAt: Date.now(),
+				cliSecret: 'cli-SECRET-2',
+			});
+			await hostEndpoint({ dataDir: dir }, deps());
+			const printed = [...out, ...err].join('\n');
+			expect(printed).toContain('port 4000');
+			expect(printed).not.toContain('tok-SECRET-1');
+			expect(printed).not.toContain('cli-SECRET-2');
+		});
+
+		it('says running: false with exit 3 when no host publishes', async () => {
+			await hostEndpoint({ dataDir: dir, json: true }, deps());
+			expect(JSON.parse(out.join('\n'))).toEqual({ running: false });
+			expect(process.exitCode).toBe(3);
+		});
+
+		it('says running: false for a discovery file whose pid is dead', async () => {
+			publish(424242);
+			await hostEndpoint({ dataDir: dir, json: true }, deps());
+			expect(JSON.parse(out.join('\n'))).toEqual({ running: false });
+			expect(process.exitCode).toBe(3);
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			'refuses, without the token or the secret, when other users can read the discovery file',
+			async () => {
+				writeCliServerInfoTo(dir, {
+					port: 4000,
+					token: 'tok-SECRET-1',
+					pid: process.pid,
+					startedAt: Date.now(),
+					cliSecret: 'cli-SECRET-2',
+				});
+				fs.chmodSync(path.join(dir, 'cli-server.json'), 0o644);
+				await hostEndpoint({ dataDir: dir, json: true }, deps());
+				const printed = [...out, ...err].join('\n');
+				expect(JSON.parse(out.join('\n')).error).toContain('chmod 600');
+				expect(printed).not.toContain('tok-SECRET-1');
+				expect(printed).not.toContain('cli-SECRET-2');
+				expect(process.exitCode).toBe(1);
+			}
+		);
 	});
 
 	describe('stop --wait', () => {

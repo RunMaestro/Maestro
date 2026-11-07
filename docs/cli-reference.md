@@ -1461,6 +1461,16 @@ Report the host: pid, uptime, lock holder, Cue state, and work in flight
 | `--dev`             | Use the development data directory                              | -       |
 | `--json`            | Output as JSON (for scripting)                                  | -       |
 
+## `maestro-cli host endpoint`
+
+Print this data directory's host endpoint (port, token, CLI secret) for Federation over SSH
+
+| Option              | Description                                                     | Default |
+| ------------------- | --------------------------------------------------------------- | ------- |
+| `--data-dir <path>` | Maestro data directory (default: resolved like the desktop app) | -       |
+| `--dev`             | Use the development data directory                              | -       |
+| `--json`            | Output as JSON, with the token and the CLI secret               | -       |
+
 ## `maestro-cli host stop`
 
 Stop the host (refuses while a turn, Auto Run or Cue run is in flight, unless --wait or --force)
