@@ -532,6 +532,11 @@ export interface AgentDetailDisplay {
 	customContextWindow?: number | null;
 	tokenSource?: string | null;
 	codexTransport?: string | null;
+	/** Federation: the peer whose host owns the agent. Absent for a local agent. */
+	peer?: string;
+	/** Federation: the host's tabs, so a turn started from here can be found again. */
+	tabs?: { id: string; name: string | null; state: 'idle' | 'busy' }[];
+	/** Null for a peer's agent: its History lives on the host, and the bridge does not carry it. */
 	stats: {
 		historyEntries: number;
 		successCount: number;
@@ -542,7 +547,7 @@ export interface AgentDetailDisplay {
 		totalCacheCreationTokens: number;
 		totalCost: number;
 		totalElapsedMs: number;
-	};
+	} | null;
 	recentHistory: {
 		id: string;
 		type: string;
@@ -582,6 +587,9 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	lines.push(`  ${c('white', 'ID:')}         ${agent.id}`);
 	lines.push(`  ${c('white', 'Type:')}       ${c('green', agent.toolType)}`);
 	lines.push(`  ${c('white', 'Directory:')}  ${dim(agent.cwd)}`);
+	if (agent.peer) {
+		lines.push(`  ${c('white', 'Peer:')}       ${c('magenta', agent.peer)}`);
+	}
 
 	if (agent.groupName) {
 		lines.push(`  ${c('white', 'Group:')}      ${agent.groupName}`);
@@ -633,6 +641,16 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 		lines.push(...configRows);
 	}
 
+	if (agent.tabs && agent.tabs.length > 0) {
+		lines.push('');
+		lines.push(bold(c('cyan', 'TABS')));
+		lines.push('');
+		for (const tab of agent.tabs) {
+			const state = tab.state === 'busy' ? c('yellow', 'busy') : c('green', 'idle');
+			lines.push(`  ${state}  ${tab.id}${tab.name ? `  ${tab.name}` : ''}`);
+		}
+	}
+
 	lines.push('');
 
 	// Stats
@@ -640,6 +658,12 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	lines.push('');
 
 	const { stats } = agent;
+	if (!stats) {
+		lines.push(
+			`  ${dim(`Kept on peer ${agent.peer ?? 'host'}: its History is not read from here.`)}`
+		);
+		return lines.join('\n');
+	}
 	const successRate =
 		stats.historyEntries > 0 ? ((stats.successCount / stats.historyEntries) * 100).toFixed(0) : '0';
 

@@ -23,16 +23,25 @@ vi.mock('../../../cli/services/storage', () => ({
 import { ExitCode } from '../../../cli/exit-codes';
 import {
 	PeerResolveError,
+	clientErrorExitCode,
 	connectPeer,
 	findPeerRemote,
+	hostCallError,
 	listFederationPeers,
 	listHostAgents,
 	parsePeerTarget,
+	peerAgentRef,
+	peerErrorCode,
 	peerIdFor,
 	resolvePeerAgent,
 	routeAgentTarget,
+	watchPeerConnection,
+	withPeerAgent,
 	type PeerResolverDeps,
 } from '../../../cli/services/peer-resolver';
+import type { BridgeConnection } from '../../../shared/maestro-lib/client/bridge-connection';
+import type { SshForwardState } from '../../../shared/maestro-lib/client/ssh-forward';
+import type { MaestroEvent } from '../../../shared/maestro-lib/client/types';
 import { generateUUID } from '../../../shared/uuid';
 import {
 	SshForwardError,
@@ -110,6 +119,14 @@ function depsWith(
 		isLocalAgent: () => false,
 		acquireForward: vi.fn(() => lease),
 		createClient: vi.fn(() => client),
+		createBridge: vi.fn(
+			() =>
+				({
+					connect: vi.fn(async () => undefined),
+					sendCommand: vi.fn(),
+					disconnect: vi.fn(),
+				}) as unknown as BridgeConnection
+		),
 		lease,
 		close,
 		...overrides,
@@ -309,5 +326,151 @@ describe('resolvePeerAgent', () => {
 		expect(error.message).toContain('maestro-cli remote-host status buildbox');
 		expect(close).toHaveBeenCalled();
 		expect(deps.lease.release).toHaveBeenCalled();
+	});
+});
+
+describe('withBridge', () => {
+	function fakeBridge(connect: () => Promise<void> = async () => undefined) {
+		return {
+			connect: vi.fn(connect),
+			sendCommand: vi.fn(async () => ({ type: 'command_result', success: true })),
+			disconnect: vi.fn(),
+		};
+	}
+
+	it("dials a raw bridge on the forward's local end and always closes it", async () => {
+		const bridge = fakeBridge();
+		const deps = depsWith({ createBridge: vi.fn(() => bridge as unknown as BridgeConnection) });
+		const connection = await connectPeer('buildbox', deps);
+
+		const reply = await connection.withBridge((b) => b.sendCommand({ type: 'ping' }, 'pong'));
+
+		expect(deps.createBridge).toHaveBeenCalledWith(ENDPOINT);
+		expect(reply).toMatchObject({ success: true });
+		expect(bridge.disconnect).toHaveBeenCalledTimes(1);
+		await expect(
+			connection.withBridge(async () => Promise.reject(new Error('boom')))
+		).rejects.toThrow('boom');
+		expect(bridge.disconnect).toHaveBeenCalledTimes(2);
+	});
+
+	it('reports a bridge that will not attach as connect-failed, naming the peer', async () => {
+		const bridge = fakeBridge(async () => {
+			throw new Error('ECONNREFUSED');
+		});
+		const deps = depsWith({ createBridge: vi.fn(() => bridge as unknown as BridgeConnection) });
+		const connection = await connectPeer('buildbox', deps);
+		const action = vi.fn();
+
+		const error = await rejection(connection.withBridge(action));
+
+		expect(error.code).toBe('connect-failed');
+		expect(error.exitCode).toBe(ExitCode.NotRunning);
+		expect(error.message).toContain('maestro-cli remote-host status buildbox');
+		expect(action).not.toHaveBeenCalled();
+		expect(bridge.disconnect).toHaveBeenCalled();
+	});
+});
+
+describe('withPeerAgent', () => {
+	it('runs the action on the resolved agent and releases the connection after', async () => {
+		const deps = depsWith();
+		const seen = await withPeerAgent(
+			'buildbox:docs',
+			async ({ agent, peer }) => `${peer}/${agent.id}`,
+			deps
+		);
+		expect(seen).toBe('buildbox/b2222222-0000-4000-8000-000000000002');
+		expect(deps.close).toHaveBeenCalled();
+		expect(deps.lease.release).toHaveBeenCalled();
+	});
+
+	it('releases when the action throws', async () => {
+		const deps = depsWith();
+		await expect(
+			withPeerAgent('buildbox:docs', async () => Promise.reject(new Error('nope')), deps)
+		).rejects.toThrow('nope');
+		expect(deps.lease.release).toHaveBeenCalled();
+	});
+});
+
+describe('peer error helpers', () => {
+	it('prefixes resolver codes with PEER_ and addresses agents as peer:agent', () => {
+		expect(peerErrorCode('host-down')).toBe('PEER_HOST_DOWN');
+		expect(peerErrorCode('connection-lost')).toBe('PEER_CONNECTION_LOST');
+		expect(peerAgentRef('buildbox', 'a1')).toBe('buildbox:a1');
+	});
+
+	it('maps a host call failure to an exit code and a peer-named error', () => {
+		expect(clientErrorExitCode({ code: 'host-lost' })).toBe(ExitCode.NotRunning);
+		expect(clientErrorExitCode({ code: 'timeout' })).toBe(ExitCode.Timeout);
+		expect(clientErrorExitCode({ code: 'unsupported' })).toBe(ExitCode.Unsupported);
+		expect(clientErrorExitCode({ code: 'rejected' })).toBe(ExitCode.GeneralError);
+
+		const lost = hostCallError('buildbox', { code: 'host-lost', message: 'Dropped.' });
+		expect(lost.code).toBe('connection-lost');
+		expect(lost.message).toContain('maestro-cli remote-host status buildbox');
+		const refused = hostCallError('buildbox', { code: 'rejected', message: 'Busy.' });
+		expect(refused.code).toBe('host-failed');
+		expect(refused.message).toBe('Peer "buildbox": Busy.');
+	});
+});
+
+describe('watchPeerConnection', () => {
+	function watched() {
+		let hostListener: (event: MaestroEvent) => void = () => undefined;
+		let leaseListener: (state: SshForwardState) => void = () => undefined;
+		const offHost = vi.fn();
+		const offLease = vi.fn();
+		const connection = {
+			client: {
+				events: {
+					subscribe: vi.fn((listener: (event: MaestroEvent) => void) => {
+						hostListener = listener;
+						return offHost;
+					}),
+				},
+			},
+			lease: {
+				onChange: vi.fn((listener: (state: SshForwardState) => void) => {
+					leaseListener = listener;
+					return offLease;
+				}),
+			},
+		} as unknown as Parameters<typeof watchPeerConnection>[0];
+		const onLost = vi.fn();
+		const stop = watchPeerConnection(connection, onLost);
+		return {
+			hostListener: () => hostListener,
+			leaseListener: () => leaseListener,
+			onLost,
+			stop,
+			offHost,
+			offLease,
+		};
+	}
+
+	it('fires once, on the client losing the host or the forward going down', () => {
+		const w = watched();
+		w.leaseListener()({ status: 'up', endpoint: ENDPOINT });
+		expect(w.onLost).not.toHaveBeenCalled();
+		w.hostListener()({ type: 'host.lost', reason: 'socket closed' });
+		w.leaseListener()({
+			status: 'down',
+			error: new Error('ssh exited'),
+			attempt: 1,
+			retryInMs: 500,
+		});
+		expect(w.onLost).toHaveBeenCalledTimes(1);
+		expect(w.onLost).toHaveBeenCalledWith('socket closed');
+	});
+
+	it('treats a stopped forward as lost, and unsubscribes both', () => {
+		const w = watched();
+		w.leaseListener()({ status: 'stopped' });
+		expect(w.onLost).toHaveBeenCalledWith('The SSH forward stopped.');
+		w.stop();
+		expect(w.offHost).toHaveBeenCalled();
+		expect(w.offLease).toHaveBeenCalled();
 	});
 });

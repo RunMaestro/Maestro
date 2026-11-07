@@ -2284,6 +2284,26 @@ A peer is an SSH remote that is opted in to Federation and runs a `maestro-cli h
 
 The host is the only record of its agents: Maestro reads them fresh every time and never writes them to the local agent store. A peer that cannot be reached is an error that names the fix (`maestro-cli remote-host start <peer>` when no host runs). `--all-peers` lists the peers it reaches first, then reports each peer it could not reach on stderr and exits with that failure's code (`3` when a host is down). Both flags belong to the Federation Encore Feature, are left out of `--help` while it is off, and are refused if passed then. Neither combines with `--group`, which filters local agents.
 
+These verbs take a `peer:agent` target (an agent ID, ID prefix, or name after the first colon) and act on the host's agent. Each prints what it prints for a local agent, plus a `peer` field in its JSON:
+
+```bash
+maestro-cli show agent build-box:docs --json        # the host's record and its tabs; stats is null
+maestro-cli send build-box:docs "Summarize the open PRs"
+maestro-cli ask build-box:docs "Which branch is checked out?"
+maestro-cli dispatch build-box:docs "Run the release checklist" --new-tab
+maestro-cli interrupt build-box:docs
+```
+
+| Verb         | On a peer                                                                                                                                                                                                                                                                                                                             |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `show agent` | Reads the agent from the host and lists its tabs with their state. History stays on the host, so `stats` is `null` and `recentHistory` is empty.                                                                                                                                                                                      |
+| `send`       | Opens a new tab on the host (or the tab that holds `--session`, which must be idle), sends the message, and waits for the turn to end. The host records the turn in its own History. `--read-only`, `--tab`, `--no-system-prompt`, `--no-history`, `--no-synopsis` and the plugin-tool flags are refused (`PEER_UNSUPPORTED_OPTION`). |
+| `ask`        | Sends the same consult to the host. `--from` and `--with-context` name a local agent the host cannot see, so they are refused.                                                                                                                                                                                                        |
+| `dispatch`   | Sends the same message as a local dispatch to the host. `--notify-on-complete`, the `--callback-*` flags and `--routing` are refused, because they name local agents. A lost acknowledgement is `DISPATCH_UNKNOWN`, as it is locally: reconcile with the same `--dispatch-id`.                                                        |
+| `interrupt`  | Stops every busy tab of the agent on the host, or the one `--tab` names.                                                                                                                                                                                                                                                              |
+
+Nothing is queued or retried on this machine. A peer that is down, or a forward that is dead, exits non-zero with a `PEER_*` code (`PEER_HOST_DOWN` exits `3`). If the forward drops while `send` waits, the turn keeps running on the host: `send` exits `3` with `PEER_CONNECTION_LOST`, the tab ID, and the command that shows the tab (`maestro-cli show agent <peer>:<agent>`). With Federation off, a target with a colon is an ordinary local agent ID or name.
+
 ### One Host Per Data Directory
 
 A data directory has one owner at a time: a lock file (`maestro-runtime.lock`) in the directory says who. `host start` refuses a directory the desktop app or another host already holds, and says which. The desktop app will not open on a directory a headless host holds: it shows a dialog naming the host and quits, because loading its stores on top of the host's would overwrite the host's writes. Stop the host with `maestro-cli host stop`, then open Maestro.
