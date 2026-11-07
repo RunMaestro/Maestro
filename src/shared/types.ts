@@ -1023,6 +1023,15 @@ export interface SshRemoteConfig {
 	 * Used for display purposes to show where the config came from.
 	 */
 	sshConfigHost?: string;
+
+	/**
+	 * Opt this remote in to Federation (the `federation` Encore Feature): Maestro
+	 * may look for a `maestro-cli host` on it and forward to that host over SSH.
+	 * Off (absent) by default. Maestro never probes a remote without this flag,
+	 * because dialing every remote at once is an SSH startup storm and tunnelled
+	 * remotes fail under concurrent dials.
+	 */
+	federation?: boolean;
 }
 
 /**

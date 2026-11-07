@@ -1991,6 +1991,7 @@ Create a new SSH remote configuration
 | `--ssh-option <KEY=VALUE>` | Extra ssh -o option, e.g. ProxyCommand=... or ConnectTimeout=45 (repeatable) | `[]`    |
 | `--ssh-config`             | Use ~/.ssh/config for connection settings (host becomes Host pattern)        | -       |
 | `--disabled`               | Create in disabled state                                                     | -       |
+| `--federation <on\|off>`   | Opt this remote in to Federation (on/off)                                    | -       |
 | `--set-default`            | Set as the global default SSH remote                                         | -       |
 | `--json`                   | Output as JSON (for scripting)                                               | -       |
 
@@ -2024,10 +2025,13 @@ Update an existing SSH remote configuration
 | `--enable-ssh-option <KEY>`  | Switch a previously disabled ssh -o option back on (repeatable) | `[]`    |
 | `--ssh-config <bool>`        | Use ~/.ssh/config for connection settings (true/false)          | -       |
 | `--enabled <bool>`           | Enable or disable this remote (true/false)                      | -       |
+| `--federation <on\|off>`     | Opt this remote in to Federation (on/off)                       | -       |
 | `--set-default`              | Set as the global default SSH remote                            | -       |
 | `--json`                     | Output as JSON (for scripting)                                  | -       |
 
 Only supplied fields change. `--env` and `--ssh-option` merge with existing values; use `--clear-env` or `--clear-ssh-options` to start from empty. `--disable-*` keeps a value but stops passing it to SSH; `--enable-*` restores it. Clearing also removes disabled entries. JSON output includes `sshOptions`, disabled entries, and `resolvedSshOptions` (the effective options including defaults).
+
+`--federation` belongs to the Federation Encore Feature: it is refused while that feature is off. A remote with Federation off is never probed for a `maestro-cli host`. While the feature is on, `list ssh-remotes --json` and `update-ssh-remote --json` report `federation`.
 
 ## `maestro-cli remove-ssh-remote <remote-id>`
 

@@ -3,6 +3,7 @@
 import { readSshRemotes, readSettingValue } from '../services/storage';
 import { formatSshRemotes } from '../output/formatter';
 import { resolveSshOptions } from '../../shared/sshOptions';
+import { isEncoreEnabled } from '../utils/encore-gate';
 
 interface ListSshRemotesOptions {
 	json?: boolean;
@@ -13,6 +14,8 @@ export function listSshRemotes(options: ListSshRemotesOptions): void {
 	const defaultId = readSettingValue('defaultSshRemoteId') as string | null;
 
 	if (options.json) {
+		// Federation is an Encore Feature: while it is off the field is left out.
+		const federationOn = isEncoreEnabled('federation');
 		for (const remote of remotes) {
 			console.log(
 				JSON.stringify({
@@ -33,6 +36,7 @@ export function listSshRemotes(options: ListSshRemotesOptions): void {
 					// overrides layered on top of it.
 					resolvedSshOptions: resolveSshOptions(remote.sshOptions),
 					isDefault: remote.id === defaultId,
+					...(federationOn ? { federation: remote.federation === true } : {}),
 				})
 			);
 		}

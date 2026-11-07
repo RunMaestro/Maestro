@@ -2410,6 +2410,14 @@ tabTargetOptions(tab.command('transfer [tab-id]'))
 	.option('--focus', 'Jump to the new tab (default)')
 	.action((tabId, options) => tabTransfer(tabId, options));
 
+// The per-remote Federation opt-in belongs to the Federation Encore Feature: left
+// out of --help while it is off, and passing it then is refused.
+const FEDERATION_OPTION_KEYS = ['federation'] as const;
+const federationOption = (): Option =>
+	new Option('--federation <on|off>', 'Opt this remote in to Federation (on/off)').hideHelp(
+		!encoreFlags.federation
+	);
+
 // Create SSH remote command - add a new SSH remote configuration
 program
 	.command('create-ssh-remote <name>')
@@ -2435,8 +2443,12 @@ program
 	)
 	.option('--ssh-config', 'Use ~/.ssh/config for connection settings (host becomes Host pattern)')
 	.option('--disabled', 'Create in disabled state')
+	.addOption(federationOption())
 	.option('--set-default', 'Set as the global default SSH remote')
 	.option('--json', 'Output as JSON (for scripting)')
+	.hook('preAction', (_command, action) =>
+		requireEncoreForOptions('federation', action.opts(), FEDERATION_OPTION_KEYS)
+	)
 	.action(createSshRemote);
 
 // Update SSH remote command - edit an existing SSH remote configuration
@@ -2488,8 +2500,12 @@ program
 	)
 	.option('--ssh-config <bool>', 'Use ~/.ssh/config for connection settings (true/false)')
 	.option('--enabled <bool>', 'Enable or disable this remote (true/false)')
+	.addOption(federationOption())
 	.option('--set-default', 'Set as the global default SSH remote')
 	.option('--json', 'Output as JSON (for scripting)')
+	.hook('preAction', (_command, action) =>
+		requireEncoreForOptions('federation', action.opts(), FEDERATION_OPTION_KEYS)
+	)
 	.action(updateSshRemote);
 
 // Remove SSH remote command - delete an SSH remote configuration
