@@ -339,6 +339,43 @@ describe('maestro-cli host', () => {
 		});
 	});
 
+	describe('start --no-prevent-sleep', () => {
+		it('hands the opt-out to the detached child', async () => {
+			const spawnDetached = vi.fn((_args: string[]): DetachedChild => {
+				publish(process.pid, 4321);
+				return { pid: process.pid, exited: () => undefined };
+			});
+			await hostStart({ dataDir: dir, preventSleep: false }, undefined, deps({ spawnDetached }));
+			const [args] = spawnDetached.mock.calls[0] as unknown as [string[]];
+			expect(args).toContain('--no-prevent-sleep');
+		});
+
+		it('passes nothing when sleep prevention stays on (the default)', async () => {
+			const spawnDetached = vi.fn((_args: string[]): DetachedChild => {
+				publish(process.pid, 4321);
+				return { pid: process.pid, exited: () => undefined };
+			});
+			await hostStart({ dataDir: dir, preventSleep: true }, undefined, deps({ spawnDetached }));
+			const [args] = spawnDetached.mock.calls[0] as unknown as [string[]];
+			expect(args).not.toContain('--no-prevent-sleep');
+		});
+	});
+
+	describe('status: sleep prevention', () => {
+		it('says the host holds the Mac awake, and puts it in the JSON', async () => {
+			expect(formatHostStatus(report({ preventingSleep: true }))).toContain(
+				'Sleep: prevented while work is in flight'
+			);
+			expect(formatHostStatus(report({ preventingSleep: false }))).not.toContain('Sleep:');
+
+			await hostStatus(
+				{ dataDir: dir, json: true },
+				deps({ requestStatus: vi.fn(async () => report({ preventingSleep: true })) })
+			);
+			expect(JSON.parse(out.join('\n'))).toMatchObject({ running: true, preventingSleep: true });
+		});
+	});
+
 	describe('a signal to a foreground host', () => {
 		/** A host whose work is whatever `work` says, and whose stop and Cue drain are recorded. */
 		function drainable(work: () => HostWork) {

@@ -1845,6 +1845,10 @@ host
 		'--stop-grace <seconds>',
 		'On SIGTERM/SIGINT, wait this long for work in flight before stopping (default 30; 0 stops at once)'
 	)
+	.option(
+		'--no-prevent-sleep',
+		'macOS: let the Mac sleep even while work is in flight (default: caffeinate holds it awake)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => hostStart(options, cliVersion));
 

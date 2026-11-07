@@ -1451,6 +1451,7 @@ Start a detached host that serves this data directory over the bridge
 | `--port <port>`          | Port to listen on (default: any free port)                                                         | -       |
 | `--foreground`           | Serve in this process instead of detaching (what the detached child runs)                          | -       |
 | `--stop-grace <seconds>` | On SIGTERM/SIGINT, wait this long for work in flight before stopping (default 30; 0 stops at once) | -       |
+| `--no-prevent-sleep`     | macOS: let the Mac sleep even while work is in flight (default: caffeinate holds it awake)         | -       |
 | `--json`                 | Output as JSON (for scripting)                                                                     | -       |
 
 ## `maestro-cli host status`

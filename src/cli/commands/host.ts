@@ -46,6 +46,11 @@ export interface HostCommandOptions {
 	foreground?: boolean;
 	/** `start` only: a port to listen on. Default: any free one. */
 	port?: string | number;
+	/**
+	 * `start` only: hold the Mac awake while work is in flight (`caffeinate -i`). Commander sets it
+	 * `false` for `--no-prevent-sleep`; absent means on. No effect on other platforms.
+	 */
+	preventSleep?: boolean;
 	/** `stop` only: stop even with a turn, an Auto Run, or a Cue run in flight. */
 	force?: boolean;
 	/**
@@ -250,6 +255,7 @@ async function startDetached(
 		paths.userDataDir,
 		...(options.dev ? ['--dev'] : []),
 		...(options.port !== undefined ? ['--port', String(options.port)] : []),
+		...(options.preventSleep === false ? ['--no-prevent-sleep'] : []),
 		...(options.stopGrace !== undefined ? ['--stop-grace', String(options.stopGrace)] : []),
 	];
 	const child = deps.spawnDetached(
@@ -390,6 +396,7 @@ async function runForeground(
 			moduleDirectory: __dirname,
 			...(cliVersion ? { version: cliVersion } : {}),
 			...(options.port !== undefined ? { port: Number(options.port) } : {}),
+			preventSleep: options.preventSleep !== false,
 			log: (line) => console.log(line),
 		});
 	} catch (error) {
@@ -462,6 +469,7 @@ export function formatHostStatus(report: HostStatusReport): string {
 		`Clients: ${report.clients}`,
 		`Work: ${describeWork(report.work)}`,
 		`Cue: ${describeCue(report.cue)}`,
+		...(report.preventingSleep ? ['Sleep: prevented while work is in flight (caffeinate)'] : []),
 	].join('\n');
 }
 
