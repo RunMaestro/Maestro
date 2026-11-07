@@ -9,11 +9,13 @@ import {
 	applyPeerEvent,
 	clearTabStale,
 	createMirroredPeer,
+	findMirrorPeer,
 	markAllTabsStale,
 	mirrorKey,
 	replacePeerAgents,
 	setPeerConnection,
 	summarizePeer,
+	type MirrorPeerSummary,
 	type MirroredPeer,
 } from '../../../../shared/maestro-lib/client/peer-mirror';
 import type { AgentRecord } from '../../../../shared/maestro-lib/store/records';
@@ -188,5 +190,47 @@ describe('peer helpers', () => {
 		const read = clearTabStale(peer, 'a1', 't1');
 		expect(Object.keys(read.staleTabs)).toEqual([liveTurnKey('a1', 't2')]);
 		expect(clearTabStale(read, 'a1', 't1')).toBe(read);
+	});
+});
+
+describe('findMirrorPeer', () => {
+	const summary = (peerId: string, remoteId: string, name = peerId): MirrorPeerSummary => ({
+		peerId,
+		remoteId,
+		name,
+		connection: 'connected',
+		agentCount: 0,
+	});
+	const peers = [
+		summary('buildbox', 'remote-aaa111'),
+		summary('remote-bbb222', 'remote-bbb222', 'twin'),
+		summary('remote-bbc333', 'remote-bbc333', 'twin'),
+	];
+
+	it('matches the peer id exactly, then case-insensitively', () => {
+		expect(findMirrorPeer(peers, 'buildbox')).toEqual({ ok: true, peer: peers[0] });
+		expect(findMirrorPeer(peers, ' BuildBox ')).toEqual({ ok: true, peer: peers[0] });
+	});
+
+	it('matches a remote id and a unique id prefix', () => {
+		expect(findMirrorPeer(peers, 'remote-aaa111')).toEqual({ ok: true, peer: peers[0] });
+		expect(findMirrorPeer(peers, 'remote-bbc')).toEqual({ ok: true, peer: peers[2] });
+	});
+
+	it('refuses a name two remotes share, naming both peer ids', () => {
+		const match = findMirrorPeer(peers, 'twin');
+		expect(match).toMatchObject({ ok: false, code: 'ambiguous-peer' });
+		expect(match.ok === false && match.error).toContain('remote-bbb222, remote-bbc333');
+	});
+
+	it('refuses an ambiguous id prefix and an unknown ref', () => {
+		expect(findMirrorPeer(peers, 'remote-bb')).toMatchObject({ ok: false, code: 'ambiguous-peer' });
+		expect(findMirrorPeer(peers, 'nope')).toEqual({
+			ok: false,
+			code: 'unknown-peer',
+			error: 'Not a mirrored peer: nope',
+		});
+		expect(findMirrorPeer(peers, '  ')).toMatchObject({ ok: false, code: 'unknown-peer' });
+		expect(findMirrorPeer([], 'buildbox')).toMatchObject({ ok: false, code: 'unknown-peer' });
 	});
 });

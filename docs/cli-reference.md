@@ -1518,6 +1518,26 @@ Move an SSH remote agent, with its tabs, transcripts, provider sessions and queu
 | `--with-env` | Send secret env vars too (non-secret ones always move) | -       |
 | `--json`     | Output as JSON (for scripting)                         | -       |
 
+## `maestro-cli federation`
+
+List and reconnect the Federation peers the desktop app mirrors in its Left Bar
+
+## `maestro-cli federation peers`
+
+List the peers the desktop mirrors, with connection state and agent count
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli federation reconnect <peer>`
+
+Force the desktop to reconnect to a peer and reload its agent list
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli completions <shell>`
 
 Print a shell completion script (bash, zsh, or fish)

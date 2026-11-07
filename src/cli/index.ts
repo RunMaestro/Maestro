@@ -92,6 +92,7 @@ import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './com
 import { hostEndpoint, hostStart, hostStatus, hostStop } from './commands/host';
 import { remoteHostStart, remoteHostStatus } from './commands/remote-host';
 import { lift } from './commands/lift';
+import { federationPeers, federationReconnect } from './commands/federation';
 import { createAgent } from './commands/create-agent';
 import { duplicateAgent } from './commands/duplicate-agent';
 import { liveStatus, liveOn, liveOff, liveTunnel } from './commands/live';
@@ -1920,6 +1921,23 @@ encoreCommand(program, 'lift <agent>', 'federation', encoreFlags)
 	.option('--with-env', 'Send secret env vars too (non-secret ones always move)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agent: string, options) => lift(agent, options));
+
+// Federation peer mirror - the peers the desktop mirrors in its Left Bar (FED-SSH-05)
+const federation = encoreCommand(program, 'federation', 'federation', encoreFlags).description(
+	'List and reconnect the Federation peers the desktop app mirrors in its Left Bar'
+);
+
+federation
+	.command('peers')
+	.description('List the peers the desktop mirrors, with connection state and agent count')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationPeers(options));
+
+federation
+	.command('reconnect <peer>')
+	.description('Force the desktop to reconnect to a peer and reload its agent list')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((peer: string, options) => federationReconnect(peer, options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program

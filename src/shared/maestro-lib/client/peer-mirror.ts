@@ -123,6 +123,41 @@ export function summarizePeer(peer: MirroredPeer): MirrorPeerSummary {
 	};
 }
 
+/** What `findMirrorPeer()` answers: the one peer `ref` names, or why there is none. */
+export type MirrorPeerMatch =
+	| { ok: true; peer: MirrorPeerSummary }
+	| { ok: false; code: 'unknown-peer' | 'ambiguous-peer'; error: string };
+
+/**
+ * The mirrored peer `ref` names, the way the other remote verbs resolve one: the peer id exactly,
+ * then a case-insensitive peer id or remote name, then the remote id or a unique id prefix. A name
+ * two remotes share matches neither (their peer ids are their remote ids).
+ */
+export function findMirrorPeer(peers: readonly MirrorPeerSummary[], ref: string): MirrorPeerMatch {
+	const wanted = ref.trim();
+	const exact = peers.find((peer) => peer.peerId === wanted);
+	if (exact) return { ok: true, peer: exact };
+	const lower = wanted.toLowerCase();
+	const tiers = [
+		peers.filter(
+			(peer) => peer.peerId.toLowerCase() === lower || peer.name.toLowerCase() === lower
+		),
+		peers.filter((peer) => peer.remoteId === wanted),
+		wanted ? peers.filter((peer) => peer.remoteId.startsWith(wanted)) : [],
+	];
+	for (const matches of tiers) {
+		if (matches.length === 1) return { ok: true, peer: matches[0] };
+		if (matches.length > 1) {
+			return {
+				ok: false,
+				code: 'ambiguous-peer',
+				error: `Ambiguous peer "${ref}": matches ${matches.map((peer) => peer.peerId).join(', ')}`,
+			};
+		}
+	}
+	return { ok: false, code: 'unknown-peer', error: `Not a mirrored peer: ${ref}` };
+}
+
 function stateStep(peer: MirroredPeer): MirrorStep {
 	return { peer, push: [{ type: 'peer.state', peer: summarizePeer(peer) }] };
 }
