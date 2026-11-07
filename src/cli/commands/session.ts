@@ -1,7 +1,9 @@
 // Session inspection commands - read-only access to desktop conversation state
 // for external pollers (Maestro-Discord, Cue follow-ups, etc.).
 //
-// `session list` enumerates every open AI tab across every Maestro agent.
+// `session list` enumerates every open AI tab across every Maestro agent that
+// the tab bar draws. Hidden tabs (consults) are left out unless
+// `--include-hidden` is passed; every entry carries `hidden` either way.
 // `session show <tabId>` returns that tab's conversation history, with optional
 // `--since` (poll cursor) and `--tail` (cap) filters applied desktop-side so the
 // wire payload stays small even on long conversations.
@@ -17,6 +19,8 @@ import type { DesktopTabEntry as DesktopSessionEntry } from '../../shared/deskto
 
 export interface SessionListOptions {
 	json?: boolean;
+	/** Also list hidden tabs (consult transcripts the tab bar draws no chip for). */
+	includeHidden?: boolean;
 }
 
 export interface SessionShowOptions {
@@ -104,13 +108,18 @@ function parseSinceToMs(since: string): number | null {
 
 export async function sessionList(options: SessionListOptions): Promise<void> {
 	try {
-		const sessions = await withMaestroClient(async (client) => {
+		const allSessions = await withMaestroClient(async (client) => {
 			const result = await client.sendCommand<{ sessions?: DesktopSessionEntry[] }>(
 				{ type: 'list_desktop_sessions' },
 				'desktop_sessions_list'
 			);
 			return result.sessions ?? [];
 		});
+		// The desktop reports every stored AI tab so tab verbs can still resolve a
+		// hidden consult tab by ID. The listing matches the tab bar instead.
+		const sessions = options.includeHidden
+			? allSessions
+			: allSessions.filter((s) => s.hidden !== true);
 
 		if (options.json) {
 			console.log(JSON.stringify({ success: true, sessions }, null, 2));

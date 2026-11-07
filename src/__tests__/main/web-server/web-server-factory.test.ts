@@ -805,6 +805,40 @@ describe('web-server/web-server-factory', () => {
 			const entries = getCallback()();
 			expect(entries.map((entry: { state: string }) => entry.state)).toEqual(['busy', 'unknown']);
 		});
+
+		it('reports hidden and tab-order membership for every stored AI tab (#2008)', () => {
+			vi.mocked(mockSessionsStore.get).mockReturnValue([
+				{
+					id: 'agent-a',
+					name: 'Backend',
+					toolType: 'claude-code',
+					activeTabId: 'tab-a',
+					aiTabs: [
+						{ id: 'tab-a', state: 'idle' },
+						{ id: 'tab-consult', state: 'idle', hidden: true },
+						{ id: 'tab-orphan', state: 'idle' },
+					],
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'tab-a' },
+						{ type: 'ai', id: 'tab-consult' },
+						{ type: 'file', id: 'tab-orphan' },
+					],
+				},
+			]);
+
+			const entries = getCallback()();
+			expect(
+				entries.map((e: { tabId: string; hidden: boolean; inTabOrder: boolean }) => [
+					e.tabId,
+					e.hidden,
+					e.inTabOrder,
+				])
+			).toEqual([
+				['tab-a', false, true],
+				['tab-consult', true, true],
+				['tab-orphan', false, false],
+			]);
+		});
 	});
 
 	// PR2 of the CLI surface refactor: read-only conversation-state inspection
