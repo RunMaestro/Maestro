@@ -2340,7 +2340,106 @@ The host is the CLI bundle, run with Node.js. On a machine without the Maestro a
 - **`better-sqlite3` built for that Node**, installed next to the bundle: `npm install --prefix <dir of maestro-cli.js> better-sqlite3`. The host records usage and Cue history in SQLite.
 - **The provider CLIs** your agents use (Claude Code, Codex, OpenCode, and so on), on the host's `PATH`.
 
-To keep the host running across reboots, have your service manager run `maestro-cli host start --foreground` (with `--data-dir` if the directory is not the default) and stop it with SIGTERM, which drains as described above.
+To keep the host running across reboots, have your service manager run `maestro-cli host start --foreground` (with `--data-dir` if the directory is not the default) and stop it with SIGTERM, which drains as described above. [Run the Host as a Service](#run-the-host-as-a-service) has the unit files.
+
+## Run the Host as a Service
+
+`maestro-cli host start` detaches, but nothing starts it again after a reboot or a crash. A service manager does both. Maestro does not install these files: copy the one for your platform and change the paths.
+
+**Run the service as the user your SSH agents run as.** The host and the SSH agents then share one home directory, so the host reads the same provider logins and session files. A host that runs as another user cannot resume the provider sessions of an agent lifted onto it. This is not the `maestro` system user that the [server bundle](/maestro-cue-server) creates for a dedicated Cue engine: that user is for an engine that owns its whole machine, and an SSH agent you start does not run as it.
+
+The service manager starts the host with a small environment, not your login shell's. Put the directories of the provider CLIs your agents use (Claude Code, Codex, and so on) on the service's `PATH`, as both files below do. Run `command -v claude` (or the CLI you use) in your own shell to find them.
+
+Do not run the service on a data directory the desktop app also opens. While the desktop app holds the directory, the host refuses to start, and the service manager starts it again and again.
+
+### systemd (Linux)
+
+Save this as `~/.config/systemd/user/maestro-host.service`. `ExecStart` takes the absolute path of your `maestro-cli` wrapper (`command -v maestro-cli` prints it; `%h` is your home directory):
+
+```ini
+[Unit]
+Description=Maestro headless host
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/maestro-cli host start --foreground
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=10
+# Keep --stop-grace (30 s by default) below this, with a few seconds to spare
+TimeoutStopSec=90
+
+[Install]
+WantedBy=default.target
+```
+
+Then enable it, and turn on lingering so the host keeps running after you log out and starts at boot before anyone logs in:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now maestro-host
+loginctl enable-linger "$USER"
+
+systemctl --user status maestro-host
+journalctl --user -u maestro-host
+```
+
+Without lingering, systemd-logind stops your user's services, the host with them, when your last session ends. `host start` and `host status` warn when lingering is off for your user (`linger: false` in `--json`), and `remote-host status` passes that warning through to the laptop.
+
+### launchd (macOS)
+
+Save this as `~/Library/LaunchAgents/sh.maestro.host.plist`. It runs the CLI under the app's own executable, the same command the wrapper runs:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>sh.maestro.host</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Applications/Maestro.app/Contents/MacOS/Maestro</string>
+		<string>/Applications/Maestro.app/Contents/Resources/maestro-cli.js</string>
+		<string>host</string>
+		<string>start</string>
+		<string>--foreground</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>ELECTRON_RUN_AS_NODE</key>
+		<string>1</string>
+		<key>PATH</key>
+		<string>/Users/you/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<!-- Seconds launchd waits after SIGTERM before SIGKILL (default 20). Keep above stop-grace -->
+	<key>ExitTimeOut</key>
+	<integer>40</integer>
+</dict>
+</plist>
+```
+
+Replace `/Users/you` with your home directory: launchd does not expand `~` or `$HOME`. `KeepAlive` with `SuccessfulExit` set to false starts the host again when it exits with an error, and leaves it stopped after a clean stop. Load it, and check it:
+
+```bash
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/sh.maestro.host.plist
+launchctl print "gui/$(id -u)/sh.maestro.host"
+
+# Stop it (SIGTERM, which drains) and unload it
+launchctl bootout "gui/$(id -u)/sh.maestro.host"
+```
+
+A LaunchAgent runs while you are logged in to the Mac. On a Mac mini host, turn on automatic login so the host starts after a reboot. The host keeps the Mac awake while work is in flight (see `--no-prevent-sleep` under [`host start`](#host-start)).
 
 ## Cue Automation
 
