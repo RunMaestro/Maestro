@@ -24,7 +24,12 @@ describe('Agents Preload API', () => {
 	});
 
 	it('uses the single translation IPC contract and returns refusal unchanged', async () => {
-		const request = { agentId: 'agent', destination: 'codex' as const, action: 'apply' as const };
+		const request = {
+			agentId: 'agent',
+			tabId: 'selected-tab',
+			destination: 'codex' as const,
+			action: 'apply' as const,
+		};
 		const refusal = { success: false, error: 'Native resume is unverified' };
 		mockInvoke.mockResolvedValue(refusal);
 		expect(await api.translateProvider(request)).toEqual(refusal);

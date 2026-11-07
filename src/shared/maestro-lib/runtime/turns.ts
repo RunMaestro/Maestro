@@ -1,3 +1,10 @@
+import { isAutoModel } from '../../autoModel';
+import { resolveAutoTurn } from '../../autoTurn';
+import { parseRunOnTarget, type RunOnTarget } from '../../local-models/run-on';
+import { prepareTabForSend, TranslationSendHeldError } from '../translation/send';
+import type { TranslationServiceSession, NativeTranslationService } from '../translation/service';
+import { projectTabProvider, type ProviderSwitchAgent } from '../agents/providerSwap';
+import { createRuntimeTranslationService } from './translation';
 /**
  * The runtime's turns: send, queue, stop, and the per-tab event stream (CH-2 to CH-5, gap L10).
  *
@@ -103,6 +110,7 @@ export interface RuntimeTurnOptions {
 
 /** Seams for tests: the provider launch and the probes `loadTurnContext` makes. */
 export interface RuntimeTurnDeps {
+	translation?: Pick<NativeTranslationService, 'run'>;
 	runAgentTurn: typeof runAgentTurn;
 	probeBinary?(binaryName: string, customPath?: string): Promise<BinaryDetectionResult>;
 	readGitBranch?(cwd: string): Promise<string | undefined>;
@@ -139,10 +147,9 @@ interface TurnItem extends QueueItem {
 	text: string;
 	queuedAt: number;
 	/** Model and effort at the moment it was queued (a model change before it runs must not relabel it). */
-	turnSettings: { model?: string; effort?: string };
+	turnSettings: { model?: string; effort?: string; runOn?: RunOnTarget };
 	/**
-	 * The provider those settings were chosen on. A model name means nothing to another provider,
-	 * so a message still queued when the agent switches runs with the new provider's settings.
+	 * The provider captured when queued. Later agent edits cannot reroute this message.
 	 */
 	settingsProvider: string;
 }
@@ -187,6 +194,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	});
 
 	const sshStore = createSshRemoteStore(paths);
+	const translation =
+		deps.translation ?? createRuntimeTranslationService(paths, repository, registry);
 
 	const queues = new Map<string, ExecutionQueue<TurnItem>>();
 	/** Resolved by the first dispatch attempt of an item that ran straight away. */
@@ -206,15 +215,58 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	// -----------------------------------------------------------------------
 
 	async function startItem(agentId: string, item: TurnItem): Promise<QueuedTurnHandle> {
-		const record = repository.getAgent(agentId);
+		let record = repository.getAgent(agentId);
 		if (!record) throw new Error(`No agent ${agentId}.`);
-		const tabRecord = repository.getTab(agentId, item.tabId);
+		let tabRecord = repository.getTab(agentId, item.tabId);
 		if (!tabRecord) throw new Error(`The tab ${item.tabId} no longer exists.`);
 		// The tab's previous process has not gone yet: a timing collision, not a verdict on the item.
 		if (registry.isBusy(agentId, item.tabId)) throw new TurnCollisionError();
 
-		const agent = toTurnAgent(record);
+		const getTranslationSession = () => {
+			const current = repository.getAgent(agentId);
+			if (!current) throw new Error(`No agent ${agentId}.`);
+			return {
+				...current,
+				aiTabs: (current.aiTabs ?? []).map((tab) => ({
+					...tab,
+					agentSessionId: tab.agentSessionId ?? null,
+				})),
+			} as unknown as TranslationServiceSession;
+		};
+		try {
+			await prepareTabForSend(item.tabId, item.settingsProvider as ToolType, {
+				getSession: getTranslationSession,
+				translate: (request) => translation.run(request),
+				isBusy: () => registry.isBusy(agentId),
+			});
+		} catch (error) {
+			if (error instanceof TranslationSendHeldError && error.deferred)
+				throw new TurnCollisionError();
+			throw error;
+		}
+		record = repository.getAgent(agentId);
+		if (!record) throw new Error(`No agent ${agentId}.`);
+		tabRecord = repository.getTab(agentId, item.tabId);
+		if (!tabRecord) throw new Error(`The tab ${item.tabId} no longer exists.`);
+		const projected = projectTabProvider(
+			{
+				...record,
+				toolType: record.toolType as ToolType,
+				contextWindowSource:
+					record.contextWindowSource === 'user-edited' ? ('user-edited' as const) : undefined,
+				runOn: record.runOn,
+				providerOverrides: record.providerOverrides as ProviderSwitchAgent['providerOverrides'],
+			},
+			{
+				...tabRecord,
+				tabProvider: tabRecord.tabProvider as ToolType | undefined,
+				agentSessionId: tabRecord.agentSessionId ?? null,
+			},
+			item.settingsProvider as ToolType
+		);
+		const agent = toTurnAgent(projected.agent);
 		if (!agent) throw new Error('The agent has no working directory to run in.');
+		tabRecord = projected.tab!;
 
 		const loaded = await loadTurnContext(agent, {
 			paths,
@@ -227,12 +279,26 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		});
 		if (!loaded.ok) throw new Error(loaded.message);
 
+		const target = item.turnSettings.runOn;
+		if (target?.type === 'source')
+			throw new Error(
+				'This runtime host cannot prepare a Local Models source. Send this turn through the desktop.'
+			);
+		// Hosts without a model router use the shared no-decision resolution.
+		// The Auto selection is never handed to a provider as a model name.
+		const settings = isAutoModel(item.turnSettings.model)
+			? resolveAutoTurn({
+					toolType: item.settingsProvider as ToolType,
+					agentEffort: item.turnSettings.effort,
+					routing: { runOn: target },
+				})
+			: item.turnSettings;
 		const tab: TurnTab = toTurnTab(tabRecord);
 		const command = resolveSlashCommand(item.text, loaded.commands, agent.agentCommands);
 		const message: TurnMessage = {
 			text: item.text,
-			// Frozen settings only hold on the provider they were frozen on (see `settingsProvider`).
-			...(item.settingsProvider === agent.toolType ? { turnSettings: item.turnSettings } : {}),
+			// Queuing is sending: provider, model and effort remain the captured choice.
+			turnSettings: settings,
 			...(command ? { command } : {}),
 			...(item.readOnly ? { readOnly: true } : {}),
 		};
@@ -248,7 +314,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const started = await deps.runAgentTurn(turn, {
 			sessionId: `${agentId}-ai-${item.tabId}`,
 			sshStore,
-			claudeTokenSource: getClaudeTokenSourceFields(record as ClaudeTokenSourceFields),
+			claudeTokenSource: getClaudeTokenSourceFields(projected.agent as ClaudeTokenSourceFields),
 			maestroPBinPath: host.maestroPBinPath ?? null,
 			// A chat turn runs in the agent's own cwd, so a TUI turn may accept claude's
 			// folder-trust prompt there (#1872).
@@ -401,7 +467,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 							type: 'unknown',
 							message: `The message was not sent: ${event.error.message}`,
 							recoverable: true,
-							agentId: repository.getAgent(agentId)?.toolType ?? 'unknown',
+							agentId: event.item.settingsProvider,
 							timestamp: deps.now(),
 						},
 					});
@@ -469,9 +535,27 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		if (!record) return fail(method, 'not-found', `No agent ${agentId}.`);
 		const tabRecord = repository.getTab(agentId, tabId);
 		if (!tabRecord) return fail(method, 'not-found', `No tab ${tabId}.`);
-		const agent = toTurnAgent(record);
+		const projected = projectTabProvider(
+			{
+				...record,
+				toolType: record.toolType as ToolType,
+				contextWindowSource:
+					record.contextWindowSource === 'user-edited' ? ('user-edited' as const) : undefined,
+				runOn: record.runOn,
+				providerOverrides: record.providerOverrides as ProviderSwitchAgent['providerOverrides'],
+			},
+			{
+				...tabRecord,
+				tabProvider: tabRecord.tabProvider as ToolType | undefined,
+				agentSessionId: tabRecord.agentSessionId ?? null,
+			}
+		);
+		const agent = toTurnAgent(projected.agent);
 		if (!agent) return fail(method, 'rejected', 'The agent has no working directory to run in.');
 		const tab = toTurnTab(tabRecord);
+
+		const runOn = parseRunOnTarget(projected.agent.runOn ?? { type: 'provider' });
+		if (!runOn.ok) return fail(method, 'invalid', runOn.error);
 
 		const item: TurnItem = {
 			id: ctx.newId(),
@@ -482,6 +566,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			turnSettings: {
 				model: tab.customModel ?? agent.customModel,
 				effort: tab.customEffort ?? agent.customEffort,
+				runOn: structuredClone(runOn.target),
 			},
 			settingsProvider: agent.toolType,
 		};

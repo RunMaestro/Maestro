@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { UsageDashboardModal } from '../../../renderer/components/UsageDashboard/UsageDashboardModal';
+import { EMPTY_MODEL_USAGE } from '../../helpers/modelUsageFixtures';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Theme } from '../../../renderer/types';
@@ -25,6 +26,7 @@ vi.mock('lucide-react', () => {
 	return {
 		// UsageDashboardModal icons
 		X: createIcon('x', '×'),
+		Wand2: createIcon('wand2', ''),
 		BarChart3: createIcon('barchart', '📊'),
 		Calendar: createIcon('calendar', '📅'),
 		Download: createIcon('download', '⬇️'),
@@ -120,6 +122,8 @@ const mockMaestro = {
 			cue: { count: 0, durationMs: 0 },
 		}),
 		getDelegationByDay: vi.fn().mockResolvedValue([]),
+		// The Models tab loads its own record; empty, so it draws its empty state.
+		getModelUsage: vi.fn().mockResolvedValue(EMPTY_MODEL_USAGE),
 		exportUsage: mockExportUsage,
 		onStatsUpdate: mockOnStatsUpdate,
 		getAutoRunSessions: mockGetAutoRunSessions,
@@ -300,14 +304,15 @@ describe('UsageDashboardModal', () => {
 				// Use getAllByRole('tab') to find tabs - there may be multiple elements with text 'Agents'
 				// Cue ships on, so its tab sits between Auto Run and Shortcuts.
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs).toHaveLength(8);
+				expect(tabs).toHaveLength(9);
 				expect(tabs[0]).toHaveTextContent('Overview');
 				expect(tabs[1]).toHaveTextContent('Agent Overview');
 				expect(tabs[2]).toHaveTextContent('Agents');
 				expect(tabs[3]).toHaveTextContent('Groups');
 				expect(tabs[4]).toHaveTextContent('Tokens');
-				expect(tabs[5]).toHaveTextContent('Activity');
-				expect(tabs[6]).toHaveTextContent('Auto Run');
+				expect(tabs[5]).toHaveTextContent('Models');
+				expect(tabs[6]).toHaveTextContent('Activity');
+				expect(tabs[7]).toHaveTextContent('Auto Run');
 			});
 		});
 
@@ -1680,7 +1685,7 @@ describe('UsageDashboardModal', () => {
 
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs).toHaveLength(8);
+				expect(tabs).toHaveLength(9);
 
 				// First tab (Overview) should be selected
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'true');

@@ -7,6 +7,7 @@
 import { getCliPrompt } from '../services/prompt-loader';
 import { CORE_PROMPTS, isPromptAvailable } from '../../shared/promptDefinitions';
 import { readSettingValue } from '../services/storage';
+import { failCommand } from '../services/session-command';
 
 /** The core prompts that exist right now (none from a switched-off feature). */
 function availablePrompts() {
@@ -24,12 +25,7 @@ export async function promptsGet(id: string, options: PromptsGetOptions): Promis
 	if (!def) {
 		const known = available.map((p) => p.id).join(', ');
 		const message = `Unknown prompt id: ${id}. Available: ${known}`;
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(message);
-		}
-		process.exit(1);
+		failCommand(message, options.json);
 	}
 
 	try {
@@ -49,12 +45,7 @@ export async function promptsGet(id: string, options: PromptsGetOptions): Promis
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(message);
-		}
-		process.exit(1);
+		failCommand(message, options.json);
 	}
 }
 

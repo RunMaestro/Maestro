@@ -41,6 +41,10 @@ export interface AiCommandSuggestResult {
 	success: boolean;
 	command?: string;
 	error?: string;
+	/** One sentence on what the command does, from a Local Models source. */
+	explanation?: string;
+	/** The local model or endpoint that answered, when it was not the tab's provider. */
+	producedBy?: string;
 }
 
 export function createAiCommandApi() {

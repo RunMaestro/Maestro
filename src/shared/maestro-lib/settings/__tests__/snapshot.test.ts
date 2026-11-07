@@ -126,6 +126,8 @@ describe('buildSettingsSnapshot (ST-1)', () => {
 		expect(Object.keys(ENCORE_FEATURE_LABELS).sort()).toEqual(
 			Object.keys(ENCORE_FEATURE_DEFAULTS).sort()
 		);
+		expect(ENCORE_FEATURE_LABELS).not.toHaveProperty('ensemble');
+		expect(ENCORE_FEATURE_DEFAULTS).not.toHaveProperty('ensemble');
 	});
 });
 

@@ -1,3 +1,4 @@
+import type { ToolType } from '../types';
 import React, {
 	useRef,
 	useEffect,
@@ -137,8 +138,13 @@ interface RightPanelProps {
 	onAbortBatchOnError?: () => void;
 	onResumeAfterError?: () => void;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
-	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
+	onResumeSession?: (agentSessionId: string, provider?: ToolType) => void;
+	onOpenSessionAsTab?: (
+		agentSessionId: string,
+		projectPath?: string,
+		sessionName?: string,
+		provider?: ToolType
+	) => void;
 
 	// Modal handlers
 	onOpenAboutModal?: () => void;

@@ -6,6 +6,7 @@ import type { PluginJson } from '../plugins/primitives';
  */
 
 import type { TaskSelectionMode, UsageStats } from '../types';
+import type { CueGateOnUnavailable } from './gate';
 import type { EffortLevel, ModelTier } from '../modelTiers';
 
 /** Days of the week for scheduled triggers */
@@ -361,6 +362,30 @@ export interface CueSubscription {
 	 *  in its own file instead of bloating the YAML. */
 	fan_out_prompt_files?: string[];
 	filter?: Record<string, string | number | boolean>;
+	/** A condition in plain language that the event must meet before a run
+	 *  starts, such as "the comment asks for a code change or reports a bug".
+	 *  The `cue-gate` Local Models task answers it against the event payload;
+	 *  a "no" skips the run and records a `gated` event with the reason.
+	 *  Unlike `filter`, which drops an event before anything sees it, a gated
+	 *  event is kept in the activity log. Manual triggers are not gated. A cost
+	 *  control, not a security control: see `src/shared/cue/gate.ts`. */
+	gate?: string;
+	/** What a `gate` does when its model cannot answer (the task is off, the
+	 *  model is not installed, the server is down). `'run'` (the default)
+	 *  starts the run and warns the user; `'skip'` records a `gated` event
+	 *  instead. Ignored without a `gate`. */
+	gate_on_unavailable?: CueGateOnUnavailable;
+	/** Whether the `injection-screen` Local Models task scores the untrusted
+	 *  text this subscription substitutes (a comment, an issue body, a webhook
+	 *  payload) before a run starts. A value at or above `injection_threshold`
+	 *  blocks the run and records a `blocked-injection` event. Absent means
+	 *  the default: screened when this is an `action: command` subscription
+	 *  that substitutes an untrusted variable, not screened otherwise. See
+	 *  `src/shared/cue/injection-screen.ts` for the failure policy. */
+	screen_injection?: boolean;
+	/** The score (above 0, at most 1) at or above which a screened value
+	 *  blocks the run. Absent means 0.8. */
+	injection_threshold?: number;
 	repo?: string;
 	poll_minutes?: number;
 	gh_state?: CueGitHubState;
@@ -529,8 +554,44 @@ export interface CueEvent {
 	payload: Record<string, unknown>;
 }
 
-/** Status of a Cue run */
-export type CueRunStatus = 'running' | 'completed' | 'failed' | 'timeout' | 'stopped';
+/**
+ * Status of a Cue run.
+ *
+ * Two statuses are not runs, because nothing was spawned (see
+ * {@link isCueRunSkipped}):
+ *
+ * - `gated`: the subscription's `gate` said the event does not need a run. It
+ *   is recorded so the activity list can show the event and the reason. It is
+ *   not a failure.
+ * - `blocked-injection`: the prompt-injection screen refused the run. It IS a
+ *   failure the user has to see (see {@link isCueRunBlocked}), but it spent no
+ *   agent time, so it stays out of run counts and averages.
+ */
+export type CueRunStatus =
+	| 'running'
+	| 'completed'
+	| 'failed'
+	| 'timeout'
+	| 'stopped'
+	| 'gated'
+	| 'blocked-injection';
+
+/**
+ * Whether a status records an event that was skipped before anything was
+ * spawned. Code that counts runs, run time, or tokens leaves these out.
+ */
+export function isCueRunSkipped(status: CueRunStatus | string): boolean {
+	return status === 'gated' || status === 'blocked-injection';
+}
+
+/**
+ * Whether a status records a run the prompt-injection screen refused. Unlike
+ * `gated`, a block is a failure: pipeline health, History, and the group
+ * failure count all keep it.
+ */
+export function isCueRunBlocked(status: CueRunStatus | string): boolean {
+	return status === 'blocked-injection';
+}
 
 /** Result of a completed (or failed/timed-out) Cue run */
 export interface CueRunResult {

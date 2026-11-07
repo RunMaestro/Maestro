@@ -21,8 +21,9 @@ export type ModalResizeDirection = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 
  * trigger, a popover. There the dragged corner moves 1:1 with the cursor. Such
  * a surface should expose only the `s`, `e` and `se` handles: dragging `n` or
  * `w` would have to move the anchor, which this hook does not do.
+ * `bottom-left` pins a menu above its trigger and exposes `n`, `e` and `ne`.
  */
-export type ModalResizeAnchor = 'center' | 'top-left';
+export type ModalResizeAnchor = 'center' | 'top-left' | 'bottom-left';
 
 export interface UseResizableModalOptions {
 	resizeKey: ModalResizeKey;
@@ -42,6 +43,8 @@ export interface UseResizableModalOptions {
 	 * `top-left` is for a free-positioned window pinned by its top-left corner.
 	 * Its origin does not move, so the delta applies 1:1 - doubling it there
 	 * would make the frame race away from the pointer at twice its speed.
+	 * `bottom-left` uses the same 1:1 deltas for a menu above its trigger;
+	 * expose only `n`, `e` and `ne` handles so its bottom-left stays pinned.
 	 */
 	anchor?: ModalResizeAnchor;
 }

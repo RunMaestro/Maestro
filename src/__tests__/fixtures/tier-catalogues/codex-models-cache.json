@@ -1,0 +1,75 @@
+{
+	"client_version": "0.162.1",
+	"models": [
+		{
+			"slug": "gpt-6.1-sol",
+			"display_name": "GPT-6.1-Sol",
+			"description": "Latest workhorse model for coding and everyday work.",
+			"visibility": "list",
+			"priority": 1
+		},
+		{
+			"slug": "gpt-6-astra",
+			"display_name": "GPT-6-Astra",
+			"description": "Frontier intelligence for the most demanding work.",
+			"visibility": "list",
+			"priority": 2
+		},
+		{
+			"slug": "gpt-6-sol",
+			"display_name": "GPT-6-Sol",
+			"description": "Previous generation workhorse model.",
+			"visibility": "list",
+			"priority": 3
+		},
+		{
+			"slug": "gpt-6-luna",
+			"display_name": "GPT-6-Luna",
+			"description": "Fast and affordable model for easier tasks.",
+			"visibility": "list",
+			"priority": 4
+		},
+		{
+			"slug": "gpt-reserve",
+			"display_name": "GPT-Reserve",
+			"description": "Fast and affordable agentic coding model.",
+			"visibility": "hide",
+			"priority": 4
+		},
+		{
+			"slug": "gpt-5.6-sol",
+			"display_name": "GPT-5.6-Sol",
+			"description": "Older generation workhorse model.",
+			"visibility": "list",
+			"priority": 5
+		},
+		{
+			"slug": "gpt-5.6-terra",
+			"display_name": "GPT-5.6-Terra",
+			"description": "Older balanced model for straightforward work.",
+			"visibility": "list",
+			"priority": 8
+		},
+		{
+			"slug": "gpt-5.6-luna",
+			"display_name": "GPT-5.6-Luna",
+			"description": "Older fast and efficient model.",
+			"visibility": "list",
+			"priority": 9
+		},
+		{
+			"slug": "gpt-5.5",
+			"display_name": "GPT-5.5",
+			"description": "Legacy coding model.",
+			"visibility": "hide",
+			"priority": 13
+		},
+		{
+			"slug": "codex-auto-review",
+			"display_name": "Codex Auto Review",
+			"description": "Automatic approval review model for Codex.",
+			"visibility": "hide",
+			"priority": 43
+		}
+	]
+}

@@ -23,9 +23,18 @@ vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 }));
 
+// The consult budget is a file under the Maestro data directory. The real rule
+// runs against a temp directory in services/consult-budget-guard.test.ts; here
+// the guard is a mock, so no ask in this suite touches the live counter.
+vi.mock('../../../cli/services/consult-budget-guard', () => ({
+	admitCliConsult: vi.fn(),
+}));
+
 import { ask } from '../../../cli/commands/ask';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { resolveAgentId } from '../../../cli/services/storage';
+import { admitCliConsult } from '../../../cli/services/consult-budget-guard';
+import { CONSULT_BUDGET_EXHAUSTED_CODE } from '../../../shared/consultBudget';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../../shared/agentDelegation';
 
@@ -37,6 +46,9 @@ function mockClient(response: Record<string, unknown>) {
 	);
 	return sendCommand;
 }
+
+/** The place in the chain the guard hands the consulted agent by default. */
+const TARGET_CHAIN = { chainId: 'chain-under-test', depth: 1 };
 
 describe('ask command', () => {
 	// `--from` defaults to the caller identity in the environment, and the suite
@@ -53,6 +65,7 @@ describe('ask command', () => {
 		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 		vi.mocked(resolveAgentId).mockImplementation((id: string) => `resolved-${id}`);
+		vi.mocked(admitCliConsult).mockReturnValue({ allowed: true, chain: TARGET_CHAIN });
 	});
 
 	it('sends cross_agent_ask - never send_command - and prints the answer', async () => {
@@ -191,6 +204,85 @@ describe('ask command', () => {
 
 			expect(sendCommand).not.toHaveBeenCalled();
 			expect(errorSpy).toHaveBeenCalledWith('Error: an agent cannot consult itself');
+		});
+	});
+
+	describe('the consult budget', () => {
+		const refusal = {
+			allowed: false as const,
+			code: CONSULT_BUDGET_EXHAUSTED_CODE,
+			message:
+				'Consultation budget exhausted, so nothing was sent: the agents working on this message have spent 25 of 25 consults and delegations. The budget is the maxConsultationsPerTurn setting.',
+		};
+
+		it('refuses loudly on stderr with a non-zero exit, and consults nobody', async () => {
+			const sendCommand = mockClient({ success: true, answer: 'ok' });
+			vi.mocked(admitCliConsult).mockReturnValue(refusal);
+
+			await ask('pedtome', 'q', {});
+
+			expect(errorSpy).toHaveBeenCalledWith(`Error: ${refusal.message}`);
+			expect(exitSpy).toHaveBeenCalledWith(1);
+			// An empty answer would read as a peer with nothing to say.
+			expect(logSpy).not.toHaveBeenCalled();
+			expect(withMaestroClient).not.toHaveBeenCalled();
+			expect(sendCommand).not.toHaveBeenCalled();
+		});
+
+		it('reports the same message and code as every other verb with --json', async () => {
+			mockClient({ success: true, answer: 'ok' });
+			vi.mocked(admitCliConsult).mockReturnValue(refusal);
+
+			await ask('pedtome', 'q', { json: true });
+
+			expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+				success: false,
+				error: refusal.message,
+				code: CONSULT_BUDGET_EXHAUSTED_CODE,
+			});
+			expect(exitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('spends once per ask, from the environment the command runs in', async () => {
+			mockClient({ success: true, answer: 'ok' });
+
+			await ask('pedtome', 'q', {});
+
+			expect(admitCliConsult).toHaveBeenCalledExactlyOnceWith();
+		});
+
+		// Checked last: an ask that was never going to start must not cost the
+		// chain one of its consults.
+		it('spends nothing on an invocation it rejects', async () => {
+			mockClient({ success: true });
+
+			await ask('pedtome', '   ', {});
+			await ask('kensho', 'q', { from: 'kensho' });
+			await ask('pedtome', 'q', { timeout: '99999' });
+
+			expect(admitCliConsult).not.toHaveBeenCalled();
+		});
+
+		it("sends the consulted agent's place in the chain with the question", async () => {
+			const sendCommand = mockClient({ success: true, answer: 'ok' });
+
+			await ask('pedtome', 'q', {});
+
+			expect(sendCommand.mock.calls[0][0]).toMatchObject({
+				type: 'cross_agent_ask',
+				consultChain: TARGET_CHAIN,
+			});
+		});
+
+		it('keeps a validation failure free of a code with --json', async () => {
+			mockClient({ success: true });
+
+			await ask('pedtome', '   ', { json: true });
+
+			expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+				success: false,
+				error: 'question cannot be empty',
+			});
 		});
 	});
 });

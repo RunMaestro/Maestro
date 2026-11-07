@@ -8,7 +8,8 @@
  * push rc", "every weekday at 9am summarize the PR queue").
  *
  * Modes, selected by flag:
- *   - default:            create a task (one-shot, daily, or interval)
+ *   - default:            create a task (one-shot, daily, or interval), with an
+ *                         optional `--gate` a local model checks at each fire
  *   - `--list`:           enumerate scheduled tasks across every agent
  *   - `--cancel <name>`:  delete a task
  *   - `--reschedule <n>`: change WHEN an existing task fires
@@ -18,6 +19,10 @@
  * shared with the desktop app's Scheduled Tasks tab, so a task created here
  * and one created by clicking are the same object on disk. Writes do not need
  * the desktop app running - the engine's YAML watcher picks them up.
+ *
+ * A task's gate is set here at creation and read back by `--list`. Changing or
+ * removing it afterwards is `maestro-cli cue gate <name>`, which reaches every
+ * event type, as `cue enable` / `cue disable` do for the on/off switch.
  */
 import * as fs from 'fs';
 import { readLiveSessions } from '../services/storage';
@@ -51,8 +56,15 @@ import type {
 	CueScheduleDay,
 } from '../../shared/cue/contracts';
 import { parseCueAutoRunWorktree } from '../../shared/cue/autorun-worktree';
+import {
+	CUE_GATE_ON_UNAVAILABLE,
+	cueGateConditionProblem,
+	parseCueGateOnUnavailable,
+	type CueGateOnUnavailable,
+} from '../../shared/cue/gate';
 import { formatCueTurnSettings, parseCueTurnSettingsInput } from '../../shared/cue/turn-settings';
 import type { SessionInfo } from '../../shared/types';
+import { ExitCode, exitWith } from '../exit-codes';
 
 export interface CueScheduleOptions {
 	in?: string;
@@ -93,6 +105,8 @@ export interface CueScheduleOptions {
 	worktreePath?: string;
 	baseBranch?: string;
 	createPr?: boolean;
+	gate?: string;
+	gateOnUnavailable?: string;
 	tier?: string;
 	json?: boolean;
 }
@@ -143,7 +157,7 @@ function errorOut(message: string, options: CueScheduleOptions, code?: string): 
 	} else {
 		console.error(`Error: ${message}`);
 	}
-	process.exit(1);
+	exitWith(ExitCode.GeneralError);
 }
 
 /** CLI entry point. Routes to the mode selected by the flags. */
@@ -193,6 +207,11 @@ interface ScheduledTaskRow {
 	 *  worktree it fires in. Present only on autorun rows, so a schedule written
 	 *  with `--auto-run` can be read back and checked. */
 	auto_run?: CueAutoRunConfig;
+	/** The task's gate condition. Present only on a gated task, so a gate
+	 *  written with `--gate` (or `cue gate`) can be read back and checked. */
+	gate?: string;
+	/** Present only when the task spells the policy out (absent = run). */
+	gate_on_unavailable?: CueGateOnUnavailable;
 	tier: string;
 	model: string;
 	effort: string;
@@ -214,6 +233,8 @@ function toRow(task: ScheduledTask, now: number): ScheduledTaskRow {
 		action: task.action,
 		label: task.label,
 		...(task.autoRun ? { auto_run: task.autoRun } : {}),
+		...(task.gate ? { gate: task.gate } : {}),
+		...(task.gateOnUnavailable ? { gate_on_unavailable: task.gateOnUnavailable } : {}),
 		tier: task.tier ?? '',
 		model: task.model ?? '',
 		effort: task.effort ?? '',
@@ -235,6 +256,12 @@ function renderTable(rows: ScheduledTaskRow[]): string {
 		{ header: 'ACTION', get: (r) => r.action },
 		{ header: 'LABEL', get: (r) => r.label },
 	];
+	// A gate changes whether a task runs at all, so it is listed. The column
+	// is drawn only when some task has one: most lists have none, and an
+	// always-empty trailing column would be noise on every one of them.
+	if (rows.some((row) => row.gate)) {
+		columns.push({ header: 'GATE', get: (r) => r.gate ?? '' });
+	}
 	return formatTextTable(
 		columns.map((col) => col.header),
 		rows.map((row) => columns.map((col) => col.get(row)))
@@ -797,6 +824,8 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 		graceMinutes = n;
 	}
 
+	const gate = parseGateFlags(options);
+
 	const notifyMessage =
 		(options.message && options.message.length > 0 ? options.message : undefined) ??
 		(options.label && options.label.length > 0 ? options.label : undefined) ??
@@ -821,6 +850,7 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 		// the Auto Run window: the alternative is a run that never happened and
 		// left nothing behind to say why.
 		keepOnFailure: options.keepOnFailure === true || autoRun !== undefined,
+		...(gate ? { gate: gate.condition, gateOnUnavailable: gate.onUnavailable } : {}),
 		tier,
 		model,
 		effort,
@@ -854,6 +884,8 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 				interval_minutes: timing.intervalMinutes ?? null,
 				agent_id: agent.id,
 				pipeline_name: pipelineName,
+				...(gate ? { gate: gate.condition } : {}),
+				...(gate?.onUnavailable ? { gate_on_unavailable: gate.onUnavailable } : {}),
 				tier: tier ?? '',
 				model: model ?? '',
 				effort: effort ?? '',
@@ -869,4 +901,46 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 	console.log(
 		`Scheduled ${noun} ${quoted} on agent ${agentDisplay}: ${describeTiming(timing)}${modelNote}`
 	);
+	if (gate) {
+		// The gate checks nothing until the `cue-gate` task has a model, and
+		// this command runs with the app closed, so it cannot look. Say where
+		// to look instead of implying the gate is live.
+		console.log(`Gate: ${gate.condition}`);
+		console.log(
+			'The Local Models task "cue-gate" checks it. See `maestro-cli models status cue-gate`.'
+		);
+	}
+}
+
+/**
+ * Read `--gate` / `--gate-on-unavailable`, or `undefined` when the task has no
+ * gate. Refused here, by flag name, for the same reason an Auto Run document is
+ * checked up front: a gate the engine rejects would surface at the first fire,
+ * with nobody watching.
+ */
+function parseGateFlags(
+	options: CueScheduleOptions
+): { condition: string; onUnavailable?: CueGateOnUnavailable } | undefined {
+	if (options.gate === undefined) {
+		if (options.gateOnUnavailable !== undefined) {
+			errorOut('--gate-on-unavailable requires --gate', options, 'GATE_POLICY_WITHOUT_GATE');
+		}
+		return undefined;
+	}
+	const problem = cueGateConditionProblem(options.gate);
+	if (problem) errorOut(`--gate: ${problem}`, options, 'BAD_GATE');
+
+	let onUnavailable: CueGateOnUnavailable | undefined;
+	if (options.gateOnUnavailable !== undefined) {
+		const parsed = parseCueGateOnUnavailable(options.gateOnUnavailable);
+		if (!parsed) {
+			errorOut(
+				`--gate-on-unavailable must be one of: ${CUE_GATE_ON_UNAVAILABLE.join(', ')}`,
+				options,
+				'BAD_GATE_POLICY'
+			);
+		}
+		onUnavailable = parsed;
+	}
+	return { condition: options.gate.trim(), onUnavailable };
 }

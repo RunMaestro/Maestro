@@ -20,7 +20,7 @@ import {
 	type CampaignStatus,
 } from '../../shared/campaign';
 import { TERMINAL_AGENT_RUN_STATUSES } from '../../shared/agent-run/lifecycle';
-import { assertSerializedJsonIsSafe } from '../../shared/jsonUtils';
+import { atomicWriteJsonSync } from '../../shared/atomicJsonSync';
 import { serializeWithMemoizedArray } from '../../shared/memoizedJsonSerialize';
 import { getConfigDirectory } from './storage';
 import { withStoreLock } from './agent-run-lock';
@@ -192,16 +192,16 @@ function atomicWriteJson(filename: string, value: unknown): void {
 	ensureConfigDirectory();
 	const filePath = getStorePath(filename);
 	const cached = CACHED_JSON_FILES.has(filename);
-	// The runs files reuse each unchanged entry's memoized JSON; the output is
-	// byte-identical to JSON.stringify(value, null, '\t').
-	const content = `${cached ? serializeWithMemoizedArray(value, 'runs') : JSON.stringify(value, null, '\t')}\n`;
-	// Guards against writing the literal "undefined" over a good file. Skips the
-	// full round-trip parse on large payloads, where it cost more than the write
-	// itself - see assertSerializedJsonIsSafe.
-	assertSerializedJsonIsSafe(content, filePath);
-	const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-	fs.writeFileSync(tempPath, content, 'utf-8');
-	fs.renameSync(tempPath, filePath);
+	// The shared writer guards against writing the literal "undefined" over a
+	// good file, and skips the full round-trip parse on large payloads, where it
+	// cost more than the write itself - see assertSerializedJsonIsSafe.
+	atomicWriteJsonSync(filePath, value, {
+		indent: '\t',
+		trailingNewline: true,
+		// The runs files reuse each unchanged entry's memoized JSON; the output is
+		// byte-identical to JSON.stringify(value, null, '\t').
+		...(cached ? { serialize: (data: unknown) => serializeWithMemoizedArray(data, 'runs') } : {}),
+	});
 	if (cached) {
 		// Every writer holds the store lock, so nothing else can replace the file
 		// between the rename and this stat.

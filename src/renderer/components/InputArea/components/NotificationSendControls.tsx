@@ -1,4 +1,5 @@
 import { memo, useMemo } from 'react';
+import { Mic } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { ComposerSendColumn, type ComposerSendMenu } from '../../ChatComposer';
 import { SendMenuPopover } from './SendMenuPopover';
@@ -11,6 +12,18 @@ interface NotificationSendControlsProps {
 	theme: Theme;
 	isTerminalMode: boolean;
 	processInput: () => void;
+	/**
+	 * Show the A Cappella microphone under Send.
+	 *
+	 * True only when the Encore Feature owns the composer's microphone. The Web
+	 * Speech dictation button stays where it has always been, in the toolbar row
+	 * and on touch pointers only, so exactly one microphone is ever on screen.
+	 */
+	showVoiceButton?: boolean;
+	/** True while this agent holds the voice floor. */
+	isVoiceListening?: boolean;
+	/** Start or end the voice session. Stable identity (see InputArea). */
+	onToggleVoice?: () => void;
 }
 
 /**
@@ -21,6 +34,9 @@ export const NotificationSendControls = memo(function NotificationSendControls({
 	theme,
 	isTerminalMode,
 	processInput,
+	showVoiceButton = false,
+	isVoiceListening = false,
+	onToggleVoice,
 }: NotificationSendControlsProps) {
 	const sendMenu = useMemo<ComposerSendMenu>(
 		() => ({
@@ -54,11 +70,31 @@ export const NotificationSendControls = memo(function NotificationSendControls({
 	);
 
 	return (
-		<ComposerSendColumn
-			theme={theme}
-			onSend={processInput}
-			sendTitle={isTerminalMode ? 'Run command (Enter)' : 'Send message'}
-			sendMenu={sendMenu}
-		/>
+		<div className="flex flex-shrink-0 flex-col gap-2">
+			<ComposerSendColumn
+				theme={theme}
+				onSend={processInput}
+				sendTitle={isTerminalMode ? 'Run command (Enter)' : 'Send message'}
+				sendMenu={sendMenu}
+			/>
+			{showVoiceButton && onToggleVoice && (
+				<button
+					type="button"
+					data-testid="composer-voice-button"
+					onClick={onToggleVoice}
+					className={`p-2 rounded-lg border transition-all ${isVoiceListening ? 'animate-pulse' : ''}`}
+					style={{
+						backgroundColor: isVoiceListening ? `${theme.colors.accent}20` : theme.colors.bgMain,
+						borderColor: isVoiceListening ? theme.colors.accent : theme.colors.border,
+						color: isVoiceListening ? theme.colors.accent : theme.colors.textDim,
+					}}
+					title={isVoiceListening ? 'End the voice session' : 'Talk to this agent'}
+					aria-label={isVoiceListening ? 'End the voice session' : 'Talk to this agent'}
+					aria-pressed={isVoiceListening}
+				>
+					<Mic className="w-4 h-4" />
+				</button>
+			)}
+		</div>
 	);
 });

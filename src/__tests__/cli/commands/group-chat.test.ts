@@ -31,6 +31,7 @@ import {
 } from '../../../cli/commands/group-chat';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import type { RemoteGroupChatState } from '../../../shared/groupChatRemote';
+import { formatError } from '../../../cli/output/formatter';
 import { QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS } from '../../../shared/chatSteering';
 
 function chat(id: string, topic: string, extra: Partial<RemoteGroupChatState> = {}) {
@@ -136,7 +137,7 @@ describe('group-chat commands', () => {
 
 		it('requires at least one participant', async () => {
 			await expect(groupChatStart('R', { participant: [] })).rejects.toThrow('process.exit');
-			expect(errorSpy).toHaveBeenCalledWith('Error: At least one --participant is required');
+			expect(errorSpy).toHaveBeenCalledWith(formatError('At least one --participant is required'));
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 
@@ -144,7 +145,7 @@ describe('group-chat commands', () => {
 			await expect(groupChatStart('R', { participant: ['missing'] })).rejects.toThrow(
 				'process.exit'
 			);
-			expect(errorSpy).toHaveBeenCalledWith('Error: Agent not found: missing');
+			expect(errorSpy).toHaveBeenCalledWith(formatError('Agent not found: missing'));
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 
@@ -173,7 +174,7 @@ describe('group-chat commands', () => {
 			mockBridge({ start_group_chat: { type: 'error', message: 'At least 1 participant' } });
 
 			await expect(groupChatStart('R', { participant: ['rc'] })).rejects.toThrow('process.exit');
-			expect(errorSpy).toHaveBeenCalledWith('Error: At least 1 participant');
+			expect(errorSpy).toHaveBeenCalledWith(formatError('At least 1 participant'));
 		});
 	});
 
@@ -262,7 +263,7 @@ describe('group-chat commands', () => {
 				groupChatSteer('abc123', undefined, { item: 'item-1', readOnly: true })
 			).rejects.toThrow('process.exit');
 			expect(errorSpy).toHaveBeenCalledWith(
-				'Error: --read-only applies to new text; a queued item keeps its own setting'
+				formatError('--read-only applies to new text; a queued item keeps its own setting')
 			);
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
@@ -310,7 +311,7 @@ describe('group-chat commands', () => {
 			});
 
 			await expect(groupChatSteer('abc123', 'go', {})).rejects.toThrow('process.exit');
-			expect(errorSpy).toHaveBeenCalledWith('Error: Missing chatId');
+			expect(errorSpy).toHaveBeenCalledWith(formatError('Missing chatId'));
 		});
 
 		it('requires exactly one of a message and --item, before contacting the app', async () => {
@@ -463,7 +464,14 @@ describe('group-chat commands', () => {
 			});
 
 			await expect(groupChatArchive('Release', {})).rejects.toThrow('process.exit');
-			expect(errorSpy).toHaveBeenCalledWith('Error: Failed to archive group chat');
+			expect(errorSpy).toHaveBeenCalledWith(formatError('Failed to archive group chat'));
+			expect(exitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('reports bridge failures through the shared command error handler', async () => {
+			vi.mocked(withMaestroClient).mockRejectedValue(new Error('Desktop unavailable'));
+			await expect(groupChatArchive('Release', {})).rejects.toThrow('process.exit');
+			expect(errorSpy).toHaveBeenCalledWith(formatError('Desktop unavailable'));
 			expect(exitSpy).toHaveBeenCalledWith(1);
 		});
 	});

@@ -157,6 +157,13 @@ describe('FilePreviewHeader on a phone', () => {
 		expect(screen.getByText('View in Document Graph')).toBeInTheDocument();
 	});
 
+	it('omits the duplicate document microphone from the actions sheet', () => {
+		renderHeader();
+		openSheet();
+		expect(screen.queryByTestId('talk-with-document-button')).not.toBeInTheDocument();
+		expect(screen.queryByText('Talk with this document')).not.toBeInTheDocument();
+	});
+
 	it('offers the preview tier as an accordion rather than an anchored popover', () => {
 		const onPreviewTierChange = vi.fn();
 		renderHeader({ onPreviewTierChange });
@@ -189,6 +196,12 @@ describe('FilePreviewHeader on a desktop', () => {
 		expect(screen.getByTestId('preview-tier-chip-button')).toBeInTheDocument();
 		expect(screen.getByText('/Users/pedram/Pedsidian/Meetings')).toBeInTheDocument();
 		expect(screen.getByText('Size:')).toBeInTheDocument();
+	});
+
+	it('omits the duplicate document microphone and its toolbar preference', () => {
+		renderHeader();
+		expect(screen.queryByTestId('talk-with-document-button')).not.toBeInTheDocument();
+		expect(FILE_PREVIEW_TOOLBAR_BUTTON_KEYS).not.toContain('talkWithDocument');
 	});
 
 	// MAESTRO-YS: an Untitled (unsaved) tab has an empty path. Reveal handed that

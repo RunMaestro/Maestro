@@ -6,6 +6,13 @@ Session interface (agent data model) and code conventions for the Maestro codeba
 
 ## Session Interface (Agent Data Model)
 
+`waiting_input` means the permission relay has an unresolved request for the agent.
+The native registry owns this transient signal; owning renderers publish it as
+runtime state. A live-process reattach preserves it until the request resolves.
+`selectNeedsInputCount` in `src/renderer/stores/sessionStore.ts` counts waiting
+agents once, excluding Pianola and worktree children, for both the dashboard badge
+and browser page title. Idle or unread conversations do not count as requests.
+
 Key fields on the Session object (abbreviated - see `src/renderer/types/index.ts` for full definition):
 
 ```typescript
@@ -129,6 +136,7 @@ interface AITab {
 	providerSessions?: Partial<Record<ToolType, ProviderTabSession>>;
 	turnProvider?: ToolType; // Codified at send; turnModel?, turnEffort?
 	agentError?: AgentError; // Tab-specific error banner
+	documentOrigin?: { path: string; archived?: boolean }; // Document chat binding
 	scrollTop?: number;
 }
 
@@ -159,6 +167,10 @@ interface FilePreviewTab {
 type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal' | 'browser' | 'group'; id: string };
 ```
 
+Document chats are ordinary AI tabs. New chat sets `documentOrigin.archived` on the old thread;
+active text and voice routing exclude archived threads, while document history can restore them.
+Persistence retains the full transcript of active and archived document chats, including deferred
+content merges and closed-tab history. Ordinary tabs keep their existing log cap.
 **Other tab types** (not restated here, read them in `src/renderer/types/index.ts`):
 
 - `TerminalTab` (~line 1004): `id`, `name | null` ("Terminal N" when null), `shellType`, `pid` (0 until the PTY spawns), `cwd`, `state: 'idle' | 'busy' | 'exited'`, `exitCode?`. Helpers in `src/renderer/utils/terminalTabHelpers.ts`.

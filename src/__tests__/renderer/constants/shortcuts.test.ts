@@ -361,6 +361,8 @@ describe('DEFAULT_SHORTCUTS / TAB_SHORTCUTS / FIXED_SHORTCUTS duplicate bindings
 describe('every registered action has a handler', () => {
 	const UNBOUND_IDS = [
 		'showSnoozeList',
+		'tabCleanupSuggestions',
+		'openDelegationGraph',
 		'openMediaPlayer',
 		'mediaPlayPause',
 		'mediaNext',
@@ -369,6 +371,7 @@ describe('every registered action has a handler', () => {
 		'clearAllNotifications',
 		'toggleInAppToasts',
 		'openThemeSettings',
+		'dictate',
 	];
 
 	it('registers each unbound id with empty keys', () => {

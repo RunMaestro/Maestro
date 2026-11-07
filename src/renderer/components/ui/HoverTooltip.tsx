@@ -60,6 +60,13 @@ export interface HoverTooltipProps {
 	 * the available viewport; this prop can impose a narrower wrapping boundary.
 	 */
 	maxWidth?: number;
+	/**
+	 * Stacking order for the portaled tooltip. The default sits with menus and
+	 * tooltips inside a modal; a trigger on a surface that outranks modals (the
+	 * voice HUD) must pass its own layer from `Z_LAYERS`, or the tooltip draws
+	 * BEHIND the button it describes.
+	 */
+	zIndex?: number;
 }
 
 const VIEWPORT_MARGIN = 8;
@@ -76,6 +83,7 @@ export function HoverTooltip({
 	triggerClassName = 'inline-flex',
 	triggerStyle,
 	maxWidth,
+	zIndex = 10000,
 }: HoverTooltipProps) {
 	const triggerRef = useRef<HTMLSpanElement>(null);
 	const tooltipRef = useRef<HTMLDivElement>(null);
@@ -150,6 +158,8 @@ export function HoverTooltip({
 				style={triggerStyle}
 				onMouseEnter={handleEnter}
 				onMouseLeave={() => setOpen(false)}
+				onFocus={handleEnter}
+				onBlur={() => setOpen(false)}
 			>
 				{children}
 			</span>
@@ -174,7 +184,7 @@ export function HoverTooltip({
 											maxWidth ?? Number.POSITIVE_INFINITY,
 											Math.max(0, window.innerWidth - VIEWPORT_MARGIN * 2)
 										),
-							zIndex: 10000,
+							zIndex,
 							...elevatedSurfaceStyle(theme),
 							color: theme.colors.textMain,
 							opacity: pos ? 1 : 0,

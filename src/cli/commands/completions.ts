@@ -11,9 +11,9 @@
 //   maestro-cli completions bash >> ~/.bashrc
 //   maestro-cli completions fish >  ~/.config/fish/completions/maestro-cli.fish
 
-import type { Command, Option } from 'commander';
+import type { Command } from 'commander';
 import { formatError } from '../output/formatter';
-import { ExitCode } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 import { listedSubcommands } from '../utils/encore-gate';
 
 interface CommandNode {
@@ -25,7 +25,8 @@ interface CommandNode {
 /** Collect the long-form flags declared directly on a command. */
 function collectFlags(cmd: Command): string[] {
 	const flags: string[] = [];
-	for (const opt of cmd.options as readonly Option[]) {
+	for (const opt of cmd.options) {
+		// A hidden option is a kept alias for an old spelling: do not offer it.
 		if (opt.hidden) continue;
 		// `opt.long` is the `--foo` form; fall back to the short form if that's all
 		// the option has. Skip Commander's auto help (added per-command).
@@ -153,6 +154,6 @@ export function completions(program: Command, shell: string): void {
 			break;
 		default:
 			console.error(formatError(`Unsupported shell "${shell}". Use one of: bash, zsh, fish.`));
-			process.exit(ExitCode.InvalidUsage);
+			exitWith(ExitCode.InvalidUsage);
 	}
 }

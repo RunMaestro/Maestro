@@ -11,7 +11,10 @@ import {
 	resolveAgentEnvironment,
 	isBlankEnvValue,
 	isBlankEnvKey,
+	isEnvVarSet,
+	isValidEnvVarName,
 	stripBlankEnvVars,
+	applyEnvVarMerges,
 } from '../../shared/agentEnvironment';
 
 describe('resolveAgentEnvironment', () => {
@@ -130,9 +133,67 @@ describe('maskEnvValue', () => {
 
 describe('envSourceLabel', () => {
 	it('names each layer distinctly', () => {
-		const labels = (['global', 'agent', 'session'] as const).map(envSourceLabel);
-		expect(new Set(labels).size).toBe(3);
-		expect(labels).toEqual(['Global', 'Provider', 'This agent']);
+		const labels = (['global', 'agent', 'session', 'gateway'] as const).map(envSourceLabel);
+		expect(new Set(labels).size).toBe(4);
+		expect(labels).toEqual(['Global', 'Provider', 'This agent', 'Local Models gateway']);
+	});
+});
+
+describe('resolveAgentEnvironment: the gateway layer', () => {
+	const gateway = { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8787' };
+
+	it('reports the gateway as the source, over a global value it shadows', () => {
+		const resolved = resolveAgentEnvironment({
+			global: { ANTHROPIC_BASE_URL: 'https://global.example.com' },
+			session: { OTHER: 'x' },
+			gateway,
+		});
+
+		expect(resolved.find((entry) => entry.key === 'ANTHROPIC_BASE_URL')).toEqual({
+			key: 'ANTHROPIC_BASE_URL',
+			value: 'http://127.0.0.1:8787',
+			source: 'gateway',
+			shadowedBy: ['global'],
+		});
+	});
+
+	it("leaves the variable to the agent's own value when it sets one", () => {
+		const resolved = resolveAgentEnvironment({
+			session: { ANTHROPIC_BASE_URL: 'https://mine.example.com' },
+			gateway,
+		});
+
+		expect(resolved).toEqual([
+			{
+				key: 'ANTHROPIC_BASE_URL',
+				value: 'https://mine.example.com',
+				source: 'session',
+				shadowedBy: [],
+			},
+		]);
+	});
+
+	it('yields to the provider-level value only while the agent has no vars of its own', () => {
+		const agent = { ANTHROPIC_BASE_URL: 'https://provider.example.com' };
+
+		expect(resolveAgentEnvironment({ agent, gateway })[0].source).toBe('agent');
+		// An agent record, even an empty one, replaces the provider-level set.
+		expect(resolveAgentEnvironment({ agent, session: {}, gateway })[0].source).toBe('gateway');
+	});
+
+	it('applies over a blank value, which is an absence and not a choice', () => {
+		const resolved = resolveAgentEnvironment({ session: { ANTHROPIC_BASE_URL: ' ' }, gateway });
+
+		expect(resolved[0]).toMatchObject({ source: 'gateway', shadowedBy: ['session'] });
+	});
+});
+
+describe('isEnvVarSet', () => {
+	it('is true only for a real value', () => {
+		expect(isEnvVarSet({ A: 'x' }, 'A')).toBe(true);
+		expect(isEnvVarSet({ A: '  ' }, 'A')).toBe(false);
+		expect(isEnvVarSet({ A: 'x' }, 'B')).toBe(false);
+		expect(isEnvVarSet(undefined, 'A')).toBe(false);
 	});
 });
 
@@ -191,5 +252,59 @@ describe('isBlankEnvKey', () => {
 	it('treats any real name as named', () => {
 		expect(isBlankEnvKey('A')).toBe(false);
 		expect(isBlankEnvKey('CLAUDE_CONFIG_DIR')).toBe(false);
+	});
+});
+
+describe('isValidEnvVarName', () => {
+	it('accepts portable names', () => {
+		expect(isValidEnvVarName('OPENAI_API_KEY')).toBe(true);
+		expect(isValidEnvVarName('_private')).toBe(true);
+		expect(isValidEnvVarName('a1')).toBe(true);
+	});
+
+	it('rejects names a shell cannot export', () => {
+		expect(isValidEnvVarName('')).toBe(false);
+		expect(isValidEnvVarName('1KEY')).toBe(false);
+		expect(isValidEnvVarName('MY-KEY')).toBe(false);
+		expect(isValidEnvVarName('MY KEY')).toBe(false);
+		expect(isValidEnvVarName('$KEY')).toBe(false);
+	});
+});
+
+describe('applyEnvVarMerges', () => {
+	const merges = { DOC: (current: string | undefined) => `${current ?? 'none'}+added` };
+
+	it('builds each variable from the value the record carries', () => {
+		const env: Record<string, string | undefined> = { DOC: 'mine', OTHER: 'kept' };
+
+		applyEnvVarMerges(env, merges);
+
+		expect(env).toEqual({ DOC: 'mine+added', OTHER: 'kept' });
+	});
+
+	it('builds on the fallback when the record does not set the variable, or sets it blank', () => {
+		for (const own of [undefined, '', '  ']) {
+			const env: Record<string, string | undefined> = { DOC: own };
+
+			applyEnvVarMerges(env, merges, { DOC: 'beneath' });
+
+			expect(env.DOC).toBe('beneath+added');
+		}
+	});
+
+	it('hands the merge nothing when no layer has a value', () => {
+		const env: Record<string, string | undefined> = {};
+
+		applyEnvVarMerges(env, merges, { DOC: '' });
+
+		expect(env.DOC).toBe('none+added');
+	});
+
+	it('leaves the record alone when there is nothing to merge', () => {
+		const env = { DOC: 'mine' };
+
+		applyEnvVarMerges(env, undefined);
+
+		expect(env).toEqual({ DOC: 'mine' });
 	});
 });

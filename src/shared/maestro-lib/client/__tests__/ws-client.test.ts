@@ -2022,6 +2022,7 @@ describe('createWsMaestroClient', () => {
 					question: 'which branch?',
 					fromAgentId: A1,
 					fromTabId: 't1',
+					consultChain: { chainId: 'chain-existing', depth: 2 },
 				})
 			).toEqual({ ok: true, value: { answer: 'Use main.', agentName: 'Beta' } });
 			expect(bridge.sent('cross_agent_ask')).toEqual([
@@ -2030,6 +2031,7 @@ describe('createWsMaestroClient', () => {
 					question: 'which branch?',
 					fromSessionId: A1,
 					fromTabId: 't1',
+					consultChain: { chainId: 'chain-existing', depth: 2 },
 					withContext: false,
 					timeoutMs: 600_000,
 				}),

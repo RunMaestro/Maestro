@@ -2,10 +2,15 @@
 // Supports dot-notation, auto type coercion, --raw for explicit JSON
 
 import { readSettingValue, writeSettingValue } from '../services/storage';
-import { formatSuccess, formatError, formatWarning } from '../output/formatter';
+import { formatSuccess, formatWarning } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
-import { SETTINGS_METADATA } from '../../shared/settingsMetadata';
+import {
+	SETTINGS_METADATA,
+	isNestedTextSetting,
+	nestedSettingProblem,
+} from '../../shared/settingsMetadata';
 import { resolveMediaModelDirectory } from '../../main/plugins/plugin-media-tools';
+import { failCommand } from '../services/session-command';
 
 interface SettingsSetOptions {
 	json?: boolean;
@@ -70,6 +75,13 @@ export async function settingsSet(
 			parsedValue = parseValue(value);
 		}
 
+		// A setting that is one object with a field table (the A Cappella blob)
+		// is checked against it: its readers sanitise, so a bad value would be
+		// stored, reported as set, and silently read back as the default.
+		if (options.raw === undefined && isNestedTextSetting(key)) parsedValue = value;
+		const problem = nestedSettingProblem(key, parsedValue);
+		if (problem) throw new Error(problem);
+
 		if (topKey === 'mediaModelDirectory') {
 			if (key !== topKey) throw new Error('mediaModelDirectory does not accept nested keys');
 			parsedValue = await resolveMediaModelDirectory(parsedValue);
@@ -88,11 +100,6 @@ export async function settingsSet(
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to set "${key}": ${message}`));
-		}
-		process.exit(1);
+		failCommand(`Failed to set "${key}": ${message}`, options.json);
 	}
 }

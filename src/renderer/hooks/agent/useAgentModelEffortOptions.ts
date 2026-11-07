@@ -54,120 +54,125 @@ export interface AgentModelEffortOptions {
  * `opencode models` subprocess) from the previous agent overwrite the current
  * agent's list.
  *
- * @param agentId - The agent's tool type, or undefined when no agent is active.
+ * @param agentId - The effective tab provider, or undefined when no agent is active.
+ * @param sshRemoteId - Model discovery host; config and effort remain provider-scoped.
  */
-export function useAgentModelEffortOptions(agentId?: string): AgentModelEffortOptions {
-	const [models, setModels] = useState<string[]>([]);
-	const [efforts, setEfforts] = useState<string[]>([]);
-	const [defaultModel, setDefaultModel] = useState('');
-	const [defaultEffort, setDefaultEffort] = useState('');
-	const [loaded, setLoaded] = useState(false);
+export function useAgentModelEffortOptions(
+	agentId?: string,
+	sshRemoteId?: string
+): AgentModelEffortOptions {
+	const [result, setResult] = useState<
+		Omit<AgentModelEffortOptions, 'refreshModels' | 'refreshingModels'> & {
+			agentId?: string;
+			sshRemoteId?: string;
+		}
+	>({ models: [], efforts: [], defaultModel: '', defaultEffort: '', loaded: false });
 	const [refreshingModels, setRefreshingModels] = useState(false);
-
-	// Read after the refresh's await: the surface may have moved to another
-	// agent, and that agent's list must not be overwritten with this one.
-	const agentIdRef = useRef(agentId);
-	agentIdRef.current = agentId;
-	const modelsRef = useRef(models);
-	modelsRef.current = models;
+	const scopeRef = useRef({ agentId, sshRemoteId });
+	scopeRef.current = { agentId, sshRemoteId };
+	const resultRef = useRef(result);
+	resultRef.current = result;
+	const refreshSequence = useRef(0);
+	const refreshed = useRef<{ agentId: string; sshRemoteId?: string; models: string[] } | null>(
+		null
+	);
 
 	useEffect(() => {
 		if (!agentId) return;
 		let stale = false;
-		setLoaded(false);
-
-		const modelsDone = window.maestro.agents
-			.getModels(agentId)
-			.then((fetched) => {
-				if (!stale) setModels(fetched);
-			})
-			.catch(() => {
-				if (!stale) setModels([]);
-			});
-
-		const effortsDone = Promise.all([
+		// Only model discovery is host-specific. Config and effort are provider
+		// definitions, and their existing APIs deliberately take no host.
+		Promise.all([
+			window.maestro.agents.getModels(agentId, false, sshRemoteId).catch(() => [] as string[]),
 			window.maestro.agents.getConfigOptions(agentId, 'effort').catch(() => [] as string[]),
 			window.maestro.agents
 				.getConfigOptions(agentId, 'reasoningEffort')
 				.catch(() => [] as string[]),
-		])
-			.then(([effortOpts, reasoningOpts]) => {
-				if (stale) return;
-				setEfforts(effortOpts.length > 0 ? effortOpts : reasoningOpts);
-			})
-			.catch(() => {
-				if (!stale) setEfforts([]);
+			window.maestro.agents.getConfig(agentId).catch(() => undefined),
+		]).then(([models, effortOpts, reasoningOpts, config]) => {
+			if (stale) return;
+			setResult({
+				agentId,
+				sshRemoteId,
+				models:
+					refreshed.current?.agentId === agentId && refreshed.current.sshRemoteId === sshRemoteId
+						? refreshed.current.models
+						: models,
+				efforts: effortOpts.length > 0 ? effortOpts : reasoningOpts,
+				defaultModel: config?.model || '',
+				defaultEffort: readEffortFromConfig(config) ?? '',
+				loaded: true,
 			});
-
-		const defaultsDone = window.maestro.agents
-			.getConfig(agentId)
-			.then((config) => {
-				if (stale) return;
-				setDefaultModel(config?.model || '');
-				setDefaultEffort(readEffortFromConfig(config) ?? '');
-			})
-			.catch(() => {
-				if (stale) return;
-				setDefaultModel('');
-				setDefaultEffort('');
-			});
-
-		Promise.all([modelsDone, effortsDone, defaultsDone]).then(() => {
-			if (!stale) setLoaded(true);
 		});
-
 		return () => {
 			stale = true;
 		};
-	}, [agentId]);
+	}, [agentId, sshRemoteId]);
 
-	// A forced discovery anywhere (Settings, another picker, the CLI) carries
-	// the fresh list. Without this a picker that stays mounted - the composer
-	// does not remount per tab - kept the list it fetched on first render.
 	useEffect(() => {
 		if (!agentId) return;
 		return window.maestro.agents.onModelsRefreshed((payload) => {
-			// This hook discovers on this machine, so a remote host's list is not ours.
-			if (payload.agentId !== agentId || payload.sshRemoteId !== null) return;
-			setModels(payload.models);
+			if (payload.agentId !== agentId || payload.sshRemoteId !== (sshRemoteId ?? null)) return;
+			refreshed.current = { agentId, sshRemoteId, models: payload.models };
+			setResult((previous) =>
+				previous.agentId === agentId && previous.sshRemoteId === sshRemoteId
+					? { ...previous, models: payload.models }
+					: previous
+			);
 		});
-	}, [agentId]);
+	}, [agentId, sshRemoteId]);
 
 	const refreshModels = useCallback(async () => {
-		const target = agentId;
-		if (!target) return;
-		const previous = modelsRef.current;
+		if (!agentId) return;
+		const sequence = ++refreshSequence.current;
+		const isCurrent = () =>
+			sequence === refreshSequence.current &&
+			scopeRef.current.agentId === agentId &&
+			scopeRef.current.sshRemoteId === sshRemoteId;
+		const previous =
+			resultRef.current.agentId === agentId && resultRef.current.sshRemoteId === sshRemoteId
+				? resultRef.current.models
+				: [];
 		setRefreshingModels(true);
 		try {
-			const next = await window.maestro.agents.getModels(target, true);
-			if (agentIdRef.current !== target) return;
-			setModels(next);
+			const models = await window.maestro.agents.getModels(agentId, true, sshRemoteId);
+			if (!isCurrent()) return;
+			refreshed.current = { agentId, sshRemoteId, models };
+			setResult((current) =>
+				current.agentId === agentId && current.sshRemoteId === sshRemoteId
+					? { ...current, models }
+					: current
+			);
 			notifyCenterFlash({
 				message: 'Models refreshed',
-				detail: describeModelsRefresh(summarizeModelsRefresh(previous, next)),
+				detail: describeModelsRefresh(summarizeModelsRefresh(previous, models)),
 				color: 'green',
 			});
 		} catch (error) {
-			if (agentIdRef.current !== target) return;
-			notifyCenterFlash({
-				message: 'Could not refresh models',
-				detail: error instanceof Error ? error.message : String(error),
-				color: 'red',
-			});
+			if (isCurrent())
+				notifyCenterFlash({
+					message: 'Could not refresh models',
+					detail: error instanceof Error ? error.message : String(error),
+					color: 'red',
+				});
 		} finally {
-			setRefreshingModels(false);
+			if (sequence === refreshSequence.current) setRefreshingModels(false);
 		}
-	}, [agentId]);
+	}, [agentId, sshRemoteId]);
 
-	return {
-		models,
-		efforts,
-		defaultModel,
-		defaultEffort,
-		loaded,
-		refreshModels,
-		refreshingModels,
-	};
+	// Hide the previous scope synchronously, including the render before the
+	// effect runs. A slow response must never offer another provider's knobs.
+	return agentId && result.agentId === agentId && result.sshRemoteId === sshRemoteId
+		? { ...result, refreshModels, refreshingModels }
+		: {
+				models: [],
+				efforts: [],
+				defaultModel: '',
+				defaultEffort: '',
+				loaded: false,
+				refreshModels,
+				refreshingModels,
+			};
 }
 
 /**

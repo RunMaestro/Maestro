@@ -23,6 +23,8 @@ describe('cue-metrics', () => {
 			expect(snap.runsFailed).toBe(0);
 			expect(snap.runsTimedOut).toBe(0);
 			expect(snap.runsStopped).toBe(0);
+			expect(snap.runsGated).toBe(0);
+			expect(snap.runsBlocked).toBe(0);
 			expect(snap.eventsDropped).toBe(0);
 			expect(snap.queueRestored).toBe(0);
 			expect(snap.fanInTimeouts).toBe(0);

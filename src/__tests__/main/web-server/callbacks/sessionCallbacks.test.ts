@@ -83,4 +83,31 @@ describe('session history callback', () => {
 
 		expect(getHistory('tab-gone')).toBeNull();
 	});
+	it('reports the tab owner separately from the default and captured turn', () => {
+		const getHistory = setup([
+			{
+				id: 'agent',
+				toolType: 'claude-code',
+				customModel: 'opus',
+				aiTabs: [
+					{
+						id: 'tab',
+						agentSessionId: 'codex-native',
+						tabProvider: 'codex',
+						turnProvider: 'claude-code',
+						customModel: 'auto',
+						logs: [],
+					},
+				],
+			},
+		]);
+		expect(getHistory('tab')).toMatchObject({
+			agentSessionId: 'codex-native',
+			provider: 'codex',
+			agentProvider: 'claude-code',
+			tabProvider: 'codex',
+			turnProvider: 'claude-code',
+			effectiveModel: 'auto',
+		});
+	});
 });

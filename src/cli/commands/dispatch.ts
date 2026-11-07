@@ -12,7 +12,6 @@ import {
 	readGroups,
 } from '../services/storage';
 import { withMaestroClient, UnsupportedCommandError } from '../services/maestro-client';
-import { ExitCode } from '../exit-codes';
 import { MaestroNotRunningError, MAESTRO_NOT_RUNNING_CODE } from '../services/maestro-not-running';
 import { getSettingDefault } from '../../shared/settingsMetadata';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
@@ -23,6 +22,9 @@ import {
 } from '../../shared/agentDelegation';
 import { parseMentionRoutingField, type MentionRouting } from '../../shared/crossAgentContext';
 import { resolveMentionedTargetSessionIds } from '../../shared/maestro-lib/mentions/roster';
+import { admitCliConsult } from '../services/consult-budget-guard';
+import type { ConsultChain } from '../../shared/consultBudget';
+import { ExitCode, exitWith } from '../exit-codes';
 
 export interface DispatchOptions {
 	dispatchId?: string;
@@ -78,6 +80,15 @@ export interface DispatchOptions {
 	callbackPrompt?: string;
 	/** Give up and fire a `timeout` callback after this many seconds. */
 	callbackTimeout?: string;
+	/**
+	 * Send without consulting the consult budget. For Pianola's supervisor loops
+	 * only (`pianola watch`, `pianola orchestrate`): one long-lived process
+	 * answers and assigns work for hours under its own rules and autopilot gates.
+	 * That is not a delegation made while working on one user message, and a
+	 * per-message budget would stop the loop at its 25th dispatch. Not a CLI
+	 * flag: the `dispatch` verb never sets it, so an agent cannot ask for it.
+	 */
+	skipConsultBudget?: boolean;
 	/**
 	 * How the prompt's `@mentions` run (`parallel`, `consult-first`, `handoff`,
 	 * `only`), as if the composer's routing strip had been set. Without it the
@@ -459,17 +470,33 @@ export async function runDispatch(
 	const callback = buildCallbackFields(options, agentId, callerIdentity);
 	if (!callback.ok) return callback.response;
 
+	// The consult budget, checked last so a dispatch that was never going to
+	// start spends nothing. A dispatch from an agent's shell is a delegation made
+	// while working on some user message: it spends one from that message's
+	// chain, and when the chain is out it is refused here, loudly, because a
+	// silent no-op would read to the calling agent as work that was handed over.
+	// A dispatch the user runs is their own message and always passes. Either
+	// way the target's place in the chain travels in the message, on all three
+	// paths below, and the desktop applies it to the turn the prompt starts, so
+	// what THAT agent asks and delegates is counted against the same budget (see
+	// admitConsult). The spend is made before the desktop is reached, so a
+	// dispatch the desktop then refuses (a busy tab, an app that is not running)
+	// has still spent one: a caller retrying against a refusal is bounded too.
+	let chain: { consultChain?: ConsultChain } = {};
+	if (!options.skipConsultBudget) {
+		const admission = admitCliConsult();
+		if (!admission.allowed) {
+			return { success: false, error: admission.message, code: admission.code };
+		}
+		chain = { consultChain: admission.chain };
+	}
+
 	// --queue routes through the renderer's authoritative execution queue.
 	if (queue) {
-		return runQueueDispatch(
-			agentId,
-			message,
-			options,
-			background,
-			callback.fields,
-			routingFields,
-			caller
-		);
+		return runQueueDispatch(agentId, message, options, background, callback.fields, routingFields, {
+			...caller,
+			...chain,
+		});
 	}
 	const dispatchId = options.dispatchId ?? generateUUID();
 	let awaitingDispatchAck = false;
@@ -501,6 +528,7 @@ export async function runDispatch(
 						...callback.fields,
 						...routingFields,
 						...caller,
+						...chain,
 					},
 					'new_ai_tab_with_prompt_result'
 				);
@@ -565,6 +593,7 @@ export async function runDispatch(
 					...callback.fields,
 					...routingFields,
 					...caller,
+					...chain,
 				},
 				'command_result'
 			);
@@ -666,6 +695,7 @@ async function runQueueDispatch(
 	background: boolean,
 	callbackFields: Record<string, unknown>,
 	routingFields: Record<string, unknown>,
+	/** Who is dispatching and the target's place in the consult chain. */
 	callerFields: Record<string, unknown>
 ): Promise<DispatchResponse> {
 	const dispatchId = options.dispatchId ?? generateUUID();
@@ -784,7 +814,7 @@ export async function dispatch(
 	if (!result.success) {
 		if (result.unknown || result.admission) console.log(JSON.stringify(result, null, 2));
 		else emitErrorJson(result.error ?? 'Unknown error', result.code ?? 'UNKNOWN');
-		process.exit(
+		exitWith(
 			result.code === MAESTRO_NOT_RUNNING_CODE ? ExitCode.NotRunning : ExitCode.GeneralError
 		);
 		return;

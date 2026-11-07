@@ -177,6 +177,8 @@ const mockModalActions = {
 	setRenameGroupEmoji: vi.fn(),
 	setRenameGroupIcon: vi.fn(),
 	setRenameGroupColor: vi.fn(),
+	openGroupSettings: vi.fn(),
+	openDelegationGraph: vi.fn(),
 };
 
 vi.mock('../../../renderer/stores/modalStore', async (importActual) => {
@@ -1543,6 +1545,50 @@ describe('SessionList', () => {
 			expect(mockModalActions.setRenameGroupModalOpen).toHaveBeenCalledWith(true);
 		});
 
+		it('opens Group Settings on the group when "Group Settings..." is clicked', () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group', emoji: '🚀' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [] });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+			fireEvent.click(screen.getByText('Group Settings...'));
+
+			expect(mockModalActions.openGroupSettings).toHaveBeenCalledWith('g1');
+			// The menu closes behind the click.
+			expect(screen.queryByText('Group Settings...')).not.toBeInTheDocument();
+		});
+
+		it('opens the Delegation Graph on the group when "Delegation Graph" is clicked', () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group', emoji: '🚀' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [] });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+			fireEvent.click(screen.getByText('Delegation Graph'));
+
+			// The group that was right-clicked, never the scope the graph last had.
+			expect(mockModalActions.openDelegationGraph).toHaveBeenCalledWith('g1');
+			// The menu closes behind the click.
+			expect(screen.queryByText('Delegation Graph')).not.toBeInTheDocument();
+		});
+
+		it('offers no Group Settings for a worktree group', () => {
+			const group = createMockGroup({ id: 'g1', name: 'Tree Group', emoji: '🌳' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [] });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('Tree Group'), { clientX: 100, clientY: 100 });
+
+			expect(screen.getByText('Rename Group...')).toBeInTheDocument();
+			expect(screen.queryByText('Group Settings...')).not.toBeInTheDocument();
+		});
+
 		it('opens newInstance modal with presetGroupId when "New Agent in Group..." is clicked', () => {
 			const group = createMockGroup({ id: 'g1', name: 'My Group' });
 			useSessionStore.setState({ sessions: [], groups: [group] });
@@ -1829,7 +1875,8 @@ describe('SessionList', () => {
 			// Open context menu
 			fireEvent.contextMenu(screen.getByText('Copy GUID Me'), { clientX: 100, clientY: 100 });
 
-			fireEvent.click(screen.getByText('Copy Agent GUID to Clipboard'));
+			fireEvent.click(screen.getByRole('button', { name: 'Agent Tools' }));
+			fireEvent.click(screen.getByText('Copy Agent GUID'));
 
 			expect(mockClipboard.writeText).toHaveBeenCalledWith('agent-guid-1');
 		});
@@ -1866,6 +1913,7 @@ describe('SessionList', () => {
 			// Open context menu
 			fireEvent.contextMenu(screen.getByText('Duplicate Me'), { clientX: 100, clientY: 100 });
 
+			fireEvent.click(screen.getByRole('button', { name: 'Agent Tools' }));
 			fireEvent.click(screen.getByText('Duplicate...'));
 
 			// Should NOT open the newAgentChoice modal

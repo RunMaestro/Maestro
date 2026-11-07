@@ -12,6 +12,7 @@
  * that test for any new visible string you want guaranteed-findable.
  */
 
+import type { SettingsTab } from '../../types';
 import { GENERAL_SETTINGS } from './searchableSettingsGeneral';
 import { DISPLAY_SETTINGS } from './searchableSettingsDisplay';
 import {
@@ -24,25 +25,14 @@ import {
 } from './searchableSettingsMisc';
 import { NOTIFICATION_SETTINGS, AI_COMMANDS_SETTINGS } from './searchableSettingsNotifications';
 import { ENCORE_SETTINGS } from './searchableSettingsEncore';
+import { LOCAL_MODELS_SETTINGS } from './searchableSettingsLocalModels';
 import type { EncoreFeatureFlags } from '../../types';
 
 export interface SearchableSetting {
 	/** Unique id used as data-setting-id on the DOM element */
 	id: string;
 	/** Which tab this setting lives in */
-	tab:
-		| 'about'
-		| 'general'
-		| 'display'
-		| 'shortcuts'
-		| 'theme'
-		| 'notifications'
-		| 'aicommands'
-		| 'ssh'
-		| 'environment'
-		| 'encore'
-		| 'prompts'
-		| `plugin-settings:${string}`;
+	tab: SettingsTab | `plugin-settings:${string}`;
 	/** Human-readable tab label */
 	tabLabel: string;
 	/** The setting's visible title */
@@ -60,6 +50,13 @@ export interface SearchableSetting {
 	 * does render so the result still lands somewhere meaningful.
 	 */
 	jumpToId?: string;
+	/**
+	 * Place inside `tab` that holds this setting, for a tab that splits itself
+	 * (Models: a sub-tab path such as `system-one` or `library/engines`). A jump
+	 * to the setting moves there first, because only the open place renders its
+	 * `data-setting-id`.
+	 */
+	subTab?: string;
 	/**
 	 * Encore Feature this setting configures. The entry is left out of search
 	 * while that feature is off, so a disabled feature's options cannot be
@@ -98,7 +95,13 @@ export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
 	...ENVIRONMENT_SETTINGS,
 	...ENCORE_SETTINGS,
 	...PROMPTS_SETTINGS,
+	...LOCAL_MODELS_SETTINGS,
 ];
+
+/** The place inside its tab that holds a setting, or `undefined` for a setting on a plain tab. */
+export function settingSubTab(settingId: string): string | undefined {
+	return ALL_SEARCHABLE_SETTINGS.find((setting) => setting.id === settingId)?.subTab;
+}
 
 /**
  * The Plugins tile a jump to `settingId` has to open, or undefined when the

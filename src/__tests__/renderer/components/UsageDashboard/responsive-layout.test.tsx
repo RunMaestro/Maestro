@@ -32,6 +32,7 @@ vi.mock('lucide-react', () => {
 
 	return {
 		X: createIcon('x', '×'),
+		Wand2: createIcon('wand2', ''),
 		BarChart3: createIcon('barchart', '📊'),
 		Calendar: createIcon('calendar', '📅'),
 		Download: createIcon('download', '⬇️'),

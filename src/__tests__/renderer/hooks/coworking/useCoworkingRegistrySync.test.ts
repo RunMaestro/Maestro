@@ -11,6 +11,7 @@ import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { isWebDesktop } from '../../../../renderer/utils/runtimeContext';
 import { createMockSession } from '../../../helpers/mockSession';
+import { createMockAITab } from '../../../helpers/mockTab';
 
 vi.mock('../../../../renderer/utils/runtimeContext', () => ({
 	isWebDesktop: vi.fn(() => false),
@@ -49,5 +50,38 @@ describe('useCoworkingRegistrySync', () => {
 		expect(coworking.syncSessionTerminals).not.toHaveBeenCalled();
 		expect(coworking.syncSessionBrowsers).not.toHaveBeenCalled();
 		expect(coworking.removeSession).not.toHaveBeenCalled();
+	});
+
+	it('mirrors each provider policy and disables ambiguous legacy callers across mixed busy tabs', async () => {
+		useSettingsStore.setState({
+			coworkingBrowserInteraction: ['codex'],
+			coworkingBrowserInteractionConfirm: { codex: 'off', 'claude-code': 'all' },
+		});
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 's1',
+					toolType: 'claude-code',
+					state: 'busy',
+					busySource: 'ai',
+					aiTabs: [
+						createMockAITab({ tabProvider: 'claude-code', turnProvider: 'codex', state: 'busy' }),
+					],
+				}),
+			],
+		});
+		renderHook(() => useCoworkingRegistrySync());
+		await act(async () => {});
+		expect(coworking.syncSessionBrowsers).toHaveBeenCalledWith(
+			's1',
+			[],
+			false,
+			undefined,
+			'all',
+			expect.objectContaining({
+				codex: { interactionEnabled: true, confirmPolicy: 'off' },
+				'claude-code': { interactionEnabled: false, confirmPolicy: 'all' },
+			})
+		);
 	});
 });

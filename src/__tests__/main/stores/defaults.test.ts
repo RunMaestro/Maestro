@@ -190,6 +190,10 @@ describe('stores/defaults', () => {
 			expect(SETTINGS_DEFAULTS.autoResumeGiveUpDays).toBe(7);
 		});
 
+		it('should default maxConsultationsPerTurn to 25', () => {
+			expect(SETTINGS_DEFAULTS.maxConsultationsPerTurn).toBe(25);
+		});
+
 		it("should ship Usage & Stats, Director's Notes, and Cue enabled", () => {
 			expect(SETTINGS_DEFAULTS.encoreFeatures).toMatchObject({
 				usageStats: true,

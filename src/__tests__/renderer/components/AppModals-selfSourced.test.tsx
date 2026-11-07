@@ -31,6 +31,19 @@ const promptComposerModalMock = vi.hoisted(() => ({
 	props: undefined as Record<string, unknown> | undefined,
 }));
 
+const delegationGraphModalMock = vi.hoisted(() => ({
+	props: undefined as Record<string, unknown> | undefined,
+}));
+
+// The Delegation Graph is lazy-loaded and draws a reactflow canvas. Replaced by
+// a marker that records what the host handed it.
+vi.mock('../../../renderer/components/DelegationGraph/DelegationGraphModal', () => ({
+	DelegationGraphModal: (props: Record<string, unknown>) => {
+		delegationGraphModalMock.props = props;
+		return <div data-testid="delegation-graph-modal-stub" />;
+	},
+}));
+
 // Mock ALL sub-components to capture props
 vi.mock('../../../renderer/components/AboutModal', () => ({ AboutModal: () => null }));
 vi.mock('../../../renderer/components/ShortcutsHelpModal', () => ({
@@ -710,5 +723,50 @@ describe('AppModals (Tier 1B self-sourcing)', () => {
 			const { unmount } = render(<AppModals {...props} />);
 			unmount();
 		});
+	});
+});
+
+describe('AppModals: Delegation Graph', () => {
+	beforeEach(() => {
+		delegationGraphModalMock.props = undefined;
+		useModalStore.getState().closeAll();
+	});
+
+	it('is not mounted until the modal store opens it', () => {
+		const { unmount } = render(<AppModals {...createDefaultProps()} />);
+
+		expect(screen.queryByTestId('delegation-graph-modal-stub')).not.toBeInTheDocument();
+		unmount();
+	});
+
+	it('mounts from the modal store alone, with the scope it was opened on', async () => {
+		const { unmount } = render(<AppModals {...createDefaultProps()} />);
+
+		act(() => {
+			useModalStore
+				.getState()
+				.openModal('delegationGraph', { scope: { kind: 'group', groupId: 'group-1' } });
+		});
+
+		expect(await screen.findByTestId('delegation-graph-modal-stub')).toBeInTheDocument();
+		expect(delegationGraphModalMock.props?.scope).toEqual({ kind: 'group', groupId: 'group-1' });
+		expect(delegationGraphModalMock.props?.theme).toBe(mockTheme);
+		unmount();
+	});
+
+	it('closes through the modal store', async () => {
+		const { unmount } = render(<AppModals {...createDefaultProps()} />);
+		act(() => {
+			useModalStore.getState().openModal('delegationGraph');
+		});
+		await screen.findByTestId('delegation-graph-modal-stub');
+
+		act(() => {
+			(delegationGraphModalMock.props?.onClose as () => void)();
+		});
+
+		expect(useModalStore.getState().isOpen('delegationGraph')).toBe(false);
+		expect(screen.queryByTestId('delegation-graph-modal-stub')).not.toBeInTheDocument();
+		unmount();
 	});
 });

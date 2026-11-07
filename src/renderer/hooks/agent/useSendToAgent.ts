@@ -31,6 +31,7 @@ import {
 	buildContextTransferPrompt,
 	getAgentDisplayName,
 } from '../../services/contextGroomer';
+import { resolveTabNativeProvider } from '../../utils/providerTabSessions';
 import { extractTabContext } from '../../utils/contextExtractor';
 import { createMergedSession } from '../../utils/tabHelpers';
 import { classifyTransferError } from '../../components/TransferErrorModal';
@@ -232,9 +233,9 @@ export function useSendToAgent(): UseSendToAgentResult {
 			lastRequest: minimalRequest,
 		});
 
+		const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
 		try {
 			// Step 1: Validate inputs and get source tab
-			const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
 			if (!sourceTab) {
 				throw new Error('Source tab not found');
 			}
@@ -309,7 +310,10 @@ export function useSendToAgent(): UseSendToAgentResult {
 				});
 
 				// Build agent-specific transfer prompt
-				const transferPrompt = buildContextTransferPrompt(sourceSession.toolType, targetAgent);
+				const transferPrompt = buildContextTransferPrompt(
+					resolveTabNativeProvider(sourceTab, sourceSession),
+					targetAgent
+				);
 
 				const groomingRequest: MergeRequest = {
 					sources: [sourceContext],
@@ -391,7 +395,7 @@ export function useSendToAgent(): UseSendToAgentResult {
 				id: `transfer-notice-${Date.now()}`,
 				timestamp: Date.now(),
 				source: 'system',
-				text: `Context transferred from ${getAgentDisplayName(sourceSession.toolType)}. ${
+				text: `Context transferred from ${getAgentDisplayName(resolveTabNativeProvider(sourceTab, sourceSession))}. ${
 					options.groomContext
 						? `Groomed and optimized for ${getAgentDisplayName(targetAgent)}.`
 						: 'Original context preserved.'
@@ -426,7 +430,7 @@ export function useSendToAgent(): UseSendToAgentResult {
 
 			// Classify the error for structured handling
 			const classifiedError = classifyTransferError(errorMessage, {
-				sourceAgent: sourceSession.toolType,
+				sourceAgent: resolveTabNativeProvider(sourceTab, sourceSession),
 				targetAgent,
 				wasGrooming: options.groomContext,
 				elapsedTimeMs,
@@ -609,7 +613,9 @@ export function useSendToAgentWithSessions(
 					.join('\n\n');
 
 				const sourceName = getSessionDisplayName(sourceSession);
-				const sourceAgentName = getAgentDisplayName(sourceSession.toolType);
+				const sourceAgentName = getAgentDisplayName(
+					resolveTabNativeProvider(sourceTab, sourceSession)
+				);
 
 				// Create the pending context with a clear header explaining what this is
 				const pendingMergedContext = formattedContext

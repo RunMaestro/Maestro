@@ -17,6 +17,7 @@ import type { GraphNodeData, DocumentNodeData, ExternalLinkNodeData } from './gr
 import {
 	type MindMapLayoutType,
 	calculateLayout,
+	calculateBounds,
 	buildAdjacencyMap,
 	calculateNodeHeight,
 	calculateNodeWidth,
@@ -37,6 +38,7 @@ import {
 	roundRect,
 } from './mindMapCanvas';
 import { logger } from '../../utils/logger';
+import { graphEdgeGeometry } from '../../utils/graphEdgeGeometry';
 import { GraphMiniMap } from './GraphMiniMap';
 import { useSurfaceFontFamily, useSurfaceFontSize } from '../../hooks/ui/useSurfaceTypography';
 
@@ -93,6 +95,11 @@ export interface MindMapLink {
 	source: string;
 	target: string;
 	type: 'internal' | 'external';
+	/** Agent relationships can use the same canvas with directed, typed links. */
+	directed?: boolean;
+	dashed?: boolean;
+	strokeWidth?: number;
+	opacity?: number;
 }
 
 /**
@@ -128,6 +135,13 @@ export interface MindMapProps {
 	 * Only a scope-mode graph can have any - see `BuildOptions.scopeFiles`.
 	 */
 	showOrphans?: boolean;
+	/** Include disconnected communities in Lobes, instead of the orphan band. */
+	clusterAllNodes?: boolean;
+	/** Hide algorithm hulls when the caller is displaying hand-placed nodes. */
+	showClusters?: boolean;
+	/** Noun used in cluster captions. */
+	nodeLabel?: string;
+	selectCenterOnOpen?: boolean;
 	/** Currently selected node ID */
 	selectedNodeId: string | null;
 	/** Callback when a node is selected */
@@ -151,7 +165,11 @@ export interface MindMapProps {
 	/** Custom position overrides for nodes (from user drag operations) */
 	nodePositions?: Map<string, NodePositionOverride>;
 	/** Callback when a node position is changed via drag */
-	onNodePositionChange?: (nodeId: string, position: NodePositionOverride) => void;
+	onNodePositionChange?: (
+		nodeId: string,
+		position: NodePositionOverride,
+		positions: ReadonlyMap<string, NodePositionOverride>
+	) => void;
 	/** Optional ref to the container div for external focus control */
 	containerRef?: React.RefObject<HTMLDivElement>;
 	/** Whether the help/legend drawer is open - slides the minimap clear of it */
@@ -200,6 +218,10 @@ export function MindMap({
 	maxDepth,
 	showExternalLinks,
 	showOrphans = false,
+	clusterAllNodes = false,
+	showClusters = true,
+	nodeLabel = 'document',
+	selectCenterOnOpen = true,
 	selectedNodeId,
 	onNodeSelect,
 	onNodeDoubleClick,
@@ -268,7 +290,8 @@ export function MindMap({
 			showExternalLinks,
 			previewCharLimit,
 			spacingScale,
-			showOrphans
+			showOrphans,
+			clusterAllNodes
 		);
 	}, [
 		layoutType,
@@ -283,6 +306,7 @@ export function MindMap({
 		previewCharLimit,
 		spacingScale,
 		showOrphans,
+		clusterAllNodes,
 	]);
 
 	// Set initial focus to center node when center file changes
@@ -290,7 +314,7 @@ export function MindMap({
 		const centerNode = layout.nodes.find((n) => n.isFocused);
 		if (centerNode) {
 			setFocusedNodeId(centerNode.id);
-			onNodeSelect(centerNode);
+			if (selectCenterOnOpen) onNodeSelect(centerNode);
 		}
 	}, [centerFilePath]); // Only trigger when center file changes, not on every layout/callback update
 
@@ -429,7 +453,7 @@ export function MindMap({
 		// them that layout is indistinguishable from Force - both relax nodes
 		// with links pulling and charge pushing, so a lobe that is not DRAWN as
 		// a lobe is just a differently-seeded force graph.
-		if (layout.clusters && layout.clusters.length > 0) {
+		if (showClusters && layout.clusters && layout.clusters.length > 0) {
 			ctx.save();
 			layout.clusters.forEach((cluster) => {
 				if (cluster.hull.length < 3) return;
@@ -464,7 +488,10 @@ export function MindMap({
 				ctx.font = `600 ${graphFontPx(13, graphFontSize)}px ${graphFontFamily}`;
 				ctx.textAlign = 'center';
 				ctx.textBaseline = 'middle';
-				ctx.fillText(cluster.label, cluster.labelX, cluster.labelY);
+				const label = ungrouped
+					? cluster.label
+					: `${cluster.size} ${nodeLabel}${cluster.size === 1 ? '' : 's'}`;
+				ctx.fillText(label, cluster.labelX, cluster.labelY);
 			});
 			ctx.restore();
 		}
@@ -493,6 +520,11 @@ export function MindMap({
 
 		// Render links first (behind nodes)
 		const nodeMap = new Map(nodesWithState.map((n) => [n.id, n]));
+		const directedPairs = new Set(
+			layout.links
+				.filter((link) => link.directed)
+				.map((link) => JSON.stringify([link.source, link.target]))
+		);
 		layout.links.forEach((link) => {
 			const sourceNode = nodeMap.get(link.source);
 			const targetNode = nodeMap.get(link.target);
@@ -510,11 +542,32 @@ export function MindMap({
 					? `${theme.colors.textDim}44`
 					: `${theme.colors.textDim}66`;
 
-			const lineWidth = isHighlighted ? 3 : 1.5;
+			const lineWidth = isHighlighted
+				? Math.max(3, link.strokeWidth ?? 1.5)
+				: (link.strokeWidth ?? 1.5);
 
 			// Calculate connection points based on node positions
 			let sourceX = sourceNode.x;
 			let targetX = targetNode.x;
+			let sourceY = sourceNode.y;
+			let targetY = targetNode.y;
+			const geometry = link.directed
+				? graphEdgeGeometry(
+						{
+							centerX: sourceNode.x,
+							centerY: sourceNode.y,
+							halfWidth: sourceNode.width / 2,
+							halfHeight: sourceNode.height / 2,
+						},
+						{
+							centerX: targetNode.x,
+							centerY: targetNode.y,
+							halfWidth: targetNode.width / 2,
+							halfHeight: targetNode.height / 2,
+						},
+						directedPairs.has(JSON.stringify([link.target, link.source]))
+					)
+				: undefined;
 
 			// Adjust connection points to node edges
 			if (sourceNode.x < targetNode.x) {
@@ -524,17 +577,27 @@ export function MindMap({
 				sourceX = sourceNode.x - sourceNode.width / 2;
 				targetX = targetNode.x + targetNode.width / 2;
 			}
+			if (geometry) {
+				sourceX = geometry.start.x;
+				sourceY = geometry.start.y;
+				targetX = geometry.end.x;
+				targetY = geometry.end.y;
+			}
 
+			ctx.globalAlpha = link.opacity ?? 1;
 			drawLink(
 				ctx,
 				sourceX,
-				sourceNode.y,
+				sourceY,
 				targetX,
-				targetNode.y,
+				targetY,
 				color,
 				lineWidth,
-				link.type === 'external'
+				link.dashed ?? link.type === 'external',
+				link.directed,
+				geometry
 			);
+			ctx.globalAlpha = 1;
 		});
 
 		// Render nodes
@@ -606,6 +669,8 @@ export function MindMap({
 		layout.links,
 		layout.axisLabels,
 		layout.clusters,
+		showClusters,
+		nodeLabel,
 		selectedNodeId,
 		hoveredNodeId,
 		focusedNodeId,
@@ -631,7 +696,9 @@ export function MindMap({
 	 * amount of scrolling brings it back into view.
 	 */
 	const fitToView = useCallback(() => {
-		const { minX, maxX, minY, maxY } = layout.bounds;
+		const { minX, maxX, minY, maxY } = nodePositions?.size
+			? calculateBounds(nodesWithState)
+			: layout.bounds;
 		const contentWidth = maxX - minX;
 		const contentHeight = maxY - minY;
 		if (contentWidth <= 0 || contentHeight <= 0 || width <= 0 || height <= 0) return;
@@ -648,13 +715,13 @@ export function MindMap({
 		};
 		lastFitRef.current = next;
 		setTransform(next);
-	}, [layout.bounds, width, height]);
+	}, [layout.bounds, nodePositions, nodesWithState, width, height]);
 
 	// Frame the graph on mount, and whenever the thing being drawn changes shape
 	// (new center, new layout algorithm). Not on every `layout` identity: node
 	// drags rebuild it too, and re-framing under a drag fights the user.
 	useEffect(() => {
-		if (layout.nodes.length > 0) {
+		if (layout.nodes.length > 0 && !draggingNodeId) {
 			fitToView();
 		}
 	}, [centerFilePath, layoutType, previewCharLimit]);
@@ -751,7 +818,12 @@ export function MindMap({
 				const newX = nodeDragStart.nodeX + deltaX;
 				const newY = nodeDragStart.nodeY + deltaY;
 
-				onNodePositionChange(draggingNodeId, { x: newX, y: newY });
+				const position = { x: newX, y: newY };
+				const positions = new Map(
+					nodesWithState.map((node) => [node.id, { x: node.x, y: node.y }])
+				);
+				positions.set(draggingNodeId, position);
+				onNodePositionChange(draggingNodeId, position, positions);
 
 				// Update cursor
 				if (canvasRef.current) {
@@ -779,6 +851,7 @@ export function MindMap({
 			nodeDragStart,
 			zoom,
 			onNodePositionChange,
+			nodesWithState,
 			isPanning,
 			panStart,
 			screenToCanvas,

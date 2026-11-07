@@ -274,10 +274,36 @@ describe('Git Preload API', () => {
 				'content',
 				'description',
 				true,
+				undefined,
 				undefined
 			);
 			expect(result.success).toBe(true);
 			expect(result.gistUrl).toBe('https://gist.github.com/user/abc123');
+		});
+
+		it('should forward allowSecrets and return a secret-screen refusal as it is', async () => {
+			const refusal = {
+				success: false,
+				error: 'Found 1 possible secret in the gist. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings: [{ kind: 'aws-access-key', line: 1, preview: '••••••••MPLE' }],
+			};
+			mockInvoke.mockResolvedValue(refusal);
+
+			const result = await api.createGist('file.txt', 'content', '', false, undefined, {
+				allowSecrets: true,
+			});
+
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'git:createGist',
+				'file.txt',
+				'content',
+				'',
+				false,
+				undefined,
+				{ allowSecrets: true }
+			);
+			expect(result).toEqual(refusal);
 		});
 	});
 

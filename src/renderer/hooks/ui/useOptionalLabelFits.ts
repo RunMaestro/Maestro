@@ -41,6 +41,20 @@
  * and is removed only once something is known to be too tight. In jsdom, where
  * there is no layout engine and both widths read 0, it stays `true`.
  *
+ * ## The same decision, vertically
+ *
+ * `useOptionalContentFits(ref, { axis: 'height' })` asks it of a column: the
+ * Settings sidebar shows the Models subtree expanded whenever it fits without
+ * scrolling the sidebar, and collapses it (open only under the selected tab)
+ * when it would not. The element must be the one that scrolls or clips, so its
+ * `scrollHeight` is what it wants and `clientHeight` what it has. Measurement
+ * runs in a layout effect, so content shown optimistically and then dropped
+ * never paints.
+ *
+ * `contentKey` is for content the caller changes on purpose (rows added or
+ * removed). A change shows the optional content again so the new requirement
+ * is measured with it present, rather than judged against a stale number.
+ *
  * ```tsx
  * const rowRef = useRef<HTMLDivElement>(null);
  * const labelFits = useOptionalLabelFits(rowRef);
@@ -53,33 +67,56 @@
  * ```
  */
 
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
 
-export function useOptionalLabelFits(rowRef: RefObject<HTMLElement | null>): boolean {
+export interface OptionalContentFitsOptions {
+	/** Which way the content overflows. Defaults to `width`. */
+	axis?: 'width' | 'height';
+	/** Changes when the caller changes the container's content; forces a fresh measurement. */
+	contentKey?: string | number;
+}
+
+export function useOptionalContentFits(
+	containerRef: RefObject<HTMLElement | null>,
+	{ axis = 'width', contentKey }: OptionalContentFitsOptions = {}
+): boolean {
 	const [fits, setFits] = useState(true);
 	/**
-	 * Row width required WITH the label, captured on the last frame it was
-	 * shown. Null until measured, which is why a label that has never rendered
-	 * is never hidden.
+	 * Size required WITH the optional content, captured on the last frame it
+	 * was shown. Null until measured, which is why content that has never
+	 * rendered is never hidden.
 	 */
-	const requiredWidth = useRef<number | null>(null);
+	const required = useRef<number | null>(null);
 
-	useEffect(() => {
-		const element = rowRef.current;
+	// New content means the remembered requirement no longer describes it:
+	// show the optional part again and measure afresh.
+	const lastContentKey = useRef(contentKey);
+	useLayoutEffect(() => {
+		if (lastContentKey.current === contentKey) return;
+		lastContentKey.current = contentKey;
+		required.current = null;
+		setFits(true);
+	}, [contentKey]);
+
+	useLayoutEffect(() => {
+		const element = containerRef.current;
 		if (!element) return;
+
+		const wanted = () => (axis === 'width' ? element.scrollWidth : element.scrollHeight);
+		const available = () => (axis === 'width' ? element.clientWidth : element.clientHeight);
 
 		const measure = () => {
 			if (fits) {
-				// scrollWidth is the row's true appetite because the label refuses
-				// to shrink. Record it before hiding, since it is the only moment
-				// the real requirement is observable.
-				requiredWidth.current = element.scrollWidth;
-				if (element.scrollWidth > element.clientWidth) setFits(false);
+				// The scroll size is the container's true appetite because the
+				// optional content refuses to shrink. Record it before hiding,
+				// since it is the only moment the real requirement is observable.
+				required.current = wanted();
+				if (wanted() > available()) setFits(false);
 				return;
 			}
-			// Hidden: the row fits trivially, so compare against the remembered
-			// requirement instead of the current overflow.
-			if (requiredWidth.current !== null && element.clientWidth >= requiredWidth.current) {
+			// Hidden: the container fits trivially, so compare against the
+			// remembered requirement instead of the current overflow.
+			if (required.current !== null && available() >= required.current) {
 				setFits(true);
 			}
 		};
@@ -93,7 +130,12 @@ export function useOptionalLabelFits(rowRef: RefObject<HTMLElement | null>): boo
 		const observer = new ResizeObserver(measure);
 		observer.observe(element);
 		return () => observer.disconnect();
-	}, [rowRef, fits]);
+	}, [containerRef, fits, axis, contentKey]);
 
 	return fits;
+}
+
+/** Whether an optional label fits its row: {@link useOptionalContentFits} across the width. */
+export function useOptionalLabelFits(rowRef: RefObject<HTMLElement | null>): boolean {
+	return useOptionalContentFits(rowRef);
 }

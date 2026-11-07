@@ -54,7 +54,7 @@ export interface LogItemProps {
 	onClearLocalFilter: (logId: string) => void;
 	// Delete state
 	deleteConfirmLogId: string | null;
-	onDeleteLog?: (logId: string) => number | null;
+	onDeleteLog?: (logId: string) => number | null | Promise<number | null>;
 	onSetDeleteConfirmLogId: (logId: string | null) => void;
 	scrollContainerRef: React.RefObject<HTMLDivElement>;
 	// Other callbacks
@@ -108,6 +108,8 @@ export interface LogItemProps {
 	 * including on every user message.
 	 */
 	responseDurationMs?: number;
+	/** First attributed response, or a change from the preceding response's owner. */
+	showTurnProvider?: boolean;
 	/**
 	 * The entry right below this one is a steered message stitched to the same
 	 * turn (`steerJoinsRunningTurn`), so a stitched steer draws its connector on
@@ -171,7 +173,7 @@ export interface TerminalOutputProps {
 	inputRef: React.RefObject<HTMLTextAreaElement>;
 	logsEndRef: React.RefObject<HTMLDivElement>;
 	maxOutputLines: number;
-	onDeleteLog?: (logId: string) => number | null; // Returns the index to scroll to after deletion
+	onDeleteLog?: (logId: string) => number | null | Promise<number | null>; // Returns the index to scroll to after deletion
 	onRemoveQueuedItem?: (itemId: string) => void; // Callback to remove a queued item from execution queue
 	onTogglePauseQueuedItem?: (itemId: string) => void; // Callback to toggle held/paused state of a queued item
 	onMergeQueuedItem?: (itemId: string) => void; // Fold a queued message into the one above it

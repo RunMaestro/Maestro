@@ -5,16 +5,23 @@ import * as os from 'os';
 import * as path from 'path';
 import {
 	readDirRemote,
+	readDirNamesRemote,
 	readFileRemote,
 	readFileInRootRemote,
 	readBinaryFileRemoteAsBase64,
 	readBinaryFileBlockRemoteAsBase64,
 	readFileTailRemote,
 	statRemote,
+	lstatRemote,
+	realpathRemote,
+	readlinkRemote,
+	symlinkRemote,
 	findAncestorWithDirRemote,
 	listFilesWithStatsRemote,
 	directorySizeRemote,
 	writeFileRemote,
+	writeFileAtomicRemote,
+	createExclusiveRemote,
 	existsRemote,
 	mkdirRemote,
 	compressFolderRemote,
@@ -27,6 +34,7 @@ import {
 } from '../../../main/utils/remote-fs';
 import type { SshRemoteConfig } from '../../../shared/types';
 import type { ExecResult } from '../../../main/utils/execFile';
+import { shellEscapeRemotePath } from '../../../main/utils/shell-escape';
 
 describe('remote-fs', () => {
 	// Base SSH config for testing
@@ -57,6 +65,40 @@ describe('remote-fs', () => {
 				]),
 		};
 	}
+
+	describe('readDirNamesRemote', () => {
+		it('preserves hidden names, newlines, whitespace and quotes without following links', async () => {
+			const deps = createMockDeps({
+				stdout: "./.hidden\0./a\nb\0./ with space \0./quote'\0",
+				stderr: '',
+				exitCode: 0,
+			});
+			const file = "/remote/a user's folder";
+			expect(await readDirNamesRemote(file, baseConfig, {}, deps)).toEqual({
+				success: true,
+				data: ['.hidden', 'a\nb', ' with space ', "quote'"],
+			});
+			const command = vi.mocked(deps.execSsh).mock.calls[0][1].at(-1)!;
+			expect(command).toContain(shellEscapeRemotePath(file));
+			expect(command).toContain('find . -mindepth 1 -maxdepth 1');
+			expect(command).not.toContain('find -L');
+			await readDirNamesRemote(file, baseConfig, { recursive: true }, deps);
+			expect(vi.mocked(deps.execSsh).mock.calls[1][1].at(-1)).not.toContain('-maxdepth');
+		});
+		it('rejects truncated listings and propagates permissions instead of returning no files', async () => {
+			const deps = createMockDeps({ stdout: './partial', stderr: '', exitCode: 0 });
+			expect((await readDirNamesRemote('/remote', baseConfig, {}, deps)).success).toBe(false);
+			vi.mocked(deps.execSsh).mockResolvedValue({
+				stdout: '',
+				stderr: 'Permission denied',
+				exitCode: 1,
+			});
+			expect(await readDirNamesRemote('/remote', baseConfig, {}, deps)).toMatchObject({
+				success: false,
+				error: 'Permission denied',
+			});
+		});
+	});
 
 	describe('readDirRemote', () => {
 		it('parses ls output correctly for regular files and directories', async () => {
@@ -731,6 +773,145 @@ describe('remote-fs', () => {
 		});
 	});
 
+	describe('lstatRemote', () => {
+		it.each([
+			['GNU file', 'G|42|81ed|1703836800\n', 'file', 0o100755, false],
+			['BSD file', 'B|42|100644|1703836800\n', 'file', 0o100644, false],
+			['GNU directory', 'G|42|41c0|1703836800\n', 'directory', 0o40700, true],
+			['BSD directory', 'B|42|40755|1703836800\n', 'directory', 0o40755, true],
+			['GNU symlink', 'G|42|a1ff|1703836800\n', 'symlink', 0o120777, false],
+			['BSD symlink', 'B|42|120755|1703836800\n', 'symlink', 0o120755, false],
+			['GNU FIFO', 'G|42|1180|1703836800\n', 'other', 0o10600, false],
+		])('parses %s without following links', async (_label, stdout, type, mode, isDirectory) => {
+			const deps = createMockDeps({ stdout: String(stdout), stderr: '', exitCode: 0 });
+			const filePath = "/home/a user's folder/link";
+			expect(await lstatRemote(filePath, baseConfig, deps)).toEqual({
+				success: true,
+				data: { size: 42, type, mode, isDirectory, mtime: 1703836800000 },
+			});
+			const command = vi.mocked(deps.execSsh).mock.calls[0][1].at(-1)!;
+			expect(command).toContain(shellEscapeRemotePath(filePath));
+			expect(command).toContain('G|%s|%f|%Y');
+			expect(command).toContain('B|%z|%p|%m');
+			expect(command).not.toContain('stat -L');
+			expect(command).not.toContain("$'");
+		});
+
+		it.each(['', 'G|12|81ed', 'G|oops|81ed|1', 'B|12|100888|1', 'G|1|fffff|1', 'G|1|81ed|no'])(
+			'rejects malformed metadata %j',
+			async (stdout) => {
+				const deps = createMockDeps({ stdout, stderr: '', exitCode: 0 });
+				expect(await lstatRemote('/file', baseConfig, deps)).toEqual({
+					success: false,
+					error: 'Invalid lstat output for: /file',
+				});
+			}
+		);
+
+		it('preserves transport and filesystem errors', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: 'Permission denied', exitCode: 1 });
+			expect(await lstatRemote('/private', baseConfig, deps)).toEqual({
+				success: false,
+				error: 'Permission denied',
+			});
+		});
+	});
+
+	describe('realpathRemote', () => {
+		it('uses remote home expansion and preserves whitespace in the resolved path', async () => {
+			const deps = createMockDeps({
+				stdout: '/remote/a folder/ name \n\n',
+				stderr: '',
+				exitCode: 0,
+			});
+			expect(await realpathRemote("~/a user's folder/link", baseConfig, deps)).toEqual({
+				success: true,
+				data: '/remote/a folder/ name \n',
+			});
+			const command = vi.mocked(deps.execSsh).mock.calls[0][1].at(-1)!;
+			expect(command).toContain(shellEscapeRemotePath("~/a user's folder/link"));
+			expect(command).toContain('command -v realpath');
+			expect(command).toContain('readlink -f / >/dev/null 2>&1');
+			expect(command).toContain('readlink -f -- "$1"');
+		});
+
+		it('reports the missing realpath/readlink capability clearly', async () => {
+			const error = 'Remote path resolution requires realpath or readlink with -f support';
+			const deps = createMockDeps({ stdout: '', stderr: error, exitCode: 127 });
+			expect(await realpathRemote('/project', baseConfig, deps)).toEqual({ success: false, error });
+			expect(vi.mocked(deps.execSsh).mock.calls[0][1].at(-1)).toContain(error);
+		});
+
+		it('does not accept a path from a failed command', async () => {
+			const deps = createMockDeps({ stdout: '/partial', stderr: 'No such file', exitCode: 1 });
+			expect(await realpathRemote('/missing/link', baseConfig, deps)).toEqual({
+				success: false,
+				error: 'No such file',
+			});
+		});
+
+		it.each(['', 'relative/path\n'])('rejects invalid resolved output %j', async (stdout) => {
+			const deps = createMockDeps({ stdout, stderr: '', exitCode: 0 });
+			expect((await realpathRemote('/file', baseConfig, deps)).success).toBe(false);
+		});
+	});
+
+	describe('readlinkRemote', () => {
+		it('preserves a dangling relative target and escapes the link path', async () => {
+			const deps = createMockDeps({ stdout: '../missing/ target \n\n', stderr: '', exitCode: 0 });
+			const filePath = "/home/a user's folder/link";
+			expect(await readlinkRemote(filePath, baseConfig, deps)).toEqual({
+				success: true,
+				data: '../missing/ target \n',
+			});
+			expect(vi.mocked(deps.execSsh).mock.calls[0][1].at(-1)).toBe(
+				`readlink -- ${shellEscapeRemotePath(filePath)}`
+			);
+		});
+
+		it('reports failure for non-links even when readlink supplies no stderr', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 1 });
+			expect(await readlinkRemote('/file', baseConfig, deps)).toEqual({
+				success: false,
+				error: 'Failed to read symbolic link: /file',
+			});
+		});
+	});
+
+	describe('symlinkRemote', () => {
+		it('escapes both paths and refuses to follow an existing destination link', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			const target = "../a user's folder/target";
+			const link = '~/a "quoted" folder/link';
+			expect(await symlinkRemote(target, link, baseConfig, deps)).toEqual({ success: true });
+			const command = vi.mocked(deps.execSsh).mock.calls[0][1].at(-1)!;
+			expect(command).toContain(shellEscapeRemotePath(target));
+			expect(command).toContain(shellEscapeRemotePath(link));
+			expect(command).toContain('[ -e "$2" ] || [ -L "$2" ]');
+			expect(command).toContain('ln -sT');
+			expect(command).toContain('ln -sh');
+			expect(command).not.toContain('ln -sf');
+		});
+
+		it('reports an existing path separately from permission failures', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 73 });
+			expect(await symlinkRemote('../target', '/link', baseConfig, deps)).toEqual({
+				success: false,
+				code: 'EEXIST',
+				error: 'Path already exists: /link',
+			});
+			vi.mocked(deps.execSsh).mockResolvedValue({
+				stdout: '',
+				stderr: 'Permission denied',
+				exitCode: 1,
+			});
+			expect(await symlinkRemote('../target', '/link', baseConfig, deps)).toEqual({
+				success: false,
+				error: 'Permission denied',
+			});
+		});
+	});
+
 	describe('listDirWithStatsRemote', () => {
 		it('parses pipe-separated stat output into entries with ms-resolution mtime', async () => {
 			const deps = createMockDeps({
@@ -1327,6 +1508,154 @@ describe('remote-fs', () => {
 			expect(stringInput).toBe(expectedBase64);
 			expect(bufferInput).toBe(expectedBase64);
 		});
+	});
+
+	describe('writeFileAtomicRemote', () => {
+		it('preserves explicitly requested permission bits before replacing the target', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			await writeFileAtomicRemote('/file', 'data', baseConfig, { mode: 0o700 }, deps);
+			const command = vi.mocked(deps.execSsh).mock.calls[0][1].at(-1)!;
+			expect(command).toContain('chmod 700 "$tmp" || exit 1');
+			expect(command.indexOf('chmod 700')).toBeLessThan(command.indexOf('mv -fT'));
+		});
+		it.each(['text with quotes: \' and "\n', 'caf\u00e9', Buffer.from([0, 255, 128, 10]), ''])(
+			'stages payload %j over stdin and cleans up on failure',
+			async (content) => {
+				const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+				const filePath = "/home/a user's folder/file";
+				expect(await writeFileAtomicRemote(filePath, content, baseConfig, {}, deps)).toEqual({
+					success: true,
+				});
+				const [, args, input] = vi.mocked(deps.execSsh).mock.calls[0];
+				const command = args.at(-1)!;
+				expect(input).toBe(Buffer.from(content).toString('base64'));
+				if (input) expect(command).not.toContain(input);
+				expect(command).toContain(shellEscapeRemotePath(filePath));
+				expect(command).toMatch(new RegExp(` ${Buffer.byteLength(content)}$`));
+				expect(command).toContain('mktemp -- "$target.maestro-XXXXXX"');
+				expect(command).toContain('base64 -d > "$tmp" || exit 1');
+				expect(command).toContain('byte_count=$(wc -c < "$tmp") || exit 1');
+				expect(command.indexOf('Incomplete atomic write payload')).toBeLessThan(
+					command.indexOf('mv -fT')
+				);
+				expect(command).toContain('rm -f -- "$tmp"');
+				expect(command).toContain('HUP INT TERM');
+				expect(command).toContain('mv -fT -- "$tmp" "$target"');
+				expect(command).toContain('mv -fh -- "$tmp" "$target"');
+				expect(command).not.toContain('> "$target"');
+				expect(command).not.toContain('sync');
+			}
+		);
+
+		it('flushes data before replacement and the rename afterwards when requested', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			await writeFileAtomicRemote('~/file', 'data', baseConfig, { sync: true }, deps);
+			const command = vi.mocked(deps.execSsh).mock.calls[0][1].at(-1)!;
+			expect(command).toContain('"$HOME/file"');
+			expect(command.indexOf('sync || exit 1')).toBeGreaterThan(command.indexOf('base64 -d'));
+			expect(command.indexOf('sync || exit 1')).toBeLessThan(command.indexOf('mv -fT'));
+			expect(command.lastIndexOf('sync || exit 1')).toBeGreaterThan(command.indexOf('mv -fh'));
+		});
+
+		it.each([
+			'Permission denied',
+			'base64: invalid input',
+			'Incomplete atomic write payload',
+			'sync: failed',
+			'mv: failed',
+		])('propagates write failures: %s', async (stderr) => {
+			const deps = createMockDeps({ stdout: '', stderr, exitCode: 1 });
+			expect(await writeFileAtomicRemote('/file', 'data', baseConfig, {}, deps)).toEqual({
+				success: false,
+				error: stderr,
+			});
+		});
+	});
+
+	describe('createExclusiveRemote', () => {
+		it('honors durable writes and permissions without widening the default directory mode', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			await createExclusiveRemote('/file', 'data', baseConfig, deps, { mode: 0o700, sync: true });
+			const command = vi.mocked(deps.execSsh).mock.calls[0][1].at(-1)!;
+			expect(command).toContain('chmod 700 "$target" || exit 1');
+			expect(command.indexOf('sync || exit 1')).toBeGreaterThan(command.indexOf('chmod 700'));
+			await mkdirRemote('/private', baseConfig, true, deps, { mode: 0o700 });
+			expect(vi.mocked(deps.execSsh).mock.calls[1][1].at(-1)).toContain(
+				'umask 077; mkdir -p -m 700'
+			);
+		});
+		it('holds a noclobber descriptor while decoding stdin, without reopening for write', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			const filePath = "/home/a user's folder/file";
+			const content = Buffer.from([0, 128, 255]);
+			expect(await createExclusiveRemote(filePath, content, baseConfig, deps)).toEqual({
+				success: true,
+			});
+			const [, args, input] = vi.mocked(deps.execSsh).mock.calls[0];
+			const command = args.at(-1)!;
+			expect(input).toBe(content.toString('base64'));
+			expect(command).not.toContain(input!);
+			expect(command).toContain(shellEscapeRemotePath(filePath));
+			expect(command).toContain('set -C');
+			expect(command).toContain('base64 -d >&3 || exit 74');
+			expect(command).toContain('byte_count=$(wc -c < "$target") || exit 1');
+			expect(command).toContain('Incomplete exclusive create payload');
+			expect(command).toMatch(/ 3$/);
+			expect(command).toContain('3> "$target"');
+			expect(command).toContain('[ -e "$target" ] || [ -L "$target" ]');
+			expect(command).not.toContain('rm ');
+		});
+
+		it('returns EEXIST for a collision without replacing the existing path', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'cannot overwrite existing file',
+				exitCode: 73,
+			});
+			expect(await createExclusiveRemote('/file', 'new content', baseConfig, deps)).toEqual({
+				success: false,
+				code: 'EEXIST',
+				error: 'Path already exists: /file',
+			});
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+		});
+
+		it.each([
+			'Permission denied',
+			'No such file or directory',
+			'base64: invalid input',
+			'Incomplete exclusive create payload',
+		])('does not misclassify %s as a collision', async (stderr) => {
+			const deps = createMockDeps({ stdout: '', stderr, exitCode: 1 });
+			expect(await createExclusiveRemote('/file', 'data', baseConfig, deps)).toEqual({
+				success: false,
+				error: stderr,
+			});
+		});
+	});
+
+	describe('translation write transport failures', () => {
+		it.each(['atomic', 'exclusive', 'symlink'] as const)(
+			'does not replay an ambiguous %s operation',
+			async (operation) => {
+				const deps = createMockDeps({
+					stdout: '',
+					stderr: 'Connection reset by peer',
+					exitCode: 255,
+				});
+				vi.mocked(deps.execSsh)
+					.mockResolvedValueOnce({ stdout: '', stderr: 'Connection reset by peer', exitCode: 255 })
+					.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+				const result =
+					operation === 'atomic'
+						? await writeFileAtomicRemote('/file', 'data', baseConfig, {}, deps)
+						: operation === 'exclusive'
+							? await createExclusiveRemote('/file', 'data', baseConfig, deps)
+							: await symlinkRemote('../target', '/link', baseConfig, deps);
+				expect(result).toEqual({ success: false, error: 'Connection reset by peer' });
+				expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			}
+		);
 	});
 
 	describe('existsRemote', () => {

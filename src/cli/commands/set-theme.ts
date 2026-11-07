@@ -8,7 +8,7 @@ import {
 	sendSimpleCommand,
 	reportResult,
 	failCommand,
-	exitIfMaestroNotRunning,
+	failFromError,
 } from '../services/session-command';
 
 interface SetThemeOptions {
@@ -59,7 +59,6 @@ export async function setTheme(
 			jsonExtra: { themeId: match.id, name: match.name },
 		});
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }

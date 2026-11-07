@@ -18,6 +18,8 @@ import { PluginPanelSlot } from './plugins/PluginPanelSlot';
 import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
 import { ImageContextMenuHost } from './ImageContextMenuHost';
+import { SecretScreenConfirmHost } from './SecretScreenConfirmHost';
+import { DictationHost } from './DictationHost';
 import { ZoomViewerHost } from './ZoomViewer';
 import { MediaPlaybackHost } from './MediaPlayback';
 import { ThroughputGaugeHost } from './ThroughputGauge';
@@ -28,6 +30,7 @@ import { HarnessInteractionPrompt } from './HarnessInteractionPrompt';
 import { StatsIndexingHost } from './StatsIndexing/StatsIndexingHost';
 import { CadenzaLayer } from './Cadenza';
 import { ConcertoStageModal } from './Concerto/ConcertoStageModal';
+import { VoiceHud } from './ACappella';
 import { useCadenzaStore } from '../stores/cadenzaStore';
 import { useMovementStore } from '../stores/movementStore';
 import { selectActiveSession, useSessionStore } from '../stores/sessionStore';
@@ -45,6 +48,7 @@ export interface AppShellProps {
 	useNativeTitleBar: boolean;
 	isMdDownViewport: boolean;
 	concertoEnabled: boolean;
+	aCappellaEnabled: boolean;
 
 	activeGroupChatId: string | null;
 	groupChats: GroupChat[];
@@ -88,6 +92,7 @@ export function AppShell({
 	useNativeTitleBar,
 	isMdDownViewport,
 	concertoEnabled,
+	aCappellaEnabled,
 	activeGroupChatId,
 	groupChats,
 	groups,
@@ -301,6 +306,16 @@ export function AppShell({
 			    right-click Copy / Save. Surfaces wire up nothing. See
 			    ImageContextMenuHost. */}
 			<ImageContextMenuHost theme={theme} />
+			{/* --- SECRET SCREEN CONFIRM (single, app-wide) ---
+			    "Publish anyway?" for a gist, feedback, or support package the
+			    main-process secret screen refused. Opened only through
+			    withSecretScreenConfirm(). */}
+			<SecretScreenConfirmHost theme={theme} />
+			{/* --- DICTATION (single, app-wide) ---
+			    Mirrors the dictation task's readiness for every DictationButton,
+			    classifies the `dictate` shortcut's press, and draws the pill that
+			    says a microphone is recording. See DictationHost. */}
+			<DictationHost theme={theme} />
 			{/* --- ZOOM VIEWER (single, app-wide) ---
 			    Full-screen pan/zoom for any diagram or image. Opened by expand
 			    buttons and the image right-click menu via openZoomViewer(). */}
@@ -320,6 +335,12 @@ export function AppShell({
 			<ContextTimelinePanel theme={theme} />
 			{/* --- PERMISSION PROMPT (Claude Code standard mode; portal) --- */}
 			<PermissionPrompt theme={theme} />
+			{/* --- A CAPPELLA VOICE HUD (single, app-wide; Encore-gated) ---
+			    Owns the one `acappella:event` subscription, so it is mounted
+			    unconditionally and gates itself: a second mount would project every
+			    protocol event twice. Renders nothing, and subscribes to nothing,
+			    while the Encore Feature is off. */}
+			<VoiceHud theme={theme} enabled={aCappellaEnabled} />
 			{/* Native protocol interactions are opt-in and independent of the current relay. */}
 			<HarnessInteractionPrompt theme={theme} />
 			{/* --- USAGE DATA SCAN PROGRESS (single, app-wide) ---

@@ -8,6 +8,7 @@
  */
 
 import type { AdditionalDirectory, AgentSshRemoteConfig } from '../../types';
+import { isValidAgentId } from '../../agentIds';
 import { sshRecordOf } from '../agents/rules';
 import type { AgentRecord, AITabRecord } from '../store/records';
 import type { TurnAgent, TurnTab } from './assemble';
@@ -115,6 +116,10 @@ export function toTurnTab(record: AITabRecord): TurnTab {
 	const mode = PERMISSION_MODES.find((candidate) => candidate === record.permissionMode);
 	return {
 		id: record.id,
+		tabProvider:
+			typeof record.tabProvider === 'string' && isValidAgentId(record.tabProvider)
+				? record.tabProvider
+				: undefined,
 		agentSessionId: str(record.agentSessionId) ?? null,
 		customModel: str(record.customModel),
 		customEffort: str(record.customEffort),

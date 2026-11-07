@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { NowPlayingIndicator } from '../../../../renderer/components/MediaPlayback/NowPlayingIndicator';
 import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
+import { installMediaPlaybackReplica } from '../../../../renderer/stores/mediaPlaybackReplica';
 import type { MediaItem } from '../../../../renderer/utils/mediaItems';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -111,6 +112,68 @@ describe('NowPlayingIndicator', () => {
 		const state = useMediaPlaybackStore.getState();
 		expect(state.dismissed).toBe(false);
 		expect(state.toggleRequest).toBe(0);
+	});
+
+	it.each([false, true])('calls media actions without DOM events (compact=%s)', (compact) => {
+		const original = useMediaPlaybackStore.getState();
+		const requestToggle = vi.fn(original.requestToggle);
+		const restore = vi.fn(original.restore);
+		useMediaPlaybackStore.setState({ requestToggle, restore });
+		try {
+			render(<NowPlayingIndicator theme={mockTheme} compact={compact} />);
+			fireEvent.click(screen.getByTestId('now-playing-toggle'));
+			expect(requestToggle).toHaveBeenCalledExactlyOnceWith();
+			expect(useMediaPlaybackStore.getState().toggleRequest).toBe(1);
+			fireEvent.click(screen.getByTestId('now-playing-restore'));
+			expect(restore).toHaveBeenCalledExactlyOnceWith();
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+		} finally {
+			useMediaPlaybackStore.setState({
+				requestToggle: original.requestToggle,
+				restore: original.restore,
+			});
+		}
+	});
+
+	it.each([false, true])('forwards desktop clicks without React events (compact=%s)', (compact) => {
+		const sendCommand = vi.fn();
+		(window as unknown as { maestro: unknown }).maestro = {
+			settings: { set: vi.fn() },
+			floatingWidgets: {
+				sendCommand,
+				getState: vi.fn(async () => null),
+				onState: vi.fn(() => () => {}),
+			},
+		};
+		const uninstall = installMediaPlaybackReplica();
+		try {
+			const { rerender } = render(<NowPlayingIndicator theme={mockTheme} compact={compact} />);
+			fireEvent.click(screen.getByLabelText('Pause podcast.mp3'));
+			expect(sendCommand).toHaveBeenLastCalledWith('media-player', {
+				type: 'action',
+				action: 'requestToggle',
+				args: [],
+			});
+
+			// The authority reports paused playback back to the replica.
+			seed({ playing: false });
+			rerender(<NowPlayingIndicator theme={mockTheme} compact={compact} />);
+			fireEvent.click(screen.getByLabelText('Play podcast.mp3'));
+			expect(sendCommand).toHaveBeenLastCalledWith('media-player', {
+				type: 'action',
+				action: 'requestToggle',
+				args: [],
+			});
+
+			fireEvent.click(screen.getByLabelText('Show the media player'));
+			expect(sendCommand).toHaveBeenLastCalledWith('media-player', {
+				type: 'action',
+				action: 'restore',
+				args: [],
+			});
+		} finally {
+			uninstall();
+		}
 	});
 
 	it('stays put while paused, rather than stranding a half-listened file', () => {

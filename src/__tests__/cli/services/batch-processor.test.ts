@@ -59,10 +59,21 @@ vi.mock('../../../cli/services/prompt-loader', () => ({
 	getCliTaskSelectionBlock: vi.fn().mockResolvedValue('SELECTION BLOCK'),
 }));
 
+// The desktop app is the model router's home. A test must never reach the
+// real one, so the bridge to it is replaced: each test says what it answers.
+const desktopRouter = vi.hoisted(() => ({ sendCommand: vi.fn() }));
+vi.mock('../../../cli/services/maestro-client', () => ({
+	MaestroClient: class {},
+	withMaestroClient: vi.fn(async (action: (client: unknown) => Promise<unknown>) =>
+		action({ sendCommand: desktopRouter.sendCommand })
+	),
+}));
+
 // Mock storage
 vi.mock('../../../cli/services/storage', () => ({
 	addHistoryEntry: vi.fn(),
 	readGroups: vi.fn(),
+	readHarnessTierDefaults: vi.fn(),
 	readHistory: vi.fn(),
 	readSettings: vi.fn(() => ({})),
 }));
@@ -95,7 +106,12 @@ import {
 	uncheckAllTasks,
 	writeDoc,
 } from '../../../cli/services/agent-spawner';
-import { addHistoryEntry, readGroups, readHistory } from '../../../cli/services/storage';
+import {
+	addHistoryEntry,
+	readGroups,
+	readHarnessTierDefaults,
+	readHistory,
+} from '../../../cli/services/storage';
 import { registerCliActivity, unregisterCliActivity } from '../../../shared/cli-activity';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 import { getCliTaskSelectionBlock } from '../../../cli/services/prompt-loader';
@@ -144,6 +160,8 @@ describe('batch-processor', () => {
 		]);
 		// By default, no persisted history so reconciliation is a no-op.
 		vi.mocked(readHistory).mockReturnValue([]);
+		// By default, no harness tier defaults: a tier resolves to the built-in table.
+		vi.mocked(readHarnessTierDefaults).mockReturnValue({});
 		// By default, return 0 tasks to prevent infinite loops
 		vi.mocked(readDocAndCountTasks).mockReturnValue({ content: '', taskCount: 0 });
 		vi.mocked(readDocAndGetTasks).mockReturnValue({ content: '', tasks: [] });
@@ -563,6 +581,17 @@ describe('batch-processor', () => {
 					return { content: '', taskCount: 0 };
 				});
 			};
+
+			it("runs the task on the agent's Run on target", async () => {
+				singleTask();
+				const runOn = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+				await collectEvents(
+					runPlaybook(mockSession({ runOn } as never), mockPlaybook(), '/playbooks', {})
+				);
+
+				expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({ runOn });
+			});
 
 			it('lets the run model/effort win over the session values on the task spawn', async () => {
 				singleTask();
@@ -2189,6 +2218,250 @@ describe('batch-processor', () => {
 			expect(resolution?.model).toBe('opus');
 			expect(resolution?.effort).toBe('max');
 			expect(resolution?.warnings).toEqual([]);
+		});
+
+		it('resolves a tier through the harness default, then the agent, before the built-in table', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" -->\n- [ ] Task one');
+			vi.mocked(readHarnessTierDefaults).mockReturnValue({
+				'claude-code': { high: { type: 'provider-model', model: 'opus[1m]' } },
+			});
+
+			const session = mockSession({ toolType: 'claude-code', customModel: 'sonnet' });
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.customModel).toBe('opus[1m]');
+			expect(events.find((e) => e.type === 'model_resolution')?.notes).toEqual([
+				'tier="high" (document) -> model opus[1m] on the provider (Harness default)',
+			]);
+
+			// The agent's own target wins over the harness default.
+			vi.mocked(spawnAgent).mockClear();
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" -->\n- [ ] Task one');
+			await collectEvents(
+				runPlaybook(
+					mockSession({
+						toolType: 'claude-code',
+						customModel: 'sonnet',
+						tierTargets: { high: { type: 'provider-model', model: 'opus' } },
+					}),
+					mockPlaybook(),
+					'/playbooks',
+					{ skipSynopsis: true }
+				)
+			);
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.customModel).toBe('opus');
+		});
+
+		it('launches a low task and a high task of one document on their own targets', async () => {
+			// The document as the engine re-reads it: each task spawn checks one box.
+			let content = [
+				'<!-- MAESTRO:MODEL tier="low" -->',
+				'- [ ] Rename the helper',
+				'',
+				'<!-- MAESTRO:MODEL tier="high" -->',
+				'- [ ] Design the migration',
+			].join('\n');
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => ({
+				content,
+				taskCount: (content.match(/- \[ \]/g) ?? []).length,
+			}));
+			vi.mocked(spawnAgent).mockImplementation(async (_tool, _cwd, _prompt, resumeId) => {
+				// A resume is the task's synopsis; only the task itself does the work.
+				if (!resumeId) content = content.replace('- [ ]', '- [x]');
+				return {
+					success: true,
+					response: '**Summary:** ok\n**Details:** ok',
+					agentSessionId: 'claude-session-123',
+				};
+			});
+
+			// The agent's own turns run on Ollama. It sends `low` to another local
+			// model and `high` to the provider.
+			const own = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+			const low = { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+			const session = mockSession({
+				toolType: 'claude-code',
+				customModel: 'sonnet',
+				runOn: own,
+				tierTargets: { low, high: { type: 'provider-model', model: 'opus' } },
+			} as never);
+			await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks', {}));
+
+			const spawns = vi.mocked(spawnAgent).mock.calls;
+			const tasks = spawns.filter((call) => !call[3]).map((call) => call[4]);
+			const synopses = spawns.filter((call) => call[3]).map((call) => call[4]);
+			expect(tasks).toHaveLength(2);
+			expect(tasks[0]).toMatchObject({ customModel: 'qwen3.5-4b', runOn: low });
+			expect(tasks[1]).toMatchObject({ customModel: 'opus', runOn: { type: 'provider' } });
+			// Each synopsis resumes its task's conversation where that task ran, not
+			// on the agent's own target.
+			expect(synopses).toHaveLength(2);
+			expect(synopses[0]?.runOn).toEqual(low);
+			expect(synopses[1]?.runOn).toEqual({ type: 'provider' });
+		});
+
+		// An agent set to the Auto model: every dispatch is routed by the desktop
+		// app's model router, and a marker wins on the axes it sets.
+		describe('an agent on the Auto model', () => {
+			const routedTo = (tier: string, effort: string) =>
+				desktopRouter.sendCommand.mockResolvedValue({
+					success: true,
+					result: {
+						tier,
+						effort,
+						engine: { id: 'embedding-router', label: 'Embedding router', calibrated: false },
+						latencyMs: 20,
+					},
+				});
+			const autoSession = (overrides: Partial<SessionInfo> = {}) =>
+				mockSession({
+					toolType: 'claude-code',
+					customModel: 'auto',
+					customEffort: 'high',
+					...overrides,
+				});
+			const run = (session: SessionInfo, options: Record<string, unknown> = {}) =>
+				collectEvents(
+					runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true, ...options })
+				);
+			const taskSpawn = () => vi.mocked(spawnAgent).mock.calls[0][4];
+
+			beforeEach(() => {
+				desktopRouter.sendCommand.mockReset();
+				routedTo('low', 'low');
+			});
+
+			it('routes the task text and spawns on the tier and effort the router chose', async () => {
+				singleTaskDocument('- [ ] Rename the helper\n  - three callers');
+
+				const events = await run(autoSession());
+
+				expect(desktopRouter.sendCommand).toHaveBeenCalledTimes(1);
+				expect(desktopRouter.sendCommand.mock.calls[0][0]).toMatchObject({
+					type: 'model_route_turn',
+					request: { prompt: 'Rename the helper\n  - three callers', agentId: 'session-123' },
+				});
+				expect(taskSpawn()).toMatchObject({ customModel: 'haiku', customEffort: 'low' });
+				const resolution = events.find((e) => e.type === 'model_resolution');
+				expect(resolution?.model).toBe('haiku');
+				expect(resolution?.notes?.[0]).toBe('Auto: Embedding router chose tier low, effort low.');
+			});
+
+			it('a marker that sets the tier wins it, and the router still decides the effort', async () => {
+				routedTo('low', 'medium');
+				singleTaskDocument('- [ ] Design the migration <!-- MAESTRO:MODEL tier="high" -->');
+
+				await run(autoSession());
+
+				expect(desktopRouter.sendCommand).toHaveBeenCalledTimes(1);
+				expect(taskSpawn()).toMatchObject({ customModel: 'opus', customEffort: 'high' });
+			});
+
+			it('a marker that sets both axes is not routed at all', async () => {
+				singleTaskDocument('<!-- MAESTRO:MODEL tier="high" effort="low" -->\n- [ ] Task one');
+
+				await run(autoSession());
+
+				expect(desktopRouter.sendCommand).not.toHaveBeenCalled();
+				expect(taskSpawn()).toMatchObject({ customModel: 'opus', customEffort: 'low' });
+			});
+
+			it("with no desktop to ask, the task runs on the agent's default and is not failed", async () => {
+				desktopRouter.sendCommand.mockRejectedValue(new Error('Maestro is not running'));
+				singleTaskDocument('- [ ] Rename the helper');
+
+				const events = await run(autoSession());
+
+				expect(taskSpawn()?.customModel).toBeUndefined();
+				expect(taskSpawn()?.customEffort).toBe('high');
+				expect(events.find((e) => e.type === 'model_resolution')?.notes?.[0]).toMatch(
+					/^Auto \(no decision\)/
+				);
+				expect(events.find((e) => e.type === 'complete')?.totalTasksCompleted).toBe(1);
+			});
+
+			it('launches a tier the agent maps to a source on that source', async () => {
+				const local = { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+				singleTaskDocument('- [ ] Rename the helper');
+
+				await run(autoSession({ tierTargets: { low: local } } as never));
+
+				expect(taskSpawn()).toMatchObject({ customModel: 'qwen3.5-4b', runOn: local });
+			});
+
+			it('fails the task by name, without a spawn, when the routed tier cannot be used', async () => {
+				singleTaskDocument('- [ ] Rename the helper');
+
+				await run(
+					autoSession({
+						toolType: 'factory-droid',
+						tierTargets: { low: { type: 'source', endpointId: 'ep-x', model: 'qwen3' } },
+					} as never)
+				);
+
+				expect(spawnAgent).not.toHaveBeenCalled();
+			});
+
+			it('a run that names a model is not routed, and one that names auto is', async () => {
+				singleTaskDocument('- [ ] Rename the helper');
+				await run(autoSession(), { model: 'sonnet' });
+				expect(desktopRouter.sendCommand).not.toHaveBeenCalled();
+				expect(taskSpawn()?.customModel).toBe('sonnet');
+
+				vi.mocked(spawnAgent).mockClear();
+				singleTaskDocument('- [ ] Rename the helper');
+				await run(mockSession({ toolType: 'claude-code', customModel: 'opus' }), { model: 'auto' });
+				expect(desktopRouter.sendCommand).toHaveBeenCalledTimes(1);
+				expect(taskSpawn()?.customModel).toBe('haiku');
+			});
+
+			it('routes nothing for an agent on a named model', async () => {
+				singleTaskDocument('- [ ] Rename the helper');
+
+				await run(mockSession({ toolType: 'claude-code', customModel: 'opus' }));
+
+				expect(desktopRouter.sendCommand).not.toHaveBeenCalled();
+				expect(taskSpawn()?.customModel).toBe('opus');
+			});
+		});
+
+		it("keeps the agent's own Run on target for a tier that names no place", async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" -->\n- [ ] Task one');
+
+			// On the provider, only the built-in table maps `high`: a model, no place.
+			await collectEvents(
+				runPlaybook(
+					mockSession({ toolType: 'claude-code', customModel: 'sonnet' }),
+					mockPlaybook(),
+					'/playbooks',
+					{ skipSynopsis: true }
+				)
+			);
+			const spawned = vi.mocked(spawnAgent).mock.calls[0][4];
+			expect(spawned?.customModel).toBe('opus');
+			expect(spawned?.runOn).toBeUndefined();
+		});
+
+		it('fails the task by name, without a spawn, when the tier target cannot be used', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="low" -->\n- [ ] Task one');
+
+			// A malformed target must never run on the agent's own model instead.
+			const session = mockSession({
+				toolType: 'claude-code',
+				customModel: 'sonnet',
+				tierTargets: { low: { type: 'source' } as never },
+			});
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(spawnAgent).not.toHaveBeenCalled();
+			const task = events.find((e) => e.type === 'task_complete');
+			expect(task?.success).toBe(false);
+			expect(task?.fullResponse).toContain('This agent\'s "low" tier target cannot be used');
+			const warnings = events.find((e) => e.type === 'model_resolution')?.warnings as string[];
+			expect(warnings).toHaveLength(1);
 		});
 
 		it('falls back to the agent model AND warns when the provider has no tier mapping', async () => {

@@ -223,6 +223,26 @@ describe('Stats Preload API', () => {
 		});
 	});
 
+	describe('getModelUsage', () => {
+		it('should invoke stats:get-model-usage with the range', async () => {
+			const usage = { range: 'quarter', sources: [] };
+			mockInvoke.mockResolvedValue(usage);
+
+			const result = await api.getModelUsage('quarter');
+
+			expect(mockInvoke).toHaveBeenCalledWith('stats:get-model-usage', 'quarter');
+			expect(result).toEqual(usage);
+		});
+
+		it('should default to the week', async () => {
+			mockInvoke.mockResolvedValue({});
+
+			await api.getModelUsage();
+
+			expect(mockInvoke).toHaveBeenCalledWith('stats:get-model-usage', 'week');
+		});
+	});
+
 	describe('exportUsage', () => {
 		it('should invoke stats:export with the range, format, and path', async () => {
 			const exportResult = {

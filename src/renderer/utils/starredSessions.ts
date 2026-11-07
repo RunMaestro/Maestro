@@ -14,6 +14,7 @@ import type { Session, AITab } from '../types';
 import { getTabDisplayName } from './tabHelpers';
 import { logger } from './logger';
 import { captureException } from './sentry';
+import { projectTabProvider, resolveTabNativeProvider } from './providerTabSessions';
 
 /** Window event fired whenever any session's starred state changes. */
 const STARRED_CHANGED_EVENT = 'maestro:starredSessionsChanged';
@@ -39,8 +40,9 @@ export function onStarredSessionsChanged(handler: () => void): () => void {
  * remote (web) handler. No-op when the tab has no agentSessionId.
  */
 export function persistTabStarred(session: Session, tab: AITab, starred: boolean): void {
+	const agentId = resolveTabNativeProvider(tab, session);
+	tab = projectTabProvider(session, tab, agentId).tab!;
 	if (!tab.agentSessionId) return;
-	const agentId = session.toolType || 'claude-code';
 	const persist =
 		agentId === 'claude-code'
 			? window.maestro.claude.updateSessionStarred(session.projectRoot, tab.agentSessionId, starred)
@@ -67,10 +69,12 @@ export function persistTabStarred(session: Session, tab: AITab, starred: boolean
 
 /** Mirror starred transcripts at a confirmed close boundary before the provider can delete them. */
 export function snapshotClosedTabTranscript(session: Session, tab: AITab): void {
+	const provider = resolveTabNativeProvider(tab, session);
+	tab = projectTabProvider(session, tab, provider).tab!;
 	if (!tab.starred || !tab.agentSessionId || !session.projectRoot) return;
 	void window.maestro.agentSessions
 		.snapshotStarredTranscript(
-			session.toolType || 'claude-code',
+			provider,
 			session.projectRoot,
 			tab.agentSessionId,
 			getTabDisplayName(tab)

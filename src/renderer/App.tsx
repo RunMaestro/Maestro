@@ -1,3 +1,5 @@
+import { getAgentCommands } from './utils/agentCommands';
+import { resolveTabProvider } from './utils/providerTabSessions';
 import React, {
 	useState,
 	useEffect,
@@ -1551,9 +1553,12 @@ function MaestroConsoleInner() {
 		glossLevel: themeGloss,
 	});
 
-	// Get capabilities for the active session's agent type
+	// Commands and capabilities follow the selected tab's provider.
+	const commandTab = activeSession ? getActiveTab(activeSession) : undefined;
+	const commandProvider = activeSession ? resolveTabProvider(commandTab, activeSession) : undefined;
+	const scopedAgentCommands = getAgentCommands(activeSession, commandTab);
 	const { hasCapability: hasActiveSessionCapability } = useAgentCapabilities(
-		activeSession?.toolType,
+		commandProvider,
 		activeSession?.providerTranslationKnowledgeDirectory
 	);
 
@@ -1664,14 +1669,13 @@ function MaestroConsoleInner() {
 		// Only include agent-specific commands if the agent supports slash commands
 		// This allows built-in and custom commands to be shown for all agents (Codex, OpenCode, etc.)
 		const agentCommands = hasActiveSessionCapability('supportsSlashCommands')
-			? (activeSession?.agentCommands || []).map((cmd) => ({
+			? (scopedAgentCommands || []).map((cmd) => ({
 					command: cmd.command,
 					description: cmd.description,
-					aiOnly: true, // Agent commands are only available in AI mode
+					aiOnly: true,
 				}))
 			: [];
-		// Filter built-in slash commands by agent type (if specified)
-		const currentAgentType = activeSession?.toolType;
+		const currentAgentType = commandProvider;
 		const filteredSlashCommands = slashCommands.filter(
 			(cmd) => !cmd.agentTypes || (currentAgentType && cmd.agentTypes.includes(currentAgentType))
 		);
@@ -1688,8 +1692,8 @@ function MaestroConsoleInner() {
 		speckitCommands,
 		openspecCommands,
 		bmadCommands,
-		activeSession?.agentCommands,
-		activeSession?.toolType,
+		scopedAgentCommands,
+		commandProvider,
 		hasActiveSessionCapability,
 	]);
 
@@ -3363,6 +3367,7 @@ function MaestroConsoleInner() {
 				useNativeTitleBar={useNativeTitleBar}
 				isMdDownViewport={isMdDownViewport}
 				concertoEnabled={encoreFeatures.concerto === true}
+				aCappellaEnabled={encoreFeatures.aCappella === true}
 				activeGroupChatId={activeGroupChatId}
 				groupChats={groupChats}
 				groups={groups}

@@ -11,3 +11,5 @@ export { useGlobalAgentStats } from './useGlobalAgentStats';
 export type { UseGlobalAgentStatsResult } from './useGlobalAgentStats';
 export { useProviderProfiles } from './useProviderProfiles';
 export type { ProviderProfile, ProviderProfileIndex } from './useProviderProfiles';
+export { useModelUsage } from './useModelUsage';
+export type { UseModelUsageResult } from './useModelUsage';

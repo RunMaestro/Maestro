@@ -572,6 +572,7 @@ export function beginTurnRecord(tab: AITabRecord, begin: TurnBegin): AITabRecord
 	return {
 		...base,
 		turnProvider: begin.provider,
+		turnSessionId: tab.agentSessionId || undefined,
 		logs: [...(Array.isArray(tab.logs) ? tab.logs : []), begin.userEntry],
 	};
 }
@@ -598,7 +599,7 @@ export function recordTabSession(
 	if (update.agentSessionId !== undefined) fields.agentSessionId = update.agentSessionId;
 	if (update.addUsage !== undefined) {
 		const slot = (
-			owningProvider === agent.toolType
+			owningProvider === (tab.tabProvider ?? agent.toolType)
 				? tab
 				: (tab.providerSessions as Record<string, unknown>)?.[owningProvider]
 		) as { usageStats?: UsageStats } | undefined;
@@ -648,6 +649,8 @@ export function applyTabPatch(
 	tab: AITabRecord,
 	patch: Record<string, unknown>
 ): RuleResult<AITabRecord> {
+	if ('tabProvider' in patch || 'providerSessions' in patch || 'pendingTranslation' in patch)
+		return invalid('Use tab provider to select a provider through the parking operation.');
 	const next: AITabRecord = { ...tab };
 	let touched = 0;
 	for (const key of Object.keys(patch)) {

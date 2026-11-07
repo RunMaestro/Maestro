@@ -10,6 +10,7 @@ import { emitError, type CompleteEvent } from '../output/jsonl';
 import { formatRunEvent, formatError, formatInfo, RunEvent } from '../output/formatter';
 import { checkAgentBusy, waitForAgentAvailable } from '../services/agent-busy';
 import { installInterruptHandler } from '../utils/interrupt';
+import { ExitCode, exitWith } from '../exit-codes';
 
 interface RunPlaybookOptions {
 	dryRun?: boolean;
@@ -49,7 +50,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const agent = getSessionById(agentId)!;
@@ -63,7 +64,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const detection = await detectAgent(agent.toolType);
@@ -75,7 +76,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		// Check if agent is busy (either from desktop or another CLI instance)
@@ -93,7 +94,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 				} else {
 					console.error(formatError(message));
 				}
-				process.exit(1);
+				exitWith(ExitCode.GeneralError);
 			}
 		}
 
@@ -105,7 +106,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 			} else {
 				console.error(formatError('Agent does not have an Auto Run folder configured'));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		// Show startup info in human-readable mode
@@ -163,7 +164,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 				}
 				// A stopped run is not a success; report it the way a shell reports SIGINT.
 				if (event.type === 'complete' && (event as CompleteEvent).stopped) {
-					process.exitCode = 130;
+					process.exitCode = ExitCode.Interrupted;
 				}
 			}
 		} finally {
@@ -176,6 +177,6 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 		} else {
 			console.error(formatError(`Failed to run playbook: ${message}`));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 }

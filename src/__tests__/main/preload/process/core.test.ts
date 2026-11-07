@@ -48,6 +48,18 @@ describe('Process Core Preload API', () => {
 	});
 
 	describe('spawn', () => {
+		it('forwards actual Codex transport updates and removes the listener', () => {
+			const callback = vi.fn();
+			const off = api.onCodexTransport(callback);
+			const handler = mockOn.mock.calls.find(
+				([channel]) => channel === 'process:codex-transport'
+			)![1];
+			handler({}, 'agent-ai-tab', 'exec');
+			expect(callback).toHaveBeenCalledWith('agent-ai-tab', 'exec');
+			off();
+			expect(mockRemoveListener).toHaveBeenCalledWith('process:codex-transport', handler);
+		});
+
 		it('should invoke process:spawn with config', async () => {
 			const config: ProcessConfig = {
 				sessionId: 'session-123',

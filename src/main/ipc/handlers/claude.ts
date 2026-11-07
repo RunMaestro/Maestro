@@ -1505,8 +1505,8 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 		'claude:getCommands',
 		withIpcErrorLogging(
 			handlerOpts('getCommands', COMMANDS_LOG_CONTEXT),
-			async (projectPath: string) => {
-				const homeDir = os.homedir();
+			async (projectPath: string, configDir?: string) => {
+				const accountDir = configDir || path.join(os.homedir(), '.claude');
 				const commands: Array<{ command: string; description: string }> = [];
 
 				const extractDescription = async (filePath: string): Promise<string> => {
@@ -1549,7 +1549,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				};
 
 				// 1. User-defined commands
-				const userCommandsDir = path.join(homeDir, '.claude', 'commands');
+				const userCommandsDir = path.join(accountDir, 'commands');
 				await scanCommandsDir(userCommandsDir);
 
 				// 2. Project-level commands
@@ -1557,18 +1557,13 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				await scanCommandsDir(projectCommandsDir);
 
 				// 3. Enabled plugins' commands
-				const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+				const settingsPath = path.join(accountDir, 'settings.json');
 				try {
 					const settingsContent = await fs.readFile(settingsPath, 'utf-8');
 					const settings = JSON.parse(settingsContent);
 					const enabledPlugins = settings.enabledPlugins || {};
 
-					const installedPluginsPath = path.join(
-						homeDir,
-						'.claude',
-						'plugins',
-						'installed_plugins.json'
-					);
+					const installedPluginsPath = path.join(accountDir, 'plugins', 'installed_plugins.json');
 					const installedContent = await fs.readFile(installedPluginsPath, 'utf-8');
 					const installedPlugins = JSON.parse(installedContent);
 

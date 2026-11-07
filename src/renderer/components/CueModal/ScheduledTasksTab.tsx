@@ -109,6 +109,8 @@ function subtitleFor(task: ScheduledTask): string {
 	const parts = [task.name];
 	if (task.pipelineName && task.pipelineName !== task.agentName) parts.push(task.pipelineName);
 	if (task.action !== 'prompt') parts.push(task.action);
+	// A gate decides whether a fire runs at all, so the row says it has one.
+	if (task.gate) parts.push('gated');
 	const model = formatCueTurnSettings(task);
 	if (model) parts.push(model);
 	if (!task.enabled) parts.push('paused');

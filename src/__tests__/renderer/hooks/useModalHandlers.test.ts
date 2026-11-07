@@ -130,6 +130,36 @@ describe('useModalHandlers', () => {
 			expect(result.current.errorSession).toEqual(session);
 		});
 
+		it('builds failure recovery actions for the captured owner after a selection change', () => {
+			const error = {
+				type: 'auth_expired',
+				agentId: 'claude-code',
+				message: 'expired',
+				timestamp: 1,
+				recoverable: true,
+			} as never;
+			const session = createMockSession({
+				id: 'err-session',
+				toolType: 'codex',
+				agentError: error,
+				agentErrorTabId: 'tab-1',
+				aiTabs: [
+					createBaseMockAITab({
+						id: 'tab-1',
+						tabProvider: 'codex',
+						turnProvider: 'codex',
+						agentError: error,
+					}),
+				],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			getModalActions().setAgentErrorModalSessionId(session.id);
+			renderHook(() => useModalHandlers(createInputRef(), createTerminalOutputRef()));
+			expect(useAgentErrorRecovery).toHaveBeenLastCalledWith(
+				expect.objectContaining({ agentId: 'claude-code', sessionId: session.id })
+			);
+		});
+
 		it('errorSession is null when agentErrorModalSessionId does not match any session', () => {
 			useSessionStore.setState({ sessions: [createMockSession({ id: 'other' })] });
 			getModalActions().setAgentErrorModalSessionId('nonexistent');

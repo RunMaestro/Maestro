@@ -1,11 +1,11 @@
-import { atomicWriteFile } from '../storage/atomic-json-store';
 import { assertTranslationTarget } from './resource-projections';
-import { translationKnowledgePrompt } from './resources';
-import * as fs from 'node:fs/promises';
+import { translationKnowledgePrompt, resourceBindingHash } from './resources';
+import type { TranslationFs } from './fs-port';
+import { localTranslationFs } from './local-fs';
 import * as path from 'node:path';
 import { createKeyedWriteQueue } from '../../keyedWriteQueue';
 import { canonicalJson } from '../../canonicalJson';
-import { translationHash, nativeRecordKey } from './identity';
+import { translationHash, nativeRecordKey, translationArtifact } from './identity';
 import { extractNativeConversation } from './native-records';
 import { TranslationArchive, type TranslationJournal } from './archive';
 import { TranslationRegistry } from './registry';
@@ -17,12 +17,23 @@ import type {
 	OwnedTranslationWrite,
 } from './types';
 import { TranslationSourceBusyError } from './types';
+import { limitationsNeedingAcceptance } from './limitations';
+import { assertTranslationKnowledgeDirectory } from './knowledge-binding';
+import { isPathAtOrUnderRoot } from '../../worktreePaths';
 
 export interface TranslationTransactionHost {
+	/** Native provider files; the archive owns a separate, fixed local filesystem. */
+	nativeFs?: TranslationFs;
+	/** Host-owned directory: local app data or the SSH user's .maestro, never the project. */
+	knowledgeRoot: string;
+	/** Resolve git metadata without coupling the library to the desktop host. */
+	resolveProjectGit?(
+		projectRoot: string
+	): Promise<{ root: string; commonDirectory: string } | undefined>;
 	/** Called again before every mutation and commit, not just when planning. */
 	assertSourceUnchanged(journal: TranslationJournal): Promise<void>;
 	setMigration(state: ProviderMigrationState): Promise<void>;
-	/** Must commit the agent provider, all tab mappings, and operation ID atomically. */
+	/** Atomically commit the selected mappings and operation ID; only an unscoped plan switches the agent. */
 	commit(journal: TranslationJournal): Promise<void>;
 	isCommitted(operationId: string): Promise<boolean>;
 	codex?: TranslationRpc;
@@ -30,35 +41,89 @@ export interface TranslationTransactionHost {
 
 const operations = createKeyedWriteQueue();
 
+/** A journal never gets to choose an arbitrary root for its writes or rollback. */
+async function translationWriteRoot(
+	journal: TranslationJournal,
+	write: OwnedTranslationWrite,
+	knowledgeRoot: string,
+	allowLegacyKnowledge = false,
+	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit'],
+	nativeFs: TranslationFs = localTranslationFs
+): Promise<string> {
+	const paths = nativeFs?.paths ?? path;
+	if (!journal.resourceWrites.includes(write))
+		return journal.plan.destination.nativeSessionRoot ?? journal.plan.destination.accountRoot;
+	if (write.gitExcludeBlock) {
+		const git = await resolveProjectGit?.(journal.plan.destination.projectRoot);
+		if (!git || paths.resolve(write.path) !== paths.join(git.commonDirectory, 'info', 'exclude'))
+			throw new Error('Unsafe journal git exclude path');
+		return git.commonDirectory;
+	}
+	const directory = journal.knowledgeDirectory;
+	if (directory) {
+		const suffix = paths.join(translationHash(journal.plan.agentId), journal.plan.id);
+		const legacyRoot = paths.join(
+			journal.plan.destination.projectRoot,
+			'.maestro/provider-knowledge'
+		);
+		const legacy =
+			allowLegacyKnowledge && paths.resolve(directory) === paths.resolve(legacyRoot, suffix);
+		const root = legacy ? legacyRoot : knowledgeRoot;
+		if (paths.resolve(directory) !== paths.resolve(root, suffix))
+			throw new Error('Unsafe journal knowledge directory');
+		await assertTranslationKnowledgeDirectory(directory, root, nativeFs);
+		if (
+			isPathAtOrUnderRoot(
+				paths.resolve(write.path).split(paths.sep).join('/'),
+				paths.resolve(directory).split(paths.sep).join('/')
+			)
+		)
+			return legacy ? journal.plan.destination.projectRoot : root;
+	}
+	return journal.plan.destination.projectRoot;
+}
+
 /** An intent is not ownership: only a successful exclusive create permits rollback deletion. */
 async function stageResourceWrite(
 	archive: TranslationArchive,
 	journal: TranslationJournal,
 	write: OwnedTranslationWrite,
-	bytes: Buffer
+	bytes: Buffer,
+	knowledgeRoot: string,
+	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit'],
+	nativeFs: TranslationFs = localTranslationFs
 ): Promise<void> {
+	const paths = nativeFs?.paths ?? path;
 	const owned = { ...write, created: false };
 	journal.resourceWrites.push(owned);
 	await archive.write(journal);
-	await assertTranslationTarget(write.path, journal.plan.destination.projectRoot);
-	await fs.mkdir(path.dirname(write.path), { recursive: true, mode: 0o700 });
-	await assertTranslationTarget(write.path, journal.plan.destination.projectRoot);
-	if (write.deleted) await fs.unlink(write.path);
+	const root = await translationWriteRoot(
+		journal,
+		owned,
+		knowledgeRoot,
+		false,
+		resolveProjectGit,
+		nativeFs
+	);
+	await assertTranslationTarget(write.path, root, nativeFs);
+	await nativeFs.mkdir(paths.dirname(write.path), { recursive: true, mode: 0o700 });
+	await assertTranslationTarget(write.path, root, nativeFs);
+	if (write.deleted) await nativeFs.unlink(write.path);
 	else if (write.symlinkTarget && write.created) {
-		await fs.symlink(write.symlinkTarget, write.path);
+		await nativeFs.symlink(write.symlinkTarget, write.path);
 		owned.created = true;
 		await archive.write(journal);
 	} else if (write.created) {
-		const handle = await fs.open(write.path, 'wx', write.mode ?? 0o600);
-		try {
-			owned.created = true;
-			await archive.write(journal);
-			await handle.writeFile(bytes);
-			await handle.sync();
-		} finally {
-			await handle.close();
-		}
-	} else await atomicWriteFile(write.path, bytes, { mode: write.mode ?? 0o600, durable: true });
+		await nativeFs.createExclusive(write.path, bytes, {
+			mode: write.mode ?? 0o600,
+			durable: true,
+			onCreated: async () => {
+				owned.created = true;
+				await archive.write(journal);
+			},
+		});
+	} else
+		await nativeFs.atomicWrite(write.path, bytes, { mode: write.mode ?? 0o600, durable: true });
 }
 
 async function deferTranslation(
@@ -74,12 +139,14 @@ async function deferTranslation(
 	await archive.markLatest(plan.agentId, plan.id);
 	await host.setMigration({
 		operationId: plan.id,
+		tabId: plan.tabId,
 		destination: plan.destination.provider,
 		state: 'deferred',
 		verification: plan.verification,
 		acceptLimitations,
 		selectedUserResources: plan.scope.selectedUserResources,
-		acceptedLimitationCodes: plan.limitations.map(canonicalJson),
+		projectResourcesIntoRepo: plan.scope.projectResourcesIntoRepo,
+		acceptedLimitationCodes: limitationsNeedingAcceptance(plan.limitations).map(canonicalJson),
 	});
 	return {
 		success: false,
@@ -98,8 +165,11 @@ export async function applyTranslation(
 	host: TranslationTransactionHost,
 	acceptLimitations = false
 ): Promise<TranslationResult> {
+	const nativeFs = host.nativeFs ?? localTranslationFs;
+	const paths = nativeFs.paths ?? path;
 	return operations.enqueue(journal.plan.agentId, async () => {
 		const plan = journal.plan;
+		assertTabScope(journal);
 		// Reapplying a durable operation must never replay an uncertain native import.
 		if (journal.state === 'committed' && journal.result?.state === 'committed')
 			return journal.result;
@@ -117,7 +187,10 @@ export async function applyTranslation(
 					'Existing provider migration requires recovery or rollback; native staging is not replayed.',
 			};
 		if (plan.status === 'noop') return { success: true, state: 'noop', plan, mappings: [] };
-		if (plan.status === 'blocked' || (!acceptLimitations && plan.limitations.length)) {
+		if (
+			plan.status === 'blocked' ||
+			(!acceptLimitations && limitationsNeedingAcceptance(plan.limitations).length)
+		) {
 			journal.result = {
 				success: false,
 				state: 'refused',
@@ -134,18 +207,47 @@ export async function applyTranslation(
 		}
 		const release = await archive.lock(plan.agentId);
 		let releaseProject: (() => Promise<void>) | undefined;
+		let releaseGit: (() => Promise<void>) | undefined;
 		try {
 			releaseProject = await archive.lock(`project:${plan.destination.projectRoot}`);
+			const currentCheckpoint = await archive.checkpoint(plan.agentId);
+			if (currentCheckpoint?.operationId !== journal.checkpoint?.operationId)
+				return {
+					success: false,
+					state: 'refused',
+					plan,
+					mappings: [],
+					error: 'Agent checkpoint changed since preflight; plan translation again',
+				};
 			await host.assertSourceUnchanged(journal);
 			journal.state = 'staging';
 			await archive.write(journal);
 			await archive.markLatest(plan.agentId, plan.id);
 			await host.setMigration({
 				operationId: plan.id,
+				tabId: plan.tabId,
 				destination: plan.destination.provider,
 				state: 'staging',
 				verification: plan.verification,
 			});
+			const projections = plan.scope.projectResourcesIntoRepo ? (journal.projections ?? []) : [];
+			if (projections.some((p) => !p.deleted) && !host.resolveProjectGit)
+				throw new Error('Project resource installation requires a host git resolver');
+			const git = projections.some((p) => !p.deleted)
+				? await host.resolveProjectGit?.(plan.destination.projectRoot)
+				: undefined;
+			if (
+				projections.some((p) => !p.deleted) &&
+				!git &&
+				!plan.limitations.some((l) => l.code === 'resource-git-exclude-unavailable')
+			)
+				plan.limitations.push({
+					code: 'resource-git-exclude-unavailable',
+					severity: 'info',
+					message:
+						'This project is not a git repository. Native resources will be installed without a local git exclude entry.',
+				});
+			if (git) releaseGit = await archive.lock(`git:${git.commonDirectory}`);
 			const adapter = registry.get(plan.destination.provider);
 			if (!adapter) throw new Error('Destination translation adapter unavailable');
 			for (const conversation of journal.conversations) {
@@ -164,6 +266,7 @@ export async function applyTranslation(
 					operationId: plan.id,
 					destination: plan.destination,
 					codex: host.codex,
+					nativeFs,
 					recordIntent: async (mapping) => {
 						journal.mappings = [
 							...journal.mappings.filter((m) => m.tabId !== mapping.tabId),
@@ -173,12 +276,61 @@ export async function applyTranslation(
 					},
 				});
 			}
-			for (const projection of journal.projections ?? []) {
-				await host.assertSourceUnchanged(journal);
-				await assertTranslationTarget(projection.path, plan.destination.projectRoot);
+			if (git) {
+				const file = paths.join(git.commonDirectory, 'info', 'exclude');
+				await assertTranslationTarget(file, git.commonDirectory, nativeFs);
 				let current: Buffer | undefined;
 				try {
-					current = await fs.readFile(projection.path);
+					current = await nativeFs.readFile(file);
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+				}
+				const excludePaths = projections
+					.filter((p) => !p.deleted)
+					.map((p) => {
+						const relative = paths.relative(git.root, p.path).split(paths.sep).join('/');
+						if (
+							!relative ||
+							relative === '..' ||
+							relative.startsWith('../') ||
+							paths.isAbsolute(relative) ||
+							/[\r\n]/.test(relative)
+						)
+							throw new Error('Unsafe git exclude resource path');
+						// Anchored literal patterns, including names with gitignore metacharacters.
+						return '/' + relative.replace(/([\\*?\[\] ])/g, '\\$1');
+					});
+				const block = `${current?.length && current[current.length - 1] !== 10 ? '\n' : ''}# Maestro provider resources ${plan.id} begin\n${[...new Set(excludePaths)].join('\n')}\n# Maestro provider resources ${plan.id} end\n`;
+				const bytes = Buffer.concat([current ?? Buffer.alloc(0), Buffer.from(block)]);
+				const backup = current
+					? {
+							...translationArtifact('instruction', file, 'git-info-exclude', current),
+							mode: (await nativeFs.stat(file)).mode & 0o777,
+						}
+					: undefined;
+				await stageResourceWrite(
+					archive,
+					journal,
+					{
+						path: file,
+						sha256: translationHash(bytes),
+						created: !current,
+						gitExcludeBlock: block,
+						backup,
+						mode: backup?.mode,
+					},
+					bytes,
+					host.knowledgeRoot,
+					host.resolveProjectGit,
+					nativeFs
+				);
+			}
+			for (const projection of projections) {
+				await host.assertSourceUnchanged(journal);
+				await assertTranslationTarget(projection.path, plan.destination.projectRoot, nativeFs);
+				let current: Buffer | undefined;
+				try {
+					current = await nativeFs.readFile(projection.path);
 				} catch (error) {
 					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 				}
@@ -188,45 +340,82 @@ export async function applyTranslation(
 					archive,
 					journal,
 					projection,
-					Buffer.from(projection.bytesBase64, 'base64')
+					Buffer.from(projection.bytesBase64, 'base64'),
+					host.knowledgeRoot,
+					host.resolveProjectGit,
+					nativeFs
 				);
 			}
-			if (journal.plan.scope.projectKnowledge) {
-				const directory = path.join(
-					plan.destination.projectRoot,
-					'.maestro',
-					'provider-knowledge',
+			journal.resources.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+			const resourceKey = translationHash(
+				canonicalJson({
+					source: plan.source,
+					destination: plan.destination,
+					scope: plan.scope,
+					binding: resourceBindingHash(journal.resources),
+					resources: journal.resources.map((resource) => ({
+						path: resource.relativePath,
+						kind: resource.kind,
+						mode: resource.mode,
+						symlinkTarget: resource.symlinkTarget,
+					})),
+				})
+			);
+			const previousImport = currentCheckpoint?.resourceImport;
+			journal.resourceImport =
+				previousImport?.key === resourceKey
+					? previousImport
+					: { key: resourceKey, operationId: plan.id };
+			if (journal.resourceImport.operationId !== plan.id) {
+				journal.knowledgeDirectory = paths.resolve(
+					host.knowledgeRoot,
 					translationHash(plan.agentId),
-					plan.id
+					journal.resourceImport.operationId
 				);
+			} else if (journal.plan.scope.projectKnowledge) {
+				const directory = paths.resolve(host.knowledgeRoot, translationHash(plan.agentId), plan.id);
 				journal.knowledgeDirectory = directory;
+				await assertTranslationKnowledgeDirectory(directory, host.knowledgeRoot, nativeFs);
+				await nativeFs.mkdir(host.knowledgeRoot, { recursive: true, mode: 0o700 });
 				for (const artifact of journal.resources) {
-					const relative = path.normalize(artifact.relativePath);
+					const relative = paths.normalize(artifact.relativePath);
 					if (
-						path.isAbsolute(relative) ||
+						paths.isAbsolute(relative) ||
 						relative === '..' ||
-						relative.startsWith('..' + path.sep)
+						relative.startsWith('..' + paths.sep)
 					)
 						throw new Error('Unsafe resource projection path');
-					const file = path.join(directory, relative);
+					const file = paths.join(directory, relative);
 					const bytes = Buffer.from(artifact.bytesBase64, 'base64');
 					await stageResourceWrite(
 						archive,
 						journal,
 						{ path: file, sha256: artifact.sha256, created: true, mode: artifact.mode },
-						bytes
+						bytes,
+						host.knowledgeRoot,
+						host.resolveProjectGit,
+						nativeFs
 					);
 				}
-				const indexPath = path.join(directory, 'knowledge-index.md');
-				const index = translationKnowledgePrompt(directory, journal.resources);
+				const indexPath = paths.join(directory, 'knowledge-index.md');
+				const index = translationKnowledgePrompt(directory, journal.resources, paths);
 				await stageResourceWrite(
 					archive,
 					journal,
 					{ path: indexPath, sha256: translationHash(index), created: true },
-					Buffer.from(index)
+					Buffer.from(index),
+					host.knowledgeRoot,
+					host.resolveProjectGit,
+					nativeFs
 				);
 			}
-			await verifyTranslationWrites(journal);
+			await verifyTranslationWrites(
+				journal,
+				host.knowledgeRoot,
+				false,
+				host.resolveProjectGit,
+				nativeFs
+			);
 			journal.state = 'staged';
 			await archive.write(journal);
 			await host.assertSourceUnchanged(journal);
@@ -236,6 +425,7 @@ export async function applyTranslation(
 			await finalizeTranslation(archive, journal);
 			await host.setMigration({
 				operationId: plan.id,
+				tabId: plan.tabId,
 				destination: plan.destination.provider,
 				state: 'committed',
 				verification: plan.verification,
@@ -263,6 +453,7 @@ export async function applyTranslation(
 			await archive.write(journal);
 			await host.setMigration({
 				operationId: plan.id,
+				tabId: plan.tabId,
 				destination: plan.destination.provider,
 				state: journal.state,
 				verification: plan.verification,
@@ -270,15 +461,69 @@ export async function applyTranslation(
 			});
 			return journal.result;
 		} finally {
+			await releaseGit?.();
 			await releaseProject?.();
 			await release();
 		}
 	});
 }
 
-export async function verifyTranslationWrites(journal: TranslationJournal): Promise<void> {
+/** Select the existing transaction engine, including its recovery and rollback journal. */
+export async function applyTabTranslation(
+	...args: Parameters<typeof applyTranslation>
+): Promise<TranslationResult> {
+	if (!args[2].plan.tabId) throw new Error('Single-tab apply requires a tab-scoped plan');
+	return applyTranslation(...args);
+}
+
+function assertTabScope(journal: TranslationJournal): void {
+	const tabId = journal.plan.tabId;
+	if (
+		tabId !== undefined &&
+		(!tabId ||
+			journal.plan.tabs.length !== 1 ||
+			journal.plan.tabs[0].tabId !== tabId ||
+			journal.conversations.length !== 1 ||
+			journal.conversations[0].tabId !== tabId ||
+			journal.mappings.some((mapping) => mapping.tabId !== tabId))
+	)
+		throw new Error('Single-tab journal contains an unrelated conversation or mapping');
+}
+
+export async function verifyTranslationWrites(
+	journal: TranslationJournal,
+	knowledgeRoot: string,
+	allowLegacyKnowledge = false,
+	resolveProjectGit?: TranslationTransactionHost['resolveProjectGit'],
+	nativeFs: TranslationFs = localTranslationFs
+): Promise<void> {
+	const paths = nativeFs?.paths ?? path;
+	assertTabScope(journal);
 	if (journal.mappings.length !== journal.conversations.length)
 		throw new Error('Incomplete all-tabs mapping');
+	if (journal.resourceImport && journal.resourceImport.operationId !== journal.plan.id) {
+		const directory = paths.resolve(
+			knowledgeRoot,
+			translationHash(journal.plan.agentId),
+			journal.resourceImport.operationId
+		);
+		if (journal.knowledgeDirectory !== directory)
+			throw new Error('Invalid reused knowledge directory');
+		await assertTranslationKnowledgeDirectory(directory, knowledgeRoot, nativeFs);
+		for (const resource of journal.resources) {
+			const file = paths.join(directory, resource.relativePath);
+			await assertTranslationTarget(file, directory, nativeFs);
+			if (translationHash(await nativeFs.readFile(file)) !== resource.sha256)
+				throw new Error('Previously imported resource changed since preflight');
+		}
+		const index = paths.join(directory, 'knowledge-index.md');
+		await assertTranslationTarget(index, directory, nativeFs);
+		if (
+			(await nativeFs.readFile(index)).toString('utf8') !==
+			translationKnowledgePrompt(directory, journal.resources, paths)
+		)
+			throw new Error('Previously imported knowledge index changed since preflight');
+	}
 	const destinationObserved: Record<string, string> = {};
 	for (const write of [
 		...journal.resourceWrites,
@@ -286,23 +531,33 @@ export async function verifyTranslationWrites(journal: TranslationJournal): Prom
 	]) {
 		await assertTranslationTarget(
 			write.path,
-			journal.resourceWrites.includes(write)
-				? journal.plan.destination.projectRoot
-				: (journal.plan.destination.nativeSessionRoot ?? journal.plan.destination.accountRoot)
+			await translationWriteRoot(
+				journal,
+				write,
+				knowledgeRoot,
+				allowLegacyKnowledge,
+				resolveProjectGit,
+				nativeFs
+			),
+			nativeFs
 		);
 		if (write.deleted) {
 			try {
-				await fs.lstat(write.path);
+				await nativeFs.lstat(write.path);
 				throw new Error('Deleted native resource reappeared before commit');
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
 				throw error;
 			}
 		}
-		if (write.symlinkTarget && (await fs.readlink(write.path)) !== write.symlinkTarget)
+		if (write.symlinkTarget && (await nativeFs.readlink(write.path)) !== write.symlinkTarget)
 			throw new Error('Native discovery alias changed before commit');
-		const bytes = await fs.readFile(write.path);
-		if (!write.sha256 || translationHash(bytes) !== write.sha256)
+		const bytes = await nativeFs.readFile(write.path);
+		if (
+			write.gitExcludeBlock
+				? !bytes.includes(Buffer.from(write.gitExcludeBlock))
+				: !write.sha256 || translationHash(bytes) !== write.sha256
+		)
 			throw new Error(`Destination readback changed: ${write.path}`);
 		const mapping = journal.mappings.find((m) => m.artifacts.includes(write));
 		if (mapping) {
@@ -327,15 +582,25 @@ async function finalizeTranslation(
 ): Promise<void> {
 	if (!journal.destinationObserved)
 		throw new Error('Staged native checkpoint is missing; recovery requires inspection');
-	const checkpoint: TranslationCheckpoint = journal.checkpoint ?? {
-		observed: {},
-		lineage: {},
-		conversations: [],
-		resources: [],
-		resourceBases: {},
-		providerRoots: {},
-	};
-	checkpoint.conversations = journal.conversations;
+	const checkpoint: TranslationCheckpoint = journal.checkpoint
+		? structuredClone(journal.checkpoint)
+		: {
+				observed: {},
+				lineage: {},
+				conversations: [],
+				resources: [],
+				resourceBases: {},
+				providerRoots: {},
+			};
+	checkpoint.operationId = journal.plan.id;
+	checkpoint.resourceImport = journal.resourceImport;
+	checkpoint.conversations = [
+		...checkpoint.conversations.filter(
+			(conversation) =>
+				!journal.conversations.some((current) => current.tabId === conversation.tabId)
+		),
+		...journal.conversations,
+	];
 	checkpoint.resources = journal.resources;
 	checkpoint.ownedResources ??= {};
 	for (const write of journal.resourceWrites)
@@ -371,6 +636,8 @@ export async function recoverTranslation(
 	host: TranslationTransactionHost,
 	rollback = false
 ): Promise<TranslationResult> {
+	const nativeFs = host.nativeFs ?? localTranslationFs;
+	assertTabScope(journal);
 	// A later switch may replace the host's active operation ID, but it does not undo this commit.
 	if (rollback && journal.state === 'committed')
 		throw new Error('Committed migration cannot be deleted; switch back through a new translation');
@@ -378,8 +645,15 @@ export async function recoverTranslation(
 	await archive.recoverLock(`project:${journal.plan.destination.projectRoot}`);
 	const release = await archive.lock(journal.plan.agentId);
 	let releaseProject: (() => Promise<void>) | undefined;
+	let releaseGit: (() => Promise<void>) | undefined;
 	try {
 		releaseProject = await archive.lock(`project:${journal.plan.destination.projectRoot}`);
+		if (journal.resourceWrites.some((w) => w.gitExcludeBlock)) {
+			const git = await host.resolveProjectGit?.(journal.plan.destination.projectRoot);
+			if (!git) throw new Error('Cannot resolve journal git exclude directory');
+			await archive.recoverLock(`git:${git.commonDirectory}`);
+			releaseGit = await archive.lock(`git:${git.commonDirectory}`);
+		}
 		if (await host.isCommitted(journal.plan.id)) {
 			if (rollback)
 				throw new Error(
@@ -389,6 +663,7 @@ export async function recoverTranslation(
 			if (journal.state !== 'committed') await finalizeTranslation(archive, journal);
 			await host.setMigration({
 				operationId: journal.plan.id,
+				tabId: journal.plan.tabId,
 				destination: journal.plan.destination.provider,
 				state: 'committed',
 				verification: journal.plan.verification,
@@ -397,6 +672,7 @@ export async function recoverTranslation(
 		}
 		if (rollback) {
 			const writes = [...journal.resourceWrites, ...journal.mappings.flatMap((m) => m.artifacts)];
+			const excludeRollbacks = new Map<OwnedTranslationWrite, Buffer>();
 			for (const write of writes) {
 				if (
 					write.backup &&
@@ -406,17 +682,74 @@ export async function recoverTranslation(
 				// Missing files still need root validation before a backup can be restored.
 				await assertTranslationTarget(
 					write.path,
-					journal.resourceWrites.includes(write)
-						? journal.plan.destination.projectRoot
-						: (journal.plan.destination.nativeSessionRoot ?? journal.plan.destination.accountRoot)
+					await translationWriteRoot(
+						journal,
+						write,
+						host.knowledgeRoot,
+						true,
+						host.resolveProjectGit,
+						nativeFs
+					),
+					nativeFs
 				);
+				// Codex owns the rollout/index pair. A lost import reply leaves its hash
+				// unknown, but rollback never mutates retained artifacts, so no hash is needed.
+				if (write.cleanup === 'retain') continue;
+				if (write.gitExcludeBlock) {
+					let bytes: Buffer;
+					try {
+						bytes = await nativeFs.readFile(write.path);
+					} catch (error) {
+						if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+						throw error;
+					}
+					if (!write.created && !write.backup)
+						throw new Error('Rollback refused: git exclude creation ownership is unproved');
+					if (write.created && !bytes.length) {
+						excludeRollbacks.set(write, bytes);
+						continue;
+					}
+					// Latin1 gives a reversible byte-to-character mapping for unrelated user data.
+					const current = bytes.toString('latin1');
+					const block = Buffer.from(write.gitExcludeBlock).toString('latin1');
+					if (current.includes(block)) {
+						excludeRollbacks.set(write, Buffer.from(current.replace(block, ''), 'latin1'));
+						continue;
+					}
+					const begin = `# Maestro provider resources ${journal.plan.id} begin\n`;
+					const end = `# Maestro provider resources ${journal.plan.id} end\n`;
+					const start = current.indexOf(begin);
+					const finish = current.indexOf(end, start + begin.length);
+					if (start < 0 && finish < 0) continue;
+					if (start < 0 || finish < 0)
+						throw new Error('Rollback refused: git exclude markers changed');
+					const owned = new Set(
+						block
+							.slice(block.indexOf(begin) + begin.length, block.indexOf(end))
+							.split('\n')
+							.filter(Boolean)
+					);
+					const retained = current
+						.slice(start + begin.length, finish)
+						.split('\n')
+						.filter((line) => !owned.delete(line))
+						.join('\n');
+					let prefix = current.slice(0, start);
+					if (!retained && block.startsWith('\n') && prefix.endsWith('\n'))
+						prefix = prefix.slice(0, -1);
+					excludeRollbacks.set(
+						write,
+						Buffer.from(prefix + retained + current.slice(finish + end.length), 'latin1')
+					);
+					continue;
+				}
 				try {
-					await fs.lstat(write.path);
+					await nativeFs.lstat(write.path);
 					if (!write.created && !write.backup)
 						throw new Error('Rollback refused: artifact creation ownership is unproved');
-					if (write.symlinkTarget && (await fs.readlink(write.path)) !== write.symlinkTarget)
+					if (write.symlinkTarget && (await nativeFs.readlink(write.path)) !== write.symlinkTarget)
 						throw new Error('Rollback refused: native alias changed');
-					const hash = translationHash(await fs.readFile(write.path));
+					const hash = translationHash(await nativeFs.readFile(write.path));
 					if (
 						(!write.created && !write.backup) ||
 						!write.sha256 ||
@@ -433,13 +766,24 @@ export async function recoverTranslation(
 				}
 			}
 			for (const write of writes) {
+				if (write.gitExcludeBlock) {
+					const remaining = excludeRollbacks.get(write);
+					if (!remaining) continue;
+					if (!remaining.length && write.created) await nativeFs.unlink(write.path);
+					else
+						await nativeFs.atomicWrite(write.path, remaining, {
+							mode: (await nativeFs.stat(write.path)).mode & 0o777,
+							durable: true,
+						});
+					continue;
+				}
 				if (write.cleanup === 'retain' || (!write.created && !write.backup)) continue;
 				if (write.backup)
-					await atomicWriteFile(write.path, Buffer.from(write.backup.bytesBase64, 'base64'), {
+					await nativeFs.atomicWrite(write.path, Buffer.from(write.backup.bytesBase64, 'base64'), {
 						mode: write.backup.mode ?? 0o600,
 					});
 				else
-					await fs.unlink(write.path).catch((error) => {
+					await nativeFs.unlink(write.path).catch((error) => {
 						if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 					});
 			}
@@ -458,7 +802,13 @@ export async function recoverTranslation(
 					'Incomplete native staging requires inspection/rollback; uncertain writes are not retried'
 				);
 			await host.assertSourceUnchanged(journal);
-			await verifyTranslationWrites(journal);
+			await verifyTranslationWrites(
+				journal,
+				host.knowledgeRoot,
+				true,
+				host.resolveProjectGit,
+				nativeFs
+			);
 			await host.commit(journal);
 			await finalizeTranslation(archive, journal);
 		}
@@ -471,12 +821,14 @@ export async function recoverTranslation(
 		await archive.write(journal);
 		await host.setMigration({
 			operationId: journal.plan.id,
+			tabId: journal.plan.tabId,
 			destination: journal.plan.destination.provider,
 			state: journal.state,
 			verification: journal.plan.verification,
 		});
 		return journal.result;
 	} finally {
+		await releaseGit?.();
 		await releaseProject?.();
 		await release();
 	}

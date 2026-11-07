@@ -16,7 +16,7 @@
 import { getContextCompactCommand } from '../../shared/contextCompaction';
 import { getClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 import { selectSessionById, updateAiTab, useSessionStore } from '../stores/sessionStore';
-import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
+import { captureQueuedTurnSettings, projectTabProvider } from '../utils/providerTabSessions';
 import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
 import type { AITab, LogEntry, Session, ToolType } from '../types';
@@ -87,11 +87,16 @@ function findTab(session: Session | undefined, tabId: string): AITab | undefined
  * has a compaction command, the tab has a session to resume, and a spawner is
  * wired.
  */
-export function canCompactTabContext(sessionId: string, tabId: string): boolean {
+export function canCompactTabContext(
+	sessionId: string,
+	tabId: string,
+	provider?: ToolType
+): boolean {
 	if (!hiddenTurnSpawner) return false;
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
-	if (!session || !getContextCompactCommand(session.toolType)) return false;
-	return !!findTab(session, tabId)?.agentSessionId;
+	if (!session) return false;
+	const projected = projectTabProvider(session, findTab(session, tabId), provider);
+	return !!getContextCompactCommand(projected.agent.toolType) && !!projected.tab?.agentSessionId;
 }
 
 /**
@@ -104,10 +109,16 @@ export function canCompactTabContext(sessionId: string, tabId: string): boolean 
  */
 export async function compactTabContext(
 	sessionId: string,
-	tabId: string
+	tabId: string,
+	provider?: ToolType
 ): Promise<ContextCompactionResult> {
-	const session = selectSessionById(sessionId)(useSessionStore.getState());
-	const tab = findTab(session, tabId);
+	const savedSession = selectSessionById(sessionId)(useSessionStore.getState());
+	if (!savedSession) return { success: false, error: 'This conversation cannot be compacted.' };
+	const { agent: session, tab } = projectTabProvider(
+		savedSession,
+		findTab(savedSession, tabId),
+		provider
+	);
 	const command = getContextCompactCommand(session?.toolType);
 	if (!hiddenTurnSpawner || !session || !tab?.agentSessionId || !command) {
 		return { success: false, error: 'This conversation cannot be compacted.' };

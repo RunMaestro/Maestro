@@ -1,3 +1,4 @@
+import type { ToolType } from '../../../types';
 import type { AITab, FilePreviewHistoryEntry, FilePreviewTab, UnifiedTab } from '../../../types';
 import type { BrowserTab } from '../../../../shared/browserPage';
 import type { MediaOpenMode } from '../../../../shared/mediaTypes';
@@ -45,7 +46,9 @@ export interface AITabHandlersReturn {
 	handleRequestTabRename: (tabId: string) => void;
 	handleUpdateTabByClaudeSessionId: (
 		agentSessionId: string,
-		updates: { name?: string | null; starred?: boolean }
+		updates: { name?: string | null; starred?: boolean },
+		provider?: ToolType,
+		sessionId?: string
 	) => void;
 	handleTabStar: (tabId: string, starred: boolean) => void;
 	handleTabMarkUnread: (tabId: string) => void;
@@ -112,7 +115,7 @@ export interface UnifiedTabHandlersReturn {
 export interface ScrollLogHandlersReturn {
 	handleScrollPositionChange: (scrollTop: number) => void;
 	handleAtBottomChange: (isAtBottom: boolean) => void;
-	handleDeleteLog: (logId: string) => number | null;
+	handleDeleteLog: (logId: string) => Promise<number | null>;
 }
 
 export interface TabHandlersReturn

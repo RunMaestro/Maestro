@@ -129,6 +129,47 @@ afterEach(() => {
 // ============================================================================
 
 describe('useForkConversation', () => {
+	it('forks a pinned provider with its own configuration', async () => {
+		const tab = buildSourceTab({
+			tabProvider: 'codex',
+			customModel: 'tab-codex',
+			customEffort: 'high',
+		});
+		const session = buildSession({
+			aiTabs: [tab],
+			customPath: '/claude',
+			customEnvVars: { CLAUDE: 'yes' },
+			providerOverrides: {
+				codex: {
+					customPath: '/codex',
+					customEnvVars: { CODEX: 'yes' },
+					customModel: 'codex-model',
+					customEffort: 'high',
+				},
+			},
+		});
+		const hook = mountHook([session], session.id);
+		hook.fork('log-2');
+		await waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalled());
+		expect(window.maestro.agents.get).toHaveBeenCalledWith('codex');
+		expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+			expect.objectContaining({
+				toolType: 'codex',
+				sessionCustomPath: '/codex',
+				sessionCustomEnvVars: { CODEX: 'yes' },
+				sessionCustomModel: 'codex-model',
+				sessionCustomEffort: 'high',
+			})
+		);
+		const updated = hook.getSessions()[0];
+		expect(updated.toolType).toBe('claude-code');
+		expect(updated.aiTabs.find((t) => t.id === updated.activeTabId)).toMatchObject({
+			tabProvider: 'codex',
+			turnProvider: 'codex',
+			agentSessionId: null,
+		});
+	});
+
 	describe('session-level invariants', () => {
 		it('creates a new tab in the existing session (does NOT create a new session)', () => {
 			const session = buildSession();

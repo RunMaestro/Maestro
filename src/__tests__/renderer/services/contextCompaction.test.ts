@@ -101,6 +101,44 @@ describe('compactTabContext', () => {
 		expect(options).toEqual({ keepTurnSettings: true, allowEmptyResponse: true });
 	});
 
+	it('compacts a pinned or parked Claude slot under its own config without changing selection', async () => {
+		const spawner = vi.fn<HiddenTurnSpawner>().mockResolvedValue({ success: true });
+		registerContextCompactionSpawner(spawner);
+		seed({
+			toolType: 'codex',
+			customPath: '/bin/codex',
+			providerOverrides: {
+				'claude-code': { customPath: '/bin/claude-work', customModel: 'sonnet' },
+			},
+			aiTabs: [
+				createMockAITab({
+					id: TAB,
+					agentSessionId: 'codex-live',
+					providerSessions: {
+						'claude-code': { agentSessionId: 'claude-parked', customEffort: 'high' },
+					},
+				}),
+			],
+		});
+		expect(canCompactTabContext(SESSION, TAB)).toBe(false);
+		expect(canCompactTabContext(SESSION, TAB, 'claude-code')).toBe(true);
+		await compactTabContext(SESSION, TAB, 'claude-code');
+		expect(spawner).toHaveBeenCalledWith(
+			SESSION,
+			'/repo',
+			'claude-parked',
+			'/compact',
+			'claude-code',
+			expect.objectContaining({
+				customPath: '/bin/claude-work',
+				customModel: 'sonnet',
+				customEffort: 'high',
+			}),
+			expect.anything()
+		);
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].agentSessionId).toBe('codex-live');
+	});
+
 	it('reports a failed or thrown compaction instead of throwing', async () => {
 		registerContextCompactionSpawner(
 			vi.fn<HiddenTurnSpawner>().mockResolvedValue({ success: false, error: 'Prompt is too long' })

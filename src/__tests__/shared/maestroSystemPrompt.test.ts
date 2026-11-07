@@ -1,16 +1,31 @@
 /**
  * @file maestroSystemPrompt.test.ts
  * @description The one Maestro system prompt assembler shared by the renderer,
- * CLI, and main-process builders: which plugin sections apply, and how the
- * base template and sections are substituted and joined.
+ * CLI, and main-process builders: which plugin sections and which core
+ * sections apply, and how the base template and sections are substituted and
+ * joined.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { describe, it, expect } from 'vitest';
 import {
 	assembleMaestroSystemPrompt,
+	coreSystemPromptContext,
+	coreSystemPromptSectionsFor,
 	systemPromptSectionsFor,
 	MAESTRO_SYSTEM_PROMPT_SECTION_SEPARATOR,
 } from '../../shared/maestroSystemPrompt';
+import {
+	SYSTEM_ONE_CALIBRATED_NOTE,
+	SYSTEM_ONE_UNCALIBRATED_NOTE,
+} from '../../shared/local-models/system-one-prompt';
+import { PROMPT_IDS } from '../../shared/promptDefinitions';
+import {
+	SYSTEM_ONE_GATES,
+	refusedSystemOneAccess,
+	systemOneAccess,
+} from '../helpers/systemOneAccess';
 import {
 	FIRST_PARTY_PLUGIN_DEFINITIONS,
 	COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
@@ -160,6 +175,112 @@ describe('systemPromptSectionsFor', () => {
 	});
 });
 
+describe('coreSystemPromptSectionsFor', () => {
+	const systemOneSection = { featureId: 'system-one', promptId: 'system-one-system' };
+
+	it('carries the System One section when every gate passes for a local agent', () => {
+		expect(coreSystemPromptSectionsFor({ isSsh: false, systemOne: systemOneAccess() })).toEqual([
+			systemOneSection,
+		]);
+		expect(PROMPT_IDS.SYSTEM_ONE_SYSTEM).toBe(systemOneSection.promptId);
+	});
+
+	it('carries it on an engine that is not calibrated too: the section says so', () => {
+		const access = systemOneAccess({
+			engine: 'local-judge',
+			engineLabel: 'Local judge, not calibrated',
+			calibrated: false,
+		});
+		expect(coreSystemPromptSectionsFor({ isSsh: false, systemOne: access })).toEqual([
+			systemOneSection,
+		]);
+	});
+
+	it('leaves it out behind each gate that refuses the agent', () => {
+		for (const gate of SYSTEM_ONE_GATES) {
+			const input = { isSsh: false, systemOne: refusedSystemOneAccess(gate) };
+			expect(coreSystemPromptSectionsFor(input), gate).toEqual([]);
+			expect(coreSystemPromptContext(input), gate).toEqual({});
+		}
+	});
+
+	it('leaves it out for an SSH remote agent even when every gate passes', () => {
+		const input = { isSsh: true, systemOne: systemOneAccess() };
+		expect(coreSystemPromptSectionsFor(input)).toEqual([]);
+		expect(coreSystemPromptContext(input)).toEqual({});
+	});
+
+	it('leaves it out when the builder could not ask', () => {
+		expect(coreSystemPromptSectionsFor({ isSsh: false })).toEqual([]);
+		expect(coreSystemPromptSectionsFor({ isSsh: false, systemOne: null })).toEqual([]);
+		expect(coreSystemPromptContext({ isSsh: false })).toEqual({});
+	});
+
+	it('fills the context from the same answer the section was decided on', () => {
+		const input = { isSsh: false, systemOne: systemOneAccess() };
+		expect(coreSystemPromptContext(input)).toEqual({
+			systemOne: {
+				engine: 'Jev (TypeSafe cloud)',
+				calibrated: SYSTEM_ONE_CALIBRATED_NOTE,
+				budget: '$1.00 a day across all agents; more than half is left today',
+			},
+		});
+	});
+});
+
+describe('the System One section, assembled from the real prompt', () => {
+	const section = fs.readFileSync(
+		path.resolve(__dirname, '../../prompts/system-one-system.md'),
+		'utf-8'
+	);
+	const assemble = (systemOne: ReturnType<typeof systemOneAccess>, isSsh = false) => {
+		const core = { isSsh, systemOne };
+		return assembleMaestroSystemPrompt({
+			template: 'BASE',
+			context: {
+				...context,
+				maestroCliPath: '/app/maestro-cli.js',
+				...coreSystemPromptContext(core),
+			},
+			// A builder loads one text per ref; the file stands in for the loader here.
+			coreSections: coreSystemPromptSectionsFor(core).map(() => section),
+		});
+	};
+
+	it('names the engine, its calibration, the budget and the one pointer', () => {
+		const result = assemble(systemOneAccess());
+		expect(result).toContain('## System One');
+		expect(result).toContain(`**Engine:** Jev (TypeSafe cloud), ${SYSTEM_ONE_CALIBRATED_NOTE}.`);
+		expect(result).toContain(
+			'**Budget:** $1.00 a day across all agents; more than half is left today.'
+		);
+		expect(result).toContain('run `node "/app/maestro-cli.js" s1 guide` once per session');
+		// Every variable the section names was filled.
+		expect(result).not.toMatch(/\{\{(?!REF:)/);
+	});
+
+	it('tells an agent on the local judge that its numbers are not probabilities', () => {
+		const result = assemble(
+			systemOneAccess({
+				engine: 'local-judge',
+				engineLabel: 'Local judge (qwen), not calibrated',
+				calibrated: false,
+			})
+		);
+		expect(result).toContain(
+			`**Engine:** Local judge (qwen), not calibrated, ${SYSTEM_ONE_UNCALIBRATED_NOTE}.`
+		);
+		expect(result).not.toContain(SYSTEM_ONE_CALIBRATED_NOTE);
+	});
+
+	it('is absent behind every gate, and for an SSH remote agent', () => {
+		for (const gate of SYSTEM_ONE_GATES) {
+			expect(assemble(refusedSystemOneAccess(gate)), gate).toBe('BASE');
+		}
+		expect(assemble(systemOneAccess(), true)).toBe('BASE');
+	});
+});
+
 describe('assembleMaestroSystemPrompt', () => {
 	it('substitutes the base template alone when there are no sections', () => {
 		expect(assembleMaestroSystemPrompt({ template: 'Hi {{AGENT_NAME}}', context })).toBe(
@@ -177,6 +298,26 @@ describe('assembleMaestroSystemPrompt', () => {
 		const sep = MAESTRO_SYSTEM_PROMPT_SECTION_SEPARATOR;
 		expect(sep).toBe('\n\n---\n\n');
 		expect(result).toBe(`BASE${sep}ROLE${sep}PLUGIN`);
+	});
+
+	it('places core sections after the role sections and before the plugin sections', () => {
+		const result = assembleMaestroSystemPrompt({
+			template: 'BASE',
+			context,
+			roleSections: ['ROLE'],
+			coreSections: ['CORE'],
+			pluginSections: ['PLUGIN'],
+		});
+		const sep = MAESTRO_SYSTEM_PROMPT_SECTION_SEPARATOR;
+		expect(result).toBe(`BASE${sep}ROLE${sep}CORE${sep}PLUGIN`);
+	});
+
+	it('renders the System One variables empty when no builder supplied them', () => {
+		const result = assembleMaestroSystemPrompt({
+			template: '[{{SYSTEM_ONE_ENGINE}}|{{SYSTEM_ONE_CALIBRATED}}|{{SYSTEM_ONE_BUDGET}}]',
+			context,
+		});
+		expect(result).toBe('[||]');
 	});
 
 	it('substitutes every section with the same context, including COMPUTER_HISTORY_DIR', () => {

@@ -20,6 +20,7 @@ import {
 import { formatDurationCompact } from '../../shared/duration';
 import { formatTimestamp } from '../../shared/formatters';
 import { parseTimeInput } from '../../shared/timeInput';
+import { readCallerIdentity } from '../../shared/agentDelegation';
 import {
 	DEFAULT_TIMELINE_SOURCES,
 	TIMELINE_SOURCES,
@@ -33,6 +34,7 @@ import type { SessionInfo } from '../../shared/types';
 
 export interface TimelineOptions {
 	agent?: string;
+	global?: boolean;
 	since?: string;
 	until?: string;
 	sources?: string;
@@ -44,7 +46,24 @@ export interface TimelineOptions {
 
 export interface TimelineShowOptions {
 	agent?: string;
+	global?: boolean;
 	json?: boolean;
+}
+
+/** Only an explicit global read may omit the agent scope. */
+function resolveTimelineAgentId(
+	options: TimelineShowOptions,
+	sessions: SessionInfo[]
+): string | undefined {
+	if (options.global) {
+		if (options.agent !== undefined) throw new Error('--agent and --global cannot be combined');
+		return undefined;
+	}
+	const agent = options.agent ?? readCallerIdentity(process.env)?.agentId;
+	if (!agent) {
+		throw new Error('Caller agent is unknown. Pass --agent <guid> or explicitly use --global.');
+	}
+	return resolveAgentId(agent, sessions);
 }
 
 /** `--since` when none is given. */
@@ -133,7 +152,10 @@ export async function timeline(options: TimelineOptions): Promise<void> {
 		const sources = parseSources(options.sources, options.json);
 
 		const sessions = readLiveSessions();
-		const agentId = options.agent ? resolveAgentId(options.agent, sessions) : undefined;
+		const agentId = resolveTimelineAgentId(options, sessions);
+		if (sources.includes('computer') && !options.global) {
+			throw new Error('Computer History is device-wide. Use --global to include it.');
+		}
 		const agents = agentId ? sessions.filter((s) => s.id === agentId) : sessions;
 
 		const { events, notes } = await readTimeline({
@@ -224,7 +246,7 @@ function formatEntry({ agentId, entry }: FoundHistoryEntry, agentName: string | 
 
 /**
  * `timeline show <entry>`: one history entry in full, found by an id prefix
- * from a timeline line. Searches every live agent unless `--agent` names one.
+ * from a timeline line. Defaults to the caller; `--global` searches every live agent.
  */
 export async function timelineShow(ref: string, options: TimelineShowOptions): Promise<void> {
 	try {
@@ -233,9 +255,8 @@ export async function timelineShow(ref: string, options: TimelineShowOptions): P
 			throw new Error(`Entry id too short: ${ref} (give at least ${MIN_REF_CHARS} characters)`);
 		}
 		const sessions = readLiveSessions();
-		const agentIds = options.agent
-			? [resolveAgentId(options.agent, sessions)]
-			: sessions.map((s) => s.id);
+		const agentId = resolveTimelineAgentId(options, sessions);
+		const agentIds = agentId ? [agentId] : sessions.map((s) => s.id);
 		const found = await findHistoryEntries(getTimelinePaths(), agentIds, prefix);
 		const names = new Map(sessions.map((s) => [s.id, s.name]));
 

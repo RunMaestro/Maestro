@@ -12,9 +12,8 @@
  * and the incoming provider's parked values are restored, so switching away
  * and back lands on the same conversations and the same configuration.
  *
- * One invariant holds for both maps, and every reader of the live fields
- * relies on it: the live fields ALWAYS belong to the agent's current
- * `toolType`, and a parked map NEVER holds an entry for it.
+ * Live tab fields belong to resolveTabProvider(tab, agent); live agent
+ * overrides belong to toolType. Neither parked map holds its live provider.
  *
  *   - `AITab.providerSessions` parks a tab's `agentSessionId`, `usageStats`,
  *     `customModel`, and `customEffort`.
@@ -31,7 +30,10 @@
  * untouched.
  */
 
-import { getAgentDisplayName } from '../../agentMetadata';
+import { getAgentDisplayName, getAgentPickerMeta } from '../../agentMetadata';
+import { isValidAgentId } from '../../agentIds';
+import type { RunOnTarget } from '../../local-models/run-on';
+import { OFF_TOKEN_PROXY_FIELDS } from '../../local-models/token-proxy';
 import type { ToolType, UsageStats } from '../../types';
 import { mapAgentAiTabs, switchTabProvider } from '../translation/session';
 import type { AiTabContainers } from '../translation/session';
@@ -55,18 +57,22 @@ export interface ProviderTabSession {
 	usageStats?: UsageStats;
 	customModel?: string;
 	customEffort?: string;
+	runOn?: RunOnTarget;
 }
 
 /** The AI tab fields a provider switch reads and writes. */
-export interface ProviderSwitchTab {
-	agentSessionId: string | null;
-	usageStats?: UsageStats;
-	customModel?: string;
-	customEffort?: string;
+export interface ProviderSwitchTab extends ProviderTabSession {
+	/** Absent inherits the agent default; a named provider is an explicit pin. */
+	tabProvider?: ToolType;
+	state?: 'idle' | 'busy';
 	awaitingSessionId?: boolean;
+	/** Latest native source to translate before the next send. */
+	pendingTranslation?: ToolType;
 	providerSessions?: Partial<Record<ToolType, ProviderTabSession>>;
 	/** The provider that owns the tab's most recent turn, captured at send. */
 	turnProvider?: ToolType;
+	/** Native identity used by the captured turn; replacement invalidates its cache. */
+	turnSessionId?: string;
 }
 
 /**
@@ -124,13 +130,14 @@ export interface ProviderSwitchQueuedItem {
 	id: string;
 	tabId: string;
 	/** The model and effort the item was queued with (`QueuedItem.turnSettings`). */
-	turnSettings?: { model?: string; effort?: string };
+	turnSettings?: { provider?: ToolType; model?: string; effort?: string };
 }
 
 /** The agent fields a provider switch reads and writes. */
 export interface ProviderSwitchAgent
 	extends ProviderAgentOverrides, Omit<AiTabContainers, 'aiTabs'> {
 	toolType: ToolType;
+	runOn?: RunOnTarget;
 	aiTabs?: ProviderSwitchTab[];
 	/** Tabs the native translation inventory still owns; parked like the tabs themselves. */
 	providerTranslationTabInventory?: Array<Omit<ProviderSwitchTab, 'id'> & { id: string }>;
@@ -172,6 +179,51 @@ export interface ProviderSwitchResult<A> {
 	unparked: UnparkedProviderState[];
 }
 
+/** Next-send provider selection, independent of the Encore controls' visibility. */
+export function resolveTabProvider(
+	tab: Pick<ProviderSwitchTab, 'tabProvider'> | undefined,
+	agent: Pick<ProviderSwitchAgent, 'toolType'>
+): ToolType {
+	return tab?.tabProvider ?? agent.toolType ?? 'claude-code';
+}
+
+/** Native transcript owner, including the latest source awaiting translation. */
+export function resolveTabNativeProvider(
+	tab: Pick<ProviderSwitchTab, 'tabProvider' | 'pendingTranslation'> | undefined,
+	agent: Pick<ProviderSwitchAgent, 'toolType'>
+): ToolType {
+	return tab?.pendingTranslation ?? resolveTabProvider(tab, agent);
+}
+
+/**
+ * Select one tab's provider without changing the agent or captured turn.
+ * Callers gate availability before persisting this pure transform with updateAiTab.
+ * Undefined clears the pin. An existing pending source wins over older parked
+ * destinations until a send establishes a new owner; returning to it cancels
+ * an unsent hop. Selection never imports native context or starts a process.
+ */
+export function switchTabProviderFor<T extends ProviderSwitchTab>(
+	tab: T,
+	agent: Pick<ProviderSwitchAgent, 'toolType'>,
+	provider: ToolType | undefined
+): T {
+	const destination = provider ?? agent.toolType;
+	if (!getAgentPickerMeta(destination))
+		throw new Error(`Provider cannot run an AI tab: ${destination}`);
+	const source = resolveTabProvider(tab, agent);
+	if (source === destination) {
+		return tab.tabProvider === provider ? tab : { ...tab, tabProvider: provider };
+	}
+	const pending =
+		tab.pendingTranslation ??
+		(tab.agentSessionId || tab.awaitingSessionId || tab.state === 'busy' ? source : undefined);
+	return {
+		...switchTabProvider(tab, source, destination),
+		tabProvider: provider,
+		pendingTranslation: pending === destination ? undefined : pending,
+	};
+}
+
 /**
  * The provider that owns this tab's most recent turn.
  *
@@ -183,19 +235,30 @@ export interface ProviderSwitchResult<A> {
  * writes the old provider's resume token into the new provider's live slot and
  * the next spawn tries to resume a session that provider has never heard of.
  *
- * Falls back to the agent's current provider for tabs that predate
+ * Falls back to the tab's effective provider for tabs that predate
  * `turnProvider` or have never sent a message.
  */
 export function resolveTurnProvider(
-	tab: Pick<ProviderSwitchTab, 'turnProvider'> | undefined,
+	tab: Pick<ProviderSwitchTab, 'turnProvider' | 'tabProvider'> | undefined,
 	agent: Pick<ProviderSwitchAgent, 'toolType'>
 ): ToolType {
-	return tab?.turnProvider ?? agent.toolType;
+	return tab?.turnProvider ?? resolveTabProvider(tab, agent);
+}
+
+/** A captured failure outranks both the current selection and a later turn. */
+export function resolveErrorProvider(
+	tab: Pick<ProviderSwitchTab, 'turnProvider' | 'tabProvider'> | undefined,
+	agent: Pick<ProviderSwitchAgent, 'toolType'>,
+	error?: { agentId?: string }
+): ToolType {
+	return error?.agentId && isValidAgentId(error.agentId)
+		? error.agentId
+		: resolveTurnProvider(tab, agent);
 }
 
 /**
  * Apply an update to whichever slot belongs to `owningProvider` - the live
- * fields when it is the agent's current provider, the parked entry otherwise.
+ * fields when it is the tab's effective provider, the parked entry otherwise.
  *
  * This is how a late event from a turn that outlived a provider switch is
  * recorded without corrupting the current provider's state. The parked entry is
@@ -207,13 +270,26 @@ export function updateProviderSlot<T extends ProviderSwitchTab>(
 	owningProvider: ToolType,
 	update: Partial<ProviderTabSession>
 ): T {
-	if (owningProvider === agent.toolType) {
-		return { ...tab, ...update };
+	if (owningProvider === resolveTabProvider(tab, agent)) {
+		return {
+			...tab,
+			...update,
+			...(update.agentSessionId && tab.turnProvider === owningProvider
+				? { turnSessionId: update.agentSessionId }
+				: {}),
+		};
 	}
 
 	const existing = tab.providerSessions?.[owningProvider];
 	return {
 		...tab,
+		...(update.agentSessionId && tab.turnProvider === owningProvider
+			? { turnSessionId: update.agentSessionId }
+			: {}),
+		...(update.agentSessionId ||
+		(update.usageStats && !update.usageStats.contextWindowCorrectionOnly)
+			? { pendingTranslation: owningProvider }
+			: {}),
 		providerSessions: {
 			...(tab.providerSessions ?? {}),
 			[owningProvider]: {
@@ -248,8 +324,60 @@ export function providerOverridesFor(
 	agent: ProviderSwitchAgent,
 	provider: ToolType
 ): ProviderAgentOverrides {
-	if (provider === agent.toolType) return liveProviderOverrides(agent);
+	if (provider === resolveTabProvider(undefined, agent)) return liveProviderOverrides(agent);
 	return { ...agent.providerOverrides?.[provider] };
+}
+
+/** Launch-only view of one provider. Never persist this projection as the agent. */
+export function projectTabProvider<
+	A extends ProviderAgentOverrides & Pick<ProviderSwitchAgent, 'toolType' | 'providerOverrides'>,
+	T extends ProviderSwitchTab & { id?: string },
+>(
+	agent: A,
+	tab: T | undefined,
+	provider: ToolType = resolveTabProvider(tab, agent)
+): { agent: A; tab: T | undefined } {
+	const overrides = providerOverridesFor(
+		{ ...agent, aiTabs: undefined, executionQueue: undefined },
+		provider
+	);
+	const cleared = Object.fromEntries(PROVIDER_OVERRIDE_KEYS.map((key) => [key, undefined]));
+	const foreign = provider !== resolveTabProvider(undefined, agent);
+	const projectedTab = tab
+		? { ...switchTabProvider(tab, resolveTabProvider(tab, agent), provider), tabProvider: provider }
+		: undefined;
+	const tabs = (agent as A & { aiTabs?: Array<ProviderSwitchTab & { id?: string }> }).aiTabs;
+	return {
+		agent: {
+			...agent,
+			...cleared,
+			...overrides,
+			toolType: provider,
+			...(foreign && {
+				// The default harness's last quota probe cannot identify a foreign tab account.
+				claudeInteractive: undefined,
+				tierTargets: undefined,
+				runOn: undefined,
+				gatewayUrl: undefined,
+				...OFF_TOKEN_PROXY_FIELDS,
+				codexTransport: undefined,
+				agentCommands: undefined,
+			}),
+			...(Array.isArray(tabs) &&
+				projectedTab && {
+					aiTabs: tabs.map((candidate) =>
+						candidate.id === projectedTab.id ? projectedTab : candidate
+					),
+				}),
+			...(tab?.runOn !== undefined && provider === resolveTabProvider(tab, agent)
+				? { runOn: tab.runOn }
+				: provider !== resolveTabProvider(tab, agent) &&
+					  tab?.providerSessions?.[provider]?.runOn !== undefined
+					? { runOn: tab.providerSessions[provider]!.runOn }
+					: {}),
+		} as A,
+		tab: projectedTab,
+	};
 }
 
 function describeClearedQueuedSettings(
@@ -321,7 +449,7 @@ export function switchAgentProvider<A extends ProviderSwitchAgent>(
 
 	const unparked: UnparkedProviderState[] = [];
 	const executionQueue = agent.executionQueue?.map((item) => {
-		if (!item.turnSettings) return item;
+		if (!item.turnSettings || item.turnSettings.provider) return item;
 		const { model, effort } = item.turnSettings;
 		// An item queued on the agent's default named no setting of its own, so
 		// following the incoming provider's configuration loses nothing.
@@ -346,10 +474,12 @@ export function switchAgentProvider<A extends ProviderSwitchAgent>(
 		providerOverrides: Object.keys(parked).length > 0 ? parked : undefined,
 		// Closed, snoozed, and orphaned tabs too: reopening one must not resume
 		// the old provider's session ID under the new provider.
-		...mapAgentAiTabs(agent, (tab) => switchTabProvider(tab, fromProvider, newProvider)),
+		...mapAgentAiTabs(agent, (tab) =>
+			tab.tabProvider === undefined ? switchTabProvider(tab, fromProvider, newProvider) : tab
+		),
 		...(agent.providerTranslationTabInventory && {
 			providerTranslationTabInventory: agent.providerTranslationTabInventory.map((tab) =>
-				switchTabProvider(tab, fromProvider, newProvider)
+				tab.tabProvider === undefined ? switchTabProvider(tab, fromProvider, newProvider) : tab
 			),
 		}),
 		...(executionQueue && { executionQueue }),

@@ -19,7 +19,9 @@ The Maestro CLI (`maestro-cli`) provides command-line access to agents, playbook
 
 ```text
 src/cli/
-├── index.ts                # Entry point (Commander.js program)
+├── index.ts                # Entry point (Commander.js program; exports `program`, parses unless under a test runner)
+├── command-examples.ts     # The example registry: one entry per verb, shown by --help and `reference`
+├── exit-codes.ts           # ExitCode, exitWith(), exitCodeForError()
 ├── commands/               # Command implementations
 │   ├── auto-run.ts
 │   ├── clean-playbooks.ts
@@ -49,7 +51,15 @@ src/cli/
 │   ├── settings-set.ts
 │   ├── show-agent.ts
 │   ├── show-playbook.ts
-│   └── status.ts
+│   ├── status.ts
+│   ├── agent-test-run-on.ts   # Run on Test button (agent test-run-on)
+│   ├── delegation-graph.ts    # Read the Delegation Graph (no app needed)
+│   ├── group-settings.ts      # Read a group's defaults; update-group-settings.ts writes them
+│   ├── models-*.ts            # manage, assign, run, status, index, proxy, server, tiers, config, runtimes, endpoints
+│   ├── search.ts              # Search past work: text, or --semantic
+│   ├── stats.ts               # stats, and stats models (the Models tab as data)
+│   ├── system-one*.ts         # s1: engine, key, ledger, route, usage, and the verbs agents ask with
+│   └── voice*.ts              # voice: session, HUD, providers, credentials, devices, wake word
 ├── services/               # Business logic
 │   ├── agent-busy.ts        # Shared busy-state check (desktop + CLI activity)
 │   ├── agent-sessions.ts    # Read Claude Code session files
@@ -58,10 +68,14 @@ src/cli/
 │   ├── batch-processor.ts   # Playbook (Spec-Driven) execution engine
 │   ├── goal-runner.ts       # Goal-Driven Auto Run engine (shared goalDriven core)
 │   ├── maestro-client.ts    # IPC client to running Maestro desktop app
+│   ├── maestro-bridge-errors.ts # MaestroNotRunningError / UnsupportedCommandError / CommandTimeoutError (no imports)
 │   ├── session-command.ts   # Shared helpers for desktop-driving commands (see below)
+│   ├── agent-setting-flags.ts # The per-agent setting flags shared by create-agent, update-agent, update-group-settings
+│   ├── peer-flags.ts        # --peer / --peer-note / --remove-peer / --group-peers / --worktree-peers
 │   ├── playbooks.ts         # Playbook file management
 │   └── storage.ts           # Electron Store file reader + SSH remote helpers
 ├── utils/                  # Argument parsing shared by commands
+│   ├── confirm.ts           # confirmOnTerminal() / canPrompt(): a yes/no only when both ends are a terminal
 │   └── parse.ts             # parseCliBool / isInheritValue (one vocabulary for every verb)
 └── output/                 # Output formatting
     ├── formatter.ts         # Human-readable terminal output (incl. SSH remote tables)
@@ -73,12 +87,32 @@ Note: `run-playbook.ts` is the file name, but the command is registered under th
 **Adding a desktop-driving command? Reuse `services/session-command.ts` first.** Most commands that mutate a running app follow one shape: resolve an agent, send a single `{ type, sessionId, ... }` WS message, expect a `{ success, error? }` reply, then report it (JSON or human-readable) and exit non-zero on failure. `session-command.ts` centralizes that:
 
 - `runAgentCommand(agentId, options, build)` - the one-liner path: resolves the agent (partial IDs), sends the message `build()` describes, reports the result. Used by `rename-agent`, `auto-run-control` (stop/resume/skip/abort/reset), `remove-playbook`, `agent-control` (focus/switch-mode).
-- `sendSimpleCommand(payload, responseType)` + `reportResult(result, opts)` + `failCommand(msg, json)` - the building blocks, for commands that don't key off an agent ID (e.g. `rename-group` uses `resolveGroupId`; `set-theme`/`encore` send `set_setting`).
+- `sendSimpleCommand(payload, responseType)` + `reportResult(result, opts)` + `failCommand(msg, json, code?)` - the building blocks, for commands that don't key off an agent ID (e.g. `rename-group` uses `resolveGroupId`; `set-theme`/`encore` send `set_setting`).
+- `sendBridgeCommand<T>(payload, responseType, json, timeoutMs?)` - one round trip for a verb that needs the reply's fields. A transport failure exits with its own code (see Exit codes and failures below), and a reply the app marked `success: false` exits with its error, so the caller only ever reads a reply that succeeded. `s1`, `voice`, `models` and `group-settings` are built on it.
+- `failFromError(error, json)` - the one spelling of `catch (error) { ... }`: prints the error and exits with `exitCodeForError(error)`.
 - `resolveAgentOrFail(agentId, json)` - resolve-or-exit helper.
 - `resolveTabEntry(tabId, agentHint?)` - resolve one desktop tab via `list_desktop_sessions` and return its whole `DesktopTabEntry` (`src/shared/desktopTabs.ts`). Accepts an exact ID, a unique prefix, or the literal `active` - the tab that `agentHint`'s agent has selected, or the desktop's focused agent (`readActiveAgentId()`) when no hint is given. Use it rather than matching IDs yourself: a verb that has to read before it writes (`tab show`, `tab thinking cycle`) gets the current settings from the same call that resolved the tab, instead of a second round trip or a value the caller guessed.
 - `resolveTabOwner(tabId, agentHint?)` - thin wrapper over `resolveTabEntry` for the verbs that only need `{ agentId, tabId }`.
 
-Do NOT re-implement the withMaestroClient + sendCommand + JSON/text + `process.exit(1)` boilerplate in a new command file; extend `session-command.ts` if your case needs a new shape.
+Do NOT re-implement the withMaestroClient + sendCommand + JSON/text + exit boilerplate in a new command file, and do not write a private `fail()`, `send()` or `emitError()`: 28 such copies were collapsed into `failCommand()` and `sendBridgeCommand()`. Extend `session-command.ts` if your case needs a new shape.
+
+**Exit codes and failures.** Every exit goes through `exitWith(ExitCode.*)` (`src/cli/exit-codes.ts`), never a bare `process.exit(n)`:
+
+| Code  | `ExitCode`     | Meaning                                                                                                 |
+| ----- | -------------- | ------------------------------------------------------------------------------------------------------- |
+| `0`   | `Success`      | Done                                                                                                    |
+| `1`   | `GeneralError` | Uncategorized failure. Also the "no" of `s1 yes` and an answer under `--min-confidence`, never an error |
+| `2`   | `InvalidUsage` | Unknown flag, bad argument, nothing to do, or a confirmation with no terminal and no `--yes`            |
+| `3`   | `NotRunning`   | The desktop app is not running or not reachable                                                         |
+| `4`   | `Unsupported`  | The running app is an older build without the command                                                   |
+| `5`   | `Timeout`      | The app was reachable and did not answer in time                                                        |
+| `6`   | `Refused`      | A switch or a budget declined the request (System One off, a task switched off). Do not retry           |
+| `7`   | `NoAnswer`     | It ran and has no answer (engine failed, a task unavailable, a long job incomplete)                     |
+| `130` | `Interrupted`  | The operator pressed Ctrl+C                                                                             |
+
+`exitCodeForError(error)` maps a bridge failure to 3, 4 or 5 through the three error classes in `services/maestro-bridge-errors.ts` (a module with no imports, so loading it does not pull in the WebSocket client). The failure shape is one for every verb: a person reads `Error: <reason>` on stderr, and under `--json` a script reads `{"success":false,"error":"<reason>"}` on stdout. The only two raw exits left are in `maestro-client.ts`, which `exit-codes.ts` imports, so `exitWith` there would be a cycle.
+
+**`--json` on every verb that returns data.** A verb that always prints JSON (`send`, `dispatch`, `queue`, `gist create`, `settings media-status`) still declares `--json`, as a documented no-op, so one flag works everywhere. Read verbs print `{ "success": true, ... }` where they are new; older verbs keep their record, array or JSONL shape.
 
 **Parsing an argument? Use `utils/parse.ts`.** `parseCliBool(value, flag)` is the one boolean vocabulary (`true/false`, `1/0`, `yes/no`, `on/off`, case-insensitive) - three near-identical copies had already drifted on whether they accepted `on`/`off`. `isInheritValue(value)` recognizes the words that clear an override (`inherit`, `default`, `none`, `clear`, `unset`, empty) so a per-tab or per-agent value falls back to what it inherits. Clearing is not the same as `false`: `tab enter-to-send <id> false` pins the tab to Cmd+Enter, while `inherit` returns it to the global `enterToSendAI` setting.
 
@@ -106,6 +140,16 @@ Built with [Commander.js](https://github.com/tj/commander.js). The CLI reads its
 ```bash
 maestro-cli [command] [options]
 ```
+
+`src/cli/index.ts` exports `program` and does not call `program.parse()` under a test runner (`process.env.VITEST`), so a test can walk the live command tree.
+
+### Help, examples, and `reference`
+
+Every verb ends its `--help` with an `Examples:` block, and `maestro-cli reference` prints the same lines under each command (`--format json` carries them as `examples`). They come from one registry, `COMMAND_EXAMPLES` in `src/cli/command-examples.ts`, keyed by the command path without the program name (`models server start`). `applyCommandExamples(program)` attaches each entry with `addHelpText('after', ...)` before parse.
+
+**Adding a verb means adding its entry.** `src/__tests__/cli/command-tree.test.ts` walks the registered tree and fails when a command has no description, when a runnable command (a leaf, or a group with an action) has no example, when a registry key names a command that does not exist, when an example does not start at `maestro-cli` or resolves to a different command than the one it is filed under, or when it uses a flag the command does not declare. It is structural: whether the example's values make sense on a given machine is not checked.
+
+`docs/cli-reference.md` is generated from `maestro-cli reference` (`npm run gen:cli-reference`, which also rebuilds the CLI bundle). Regenerating destroys hand edits, so check the diff before committing: the generator keeps the usage notes it carries in `scripts/gen-cli-reference.mjs`, and anything hand-written that is not there is lost.
 
 ---
 
@@ -181,11 +225,15 @@ Two things several verbs need, written once rather than per-command:
 
 ### `show agent <id>`
 
-Show detailed agent information including history and usage stats.
+Show detailed agent information including history and usage stats, the environment the agent is spawned with, and its peers.
 
 ```bash
-maestro-cli show agent <id> [--json]
+maestro-cli show agent <id> [--show-secrets] [--json]
 ```
+
+- `effectiveEnv` is `resolveAgentEnvironment()` (`src/shared/agentEnvironment.ts`) over the global, agent (or tab session) and gateway layers: every variable the agent is spawned with, the layer that won (`source`), and the layers it overrode (`shadowedBy`). `parkedEnvVars` are the variables switched off with `update-agent --env-park`.
+- Values whose key `isSecretEnvKey()` flags (and the same keys in `customEnvVars`) are masked with `maskEnvValue()` unless `--show-secrets` is passed, as `settings list` does.
+- Reads the stored agent. It also prints the resolved peer roster (`peers`), the Run on target (`runOn`, `runOnSpec`) and each tier with where it came from.
 
 ### `show playbook <id>`
 
@@ -327,6 +375,9 @@ Options:
 - `--env KEY=VALUE` - Repeatable environment variable; parsed into a `Record<string, string>`
 - `--context-window <size>` - Validated as positive integer
 - `--ssh-remote <id>` + `--ssh-cwd <path>` - Builds `sessionSshRemoteConfig` for remote execution
+- `--run-on`, `--run-on-context`, `--gateway-url` - Where the model runs and the gateway, checked like the `update-agent` flags
+- `--peer`, `--peer-note`, `--group-peers`, `--worktree-peers` - Peers, read by `readPeerFlags()` (`services/peer-flags.ts`) and written after the create by the same `update_session_config` message `update-agent --peer` sends, so one applier owns the rules. `create-agent` has no `--remove-peer` (a new agent has no row to remove), `--tier`, `--background-requests`, `--system-one` or `--proxy-mode`: set those with `update-agent` afterwards. `src/__tests__/prompts/maestroCliPrompt.test.ts` pins this, so adding one fails the test on purpose and the agent-facing map gets updated with it.
+- `--type` lists `PICKABLE_AGENT_IDS` in its help; `--model auto` is the model router.
 
 ### `create-worktree`
 
@@ -351,15 +402,294 @@ maestro-cli remove-agent <agent-id> [--json]
 
 ### `update-agent <agent-id>`
 
-Mutate an existing agent in place via WebSocket (`withMaestroClient`). At least one of `--group` or `--cwd` is required; the command fans out one round-trip per flag.
+Mutate an existing agent in place via WebSocket (`withMaestroClient`). At least one field flag is required; the command fans out one round-trip per kind of change (group, cwd, SSH, settings).
 
 ```bash
 maestro-cli update-agent <agent-id> [-g <group-id|none>] [-d <new-cwd>] [--json]
+maestro-cli update-agent <agent-id> [setting flags: --nudge --model --effort --env --tier --peer ...]
 ```
+
+The setting flags are read by `buildConfigPatch()` (`services/agent-setting-flags.ts`), shared with `update-group-settings`, and ride one `update_session_config` message. The renderer applies the patch with the validators the Edit Agent dialog saves with, so a flag and a click cannot store different things:
+
+- `--proxy-mode <off|passthrough|compress|compress-early>`, `--gateway-url`, `--run-on`, `--run-on-context`, `--tier <tier=target>` (repeatable), `--background-requests <target|none>`, `--system-one <on|off>`, and `--model auto` are the Models tab.
+- `--retry-on-availability`, `--retry-on-token-exhaustion`, `--codex-auto-reset` (`true|false|default`), `--additional-dir <path[:rw]>`, `--clear-additional-dirs`, `--env-park KEY`, `--env-unpark KEY` and `--share-history-to-project-dir` are applied by `applyAgentConfigExtras()` in `src/shared/agentConfigExtras.ts`, over `setKeysParked()` (`src/shared/parkedRecords.ts`) and `normalizeAdditionalDirectories()`. `default` writes `null`, which the patch reads as "drop the choice" (the retries are on by default, which is why it is not `false`).
+- `--peer`, `--peer-note`, `--remove-peer`, `--group-peers`, `--worktree-peers` are the Peers tab (`peerAgentEdits` in the same patch). `--peer x:none` excludes a peer from a grant; `--remove-peer x` deletes the row.
+- `--json` reports the patch it sent, not the stored result. Read the result with `show agent <id> --json`.
 
 - `--group <id>` sends a `move_session_to_group` message (reuses the same write path as drag-and-drop in the Left Bar). Pass `none`, `null`, or `""` to ungroup. Supports partial group IDs via `resolveGroupId()`.
 - `--cwd <path>` sends the new `update_session_cwd` message. Resolves to absolute via `path.resolve()`. The renderer relocates the agent through `withWorkingDirectory()` (`src/renderer/utils/agentWorkingDirectory.ts`), which moves `cwd`/`fullPath`/`shellCwd`/`projectRoot` together, rebases `autoRunFolderPath` when it lives under the old root, and clears the file tree and git state so they reload from the new directory. Moving `cwd` alone left the Files panel and the Edit dialog on the old folder (#1565). Provider conversations stored under the old path are not carried over.
 - The renderer refuses cwd updates while the agent is busy or `aiPid > 0` (`workingDirectoryChangeBlocker()`; the PTY's cwd is fixed at spawn time) and returns `{ success: false, error: '...' }`; the CLI surfaces that error and exits non-zero.
+- `--gateway-url <url|none>` rides the `update_session_config` message as `gatewayUrl` (a normalized URL, or `null` to clear). Both ends validate with `parseGatewayUrlEdit()` (`src/shared/local-models/gateway.ts`): the CLI before it contacts the app, when it can read the agent's provider, and the renderer before it writes, so a provider that cannot use a gateway or a value that is not a URL is refused instead of being stored for the launch to trip over. The handler's `setMany` flush matters here: the desktop spawn reads the gateway from the main-process sessions store. Read it back with `show agent <id> --json` (`gatewayUrl`).
+
+### `models list|install|pause|cancel|remove|verify|add-hf|remove-hf`
+
+The local model Library and what is on disk. Implemented in `src/cli/commands/models-manage.ts`.
+
+```bash
+maestro-cli models list [-k <text-gen|embedding|classifier|stt|tts|wake-word>] [--fit] [--json]
+maestro-cli models add-hf <repo> <file> [--dry-run] [--json]
+maestro-cli models remove-hf <model-id> [--force] [--json]
+maestro-cli models install <model-id> [--json]
+maestro-cli models pause <model-id> [--json]
+maestro-cli models cancel <model-id> [--json]
+maestro-cli models remove <model-id> [--force] [--json]
+maestro-cli models runtimes list [--json]
+maestro-cli models runtimes install <onnx|llama> [--json]
+maestro-cli models verify <model-id> [--json]
+```
+
+- All six run in the desktop over the WS bridge (`local_models_list`, `local_models_download`, `local_models_pause`, `local_models_cancel`, `local_models_remove`, `local_models_verify`, handlers in `src/main/web-server/handlers/messageHandlers/localModels.ts`) through the same `src/main/local-models/service.ts` functions as the `localModels:*` IPC channels the Settings -> Local Models rows call. A download started from the CLI is the same job the app shows progress for; a second `install` of a running download joins it.
+- `list` groups with `groupLocalModelsForLibrary()` (`src/shared/local-models/library.ts`), the same grouping the Library draws, and prints each model's `goodAt` line and role badges. `--fit` sends `fit: true`; the desktop adds its hardware profile (`resolveHardwareProfile()`) to the reply and the CLI runs the shared `modelFit()` on it, so a row and the CLI cannot disagree. The CLI hides nothing: the "too large" toggle is a view filter.
+- `add-hf` (`local_models_hf_add`) and `remove-hf` (`local_models_hf_remove`) call `addHuggingFaceModel()` / `removeUserLocalModel()` in `src/main/local-models/user-models.ts`, the functions behind the Library's Add from Hugging Face card and a row's Remove from Library. `add-hf` makes one request to Hugging Face's API and downloads nothing; `--dry-run` calls `previewHuggingFaceModel()` and saves nothing. A refusal (no such repo, a gated repo, a file with no reported SHA-256) comes back as `success: false` with its sentence. `remove-hf` applies the same in-use guard as `remove`.
+- The `models` group has a `preAction` hook, `loadUserLocalModels()` (`src/cli/services/storage.ts`), which reads `local-models-user.json` from the data folder into the CLI's catalog, so `install`, `remove`, `verify` and `assign` accept a user model's id.
+- Ids are checked against the shared catalog before the bridge opens. `install` refuses a `pending` model (one this build cannot run), matching the Settings row, which offers no Download button for it. It waits up to two hours for the job to settle; if the wait ends, the download keeps running in the app.
+- `pause` and `cancel` are the row's Pause and Cancel buttons (`pauseLocalModel()` / `cancelLocalModel()`). `pause` keeps the partial file; there is no `resume` verb because `install` is the same call the Resume button makes. `cancel` deletes everything the job wrote, the partial file of a paused download included, and leaves an installed model alone (that is `remove`). Both answer `paused: false` / `cancelled: false` with exit code 0 when nothing was downloading: that is an answer, not a failure.
+- `remove` refuses a model whose EFFECTIVE assignment (`tasksUsingLocalModel()`) is a task, naming the tasks, until `--force`; Settings shows the same warning inline. Voice usage is reported but does not block, as in Settings.
+- `verify` never deletes or re-downloads; a mismatch exits non-zero and prints the file and both hashes.
+
+### `models assign <task-id> <assignment>` and `models tasks`
+
+Which source each Local Models task runs on. Implemented in `src/cli/commands/models-assign.ts`.
+
+```bash
+maestro-cli models assign <task-id> <off|utility-agent|local:<model-id>|endpoint:<endpoint>:<model>> [--json]
+maestro-cli models tasks [--json]
+```
+
+- `assign` edits the `localModelAssignments` setting on disk (`readLocalModelAssignments()` / `writeLocalModelAssignments()`), so it works with the app closed. It parses with `parseLocalModelAssignmentSpec()`, validates with `localModelAssignmentProblem()`, and stores with `withLocalModelAssignment()` (shared, `src/shared/local-models/tasks.ts`): the same three the Assignments picker uses, so a wrong-kind model or an endpoint for a classifier is refused, and choosing a task's default removes its entry. The endpoint may be named by id, id prefix, or name (`findLocalModelEndpoint()`); the full id is stored. Everything after the endpoint is the model, so `endpoint:ollama:qwen3:latest` keeps the tag.
+- `tasks` lists every task with its stored-or-default assignment, and the readiness verdict from the desktop (`local_models_task_readiness`, the resolver behind `models status`). With the app closed it still lists the assignments and reports `readinessError`. Use `models status` when a script needs an exit code.
+
+### `models proxy status` and `models proxy block <hash>`
+
+Implemented in `src/cli/commands/models-proxy.ts`. Both are one WS round trip to the desktop and change nothing.
+
+- `status` (`local_models_proxy_status`) prints `getTokenProxyReport()`, the same report `localModels:proxy:report` returns and Settings -> Models -> Gateway draws: whether the proxy is listening and on which port, the agents on it with their mode, requests, tokens saved and average added latency for the last 30 days (in all and per agent), and the blocks it last shortened, each with the hash `block` takes. `--json` prints the whole report. Exit code is non-zero only when the proxy could not start (its port is held by another program); not set up and stopped are not failures.
+- `block <hash>` (`local_models_proxy_block`) prints `readTokenProxyBlock(hash)`: a unified diff of what the agent sent against what was sent in its place, both read from the content-addressed cache under `userData/proxy-cache/`. `--original` and `--compressed` print one side alone, for piping. The app checks the hash with `isContentHash()` before it is used as a path. Exit code is non-zero for a hash the cache holds no compressed block for.
+- An agent's mode is not set here. `update-agent --proxy-mode <off|passthrough|compress|compress-early>` rides `update_session_config` as `tokenProxyMode`, and the renderer applies it with `setAgentTokenProxyMode()` (`src/renderer/services/agentGateway.ts`), the function the Gateway table's select calls: `passthrough` and `compress` point the agent's gateway at the proxy and store the mode, `off` clears that gateway. It cannot be combined with `--gateway-url`, because the mode chooses the URL. Read it back with `show agent <id> --json` (`tokenProxyMode`; `null` is the default, passthrough).
+
+### `models index`
+
+Prints the semantic index's background indexer: its state (`off`, `idle`, `indexing`, `paused`, `unavailable`), `indexed / total` sources per type, and the reason when it cannot run. It is one WS round trip (`local_models_semantic_index_status`) answered from memory by `semanticIndexProgress()`, the same record `localModels:semanticIndex:status` returns. There is no start verb: the indexer runs whenever `semantic-search` is assigned a source, and `settings set semanticIndexCue true` opts Cue runs in. Exit code is non-zero only for `unavailable`.
+
+### `search <query>`
+
+Finds past work across History entries, archived Director's Notes synopses, and persisted AI tab transcripts. Implemented in `src/cli/commands/search.ts`.
+
+```bash
+maestro-cli search "<query>" [--semantic] [--source history|notes|transcripts] [--agent <id>] [--limit n] [--json]
+```
+
+- One WS round trip (`local_models_search`) to `searchPastWorkRequest()` in `src/main/local-models/work-search.ts`, the same function the `localModels:search` IPC channel calls for the History panel's and cross-tab search's Semantic toggle, so the three rank and cut snippets identically.
+- With no flag it matches the query as written (case-insensitive), newest first, with no model. `--semantic` embeds the query on the `semantic-search` assignment and ranks by cosine similarity against the semantic index. It NEVER falls back to text: `off` and `unavailable` print the reason and exit 1.
+- `--source` is repeatable or comma-separated. `--agent` goes through `resolveAgentId()` (id, prefix, or exact name) and leaves Director's Notes out, since a synopsis belongs to no agent. `--limit` is 1 to 100, default 20.
+- Each hit prints its rank (a percentage, or a match count in text mode), source, agent, age, title, snippet, and the ids to act on (`agent <id>  entry <id>` or `agent <id>  tab <id>`). `--json` prints the whole `WorkSearchResult`, including `index` (how far the index had got) for a semantic search.
+
+### `tab suggest-cleanup`
+
+The CLI path to the Tab Cleanup Suggestions modal's list. Implemented in `src/cli/commands/tab-suggest-cleanup.ts`. `tabs` is accepted as an alias of the `tab` group, so `maestro-cli tabs suggest-cleanup` works too.
+
+```bash
+maestro-cli tab suggest-cleanup [--json]
+```
+
+- One WS round trip (`local_models_tab_cleanup`) to `suggestTabCleanup()` in `src/main/local-models/tab-cleanup.ts`, the same function the `localModels:suggestTabCleanup` IPC channel calls for the modal, so both read the same tabs (every agent's visible AI tabs plus its snoozed tabs), the same `tab-cleanup` assignment, and the same guard. The request carries nothing: a caller cannot steer which tabs are read.
+- **Read-only, and there is no `--apply`.** It changes no tab. Each suggestion is printed with the ordinary verb that applies it (`tab close <tab-id>`, `snooze tab <tab-id> <when> --agent <id>`, `snooze wake <snooze-id>`), which is the path the modal's Apply button takes. `--json` prints the whole `TabCleanupResult` with that command as `apply` on each suggestion.
+- A tab that is busy, starred, or holding an unsent draft is never suggested (`guardTabCleanupSuggestions()` in `src/shared/tabCleanup.ts`); `protectedCount` says how many were left out. Hidden consult tabs are never read.
+- Exits 0 with a list, including an empty one. Exits non-zero with the reason when the task is off (the default), the assigned model or endpoint is unavailable, the model timed out, or its reply was not usable. It never falls back to an agent.
+
+### `models run <task-id>`
+
+Runs a text task through its assignment, or the two file and repository forms below. Implemented in `src/cli/commands/models-run.ts`.
+
+```bash
+maestro-cli models run <task-id> --input <text> [--system <text>] [--max-tokens <n>] [--json]
+```
+
+- Exit codes follow the split `s1 route` uses: `6` when the task is switched off or assigned to the Utility Agent (nothing local will answer; do not retry), `7` when the task ran and could not answer (unavailable, cancelled, no changes), `2` for a bad invocation, `3`/`4`/`5` for the app.
+
+### `models server status|start|stop|set|key`
+
+The Maestro model server (`llama-server`), the card in Settings -> Models -> Sources. Implemented in `src/cli/commands/models-server.ts`. Every verb runs in the desktop over the WS bridge through `getModelServerReport()`, `startModelServer()`, `stopModelServer()` and `installModelServerEngine()`, so a server started here is the one the card shows.
+
+```bash
+maestro-cli models server status [--json]
+maestro-cli models server start [--json]
+maestro-cli models server stop [--json]
+maestro-cli models server set [--bind local|network] [--max-models <n>] [--rotate-key] [--build default|cpu|cuda|rocm] [--json]
+maestro-cli models server key [--json]
+```
+
+- `start` and `stop` wait until the server answers or exits. A running server restarts to apply any `set`. `--bind network` needs the key; `--rotate-key` invalidates whatever used the old one.
+- `status` exits non-zero only when the server is `failed` (could not start, or crashed repeatedly); a stopped server is not a failure. `key` prints the key a harness sends, made on first use.
+
+### `models tiers list|options|suggest|set|reset`
+
+The harness tier defaults: which model a `low`, `medium` or `high` task launches on, per harness (Settings -> Models -> System Two). Implemented in `src/cli/commands/models-tiers.ts`.
+
+```bash
+maestro-cli models tiers list [--harness <id>] [--json]
+maestro-cli models tiers options <harness> [--refresh] [--json]
+maestro-cli models tiers suggest <harness> [--apply] [--json]
+maestro-cli models tiers set <harness> <low|medium|high> <default|provider|provider:<model>|<source id>:<model>> [--json]
+maestro-cli models tiers reset <harness> [--tier <tier>] [--json]
+```
+
+- `list`, `set`, `reset` and `suggest --apply` read and write the `harnessTierDefaults` setting in the settings file, so they work with Maestro closed and the watcher reloads every window. `options` and `suggest` ask the desktop, which owns the agent detector and the Run on sources.
+- They check and store through the helpers the Tier defaults table uses (`parseTierTargetSpec()`, `parseTierTargetEdit()`, `withHarnessTierDefault()`, `suggestHarnessTierDefaults()` in `src/shared/modelTiers.ts`), so the CLI cannot save a target the table would refuse. `default` clears a tier. Each tier prints the layer it came from (Harness default or Built-in).
+
+### `models config show|set`
+
+Where model files are downloaded from (`localModelsDownloadBase`). Implemented in `src/cli/commands/models-config.ts`.
+
+```bash
+maestro-cli models config show [--json]
+maestro-cli models config set download-base <url|default> [--json]
+```
+
+Both read and write the settings file, so they work with Maestro closed. The value is checked by `downloadBaseProblem()`, the function the Settings field uses; exit `2` for an unknown key or an unusable URL. It changes the host only: every download is still checked against the catalog hash.
+
+### `agent test-run-on <agent-id>`
+
+The Run on picker's Test button. Implemented in `src/cli/commands/agent-test-run-on.ts`. One WS round trip to `testAgentRunOn()` (`src/main/local-models/run-on-test.ts`), which sends one short read-only turn through the agent's own harness on its STORED Run on target. Only the agent id is sent, so there is no way to test an unsaved draft from the CLI: write the target with `update-agent --run-on`, then test it. A Provider target has nothing to test and is refused. Its outer timeout is long enough for the model server to start and a cold model to load; the app applies its own budget to each step and answers with the reason when one runs out.
+
+### `s1` (System One)
+
+The engine, its key, and the verbs agents ask with. Implemented in `src/cli/commands/system-one.ts` (status, set, key, test, ledger), `system-one-ask.ts` (yes, pick, rate, ask, rank, batch), `system-one-route.ts` (route), `system-one-spend.ts` (usage, cost) and `system-one-guide.ts` (guide, examples).
+
+```bash
+maestro-cli s1 status|test [--json]
+maestro-cli s1 set engine off|jev-cloud|openjev|local-judge [--url <url>] [--model <source>]
+maestro-cli s1 set timeout <ms> | fail-policy <task> open|closed|default | keep-inputs on|off | agents on|off | budget [<usd>] [--per-agent <usd|none>]
+pbpaste | maestro-cli s1 key set [--engine jev-cloud|openjev]
+maestro-cli s1 key clear [--engine jev-cloud|openjev]
+maestro-cli s1 ledger [--task <task>] [--outcome <outcome>] [--since <time>] [--limit <n>] [--json]
+maestro-cli s1 usage [--agent <id>] [--since <time>] [--json]
+maestro-cli s1 route "<prompt>" [--agent <id>] [--correct <low|medium|high>] [--json]
+maestro-cli s1 yes "<question>" -s <text> | pick "<question>" "a=desc,b=desc" | rate "<question>" "low,...,high" | ask | rank | batch
+```
+
+- The admin verbs run in the desktop over the WS bridge through the same service functions the System One card calls. The asking verbs send ONE request to `runAgentSystemOneRequest()` (`src/main/local-models/system-one/agent-service.ts`); the engine's key never leaves the desktop, and the caller's agent and tab are read from its environment so the request is counted against that agent's budget and filed under it in the ledger.
+- The flag grammar is the `jev` CLI's (`readState()`, `buildQuestions()`, `collectQuestionFlags()` in `src/cli/services/system-one-input.ts`), so an agent that knows one knows the other.
+- A key is read from standard input only (`readStdinText()`), never an argument, and no verb prints one.
+- Exit codes so a verb can sit in a shell `if`: `0` yes, or an answer at or above `--min-confidence`, or a job that judged everything; `1` is a "no" or an answer under the confidence asked for (never an error); `2` a bad request; `3`/`4`/`5` the app; `6` refused (System One off, or the day's budget spent: go on without it); `7` no answer (the engine failed, or a `rank` or `batch` is incomplete). `status` exits non-zero when the engine in force cannot answer as set up; `off` is not a failure.
+
+### `voice`
+
+A Cappella: the HUD and the Voice settings, verb for verb. Implemented in `src/cli/commands/voice.ts` (session, HUD, readouts), `voice-providers.ts` (providers, voices, credentials, wake-phrase), `voice-devices.ts` (paired devices) and `voice-wake.ts` (wake word training).
+
+```bash
+maestro-cli voice status|latency|self-test|setup [--download] [--json]
+maestro-cli voice start [--conductor | --agent <id> [--tab <id|active>] | --agent <id> --document <path>] [--paused] [--json]
+maestro-cli voice stop|send|stop-reply|mute|unmute [--json]
+maestro-cli voice listen on|off [--send] | scope conductor|agent|tab | wait [<ms>|default] | volume <0.1-1>
+maestro-cli voice input list | set <device-id|default>
+maestro-cli voice providers list | set <stt|tts|brain|realtime> <provider-id> | set pipeline <cascade|realtime>
+maestro-cli voice voices list | set <voice-id> | preview [<voice-id>] [--text <text>]
+pbpaste | maestro-cli voice credentials set <openai|elevenlabs|anthropic>   # also: list, test, clear
+maestro-cli voice devices list|rename|revoke|forget|revoke-all|disconnect|discovery|test-connection
+maestro-cli voice wake-phrase list | set <agent> <phrase> | clear <agent>
+maestro-cli voice wake record|stop|add|undo|clear-background|train|status|list|remove|test
+```
+
+- **One entry point.** Every `voice` verb except `voice wake` crosses the bridge as one `voice_control` message (`sendVoiceControl()` in `src/cli/services/voice-control.ts`, wire contract in `src/shared/acappella/voice-control.ts`) and ends in `runVoiceControlRequest()` (`src/main/acappella/voice-control-service.ts`). The handlers are built in `src/main/ipc/handlers/acappella.ts` from the same named functions the `acappella:*` IPC channels call, so a session started here and one started from the header pill are the same session on the same microphone. The bridge hop answers `maestro-cli` only.
+- **Refusals are replies, not crashes.** A refusal the app gave on purpose (voice is off, a turn is in flight, no device has that id, a model is missing) comes back with a reason; the verb prints it and exits non-zero. A missing capability is refused by name and never swapped for a cloud provider.
+- **Window.** A session a verb starts belongs to the window the user is looking at, like a global hotkey, because a command line has no window of its own. A new surface must gate on `useOwnsVoiceSession()`.
+- **Settings.** `voice providers|voices|wake-phrase` write the `acappella` settings object in the settings file (so they work with Maestro closed) after `voiceSettingProblem()` (`src/shared/acappella/voice-settings-schema.ts`) checks the value against the bounds the panels use, and then ask the running app to apply it. A swap refused because a turn is in flight is reported as saved, not applied. `settings get|set|reset acappella.<path>` is checked by the same table through `nestedSettingProblem()`, and after a write main re-syncs the wake word and the voice hotkeys (`syncACappellaAfterExternalSettingsChange()`).
+- **Secrets.** A cloud key is read from standard input and filed in the OS keychain by the app. The TURN credential reads back masked from `settings get` and `settings list`; it is still plain text at rest (an open gap in CLI-UI-PARITY.md).
+- **No verb for pairing Approve or Deny.** It is a decision for a person at the computer.
+- **Wake training** has its own message and enrollment service (`src/main/acappella/wake/wake-enrollment-service.ts`): `record` opens the microphone and returns at once, `stop` closes it, and `train` waits. `--other-speech` marks ordinary speech; `--background` is the old spelling and is hidden from `reference`.
+
+### `stats` and `stats models`
+
+Implemented in `src/cli/commands/stats.ts`. Both are one WS round trip to the desktop, which owns the open stats database. `stats [--range <r>]` is the aggregated dashboard; `stats models [--range <r>]` is the Models tab as data, from `readModelUsage()` (`src/main/local-models/model-usage.ts`) over `getModelUsage()`: what every model other than a provider's own did, by source and task, the Run on agents, System One, and what the token proxy saved. `--range` is `day|week|month|quarter|year|all` (default `week`). `stats-query "<sql>"` runs a read-only query; it is enforced read-only in the main process.
+
+### `delegation graph`
+
+The read half of the Delegation Graph. Implemented in `src/cli/commands/delegation-graph.ts`. It builds the model the canvas draws with `buildDelegationGraph()` (`src/shared/delegationGraph.ts`) from the stored agents, so the listing cannot disagree with the graph, and it needs no running app.
+
+```bash
+maestro-cli delegation graph [--group <group-id>] [--json]
+```
+
+`--json` prints `scope`, `group`, `stats`, `nodes` and `edges`. There is no write verb: an edge is written with `update-agent --peer` or `--remove-peer`, the same `peerAgentEdits` path the graph's drawing mode uses (`writeDelegationEdge()`). `maestro-cli open delegation-graph [--group <id>]` shows the canvas.
+
+### `group-settings` and `update-group-settings`
+
+A group's profile (what a new agent in it starts with) and its pill label. Implemented in `src/cli/commands/group-settings.ts` and `update-group-settings.ts`, over `services/group-settings.ts`.
+
+```bash
+maestro-cli group-settings <group-id> [--json]
+maestro-cli update-group-settings <group-id> [setting flags] [--short-label <text>] [--clear] [--publish [--yes]] [--json]
+maestro-cli open group-settings --group <group-id>
+```
+
+- The read needs no app. The write is one `update_group_settings` message: the renderer owns the group list and the validator the dialog saves with, so the flags are the `update-agent` ones (`buildConfigPatch()`, `readPeerFlags()`) and the app builds the profile. The CLI then reads the group back, because an older app would drop a field it does not know.
+- Profile only is the default. `--publish` also writes THIS call's diff into the group's existing agents by the dialog's "Update N agents" rules (`summarizeGroupDefaultsDiff()`), and has no undo on the CLI, so it asks on a terminal or needs `--yes`.
+- `create-agent --group` seeds a new agent from the profile (`seedRemoteCreate()`); `--no-group-defaults` skips it.
+- `open group-settings --group` has `groupRequired` on its `UI_SURFACES` entry and no hotkey: a global chord has no group to act on.
+- `open agent-settings --agent <id> [--tab <tab>]` opens Edit Agent the same way. Its entry has `agentClick`, which makes `--agent` valid and required, and its tabs come from `AGENT_SETTINGS_TAB_IDS` (`src/shared/agentSettingsTabs.ts`), the list the form's own strip is built from. The bridge handler refuses an agent that is gone (`getSessions`), because the renderer would open nothing and say nothing.
+
+### `models run git-drafts --cwd <path>`
+
+The CLI path to the Create Pull Request form's "Draft with local model" button. Implemented in `src/cli/commands/models-run.ts` (`runPullRequestDraft`).
+
+```bash
+maestro-cli models run git-drafts --cwd <path> [--base <branch>] [--json]
+```
+
+- Runs in the desktop (`local_models_git_draft`) through `draftPullRequestRequest()` in `src/main/local-models/git-drafts.ts`, the same function the `localModels:draftPullRequest` IPC channel calls, so the form and the CLI read the same assignment and summarize the same branch. `--cwd` is resolved with `resolveCliPath()` and must be a local checkout.
+- `--base` defaults to `main`, then `master` (the form's own default order); a named branch is tried locally, then as `origin/<branch>`.
+- Prints the title, a blank line, then the body. `--json` prints the whole result (`title`, `body`, `baseBranch`, `commitCount`, `truncated`, `producedBy`). It never pushes or opens a pull request.
+- Exits non-zero with the reason when the task is off, the source is unavailable, the branch has no commits the base lacks, or git fails. `--cwd` and `--base` are refused for every other task, and do not combine with `--input`, `--system`, or `--max-tokens`.
+
+### `models run dictation --audio <file>`
+
+The CLI path to dictation (the microphone in a text box, and the `dictate` shortcut). Implemented in `src/cli/commands/models-run.ts` (`runTranscription`).
+
+```bash
+maestro-cli models run dictation --audio <file.wav> [--json]
+```
+
+- Runs in the desktop (`local_models_transcribe`) through `transcribeAudioFileRequest()` in `src/main/local-models/dictation.ts`, which decodes the file and calls `transcribeClip()`: the same function a clip recorded in a text box ends in, so both run on the same Dictation assignment and record the same `local_model_runs` row. `--audio` is resolved with `resolveCliPath()`.
+- **It takes a file, not the microphone.** The UI records from the computer's microphone; an agent has none, so it brings the speech as audio. The verb transcribes and stops: where the text goes is the caller's business, the same way the UI only types it into a box and never sends it.
+- Only 16-bit PCM WAV is read (mono, or the first channel of a stereo file; any sample rate, resampled to 16 kHz). Convert anything else first, for example `ffmpeg -i in.m4a -ac 1 -c:a pcm_s16le out.wav`.
+- Prints the transcript alone on stdout, which is empty when the clip held no speech. `--json` prints the whole result (`text`, `audioMs`, `source`, `durationMs`).
+- Exits non-zero with the reason when the task is off (the default), the source is unavailable, or the file is missing or not a readable WAV. It never falls back to another recogniser. `--audio` is refused for every other task and does not combine with `--input`, `--system`, `--max-tokens`, `--cwd`, or `--base`.
+
+### `notify speak <text>`
+
+The CLI path to spoken notices (the Test button under **Speak When an Agent Finishes** in Settings > Notifications). Implemented in `src/cli/commands/notify-speak.ts`.
+
+```bash
+maestro-cli notify speak "<text>" [--json]
+```
+
+- Runs in the desktop (`notify_speak`) through `speakNoticeRequest()` in `src/main/local-models/spoken-notices.ts`, which calls `speakNotice()`: the same queue, the same local voice, and the same rules as the notice Maestro speaks when an agent finishes a turn.
+- **It waits.** The command returns once the line was heard, or was refused, so a caller can tell the two apart. Prints `Spoken: <text>`; `--json` prints `{ success, spoken, text }`.
+- **It ignores the `spokenNotices` setting and window focus**, because it is an explicit request. Everything else holds: one line at a time with a quiet window between them, and nothing while a voice session is live.
+- A line that was not spoken exits non-zero with `Not spoken (<code>): <reason>` (`--json`: `{ success: false, spoken: false, code, error }`). Codes: `voice-session-active`, `no-speaker`, `empty`, `stale`, `superseded`, `cancelled`, `speech-failed`.
+- Text is limited to 600 characters (refused as a usage error before the app is called) and is flattened to one speakable line: markup and URLs are removed.
+- The mode itself is a setting, not a verb: `maestro-cli settings set spokenNotices <off|unfocused|always>`.
+
+### `models endpoints list|add|update|remove|models|test|detect`
+
+Model servers the user runs for Local Models (Ollama, LM Studio, any OpenAI-compatible base URL). Implemented in `src/cli/commands/models-endpoints.ts`.
+
+```bash
+maestro-cli models endpoints list [--json]
+maestro-cli models endpoints add --kind <ollama|lmstudio|openai-compatible> [--url <url>] [--name <name>] [--api-key-env <VAR>] [--disabled] [--json]
+maestro-cli models endpoints update <id|id-prefix|name> [--name <name>] [--url <url>] [--kind <kind>] [--api-key-env <VAR> | --clear-api-key-env] [--enable | --disable] [--json]
+maestro-cli models endpoints remove <id|id-prefix|name> [--json]
+maestro-cli models endpoints models <id|id-prefix|name> [--json]
+maestro-cli models endpoints test <id|id-prefix|name> [-m <model>] [--json]
+maestro-cli models endpoints detect [--json]
+```
+
+- `list` / `add` / `update` / `remove` edit the `localModelEndpoints` setting on disk (`readLocalModelEndpoints()` / `writeLocalModelEndpoints()`), like the SSH remote verbs, so they work with the app closed; the settings watcher reloads every window. The list changes go through the shared `addLocalModelEndpoint()` / `updateLocalModelEndpoint()` / `removeLocalModelEndpoint()` / `findLocalModelEndpoint()` in `src/shared/local-models/endpoints.ts`, so the CLI cannot save a record the app would drop (bad URL, credentials in the URL, taken id, or a server already configured under another loopback spelling).
+- `--url` defaults to the standard local port for `ollama` and `lmstudio`; `openai-compatible` requires it. `--api-key-env` stores the NAME of a Settings -> Environment variable, never the key. `list` and `add` flag a name that is not set there yet.
+- `update` is the row's Edit form and its enabled switch in one verb. Only the fields a flag names change; the id and the list position are kept, so an assignment that names the endpoint still resolves. A call with no field flag, with both `--enable` and `--disable`, or with both `--api-key-env` and `--clear-api-key-env` is a usage error. `--disable` is not checked against assignments (neither is the switch in Settings): a task assigned to a disabled endpoint reports `endpoint-disabled` in `models status`.
+- `models` prints the ids the server lists now, one per line, with the on-disk size when the server reports one (Ollama does). It is the row's "List the models this server serves now" button and the source of the `<model>` half of `models assign <task> endpoint:<endpoint>:<model>`. A server that cannot be listed exits non-zero with the same failure kinds as `test`.
+- `models`, `test` and `detect` need the network and Settings -> Environment, so they run in the desktop over the WS bridge (`local_models_endpoint_models`, `local_models_endpoint_test`, `local_models_endpoints_detect`, handlers in `src/main/web-server/handlers/messageHandlers/localModels.ts`) through the same `endpoint-service.ts` functions as the `localModels:endpoints:*` IPC channels. A failed test exits non-zero and reports the failure `kind` (`missing-key`, `auth`, `network`, `timeout`, ...) in `--json`. `detect` saves nothing; it prints the `add` command for each server it finds.
 
 ### `list ssh-remotes`
 
@@ -785,6 +1115,13 @@ Machine-parseable output format. Each line is a complete JSON object. Used when 
 | Create agent        | `src/cli/commands/create-agent.ts`                                                                             |
 | Remove agent        | `src/cli/commands/remove-agent.ts`                                                                             |
 | Update agent        | `src/cli/commands/update-agent.ts`                                                                             |
+| Exit codes          | `src/cli/exit-codes.ts`, `src/cli/services/maestro-bridge-errors.ts`                                           |
+| Bridge round trip   | `src/cli/services/session-command.ts` (`failCommand`, `failFromError`, `sendBridgeCommand`)                    |
+| Help examples       | `src/cli/command-examples.ts`, `src/__tests__/cli/command-tree.test.ts`                                        |
+| Agent setting flags | `src/cli/services/agent-setting-flags.ts`, `src/cli/services/peer-flags.ts`, `src/shared/agentConfigExtras.ts` |
+| Local Models verbs  | `src/cli/commands/models-*.ts`, `agent-test-run-on.ts`                                                         |
+| System One verbs    | `src/cli/commands/system-one*.ts`, `src/cli/services/system-one-input.ts`                                      |
+| Voice verbs         | `src/cli/commands/voice*.ts`, `src/cli/services/voice-control.ts`, `src/shared/acappella/voice-control.ts`     |
 | SSH remote CRUD     | `src/cli/commands/create-ssh-remote.ts`, `list-ssh-remotes.ts`, `update-ssh-remote.ts`, `remove-ssh-remote.ts` |
 | SSH `-o` resolution | `src/shared/sshOptions.ts`                                                                                     |
 | Shared types        | `src/shared/types.ts`                                                                                          |

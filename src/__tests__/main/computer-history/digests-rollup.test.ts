@@ -35,11 +35,16 @@ function writeDigest(startMs: number, text = '- did things') {
 	return abs;
 }
 
-function scheduler(consult: (p: { question: string }) => Promise<Answer>) {
+function scheduler(
+	consult: (p: { question: string }) => Promise<Answer>,
+	localWriter?: ReturnType<typeof vi.fn>
+) {
 	const s = new DigestScheduler({
 		storeDir: dir,
 		getConfig: () => config,
 		getConsult: () => consult as never,
+		getLocalWriter: () =>
+			localWriter ? ({ hasModel: () => true, write: localWriter } as never) : null,
 		now: () => now,
 	});
 	s.start();
@@ -52,7 +57,7 @@ const flush = () => new Promise((r) => setTimeout(r, 30));
 beforeEach(() => {
 	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ch-rollup-'));
 	config = defaultComputerHistoryConfig();
-	config.digests = { enabled: true, agentId: 'agent-1', rollup: true };
+	config.digests = { enabled: true, source: 'agent', agentId: 'agent-1', rollup: true };
 	now = BLOCK + 6 * 60 * MIN + 20_000; // 18:00:20, just after the block ends
 });
 afterEach(() => {
@@ -87,6 +92,33 @@ describe('6-hour roll-up', () => {
 		if (process.platform !== 'win32') expect(fs.statSync(out).mode & 0o777).toBe(0o600);
 		expect(s.status().lastRollupFile).toBe('digests/2026-10-03/6h-1200Z.md');
 		expect(s.status().lastRollupAt).not.toBeNull();
+	});
+
+	it('the local source writes both from the same model: the roll-up is handed the digest paths', async () => {
+		config.digests = { enabled: true, source: 'local', agentId: 'agent-1', rollup: true };
+		const early = writeDigest(BLOCK, '- morning work');
+		writeSegment(LAST_WINDOW);
+		const consult = vi.fn(async () => ({ success: true, answer: 'x' }));
+		const local = vi.fn(async (request: { kind: string }) => ({
+			success: true,
+			answer: request.kind === '6h' ? '- the block' : '- last window',
+			writtenBy: 'local model `Qwen3 1.7B`',
+		}));
+		const s = scheduler(consult, local);
+		s.onSegmentClosed(entryFor(LAST_WINDOW), LAST_WINDOW);
+		const out = path.join(dir, ...ROLLUP_FILE);
+		await vi.waitFor(() => expect(fs.existsSync(out)).toBe(true));
+		expect(consult).not.toHaveBeenCalled();
+		expect(local.mock.calls.map(([request]) => request.kind)).toEqual(['15m', '6h']);
+		expect(local.mock.calls[1][0]).toEqual({
+			kind: '6h',
+			digestPaths: [early, path.join(dir, ...digestRelativePath(LAST_WINDOW).split('/'))],
+			blockStartIso: '2026-10-03T12:00:00.000Z',
+			blockEndIso: '2026-10-03T18:00:00.000Z',
+		});
+		const body = fs.readFileSync(out, 'utf-8');
+		expect(body).toContain('- the block');
+		expect(body).toContain('From 2 15-minute digest(s). Written by local model `Qwen3 1.7B`.');
 	});
 
 	it('skips a block with no 15-minute digests', async () => {

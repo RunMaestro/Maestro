@@ -12,6 +12,7 @@ import {
 	isFloatingWidgetId,
 	isMediaPlayerWidgetCommand,
 	isThroughputGaugeWidgetCommand,
+	isVoiceWidgetCommand,
 	NO_FLOATING_WIDGET_OVERFLOW,
 	planFloatingWidgetOverflow,
 	sanitizeFloatingWidgetOverflow,
@@ -50,6 +51,7 @@ describe('FLOATING_WIDGET_SPECS', () => {
 	it('names the window that owns each widget', () => {
 		expect(FLOATING_WIDGET_SPECS['throughput-gauge'].authority).toBe('app');
 		expect(FLOATING_WIDGET_SPECS['media-player'].authority).toBe('widget');
+		expect(FLOATING_WIDGET_SPECS['acappella-voice'].authority).toBe('app');
 	});
 
 	it('never opens a widget below its own minimum size', () => {
@@ -161,6 +163,41 @@ describe('isMediaPlayerWidgetCommand', () => {
 		for (const value of [undefined, null, 'dismiss', 0, true, {}, [], [{ type: 'action' }]]) {
 			expect(isMediaPlayerWidgetCommand(value)).toBe(false);
 		}
+	});
+});
+
+describe('isVoiceWidgetCommand', () => {
+	it.each([
+		{ type: 'close' },
+		{ type: 'minimize' },
+		{ type: 'open-mic', hold: true },
+		{ type: 'close-mic', send: false },
+		{ type: 'set-mode', mode: 'agent' },
+		{ type: 'cycle-mode', direction: -1 },
+		{ type: 'set-wait', waitMs: null },
+		{ type: 'set-wait', waitMs: 800 },
+		{ type: 'set-input', deviceId: 'headset' },
+		{ type: 'set-force-send', enabled: true },
+		{ type: 'set-send-phrases', phrases: '' },
+		{ type: 'navigate', agentSessionId: 'agent', tabId: 'tab' },
+	])('accepts a typed voice control: %j', (command) => {
+		expect(isVoiceWidgetCommand(command)).toBe(true);
+	});
+	it.each([
+		null,
+		[],
+		{},
+		{ type: 'start' },
+		{ type: 'open-mic', hold: 'yes' },
+		{ type: 'set-mode', mode: 'document' },
+		{ type: 'set-wait', waitMs: NaN },
+		{ type: 'set-wait', waitMs: -1 },
+		{ type: 'cycle-mode', direction: 0 },
+		{ type: 'set-input', deviceId: '' },
+		{ type: 'set-force-send', enabled: 1 },
+		{ type: 'navigate', agentSessionId: 'agent' },
+	])('refuses malformed voice controls: %j', (command) => {
+		expect(isVoiceWidgetCommand(command)).toBe(false);
 	});
 });
 

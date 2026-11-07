@@ -3,8 +3,12 @@
  * fresh-context mode picker and the live context gauge.
  */
 
+import { waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
+	__resetConfiguredContextWindowCacheForTests,
+	ensureConfiguredContextWindowCached,
+	getCachedConfiguredContextWindow,
 	resolveConfiguredContextWindow,
 	resolveEffectiveContextWindow,
 } from '../../../renderer/utils/contextWindowResolver';
@@ -115,5 +119,21 @@ describe('resolveEffectiveContextWindow', () => {
 		mockGetConfig.mockResolvedValue({});
 		const value = await resolveEffectiveContextWindow({ toolType: 'terminal' });
 		expect(value).toBe(0);
+	});
+});
+
+describe('provider-scoped configured context cache', () => {
+	it('keeps equal model and override inputs separate by provider', async () => {
+		__resetConfiguredContextWindowCacheForTests();
+		mockGetConfig.mockImplementation(async (provider) => ({
+			contextWindow: provider === 'codex' ? 128_000 : 200_000,
+		}));
+		const claude = { toolType: 'claude-code', customModel: 'shared-model-name' };
+		const codex = { ...claude, toolType: 'codex' };
+		ensureConfiguredContextWindowCached(claude);
+		ensureConfiguredContextWindowCached(codex);
+		await waitFor(() => expect(getCachedConfiguredContextWindow(codex)).toBe(128_000));
+		expect(getCachedConfiguredContextWindow(claude)).toBe(200_000);
+		__resetConfiguredContextWindowCacheForTests();
 	});
 });

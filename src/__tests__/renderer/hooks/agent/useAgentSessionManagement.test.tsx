@@ -55,6 +55,68 @@ function lastAddedEntry(): Record<string, unknown> {
 }
 
 describe('useAgentSessionManagement - history token source capture', () => {
+	it('preserves an explicit background owner without borrowing the active tab', async () => {
+		seedActiveSession(createMockSession({ toolType: 'claude-code' }));
+		const { result } = renderHook(() => useAgentSessionManagement(makeDeps()));
+		await act(async () => {
+			await result.current.addHistoryEntry({
+				type: 'USER',
+				summary: 'background',
+				agentSessionId: 'untracked-native',
+				provider: 'codex',
+			});
+		});
+		expect(lastAddedEntry().provider).toBe('codex');
+		expect(lastAddedEntry().tokenSource).toBeUndefined();
+	});
+
+	it('keeps a closed tab turn owner when recording History', async () => {
+		const tab = createMockAITab({
+			id: 'closed',
+			tabProvider: 'claude-code',
+			turnProvider: 'codex',
+		});
+		const session = createMockSession({
+			toolType: 'claude-code',
+			aiTabs: [],
+			closedTabHistory: [{ tab, index: 0, closedAt: 1 }],
+		});
+		seedActiveSession(session);
+		const { result } = renderHook(() => useAgentSessionManagement(makeDeps()));
+		await act(async () => {
+			await result.current.addHistoryEntry({ type: 'USER', summary: 'closed turn', tabId: tab.id });
+		});
+		expect(lastAddedEntry().tokenSource).toBeUndefined();
+		expect(lastAddedEntry().provider).toBe('codex');
+	});
+
+	it.each(['codex', 'claude-code'] as const)(
+		'uses the captured %s turn owner after selection changes',
+		async (provider) => {
+			const tab = createMockAITab({
+				id: 'owner',
+				tabProvider: provider === 'codex' ? 'claude-code' : 'codex',
+				turnProvider: provider,
+			});
+			const session = createMockSession({
+				toolType: 'claude-code',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			seedActiveSession(session);
+			const { result } = renderHook(() => useAgentSessionManagement(makeDeps()));
+			await act(async () => {
+				await result.current.addHistoryEntry({
+					type: 'USER',
+					summary: 'finished turn',
+					tabId: tab.id,
+				});
+			});
+			expect(lastAddedEntry().tokenSource).toBe(provider === 'claude-code' ? 'api' : undefined);
+			expect(lastAddedEntry().provider).toBe(provider);
+		}
+	);
+
 	it('stamps tokenSource/tokenSourceReason from a Claude Code session in TUI mode', async () => {
 		const activeSession = createMockSession({
 			id: 'sess-tui',
@@ -306,7 +368,11 @@ describe('useAgentSessionManagement - naming a resumed session', () => {
 				})
 			).toBe(true);
 		});
-		expect(useSessionStore.getState().sessions[0].aiTabs[0]).toEqual({ ...tab, origin: 'relay' });
+		expect(useSessionStore.getState().sessions[0].aiTabs[0]).toEqual({
+			...tab,
+			origin: 'relay',
+			tabProvider: 'claude-code',
+		});
 	});
 
 	it('keeps Relay provenance on the tab through a persisted reload', async () => {
@@ -347,6 +413,49 @@ describe('useAgentSessionManagement - naming a resumed session', () => {
 });
 
 describe('useAgentSessionManagement - translated History ownership', () => {
+	it('reads a pending History conversation and pins its original provider', async () => {
+		const session = createMockSession({
+			id: 'pending-agent',
+			toolType: 'codex',
+			projectRoot: '/test/project',
+			aiTabs: [],
+			providerTranslationTabInventory: [
+				{
+					id: 'history:old-claude',
+					agentSessionId: null,
+					providerSessions: { 'claude-code': { agentSessionId: 'old-claude' } },
+				},
+			],
+		});
+		window.maestro.agentSessions.read = vi
+			.fn()
+			.mockResolvedValue({ messages: [{ type: 'user', content: 'kept history' }] });
+		window.maestro.claude.getSessionOrigins = vi.fn().mockResolvedValue({});
+		seedActiveSession(session);
+		const deps = makeDeps(session);
+		const { result } = renderHook(() => useAgentSessionManagement(deps));
+		await act(async () => {
+			expect(await result.current.handleResumeSession('old-claude')).toBe(true);
+		});
+		expect(window.maestro.agentSessions.read).toHaveBeenCalledWith(
+			'claude-code',
+			'/test/project',
+			'old-claude',
+			expect.any(Object),
+			undefined
+		);
+		const updater = vi.mocked(deps.setSessions).mock.calls.at(-1)![0] as (
+			sessions: Session[]
+		) => Session[];
+		const resumed = updater([session])[0];
+		expect(resumed.aiTabs[0]).toMatchObject({
+			agentSessionId: 'old-claude',
+			tabProvider: 'claude-code',
+			providerSessions: { codex: { agentSessionId: null } },
+		});
+		// A second click reuses the pinned native tab.
+		expect(updater([resumed])[0].aiTabs).toHaveLength(1);
+	});
 	it('refuses a History entry without a destination native mapping before creating a tab', async () => {
 		const session = createMockSession({
 			id: 'translated-agent',

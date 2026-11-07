@@ -7,6 +7,22 @@
  * across the IPC boundary.
  */
 
+import type { ToolType } from './types';
+
+/** Main-process launch identity, resolved from the MCP caller's process tree. */
+export interface CoworkingBrowserCaller {
+	sessionId: string;
+	processSessionId: string;
+	provider: ToolType;
+}
+
+export interface CoworkingBrowserPolicy {
+	interactionEnabled: boolean;
+	confirmPolicy: BrowserConfirmPolicy;
+}
+
+export type CoworkingBrowserPolicies = Partial<Record<ToolType, CoworkingBrowserPolicy>>;
+
 /** Raw browser-tab data the renderer pushes per session. The registry assigns
  *  the stable public `browser:N` id, so we only carry raw tab metadata here. */
 export interface CoworkingBrowserInput {

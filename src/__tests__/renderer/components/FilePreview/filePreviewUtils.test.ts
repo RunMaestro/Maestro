@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
 	getLanguageFromFilename,
 	isBinaryContent,
-	isBinaryExtension,
 	formatFileSize,
 	formatDateTime,
 	countMarkdownTasks,
@@ -25,6 +24,7 @@ import {
 	PREVIEW_SCROLLER_ATTR,
 	type FontScaleTargetView,
 } from '../../../../renderer/components/FilePreview/filePreviewUtils';
+import { isBinaryExtension } from '../../../../shared/fileKinds';
 import { buildParquetPreviewMarker } from '../../../../shared/parquet/preview';
 
 describe('filePreviewUtils', () => {

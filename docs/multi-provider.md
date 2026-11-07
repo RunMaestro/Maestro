@@ -34,9 +34,9 @@ separate transcript trees, not separate logins: they all bill the same GitHub
 account, and the split is a workspace split rather than a quota split.
 
 <Note>
-This page covers **one provider, different accounts**. Claude Code and Codex
-also have preview memory/session conversion between providers; see
-[Switching Providers](#switching-providers) for the supported versions and limits.
+This page covers **one provider, different accounts** and preview conversion
+between providers. See [Switching Providers](#switching-providers) to change
+the agent default and optionally convert memory and session history.
 </Note>
 
 ## Setting the Variable in Maestro
@@ -325,19 +325,101 @@ started on one account is intelligible to the other, and in Claude Code's case
 directly resumable.
 
 Different providers use different native formats. Maestro provides preview
-conversion between **Claude Code 2.1.296/2.1.302** and **Codex 0.162.1/0.163.0**,
-in both directions, for session history and project memory. Live checks on
-2.1.302/0.163.0 verified native conversation recall and carried project resource
-reads. Both directions remain unverified overall; execution continuity and
-repeated incremental synchronization are not certified. Other provider/version
-combinations have no supported converter.
+conversion between **Claude Code 2.1.296 or newer** and **Codex 0.162.1 or newer**,
+in both directions, for session history and project memory. The tested versions
+are **2.1.296/2.1.302** and **0.162.1/0.163.0**, respectively; other versions at or above those
+minimums show an `untested-version` warning naming the installed and tested
+versions. Unreadable versions, older versions and providers without a converter
+are blocked by preflight.
+
+Status (2026-10-17): **Claude Code 2.1.296 -> Codex 0.162.1** and
+**Codex 0.162.1 -> Claude Code 2.1.296** remain **unverified**. Native
+acceptance was initially skipped; subsequent isolated live QA on 2.1.302/0.163.0
+verified conversation recall and access to carried resource definitions, while
+execution continuity and repeated incremental synchronization remain uncertified. Tested versions describe schema coverage,
+not native certification. Untested versions
+keep the plan unverified even if the direction later gains certification;
+blocking history or resource limitations still prevent conversion on any version.
 
 Changing the provider in **Edit Agent** is a plain switch by default: tabs and
 transcripts stay, each tab starts a fresh conversation on the new provider, and
 switching back resumes the old one. Destinations with a **Carry Over** pill also
 offer **Convert memory and session history**, which is opt-in. Checking it reads
-a conversion plan and lists any warnings; **Save Changes** applies it. If the
-conversion is blocked or fails, a notice says so and saving switches providers
+a conversion plan and lists any warnings. Accept the listed limitations beside
+**Save Changes**, then save to apply it. If preflight is blocked or fails, a notice says so and saving switches providers
 without converting. See
 [memory and session carry](/provider-notes#switching-providers-with-memory-and-session-carry)
 for the steps, scope, CLI examples and activity indicator.
+
+The plan separates **Translated now** (open AI tabs) from **Translated on next
+use** (closed, snoozed and other saved conversations), with counts. Only open
+tabs are converted during the switch. Reopening a closed tab, waking a snoozed
+tab or resuming from History does not convert it immediately. Its next message
+triggers conversion before the destination resumes, including when that
+provider has an older copy of the conversation. A problem in a closed
+conversation is checked then and does not block the initial switch.
+
+During conversion, the tab shows **Translating context from &lt;provider&gt;**.
+A running source turn is allowed to finish. Notes pass without review; a new
+warning holds the message and offers a toast that opens the tab's conversion
+review in Edit Agent. Blocking limitations must be resolved before sending.
+Previously accepted warnings carry forward only when the direction, provider
+versions and warning details match. Held messages stay in the draft or queue,
+and queued messages keep the provider, model and effort selected when queued.
+The headless runtime uses the same conversion checks and retains held messages.
+
+### SSH agents
+
+SSH translation infrastructure is implemented, but **the live check was skipped
+on 2026-10-17**. Both Claude Code to Codex and Codex to Claude Code remain
+unverified over SSH. Native certification remains deferred until
+live evidence is recorded.
+
+The source and destination providers run on the agent's configured remote host.
+Provider versions, accounts, project paths and memory are resolved there, and
+native transcript reads, destination writes and readback stay there. Maestro
+keeps original-byte archives, checkpoints, recovery journals and agent mappings
+in its local data directory. Status can inspect the local journal offline;
+recovery or rollback that touches native files needs the same remote host.
+An unresolved SSH target fails without using a local provider instead.
+
+The remote needs the supported provider binaries, POSIX `sh`, `base64` decoding
+with `-d`, `realpath` or a working `readlink -f`, Git, and GNU/BSD filesystem
+tools for listing, metadata, links and durable writes. Missing tools or a failed
+provider version probe stop translation. Codex imports also need the remote
+`codex app-server` history APIs; ordinary SSH messages still use `codex exec`.
+The destination account is pinned during import. A dropped connection requires
+inspection of migration status before another attempt.
+
+### Knowledge and project resources
+
+Carried knowledge stays outside your project. Local agents use Maestro's data
+directory at `<userData>/provider-knowledge/<agent-hash>/<operation-id>/`. SSH
+agents use `<remote HOME>/.maestro/provider-knowledge/<agent-hash>/<operation-id>/`
+on their configured host. Maestro connects its knowledge index to each turn,
+including resumed sessions. Claude also receives
+access to that directory and a memory setting for it. These bindings do not yet
+certify native recall or repeated round-trip continuity.
+
+Installing native project resources is **off by default for each switch**. The
+plan's Notes list instruction aliases, skills and subagents that were not
+installed. Their original files remain in managed knowledge, but that does not
+make them available as native skills or subagents.
+
+To install them, select **Also install skills and subagents into the project
+(git-excluded)** in Edit Agent, or add `--project-resources` to
+`maestro-cli update-agent <id> --provider <type>`. This can create a compatible
+`AGENTS.md` or `CLAUDE.md` alias, skills under `.agents/skills` or `.claude/skills`,
+and supported subagents under `.codex/agents` or `.claude/agents`. Unsupported
+definitions remain listed as limitations.
+
+Maestro adds each installed path to a marked block in Git's repository-local
+`info/exclude`, using the shared Git directory for worktrees. For SSH agents,
+this file and the installed resources are on the remote host. It does not change
+your committed `.gitignore` or untrack files already in Git. Rollback before
+commit removes its own exclude entries while preserving entries you add later;
+changed ownership or markers require inspection. Outside a Git repository,
+installation still works, but Notes report that local Git exclusions are
+unavailable. Older operations that stored knowledge under
+`.maestro/provider-knowledge` remain recoverable or reversible; new switches
+and launch bindings use the knowledge root for the provider host.

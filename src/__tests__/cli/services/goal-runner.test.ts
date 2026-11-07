@@ -384,6 +384,16 @@ describe('goal-runner (runGoal)', () => {
 		});
 	});
 
+	it("runs every spawn on the agent's Run on target", async () => {
+		const runOn = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+		await collectEvents(runGoal(mockSession({ runOn } as never), goalConfig()));
+
+		const calls = vi.mocked(spawnAgent).mock.calls;
+		expect(calls.length).toBeGreaterThan(0);
+		for (const call of calls) expect(call[4]).toMatchObject({ runOn });
+	});
+
 	describe('per-run model/effort override', () => {
 		it('lets the run model/effort win over the session values', async () => {
 			const session = mockSession({ customModel: 'opus', customEffort: 'high' });

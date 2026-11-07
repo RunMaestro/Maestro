@@ -1,5 +1,6 @@
 import React, { memo, useMemo } from 'react';
 import type { Session, Group, Theme } from '../../../types';
+import { resolveTabProvider } from '../../../utils/providerTabSessions';
 import { getProviderDisplayName } from '../../../utils/sessionValidation';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useSessionStore } from '../../../stores/sessionStore';
@@ -165,7 +166,12 @@ export const InputTextarea = memo(function InputTextarea({
 								? 'Describe what you want to accomplish... (Esc for Command Mode)'
 								: isCommandModeDraft
 									? 'Run shell command... (! for AI Command, Esc for the agent)'
-									: `Talking to ${session.name} powered by ${getProviderDisplayName(session.toolType)}`
+									: `Talking to ${session.name} powered by ${getProviderDisplayName(
+											resolveTabProvider(
+												session.aiTabs.find((tab) => tab.id === session.activeTabId),
+												session
+											)
+										)}`
 				}
 				value={inputValue}
 				// Read-only, not disabled: a disabled textarea cannot hold focus, and

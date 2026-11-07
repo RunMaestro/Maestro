@@ -182,6 +182,8 @@ export type GroupChatPromptId =
  * desktop or the run layer headless).
  */
 export interface GroupChatSpawn {
+	/** Stored agent whose per-agent routing applies to this turn. */
+	maestroAgentId?: string;
 	/** Process id; the shapes are in `session-ids.ts`. */
 	processId: string;
 	providerId: string;

@@ -13,12 +13,55 @@
  * on this tab", so the tab inherits the agent's value (model / effort) or the
  * global setting (enter-to-send) - it is NOT the same as `false`.
  */
-export interface DesktopTabEntry {
+import {
+	projectTabProvider,
+	type ProviderSwitchAgent,
+	type ProviderSwitchTab,
+} from './maestro-lib/agents/providerSwap';
+import type { TranslationReport } from './maestro-lib/translation/types';
+import { isValidAgentId } from './agentIds';
+import type { RunOnTarget } from './local-models/run-on';
+
+/** Safe inspection fields. Never expose environment values or parked native slots. */
+export interface TabProviderInspection {
+	provider?: string;
+	agentProvider?: string;
+	tabProvider?: string | null;
+	turnProvider?: string | null;
+	pendingTranslation?: string | null;
+	effectiveModel?: string | null;
+	effectiveEffort?: string | null;
+	runOn?: RunOnTarget;
+}
+
+export function inspectTabProvider(
+	tab: ProviderSwitchTab,
+	agent: Omit<ProviderSwitchAgent, 'toolType' | 'aiTabs'> & { toolType: string }
+): TabProviderInspection {
+	const projected = isValidAgentId(agent.toolType)
+		? projectTabProvider({ ...agent, toolType: agent.toolType, aiTabs: undefined }, tab).agent
+		: undefined;
+	return {
+		provider: projected?.toolType ?? tab.tabProvider ?? agent.toolType,
+		agentProvider: agent.toolType,
+		tabProvider: tab.tabProvider ?? null,
+		turnProvider: tab.turnProvider ?? null,
+		pendingTranslation: tab.pendingTranslation ?? null,
+		effectiveModel: tab.customModel ?? projected?.customModel ?? null,
+		effectiveEffort: tab.customEffort ?? projected?.customEffort ?? null,
+		runOn: projected?.runOn ?? { type: 'provider' },
+	};
+}
+
+export type TabConfigResult = TranslationReport & { tab?: TabProviderInspection };
+
+export interface DesktopTabEntry extends TabProviderInspection {
 	tabId: string;
 	sessionId: string;
 	/** Maestro agent (Left Bar entity) ID this tab belongs to. */
 	agentId: string;
 	agentName: string;
+	/** Legacy agent default. `provider` is this tab's effective harness. */
 	toolType: string;
 	/** User-defined tab name; null when the user hasn't named the tab. */
 	name: string | null;

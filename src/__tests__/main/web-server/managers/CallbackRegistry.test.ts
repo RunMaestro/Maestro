@@ -384,6 +384,7 @@ describe('CallbackRegistry', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -398,6 +399,7 @@ describe('CallbackRegistry', () => {
 				'session-5',
 				'npm test',
 				'terminal',
+				undefined,
 				undefined,
 				undefined,
 				undefined,
@@ -420,6 +422,7 @@ describe('CallbackRegistry', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -435,6 +438,7 @@ describe('CallbackRegistry', () => {
 				'follow up',
 				'ai',
 				'tab-xyz',
+				undefined,
 				undefined,
 				undefined,
 				undefined,
@@ -454,6 +458,7 @@ describe('CallbackRegistry', () => {
 				'ai',
 				undefined,
 				true,
+				undefined,
 				undefined,
 				undefined,
 				undefined
@@ -482,6 +487,36 @@ describe('CallbackRegistry', () => {
 				undefined,
 				images,
 				undefined,
+				undefined,
+				undefined
+			);
+		});
+
+		it('passes the consult chain so `dispatch` keeps spending one budget across the boundary', async () => {
+			const callback = vi.fn().mockResolvedValue(true);
+			registry.setExecuteCommandCallback(callback);
+
+			const consultChain = { chainId: 'chain-1', depth: 2 };
+			await registry.executeCommand(
+				'session-5',
+				'follow up',
+				'ai',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				consultChain
+			);
+
+			expect(callback).toHaveBeenCalledWith(
+				'session-5',
+				'follow up',
+				'ai',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				consultChain,
 				undefined
 			);
 		});

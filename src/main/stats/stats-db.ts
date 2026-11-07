@@ -20,6 +20,10 @@ import type {
 	SessionLifecycleEvent,
 	ResilienceEvent,
 	WizardRun,
+	LocalModelRun,
+	ProxyCompressionEntry,
+	ProxyRequest,
+	ProxyRequestUsage,
 	StatsTimeRange,
 	StatsFilters,
 	StatsAggregation,
@@ -57,7 +61,33 @@ import {
 } from './session-lifecycle';
 import { recordResilienceEvent, getResilienceEvents, clearResilienceCache } from './resilience';
 import { recordWizardRun, getWizardRuns, clearWizardRunsCache } from './wizard-runs';
+import {
+	recordLocalModelRun,
+	getLocalModelRuns,
+	clearLocalModelRunsCache,
+} from './local-model-runs';
+import {
+	recordProxyRequest,
+	getProxyRequestUsage,
+	getRecentProxyCompressions,
+	clearProxyRequestsCache,
+} from './proxy-requests';
+import {
+	insertSystemOneDecision,
+	getSystemOneDecisions,
+	getSystemOneAgentSpend,
+	pruneSystemOneDecisions,
+	clearSystemOneDecisionsCache,
+	type SystemOneAgentSpendRow,
+	type SystemOneDecisionsRead,
+} from './s1-decisions';
+import type {
+	SystemOneDecision,
+	SystemOneLedgerEntry,
+} from '../../shared/local-models/system-one-ledger';
 import { getAggregatedStats } from './aggregations';
+import { getModelUsage } from './model-usage';
+import type { ModelUsage, ModelUsageNames } from '../../shared/local-models/model-usage';
 import {
 	getQuerySourceTotals,
 	getQuerySourceByDay,
@@ -212,6 +242,9 @@ export class StatsDB {
 			clearSessionLifecycleCache();
 			clearResilienceCache();
 			clearWizardRunsCache();
+			clearLocalModelRunsCache();
+			clearProxyRequestsCache();
+			clearSystemOneDecisionsCache();
 			clearImageAnnotationCache();
 			clearShortcutUsageCache();
 			clearMultiWindowUsageCache();
@@ -844,6 +877,65 @@ export class StatsDB {
 
 	getWizardRuns(range: StatsTimeRange): WizardRun[] {
 		return getWizardRuns(this.database, range);
+	}
+
+	// ============================================================================
+	// Local Model Runs (delegated)
+	// ============================================================================
+
+	recordLocalModelRun(run: Omit<LocalModelRun, 'id'>): string {
+		return recordLocalModelRun(this.database, run);
+	}
+
+	getLocalModelRuns(range: StatsTimeRange): LocalModelRun[] {
+		return getLocalModelRuns(this.database, range);
+	}
+
+	// ============================================================================
+	// Token Proxy Requests (delegated)
+	// ============================================================================
+
+	recordProxyRequest(request: Omit<ProxyRequest, 'id'>): string {
+		return recordProxyRequest(this.database, request);
+	}
+
+	getProxyRequestUsage(range: StatsTimeRange): ProxyRequestUsage {
+		return getProxyRequestUsage(this.database, range);
+	}
+
+	getRecentProxyCompressions(limit: number): ProxyCompressionEntry[] {
+		return getRecentProxyCompressions(this.database, limit);
+	}
+
+	// ============================================================================
+	// Model Usage (delegated)
+	// ============================================================================
+
+	getModelUsage(range: StatsTimeRange, names?: ModelUsageNames): ModelUsage {
+		return getModelUsage(this.database, range, names);
+	}
+
+	// ============================================================================
+	// System One Decisions (delegated)
+	// ============================================================================
+
+	recordSystemOneDecision(decision: SystemOneDecision): string {
+		return insertSystemOneDecision(this.database, decision);
+	}
+
+	getSystemOneDecisions(read: SystemOneDecisionsRead): {
+		entries: SystemOneLedgerEntry[];
+		total: number;
+	} {
+		return getSystemOneDecisions(this.database, read);
+	}
+
+	getSystemOneAgentSpend(since: number): SystemOneAgentSpendRow[] {
+		return getSystemOneAgentSpend(this.database, since);
+	}
+
+	pruneSystemOneDecisions(cutoffMs: number): number {
+		return pruneSystemOneDecisions(this.database, cutoffMs);
 	}
 
 	// ============================================================================

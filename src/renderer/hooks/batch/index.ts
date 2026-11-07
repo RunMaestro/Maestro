@@ -16,6 +16,7 @@ export {
 
 // Whether a run is parked waiting on the user (agent error or HITL gate)
 export { useAutoRunErrorPaused } from './useAutoRunPause';
+export { useTierPillLabel } from './useTierPillLabel';
 
 // Debounce hook for per-session state updates
 export { useSessionDebounce } from './useSessionDebounce';

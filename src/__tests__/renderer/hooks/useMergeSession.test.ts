@@ -34,7 +34,7 @@ vi.mock('../../../renderer/utils/contextExtractor', () => ({
 		projectRoot: session.projectRoot,
 		name: `${name} / ${tab.name || 'Tab'}`,
 		logs: tab.logs,
-		agentType: session.toolType,
+		agentType: tab.pendingTranslation ?? tab.tabProvider ?? session.toolType,
 	})),
 }));
 
@@ -119,6 +119,36 @@ function createMockSession(
 }
 
 describe('useMergeSession', () => {
+	it.each([false, true])(
+		'grooms for the destination provider (new agent: %s)',
+		async (createNewSession) => {
+			const sourceSession = createMockSession('source', 'claude-code');
+			sourceSession.aiTabs[0].tabProvider = 'opencode';
+			const targetSession = createMockSession('target', 'opencode');
+			targetSession.aiTabs[0].tabProvider = 'codex';
+			const { result } = renderHook(() => useMergeSession());
+			await act(async () => {
+				await result.current.startMerge({
+					sourceSession,
+					sourceTabId: 'tab-1',
+					targetSession,
+					targetTabId: 'tab-1',
+					options: { groomContext: true, createNewSession, preserveTimestamps: true },
+				});
+			});
+			expect(contextGroomer.contextGroomingService.groomContexts).toHaveBeenCalledWith(
+				expect.objectContaining({ targetAgent: createNewSession ? 'claude-code' : 'codex' }),
+				expect.any(Function)
+			);
+			if (createNewSession) {
+				const { createMergedSession } = await import('../../../renderer/utils/tabHelpers');
+				expect(createMergedSession).toHaveBeenCalledWith(
+					expect.objectContaining({ toolType: 'claude-code' })
+				);
+			}
+		}
+	);
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 

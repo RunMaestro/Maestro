@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import type { CreateGistResult } from '../../../shared/gitUtils';
 
 export function createGistRemoteApi() {
 	return {
@@ -14,6 +15,7 @@ export function createGistRemoteApi() {
 				description: string,
 				isPublic: boolean,
 				agentSessionId: string | undefined,
+				allowSecrets: boolean,
 				responseChannel: string
 			) => void
 		): (() => void) => {
@@ -23,10 +25,11 @@ export function createGistRemoteApi() {
 				description: string,
 				isPublic: boolean,
 				agentSessionId: string | undefined,
+				allowSecrets: boolean,
 				responseChannel: string
 			) => {
 				try {
-					callback(sessionId, description, isPublic, agentSessionId, responseChannel);
+					callback(sessionId, description, isPublic, agentSessionId, allowSecrets, responseChannel);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, {
 						success: false,
@@ -42,10 +45,7 @@ export function createGistRemoteApi() {
 		/**
 		 * Send response for remote create-gist
 		 */
-		sendRemoteCreateGistResponse: (
-			responseChannel: string,
-			result: { success: boolean; gistUrl?: string; error?: string }
-		): void => {
+		sendRemoteCreateGistResponse: (responseChannel: string, result: CreateGistResult): void => {
 			ipcRenderer.send(responseChannel, result);
 		},
 	};

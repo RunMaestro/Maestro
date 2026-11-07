@@ -28,6 +28,12 @@
  *   later through `onChunk`.
  */
 
+import { admitConsult, type ConsultBudgetStoreOptions } from './consult-budget';
+import {
+	buildConsultChainEnv,
+	normalizeMaxConsultationsPerTurn,
+	type ConsultChain,
+} from '../../consultBudget';
 import { getAgentDisplayName } from '../../agentMetadata';
 import { getClaudeTokenMode } from '../../claudeTokenMode';
 import type { CrossAgentRequest, CrossAgentResponseChunk } from '../../crossAgentTypes';
@@ -41,6 +47,11 @@ import { MAESTRO_P_WORKSPACE_UNTRUSTED_EXIT_CODE } from '../launch/interactive-m
 import type { SshRemoteSettingsStore } from '../launch/ssh-remote-resolver';
 import type { AgentConfig } from '../providers/definitions';
 import { buildCrossAgentPrompt } from './consult-prompt';
+import {
+	projectTabProvider,
+	type ProviderAgentOverrides,
+	type ProviderSwitchTab,
+} from './providerSwap';
 
 const LOG_CONTEXT = '[CrossAgentConsult]';
 
@@ -80,11 +91,13 @@ function consultExitError(target: CrossAgentTargetSession, code: number, text: s
  * The subset of a target agent's stored session config a consult needs to spawn. Resolved by
  * the caller from its own session store.
  */
-export interface CrossAgentTargetSession {
+export interface CrossAgentTargetSession extends ProviderAgentOverrides {
 	id: string;
 	name: string;
 	toolType: ToolType;
 	cwd: string;
+	providerOverrides?: Partial<Record<ToolType, ProviderAgentOverrides>>;
+	aiTabs?: Array<ProviderSwitchTab & { id: string }>;
 	/**
 	 * Per-agent binary override. Honored ahead of detection, exactly like the tab spawn and the
 	 * Group Chat moderator: a consult that ignores it runs a DIFFERENT binary than the tab does
@@ -145,6 +158,8 @@ export interface ConsultRunner {
 }
 
 export interface ConsultStartOptions {
+	maxConsultationsPerTurn?: number;
+	consultBudgetStore?: ConsultBudgetStoreOptions;
 	/** Host-only proof: preparation failed or was canceled before invoking the runner. */
 	onNotStarted?: () => void;
 	runner: ConsultRunner;
@@ -169,7 +184,10 @@ export interface ConsultStartOptions {
 	 * its own tabs carry. Optional: a host that cannot build one passes none and
 	 * the consult starts without it.
 	 */
-	getSystemPrompt?: (target: CrossAgentTargetSession) => Promise<string | undefined>;
+	getSystemPrompt?: (
+		target: CrossAgentTargetSession,
+		chain?: ConsultChain
+	) => Promise<string | undefined>;
 	/** Called with each response chunk; `done: true` marks completion/failure. */
 	onChunk: (chunk: CrossAgentResponseChunk) => void;
 }
@@ -310,7 +328,25 @@ export function createConsultService() {
 		const { runner, sshStore, getTargetSession, onChunk } = opts;
 		const writable = opts.writable ?? false;
 
-		const target = getTargetSession(request.targetSessionId);
+		const storedTarget = getTargetSession(request.targetSessionId);
+		const consultTab = storedTarget?.aiTabs?.find((tab) => tab.id === request.targetTabId);
+		const projected = storedTarget
+			? projectTabProvider(storedTarget, consultTab, request.targetProvider)
+			: undefined;
+		const target = projected
+			? {
+					...projected.agent,
+					customModel: projected.tab?.customModel ?? projected.agent.customModel,
+					customEffort: projected.tab?.customEffort ?? projected.agent.customEffort,
+				}
+			: undefined;
+		// Renderer requests capture the destination before IPC/persistence can race a switch.
+		// Library callers without that snapshot resolve the named consult tab here.
+		const resumeAgentSessionId = request.targetProvider
+			? request.resumeAgentSessionId
+			: projected?.tab
+				? (projected.tab.agentSessionId ?? undefined)
+				: request.resumeAgentSessionId;
 
 		// Base fields shared by every chunk we emit for this request. targetToolType / name fall
 		// back to the raw id when the session can't be resolved.
@@ -321,7 +357,7 @@ export function createConsultService() {
 			targetSessionId: request.targetSessionId,
 			targetTabId: request.targetTabId,
 			targetAgentName: target?.name ?? request.targetSessionId,
-			targetToolType: (target?.toolType ?? 'claude-code') as ToolType,
+			targetToolType: target?.toolType ?? request.targetProvider ?? 'claude-code',
 			chunk: '',
 			done: false,
 			...overrides,
@@ -355,6 +391,10 @@ export function createConsultService() {
 
 		if (!target) {
 			emitError(`Target agent not found for session ${request.targetSessionId}`);
+			return;
+		}
+		if (consultTab?.pendingTranslation && consultTab.pendingTranslation !== target.toolType) {
+			emitError('The consult conversation needs context translation before it can run.');
 			return;
 		}
 
@@ -409,7 +449,7 @@ export function createConsultService() {
 			// `permissionMode` is therefore stated explicitly at both ends, keeping the args in
 			// agreement with the cwdGrant text.
 			permissionMode: writable ? 'full' : 'readonly',
-			agentSessionId: request.resumeAgentSessionId,
+			agentSessionId: resumeAgentSessionId,
 		});
 		const configResolution = applyAgentConfigOverrides(agent, baseArgs, {
 			agentConfigValues,
@@ -425,7 +465,7 @@ export function createConsultService() {
 		// The target's own provider session id, captured from its output stream. Forwarded on the
 		// terminal chunk so the caller stores it on the consult tab and resumes it on the next
 		// mention from this source tab.
-		let capturedAgentSessionId: string | undefined = request.resumeAgentSessionId;
+		let capturedAgentSessionId: string | undefined = resumeAgentSessionId;
 		// Assigned once the consult is actually under way (see below). Held on a const object so
 		// `release` can close over it without a `let` that trips prefer-const.
 		const watch: { dog?: IdleWatchdog } = {};
@@ -555,6 +595,30 @@ export function createConsultService() {
 			return;
 		}
 
+		let targetChain = request.consultChain;
+		if (!targetChain) {
+			const admission = admitConsult(
+				{
+					chain: request.sourceConsultChain,
+					fromAgent: false,
+					limit: normalizeMaxConsultationsPerTurn(opts.maxConsultationsPerTurn),
+				},
+				opts.consultBudgetStore
+			);
+			if (!admission.allowed) {
+				settled = true;
+				release();
+				emitError(admission.message);
+				return;
+			}
+			targetChain = admission.chain;
+		}
+		const consultEnvVars = {
+			...(configResolution.effectiveCustomEnvVars ??
+				opts.getCustomEnvVars?.(target.toolType) ??
+				{}),
+			...buildConsultChainEnv(targetChain),
+		};
 		try {
 			const appendSystemPrompt = await opts.getSystemPrompt?.(target);
 			if (settled) return;
@@ -567,8 +631,8 @@ export function createConsultService() {
 					args: configResolution.args,
 					cwd: target.cwd,
 					prompt: fullPrompt,
-					customEnvVars:
-						configResolution.effectiveCustomEnvVars ?? opts.getCustomEnvVars?.(target.toolType),
+					customEnvVars: consultEnvVars,
+					maestroAgentId: target.id,
 					agentConfigValues,
 					sshRemoteConfig: target.sshRemoteConfig,
 					tokenMode: getClaudeTokenMode(target, {
@@ -587,7 +651,7 @@ export function createConsultService() {
 					// system prompt its own tabs carry. A resumed consult skips re-embedding
 					// for agents without the native flag (already in that transcript).
 					appendSystemPrompt,
-					isResume: !!request.resumeAgentSessionId && !!agent.resumeArgs,
+					isResume: !!resumeAgentSessionId && !!agent.resumeArgs,
 				},
 				observer
 			);

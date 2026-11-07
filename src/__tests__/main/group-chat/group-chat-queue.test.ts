@@ -7,6 +7,7 @@
  * survives a restart, and what happens to a file that cannot be read.
  */
 
+import { groupChatEvents } from '../../../main/group-chat/emitters';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -408,7 +409,10 @@ describe('T11 (D10): main decides whether to queue or send', () => {
 		const h = install();
 		h.idle = true;
 
+		const submission = vi.fn();
+		groupChatEvents.once('submission', submission);
 		await submitMessage(CHAT_ID, item('solo', 'straight through'));
+		expect(submission).toHaveBeenCalledWith(CHAT_ID, 'solo');
 
 		expect(h.sends).toEqual(['straight through']);
 		expect((await getQueue(CHAT_ID)).items).toHaveLength(0);

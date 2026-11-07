@@ -1,3 +1,4 @@
+import { createMockAITab } from '../../../../helpers/mockTab';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useAgentUsageListener } from '../../../../../renderer/hooks/agent/internal/useAgentUsageListener';
@@ -628,4 +629,45 @@ describe('useAgentUsageListener', () => {
 			expect(points[0].percentage).toBe(30);
 		});
 	});
+});
+
+it('uses the captured running provider window after another provider is selected', () => {
+	const tab = createMockAITab({
+		id: 'pin',
+		tabProvider: 'opencode',
+		turnProvider: 'codex',
+		providerSessions: { codex: { agentSessionId: 'running-codex' } },
+	});
+	useSessionStore.setState({
+		sessions: [
+			createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				customContextWindow: 200000,
+				aiTabs: [tab],
+				providerOverrides: {
+					codex: { customContextWindow: 100000, contextWindowSource: 'user-edited' },
+				},
+			}),
+		],
+	});
+	const batched = makeBatched();
+	renderHook(() =>
+		useAgentUsageListener({ batchedUpdater: batched, contextWarningYellowThreshold: 80 })
+	);
+	handler!('sess-1-ai-pin', {
+		inputTokens: 10000,
+		outputTokens: 1000,
+		cacheReadInputTokens: 0,
+		cacheCreationInputTokens: 0,
+		totalCostUsd: 0,
+		contextWindow: 100000,
+	});
+	const points = useContextTimelineStore.getState().buffers['sess-1']?.points ?? [];
+	expect(points[0]?.contextWindow).toBe(100000);
+	expect(batched.updateUsage).toHaveBeenCalledWith(
+		'sess-1',
+		'pin',
+		expect.objectContaining({ inputTokens: 10000 })
+	);
 });

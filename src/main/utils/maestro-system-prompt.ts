@@ -15,15 +15,32 @@
 import { app } from 'electron';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { computerHistoryDir } from '../../shared/computer-history/paths';
+import type { SystemOneAgentAccess } from '../../shared/local-models/system-one-agent';
 import {
 	assembleMaestroSystemPrompt,
+	coreSystemPromptContext,
+	coreSystemPromptSectionsFor,
 	systemPromptSectionsFor,
+	type CoreSystemPromptInput,
 } from '../../shared/maestroSystemPrompt';
+import { resolvePeerRosterForPrompt } from '../../shared/peerAgents';
+import {
+	MAX_CONSULTATIONS_PER_TURN_SETTING,
+	normalizeMaxConsultationsPerTurn,
+	type ConsultBudgetStatus,
+	type ConsultChain,
+} from '../../shared/consultBudget';
 import type { TemplateContext } from '../../shared/templateVariables';
 import type { StoredSession } from '../stores/types';
+import type { ToolType } from '../../shared/types';
 import { getPrompt } from '../prompt-manager';
 import { getSessionsStore, getSettingsStore } from '../stores/getters';
 import { getHistoryManager } from '../history-manager';
+import { getSystemOneAgentAccess } from '../local-models/system-one/agent-service';
+import {
+	readConsultBudgetStatus,
+	type ConsultBudgetStoreOptions,
+} from '../peer-consults/consult-budget';
 import { getJourneyFilePath } from '../user-journey-manager';
 import { getMaestroRunService } from '../maestro-run';
 import { resolveBundledCliPathSync } from '../maestro-cli-manager';
@@ -36,6 +53,17 @@ const LOG_CONTEXT = '[MaestroSystemPrompt]';
 export interface BuildMaestroSystemPromptOptions {
 	/** The AI tab the spawn belongs to ({{TAB_ID}}). Headless spawns leave it empty. */
 	activeTabId?: string;
+	/** Captured launch provider for a consult or another tab-scoped spawn. */
+	provider?: ToolType;
+	/**
+	 * The place the spawned turn takes in a consult chain, when the caller put
+	 * it in one (a cross-agent consult). The Peer Agents block then states what
+	 * is left of that chain's budget. Left unset by a caller whose spawn carries
+	 * no chain (a Cue run, a Group Chat participant): the sentence is left out.
+	 */
+	consultChain?: ConsultChain;
+	/** Where the budget counter lives. Tests pass a temp directory. */
+	consultBudgetStore?: ConsultBudgetStoreOptions;
 }
 
 /** A core prompt by id, or undefined (logged) when it is missing or prompts are not loaded. */
@@ -50,7 +78,12 @@ function loadPrompt(id: string): string | undefined {
 	}
 }
 
-function readSettings(): { encoreFeatures: unknown; conductorProfile: string | undefined } {
+function readSettings(): {
+	encoreFeatures: unknown;
+	conductorProfile: string | undefined;
+	/** Undefined when the settings cannot be read: no budget is then stated. */
+	maxConsultationsPerTurn: number | undefined;
+} {
 	try {
 		const store = getSettingsStore() as unknown as { get: (key: string) => unknown };
 		const conductorProfile = store.get('conductorProfile');
@@ -58,12 +91,19 @@ function readSettings(): { encoreFeatures: unknown; conductorProfile: string | u
 			encoreFeatures: store.get('encoreFeatures'),
 			conductorProfile:
 				typeof conductorProfile === 'string' && conductorProfile ? conductorProfile : undefined,
+			maxConsultationsPerTurn: normalizeMaxConsultationsPerTurn(
+				store.get(MAX_CONSULTATIONS_PER_TURN_SETTING)
+			),
 		};
 	} catch (err) {
 		logger.warn('Settings unavailable while building system prompt', LOG_CONTEXT, {
 			error: err instanceof Error ? err.message : String(err),
 		});
-		return { encoreFeatures: undefined, conductorProfile: undefined };
+		return {
+			encoreFeatures: undefined,
+			conductorProfile: undefined,
+			maxConsultationsPerTurn: undefined,
+		};
 	}
 }
 
@@ -94,17 +134,21 @@ function isSshRecord(record: StoredSession): boolean {
 	return !!record.sessionSshRemoteConfig?.enabled || !!record.sshRemoteId;
 }
 
-function findStoredSession(sessionId: string): StoredSession | undefined {
+/** Every persisted agent, or none (logged) when the store cannot be read. */
+function readStoredSessions(sessionId: string): StoredSession[] {
 	try {
-		const sessions = getSessionsStore().get('sessions', []) as StoredSession[];
-		return sessions.find((s) => s.id === sessionId);
+		return getSessionsStore().get('sessions', []) as StoredSession[];
 	} catch (err) {
 		logger.warn('Sessions store unavailable while building system prompt', LOG_CONTEXT, {
 			sessionId,
 			error: err instanceof Error ? err.message : String(err),
 		});
-		return undefined;
+		return [];
 	}
+}
+
+function findStoredSession(sessionId: string): StoredSession | undefined {
+	return readStoredSessions(sessionId).find((s) => s.id === sessionId);
 }
 
 async function localGitBranch(cwd: string): Promise<string | undefined> {
@@ -150,6 +194,35 @@ async function localMaestroRunPath(): Promise<string | undefined> {
 	}
 }
 
+/**
+ * Whether a System One request from this agent would be answered right now, or
+ * undefined when that cannot be read. Never throws: no answer leaves the
+ * section out rather than advertising a tool that may refuse. Reads the
+ * settings and the day's count; sends nothing to an engine.
+ *
+ * Exported for the one other builder that runs in this process: the CLI's
+ * (`prepareMaestroSystemPromptCli`), which the plugin headless runner calls.
+ */
+export async function localSystemOneAccess(
+	agentId: string
+): Promise<SystemOneAgentAccess | undefined> {
+	try {
+		return await getSystemOneAgentAccess(agentId);
+	} catch (err) {
+		logger.warn('System One access check failed; leaving its section out', LOG_CONTEXT, {
+			error: err instanceof Error ? err.message : String(err),
+		});
+		return undefined;
+	}
+}
+
+/** Load the core section texts that apply to this agent (blank or missing ones dropped). */
+function loadCoreSections(core: CoreSystemPromptInput): string[] {
+	return coreSystemPromptSectionsFor(core)
+		.map((ref) => loadPrompt(ref.promptId))
+		.filter((text): text is string => !!text && !!text.trim());
+}
+
 /** Load the plugin section texts that apply right now (blank or missing ones dropped). */
 function loadPluginSections(
 	encoreFeatures: unknown,
@@ -168,9 +241,10 @@ function loadPluginSections(
 
 /**
  * The full Maestro system prompt for one persisted agent: the base template
- * with that agent's identity, git branch (local only), history and journey
- * files (local only), conductor profile, the Pianola role section when it is the Pianola
- * agent, and every enabled plugin section (`localOnly` ones skipped over SSH).
+ * with that agent's identity, git branch (local only), history and journey files (local
+ * only), conductor profile, its Peer Agents roster, the Pianola role section
+ * when it is the Pianola agent, the core sections that are ready for it (System One, local agents
+ * only), and every enabled plugin section (`localOnly` ones skipped over SSH).
  *
  * Accepts the session id or the already-loaded stored record. Returns undefined
  * when the agent is unknown or the base template cannot be loaded.
@@ -192,7 +266,7 @@ export async function buildMaestroSystemPromptForSession(
 
 	const isSsh = isSshRecord(record);
 	const cwd: string = record.cwd || record.projectRoot || record.fullPath || '';
-	const { encoreFeatures, conductorProfile } = readSettings();
+	const { encoreFeatures, conductorProfile, maxConsultationsPerTurn } = readSettings();
 
 	// Branch and history file are read from this machine, so an SSH agent gets
 	// neither: the values would describe the wrong host.
@@ -201,12 +275,31 @@ export async function buildMaestroSystemPromptForSession(
 	const journeyFilePath = isSsh ? undefined : localJourneyFilePath(record.id);
 	// The launcher is on this Mac, so an SSH agent is never told about it.
 	const maestroRunPath = isSsh ? undefined : await localMaestroRunPath();
+	// `maestro-cli s1` reaches this desktop, so an SSH agent is never asked about.
+	const core: CoreSystemPromptInput = {
+		isSsh,
+		systemOne: isSsh ? undefined : await localSystemOneAccess(record.id),
+	};
+
+	// {{PEER_AGENTS}}. The grants are read from `record`: the `session` literal
+	// below is hand-built and does not carry them. The agent list is read only
+	// when the agent has a grant.
+	const peerRoster = resolvePeerRosterForPrompt(record, () => readStoredSessions(record.id));
+	// The budget sentence of that block: only for an agent that has peers, and
+	// only when the caller named the chain this spawn is in.
+	const consultBudget: ConsultBudgetStatus | undefined =
+		peerRoster?.length && opts.consultChain && maxConsultationsPerTurn !== undefined
+			? readConsultBudgetStatus(
+					{ chain: opts.consultChain, limit: maxConsultationsPerTurn },
+					opts.consultBudgetStore
+				)
+			: undefined;
 
 	const context: TemplateContext = {
 		session: {
 			id: record.id,
 			name: record.name,
-			toolType: record.toolType,
+			toolType: opts.provider ?? record.toolType,
 			cwd,
 			projectRoot: record.projectRoot,
 			fullPath: record.fullPath,
@@ -224,6 +317,9 @@ export async function buildMaestroSystemPromptForSession(
 		computerHistoryDir: isSsh ? undefined : localComputerHistoryDir(),
 		maestroRunPath,
 		maestroCliPath: resolvedCliPath(),
+		peerRoster,
+		consultBudget,
+		...coreSystemPromptContext(core),
 	};
 
 	// The Pianola role only while its Encore flag is on: a dormant Pianola gets
@@ -237,6 +333,7 @@ export async function buildMaestroSystemPromptForSession(
 		template,
 		context,
 		roleSections,
+		coreSections: loadCoreSections(core),
 		pluginSections: loadPluginSections(encoreFeatures, isSsh, maestroRunPath),
 	});
 }
@@ -246,6 +343,10 @@ export async function buildMaestroSystemPromptForSession(
  * behind it (the Group Chat moderator and its synthesis turn). Substituted with
  * a minimal context: agent-specific variables render empty. Returns undefined
  * when no section applies, so the caller passes nothing at all.
+ *
+ * Core sections are not included. System One is told to an agent: its requests
+ * are counted, capped and switched off per agent, and a spawn with no agent
+ * behind it has none of the three.
  */
 export function buildPluginSystemPromptSections(opts: { isSsh: boolean }): string | undefined {
 	const { encoreFeatures, conductorProfile } = readSettings();

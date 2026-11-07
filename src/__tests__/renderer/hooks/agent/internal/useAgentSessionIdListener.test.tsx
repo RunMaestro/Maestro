@@ -151,3 +151,28 @@ describe('useAgentSessionIdListener', () => {
 		expect(sessions).toEqual([]);
 	});
 });
+
+it('writes a pinned Codex identity to its live tab without changing the Claude agent identity', async () => {
+	const tab = createMockAITab({
+		id: 'tab-1',
+		tabProvider: 'codex',
+		turnProvider: 'codex',
+		awaitingSessionId: true,
+	});
+	useSessionStore.setState({
+		sessions: [
+			createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				agentSessionId: 'claude-default',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			}),
+		],
+	});
+	renderHook(() => useAgentSessionIdListener({ batchedUpdater: makeBatched() }));
+	await handler!('sess-1-ai-tab-1', 'codex-native');
+	const session = useSessionStore.getState().sessions[0];
+	expect(session.aiTabs[0].agentSessionId).toBe('codex-native');
+	expect(session.agentSessionId).toBe('claude-default');
+});

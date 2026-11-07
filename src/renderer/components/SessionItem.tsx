@@ -13,10 +13,12 @@ import {
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { LongPressable, longPressMouseEvent } from './shared/LongPressable';
+import { GroupPill } from './ui/GroupPill';
 import { WorktreePill } from './ui/WorktreePill';
 import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
+import { AgentVoiceIndicator } from './SessionList/AgentVoiceIndicator';
 import { WindowBadge } from './SessionList/WindowBadge';
 import { AutoRunErrorBadge } from './SessionList/AutoRunErrorBadge';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
@@ -29,7 +31,6 @@ import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { getConnectingColor } from '../utils/theme';
 import { hasUnreadVisibleTab } from '../utils/tabHelpers';
-import { abbreviateGroupName } from '../../shared/formatters';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import type { Session, Group, Theme } from '../types';
 
@@ -475,6 +476,10 @@ export const SessionItem = memo(function SessionItem({
 						/>
 						{/* Inline wizard indicator: shown while /wizard is in dialog or doc-gen phase. */}
 						<WizardIndicator active={wizardActive} generatingDocs={wizardGeneratingDocs} />
+						{/* A Cappella: holds the voice floor, is being spoken, or has a wake
+						    phrase. Reads the voice stores itself and renders null when the
+						    Encore Feature is off, so nothing needs threading through here. */}
+						<AgentVoiceIndicator sessionId={session.id} theme={theme} />
 						{/* Auto Run parked on an error: amber while an automatic resume is
 						    still coming, red once only a person can continue it. */}
 						<AutoRunErrorBadge
@@ -546,18 +551,12 @@ export const SessionItem = memo(function SessionItem({
 				{!phone && <WindowBadge windowNumber={otherWindowNumber} />}
 				{/* Group badge (only in bookmark variant when session belongs to a group).
 				    Hidden entirely when showGroupLabelInBookmarks is off. Abbreviated by
-				    default; the showFullGroupLabelInBookmarks setting swaps in the full group
-				    name, truncated with the complete value available on hover. */}
+				    default, or the group's own shortLabel when the user set one
+				    (groupBadgeLabel, inside GroupPill); the showFullGroupLabelInBookmarks
+				    setting swaps in the full group name, truncated with the complete value
+				    available on hover. */}
 				{variant === 'bookmark' && group && showGroupLabelInBookmarks && !phone && (
-					<span
-						className={`row-group-chip text-3xs px-1 py-0.5 rounded${
-							showFullGroupLabelInBookmarks ? ' max-w-[140px] truncate' : ''
-						}`}
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-						title={group.name}
-					>
-						{showFullGroupLabelInBookmarks ? group.name : abbreviateGroupName(group.name)}
-					</span>
+					<GroupPill theme={theme} group={group} full={showFullGroupLabelInBookmarks} />
 				)}
 				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}
 				{showLeftPanelGitIndicator &&

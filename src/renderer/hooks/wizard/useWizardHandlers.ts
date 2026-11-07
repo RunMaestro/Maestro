@@ -16,6 +16,8 @@
  * Contexts: useInlineWizardContext, useWizard, useInputContext
  */
 
+import { agentCommandScope, getAgentCommands } from '../../utils/agentCommands';
+import { projectTabProvider, resolveTabProvider } from '../../utils/providerTabSessions';
 import {
 	isBridgeTransportReady,
 	isExpectedBridgeError,
@@ -52,6 +54,7 @@ import { generateId } from '../../utils/ids';
 import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { getSessionSshRemoteId, isSessionRemote } from '../../utils/sessionHelpers';
+import { resolveAgentAccountKey } from '../../../shared/providerProfiles';
 import { parseSynopsis } from '../../../shared/synopsis';
 import { supportsNativeControl } from '../../../shared/maestro-lib/providers/native-control';
 
@@ -80,6 +83,7 @@ import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { normalizePeerAgents } from '../../../shared/peerAgents';
 import { getHomeDir } from '../../utils/homeDir';
 import { DEFAULT_BATCH_PROMPT } from '../../components/BatchRunnerModal';
 import type { PreviousUIState, UseInlineWizardReturn } from '../batch/useInlineWizard';
@@ -199,21 +203,23 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// wake App via this hook. Effects use narrow fields; callbacks resolve via getState().
 	const activeSessionId = useSessionStore((s) => selectActiveSession(s)?.id);
 	const activeTabId = useSessionStore((s) => selectActiveSession(s)?.activeTabId);
-	const activeToolType = useSessionStore((s) => selectActiveSession(s)?.toolType);
+	const activeToolType = useSessionStore((s) => {
+		const session = selectActiveSession(s);
+		return session ? resolveTabProvider(getActiveTab(session), session) : undefined;
+	});
+	const activeCommandScope = useSessionStore((s) => {
+		const session = selectActiveSession(s);
+		return session ? agentCommandScope(session, getActiveTab(session)) : undefined;
+	});
 	const activeCwd = useSessionStore((s) => selectActiveSession(s)?.cwd);
 	const activeCustomPath = useSessionStore((s) => selectActiveSession(s)?.customPath);
-	// Codex refreshes persisted command lists on focus; its own write must not retrigger discovery.
-	const activeAgentCommands = useSessionStore((s) => {
-		const session = selectActiveSession(s);
-		return session?.toolType === 'codex' ? undefined : session?.agentCommands;
-	});
 	const activeCodexEnv = useSessionStore((s) => {
 		const session = selectActiveSession(s);
-		return session?.toolType === 'codex' ? session.customEnvVars : undefined;
+		return session && activeToolType === 'codex'
+			? projectTabProvider(session, getActiveTab(session)).agent.customEnvVars
+			: undefined;
 	});
-	const codexShellEnv = useSettingsStore((s) =>
-		activeToolType === 'codex' ? s.shellEnvVars : undefined
-	);
+	const codexShellEnv = useSettingsStore((s) => s.shellEnvVars);
 	const activeSshRemoteId = useSessionStore((s) => {
 		const session = selectActiveSession(s);
 		return isSessionRemote(session) ? getSessionSshRemoteId(session) : undefined;
@@ -248,8 +254,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	const discoverCommandsRef = useRef<(() => void) | null>(null);
 	useEventListener(WEB_BRIDGE_STATE_EVENT, () => discoverCommandsRef.current?.());
 	useEffect(() => {
-		const currentSession = selectActiveSession(useSessionStore.getState());
-		if (!currentSession) return;
+		const savedSession = selectActiveSession(useSessionStore.getState());
+		if (!savedSession) return;
+		const tab = getActiveTab(savedSession);
+		const { agent: currentSession } = projectTabProvider(savedSession, tab);
+		const scope = agentCommandScope(savedSession, tab);
 		if (
 			currentSession.toolType !== 'claude-code' &&
 			currentSession.toolType !== 'opencode' &&
@@ -257,7 +266,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			currentSession.toolType !== 'codex'
 		)
 			return;
-		if (currentSession.toolType !== 'codex' && currentSession.agentCommands?.length) return;
+		if (currentSession.toolType !== 'codex' && getAgentCommands(savedSession, tab)?.length) return;
 
 		const sessionId = currentSession.id;
 		const projectRoot = currentSession.projectRoot;
@@ -278,7 +287,15 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 		const fetchCustomCommands = async () => {
 			try {
-				const customClaudeCommands = await (window as any).maestro.claude.getCommands(projectRoot);
+				const account = resolveAgentAccountKey(
+					currentSession.toolType,
+					{ ...codexShellEnv, ...currentSession.customEnvVars },
+					getHomeDir()
+				);
+				const customClaudeCommands = await window.maestro.claude.getCommands(
+					projectRoot,
+					account ?? undefined
+				);
 				if (cancelled) return;
 
 				const customCommandObjects = (customClaudeCommands || []).map(
@@ -290,9 +307,12 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 				if (customCommandObjects.length > 0) {
 					updateSessionWith(sessionId, (s) => {
-						const existingCommands = s.agentCommands || [];
+						const liveTab = s.aiTabs.find((candidate) => candidate.id === tab?.id);
+						if (!liveTab || agentCommandScope(s, liveTab) !== scope) return s;
+						const existingCommands = getAgentCommands(s, liveTab) || [];
 						return {
 							...s,
+							agentCommandsScope: scope,
 							agentCommands: mergeCommands(existingCommands, customCommandObjects),
 						};
 					});
@@ -315,9 +335,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					currentSession.cwd,
 					currentSession.customPath,
 					activeSshRemoteId,
-					...(currentSession.toolType === 'codex' && currentSession.customEnvVars !== undefined
-						? [currentSession.customEnvVars]
-						: [])
+					...(currentSession.customEnvVars !== undefined ? [currentSession.customEnvVars] : [])
 				);
 				if (cancelled) return;
 
@@ -334,9 +352,12 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 						(agentSlashCommands !== null || activeSshRemoteId !== undefined))
 				) {
 					updateSessionWith(sessionId, (s) => {
-						const existingCommands = s.agentCommands || [];
+						const liveTab = s.aiTabs.find((candidate) => candidate.id === tab?.id);
+						if (!liveTab || agentCommandScope(s, liveTab) !== scope) return s;
+						const existingCommands = getAgentCommands(s, liveTab) || [];
 						return {
 							...s,
+							agentCommandsScope: scope,
 							agentCommands:
 								currentSession.toolType === 'codex'
 									? agentCommandObjects
@@ -357,7 +378,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 		const discover = () => {
 			if (!isBridgeTransportReady()) return;
-			if (currentSession.toolType === 'claude-code') {
+			if (currentSession.toolType === 'claude-code' && !activeSshRemoteId) {
 				void fetchCustomCommands();
 			}
 			void discoverAgentCommands();
@@ -371,10 +392,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		};
 	}, [
 		activeSessionId,
+		activeTabId,
+		activeCommandScope,
 		activeToolType,
 		activeCwd,
 		activeCustomPath,
-		activeAgentCommands,
 		activeCodexEnv,
 		codexShellEnv,
 		activeSshRemoteId,
@@ -621,7 +643,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// handleHistoryCommand - /history slash command
 	// ========================================================================
 	const handleHistoryCommand = useCallback(async () => {
-		const currentSession = selectActiveSession(useSessionStore.getState());
+		const savedSession = selectActiveSession(useSessionStore.getState());
+		const currentSession = savedSession
+			? projectTabProvider(savedSession, getActiveTab(savedSession)).agent
+			: undefined;
 		if (!currentSession) {
 			logger.warn('[handleHistoryCommand] No active session');
 			return;
@@ -767,7 +792,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// handleSkillsCommand - /skills slash command
 	// ========================================================================
 	const handleSkillsCommand = useCallback(async () => {
-		const currentSession = selectActiveSession(useSessionStore.getState());
+		const savedSession = selectActiveSession(useSessionStore.getState());
+		const currentSession = savedSession
+			? projectTabProvider(savedSession, getActiveTab(savedSession)).agent
+			: undefined;
 		if (!currentSession) {
 			logger.warn('[handleSkillsCommand] No active session');
 			return;
@@ -871,7 +899,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// ========================================================================
 	const handleWizardCommand = useCallback(
 		(args: string) => {
-			const currentSession = selectActiveSession(useSessionStore.getState());
+			const savedSession = selectActiveSession(useSessionStore.getState());
+			const currentSession = savedSession
+				? projectTabProvider(savedSession, getActiveTab(savedSession)).agent
+				: undefined;
 			if (!currentSession) {
 				logger.warn('[handleWizardCommand] No active session');
 				return;
@@ -1231,6 +1262,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				selectedAgent,
 				directoryPath,
 				additionalDirectories,
+				peerAgents,
+				groupPeerAccess,
+				worktreePeerAccess,
 				agentName,
 				generatedDocuments,
 				customPath,
@@ -1328,6 +1362,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				// getHomeDir() reads the module cache the app warmed at startup, so `~`
 				// paths typed in the wizard expand the same way they do in the modals.
 				additionalDirectories: normalizeAdditionalDirectories(additionalDirectories, getHomeDir()),
+				// The same save rule as the agent forms: an empty list is stored as
+				// absent, and a row with neither square lit is kept (it excludes).
+				peerAgents: normalizePeerAgents(peerAgents),
+				groupPeerAccess,
+				worktreePeerAccess,
 				createdAt: Date.now(),
 				isGitRepo,
 				gitBranches,

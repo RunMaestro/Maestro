@@ -413,6 +413,7 @@ describe('modalStore', () => {
 				'renameInstance',
 				'renameTab',
 				'renameGroup',
+				'groupSettings',
 				'agentSessions',
 				'memoryViewer',
 				'queueBrowser',
@@ -760,6 +761,67 @@ describe('modalStore', () => {
 			expect(data?.groupId).toBe('group-1');
 			expect(data?.value).toBe('Work Projects');
 			expect(data?.emoji).toBe('💼');
+		});
+	});
+
+	describe('integration: delegation graph', () => {
+		it('openDelegationGraph with no group opens on every agent', () => {
+			getModalActions().openDelegationGraph();
+
+			expect(useModalStore.getState().isOpen('delegationGraph')).toBe(true);
+			expect(useModalStore.getState().getData('delegationGraph')).toBeUndefined();
+		});
+
+		it('openDelegationGraph with a group opens on that group', () => {
+			getModalActions().openDelegationGraph('group-1');
+
+			expect(useModalStore.getState().isOpen('delegationGraph')).toBe(true);
+			expect(useModalStore.getState().getData('delegationGraph')).toEqual({
+				scope: { kind: 'group', groupId: 'group-1' },
+			});
+		});
+
+		it('a second open on another group replaces the scope', () => {
+			getModalActions().openDelegationGraph('group-1');
+			getModalActions().openDelegationGraph('group-2');
+
+			expect(useModalStore.getState().getData('delegationGraph')).toEqual({
+				scope: { kind: 'group', groupId: 'group-2' },
+			});
+		});
+	});
+
+	describe('integration: group settings flow', () => {
+		it('openGroupSettings opens the modal on the given group', () => {
+			getModalActions().openGroupSettings('group-1');
+
+			expect(useModalStore.getState().isOpen('groupSettings')).toBe(true);
+			expect(useModalStore.getState().getData('groupSettings')).toEqual({ groupId: 'group-1' });
+		});
+
+		it('openGroupSettings on a second group replaces the first', () => {
+			getModalActions().openGroupSettings('group-1');
+			getModalActions().openGroupSettings('group-2');
+
+			expect(useModalStore.getState().getData('groupSettings')).toEqual({ groupId: 'group-2' });
+		});
+
+		it('closeGroupSettings closes the modal and drops the group id', () => {
+			getModalActions().openGroupSettings('group-1');
+			getModalActions().closeGroupSettings();
+
+			expect(useModalStore.getState().isOpen('groupSettings')).toBe(false);
+			expect(useModalStore.getState().getData('groupSettings')).toBeUndefined();
+		});
+
+		it('leaves Rename Group alone', () => {
+			useModalStore
+				.getState()
+				.openModal('renameGroup', { groupId: 'group-1', value: 'Backend', emoji: '🌳' });
+			getModalActions().openGroupSettings('group-1');
+			getModalActions().closeGroupSettings();
+
+			expect(useModalStore.getState().isOpen('renameGroup')).toBe(true);
 		});
 	});
 
@@ -1337,6 +1399,27 @@ describe('modalStore', () => {
 			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
 		});
 
+		it('treats the Delegation Graph as a destination, and keeps it under the Edit Agent form', () => {
+			const store = useModalStore.getState();
+			store.openModal('usageDashboard');
+			store.openModal('delegationGraph', { scope: { kind: 'group', groupId: 'g1' } });
+
+			// One full-window surface at a time.
+			expect(useModalStore.getState().isOpen('usageDashboard')).toBe(false);
+			expect(useModalStore.getState().isOpen('delegationGraph')).toBe(true);
+			expect(useModalStore.getState().getData('delegationGraph')).toEqual({
+				scope: { kind: 'group', groupId: 'g1' },
+			});
+
+			// The graph's Peers link opens the Edit Agent form, a dialog ABOUT the
+			// graph under it. Opening it must not close the graph.
+			store.openModal('editAgent', { session: { id: 's1' } as never, initialTab: 'peers' });
+			expect(useModalStore.getState().isOpen('delegationGraph')).toBe(true);
+
+			store.closeModal('editAgent');
+			store.closeModal('delegationGraph');
+		});
+
 		it('does not list dialogs as destinations', () => {
 			for (const id of ['confirm', 'renameTab', 'cueYamlEditor', 'shortcutsHelp'] as ModalId[]) {
 				expect(DESTINATION_MODALS.has(id)).toBe(false);
@@ -1354,6 +1437,7 @@ describe('modalStore', () => {
 					'computerHistory',
 					'directorNotes',
 					'openCue',
+					'openDelegationGraph',
 					'openMemoryViewer',
 					'openSymphony',
 					'processMonitor',

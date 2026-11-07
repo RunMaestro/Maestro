@@ -17,6 +17,15 @@ import {
 } from '../../shared/providerAuthIdentity';
 
 describe('providerAuthKey', () => {
+	it('keeps account directories separate on each host', () => {
+		expect(providerAuthKey('codex', null, '/accounts/a')).not.toBe(
+			providerAuthKey('codex', null, '/accounts/b')
+		);
+		expect(providerAuthKey('codex', 'remote', '/accounts/a')).not.toBe(
+			providerAuthKey('codex', null, '/accounts/a')
+		);
+	});
+
 	it('scopes a local agent to its binary alone', () => {
 		expect(providerAuthKey('claude-code')).toBe('claude-code');
 	});

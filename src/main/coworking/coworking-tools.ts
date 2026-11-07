@@ -10,6 +10,7 @@
  */
 
 import { coworkingRegistry, type CoworkingRegistry } from './coworking-registry';
+import type { CoworkingBrowserCaller } from '../../shared/coworkingBrowser';
 import type {
 	BrowserOp,
 	BrowserOpResult,
@@ -99,7 +100,8 @@ export async function readTerminal(
 export type BrowserResolver = (
 	sessionId: string,
 	tabUuid: string,
-	op: BrowserOp
+	op: BrowserOp,
+	caller?: CoworkingBrowserCaller
 ) => Promise<BrowserOpResult>;
 
 let browserResolver: BrowserResolver | null = null;
@@ -200,7 +202,11 @@ export async function readBrowser(
 export async function browserInteract(
 	sessionId: string,
 	args: { id?: string; op: BrowserOp },
-	deps: { registry?: CoworkingRegistry; resolver?: BrowserResolver } = {}
+	deps: {
+		registry?: CoworkingRegistry;
+		resolver?: BrowserResolver;
+		caller?: CoworkingBrowserCaller;
+	} = {}
 ): Promise<BrowserOpResult> {
 	const registry = deps.registry ?? coworkingRegistry;
 	const resolver = deps.resolver ?? browserResolver;
@@ -208,7 +214,9 @@ export async function browserInteract(
 		throw new Error('coworking tools: browser resolver not configured');
 	}
 	if (args.op.kind === 'newTab') {
-		return resolver(sessionId, '', args.op);
+		return deps.caller
+			? resolver(sessionId, '', args.op, deps.caller)
+			: resolver(sessionId, '', args.op);
 	}
 	if (typeof args.id !== 'string') {
 		throw new Error('coworking tools: browser tab `id` is required for this op');
@@ -219,5 +227,7 @@ export async function browserInteract(
 			`coworking tools: browser '${args.id}' not found in your session (it may have been closed)`
 		);
 	}
-	return resolver(sessionId, tabUuid, args.op);
+	return deps.caller
+		? resolver(sessionId, tabUuid, args.op, deps.caller)
+		: resolver(sessionId, tabUuid, args.op);
 }

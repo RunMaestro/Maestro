@@ -303,6 +303,31 @@ describe('executeCueRunAction turn settings', () => {
 		expect(modelLines(deps)).toEqual([['cue', expect.stringContaining('(subscription)')]]);
 	});
 
+	it('keeps an agent tier target and gateway on the shared launch path', async () => {
+		const deps = depsForAgent({
+			gatewayUrl: 'http://localhost:8080',
+			tierTargets: { low: { type: 'provider-model', model: 'sonnet' } },
+		});
+		await executeCueRunAction(deps, params({ turnSettings: { tier: 'low' } }));
+		expect(promptCall(deps)).toMatchObject({
+			customModel: 'sonnet',
+			gatewayUrl: 'http://localhost:8080',
+		});
+	});
+
+	it('resolves Auto only after prompt substitution and uses the resolved model', async () => {
+		const deps = makeDeps({
+			resolveAutoTurn: vi.fn(async () => ({ model: 'sonnet', warnings: [], notes: [] })),
+		});
+		await executeCueRunAction(deps, params({ turnSettings: { model: 'auto' } }));
+		expect(deps.resolveAutoTurn).not.toHaveBeenCalled();
+		const launch = await promptCall(deps).resolveLateTurn('substituted prompt');
+		expect(deps.resolveAutoTurn).toHaveBeenCalledWith(
+			expect.objectContaining({ prompt: 'substituted prompt' })
+		);
+		expect(launch.customModel).toBe('sonnet');
+	});
+
 	it('hands an exact model through verbatim over the agent model', async () => {
 		const deps = makeDeps();
 		await executeCueRunAction(deps, params({ turnSettings: { model: 'claude-sonnet-4-5' } }));
@@ -330,13 +355,13 @@ describe('executeCueRunAction turn settings', () => {
 	});
 
 	it('falls back to the agent model and warns when the provider has no tier table', async () => {
-		const deps = depsForAgent({ toolType: 'codex', customModel: 'gpt-5' });
+		const deps = depsForAgent({ toolType: 'copilot-cli', customModel: 'copilot-model' });
 		await executeCueRunAction(deps, params({ turnSettings: { tier: 'high' } }));
 
-		expect(promptCall(deps).customModel).toBe('gpt-5');
+		expect(promptCall(deps).customModel).toBe('copilot-model');
 		expect(deps.onLog).toHaveBeenCalledWith(
 			'warn',
-			expect.stringMatching(/codex has no model tier mapping/)
+			expect.stringMatching(/copilot-cli has no model tier mapping/)
 		);
 	});
 

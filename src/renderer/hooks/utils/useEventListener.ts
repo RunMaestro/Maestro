@@ -16,10 +16,12 @@ export interface UseEventListenerOptions {
 	 * The EventTarget to attach the listener to. Defaults to `window`.
 	 * Pass `document` for click-outside / global keyboard handlers, or an
 	 * `HTMLElement` (typically from a ref) for element-scoped listeners.
+	 * Any other EventTarget works too: `navigator.mediaDevices` fires
+	 * `devicechange` and is not a DOM node.
 	 * Pass `null` to skip subscription (useful for ref-based targets that
 	 * may be initially null).
 	 */
-	target?: Window | Document | HTMLElement | null;
+	target?: EventTarget | null;
 	/**
 	 * When `false`, the listener is not attached. Toggling between `true` and
 	 * `false` re-attaches / detaches the listener cleanly. Defaults to `true`.

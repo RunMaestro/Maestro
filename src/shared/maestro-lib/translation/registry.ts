@@ -1,6 +1,8 @@
 import { generateUUID } from '../../uuid';
 import { canonicalJson } from '../../canonicalJson';
 import { translationHash } from './identity';
+import { translationVersionLimitation } from './support';
+import { activeContextRecords } from './context-window';
 import type {
 	TranslationAdapter,
 	TranslationIdentity,
@@ -40,18 +42,29 @@ export class TranslationRegistry {
 		source: TranslationIdentity,
 		destination: TranslationIdentity
 	): TranslationDirection | undefined {
-		return this.directions.find(
-			(d) =>
-				d.source === source.provider &&
-				d.destination === destination.provider &&
-				d.sourceVersions.includes(source.version) &&
-				d.destinationVersions.includes(destination.version)
-		);
+		for (const direction of this.directions) {
+			if (direction.source !== source.provider || direction.destination !== destination.provider)
+				continue;
+			const limitations = [
+				translationVersionLimitation(source.provider, source.version, {
+					minVersion: direction.sourceMinVersion,
+					testedVersions: direction.sourceTestedVersions,
+				}),
+				translationVersionLimitation(destination.provider, destination.version, {
+					minVersion: direction.destinationMinVersion,
+					testedVersions: direction.destinationTestedVersions,
+				}),
+			];
+			if (limitations.some((limitation) => limitation?.severity === 'block')) continue;
+			return limitations.some(Boolean) ? { ...direction, verification: 'unverified' } : direction;
+		}
+		return undefined;
 	}
 }
 
 export function planTranslation(options: {
 	agentId: string;
+	tabId?: string;
 	source: TranslationIdentity;
 	destination: TranslationIdentity;
 	scope: TranslationScope;
@@ -62,7 +75,13 @@ export function planTranslation(options: {
 	newRecords?: Record<string, number>;
 	resources?: TranslationArtifact[];
 }): TranslationPlan {
-	const { source, destination, registry, conversations } = options;
+	const { source, destination, registry } = options;
+	const conversations =
+		options.tabId === undefined
+			? options.conversations
+			: options.conversations.filter((c) => c.tabId === options.tabId);
+	if (options.tabId !== undefined && (!options.tabId || conversations.length !== 1))
+		throw new Error('Single-tab translation requires exactly one matching conversation');
 	const noop =
 		source.provider === destination.provider && source.accountRoot === destination.accountRoot;
 	const direction = registry.direction(source, destination);
@@ -80,7 +99,15 @@ export function planTranslation(options: {
 	for (const resource of options.resources ?? []) payloadClasses.add(resource.kind);
 	const limitations: TranslationLimitation[] = noop
 		? []
-		: [...(options.limitations ?? []), ...conversations.flatMap((c) => c.limitations)];
+		: [
+				...(options.limitations ?? []).filter(
+					(limitation) =>
+						options.tabId === undefined ||
+						limitation.tabId === undefined ||
+						limitation.tabId === options.tabId
+				),
+				...conversations.flatMap((c) => c.limitations),
+			];
 	if (!noop) {
 		if (destination.provider === 'codex')
 			for (const conversation of conversations) {
@@ -107,12 +134,39 @@ export function planTranslation(options: {
 					severity: 'block',
 					message: `No translation adapter for ${identity.provider}. Native resume support is separate.`,
 				});
-			else if (!adapter.versions.includes(identity.version))
-				limitations.push({
-					code: 'unknown-version',
-					severity: 'block',
-					message: `${identity.provider} ${identity.version || 'unknown'} has no declared schema mapping.`,
-				});
+			else {
+				const limitation = translationVersionLimitation(
+					identity.provider,
+					identity.version,
+					adapter
+				);
+				if (limitation) limitations.push(limitation);
+			}
+		}
+		if (direction) {
+			for (const [identity, support] of [
+				[
+					source,
+					{
+						minVersion: direction.sourceMinVersion,
+						testedVersions: direction.sourceTestedVersions,
+					},
+				],
+				[
+					destination,
+					{
+						minVersion: direction.destinationMinVersion,
+						testedVersions: direction.destinationTestedVersions,
+					},
+				],
+			] as const) {
+				const limitation = translationVersionLimitation(
+					identity.provider,
+					identity.version,
+					support
+				);
+				if (limitation) limitations.push(limitation);
+			}
 		}
 		if (!direction)
 			limitations.push({
@@ -144,6 +198,7 @@ export function planTranslation(options: {
 		schemaVersion: 1,
 		id: generateUUID(),
 		agentId: options.agentId,
+		...(options.tabId !== undefined && { tabId: options.tabId }),
 		source,
 		destination,
 		scope: options.scope,
@@ -157,13 +212,28 @@ export function planTranslation(options: {
 		verification:
 			direction?.verification === 'verified' && unique.length === 0 ? 'verified' : 'unverified',
 		limitations: unique,
-		tabs: conversations.map((c) => ({
-			tabId: c.tabId,
-			sourceSessionId: c.nativeSessionId,
-			records: c.records.length,
-			newRecords: options.newRecords?.[c.tabId] ?? c.records.length,
-		})),
+		tabs: conversations.map((c) => {
+			const activeRecords = activeContextRecords(c.records).length;
+			return {
+				tabId: c.tabId,
+				sourceSessionId: c.nativeSessionId,
+				records: c.records.length,
+				activeRecords,
+				archivedRecords: c.records.length - activeRecords,
+				newRecords: options.newRecords?.[c.tabId] ?? c.records.length,
+			};
+		}),
 		counts: {
+			messages: conversations.reduce(
+				(n, c) =>
+					n +
+					c.records.filter(
+						(record) =>
+							(record.role === 'user' || record.role === 'assistant') &&
+							record.blocks.some((block) => block.kind === 'text' || block.kind === 'attachment')
+					).length,
+				0
+			),
 			records: conversations.reduce((n, c) => n + c.records.length, 0),
 			artifacts: artifacts.length,
 			bytes: artifacts.reduce((n, a) => n + Buffer.from(a.bytesBase64, 'base64').length, 0),
@@ -172,6 +242,7 @@ export function planTranslation(options: {
 			canonicalJson({
 				source,
 				destination,
+				tabId: options.tabId,
 				scope: options.scope,
 				conversations,
 				resources: options.resources ?? [],
@@ -179,4 +250,11 @@ export function planTranslation(options: {
 			})
 		),
 	};
+}
+
+/** The same planner and acceptance gates, scoped to one native conversation. */
+export function planTabTranslation(
+	options: Parameters<typeof planTranslation>[0] & { tabId: string }
+): TranslationPlan {
+	return planTranslation(options);
 }

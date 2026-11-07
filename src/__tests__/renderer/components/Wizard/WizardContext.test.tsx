@@ -136,6 +136,9 @@ describe('WizardContext', () => {
 			expect(state.isGitRepo).toBe(false);
 			expect(state.detectedAgentPath).toBeNull();
 			expect(state.directoryError).toBeNull();
+			expect(state.peerAgents).toEqual([]);
+			expect(state.groupPeerAccess).toBeUndefined();
+			expect(state.worktreePeerAccess).toBeUndefined();
 
 			// Conversation
 			expect(state.conversationHistory).toEqual([]);
@@ -184,6 +187,9 @@ describe('WizardContext', () => {
 			expect(typeof result.current.setIsGitRepo).toBe('function');
 			expect(typeof result.current.setDetectedAgentPath).toBe('function');
 			expect(typeof result.current.setDirectoryError).toBe('function');
+			expect(typeof result.current.setPeerAgents).toBe('function');
+			expect(typeof result.current.setGroupPeerAccess).toBe('function');
+			expect(typeof result.current.setWorktreePeerAccess).toBe('function');
 
 			// Conversation
 			expect(typeof result.current.addMessage).toBe('function');
@@ -789,6 +795,54 @@ describe('WizardContext', () => {
 		});
 	});
 
+	describe('Peer Grants State', () => {
+		it('sets the explicit peer rows', () => {
+			const { result } = renderHook(() => useWizard(), { wrapper });
+			const peers = [{ sessionId: 'agent-a', read: true, write: false, description: 'Docs' }];
+
+			act(() => {
+				result.current.setPeerAgents(peers);
+			});
+
+			expect(result.current.state.peerAgents).toEqual(peers);
+		});
+
+		it('sets and clears the group and worktree grants', () => {
+			const { result } = renderHook(() => useWizard(), { wrapper });
+
+			act(() => {
+				result.current.setGroupPeerAccess({ read: true, write: false });
+				result.current.setWorktreePeerAccess({ read: true, write: true });
+			});
+			expect(result.current.state.groupPeerAccess).toEqual({ read: true, write: false });
+			expect(result.current.state.worktreePeerAccess).toEqual({ read: true, write: true });
+
+			act(() => {
+				result.current.setGroupPeerAccess(undefined);
+				result.current.setWorktreePeerAccess(undefined);
+			});
+			expect(result.current.state.groupPeerAccess).toBeUndefined();
+			expect(result.current.state.worktreePeerAccess).toBeUndefined();
+		});
+
+		it('saves the peer grants in the resume state', () => {
+			const { result } = renderHook(() => useWizard(), { wrapper });
+			const peers = [{ sessionId: 'agent-a', read: false, write: true }];
+
+			act(() => {
+				result.current.setPeerAgents(peers);
+				result.current.setWorktreePeerAccess({ read: true, write: false });
+			});
+
+			expect(result.current.getSerializableState()).toEqual(
+				expect.objectContaining({
+					peerAgents: peers,
+					worktreePeerAccess: { read: true, write: false },
+				})
+			);
+		});
+	});
+
 	describe('Conversation State', () => {
 		it('adds message with auto-generated id and timestamp', () => {
 			const { result } = renderHook(() => useWizard(), { wrapper });
@@ -1184,6 +1238,9 @@ describe('WizardContext', () => {
 					agentName: 'Test Project',
 					directoryPath: '/test/path',
 					additionalDirectories: [],
+					peerAgents: [],
+					groupPeerAccess: undefined,
+					worktreePeerAccess: undefined,
 					isGitRepo: true,
 					conversationHistory: [],
 					confidenceLevel: 50,

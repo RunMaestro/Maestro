@@ -76,7 +76,7 @@ const EMPTY_INDEX: Omit<ProviderProfileIndex, 'ready'> = {
  * panels take the same one-shot approach; a stale value costs a mislabelled
  * badge until the dashboard is reopened, not a wrong number in the database.
  */
-function useAgentLevelEnvVars(toolTypes: string[]): {
+export function useAgentLevelEnvVars(toolTypes: string[]): {
 	envByToolType: Record<string, Record<string, string>>;
 	/** Every provider in `toolTypes` has had its fetch resolve or fail. */
 	settled: boolean;

@@ -13,7 +13,11 @@ import {
 	requestAiCommand,
 	acceptAiCommand,
 	dismissAiCommand,
+	resolveAiCommandProvenance,
 } from '../../../renderer/services/aiCommand';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { QWEN3_1_7B_ID, getLocalModel } from '../../../shared/local-models/model-catalog';
+import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
 import {
 	aiCommandKey,
 	useAiCommandStore,
@@ -60,11 +64,123 @@ let suggest: Mock;
 beforeEach(() => {
 	vi.clearAllMocks();
 	useAiCommandStore.setState({ entries: {} });
+	useSettingsStore.setState({
+		localModelAssignments: {},
+		localModelEndpoints: [],
+		utilitySource: { type: 'utility-agent' },
+		utilityAgentId: null,
+		utilityModelId: null,
+	});
 	suggest = vi.fn().mockResolvedValue({ success: true, command: 'du -sh *' });
 	(window as unknown as { maestro: unknown }).maestro = { aiCommand: { suggest } };
 });
 
+const OLLAMA = { id: 'ep-1', name: 'Ollama' } as LocalModelEndpoint;
+const QWEN_NAME = getLocalModel(QWEN3_1_7B_ID)!.displayName;
+
+describe('resolveAiCommandProvenance', () => {
+	const turn = { turnModel: 'opus', turnEffort: 'high' };
+
+	it('names the tab model and effort for the default assignment', () => {
+		expect(resolveAiCommandProvenance(turn, {}, [])).toEqual({ model: 'opus', effort: 'high' });
+		expect(resolveAiCommandProvenance(turn, undefined, [])).toEqual({
+			model: 'opus',
+			effort: 'high',
+		});
+	});
+
+	it('names an assigned local model, with no effort beside it', () => {
+		expect(
+			resolveAiCommandProvenance(
+				turn,
+				{ 'ai-command': { type: 'local', modelId: QWEN3_1_7B_ID } },
+				[]
+			)
+		).toEqual({ model: QWEN_NAME });
+	});
+
+	it('names an assigned endpoint model with its endpoint', () => {
+		expect(
+			resolveAiCommandProvenance(
+				turn,
+				{ 'ai-command': { type: 'endpoint', endpointId: 'ep-1', model: 'qwen3:latest' } },
+				[OLLAMA]
+			)
+		).toEqual({ model: 'qwen3:latest on Ollama' });
+	});
+
+	it('names nothing when the task is off', () => {
+		expect(resolveAiCommandProvenance(turn, { 'ai-command': { type: 'off' } }, [])).toEqual({});
+	});
+
+	it('names the inherited utility model and keeps explicit Off authoritative', () => {
+		const utility = { type: 'local', modelId: QWEN3_1_7B_ID } as const;
+		expect(resolveAiCommandProvenance(turn, {}, [], utility)).toEqual({ model: QWEN_NAME });
+		expect(
+			resolveAiCommandProvenance(turn, { 'ai-command': { type: 'off' } }, [], utility)
+		).toEqual({});
+	});
+
+	it('names the utility provider model without claiming the tab effort applies', () => {
+		expect(
+			resolveAiCommandProvenance(
+				turn,
+				{},
+				[],
+				{ type: 'utility-agent' },
+				{
+					utilityAgentId: 'codex',
+					utilityModelId: 'gpt-model',
+				}
+			)
+		).toEqual({ model: 'gpt-model' });
+		expect(
+			resolveAiCommandProvenance(
+				turn,
+				{},
+				[],
+				{ type: 'utility-agent' },
+				{
+					utilityAgentId: 'codex',
+					utilityModelId: null,
+				}
+			)
+		).toEqual({ model: 'Codex (default model)' });
+	});
+});
+
 describe('requestAiCommand', () => {
+	it('stamps the assigned local model, not the tab model, while the request is in flight', async () => {
+		useSettingsStore.setState({
+			localModelAssignments: { 'ai-command': { type: 'local', modelId: QWEN3_1_7B_ID } },
+		});
+
+		const pending = requestAiCommand({ session: makeSession(), tabId: TAB_ID, request: 'ls' });
+
+		expect(entryNow()?.model).toBe(QWEN_NAME);
+		expect(entryNow()?.effort).toBeUndefined();
+		await pending;
+	});
+
+	it('keeps the explanation and the source main reports on the proposal', async () => {
+		suggest.mockResolvedValue({
+			success: true,
+			command: 'du -sh *',
+			explanation: 'Sizes everything here.',
+			producedBy: 'qwen3:latest on Ollama',
+		});
+
+		await requestAiCommand({ session: makeSession(), tabId: TAB_ID, request: 'how big' });
+
+		expect(entryNow()).toMatchObject({
+			status: 'proposed',
+			command: 'du -sh *',
+			explanation: 'Sizes everything here.',
+			model: 'qwen3:latest on Ollama',
+		});
+		expect(entryNow()?.effort).toBeUndefined();
+	});
+
 	it('parks a thinking entry immediately, then resolves it with the proposal', async () => {
 		const pending = requestAiCommand({
 			session: makeSession(),
@@ -100,6 +216,47 @@ describe('requestAiCommand', () => {
 		);
 		expect(entryNow()?.model).toBe('tab-model');
 		expect(entryNow()?.effort).toBe('high');
+	});
+
+	it('uses the requested tab harness and its parked configuration', async () => {
+		const session = makeSession({
+			customPath: '/claude',
+			customEnvVars: { CLAUDE_CONFIG_DIR: '/claude-account' },
+			enableMaestroP: true,
+			providerOverrides: {
+				codex: {
+					customPath: '/codex',
+					customArgs: '--codex',
+					customEnvVars: { CODEX_HOME: '/codex-account' },
+				},
+			},
+			aiTabs: [
+				createMockAITab({
+					id: TAB_ID,
+					tabProvider: 'codex',
+					customModel: 'gpt-5',
+					customEffort: 'high',
+				}),
+			],
+		});
+		await requestAiCommand({ session, tabId: TAB_ID, request: 'list files' });
+		expect(suggest).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentType: 'codex',
+				customPath: '/codex',
+				customArgs: '--codex',
+				customEnvVars: { CODEX_HOME: '/codex-account' },
+				customModel: 'gpt-5',
+				customEffort: 'high',
+				claudeTokenSource: expect.objectContaining({ enableMaestroP: undefined }),
+			})
+		);
+	});
+
+	it('does not suggest on the default provider when the requested tab is gone', async () => {
+		await requestAiCommand({ session: makeSession(), tabId: 'gone', request: 'list files' });
+		expect(suggest).not.toHaveBeenCalled();
+		expect(entryNow()).toBeUndefined();
 	});
 
 	it('falls back to the agent model and effort when the tab has no override', async () => {

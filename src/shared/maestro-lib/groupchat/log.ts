@@ -208,6 +208,34 @@ export async function readLog(logPath: string): Promise<GroupChatMessage[]> {
 	}
 }
 
+export interface FormatChatHistoryOptions {
+	/** How many of the most recent messages to keep. */
+	last: number;
+	/** Cut each message body at this many characters, marked with `...`. Omitted, bodies are whole. */
+	maxContentChars?: number;
+}
+
+/**
+ * The recent chat log as `[from]: content` lines, for a prompt. Every prompt
+ * that hands an agent or model the conversation so far reads it this way.
+ */
+export function formatChatHistoryForPrompt(
+	messages: readonly GroupChatMessage[],
+	options: FormatChatHistoryOptions
+): string {
+	const { last, maxContentChars } = options;
+	return messages
+		.slice(-last)
+		.map((m) => {
+			const content =
+				maxContentChars !== undefined && m.content.length > maxContentChars
+					? `${m.content.substring(0, maxContentChars)}...`
+					: m.content;
+			return `[${m.from}]: ${content}`;
+		})
+		.join('\n');
+}
+
 /** Allowed image file extensions */
 const ALLOWED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 

@@ -16,7 +16,9 @@ import { Check, X } from 'lucide-react';
 import type { Theme } from '../../types';
 import { FormInput } from '../ui/FormInput';
 import { ToggleSwitch } from '../ui/ToggleSwitch';
+import { CueGateField, type CueGateFieldValue } from '../CuePipelineEditor/panels/CueGateField';
 import { CUE_SCHEDULE_DAYS, type CueScheduleDay } from '../../../shared/cue/contracts';
+import { DEFAULT_CUE_GATE_ON_UNAVAILABLE, cueGateConditionProblem } from '../../../shared/cue/gate';
 import {
 	DEFAULT_SCHEDULED_TASK_PIPELINE,
 	MAX_SCHEDULE_MINUTES,
@@ -103,6 +105,10 @@ export function ScheduledTaskForm({
 	const [notifySticky, setNotifySticky] = useState(() => task?.notifySticky === true);
 	const [label, setLabel] = useState(() => task?.label ?? '');
 	const [pipeline, setPipeline] = useState(() => task?.pipelineName ?? '');
+	const [gate, setGate] = useState<CueGateFieldValue>(() => ({
+		condition: task?.gate ?? '',
+		onUnavailable: task?.gateOnUnavailable ?? DEFAULT_CUE_GATE_ON_UNAVAILABLE,
+	}));
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -134,6 +140,8 @@ export function ScheduledTaskForm({
 				return `Interval must be a whole number of minutes between 1 and ${MAX_SCHEDULE_MINUTES}.`;
 			}
 		}
+		// A blank gate is no gate; only a typed one is checked.
+		if (gate.condition.trim()) return cueGateConditionProblem(gate.condition);
 		return null;
 	}, [
 		agentId,
@@ -144,6 +152,7 @@ export function ScheduledTaskForm({
 		fireAtLocal,
 		parsedTimes,
 		intervalMinutes,
+		gate.condition,
 	]);
 
 	function applyQuickOffset(duration: string) {
@@ -171,6 +180,7 @@ export function ScheduledTaskForm({
 			const notify = notifyEnabled
 				? { message: notifyMessage.trim() || prompt.trim(), sticky: notifySticky }
 				: undefined;
+			const gateCondition = gate.condition.trim();
 
 			if (isEdit && task) {
 				const patch: ScheduledTaskUpdateInput = {
@@ -196,6 +206,15 @@ export function ScheduledTaskForm({
 					patch.scheduleDays = days;
 				}
 				if (kind === 'interval') patch.intervalMinutes = Number(intervalMinutes);
+				// The gate is the one field an edit can remove: an emptied
+				// condition takes the gate off. A task that never had one and
+				// still has none is left alone.
+				if (gateCondition) {
+					patch.gate = gateCondition;
+					patch.gateOnUnavailable = gate.onUnavailable;
+				} else if (task.gate) {
+					patch.gate = null;
+				}
 				const ok = await onUpdate(task, patch);
 				if (ok) onCancel();
 				return;
@@ -212,6 +231,7 @@ export function ScheduledTaskForm({
 				notify,
 				label: label.trim() || undefined,
 				pipelineName: pipeline.trim() || undefined,
+				...(gateCondition ? { gate: gateCondition, gateOnUnavailable: gate.onUnavailable } : {}),
 				// The model choice belongs to the prompt run; a notify-only task has none.
 				...(prompt.trim() ? cueTurnSettingsOf(turnSettings) : undefined),
 			};
@@ -458,6 +478,8 @@ export function ScheduledTaskForm({
 					/>
 				)}
 			</div>
+
+			<CueGateField theme={theme} value={gate} onChange={setGate} variant="form" />
 
 			{(error || validationError) && (
 				<div className="text-xs" style={{ color: theme.colors.error }}>

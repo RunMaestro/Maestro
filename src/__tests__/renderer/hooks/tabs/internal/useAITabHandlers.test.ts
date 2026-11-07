@@ -39,6 +39,33 @@ describe('useAITabHandlers', () => {
 		cleanup();
 	});
 
+	it('updates only the provider identity in the browser owning agent', () => {
+		setupSession({
+			toolType: 'claude-code',
+			aiTabs: [
+				createMockAITab({ id: 'claude', agentSessionId: 'same' }),
+				createMockAITab({ id: 'codex', tabProvider: 'codex', agentSessionId: 'same' }),
+				createMockAITab({
+					id: 'parked',
+					pendingTranslation: 'codex',
+					agentSessionId: 'claude-live',
+					providerSessions: { codex: { agentSessionId: 'same' } },
+				}),
+			],
+		});
+		const { result } = renderHook(() => useAITabHandlers());
+		act(() =>
+			result.current.handleUpdateTabByClaudeSessionId(
+				'same',
+				{ name: 'Owned', starred: true },
+				'codex',
+				getSession().id
+			)
+		);
+		expect(getSession().aiTabs.map((tab) => tab.name)).toEqual([null, 'Owned', 'Owned']);
+		expect(getSession().aiTabs[0].starred).not.toBe(true);
+	});
+
 	it('creates a new AI tab with default settings', () => {
 		setupSession({
 			aiTabs: [createMockAITab({ id: 'ai-1' })],

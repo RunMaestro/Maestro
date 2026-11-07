@@ -6,6 +6,8 @@ import {
 	SNOOZE_PRESETS,
 	SNOOZE_DEFAULT_HOUR,
 	MIN_SNOOZE_MS,
+	clampSnoozeLabel,
+	snoozedEntryLabel,
 } from '../../shared/snooze';
 
 // Fixed reference instant: Wednesday 2026-07-15, 10:30 local time.
@@ -229,5 +231,60 @@ describe('formatters', () => {
 		const nextYear = new Date(2027, 7, 5, 9, 0).getTime();
 		expect(formatSnoozeTarget(thisYear, NOW)).not.toContain('2026');
 		expect(formatSnoozeTarget(nextYear, NOW)).toContain('2027');
+	});
+});
+
+// The label rules are shared by the renderer (the Snoozed Tabs list, `snooze
+// list`) and the main process (tab cleanup), which passes records straight out
+// of the sessions store. So they are exercised here against loose records.
+describe('snoozedEntryLabel', () => {
+	it('names an AI tab by its name, then its opening message, then its session id', () => {
+		expect(snoozedEntryLabel({ type: 'ai', tab: { name: 'Auth work' } })).toBe('Auth work');
+		expect(
+			snoozedEntryLabel({
+				type: 'ai',
+				tab: {
+					name: null,
+					logs: [
+						{ source: 'ai', text: 'not this' },
+						{ source: 'user', text: '   ' },
+						{ source: 'user', text: 'why does login time out\nsecond line' },
+					],
+				},
+			})
+		).toBe('why does login time out');
+		expect(
+			snoozedEntryLabel({ type: 'ai', tab: { agentSessionId: 'abcdef1234567890', logs: [] } })
+		).toBe('abcdef12');
+		expect(snoozedEntryLabel({ type: 'ai', tab: {} })).toBe('Untitled tab');
+	});
+
+	it('names the other kinds from what they hold', () => {
+		expect(snoozedEntryLabel({ type: 'file', tab: { name: 'notes', extension: '.md' } })).toBe(
+			'notes.md'
+		);
+		expect(
+			snoozedEntryLabel({ type: 'browser', tab: { title: 'Docs', url: 'https://example.com' } })
+		).toBe('Docs');
+		expect(snoozedEntryLabel({ type: 'browser', tab: { url: 'https://example.com' } })).toBe(
+			'https://example.com'
+		);
+		expect(snoozedEntryLabel({ type: 'terminal', tab: { cwd: '/repo' } })).toBe('/repo');
+		expect(snoozedEntryLabel({ type: 'group', group: { name: 'Release work' } })).toBe(
+			'Release work'
+		);
+	});
+
+	it('falls back to a word for the kind rather than an empty label', () => {
+		expect(snoozedEntryLabel({ type: 'file', tab: {} })).toBe('Untitled file');
+		expect(snoozedEntryLabel({ type: 'browser', tab: null })).toBe('Browser tab');
+		expect(snoozedEntryLabel({ type: 'terminal' })).toBe('Terminal');
+		expect(snoozedEntryLabel({ type: 'group', group: {} })).toBe('Tab group');
+	});
+
+	it('clamps a long label to one row', () => {
+		const label = clampSnoozeLabel(`  ${'x'.repeat(100)}\nmore`);
+		expect(label).toHaveLength(60);
+		expect(label.endsWith('...')).toBe(true);
 	});
 });

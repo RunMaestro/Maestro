@@ -100,13 +100,23 @@ export function registerLiteCommands(program: Command): void {
 	const discovery = lite
 		.command('discovery')
 		.description('Local-network and consented Tailscale peer or advertised Service discovery');
-	discovery.command('show').action((_options, command: Command) => run('discover', command));
+	discovery
+		.command('show')
+		.description('Show the native discovery view in the Lite client')
+		.action((_options, command: Command) => run('discover', command));
 	discovery
 		.command('status')
+		.description(
+			'Read the discovered hosts, each with its key and generation, and any pairing state'
+		)
 		.action((_options, command: Command) => run('discovery-status', command));
-	discovery.command('stop').action((_options, command: Command) => run('discovery-stop', command));
+	discovery
+		.command('stop')
+		.description('Stop browsing for hosts; saved profiles and connections are not changed')
+		.action((_options, command: Command) => run('discovery-stop', command));
 	discovery
 		.command('start')
+		.description('Start browsing for hosts on the local network and through Tailscale')
 		.option(
 			'--interface <ipv4>',
 			'Advanced override: use one approved LAN interface instead of automatic selection'
@@ -143,6 +153,9 @@ export function registerLiteCommands(program: Command): void {
 		.description('Attended metadata-only PIN proof; never creates a full Maestro login');
 	pairing
 		.command('request <key>')
+		.description(
+			'Ask a discovered host to pair with this client; the host shows a six-digit PIN to the person there'
+		)
 		.requiredOption('--generation <n>', 'Generation from discovery status')
 		.requiredOption('--name <label>', 'Self-asserted client label')
 		.action((key: string, options, command: Command) =>
@@ -154,6 +167,7 @@ export function registerLiteCommands(program: Command): void {
 		);
 	pairing
 		.command('submit')
+		.description('Answer the active pairing request with the PIN the host showed')
 		.requiredOption('--pin-stdin', 'Read six-digit PIN from stdin, not process arguments')
 		.action((_options, command: Command) =>
 			run('pair-submit', command, async () => {
@@ -167,8 +181,14 @@ export function registerLiteCommands(program: Command): void {
 				return pin;
 			})
 		);
-	pairing.command('read').action((_options, command: Command) => run('pair-read', command));
-	pairing.command('cancel').action((_options, command: Command) => run('pair-cancel', command));
+	pairing
+		.command('read')
+		.description('Read the connection details the host released to the completed pairing')
+		.action((_options, command: Command) => run('pair-read', command));
+	pairing
+		.command('cancel')
+		.description('Cancel the active pairing request; nothing is saved')
+		.action((_options, command: Command) => run('pair-cancel', command));
 	const controls: [LiteControlAction, string][] = [
 		['status', 'Read connection status, errors, selected profile, and local presentation state'],
 		['reconnect', 'Reconnect the selected profile without replaying host commands'],

@@ -6,6 +6,11 @@
  * - Hierarchical: Uses dagre for tree-like, ranked layouts
  *
  * Both algorithms preserve node data and only update positions.
+ *
+ * The Delegation Graph runs the same two algorithms over agent nodes
+ * (`DelegationGraph/delegationLayouts.ts`). They are generic over the node
+ * data for that reason, and a caller whose nodes are not document cards passes
+ * `measureNode` to say how big one is.
  */
 
 import { Node, Edge } from 'reactflow';
@@ -23,10 +28,16 @@ import {
 import dagre from '@dagrejs/dagre';
 import type { GraphNodeData, DocumentNodeData } from './graphDataBuilder';
 
+/** The footprint a layout reserves for one node. */
+export interface NodeDimensions {
+	width: number;
+	height: number;
+}
+
 /**
  * Layout configuration options
  */
-export interface LayoutOptions {
+export interface LayoutOptions<T = GraphNodeData> {
 	/** Node width for layout calculations */
 	nodeWidth?: number;
 	/** Node height for layout calculations */
@@ -41,12 +52,20 @@ export interface LayoutOptions {
 	centerX?: number;
 	/** Center Y position for the layout */
 	centerY?: number;
+	/**
+	 * How big a node is, for a graph whose nodes are not document cards. Absent,
+	 * the size is estimated from a document node's title and preview.
+	 */
+	measureNode?: (node: Node<T>) => NodeDimensions;
 }
+
+/** The options that are plain numbers and words, each with a default. */
+type ResolvedLayoutOptions = Required<Omit<LayoutOptions, 'measureNode'>>;
 
 /**
  * Default layout options
  */
-const DEFAULT_OPTIONS: Required<LayoutOptions> = {
+const DEFAULT_OPTIONS: ResolvedLayoutOptions = {
 	nodeWidth: 220,
 	nodeHeight: 80,
 	rankDirection: 'TB',
@@ -67,7 +86,7 @@ const nodeDimensionCache = new Map<string, { width: number; height: number }>();
  * This provides more accurate sizing for layout calculations.
  * Only works with document nodes (not external link nodes).
  */
-function estimateNodeDimensions(node: Node<DocumentNodeData>): { width: number; height: number } {
+function estimateNodeDimensions(node: Node<DocumentNodeData>): NodeDimensions {
 	const data = node.data;
 	const titleText = data.title || '';
 	const previewText = data.description || data.contentPreview || '';
@@ -122,6 +141,17 @@ function estimateNodeDimensions(node: Node<DocumentNodeData>): { width: number; 
 }
 
 /**
+ * The size function a layout run uses: the caller's own, or the document
+ * estimate for a graph of document cards.
+ */
+function nodeMeasurer<T>(options: LayoutOptions<T>): (node: Node<T>) => NodeDimensions {
+	return (
+		options.measureNode ??
+		((node) => estimateNodeDimensions(node as unknown as Node<DocumentNodeData>))
+	);
+}
+
+/**
  * Extended node datum for d3-force simulation
  */
 interface ForceNodeDatum extends SimulationNodeDatum {
@@ -153,14 +183,15 @@ interface ForceLinkDatum extends SimulationLinkDatum<ForceNodeDatum> {
  * @param options - Layout configuration options
  * @returns New array of nodes with updated positions
  */
-export function applyForceLayout(
-	nodes: Node<GraphNodeData>[],
+export function applyForceLayout<T = GraphNodeData>(
+	nodes: Node<T>[],
 	edges: Edge[],
-	options: LayoutOptions = {}
-): Node<GraphNodeData>[] {
+	options: LayoutOptions<T> = {}
+): Node<T>[] {
 	if (nodes.length === 0) return [];
 
 	const opts = { ...DEFAULT_OPTIONS, ...options };
+	const measureNode = nodeMeasurer(options);
 
 	// Separate document nodes from external nodes
 	const documentNodes = nodes.filter((n) => n.type !== 'externalLinkNode');
@@ -175,7 +206,7 @@ export function applyForceLayout(
 	const internalEdges = edges.filter((e) => e.type !== 'external');
 
 	const simNodes: ForceNodeDatum[] = documentNodes.map((node) => {
-		const dims = estimateNodeDimensions(node as Node<DocumentNodeData>);
+		const dims = measureNode(node);
 		return {
 			id: node.id,
 			x: node.position.x || Math.random() * 400 - 200,
@@ -272,10 +303,7 @@ export function applyForceLayout(
 /**
  * Arrange nodes in a simple grid layout
  */
-function arrangeNodesInGrid(
-	nodes: Node<GraphNodeData>[],
-	opts: Required<LayoutOptions>
-): Node<GraphNodeData>[] {
+function arrangeNodesInGrid<T>(nodes: Node<T>[], opts: ResolvedLayoutOptions): Node<T>[] {
 	const cols = Math.ceil(Math.sqrt(nodes.length));
 	const nodeWidth = 180;
 	const nodeHeight = 80;
@@ -308,14 +336,15 @@ function arrangeNodesInGrid(
  * @param options - Layout configuration options
  * @returns New array of nodes with updated positions
  */
-export function applyHierarchicalLayout(
-	nodes: Node<GraphNodeData>[],
+export function applyHierarchicalLayout<T = GraphNodeData>(
+	nodes: Node<T>[],
 	edges: Edge[],
-	options: LayoutOptions = {}
-): Node<GraphNodeData>[] {
+	options: LayoutOptions<T> = {}
+): Node<T>[] {
 	if (nodes.length === 0) return [];
 
 	const opts = { ...DEFAULT_OPTIONS, ...options };
+	const measureNode = nodeMeasurer(options);
 
 	// Separate document nodes from external nodes
 	const documentNodes = nodes.filter((n) => n.type !== 'externalLinkNode');
@@ -347,7 +376,7 @@ export function applyHierarchicalLayout(
 
 	// Add document nodes with estimated dimensions plus padding for spacing
 	for (const node of documentNodes) {
-		const dims = estimateNodeDimensions(node as Node<DocumentNodeData>);
+		const dims = measureNode(node);
 		nodeDimensions.set(node.id, dims);
 		g.setNode(node.id, {
 			width: dims.width + 20,
@@ -754,11 +783,11 @@ export function mergeAnimatingNodes<T>(
  * @param options - Layout options
  * @returns New nodes with initial positions near connected neighbors
  */
-export function positionNewNodesNearNeighbors<T extends GraphNodeData>(
+export function positionNewNodesNearNeighbors<T = GraphNodeData>(
 	newNodes: Node<T>[],
 	existingNodes: Node<T>[],
 	edges: Edge[],
-	options: LayoutOptions = {}
+	options: LayoutOptions<T> = {}
 ): Node<T>[] {
 	const opts = { ...DEFAULT_OPTIONS, ...options };
 	const existingPositions = new Map(existingNodes.map((n) => [n.id, n.position]));

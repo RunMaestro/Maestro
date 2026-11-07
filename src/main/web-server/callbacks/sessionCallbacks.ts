@@ -1,3 +1,4 @@
+import { inspectTabProvider } from '../../../shared/desktopTabs';
 import { sameCurrentTurnCursor } from '../../../shared/currentTurn';
 import { getPendingQuestionsSnapshot } from '../../permission-relay/registry';
 import { nativeCurrentTurns } from '../../pianola/current-turn';
@@ -74,6 +75,7 @@ export function registerSessionCallbacks(
 				s.aiTabs?.map((tab: any) => ({
 					id: tab.id,
 					agentSessionId: tab.agentSessionId || null,
+					...inspectTabProvider(tab, s),
 					name: tab.name || null,
 					origin: tab.origin,
 					starred: tab.starred || false,
@@ -205,6 +207,7 @@ export function registerSessionCallbacks(
 					agentId: s.id,
 					agentName: s.name,
 					toolType: s.toolType,
+					...inspectTabProvider(tab as any, s),
 					name: typeof tab.name === 'string' ? tab.name : null,
 					agentSessionId: typeof tab.agentSessionId === 'string' ? tab.agentSessionId : null,
 					state,
@@ -398,6 +401,7 @@ export function registerSessionCallbacks(
 				sessionId: tabId,
 				agentId: s.id,
 				agentSessionId: typeof tab.agentSessionId === 'string' ? tab.agentSessionId : null,
+				...inspectTabProvider(tab as any, s),
 				projectPath: typeof s.cwd === 'string' ? s.cwd : undefined,
 				messages,
 			};
@@ -417,6 +421,9 @@ export function registerSessionCallbacks(
 		// AI logs include thinking and tool entries for UX parity with desktop
 		let aiLogs: any[] = [];
 		const targetTabId = tabId || session.activeTabId;
+		const selectedTab =
+			session.aiTabs?.find((t: any) => t.id === targetTabId) ??
+			(!tabId ? session.aiTabs?.[0] : undefined);
 		if (session.aiTabs && session.aiTabs.length > 0) {
 			const targetTab = session.aiTabs.find((t: any) => t.id === targetTabId);
 			// If a specific tabId was requested but not found, return empty logs
@@ -445,6 +452,7 @@ export function registerSessionCallbacks(
 
 		return {
 			id: session.id,
+			...(selectedTab ? inspectTabProvider(selectedTab as any, session) : {}),
 			name: session.name,
 			toolType: session.toolType,
 			state: isAgentBusy(session, getProcessManager()) ? 'busy' : session.state,
@@ -453,7 +461,7 @@ export function registerSessionCallbacks(
 			aiLogs,
 			shellLogs: session.shellLogs || [],
 			usageStats: session.usageStats,
-			agentSessionId: session.agentSessionId,
+			agentSessionId: selectedTab?.agentSessionId ?? undefined,
 			isGitRepo: session.isGitRepo,
 			activeTabId: targetTabId,
 		};

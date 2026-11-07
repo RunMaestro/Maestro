@@ -22,6 +22,7 @@ import { listClaudeSessions } from '../services/agent-sessions';
 import { formatSessions, formatError, SessionDisplay } from '../output/formatter';
 import { computeTabConversationStats } from '../../shared/tabConversationStats';
 import type { ToolType } from '../../shared/types';
+import { ExitCode, exitWith } from '../exit-codes';
 
 interface ListSessionsOptions {
 	limit?: string;
@@ -206,7 +207,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 			} else {
 				console.error(formatError(`Agent not found: ${agentIdArg}`));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const limit = options.limit ? parseInt(options.limit, 10) : 25;
@@ -219,7 +220,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 			} else {
 				console.error(formatError(msg));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const skip = options.skip ? parseInt(options.skip, 10) : 0;
@@ -232,7 +233,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 			} else {
 				console.error(formatError(msg));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		// Use disk-based reader for Claude Code, tab-based reader for other agents.
@@ -320,6 +321,6 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 		} else {
 			console.error(formatError(`Failed to list sessions: ${message}`));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 }

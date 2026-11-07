@@ -13,6 +13,11 @@ import {
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
 import { MAESTRO_FONT_STACK } from '../../../shared/fontStack';
+import {
+	DEFAULT_MAX_CONSULTATIONS_PER_TURN,
+	MAX_CONSULTATIONS_PER_TURN_CEILING,
+	MAX_CONSULTATIONS_PER_TURN_SETTING,
+} from '../../../shared/consultBudget';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../../shared/cue/retention';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
@@ -89,6 +94,7 @@ function getBadgeLevelForTime(cumulativeTimeMs: number): number {
  */
 function resetStore() {
 	useSettingsStore.setState({
+		utilitySource: { type: 'utility-agent' },
 		settingsLoaded: false,
 		conductorProfile: '',
 		globalShowHotkey: [],
@@ -97,6 +103,7 @@ function resetStore() {
 		mediaModelDirectory: '',
 		shellArgs: '',
 		shellEnvVars: {},
+		harnessTierDefaults: {},
 		ghPath: '',
 		fontFamily: MAESTRO_FONT_STACK,
 		fontSize: 14,
@@ -118,6 +125,7 @@ function resetStore() {
 		showHiddenFiles: true,
 		fileExplorerIconTheme: 'rich',
 		toastPosition: 'bottom-right',
+		spokenNotices: 'off',
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 10000,
@@ -282,6 +290,8 @@ describe('settingsStore', () => {
 			expect(state.sshReduceEntryCapEnabled).toBe(false);
 			expect(state.sshReduceEntryCapFraction).toBe(0.1);
 			expect(state.toastPosition).toBe('bottom-right');
+			// Speaking aloud is opt-in.
+			expect(state.spokenNotices).toBe('off');
 			expect(state.terminalWidth).toBe(100);
 			expect(state.logLevel).toBe('info');
 			expect(state.maxLogBuffer).toBe(10000);
@@ -392,6 +402,50 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setShellEnvVars({ KEEP: 'yes' });
 				useSettingsStore.getState().setShellEnvVarsDisabled({ OFF: 'no' });
 				expect(useSettingsStore.getState().shellEnvVars).toEqual({ KEEP: 'yes' });
+			});
+
+			it('setLocalModelAssignments updates state and persists', () => {
+				const assignments = {
+					'git-drafts': { type: 'local' as const, modelId: 'qwen3-1.7b-instruct-q4km' },
+				};
+				useSettingsStore.getState().setLocalModelAssignments(assignments);
+				expect(useSettingsStore.getState().localModelAssignments).toEqual(assignments);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(
+					'localModelAssignments',
+					assignments
+				);
+			});
+
+			it('setHarnessTierDefaults stores the sparse form and persists it', () => {
+				const local = {
+					type: 'source' as const,
+					endpointId: 'maestro-server',
+					model: 'qwen3.5-4b',
+				};
+				useSettingsStore.getState().setHarnessTierDefaults({
+					'claude-code': { low: local },
+					// A harness left with no tier set is not kept.
+					codex: {},
+				});
+				const stored = { 'claude-code': { low: local } };
+				expect(useSettingsStore.getState().harnessTierDefaults).toEqual(stored);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('harnessTierDefaults', stored);
+			});
+
+			it('setLocalModelsDownloadBase normalizes, persists, and reads default back to Hugging Face', () => {
+				useSettingsStore.getState().setLocalModelsDownloadBase('https://hf-mirror.com/');
+				expect(useSettingsStore.getState().localModelsDownloadBase).toBe('https://hf-mirror.com');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(
+					'localModelsDownloadBase',
+					'https://hf-mirror.com'
+				);
+
+				useSettingsStore.getState().setLocalModelsDownloadBase('default');
+				expect(useSettingsStore.getState().localModelsDownloadBase).toBe('https://huggingface.co');
+				expect(window.maestro.settings.set).toHaveBeenLastCalledWith(
+					'localModelsDownloadBase',
+					'https://huggingface.co'
+				);
 			});
 
 			it('setGhPath updates state and persists', () => {
@@ -633,6 +687,14 @@ describe('settingsStore', () => {
 					const [toast] = useNotificationStore.getState().toasts;
 					expect(toast.skipCustomNotification).toBe(true);
 					expect(toast.skipOsNotification).toBe(true);
+				});
+			});
+
+			describe('setSpokenNotices', () => {
+				it('updates state and persists', () => {
+					useSettingsStore.getState().setSpokenNotices('unfocused');
+					expect(useSettingsStore.getState().spokenNotices).toBe('unfocused');
+					expect(window.maestro.settings.set).toHaveBeenCalledWith('spokenNotices', 'unfocused');
 				});
 			});
 
@@ -1104,6 +1166,37 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('setters with validation', () => {
+		it('setMaxConsultationsPerTurn keeps 0, floors, and clamps to the ceiling', () => {
+			// 0 is a real value (peer consults off), never coerced to the default.
+			useSettingsStore.getState().setMaxConsultationsPerTurn(0);
+			expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(0);
+			expect(window.maestro.settings.set).toHaveBeenLastCalledWith(
+				MAX_CONSULTATIONS_PER_TURN_SETTING,
+				0
+			);
+
+			useSettingsStore.getState().setMaxConsultationsPerTurn(12.9);
+			expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(12);
+
+			useSettingsStore.getState().setMaxConsultationsPerTurn(-4);
+			expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(0);
+
+			useSettingsStore.getState().setMaxConsultationsPerTurn(1_000_000);
+			expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(
+				MAX_CONSULTATIONS_PER_TURN_CEILING
+			);
+			expect(window.maestro.settings.set).toHaveBeenLastCalledWith(
+				MAX_CONSULTATIONS_PER_TURN_SETTING,
+				MAX_CONSULTATIONS_PER_TURN_CEILING
+			);
+
+			// A non-number can only arrive from a caller bug; it must not persist NaN.
+			useSettingsStore.getState().setMaxConsultationsPerTurn(Number.NaN);
+			expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(
+				DEFAULT_MAX_CONSULTATIONS_PER_TURN
+			);
+		});
+
 		it('setConductorProfile trims to 5000 characters', () => {
 			const longProfile = 'a'.repeat(6000);
 			useSettingsStore.getState().setConductorProfile(longProfile);
@@ -2030,6 +2123,250 @@ describe('settingsStore', () => {
 	});
 
 	describe('loadAllSettings', () => {
+		describe('maxConsultationsPerTurn', () => {
+			it('starts on the default, which is also the metadata default', () => {
+				expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(
+					DEFAULT_MAX_CONSULTATIONS_PER_TURN
+				);
+				expect(SETTINGS_METADATA[MAX_CONSULTATIONS_PER_TURN_SETTING].default).toBe(
+					DEFAULT_MAX_CONSULTATIONS_PER_TURN
+				);
+			});
+
+			it('hydrates a stored 0 as 0, not as the default', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					[MAX_CONSULTATIONS_PER_TURN_SETTING]: 0,
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(0);
+			});
+
+			it('normalizes a value written by hand: out of range clamps, a string is the default', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					[MAX_CONSULTATIONS_PER_TURN_SETTING]: 99_999,
+				});
+				await loadAllSettings();
+				expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(
+					MAX_CONSULTATIONS_PER_TURN_CEILING
+				);
+
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					[MAX_CONSULTATIONS_PER_TURN_SETTING]: 'ten',
+				});
+				await loadAllSettings();
+				expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(
+					DEFAULT_MAX_CONSULTATIONS_PER_TURN
+				);
+			});
+		});
+
+		describe('harnessTierDefaults', () => {
+			it('starts on the built-in table', () => {
+				expect(useSettingsStore.getState().harnessTierDefaults).toEqual({});
+			});
+
+			it('hydrates known harnesses and tiers, and keeps a malformed target for the launch to refuse', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					harnessTierDefaults: {
+						'claude-code': {
+							low: { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' },
+							high: { type: 'source' },
+							ultra: { type: 'provider-model', model: 'opus' },
+						},
+						'not-a-harness': { low: { type: 'provider-model', model: 'x' } },
+					},
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().harnessTierDefaults).toEqual({
+					'claude-code': {
+						low: { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' },
+						high: { type: 'source' },
+					},
+				});
+			});
+		});
+
+		describe('localModelAssignments', () => {
+			it('hydrates the shared utility source and keeps per-task choices separate', async () => {
+				const utilitySource = { type: 'endpoint', endpointId: 'ep-1', model: 'qwen3' } as const;
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					utilitySource,
+					localModelAssignments: { 'tab-naming': { type: 'off' } },
+				});
+				await loadAllSettings();
+				expect(useSettingsStore.getState().utilitySource).toEqual(utilitySource);
+				expect(useSettingsStore.getState().localModelAssignments).toEqual({
+					'tab-naming': { type: 'off' },
+				});
+				useSettingsStore.getState().setUtilitySource({ type: 'local', modelId: 'local-model' });
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('utilitySource', {
+					type: 'local',
+					modelId: 'local-model',
+				});
+			});
+
+			it('drops unusable entries and keeps the Utility Agent default for an existing install', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					utilityAgentId: 'agent-1',
+					localModelAssignments: {
+						'tab-naming': { type: 'utility-agent' },
+						'git-drafts': { type: 'utility-agent' },
+						'cue-gate': { type: 'endpoint', endpointId: 'ep-1', model: 'llama3' },
+						'not-a-task': { type: 'off' },
+					},
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().localModelAssignments).toEqual({
+					'cue-gate': { type: 'endpoint', endpointId: 'ep-1', model: 'llama3' },
+				});
+				expect(useSettingsStore.getState().utilityAgentId).toBe('agent-1');
+				expect(useSettingsStore.getState().utilitySource).toEqual({ type: 'utility-agent' });
+			});
+		});
+
+		describe('localModelsDownloadBase', () => {
+			it('hydrates a stored mirror in its canonical spelling', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					localModelsDownloadBase: 'https://hf-mirror.com/',
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().localModelsDownloadBase).toBe('https://hf-mirror.com');
+			});
+
+			it('reads a hand-edited value that fails validation as Hugging Face', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					localModelsDownloadBase: 'ftp://nope',
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().localModelsDownloadBase).toBe('https://huggingface.co');
+			});
+		});
+
+		describe('shortcut migration write-back', () => {
+			// Regression: a default remap whose target chord the reserved guard
+			// strips back on the same pass reported needsMigration on every load
+			// while the value never moved. Each write woke the settings file
+			// watcher and every peer window into another identical load, which
+			// spun the file at ~166 writes/sec and starved the renderer.
+			it('does not persist shortcuts when migration is a no-op', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: structuredClone(DEFAULT_SHORTCUTS),
+				});
+
+				await loadAllSettings();
+
+				expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
+					'shortcuts',
+					expect.anything()
+				);
+			});
+
+			it('leaves every bundled default on a chord no migration rule moves', async () => {
+				// The loop above was invisible from the outside because the value
+				// round-tripped unchanged. Assert the fixed point directly: feeding
+				// the defaults back in must return them untouched.
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: structuredClone(DEFAULT_SHORTCUTS),
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().shortcuts).toEqual(DEFAULT_SHORTCUTS);
+			});
+
+			it('still writes back when a migration really moves a binding', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: {
+						...structuredClone(DEFAULT_SHORTCUTS),
+						moveToGroup: {
+							id: 'moveToGroup',
+							label: 'Move to Group',
+							keys: ['Meta', 'Shift', 'm'],
+						},
+					},
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().shortcuts.moveToGroup.keys).toEqual([
+					'Alt',
+					'Meta',
+					'm',
+				]);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(
+					'shortcuts',
+					expect.objectContaining({
+						moveToGroup: expect.objectContaining({ keys: ['Alt', 'Meta', 'm'] }),
+					})
+				);
+			});
+
+			it('moves a reserved chord left on disk onto the bundled default', async () => {
+				// Cmd+Shift+Down is the OS select-to-bottom inside a text field.
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: {
+						...structuredClone(DEFAULT_SHORTCUTS),
+						nextUnreadTab: {
+							id: 'nextUnreadTab',
+							label: 'Next Unread / Draft Tab',
+							keys: ['Meta', 'Shift', 'ArrowDown'],
+						},
+					},
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().shortcuts.nextUnreadTab.keys).toEqual(
+					DEFAULT_SHORTCUTS.nextUnreadTab.keys
+				);
+			});
+
+			it('settles after one write-back rather than looping', async () => {
+				// Feed the FIRST load's write-back into a SECOND load. A converging
+				// migration must go quiet; a self-cancelling pair of rules would ask
+				// to persist again here, forever.
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: {
+						...structuredClone(DEFAULT_SHORTCUTS),
+						nextUnreadTab: {
+							id: 'nextUnreadTab',
+							label: 'Next Unread / Draft Tab',
+							keys: ['Meta', 'Shift', 'ArrowDown'],
+						},
+					},
+				});
+
+				await loadAllSettings();
+
+				const written = vi
+					.mocked(window.maestro.settings.set)
+					.mock.calls.filter(([key]) => key === 'shortcuts')
+					.at(-1)?.[1];
+				expect(written).toBeDefined();
+
+				vi.mocked(window.maestro.settings.set).mockClear();
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					shortcuts: written as Record<string, unknown>,
+				});
+
+				await loadAllSettings();
+
+				expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
+					'shortcuts',
+					expect.anything()
+				);
+			});
+		});
 		it.each([true, false])('restores worktree provider visibility: %s', async (enabled) => {
 			useSettingsStore.setState({ showWorktreeProvider: !enabled });
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
@@ -2289,6 +2626,23 @@ describe('settingsStore', () => {
 			await loadAllSettings();
 
 			expect(useSettingsStore.getState().toastPosition).toBe('bottom-right');
+		});
+
+		it('loads a persisted spokenNotices mode', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ spokenNotices: 'unfocused' });
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().spokenNotices).toBe('unfocused');
+		});
+
+		it('reads an unknown spokenNotices value as off, because speaking aloud is consent', async () => {
+			useSettingsStore.setState({ spokenNotices: 'always' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ spokenNotices: true });
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().spokenNotices).toBe('off');
 		});
 
 		it('keeps edits made while a reload is in flight', async () => {

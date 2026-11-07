@@ -49,6 +49,13 @@ afterEach(() => {
 });
 
 describe('FloatingWidgetRoot', () => {
+	it('registers the voice widget and reports it ready without booting the app', async () => {
+		openAs('?floatingWidget=acappella-voice');
+		await renderRoot();
+		await waitFor(() => expect(ready).toHaveBeenCalledWith('acappella-voice'));
+		expect(window.maestro.floatingWidgets.getState).toHaveBeenCalledWith('acappella-voice');
+	});
+
 	it('renders nothing and logs for an unknown id', async () => {
 		const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 		openAs('?floatingWidget=not-a-widget');

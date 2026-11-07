@@ -4,6 +4,8 @@ import { ipcRenderer } from 'electron';
 import type { CallUsage, UsageStats } from '../../../shared/types';
 import type { ParsedQuestion } from '../../permission-relay/types';
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
+import type { ConsultChain } from '../../../shared/consultBudget';
+import type { CodexTransport } from '../../../shared/codexTransport';
 import type {
 	HarnessInteractionRequest,
 	HarnessInteractionResolveResult,
@@ -43,6 +45,9 @@ export interface ProcessConfig {
 	// Stats tracking options
 	querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 	tabId?: string; // Tab ID for multi-tab tracking
+	// The consult chain this turn runs IN, when another agent's delegation
+	// started it (`maestro-cli dispatch`). See shared/consultBudget.ts.
+	consultChain?: ConsultChain;
 }
 
 /**
@@ -83,6 +88,8 @@ export interface ActiveProcess {
 	cwd: string;
 	isTerminal: boolean;
 	isBatchMode: boolean;
+	/** Actual transport of this running Codex turn, including exec fallbacks. */
+	codexTransport?: CodexTransport;
 	startTime: number;
 	command?: string;
 	args?: string[];
@@ -400,6 +407,15 @@ export function createProcessCoreApi() {
 				callback(sessionId, verdict);
 			ipcRenderer.on('process:steering-verdict', handler);
 			return () => ipcRenderer.removeListener('process:steering-verdict', handler);
+		},
+		/** Actual Codex transport, reported at spawn and after an exec fallback. */
+		onCodexTransport: (
+			callback: (sessionId: string, transport: CodexTransport) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, transport: CodexTransport) =>
+				callback(sessionId, transport);
+			ipcRenderer.on('process:codex-transport', handler);
+			return () => ipcRenderer.removeListener('process:codex-transport', handler);
 		},
 
 		/**

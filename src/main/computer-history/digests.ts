@@ -1,12 +1,20 @@
 /**
  * Computer History - opt-in digests (D11, phase A6).
  *
- * OFF by default. When the user turns digests on AND picks an agent:
+ * OFF by default. When the user turns digests on, ONE writer does the work,
+ * chosen by `digests.source`:
+ *
+ *   - `local` (offered first): the model assigned to the `history-digests`
+ *     Local Models task (`src/main/local-models/history-digests.ts`).
+ *   - `agent`: the agent in `digests.agentId`.
+ *
+ * Nothing runs until the source has its writer: a model assigned, or an agent
+ * picked.
  *
  * - 15-minute digest: every closed, non-empty 15-minute segment is
- *   summarized by that agent into `digests/<day>/<HHMM>Z.md`.
+ *   summarized by that writer into `digests/<day>/<HHMM>Z.md`.
  * - 6-hour roll-up (on unless `digests.rollup` is false): when a UTC block
- *   (00:00, 06:00, 12:00, 18:00) ends, the same agent writes
+ *   (00:00, 06:00, 12:00, 18:00) ends, the same writer writes
  *   `digests/<day>/6h-<HHMM>Z.md` from that block's 15-minute digest FILES.
  *   A block with no 15-minute digests gets no roll-up.
  *
@@ -22,15 +30,21 @@
  * of the last 6 hours (at most 24), then roll-ups for completed blocks of the
  * last 24 hours that have none.
  *
- * Dispatch reuses the cross-agent CONSULT path (`maestro-cli ask`, the same
- * route a typed @mention takes): a background ask into a hidden tab on the
- * chosen agent that returns the answer text. The prompt hands the agent file
- * PATHS rather than contents, and repeats the untrusted-content rule.
+ * The agent writer reuses the cross-agent CONSULT path (`maestro-cli ask`, the
+ * same route a typed @mention takes): a background ask into a hidden tab on
+ * the chosen agent that returns the answer text. The prompt hands the agent
+ * file PATHS rather than contents, and repeats the untrusted-content rule. The
+ * local writer is handed the same paths and reads them itself, because a
+ * local model has no tools.
+ *
+ * There is no fallback between the two: a local model that cannot run is
+ * never swapped for the agent (that would send screen text to a provider the
+ * user did not choose), and the failure is the digest status's `lastError`.
  *
  * Safety (security review): nothing runs after stop(); clear() cancels
  * queued and in-flight jobs for the cleared range; right before writing, a
  * job re-checks that its window was not cleared and its inputs still exist;
- * the agent's answer goes through redactSecrets; files are written 0600.
+ * the writer's answer goes through redactSecrets; files are written 0600.
  */
 
 import * as fs from 'fs/promises';
@@ -51,6 +65,7 @@ import { readIndex } from '../../shared/computer-history/reader';
 import type { ComputerHistoryConfig, SegmentIndexEntry } from '../../shared/computer-history/types';
 import { redactSecrets } from '../../shared/redactSecrets';
 import type { DigestStatus } from '../../shared/computer-history/status';
+import type { HistoryDigestRequest, HistoryDigestWriter } from '../local-models/history-digests';
 import { STORE_DIR_MODE, STORE_FILE_MODE } from './segment-writer';
 
 /** Mirrors ConsultAgentParams / ConsultAgentResult from the web-server types. */
@@ -65,18 +80,26 @@ export interface DigestSchedulerDeps {
 	getConfig: () => ComputerHistoryConfig;
 	/** Null until the app has a window to route the consult through. */
 	getConsult: () => DigestConsult | null;
+	/** The `local` source's writer. Null where Local Models is not wired (tests). */
+	getLocalWriter: () => HistoryDigestWriter | null;
 	now?: () => number;
 	log?: (level: 'info' | 'warn', message: string) => void;
 }
 
 export type { DigestStatus };
 
+/** A writer's answer and who wrote it, for the digest's header line. */
+interface DigestAnswer {
+	answer: string;
+	writtenBy: string;
+}
+
 type DigestJob =
 	| { kind: '15m'; entry: SegmentIndexEntry; startMs: number }
 	| { kind: '6h'; blockStartMs: number };
 
 const DIGEST_TIMEOUT_MS = 10 * 60_000;
-/** A slow digest agent must not queue up a day of work behind it. */
+/** A slow digest writer must not queue up a day of work behind it. */
 export const MAX_PENDING_15M = 24;
 /** Catch-up looks this far back for missing 15-minute digests. */
 const CATCH_UP_15M_MS = 6 * 3_600_000;
@@ -170,12 +193,17 @@ export class DigestScheduler {
 	private enabled(): ComputerHistoryConfig['digests'] | null {
 		if (this.stopped) return null;
 		const { digests } = this.deps.getConfig();
-		return digests.enabled && digests.agentId ? digests : null;
+		if (!digests.enabled) return null;
+		// A source with no writer chosen does nothing: no agent picked, or no
+		// model assigned to the `history-digests` task.
+		if (digests.source === 'agent' && !digests.agentId) return null;
+		if (digests.source === 'local' && !this.deps.getLocalWriter()?.hasModel()) return null;
+		return digests;
 	}
 
 	/**
 	 * Called when a segment closes. Ignored after stop(): a close produced BY
-	 * shutting down (or a late close racing a disable) must not ask an agent
+	 * shutting down (or a late close racing a disable) must not ask a writer
 	 * about history. Queues the 15-minute digest, then (for a block's last
 	 * window) the block's roll-up behind it.
 	 */
@@ -336,30 +364,50 @@ export class DigestScheduler {
 		}
 	}
 
-	private async ask(agentId: string, question: string): Promise<string | null> {
-		const consult = this.deps.getConsult();
-		if (!consult) {
-			this.lastError = 'No Maestro window is available to route the digest';
+	/**
+	 * Ask the configured writer for one digest. Null when it produced none;
+	 * `lastError` then says why.
+	 */
+	private async ask(
+		digests: ComputerHistoryConfig['digests'],
+		job: { question: string; local: HistoryDigestRequest }
+	): Promise<DigestAnswer | null> {
+		const fail = (error: string): null => {
+			this.lastError = error;
+			this.deps.log?.('warn', `Computer History digest failed: ${error}`);
 			return null;
+		};
+		if (digests.source === 'local') {
+			const writer = this.deps.getLocalWriter();
+			if (!writer) return fail('Local Models is not available to write the digest');
+			// An unclassified engine failure throws; drain() records it.
+			const result = await writer.write(job.local);
+			return result.success
+				? { answer: result.answer, writtenBy: result.writtenBy }
+				: fail(result.error);
 		}
+		const consult = this.deps.getConsult();
+		if (!consult) return fail('No Maestro window is available to route the digest');
 		let result: Awaited<ReturnType<DigestConsult>>;
 		try {
-			result = await consult({ targetSessionId: agentId, question, timeoutMs: DIGEST_TIMEOUT_MS });
+			result = await consult({
+				targetSessionId: digests.agentId!,
+				question: job.question,
+				timeoutMs: DIGEST_TIMEOUT_MS,
+			});
 		} catch (error) {
 			result = { success: false, error: error instanceof Error ? error.message : String(error) };
 		}
 		if (!result.success || !result.answer?.trim()) {
-			this.lastError = result.error ?? 'The digest agent returned no answer';
-			this.deps.log?.('warn', `Computer History digest failed: ${this.lastError}`);
-			return null;
+			return fail(result.error ?? 'The digest agent returned no answer');
 		}
-		return result.answer;
+		return { answer: result.answer, writtenBy: `agent \`${digests.agentId}\`` };
 	}
 
 	private async writeDigest(rel: string, header: string[], answer: string): Promise<void> {
 		const abs = resolveStorePath(this.deps.storeDir, rel);
 		await fs.mkdir(path.dirname(abs), { recursive: true, mode: STORE_DIR_MODE });
-		// The agent read untrusted, possibly secret-bearing text: scrub its answer.
+		// The writer read untrusted, possibly secret-bearing text: scrub its answer.
 		const body = [...header, '', redactSecrets(answer.trim()).text, ''].join('\n');
 		await fs.writeFile(abs, body, { encoding: 'utf-8', mode: STORE_FILE_MODE });
 	}
@@ -371,31 +419,32 @@ export class DigestScheduler {
 		const startedAtSeq = this.cancelSeq;
 		const windowStartIso = new Date(startMs).toISOString();
 		const windowEndIso = new Date(startMs + SEGMENT_MS).toISOString();
-		const answer = await this.ask(
-			digests.agentId!,
-			buildDigestPrompt({
-				segmentPath: resolveStorePath(this.deps.storeDir, entry.file),
+		const segmentPath = resolveStorePath(this.deps.storeDir, entry.file);
+		const written = await this.ask(digests, {
+			question: buildDigestPrompt({
+				segmentPath,
 				schemaPath: resolveStorePath(this.deps.storeDir, SCHEMA_FILE),
 				entry,
 				windowStartIso,
 				windowEndIso,
-			})
-		);
-		if (answer === null) return;
-		// The consult can take minutes. Re-check right before writing: the user
+			}),
+			local: { kind: '15m', segmentPath, windowStartIso, windowEndIso },
+		});
+		if (written === null) return;
+		// The writer can take minutes. Re-check right before writing: the user
 		// may have stopped the feature, cleared this window, or the segment may
 		// be gone (retention, clear --all). A digest must never outlive it.
 		if (this.stopped || this.cancelledSince(startedAtSeq, startMs, SEGMENT_MS)) return;
-		if (!(await exists(resolveStorePath(this.deps.storeDir, entry.file)))) return;
+		if (!(await exists(segmentPath))) return;
 		const rel = digestRelativePath(startMs);
 		await this.writeDigest(
 			rel,
 			[
 				`# ${SEGMENT_MINUTES}-minute digest ${windowStartIso} - ${windowEndIso}`,
 				'',
-				`Segment: \`${entry.file}\` (${entry.events} events). Written by agent \`${digests.agentId}\`.`,
+				`Segment: \`${entry.file}\` (${entry.events} events). Written by ${written.writtenBy}.`,
 			],
-			answer
+			written.answer
 		);
 		this.last15mFile = rel;
 		this.last15mAt = new Date(this.now()).toISOString();
@@ -413,11 +462,11 @@ export class DigestScheduler {
 		const startedAtSeq = this.cancelSeq;
 		const blockStartIso = new Date(blockStartMs).toISOString();
 		const blockEndIso = new Date(blockStartMs + ROLLUP_MS).toISOString();
-		const answer = await this.ask(
-			digests.agentId!,
-			buildRollupPrompt({ digestPaths: inputs, blockStartIso, blockEndIso })
-		);
-		if (answer === null) return;
+		const written = await this.ask(digests, {
+			question: buildRollupPrompt({ digestPaths: inputs, blockStartIso, blockEndIso }),
+			local: { kind: '6h', digestPaths: inputs, blockStartIso, blockEndIso },
+		});
+		if (written === null) return;
 		if (this.stopped || this.cancelledSince(startedAtSeq, blockStartMs, ROLLUP_MS)) return;
 		for (const input of inputs) if (!(await exists(input))) return;
 		await this.writeDigest(
@@ -425,9 +474,9 @@ export class DigestScheduler {
 			[
 				`# ${ROLLUP_HOURS}-hour roll-up ${blockStartIso} - ${blockEndIso}`,
 				'',
-				`From ${inputs.length} ${SEGMENT_MINUTES}-minute digest(s). Written by agent \`${digests.agentId}\`.`,
+				`From ${inputs.length} ${SEGMENT_MINUTES}-minute digest(s). Written by ${written.writtenBy}.`,
 			],
-			answer
+			written.answer
 		);
 		this.lastRollupFile = rel;
 		this.lastRollupAt = new Date(this.now()).toISOString();

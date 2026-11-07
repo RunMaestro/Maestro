@@ -97,6 +97,7 @@ describe('duplicate-agent command', () => {
 			toolType: 'claude-code',
 			cwd: '/work/proj',
 			groupId: 'group-1',
+			seedFromGroup: false,
 			background: false,
 			nudgeMessage: 'Be terse',
 			customModel: 'opus',

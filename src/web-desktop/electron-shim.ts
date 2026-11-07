@@ -13,6 +13,12 @@
  *     window.maestro with the same factory output the desktop gets.
  */
 
+// Type-only, and it is what declares `window.__MAESTRO_CONFIG__` for this file:
+// the server injects one config object and there is one declaration of its
+// shape. A second, narrower copy here disagreed with it the moment the bundle
+// was type-checked alongside the renderer.
+import type {} from '../web/utils/config';
+
 import { captureException } from './sentry-shim';
 import {
 	BridgeTransportError,
@@ -38,6 +44,8 @@ const UNCERTAIN_SUBMISSION_KEY = 'maestro:web-desktop:uncertain-submission';
 // IPC queries follow the preload getter/list/read naming convention. The
 // non-prefixed query methods below are explicit exceptions, not error filters.
 const READ_ONLY_CHANNELS = new Set([
+	'acappella:input-devices',
+	'cross-agent:consultBudget',
 	'plugins:contributions',
 	'agentRun:events',
 	'agentRun:show',
@@ -67,6 +75,7 @@ const READ_ONLY_CHANNELS = new Set([
 	'history:reload',
 	'images:resolve',
 	'journey:path',
+	'localModels:taskReadiness',
 	'memory:orphans',
 	'pianola:supervisor-list',
 	'feedback:drafts:list',

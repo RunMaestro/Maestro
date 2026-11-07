@@ -81,3 +81,20 @@ The Throughput Gauge and the media player float over the Main Window today, so t
 ## Verification without a person
 
 Unit tests cover the controller (with mocked `BrowserWindow`), the relay (ordering, queue until ready, id validation), the mirror helper, the hosts in both modes, the replica forwarding, and the CLI status field. Do not run the test suite by hand: the `rc` pre-push hook runs the whole suite on push, and that is the gate. Run type-check and lint after every task.
+
+## A Cappella adoption (acappella)
+
+The `acappella-voice` spec uses an app authority: the originating voice-session window, with
+primary-window fallback when no window is named. Main still owns the voice protocol; the hidden
+A Cappella audio host still owns capture and playback. `VoiceHud` publishes its shared
+`VoiceSessionProjection`, UI preferences, device list and Force Send availability with
+`publishStoreState`. `VoiceWidget` uses `mirrorStoreState` and the existing HUD drawing inside
+`FloatingWidgetFrame`, without another voice event subscription or microphone enumeration.
+
+Every HUD control returns as a validated widget command, including mode cycling, microphone
+selection, send wait, send phrases, transcript navigation, mute and Force Send. Minimize hides
+the window without ending the session; X and Escape end it. The controller gates creation on
+`aCappella`, closes on disable and quit, and owns persisted desktop bounds. App dialogs do not
+hide the desktop widget. The relay rejects stale visibility changes and old-owner snapshots during an authority handoff;
+Quick Chat keeps its existing voice controls. Browser builds retain the draggable in-app HUD,
+and the explicit developer harness remains in-app.

@@ -25,7 +25,7 @@ The point of a Group Chat is that you are **delegating the moderating**. In an o
 ## How It Works
 
 1. **Create a Group Chat** - Use keyboard shortcut `Opt+Cmd+G` / `Alt+Ctrl+G`, click "+ New Chat" in the Group Chats section of the sidebar, or use Quick Actions (`Cmd+K` / `Ctrl+K`)
-2. **Select a moderator** - Choose which AI agent (Claude Code, OpenCode, or Codex) will coordinate the conversation
+2. **Select a moderator** - Choose which AI agent (Claude Code, OpenCode, or Codex) will coordinate the conversation. Click **Customize** to open **General**, **Provider**, and **SSH** for the moderator. Environment variables live under **Provider**; Cancel discards changes in Customize (`Cmd+Shift+[` / `]` steps through the tabs)
 3. **@mention agents** - In your message, @mention any Maestro session (e.g., `@Frontend`, `@Backend`). Agents are automatically added as participants when mentioned.
 4. **Send your question** - The moderator receives it first and decides how to proceed
 5. **Moderator coordinates** - Routes to relevant agents via @mentions, can make multiple rounds
@@ -130,11 +130,11 @@ agent is still busy after 15 minutes, the chat says so and the turn moves on wit
 
 Right-click on a group chat in the sidebar to access the context menu:
 
-| Action     | Description                                                                                  |
-| ---------- | -------------------------------------------------------------------------------------------- |
-| **Edit**   | Change the moderator agent or customize its settings (CLI args, path, environment variables) |
-| **Rename** | Change the group chat name                                                                   |
-| **Delete** | Remove the group chat and its conversation history                                           |
+| Action     | Description                                                                                    |
+| ---------- | ---------------------------------------------------------------------------------------------- |
+| **Edit**   | Change the moderator agent or its settings (CLI args, path, environment variables, SSH remote) |
+| **Rename** | Change the group chat name                                                                     |
+| **Delete** | Remove the group chat and its conversation history                                             |
 
 ## Input Features
 

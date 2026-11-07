@@ -18,6 +18,7 @@ import { paginateEntries, resolveHistoryEntryLimit } from '../../../shared/histo
 import type { PaginatedResult, GraphBucket } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
 import { getSessionsStore, getSettingsStore } from '../../stores';
+import { archiveDirectorNotesSynopsisInBackground } from '../../local-models/directors-notes-archive';
 import { isAgentDormant } from '../../../shared/agentVisibility';
 import {
 	withIpcErrorLogging,
@@ -1167,6 +1168,11 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					// file paths on THIS machine, so no `sessionSshRemoteConfig` is
 					// passed and groomContext spawns locally. See issue #1416 - the
 					// grooming path now honors SSH when a caller does supply a config.
+					//
+					// Not routed through the Local Models `tab-summary` assignment on
+					// purpose: the synopsis agent READS the history files it is given,
+					// which needs tools a local model does not have, and a weak
+					// synopsis here is what the user reads as the record of their work.
 					const result = await groomContext(
 						{
 							projectRoot: process.cwd(),
@@ -1244,6 +1250,15 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 							narrativeFields = { narrativeError: parsed.error };
 						}
 					}
+
+					// Keep a copy for semantic search. A no-op unless that task is
+					// assigned a source, and never a reason for this call to fail.
+					archiveDirectorNotesSynopsisInBackground({
+						synopsis,
+						narrative: narrativeFields.narrative,
+						lookbackDays: options.lookbackDays,
+						provider,
+					});
 
 					return {
 						success: true,

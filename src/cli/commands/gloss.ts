@@ -23,7 +23,7 @@ import {
 	sendSimpleCommand,
 	reportResult,
 	failCommand,
-	exitIfMaestroNotRunning,
+	failFromError,
 } from '../services/session-command';
 
 interface GlossOptions {
@@ -86,7 +86,6 @@ export async function gloss(level: string | undefined, options: GlossOptions): P
 			jsonExtra: { level: next, previousLevel: current },
 		});
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }

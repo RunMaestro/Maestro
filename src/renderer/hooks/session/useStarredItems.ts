@@ -26,6 +26,8 @@ import {
 } from '../../utils/starredSessions';
 import { captureException } from '../../utils/sentry';
 import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import { resolveTabProvider } from '../../utils/providerTabSessions';
 
 // ============================================================================
 // Types
@@ -103,11 +105,26 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 		s.sessions
 			.map((sess) => {
 				const tabs = (sess.aiTabs ?? [])
-					.map(
-						(t) => `${t.id}:${t.starred ? 1 : 0}:${t.agentSessionId ?? ''}:${getTabDisplayName(t)}`
+					.map((t) =>
+						canonicalJson([
+							t.id,
+							t.starred ?? false,
+							t.tabProvider ?? null,
+							t.pendingTranslation ?? null,
+							t.agentSessionId ?? null,
+							Object.entries(t.providerSessions ?? {}).map(([provider, slot]) => [
+								provider,
+								slot?.agentSessionId ?? null,
+							]),
+							getTabDisplayName(t),
+						])
 					)
 					.join(',');
-				return `${sess.id}|${sess.name}|${sess.toolType}|${sess.projectRoot}|${tabs}`;
+				return `${sess.id}|${sess.name}|${sess.toolType}|${sess.projectRoot}|${Object.keys(
+					sess.providerOverrides ?? {}
+				)
+					.sort()
+					.join(',')}|${tabs}`;
 			})
 			.join('\n')
 	);
@@ -177,10 +194,18 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 		// rendering twice - once as the open tab and once as its lingering closed
 		// twin - which is the duplication seen when restoring an aged-out star.
 		const openAgentSessionIds = new Set<string>();
+		const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
 		for (const s of sessions) {
 			if (!s.aiTabs) continue;
 			for (const t of s.aiTabs) {
-				if (t.agentSessionId) openAgentSessionIds.add(t.agentSessionId);
+				const provider = resolveTabProvider(t, s);
+				const slots = { ...t.providerSessions, [provider]: t };
+				for (const [owner, slot] of Object.entries(slots)) {
+					if (slot?.agentSessionId)
+						openAgentSessionIds.add(
+							canonicalJson([owner, norm(s.projectRoot), slot.agentSessionId])
+						);
+				}
 				if (!t.starred) continue;
 				items.push({
 					kind: 'open',
@@ -192,16 +217,33 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 				});
 			}
 		}
-		const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
 		for (const closed of starredNamedSessions) {
-			if (openAgentSessionIds.has(closed.agentSessionId)) continue;
-			const parent = sessions.find(
-				(s) => s.toolType === closed.agentId && norm(s.projectRoot) === norm(closed.projectPath)
-			);
+			if (
+				openAgentSessionIds.has(
+					canonicalJson([closed.agentId, norm(closed.projectPath), closed.agentSessionId])
+				)
+			)
+				continue;
+			const parent =
+				sessions.find(
+					(s) =>
+						norm(s.projectRoot) === norm(closed.projectPath) &&
+						(s.toolType === closed.agentId ||
+							s.aiTabs?.some(
+								(t) =>
+									resolveTabProvider(t, s) === closed.agentId ||
+									t.providerSessions?.[
+										closed.agentId as keyof NonNullable<typeof t.providerSessions>
+									] !== undefined
+							) ||
+							s.providerOverrides?.[
+								closed.agentId as keyof NonNullable<typeof s.providerOverrides>
+							] !== undefined)
+				) ?? sessions.find((s) => norm(s.projectRoot) === norm(closed.projectPath));
 			if (!parent) continue;
 			items.push({
 				kind: 'closed',
-				key: `closed:${parent.id}:${closed.agentSessionId}`,
+				key: `closed:${parent.id}:${closed.agentId}:${closed.agentSessionId}`,
 				displayName: closed.sessionName,
 				agentName: parent.name,
 				parentSessionId: parent.id,

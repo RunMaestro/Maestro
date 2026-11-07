@@ -19,6 +19,7 @@ describe('group-chat-log (desktop shim)', () => {
 			'appendToLog',
 			'readLog',
 			'saveImage',
+			'formatChatHistoryForPrompt',
 		] as const) {
 			expect(shim[name]).toBe(lib[name]);
 		}

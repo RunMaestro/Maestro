@@ -1346,7 +1346,7 @@ describe('useTabHandlers', () => {
 			expect(session.aiTabs[0].hasUnread).toBe(false);
 		});
 
-		it('handleDeleteLog removes user command and associated logs', () => {
+		it('handleDeleteLog removes user command and associated logs', async () => {
 			const tab = createMockAITab({
 				id: 'tab-1',
 				logs: [
@@ -1357,8 +1357,8 @@ describe('useTabHandlers', () => {
 			});
 			const { result } = renderWithSession([tab]);
 			let nextIndex: number | null;
-			act(() => {
-				nextIndex = result.current.handleDeleteLog('log-1');
+			await act(async () => {
+				nextIndex = await result.current.handleDeleteLog('log-1');
 			});
 
 			const session = getSession();
@@ -1367,12 +1367,12 @@ describe('useTabHandlers', () => {
 			expect(session.aiTabs[0].logs[0].id).toBe('log-3');
 		});
 
-		it('handleDeleteLog returns null for non-existent log', () => {
+		it('handleDeleteLog returns null for non-existent log', async () => {
 			const tab = createMockAITab({ id: 'tab-1', logs: [] });
 			const { result } = renderWithSession([tab]);
 			let nextIndex: number | null = -1;
-			act(() => {
-				nextIndex = result.current.handleDeleteLog('nonexistent');
+			await act(async () => {
+				nextIndex = await result.current.handleDeleteLog('nonexistent');
 			});
 
 			expect(nextIndex).toBeNull();
@@ -1989,7 +1989,7 @@ describe('useTabHandlers', () => {
 	// ========================================================================
 
 	describe('handleDeleteLog additional coverage', () => {
-		it('returns null for non-user log source', () => {
+		it('returns null for non-user log source', async () => {
 			const tab = createMockAITab({
 				id: 'tab-1',
 				logs: [
@@ -1999,8 +1999,8 @@ describe('useTabHandlers', () => {
 			});
 			const { result } = renderWithSession([tab]);
 			let nextIndex: number | null = -1;
-			act(() => {
-				nextIndex = result.current.handleDeleteLog('log-2');
+			await act(async () => {
+				nextIndex = await result.current.handleDeleteLog('log-2');
 			});
 
 			expect(nextIndex).toBeNull();
@@ -2008,7 +2008,7 @@ describe('useTabHandlers', () => {
 			expect(getSession().aiTabs[0].logs).toHaveLength(2);
 		});
 
-		it('deletes from shell logs in terminal mode', () => {
+		it('deletes from shell logs in terminal mode', async () => {
 			const tab = createMockAITab({ id: 'tab-1' });
 			const session = createMockSession({
 				id: 'test-session',
@@ -2029,8 +2029,8 @@ describe('useTabHandlers', () => {
 			});
 
 			const { result } = renderHook(() => useTabHandlers());
-			act(() => {
-				result.current.handleDeleteLog('sl-1');
+			await act(async () => {
+				await result.current.handleDeleteLog('sl-1');
 			});
 
 			const updated = getSession();
@@ -2040,7 +2040,7 @@ describe('useTabHandlers', () => {
 			expect((updated as any).shellCommandHistory).not.toContain('ls');
 		});
 
-		it('calls IPC deleteMessagePair for AI tab logs', () => {
+		it('calls IPC deleteMessagePair for AI tab logs', async () => {
 			const tab = createMockAITab({
 				id: 'tab-1',
 				agentSessionId: 'agent-1',
@@ -2062,16 +2062,17 @@ describe('useTabHandlers', () => {
 			});
 
 			// Mock the IPC call
-			(window.maestro.claude as any).deleteMessagePair = vi
+			(window.maestro.agentSessions as any).deleteMessagePair = vi
 				.fn()
 				.mockResolvedValue({ success: true });
 
 			const { result } = renderHook(() => useTabHandlers());
-			act(() => {
-				result.current.handleDeleteLog('log-1');
+			await act(async () => {
+				await result.current.handleDeleteLog('log-1');
 			});
 
-			expect((window.maestro.claude as any).deleteMessagePair).toHaveBeenCalledWith(
+			expect((window.maestro.agentSessions as any).deleteMessagePair).toHaveBeenCalledWith(
+				'claude-code',
 				'/project',
 				'agent-1',
 				'log-1',
@@ -2079,7 +2080,7 @@ describe('useTabHandlers', () => {
 			);
 		});
 
-		it('removes command from aiCommandHistory', () => {
+		it('removes command from aiCommandHistory', async () => {
 			const tab = createMockAITab({
 				id: 'tab-1',
 				logs: [
@@ -2099,8 +2100,8 @@ describe('useTabHandlers', () => {
 			});
 
 			const { result } = renderHook(() => useTabHandlers());
-			act(() => {
-				result.current.handleDeleteLog('log-1');
+			await act(async () => {
+				await result.current.handleDeleteLog('log-1');
 			});
 
 			const updated = getSession();

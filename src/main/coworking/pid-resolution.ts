@@ -155,11 +155,11 @@ export async function getParentPid(pid: number): Promise<number | null> {
  * `getParent` is injected so tests can drive the walk without forking real
  * processes; in production it defaults to `getParentPid`.
  */
-export async function resolveSessionFromPidWalk(
+export async function resolveSessionFromPidWalk<T = string>(
 	startPid: number,
-	lookup: (pid: number) => string | null,
+	lookup: (pid: number) => T | null,
 	getParent: (pid: number) => Promise<number | null> = getParentPid
-): Promise<string | null> {
+): Promise<T | null> {
 	if (!Number.isInteger(startPid) || startPid <= 1) return null;
 	let cur = startPid;
 	for (let hops = 0; hops <= MAX_PID_WALK_HOPS; hops++) {

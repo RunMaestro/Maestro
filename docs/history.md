@@ -78,6 +78,12 @@ Press `Cmd+F` / `Ctrl+F` to open the search box, or click in the filter area to 
 - Session names and IDs
 - Full response content
 
+### By Meaning
+
+When [Semantic search](./local-models) is assigned a source and ready, a sparkle button appears beside the search box. Turn it on and describe what you are looking for: "the time the upload retry was fixed" finds the entry even if it never used those words. Results are this agent's entries ranked by how close they are, each with a percentage and the passage that matched. Press `Enter` in the box to open the best match, or arrow down into the list. The type filters still apply.
+
+The button is not shown while Semantic search is off or its model is not ready. While the index is still building, the result count says how far along it is.
+
 ### By Time Range
 
 The **Graph View** at the top shows activity distribution over time. **Right-click the graph** to change the time range:

@@ -96,7 +96,7 @@ function fixture() {
 			: undefined
 	);
 	const newTab = vi.fn<NewAITabWithPromptCallback>(
-		async (_agent, _prompt, _background, _hidden, _routing, control) => {
+		async (_agent, _prompt, _background, _hidden, _chain, _routing, control) => {
 			if (!control) return { success: true, tabId: 'ordinary-tab' };
 			if (control.phase === 'prepare') {
 				snapshot.sessions = [

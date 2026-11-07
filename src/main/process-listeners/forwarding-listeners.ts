@@ -7,6 +7,7 @@ import type { ProcessManager } from '../process-manager';
 import type { ProcessListenerDependencies, ToolExecution } from './types';
 import type { CallUsage } from '../../shared/types';
 import type { SteeringResultFrame } from '../../shared/chatSteering';
+import type { CodexTransport } from '../../shared/codexTransport';
 
 /** Coalesce thinking chunks for this long before flushing to the renderer. */
 const THINKING_CHUNK_FLUSH_INTERVAL_MS = 50;
@@ -159,6 +160,9 @@ export function setupForwardingListeners(
 	// message it took out of the queue until this settles it.
 	processManager.on('steering-verdict', (sessionId: string, verdict: SteeringResultFrame) => {
 		safeSend('process:steering-verdict', sessionId, verdict);
+	});
+	processManager.on('codex-transport', (sessionId: string, transport: CodexTransport) => {
+		safeSend('process:codex-transport', sessionId, transport);
 	});
 
 	// Handle stderr separately from runCommand (for clean command execution)

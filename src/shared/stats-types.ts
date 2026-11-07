@@ -5,6 +5,7 @@
  */
 
 import type { DurationPercentiles } from './percentiles';
+import type { ModelTier } from './tierLevels';
 import type { PromptCadence } from './promptCadence';
 
 /**
@@ -47,6 +48,21 @@ export interface QueryEvent {
 	cacheCreationTokens?: number;
 	/** Cost in USD for this turn, when the provider reports one. */
 	costUsd?: number;
+	/**
+	 * The Run on source this turn launched on (`RunOnSourceTarget`): the
+	 * endpoint's id (`maestro-server` for the Maestro model server) and the model
+	 * name that source serves. Set together. Both absent for a turn on the
+	 * provider's own model, and for rows recorded before the columns existed.
+	 */
+	runOnEndpoint?: string;
+	runOnModel?: string;
+	/**
+	 * The tier the Auto router chose for this turn. Absent when the turn was not
+	 * sent on Auto, and when no router decided. It is the router's answer, not
+	 * always the launch: a session kept on its model while its cache is warm
+	 * records the tier and still runs where `runOnEndpoint` says.
+	 */
+	routedTier?: ModelTier;
 }
 
 /**
@@ -125,6 +141,20 @@ export interface SessionLifecycleEvent {
  * Time range for querying stats
  */
 export type StatsTimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
+
+/** Every range, shortest first. What a range flag or a bridge message is checked against. */
+export const STATS_TIME_RANGES: readonly StatsTimeRange[] = [
+	'day',
+	'week',
+	'month',
+	'quarter',
+	'year',
+	'all',
+];
+
+export function isStatsTimeRange(value: unknown): value is StatsTimeRange {
+	return (STATS_TIME_RANGES as readonly unknown[]).includes(value);
+}
 
 /**
  * Aggregated stats for dashboard display
@@ -310,6 +340,154 @@ export interface WizardRun {
 }
 
 /**
+ * Where a recorded run's model was:
+ *
+ *   - `local`      - a catalog model, in-process on this machine;
+ *   - `server`     - a catalog model on the Maestro model server;
+ *   - `endpoint`   - a model on a user-run endpoint (Ollama, LM Studio, a cloud API);
+ *   - `system-one` - a System One engine reached over the Jev API (Jev, OpenJev).
+ */
+export const LOCAL_MODEL_RUN_SOURCE_TYPES = ['local', 'endpoint', 'server', 'system-one'] as const;
+
+export type LocalModelRunSourceType = (typeof LOCAL_MODEL_RUN_SOURCE_TYPES)[number];
+
+/**
+ * One run that reached a model other than a provider's own: the task router
+ * called a local model, the Maestro model server or an endpoint for a task (see
+ * `src/main/local-models/task-router.ts`), or a System One request was sent to
+ * a remote engine (see `src/main/local-models/system-one/decisions.ts`). A task
+ * that was off, or handed back to its Utility Agent path, is not a run.
+ */
+export interface LocalModelRun {
+	id: string;
+	/**
+	 * The task id from `LOCAL_MODEL_TASKS` ('tab-naming', 'cue-gate', ...), or
+	 * `agent:<verb>` for a System One request an agent sent through `maestro-cli s1`.
+	 */
+	taskId: string;
+	sourceType: LocalModelRunSourceType;
+	/**
+	 * The catalog model id (`local`, `server`), the server's model name
+	 * (`endpoint`), or the model the engine says answered (`system-one`; the
+	 * engine's id when it gave no answer and so named none).
+	 */
+	modelId: string;
+	/**
+	 * The saved endpoint's id for `endpoint`, and the engine's id (`jev-cloud`,
+	 * `openjev`) for `system-one`. Absent for `local` and `server`.
+	 */
+	endpointId?: string;
+	/** The agent the run was for, when its caller knew one. */
+	agentId?: string;
+	/** Epoch ms the run started. */
+	startedAt: number;
+	/** Duration with machine sleep removed. Includes a cold model load. */
+	durationMs: number;
+	/** 'cancelled' is a caller abort, not a fault. */
+	outcome: 'ok' | 'error' | 'cancelled';
+	/** The classified failure (`model-not-installed`, `network`, ...). Absent on success. */
+	errorCode?: string;
+	tokensIn?: number;
+	tokensOut?: number;
+}
+
+/** One block the token proxy shortened for the first time in a request. */
+export interface ProxyCompressedBlock {
+	/** SHA-256 of the original text: the key of the content-addressed cache. */
+	hash: string;
+	originalTokens: number;
+	compressedTokens: number;
+	/** The compressors that contributed ('json', 'logs', 'long-lines', 'model'). */
+	compressors: string[];
+}
+
+/**
+ * One model request the Maestro token proxy carried (see
+ * `src/main/local-models/proxy/`). Only requests that hold a message list are
+ * recorded; token counting, model lists and the like are not.
+ */
+export interface ProxyRequest {
+	id: string;
+	/** The agent the base URL named. Absent for a request that named none. */
+	agentId?: string;
+	/** The route prefix ('anthropic', 'openai', 'chatgpt'). */
+	route: string;
+	/** The API the request spoke ('anthropic-messages', ...). */
+	kind: string;
+	mode: 'passthrough' | 'compress';
+	/** Epoch ms the request arrived. */
+	startedAt: number;
+	durationMs: number;
+	/** The status sent to the client, or 0 when none was. */
+	status: number;
+	/** 'completed', 'client-aborted' or 'upstream-failed'. */
+	outcome: string;
+	/** Body bytes received from the agent. */
+	requestBytes: number;
+	/** Body bytes sent on. Differs from `requestBytes` when compressed or routed. */
+	sentBytes: number;
+	responseBytes: number;
+	/**
+	 * Tokens of the body as it arrived and as it was sent, both estimated as
+	 * characters / 4. Present only when the proxy read the body (`compress`
+	 * mode): a passthrough request is counted in bytes alone.
+	 */
+	originalTokens?: number;
+	sentTokens?: number;
+	/** Time the proxy held the request to read and shorten it. `compress` only. */
+	addedLatencyMs?: number;
+	/** Tool results sent shortened in this request, cached ones included. */
+	blocksCompressed: number;
+	/** Verdicts that came from the cache: no compressor ran for them. */
+	cacheHits: number;
+	/** Compressed blocks per compressor. Absent when nothing was compressed. */
+	compressorCounts?: Record<string, number>;
+	/** Blocks shortened for the first time in this request. */
+	newBlocks?: ProxyCompressedBlock[];
+	/** Why the body was forwarded unread in `compress` mode, when it was. */
+	skipReason?: string;
+	/**
+	 * The Local Models target a background request was sent to in place of the
+	 * provider, as `<source id>:<model>`. Absent for a request that went to the
+	 * provider. A routed request whose target failed keeps it, with the failure
+	 * in `outcome`.
+	 */
+	routedTo?: string;
+}
+
+/** What the proxy carried, summed. */
+export interface ProxyRequestTotals {
+	requests: number;
+	/** Requests whose body the proxy read (`compress` mode, not skipped). */
+	compressRequests: number;
+	/** Tokens of those requests as they arrived, and as they were sent. */
+	originalTokens: number;
+	sentTokens: number;
+	tokensSaved: number;
+	/** Mean time those requests were held. 0 when there were none. */
+	avgAddedLatencyMs: number;
+}
+
+/** {@link ProxyRequestTotals} for one agent. `agentId` is null for unattributed requests. */
+export interface ProxyAgentTotals extends ProxyRequestTotals {
+	agentId: string | null;
+}
+
+export interface ProxyRequestUsage {
+	range: StatsTimeRange;
+	totals: ProxyRequestTotals;
+	/** Most requests first. */
+	byAgent: ProxyAgentTotals[];
+}
+
+/** One row of the "Recent compressions" list. */
+export interface ProxyCompressionEntry extends ProxyCompressedBlock {
+	agentId: string | null;
+	/** When the request that first shortened the block arrived. */
+	at: number;
+}
+
+/**
  * File format for a Usage Dashboard export. `json` is one file holding every
  * table plus the dashboard aggregation; `csv` is a zip with one CSV per table.
  */
@@ -329,4 +507,4 @@ export interface UsageExportResult {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 14;
+export const STATS_DB_VERSION = 20;

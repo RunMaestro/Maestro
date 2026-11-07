@@ -20,6 +20,8 @@ import {
 import { evaluatePluginDispatch } from '../../../../shared/plugins/plugin-dispatch-gate';
 import { relayMailReadOperation } from '../../../plugins/relay-mail/contract';
 import { pluginToolRunIdentity } from '../../../plugins/plugin-tool-run-identity';
+import { isTurnModelName } from '../../../../shared/autoModel';
+import { parseConsultChain } from '../../../../shared/consultBudget';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -108,6 +110,20 @@ export async function handlePluginsSendAgent(
 	const prompt = message.prompt;
 	const sessionId = message.providerSessionId;
 	const requiredToolId = message.requiredToolId;
+	// `maestro-cli send --model`: this one turn's model, in place of the agent's own.
+	const model = message.model;
+	// The place in a consult chain the CLI admitted this send at. The CLI has
+	// already spent for it; here it only has to reach the agent's environment,
+	// which this process spawns and the CLI's own shell therefore cannot supply.
+	// Anything that is not a chain reads as none.
+	const consultChain = parseConsultChain(message.consultChain);
+	const turn =
+		typeof model === 'string' || consultChain
+			? {
+					...(typeof model === 'string' ? { model } : {}),
+					...(consultChain ? { consultChain } : {}),
+				}
+			: undefined;
 	const requirePluginTools = message.requirePluginTools;
 	if (
 		(requirePluginTools !== undefined && typeof requirePluginTools !== 'boolean') ||
@@ -117,7 +133,8 @@ export async function handlePluginsSendAgent(
 		!prompt.trim() ||
 		prompt.length > 64 * 1024 ||
 		(sessionId !== undefined &&
-			(typeof sessionId !== 'string' || !/^[^\x00-\x1f\x7f]{1,256}$/.test(sessionId)))
+			(typeof sessionId !== 'string' || !/^[^\x00-\x1f\x7f]{1,256}$/.test(sessionId))) ||
+		(model !== undefined && (typeof model !== 'string' || !isTurnModelName(model)))
 	) {
 		respond({ available: true, success: false, error: 'Invalid headless agent request' });
 		return;
@@ -137,7 +154,7 @@ export async function handlePluginsSendAgent(
 		const onClose = (): void => controller.abort();
 		client.socket.once('close', onClose);
 		try {
-			const reply = await run(
+			const args = [
 				agentId,
 				prompt,
 				sessionId as string | undefined,
@@ -146,8 +163,14 @@ export async function handlePluginsSendAgent(
 				'auto',
 				undefined,
 				requiredToolId as string | undefined,
-				...(requirePluginTools === true ? ([true] as const) : [])
-			);
+			] as const;
+			// CLI sends acquire their own writer lease. Turn settings follow that
+			// host-only flag, so a model override must not bypass writer ownership.
+			const reply = turn
+				? await run(...args, requirePluginTools === true, undefined, turn)
+				: requirePluginTools === true
+					? await run(...args, true)
+					: await run(...args);
 			const toolStillActive =
 				requiredToolId === undefined ||
 				(isPluginsFeatureEnabled() &&

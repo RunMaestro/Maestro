@@ -37,6 +37,7 @@ import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
 import { isLimitError } from '../../../../shared/types';
+import { isValidAgentId } from '../../../../shared/agentIds';
 import { useOwnedSessionGate, useOwnedSideEffectGate } from './useOwnedSessionGate';
 import {
 	scheduleRetryForError,
@@ -549,6 +550,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 					const { opened, providerKey } = reportAuthFailure({
 						sessionId: actualSessionId,
 						message: agentError.message,
+						provider: isValidAgentId(agentError.agentId) ? agentError.agentId : undefined,
 						// Recorded now so the resume can replay exactly this turn. Same
 						// resolution the state update above used: the tab named by the
 						// process id, else the active one.

@@ -17,6 +17,8 @@ export interface TabNamingConfig {
 	agentType: string;
 	/** Working directory for the session */
 	cwd: string;
+	/** The agent the tab belongs to; scopes the Local Models "unavailable" notice. */
+	sessionId?: string;
 	/** Optional SSH remote configuration */
 	sessionSshRemoteConfig?: {
 		enabled: boolean;

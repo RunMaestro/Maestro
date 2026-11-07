@@ -18,6 +18,24 @@ vi.mock('../../../cli/services/storage', () => ({
 	getSessionById: vi.fn(),
 	readHistory: vi.fn(),
 	readGroups: vi.fn(),
+	// The agent list a peer roster is resolved against.
+	readSessions: vi.fn(() => []),
+	// The harness tier defaults a tier is resolved against, below the agent's own.
+	readHarnessTierDefaults: vi.fn(() => ({})),
+	// The two layers under an agent's own environment variables: Settings >
+	// Environment, and the provider-level set.
+	readSettingValue: vi.fn(() => undefined),
+	readAgentConfigValue: vi.fn(() => undefined),
+	// The saved sources a Run on target is labeled from.
+	readLocalModelEndpoints: vi.fn(() => [
+		{
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		},
+	]),
 }));
 
 // Mock the formatter
@@ -27,7 +45,15 @@ vi.mock('../../../cli/output/formatter', () => ({
 }));
 
 import { showAgent } from '../../../cli/commands/show-agent';
-import { getSessionById, readHistory, readGroups } from '../../../cli/services/storage';
+import {
+	getSessionById,
+	readAgentConfigValue,
+	readHarnessTierDefaults,
+	readHistory,
+	readGroups,
+	readSessions,
+	readSettingValue,
+} from '../../../cli/services/storage';
 import { formatAgentDetail, formatError } from '../../../cli/output/formatter';
 
 describe('show-agent command', () => {
@@ -377,6 +403,330 @@ describe('show-agent command', () => {
 			expect(parsed.worktreeBasePath).toBe('/project-worktrees');
 		});
 
+		it("reports the agent's Local Models gateway, the read for update-agent --gateway-url", () => {
+			vi.mocked(getSessionById).mockReturnValue(
+				mockSession({ gatewayUrl: 'http://127.0.0.1:8787/anthropic' })
+			);
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).gatewayUrl).toBe(
+				'http://127.0.0.1:8787/anthropic'
+			);
+		});
+
+		it('reports an empty peers block, and reads no agent list, for an agent with no peer configuration', () => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).peers).toEqual({
+				rows: [],
+				groupGrant: { on: false, read: false, write: false, access: 'Off' },
+				worktreeGrant: { on: false, read: false, write: false, access: 'Off' },
+				roster: [],
+			});
+			expect(readSessions).not.toHaveBeenCalled();
+		});
+
+		it('reports the stored peer rows, the grants, and the resolved roster with each source', () => {
+			const self = mockSession({
+				groupId: 'group-1',
+				groupPeerAccess: { read: true, write: false },
+				peerAgents: [
+					{ sessionId: 'peer-writer', read: true, write: true, description: 'Owns the API' },
+					{ sessionId: 'peer-muted', read: false, write: false },
+					{ sessionId: 'peer-deleted', read: true, write: false },
+				],
+			});
+			vi.mocked(getSessionById).mockReturnValue(self);
+			vi.mocked(readSessions).mockReturnValue([
+				self,
+				mockSession({ id: 'peer-writer', name: 'API Agent', groupId: 'group-1' }),
+				mockSession({ id: 'peer-muted', name: 'Noisy Agent', groupId: 'group-1' }),
+				mockSession({ id: 'peer-grouped', name: 'Docs Agent', groupId: 'group-1' }),
+				mockSession({ id: 'peer-elsewhere', name: 'Other Team', groupId: 'group-2' }),
+			]);
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			const { peers } = JSON.parse(consoleSpy.mock.calls[0][0]);
+			// Stored: all three rows, the exclusion and the dead id included.
+			expect(peers.rows).toEqual([
+				{
+					sessionId: 'peer-writer',
+					name: 'API Agent',
+					read: true,
+					write: true,
+					access: 'Consult + Delegate',
+					description: 'Owns the API',
+				},
+				{
+					sessionId: 'peer-muted',
+					name: 'Noisy Agent',
+					read: false,
+					write: false,
+					access: 'No access',
+					description: null,
+				},
+				{
+					sessionId: 'peer-deleted',
+					name: null,
+					read: true,
+					write: false,
+					access: 'Consult only',
+					description: null,
+				},
+			]);
+			expect(peers.groupGrant).toEqual({
+				on: true,
+				read: true,
+				write: false,
+				access: 'Consult only',
+			});
+			expect(peers.worktreeGrant.on).toBe(false);
+			// Resolved: the row replaced the grant for the writer, the exclusion
+			// removed the muted peer, the dead row resolved to nobody, and the
+			// grant alone put the grouped peer in. Sorted by name.
+			expect(
+				peers.roster.map((p: { sessionId: string; access: string; source: string }) => [
+					p.sessionId,
+					p.access,
+					p.source,
+				])
+			).toEqual([
+				['peer-writer', 'Consult + Delegate', 'explicit'],
+				['peer-grouped', 'Consult only', 'group'],
+			]);
+		});
+
+		it('reports gatewayUrl as null for an agent with no gateway', () => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).gatewayUrl).toBeNull();
+		});
+
+		it("reports the agent's Run on target, the read for update-agent --run-on", () => {
+			const runOn = {
+				type: 'source' as const,
+				endpointId: 'ep-ollama',
+				model: 'qwen3:latest',
+				contextTokens: 65_536,
+			};
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ runOn }));
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				runOn,
+				// The spelling `--run-on` takes, so the read can be written back.
+				runOnSpec: 'ep-ollama:qwen3:latest',
+				runOnLabel: 'qwen3:latest on Ollama',
+				runOnProblem: null,
+			});
+		});
+
+		it('reports the provider for an agent with no target: a value, not an unset field', () => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				runOn: { type: 'provider' },
+				runOnSpec: 'provider',
+				runOnLabel: null,
+				runOnProblem: null,
+			});
+		});
+
+		it('reports a stored target that cannot be read as it is stored, with the reason', () => {
+			const stored = { type: 'source', endpointId: 'ep-ollama' };
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ runOn: stored as never }));
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				runOn: stored,
+				runOnSpec: null,
+				runOnLabel: null,
+				runOnProblem: 'A Run on target names a model.',
+			});
+		});
+
+		it("reports each tier's value and the layer it came from, the read for update-agent --tier", () => {
+			const local = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ tierTargets: { low: local } }));
+			vi.mocked(readHarnessTierDefaults).mockReturnValue({
+				'claude-code': { medium: { type: 'provider-model', model: 'opus' } },
+			});
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).tiers).toEqual([
+				{
+					tier: 'low',
+					target: local,
+					// The spelling `--tier` takes, so the read can be written back.
+					spec: 'ep-ollama:qwen3:latest',
+					label: 'qwen3:latest on Ollama',
+					source: 'agent',
+					builtIn: 'haiku',
+				},
+				{
+					tier: 'medium',
+					target: { type: 'provider-model', model: 'opus' },
+					spec: 'provider:opus',
+					label: 'opus',
+					source: 'harness-default',
+					builtIn: 'sonnet',
+				},
+				{
+					tier: 'high',
+					target: { type: 'provider-model', model: 'opus' },
+					spec: 'provider:opus',
+					label: 'opus',
+					source: 'built-in',
+					builtIn: 'opus',
+				},
+			]);
+		});
+
+		it('reports a tier a launch would refuse with the refusal, and one that does not apply with the reason', () => {
+			vi.mocked(readHarnessTierDefaults).mockReturnValue({});
+			vi.mocked(getSessionById).mockReturnValue(
+				mockSession({
+					runOn: { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' },
+					tierTargets: { high: { type: 'source' } } as never,
+				})
+			);
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			const [low, , high] = JSON.parse(consoleSpy.mock.calls[0][0]).tiers;
+			// Only the built-in table maps low, and this agent runs on a source.
+			expect(low).toMatchObject({ target: null, spec: null, source: null });
+			expect(low.note).toMatch(/Local Models source/);
+			expect(high).toMatchObject({ target: null, source: 'agent' });
+			expect(high.problem).toMatch(/cannot be used/);
+		});
+
+		it('reports no tiers for a harness that cannot be told which model to run', () => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ toolType: 'terminal' }));
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).tiers).toEqual([]);
+		});
+
+		it("reports the agent's background requests target, the read for update-agent --background-requests", () => {
+			const target = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:4b' };
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ backgroundRequests: { target } }));
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				backgroundRequests: { target },
+				backgroundRequestsSpec: 'ep-ollama:qwen3:4b',
+				backgroundRequestsLabel: 'qwen3:4b on Ollama',
+				backgroundRequestsProblem: null,
+			});
+		});
+
+		it('reports none for an agent with no background target: a value, not an unset field', () => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				backgroundRequests: null,
+				backgroundRequestsSpec: 'none',
+				backgroundRequestsLabel: null,
+				backgroundRequestsProblem: null,
+			});
+		});
+
+		it('reports a stored background target that cannot be read, with the reason', () => {
+			const stored = { target: { type: 'source', endpointId: 'ep-ollama' } };
+			vi.mocked(getSessionById).mockReturnValue(
+				mockSession({ backgroundRequests: stored as never })
+			);
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				backgroundRequests: stored,
+				backgroundRequestsSpec: null,
+				backgroundRequestsProblem: 'A Run on target names a model.',
+			});
+		});
+
+		it("reports the agent's System One switch, the read for update-agent --system-one", () => {
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ systemOneOptOut: true }));
+			showAgent('agent-123', { json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).systemOneOptOut).toBe(true);
+
+			// An agent that was never switched off reads false: a value, not an unset field.
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			showAgent('agent-123', { json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[1][0]).systemOneOptOut).toBe(false);
+		});
+
+		it("reports the agent's token proxy mode, the read for update-agent --proxy-mode", () => {
+			vi.mocked(getSessionById).mockReturnValue(
+				mockSession({
+					gatewayUrl: 'http://127.0.0.1:48123/anthropic',
+					tokenProxyMode: 'compress',
+				})
+			);
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).tokenProxyMode).toBe('compress');
+		});
+
+		it('reports tokenProxyMode as null when none is stored (the default, passthrough)', () => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).tokenProxyMode).toBeNull();
+		});
+
 		it('should report the resolved Codex transport for a Codex agent', () => {
 			vi.mocked(getSessionById).mockReturnValue(
 				mockSession({ toolType: 'codex', codexTransport: 'app-server' })
@@ -440,9 +790,9 @@ describe('show-agent command', () => {
 
 			expect(() => showAgent('nonexistent', { json: true })).toThrow('process.exit(1)');
 
-			const errorOutput = consoleErrorSpy.mock.calls[0][0];
+			const errorOutput = consoleSpy.mock.calls[0][0];
 			const parsed = JSON.parse(errorOutput);
-			expect(parsed.error).toBe('Agent not found: nonexistent');
+			expect(parsed).toEqual({ success: false, error: 'Agent not found: nonexistent' });
 		});
 
 		it('should handle storage errors', () => {
@@ -524,5 +874,140 @@ describe('show-agent command', () => {
 
 			expect(readHistory).toHaveBeenCalledWith(undefined, 'specific-agent');
 		});
+	});
+});
+
+// The Edit Agent dialog's "Show environment" table, and the masking it does.
+// `show agent` used to print an agent's own variables raw and nothing about the
+// layers under them, so a caller could neither see what a spawn would get nor
+// read the output aloud.
+describe('show-agent: the environment an agent is spawned with', () => {
+	let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+	const agent = (overrides: Partial<SessionInfo> = {}): SessionInfo =>
+		({
+			id: 'agent-123',
+			name: 'Test Agent',
+			toolType: 'claude-code',
+			cwd: '/path/to/project',
+			projectRoot: '/path/to/project',
+			...overrides,
+		}) as SessionInfo;
+
+	const shown = () => JSON.parse(String(consoleSpy.mock.calls[0][0]));
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.mocked(readHistory).mockReturnValue([]);
+		vi.mocked(readGroups).mockReturnValue([]);
+		vi.mocked(readSessions).mockReturnValue([]);
+		vi.mocked(readHarnessTierDefaults).mockReturnValue({});
+		vi.mocked(readSettingValue).mockReturnValue(undefined);
+		vi.mocked(readAgentConfigValue).mockReturnValue(undefined);
+		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('names the layer each value came from, and the layer it overrode', () => {
+		vi.mocked(readSettingValue).mockImplementation((key: string) =>
+			key === 'shellEnvVars' ? { EDITOR: 'vim', LOG_LEVEL: 'info' } : undefined
+		);
+		vi.mocked(getSessionById).mockReturnValue(
+			agent({ customEnvVars: { LOG_LEVEL: 'debug' } } as Partial<SessionInfo>)
+		);
+
+		showAgent('agent-123', { json: true });
+
+		expect(shown().effectiveEnv).toEqual([
+			{ key: 'EDITOR', value: 'vim', source: 'global', shadowedBy: [], secret: false },
+			{
+				key: 'LOG_LEVEL',
+				value: 'debug',
+				source: 'session',
+				shadowedBy: ['global'],
+				secret: false,
+			},
+		]);
+	});
+
+	it('uses the provider-level variables only for an agent with none of its own', () => {
+		vi.mocked(readAgentConfigValue).mockReturnValue({ PROVIDER_FLAG: '1' });
+		vi.mocked(getSessionById).mockReturnValue(agent());
+		showAgent('agent-123', { json: true });
+		expect(shown().effectiveEnv).toEqual([
+			{ key: 'PROVIDER_FLAG', value: '1', source: 'agent', shadowedBy: [], secret: false },
+		]);
+		expect(readAgentConfigValue).toHaveBeenCalledWith('claude-code', 'customEnvVars');
+
+		consoleSpy.mockClear();
+		// The agent's own record REPLACES the provider-level set.
+		vi.mocked(getSessionById).mockReturnValue(
+			agent({ customEnvVars: { OWN: 'x' } } as Partial<SessionInfo>)
+		);
+		showAgent('agent-123', { json: true });
+		expect(shown().effectiveEnv.map((entry: { key: string }) => entry.key)).toEqual(['OWN']);
+	});
+
+	it('masks a secret value, keeping only its tail', () => {
+		vi.mocked(getSessionById).mockReturnValue(
+			agent({
+				customEnvVars: { ANTHROPIC_API_KEY: 'sk-ant-0123456789abcdef', REGION: 'us-east-1' },
+			} as Partial<SessionInfo>)
+		);
+
+		showAgent('agent-123', { json: true });
+
+		const out = shown();
+		expect(out.customEnvVars.REGION).toBe('us-east-1');
+		expect(out.customEnvVars.ANTHROPIC_API_KEY).not.toContain('sk-ant-0123456789');
+		expect(out.customEnvVars.ANTHROPIC_API_KEY.endsWith('cdef')).toBe(true);
+		const key = out.effectiveEnv.find(
+			(entry: { key: string }) => entry.key === 'ANTHROPIC_API_KEY'
+		);
+		expect(key.secret).toBe(true);
+		expect(key.value).toBe(out.customEnvVars.ANTHROPIC_API_KEY);
+		// Nowhere in the output, in any field.
+		expect(String(consoleSpy.mock.calls[0][0])).not.toContain('sk-ant-0123456789abcdef');
+	});
+
+	it('prints a secret in full only when --show-secrets is passed', () => {
+		vi.mocked(getSessionById).mockReturnValue(
+			agent({
+				customEnvVars: { ANTHROPIC_API_KEY: 'sk-ant-0123456789abcdef' },
+			} as Partial<SessionInfo>)
+		);
+
+		showAgent('agent-123', { json: true, showSecrets: true });
+
+		const out = shown();
+		expect(out.customEnvVars.ANTHROPIC_API_KEY).toBe('sk-ant-0123456789abcdef');
+		expect(out.effectiveEnv[0].value).toBe('sk-ant-0123456789abcdef');
+	});
+
+	it('lists the variables that are parked, which are never spawned with', () => {
+		vi.mocked(getSessionById).mockReturnValue(
+			agent({
+				customEnvVars: { LIVE: '1' },
+				customEnvVarsDisabled: { PARKED_TOKEN: 'abcdefghijklmnop' },
+			} as Partial<SessionInfo>)
+		);
+
+		showAgent('agent-123', { json: true });
+
+		const out = shown();
+		expect(Object.keys(out.parkedEnvVars)).toEqual(['PARKED_TOKEN']);
+		expect(out.parkedEnvVars.PARKED_TOKEN).not.toBe('abcdefghijklmnop');
+		expect(out.effectiveEnv.map((entry: { key: string }) => entry.key)).toEqual(['LIVE']);
+	});
+
+	it('reports no variables as null and an empty list, not as an error', () => {
+		vi.mocked(getSessionById).mockReturnValue(agent());
+		showAgent('agent-123', { json: true });
+		expect(shown()).toMatchObject({ customEnvVars: null, parkedEnvVars: null, effectiveEnv: [] });
 	});
 });

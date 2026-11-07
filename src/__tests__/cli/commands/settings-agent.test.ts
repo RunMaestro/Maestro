@@ -93,7 +93,7 @@ describe('settings agent', () => {
 			expect(() => settingsAgentGet(codexAgent.id, 'bogus', { json: true })).toThrow(
 				'process.exit(1)'
 			);
-			const { error } = JSON.parse(String(errorSpy.mock.calls[0][0]));
+			const { error } = JSON.parse(String(logSpy.mock.calls[0][0]));
 			expect(error).toContain('Unknown setting "bogus"');
 		});
 
@@ -133,7 +133,7 @@ describe('settings agent', () => {
 				settingsAgentSet(codexAgent.id, 'codexTransport', 'app-server', { json: true })
 			).toThrow('process.exit(1)');
 			expect(writeAgentConfigValue).not.toHaveBeenCalled();
-			expect(String(errorSpy.mock.calls[0][0])).toContain('update-agent');
+			expect(String(logSpy.mock.calls[0][0])).toContain('update-agent');
 		});
 
 		it('refuses to reset provider config under an agent ID', () => {

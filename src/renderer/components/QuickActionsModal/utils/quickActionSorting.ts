@@ -29,7 +29,11 @@ export function filterAndSortQuickActions(
 			if (isDebugCommand && !showDebugCommands) {
 				return false;
 			}
-			return a.label.toLowerCase().includes(searchLower);
+			if (a.label.toLowerCase().includes(searchLower)) return true;
+			// Keywords are opt-in and almost nothing declares them, so this is a
+			// second chance for the handful of commands whose name is not the word
+			// a user would search for - not a broadening of the match rule.
+			return !!a.keywords?.some((keyword) => keyword.toLowerCase().includes(searchLower));
 		})
 		.sort((a, b) => {
 			// Buckets outrank everything in agents mode: the list is drawn under

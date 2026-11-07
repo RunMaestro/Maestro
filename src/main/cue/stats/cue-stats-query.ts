@@ -32,7 +32,7 @@ import { getTimeRangeStart } from '../../stats/utils';
 import { computePercentiles } from '../../../shared/percentiles';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { buildCueRunSummary, parseSubscriptionName } from '../../../shared/cue/cue-summary';
-import type { CueEventType } from '../../../shared/cue/contracts';
+import { isCueRunSkipped, type CueEventType } from '../../../shared/cue/contracts';
 import type { CueHistoryGroup, HistoryEntry } from '../../../shared/types';
 import {
 	getAgentTypesForSessions,
@@ -536,7 +536,14 @@ export async function getCueStatsAggregation(
 	const windowStartMs = getTimeRangeStart(timeRange);
 	const bucketSizeMs = bucketSizeFor(timeRange);
 
-	const allEvents = getRecentCueEvents(windowStartMs);
+	// A `gated` row is an event a subscription's gate skipped, not a run: it
+	// spent no agent time and no tokens. Counting it as an occurrence would
+	// bury the real runs under the events the gate exists to filter out. A
+	// run the injection screen blocked spent none either, and its duration is
+	// the classifier's, so it stays out of these run statistics too.
+	const allEvents = getRecentCueEvents(windowStartMs).filter(
+		(event) => !isCueRunSkipped(event.status)
+	);
 	const excluded = new Set(options.excludeTriggerTypes ?? []);
 	// Options are counted from the unfiltered set - see buildTriggerTypeOptions.
 	const triggerTypeOptions = buildTriggerTypeOptions(allEvents);

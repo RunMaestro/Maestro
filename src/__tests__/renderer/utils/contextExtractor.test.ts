@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	extractTabContext,
+	extractStoredSessionContext,
 	formatLogsForGrooming,
 	formatLogsForClipboard,
 	hasThinkingEntries,
@@ -53,6 +54,31 @@ function createMockLog(overrides: Partial<LogEntry> = {}): LogEntry {
 }
 
 describe('extractTabContext', () => {
+	it.each(['codex', 'opencode'] as const)(
+		'uses a pinned %s tab instead of the agent default',
+		(provider) => {
+			const tab = createMockTab({ tabProvider: provider });
+			expect(extractTabContext(tab, 'Project', createMockSession())).toMatchObject({
+				agentType: provider,
+				agentSessionId: tab.agentSessionId,
+			});
+		}
+	);
+
+	it('pairs a pending native ID and usage with the parked source owner', () => {
+		const tab = createMockTab({
+			tabProvider: 'codex',
+			agentSessionId: 'old-codex',
+			pendingTranslation: 'claude-code',
+			providerSessions: { 'claude-code': { agentSessionId: 'latest-claude' } },
+		});
+		expect(extractTabContext(tab, 'Project', createMockSession())).toMatchObject({
+			agentType: 'claude-code',
+			agentSessionId: 'latest-claude',
+			usageStats: undefined,
+		});
+	});
+
 	it('should extract context from a tab with all fields populated', () => {
 		const tab = createMockTab({
 			name: 'Feature Branch',
@@ -780,5 +806,28 @@ describe('getContextSummary', () => {
 		expect(summary.estimatedTokens).toBe(475);
 		expect(summary.byAgent['claude-code']).toBe(1);
 		expect(summary.byAgent['opencode']).toBe(1);
+	});
+});
+
+describe('stored native context ownership', () => {
+	it('tags imported messages with their explicit native provider', async () => {
+		mockAgentSessionsRead.mockResolvedValueOnce({
+			messages: [
+				{
+					uuid: 'message',
+					type: 'assistant',
+					content: 'native answer',
+					timestamp: new Date(0).toISOString(),
+				},
+			],
+			total: 1,
+			hasMore: false,
+		});
+		const context = await extractStoredSessionContext('codex', '/project', 'native');
+		expect(context).toMatchObject({
+			agentType: 'codex',
+			agentSessionId: 'native',
+			logs: [expect.objectContaining({ turnProvider: 'codex', text: 'native answer' })],
+		});
 	});
 });

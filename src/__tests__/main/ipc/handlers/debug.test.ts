@@ -148,6 +148,29 @@ describe('debug IPC handlers', () => {
 	});
 
 	describe('debug:createPackage', () => {
+		/**
+		 * The generator is handed a destination FUNCTION (the save dialog) and
+		 * calls it only once its secret screen has passed. Stand in for that:
+		 * resolve the destination the way the real one does, record what it
+		 * chose, then answer with `result`.
+		 */
+		let chosenOutputDir: string | null | undefined;
+		const generateWith = (result: Record<string, unknown>) => {
+			vi.mocked(debugPackage.generateDebugPackage).mockImplementation((async (
+				destination: string | (() => Promise<string | null>)
+			) => {
+				chosenOutputDir = typeof destination === 'string' ? destination : await destination();
+				if (!chosenOutputDir) {
+					return { success: false, cancelled: true, filesIncluded: [], totalSizeBytes: 0 };
+				}
+				return result;
+			}) as any);
+		};
+
+		beforeEach(() => {
+			chosenOutputDir = undefined;
+		});
+
 		it('should create debug package with selected file path', async () => {
 			const mockFilePath = '/export/path/maestro-debug-2024-01-01.zip';
 			const mockOutputDir = '/export/path';
@@ -159,7 +182,7 @@ describe('debug IPC handlers', () => {
 
 			vi.mocked(path.dirname).mockReturnValue(mockOutputDir);
 
-			vi.mocked(debugPackage.generateDebugPackage).mockResolvedValue({
+			generateWith({
 				success: true,
 				path: mockFilePath,
 				filesIncluded: ['system-info.json', 'settings.json', 'logs.json'],
@@ -176,8 +199,9 @@ describe('debug IPC handlers', () => {
 					filters: [{ name: 'Zip Files', extensions: ['zip'] }],
 				})
 			);
+			expect(chosenOutputDir).toBe(mockOutputDir);
 			expect(debugPackage.generateDebugPackage).toHaveBeenCalledWith(
-				mockOutputDir,
+				expect.any(Function),
 				expect.objectContaining({
 					getAgentDetector: expect.any(Function),
 					getProcessManager: expect.any(Function),
@@ -214,7 +238,7 @@ describe('debug IPC handlers', () => {
 
 			vi.mocked(path.dirname).mockReturnValue(mockOutputDir);
 
-			vi.mocked(debugPackage.generateDebugPackage).mockResolvedValue({
+			generateWith({
 				success: true,
 				path: mockFilePath,
 				filesIncluded: ['system-info.json', 'settings.json'],
@@ -224,8 +248,9 @@ describe('debug IPC handlers', () => {
 			const handler = handlers.get('debug:createPackage');
 			await handler!({} as any, options);
 
+			expect(chosenOutputDir).toBe(mockOutputDir);
 			expect(debugPackage.generateDebugPackage).toHaveBeenCalledWith(
-				mockOutputDir,
+				expect.any(Function),
 				expect.any(Object),
 				options
 			);
@@ -237,6 +262,8 @@ describe('debug IPC handlers', () => {
 				filePath: undefined,
 			});
 
+			generateWith({ success: true, path: '/never', filesIncluded: [], totalSizeBytes: 0 });
+
 			const handler = handlers.get('debug:createPackage');
 			const result = await handler!({} as any);
 
@@ -247,7 +274,65 @@ describe('debug IPC handlers', () => {
 				totalSizeBytes: 0,
 				cancelled: true,
 			});
-			expect(debugPackage.generateDebugPackage).not.toHaveBeenCalled();
+			expect(chosenOutputDir).toBeNull();
+		});
+
+		// The screen runs before the destination is asked for, so a refused
+		// package never raises a save dialog. The renderer shows the findings and
+		// asks again with `allowSecrets`.
+		it('should return secret findings without raising the save dialog', async () => {
+			const secretFindings = [
+				{ kind: 'github-token', line: 7, preview: '••••••••abcd', source: 'logs.json' },
+			];
+			vi.mocked(dialog.showSaveDialog).mockClear();
+			vi.mocked(debugPackage.generateDebugPackage).mockResolvedValue({
+				success: false,
+				error: 'Found 1 possible secret in the support package. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings,
+				secretScreenNote: 'Secret screen model did not run.',
+				filesIncluded: [],
+				totalSizeBytes: 0,
+			});
+
+			const handler = handlers.get('debug:createPackage');
+			const result = await handler!({} as any);
+
+			expect(result).toEqual({
+				success: false,
+				path: null,
+				filesIncluded: [],
+				totalSizeBytes: 0,
+				cancelled: false,
+				error: 'Found 1 possible secret in the support package. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings,
+				secretScreenNote: 'Secret screen model did not run.',
+			});
+			expect(dialog.showSaveDialog).not.toHaveBeenCalled();
+		});
+
+		it('should pass allowSecrets through on the confirmed retry', async () => {
+			vi.mocked(dialog.showSaveDialog).mockResolvedValue({
+				canceled: false,
+				filePath: '/export/path/maestro-debug.zip',
+			});
+			vi.mocked(path.dirname).mockReturnValue('/export/path');
+			generateWith({
+				success: true,
+				path: '/export/path/maestro-debug.zip',
+				filesIncluded: ['logs.json'],
+				totalSizeBytes: 10,
+			});
+
+			const handler = handlers.get('debug:createPackage');
+			const result = await handler!({} as any, { allowSecrets: true });
+
+			expect(vi.mocked(debugPackage.generateDebugPackage).mock.calls.at(-1)?.[2]).toEqual({
+				allowSecrets: true,
+			});
+			expect(result.success).toBe(true);
+			expect(result.path).toBe('/export/path/maestro-debug.zip');
 		});
 
 		it('should return error when main window is not available', async () => {

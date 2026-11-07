@@ -17,6 +17,7 @@
  */
 
 import type { Session } from '../types';
+import type { AgentSettingsTabId } from '../components/AgentSettings/agentSettingsTabs';
 import { useSessionStore } from '../stores/sessionStore';
 import { useUIStore } from '../stores/uiStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
@@ -105,7 +106,17 @@ export function jumpToAgent(sessionId: string, options: JumpToAgentOptions = {})
 	return true;
 }
 
+export interface OpenAgentSettingsOptions {
+	/**
+	 * The tab the caller is sending the user to, e.g. `peers` from the
+	 * Delegation Graph. Absent, the form opens on the tab it was last on.
+	 */
+	tab?: AgentSettingsTabId;
+}
+
 /** Open the Edit Agent modal for an agent (the per-agent settings pane). */
-export function openAgentSettings(session: Session): void {
-	useModalStore.getState().openModal('editAgent', { session });
+export function openAgentSettings(session: Session, options: OpenAgentSettingsOptions = {}): void {
+	useModalStore
+		.getState()
+		.openModal('editAgent', options.tab ? { session, initialTab: options.tab } : { session });
 }

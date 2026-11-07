@@ -4,6 +4,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import type { TerminalTabInfo, ReadTerminalTabResult, NewAITabWithPromptResult } from '../types';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 
@@ -321,6 +322,7 @@ export function registerBrowserTabCallbacks(
 			prompt: string,
 			background?: boolean,
 			hidden?: boolean,
+			consultChain?: ConsultChain,
 			mentionRouting?: MentionRouting,
 			control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
 		) => {
@@ -397,6 +399,7 @@ export function registerBrowserTabCallbacks(
 						responseChannel,
 						background,
 						hidden,
+						consultChain,
 						mentionRouting,
 						control
 					);

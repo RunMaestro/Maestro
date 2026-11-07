@@ -87,6 +87,12 @@ vi.mock('lucide-react', () => ({
 	Trash2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="trash-icon" className={className} style={style} />
 	),
+	Users: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="users-icon" className={className} style={style} />
+	),
+	GitBranch: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="git-branch-icon" className={className} style={style} />
+	),
 	// Icons used by tour system (tourSteps.tsx)
 	PenLine: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="pen-line-icon" className={className} style={style} />

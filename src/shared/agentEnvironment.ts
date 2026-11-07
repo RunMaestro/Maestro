@@ -14,10 +14,13 @@
  *   2. session  - this agent's own vars, from Edit Agent, OR, when the agent has
  *      no vars record at all, agent: the provider-level set for its provider.
  *      Never both - the session record replaces the provider set.
+ *   3. gateway  - the base-URL variable the agent's Local Models gateway sets,
+ *      ONLY when layer 2 does not set that variable itself: an explicit user
+ *      variable wins over the gateway (`resolveAgentGateway`).
  */
 
 /** Which layer a value was set in. */
-export type EnvVarSource = 'global' | 'agent' | 'session';
+export type EnvVarSource = 'global' | 'agent' | 'session' | 'gateway';
 
 export interface ResolvedEnvVar {
 	key: string;
@@ -35,6 +38,11 @@ export interface AgentEnvironmentLayers {
 	agent?: Record<string, string>;
 	/** This agent's own overrides. */
 	session?: Record<string, string>;
+	/**
+	 * What the agent's Local Models gateway would set (`gatewayEnvVarsFor`). A
+	 * key the agent's own layer already sets is left to that layer.
+	 */
+	gateway?: Record<string, string>;
 }
 
 /**
@@ -87,9 +95,20 @@ export function maskEnvValue(value: string): string {
  * @returns One entry per key, sorted by key for a stable read.
  */
 export function resolveAgentEnvironment(layers: AgentEnvironmentLayers): ResolvedEnvVar[] {
+	const userLayer = layers.session !== undefined ? layers.session : layers.agent;
 	const ordered: Array<[EnvVarSource, Record<string, string> | undefined]> = [
 		['global', layers.global],
 		layers.session !== undefined ? ['session', layers.session] : ['agent', layers.agent],
+		// The gateway yields to a variable the agent sets itself, so only the
+		// keys that layer leaves unset are applied here.
+		[
+			'gateway',
+			layers.gateway
+				? Object.fromEntries(
+						Object.entries(layers.gateway).filter(([key]) => !isEnvVarSet(userLayer, key))
+					)
+				: undefined,
+		],
 	];
 
 	const resolved = new Map<string, ResolvedEnvVar>();
@@ -121,6 +140,8 @@ export function envSourceLabel(source: EnvVarSource): string {
 			return 'Provider';
 		case 'session':
 			return 'This agent';
+		case 'gateway':
+			return 'Local Models gateway';
 	}
 }
 
@@ -136,6 +157,15 @@ export function envSourceLabel(source: EnvVarSource): string {
  */
 export function isBlankEnvValue(value: string): boolean {
 	return value.trim() === '';
+}
+
+/**
+ * Whether a layer sets a variable to a real value. A blank value is an absence
+ * ({@link isBlankEnvValue}), so it does not count as the user setting it.
+ */
+export function isEnvVarSet(vars: Record<string, string> | undefined, key: string): boolean {
+	const value = vars?.[key];
+	return typeof value === 'string' && !isBlankEnvValue(value);
 }
 
 /**
@@ -158,6 +188,16 @@ export function isBlankEnvKey(key: string): boolean {
 }
 
 /**
+ * Whether a string is a portable environment variable NAME: a letter or
+ * underscore, then letters, digits, or underscores. POSIX shells refuse anything
+ * else in `export`, so a name outside this shape is a typo that no process will
+ * ever be able to read back.
+ */
+export function isValidEnvVarName(name: string): boolean {
+	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+}
+
+/**
  * Drop entries a spawn must not export: blank values, and unnamed rows.
  *
  * Note this is the SPAWN-time rule, and it deliberately differs from
@@ -175,4 +215,32 @@ export function stripBlankEnvVars(
 		result[key] = value;
 	}
 	return result;
+}
+
+/**
+ * A variable whose value is built from the one the launch would otherwise
+ * carry, when replacing that value would lose something the launch needs.
+ * OpenCode's `OPENCODE_CONFIG_CONTENT` is one JSON document: it holds Maestro's
+ * permission block, or the user's own config, and a Run on target adds its
+ * provider to that document instead of taking its place.
+ */
+export type EnvVarMerge = (current: string | undefined) => string;
+
+/**
+ * Apply {@link EnvVarMerge}s to an environment record, in place. `current` is
+ * the record's own value, or `fallback`'s when the record does not set the
+ * variable (a layer that sits beneath the record, which the merge must still
+ * build on). A blank value counts as none.
+ */
+export function applyEnvVarMerges(
+	env: Record<string, string | undefined>,
+	merges: Record<string, EnvVarMerge> | undefined,
+	fallback?: Record<string, string | undefined>
+): void {
+	for (const [name, merge] of Object.entries(merges ?? {})) {
+		const current = [env[name], fallback?.[name]].find(
+			(value) => value !== undefined && !isBlankEnvValue(value)
+		);
+		env[name] = merge(current);
+	}
 }

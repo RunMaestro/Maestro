@@ -1,3 +1,4 @@
+import { projectTabProvider, resolveTurnProvider } from './providerTabSessions';
 /**
  * Helpers for the per-session AI execution queue, centralizing the rules for
  * user-paused items and connection-held items.
@@ -22,12 +23,12 @@ import type {
 	SessionState,
 } from '../types';
 import { generateId } from './ids';
+import { isAutoModel } from '../../shared/autoModel';
 import {
 	STEERING_TOO_LONG_DETAIL,
 	startsWithTuiCommandPrefix,
 	steeringTextTooLong,
 } from '../../shared/chatSteering';
-import { resolveCodexTransport } from '../../shared/codexTransport';
 import { supportsNativeSteering } from '../../shared/maestro-lib/providers/native-control';
 import { isSessionRemote } from './sessionHelpers';
 import {
@@ -51,6 +52,13 @@ import {
  * settings it was displaying, so clearing a picker back to "Default" has to
  * clear the stored field rather than leave the previous value behind.
  *
+ * The model router's answer (`turnSettings.route`, on an item queued on the
+ * Auto model) is an answer about the item's TEXT. When the text changed it is
+ * dropped, so the edited message is routed for what it now says when it is
+ * dispatched, and never launched on a decision made about other words. It is
+ * dropped too when the edit took the item off Auto: an answer means nothing on
+ * a named model.
+ *
  * `crossAgent` is optional and carries the `@mention` fields, re-derived by
  * the caller from the EDITED text. It is a parameter rather than something this
  * function works out for itself because deriving it needs `planCrossAgentMentions`,
@@ -66,17 +74,21 @@ export function applyQueuedItemEdit(
 		crossAgentMention: boolean;
 	}
 ): QueuedItem[] {
-	return queue.map((item) =>
-		item.id === itemId && !item.pendingAdmissionId
-			? {
-					...item,
-					text: patch.text,
-					images: patch.images,
-					turnSettings: patch.turnSettings,
-					...(crossAgent ?? {}),
-				}
-			: item
-	);
+	return queue.map((item) => {
+		if (item.id !== itemId || item.pendingAdmissionId) return item;
+		let turnSettings = patch.turnSettings;
+		if (turnSettings?.route && (item.text !== patch.text || !isAutoModel(turnSettings.model))) {
+			const { route: _staleRoute, ...withoutRoute } = turnSettings;
+			turnSettings = withoutRoute;
+		}
+		return {
+			...item,
+			text: patch.text,
+			images: patch.images,
+			turnSettings,
+			...(crossAgent ?? {}),
+		};
+	});
 }
 
 /**
@@ -759,6 +771,7 @@ export type SteerBlockedReason =
 	| 'no-target-tab'
 	| 'tab-not-working'
 	| 'not-claude'
+	| 'provider-mismatch'
 	| 'codex-exec'
 	| 'api-token-source'
 	| 'nothing-to-type'
@@ -855,6 +868,7 @@ export function getSteerEligibility(
 	item: Pick<
 		QueuedItem,
 		| 'tabId'
+		| 'turnSettings'
 		| 'text'
 		| 'images'
 		| 'awaitingConsult'
@@ -884,6 +898,12 @@ export function getSteerEligibility(
 	if (!getQueueBusyContext(session, item).targetTabBusy) {
 		return { canSteer: false, blockedReason: 'tab-not-working' };
 	}
+	const runningTab = findQueueTargetTab(session, target.tabId);
+	const provider = resolveTurnProvider(runningTab, session);
+	if (item.turnSettings?.provider && item.turnSettings.provider !== provider)
+		return { canSteer: false, blockedReason: 'provider-mismatch' };
+	const runningClaudeMode = session.claudeInteractive?.mode;
+	session = projectTabProvider(session, runningTab, resolveTurnProvider(runningTab, session)).agent;
 	const claudeTuiActive =
 		session.toolType === 'claude-code' && session.claudeInteractive?.mode === 'interactive';
 	const nativeSteering =
@@ -894,13 +914,7 @@ export function getSteerEligibility(
 		// Native control is local-only; its adapter owns the in-turn protocol channel.
 		if (isSessionRemote(session)) return { canSteer: false, blockedReason: 'ssh-remote' };
 	} else if (session.toolType === 'codex') {
-		// A Codex turn is steerable only on the opt-in app-server transport, which
-		// accepts `turn/steer` while a turn runs, locally or over SSH (the protocol
-		// rides the ssh client's stdio). `codex exec` (the default) accepts nothing
-		// once the turn has started. An app-server agent can still run a given turn
-		// on exec (images, an unsupported arg); main answers that steer `refused`
-		// with `not-running`, so the routing is not re-derived here.
-		if (resolveCodexTransport(session) !== 'app-server') {
+		if (runningTab?.turnCodexTransport !== 'app-server') {
 			return { canSteer: false, blockedReason: 'codex-exec' };
 		}
 	} else if (isSessionRemote(session)) {
@@ -909,7 +923,7 @@ export function getSteerEligibility(
 		return { canSteer: false, blockedReason: 'ssh-remote' };
 	} else if (session.toolType !== 'claude-code') {
 		return { canSteer: false, blockedReason: 'not-claude' };
-	} else if (session.claudeInteractive?.mode !== 'interactive') {
+	} else if (runningClaudeMode !== 'interactive') {
 		return { canSteer: false, blockedReason: 'api-token-source' };
 	}
 	// Steering TYPES text into the composer, so an item with nothing to type has
@@ -1013,8 +1027,10 @@ const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
 	'no-target-tab': 'The tab this message was queued on is gone.',
 	'tab-not-working': 'No turn is running on this tab, so there is nothing to steer.',
 	'not-claude': 'This provider cannot take a message while a turn is running.',
+	'provider-mismatch':
+		'This message was queued for another provider and must wait for its own turn.',
 	'codex-exec':
-		'This Codex agent runs on the exec transport. Set Codex Transport to app server to steer it.',
+		'This Codex turn has no confirmed app-server transport. Image turns and other exec fallbacks must finish before queued messages run.',
 	'api-token-source':
 		'This turn is running on the API token source, which takes no input until it ends.',
 	'nothing-to-type': 'The message has no text to steer with.',

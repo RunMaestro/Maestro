@@ -369,9 +369,12 @@ describe('list-agents command', () => {
 
 			expect(() => listAgents({ json: true })).toThrow('process.exit(1)');
 
-			const errorOutput = consoleErrorSpy.mock.calls[0][0];
+			const errorOutput = consoleSpy.mock.calls[0][0];
 			const parsed = JSON.parse(errorOutput);
-			expect(parsed.error).toBe('JSON storage error');
+			expect(parsed).toEqual({
+				success: false,
+				error: 'Failed to list agents: JSON storage error',
+			});
 		});
 
 		it('should handle group resolution errors', () => {

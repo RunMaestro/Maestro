@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { BatchRunState } from '../../../renderer/types';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useSecretScreenStore } from '../../../renderer/stores/secretScreenStore';
 import {
 	captureAutoRunSnapshots,
 	createDebugPackage,
@@ -146,6 +147,75 @@ describe('debugPackage service', () => {
 					autoRunSnapshots: [expect.objectContaining({ sessionId: 'agent-1', isRunning: true })],
 				})
 			);
+		});
+
+		// Main screens the collected package and refuses on a finding. This is
+		// the one place the renderer asks about it, so the modal and the palette
+		// cannot answer differently.
+		describe('secret screen', () => {
+			const refusal = {
+				success: false,
+				path: null,
+				filesIncluded: [],
+				totalSizeBytes: 0,
+				cancelled: false,
+				error: 'Found 1 possible secret in the support package. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings: [
+					{ kind: 'github-token', line: 7, preview: '••••••••abcd', source: 'logs.json' },
+				],
+			};
+
+			const installCreatePackage = (createPackage: ReturnType<typeof vi.fn>) => {
+				(globalThis as unknown as { window: unknown }).window = {
+					maestro: { debug: { createPackage } },
+				};
+			};
+
+			const pendingRequest = async () => {
+				await vi.waitFor(() => expect(useSecretScreenStore.getState().queue).toHaveLength(1));
+				return useSecretScreenStore.getState().queue[0];
+			};
+
+			beforeEach(() => {
+				useSecretScreenStore.setState({ queue: [] });
+			});
+
+			it('asks "Create anyway" and repeats the request with allowSecrets on yes', async () => {
+				const createPackage = vi
+					.fn()
+					.mockResolvedValueOnce(refusal)
+					.mockResolvedValueOnce({ success: true, path: '/out/p.zip' });
+				installCreatePackage(createPackage);
+
+				const pending = createDebugPackage({ includeLogs: true });
+				const request = await pendingRequest();
+				expect(request.subject).toBe('this support package');
+				expect(request.confirmLabel).toBe('Create anyway');
+				expect(request.findings).toEqual(refusal.secretFindings);
+				expect(createPackage.mock.calls[0][0]).toMatchObject({ allowSecrets: false });
+
+				useSecretScreenStore.getState().settle(request.id, true);
+
+				await expect(pending).resolves.toEqual({ success: true, path: '/out/p.zip' });
+				expect(createPackage).toHaveBeenCalledTimes(2);
+				expect(createPackage.mock.calls[1][0]).toMatchObject({
+					includeLogs: true,
+					allowSecrets: true,
+				});
+			});
+
+			it('reports a no as cancelled, the same as a dismissed save dialog', async () => {
+				const createPackage = vi.fn().mockResolvedValueOnce(refusal);
+				installCreatePackage(createPackage);
+
+				const pending = createDebugPackage();
+				const request = await pendingRequest();
+				useSecretScreenStore.getState().settle(request.id, false);
+
+				await expect(pending).resolves.toMatchObject({ cancelled: true });
+				expect(createPackage).toHaveBeenCalledTimes(1);
+			});
 		});
 	});
 

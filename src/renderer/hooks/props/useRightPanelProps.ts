@@ -8,6 +8,8 @@
  */
 
 import { useMemo } from 'react';
+import type { ToolType } from '../../types';
+import type { ResumeSessionOptions } from '../agent/useAgentSessionManagement';
 import type {
 	Session,
 	Theme,
@@ -94,7 +96,8 @@ export interface UseRightPanelPropsDeps {
 		sessionName?: string,
 		starred?: boolean,
 		usageStats?: UsageStats,
-		projectPath?: string
+		projectPath?: string,
+		opts?: ResumeSessionOptions
 	) => void;
 
 	// Modal handlers
@@ -159,20 +162,29 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			onAbortBatchOnError: deps.handleAbortBatchOnError,
 			onResumeAfterError: deps.handleResumeAfterError,
 			onJumpToAgentSession: deps.handleJumpToAgentSession,
-			onResumeSession: deps.handleResumeSession,
+			onResumeSession: (id: string, provider?: ToolType) =>
+				deps.handleResumeSession(id, undefined, undefined, undefined, undefined, undefined, {
+					provider,
+				}),
 			// `sessionName` is the name the history entry already shows on its pill.
 			// It has to travel: the resume fallback reads the session-origins store,
 			// which is Claude-only and only ever written by a synopsis, so for every
 			// other provider (and for any session that never produced one) the history
 			// record is the ONLY surviving copy of that name.
-			onOpenSessionAsTab: (agentSessionId: string, projectPath?: string, sessionName?: string) =>
+			onOpenSessionAsTab: (
+				agentSessionId: string,
+				projectPath?: string,
+				sessionName?: string,
+				provider?: ToolType
+			) =>
 				deps.handleResumeSession(
 					agentSessionId,
 					undefined,
 					sessionName,
 					undefined,
 					undefined,
-					projectPath
+					projectPath,
+					{ provider }
 				),
 
 			// Modal handlers

@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { requestFromRenderer } from './remoteRequest';
 import type { ConsultAgentResult } from '../types';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 import { snapshotAiTurnProcesses, waitForAiTurnsToExit } from '../../utils/agent-busy';
 import {
@@ -79,6 +80,7 @@ export function parseConsultAgentResult(raw: unknown): ConsultAgentResult {
 		canceled: r.canceled === true,
 		targetAgentName: str(r.targetAgentName),
 		targetTabId: str(r.targetTabId),
+		targetToolType: str(r.targetToolType),
 	};
 }
 
@@ -105,6 +107,7 @@ export function registerCommandCallbacks(
 			force?: boolean,
 			images?: string[],
 			background?: boolean,
+			consultChain?: ConsultChain,
 			mentionRouting?: MentionRouting,
 			requireDeliveryReceipt?: boolean,
 			pianolaDispatchId?: string
@@ -159,6 +162,7 @@ export function registerCommandCallbacks(
 						force,
 						images,
 						background,
+						consultChain,
 						mentionRouting,
 						...(pianolaDispatchId ? [pianolaDispatchId] : []),
 					],
@@ -215,6 +219,7 @@ export function registerCommandCallbacks(
 					fromSessionId: params.fromSessionId,
 					fromTabId: params.fromTabId,
 					withContext: params.withContext,
+					...(params.consultChain ? { consultChain: params.consultChain } : {}),
 				},
 			],
 		});

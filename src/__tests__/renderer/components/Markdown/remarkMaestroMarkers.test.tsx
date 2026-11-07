@@ -7,19 +7,25 @@
  * transformed the node and react-markdown dropped it anyway".
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
-import { remarkMaestroMarkers } from '../../../../renderer/components/Markdown/remarkMaestroMarkers';
+import {
+	remarkMaestroMarkers,
+	type MaestroMarkersOptions,
+} from '../../../../renderer/components/Markdown/remarkMaestroMarkers';
 import { createMarkdownComponents } from '../../../../renderer/utils/markdownConfig';
 import { createChatMarkdownComponents } from '../../../../renderer/components/Markdown/chatComponents';
 import { mockTheme } from '../../../helpers/mockTheme';
 
-function renderDocument(content: string) {
+function renderDocument(content: string, options?: MaestroMarkersOptions) {
 	const components = createMarkdownComponents({ theme: mockTheme }) as Components;
 	return render(
-		<ReactMarkdown remarkPlugins={[remarkMaestroMarkers]} components={components}>
+		<ReactMarkdown
+			remarkPlugins={options ? [[remarkMaestroMarkers, options]] : [remarkMaestroMarkers]}
+			components={components}
+		>
 			{content}
 		</ReactMarkdown>
 	);
@@ -67,6 +73,36 @@ describe('marker pills on a document surface', () => {
 		const pill = screen.getByTestId('maestro-marker-model');
 		expect(pill).toHaveTextContent('high model');
 		expect(pill).toHaveTextContent('high effort');
+	});
+
+	it('names where the tier launches when the surface knows the agent', () => {
+		const describeTier = (tier: string) =>
+			tier === 'low' ? 'low · qwen3.5-4b · Maestro' : undefined;
+		renderDocument(
+			[
+				'<!-- MAESTRO:MODEL tier="low" effort="medium" -->',
+				'- [ ] Rename the helper',
+				'',
+				'<!-- MAESTRO:MODEL tier="high" -->',
+				'- [ ] Design the migration',
+			].join('\n'),
+			{ describeTier }
+		);
+		const [low, high] = screen.getAllByTestId('maestro-marker-model');
+		// The tier and its target take the place of "low model"; effort stays.
+		expect(low).toHaveTextContent('low · qwen3.5-4b · Maestro, medium effort');
+		expect(low).not.toHaveTextContent('low model');
+		// A tier with no target on this agent keeps the plain wording.
+		expect(high).toHaveTextContent('high model');
+	});
+
+	it('never asks where the agent default launches', () => {
+		const describeTier = vi.fn(() => 'unused');
+		renderDocument(['<!-- MAESTRO:MODEL tier="default" -->', '', '- [ ] Design'].join('\n'), {
+			describeTier,
+		});
+		expect(screen.getByTestId('maestro-marker-model')).toHaveTextContent('default model');
+		expect(describeTier).not.toHaveBeenCalled();
 	});
 
 	it('shows an inline model hint beside its own task', () => {

@@ -165,6 +165,31 @@ afterEach(() => {
 // ============================================================================
 
 describe('useTabExportHandlers', () => {
+	it('exports pending context using its native owner and ID', async () => {
+		const tab = createMockTab({
+			id: 'tab-1',
+			tabProvider: 'codex',
+			agentSessionId: 'old-codex',
+			pendingTranslation: 'opencode',
+			providerSessions: { opencode: { agentSessionId: 'latest-opencode' } },
+		});
+		const session = createMockSession({ aiTabs: [tab] });
+		const deps = createDeps({
+			sessionsRef: { current: [session] },
+			activeSessionIdRef: { current: session.id },
+		});
+		const { result } = renderHook(() => useTabExportHandlers(deps));
+		await act(async () => {
+			await result.current.handleExportHtml(tab.id);
+		});
+		expect(mockDownloadTabExport).toHaveBeenCalledWith(
+			expect.objectContaining({ agentSessionId: 'latest-opencode' }),
+			expect.objectContaining({ toolType: 'opencode' }),
+			deps.themeRef.current
+		);
+		expect(tab.agentSessionId).toBe('old-codex');
+	});
+
 	// ========================================================================
 	// Return shape
 	// ========================================================================
@@ -441,7 +466,7 @@ describe('useTabExportHandlers', () => {
 			});
 
 			expect(mockDownloadTabExport).toHaveBeenCalledWith(
-				tab,
+				{ ...tab, tabProvider: 'claude-code' },
 				{
 					name: 'My Project',
 					cwd: '/projects/myapp',

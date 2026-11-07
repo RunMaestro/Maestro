@@ -40,6 +40,21 @@ function browserIdMap(
 }
 
 describe('CoworkingRegistry browser methods', () => {
+	it('uses captured-provider permissions and refuses unknown owners without borrowing the default', () => {
+		const registry = new CoworkingRegistry();
+		registry.syncSessionBrowsers('mixed', [], false, undefined, 'all', {
+			'claude-code': { interactionEnabled: false, confirmPolicy: 'all' },
+			codex: { interactionEnabled: true, confirmPolicy: 'off' },
+		});
+		expect(registry.isBrowserInteractionEnabled('mixed')).toBe(false);
+		expect(registry.isBrowserInteractionEnabled('mixed', 'claude-code')).toBe(false);
+		expect(registry.isBrowserInteractionEnabled('mixed', 'codex')).toBe(true);
+		expect(registry.getBrowserConfirmPolicy('mixed', 'codex')).toBe('off');
+		expect(registry.isBrowserInteractionEnabled('mixed', 'opencode')).toBe(false);
+		registry.removeSession('mixed');
+		expect(registry.isBrowserInteractionEnabled('mixed', 'codex')).toBe(false);
+	});
+
 	let registry: CoworkingRegistry;
 	beforeEach(() => {
 		registry = new CoworkingRegistry();
@@ -144,6 +159,24 @@ describe('CoworkingRegistry browser methods', () => {
 });
 
 describe('coworking browser tools', () => {
+	it('forwards the captured caller to the browser resolver', async () => {
+		const caller = { sessionId: 's1', processSessionId: 's1-ai-t1', provider: 'codex' as const };
+		let received: unknown;
+		await browserInteract(
+			's1',
+			{ id: 'browser:1', op: { kind: 'reload' } },
+			{
+				registry,
+				caller,
+				resolver: async (_session, _tab, _op, owner) => {
+					received = owner;
+					return { ok: true };
+				},
+			}
+		);
+		expect(received).toBe(caller);
+	});
+
 	let registry: CoworkingRegistry;
 	beforeEach(() => {
 		registry = new CoworkingRegistry();

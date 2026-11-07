@@ -11,6 +11,7 @@
 
 import { ipcRenderer } from 'electron';
 import type {
+	CreateGistResult,
 	GitCommandOutputChunk,
 	GitRunCommandResult,
 	GitStreamingOperation,
@@ -493,12 +494,18 @@ export function createGitApi() {
 			content: string,
 			description: string,
 			isPublic: boolean,
-			ghPath?: string
-		): Promise<{
-			success: boolean;
-			gistUrl?: string;
-			error?: string;
-		}> => ipcRenderer.invoke('git:createGist', filename, content, description, isPublic, ghPath),
+			ghPath?: string,
+			options?: { allowSecrets?: boolean }
+		): Promise<CreateGistResult> =>
+			ipcRenderer.invoke(
+				'git:createGist',
+				filename,
+				content,
+				description,
+				isPublic,
+				ghPath,
+				options
+			),
 
 		/**
 		 * List all worktrees for a git repository

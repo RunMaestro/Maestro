@@ -17,12 +17,27 @@ import type { Session, TaskSelectionMode, UsageStats } from '../../types';
 import { substituteTemplateVariables, TemplateContext } from '../../utils/templateVariables';
 import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
 import { countMarkdownTasks, getTaskSelectionBlock } from './batchUtils';
-import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../agent/useAgentExecution';
+import type {
+	AgentSpawnErrorKind,
+	SpawnAgentOptions,
+	SpawnAgentRunOverrides,
+} from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
 import { extractTaskSynopsis } from '../../../shared/maestro-lib/autorun/synopsis';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../../shared/autorunModelHints';
-import { resolveTurnSettings } from '../../../shared/autorunTurnSettings';
+import {
+	describeTurnSettings,
+	resolveTurnSettings,
+	type ResolvedTurnSettings,
+} from '../../../shared/autorunTurnSettings';
+import { isAutoModel } from '../../../shared/autoModel';
+import { autoTurnNeedsRoute, resolveAutoTurn, type AutoTurnStamp } from '../../../shared/autoTurn';
+import { MODEL_ROUTING_UNATTENDED_TIMEOUT_MS } from '../../../shared/local-models/model-routing-task';
+import { autoRunRoutingPrompt } from '../../../shared/markdownTaskScan';
+import { requestTurnRoute } from '../../services/autoTurn';
+import type { TierRouting } from '../../../shared/modelTiers';
+import { useSettingsStore } from '../../stores/settingsStore';
 import {
 	formatSteeringNotesBlock,
 	type AutoRunSteeringNote,
@@ -201,13 +216,14 @@ export interface DocumentReadResult {
 }
 
 /**
- * Per-task model/effort resolved from the document's `MAESTRO:MODEL` hint.
- * Undefined on either axis means the agent's configured value stands.
+ * Per-task model/effort resolved from the document's `MAESTRO:MODEL` hint, and
+ * the Run on target when the hint's tier names a place. Undefined on an axis
+ * means the agent's configured value stands.
  */
-export interface AutoRunTurnOverrides {
-	modelOverride?: string;
-	effortOverride?: string;
-}
+export type AutoRunTurnOverrides = Pick<
+	SpawnAgentOptions,
+	'modelOverride' | 'effortOverride' | 'runOnOverride' | 'autoStamp'
+>;
 
 /**
  * The run-scoped settings a BatchRunConfig hands the document processor: the
@@ -423,15 +439,15 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			const ignoreModelHints = runOverrides?.ignoreModelHints === true;
 			const baselineModel = runOverrides?.modelOverride ?? session.customModel;
 			const baselineEffort = runOverrides?.effortOverride ?? session.customEffort;
-			const turnSettings = resolveTurnSettings(
-				session.toolType,
-				ignoreModelHints ? null : findActiveModelHint(documentContent),
-				baselineModel,
-				baselineEffort
-			);
-			for (const warning of turnSettings.warnings) {
-				logger.warn(`[DocumentProcessor] ${warning}`, undefined, { document: filename });
-			}
+			// Where a tier launches for this agent: its own tier targets, then the
+			// harness defaults. Read from the store per dispatch, not captured, so a
+			// change made while the run is going applies to the next task.
+			const tierRouting: TierRouting = {
+				tierTargets: session.tierTargets,
+				runOn: session.runOn,
+				harnessDefaults: useSettingsStore.getState().harnessTierDefaults,
+			};
+			const modelHint = ignoreModelHints ? null : findActiveModelHint(documentContent);
 
 			// Resolve the task-selection block placeholder before the generic template
 			// substitution pass so any variables inside the swapped-in block are also
@@ -452,12 +468,58 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 						documentContent,
 						session.toolType,
 						baselineModel,
-						baselineEffort
+						baselineEffort,
+						tierRouting
 					);
 			const promptWithSelectionBlock = customPrompt.replace(
 				/\{\{TASK_SELECTION_BLOCK\}\}/gi,
 				getTaskSelectionBlock(taskSelectionMode, hintSegment)
 			);
+
+			// The settings this dispatch runs under. On a named model: the marker,
+			// then the baseline. On the Auto model each dispatch is ROUTED: the
+			// router reads the tasks the dispatch will work (not the playbook's
+			// instructions, which are the same words for every task), and its tier
+			// and effort apply. A `MAESTRO:MODEL` marker always wins on the axes it
+			// sets, and one that sets both leaves the router nothing to ask. Each
+			// task starts a fresh provider session, so there is no model to keep.
+			let turnSettings: ResolvedTurnSettings;
+			// What Auto did with this dispatch, for its stats row. Undefined on a named model.
+			let autoStamp: AutoTurnStamp | undefined;
+			if (isAutoModel(baselineModel)) {
+				const route = autoTurnNeedsRoute(modelHint)
+					? await requestTurnRoute({
+							sessionId: session.id,
+							prompt: autoRunRoutingPrompt(
+								documentContent,
+								taskSelectionMode === 'document' ? hintSegment?.count : 1
+							),
+							timeoutMs: MODEL_ROUTING_UNATTENDED_TIMEOUT_MS,
+						})
+					: undefined;
+				const autoTurn = resolveAutoTurn({
+					toolType: session.toolType,
+					...(route ? { route } : {}),
+					agentEffort: baselineEffort,
+					routing: tierRouting,
+					marker: modelHint,
+				});
+				turnSettings = autoTurn;
+				autoStamp = autoTurn.stamp;
+				const note = describeTurnSettings({ ...turnSettings, warnings: [] });
+				if (note) logger.info(`[DocumentProcessor] ${note}`, undefined, { document: filename });
+			} else {
+				turnSettings = resolveTurnSettings(
+					session.toolType,
+					modelHint,
+					baselineModel,
+					baselineEffort,
+					tierRouting
+				);
+			}
+			for (const warning of turnSettings.warnings) {
+				logger.warn(`[DocumentProcessor] ${warning}`, undefined, { document: filename });
+			}
 
 			// Substitute template variables in the prompt
 			const substitutedPrompt = substituteTemplateVariables(
@@ -491,13 +553,23 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			// spans a lid close must not report the sleep as agent work time.
 			const taskSpan = beginSleepAwareSpan();
 
-			// Spawn agent with the prompt, using effective cwd (may be worktree path)
-			const result = await callbacks.onSpawnAgent(
-				session.id,
-				finalPrompt,
-				effectiveCwd !== session.cwd ? effectiveCwd : undefined,
-				{ modelOverride: turnSettings.model, effortOverride: turnSettings.effort }
-			);
+			// Spawn agent with the prompt, using effective cwd (may be worktree path).
+			// A tier target that cannot be used fails the task by name. It is never
+			// launched on the agent's own model in its place.
+			const tierRefusal = turnSettings.refusal;
+			const result: Awaited<ReturnType<AutoRunSpawnAgentFn>> = tierRefusal
+				? { success: false, error: tierRefusal.message }
+				: await callbacks.onSpawnAgent(
+						session.id,
+						finalPrompt,
+						effectiveCwd !== session.cwd ? effectiveCwd : undefined,
+						{
+							modelOverride: turnSettings.model,
+							effortOverride: turnSettings.effort,
+							runOnOverride: turnSettings.runOn,
+							...(autoStamp ? { autoStamp } : {}),
+						}
+					);
 
 			// Capture elapsed time (machine sleep excluded)
 			const elapsedTimeMs = sleepAwareElapsedMs(taskSpan);
