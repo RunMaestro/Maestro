@@ -134,6 +134,18 @@ describe('lift refusals', () => {
 		['a local agent', { sessionSshRemoteConfig: undefined }, 'LIFT_NOT_SSH'],
 		['a busy tab', { aiTabs: [{ id: 'tab-1', state: 'busy' as const }] }, 'LIFT_BUSY'],
 		['a busy agent', { state: 'busy' as const }, 'LIFT_BUSY'],
+		[
+			'an agent whose SSH remote is no longer configured',
+			{
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'gone',
+					workingDirOverride: '/home/me/docs',
+				},
+			},
+			'LIFT_REMOTE_MISSING',
+		],
+		['an agent with no AI tab to move', { aiTabs: [] }, 'LIFT_NO_TABS'],
 	])('refuses %s before reaching the host', async (_label, overrides, code) => {
 		const { deps } = depsWith(sshAgent(overrides as Partial<AgentRecord>));
 		await lift('agent-1', { json: true }, deps);
