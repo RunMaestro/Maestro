@@ -160,6 +160,25 @@ describe('FileTreeRow', () => {
 			expect(stem.style.left).toBe('32px');
 		});
 
+		it('reaches a folder chevron and a file icon with the same 4px gap', () => {
+			// Depth 2: padding 48, so the chevron slot starts at 48 and the icon
+			// column at 48 + 12 (slot) + 8 (gap) = 68. The arm starts at 32.
+			const armEnd = (node: FileNode) => {
+				const { container, unmount } = render(
+					<FileTreeRow {...defaultProps} item={makeItem(node, 2)} />
+				);
+				const arm = container.querySelector<HTMLElement>(
+					'[data-testid="file-tree-connector-arm"]'
+				)!;
+				const end = parseFloat(arm.style.left) + parseFloat(arm.style.width);
+				unmount();
+				return end;
+			};
+			expect(armEnd(folderNode)).toBe(44);
+			// A file's chevron slot is empty, so its arm crosses it to the icon.
+			expect(armEnd(fileNode)).toBe(64);
+		});
+
 		it('runs the elbow stem full height when the row has a following sibling', () => {
 			const { container } = render(
 				<FileTreeRow {...defaultProps} item={makeItem(fileNode, 1, { isLastChild: false })} />

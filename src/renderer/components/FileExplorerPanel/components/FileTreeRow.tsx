@@ -9,7 +9,7 @@ import type { FileExplorerIconTheme } from '../../../utils/fileExplorerIcons/sha
 import type { FlattenedNode } from '../types';
 import { FILE_TREE_SINGLE_MIME, FILE_TREE_MULTI_MIME } from '../types';
 import { parentDirOf } from '../utils/pathHelpers';
-import { CONNECTOR_ARM_WIDTH, INDENT_STEP, guideLeft, rowPaddingLeft } from '../utils/treeLines';
+import { INDENT_STEP, connectorArmWidth, guideLeft, rowPaddingLeft } from '../utils/treeLines';
 
 interface VirtualRow {
 	index: number;
@@ -203,7 +203,7 @@ export const FileTreeRow = memo(function FileTreeRow({
 				style={{
 					left: `${elbowLeft}px`,
 					top: '50%',
-					width: `${CONNECTOR_ARM_WIDTH}px`,
+					width: `${connectorArmWidth(isFolder)}px`,
 					backgroundColor: theme.colors.border,
 				}}
 			/>
