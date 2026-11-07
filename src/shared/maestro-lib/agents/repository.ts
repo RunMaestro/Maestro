@@ -31,6 +31,7 @@ import { workingDirectoryChangeBlocker } from '../../agentWorkingDirectory';
 import { isValidAgentId } from '../../agentIds';
 import type {
 	AgentCreateInput,
+	AgentImportInput,
 	AgentPatch,
 	AgentPatchField,
 	AgentUpdateReceipt,
@@ -78,11 +79,13 @@ import {
 	buildAgentConfigPatch,
 	buildAgentRecord,
 	buildGroupRecord,
+	buildImportedAgentRecord,
 	beginTurnRecord,
 	openConsultTabRecord,
 	recordConsultAnswerRecord,
 	buildTabConfigPatch,
 	checkAgentCreateInput,
+	checkAgentImportInput,
 	checkAgentName,
 	closeTabRecord,
 	DEFAULT_RULE_CONTEXT,
@@ -169,6 +172,12 @@ export interface AgentRepository {
 	drain(): Promise<void>;
 
 	createAgent(input: AgentCreateInput): Promise<ClientResult<{ agentId: string }>>;
+	/**
+	 * Create an agent another Maestro handed over, with its tabs, transcripts, and provider
+	 * session ids (Federation lift). The working directory must be usable on this machine.
+	 * Queued messages are not stored: the runtime's queue is in memory, so its caller sends them.
+	 */
+	importAgent(input: AgentImportInput): Promise<ClientResult<{ agentId: string }>>;
 	updateAgent(agentId: string, patch: AgentPatch): Promise<ClientResult<AgentUpdateReceipt>>;
 	renameAgent(agentId: string, name: string): Promise<ClientResult<void>>;
 	removeAgent(agentId: string): Promise<ClientResult<void>>;
@@ -536,6 +545,40 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 
 			const defaults = await readTabDefaults();
 			const { agent } = buildAgentRecord(input, checked.value, ctx, defaults);
+			return {
+				ok: true,
+				plan: {
+					value: { agentId: agent.id },
+					sessions: {
+						...sessionsDoc,
+						sessions: [...(sessionsDoc.sessions ?? []), agent],
+					},
+					events: [{ type: 'agent.added', agent: project(agent) }],
+				},
+			};
+		});
+	}
+
+	function importAgent(input: AgentImportInput): Promise<ClientResult<{ agentId: string }>> {
+		const method: ClientMethod = 'agents.import';
+		return run(method, async () => {
+			const checked = checkAgentImportInput(input);
+			if (!checked.ok) return failure(method, checked.code, checked.message);
+
+			const validation = validateNewAgent(checked.value.name, checked.value.cwd, agents(), null);
+			if (!validation.valid) {
+				return failure(method, 'invalid', validation.error ?? 'The agent cannot be imported.');
+			}
+			if (input.agent.groupId && !groups().some((group) => group.id === input.agent.groupId)) {
+				return noGroup(method, input.agent.groupId);
+			}
+			// The same check `create` applies to a local agent: the agent runs here, so its
+			// directory must be here.
+			const reason = checkCwd(checked.value.cwd);
+			if (reason) return failure(method, 'invalid', reason);
+
+			const defaults = await readTabDefaults();
+			const agent = buildImportedAgentRecord(input, checked.value, ctx, defaults);
 			return {
 				ok: true,
 				plan: {
@@ -1085,6 +1128,7 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 			await chain;
 		},
 		createAgent,
+		importAgent,
 		updateAgent,
 		renameAgent,
 		removeAgent,

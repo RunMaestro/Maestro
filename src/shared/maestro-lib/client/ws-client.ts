@@ -29,6 +29,7 @@ import {
 	buildAgentConfigPatch,
 	buildTabConfigPatch,
 	checkAgentCreateInput,
+	checkAgentImportInput,
 	MAX_AGENT_NAME_LENGTH,
 } from '../agents/rules';
 import { createEventBus } from './event-bus';
@@ -81,6 +82,9 @@ import {
 import { ClientMirror, type ProjectedAgent, type ProjectedTab } from './mirror';
 import type {
 	AgentCreateInput,
+	AgentImportInput,
+	AgentImportReceipt,
+	AgentImportTab,
 	AgentPatch,
 	AgentPatchField,
 	AgentUpdateReceipt,
@@ -131,6 +135,9 @@ const MAX_CHAT_NAME_LENGTH = 100;
 
 const TOO_OLD_MESSAGE = 'The running Maestro is too old for the TUI; update the desktop app.';
 
+/** The least time an `import_agent` gets: it carries every transcript the agent has. */
+const IMPORT_TIMEOUT_MS = 60_000;
+
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
@@ -151,6 +158,53 @@ function asString(value: unknown): string | undefined {
  * A headless host's `autorun_ended` outcome, or `undefined` for anything else: a status this
  * client does not know is dropped rather than passed on as one it does.
  */
+/**
+ * An agent input in `create_session`'s spelling (the record's keys), for `create_session` and
+ * `import_agent`. `name` is the checked name. Blank env values are dropped: blank means unset.
+ */
+function agentWireFields(
+	input: Omit<AgentCreateInput, 'ssh'> & { ssh?: AgentCreateInput['ssh'] },
+	name: string
+): Record<string, unknown> {
+	const env = input.env ? stripBlankEnvVars(input.env) : undefined;
+	const fields: Record<string, unknown> = { name, toolType: input.provider, cwd: input.cwd };
+	const optional: Array<[string, unknown]> = [
+		['groupId', input.groupId],
+		['nudgeMessage', input.nudgeMessage],
+		['newSessionMessage', input.newSessionMessage],
+		['customPath', input.customPath],
+		['customArgs', input.customArgs],
+		['customEnvVars', env && Object.keys(env).length > 0 ? env : undefined],
+		['customModel', input.model],
+		['customEffort', input.effort],
+		['customContextWindow', input.contextWindow],
+		['sessionSshRemoteConfig', input.ssh],
+		['autoRunFolderPath', input.autoRunFolderPath],
+	];
+	for (const [key, value] of optional) if (value !== undefined && value !== '') fields[key] = value;
+	if (input.contextWindow !== undefined) fields.contextWindowSource = 'user-edited';
+	return fields;
+}
+
+/** An imported tab in the record's spelling, as `import_agent` carries it. */
+function importTabWireFields(tab: AgentImportTab): Record<string, unknown> {
+	const fields: Record<string, unknown> = { id: tab.id, logs: tab.logs };
+	const optional: Array<[string, unknown]> = [
+		['name', tab.name],
+		['starred', tab.starred],
+		['agentSessionId', tab.agentSessionId],
+		['createdAt', tab.createdAt],
+		['saveToHistory', tab.saveToHistory],
+		['showThinking', tab.showThinking],
+		['readOnlyMode', tab.readOnlyMode],
+		['customModel', tab.model],
+		['customEffort', tab.effort],
+		['usageStats', tab.usageStats],
+	];
+	for (const [key, value] of optional) if (value !== undefined) fields[key] = value;
+	return fields;
+}
+
 function parseAutoRunOutcome(value: unknown): AutoRunOutcome | undefined {
 	if (!isObject(value)) return undefined;
 	const reason = asString(value.reason) ?? '';
@@ -267,6 +321,7 @@ class WsMaestroClient implements MaestroClient {
 		},
 		get: (agentId: string) => this.agentsGet(agentId),
 		create: (input: AgentCreateInput) => this.agentsCreate(input),
+		import: (input: AgentImportInput) => this.agentsImport(input),
 		update: (agentId: string, patch: AgentPatch) => this.agentsUpdate(agentId, patch),
 		rename: (agentId: string, name: string) => this.agentsRename(agentId, name),
 		remove: (agentId: string) => this.agentsRemove(agentId),
@@ -1286,33 +1341,12 @@ class WsMaestroClient implements MaestroClient {
 	private async agentsCreate(input: AgentCreateInput): Promise<ClientResult<{ agentId: string }>> {
 		const inputCheck = checkAgentCreateInput(input);
 		if (!inputCheck.ok) return this.fail('agents.create', inputCheck.code, inputCheck.message);
-		const { name } = inputCheck.value;
 
-		const env = input.env ? stripBlankEnvVars(input.env) : undefined;
 		const message: Record<string, unknown> = {
 			type: 'create_session',
-			name,
-			toolType: input.provider,
-			cwd: input.cwd,
+			...agentWireFields(input, inputCheck.value.name),
 			background: true,
 		};
-		const optional: Array<[string, unknown]> = [
-			['groupId', input.groupId],
-			['nudgeMessage', input.nudgeMessage],
-			['newSessionMessage', input.newSessionMessage],
-			['customPath', input.customPath],
-			['customArgs', input.customArgs],
-			['customEnvVars', env && Object.keys(env).length > 0 ? env : undefined],
-			['customModel', input.model],
-			['customEffort', input.effort],
-			['customContextWindow', input.contextWindow],
-			['sessionSshRemoteConfig', input.ssh],
-			['autoRunFolderPath', input.autoRunFolderPath],
-		];
-		for (const [key, value] of optional)
-			if (value !== undefined && value !== '') message[key] = value;
-		if (input.contextWindow !== undefined) message.contextWindowSource = 'user-edited';
-
 		const sent = await this.send('agents.create', message, 'create_session_result');
 		if (!sent.ok) return sent;
 		const checked = this.checkResult('agents.create', sent.value);
@@ -1321,6 +1355,38 @@ class WsMaestroClient implements MaestroClient {
 		if (!agentId)
 			return this.fail('agents.create', 'failed', 'The desktop did not report the new agent.');
 		return ok({ agentId });
+	}
+
+	private async agentsImport(input: AgentImportInput): Promise<ClientResult<AgentImportReceipt>> {
+		const inputCheck = checkAgentImportInput(input);
+		if (!inputCheck.ok) return this.fail('agents.import', inputCheck.code, inputCheck.message);
+
+		const message: Record<string, unknown> = {
+			type: 'import_agent',
+			agent: agentWireFields(input.agent, inputCheck.value.name),
+			tabs: input.tabs.map(importTabWireFields),
+			...(input.activeTabId ? { activeTabId: input.activeTabId } : {}),
+			...(input.queue && input.queue.length > 0 ? { queue: input.queue } : {}),
+		};
+		// A long transcript is a large frame: give it the time a large frame takes.
+		const sent = await this.send('agents.import', message, 'import_agent_result', {
+			timeoutMs: Math.max(this.requestTimeoutMs, IMPORT_TIMEOUT_MS),
+		});
+		if (!sent.ok) return sent;
+		const checked = this.checkResult('agents.import', sent.value);
+		if (!checked.ok) return checked;
+		const agentId = asString(sent.value.sessionId);
+		if (!agentId) {
+			return this.fail('agents.import', 'failed', 'The host did not report the imported agent.');
+		}
+		const notices = Array.isArray(sent.value.notices)
+			? sent.value.notices.filter((notice): notice is string => typeof notice === 'string')
+			: [];
+		return ok({
+			agentId,
+			queued: typeof sent.value.queued === 'number' ? sent.value.queued : 0,
+			...(notices.length > 0 ? { notices } : {}),
+		});
 	}
 
 	private async agentsRename(agentId: string, name: string): Promise<ClientResult<void>> {

@@ -72,6 +72,7 @@ export type ClientMethod =
 	| 'agents.list'
 	| 'agents.get'
 	| 'agents.create'
+	| 'agents.import'
 	| 'agents.update'
 	| 'agents.rename'
 	| 'agents.remove'
@@ -193,6 +194,61 @@ export interface AgentCreateInput {
 }
 
 /**
+ * One tab an imported agent brings with it (Federation lift): its chips, its transcript, and the
+ * provider session its next turn resumes. Absent fields take the host's defaults for a new tab.
+ */
+export interface AgentImportTab {
+	/** Kept on the host, so a queued message, a pin, or a link that names the tab still finds it. */
+	id: string;
+	name?: string | null;
+	starred?: boolean;
+	/**
+	 * The provider session id. The SAME id on the host, so the next turn resumes the conversation
+	 * from the provider's own session files, which already sit on the host.
+	 */
+	agentSessionId?: string | null;
+	createdAt?: number;
+	saveToHistory?: boolean;
+	showThinking?: ThinkingMode;
+	readOnlyMode?: boolean;
+	model?: string;
+	effort?: string;
+	usageStats?: UsageStats;
+	/** The transcript, oldest first, as the source persisted it. */
+	logs: LogEntryRecord[];
+}
+
+/** A message that was waiting on the source agent. It runs on the host in the order given. */
+export interface AgentImportQueuedMessage {
+	/** The tab it waits for: an `id` from `AgentImportInput.tabs`. */
+	tabId: string;
+	text: string;
+	/** Images as data URLs. */
+	images?: string[];
+}
+
+/**
+ * An agent moved onto this host from another Maestro (Federation lift). The agent runs locally on
+ * the host, so `agent.ssh` is refused, and `agent.cwd` must exist here.
+ */
+export interface AgentImportInput {
+	agent: Omit<AgentCreateInput, 'ssh'>;
+	/** At least one tab, in strip order. */
+	tabs: AgentImportTab[];
+	/** The tab the person was looking at. Absent, or not one of `tabs`: the first tab. */
+	activeTabId?: string;
+	queue?: AgentImportQueuedMessage[];
+}
+
+export interface AgentImportReceipt {
+	agentId: string;
+	/** How many of the queued messages the host accepted. */
+	queued: number;
+	/** A queued message the host could not accept, one line each. The agent itself was imported. */
+	notices?: string[];
+}
+
+/**
  * AG-4. Absent means unchanged; `null` clears the field so it inherits again.
  * `env` replaces the whole map, because it is one field on the host.
  */
@@ -244,6 +300,11 @@ export interface AgentsApi {
 	/** One agent, read fresh from the host. An edit form opens on this. */
 	get(agentId: string): Promise<ClientResult<AgentRecord>>;
 	create(input: AgentCreateInput): Promise<ClientResult<{ agentId: string }>>;
+	/**
+	 * Create an agent from one another Maestro hands over, with its tabs, transcripts, provider
+	 * session ids, and queued messages (Federation lift). Same checks as `create`.
+	 */
+	import(input: AgentImportInput): Promise<ClientResult<AgentImportReceipt>>;
 	update(agentId: string, patch: AgentPatch): Promise<ClientResult<AgentUpdateReceipt>>;
 	/** Same as `update(agentId, { name })`. */
 	rename(agentId: string, name: string): Promise<ClientResult<void>>;
