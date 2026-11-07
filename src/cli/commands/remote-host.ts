@@ -23,6 +23,11 @@ import {
 import type { SshRemoteConfig } from '../../shared/types';
 import { ExitCode } from '../exit-codes';
 import { colorize, formatError, formatSuccess } from '../output/formatter';
+import {
+	PeerResolveError,
+	findPeerRemote,
+	requireFederationRemote,
+} from '../services/peer-resolver';
 import { readSshRemotes, resolveSshRemoteId } from '../services/storage';
 
 export interface RemoteHostOptions {
@@ -80,35 +85,6 @@ function fail(options: RemoteHostOptions, message: string, code: ExitCode): void
 	if (options.json) console.log(JSON.stringify({ error: message }, null, 2));
 	else console.error(formatError(message));
 	process.exitCode = code;
-}
-
-/** An exact (case-insensitive) name first, then an id or id prefix, like the other remote verbs. */
-function findRemote(ref: string, deps: RemoteHostDeps): SshRemoteConfig {
-	const remotes = deps.readRemotes();
-	const byName = remotes.filter((r) => r.name.toLowerCase() === ref.toLowerCase());
-	if (byName.length === 1) return byName[0];
-	let id: string;
-	try {
-		id = deps.resolveRemoteId(ref);
-	} catch (error) {
-		throw new RemoteHostUsageError(
-			error instanceof Error ? error.message : String(error),
-			ExitCode.InvalidUsage
-		);
-	}
-	const remote = remotes.find((r) => r.id === id);
-	if (!remote)
-		throw new RemoteHostUsageError(`SSH remote not found: ${ref}`, ExitCode.InvalidUsage);
-	return remote;
-}
-
-/** Refuse a remote that is not opted in: Maestro never dials one (decision D8). */
-function requireFederation(remote: SshRemoteConfig): void {
-	if (remote.federation) return;
-	throw new RemoteHostUsageError(
-		`SSH remote "${remote.name}" is not opted in to Federation, so Maestro does not dial it. ` +
-			`Turn it on with: maestro-cli update-ssh-remote ${remote.id} --federation on`
-	);
 }
 
 function discoveryOptions(options: RemoteHostOptions): DiscoverRemoteHostOptions {
@@ -194,7 +170,7 @@ export function formatRemoteHostStatus(report: RemoteHostStatusReport): string {
 }
 
 function reportError(options: RemoteHostOptions, error: unknown): void {
-	if (error instanceof RemoteHostUsageError) {
+	if (error instanceof RemoteHostUsageError || error instanceof PeerResolveError) {
 		fail(options, error.message, error.exitCode);
 		return;
 	}
@@ -230,8 +206,11 @@ export async function remoteHostStatus(
 ): Promise<void> {
 	const deps = { ...defaultDeps, ...overrides };
 	try {
-		const remote = findRemote(ref, deps);
-		requireFederation(remote);
+		const remote = findPeerRemote(ref, {
+			readRemotes: deps.readRemotes,
+			resolveRemoteId: deps.resolveRemoteId,
+		});
+		requireFederationRemote(remote);
 		const opts = discoveryOptions(options);
 		const found = await deps.discover(remote, opts);
 		printStatus(options, buildRemoteHostStatusReport(remote, found, localVersion));
@@ -248,8 +227,11 @@ export async function remoteHostStart(
 ): Promise<void> {
 	const deps = { ...defaultDeps, ...overrides };
 	try {
-		const remote = findRemote(ref, deps);
-		requireFederation(remote);
+		const remote = findPeerRemote(ref, {
+			readRemotes: deps.readRemotes,
+			resolveRemoteId: deps.resolveRemoteId,
+		});
+		requireFederationRemote(remote);
 		const opts = discoveryOptions(options);
 		const before = await deps.discover(remote, opts);
 		if (!before.installed || before.running) {
