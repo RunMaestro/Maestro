@@ -49,7 +49,10 @@ vi.mock('../../../../renderer/services/git', () => ({
 	gitService: { getDiff: vi.fn().mockResolvedValue({ diff: 'diff --git a/x b/x' }) },
 }));
 
-vi.mock('../../../../renderer/stores/centerFlashStore', () => ({
+// Spread the real module: `resetStores` (from the helpers) imports the store
+// itself, so a factory that only returns `notifyCenterFlash` throws at import.
+vi.mock('../../../../renderer/stores/centerFlashStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/stores/centerFlashStore')>()),
 	notifyCenterFlash: vi.fn(),
 }));
 
