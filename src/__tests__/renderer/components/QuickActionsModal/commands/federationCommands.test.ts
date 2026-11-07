@@ -20,6 +20,8 @@ function build(overrides: Partial<Parameters<typeof buildFederationCommands>[0]>
 		selectMirroredAgent: vi.fn(),
 		reconnectPeer: vi.fn(),
 		copyPeerAgentRef: vi.fn(),
+		requestMoveToHost: vi.fn(),
+		openLiftedAgent: vi.fn(),
 		setQuickActionOpen: vi.fn(),
 		...overrides,
 	};
@@ -55,5 +57,26 @@ describe('buildFederationCommands', () => {
 		expect(copy?.label).toContain('buildbox:a1');
 		copy?.action();
 		expect(deps.copyPeerAgentRef).toHaveBeenCalledWith('buildbox', 'a1');
+	});
+
+	it('offers Move to Host for the active agent only when it can move', () => {
+		expect(build().commands.some((c) => c.id === 'federation-move-to-host')).toBe(false);
+		const { deps, commands } = build({
+			moveToHost: { sessionId: 's1', agentName: 'Docs', peerName: 'Build Box' },
+		});
+		const move = commands.find((c) => c.id === 'federation-move-to-host');
+		expect(move?.label).toBe('Move to Host: Docs (Build Box)');
+		move?.action();
+		expect(deps.requestMoveToHost).toHaveBeenCalledWith('s1');
+		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
+	});
+
+	it('offers to open a lifted agent on its host', () => {
+		expect(build().commands.some((c) => c.id === 'federation-open-lifted-agent')).toBe(false);
+		const { deps, commands } = build({ liftedTarget: { ref: 'buildbox:h1' } });
+		const open = commands.find((c) => c.id === 'federation-open-lifted-agent');
+		expect(open?.label).toBe('Open on Host (buildbox:h1)');
+		open?.action();
+		expect(deps.openLiftedAgent).toHaveBeenCalled();
 	});
 });

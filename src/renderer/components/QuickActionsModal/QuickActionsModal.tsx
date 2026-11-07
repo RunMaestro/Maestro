@@ -92,6 +92,8 @@ import { buildStarredSessionCommands } from './commands/starredSessionCommands';
 import { buildFederationCommands } from './commands/federationCommands';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { copyPeerAgentRef, reconnectPeer } from '../../services/peerMirror';
+import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
+import { useLiftedMirrorTarget, useMoveToHostPeer } from '../../hooks/federation/useAgentLift';
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
 import { buildTabGroupCommands } from './commands/tabGroupCommands';
@@ -582,12 +584,28 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const mirrorOrder = usePeerMirrorStore((s) => s.order);
 	const mirrorPeers = usePeerMirrorStore((s) => s.peers);
 	const activeMirror = usePeerMirrorStore((s) => s.activeMirror);
+	const moveToHostPeer = useMoveToHostPeer(activeSession);
+	const liftedTarget = useLiftedMirrorTarget(activeSession?.liftedTo);
 	const federationActions = buildFederationCommands({
 		peers: mirrorOrder.flatMap((peerId) => (mirrorPeers[peerId] ? [mirrorPeers[peerId]] : [])),
 		activeMirror,
 		selectMirroredAgent: usePeerMirrorStore.getState().selectMirroredAgent,
 		reconnectPeer,
 		copyPeerAgentRef,
+		// The active LOCAL agent's entries; hidden while the Main Window shows a mirrored one.
+		moveToHost:
+			activeSession && moveToHostPeer && !activeMirror
+				? {
+						sessionId: activeSession.id,
+						agentName: activeSession.name,
+						peerName: moveToHostPeer.name,
+					}
+				: undefined,
+		requestMoveToHost,
+		liftedTarget: activeMirror ? undefined : liftedTarget,
+		openLiftedAgent: () => {
+			if (activeSession) openLiftedAgent(activeSession);
+		},
 		setQuickActionOpen,
 	});
 

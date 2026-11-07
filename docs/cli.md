@@ -2334,6 +2334,8 @@ maestro-cli lift docs --with-env --json
 maestro-cli send build-box:<new-agent-id> "Carry on"
 ```
 
+The desktop app runs the same lift. Right-click the agent in the Left Bar and choose **Move to Host**, or run **Move to Host** from the command palette. The action shows only while the agent's remote is a connected Federation peer. It shows the plan `--dry-run` prints, with a choice to send secret env vars, before anything moves. Afterwards the agent's row shows `on <peer>`: click it to open the agent on its host.
+
 ### One Host Per Data Directory
 
 A data directory has one owner at a time: a lock file (`maestro-runtime.lock`) in the directory says who. `host start` refuses a directory the desktop app or another host already holds, and says which. The desktop app will not open on a directory a headless host holds: it shows a dialog naming the host and quits, because loading its stores on top of the host's would overwrite the host's writes. Stop the host with `maestro-cli host stop`, then open Maestro.

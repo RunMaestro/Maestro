@@ -271,6 +271,28 @@ export class PeerMirrorService {
 	}
 
 	/**
+	 * The held client of the peer on `remoteId`, for a call that is not an agent action (the
+	 * desktop's Lift, `src/main/federation/lift.ts`). Borrowed, never dialed: a peer that is not
+	 * connected right now is an error that names it, so no second ssh starts beside the queue.
+	 */
+	hostClient(remoteId: string): { peer: string; client: MaestroClient } {
+		const entry = this.entries.get(remoteId);
+		if (!entry) {
+			throw new Error(
+				`SSH remote ${remoteId} is not a mirrored Federation peer. Turn Federation on for it first.`
+			);
+		}
+		const client = entry.connection?.client;
+		if (!client || entry.state.connection !== 'connected') {
+			const reason = entry.state.error ? ` ${entry.state.error}` : '';
+			throw new Error(
+				`Not connected to peer "${entry.state.peerId}" (${entry.state.connection}). Nothing moved.${reason}`
+			);
+		}
+		return { peer: entry.state.peerId, client };
+	}
+
+	/**
 	 * Force a reload of one peer: restart the forward when it is down, reconnect the client when it
 	 * is not attached, then read the whole agent list again. Runs in the one queue.
 	 */

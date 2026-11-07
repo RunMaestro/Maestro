@@ -1,7 +1,8 @@
 /**
  * Tests for the desktop's peer mirror service: sequential connects, failures as peer state,
  * event pushes with turn coalescing, reconcile on remote edits, wake reload, reconnect, stop, and
- * `act()`, the input path to a mirrored agent (FED-SSH-06).
+ * `act()`, the input path to a mirrored agent, and `hostClient()`, the client Move to Host borrows
+ * (FED-SSH-06).
  * The SSH forward and the host client are stood in for; nothing here dials.
  */
 
@@ -470,6 +471,29 @@ describe('PeerMirrorService', () => {
 			const lost = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'x' });
 			expect(lost).toMatchObject({ ok: false, unknown: true });
 			expect(lost.ok ? '' : lost.error).toContain('The connection to peer "a" dropped');
+		});
+	});
+
+	describe('hostClient', () => {
+		it('lends the held client of a connected peer without dialing again', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			const borrowed = h.service.hostClient('a');
+			expect(borrowed.peer).toBe('a');
+			expect(borrowed.client).toBe(a.client);
+			expect(h.deps.acquireForward).toHaveBeenCalledTimes(1);
+		});
+
+		it('refuses a peer that is not connected, and a remote that is not mirrored', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			a.emit({ type: 'host.lost', reason: 'socket closed' });
+			expect(() => h.service.hostClient('a')).toThrow(/Not connected to peer "a".*Nothing moved/);
+			expect(() => h.service.hostClient('ghost')).toThrow(/not a mirrored Federation peer/);
 		});
 	});
 });

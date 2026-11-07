@@ -6,10 +6,18 @@
 
 import { describe, expect, it } from 'vitest';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+	setPeerConnection,
+	type MirroredPeer,
+} from '../../../shared/maestro-lib/client/peer-mirror';
 import type { LogEntryRecord } from '../../../shared/maestro-lib/store/transcript';
 import {
 	buildMirrorViewSession,
 	isPeerDisconnected,
+	liftedMirrorTarget,
+	moveToHostPeer,
 	MIRROR_COMPOSER_UNAVAILABLE,
 	mirroredAgentState,
 	mirrorSendBlockReason,
@@ -152,5 +160,59 @@ describe('mirrorSendBlockReason', () => {
 		for (const text of ['/Users/me/plan.md says hi', 'use a/b here', '/ alone', '!ls', 'hello']) {
 			expect(mirrorSendBlockReason(text)).toBeUndefined();
 		}
+	});
+});
+
+describe('Move to Host (FED-SSH-06)', () => {
+	const connected = (peerId: string, remoteId: string): MirroredPeer =>
+		setPeerConnection(
+			replacePeerAgents(
+				createMirroredPeer({ peerId, remoteId, name: peerId }),
+				[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [] }],
+				[],
+				1
+			).peer,
+			'connected'
+		).peer;
+	const ssh = { sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } };
+
+	it('moveToHostPeer finds the connected peer of the agent remote', () => {
+		const peer = connected('box', 'r1');
+		expect(moveToHostPeer(ssh, [connected('other', 'r2'), peer])).toBe(peer);
+	});
+
+	it('moveToHostPeer offers nothing for a local, lifted, or unreachable agent', () => {
+		const peer = connected('box', 'r1');
+		expect(moveToHostPeer({}, [peer])).toBeUndefined();
+		expect(
+			moveToHostPeer({ sessionSshRemoteConfig: { enabled: false, remoteId: 'r1' } }, [peer])
+		).toBeUndefined();
+		expect(
+			moveToHostPeer({ ...ssh, liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }, [peer])
+		).toBeUndefined();
+		const lost = setPeerConnection(peer, 'lost', 'gone').peer;
+		expect(moveToHostPeer(ssh, [lost])).toBeUndefined();
+		expect(moveToHostPeer(ssh, [])).toBeUndefined();
+	});
+
+	it('liftedMirrorTarget reads the pointer and whether the mirror holds the agent', () => {
+		const peers = { box: connected('box', 'r1') };
+		expect(liftedMirrorTarget({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }, peers)).toEqual({
+			peerId: 'box',
+			agentId: 'h1',
+			ref: 'box:h1',
+			mirrored: true,
+		});
+		expect(
+			liftedMirrorTarget({ liftedTo: { peer: 'box', agentId: 'gone', at: 1 } }, peers)?.mirrored
+		).toBe(false);
+		expect(liftedMirrorTarget({ liftedTo: { peer: 'nope', agentId: 'h1', at: 1 } }, {})).toEqual({
+			peerId: 'nope',
+			agentId: 'h1',
+			ref: 'nope:h1',
+			mirrored: false,
+		});
+		expect(liftedMirrorTarget({}, peers)).toBeUndefined();
+		expect(liftedMirrorTarget({ liftedTo: { peer: 1 } }, peers)).toBeUndefined();
 	});
 });

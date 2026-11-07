@@ -26,6 +26,7 @@ import {
 import {
 	PeerConnectError,
 	connectPeerClient,
+	federationOffMessage,
 	federationPeersOf,
 	peerAttachError,
 	peerForwardError,
@@ -227,8 +228,7 @@ export function requireFederationRemote(remote: SshRemoteConfig): void {
 	if (remote.federation) return;
 	throw new PeerResolveError(
 		'federation-off',
-		`SSH remote "${remote.name}" is not opted in to Federation, so Maestro does not dial it. ` +
-			`Turn it on with: maestro-cli update-ssh-remote ${remote.id} --federation on`,
+		federationOffMessage(remote),
 		ExitCode.GeneralError,
 		remote.name
 	);

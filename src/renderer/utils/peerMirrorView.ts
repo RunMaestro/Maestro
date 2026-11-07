@@ -15,6 +15,7 @@ import type {
 	PeerMirrorConnection,
 } from '../../shared/maestro-lib/client/peer-mirror';
 import { mirrorKey } from '../../shared/maestro-lib/client/peer-mirror';
+import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import type { AgentRecord, AITabRecord } from '../../shared/maestro-lib/store/records';
 import {
 	LOG_ENTRY_SOURCES,
@@ -198,4 +199,52 @@ export function mirrorSendBlockReason(text: string): string | undefined {
 	return SLASH_COMMAND_PATTERN.test(text.trimStart())
 		? MIRROR_COMPOSER_UNAVAILABLE.slashCommands
 		: undefined;
+}
+
+/** The slice of a local agent "Move to Host" and its pointer read. */
+export interface LiftableAgent {
+	liftedTo?: unknown;
+	sessionSshRemoteConfig?: { enabled: boolean; remoteId: string | null };
+}
+
+/**
+ * The mirrored peer "Move to Host" lifts `agent` onto, or undefined when the action is not offered:
+ * the agent already moved, it is not an SSH remote agent, or its remote is not a Federation peer
+ * with a running host the mirror is connected to right now. The main-process lift checks the
+ * same rules again (`runLift()`); this one only decides whether to offer the action.
+ */
+export function moveToHostPeer(
+	agent: LiftableAgent,
+	peers: readonly MirroredPeer[]
+): MirroredPeer | undefined {
+	if (readLiftedTo(agent.liftedTo)) return undefined;
+	const ssh = agent.sessionSshRemoteConfig;
+	if (!ssh?.enabled || !ssh.remoteId) return undefined;
+	return peers.find((peer) => peer.remoteId === ssh.remoteId && peer.connection === 'connected');
+}
+
+/** Where a lifted agent's pointer leads, and whether the mirror holds that agent right now. */
+export interface LiftedMirrorTarget {
+	peerId: string;
+	agentId: string;
+	/** `peer:agentId`, the address maestro-cli takes. */
+	ref: string;
+	/** The mirror shows this peer's agent, so a click can open it. */
+	mirrored: boolean;
+}
+
+/** The pointer of a lifted agent as the Left Bar shows it, or undefined for one that never moved. */
+export function liftedMirrorTarget(
+	agent: Pick<LiftableAgent, 'liftedTo'>,
+	peers: Readonly<Record<string, MirroredPeer>>
+): LiftedMirrorTarget | undefined {
+	const pointer = readLiftedTo(agent.liftedTo);
+	if (!pointer) return undefined;
+	const peer = peers[pointer.peer];
+	return {
+		peerId: pointer.peer,
+		agentId: pointer.agentId,
+		ref: mirrorKey(pointer.peer, pointer.agentId),
+		mirrored: Boolean(peer?.agents.some((candidate) => candidate.id === pointer.agentId)),
+	};
 }

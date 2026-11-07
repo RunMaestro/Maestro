@@ -1,6 +1,7 @@
 /**
  * Federation peer mirror IPC (`federation:*`): the desktop's mirror of its Federation peers
- * (FED-SSH-05), and `federation:act`, the input that drives a mirrored agent (FED-SSH-06).
+ * (FED-SSH-05), `federation:act`, the input that drives a mirrored agent, and `federation:lift`,
+ * the desktop's "Move to Host" (FED-SSH-06).
  *
  * Thin pass-throughs to the one `PeerMirrorService` (`src/main/federation/`); the CLI bridge
  * reaches the same instance. While the Federation Encore Feature is off there is no service:
@@ -23,7 +24,17 @@ import type {
 	PeerReconnectResult,
 	TranscriptReadOptions,
 } from '../../federation/peer-mirror-service';
+import {
+	buildDesktopLiftDeps,
+	liftAgentFromDesktop,
+	type DesktopLiftAnswer,
+	type DesktopLiftOptions,
+	type DesktopLiftRuntime,
+} from '../../federation/lift';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
+
+/** What `federation:lift` reads: the stores, the live processes, and the window. */
+export type FederationHandlerDeps = Omit<DesktopLiftRuntime, 'service'>;
 
 const LOG_CONTEXT = '[Federation]';
 
@@ -52,7 +63,14 @@ function readTail(options: unknown): TranscriptReadOptions {
 	return { tail };
 }
 
-export function registerFederationHandlers(): void {
+function readLiftOptions(options: unknown): DesktopLiftOptions {
+	if (!options || typeof options !== 'object') return {};
+	const { dryRun, withEnv } = options as { dryRun?: unknown; withEnv?: unknown };
+	return { dryRun: dryRun === true, withEnv: withEnv === true };
+}
+
+export function registerFederationHandlers(deps: FederationHandlerDeps): void {
+	const liftDeps = buildDesktopLiftDeps({ ...deps, service: getPeerMirrorService });
 	ipcMain.handle(
 		'federation:status',
 		withIpcErrorLogging(
@@ -118,6 +136,14 @@ export function registerFederationHandlers(): void {
 					parsePeerAgentAction(action)
 				);
 			}
+		)
+	);
+	ipcMain.handle(
+		'federation:lift',
+		withIpcErrorLogging(
+			opts('lift'),
+			async (agentId: unknown, options?: unknown): Promise<DesktopLiftAnswer> =>
+				liftAgentFromDesktop(requireId(agentId, 'agent id'), readLiftOptions(options), liftDeps)
 		)
 	);
 }

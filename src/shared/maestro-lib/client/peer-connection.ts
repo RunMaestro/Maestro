@@ -63,6 +63,14 @@ export function federationPeersOf(remotes: readonly SshRemoteConfig[]): Federati
 		.map((remote) => ({ peer: peerIdFor(remote, remotes), remote }));
 }
 
+/** Why a remote that is not opted in is never dialed (decision D8), with the fix. */
+export function federationOffMessage(remote: Pick<SshRemoteConfig, 'id' | 'name'>): string {
+	return (
+		`SSH remote "${remote.name}" is not opted in to Federation, so Maestro does not dial it. ` +
+		`Turn it on with: maestro-cli update-ssh-remote ${remote.id} --federation on`
+	);
+}
+
 /** The `remote-host status` line that diagnoses a peer. */
 export function peerStatusFix(peer: string): string {
 	return `Check it with: maestro-cli remote-host status ${peer}`;

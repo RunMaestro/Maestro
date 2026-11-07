@@ -2,15 +2,18 @@
  * Preload API for the Federation peer mirror (`window.maestro.federation`).
  *
  * Mirrors the `federation:*` channels in `src/main/ipc/handlers/federation.ts`. A window reads
- * what the main-process service mirrors, follows its pushes, and drives a mirrored agent with
- * `act()` (FED-SSH-06). What a window gets here lives in memory only; nothing here writes a store. Desktop-only: no
- * `federation:` channel is on the web-desktop allowlist.
+ * what the main-process service mirrors, follows its pushes, drives a mirrored agent with
+ * `act()`, and lifts a local SSH agent onto its host with `lift()` (FED-SSH-06). What a window
+ * reads here lives in memory only; the one local write is the lift pointer, which the window's own
+ * `remote:updateSessionConfig` handler applies. Desktop-only: no `federation:` channel is on the
+ * web-desktop allowlist.
  */
 
 import { ipcRenderer } from 'electron';
 import type { MirrorPeerSummary, MirrorPush } from '../../shared/maestro-lib/client/peer-mirror';
 import type { PeerAgentAction } from '../../shared/maestro-lib/client/peer-actions';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
+import type { DesktopLiftAnswer, DesktopLiftOptions } from '../federation/lift';
 import type {
 	PeerActionAnswer,
 	PeerMirrorSnapshot,
@@ -44,6 +47,12 @@ export function createFederationApi() {
 		 */
 		act: (peerId: string, agentId: string, action: PeerAgentAction): Promise<PeerActionAnswer> =>
 			ipcRenderer.invoke('federation:act', peerId, agentId, action),
+		/**
+		 * Move to Host: lift a local SSH agent onto its remote's host (`maestro-cli lift`). With
+		 * `dryRun` it answers the plan only; nothing moves.
+		 */
+		lift: (agentId: string, options?: DesktopLiftOptions): Promise<DesktopLiftAnswer> =>
+			ipcRenderer.invoke('federation:lift', agentId, options ?? {}),
 		/** Fires on every change to a mirrored peer. */
 		onEvent: (handler: (payload: MirrorPush) => void): (() => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, payload: MirrorPush) => handler(payload);

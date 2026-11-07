@@ -131,9 +131,16 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// `computerHistory:*` channel (D15). See src/main/ipc/handlers/computerHistory.ts.
 	registerComputerHistoryHandlers();
 
-	// Federation peer mirror - reads and pushes of the desktop's read-only mirror of
-	// its Federation peers. Desktop-only. See src/main/ipc/handlers/federation.ts.
-	registerFederationHandlers();
+	// Federation peer mirror - reads and pushes of the desktop's mirror of its
+	// Federation peers, input to them, and Move to Host (lift). Desktop-only.
+	// See src/main/ipc/handlers/federation.ts.
+	registerFederationHandlers({
+		readSessions: () => deps.sessionsStore.get('sessions', []),
+		readSshRemotes: () => deps.settingsStore.get('sshRemotes', []),
+		readAgentConfigs: () => deps.agentConfigsStore.get('configs', {}),
+		getMainWindow: deps.getMainWindow,
+		getProcessManager: deps.getProcessManager,
+	});
 
 	// MaestroRun - install, grant walkthrough, and the readiness that gates its
 	// system-prompt section. See src/main/ipc/handlers/maestroRun.ts.

@@ -15,14 +15,19 @@
 //
 // The two writes cannot be one transaction. The host's copy is made first; if the local pointer
 // cannot be set, the host's copy is removed again, so the agent never has two owners.
+//
+// Every step runs in `runLift()` (`src/shared/maestro-lib/agents/lift-run.ts`), the function the
+// desktop's "Move to Host" action runs too. This file adds what is the CLI's own: its SSH forward,
+// the store owner check, the pointer write through the desktop or the store file, and the output.
 
 import {
-	liftRefusal,
-	liftSshRemoteId,
-	planAgentLift,
-} from '../../shared/maestro-lib/agents/lift-plan';
-import type { LiftPlan, LiftPlanSummary } from '../../shared/maestro-lib/agents/lift-plan';
-import { peerAgentRef, type LiftedToPointer } from '../../shared/maestro-lib/agents/lift-pointer';
+	LiftRunError,
+	formatLiftPlan,
+	providerEnvVarsOf,
+	runLift,
+	type LiftRunDeps,
+} from '../../shared/maestro-lib/agents/lift-run';
+import type { LiftedToPointer } from '../../shared/maestro-lib/agents/lift-pointer';
 import { isPidAlive, readCliServerInfo } from '../../shared/maestro-lib/client/discovery';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../shared/types';
@@ -39,8 +44,6 @@ import {
 	connectPeer,
 	hostCallError,
 	peerErrorCode,
-	peerIdFor,
-	requireFederationRemote,
 	type PeerConnection,
 } from '../services/peer-resolver';
 import {
@@ -94,15 +97,6 @@ export interface LiftDeps {
 	now(): number;
 }
 
-function envRecord(value: unknown): Record<string, string> | undefined {
-	if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-	const out: Record<string, string> = {};
-	for (const [key, entry] of Object.entries(value)) {
-		if (typeof entry === 'string') out[key] = entry;
-	}
-	return out;
-}
-
 /** The agent record with the pointer set and the moved queue items taken off its queue. */
 export function withLiftPointer(
 	record: Record<string, unknown>,
@@ -129,7 +123,7 @@ const defaultDeps: LiftDeps = {
 	readAgents: () => readSessions() as unknown as AgentRecord[],
 	readRemotes: () => readSshRemotes(),
 	resolveAgentId: (ref) => resolveAgentId(ref),
-	providerEnvVars: (provider) => envRecord(readAgentConfig(provider).customEnvVars),
+	providerEnvVars: (provider) => providerEnvVarsOf(readAgentConfig(provider).customEnvVars),
 	cliBusy: (agentId) => checkAgentBusy(agentId),
 	localStoreOwner: () => {
 		const info = readCliServerInfo();
@@ -166,80 +160,6 @@ const defaultDeps: LiftDeps = {
 	now: () => Date.now(),
 };
 
-/** A refusal or failure, with the `--json` code and the exit code it ends with. */
-class LiftError extends Error {
-	constructor(
-		readonly code: string,
-		message: string,
-		readonly exitCode: ExitCode = ExitCode.GeneralError
-	) {
-		super(message);
-		this.name = 'LiftError';
-	}
-}
-
-function refusalCode(code: string): string {
-	return `LIFT_${code.toUpperCase().replace(/-/g, '_')}`;
-}
-
-/** The plan, as a person reads it before anything moves. */
-export function formatLiftPlan(summary: LiftPlanSummary, dryRun: boolean): string {
-	const lines: string[] = [];
-	lines.push(
-		`${dryRun ? 'Would lift' : 'Lifting'} "${summary.agent.name}" (${summary.agent.provider}) onto peer "${summary.peer}" (SSH remote ${summary.remote.name})`
-	);
-	lines.push('Moves to the host:');
-	lines.push(`  Working directory: ${summary.cwd}`);
-	if (summary.model) lines.push(`  Model: ${summary.model}`);
-	if (summary.effort) lines.push(`  Effort: ${summary.effort}`);
-	if (summary.customArgs) lines.push(`  Arguments: ${summary.customArgs}`);
-	if (summary.customPath) lines.push(`  Binary path: ${summary.customPath}`);
-	lines.push(`  Tabs (${summary.tabs.length}):`);
-	for (const tab of summary.tabs) {
-		const label = tab.name ? `"${tab.name}"` : tab.id;
-		const session = tab.agentSessionId
-			? `resumes ${tab.agentSessionId}`
-			: 'no provider session yet';
-		const active = tab.id === summary.activeTabId ? ', active' : '';
-		lines.push(`    - ${label}: ${tab.entries} transcript entries, ${session}${active}`);
-	}
-	lines.push(
-		`  Env vars (${summary.env.sent.length}): ${summary.env.sent.length > 0 ? summary.env.sent.join(', ') : 'none'}`
-	);
-	if (summary.env.secretsSent.length > 0) {
-		lines.push(`  Secret env vars sent (--with-env): ${summary.env.secretsSent.join(', ')}`);
-	}
-	if (summary.env.sessionDir) {
-		lines.push(
-			`  Provider session dir: ${summary.env.sessionDir.key}=${summary.env.sessionDir.value} (the host checks it exists)`
-		);
-	}
-	lines.push(`  Queued messages: ${summary.queued.length}`);
-	lines.push('Stays on this machine:');
-	lines.push(
-		'  Every tab and transcript (the local agent becomes a pointer; sends to it are refused)'
-	);
-	for (const stay of summary.stays) {
-		const what =
-			stay.kind === 'secret-env'
-				? `Env var ${stay.ref}`
-				: stay.kind === 'hidden-tab'
-					? `Hidden tab ${stay.ref}`
-					: stay.kind === 'auto-run-folder'
-						? `Auto Run folder ${stay.ref}`
-						: `Queue item ${stay.ref}`;
-		lines.push(`  ${what}: ${stay.reason}`);
-	}
-	return lines.join('\n');
-}
-
-/** Remove the host's copy after the pointer could not be set. Returns a line for the error. */
-async function rollBack(connection: PeerConnection, hostAgentId: string): Promise<string> {
-	const removed = await connection.client.agents.remove(hostAgentId);
-	if (removed.ok) return `The host's copy was removed again, so the agent stays here, unchanged.`;
-	return `The host's copy (${peerAgentRef(connection.peer, hostAgentId)}) could not be removed: ${removed.error.message} On the remote, run: maestro-cli remove-agent ${hostAgentId}`;
-}
-
 /** Set the local pointer through whoever owns the store. Throws on failure. */
 async function setPointer(
 	deps: LiftDeps,
@@ -263,100 +183,31 @@ async function setPointer(
 	await deps.setPointerOnDisk(agentId, pointer, moved);
 }
 
-export interface LiftResult {
-	plan: LiftPlanSummary;
-	dryRun: boolean;
-	/** Set once the host made its copy. */
-	liftedTo?: LiftedToPointer;
-	/** `peer:agentId`: where to send from now on. */
-	target?: string;
-	/** Queued messages the host accepted. */
-	queued?: number;
-	notices?: string[];
-}
-
-/** Every step of a lift, without printing. Throws `LiftError` or `PeerResolveError`. */
-export async function runLift(
-	agentRef: string,
-	options: LiftOptions,
-	deps: LiftDeps,
-	onPlan: (plan: LiftPlan) => void = () => {}
-): Promise<LiftResult> {
-	let agentId: string;
-	try {
-		agentId = deps.resolveAgentId(agentRef);
-	} catch (error) {
-		throw new LiftError('AGENT_NOT_FOUND', error instanceof Error ? error.message : String(error));
-	}
-	const agent = deps.readAgents().find((record) => record.id === agentId);
-	if (!agent) throw new LiftError('AGENT_NOT_FOUND', `Agent not found: ${agentRef}`);
-
-	const remotes = deps.readRemotes();
-	const refusal = liftRefusal(agent, remotes);
-	if (refusal) throw new LiftError(refusalCode(refusal.code), refusal.message);
-	const remote = remotes.find((candidate) => candidate.id === liftSshRemoteId(agent));
-	if (!remote) throw new LiftError(refusalCode('remote-missing'), 'SSH remote not found');
-	requireFederationRemote(remote);
-
-	const busy = deps.cliBusy(agent.id);
-	if (busy.busy) {
-		throw new LiftError(
-			refusalCode('busy'),
-			`"${agent.name}" is busy: ${busy.reason}. A running turn cannot move: wait for it to finish, then lift again.`
-		);
-	}
-	const owner = deps.localStoreOwner();
-	if (owner === 'headless-host') {
-		throw new LiftError(
-			'LIFT_LOCAL_HOST',
-			"A maestro-cli host owns this machine's agents, so the lift cannot mark the local agent as moved. Stop it (maestro-cli host stop), or lift from the desktop app."
-		);
-	}
-
-	const plan = planAgentLift({
-		agent,
-		remote,
-		peer: peerIdFor(remote, remotes),
-		providerEnvVars: deps.providerEnvVars(agent.toolType),
-		withEnv: options.withEnv === true,
-	});
-
-	const connection = await deps.connect(remote.id);
-	try {
-		onPlan(plan);
-		if (options.dryRun) return { plan: plan.summary, dryRun: true };
-
-		const imported = await connection.client.agents.import(plan.input);
-		if (!imported.ok) throw hostCallError(connection.peer, imported.error);
-		const { agentId: hostAgentId, queued, notices } = imported.value;
-		const pointer: LiftedToPointer = {
-			peer: connection.peer,
-			agentId: hostAgentId,
-			at: deps.now(),
-		};
-
-		try {
-			await setPointer(deps, owner, agent.id, pointer, plan.movedQueueItemIds);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			const undo = await rollBack(connection, hostAgentId);
-			throw new LiftError(
-				'LIFT_POINTER_FAILED',
-				`Could not mark "${agent.name}" as moved: ${message}. ${undo}`
+/** The CLI's world as the shared runner's deps. */
+function sharedDeps(deps: LiftDeps): LiftRunDeps {
+	let owner: LocalStoreOwner = 'none';
+	return {
+		readAgents: deps.readAgents,
+		readRemotes: deps.readRemotes,
+		resolveAgentId: deps.resolveAgentId,
+		providerEnvVars: deps.providerEnvVars,
+		busyReason: (agentId) => {
+			const busy = deps.cliBusy(agentId);
+			return busy.busy ? busy.reason : undefined;
+		},
+		localRefusal: () => {
+			owner = deps.localStoreOwner();
+			if (owner !== 'headless-host') return undefined;
+			return new LiftRunError(
+				'LIFT_LOCAL_HOST',
+				"A maestro-cli host owns this machine's agents, so the lift cannot mark the local agent as moved. Stop it (maestro-cli host stop), or lift from the desktop app."
 			);
-		}
-
-		return {
-			plan: plan.summary,
-			dryRun: false,
-			liftedTo: pointer,
-			target: peerAgentRef(pointer.peer, pointer.agentId),
-			queued,
-			...(notices && notices.length > 0 ? { notices } : {}),
-		};
-	} finally {
-		await connection.release();
-	}
+		},
+		connect: (remote) => deps.connect(remote.id),
+		hostCallError,
+		setPointer: (agentId, pointer, moved) => setPointer(deps, owner, agentId, pointer, moved),
+		now: deps.now,
+	};
 }
 
 /** `maestro-cli lift <agent>`. */
@@ -367,7 +218,7 @@ export async function lift(
 ): Promise<void> {
 	const deps = { ...defaultDeps, ...overrides };
 	try {
-		const result = await runLift(agentRef, options, deps, (plan) => {
+		const result = await runLift(agentRef, options, sharedDeps(deps), (plan) => {
 			if (!options.json) console.log(formatLiftPlan(plan.summary, options.dryRun === true));
 		});
 		if (options.json) {
@@ -386,15 +237,12 @@ export async function lift(
 		);
 	} catch (error) {
 		const code =
-			error instanceof LiftError
+			error instanceof LiftRunError
 				? error.code
 				: error instanceof PeerResolveError
 					? peerErrorCode(error.code)
 					: 'LIFT_FAILED';
-		const exitCode =
-			error instanceof LiftError || error instanceof PeerResolveError
-				? error.exitCode
-				: ExitCode.GeneralError;
+		const exitCode = error instanceof PeerResolveError ? error.exitCode : ExitCode.GeneralError;
 		const message = error instanceof Error ? error.message : String(error);
 		if (options.json)
 			console.log(JSON.stringify({ success: false, error: message, code }, null, 2));
