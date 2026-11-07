@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import { configureBoardFeatures } from '../../../main/board/board-feature';
 import { executeBoardCommand } from '../../../main/board/board-command-host';
-import { getBoardStorage } from '../../../main/board/board-storage';
+import { getBoardStorage, getExistingBoardStorage } from '../../../main/board/board-storage';
 import { refreshBoardSources } from '../../../main/board/board-source-host';
 import { BoardCueHost } from '../../../main/board/board-cue';
 
@@ -35,6 +35,7 @@ it.each([
 		await expect(executeBoardCommand({ action: 'initialize' })).rejects.toThrow(reason);
 		expect(() => refreshBoardSources()).toThrow(reason);
 		expect(() => getBoardStorage()).toThrow(reason);
+		expect(getExistingBoardStorage()).toBeUndefined();
 		const lock = vi.fn(() => null);
 		const storage = vi.fn((): never => {
 			throw new Error('Unexpected storage access');

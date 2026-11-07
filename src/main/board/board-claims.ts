@@ -508,19 +508,25 @@ export function boardWorkerCanStart(
 	return !reservation || (runId !== undefined && reservation.run_id === runId);
 }
 
-/** Check live feature settings before touching Board storage; failures deny admission. */
+/** New Board work requires both gates. Ordinary turns retain already-bound capacity fences.
+ * Off-state observation must never open storage; an unbound cold start has no durable view. */
 export function createBoardAgentAdmission(
 	settings: EncoreSettingsReader,
 	getDb: () => Database.Database,
-	onError: (error: unknown) => void
+	onError: (error: unknown) => void,
+	getRetainedDb: () => Database.Database | undefined
 ): (agentId: string, runId?: string) => boolean {
 	return (agentId, runId) => {
 		try {
 			if (
 				!isEncoreFeatureEnabled(settings, 'board') ||
 				!isEncoreFeatureEnabled(settings, 'maestroCue')
-			)
-				return runId === undefined;
+			) {
+				if (runId !== undefined) return false;
+				// Reading this existing facade observes lifecycle fences, not new activation.
+				const retained = getRetainedDb();
+				return !retained || boardWorkerCanStart(retained, agentId);
+			}
 			return boardWorkerCanStart(getDb(), agentId, runId);
 		} catch (error) {
 			onError(error);

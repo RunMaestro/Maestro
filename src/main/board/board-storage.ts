@@ -1405,6 +1405,11 @@ function storage(): BoardStorageFacade {
 		openBoardDb(path.join(resolveUserDataDir(), 'board', 'board.sqlite'))
 	));
 }
+/** Observe an already-bound lifecycle facade without opening or activating Board storage. */
+export function getExistingBoardStorage(): BoardStorageFacade | undefined {
+	if (!configuredFacade && !defaultFacade) return undefined;
+	return storage();
+}
 /** Share the current facade with the owning Cue adapter without another DB. */
 export { storage as getBoardStorage };
 

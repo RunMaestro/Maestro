@@ -17,6 +17,7 @@ import {
 } from '../../../main/board/board-review';
 import {
 	configureBoardStorage,
+	getExistingBoardStorage,
 	updateCardStatus,
 	deleteCard,
 	deleteCards,
@@ -43,6 +44,7 @@ import {
 import { boardWorkerCanStart } from '../../../main/board/board-claims';
 import {
 	configureAgentAdmission,
+	canStartAgentTurn,
 	issueAgentTurnAdmission,
 	revokeAgentTurnAdmission,
 	startAdmittedAgentTurn,
@@ -147,6 +149,7 @@ function newRuntime(
 	);
 }
 beforeEach(() => {
+	configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
 	transitions = [];
 	events = [];
 	toasts = [];
@@ -2536,24 +2539,38 @@ it.each([false, true])(
 	}
 );
 
-it('lets an ordinary admitted real child run while Board is off without reading or changing Board holds', async () => {
+it('lets a different ordinary admitted real child run while Board is off without activating storage or changing holds', async () => {
 	const token = claim();
 	configureBoardFeatures({ get: () => ({ board: false, maestroCue: false }) });
 	const getDb = vi.fn(() => db);
 	configureAgentAdmission(
-		createBoardAgentAdmission({ get: () => ({ board: false, maestroCue: false }) }, getDb, vi.fn())
+		createBoardAgentAdmission(
+			{ get: () => ({ board: false, maestroCue: false }) },
+			getDb,
+			vi.fn(),
+			() => getExistingBoardStorage()?.db
+		)
 	);
-	const proof = issueAgentTurnAdmission('worker');
+	const proof = issueAgentTurnAdmission('ordinary-other');
+	expect(canStartAgentTurn('worker')).toBe(false);
+	expect(canStartAgentTurn('ordinary-other')).toBe(true);
 	const before = snapshotSqlite(db);
 	const onStarted = vi.fn();
+	const fake = fakeAgentSpec(dir, {
+		chunks: [
+			'{"type":"item.completed","item":{"type":"agent_message","phase":"final","text":"Verified free worker"}}\n',
+		],
+		close: { code: 0, signal: null },
+	});
 	const result = await spawnAgent('codex', dir, 'fixture', undefined, {
 		agentCommand: process.execPath,
 		agentConfigValues: {},
-		originWorkerId: 'worker',
+		customEnvVars: { FAKE_AGENT_RECORDING: fake.env!.FAKE_AGENT_RECORDING! },
+		originWorkerId: 'ordinary-other',
 		workerAdmission: proof,
 		onProcessStarted: onStarted,
 	});
-	expect(result).toHaveProperty('success');
+	expect(result).toMatchObject({ success: true, response: 'Verified free worker' });
 	expect(onStarted).toHaveBeenCalledWith(expect.any(Number));
 	expect(getDb).not.toHaveBeenCalled();
 	expect(snapshotSqlite(db)).toEqual(before);
@@ -2575,3 +2592,118 @@ it('keeps prepared capacity fenced when disabled before start and resumes only a
 	settle(good);
 	expect(await pending).toEqual({ ok: true });
 });
+
+it.each(['prepared', 'running', 'termination-unconfirmed', 'migration'] as const)(
+	'off-capacity preserves %s worker fences through gate toggles at real native start seams',
+	async (kind) => {
+		let pending: ReturnType<BoardRuntime['start']> | undefined;
+		const fake = fakeAgentSpec(dir, {
+			chunks: [
+				'{"type":"item.completed","item":{"type":"agent_message","phase":"final","text":"Verified free worker"}}\n',
+			],
+			close: { code: 0, signal: null },
+		});
+		const customEnvVars = { FAKE_AGENT_RECORDING: fake.env!.FAKE_AGENT_RECORDING! };
+		if (kind === 'migration') {
+			db.prepare(
+				'INSERT INTO migration_worker_holds (worker_agent_id, claims_json) VALUES (?, ?)'
+			).run('worker', '[{"sourceKey":"legacy","cardId":"uncertain"}]');
+		} else {
+			const token = claim();
+			expect(runtime.read(token)!.life.phase).toBe('prepared');
+			if (kind !== 'prepared') {
+				pending = runtime.start(token);
+				expect(hooks).toBeDefined();
+				expect(runtime.read(token)!.life.process!.pid).toBe(202);
+				if (kind === 'termination-unconfirmed') {
+					settle({ ...good, terminationConfirmed: false });
+					expect(await pending).toMatchObject({ ok: false, reason: 'termination-unconfirmed' });
+					pending = undefined;
+					expect(service.probe(runtime.read(token)!.spec)).toBe('unknown');
+					expect(runtime.read(token)!.life.phase).toBe('uncertain');
+					expect(runtime.read(token)!.outcome).toBeNull();
+				}
+			}
+		}
+		let flags = { board: true, maestroCue: true };
+		configureBoardFeatures({ get: () => flags });
+		const getDb = vi.fn(() => db);
+		configureAgentAdmission(
+			createBoardAgentAdmission(
+				{ get: () => flags },
+				getDb,
+				vi.fn(),
+				() => getExistingBoardStorage()?.db
+			)
+		);
+		const manager = new ProcessManager(() => false, { isCoworkingEnabled: () => false });
+		try {
+			for (const state of [
+				{ board: true, maestroCue: true },
+				{ board: false, maestroCue: true },
+				{ board: true, maestroCue: false },
+				{ board: false, maestroCue: false },
+				{ board: true, maestroCue: true },
+			]) {
+				flags = state;
+				getDb.mockClear();
+				const before = snapshotSqlite(db);
+				const proof = issueAgentTurnAdmission('worker');
+				const started = vi.fn();
+				try {
+					const result = await spawnAgent('codex', dir, 'fixture', undefined, {
+						originWorkerId: 'worker',
+						workerAdmission: proof,
+						agentCommand: process.execPath,
+						agentConfigValues: {},
+						customEnvVars,
+						onProcessStarted: started,
+					});
+					expect(result).toMatchObject({
+						success: false,
+						error: expect.stringContaining('reserved'),
+					});
+					expect(started).not.toHaveBeenCalled();
+				} finally {
+					revokeAgentTurnAdmission(proof);
+				}
+				expect(
+					manager.spawn({
+						sessionId: 'off-capacity-worker',
+						originWorkerId: 'worker',
+						toolType: 'codex',
+						command: process.execPath,
+						args: [providerScript],
+						cwd: dir,
+					})
+				).toMatchObject({ success: false, error: expect.stringContaining('reserved') });
+				expect(manager.getAll()).toHaveLength(0);
+				const other = issueAgentTurnAdmission('ordinary-other');
+				const otherStarted = vi.fn();
+				try {
+					const otherResult = await spawnAgent('codex', dir, 'fixture', undefined, {
+						originWorkerId: 'ordinary-other',
+						workerAdmission: other,
+						agentCommand: process.execPath,
+						agentConfigValues: {},
+						customEnvVars,
+						onProcessStarted: otherStarted,
+					});
+					expect(otherResult).toMatchObject({ success: true, response: 'Verified free worker' });
+					expect(otherStarted).toHaveBeenCalledWith(expect.any(Number));
+				} finally {
+					revokeAgentTurnAdmission(other);
+				}
+				expect(snapshotSqlite(db)).toEqual(before);
+				if (!flags.board || !flags.maestroCue) expect(getDb).not.toHaveBeenCalled();
+			}
+		} finally {
+			manager.killAll({ shutdown: true });
+			if (pending) {
+				settle({ ...good, terminationConfirmed: false });
+				await pending;
+			}
+			configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
+		}
+	}
+);

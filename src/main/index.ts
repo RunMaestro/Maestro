@@ -228,6 +228,7 @@ import {
 	configureBoardReadinessHost,
 	listBoardWorkers,
 	getBoardStorage,
+	getExistingBoardStorage,
 	listBoards,
 	saveBoard,
 	setBoardSavedListener,
@@ -1799,7 +1800,8 @@ app
 			createBoardAgentAdmission(
 				store,
 				() => getBoardStorage().db,
-				(error) => logger.error(`Board agent admission failed: ${String(error)}`, 'Board')
+				(error) => logger.error(`Board agent admission failed: ${String(error)}`, 'Board'),
+				() => getExistingBoardStorage()?.db
 			)
 		);
 		configureBoardRuntimeHost(globalBoardHost.runtimeFor);

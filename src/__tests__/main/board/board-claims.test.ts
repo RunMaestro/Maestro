@@ -62,7 +62,7 @@ describe('global Board agent admission', () => {
 		const settings = { get: () => flags };
 		const getDb = vi.fn(() => db);
 		const onError = vi.fn();
-		const admit = createBoardAgentAdmission(settings, getDb, onError);
+		const admit = createBoardAgentAdmission(settings, getDb, onError, () => facade.db);
 		for (const state of [
 			{ board: false, maestroCue: false },
 			{ board: true, maestroCue: false },
@@ -84,7 +84,8 @@ describe('global Board agent admission', () => {
 		expect(admit('other')).toBe(false);
 		expect(onError).toHaveBeenCalledWith(failure);
 		flags.board = false;
-		expect(admit('worker')).toBe(true);
+		expect(admit('worker')).toBe(false);
+		expect(admit('other')).toBe(true);
 	});
 });
 
