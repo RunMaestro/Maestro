@@ -1508,6 +1508,16 @@ Start the host on the remote (as the SSH user) when none runs, then report statu
 | `--timeout <seconds>` | Give up on each SSH call after this many seconds (default 60) | -       |
 | `--json`              | Output as JSON (for scripting)                                | -       |
 
+## `maestro-cli lift <agent>`
+
+Move an SSH remote agent, with its tabs, transcripts, provider sessions and queue, onto the host on its remote
+
+| Option       | Description                                            | Default |
+| ------------ | ------------------------------------------------------ | ------- |
+| `--dry-run`  | Print what would move and what stays, then stop        | -       |
+| `--with-env` | Send secret env vars too (non-secret ones always move) | -       |
+| `--json`     | Output as JSON (for scripting)                         | -       |
+
 ## `maestro-cli completions <shell>`
 
 Print a shell completion script (bash, zsh, or fish)

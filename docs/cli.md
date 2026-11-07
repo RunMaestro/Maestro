@@ -2305,6 +2305,31 @@ maestro-cli interrupt build-box:docs
 
 Nothing is queued or retried on this machine. A peer that is down, or a forward that is dead, exits non-zero with a `PEER_*` code (`PEER_HOST_DOWN` exits `3`). If the forward drops while `send` waits, the turn keeps running on the host: `send` exits `3` with `PEER_CONNECTION_LOST`, the tab ID, and the command that shows the tab (`maestro-cli show agent <peer>:<agent>`). With Federation off, a target with a colon is an ordinary local agent ID or name.
 
+### Lift an SSH Agent Onto Its Host
+
+`maestro-cli lift <agent>` moves an SSH remote agent onto the `maestro-cli host` on its remote. The provider already ran on that box as the SSH user, so its session files are already there. The host gets an agent with the agent's remote working directory (not its local one), provider, model, effort and arguments, plus every visible tab with its transcript and the same provider session ID, so the next turn resumes the conversation. Queued messages move with it. After the lift, the local agent keeps every tab and transcript, but it is a pointer: `list agents` shows `moved to peer:agent-id`, and every send to it is refused with that target (`AGENT_LIFTED`).
+
+Env vars: every non-secret custom env var moves. Secret ones stay here unless you pass `--with-env`. The variable that selects the provider's config or session directory (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`) always moves, and the host refuses the agent when that directory does not exist there, because the provider would start a new session instead of resuming.
+
+Before it acts, `lift` prints what moves and what stays. `--json` gives the same plan, and `--dry-run` stops after it. It refuses, and moves nothing, when:
+
+| Refusal                                               | Code                      |
+| ----------------------------------------------------- | ------------------------- |
+| The agent was already lifted                          | `LIFT_ALREADY_LIFTED`     |
+| The agent is not an SSH remote agent                  | `LIFT_NOT_SSH`            |
+| Its SSH remote is not opted in to Federation          | `PEER_FEDERATION_OFF`     |
+| A tab is running a turn                               | `LIFT_BUSY`               |
+| No host is running on the remote                      | `PEER_HOST_DOWN` (exit 3) |
+| A local `maestro-cli host` owns this machine's agents | `LIFT_LOCAL_HOST`         |
+
+The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. Hidden consult tabs, queued slash commands, and images in this machine's image store stay here. The verb belongs to the Federation Encore Feature.
+
+```bash
+maestro-cli lift docs --dry-run
+maestro-cli lift docs --with-env --json
+maestro-cli send build-box:<new-agent-id> "Carry on"
+```
+
 ### One Host Per Data Directory
 
 A data directory has one owner at a time: a lock file (`maestro-runtime.lock`) in the directory says who. `host start` refuses a directory the desktop app or another host already holds, and says which. The desktop app will not open on a directory a headless host holds: it shows a dialog naming the host and quits, because loading its stores on top of the host's would overwrite the host's writes. Stop the host with `maestro-cli host stop`, then open Maestro.

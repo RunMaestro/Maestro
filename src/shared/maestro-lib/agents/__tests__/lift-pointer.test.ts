@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	liftBusyReason,
 	liftedAgentRef,
 	liftedOwnerOfProcess,
 	liftedSendRefusal,
@@ -80,5 +81,26 @@ describe('liftedOwnerOfProcess', () => {
 	it('skips null entries a hand-edited store can hold', () => {
 		const withNull = [null, lifted] as unknown as Array<typeof lifted>;
 		expect(liftedOwnerOfProcess(withNull, `${lifted.id}-ai-t`)).toBe(lifted);
+	});
+});
+
+describe('liftBusyReason', () => {
+	it('is null when no tab and not the agent is busy', () => {
+		expect(
+			liftBusyReason({ name: 'Docs', state: 'idle', aiTabs: [{ id: 't1', state: 'idle' }] })
+		).toBeNull();
+	});
+
+	it('names the busy tab, by name or by id', () => {
+		expect(
+			liftBusyReason({ name: 'Docs', aiTabs: [{ id: 't1', name: 'Main', state: 'busy' }] })
+		).toContain('tab "Main"');
+		expect(liftBusyReason({ name: 'Docs', aiTabs: [{ id: 't1', state: 'busy' }] })).toContain(
+			'tab t1'
+		);
+	});
+
+	it('counts the agent state when no tab says busy', () => {
+		expect(liftBusyReason({ name: 'Docs', state: 'busy', aiTabs: [] })).toContain('"Docs" is busy');
 	});
 });

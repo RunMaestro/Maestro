@@ -517,7 +517,7 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
 
 ### Federation: CLI first, desktop pending
 
-The Federation Encore Feature ships its CLI verbs first (FED-SSH-01 and 02);
+The Federation Encore Feature ships its CLI verbs first (FED-SSH-01, 02 and 04);
 the desktop halves arrive in FED-SSH-05 (read-only Left Bar mirror) and
 FED-SSH-06 (input for mirrored agents). Until then each verb below is
 CLI-only. Close a row by moving it to Covered when its UI half lands, through
@@ -533,6 +533,7 @@ the same bridge message the CLI sends.
 | `interrupt <peer:agent>`                                                     | Stop on a mirrored agent's running turn                           | FED-SSH-06                                                                       |
 | `dispatch <peer:agent> <message>` (new tab or queue)                         | New tab on a mirrored agent, then send                            | FED-SSH-06                                                                       |
 | `ask <peer:agent> <question>`                                                | An `@mention` of a mirrored agent from a local composer           | No phase plans one yet; FED-SSH-06 covers send, interrupt, new tab, rename, star |
+| `lift <agent>` (`--dry-run`, `--with-env`, `--json`)                         | A Lift action on an SSH agent, showing the same plan first        | FED-SSH-06                                                                       |
 | Worktrees for host-owned agents (no verb either: `create-worktree` is local) | Worktree create and scan for a mirrored agent                     | Out of scope for v1 (decision D5)                                                |
 
 ### Audit backlog (2026-09-27, re-verified 2026-10-19)

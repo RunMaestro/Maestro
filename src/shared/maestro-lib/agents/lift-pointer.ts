@@ -81,3 +81,25 @@ export function liftedOwnerOfProcess<T extends { id: string; liftedTo?: unknown 
 			(processSessionId === agent.id || processSessionId.startsWith(`${agent.id}-`))
 	);
 }
+
+/**
+ * Why a turn of this agent is running, or null. The agent's own state and every tab's state count,
+ * hidden consult tabs included: a consult answering on one of them is a running turn too.
+ */
+export function liftBusyReason(agent: {
+	name?: string;
+	state?: string;
+	aiTabs?: readonly { id: string; name?: string | null; state?: string }[];
+}): string | null {
+	const tabs = Array.isArray(agent.aiTabs) ? agent.aiTabs : [];
+	const busyTab = tabs.find((tab) => tab?.state === 'busy');
+	const who = agent.name ? `"${agent.name}"` : 'The agent';
+	if (busyTab) {
+		const tab = busyTab.name ? `tab "${busyTab.name}"` : `tab ${busyTab.id}`;
+		return `${who} is running a turn in ${tab}. A running turn cannot move: wait for it to finish, or stop it, then lift again.`;
+	}
+	if (agent.state === 'busy') {
+		return `${who} is busy. A running turn cannot move: wait for it to finish, or stop it, then lift again.`;
+	}
+	return null;
+}

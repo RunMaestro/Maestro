@@ -91,6 +91,7 @@ import {
 import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './commands/bundle';
 import { hostEndpoint, hostStart, hostStatus, hostStop } from './commands/host';
 import { remoteHostStart, remoteHostStatus } from './commands/remote-host';
+import { lift } from './commands/lift';
 import { createAgent } from './commands/create-agent';
 import { duplicateAgent } from './commands/duplicate-agent';
 import { liveStatus, liveOn, liveOff, liveTunnel } from './commands/live';
@@ -1909,6 +1910,16 @@ remoteHost
 	.option('--timeout <seconds>', 'Give up on each SSH call after this many seconds (default 60)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((ref: string, options) => remoteHostStart(ref, options, cliVersion));
+
+// Lift - move an SSH remote agent onto the maestro-cli host on its remote (Federation, #1716)
+encoreCommand(program, 'lift <agent>', 'federation', encoreFlags)
+	.description(
+		'Move an SSH remote agent, with its tabs, transcripts, provider sessions and queue, onto the host on its remote'
+	)
+	.option('--dry-run', 'Print what would move and what stays, then stop')
+	.option('--with-env', 'Send secret env vars too (non-secret ones always move)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agent: string, options) => lift(agent, options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program
