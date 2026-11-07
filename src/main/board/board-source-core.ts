@@ -85,12 +85,9 @@ export async function discoverLocalBoardSources(
 			continue;
 		// An import is a point-in-time transfer, never a YAML synchronization loop.
 		const existing = storage.db
-			.prepare('SELECT snapshot FROM migrations WHERE source_key=?')
-			.get(sourceKey) as { snapshot: Uint8Array } | undefined;
-		if (existing) {
-			applyBoardMigration(storage.db, JSON.parse(Buffer.from(existing.snapshot).toString('utf8')));
-			continue;
-		}
+			.prepare('SELECT 1 FROM migrations WHERE source_key=?')
+			.get(sourceKey);
+		if (existing) continue;
 		const knownRepository = storage.db
 			.prepare('SELECT payload_json FROM repositories WHERE id=?')
 			.get(`source:${sourceKey}`) as { payload_json: string } | undefined;
@@ -247,12 +244,9 @@ export async function discoverRemoteBoardSources(
 		)
 			continue;
 		const existing = storage.db
-			.prepare('SELECT snapshot FROM migrations WHERE source_key=?')
-			.get(sourceKey) as { snapshot: Uint8Array } | undefined;
-		if (existing) {
-			applyBoardMigration(storage.db, JSON.parse(Buffer.from(existing.snapshot).toString('utf8')));
-			continue;
-		}
+			.prepare('SELECT 1 FROM migrations WHERE source_key=?')
+			.get(sourceKey);
+		if (existing) continue;
 		let diagnostic: string | undefined;
 		try {
 			await importRemoteBoardSource(storage, source, registered, remote);

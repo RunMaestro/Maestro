@@ -1,9 +1,11 @@
+import { configureBoardFeatures } from '../../../main/board/board-feature';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
 	handlers: new Map<string, (...args: any[]) => Promise<any>>(),
 	workers: [] as any[],
 	live: ['agent'],
+	event: {} as any,
 }));
 vi.mock('electron', () => ({
 	ipcMain: {
@@ -11,7 +13,8 @@ vi.mock('electron', () => ({
 			state.handlers.set(channel, handler),
 	},
 	ipcRenderer: {
-		invoke: (channel: string, ...args: unknown[]) => state.handlers.get(channel)!(null, ...args),
+		invoke: (channel: string, ...args: unknown[]) =>
+			state.handlers.get(channel)!(state.event, ...args),
 	},
 }));
 vi.mock('../../../main/utils/ipcHandler', () => ({
@@ -23,7 +26,8 @@ vi.mock('../../../main/utils/ipcHandler', () => ({
 vi.mock('../../../main/stores/getters', () => ({
 	getLiveSessions: () => state.live.map((id) => ({ id })),
 }));
-vi.mock('../../../main/board/board-storage', () => ({
+vi.mock('../../../main/board/board-storage', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/board/board-storage')>()),
 	listBoardWorkers: () => structuredClone(state.workers),
 	listBoardWorkerAccessOptions: () => ({ roles: [], repositories: [] }),
 	registerBoardWorker: (agentId: string) => {
@@ -53,7 +57,13 @@ beforeEach(() => {
 	state.handlers.clear();
 	state.workers = [];
 	state.live = ['agent'];
-	registerBoardHandlers({ getCueEngine: () => null });
+	configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
+	const webContents = { mainFrame: {} };
+	state.event = { sender: webContents, senderFrame: webContents.mainFrame };
+	registerBoardHandlers({
+		getCueEngine: () => null,
+		getMainWindow: () => ({ isDestroyed: () => false, webContents }) as any,
+	});
 });
 describe('Board worker IPC bridge', () => {
 	it('routes registration and state changes, and returns validation errors', async () => {
@@ -86,3 +96,48 @@ describe('Board worker IPC bridge', () => {
 			await expect(api.setWorkerOptions(input as never)).rejects.toThrow();
 	});
 });
+
+it.each([
+	'board:setWorkerOptions',
+	'board:registerWorker',
+	'board:setWorkerAccess',
+	'board:enableWorker',
+	'board:pauseWorker',
+])('%s refuses secondary frames and removed agents before mutation', async (channel) => {
+	const native = state.event;
+	state.event = { ...native, senderFrame: {} };
+	await expect(
+		state.handlers.get(channel)!(state.event, {
+			agentId: 'agent',
+			expectedPayload: '{}',
+			patch: {},
+		})
+	).rejects.toThrow('main frame');
+	expect(state.workers).toEqual([]);
+	state.event = native;
+	state.live = [];
+	await expect(
+		state.handlers.get(channel)!(state.event, {
+			agentId: 'agent',
+			expectedPayload: '{}',
+			patch: {},
+		})
+	).rejects.toThrow('Live agent not found');
+	expect(state.workers).toEqual([]);
+});
+
+it.each([
+	{ board: false, maestroCue: false },
+	{ board: true, maestroCue: false },
+	{ board: false, maestroCue: true },
+])(
+	'every registered Board IPC refuses disabled flags before its implementation: %j',
+	async (flags) => {
+		configureBoardFeatures({ get: () => flags });
+		for (const handler of state.handlers.values())
+			await expect(handler(state.event, {})).rejects.toThrow(
+				flags.board ? 'CueDisabled' : 'BoardDisabled'
+			);
+		expect(state.workers).toEqual([]);
+	}
+);

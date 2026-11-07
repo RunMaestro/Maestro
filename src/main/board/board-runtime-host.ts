@@ -1,3 +1,4 @@
+import { isBoardEnabled, requireBoardEnabled } from './board-feature';
 import { yieldToEventLoop } from '../utils/concurrency';
 import { readyCardsInDispatchOrder } from './board-dispatcher';
 /** One host entry for desktop IPC, authenticated CLI and the Cue adapter.
@@ -35,6 +36,7 @@ export async function executeBoardRuntimeCommand(
 	/** Only a validated native main-frame IPC action supplies this principal. */
 	principal?: string
 ): Promise<BoardCommandResult> {
+	requireBoardEnabled();
 	if (
 		command.action === 'control' &&
 		['accept', 'recover'].includes(command.operation) &&
@@ -63,6 +65,22 @@ export async function executeBoardRuntimeCommand(
 	});
 	if (command.action === 'tick') {
 		const results: BoardTickResult[] = [];
+		const lookup = async (key: BoardCardKey, prepare: boolean) => {
+			try {
+				return await runtimeFor(key, prepare);
+			} catch (error) {
+				// A mid-tick toggle must not erase already-returned dispatch receipts.
+				// Unexpected preparation/storage/admission errors still propagate.
+				if (
+					results.some((result) => result.ok) &&
+					!isBoardEnabled() &&
+					error instanceof Error &&
+					['BoardDisabled', 'CueDisabled'].includes(error.message)
+				)
+					return null;
+				throw error;
+			}
+		};
 		const ordered = readyCardsInDispatchOrder(entry.board, true);
 		const selected = new Set(ordered.map((card) => card.id));
 		for (const card of [
@@ -80,7 +98,7 @@ export async function executeBoardRuntimeCommand(
 			// Acquire and validate the owner without probing Git; re-read the card and
 			// registry after every async boundary before reporting this wait reason.
 			if (selected.has(card.id) && listBoardWorkers(getBoardStorage().db).length === 0) {
-				const waitingRuntime = await runtimeFor(key, false);
+				const waitingRuntime = await lookup(key, false);
 				if (
 					canonicalJson(await prepareBoardWorkspaceQuery(requestedQuery)) !==
 						canonicalJson(query) ||
@@ -90,7 +108,11 @@ export async function executeBoardRuntimeCommand(
 						'stale-revision',
 						'Board project alias changed during runtime preparation'
 					);
-				if (!waitingRuntime) return failed('runtime-unavailable');
+				if (!waitingRuntime) {
+					if (!results.some((result) => result.ok)) return failed('runtime-unavailable');
+					results.push({ cardId: card.id, ok: false, reason: 'runtime-unavailable' });
+					continue;
+				}
 				const current = waitingRuntime.storage.workspace.readCollection(key);
 				const currentCard = current?.cards.find((c) => c.cardId === card.id);
 				if (!current || !currentCard) {
@@ -134,7 +156,7 @@ export async function executeBoardRuntimeCommand(
 					}
 				}
 			}
-			const runtime = await runtimeFor(key, selected.has(card.id));
+			const runtime = await lookup(key, selected.has(card.id));
 			if (
 				canonicalJson(await prepareBoardWorkspaceQuery(requestedQuery)) !== canonicalJson(query) ||
 				getBoardStorage().sourceIdentity(target.sourceKey) !== sourceIdentity
@@ -143,7 +165,11 @@ export async function executeBoardRuntimeCommand(
 					'stale-revision',
 					'Board project alias changed during runtime preparation'
 				);
-			if (!runtime) return failed('runtime-unavailable');
+			if (!runtime) {
+				if (!results.some((result) => result.ok)) return failed('runtime-unavailable');
+				results.push({ cardId: card.id, ok: false, reason: 'runtime-unavailable' });
+				continue;
+			}
 			const storage = runtime.storage;
 			const collection = storage.workspace.readCollection(key);
 			const fresh = collection?.cards.find((c) => c.cardId === card.id);

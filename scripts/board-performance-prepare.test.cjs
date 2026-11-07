@@ -15,11 +15,12 @@ const runWithEnv = (env, ...args) =>
 	});
 const run = (...args) => runWithEnv({}, ...args);
 
-test('prepares the three isolated profiles without workers or measurements', () => {
+test('prepares the three isolated profiles without workers or measurements', (t) => {
 	for (const count of [0, 100, 500]) {
 		const result = run(String(count));
 		assert.equal(result.status, 0, result.stderr);
 		const manifest = JSON.parse(fs.readFileSync(result.stdout.trim(), 'utf8'));
+		t.after(() => fs.rmSync(manifest.contract.root, { recursive: true, force: true }));
 		assert.equal(manifest.counts.cards, count);
 		assert.deepEqual(
 			[manifest.counts.agents, manifest.counts.groups, manifest.counts.sources],
@@ -56,6 +57,7 @@ test(
 		const result = runWithEnv({ PATH: directory }, '0');
 		assert.equal(result.status, 0, result.stderr);
 		const manifest = JSON.parse(fs.readFileSync(result.stdout.trim(), 'utf8'));
+		t.after(() => fs.rmSync(manifest.contract.root, { recursive: true, force: true }));
 		assert.equal(manifest.head, 'fixture-head');
 	}
 );

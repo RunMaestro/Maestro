@@ -85,15 +85,20 @@ export function revokeAgentTurnAdmission(proof: AgentTurnAdmissionProof): void {
 	}
 }
 
+/** A typed, pre-start admission refusal; provider/observer failures use their own errors. */
+export class AgentTurnAdmissionError extends Error {}
+
 export function startAdmittedAgentTurn(
 	proof: AgentTurnAdmissionProof | undefined,
 	agentId: string | undefined
 ): () => void {
 	const state = proof && proofs.get(proof);
 	if (!state || state.revoked || state.active || !agentId || proof?.agentId !== agentId)
-		throw new Error('Valid host admission proof and originating worker required');
+		throw new AgentTurnAdmissionError('Valid host admission proof and originating worker required');
 	if (!canStartAgentTurn(agentId))
-		throw new Error('Board worker is reserved; wait for its current attempt to settle');
+		throw new AgentTurnAdmissionError(
+			'Board worker is reserved; wait for its current attempt to settle'
+		);
 	state.active = true;
 	const releaseActivity = trackHeadlessAgentActivity(agentId);
 	let released = false;

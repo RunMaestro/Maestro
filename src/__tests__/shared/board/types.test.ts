@@ -292,3 +292,12 @@ describe('validateCardRun prError', () => {
 		expect(card?.runs?.[1].prError).toBeUndefined();
 	});
 });
+
+it('drops malformed known execution fields before rebuilding a card', () => {
+	const card = validateBoardCard(
+		raw({ assigneeAgentId: '   ', assigneeProfileId: {}, worktree: 'invalid', runs: {} })
+	);
+	expect(card).not.toBeNull();
+	for (const key of ['assigneeAgentId', 'assigneeProfileId', 'worktree', 'runs'])
+		expect(card).not.toHaveProperty(key);
+});

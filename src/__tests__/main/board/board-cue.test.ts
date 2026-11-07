@@ -1,3 +1,4 @@
+import { configureBoardFeatures } from '../../../main/board/board-feature';
 import { snapshotSqlite } from '../../helpers/sqliteSnapshot';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
@@ -102,6 +103,7 @@ function newRuntime(
 	);
 }
 beforeEach(() => {
+	configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
 	dir = fs.mkdtempSync(path.join(fixture.contract.root, 'cue-'));
 	db = openBoardDb(fixture.contract.db);
 	storage = new BoardStorageFacade(db, (root) => [root]);
@@ -1077,3 +1079,48 @@ describe('attempt-owned native review preparation', () => {
 		expect(db.prepare('SELECT count(*) AS n FROM reservations').get()).toEqual({ n: 0 });
 	});
 });
+
+it.each(['owner-loss', 'gate-off'])(
+	'preserves earlier per-card dispatch receipts after %s',
+	async (failure) => {
+		const entry = storage.query().collections[0];
+		const first = db
+			.prepare('SELECT payload_json FROM cards WHERE collection_key=?')
+			.get(entry.collectionKey) as { payload_json: string };
+		db.prepare('INSERT INTO cards(collection_key,id,payload_json,revision) VALUES(?,?,?,0)').run(
+			entry.collectionKey,
+			'later',
+			JSON.stringify({ ...JSON.parse(first.payload_json), id: 'later', title: 'Later' })
+		);
+		let lookups = 0;
+		configureBoardRuntimeHost((key, shouldPrepare) => {
+			if (++lookups === 1) return cue.runtimeFor(key, shouldPrepare);
+			if (failure === 'gate-off') {
+				configureBoardFeatures({ get: () => ({ board: false, maestroCue: true }) });
+				return cue.runtimeFor(key, shouldPrepare);
+			}
+			return null;
+		});
+		const result = await executeBoardRuntimeCommand({
+			action: 'tick',
+			operationId: 'partial-owner-loss',
+			target: {
+				sourceKey: entry.sourceKey,
+				collectionKey: entry.collectionKey,
+				expectedRevision: storage.workspace.readCollection(entry)!.revision,
+			},
+		});
+		expect(result).toMatchObject({
+			ok: true,
+			value: [
+				expect.objectContaining({
+					ok: true,
+					runToken: expect.objectContaining({ runId: expect.any(String) }),
+				}),
+				expect.objectContaining({ ok: false, reason: 'runtime-unavailable' }),
+			],
+		});
+		settle(good);
+		await cue.settle();
+	}
+);

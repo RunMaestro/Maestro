@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 /** Pure planning of explicitly supplied legacy Board sources. No discovery or writes. */
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
@@ -681,7 +682,10 @@ function applyMigrationWorkerAccess(
 							(c) =>
 								c.boardWorker &&
 								c.dir &&
-								isPathAtOrUnderRoot(c.dir, plan.repository!.workingDirectory)
+								isPathAtOrUnderRoot(
+									path.posix.normalize(c.dir),
+									path.posix.normalize(plan.repository!.workingDirectory)
+								)
 						)
 						.map((c) => c.id)
 				: selectPoolAgentIds(

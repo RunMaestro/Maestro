@@ -454,18 +454,21 @@ describe('remote-fs', () => {
 			expect(sshArgs[sshArgs.length - 1]).toContain('base64 < ');
 		});
 
-		it('maps a missing remote image to a file-not-found error', async () => {
-			const deps = createMockDeps({
-				stdout: '',
-				stderr: 'base64: /missing.png: No such file or directory',
-				exitCode: 1,
-			});
+		it.each(['No such file or directory', 'no such file or directory'])(
+			'maps a missing remote image (%s) to a file-not-found error',
+			async (reason) => {
+				const deps = createMockDeps({
+					stdout: '',
+					stderr: `base64: /missing.png: ${reason}`,
+					exitCode: 1,
+				});
 
-			const result = await readBinaryFileRemoteAsBase64('/missing.png', baseConfig, deps);
+				const result = await readBinaryFileRemoteAsBase64('/missing.png', baseConfig, deps);
 
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('File not found');
-		});
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('File not found');
+			}
+		);
 	});
 
 	describe('readBinaryFileBlockRemoteAsBase64', () => {

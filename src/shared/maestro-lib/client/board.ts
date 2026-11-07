@@ -8,6 +8,7 @@ export function requestBoardCommand(
 ): Promise<BoardCommandReply> {
 	return connection.sendCommand<BoardCommandReply>(
 		{ type: 'board_command', ...command },
-		'board_command_result'
+		'board_command_result',
+		command.action === 'card-pr' ? 240000 : command.action.startsWith('source-') ? 60000 : undefined
 	);
 }

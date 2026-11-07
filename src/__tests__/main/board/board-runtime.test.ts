@@ -1,3 +1,5 @@
+import { createBoardAgentAdmission } from '../../../main/board/board-claims';
+import { configureBoardFeatures } from '../../../main/board/board-feature';
 import { snapshotSqlite } from '../../helpers/sqliteSnapshot';
 import { boardOwnerLiveness } from '../../../main/board/board-owner-liveness';
 import { isLeftByEarlierHolderOfOurPid } from '../../../main/cue/cue-engine-lock';
@@ -577,7 +579,10 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 			const pending = run('worker', 'fixture', undefined, undefined, 'relay');
 			await ready;
 			const token = claim(); // proof issued BEFORE the durable Board reservation
-			const denied = expect(pending).rejects.toThrow('reserved');
+			const denied = expect(pending).resolves.toMatchObject({
+				success: false,
+				error: expect.stringContaining('reserved'),
+			});
 			continuePlanning();
 			await denied;
 			expect(fs.existsSync(marker)).toBe(false);
@@ -669,7 +674,10 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 					agentCommand: process.execPath,
 					agentConfigValues: {},
 				})
-			).rejects.toThrow('admission proof');
+			).resolves.toMatchObject({
+				success: false,
+				error: expect.stringContaining('admission proof'),
+			});
 		}
 		revokeAgentTurnAdmission(proof);
 		expect(() => startAdmittedAgentTurn(proof, 'worker')).toThrow('admission proof');
@@ -839,7 +847,7 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 				agentCommand: process.execPath,
 				agentConfigValues: {},
 			})
-		).rejects.toThrow('reserved');
+		).resolves.toMatchObject({ success: false, error: expect.stringContaining('reserved') });
 		revokeAgentTurnAdmission(proof);
 		expect(db.prepare('SELECT * FROM migration_worker_holds').all()).toHaveLength(1);
 	});
@@ -1330,8 +1338,8 @@ import(${JSON.stringify(pathToFileURL(FAKE_AGENT_PATH).href)});
 		});
 		const token = claim();
 		expect(await runtime.start(token)).toEqual({ ok: true });
-		expect(card().status).toBe('ready');
-		expect((card().runs as { outcome: string }[])[0].outcome).toBe('error');
+		expect(card().status).toBe('blocked');
+		expect((card().runs as { outcome: string }[])[0].outcome).toBe('blocked');
 		expect(reservations()).toEqual([]);
 	});
 	it('holds before requesting Stop, retains reservation until acknowledgement and preserves policy on Resume', async () => {
@@ -2503,4 +2511,67 @@ describe('work, linked review and explicit final human decision', () => {
 		});
 		expect(reservations()).toHaveLength(0);
 	});
+});
+
+it.each([false, true])(
+	'pauses new Board intake while retaining bound results when Cue=%s',
+	async (maestroCue) => {
+		const token = claim();
+		const pending = runtime.start(token);
+		configureBoardFeatures({ get: () => ({ board: false, maestroCue }) });
+		host.dispatchEnabled = false;
+		const retained = snapshotSqlite(db);
+		expect(runtime.acquire()).toMatchObject({ ok: false, reason: 'runtime-unavailable' });
+		expect(runtime.claim(command(1))).toMatchObject({ ok: false, reason: 'runtime-unavailable' });
+		expect(snapshotSqlite(db)).toEqual(retained);
+		expect(reservations()).toHaveLength(1);
+		settle(good);
+		expect(await pending).toEqual({ ok: true });
+		expect(runtime.read(token)!.outcome).toMatchObject({
+			result: { output: good.output, artifact: good.artifact },
+		});
+		expect(card().status).toBe('review');
+		expect(reservations()).toHaveLength(0);
+		configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
+	}
+);
+
+it('lets an ordinary admitted real child run while Board is off without reading or changing Board holds', async () => {
+	const token = claim();
+	configureBoardFeatures({ get: () => ({ board: false, maestroCue: false }) });
+	const getDb = vi.fn(() => db);
+	configureAgentAdmission(
+		createBoardAgentAdmission({ get: () => ({ board: false, maestroCue: false }) }, getDb, vi.fn())
+	);
+	const proof = issueAgentTurnAdmission('worker');
+	const before = snapshotSqlite(db);
+	const onStarted = vi.fn();
+	const result = await spawnAgent('codex', dir, 'fixture', undefined, {
+		agentCommand: process.execPath,
+		agentConfigValues: {},
+		originWorkerId: 'worker',
+		workerAdmission: proof,
+		onProcessStarted: onStarted,
+	});
+	expect(result).toHaveProperty('success');
+	expect(onStarted).toHaveBeenCalledWith(expect.any(Number));
+	expect(getDb).not.toHaveBeenCalled();
+	expect(snapshotSqlite(db)).toEqual(before);
+	expect(runtime.read(token)!.outcome).toBeNull();
+	revokeAgentTurnAdmission(proof);
+	configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
+});
+
+it('keeps prepared capacity fenced when disabled before start and resumes only after enabling both gates', async () => {
+	const token = claim();
+	configureBoardFeatures({ get: () => ({ board: true, maestroCue: false }) });
+	const before = snapshotSqlite(db);
+	expect(await runtime.start(token)).toEqual({ ok: false, reason: 'runtime-unavailable' });
+	expect(service.spawn).not.toHaveBeenCalled();
+	expect(snapshotSqlite(db)).toEqual(before);
+	expect(reservations()).toHaveLength(1);
+	configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
+	const pending = runtime.start(token);
+	settle(good);
+	expect(await pending).toEqual({ ok: true });
 });

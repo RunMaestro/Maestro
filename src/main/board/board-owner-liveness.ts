@@ -1,3 +1,4 @@
+import { isBoardEnabled } from './board-feature';
 /** Native host evidence for Board owner recovery; never a wire-supplied death verdict. */
 import {
 	readCueEngineLock,
@@ -95,6 +96,7 @@ export async function readBoardOwnerHostIdentity(
 	platform: NodeJS.Platform = process.platform,
 	read: typeof execFileNoThrow = execFileNoThrow
 ): Promise<string | undefined> {
+	if (!isBoardEnabled()) return undefined;
 	try {
 		let result;
 		if (platform === 'darwin') {

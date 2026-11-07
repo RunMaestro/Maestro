@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planBoardMigration } from './board-migration';
+import { planBoardMigration } from '../../../main/board/board-migration';
 
 describe('migration fixture', () => {
 	it('keeps sources separate and retains raw data deterministically', () => {

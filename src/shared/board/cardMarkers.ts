@@ -17,7 +17,7 @@
  * Parsing is deliberately regex-based and dependency-free - no markdown/HTML
  * parser is pulled in - and follows the exact same approach as `goalMarkers.ts`
  * (whitespace-tolerant, well-anchored to the `<!-- maestro:... -->` shape, and
- * takes the LAST match of each marker type so the agent's final word wins).
+ * accepts only the final standalone marker so the agent's final word wins).
  */
 
 /**
@@ -56,78 +56,31 @@ export interface CardMarkers {
 	blockReason?: string;
 }
 
-/**
- * Matches the completion marker, with or without a summary:
- *   `<!-- maestro:card-complete -->` or
- *   `<!-- maestro:card-complete | summary here -->`.
- *
- * The optional `| summary` group is non-greedy so it stops at the first `-->`.
- * The `g` flag lets us keep the LAST match when the agent emits several.
- */
-const CARD_COMPLETE_RE = /<!--\s*maestro:card-complete\s*(?:\|\s*([\s\S]*?))?\s*-->/g;
+/** Only a final standalone marker carries worker authority. Inline/quoted
+ * examples and unterminated markers cannot consume a later marker's terminator. */
+const FINAL_CARD_MARKER_RE =
+	/(?:^|\n)[ \t]*<!--[ \t]*maestro:card-(complete|review|block|findings)[ \t]*(?:([|:])[ \t]*((?:(?!<!--|-->)[^\r\n])*?))?[ \t]*-->[ \t\r\n]*$/;
 
-/**
- * Matches the block marker, with or without a reason:
- *   `<!-- maestro:card-block -->` or `<!-- maestro:card-block: reason here -->`.
- *
- * The optional `:` + reason group is captured into `blockReason`.
- */
-const CARD_BLOCK_RE = /<!--\s*maestro:card-block\s*(?::\s*([\s\S]*?))?\s*-->/g;
+const CARD_FINDINGS_RE =
+	/(?:^|\n)[ \t]*<!--[ \t]*maestro:card-findings[ \t]*:[ \t]*((?:(?!<!--|-->)[\s\S])*?)-->[ \t]*(?=\r?\n|$)/g;
 
-/**
- * Matches the review marker, with or without a reason:
- *   `<!-- maestro:card-review -->` or `<!-- maestro:card-review: reason here -->`.
- *
- * Same shape as {@link CARD_BLOCK_RE}; the optional `:` + reason group is
- * captured into `reviewReason`.
- */
-const CARD_REVIEW_RE = /<!--\s*maestro:card-review\s*(?::\s*([\s\S]*?))?\s*-->/g;
-const CARD_FINDINGS_RE = /<!--\s*maestro:card-findings\s*:\s*([\s\S]*?)\s*-->/g;
-
-/**
- * Return the last regex match in `text`, or `null` if there are none.
- *
- * When a marker type appears multiple times in one run's output we take the
- * agent's final word for that type. The pattern must carry the `g` flag.
- */
-function lastMatch(re: RegExp, text: string): RegExpMatchArray | null {
-	let last: RegExpMatchArray | null = null;
-	for (const match of text.matchAll(re)) {
-		last = match;
-	}
-	return last;
-}
-
-/** Trim a captured group; return `undefined` when absent or empty after trimming. */
-function trimToUndefined(value: string | undefined): string | undefined {
-	if (value === undefined) {
-		return undefined;
-	}
-	const trimmed = value.trim();
-	return trimmed.length > 0 ? trimmed : undefined;
-}
-
-/**
- * Parse the card completion markers from one run's agent output.
- *
- * Block, review, and complete markers can all technically appear; the caller
- * (the dispatcher) resolves precedence - block beats review beats complete - so
- * this parser reports every flag faithfully rather than deciding for it. Missing
- * markers yield `false`/`undefined`, letting the caller fall back to the process
- * exit status.
- */
+/** Parse the worker's final handoff; absent authority preserves exit-status fallback. */
 export function parseCardMarkers(output: string): CardMarkers {
-	const completeMatch = lastMatch(CARD_COMPLETE_RE, output);
-	const reviewMatch = lastMatch(CARD_REVIEW_RE, output);
-	const blockMatch = lastMatch(CARD_BLOCK_RE, output);
-
+	let findings: string | undefined;
+	for (const report of output.matchAll(CARD_FINDINGS_RE)) findings = report[1].trim() || undefined;
+	const match = output.match(FINAL_CARD_MARKER_RE);
+	const kind = match?.[1];
+	const separator = match?.[2];
+	const value = match?.[3]?.trim() || undefined;
+	const valid =
+		kind === 'complete' ? !separator || separator === '|' : !separator || separator === ':';
 	return {
-		findings: trimToUndefined(lastMatch(CARD_FINDINGS_RE, output)?.[1]),
-		complete: completeMatch !== null,
-		summary: completeMatch ? trimToUndefined(completeMatch[1]) : undefined,
-		review: reviewMatch !== null,
-		reviewReason: reviewMatch ? trimToUndefined(reviewMatch[1]) : undefined,
-		blocked: blockMatch !== null,
-		blockReason: blockMatch ? trimToUndefined(blockMatch[1]) : undefined,
+		findings,
+		complete: valid && kind === 'complete',
+		summary: valid && kind === 'complete' ? value : undefined,
+		review: valid && kind === 'review',
+		reviewReason: valid && kind === 'review' ? value : undefined,
+		blocked: valid && kind === 'block',
+		blockReason: valid && kind === 'block' ? value : undefined,
 	};
 }

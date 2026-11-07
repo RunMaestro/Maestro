@@ -50,7 +50,8 @@ export function boardCardBranchName(boardId: string, cardId: string): string {
  * the project root, mirroring the branch name underneath it.
  */
 export function boardWorktreePath(projectRoot: string, branch: string): string {
-	return joinPath(getParentDir(projectRoot), BOARD_WORKTREE_DIRNAME, branch);
+	const trimmed = projectRoot.replace(/[/\\]+$/, '') || projectRoot;
+	return joinPath(getParentDir(trimmed), BOARD_WORKTREE_DIRNAME, branch);
 }
 
 /**

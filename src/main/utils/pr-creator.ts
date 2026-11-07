@@ -77,9 +77,13 @@ export interface CreatePullRequestResult {
  * Resolve a repository's default branch: ask the remote first, then fall back
  * to a local `main` or `master`. Returns null when none of those answer.
  */
-export async function resolveDefaultBranch(cwd: string): Promise<string | null> {
+export async function resolveDefaultBranch(cwd: string, timeout?: number): Promise<string | null> {
+	const exec = (args: string[]) =>
+		timeout === undefined
+			? execFileNoThrow('git', args, cwd)
+			: execFileNoThrow('git', args, cwd, { timeout });
 	// First try to get the default branch from remote
-	const remoteResult = await execFileNoThrow('git', ['remote', 'show', 'origin'], cwd);
+	const remoteResult = await exec(['remote', 'show', 'origin']);
 	if (remoteResult.exitCode === 0) {
 		// Parse "HEAD branch: main" from the output
 		const match = remoteResult.stdout.match(/HEAD branch:\s*(\S+)/);
@@ -89,12 +93,12 @@ export async function resolveDefaultBranch(cwd: string): Promise<string | null> 
 	}
 
 	// Fallback: check if main or master exists locally
-	const mainResult = await execFileNoThrow('git', ['rev-parse', '--verify', 'main'], cwd);
+	const mainResult = await exec(['rev-parse', '--verify', 'main']);
 	if (mainResult.exitCode === 0) {
 		return 'main';
 	}
 
-	const masterResult = await execFileNoThrow('git', ['rev-parse', '--verify', 'master'], cwd);
+	const masterResult = await exec(['rev-parse', '--verify', 'master']);
 	if (masterResult.exitCode === 0) {
 		return 'master';
 	}
@@ -111,7 +115,9 @@ export async function resolveDefaultBranch(cwd: string): Promise<string | null> 
  */
 async function countCommitsAhead(cwd: string, base: string): Promise<number | null> {
 	for (const ref of [base, `origin/${base}`]) {
-		const result = await execFileNoThrow('git', ['rev-list', '--count', `${ref}..HEAD`], cwd);
+		const result = await execFileNoThrow('git', ['rev-list', '--count', `${ref}..HEAD`], cwd, {
+			timeout: 30000,
+		});
 		if (result.exitCode !== 0) continue;
 		const count = Number.parseInt(result.stdout.trim(), 10);
 		if (Number.isFinite(count)) return count;
@@ -132,7 +138,9 @@ export async function createPullRequest(
 	// Resolve the base branch: explicit value, else the repo default, else main
 	let targetBranch = options.targetBranch;
 	if (!targetBranch) {
-		targetBranch = (await resolveDefaultBranch(mainRepoCwd || worktreePath)) || 'main';
+		targetBranch =
+			(await resolveDefaultBranch(mainRepoCwd || worktreePath, skipHooks ? 10000 : undefined)) ||
+			'main';
 	}
 
 	// Empty-branch precondition (X1, decision 6). An unattended caller can be
@@ -175,7 +183,12 @@ export async function createPullRequest(
 	const pushArgs = skipHooks
 		? ['push', '--no-verify', '-u', 'origin', 'HEAD']
 		: ['push', '-u', 'origin', 'HEAD'];
-	const pushResult = await execFileNoThrow('git', pushArgs, worktreePath, shellEnv);
+	const pushResult = await execFileNoThrow(
+		'git',
+		pushArgs,
+		worktreePath,
+		skipHooks ? { env: shellEnv, timeout: 60000 } : shellEnv
+	);
 	if (pushResult.exitCode !== 0) {
 		return { success: false, targetBranch, error: `Failed to push branch: ${pushResult.stderr}` };
 	}
@@ -185,7 +198,7 @@ export async function createPullRequest(
 		ghCommand,
 		['pr', 'create', '--base', targetBranch, '--title', title, '--body', body],
 		worktreePath,
-		shellEnv
+		skipHooks ? { env: shellEnv, timeout: 60000 } : shellEnv
 	);
 
 	if (prResult.exitCode !== 0) {

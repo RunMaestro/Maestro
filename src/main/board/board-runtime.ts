@@ -1,3 +1,4 @@
+import { isBoardEnabled } from './board-feature';
 import { captureException } from '../utils/sentry';
 import { parseCardMarkers } from '../../shared/board/cardMarkers';
 /** Durable Board lifecycle around the existing Cue runner. No queue, timer,
@@ -110,6 +111,7 @@ export class BoardRuntime {
 				ok: false;
 				reason: 'runtime-unavailable' | 'owner-identity-unavailable' | 'owner-conflict';
 		  } {
+		if (!isBoardEnabled()) return { ok: false, reason: 'runtime-unavailable' };
 		return this.storage.db
 			.transaction((): ReturnType<BoardRuntime['acquire']> => {
 				if (!this.lock.verify().ok) return { ok: false, reason: 'runtime-unavailable' };
@@ -147,6 +149,7 @@ export class BoardRuntime {
 	}
 
 	claim(command: BoardClaimCommand, emptyRegistryProbe: boolean | 'readiness' = false) {
+		if (!isBoardEnabled()) return { ok: false as const, reason: 'runtime-unavailable' as const };
 		if (!this.owns()) return { ok: false as const, reason: 'owner-conflict' as const };
 		return this.storage.claim(command, () => this.context(), emptyRegistryProbe);
 	}
@@ -256,6 +259,7 @@ export class BoardRuntime {
 
 	/** Only the prepared -> starting winner invokes the existing run service. */
 	async start(token: BoardRunToken): Promise<Verdict> {
+		if (!isBoardEnabled()) return { ok: false, reason: 'runtime-unavailable' };
 		const accepted = this.storage.db
 			.transaction((): Verdict => {
 				if (!this.owns() || token.ownerEpoch !== this.epoch)
@@ -852,7 +856,7 @@ export class BoardRuntime {
 					'result',
 					this.onTransitions
 				);
-				queueBoardReviews(this.storage, this.onTransitions);
+				if (isBoardEnabled()) queueBoardReviews(this.storage, this.onTransitions);
 				queueMicrotask(() => {
 					// Match this completion, including an identical retry after outer rollback.
 					try {

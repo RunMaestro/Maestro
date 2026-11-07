@@ -1,3 +1,4 @@
+import { configureBoardFeatures } from '../../../main/board/board-feature';
 /**
  * @file board-spawn.test.ts
  * @description Board Phase 4: the spawn path's worktree handling. The Cue
@@ -100,6 +101,8 @@ beforeEach(() => {
 	});
 });
 afterEach(() => vi.restoreAllMocks());
+
+beforeEach(() => configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) }));
 
 describe('spawnBoardCard worktree isolation', () => {
 	it('refuses a historical retry without a baseline and preserves committed work with a recorded base', async () => {

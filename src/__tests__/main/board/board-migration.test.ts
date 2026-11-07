@@ -359,3 +359,49 @@ it('resolves local migration worker aliases without granting symlink escapes and
 		db.close();
 	}
 });
+
+it('normalizes SSH containment decisions without rewriting raw migration evidence or managed access', () => {
+	const db = openBoardDb(fixture.contract.db);
+	try {
+		const workers = [
+			{ id: 'inside', dir: '/remote/repo/./inside', boardWorker: true, sshRemoteId: 'remote' },
+			{ id: 'escape', dir: '/remote/repo/../outside', boardWorker: true, sshRemoteId: 'remote' },
+			{ id: 'sibling', dir: '/remote/repository', boardWorker: true, sshRemoteId: 'remote' },
+			{ id: 'managed', dir: '/remote/repo/inside', boardWorker: true, sshRemoteId: 'remote' },
+		];
+		db.prepare('INSERT INTO workers VALUES (?, 1, 0, ?)').run(
+			'managed',
+			'{"accessManaged":true,"allowedRepositoryIds":[],"roleRefs":[]}'
+		);
+		const plan = planBoardMigration({
+			source: { location: { kind: 'ssh', remoteId: 'remote' }, path: '/remote/repo' },
+			repository: {
+				id: 'repo',
+				workingDirectory: '/remote/repo',
+				validated: true,
+				location: { kind: 'ssh', remoteId: 'remote' },
+			},
+			boardBytes: null,
+			profileBytes: null,
+			workers,
+		});
+		applyBoardMigration(db, plan);
+		const registered = listBoardWorkers(db);
+		expect(
+			registered.find((worker) => worker.agentId === 'inside')!.payload.allowedRepositoryIds
+		).toEqual(['repo']);
+		for (const id of ['escape', 'sibling', 'managed'])
+			expect(
+				registered.find((worker) => worker.agentId === id)!.payload.allowedRepositoryIds
+			).toEqual([]);
+		const saved = db.prepare('SELECT snapshot FROM migrations').get() as { snapshot: Uint8Array };
+		expect(JSON.parse(Buffer.from(saved.snapshot).toString('utf8')).snapshot.workers).toEqual(
+			workers
+		);
+		const before = snapshotSqlite(db);
+		applyBoardMigration(db, plan);
+		expect(snapshotSqlite(db)).toEqual(before);
+	} finally {
+		db.close();
+	}
+});

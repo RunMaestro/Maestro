@@ -1,3 +1,4 @@
+import { requireBoardEnabled } from '../../board/board-feature';
 /**
  * Board IPC Handlers
  *
@@ -111,13 +112,47 @@ export interface BoardHandlerDependencies {
  * owning runtime as CLI; an unavailable owner never fabricates termination.
  */
 export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
-	ipcMain.handle('board:deleteCards', async (_event, input: Record<string, unknown>) => {
+	// One registration boundary covers logged and raw Board IPC handlers alike.
+	const handle: typeof ipcMain.handle = (channel, listener) =>
+		ipcMain.handle(channel, async (event, ...args) => {
+			requireBoardEnabled();
+			if (
+				[
+					'board:setWorkerOptions',
+					'board:registerWorker',
+					'board:setWorkerAccess',
+					'board:enableWorker',
+					'board:pauseWorker',
+				].includes(channel)
+			) {
+				const window = deps.getMainWindow?.();
+				if (
+					!window ||
+					window.isDestroyed() ||
+					event.sender !== window.webContents ||
+					event.senderFrame !== window.webContents.mainFrame
+				)
+					throw new BoardStorageError(
+						'protected-field',
+						'Board worker changes require the desktop main frame'
+					);
+				const input = args[0];
+				if (
+					!input ||
+					typeof input.agentId !== 'string' ||
+					!getLiveSessions().some((session) => session.id === input.agentId)
+				)
+					throw new Error('Live agent not found');
+			}
+			return listener(event, ...args);
+		});
+	handle('board:deleteCards', async (_event, input: Record<string, unknown>) => {
 		const command = input && parseBoardCommand(input);
 		if (!command || command.action !== 'delete-cards')
 			return { ok: false, error: { code: 'invalid-input', message: 'Invalid Board batch' } };
 		return executeBoardCommand(command);
 	});
-	ipcMain.handle(
+	handle(
 		'board:runtimeCommand',
 		async (event, input: Record<string, unknown>): Promise<BoardCommandResult> => {
 			try {
@@ -150,7 +185,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 		}
 	);
 
-	ipcMain.handle(
+	handle(
 		'board:setStartPolicy',
 		async (
 			event,
@@ -197,7 +232,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 		}
 	);
 
-	ipcMain.handle(
+	handle(
 		'board:sourceCommand',
 		async (event, command: import('../../../shared/board/types').BoardSourceCommand) => {
 			const window = deps.getMainWindow?.();
@@ -218,7 +253,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 		}
 	);
 
-	ipcMain.handle(
+	handle(
 		'board:upsertRole',
 		async (
 			event,
@@ -244,37 +279,34 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 			);
 		}
 	);
-	ipcMain.handle(
-		'board:roleCommand',
-		async (event, input: unknown): Promise<BoardCommandResult> => {
-			const window = deps.getMainWindow?.();
-			if (
-				!window ||
-				window.isDestroyed() ||
-				event?.sender !== window.webContents ||
-				event.senderFrame !== window.webContents.mainFrame
-			)
-				return {
-					ok: false,
-					error: {
-						code: 'protected-field',
-						message: 'Board role editing requires the desktop main frame',
-					},
-				};
-			const command =
-				input && typeof input === 'object' && !Array.isArray(input)
-					? parseBoardCommand(input as Record<string, unknown>)
-					: undefined;
-			if (!command || (command.action !== 'create-role' && command.action !== 'set-worker-role'))
-				return {
-					ok: false,
-					error: { code: 'invalid-input', message: 'Invalid Board role command' },
-				};
-			return executeBoardCommand(command);
-		}
-	);
+	handle('board:roleCommand', async (event, input: unknown): Promise<BoardCommandResult> => {
+		const window = deps.getMainWindow?.();
+		if (
+			!window ||
+			window.isDestroyed() ||
+			event?.sender !== window.webContents ||
+			event.senderFrame !== window.webContents.mainFrame
+		)
+			return {
+				ok: false,
+				error: {
+					code: 'protected-field',
+					message: 'Board role editing requires the desktop main frame',
+				},
+			};
+		const command =
+			input && typeof input === 'object' && !Array.isArray(input)
+				? parseBoardCommand(input as Record<string, unknown>)
+				: undefined;
+		if (!command || (command.action !== 'create-role' && command.action !== 'set-worker-role'))
+			return {
+				ok: false,
+				error: { code: 'invalid-input', message: 'Invalid Board role command' },
+			};
+		return executeBoardCommand(command);
+	});
 
-	ipcMain.handle(
+	handle(
 		'board:captureCatalog',
 		withIpcErrorLogging(handlerOpts('captureCatalog'), async () => {
 			await refreshBoardSources();
@@ -283,7 +315,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 	);
 	// This native-only channel derives authority from the actual top-level desktop sender.
 	// Remote/web/CLI callers use ordinary mutations and cannot claim human policy authority.
-	ipcMain.handle(
+	handle(
 		'board:captureCard',
 		async (event, command: BoardCaptureCommand): Promise<BoardCaptureResponse> => {
 			try {
@@ -330,7 +362,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 		}
 	);
 
-	ipcMain.handle(
+	handle(
 		'board:initialize',
 		withIpcErrorLogging(handlerOpts('initialize'), async (): Promise<BoardCaptureResponse> => {
 			try {
@@ -347,7 +379,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 		})
 	);
 
-	ipcMain.handle(
+	handle(
 		'board:queryWorkspace',
 		withIpcErrorLogging(
 			handlerOpts('queryWorkspace'),
@@ -363,11 +395,11 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 		)
 	);
 
-	ipcMain.handle(
+	handle(
 		'board:listWorkers',
 		withIpcErrorLogging(handlerOpts('listWorkers'), async () => listBoardWorkers())
 	);
-	ipcMain.handle(
+	handle(
 		'board:setWorkerOptions',
 		withIpcErrorLogging(handlerOpts('setWorkerOptions'), async (input: unknown) => {
 			const command = parseBoardWorkerOptionsCommand(input);
@@ -378,13 +410,13 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 			return listBoardWorkers();
 		})
 	);
-	ipcMain.handle(
+	handle(
 		'board:listWorkerAccessOptions',
 		withIpcErrorLogging(handlerOpts('listWorkerAccessOptions'), async () =>
 			listBoardWorkerAccessOptions()
 		)
 	);
-	ipcMain.handle(
+	handle(
 		'board:registerWorker',
 		withIpcErrorLogging(handlerOpts('registerWorker'), async (options: { agentId: string }) => {
 			if (
@@ -398,7 +430,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 			return listBoardWorkers();
 		})
 	);
-	ipcMain.handle(
+	handle(
 		'board:setWorkerAccess',
 		withIpcErrorLogging(
 			handlerOpts('setWorkerAccess'),
@@ -417,7 +449,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 		)
 	);
 
-	ipcMain.handle(
+	handle(
 		'board:enableWorker',
 		withIpcErrorLogging(
 			handlerOpts('enableWorker'),
@@ -429,7 +461,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 			}
 		)
 	);
-	ipcMain.handle(
+	handle(
 		'board:pauseWorker',
 		withIpcErrorLogging(
 			handlerOpts('pauseWorker'),
@@ -443,7 +475,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 	);
 
 	// List all boards for a project.
-	ipcMain.handle(
+	handle(
 		'board:list',
 		withIpcErrorLogging(
 			handlerOpts('list'),
@@ -454,7 +486,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 	);
 
 	// Get a single board by id (null when it does not exist).
-	ipcMain.handle(
+	handle(
 		'board:get',
 		withIpcErrorLogging(
 			handlerOpts('get'),
@@ -465,7 +497,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 	);
 
 	// Create a new, empty board. Returns the created board.
-	ipcMain.handle(
+	handle(
 		'board:create',
 		withIpcErrorLogging(
 			handlerOpts('create'),
@@ -478,7 +510,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 	);
 
 	// Rename a board in place. Returns the renamed board.
-	ipcMain.handle(
+	handle(
 		'board:rename',
 		withIpcErrorLogging(
 			handlerOpts('rename'),
@@ -492,7 +524,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 
 	// Delete an entire board. Refuses without `force` when any card is not `done`.
 	// Returns the remaining boards.
-	ipcMain.handle(
+	handle(
 		'board:delete',
 		withIpcErrorLogging(
 			handlerOpts('delete'),
@@ -509,7 +541,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 	);
 
 	// Create a card on a board. Returns the updated board.
-	ipcMain.handle(
+	handle(
 		'board:addCard',
 		withIpcErrorLogging(
 			handlerOpts('addCard'),
@@ -526,7 +558,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 	);
 
 	// Update a card in place (title/body/assignee/parents/etc.). Returns the board.
-	ipcMain.handle(
+	handle(
 		'board:updateCard',
 		withIpcErrorLogging(
 			handlerOpts('updateCard'),
@@ -543,7 +575,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 	);
 
 	// Status requests never grant final human approval, including desktop drags.
-	ipcMain.handle(
+	handle(
 		'board:setCardStatus',
 		withIpcErrorLogging(
 			handlerOpts('setCardStatus'),
@@ -571,7 +603,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 	// (which does NOT count toward the circuit breaker). The card returns to
 	// `todo` but is HELD there (`heldByUser`), so the promote pass leaves it alone
 	// until a person resumes it. Returns the updated board.
-	ipcMain.handle(
+	handle(
 		'board:cancelCard',
 		withIpcErrorLogging(
 			handlerOpts('cancelCard'),
@@ -592,7 +624,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 		)
 	);
 
-	ipcMain.handle(
+	handle(
 		'board:resumeCard',
 		withIpcErrorLogging(
 			handlerOpts('resumeCard'),
@@ -613,7 +645,7 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 	);
 
 	// Delete a card by id. Returns the updated board.
-	ipcMain.handle(
+	handle(
 		'board:deleteCard',
 		withIpcErrorLogging(
 			handlerOpts('deleteCard'),

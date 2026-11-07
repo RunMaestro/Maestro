@@ -660,7 +660,7 @@ A plugin with `events:subscribe` receives a FIXED catalog of host topics (`src/s
 
 `tool.executed` fires when a tool call transitions (best-effort `phase`, e.g. running / completed / failed, when the provider reports one). It is metadata only: tool NAME and timing, never the tool's arguments or results. Requires `minHostApi: '1.14.0'`.
 
-Board topics (host-API 1.15.0) let a plugin follow a task DAG without reading `board.yaml`:
+Board topics (host-API 1.32.0, SDK 0.26.0) let a plugin follow a task DAG without reading `board.yaml`:
 
 | Topic                     | Payload                                                                                        |
 | ------------------------- | ---------------------------------------------------------------------------------------------- |

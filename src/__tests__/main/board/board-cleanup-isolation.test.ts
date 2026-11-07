@@ -1,3 +1,7 @@
+import { applyBoardMigration, planBoardMigration } from '../../../main/board/board-migration';
+import { openBoardDb } from '../../../main/board/board-db';
+import { BoardStorageFacade } from '../../../main/board/board-storage';
+import * as fs from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as path from 'node:path';
 import type Database from 'better-sqlite3';
@@ -64,4 +68,38 @@ describe('isolated Board cleanup boundary', () => {
 		expect(db.transaction).not.toHaveBeenCalled();
 		expect(db.prepare).not.toHaveBeenCalled();
 	});
+});
+
+it('restores source archives whose SQLite ordering differs from locale ordering', () => {
+	const db = openBoardDb(fixture.contract.db);
+	try {
+		const storage = new BoardStorageFacade(db);
+		const plan = planBoardMigration({
+			source: { location: { kind: 'local' }, path: fixture.sources.one },
+			repository: null,
+			boardBytes: null,
+			profileBytes: null,
+			workers: [],
+		});
+		applyBoardMigration(db, plan);
+		const sourceKey = plan.sourceKey;
+		for (const key of ['Z', 'a'])
+			storage.workspace.createCollection({
+				sourceKey,
+				collectionKey: key,
+				legacyBoardId: key,
+				expectedRevision: null,
+				set: { name: key },
+			});
+		const backup = path.join(fixture.contract.root, 'archive-order.json');
+		const exported = exportBoardSourceCleanup(db, sourceKey, backup);
+		const receipt = suppressBoardSource(db, sourceKey, backup, exported.sha256);
+		expect(() => restoreBoardSource(db, receipt, backup)).not.toThrow();
+		expect(storage.workspace.listCollections(sourceKey)).toHaveLength(2);
+		fs.unlinkSync(backup);
+	} finally {
+		db.close();
+		for (const suffix of ['', '-wal', '-shm'])
+			fs.rmSync(fixture.contract.db + suffix, { force: true });
+	}
 });

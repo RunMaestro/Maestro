@@ -1,3 +1,4 @@
+import { requireBoardEnabled } from './board-feature';
 /**
  * Board card spawn wiring (Board Phase 3).
  *
@@ -81,6 +82,7 @@ export function createBoardRunService(
 ): BoardRunService {
 	return {
 		spawn: (spec, hooks) => {
+			requireBoardEnabled();
 			const worker = ctx.getStoredSessions().find((session) => session.id === spec.workerAgentId);
 			const location = worker && resolveBoardLocation(worker);
 			if (location?.kind === 'invalid')
@@ -267,6 +269,7 @@ export async function spawnBoardCard(
 	ctx: BoardSpawnContext,
 	boardId: string
 ): Promise<CardSpawnResult> {
+	requireBoardEnabled();
 	const { card, overrides, agentId } = request;
 	const run = {
 		runId: request.lifecycle?.runId ?? `board-${card.id}-${generateUUID()}`,
@@ -579,6 +582,9 @@ async function runCardPrompt(
 						artifactBase = originalBase ?? artifact;
 						baseCommit = artifactBase.commit;
 					}
+					if (!artifact)
+						preparationError =
+							'Local launch requires a clean Git checkout with a readable branch and HEAD';
 					return !!artifact;
 				}
 			: undefined,

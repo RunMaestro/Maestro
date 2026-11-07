@@ -209,10 +209,17 @@ export async function prepareBoardReviewHandoff(
 /** Workflow writes run inside the caller's existing SQLite transaction. */
 function writeWorkflowCard(storage: BoardStorageFacade, key: BoardCardKey, card: BoardCard): void {
 	const { storageRevision: _revision, ...payload } = card;
+	const original = storage.db
+		.prepare('SELECT payload_json FROM cards WHERE collection_key=? AND id=?')
+		.get(key.collectionKey, key.cardId) as { payload_json: string };
 	storage.db
 		.prepare('UPDATE cards SET payload_json=?, revision=revision+1 WHERE collection_key=? AND id=?')
 		.run(
-			canonicalJson({ ...payload, updatedAt: new Date().toISOString() }),
+			canonicalJson({
+				...JSON.parse(original.payload_json),
+				...payload,
+				updatedAt: new Date().toISOString(),
+			}),
 			key.collectionKey,
 			key.cardId
 		);

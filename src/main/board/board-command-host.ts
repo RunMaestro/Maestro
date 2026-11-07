@@ -1,3 +1,4 @@
+import { requireBoardEnabled } from './board-feature';
 import {
 	previewBoardSourceCleanup,
 	exportBoardSourceCleanup,
@@ -37,6 +38,7 @@ import {
 } from './board-storage';
 
 export const executeBoardCommand: BoardCommandHost = async (command) => {
+	requireBoardEnabled();
 	try {
 		if (
 			command.action === 'source-preview' ||

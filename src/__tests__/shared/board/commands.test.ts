@@ -1,3 +1,4 @@
+import { requestBoardCommand } from '../../../shared/maestro-lib/client/board';
 import { describe, expect, it, vi } from 'vitest';
 import path from 'node:path';
 import os from 'node:os';
@@ -209,3 +210,23 @@ describe('Board wire parser and native runtime dispatch', () => {
 		});
 	});
 });
+
+it.each([
+	{ command: { action: 'query', query: {} }, timeout: undefined },
+	{
+		command: { action: 'card-pr', projectRoot: '/repo', boardId: 'b', cardId: 'c' },
+		timeout: 240000,
+	},
+	{ command: { action: 'source-preview', sourceKey: 's' }, timeout: 60000 },
+])(
+	'gives long Board operations an explicit transport budget: $command.action',
+	async ({ command, timeout }) => {
+		const sendCommand = vi.fn().mockResolvedValue({ ok: true });
+		await requestBoardCommand({ sendCommand } as never, command as never);
+		expect(sendCommand).toHaveBeenCalledWith(
+			{ type: 'board_command', ...command },
+			'board_command_result',
+			timeout
+		);
+	}
+);

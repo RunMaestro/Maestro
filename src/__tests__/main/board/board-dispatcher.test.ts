@@ -193,6 +193,23 @@ describe('applyCardResult', () => {
 		return card({ id, status: 'running', runs: [{ attempt: 1, startedAt: NOW }] });
 	}
 
+	it('records host preparation refusal as blocked without counting a worker failure', () => {
+		const b = board([running('a')]);
+		expect(
+			applyCardResult(
+				b,
+				'a',
+				{ output: '', exitCode: null, error: 'Clean checkout required', executionStarted: false },
+				NOW,
+				2
+			)
+		).toBe('blocked');
+		expect(b.cards[0].runs?.[0]).toMatchObject({
+			outcome: 'blocked',
+			summary: 'Clean checkout required',
+			endedAt: NOW,
+		});
+	});
 	it('moves to done on a complete marker and records the summary', () => {
 		const b = board([running('a')]);
 		expect(applyCardResult(b, 'a', completeMarker('shipped'), NOW, 2)).toBe('done');

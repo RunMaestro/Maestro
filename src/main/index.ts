@@ -1,3 +1,4 @@
+import { configureBoardFeatures, requireBoardEnabled } from './board/board-feature';
 import { createPluginSessionLifecycle } from './plugins/plugin-session-lifecycle';
 import type { ConfirmQueueItem, ReleaseQueueItem } from './stores/queue-item-receipt';
 import { flushPendingSessionWrites } from './stores/instances';
@@ -650,12 +651,27 @@ noteSentryAgentInventory(sessionsStore.get('sessions', []));
 noteSentryWorkReasons(powerManager.getStatus().reasons);
 powerManager.onReasonsChanged(noteSentryWorkReasons);
 const groupsStore = getGroupsStore();
+configureBoardFeatures(store);
 configureBoardCaptureHost(() => ({
 	agents: sessionsStore.get('sessions', []),
 	groups: groupsStore.get('groups', []),
 }));
 // Isolated bootstrap already bound the admitted registries and a refusing transport pre-store.
-if (!isBoardIsolationRequested()) configureBoardSourceHost(() => sessionsStore.get('sessions', []));
+if (!isBoardIsolationRequested())
+	configureBoardSourceHost(() =>
+		sessionsStore
+			.get('sessions', [])
+			.map(({ id, cwd, dir, projectRoot, boardWorker, sshRemoteId, sessionSshRemoteConfig }) => ({
+				id,
+				dir: dir ?? cwd,
+				projectRoot,
+				boardWorker,
+				sshRemoteId,
+				sessionSshRemoteConfig: sessionSshRemoteConfig
+					? { enabled: sessionSshRemoteConfig.enabled, remoteId: sessionSshRemoteConfig.remoteId }
+					: undefined,
+			}))
+	);
 const agentConfigsStore = getAgentConfigsStore();
 const agentCapabilitiesStore = getAgentCapabilitiesStore();
 const windowStateStore = getWindowStateStore();
@@ -1581,7 +1597,7 @@ app
 		const boardRegistry = new BoardRegistryRevision();
 		const boardIntakeState = (): Pick<BoardClaimHostContext, 'agentStates' | 'dispatchEnabled'> => {
 			const sessions = boardSpawnContext.getStoredSessions();
-			const flags = store.get('encoreFeatures', {}) as Record<string, boolean>;
+			const flags = resolveEncoreFeatures(store.get('encoreFeatures'));
 			const cliBusySessionIds = getSessionIdsBusyWithCli();
 			return {
 				dispatchEnabled:
@@ -1651,11 +1667,18 @@ app
 				(event) => pluginEventBus?.emit(event),
 				(payload) => safeSend('remote:notifyToast', payload)
 			);
-		const boardOwnerHostIdentity = await readBoardOwnerHostIdentity();
+		let boardOwnerHostIdentity: string | undefined;
+		let boardOwnerIdentityRead: Promise<void> | null = null;
 		let boardOwnerInfo: ReturnType<typeof readCueEngineLock> = null;
 		const globalBoardHost = new BoardCueHost({
 			storage: getBoardStorage,
-			lock: () => {
+			lock: async () => {
+				requireBoardEnabled();
+				// Read native identity only on the first admitted Board lookup, once.
+				await (boardOwnerIdentityRead ??= readBoardOwnerHostIdentity().then((identity) => {
+					boardOwnerHostIdentity = identity;
+				}));
+				requireBoardEnabled();
 				const held = readCueEngineLock();
 				if (!held || !isCueEngineLockOwnedByThisProcess(held)) return null;
 				// Cue rewrites boot-time samples on each heartbeat. Pin this process's
@@ -1958,8 +1981,8 @@ app
 				tickGlobal: () => globalBoardHost.tick(),
 				stopGlobal: () => globalBoardHost.stop(),
 				getEncoreFeatures: () => {
-					const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
-					return { maestroCue: ef.maestroCue === true, board: ef.board === true };
+					const ef = resolveEncoreFeatures(store.get('encoreFeatures'));
+					return { maestroCue: ef.maestroCue, board: ef.board };
 				},
 				getProjectRoots: () => {
 					const sessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;

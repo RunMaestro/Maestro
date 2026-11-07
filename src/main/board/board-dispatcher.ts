@@ -487,7 +487,11 @@ export function applyCardResult(
 	let outcome: CardRunOutcome;
 	let summary: string | undefined;
 
-	if (markers.blocked) {
+	if (result.executionStarted === false) {
+		status = 'blocked';
+		outcome = 'blocked';
+		summary = markers.blockReason ?? result.error ?? 'Worker did not start';
+	} else if (markers.blocked) {
 		// Explicit block marker: authoritative, never retried by the breaker.
 		status = 'blocked';
 		outcome = 'blocked';

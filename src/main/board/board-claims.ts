@@ -520,7 +520,7 @@ export function createBoardAgentAdmission(
 				!isEncoreFeatureEnabled(settings, 'board') ||
 				!isEncoreFeatureEnabled(settings, 'maestroCue')
 			)
-				return true;
+				return runId === undefined;
 			return boardWorkerCanStart(getDb(), agentId, runId);
 		} catch (error) {
 			onError(error);

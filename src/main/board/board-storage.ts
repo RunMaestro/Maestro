@@ -1,3 +1,4 @@
+import { requireBoardEnabled } from './board-feature';
 /** Central Board facade. Legacy project roots resolve only to explicitly registered or imported sources.
  * YAML is migration input only; no fallback reader or exporter exists here.
  */
@@ -1390,6 +1391,9 @@ export function configureBoardStorage(facade: BoardStorageFacade | null): void {
 	configuredFacade = facade;
 }
 function storage(): BoardStorageFacade {
+	// Retained facades belong to already-bound lifecycle callbacks. Public entry
+	// points still gate every new request; an off feature never opens a facade.
+	if (!configuredFacade && !defaultFacade) requireBoardEnabled();
 	if (isBoardIsolationRequested()) {
 		requireBoardIsolation();
 		if (!configuredFacade) throw new Error('Board isolation requires an explicit storage facade');

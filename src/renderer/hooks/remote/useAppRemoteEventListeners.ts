@@ -2017,6 +2017,24 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			return;
 		}
 
+		if (Object.prototype.hasOwnProperty.call(updated, 'boardWorker')) {
+			try {
+				if (updated.boardWorker) {
+					await window.maestro.board.registerWorker(sessionId);
+					await window.maestro.board.enableWorker(sessionId, true);
+				} else if (
+					(await window.maestro.board.listWorkers()).some((worker) => worker.agentId === sessionId)
+				) {
+					await window.maestro.board.enableWorker(sessionId, false);
+				}
+			} catch (error) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				return;
+			}
+		}
 		setSessions((prev: Session[]) =>
 			prev.map((s) => (s.id === sessionId ? { ...s, ...updated } : s))
 		);

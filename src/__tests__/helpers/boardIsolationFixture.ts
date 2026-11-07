@@ -1,3 +1,4 @@
+import { configureBoardFeatures } from '../../main/board/board-feature';
 /**
  * Explicit, test-only Board storage. No environment changes until install().
  *
@@ -50,6 +51,11 @@ export function createBoardIsolationFixture(options: { syncInUserData?: boolean 
 			{ mode: 0o600 }
 		);
 		fs.writeFileSync(
+			path.join(sync, 'maestro-settings.json'),
+			canonicalJson({ encoreFeatures: { board: true, maestroCue: true } }),
+			{ mode: 0o600 }
+		);
+		fs.writeFileSync(
 			path.join(userData, BOOTSTRAP_STORE_FILE),
 			canonicalJson({ customSyncPath: sync }),
 			{ mode: 0o600 }
@@ -88,6 +94,7 @@ export function createBoardIsolationFixture(options: { syncInUserData?: boolean 
 			env,
 			sources,
 			install() {
+				configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
 				if (disposed) throw new Error('Board test fixture already disposed');
 				if (saved) return;
 				requireBoardIsolation({ env, expected: contract });

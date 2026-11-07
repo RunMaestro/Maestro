@@ -61,13 +61,12 @@ describe('parseCardMarkers', () => {
 		expect(markers.summary).toBe('final');
 	});
 
-	it('reports both flags when the output contains both markers', () => {
-		// Precedence (block wins) is the dispatcher's decision, not the parser's;
-		// the parser reports faithfully.
+	it('uses only the last standalone authority when several types appear', () => {
+		// Earlier prose/markers cannot override the worker's final handoff.
 		const markers = parseCardMarkers(
 			'<!-- maestro:card-complete -->\n<!-- maestro:card-block: regressed -->'
 		);
-		expect(markers.complete).toBe(true);
+		expect(markers.complete).toBe(false);
 		expect(markers.blocked).toBe(true);
 		expect(markers.blockReason).toBe('regressed');
 	});
@@ -102,7 +101,7 @@ describe('parseCardMarkers', () => {
 		expect(markers.reviewReason).toBe('final');
 	});
 
-	it('reports review alongside complete and block without deciding precedence', () => {
+	it('ignores earlier complete and review authority when the final marker blocks', () => {
 		// block > review > complete is resolved in the dispatcher, not here.
 		const markers = parseCardMarkers(
 			[
@@ -111,10 +110,10 @@ describe('parseCardMarkers', () => {
 				'<!-- maestro:card-block: actually stuck -->',
 			].join('\n')
 		);
-		expect(markers.complete).toBe(true);
-		expect(markers.summary).toBe('shipped it');
-		expect(markers.review).toBe(true);
-		expect(markers.reviewReason).toBe('verify the migration');
+		expect(markers.complete).toBe(false);
+		expect(markers.summary).toBeUndefined();
+		expect(markers.review).toBe(false);
+		expect(markers.reviewReason).toBeUndefined();
 		expect(markers.blocked).toBe(true);
 		expect(markers.blockReason).toBe('actually stuck');
 	});
@@ -136,8 +135,8 @@ describe('parseCardMarkers', () => {
 			].join('\n')
 		);
 		expect(markers.findings).toBe('Scope validation is missing.\nMembership regression failed.');
-		expect(markers.complete).toBe(true);
-		expect(markers.summary).toBe('checked the bound diff');
+		expect(markers.complete).toBe(false);
+		expect(markers.summary).toBeUndefined();
 		expect(markers.review).toBe(false);
 		expect(markers.blocked).toBe(false);
 	});
@@ -156,4 +155,26 @@ describe('CARD_HANDOFF_REMINDER', () => {
 		expect(CARD_HANDOFF_REMINDER).toContain('maestro:card-findings');
 		expect(CARD_HANDOFF_REMINDER).toContain('A completion never grants final human approval');
 	});
+});
+
+it('accepts only the final standalone authority marker, not echoed examples or earlier markers', () => {
+	for (const output of [
+		CARD_HANDOFF_REMINDER,
+		'Example: `<!-- maestro:card-block: do not use -->`',
+		'<!-- maestro:card-block: incomplete\nunrelated text -->',
+	]) {
+		expect(parseCardMarkers(output)).toMatchObject({
+			complete: false,
+			review: false,
+			blocked: false,
+		});
+	}
+	expect(
+		parseCardMarkers(
+			'<!-- maestro:card-block: earlier -->\nChanged my assessment.\n<!-- maestro:card-complete | verified -->\n  '
+		)
+	).toMatchObject({ complete: true, blocked: false, review: false, summary: 'verified' });
+	expect(
+		parseCardMarkers('<!-- maestro:card-block: unfinished\n<!-- maestro:card-complete | final -->')
+	).toMatchObject({ complete: true, blocked: false });
 });

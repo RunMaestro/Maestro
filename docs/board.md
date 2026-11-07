@@ -100,8 +100,8 @@ A run records an attempt and its result, including the worker and original scope
 
 | Outcome     | Meaning                                                                                       |
 | ----------- | --------------------------------------------------------------------------------------------- |
-| `done`      | The run completed (complete marker, or a clean exit with no marker).                          |
-| `review`    | The run finished its work but asked a human to approve it (review marker).                    |
+| `done`      | The native run completed; successful work still enters its assigned artifact review.          |
+| `review`    | The run finished and requested its assigned artifact review (review marker).                  |
 | `blocked`   | The run asked for a human (block marker) or exited non-zero with no completion signal.        |
 | `error`     | The run could not be carried out (spawn failure, killed process).                             |
 | `reclaimed` | The app was restarted mid-run, so the attempt was abandoned and the card returned to `ready`. |
@@ -194,7 +194,7 @@ When a card's agent finishes, it signals the outcome with an HTML-comment marker
 <!-- maestro:card-block: reason it could not finish -->
 ```
 
-Precedence: a block marker wins (the card goes to `blocked`); then a review marker (the card goes to `review`); otherwise a complete marker (or a clean exit with no marker) records a completed run and sends work to `review`. Only the final native human decision sends the card to `done`. Both the block and the review marker are authoritative - they beat even a non-zero exit and are never retried. The reason after `card-review:` is optional and lands on the card's run as its summary, so it shows in the toast and on the tile.
+Only a final standalone marker is authoritative; quoted examples and earlier markers are ignored. Precedence: a block marker wins (the card goes to `blocked`); then a review marker (the card goes to `review`); otherwise a complete marker (or a clean exit with no marker) records a completed run and sends work to `review`. Only the final native human decision sends the card to `done`. Both the block and the review marker are authoritative - they beat even a non-zero exit and are never retried. The reason after `card-review:` is optional and lands on the card's run as its summary, so it shows in the toast and on the tile.
 
 Cards are told to fix whatever they can safely fix and card-complete it, to use card-review when the work is done but needs human judgment or verification, and to reserve card-block for genuinely being stuck. The optional summary after `card-complete |` is captured onto the card's latest run and surfaced in the UI as an expandable "Last run summary". Cards encourage a four-question handoff in that summary - what changed, how it was verified, what it unblocks, and any residual risk - so the next card inherits useful context. The summary is optional metadata; the run still completes without it.
 
@@ -300,3 +300,5 @@ before provider preparation until its SDK lifecycle can establish the terminal
 condition needed to release a worker. Ordinary native-control callers are unaffected.
 A cancellation request does not release a running child; an unconfirmed SSH stop
 retains the worker reservation because the local client cannot prove remote exit.
+
+The isolated Board fixture toolchain (`scripts/board-rendered-*.cjs`, native and performance preparation tools) requires Node 24 for built-in SQLite and its qualified Node ABI. This toolchain requirement does not change the application engine range. A native addon must match the runtime that loads it.

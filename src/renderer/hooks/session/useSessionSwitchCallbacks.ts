@@ -15,7 +15,7 @@
  *   handleResumeSession (from useAgentSessionManagement), inputRef (DOM ref)
  */
 
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { LogEntry, UsageStats } from '../../types';
 import type { FlatFileItem } from '../../components/FileSearchModal';
 import type { FileNode } from '../../types/fileTree';
@@ -152,9 +152,19 @@ export function useSessionSwitchCallbacks(
 		[setActiveSessionId, setSessions]
 	);
 
+	const pendingToastJump = useRef<{ sessionId: string; tabId?: string } | null>(null);
+	const restorationComplete = useSessionStore(
+		(state) => state.sessionsLoaded && state.initialLoadComplete
+	);
+
 	// Navigate from toast notification to a session/tab
 	const handleToastSessionClick = useCallback(
 		(sessionId: string, tabId?: string) => {
+			const state = useSessionStore.getState();
+			if (!state.sessionsLoaded || !state.initialLoadComplete) {
+				pendingToastJump.current = { sessionId, tabId };
+				return;
+			}
 			// Guard stale jumps: this shared path also serves Cue and CLI toasts, so a
 			// deleted agent id (e.g. a Board worker agent removed after its run) would
 			// otherwise silently activate a nonexistent session and blank the view. Fail
@@ -188,6 +198,13 @@ export function useSessionSwitchCallbacks(
 		},
 		[setActiveSessionId]
 	);
+
+	useEffect(() => {
+		if (!restorationComplete || !pendingToastJump.current) return;
+		const jump = pendingToastJump.current;
+		pendingToastJump.current = null;
+		handleToastSessionClick(jump.sessionId, jump.tabId);
+	}, [restorationComplete, handleToastSessionClick]);
 
 	// Native notifications use the same navigation as their in-app toast.
 	useEffect(() => {

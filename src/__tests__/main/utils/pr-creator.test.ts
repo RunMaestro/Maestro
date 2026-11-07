@@ -412,3 +412,23 @@ describe('createPullRequest failures', () => {
 		expect(result.error).toBe('Failed to create PR');
 	});
 });
+
+it('bounds unattended PR commands and preserves their shell environment', async () => {
+	routeExec({
+		'git remote': ok('HEAD branch: main'),
+		'git rev-list': ok('1'),
+		'/usr/bin/gh pr': ok('https://github.com/test/repo/pull/1'),
+	});
+	await createPullRequest({
+		worktreePath: WORKTREE,
+		title: 'Work',
+		body: 'Verified',
+		skipHooks: true,
+	});
+	for (const call of execFileNoThrow.mock.calls) {
+		expect(call[3]).toMatchObject({ timeout: expect.any(Number) });
+		expect(call[3].timeout).toBeGreaterThan(0);
+		if (call[1][0] === 'push' || call[1][0] === 'pr')
+			expect(call[3].env).toMatchObject({ PATH: '/usr/local/bin:/usr/bin' });
+	}
+});

@@ -1,3 +1,4 @@
+import { AgentTurnAdmissionError } from '../../main/utils/headless-agent-activity';
 // Agent spawner service for CLI
 // Spawns agent CLIs and parses their output
 
@@ -1873,7 +1874,7 @@ export interface SpawnAgentOptions extends HeadlessTurnAdmissionOptions {
  * outcome. The refusal is noted, so later `resolveTurnSettings` calls in this
  * run stop asking for the value and report why (see shared/effortRejection.ts).
  */
-export async function spawnAgent(
+async function spawnAgentWithAdmission(
 	toolType: ToolType,
 	cwd: string,
 	prompt: string,
@@ -2100,4 +2101,20 @@ export function uncheckAllTasks(content: string): string {
 export function writeDoc(folderPath: string, filename: string, content: string): void {
 	const filePath = `${folderPath}/${filename}`;
 	fs.writeFileSync(filePath, content, 'utf-8');
+}
+
+/** Managed admission refusals are results; unrelated startup/provider failures still reject. */
+export async function spawnAgent(
+	toolType: ToolType,
+	cwd: string,
+	prompt: string,
+	agentSessionId?: string,
+	options?: SpawnAgentOptions
+): Promise<AgentResult> {
+	try {
+		return await spawnAgentWithAdmission(toolType, cwd, prompt, agentSessionId, options);
+	} catch (error) {
+		if (error instanceof AgentTurnAdmissionError) return spawnFailureResult(error.message);
+		throw error;
+	}
 }

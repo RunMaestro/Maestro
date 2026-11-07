@@ -504,7 +504,7 @@ export function describeCapability(capability: PluginCapability): string {
  * power), and the summonable-panel trio `ui.openPanel` / `ui.closePanel` /
  * `ui.togglePanel` under the existing `ui:panel` capability alongside the
  * optional panel manifest field `size?: 'default' | 'full'` (absent or invalid
- * => `default`, so older manifests are untouched). 1.15.0 added the additive
+ * => `default`, so older manifests are untouched). 1.32.0 adds the additive
  * Board event topics `board.cardStatusChanged` / `board.cardCompleted` /
  * `board.cardBlocked` / `board.decomposed` (metadata-only: ids, statuses, and
  * the card title; never prompts, run output, summaries, or block reasons).
@@ -530,7 +530,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.31.0';
+export const HOST_API_VERSION = '1.32.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

@@ -1,9 +1,12 @@
-import { expect, it, vi } from 'vitest';
+import { configureBoardFeatures } from '../../../main/board/board-feature';
+import { beforeEach, expect, it, vi } from 'vitest';
 import {
 	boardOwnerLiveness,
 	readBoardOwnerHostIdentity,
 	type BoardOwnerEvidence,
 } from '../../../main/board/board-owner-liveness';
+
+beforeEach(() => configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) }));
 
 it.each(['darwin', 'win32'] as const)(
 	'%s native host adapter awaits bounded OS evidence and hashes only successful output',
@@ -153,4 +156,16 @@ it('keeps Linux namespace evidence mandatory and ignores host metadata as a subs
 	for (const pidNsInode of [undefined, 13])
 		expect(boardOwnerLiveness(JSON.stringify({ ...old, pidNsInode }), evidence)).toBe('unknown');
 	expect(boardOwnerLiveness('invalid', evidence)).toBe('unknown');
+});
+
+it.each([
+	{ board: false, maestroCue: false },
+	{ board: false, maestroCue: true },
+	{ board: true, maestroCue: false },
+])('does not start native identity commands when either gate is off: %j', async (flags) => {
+	configureBoardFeatures({ get: () => flags });
+	const read = vi.fn();
+	for (const platform of ['darwin', 'win32'] as const)
+		expect(await readBoardOwnerHostIdentity(platform, read)).toBeUndefined();
+	expect(read).not.toHaveBeenCalled();
 });

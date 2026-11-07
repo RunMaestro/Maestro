@@ -271,7 +271,16 @@ async function main() {
 	}, 260000);
 	try {
 		const display = await Promise.race([
-			once(xvfb.stdio[3], 'data').then(([bytes]) => String(bytes).trim()),
+			new Promise((resolve) => {
+				let displayBytes = '';
+				const onData = (bytes) => {
+					displayBytes += String(bytes);
+					if (!displayBytes.includes('\n')) return;
+					xvfb.stdio[3].off('data', onData);
+					resolve(displayBytes.slice(0, displayBytes.indexOf('\n')).trim());
+				};
+				xvfb.stdio[3].on('data', onData);
+			}),
 			once(xvfb, 'exit').then(() => {
 				throw new Error('Private Xvfb exited before display allocation');
 			}),

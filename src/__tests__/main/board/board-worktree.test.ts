@@ -133,3 +133,11 @@ it('keeps formerly colliding IDs isolated in both board and card segments', () =
 	expect(new Set(ids.map((id) => boardCardBranchName(id, 'c1'))).size).toBe(ids.length);
 	for (const branch of branches) expect(branch).toMatch(/^board\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/);
 });
+
+it('keeps trailing-separator project roots beside the checkout', () => {
+	for (const project of ['/repos/project/', 'C:\\repos\\project\\']) {
+		expect(boardWorktreePath(project, 'board/a/b')).toBe(
+			boardWorktreePath(project.replace(/[/\\]+$/, ''), 'board/a/b')
+		);
+	}
+});

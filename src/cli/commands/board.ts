@@ -1296,6 +1296,8 @@ export async function boardSourceCleanup(
 
 /** Board CRUD always talks to the currently running host; it never opens a local database. */
 async function hostCommand<T = unknown>(command: BoardCommand): Promise<T> {
+	requireEncore('board');
+	requireEncore('maestroCue');
 	const reply = await withMaestroClient((client) => requestBoardCommand(client, command));
 	if (!reply.ok) {
 		const failure =

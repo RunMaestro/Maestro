@@ -1,3 +1,4 @@
+import { isBoardEnabled, requireBoardEnabled } from './board-feature';
 /** The existing Cue heartbeat owns central intake. Desktop and CLI attach to
  * these same per-card runtime adapters; storage, owner and run service are shared. */
 import { yieldToEventLoop } from '../utils/concurrency';
@@ -18,7 +19,7 @@ export type BoardPreparedContext = Pick<BoardClaimHostContext, 'repository' | 'r
 
 export interface BoardCueHostDeps {
 	storage: () => BoardStorageFacade;
-	lock: () => BoardRuntimeLock | null;
+	lock: () => BoardRuntimeLock | null | Promise<BoardRuntimeLock | null>;
 	context: (
 		key: BoardCardKey,
 		prepared: BoardPreparedContext
@@ -39,7 +40,9 @@ export class BoardCueHost {
 	constructor(private readonly deps: BoardCueHostDeps) {}
 
 	readonly runtimeFor = async (key: BoardCardKey, prepare = true): Promise<BoardRuntime | null> => {
-		const lock = this.deps.lock();
+		requireBoardEnabled();
+		const lock = await this.deps.lock();
+		requireBoardEnabled();
 		if (!lock || !lock.verify().ok) return null;
 		const id = canonicalJson([key, lock.info]);
 		// Control-only lookups may reuse the adapter. A preparation must never
@@ -51,11 +54,13 @@ export class BoardCueHost {
 		const service: BoardRunService = {
 			...this.deps.service,
 			spawn: (spec, hooks) => {
+				requireBoardEnabled();
 				// Revoke this attempt's previous evidence before fresh launch IO.
 				prepared = { repository: null, reviewArtifact: null };
 				const task = this.deps
 					.prepare(spec.key)
 					.then((fresh) => {
+						requireBoardEnabled();
 						prepared = fresh;
 						return this.deps.service.spawn(spec, hooks);
 					})
@@ -65,6 +70,7 @@ export class BoardCueHost {
 				return task;
 			},
 		};
+		requireBoardEnabled();
 		const runtime = new BoardRuntime(
 			this.deps.storage(),
 			lock,
@@ -92,7 +98,9 @@ export class BoardCueHost {
 	};
 
 	async tick(): Promise<void> {
+		if (!isBoardEnabled()) return;
 		await refreshBoardSources();
+		if (!isBoardEnabled()) return;
 		// All registered sources, including projects without an open Left Bar agent.
 		const storage = this.deps.storage();
 		queueBoardReviews(storage, this.deps.onTransitions);
@@ -128,7 +136,7 @@ export class BoardCueHost {
 			)
 			.all() as { specification_json: string }[]) {
 			const spec = JSON.parse(row.specification_json) as BoardRunSpecification;
-			const runtime = await this.runtimeFor(spec.key);
+			const runtime = await this.runtimeFor(spec.key, false);
 			runtime?.reconcile(spec.runToken);
 		}
 	}

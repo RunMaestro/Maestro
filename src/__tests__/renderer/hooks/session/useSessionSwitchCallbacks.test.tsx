@@ -7,7 +7,7 @@
 
 import type { RefObject } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 
 // The deep-link effect subscribes on mount; stub it to a no-op unsubscribe so
 // the hook mounts without touching the real maestro:// pipeline.
@@ -41,6 +41,7 @@ function seedSessions(ids: string[]): void {
 		groups: [],
 		activeSessionId: ids[0] ?? '',
 		sessionsLoaded: true,
+		initialLoadComplete: true,
 	} as never);
 }
 
@@ -76,4 +77,16 @@ describe('useSessionSwitchCallbacks - handleToastSessionClick stale guard', () =
 		expect(deps.setActiveSessionId).toHaveBeenCalledWith('b');
 		expect(notifyToast).not.toHaveBeenCalled();
 	});
+});
+
+it('defers a cold-start notification until sessions and initial restoration are complete', () => {
+	useSessionStore.setState({ sessions: [], sessionsLoaded: false, initialLoadComplete: false });
+	const deps = makeDeps();
+	const { result } = renderHook(() => useSessionSwitchCallbacks(deps));
+	act(() => result.current.handleToastSessionClick('cold'));
+	expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+	expect(notifyToast).not.toHaveBeenCalled();
+	act(() => seedSessions(['cold']));
+	expect(deps.setActiveSessionId).toHaveBeenCalledWith('cold');
+	expect(notifyToast).not.toHaveBeenCalled();
 });

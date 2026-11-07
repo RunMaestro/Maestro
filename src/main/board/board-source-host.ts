@@ -1,3 +1,4 @@
+import { requireBoardEnabled } from './board-feature';
 /** Discover only registered roots through explicit local or SSH adapters. Legacy files are immutable import input;
  * central data owns subsequent edits. No recursive scan or remote/local fallback. */
 import { canonicalJson } from '../../shared/canonicalJson';
@@ -138,6 +139,7 @@ function admittedSources(
 }
 let pending: Promise<void> | null = null;
 export function refreshBoardSources(): Promise<void> {
+	requireBoardEnabled();
 	const registered = sessions();
 	const remote = isolatedHost?.remote ?? boardRemoteTransport;
 	const roots = admittedSources(registered, remote);
@@ -183,6 +185,7 @@ export async function executeBoardSourceCommand(
 	storage?: BoardStorageFacade,
 	remote: BoardRemoteTransport = isolatedHost?.remote ?? boardRemoteTransport
 ): Promise<import('../../shared/board/types').BoardSourceResponse> {
+	requireBoardEnabled();
 	const registered = sessions();
 	const roots = admittedSources(registered, remote);
 	storage ??= getBoardStorage();

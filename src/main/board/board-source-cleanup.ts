@@ -246,12 +246,14 @@ export function restoreBoardSource(
 				: suppression.receipt_json !== canonicalJson(receipt)) ||
 			!current.suppressed ||
 			canonicalJson(expected) !== canonicalJson(receipt.archivedCollections) ||
-			canonicalJson(current.archives) !==
+			canonicalJson(current.archives.map(canonicalJson).sort()) !==
 				canonicalJson(
 					[
 						...(original.archives as Array<{ collection_key: string }>),
 						...expected.map((collection_key) => ({ collection_key })),
-					].sort((a, b) => a.collection_key.localeCompare(b.collection_key))
+					]
+						.map(canonicalJson)
+						.sort()
 				)
 		)
 			throw new Error('Board restore conflict');

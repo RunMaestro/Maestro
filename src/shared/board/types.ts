@@ -514,6 +514,10 @@ export function validateBoardCard(raw: unknown, nowIso?: string): BoardCard | nu
 	delete card.priority;
 	delete card.heldByUser;
 	delete card.prOnDone;
+	delete card.assigneeProfileId;
+	delete card.assigneeAgentId;
+	delete card.worktree;
+	delete card.runs;
 	if (assigneeProfileId) card.assigneeProfileId = assigneeProfileId;
 	if (assigneeAgentId) card.assigneeAgentId = assigneeAgentId;
 

@@ -348,6 +348,8 @@ describe('cue-executor', () => {
 			const result = await resultPromise;
 			expect(result.status).toBe('completed');
 			expect(result.exitCode).toBe(0);
+			expect(result.executionStarted).toBe(true);
+			expect(result.terminationConfirmed).toBe(true);
 			expect(onRunTranscript).toHaveBeenCalledTimes(1);
 			expect(onRunTranscript).toHaveBeenCalledWith(
 				expect.objectContaining({ rawStdout: 'Completed output', status: 'completed', exitCode: 0 })
@@ -796,6 +798,8 @@ describe('cue-executor', () => {
 
 			expect(result.status).toBe('completed');
 			expect(result.exitCode).toBe(0);
+			expect(result.executionStarted).toBe(true);
+			expect(result.terminationConfirmed).toBe(true);
 			expect(result.runId).toBe('run-1');
 			expect(result.sessionId).toBe('session-1');
 			expect(result.sessionName).toBe('Test Session');

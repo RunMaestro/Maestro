@@ -70,6 +70,7 @@ describe('global Board agent admission', () => {
 		]) {
 			flags = state;
 			expect(admit('worker')).toBe(true);
+			expect(admit('worker', 'board-run')).toBe(false);
 		}
 		expect(getDb).not.toHaveBeenCalled();
 		flags = { board: true, maestroCue: true };
