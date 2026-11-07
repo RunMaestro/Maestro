@@ -4,6 +4,7 @@
 // Re-export agent ID constants and types from the single source of truth
 export { AGENT_IDS, isValidAgentId } from './agentIds';
 export type { AgentId } from './agentIds';
+import type { LiftedToPointer } from './maestro-lib/agents/lift-pointer';
 import type { CodexTransport } from './codexTransport';
 import type { HarnessControlMode } from './maestro-lib/providers/native-control';
 
@@ -349,6 +350,12 @@ export interface SessionInfo {
 	codexAutoResetOnExhaustion?: boolean;
 	/** Per-session SSH remote config - when enabled, CLI spawns via SSH. */
 	sessionSshRemoteConfig?: AgentSshRemoteConfig;
+	/**
+	 * Federation: set once this SSH agent was lifted onto its remote's host. The agent keeps every
+	 * tab and transcript, but its sends are refused with a pointer at `peer:agentId`. Read it
+	 * through `readLiftedTo()` / `liftedSendRefusal()` in `src/shared/maestro-lib/agents/lift-pointer.ts`.
+	 */
+	liftedTo?: LiftedToPointer;
 }
 
 // Usage statistics from AI agent CLI (Claude Code, Codex, etc.)

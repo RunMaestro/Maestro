@@ -24,6 +24,7 @@ import { readCallerIdentity } from '../../shared/agentDelegation';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { generateUUID } from '../../shared/uuid';
 import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
+import { AGENT_LIFTED_CODE, liftedSendRefusal } from '../../shared/maestro-lib/agents/lift-pointer';
 import type {
 	AgentError,
 	HistoryEntry,
@@ -294,6 +295,13 @@ export async function send(
 	const agent = getSessionById(agentId);
 	if (!agent) {
 		emitErrorJson(`Agent not found: ${agentIdArg}`, 'AGENT_NOT_FOUND');
+		process.exit(1);
+	}
+
+	// A lifted agent runs on its host now: a local turn would resume the session the host owns.
+	const liftedRefusal = liftedSendRefusal(agent);
+	if (liftedRefusal) {
+		emitErrorJson(liftedRefusal, AGENT_LIFTED_CODE);
 		process.exit(1);
 	}
 

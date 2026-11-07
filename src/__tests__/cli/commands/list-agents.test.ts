@@ -183,6 +183,24 @@ describe('list-agents command', () => {
 		});
 	});
 
+	describe('lifted agents (human-readable)', () => {
+		it('passes the peer:agentId pointer to the formatter for a lifted agent only', () => {
+			vi.mocked(readSessions).mockReturnValue([
+				mockSession({
+					id: 'lifted',
+					liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+				}),
+				mockSession({ id: 'local' }),
+			]);
+
+			listAgents({});
+
+			const rows = vi.mocked(formatAgents).mock.calls[0][0];
+			expect(rows[0].liftedTo).toBe('build-box:host-1');
+			expect(rows[1]).not.toHaveProperty('liftedTo');
+		});
+	});
+
 	describe('JSON output', () => {
 		it('should output JSON when json option is true', () => {
 			const mockSessions: SessionInfo[] = [
@@ -230,6 +248,32 @@ describe('list-agents command', () => {
 			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
 			expect(parsed[0].worktreeBasePath).toBe('/home/user/Project-WorkTrees');
 			expect(parsed[1].worktreeBasePath).toBeNull();
+		});
+
+		it('should expose a lifted agent as liftedTo, null when it was not lifted or malformed', () => {
+			// Federation: a lifted agent keeps its local record and points at where it runs now.
+			vi.mocked(readSessions).mockReturnValue([
+				mockSession({
+					id: 'lifted',
+					liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1700000000000 },
+				}),
+				mockSession({ id: 'local' }),
+				mockSession({
+					id: 'broken',
+					liftedTo: { peer: '', agentId: 'host-2', at: 1 } as SessionInfo['liftedTo'],
+				}),
+			]);
+
+			listAgents({ json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed[0].liftedTo).toEqual({
+				peer: 'build-box',
+				agentId: 'host-1',
+				at: 1700000000000,
+			});
+			expect(parsed[1].liftedTo).toBeNull();
+			expect(parsed[2].liftedTo).toBeNull();
 		});
 
 		it('should output empty JSON array for no agents', () => {
@@ -549,6 +593,7 @@ describe('list-agents command', () => {
 					worktreeBasePath: '/srv/wt',
 					bookmarked: false,
 					sessionSshRemoteConfig: null,
+					liftedTo: null,
 					peer: 'build-box',
 				},
 			]);

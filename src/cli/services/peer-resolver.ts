@@ -25,6 +25,7 @@ import {
 	type SshForwardLease,
 } from '../../shared/maestro-lib/client/ssh-forward';
 import { RemoteDiscoveryError } from '../../shared/maestro-lib/client/remote-discovery';
+import { peerAgentRef } from '../../shared/maestro-lib/agents/lift-pointer';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../shared/types';
 import { ExitCode } from '../exit-codes';
@@ -396,10 +397,8 @@ export function peerErrorCode(code: PeerErrorCode): string {
 	return `PEER_${code.toUpperCase().replace(/-/g, '_')}`;
 }
 
-/** How a peer's agent is addressed on the command line: `peer:agentId`. */
-export function peerAgentRef(peer: string, agentId: string): string {
-	return `${peer}:${agentId}`;
-}
+/** How a peer's agent is addressed on the command line: `peer:agentId` (shared with the lift pointer). */
+export { peerAgentRef };
 
 /** The exit code for a failed host call, so a script can tell a lost host from a refusal. */
 export function clientErrorExitCode(error: Pick<ClientError, 'code'>): ExitCode {

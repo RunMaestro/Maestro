@@ -250,6 +250,24 @@ describe('formatter', () => {
 			);
 		});
 
+		it('adds a "moved to peer:agentId" line for a lifted agent only', () => {
+			const agents: AgentDisplay[] = [
+				{
+					id: 'a1',
+					name: 'Lifted',
+					toolType: 'claude-code',
+					cwd: '/p',
+					liftedTo: 'build-box:host-1',
+				},
+				{ id: 'a2', name: 'Local', toolType: 'claude-code', cwd: '/q' },
+			];
+
+			const result = formatAgents(agents);
+
+			expect(result).toContain('moved to build-box:host-1');
+			expect(result.match(/moved to/g)).toHaveLength(1);
+		});
+
 		it('should show group name in title when provided', () => {
 			const agents: AgentDisplay[] = [
 				{

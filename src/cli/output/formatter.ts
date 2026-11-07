@@ -102,11 +102,14 @@ export interface AgentDisplay {
 	bookmarked?: boolean;
 	/** Set on an agent a Federation peer's host owns: the peer it lives on. */
 	peer?: string;
+	/** Set on a local agent that was lifted onto its host: `peer:agentId`, where it runs now. */
+	liftedTo?: string;
 }
 
 /**
  * The agent list. `scope.peer` titles a list read from one Federation peer. A row with `peer`
- * set is tagged with it, and its id line reads `peer:id`, the target the other verbs take.
+ * set is tagged with it, and its id line reads `peer:id`, the target the other verbs take. A
+ * lifted local agent gets one more line naming the `peer:agentId` it was moved to.
  */
 export function formatAgents(
 	agents: AgentDisplay[],
@@ -135,6 +138,7 @@ export function formatAgents(
 		lines.push(`  ${name}${bookmark} ${toolType}${autoRun}${peer}`);
 		lines.push(`      ${cwd}`);
 		lines.push(`      ${id}`);
+		if (agent.liftedTo) lines.push(`      ${c('magenta', `moved to ${agent.liftedTo}`)}`);
 	}
 
 	return lines.join('\n');

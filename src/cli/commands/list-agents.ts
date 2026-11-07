@@ -3,6 +3,11 @@
 // host owns (`--peer <name>`, `--all-peers`). Peer agents are read from the host every time and
 // never written to the local store.
 
+import {
+	liftedAgentRef,
+	readLiftedTo,
+	type LiftedToPointer,
+} from '../../shared/maestro-lib/agents/lift-pointer';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { SessionInfo } from '../../shared/types';
 import { ExitCode } from '../exit-codes';
@@ -41,6 +46,8 @@ interface AgentJsonRow {
 	worktreeBasePath: string | null;
 	bookmarked: boolean;
 	sessionSshRemoteConfig: unknown;
+	/** Where a lifted local agent runs now (`peer`, `agentId`, `at`); null when it was not lifted. */
+	liftedTo: LiftedToPointer | null;
 	/** The peer whose host owns the agent; null for a local agent in an `--all-peers` list. */
 	peer?: string | null;
 }
@@ -59,6 +66,7 @@ function localJsonRow(s: SessionInfo): AgentJsonRow {
 		worktreeBasePath: s.worktreeConfig?.basePath ?? null,
 		bookmarked: !!s.bookmarked,
 		sessionSshRemoteConfig: s.sessionSshRemoteConfig ?? null,
+		liftedTo: readLiftedTo(s.liftedTo) ?? null,
 	};
 }
 
@@ -75,6 +83,7 @@ function hostJsonRow(record: AgentRecord, peer: string): AgentJsonRow {
 		worktreeBasePath: worktree?.basePath ?? null,
 		bookmarked: !!record.bookmarked,
 		sessionSshRemoteConfig: record.sessionSshRemoteConfig ?? null,
+		liftedTo: readLiftedTo(record.liftedTo) ?? null,
 		peer,
 	};
 }
@@ -89,6 +98,7 @@ function displayRow(row: AgentJsonRow): AgentDisplay {
 		autoRunFolderPath: row.autoRunFolderPath,
 		bookmarked: row.bookmarked,
 		...(row.peer ? { peer: row.peer } : {}),
+		...(row.liftedTo ? { liftedTo: liftedAgentRef(row) } : {}),
 	};
 }
 

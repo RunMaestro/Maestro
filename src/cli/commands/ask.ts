@@ -19,7 +19,8 @@
 // name a LOCAL agent and its transcript, which the host cannot see, so they are
 // refused there rather than dropped.
 
-import { resolveAgentId } from '../services/storage';
+import { getSessionById, resolveAgentId } from '../services/storage';
+import { AGENT_LIFTED_CODE, liftedSendRefusal } from '../../shared/maestro-lib/agents/lift-pointer';
 import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
 import { readCallerIdentity } from '../../shared/agentDelegation';
 import { exitIfMaestroNotRunning } from '../services/session-command';
@@ -126,6 +127,12 @@ export async function ask(agentId: string, question: string, options: AskOptions
 		targetSessionId = resolveAgentId(agentId);
 	} catch (error) {
 		fail(error instanceof Error ? error.message : String(error));
+		return;
+	}
+	// A lifted agent answers on its host now, so the question goes there.
+	const liftedRefusal = liftedSendRefusal(getSessionById(targetSessionId) ?? {});
+	if (liftedRefusal) {
+		fail(liftedRefusal, { code: AGENT_LIFTED_CODE });
 		return;
 	}
 
