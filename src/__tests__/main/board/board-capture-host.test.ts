@@ -62,7 +62,7 @@ vi.mock('../../../main/utils/ipcHandler', () => ({
 		(_event: unknown, ...args: unknown[]) =>
 			fn(...args),
 }));
-vi.mock('../../../main/stores/getters', () => ({ getLiveSessions: () => [] }));
+vi.mock('../../../main/stores/getters', () => ({ getLiveSessions: () => agents }));
 vi.mock('../../../main/board/board-dispatcher', () => ({ applyCardCancel: vi.fn() }));
 vi.mock('../../../main/board/board-pr', () => ({ startCardPr: vi.fn() }));
 vi.mock('../../../main/utils/logger', () => ({
