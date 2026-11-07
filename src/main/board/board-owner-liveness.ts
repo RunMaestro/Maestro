@@ -1,4 +1,4 @@
-import { isBoardEnabled } from './board-feature';
+import { isBoardEnabled, requireBoardEnabled } from './board-feature';
 /** Native host evidence for Board owner recovery; never a wire-supplied death verdict. */
 import {
 	readCueEngineLock,
@@ -89,7 +89,29 @@ export function boardOwnerLiveness(
 	return !evidence.isPidAlive(old.pid!) ? 'dead' : 'unknown';
 }
 
-/** Read once per desktop lifetime. Failure supplies no proof, never a guessed identity.
+/** Cache successful native proof and share only in-flight reads. Missing proof is retryable. */
+export function createBoardOwnerHostIdentityReader(
+	read: () => Promise<string | undefined> = readBoardOwnerHostIdentity
+): () => Promise<string | undefined> {
+	let identity: string | undefined;
+	let pending: Promise<string | undefined> | null = null;
+	return async () => {
+		requireBoardEnabled();
+		if (identity !== undefined) return identity;
+		return (pending ??= read()
+			.then((value) => {
+				// A toggle during the bounded probe cannot authorize or cache that lookup.
+				requireBoardEnabled();
+				identity = value;
+				return value;
+			})
+			.finally(() => {
+				pending = null;
+			}));
+	};
+}
+
+/** Read bounded native proof. Failure supplies no proof, never a guessed identity.
  * The OS-provided identifier is hashed before it reaches the Board ledger.
  * No provisioning, heartbeat takeover, or external supervisor is involved. */
 export async function readBoardOwnerHostIdentity(

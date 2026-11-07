@@ -247,7 +247,10 @@ import { probeBoardRemoteRepository } from './board/board-remote-source';
 import { configureBoardSourceHost } from './board/board-source-host';
 import { isBoardIsolationRequested } from './board/board-isolation';
 import { isPidAlive } from '../shared/maestro-lib/client/discovery';
-import { boardOwnerLiveness, readBoardOwnerHostIdentity } from './board/board-owner-liveness';
+import {
+	boardOwnerLiveness,
+	createBoardOwnerHostIdentityReader,
+} from './board/board-owner-liveness';
 import { BoardCueHost, type BoardPreparedContext } from './board/board-cue';
 import { configureBoardRuntimeHost } from './board/board-runtime-host';
 import type { BoardClaimHostContext } from './board/board-claims';
@@ -1668,16 +1671,13 @@ app
 				(payload) => safeSend('remote:notifyToast', payload)
 			);
 		let boardOwnerHostIdentity: string | undefined;
-		let boardOwnerIdentityRead: Promise<void> | null = null;
+		const readBoardOwnerIdentity = createBoardOwnerHostIdentityReader();
 		let boardOwnerInfo: ReturnType<typeof readCueEngineLock> = null;
 		const globalBoardHost = new BoardCueHost({
 			storage: getBoardStorage,
 			lock: async () => {
 				requireBoardEnabled();
-				// Read native identity only on the first admitted Board lookup, once.
-				await (boardOwnerIdentityRead ??= readBoardOwnerHostIdentity().then((identity) => {
-					boardOwnerHostIdentity = identity;
-				}));
+				boardOwnerHostIdentity = await readBoardOwnerIdentity();
 				requireBoardEnabled();
 				const held = readCueEngineLock();
 				if (!held || !isCueEngineLockOwnedByThisProcess(held)) return null;

@@ -2,6 +2,7 @@ import { configureBoardFeatures } from '../../../main/board/board-feature';
 import { beforeEach, expect, it, vi } from 'vitest';
 import {
 	boardOwnerLiveness,
+	createBoardOwnerHostIdentityReader,
 	readBoardOwnerHostIdentity,
 	type BoardOwnerEvidence,
 } from '../../../main/board/board-owner-liveness';
@@ -168,4 +169,90 @@ it.each([
 	for (const platform of ['darwin', 'win32'] as const)
 		expect(await readBoardOwnerHostIdentity(platform, read)).toBeUndefined();
 	expect(read).not.toHaveBeenCalled();
+});
+
+it.each(['darwin', 'win32'] as const)(
+	'%s desktop identity reader retries failed proof, deduplicates pending reads and caches success',
+	async (platform) => {
+		const stdout =
+			platform === 'darwin'
+				? '"IOPlatformUUID" = "12345678-abcd-1234-abcd-123456789abc"'
+				: 'MachineGuid REG_SZ 12345678-abcd-1234-abcd-123456789abc';
+		let complete!: (result: { stdout: string; stderr: string; exitCode: number }) => void;
+		const command = vi
+			.fn()
+			.mockResolvedValueOnce({ stdout: '', stderr: 'EACCES', exitCode: 1 })
+			.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						complete = resolve;
+					})
+			);
+		const read = createBoardOwnerHostIdentityReader(() =>
+			readBoardOwnerHostIdentity(platform, command)
+		);
+		expect(await read()).toBeUndefined();
+		const retry = read();
+		const concurrent = read();
+		expect(command).toHaveBeenCalledTimes(2);
+		complete({ stdout, stderr: '', exitCode: 0 });
+		const identity = await retry;
+		expect(identity).toMatch(/^[0-9a-f]{64}$/);
+		expect(await concurrent).toBe(identity);
+		expect(await read()).toBe(identity);
+		expect(command).toHaveBeenCalledTimes(2);
+		expect(command.mock.calls.every((call) => call[3].timeout === 2000)).toBe(true);
+	}
+);
+
+it.each([
+	{ board: false, maestroCue: false },
+	{ board: false, maestroCue: true },
+	{ board: true, maestroCue: false },
+])(
+	'desktop identity reader refuses off-state reads and retries after a mid-read toggle: %j',
+	async (off) => {
+		let flags = off;
+		configureBoardFeatures({ get: () => flags });
+		let complete!: (identity: string) => void;
+		const proof = vi
+			.fn()
+			.mockImplementationOnce(
+				() =>
+					new Promise<string>((resolve) => {
+						complete = resolve;
+					})
+			)
+			.mockResolvedValue('healthy-proof');
+		const read = createBoardOwnerHostIdentityReader(proof);
+		const reason = off.board ? 'CueDisabled' : 'BoardDisabled';
+		await expect(read()).rejects.toThrow(reason);
+		expect(proof).not.toHaveBeenCalled();
+		flags = { board: true, maestroCue: true };
+		const pending = read();
+		flags = off;
+		complete('discard-off-state-proof');
+		await expect(pending).rejects.toThrow(reason);
+		await expect(read()).rejects.toThrow(reason);
+		expect(proof).toHaveBeenCalledOnce();
+		flags = { board: true, maestroCue: true };
+		expect(await read()).toBe('healthy-proof');
+		expect(proof).toHaveBeenCalledTimes(2);
+		flags = off;
+		await expect(read()).rejects.toThrow(reason);
+		flags = { board: true, maestroCue: true };
+		expect(await read()).toBe('healthy-proof');
+		expect(proof).toHaveBeenCalledTimes(2);
+	}
+);
+
+it('desktop identity reader does not permanently cache a rejected probe', async () => {
+	const proof = vi
+		.fn()
+		.mockRejectedValueOnce(new Error('probe unavailable'))
+		.mockResolvedValue('healthy-proof');
+	const read = createBoardOwnerHostIdentityReader(proof);
+	await expect(read()).rejects.toThrow('probe unavailable');
+	expect(await read()).toBe('healthy-proof');
+	expect(proof).toHaveBeenCalledTimes(2);
 });
