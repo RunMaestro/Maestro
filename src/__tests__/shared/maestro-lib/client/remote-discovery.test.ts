@@ -16,6 +16,8 @@ import {
 	discoverRemoteHost,
 	parseHostEndpointReport,
 	readRemoteScriptOutput,
+	remoteVersionSkew,
+	startRemoteHost,
 	type RemoteExec,
 } from '../../../../shared/maestro-lib/client/remote-discovery';
 import { buildSshConnectionArgs } from '../../../../shared/sshConnection';
@@ -170,6 +172,99 @@ describe('discoverRemoteHost', () => {
 		expect(error.code).toBe('unsupported');
 		expect(error.message).toContain('0.16.0');
 		expect(error.message).toContain('Upgrade');
+	});
+});
+
+describe('startRemoteHost', () => {
+	async function start(exec: RemoteExec) {
+		return startRemoteHost(remote, { exec, sshPath: 'ssh', timeoutMs: 5000 });
+	}
+
+	async function startError(exec: RemoteExec): Promise<RemoteDiscoveryError> {
+		try {
+			await start(exec);
+		} catch (error) {
+			expect(error).toBeInstanceOf(RemoteDiscoveryError);
+			return error as RemoteDiscoveryError;
+		}
+		throw new Error('start did not reject');
+	}
+
+	it('runs `host start --json` over ONE ssh invocation', async () => {
+		const exec = execReturning(`${markers()}{"started": true, "pid": 900, "port": 41001}`);
+		await start(exec);
+		expect(exec).toHaveBeenCalledTimes(1);
+		const [command, args] = exec.mock.calls[0];
+		expect(command).toBe('ssh');
+		expect(args.slice(0, -1)).toEqual(buildSshConnectionArgs(remote));
+		expect(args[args.length - 1]).toContain('start');
+		expect(args[args.length - 1]).not.toContain('endpoint');
+	});
+
+	it('reports a started host', async () => {
+		const body = JSON.stringify({ started: true, pid: 900, port: 41001, log: '/x.log' });
+		await expect(start(execReturning(`${markers()}${body}`))).resolves.toEqual({
+			installed: true,
+			started: true,
+			alreadyRunning: false,
+			pid: 900,
+			port: 41001,
+		});
+	});
+
+	it('reports a host that was already running', async () => {
+		const body = JSON.stringify({ started: false, alreadyRunning: true, pid: 900, port: 41001 });
+		await expect(start(execReturning(`${markers()}${body}`))).resolves.toMatchObject({
+			started: true,
+			alreadyRunning: true,
+		});
+	});
+
+	it('reports a desktop app that holds the data directory', async () => {
+		const body = JSON.stringify({
+			started: false,
+			reason: 'desktop-running',
+			pid: 77,
+			error: 'desktop',
+		});
+		await expect(start(execReturning(`${markers()}${body}`, '', 1))).resolves.toEqual({
+			installed: true,
+			started: false,
+			reason: 'desktop-running',
+			pid: 77,
+		});
+	});
+
+	it('reports not installed with the fix', async () => {
+		const result = await start(execReturning('MAESTRO_REMOTE_CLI=none\n', '', 127));
+		expect(result).toMatchObject({ installed: false });
+	});
+
+	it('surfaces the remote refusal, redacted', async () => {
+		const body = JSON.stringify({ error: `The host exited before it was ready. token=${TOKEN}` });
+		const error = await startError(execReturning(`${markers()}${body}`, '', 1));
+		expect(error.code).toBe('refused');
+		expect(error.message).toContain('could not start a host');
+		expect(error.message).not.toContain(TOKEN);
+	});
+
+	it('rejects output that is not a start report', async () => {
+		const error = await startError(execReturning(`${markers()}not json`, '', 1));
+		expect(error.code).toBe('malformed');
+	});
+});
+
+describe('remoteVersionSkew', () => {
+	it('compares the remote against this side, folding prerelease case', () => {
+		expect(remoteVersionSkew('0.17.2', '0.17.2')).toBe('none');
+		expect(remoteVersionSkew('0.17.2-RC', '0.17.2-rc')).toBe('none');
+		expect(remoteVersionSkew('0.17.2', '0.17.1')).toBe('remote-older');
+		expect(remoteVersionSkew('0.17.2', '0.18.0')).toBe('remote-newer');
+	});
+
+	it('is unknown when either side has no version', () => {
+		expect(remoteVersionSkew('0.17.2', undefined)).toBe('unknown');
+		expect(remoteVersionSkew(undefined, '0.17.2')).toBe('unknown');
 	});
 });
 

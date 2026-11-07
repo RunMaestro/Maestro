@@ -1483,6 +1483,28 @@ Stop the host (refuses while a turn, Auto Run or Cue run is in flight, unless --
 | `--force`           | Stop even with work in flight; a run records how it ended first           | -       |
 | `--json`            | Output as JSON (for scripting)                                            | -       |
 
+## `maestro-cli remote-host`
+
+Check and start the maestro-cli host on an SSH remote that is opted in to Federation
+
+## `maestro-cli remote-host status <ssh-remote>`
+
+Report whether Maestro is installed on the remote, whether its host runs, and the version skew
+
+| Option                | Description                                                  | Default |
+| --------------------- | ------------------------------------------------------------ | ------- |
+| `--timeout <seconds>` | Give up on the SSH call after this many seconds (default 60) | -       |
+| `--json`              | Output as JSON (for scripting)                               | -       |
+
+## `maestro-cli remote-host start <ssh-remote>`
+
+Start the host on the remote (as the SSH user) when none runs, then report status
+
+| Option                | Description                                                   | Default |
+| --------------------- | ------------------------------------------------------------- | ------- |
+| `--timeout <seconds>` | Give up on each SSH call after this many seconds (default 60) | -       |
+| `--json`              | Output as JSON (for scripting)                                | -       |
+
 ## `maestro-cli completions <shell>`
 
 Print a shell completion script (bash, zsh, or fish)

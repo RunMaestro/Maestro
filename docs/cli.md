@@ -2257,6 +2257,23 @@ Asks the host to stop and waits for its process to exit. With work in flight (a 
 | `--force`           | Stop even with work in flight. A running Auto Run records how it ended first                                                                                       | -                             |
 | `--json`            | Output as JSON (for scripting)                                                                                                                                     | -                             |
 
+### `remote-host status` and `remote-host start`
+
+Check, and start, the `maestro-cli host` on an SSH remote, for [Federation](/encore-features) over SSH. Both verbs belong to the Federation Encore Feature and are refused while it is off. Both refuse an SSH remote that is not opted in (`update-ssh-remote <id> --federation on`): Maestro never dials a remote without that flag. The `<ssh-remote>` argument is the remote's name or its ID (a unique prefix works).
+
+`remote-host status` makes one SSH call and reports whether Maestro is installed on the remote (with the fix when it is not), whether a host is running there (its pid, its port on the remote's loopback and its version), and the version skew against this CLI: `none`, `remote-older`, `remote-newer` or `unknown`. It exits `0` with a running host and `3` when no host runs or Maestro is not installed. `remote-host start` runs `maestro-cli host start` on the remote, as the SSH user, when no host is running there, then reports status the same way. It does nothing when a host already runs. The SSH calls run one after the other, never at the same time. Neither verb prints the host's token or CLI secret, with or without `--json`. A timeout exits `5`, and a remote CLI too old to know `host endpoint` exits `4`.
+
+```bash
+maestro-cli update-ssh-remote 3f2a --federation on   # takes the remote's ID
+maestro-cli remote-host status build-box
+maestro-cli remote-host start build-box --json
+```
+
+| Flag                  | Description                                      | Default |
+| --------------------- | ------------------------------------------------ | ------- |
+| `--timeout <seconds>` | Give up on each SSH call after this many seconds | `60`    |
+| `--json`              | Output as JSON (for scripting)                   | -       |
+
 ### One Host Per Data Directory
 
 A data directory has one owner at a time: a lock file (`maestro-runtime.lock`) in the directory says who. `host start` refuses a directory the desktop app or another host already holds, and says which. The desktop app will not open on a directory a headless host holds: it shows a dialog naming the host and quits, because loading its stores on top of the host's would overwrite the host's writes. Stop the host with `maestro-cli host stop`, then open Maestro.

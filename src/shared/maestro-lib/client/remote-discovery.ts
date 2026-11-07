@@ -22,6 +22,7 @@
 
 import { buildSshConnectionArgs, describeSshConnectionError } from '../../sshConnection';
 import type { HostEndpoint } from './discovery';
+import { compareVersions } from '../../pathUtils';
 import { redactSecrets } from '../../redactSecrets';
 import type { SshRemoteConfig } from '../../types';
 import { execFileNoThrow, type ExecResult } from '../launch/exec-file';
@@ -201,22 +202,37 @@ function remoteLabel(remote: SshRemoteConfig): string {
 	return remote.name || remote.host;
 }
 
+/** What one run of the remote CLI script produced, once a usable CLI was found. */
+interface RemoteCliRun {
+	launcher: RemoteCliLauncher;
+	cliVersion?: string;
+	/** Everything the CLI printed after the markers. Can hold a token: never put it in a message. */
+	body: string;
+	exitCode: ExecResult['exitCode'];
+	stderr: string;
+	label: string;
+}
+
+type RemoteCliOutcome = { installed: false; fix: string } | ({ installed: true } & RemoteCliRun);
+
+function execOf(options: DiscoverRemoteHostOptions): RemoteExec {
+	return options.exec ?? ((command, args, opts) => execFileNoThrow(command, args, undefined, opts));
+}
+
 /**
- * Ask `remote` for its host's endpoint over one SSH invocation. Resolves to a typed answer, or
- * rejects with a `RemoteDiscoveryError` whose message names the fix and holds no secret.
- *
- * The caller decides whether the remote may be probed at all: Federation only dials a remote whose
- * own `federation` flag is on (decision D8).
+ * Run one `maestro-cli` invocation on `remote` over ONE ssh call, through the PATH-then-app-bundle
+ * lookup. Resolves to "not installed" with the fix, or to what the CLI printed; rejects with a
+ * `RemoteDiscoveryError` when ssh failed, timed out, or the remote did not run the script.
  */
-export async function discoverRemoteHost(
+async function runRemoteMaestroCli(
 	remote: SshRemoteConfig,
-	options: DiscoverRemoteHostOptions = {}
-): Promise<RemoteHostDiscovery> {
+	args: string[],
+	options: DiscoverRemoteHostOptions
+): Promise<RemoteCliOutcome> {
 	const timeout = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-	const exec: RemoteExec =
-		options.exec ?? ((command, args, opts) => execFileNoThrow(command, args, undefined, opts));
+	const exec = execOf(options);
 	const sshPath = options.sshPath ?? (await resolveSshPath());
-	const script = buildRemoteMaestroCliScript(['host', 'endpoint', '--json']);
+	const script = buildRemoteMaestroCliScript(args);
 	const result = await exec(sshPath, buildRemoteScriptArgs(remote, script), { timeout });
 	const label = remoteLabel(remote);
 
@@ -244,10 +260,42 @@ export async function discoverRemoteHost(
 			`${label} answered with an unknown maestro-cli launcher.`
 		);
 	}
-	const launcher: RemoteCliLauncher = output.launcher;
-	const cliVersion = output.cliVersion;
+	return {
+		installed: true,
+		launcher: output.launcher,
+		...(output.cliVersion ? { cliVersion: output.cliVersion } : {}),
+		body: output.body,
+		exitCode: result.exitCode,
+		stderr: result.stderr,
+		label,
+	};
+}
 
-	const report = parseHostEndpointReport(output.body);
+/** The remote CLI exists but does not know the verb it was asked for. */
+function unsupportedVerb(run: RemoteCliRun, verb: string): RemoteDiscoveryError | null {
+	if (run.body || !/unknown command|too many arguments/i.test(run.stderr)) return null;
+	return new RemoteDiscoveryError(
+		'unsupported',
+		`maestro-cli on ${run.label}${run.cliVersion ? ` (${run.cliVersion})` : ''} has no \`${verb}\` verb. Upgrade Maestro on the remote.`
+	);
+}
+
+/**
+ * Ask `remote` for its host's endpoint over one SSH invocation. Resolves to a typed answer, or
+ * rejects with a `RemoteDiscoveryError` whose message names the fix and holds no secret.
+ *
+ * The caller decides whether the remote may be probed at all: Federation only dials a remote whose
+ * own `federation` flag is on (decision D8).
+ */
+export async function discoverRemoteHost(
+	remote: SshRemoteConfig,
+	options: DiscoverRemoteHostOptions = {}
+): Promise<RemoteHostDiscovery> {
+	const run = await runRemoteMaestroCli(remote, ['host', 'endpoint', '--json'], options);
+	if (!run.installed) return run;
+	const { launcher, cliVersion, label } = run;
+
+	const report = parseHostEndpointReport(run.body);
 	if (report === 'not-running') {
 		return { installed: true, running: false, launcher, ...(cliVersion ? { cliVersion } : {}) };
 	}
@@ -267,14 +315,80 @@ export async function discoverRemoteHost(
 		};
 	}
 
-	if (!output.body && /unknown command|too many arguments/i.test(result.stderr)) {
-		throw new RemoteDiscoveryError(
-			'unsupported',
-			`maestro-cli on ${label}${cliVersion ? ` (${cliVersion})` : ''} has no \`host endpoint\` verb. Upgrade Maestro on the remote.`
-		);
-	}
+	const unsupported = unsupportedVerb(run, 'host endpoint');
+	if (unsupported) throw unsupported;
 	throw new RemoteDiscoveryError(
 		'malformed',
-		`maestro-cli on ${label} returned output that is not a host endpoint (exit ${String(result.exitCode)}).`
+		`maestro-cli on ${label} returned output that is not a host endpoint (exit ${String(run.exitCode)}).`
 	);
+}
+
+/** What `maestro-cli host start --json` did on the remote. */
+export type RemoteHostStartResult =
+	/** No usable `maestro-cli` on the remote. */
+	| { installed: false; fix: string }
+	/** A host was started (`alreadyRunning: false`) or was already serving (`true`). */
+	| { installed: true; started: true; alreadyRunning: boolean; pid: number; port: number }
+	/** The remote's desktop app is the host there, so no headless host can start. */
+	| { installed: true; started: false; reason: 'desktop-running'; pid: number };
+
+/**
+ * Run `maestro-cli host start --json` on `remote` over one SSH invocation (decision D2: the host
+ * runs as the SSH user). Rejects with a `RemoteDiscoveryError` when the remote CLI failed to start
+ * one; the message carries the CLI's own reason, redacted. Like discovery, the caller checks the
+ * remote's `federation` flag first.
+ */
+export async function startRemoteHost(
+	remote: SshRemoteConfig,
+	options: DiscoverRemoteHostOptions = {}
+): Promise<RemoteHostStartResult> {
+	const run = await runRemoteMaestroCli(remote, ['host', 'start', '--json'], options);
+	if (!run.installed) return run;
+	const { label } = run;
+
+	let data: Record<string, unknown> | null = null;
+	try {
+		const parsed: unknown = JSON.parse(run.body);
+		if (parsed && typeof parsed === 'object') data = parsed as Record<string, unknown>;
+	} catch {
+		data = null;
+	}
+	if (data) {
+		const { started, alreadyRunning, reason, pid, port, error } = data;
+		if (started === true && isPort(port) && typeof pid === 'number') {
+			return { installed: true, started: true, alreadyRunning: false, pid, port };
+		}
+		if (started === false && alreadyRunning === true && isPort(port) && typeof pid === 'number') {
+			return { installed: true, started: true, alreadyRunning: true, pid, port };
+		}
+		if (started === false && reason === 'desktop-running' && typeof pid === 'number') {
+			return { installed: true, started: false, reason: 'desktop-running', pid };
+		}
+		if (typeof error === 'string') {
+			throw new RemoteDiscoveryError(
+				'refused',
+				`maestro-cli on ${label} could not start a host: ${safeText(error)}`
+			);
+		}
+	}
+
+	const unsupported = unsupportedVerb(run, 'host start');
+	if (unsupported) throw unsupported;
+	throw new RemoteDiscoveryError(
+		'malformed',
+		`maestro-cli on ${label} returned output that is not a host start report (exit ${String(run.exitCode)}).`
+	);
+}
+
+/** How a remote's Maestro version compares with this one. */
+export type RemoteVersionSkew = 'none' | 'remote-older' | 'remote-newer' | 'unknown';
+
+/**
+ * Compare a remote's version with this side's. Case is folded first, because builds stamp `-RC`
+ * where manifests write `-rc`. `unknown` when either side did not report one.
+ */
+export function remoteVersionSkew(local?: string, remote?: string): RemoteVersionSkew {
+	if (!local || !remote) return 'unknown';
+	const order = compareVersions(remote.toLowerCase(), local.toLowerCase());
+	return order === 0 ? 'none' : order < 0 ? 'remote-older' : 'remote-newer';
 }

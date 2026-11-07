@@ -90,6 +90,7 @@ import {
 } from './commands/cue-engine';
 import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './commands/bundle';
 import { hostEndpoint, hostStart, hostStatus, hostStop } from './commands/host';
+import { remoteHostStart, remoteHostStatus } from './commands/remote-host';
 import { createAgent } from './commands/create-agent';
 import { duplicateAgent } from './commands/duplicate-agent';
 import { liveStatus, liveOn, liveOff, liveTunnel } from './commands/live';
@@ -1870,6 +1871,27 @@ host
 	.option('--force', 'Stop even with work in flight; a run records how it ended first')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => hostStop(options));
+
+// Remote host commands - the `maestro-cli host` on a Federation-enabled SSH remote (#1716)
+const remoteHost = encoreCommand(program, 'remote-host', 'federation', encoreFlags).description(
+	'Check and start the maestro-cli host on an SSH remote that is opted in to Federation'
+);
+
+remoteHost
+	.command('status <ssh-remote>')
+	.description(
+		'Report whether Maestro is installed on the remote, whether its host runs, and the version skew'
+	)
+	.option('--timeout <seconds>', 'Give up on the SSH call after this many seconds (default 60)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((ref: string, options) => remoteHostStatus(ref, options, cliVersion));
+
+remoteHost
+	.command('start <ssh-remote>')
+	.description('Start the host on the remote (as the SSH user) when none runs, then report status')
+	.option('--timeout <seconds>', 'Give up on each SSH call after this many seconds (default 60)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((ref: string, options) => remoteHostStart(ref, options, cliVersion));
 
 // Completions command - emit a shell completion script (introspects the program)
 program
