@@ -99,6 +99,7 @@ describe('federation_command handler', () => {
 			success: true,
 			peers: PEERS,
 			requestId: 'q',
+			timestamp: expect.any(Number),
 		});
 	});
 

@@ -110,8 +110,10 @@ export async function federationPeers(options: FederationOptions): Promise<void>
 export async function federationReconnect(peer: string, options: FederationOptions): Promise<void> {
 	const reply = await request('reconnect', options, { peer }, FEDERATION_RECONNECT_TIMEOUT_MS);
 	if (options.json) {
-		console.log(JSON.stringify(reply, null, 2));
-		if (!reply.success) process.exit(1);
+		// Only the answer: the bridge envelope (`type`, `requestId`, `timestamp`) is wire detail.
+		const { success, error, peer: answered } = reply;
+		console.log(JSON.stringify({ success, error, peer: answered }, null, 2));
+		if (!success) process.exit(1);
 		return;
 	}
 	if (!reply.success) {

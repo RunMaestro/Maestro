@@ -116,7 +116,7 @@ describe('gateKeyForMirror', () => {
 
 	it('answers tab cycling on the mirror its own tabs', () => {
 		showMirror();
-		const event = eventFor('nextTab', 'tabShortcuts');
+		const event = eventFor('nextTab');
 		expect(gateKeyForMirror(event, matchers)).toBe('handled');
 		expect(event.defaultPrevented).toBe(true);
 		expect(usePeerMirrorStore.getState().activeTabIds.buildbox.a1).toBe('t2');
@@ -124,7 +124,7 @@ describe('gateKeyForMirror', () => {
 
 	it('does not cycle the mirror behind an open modal', () => {
 		showMirror();
-		const event = eventFor('nextTab', 'tabShortcuts');
+		const event = eventFor('nextTab');
 		expect(gateKeyForMirror(event, { ...matchers, hasOpenLayers: () => true })).toBe('handled');
 		expect(usePeerMirrorStore.getState().activeTabIds.buildbox?.a1).toBeUndefined();
 	});
