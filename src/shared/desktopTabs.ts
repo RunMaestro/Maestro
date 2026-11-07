@@ -31,6 +31,18 @@ export interface DesktopTabEntry {
 	active: boolean;
 	/** Unread marker in the tab bar. */
 	hasUnread: boolean;
+	/**
+	 * True when the tab bar draws no chip for this tab (`isAiTabHidden`): a
+	 * consult tab, or any tab marked hidden. `session list` drops these unless
+	 * `--include-hidden` is passed; tab verbs still resolve them by ID.
+	 */
+	hidden: boolean;
+	/**
+	 * True when the agent's `unifiedTabOrder` holds an `ai` ref for this tab.
+	 * Raw data, not a visibility verdict: a tab tiled into a group has no ref of
+	 * its own but is still on screen inside the group chip.
+	 */
+	inTabOrder: boolean;
 	/** Synopsize this tab's completions into History after each completion. */
 	saveToHistory: boolean;
 	/** Read-only / plan mode: the agent may not modify files. */

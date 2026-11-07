@@ -674,6 +674,7 @@ const session = program
 session
 	.command('list')
 	.description('List open desktop AI tabs and their tab/session IDs')
+	.option('--include-hidden', 'Also list hidden tabs (consults) the tab bar does not show')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(sessionList);
 

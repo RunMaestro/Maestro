@@ -427,9 +427,10 @@ Inspect open desktop tabs and their conversation history
 
 List open desktop AI tabs and their tab/session IDs
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                                | Default |
+| ------------------ | ---------------------------------------------------------- | ------- |
+| `--include-hidden` | Also list hidden tabs (consults) the tab bar does not show | -       |
+| `--json`           | Output as JSON (for scripting)                             | -       |
 
 ## `maestro-cli session show <tab-id>`
 

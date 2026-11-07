@@ -321,7 +321,12 @@ maestro-cli session list
 
 # JSON for scripting
 maestro-cli session list --json
+
+# Also list hidden tabs (consult transcripts the tab bar does not show)
+maestro-cli session list --include-hidden --json
 ```
+
+The list matches the tab bar: hidden tabs, such as the transcripts `maestro-cli ask` consults leave behind, are left out unless you pass `--include-hidden`. Each entry carries `hidden`, and `inTabOrder` (whether the agent's tab order holds a ref for the tab; a tab tiled into a group has none but is still on screen).
 
 Default text columns: `state` (`busy` / `idle`), star (`★` if starred), `tabId`, agent name + id, tab name, `createdAt` (relative). One tab per line so the output pipes cleanly into `grep`, `awk`, etc.
 
@@ -341,7 +346,9 @@ JSON envelope:
 			"agentSessionId": "claude-uuid-1",
 			"state": "idle",
 			"createdAt": 1714268000000,
-			"starred": false
+			"starred": false,
+			"hidden": false,
+			"inTabOrder": true
 		}
 	]
 }
