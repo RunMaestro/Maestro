@@ -333,18 +333,28 @@ describe('worktree PR summary', () => {
 				<SessionItem {...defaultProps} variant="worktree" session={target} onSelect={onSelect} />
 			</LayerStackProvider>
 		);
-		fireEvent.click(screen.getByRole('button', { name: 'Show PR and CI details' }));
+		fireEvent.click(screen.getByRole('button', { name: /Show PR and CI details/ }));
 		expect(screen.getByRole('dialog', { name: 'Worktree PR and CI' })).toBeInTheDocument();
 		expect(screen.getByRole('link', { name: 'PR #42: Example' })).toHaveAttribute(
 			'href',
 			'https://github.com/a/b/pull/42'
 		);
-		expect(screen.getByText(/OPEN · Draft · Base: rc/)).toBeInTheDocument();
+		expect(screen.getByText('Draft')).toBeInTheDocument();
+		expect(screen.getByText('rc')).toBeInTheDocument();
 		expect(screen.getByRole('link', { name: 'Build' })).toHaveAttribute(
 			'href',
 			'https://github.com/a/b/actions/runs/1'
 		);
 		expect(screen.getByText(/2 ahead, 1 behind/)).toBeInTheDocument();
+		// Opening status is read-only; mutation controls are revealed deliberately.
+		expect(screen.getByRole('button', { name: 'Check merge readiness' })).not.toBeVisible();
+		expect(screen.getByRole('button', { name: 'Prepare worktree cleanup' })).not.toBeVisible();
+		const mergeSection = screen
+			.getByText('Merge pull request', { selector: 'summary span' })
+			.closest('details')!;
+		expect(mergeSection).not.toHaveAttribute('open');
+		fireEvent.click(mergeSection.querySelector('summary')!);
+		expect(screen.getByRole('button', { name: 'Check merge readiness' })).toBeVisible();
 		expect(onSelect).not.toHaveBeenCalled();
 		fireEvent.click(screen.getByRole('button', { name: 'Close modal' }));
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -399,7 +409,7 @@ describe('worktree PR summary', () => {
 			</LayerStackProvider>
 		);
 		const { rerender } = render(view());
-		fireEvent.click(screen.getByRole('button', { name: 'Show PR and CI details' }));
+		fireEvent.click(screen.getByRole('button', { name: /Show PR and CI details/ }));
 		expect(screen.getByText(/Build/).parentElement).toHaveTextContent('pending');
 		check.state = 'passed';
 		rerender(view());
@@ -412,7 +422,9 @@ describe('worktree PR summary', () => {
 		const target = createMockSession({ id: 'target', name: 'Original worktree' });
 		const other = createMockSession({ id: 'other', name: 'Other worktree' });
 		useSessionStore.setState({ sessions: [target, other], activeSessionId: target.id });
-		prState.current = { snapshot: { discovery: { status: 'no-pr' } } };
+		prState.current = {
+			snapshot: { discovery: { status: 'unavailable', reason: 'gh', message: 'offline' } },
+		};
 		const view = (row: boolean) => (
 			<LayerStackProvider>
 				<WorktreePullRequestDetailsHost theme={defaultTheme} />
@@ -420,7 +432,7 @@ describe('worktree PR summary', () => {
 			</LayerStackProvider>
 		);
 		const { rerender } = render(view(true));
-		fireEvent.click(screen.getByRole('button', { name: 'Show PR and CI details' }));
+		fireEvent.click(screen.getByRole('button', { name: /Show PR and CI details/ }));
 		act(() => useSessionStore.setState({ activeSessionId: other.id }));
 		rerender(view(false));
 		expect(screen.getByRole('dialog')).toHaveTextContent('Original worktree');
@@ -483,7 +495,8 @@ describe('worktree PR summary', () => {
 		expect(prepare).toHaveBeenCalledOnce();
 	});
 
-	it('shows CI transitions and refreshes without selecting the worktree', () => {
+	it('shows CI transitions on one icon and opens details without selecting the worktree', () => {
+		prState.refresh.mockClear();
 		const onSelect = vi.fn();
 		const session = createMockSession({ worktreeBranch: 'feat/x' });
 		const snapshot = {
@@ -514,15 +527,21 @@ describe('worktree PR summary', () => {
 				onSelect={onSelect}
 			/>
 		);
-		fireEvent.click(screen.getByRole('button', { name: /CI failed/ }));
-		expect(prState.refresh).toHaveBeenCalled();
+		const icon = screen.getByRole('button', { name: /CI failed/ });
+		expect(icon).toHaveTextContent('');
+		expect(screen.queryByText('Details')).not.toBeInTheDocument();
+		fireEvent.click(icon);
+		expect(prState.refresh).not.toHaveBeenCalled();
+		expect(useModalStore.getState().getData('worktreePRDetails')?.sessionId).toBe(session.id);
 		expect(onSelect).not.toHaveBeenCalled();
 	});
 
 	it('keeps keyboard actions on the PR controls from selecting the worktree', () => {
 		const onSelect = vi.fn();
 		prState.refresh.mockClear();
-		prState.current = { snapshot: { discovery: { status: 'no-pr' } } };
+		prState.current = {
+			snapshot: { discovery: { status: 'unavailable', reason: 'gh', message: 'offline' } },
+		};
 		const target = createMockSession();
 		useSessionStore.setState({ sessions: [target] });
 		render(
@@ -531,16 +550,16 @@ describe('worktree PR summary', () => {
 				<SessionItem {...defaultProps} variant="worktree" session={target} onSelect={onSelect} />
 			</LayerStackProvider>
 		);
-		const refresh = screen.getByRole('button', { name: /No PR/ });
-		refresh.focus();
-		fireEvent.keyDown(refresh, { key: 'Enter' });
-		fireEvent.click(refresh);
-		expect(prState.refresh).toHaveBeenCalledOnce();
-		const details = screen.getByRole('button', { name: 'Show PR and CI details' });
+		const details = screen.getByRole('button', { name: /Show PR and CI details/ });
 		details.focus();
-		fireEvent.keyDown(details, { key: ' ' });
+		fireEvent.keyDown(details, { key: 'Enter' });
 		fireEvent.click(details);
 		expect(screen.getByRole('dialog', { name: 'Worktree PR and CI' })).toBeInTheDocument();
+		const refresh = screen.getByRole('button', { name: 'Refresh PR status' });
+		refresh.focus();
+		fireEvent.keyDown(refresh, { key: ' ' });
+		fireEvent.click(refresh);
+		expect(prState.refresh).toHaveBeenCalledOnce();
 		expect(onSelect).not.toHaveBeenCalled();
 	});
 
@@ -550,7 +569,7 @@ describe('worktree PR summary', () => {
 		const { rerender } = render(
 			<SessionItem {...defaultProps} variant="worktree" session={session} />
 		);
-		expect(screen.getByRole('button', { name: /No PR/ })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /No PR/ })).not.toBeInTheDocument();
 		prState.current = {
 			snapshot: {
 				discovery: { status: 'found', pullRequest: { identity: { number: 7 }, state: 'OPEN' } },

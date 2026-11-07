@@ -197,9 +197,14 @@ PR, and if it fails, the error waits for you both in a toast and in the form.
 
 ### Pull Request Status and Merge
 
-For a worktree sub-agent, the sidebar shows the pull request and CI status for
-its current branch. Select **Details** for the PR, checks, local divergence and
-manual refresh. You can also open **Worktree PR and CI** for the active worktree
+For a worktree sub-agent, one compact pull-request icon shows the status of its
+current branch. Hover for the PR number and CI summary; click to open its status
+card. Green means checks passed, amber means checks are pending or running, red
+marks failed checks or a closed PR, and the accent color marks a merged PR. Drafts
+and unavailable or stale results are muted. The icon shape and accessible label
+also identify the state. Branches with no matching PR do not add an extra sidebar
+control. A green CI icon does not imply review approval or merge readiness.
+You can also open **Worktree PR and CI** for the active worktree
 from the Left Bar hamburger menu, search **Git: Worktree PR and CI** in the
 command palette, or press **Alt+Cmd+Shift+P** on macOS (**Alt+Ctrl+Shift+P** on
 Windows/Linux). Agents can use `maestro-cli open worktree-pr-details`. The details
@@ -212,7 +217,10 @@ requests finish before another automatic refresh starts. Completed PRs can be
 rediscovered after a restart when their repository, branch and head match. A failed refresh can leave the last result marked stale;
 unknown or missing checks are not a passing result.
 
-In the details, **Check merge readiness** checks the current PR and checkout
+The status card starts with the PR title, branches and CI summary. Expand the
+check list for individual results and links; failed checks are expanded by default.
+Refresh is available in the footer. Expand **Merge pull request**, then choose
+**Check merge readiness** to check the current PR and checkout
 against GitHub. Local HEAD must match the reviewed PR head, so unpublished
 commits require a push and another refresh before merging. If eligible, choose an allowed merge method or add the PR to the
 repository's required merge queue. Maestro rechecks before the action and
@@ -224,7 +232,8 @@ Discovery and manual merge currently support local worktrees with a GitHub.com
 post-merge worktree cleanup is not available. Merging does not remove the
 checkout; use the explicit removal controls below when appropriate.
 
-The PR details now offer **Prepare worktree cleanup**, followed by explicit
+Expand **Worktree cleanup** in PR details to find **Prepare worktree cleanup**,
+followed by explicit
 **Confirm worktree removal** or **Keep checkout**. Preparation temporarily
 fences child and parent session updates, queued work, Auto Run starts, composer
 drafts and editor entry points before inspecting live state. Saved idle chat is
