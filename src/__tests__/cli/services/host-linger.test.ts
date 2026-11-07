@@ -1,9 +1,30 @@
 /**
  * Tests for src/cli/services/host-linger.ts: whether systemd-logind lets a Linux host outlive the
- * SSH session that started it, with loginctl and the platform stood in for.
+ * SSH session that started it, with loginctl and the platform stood in for. The injected-deps
+ * tests pass every dependency; the default-wiring tests mock the platform helper, the exec helper
+ * and `os.userInfo()`, so no loginctl ever runs.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { isLinuxMock, execFileNoThrowMock, userInfoMock } = vi.hoisted(() => ({
+	isLinuxMock: vi.fn(() => true),
+	execFileNoThrowMock: vi.fn(),
+	userInfoMock: vi.fn(() => ({ username: 'bob' })),
+}));
+
+vi.mock('../../../shared/platformDetection', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../shared/platformDetection')>()),
+	isLinux: isLinuxMock,
+}));
+vi.mock('../../../shared/maestro-lib/launch/exec-file', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../shared/maestro-lib/launch/exec-file')>()),
+	execFileNoThrow: execFileNoThrowMock,
+}));
+vi.mock('os', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('os')>();
+	return { ...actual, default: { ...actual, userInfo: userInfoMock }, userInfo: userInfoMock };
+});
 
 import {
 	checkUserLinger,
@@ -52,6 +73,51 @@ describe('checkUserLinger', () => {
 		const deps = { ...linuxWith('Linger=no\n'), username: () => undefined };
 		expect(await checkUserLinger(deps)).toBeUndefined();
 		expect(deps.exec).not.toHaveBeenCalled();
+	});
+});
+
+describe('checkUserLinger default wiring', () => {
+	beforeEach(() => {
+		isLinuxMock.mockReset().mockReturnValue(true);
+		userInfoMock.mockReset().mockReturnValue({ username: 'bob' });
+		execFileNoThrowMock
+			.mockReset()
+			.mockResolvedValue({ stdout: 'Linger=no\n', stderr: '', exitCode: 0 });
+	});
+
+	it('asks loginctl through execFileNoThrow with a timeout, for the OS user', async () => {
+		expect(await checkUserLinger()).toEqual({
+			linger: false,
+			lingerFix: 'loginctl enable-linger bob',
+		});
+		expect(execFileNoThrowMock).toHaveBeenCalledWith(
+			'loginctl',
+			['show-user', 'bob', '-p', 'Linger'],
+			undefined,
+			{ timeout: 5_000 }
+		);
+	});
+
+	it('asks the platform helper first, and runs nothing off Linux', async () => {
+		isLinuxMock.mockReturnValue(false);
+		expect(await checkUserLinger()).toBeUndefined();
+		expect(isLinuxMock).toHaveBeenCalled();
+		expect(execFileNoThrowMock).not.toHaveBeenCalled();
+	});
+
+	it('falls back to $USER when os.userInfo() throws', async () => {
+		userInfoMock.mockImplementation(() => {
+			throw new Error('no passwd entry');
+		});
+		vi.stubEnv('USER', 'carol');
+		try {
+			expect(await checkUserLinger()).toEqual({
+				linger: false,
+				lingerFix: 'loginctl enable-linger carol',
+			});
+		} finally {
+			vi.unstubAllEnvs();
+		}
 	});
 });
 

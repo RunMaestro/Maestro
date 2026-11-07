@@ -107,6 +107,38 @@ describe('createHostSleepGuard', () => {
 		expect(lines.filter((line) => line.includes('Could not prevent sleep'))).toHaveLength(1);
 	});
 
+	it('says once that caffeinate could not be spawned at all, and stops trying', () => {
+		spawnMock.mockImplementation(() => {
+			throw new Error('EPERM');
+		});
+		const sleep = guard();
+		sleep.update(true);
+		sleep.update(true);
+		expect(spawnMock).toHaveBeenCalledTimes(1);
+		expect(sleep.holding()).toBe(false);
+		expect(lines.filter((line) => line.includes('caffeinate did not start: EPERM'))).toHaveLength(
+			1
+		);
+	});
+
+	it('says nothing when idle without a hold, or when stopped without one', () => {
+		const sleep = guard();
+		sleep.update(false);
+		sleep.stop();
+		expect(spawnMock).not.toHaveBeenCalled();
+		expect(lines).toEqual([]);
+	});
+
+	it('never spawns off macOS even when stopped and updated again', () => {
+		isMacOSMock.mockReturnValue(false);
+		const sleep = guard();
+		sleep.update(true);
+		sleep.stop();
+		sleep.update(true);
+		expect(spawnMock).not.toHaveBeenCalled();
+		expect(lines).toEqual([]);
+	});
+
 	it('releases on stop and never holds after', () => {
 		const sleep = guard();
 		sleep.update(true);
