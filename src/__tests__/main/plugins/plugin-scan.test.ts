@@ -3,17 +3,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { buildSync } from 'esbuild';
+import { build } from 'esbuild';
 import { PluginFileScanner } from '../../../main/plugins/plugin-scan';
 import { pluginIdentity } from '../../../main/plugins/plugin-identity';
 import { buildSigningPayload } from '../../../shared/plugins/signing';
 let dir: string, script: string, pluginDir: string, key: string;
-beforeAll(() => {
+beforeAll(async () => {
 	const scratch = path.resolve('.maestro/scratch');
 	fs.mkdirSync(scratch, { recursive: true });
 	dir = fs.mkdtempSync(path.join(scratch, 'fresh-plugin-worker-'));
 	script = path.join(dir, 'worker.cjs');
-	buildSync({
+	await build({
 		entryPoints: [path.resolve('src/main/plugins/plugin-scan-worker.ts')],
 		bundle: true,
 		platform: 'node',
@@ -24,11 +24,18 @@ beforeAll(() => {
 	fs.mkdirSync(pluginDir);
 	const files: Record<string, string> = {},
 		bytes = Buffer.alloc(4096, 65);
-	for (let i = 0; i < 5000; i++) {
-		const name = 'file-' + i;
-		fs.writeFileSync(path.join(pluginDir, name), bytes);
-		files[name] = createHash('sha256').update(bytes).digest('hex');
-	}
+	const payload = path.join(dir, 'payload');
+	fs.writeFileSync(payload, bytes);
+	const hash = createHash('sha256').update(bytes).digest('hex');
+	await Promise.all(
+		Array.from({ length: 32 }, async (_, offset) => {
+			for (let i = offset; i < 5000; i += 32) {
+				const name = 'file-' + i;
+				await fs.promises.copyFile(payload, path.join(pluginDir, name));
+				files[name] = hash;
+			}
+		})
+	);
 	const pair = generateKeyPairSync('ed25519');
 	key = pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
 	fs.writeFileSync(
