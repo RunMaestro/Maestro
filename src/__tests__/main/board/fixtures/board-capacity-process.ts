@@ -1,5 +1,8 @@
 /** An owned writer or a genuinely fresh native admission host, controlled only by test IPC. */
 import { once } from 'node:events';
+import Database from 'better-sqlite3';
+import { snapshotSqlite } from '../../../helpers/sqliteSnapshot';
+import { canonicalJson } from '../../../../shared/canonicalJson';
 import { requireBoardIsolation, type BoardIsolation } from '../../../../main/board/board-isolation';
 import { BACKGROUND_STOP_GRACE_MS } from '../../../../shared/maestro-lib/control/termination';
 import { boardDbPath, openBoardDb } from '../../../../main/board/board-db';
@@ -81,6 +84,26 @@ process.on(
 				if (input.journal === 'DELETE') db.pragma('journal_mode=DELETE');
 				if (input.worker) hold(input.worker, input.kind!);
 				if (input.version !== undefined) db.pragma(`user_version=${input.version}`);
+			} else if (input.action === 'snapshot') {
+				const connection =
+					db ??
+					getExistingBoardStorage()?.db ??
+					new Database(boardDbPath(), { readonly: true, fileMustExist: true });
+				try {
+					process.send!({
+						id: input.id,
+						snapshot: snapshotSqlite(connection),
+						version: connection.pragma('user_version', { simple: true }),
+						schema: canonicalJson(
+							connection
+								.prepare('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name')
+								.all()
+						),
+					});
+				} finally {
+					if (connection !== db && connection !== getExistingBoardStorage()?.db) connection.close();
+				}
+				return;
 			} else if (input.action === 'hold') hold(input.worker!, input.kind!);
 			else if (input.action === 'prepare')
 				proofs.set(input.worker!, issueAgentTurnAdmission(input.worker!));
