@@ -3342,6 +3342,7 @@ describe('process IPC handlers', () => {
 				getAgentDetector: () => null,
 				agentConfigsStore: mockAgentConfigsStore as any,
 				settingsStore: mockSettingsStore as any,
+				sessionsStore: mockSessionsStore as any,
 			};
 
 			// Re-register handlers with null agent detector
