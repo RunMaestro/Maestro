@@ -40,6 +40,7 @@ import {
 	type PeerResolverDeps,
 } from '../../../cli/services/peer-resolver';
 import type { BridgeConnection } from '../../../shared/maestro-lib/client/bridge-connection';
+import { RemoteDiscoveryError } from '../../../shared/maestro-lib/client/remote-discovery';
 import type { SshForwardState } from '../../../shared/maestro-lib/client/ssh-forward';
 import type { MaestroEvent } from '../../../shared/maestro-lib/client/types';
 import { generateUUID } from '../../../shared/uuid';
@@ -326,6 +327,89 @@ describe('resolvePeerAgent', () => {
 		expect(error.message).toContain('maestro-cli remote-host status buildbox');
 		expect(close).toHaveBeenCalled();
 		expect(deps.lease.release).toHaveBeenCalled();
+	});
+
+	it('refuses a string that is not a peer target, before reading any remote', async () => {
+		const readRemotes = vi.fn(() => [remoteOf()]);
+		const error = await rejection(resolvePeerAgent('a1111111', depsWith({ readRemotes })));
+		expect(error.exitCode).toBe(ExitCode.InvalidUsage);
+		expect(error.message).toContain('Not a peer target: a1111111');
+		expect(readRemotes).not.toHaveBeenCalled();
+	});
+
+	it('refuses an ambiguous id prefix without dialing', async () => {
+		const deps = depsWith({
+			remotes: [remoteOf(), remoteOf({ id: 'r1-zzzzzz', name: 'other' })],
+		});
+		const error = await rejection(resolvePeerAgent('r1:docs', deps));
+		expect(error.code).toBe('ambiguous-peer');
+		expect(error.exitCode).toBe(ExitCode.InvalidUsage);
+		expect(error.peer).toBe('r1');
+		expect(deps.acquireForward).not.toHaveBeenCalled();
+	});
+
+	it('addresses a peer that shares its name by remote id, in errors too', async () => {
+		const lease = fakeLease(async () => {
+			throw new SshForwardError('host-gone', 'The host exited.');
+		});
+		const deps = depsWith({
+			remotes: [remoteOf(), remoteOf({ id: 'r2-123456', name: 'BuildBox' })],
+			acquireForward: vi.fn(() => lease),
+		});
+		const error = await rejection(resolvePeerAgent('r2:docs', deps));
+		expect(error.code).toBe('host-down');
+		expect(error.peer).toBe('r2-123456');
+		expect(error.message).toContain('maestro-cli remote-host start r2-123456');
+	});
+
+	it.each([
+		{
+			label: 'a remote without maestro-cli',
+			thrown: new SshForwardError('not-installed', 'maestro-cli is not on PATH.'),
+			code: 'not-installed',
+			exitCode: ExitCode.NotRunning,
+			says: 'Peer "buildbox" has no usable maestro-cli. maestro-cli is not on PATH.',
+		},
+		{
+			label: 'a forward ssh could not open',
+			thrown: new SshForwardError('forward-failed', 'bind: Address already in use.'),
+			code: 'forward-failed',
+			exitCode: ExitCode.NotRunning,
+			says: 'maestro-cli remote-host status buildbox',
+		},
+		{
+			label: 'a discovery that timed out',
+			thrown: new RemoteDiscoveryError('timeout', 'No answer in 15s.'),
+			code: 'forward-failed',
+			exitCode: ExitCode.Timeout,
+			says: 'Could not reach peer "buildbox" over SSH: No answer in 15s.',
+		},
+		{
+			label: 'an ssh that failed',
+			thrown: new RemoteDiscoveryError('ssh-failed', 'Permission denied (publickey).'),
+			code: 'forward-failed',
+			exitCode: ExitCode.NotRunning,
+			says: 'Permission denied (publickey).',
+		},
+		{
+			label: 'an unexpected failure',
+			thrown: new Error('spawn ssh ENOENT'),
+			code: 'forward-failed',
+			exitCode: ExitCode.NotRunning,
+			says: 'Could not reach peer "buildbox": spawn ssh ENOENT',
+		},
+	])('names the peer and the fix for $label, and drops the forward', async (row) => {
+		const lease = fakeLease(async () => {
+			throw row.thrown;
+		});
+		const deps = depsWith({ acquireForward: vi.fn(() => lease) });
+		const error = await rejection(resolvePeerAgent('buildbox:docs', deps));
+		expect(error.code).toBe(row.code);
+		expect(error.exitCode).toBe(row.exitCode);
+		expect(error.peer).toBe('buildbox');
+		expect(error.message).toContain(row.says);
+		expect(lease.release).toHaveBeenCalledTimes(1);
+		expect(deps.createClient).not.toHaveBeenCalled();
 	});
 });
 

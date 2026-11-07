@@ -614,4 +614,80 @@ describe('peer:agent targets', () => {
 			expect(printedJson(logSpy)[0]).toMatchObject({ code: 'PEER_HOST_DOWN', peer: PEER });
 		});
 	});
+
+	describe('resolver failures on every verb', () => {
+		const verbs: Array<{ verb: string; run: () => unknown }> = [
+			{ verb: 'show agent', run: () => showAgent(`${PEER}:docs`, { json: true }) },
+			{ verb: 'interrupt', run: () => interrupt(`${PEER}:docs`, { json: true }) },
+			{ verb: 'ask', run: () => ask(`${PEER}:docs`, 'q', { json: true }) },
+			{ verb: 'dispatch', run: () => dispatch(`${PEER}:docs`, 'x', {}) },
+			{ verb: 'send', run: () => send(`${PEER}:docs`, 'x', {}) },
+		];
+		const failures = [
+			{
+				error: () =>
+					new PeerResolveError(
+						'unknown-peer',
+						`SSH remote not found: ${PEER}`,
+						ExitCode.InvalidUsage,
+						PEER
+					),
+				code: 'PEER_UNKNOWN_PEER',
+				exitCode: ExitCode.InvalidUsage,
+				says: `SSH remote not found: ${PEER}`,
+			},
+			{
+				error: () =>
+					new PeerResolveError(
+						'federation-off',
+						`SSH remote "${PEER}" is not opted in to Federation, so Maestro does not dial it. ` +
+							`Turn it on with: maestro-cli update-ssh-remote ${remote.id} --federation on`,
+						ExitCode.GeneralError,
+						PEER
+					),
+				code: 'PEER_FEDERATION_OFF',
+				exitCode: ExitCode.GeneralError,
+				says: '--federation on',
+			},
+			{
+				error: () =>
+					new PeerResolveError(
+						'agent-not-found',
+						`Agent not found: docs (on peer "${PEER}"). ` +
+							`List its agents with: maestro-cli list agents --peer ${PEER}`,
+						ExitCode.GeneralError,
+						PEER
+					),
+				code: 'PEER_AGENT_NOT_FOUND',
+				exitCode: ExitCode.GeneralError,
+				says: `maestro-cli list agents --peer ${PEER}`,
+			},
+		];
+		const cases = verbs.flatMap((v) => failures.map((f) => ({ ...v, ...f })));
+
+		it.each(cases)(
+			'$verb reports $code with exit $exitCode and the fix',
+			async ({ run, error, code, exitCode, says }) => {
+				vi.mocked(routeAgentTarget).mockReturnValue({
+					kind: 'peer',
+					target: { peer: PEER, agent: 'docs' },
+				});
+				vi.mocked(withPeerAgent).mockRejectedValue(error());
+				vi.mocked(resolvePeerAgent).mockRejectedValue(error());
+
+				await Promise.resolve()
+					.then(run)
+					.catch((thrown: unknown) => {
+						// The process.exit stand-in throws; anything else is a real failure.
+						if (!String(thrown).includes('process.exit(')) throw thrown;
+					});
+
+				expect(exitSpy).toHaveBeenCalledWith(exitCode);
+				const payloads = [...printedJson(logSpy), ...printedJson(errorSpy)];
+				const payload = payloads.find((p) => p.code === code);
+				expect(payload).toMatchObject({ code, peer: PEER });
+				expect(String(payload?.error)).toContain(says);
+			}
+		);
+	});
 });
