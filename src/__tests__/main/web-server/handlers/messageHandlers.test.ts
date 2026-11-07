@@ -724,8 +724,10 @@ describe('WebSocketMessageHandler', () => {
 
 			expect(callbacks.executeCommand).not.toHaveBeenCalled();
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(response.type).toBe('error');
-			expect(response.message).toContain('Unknown mention routing');
+			expect(response.type).toBe('command_result');
+			expect(response.success).toBe(false);
+			expect(response.code).toBe('INVALID_OPTIONS');
+			expect(response.error).toContain('Unknown mention routing');
 		});
 
 		it('marks a delivered CLI dispatch in the calling agent transcript', async () => {
@@ -810,19 +812,61 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
-		it('should reject command when session is busy', () => {
+		it('forwards to the renderer while the agent is busy - the busy guard is per tab', async () => {
+			// A busy agent only means some tab of it is working. An idle tab beside
+			// it takes its own turn in parallel, so main must not refuse here: only
+			// the renderer knows which tab is mid-turn.
 			(callbacks.getSessionDetail as any).mockReturnValue({ state: 'busy', inputMode: 'ai' });
 
 			handler.handleMessage(client, {
 				type: 'send_command',
 				sessionId: 'session-1',
-				command: 'test',
+				command: 'parallel turn',
+				inputMode: 'ai',
+				tabId: 'idle-tab',
 			});
 
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'parallel turn',
+					'ai',
+					'idle-tab',
+					false,
+					undefined,
+					false,
+					undefined
+				);
+			});
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(response.type).toBe('error');
-			expect(response.message).toContain('busy');
-			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+			expect(response.type).toBe('command_result');
+			expect(response.success).toBe(true);
+		});
+
+		it('answers a renderer refusal as a command_result error the caller can match', async () => {
+			// The CLI waits for `command_result` by requestId. A bare `error` frame
+			// matched nothing and left `dispatch --tab` hanging until its timeout.
+			(callbacks.executeCommand as any).mockResolvedValue(false);
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'test',
+				inputMode: 'ai',
+				tabId: 'busy-tab',
+				requestId: 'req-1',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'command_result',
+				success: false,
+				code: 'DISPATCH_REFUSED',
+				tabId: 'busy-tab',
+				requestId: 'req-1',
+			});
+			expect(response.error).toContain('mid-turn');
 		});
 
 		it('omits tabId from command_result on the no-tabId path so callers do not chain to a stale snapshot', async () => {
@@ -921,7 +965,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(response.type).toBe('error');
+			expect(response).toMatchObject({ type: 'command_result', success: false });
 			expect(callbacks.executeCommand).not.toHaveBeenCalled();
 		});
 
@@ -1033,11 +1077,17 @@ describe('WebSocketMessageHandler', () => {
 				type: 'send_command',
 				sessionId: 'nonexistent',
 				command: 'test',
+				requestId: 'req-2',
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(response.type).toBe('error');
-			expect(response.message).toContain('not found');
+			expect(response).toMatchObject({
+				type: 'command_result',
+				success: false,
+				code: 'SESSION_NOT_FOUND',
+				requestId: 'req-2',
+			});
+			expect(response.error).toContain('not found');
 		});
 
 		it('should reject command with missing sessionId', () => {
@@ -1047,8 +1097,8 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(response.type).toBe('error');
-			expect(response.message).toContain('Missing');
+			expect(response).toMatchObject({ type: 'command_result', success: false });
+			expect(response.error).toContain('Missing');
 		});
 
 		it('should reject command with missing command', () => {
@@ -1058,7 +1108,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(response.type).toBe('error');
+			expect(response).toMatchObject({ type: 'command_result', success: false });
 		});
 
 		it('should handle command execution failure', async () => {
@@ -1073,8 +1123,10 @@ describe('WebSocketMessageHandler', () => {
 			await vi.waitFor(() => {
 				const calls = (client.socket.send as any).mock.calls;
 				const lastResponse = JSON.parse(calls[calls.length - 1][0]);
-				expect(lastResponse.type).toBe('error');
-				expect(lastResponse.message).toContain('Execution failed');
+				// The caller gets a command_result it can match, not just the
+				// requestId-less error frame reportHandlerError sends.
+				expect(lastResponse).toMatchObject({ type: 'command_result', success: false });
+				expect(lastResponse.error).toContain('Execution failed');
 			});
 		});
 	});
@@ -3012,8 +3064,8 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			const response = lastSend();
-			expect(response.type).toBe('error');
-			expect(String(response.message)).toContain('requires an explicit target tab');
+			expect(response).toMatchObject({ type: 'command_result', success: false });
+			expect(String(response.error)).toContain('requires an explicit target tab');
 			expect(callbacks.executeCommand).not.toHaveBeenCalled();
 		});
 
@@ -3057,7 +3109,7 @@ describe('WebSocketMessageHandler', () => {
 				tabId: 'tab-7',
 				notifyOnComplete: 'caller-1',
 			});
-			expect(String(lastSend().message)).toContain('CALLBACK_ALREADY_ARMED');
+			expect(String(lastSend().error)).toContain('CALLBACK_ALREADY_ARMED');
 		});
 
 		it('refuses a callback that would wake the dispatch target itself', () => {
@@ -3069,7 +3121,7 @@ describe('WebSocketMessageHandler', () => {
 				tabId: 'tab-7',
 				notifyOnComplete: 'session-1',
 			});
-			expect(String(lastSend().message)).toContain('cannot be the dispatch target itself');
+			expect(String(lastSend().error)).toContain('cannot be the dispatch target itself');
 		});
 
 		it('refuses an unknown callback agent', () => {
@@ -3084,7 +3136,7 @@ describe('WebSocketMessageHandler', () => {
 				tabId: 'tab-7',
 				notifyOnComplete: 'ghost',
 			});
-			expect(String(lastSend().message)).toContain('Callback agent not found');
+			expect(String(lastSend().error)).toContain('Callback agent not found');
 		});
 
 		it('arms a callback on enqueue_command for an explicit tab', async () => {
@@ -4493,8 +4545,8 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(response.type).toBe('error');
-			expect(response.message).toContain('not configured');
+			expect(response).toMatchObject({ type: 'command_result', success: false });
+			expect(response.error).toContain('not configured');
 		});
 
 		it('should handle missing switchMode callback', () => {

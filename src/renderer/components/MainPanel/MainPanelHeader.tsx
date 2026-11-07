@@ -887,6 +887,8 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 														) : (
 															(['session', 'weekAllModels'] as const).map((key) => {
 																const window = batchUsageSnapshot[key];
+																// No 5-hour bar when the panel painted no session window.
+																if (!window) return null;
 																const label = key === 'session' ? '5-hour' : 'Weekly';
 																const pct = Math.max(0, Math.min(100, window.percent));
 																const barColor =

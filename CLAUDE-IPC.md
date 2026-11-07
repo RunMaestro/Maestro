@@ -11,10 +11,17 @@ The `window.maestro` API exposes the following namespaces:
 - `settings` - Get/set app settings
 - `sessions` / `groups` - Agent and group persistence
 - `process` - Spawn, write, kill, resize, runCommand/cancelCommand (one-off commands); getHeadlessActivity/onHeadlessActivity (transient host process counts by target agent, versioned snapshots)
-- `fs` - readDir, readFile
+- `fs` - ~20 methods: readDir, readDirTree, listTreeRemote, readFile / cancelReadFile, downloadRemoteFile, writeFile, writeImageFile, mkdir, stat, rename, delete / deleteMany, copyPath, compressFolder, directorySize, countItems, startDragOut
 - `parquet` - Windowed reads over an open Parquet file (see Parquet API below)
-- `dialog` - Folder selection
+- `dialog` - selectFolder, saveFile
 - `shells` - Detect available shells
+- `platform` - Synchronous `process.platform` string (the real one, not the renderer shim); prefer `isWindowsPlatform()` etc. in `src/renderer/utils/platformUtils.ts`
+- `maestroCliPath` - Resolved path to the bundled `maestro-cli` binary, for template resolution
+- `app` - App lifecycle events: quit confirmation, system resume, deep links, menu commands, browser-tab shortcut forwarding
+- `windows` - Multi-window system: create, close, list, moveSession, focusWindow, getBounds, drop-zone highlight, remote command relay
+- `updates` - Auto-updater: check, download, install, getStatus, onStatus, setAllowPrerelease
+- `sync` - Storage Location (custom sync folder): getSettings, getCurrentStoragePath, selectSyncFolder, setCustomPath
+- `images` - `resolve` a `maestro-image://` session-image reference to its on-disk file
 - `shell` - OS shell integration: openExternal, openPath, trashItem, showItemInFolder, clipboard image read/write, and `capturePage(rect?)`. `capturePage` screenshots the CALLING window as a PNG data URL (`window:capturePage` shoots `event.sender`, so a surface opened in a second window captures itself); pass a viewport-relative CSS-pixel rect to narrow the shot to one region, omit it for the whole page. Resolves null when there is nothing to capture.
 - `logger` - System logging
 
@@ -23,22 +30,36 @@ The `window.maestro` API exposes the following namespaces:
 - `agents` - Detect, get, config, refresh, custom paths, getCapabilities
 - `agentSessions` - Generic provider session storage API (list, read, search, delete)
 - `agentError` - Agent error handling (clearError, retryAfterError)
-- `memory` - Claude Code per-project memory (list, read, write, create, delete, search, getPath). `search` matches a query against both filenames and file bodies and returns the first matching line per hit, so the Memory Viewer's filter box does not have to pull every file into the renderer.
+- `memory` - Agent memory (Claude per project, Codex per account); every method takes a `MemoryTarget` (`src/shared/agentMemory.ts`): list, read, write, create, delete, search, getPath, plus orphan handling. `search` matches a query against both filenames and file bodies and returns the first matching line per hit, so the Memory Viewer's filter box does not have to pull every file into the renderer.
 - `claude` - (Deprecated) Claude Code provider sessions - use `agentSessions` instead
+- `context` - Context grooming for cross-provider handoff: getStoredSession, groomContext, cancelGrooming
+- `crossAgent` - `@mention` consults: send, cancel (by source agent), onChunk
+- `groupChat` - Group chat CRUD, moderator start/stop, submitMessage, the main-owned queue (getQueue, queueAdd/Remove/Reorder/Resume, onQueueState)
+- `tabNaming` - generateTabName (auto-naming a tab from its first message)
+- `tabs` - Renderer-to-main tab lifecycle notices (notifyAiTabClosed); fire-and-forget
+- `aiCommand` - AI command mode: `suggest` a shell command from plain English
+- `agentRun` - Agent run ledger and campaigns: list, record, show, events, cancel, retry, resolveFinding, merge
+- `symphony` - Symphony contributions: registry, issues, state, start / complete / cancel, draft PRs
+- `pianola` - Pianola auto-answer rules, decisions, suggestions, supervisor
+- `coworking` - Computer-use coworking: install status, terminal / browser session sync, buffer and browser-op request relays
+- `browserSession` - clearSessionData for an in-app browser partition
+- `contextTimeline` - Context Timeline capture log: getCaptures, clearCaptures
 
 ## Git Integration
 
-- `git` - Status, diff, isRepo, numstat, branches, tags, info
-- `git` - Worktree support: worktreeInfo, getRepoRoot, worktreeSetup, worktreeRunSetup, worktreeCheckout
-- `git` - PR creation: createPR, checkGhCli, getDefaultBranch
-- `git` - Remote sync: runCommand/cancelCommand/onCommandOutput (streaming pull/push/fetch), checkoutBranch
+- `git` - Status, diff, isRepo, init, commitAll, numstat, branches, tags, info, log, graph, show / showFile, commitCount
+- `git` - Worktree support: worktreeInfo, getRepoRoot, worktreeSetup, worktreeRunSetup, worktreeCheckout, listWorktrees, removeWorktree, scan / watch / unwatchWorktreeDirectory, onWorktreeDiscovered / onWorktreeRemoved
+- `git` - PR creation: createPR, checkGhCli, getDefaultBranch, createGist
+- `git` - Remote sync: runCommand/cancelCommand/onCommandOutput (streaming pull/push/fetch), checkoutBranch, switchBranch
+- `sshRemote` - SSH remote configs: saveConfig, deleteConfig, getConfigs, get / setDefaultId, test, getSshConfigHosts
 
 ## Web & Live Sessions
 
 - `web` - Broadcast user input, Auto Run state, tab changes to web clients
-- `live` - Toggle live sessions, get status, dashboard URL, connected clients
-- `webserver` - Get URL, connected client count
+- `live` - Live mode: toggle, getStatus, getDashboardUrl, getLiveSessions, startServer / stopServer, disableAll, persistent token, onStateChanged (no client count; that is `webserver`)
+- `webserver` - getUrl, getConnectedClients
 - `tunnel` - Cloudflare tunnel: isCloudflaredInstalled, start, stop, getStatus
+- `webLogin` - Web Login accounts: listUsers, createUser, setPassword, setDisplayName, setDisabled, deleteUser
 
 ## Automation
 
@@ -49,34 +70,46 @@ The `window.maestro` API exposes the following namespaces:
 - `tempfile` - Temporary file management for batch processing
 - `cue` - Maestro Cue event-driven automation (see Cue API below)
 - `cueBackup` - Snapshot/restore of every workspace's `.maestro/cue.yaml` + `.maestro/prompts/` as a zip in `userData/cue-backups/` (Cue modal Backup tab)
+- `marketplace` - Playbook marketplace: getManifest, refreshManifest, getDocument, getReadme, importPlaybook, onManifestChanged
+- `speckit` / `openspec` / `bmad` - Slash-command prompt sets, same shape each: getMetadata, getPrompts, getCommand, savePrompt, resetPrompt, refresh
+- `prompts` - Core prompts (Settings -> Maestro Prompts): get, getAll, save, reset, getBundledDefault, getPath, listFiles
+- `maestroCli` - Bundled CLI install: checkStatus, installOrUpdate
+- `plugins` - Plugin subsystem: list, setEnabled, install / update / uninstall, contributions, consent grants, invokeCommand / invokeTool, panel and grouping events
+- `feedback` - GitHub feedback flow: checkGhAuth, submit / submitConversation, searchIssues, subscribeIssue, drafts, account memory
 
 ## Analytics & Visualization
 
-- `stats` - Usage statistics: recordQuery, getAggregatedStats, exportCsv, clearOldData, getDatabaseSize
-- `stats` - Auto Run tracking: startAutoRun, endAutoRun, recordTask, getAutoRunSessions
+- `stats` - Usage statistics: recordQuery, getAggregation, getTokenUsage, getDelegationTotals / getDelegationByDay, exportUsage, clearOldData, getDatabaseSize, recordResilience, getSessionLifecycle
+- `stats` - Auto Run tracking: startAutoRun, endAutoRun, recordAutoTask, getAutoRunSessions, getAutoRunTasks
 - `stats` - Real-time updates via `stats:updated` event broadcast
+- `cueStats` - Cue analytics: getAggregation, getHistoricalConductorCredit
+- `leaderboard` - Leaderboard: getInstallationId, submit, pollAuthStatus, resendConfirmation, get, getLongestRuns, sync
+- `directorNotes` - Unified history: getUnifiedHistory, getGraphData(bucketCount, lookbackHours), getRichOverviewStats, getOffsetForTimestamp, generateSynopsis, onSynopsisProgress, onHistoryEntryAdded
+- `debug` - Debug package create / preview, getAppStats, Chromium profiling start / stop, simulateAuthExpiry
 - `documentGraph` - File watching: watchFolder, unwatchFolder
 - `documentGraph` - Real-time updates via `documentGraph:filesChanged` event
 
 ## History API
 
-Per-agent history storage with 5,000 entries per agent (up from 1,000 global). Each agent's history is stored as a JSON file in `~/Library/Application Support/Maestro/history/{sessionId}.json`.
+Per-agent history storage, capped at `MAX_ENTRIES_PER_SESSION` (10000, `src/shared/history.ts`) by default; the `maxLogBuffer` setting overrides it through `resolveHistoryEntryLimit()`. Each agent's history is a JSONL file at `userData/history/{sessionId}.jsonl` (one entry per line); `.json` is the legacy single-object format, migrated automatically by `HistoryManager` (`src/main/history-manager.ts`).
 
 ```typescript
 window.maestro.history = {
-  getAll: (projectPath?, sessionId?) => Promise<HistoryEntry[]>,
+  getAll: (projectPath?, sessionId?, sharedContext?) => Promise<HistoryEntry[]>,
   getAllPaginated: (options?) => Promise<PaginatedResult<HistoryEntry>>,
-  add: (entry) => Promise<boolean>,
-  clear: (projectPath?, sessionId?) => Promise<boolean>,
+  getCueGroupRuns: (options) => Promise<...>,
+  add: (entry, sharedContext?) => Promise<boolean>,
+  clear: (projectPath?) => Promise<boolean>,
   delete: (entryId, sessionId?) => Promise<boolean>,
   update: (entryId, updates, sessionId?) => Promise<boolean>,
-  // Activity-graph data - always all-time, decoupled from any lookback
-  // applied to the entry list. Disk-cached server-side keyed by the
-  // session file's mtime+size, so repeat calls are cheap.
-  getGraphData: (sessionId, bucketCount, sharedContext?) => Promise<HistoryGraphData>,
+  updateSessionName: (agentSessionId, sessionName) => Promise<boolean>,
+  // Activity-graph data. lookbackHours null = all-time; each (bucketCount,
+  // lookback) pair is disk-cached server-side keyed by the session file's
+  // mtime+size, so repeat calls are cheap.
+  getGraphData: (sessionId, bucketCount, lookbackHours, sharedContext?, projectPath?) => Promise<HistoryGraphData>,
   // Resolve the offset (newest-first sorted) of the first entry whose
   // timestamp <= the given value. Powers click-to-jump on the activity graph.
-  getOffsetForTimestamp: (sessionId, timestamp) => Promise<number>,
+  getOffsetForTimestamp: (sessionId, timestamp, lookbackHours?, types?) => Promise<number>,
   // For AI context integration:
   getFilePath: (sessionId) => Promise<string | null>,
   listSessions: () => Promise<string[]>,
@@ -86,13 +119,15 @@ window.maestro.history = {
 };
 ```
 
+`sharedContext` is `{ sshRemoteId, remoteCwd }` for an SSH-backed agent whose history lives on the remote.
+
 **AI Context Integration**: Use `getFilePath(sessionId)` to get the path to an agent's history file. This file can be passed directly to AI agents as context, giving them visibility into past completed tasks, decisions, and work patterns.
 
-**Activity Graph (cached)**: `getGraphData` returns pre-aggregated buckets covering the full session history. Cached to `userData/history-cache/` keyed by source-file fingerprint, so the activity graph stays "all-encompassing" without recomputing across thousands of entries on every interaction. The unified-history equivalent is `window.maestro.directorNotes.getGraphData(bucketCount)`.
+**Activity Graph (cached)**: `getGraphData` returns pre-aggregated buckets for the requested lookback (or the full session history when `lookbackHours` is null). Cached to `userData/history-cache/` keyed by source-file fingerprint plus the (bucketCount, lookback) pair, so the graph does not recompute across thousands of entries on every interaction. The unified-history equivalent is `window.maestro.directorNotes.getGraphData(bucketCount, lookbackHours)`.
 
 ## Cue API
 
-Maestro Cue event-driven automation engine. Gated behind the `maestroCue` Encore Feature flag.
+Maestro Cue event-driven automation engine. Gated behind the `maestroCue` Encore Feature flag (defaults to ON, `src/shared/encoreFeatureDefaults.ts`).
 
 ```typescript
 window.maestro.cue = {
@@ -121,6 +156,8 @@ window.maestro.cue = {
   onActivityUpdate: (callback) => () => void,  // Returns unsubscribe function
 };
 ```
+
+Also on `cue` (see `src/main/preload/cue.ts` for signatures): getSettings / saveSettings, getGraphData, getRunLiveOutput, getEventCount, setActive, triggerSubscription (manual Play), getQueueStatus, getMetrics, getFanInHealth, removeSession, scheduled task CRUD (list / create / update / cancelScheduledTask), deleteYaml, renamePipeline, savePipelineLayout / loadPipelineLayout.
 
 **Events:** `cue:activityUpdate` is pushed from main process on subscription triggers, run completions, config reloads, and config removals.
 
@@ -169,7 +206,7 @@ Engine internals (pruning, projection, resumable scans) are documented in [REMAI
 
 ## Power Management
 
-- `power` - Sleep prevention: setEnabled, isEnabled, getStatus, addReason, removeReason
+- `power` - Sleep prevention: setEnabled, isEnabled, getStatus, addReason, removeReason, setKeepDisplayAwake
 
 ## Integrations
 

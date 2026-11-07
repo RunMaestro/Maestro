@@ -625,8 +625,9 @@ Maestro is an Electron desktop app for managing multiple AI coding assistants si
 | `pi`            | Pi              | **Beta**   |
 | `qwen3-coder`   | Qwen3 Coder     | **Beta**   |
 | `terminal`      | Terminal        | Internal   |
+| `gemini-cli`    | Gemini CLI      | Hidden     |
 
-Rows are in picker order (alphabetical by display name); the registry is `AGENT_PICKER_META` in `src/shared/agentMetadata.ts`. `terminal` is internal and never offered.
+Rows are in picker order (alphabetical by display name); the registry is `AGENT_PICKER_META` in `src/shared/agentMetadata.ts`, and the picker default comes from `AGENT_AUTOSELECT_ORDER`. `terminal` is internal and never offered. `gemini-cli` is hidden (superseded by Antigravity, kept for type and back-compat reasons).
 
 See [[CLAUDE-AGENTS.md]] for capabilities and integration details.
 
@@ -654,37 +655,46 @@ npm run test:watch    # Run tests in watch mode
 ```
 src/
 ├── main/                    # Electron main process (Node.js)
-│   ├── index.ts            # Entry point, IPC handlers
+│   ├── index.ts            # Entry point (app lifecycle, window, startup wiring)
+│   ├── ipc/bootstrap/      # setupIpcHandlers(): the live IPC registration
+│   ├── ipc/handlers/       # IPC handler modules (stats, git, playbooks, cue, etc.)
 │   ├── preload/            # Secure IPC bridge (one module per namespace)
-│   ├── process-manager.ts  # Process spawning (PTY + child_process)
-│   ├── agent-*.ts          # Agent detection, capabilities, session storage
-│   ├── cue/               # Maestro Cue event-driven automation engine
+│   ├── process-manager/    # Process spawning (PTY + child_process)
+│   ├── agents/             # Agent definitions, detection, capabilities, model discovery
+│   ├── cue/                # Maestro Cue event-driven automation engine
 │   ├── parsers/            # Per-agent output parsers + error patterns
 │   ├── storage/            # Per-agent session storage implementations
-│   ├── ipc/handlers/       # IPC handler modules (stats, git, playbooks, cue, etc.)
+│   ├── plugins/            # Plugin manager, sandbox, broker, consent
+│   ├── stats/              # Usage stats SQLite (stats-db.ts, schema, aggregations)
+│   ├── web-server/         # WebSocket bridge for web-desktop and the CLI
 │   └── utils/              # Utilities (execFile, ssh-spawn-wrapper, etc.)
 │
 ├── renderer/               # React frontend (desktop)
 │   ├── App.tsx            # Main coordinator
 │   ├── components/        # UI components
 │   ├── hooks/             # Custom React hooks
-│   ├── services/          # IPC wrappers (git.ts, process.ts)
+│   ├── stores/            # Zustand stores (sessions, settings, ui, modal, ...)
+│   ├── services/          # Renderer-side services (shell commands, mentions, ...)
 │   ├── constants/         # Themes, shortcuts, priorities
 │   └── contexts/          # Context providers (LayerStack, etc.)
 │
 ├── web-desktop/            # Browser build of the renderer (WebSocket IPC bridge)
 │
-├── web/                    # PWA assets (public/) + service worker; rest is legacy dead code
+├── web/                    # PWA assets (public/) + utils/serviceWorker.ts; the rest is legacy, unimported
 │
-├── cli/                    # CLI tooling for batch automation
-│   ├── commands/          # CLI command implementations
-│   └── services/          # Playbook and batch processing
+├── cli/                    # maestro-cli: commands/ and services/ (playbooks, batch, spawner)
+│
+├── maestro-p/              # maestro-p TUI wrapper for provider CLIs
 │
 ├── prompts/                # System prompts (editable .md files)
 │
-├── shared/                 # Shared types and utilities
+├── shared/                 # Shared types and utilities (both processes, CLI-safe)
 │
-└── docs/                   # Mintlify documentation (docs.runmaestro.ai)
+├── types/                  # Ambient type declarations
+│
+└── __tests__/              # Vitest suite (mirrors src/ layout)
+
+docs/                       # Mintlify documentation (docs.runmaestro.ai) + docs/agent-guides/
 ```
 
 ---
@@ -693,7 +703,7 @@ src/
 
 | Task                                | Primary Files                                                                                                                                                                 |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Add IPC handler                     | `src/main/index.ts`, `src/main/preload/` (one module per namespace)                                                                                                           |
+| Add IPC handler                     | `src/main/ipc/handlers/` (handler module), `src/main/ipc/bootstrap/index.ts` (`setupIpcHandlers`), `src/main/preload/` (one module per namespace)                             |
 | Add UI component                    | `src/renderer/components/`                                                                                                                                                    |
 | Add browser/mobile touch affordance | `src/renderer/components/`, `src/renderer/utils/touch.ts`, `src/renderer/hooks/utils/` (gate on `isCoarsePointer()`; PWA assets in `src/web/public/`)                         |
 | Add keyboard shortcut               | `src/renderer/constants/shortcuts.ts`, `App.tsx`                                                                                                                              |

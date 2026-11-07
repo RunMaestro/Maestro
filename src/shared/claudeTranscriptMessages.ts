@@ -45,37 +45,54 @@ function isUserPrompt(entry: TranscriptLine): boolean {
 	return true;
 }
 
+/** Counts a transcript's messages one line at a time. */
+export interface ClaudeMessageCounter {
+	/** Count one transcript line. */
+	addLine(line: string): void;
+	/** Messages counted so far. */
+	count(): number;
+}
+
 /**
- * Count the user prompts and model responses in a transcript. Subagent
- * (sidechain) lines are not part of the conversation and are skipped; a response
- * spread across several lines is counted once by its message id.
+ * Count the user prompts and model responses in a transcript, fed one line at
+ * a time so a caller can stream a large file instead of holding it as one
+ * string. Subagent (sidechain) lines are not part of the conversation and are
+ * skipped; a response spread across several lines is counted once by its
+ * message id.
  */
-export function countClaudeTranscriptMessages(content: string): number {
+export function createClaudeMessageCounter(): ClaudeMessageCounter {
 	const responseIds = new Set<string>();
 	let count = 0;
 
-	for (const line of content.split('\n')) {
+	const addLine = (line: string): void => {
 		// Cheap prefilter: only user and assistant lines can be messages.
-		if (line.indexOf('"user"') === -1 && line.indexOf('"assistant"') === -1) continue;
+		if (line.indexOf('"user"') === -1 && line.indexOf('"assistant"') === -1) return;
 		let entry: TranscriptLine;
 		try {
 			entry = JSON.parse(line);
 		} catch {
-			continue;
+			return;
 		}
-		if (entry.isSidechain === true) continue;
+		if (entry.isSidechain === true) return;
 
 		if (entry.type === 'assistant') {
 			const id = entry.message?.id;
 			if (typeof id === 'string' && id) {
-				if (responseIds.has(id)) continue;
+				if (responseIds.has(id)) return;
 				responseIds.add(id);
 			}
 			count++;
 		} else if (entry.type === 'user' && isUserPrompt(entry)) {
 			count++;
 		}
-	}
+	};
 
-	return count;
+	return { addLine, count: () => count };
+}
+
+/** {@link createClaudeMessageCounter} over a transcript already in hand. */
+export function countClaudeTranscriptMessages(content: string): number {
+	const counter = createClaudeMessageCounter();
+	for (const line of content.split('\n')) counter.addLine(line);
+	return counter.count();
 }

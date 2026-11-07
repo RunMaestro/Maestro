@@ -76,11 +76,15 @@ export interface EmitResultOptions {
 // `week_sonnet_only.unread` marks a placeholder: the panel never painted that
 // section readably, so its `percent: 0` is not a measurement. Consumers should
 // prefer an earlier real reading from the same weekly window.
+//
+// `session` (the 5-hour window) is OPTIONAL: claude 2.1.317 stopped painting a
+// "Current session" block on /usage for every account, leaving only the two
+// weekly bars. Absent means "the panel showed no session window", never 0%.
 export interface StatusSnapshot {
 	type: 'status';
 	auth_state?: 'authenticated' | 'unauthenticated';
 	config_dir: string;
-	session: { percent: number; resets_at?: string };
+	session?: { percent: number; resets_at?: string };
 	week_all_models: { percent: number; resets_at?: string };
 	week_sonnet_only: { percent: number; resets_at?: string; label?: string; unread?: true };
 }

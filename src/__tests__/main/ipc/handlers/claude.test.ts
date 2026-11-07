@@ -63,6 +63,11 @@ vi.mock('fs/promises', () => ({
 	},
 }));
 
+// Transcript reads stream; feed them from the readFile stub above.
+vi.mock('../../../../main/utils/jsonl-stream', async () =>
+	(await import('../../../helpers/mockJsonlStream')).jsonlStreamFromReadFileMock()
+);
+
 // Mock path - we need to preserve the actual path functionality but mock specific behaviors
 vi.mock('path', async () => {
 	const actual = await vi.importActual<typeof import('path')>('path');
@@ -92,6 +97,8 @@ vi.mock('../../../../shared/claudeSessionUsage', async () => {
 	return {
 		readClaudeSubagentTranscripts: vi.fn(async () => []),
 		readClaudeSubagentTranscriptsSync: vi.fn(() => []),
+		listClaudeSubagentTranscriptPaths: vi.fn(async () => []),
+		isAbsentTranscriptError: vi.fn(() => false),
 		computeClaudeUsageWithSubagents: vi.fn(price),
 		computeClaudeSessionUsage: vi.fn(async (_filePath: string, content: string) => price(content)),
 	};
