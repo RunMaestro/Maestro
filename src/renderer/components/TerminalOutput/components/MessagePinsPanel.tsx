@@ -218,7 +218,10 @@ export const MessagePinsPanel = memo(function MessagePinsPanel({
 			if (!pin) return <span>{entry.text}</span>;
 			const loaded = resolved.has(pin.id);
 			const isUser = pin.source === 'user';
-			const label = messagePinLabel(pin);
+			// An unnamed pin shows the message itself, wrapped onto a second line,
+			// from the excerpt (which runs past the first line) rather than the
+			// one-line title. A renamed pin shows its name.
+			const label = pin.label?.trim() ? messagePinLabel(pin) : pin.excerpt || messagePinLabel(pin);
 			// A renamed pin keeps the message's own opening line underneath it.
 			const detail = pin.label ? pin.title || pin.excerpt : '';
 			return (
@@ -226,9 +229,9 @@ export const MessagePinsPanel = memo(function MessagePinsPanel({
 					className="flex flex-col min-w-0 w-full gap-0.5"
 					style={{ opacity: loaded ? 1 : 0.6 }}
 				>
-					<span className="flex items-center gap-1.5 min-w-0">
+					<span className="flex items-start gap-1.5 min-w-0">
 						<span
-							className="shrink-0 px-1 rounded text-2xs font-semibold uppercase tracking-wide"
+							className="shrink-0 mt-px px-1 rounded text-2xs font-semibold uppercase tracking-wide"
 							style={{
 								backgroundColor: isUser ? `${theme.colors.accent}30` : `${theme.colors.success}25`,
 								color: isUser ? theme.colors.accent : theme.colors.success,
@@ -237,7 +240,7 @@ export const MessagePinsPanel = memo(function MessagePinsPanel({
 							{isUser ? 'You' : 'Agent'}
 						</span>
 						<span
-							className="truncate"
+							className="line-clamp-2 break-words min-w-0"
 							style={{ color: theme.colors.textMain, fontWeight: isActive ? 500 : undefined }}
 						>
 							{highlightMatches(label, filter, theme.colors.accent)}
