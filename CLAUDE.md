@@ -465,7 +465,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a DataviewJS block may run:** `dataviewJsRunPolicy()`, `isTrustedDataviewRoot()` in `src/shared/dataview/trust.ts`; `useDataviewJsRunPolicy()` in `src/renderer/hooks/file/useDataviewJsRunPolicy.ts`
 - **A message from the DataviewJS sandbox:** `parseSandboxMessage(raw, from)` in `src/shared/dataview/sandboxProtocol.ts`
 - **What a Dataview block shows while it computes:** `DataviewSkeleton`, `DataviewRefreshing`, `DataviewInlineRefreshing`, `DataviewCalculatingPill`, `useDataviewRefreshIndicator()` in `src/renderer/components/Markdown/components/DataviewLoading.tsx`
-- **Highlighting a `dataview` or `dataviewjs` fence:** `DQL_TOKEN_RULES` in `src/shared/dataview/syntax.ts`; `registerDataviewPrismLanguages()`, `DATAVIEW_SHIKI_GRAMMAR` in `src/renderer/utils/dataviewSyntax.ts`; `CUSTOM_LANGUAGES` in `src/renderer/utils/shiki/highlighterManager.ts`
+- **Highlighting a `dataview` or `dataviewjs` fence:** `DQL_TOKEN_RULES` in `src/shared/dataview/syntax.ts`; adapters in `src/renderer/utils/dataviewSyntax.ts`; editor fences via `fenceLanguage()` in `src/renderer/components/FilePreview/giantPreview/languageLoader.ts`
 - **What counts as a wiki link, embed, or file path in markdown text:** `WIKI_LINK_PATTERN`, `IMAGE_EMBED_PATTERN`, `PATH_PATTERN` in `src/shared/fileLinkPatterns.ts`
 
 #### Layout, scroll, sizing, and hook utilities

@@ -1,8 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { refractor } from 'refractor/all';
 import type { Element, RootContent } from 'hast';
+import { EditorState } from '@codemirror/state';
+import { StreamLanguage, ensureSyntaxTree } from '@codemirror/language';
+import { classHighlighter, highlightTree } from '@lezer/highlight';
 import {
 	DATAVIEW_SHIKI_GRAMMAR,
+	DQL_STREAM_PARSER,
 	buildDqlPrismGrammar,
 	registerDataviewPrismLanguages,
 } from '../../../renderer/utils/dataviewSyntax';
@@ -146,5 +150,41 @@ describe('Shiki', () => {
 		expect(highlighter.loadLanguage).toHaveBeenCalledWith(DATAVIEW_SHIKI_GRAMMAR);
 		await ensureLanguage(highlighter as unknown as Highlighter, 'dataview');
 		expect(highlighter.loadLanguage).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('CodeMirror', () => {
+	/** Every highlighted token of `doc` under the DQL stream language, as `class:text`. */
+	function streamTokens(doc: string): string[] {
+		const state = EditorState.create({
+			doc,
+			extensions: [StreamLanguage.define(DQL_STREAM_PARSER)],
+		});
+		const tree = ensureSyntaxTree(state, doc.length, 5000)!;
+		const found: string[] = [];
+		highlightTree(tree, classHighlighter, (from, to, classes) => {
+			found.push(`${classes.replace(/tok-/g, '')}:${doc.slice(from, to)}`);
+		});
+		return found;
+	}
+
+	it('colors the tokens of a DQL query', () => {
+		const found = streamTokens(MEETINGS);
+		expect(found).toContain('comment:// meetings that mention me');
+		expect(found).toContain('keyword:TABLE');
+		expect(found).toContain('string:"meetings"');
+		// classHighlighter has no class for the `function` modifier; the editor theme colors it as a function.
+		expect(found).toContain('variableName:contains');
+		expect(found).toContain('bool:null');
+		expect(found).toContain('number:25');
+	});
+
+	it('reads // as a comment only at the start of a line, and never inside a field name', () => {
+		const found = streamTokens('TABLE playlist // not a comment\n  // a comment');
+		expect(found).toContain('comment:// a comment');
+		expect(
+			found.some((token) => token.includes('not a comment') && token.startsWith('comment'))
+		).toBe(false);
+		expect(found.filter((token) => token.startsWith('keyword:'))).toEqual(['keyword:TABLE']);
 	});
 });
