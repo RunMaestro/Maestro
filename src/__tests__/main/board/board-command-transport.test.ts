@@ -1,8 +1,13 @@
+import * as boardStorage from '../../../main/board/board-storage';
+import { configureBoardFeatures } from '../../../main/board/board-feature';
 import {
 	readBoardIsolationRegistries,
 	requireBoardIsolation,
 } from '../../../main/board/board-isolation';
-import { configureIsolatedBoardSourceHost } from '../../../main/board/board-source-host';
+import {
+	refreshBoardSources,
+	configureIsolatedBoardSourceHost,
+} from '../../../main/board/board-source-host';
 import { registerBoardHandlers } from '../../../main/ipc/handlers/board';
 const ipcHandlers = vi.hoisted(() => new Map<string, (...args: any[]) => any>());
 vi.mock('electron', () => ({
@@ -2250,4 +2255,226 @@ it('requires the native main-frame operator for retained-result recovery and pre
 		result: { output: '<!-- maestro:card-complete -->' },
 		operatorRecovery: { principal: 'native-desktop-main-frame' },
 	});
+});
+
+it('decouples an exact target mutation from unrelated pending real source discovery', async () => {
+	expect(await send(capture())).toMatchObject({ ok: true });
+	const created = facade.read(roots[0], 'b');
+	await promisify(execFile)('git', ['init', '--quiet', roots[1]]);
+	let release!: () => void;
+	const barrier = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let entered!: () => void;
+	const gitEntered = new Promise<void>((resolve) => {
+		entered = resolve;
+	});
+	const realpath = fs.promises.realpath.bind(fs.promises);
+	const physical = vi.spyOn(fs.promises, 'realpath').mockImplementation(async (...args) => {
+		const result = await realpath(...args);
+		if (args[0] === roots[1]) {
+			entered();
+			await barrier;
+		}
+		return result;
+	});
+	let discoveryDone = false;
+	const discovery = refreshBoardSources().finally(() => {
+		discoveryDone = true;
+	});
+	await gitEntered;
+	let settled = false;
+	const reply = send({
+		action: 'delete-cards',
+		target: target(),
+		cards: [{ cardId: 'c', cardRevision: created.cards[0].storageRevision! }],
+	}).then((r) => {
+		settled = true;
+		return r;
+	});
+	try {
+		await vi.waitFor(() => expect(settled).toBe(true), { timeout: 1000 });
+		expect(discoveryDone).toBe(false);
+		expect((await reply).ok).toBe(true);
+		expect(physical).toHaveBeenCalledWith(roots[1]);
+	} finally {
+		release();
+		await discovery;
+		await reply;
+		physical.mockRestore();
+	}
+});
+
+it.each(['moved', 'alias'] as const)(
+	'exact target admission refuses a %s physical root without writes',
+	async (mode) => {
+		expect(await send(capture())).toMatchObject({ ok: true });
+		const board = facade.read(roots[0], 'b');
+		const selected = target();
+		const before = db.serialize();
+		const moved = roots[0] + '.moved';
+		fs.renameSync(roots[0], moved);
+		if (mode === 'alias')
+			fs.symlinkSync(roots[1], roots[0], process.platform === 'win32' ? 'junction' : 'dir');
+		try {
+			const command: BoardCommand = {
+				action: 'delete-cards',
+				target: selected,
+				cards: [{ cardId: 'c', cardRevision: board.cards[0].storageRevision! }],
+			};
+			if (mode === 'alias')
+				await expect(executeBoardCommand(command)).rejects.toThrow(/symlink|alias|identity/i);
+			else
+				expect(await executeBoardCommand(command)).toMatchObject({
+					ok: false,
+					error: { code: 'legacy-mapping-missing' },
+				});
+			expect(db.serialize()).toEqual(before);
+		} finally {
+			if (mode === 'alias') fs.unlinkSync(roots[0]);
+			fs.renameSync(moved, roots[0]);
+		}
+	}
+);
+it.each(['unknown-source', 'wrong-collection', 'stale-revision'] as const)(
+	'exact target admission refuses %s without writes',
+	async (mode) => {
+		expect(await send(capture())).toMatchObject({ ok: true });
+		const board = facade.read(roots[0], 'b');
+		const selected = target();
+		if (mode === 'unknown-source') {
+			selected.sourceKey = 'f'.repeat(64);
+			selected.projectRoot = BOARD_SOURCE_PROJECT_PREFIX + selected.sourceKey;
+		}
+		if (mode === 'wrong-collection') selected.collectionKey = target(1).collectionKey;
+		if (mode === 'stale-revision') selected.expectedRevision--;
+		const before = db.serialize();
+		const reply = await send({
+			action: 'delete-cards',
+			target: selected,
+			cards: [{ cardId: 'c', cardRevision: board.cards[0].storageRevision! }],
+		});
+		expect(reply).toMatchObject({
+			ok: false,
+			error: {
+				code:
+					mode === 'stale-revision'
+						? 'stale-revision'
+						: mode === 'unknown-source'
+							? 'legacy-mapping-missing'
+							: 'identity-mismatch',
+			},
+		});
+		expect(db.serialize()).toEqual(before);
+	}
+);
+it.each(['source-row', 'revision', 'physical-root'] as const)(
+	'exact target admission rechecks %s after the canonical writequeue',
+	async (mode) => {
+		expect(await send(capture())).toMatchObject({ ok: true });
+		const board = facade.read(roots[0], 'b');
+		const selected = target();
+		let release!: () => void;
+		const barrier = new Promise<void>((r) => {
+			release = r;
+		});
+		let entered!: () => void;
+		const blocked = new Promise<void>((r) => {
+			entered = r;
+		});
+		const original = boardStorage.enqueueBoardWrite;
+		const held = original(roots[0], async () => {
+			entered();
+			await barrier;
+		});
+		await blocked;
+		let queued!: () => void;
+		const enqueued = new Promise<void>((r) => {
+			queued = r;
+		});
+		const spy = vi.spyOn(boardStorage, 'enqueueBoardWrite').mockImplementation((...args) => {
+			const result = original(...args);
+			queued();
+			return result;
+		});
+		const reply = send({
+			action: 'delete-cards',
+			target: selected,
+			cards: [{ cardId: 'c', cardRevision: board.cards[0].storageRevision! }],
+		});
+		try {
+			await enqueued;
+			if (mode === 'source-row')
+				db.prepare(
+					"UPDATE board_source_locations SET payload_json=payload_json || ' ' WHERE source_key=?"
+				).run(selected.sourceKey);
+			if (mode === 'revision')
+				db.prepare('UPDATE collections SET revision=revision+1 WHERE collection_key=?').run(
+					selected.collectionKey
+				);
+			if (mode === 'physical-root') {
+				fs.renameSync(roots[0], roots[0] + '.queued');
+				fs.mkdirSync(roots[0]);
+			}
+			const before = db.serialize();
+			release();
+			await held;
+			expect(await reply).toMatchObject({ ok: false, error: { code: 'stale-revision' } });
+			expect(db.serialize()).toEqual(before);
+		} finally {
+			release();
+			await held;
+			await reply;
+			spy.mockRestore();
+			if (mode === 'physical-root') {
+				fs.rmdirSync(roots[0]);
+				fs.renameSync(roots[0] + '.queued', roots[0]);
+			}
+		}
+	}
+);
+it.each([
+	{ board: false, maestroCue: false },
+	{ board: false, maestroCue: true },
+	{ board: true, maestroCue: false },
+])('exact target admission stays inert with gates %j', async (flags) => {
+	const selected = target();
+	const before = db.serialize();
+	configureBoardFeatures({ get: () => flags });
+	try {
+		await expect(
+			executeBoardCommand({
+				action: 'delete-cards',
+				target: selected,
+				cards: [{ cardId: 'c', cardRevision: 0 }],
+			})
+		).rejects.toThrow(flags.board ? 'CueDisabled' : 'BoardDisabled');
+		expect(db.serialize()).toEqual(before);
+	} finally {
+		configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
+	}
+});
+
+it('exact target admission refuses removed source registration without writes', async () => {
+	expect(await send(capture())).toMatchObject({ ok: true });
+	const board = facade.read(roots[0], 'b');
+	const selected = target();
+	const before = db.serialize();
+	const file = isolationFixture.contract.sourceRegistry;
+	const bytes = fs.readFileSync(file);
+	const registry = JSON.parse(bytes.toString());
+	registry.sources = registry.sources.filter((s: { root: string }) => s.root !== roots[0]);
+	fs.writeFileSync(file, JSON.stringify(registry));
+	try {
+		await expect(
+			executeBoardCommand({
+				action: 'delete-cards',
+				target: selected,
+				cards: [{ cardId: 'c', cardRevision: board.cards[0].storageRevision! }],
+			})
+		).rejects.toThrow(/isolation.*(source|registr)/i);
+		expect(db.serialize()).toEqual(before);
+	} finally {
+		fs.writeFileSync(file, bytes);
+	}
 });

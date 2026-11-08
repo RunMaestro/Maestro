@@ -7,7 +7,7 @@ import {
 } from './board-source-cleanup';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { captureBoardCardFromHost } from './board-review';
-import { refreshBoardSources } from './board-source-host';
+import { refreshBoardSources, prepareBoardMutationTarget } from './board-source-host';
 import { executeBoardRuntimeCommand } from './board-runtime-host';
 /** Ordinary (non-human) commands share the desktop's current facade and host registers. */
 import { maybeCreateCardPr } from './board-pr';
@@ -32,7 +32,6 @@ import {
 	setBoardWorkerOptions,
 	queryBoardWorkspace,
 	queryBoardWorkspaceAsync,
-	prepareBoardWorkspaceQuery,
 	renameBoard,
 	updateCardStatus,
 } from './board-storage';
@@ -85,7 +84,8 @@ export const executeBoardCommand: BoardCommandHost = async (command) => {
 				);
 			}
 		}
-		await refreshBoardSources();
+		if (!('target' in command) || command.action === 'tick' || command.action === 'control')
+			await refreshBoardSources();
 		if (command.action === 'tick' || command.action === 'control')
 			return await executeBoardRuntimeCommand(command);
 		if (command.action === 'query')
@@ -172,19 +172,9 @@ export const executeBoardCommand: BoardCommandHost = async (command) => {
 			getBoardStorage().setWorkerRole(command.agentId, command.role, command.enabled);
 			return { ok: true, value: null };
 		}
-		const sourceIdentity =
-			command.action === 'create'
-				? undefined
-				: getBoardStorage().sourceIdentity(command.target.sourceKey);
-		const projectRoot =
-			command.action === 'create'
-				? command.projectRoot
-				: (
-						await prepareBoardWorkspaceQuery({
-							projectRoot: command.target.projectRoot,
-							sourceKey: command.target.sourceKey,
-						})
-					).projectRoot!;
+		const prepared =
+			command.action === 'create' ? undefined : await prepareBoardMutationTarget(command.target);
+		const projectRoot = command.action === 'create' ? command.projectRoot : prepared!.projectRoot;
 		const result = await enqueueBoardWrite(projectRoot, async () => {
 			if (command.action === 'create') {
 				return {
@@ -197,14 +187,8 @@ export const executeBoardCommand: BoardCommandHost = async (command) => {
 				};
 			}
 			const target = command.target;
-			const current = await prepareBoardWorkspaceQuery({
-				projectRoot: target.projectRoot,
-				sourceKey: target.sourceKey,
-			});
-			if (
-				current.projectRoot !== projectRoot ||
-				getBoardStorage().sourceIdentity(target.sourceKey) !== sourceIdentity
-			)
+			const current = await prepareBoardMutationTarget(target);
+			if (current.projectRoot !== projectRoot || current.identity !== prepared!.identity)
 				throw new BoardStorageError('stale-revision', 'Board project alias changed while queued');
 			const snapshot = queryBoardWorkspace({ projectRoot, sourceKey: target.sourceKey });
 			const entry = snapshot.collections.find(

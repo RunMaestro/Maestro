@@ -1,3 +1,9 @@
+import * as fs from 'node:fs';
+import { BOARD_SOURCE_PROJECT_PREFIX } from '../../shared/board/types';
+import type { BoardCommandTarget } from '../../shared/board/commands';
+import { boardMigrationSourceKey } from './board-migration';
+import { resolveBoardLocation } from './board-location';
+import { probeBoardRemoteRepository } from './board-remote-source';
 import { requireBoardEnabled } from './board-feature';
 /** Discover only registered roots through explicit local or SSH adapters. Legacy files are immutable import input;
  * central data owns subsequent edits. No recursive scan or remote/local fallback. */
@@ -154,6 +160,147 @@ export function refreshBoardSources(): Promise<void> {
 			pending = null;
 		});
 	return pending;
+}
+
+/** Fresh exact-target admission, independent of the global discovery single-flight.
+ * No imports or grants: persisted central identity is distinct from mutation authority,
+ * which remains in the facade's current actor/specification/reservation checks.
+ */
+export async function prepareBoardMutationTarget(
+	target: BoardCommandTarget
+): Promise<{ projectRoot: string; identity: string }> {
+	requireBoardEnabled();
+	const storage = getBoardStorage();
+	const remote = isolatedHost?.remote ?? boardRemoteTransport;
+	const registered = sessions();
+	const admitted = admittedSources(registered, remote);
+	if (
+		!storage.sourceKeys(BOARD_SOURCE_PROJECT_PREFIX + target.sourceKey).includes(target.sourceKey)
+	)
+		throw new BoardStorageError('identity-mismatch', 'Unknown Board target source');
+	if (
+		storage.db
+			.prepare('SELECT 1 FROM board_source_suppressions WHERE source_key=?')
+			.get(target.sourceKey)
+	)
+		throw new BoardStorageError('protected-field', 'Board target source is suppressed');
+	if (
+		admitted &&
+		!target.projectRoot.startsWith(BOARD_SOURCE_PROJECT_PREFIX) &&
+		!admitted.has(target.projectRoot)
+	)
+		throw new Error('Board isolation target root is not registered');
+	const query = { projectRoot: target.projectRoot, sourceKey: target.sourceKey };
+	const prepared = await storage.prepareQuery(query);
+	requireBoardEnabled();
+	const verifyCollection = () => {
+		if (!storage.sourceKeys(prepared.projectRoot!).includes(target.sourceKey))
+			throw new BoardStorageError(
+				'identity-mismatch',
+				'Board target source does not match project'
+			);
+		const row = storage.workspace.readCollection(target);
+		if (!row || row.archived)
+			throw new BoardStorageError('not-found', 'Board target collection not found');
+		if (row.revision !== target.expectedRevision)
+			throw new BoardStorageError('stale-revision', 'Board changed since read');
+	};
+	verifyCollection();
+	const before = storage.sourceIdentity(target.sourceKey);
+	const source = storage.sourceLocation(target.sourceKey);
+	if (source) {
+		if (
+			typeof source.path !== 'string' ||
+			!source.path ||
+			!['local', 'ssh'].includes(source.location?.kind) ||
+			boardMigrationSourceKey(source) !== target.sourceKey
+		)
+			throw new BoardStorageError('identity-mismatch', 'Persisted Board source identity changed');
+	}
+	const association = (items: BoardSourceSession[]) =>
+		canonicalJson(
+			source
+				? items.filter((item) => {
+						const location = resolveBoardLocation(item);
+						return (
+							(item.projectRoot || item.dir) === source.path &&
+							location.kind === source.location.kind &&
+							(location.kind !== 'ssh' ||
+								source.location.kind !== 'ssh' ||
+								location.remoteId === source.location.remoteId)
+						);
+					})
+				: []
+		);
+	const associated = association(registered);
+	let physical: unknown;
+	if (source) {
+		if (associated === '[]' && !(source.location.kind === 'local' && admitted?.has(source.path)))
+			throw new BoardStorageError('legacy-mapping-missing', 'Board target is no longer registered');
+		if (source.location.kind === 'local') {
+			try {
+				const root = await fs.promises.realpath(source.path);
+				requireBoardEnabled();
+				const stat = await fs.promises.stat(root);
+				requireBoardEnabled();
+				if (root !== source.path || !stat.isDirectory())
+					throw new BoardStorageError(
+						'identity-mismatch',
+						'Board target physical identity changed'
+					);
+				physical = [root, stat.dev, stat.ino];
+			} catch (error) {
+				if (
+					!['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'ELOOP'].includes(
+						(error as NodeJS.ErrnoException).code ?? ''
+					)
+				)
+					throw error;
+				throw new BoardStorageError(
+					'legacy-mapping-missing',
+					'Board target physical directory unavailable'
+				);
+			}
+		} else {
+			physical = await probeBoardRemoteRepository(
+				source.location.remoteId,
+				source.path,
+				source.path,
+				remote,
+				requireBoardEnabled
+			);
+		}
+	} else {
+		// An explicit central reference has no filesystem authority. Do not guess a root
+		// from a worker/repository or a newly discovered association. Unmapped imports
+		// need their explicit adapter; a registered rootless central source stays central.
+		if (
+			target.projectRoot !== BOARD_SOURCE_PROJECT_PREFIX + target.sourceKey ||
+			storage.db.prepare('SELECT 1 FROM migrations WHERE source_key=?').get(target.sourceKey)
+		)
+			throw new BoardStorageError(
+				'legacy-mapping-missing',
+				'Board target source location is unresolved'
+			);
+		physical = ['central', target.sourceKey];
+	}
+	const after = await storage.prepareQuery(query);
+	requireBoardEnabled();
+	const current = sessions();
+	admittedSources(current, remote);
+	if (
+		after.projectRoot !== prepared.projectRoot ||
+		storage.sourceIdentity(target.sourceKey) !== before ||
+		canonicalJson(storage.sourceLocation(target.sourceKey) ?? null) !==
+			canonicalJson(source ?? null) ||
+		association(current) !== associated
+	)
+		throw new BoardStorageError('stale-revision', 'Board target source changed during admission');
+	verifyCollection();
+	return {
+		projectRoot: prepared.projectRoot!,
+		identity: canonicalJson({ before, source: source ?? null, associated, physical }),
+	};
 }
 
 /** Injectable storage and recorded sessions keep fixture discovery away from live data. */

@@ -274,6 +274,29 @@ export class BoardStorageFacade {
 		});
 	}
 
+	/** Persisted location, including the existing canonical legacy-snapshot recovery. */
+	sourceLocation(sourceKey: string): BoardWorkspaceQueryResult['sources'][number]['location'] {
+		const row = this.db
+			.prepare('SELECT payload_json FROM board_source_locations WHERE source_key=?')
+			.get(sourceKey) as { payload_json: string } | undefined;
+		const imported = !row
+			? (this.db.prepare('SELECT snapshot FROM migrations WHERE source_key=?').get(sourceKey) as
+					| { snapshot: Uint8Array }
+					| undefined)
+			: undefined;
+		const plan = imported ? JSON.parse(Buffer.from(imported.snapshot).toString('utf8')) : null;
+		const candidate = plan?.repository
+			? { location: { kind: 'local' as const }, path: plan.repository.workingDirectory }
+			: undefined;
+		// Older snapshots omitted the source path. Recover a local location only
+		// when its canonical identity actually matches; never relabel an SSH source.
+		const location = row
+			? JSON.parse(row.payload_json)
+			: (plan?.source ??
+				(candidate && boardMigrationSourceKey(candidate) === sourceKey ? candidate : undefined));
+		return location;
+	}
+
 	/** All filesystem observations finish before the fresh, synchronous projection begins. */
 	async prepareDiagnosticObservations(boards: Board[]): Promise<PreparedDiagnosticObservations> {
 		if (this.db.inTransaction)
@@ -916,28 +939,7 @@ export class BoardStorageFacade {
 			return {
 				revision: snapshot.revision,
 				sources: snapshot.sourceKeys.map((sourceKey) => {
-					const row = this.db
-						.prepare('SELECT payload_json FROM board_source_locations WHERE source_key=?')
-						.get(sourceKey) as { payload_json: string } | undefined;
-					const imported = !row
-						? (this.db
-								.prepare('SELECT snapshot FROM migrations WHERE source_key=?')
-								.get(sourceKey) as { snapshot: Uint8Array } | undefined)
-						: undefined;
-					const plan = imported
-						? JSON.parse(Buffer.from(imported.snapshot).toString('utf8'))
-						: null;
-					const candidate = plan?.repository
-						? { location: { kind: 'local' as const }, path: plan.repository.workingDirectory }
-						: undefined;
-					// Older snapshots omitted the source path. Recover a local location only
-					// when its canonical identity actually matches; never relabel an SSH source.
-					const location = row
-						? JSON.parse(row.payload_json)
-						: (plan?.source ??
-							(candidate && boardMigrationSourceKey(candidate) === sourceKey
-								? candidate
-								: undefined));
+					const location = this.sourceLocation(sourceKey);
 					return { sourceKey, projectRef: { sourceKey }, ...(location ? { location } : {}) };
 				}),
 				collections: selected.map((entry) => ({
