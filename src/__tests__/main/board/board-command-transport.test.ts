@@ -2362,7 +2362,7 @@ it.each(['unknown-source', 'wrong-collection', 'stale-revision'] as const)(
 						? 'stale-revision'
 						: mode === 'unknown-source'
 							? 'legacy-mapping-missing'
-							: 'identity-mismatch',
+							: 'not-found',
 			},
 		});
 		expect(db.serialize()).toEqual(before);

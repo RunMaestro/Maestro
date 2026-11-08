@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { listBoardWorkers } from './board-workspace-storage';
 import { BOARD_SOURCE_PROJECT_PREFIX } from '../../shared/board/types';
 import type { BoardCommandTarget } from '../../shared/board/commands';
@@ -201,7 +202,19 @@ export async function prepareBoardMutationTarget(
 				'identity-mismatch',
 				'Board target source does not match project'
 			);
-		const row = storage.workspace.readCollection(target);
+		let row;
+		try {
+			row = storage.workspace.readCollection(target);
+		} catch (error) {
+			// Preserve the command host's non-disclosing not-found contract. The
+			// storage-level source/collection identity guard remains authoritative.
+			if (error instanceof BoardStorageError && error.code === 'identity-mismatch')
+				throw new BoardStorageError(
+					'not-found',
+					'Board collection not found in the selected source/project'
+				);
+			throw error;
+		}
 		if (!row || row.archived)
 			throw new BoardStorageError('not-found', 'Board target collection not found');
 		if (row.revision !== target.expectedRevision)
@@ -285,9 +298,39 @@ export async function prepareBoardMutationTarget(
 		return canonicalJson(matched);
 	};
 	const associated = await association(registered);
+	// A completed SSH import is also a retained central namespace. Explicit central
+	// edits do not use the repository/transport or mint execution authority. Never
+	// infer this capability from a location row alone or an unresolved import.
+	const retainedRemoteIdentity = () => {
+		if (
+			source?.location.kind !== 'ssh' ||
+			target.projectRoot !== BOARD_SOURCE_PROJECT_PREFIX + target.sourceKey
+		)
+			return undefined;
+		const ledger = storage.db
+			.prepare(
+				'SELECT m.snapshot FROM migrations m JOIN board_source_locations l USING(source_key) WHERE m.source_key=? AND NOT EXISTS (SELECT 1 FROM board_source_suppressions s WHERE s.source_key=m.source_key)'
+			)
+			.get(target.sourceKey) as { snapshot: Uint8Array } | undefined;
+		if (!ledger) return undefined;
+		const plan = JSON.parse(Buffer.from(ledger.snapshot).toString('utf8'));
+		if (
+			canonicalJson(plan.source ?? null) !== canonicalJson(source) ||
+			plan.repository?.validated !== true ||
+			plan.repository.workingDirectory !== source.path ||
+			canonicalJson(plan.repository.location ?? null) !== canonicalJson(source.location)
+		)
+			return undefined;
+		return createHash('sha256').update(ledger.snapshot).digest('hex');
+	};
+	const retained = associated === '[]' ? retainedRemoteIdentity() : undefined;
 	let physical: unknown;
 	if (source) {
-		if (associated === '[]' && !(source.location.kind === 'local' && admitted?.has(source.path)))
+		if (
+			associated === '[]' &&
+			!retained &&
+			!(source.location.kind === 'local' && admitted?.has(source.path))
+		)
 			throw new BoardStorageError('legacy-mapping-missing', 'Board target is no longer registered');
 		if (source.location.kind === 'local') {
 			try {
@@ -313,6 +356,8 @@ export async function prepareBoardMutationTarget(
 					'Board target physical directory unavailable'
 				);
 			}
+		} else if (retained) {
+			physical = ['retained-central-ssh', retained];
 		} else {
 			physical = await probeBoardRemoteRepository(
 				source.location.remoteId,
@@ -347,7 +392,8 @@ export async function prepareBoardMutationTarget(
 		storage.sourceIdentity(target.sourceKey) !== before ||
 		canonicalJson(storage.sourceLocation(target.sourceKey) ?? null) !==
 			canonicalJson(source ?? null) ||
-		currentAssociation !== associated
+		currentAssociation !== associated ||
+		(retained !== undefined && retainedRemoteIdentity() !== retained)
 	)
 		throw new BoardStorageError('stale-revision', 'Board target source changed during admission');
 	verifyCollection();

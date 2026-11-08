@@ -1,3 +1,4 @@
+import { snapshotSqlite } from '../../helpers/sqliteSnapshot';
 import { executeBoardCommand } from '../../../main/board/board-command-host';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
@@ -745,6 +746,141 @@ it('diagnoses invalid remote legacy input without blocking later remote or local
 			storage.captureCatalog().repositories.find((repo) => repo.id === `source:${key}`)
 		).toMatchObject({ validated: true });
 	} finally {
+		db.close();
+	}
+});
+
+it.each([
+	'unknown',
+	'removed-location',
+	'removed-ledger',
+	'suppressed',
+	'remapped',
+	'unvalidated',
+	'queued-ledger-change',
+	'async-suppression',
+])('refuses retained remote central mutation with %s identity without writes', async (change) => {
+	const { db, storage } = fixture();
+	configureBoardStorage(storage);
+	let release = () => {};
+	let held: Promise<unknown> | undefined;
+	try {
+		const root = '/remote-only/Retained';
+		const remote = transport(root);
+		await discoverRemoteBoardSources(
+			storage,
+			[
+				{
+					id: 'retained',
+					dir: root,
+					boardWorker: true,
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'one' },
+				},
+			],
+			remote
+		);
+		const source = storage.query().sources[0];
+		const projectRoot = BOARD_SOURCE_PROJECT_PREFIX + source.sourceKey;
+		const board = storage.read(projectRoot, 'b');
+		const target = {
+			projectRoot,
+			sourceKey: source.sourceKey,
+			collectionKey: board.storage!.collectionKey,
+			expectedRevision: board.storage!.expectedRevision!,
+		};
+		if (change === 'unknown') {
+			target.sourceKey = 'f'.repeat(64);
+			target.projectRoot = BOARD_SOURCE_PROJECT_PREFIX + target.sourceKey;
+		}
+		if (change === 'removed-location')
+			db.prepare('DELETE FROM board_source_locations WHERE source_key=?').run(source.sourceKey);
+		if (change === 'removed-ledger') {
+			db.prepare('DELETE FROM migration_blockers WHERE source_key=?').run(source.sourceKey);
+			db.prepare('DELETE FROM migrations WHERE source_key=?').run(source.sourceKey);
+		}
+		if (change === 'suppressed')
+			db.prepare('INSERT INTO board_source_suppressions (source_key) VALUES (?)').run(
+				source.sourceKey
+			);
+		if (change === 'remapped')
+			db.prepare('UPDATE board_source_locations SET payload_json=? WHERE source_key=?').run(
+				JSON.stringify({ location: { kind: 'ssh', remoteId: 'other' }, path: root }),
+				source.sourceKey
+			);
+		if (change === 'unvalidated') {
+			const row = db
+				.prepare('SELECT snapshot FROM migrations WHERE source_key=?')
+				.get(source.sourceKey) as { snapshot: Buffer };
+			const plan = JSON.parse(row.snapshot.toString());
+			plan.repository.validated = false;
+			db.prepare('UPDATE migrations SET snapshot=? WHERE source_key=?').run(
+				Buffer.from(JSON.stringify(plan)),
+				source.sourceKey
+			);
+		}
+		let queued!: () => void;
+		const queueReady = new Promise<void>((r) => {
+			queued = r;
+		});
+		const original = await import('../../../main/board/board-storage');
+		if (change === 'queued-ledger-change') {
+			let entered!: () => void;
+			const enteredQueue = new Promise<void>((r) => {
+				entered = r;
+			});
+			const barrier = new Promise<void>((r) => {
+				release = r;
+			});
+			held = original.enqueueBoardWrite(projectRoot, async () => {
+				entered();
+				await barrier;
+			});
+			await enteredQueue;
+			const realEnqueue = original.enqueueBoardWrite;
+			vi.spyOn(original, 'enqueueBoardWrite').mockImplementation((...args) => {
+				const promise = realEnqueue(...args);
+				queued();
+				return promise;
+			});
+		}
+		let modified!: () => void;
+		const modification = new Promise<void>((r) => {
+			modified = r;
+		});
+		if (change === 'async-suppression') {
+			const prepare = storage.prepareQuery.bind(storage);
+			vi.spyOn(storage, 'prepareQuery').mockImplementationOnce(async (...args) => {
+				const result = await prepare(...args);
+				db.prepare('INSERT INTO board_source_suppressions (source_key) VALUES (?)').run(
+					source.sourceKey
+				);
+				modified();
+				return result;
+			});
+		}
+		const result = executeBoardCommand({ action: 'rename', target, name: 'Must not land' });
+		if (change === 'queued-ledger-change') {
+			await queueReady;
+			const row = db
+				.prepare('SELECT snapshot FROM migrations WHERE source_key=?')
+				.get(source.sourceKey) as { snapshot: Buffer };
+			// A valid-source ledger replacement is still a different admission snapshot.
+			db.prepare('UPDATE migrations SET snapshot=? WHERE source_key=?').run(
+				Buffer.concat([row.snapshot, Buffer.from(' ')]),
+				source.sourceKey
+			);
+			release();
+			await held;
+		}
+		if (change === 'async-suppression') await modification;
+		const before = snapshotSqlite(db);
+		expect(await result).toMatchObject({ ok: false });
+		expect(snapshotSqlite(db)).toEqual(before);
+		expect(remote.shell).toHaveBeenCalledTimes(1);
+		expect(remote.git).toHaveBeenCalledTimes(1);
+	} finally {
+		release();
+		await held;
 		db.close();
 	}
 });

@@ -10,10 +10,20 @@ import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture
 import { stopProcess } from '../../../shared/maestro-lib/control/termination';
 const fixture = createBoardIsolationFixture({ syncInUserData: true });
 let bundle: string;
+let cliBundle: string;
 beforeAll(async () => {
 	const folder = path.join(fixture.contract.root, 'alias-bundle');
 	fs.mkdirSync(folder);
 	bundle = path.join(folder, 'process.cjs');
+	cliBundle = path.join(folder, 'cli.cjs');
+	await build({
+		entryPoints: [path.resolve('src/cli/index.ts')],
+		outfile: cliBundle,
+		bundle: true,
+		platform: 'node',
+		format: 'cjs',
+		packages: 'external',
+	});
 	const sqlite =
 		process.env.MAESTRO_TEST_SQLITE_MODULE ??
 		createRequire(path.resolve('package.json')).resolve('better-sqlite3');
@@ -56,7 +66,7 @@ async function run(mode: string) {
 	try {
 		const message = once(child, 'message');
 		const exit = once(child, 'exit');
-		child.send({ contract: fixture.contract, env: fixture.env, mode });
+		child.send({ contract: fixture.contract, env: fixture.env, mode, cliBundle });
 		const [result] = await message;
 		const [code] = await exit;
 		if (code !== 0) throw new Error(result.error ?? stderr);
@@ -88,4 +98,14 @@ it('admits the alias while unrelated canonical discovery remains pending', async
 	expect(result.result.ok).toBe(true);
 	expect(result.backgroundPending).toBe(true);
 	expect(result.foreignProbes).toBe(1);
+});
+
+it.each([
+	['list', { listed: ['b'], name: 'Remote board' }],
+	['rename', { name: 'Renamed remote' }],
+	['tick', { replyType: 'tick', name: 'Remote board' }],
+	['closed', { name: 'Closed source edit' }],
+] as const)('preserves actual CLI SSH %s through real auth WS', async (operation, expected) => {
+	const result = await run('retained-ssh-cli-' + operation);
+	expect(result).toMatchObject({ actualCli: true, operation, ...expected });
 });

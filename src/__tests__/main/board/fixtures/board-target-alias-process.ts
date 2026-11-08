@@ -1,9 +1,12 @@
 /** Owned production-mode source adapter: real discovery, SQLite, authenticated WS and client. */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { applyBoardMigration, planBoardMigration } from '../../../../main/board/board-migration';
 import {
 	requireBoardIsolation,
+	assertBoardIsolationPath,
 	isBoardIsolationRequested,
 	type BoardIsolation,
 } from '../../../../main/board/board-isolation';
@@ -30,7 +33,12 @@ import { snapshotSqlite } from '../../../helpers/sqliteSnapshot';
 
 process.once(
 	'message',
-	async (input: { contract: BoardIsolation; env: NodeJS.ProcessEnv; mode: string }) => {
+	async (input: {
+		contract: BoardIsolation;
+		env: NodeJS.ProcessEnv;
+		mode: string;
+		cliBundle?: string;
+	}) => {
 		let db: ReturnType<typeof openBoardDb> | undefined;
 		let server: Awaited<ReturnType<typeof startRuntimeServer>> | undefined;
 		let client: BridgeConnection | undefined;
@@ -82,8 +90,32 @@ process.once(
 				{ id: 'a', dir: alias, projectRoot: alias, boardWorker: true },
 				{ id: 'foreign', dir: foreign },
 			];
-			configureBoardSourceHost(() => registered);
+			configureBoardSourceHost(() =>
+				input.mode.startsWith('retained-ssh-cli-') ? [] : registered
+			);
 			await refreshBoardSources();
+			if (input.mode.startsWith('retained-ssh-cli-')) {
+				applyBoardMigration(
+					db,
+					planBoardMigration({
+						source: {
+							location: { kind: 'ssh', remoteId: 'fixture-remote' },
+							path: '/retained/Repo',
+						},
+						repository: {
+							id: 'retained-repo',
+							workingDirectory: '/retained/Repo',
+							validated: true,
+							location: { kind: 'ssh', remoteId: 'fixture-remote' },
+						},
+						boardBytes: Buffer.from(
+							JSON.stringify({ boards: [{ id: 'b', name: 'Remote board', cards: [] }] })
+						),
+						profileBytes: null,
+						workers: [],
+					})
+				);
+			}
 			const collection = storage.query().collections.find((c) => c.board.id === 'b')!;
 			if (!collection) throw new Error('Canonical alias discovery did not import collection');
 			const started = await createMaestroRuntime({
@@ -99,6 +131,70 @@ process.once(
 				boardHost: executeBoardCommand,
 				onStopRequested() {},
 			});
+			if (input.mode.startsWith('retained-ssh-cli-')) {
+				if (!input.cliBundle) throw new Error('CLI bundle must be parent-owned');
+				assertBoardIsolationPath(contract, input.cliBundle);
+				fs.writeFileSync(
+					path.join(contract.userData, 'cli-server.json'),
+					JSON.stringify({
+						pid: process.pid,
+						port: server.port,
+						token: 'alias-fixture',
+						cliSecret: 'owned-alias-secret',
+						startedAt: Date.now(),
+						version: 'fixture',
+						hostKind: 'headless',
+					})
+				);
+				const sessionsFile = path.join(contract.sync, 'maestro-sessions.json');
+				fs.writeFileSync(
+					sessionsFile,
+					JSON.stringify({
+						sessions: [
+							{
+								id: 'remote-agent',
+								name: 'Remote fixture',
+								toolType: 'codex',
+								projectRoot: '/retained/Repo',
+								cwd: '/retained/Repo',
+								sessionSshRemoteConfig: { enabled: true, remoteId: 'fixture-remote' },
+							},
+						],
+					})
+				);
+				const run = async (...args: string[]) =>
+					JSON.parse(
+						(
+							await promisify(execFile)(
+								process.execPath,
+								[input.cliBundle!, 'board', ...args, '--json'],
+								{ env: process.env }
+							)
+						).stdout
+					);
+				const operation = input.mode.slice('retained-ssh-cli-'.length);
+				let response;
+				if (operation === 'closed') {
+					fs.writeFileSync(sessionsFile, JSON.stringify({ sessions: [] }));
+					response = await run(
+						'rename',
+						'b',
+						'Closed source edit',
+						'--source',
+						collection.sourceKey
+					);
+				} else if (operation === 'rename')
+					response = await run('rename', 'b', 'Renamed remote', '--agent', 'remote-agent');
+				else response = await run(operation, '--agent', 'remote-agent');
+				process.send?.({
+					actualCli: true,
+					operation,
+					listed: operation === 'list' ? response.map((b: { id: string }) => b.id) : undefined,
+					replyType: response.type,
+					name: storage.read(BOARD_SOURCE_PROJECT_PREFIX + collection.sourceKey, 'b').name,
+				});
+				return;
+			}
 			client = new BridgeConnection({
 				endpoint: { port: server.port, token: 'alias-fixture', cliSecret: 'owned-alias-secret' },
 				strictReplies: true,
