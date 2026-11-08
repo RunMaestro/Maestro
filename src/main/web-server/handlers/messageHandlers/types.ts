@@ -513,6 +513,7 @@ export interface MessageHandlerContext {
 		error: unknown,
 		handler: string,
 		extra: Record<string, unknown>,
-		userMessagePrefix: string
+		userMessagePrefix: string,
+		reply?: (message: string) => Record<string, unknown>
 	) => void;
 }

@@ -1,4 +1,4 @@
-import { answerBoardCommand } from '../../../../shared/board/commands';
+import { answerBoardCommand, type BoardCommandReply } from '../../../../shared/board/commands';
 import { executeBoardCommand } from '../../../board/board-command-host';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -33,6 +33,19 @@ export async function handleBoardCommand(
 	try {
 		ctx.send(client, await answerBoardCommand(message, executeBoardCommand));
 	} catch (error) {
-		ctx.reportHandlerError(client, error, 'board_command', {}, 'Board command failed');
+		ctx.reportHandlerError(
+			client,
+			error,
+			'board_command',
+			{ requestId: message.requestId },
+			'Board command failed',
+			(detail) =>
+				({
+					type: 'board_command_result',
+					requestId: typeof message.requestId === 'string' ? message.requestId : undefined,
+					ok: false,
+					error: { code: 'runtime-unavailable', message: detail },
+				}) satisfies BoardCommandReply
+		);
 	}
 }

@@ -270,11 +270,14 @@ export class WebSocketMessageHandler {
 		error: unknown,
 		handler: string,
 		extra: Record<string, unknown>,
-		userMessagePrefix: string
+		userMessagePrefix: string,
+		reply?: (message: string) => Record<string, unknown>
 	): void {
 		const err = error instanceof Error ? error : new Error(String(error));
 		captureException(err, { extra: { area: 'web-server', handler, ...extra } });
-		this.sendError(client, `${userMessagePrefix}: ${err.message}`);
+		const message = `${userMessagePrefix}: ${err.message}`;
+		if (reply) this.send(client, reply(message));
+		else this.sendError(client, message);
 	}
 
 	/**
