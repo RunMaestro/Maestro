@@ -214,6 +214,14 @@ describe('host Pianola dispatch admission', () => {
 			record.queuePrepare!.item.pendingAdmissionId = id;
 			record.queueRouting!.completed = true;
 			record.queuePrepare!.callbackId = 'parent-' + i;
+			// Pressure is the 32-set count, not bulk bytes. Keep the first (protected)
+			// record and original fixture's full Unicode payloads; use small background
+			// records without bypassing any store write, fsync or callback confirmation.
+			if (i > 0) {
+				record.queuePrepare!.item.text = 'Historical prompt';
+				for (const step of record.queueRouting!.steps)
+					if (step.terminal) step.terminal.text = 'Historical reply';
+			}
 			f.store.writeDispatchAdmission(record);
 			f.store.confirmDispatchCallback(id, 'parent-' + i);
 			records.push(f.store.readDispatchAdmission(id)!);
