@@ -427,6 +427,28 @@ describe('DataviewJsInlineStore', () => {
 		store.resolve('x', { kind: 'empty' }, first.ticket);
 		expect(store.pending().map((p) => p.expression)).toEqual(['x']);
 	});
+
+	it('reports a refresh only while an answer is shown and a newer one is owed', () => {
+		const store = new DataviewJsInlineStore();
+		store.register('x');
+		store.register('y');
+		// Before the first answer it is loading, not refreshing.
+		expect(store.isRefreshing('x')).toBe(false);
+		const [x, y] = store.pending();
+		store.resolve('x', { kind: 'empty' }, x.ticket);
+		store.resolve('y', { kind: 'problem', message: 'stopped' }, y.ticket, true);
+		expect(store.isRefreshing('x')).toBe(false);
+
+		store.invalidate();
+		expect(store.isRefreshing('x')).toBe(true);
+		// A halted expression is not re-run, so it is not refreshing.
+		expect(store.isRefreshing('y')).toBe(false);
+		expect(store.isRefreshing('missing')).toBe(false);
+
+		const [again] = store.pending();
+		store.resolve('x', { kind: 'empty' }, again.ticket);
+		expect(store.isRefreshing('x')).toBe(false);
+	});
 });
 
 describe('DataviewJsInlineQuery: loading', () => {

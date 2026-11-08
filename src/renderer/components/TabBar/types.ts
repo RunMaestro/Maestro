@@ -156,4 +156,12 @@ export interface TabBarProps {
 	 * strip - stays visible while tabs overflow/scroll (e.g. Pianola's
 	 * Dashboard view button). */
 	leadingSlot?: ReactNode;
+
+	/**
+	 * A strip the user can only select tabs in: no close button, no new-tab
+	 * button, no drag, no unread toggle, and no hover menu (rename, star, close,
+	 * and the rest). Used for a Federation peer's mirrored agent, whose tabs live
+	 * on another Maestro. `onTabClose` and `onNewTab` are never called.
+	 */
+	readOnly?: boolean;
 }

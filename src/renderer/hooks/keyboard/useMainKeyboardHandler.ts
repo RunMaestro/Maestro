@@ -42,6 +42,8 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { openUiSurface } from '../../utils/openUiSurface';
 import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
+import { isMirrorShown } from '../../stores/peerMirrorStore';
+import { gateKeyForMirror } from './mirrorKeyboardGate';
 
 /**
  * Open the floating media player on whatever it should be showing.
@@ -167,6 +169,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// the store so App does not need to push a live Session object onto this ref.
 			const ctx = keyboardHandlerRef.current;
 			if (!ctx) return;
+			// A Federation mirror on screen hides the local active agent rather than replacing it:
+			// only shortcuts that never touch the active agent may run (allowlist, see the gate).
+			if (isMirrorShown() && gateKeyForMirror(e, ctx) !== 'pass') return;
 			const activeSession = selectActiveSession(useSessionStore.getState());
 
 			// Terminal focus recovery: if a key event reaches this window handler while in

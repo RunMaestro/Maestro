@@ -17,7 +17,9 @@ import {
 	readCliServerInfoFrom,
 	isCliServerRunning,
 	isPidAlive,
+	isDialableEndpoint,
 	type CliServerInfo,
+	type ExplicitHostEndpoint,
 } from './discovery';
 import { CLI_SECRET_HEADER } from '../../webLogin';
 import { MaestroNotRunningError } from './not-running';
@@ -120,6 +122,12 @@ let isolatedBridge = BRIDGE_ISOLATION_ENV.some((key) => process.env[key] !== und
 export interface BridgeConnectionOptions {
 	/** Read discovery from this data dir instead of the CLI's own derivation. */
 	userDataDir?: string;
+	/**
+	 * Dial this bridge on 127.0.0.1 instead of reading any discovery file. Wins over
+	 * `userDataDir` and `MAESTRO_CLI_HOST`. Its pid is not checked (it may name a process on
+	 * another machine), and no caller-run proof is sent: that proof is for the local desktop.
+	 */
+	endpoint?: ExplicitHostEndpoint;
 	/** Extra query parameters on the upgrade URL (`since`, `epoch` for resume). */
 	query?: Record<string, string | number>;
 	/**
@@ -170,17 +178,26 @@ export class BridgeConnection {
 		if (isolatedBridge) {
 			throw new Error('Isolated fixtures cannot connect to the desktop bridge; use fixture IPC');
 		}
-		const info: CliServerInfo | null = this.options.userDataDir
-			? readCliServerInfoFrom(this.options.userDataDir)
-			: readCliServerInfo();
+		const explicit = this.options.endpoint;
+		if (explicit && !isDialableEndpoint(explicit)) {
+			// Never echo the endpoint: it holds the token.
+			throw new Error('Invalid host endpoint: expected a TCP port and a URL-safe path token');
+		}
+		const info: Pick<CliServerInfo, 'port' | 'token' | 'pid' | 'cliSecret' | 'hostKind'> | null =
+			explicit
+				? { ...explicit, pid: explicit.pid ?? 0 }
+				: this.options.userDataDir
+					? readCliServerInfoFrom(this.options.userDataDir)
+					: readCliServerInfo();
 		if (!info) {
 			throw new MaestroNotRunningError('no-discovery-file');
 		}
 		this.hostKind = info.hostKind;
 
-		const remoteHost = process.env.MAESTRO_CLI_HOST?.trim();
+		// An explicit endpoint is already a loopback port: the env override does not move it.
+		const remoteHost = explicit ? undefined : process.env.MAESTRO_CLI_HOST?.trim();
 		// The discovery PID belongs to the desktop host, not an SSH remote.
-		if (!remoteHost) {
+		if (!remoteHost && !explicit) {
 			const alive = this.options.userDataDir ? isPidAlive(info.pid) : isCliServerRunning();
 			if (!alive) {
 				throw new MaestroNotRunningError(
@@ -228,7 +245,7 @@ export class BridgeConnection {
 		const headers: Record<string, string> = {};
 		if (info.cliSecret) headers[CLI_SECRET_HEADER] = info.cliSecret;
 		const proofFile = process.env[CALLER_RUN_PROOF_FILE_ENV_VAR];
-		if (proofFile && info.cliSecret && !remoteHost) {
+		if (proofFile && info.cliSecret && !remoteHost && !explicit) {
 			try {
 				const proof = readFileSync(proofFile, 'utf8');
 				if (!/^[0-9a-f]{64}$/.test(proof)) throw new Error('Invalid proof');

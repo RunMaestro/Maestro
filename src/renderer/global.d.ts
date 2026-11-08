@@ -265,6 +265,7 @@ import type {
 import type { WindowCommandRequest, WindowCommandResult } from '../shared/windowCommands';
 import type { WebUserPublic } from '../shared/webLogin';
 import type { ComputerHistoryApi } from '../main/preload/computerHistory';
+import type { FederationApi } from '../main/preload/federation';
 import type { MaestroRunApi } from '../main/preload/maestroRun';
 import type { JourneyApi } from '../main/preload/journey';
 import type { DataviewApi } from '../main/preload/dataview';
@@ -2070,6 +2071,12 @@ interface MaestroAPI {
 	 */
 	computerHistory: ComputerHistoryApi;
 	/**
+	 * Federation peer mirror (FED-SSH-05): the peers this desktop mirrors, their agents, a tab's
+	 * transcript, and the change pushes. Read-only. Desktop-only: no `federation:*` channel is on
+	 * the web-desktop allowlist, so in the browser build every call is refused.
+	 */
+	federation: FederationApi;
+	/**
 	 * MaestroRun (macOS launcher install, the Full Disk Access walkthrough, and
 	 * the readiness that gates its system-prompt section).
 	 */
@@ -2167,7 +2174,7 @@ interface MaestroAPI {
 					accountEmail?: string;
 					accountUuid?: string;
 					organizationName?: string;
-					session: { percent: number; resetsAt?: string };
+					session?: { percent: number; resetsAt?: string };
 					weekAllModels: { percent: number; resetsAt?: string };
 					weekSonnetOnly: { percent: number; resetsAt?: string; label?: string };
 				}

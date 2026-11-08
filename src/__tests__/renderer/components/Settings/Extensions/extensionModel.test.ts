@@ -116,6 +116,7 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			'maestroRun',
 			'throughputGauge',
 			'dataview',
+			'federation',
 		]);
 
 		for (const def of BUILTIN_FEATURES) {

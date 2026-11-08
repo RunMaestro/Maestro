@@ -9,9 +9,10 @@
  * auto-fallback on the next turn.
  *
  * Snapshot data is read live from `claudeUsageStore` (the renderer mirror of
- * the on-disk map main writes). The "Refresh" button triggers a fresh
- * `runStartupUsageSampling()` on main, then pulls the updated map back into
- * the store in a single click.
+ * the on-disk map main writes). The "Refresh" button calls the store's
+ * `sample()`, which runs `runStartupUsageSampling()` on main and pulls the
+ * updated map back. The sample belongs to the store, so it keeps running when
+ * the user switches tabs and fills the panel in when it finishes.
  *
  * The bar/pill/tab/refresh primitives and the account + refresh state machines
  * are shared with `CodexPlanUsage` via `./quota/*` - this file only supplies
@@ -160,12 +161,14 @@ const AccountRow = memo(function AccountRow({
 				/>
 			) : (
 				<>
-					<QuotaBarRow
-						label="Session window"
-						percent={snapshot.session.percent}
-						resetsAt={snapshot.session.resetsAt}
-						theme={theme}
-					/>
+					{snapshot.session && (
+						<QuotaBarRow
+							label="Session window"
+							percent={snapshot.session.percent}
+							resetsAt={snapshot.session.resetsAt}
+							theme={theme}
+						/>
+					)}
 					<QuotaBarRow
 						label="Week (all models)"
 						percent={snapshot.weekAllModels.percent}
@@ -198,7 +201,9 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 	onShowAccountAgents,
 }: ClaudePlanUsageProps) {
 	const snapshots = useClaudeUsageStore((s) => s.snapshots);
-	const refreshing = useClaudeUsageStore((s) => s.refreshing);
+	// A sample in flight counts as busy even when this panel did not start it
+	// (it outlives a tab switch), so a remount shows the spinner, not an idle button.
+	const refreshing = useClaudeUsageStore((s) => s.refreshing || s.sampling);
 
 	const { configuredAccountKeys, agentCountsByAccount, setSelectedKey, effectiveSelectedKey } =
 		useQuotaAccounts({
@@ -282,16 +287,9 @@ export const ClaudePlanUsage = memo(function ClaudePlanUsage({
 			? configuredAccountKeys
 			: configuredAccountKeys.filter((k) => !hiddenSet.has(k));
 
-	// Trigger the main re-sample, then re-pull the store. The store re-pull runs
-	// even when the sampler IPC throws so the dashboard reflects the latest cache.
-	const doRefresh = useCallback(async () => {
-		try {
-			await window.maestro.agents.refreshClaudeUsageSnapshots();
-		} catch {
-			// Main-side errors surface in main logs.
-		}
-		await useClaudeUsageStore.getState().refresh();
-	}, []);
+	// The store owns the sample, not this panel: leaving the tab mid-sample
+	// does not abandon it, and the result lands in the store when it finishes.
+	const doRefresh = useCallback(() => useClaudeUsageStore.getState().sample(), []);
 
 	const { isBusy, refreshIntervalMs, setRefreshIntervalMs, handleRefresh } = useQuotaRefresh({
 		providerId: PROVIDER_ID,

@@ -39,7 +39,10 @@ import {
 	transcriptMessagesToLogEntries,
 	type TranscriptMessage,
 } from '../../utils/transcriptMessages';
-import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser/utils/sessionProjectPath';
+import {
+	resolveSessionProjectPath,
+	type SessionProjectPathSource,
+} from '../../components/AgentSessionsBrowser/utils/sessionProjectPath';
 
 /** Provider messages pulled in per "load earlier" step. */
 export const TRANSCRIPT_BACKFILL_PAGE = 250;
@@ -77,7 +80,7 @@ export interface TranscriptBackfill {
 }
 
 export function useTranscriptBackfill(
-	session: Session,
+	session: Pick<Session, 'id' | 'toolType'> & SessionProjectPathSource,
 	activeTab: AITab | undefined,
 	options: UseTranscriptBackfillOptions = {}
 ): TranscriptBackfill {

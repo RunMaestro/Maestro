@@ -38,7 +38,38 @@ vi.mock('../../../cli/output/formatter', () => ({
 	formatError: vi.fn((msg) => `Error: ${msg}`),
 }));
 
+// Federation: the peer resolver and the Encore gate are stood in for, so no SSH is dialed.
+vi.mock('../../../cli/services/peer-resolver', () => {
+	class PeerResolveError extends Error {
+		constructor(
+			readonly code: string,
+			message: string,
+			readonly exitCode: number,
+			readonly peer?: string
+		) {
+			super(message);
+		}
+	}
+	return {
+		PeerResolveError,
+		connectPeer: vi.fn(),
+		listFederationPeers: vi.fn(() => []),
+		listHostAgents: vi.fn(),
+	};
+});
+
+vi.mock('../../../cli/utils/encore-gate', () => ({
+	requireEncore: vi.fn(),
+}));
+
 import { listAgents } from '../../../cli/commands/list-agents';
+import {
+	PeerResolveError,
+	connectPeer,
+	listFederationPeers,
+	listHostAgents,
+} from '../../../cli/services/peer-resolver';
+import { requireEncore } from '../../../cli/utils/encore-gate';
 import {
 	readSessions,
 	readGroups,
@@ -152,6 +183,24 @@ describe('list-agents command', () => {
 		});
 	});
 
+	describe('lifted agents (human-readable)', () => {
+		it('passes the peer:agentId pointer to the formatter for a lifted agent only', () => {
+			vi.mocked(readSessions).mockReturnValue([
+				mockSession({
+					id: 'lifted',
+					liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+				}),
+				mockSession({ id: 'local' }),
+			]);
+
+			listAgents({});
+
+			const rows = vi.mocked(formatAgents).mock.calls[0][0];
+			expect(rows[0].liftedTo).toBe('build-box:host-1');
+			expect(rows[1]).not.toHaveProperty('liftedTo');
+		});
+	});
+
 	describe('JSON output', () => {
 		it('should output JSON when json option is true', () => {
 			const mockSessions: SessionInfo[] = [
@@ -199,6 +248,32 @@ describe('list-agents command', () => {
 			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
 			expect(parsed[0].worktreeBasePath).toBe('/home/user/Project-WorkTrees');
 			expect(parsed[1].worktreeBasePath).toBeNull();
+		});
+
+		it('should expose a lifted agent as liftedTo, null when it was not lifted or malformed', () => {
+			// Federation: a lifted agent keeps its local record and points at where it runs now.
+			vi.mocked(readSessions).mockReturnValue([
+				mockSession({
+					id: 'lifted',
+					liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1700000000000 },
+				}),
+				mockSession({ id: 'local' }),
+				mockSession({
+					id: 'broken',
+					liftedTo: { peer: '', agentId: 'host-2', at: 1 } as SessionInfo['liftedTo'],
+				}),
+			]);
+
+			listAgents({ json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed[0].liftedTo).toEqual({
+				peer: 'build-box',
+				agentId: 'host-1',
+				at: 1700000000000,
+			});
+			expect(parsed[1].liftedTo).toBeNull();
+			expect(parsed[2].liftedTo).toBeNull();
 		});
 
 		it('should output empty JSON array for no agents', () => {
@@ -479,6 +554,185 @@ describe('list-agents command', () => {
 			expect(parsed[0].id).toBe('z-last');
 			expect(parsed[1].id).toBe('a-first');
 			expect(parsed[2].id).toBe('m-middle');
+		});
+	});
+
+	describe('Federation peers', () => {
+		const hostAgent = (id: string, name: string) => ({
+			id,
+			name,
+			toolType: 'codex',
+			cwd: `/srv/${id}`,
+			worktreeConfig: { basePath: '/srv/wt' },
+		});
+
+		/** A connection whose `release()` is observable. */
+		const connection = (peer: string) => ({
+			peer,
+			release: vi.fn(async () => {}),
+		});
+
+		it('lists one peer with --peer, tags each JSON row, and releases the connection', async () => {
+			const conn = connection('build-box');
+			vi.mocked(connectPeer).mockResolvedValue(conn as never);
+			vi.mocked(listHostAgents).mockResolvedValue([hostAgent('h1', 'Remote One')] as never);
+
+			await listAgents({ peer: 'build-box', json: true });
+
+			expect(requireEncore).toHaveBeenCalledWith('federation', true);
+			expect(connectPeer).toHaveBeenCalledWith('build-box');
+			expect(conn.release).toHaveBeenCalledTimes(1);
+			expect(readSessions).not.toHaveBeenCalled();
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed).toEqual([
+				{
+					id: 'h1',
+					name: 'Remote One',
+					toolType: 'codex',
+					cwd: '/srv/h1',
+					worktreeBasePath: '/srv/wt',
+					bookmarked: false,
+					sessionSshRemoteConfig: null,
+					liftedTo: null,
+					peer: 'build-box',
+				},
+			]);
+		});
+
+		it('shows the peer name on human-readable rows and in the title', async () => {
+			vi.mocked(connectPeer).mockResolvedValue(connection('build-box') as never);
+			vi.mocked(listHostAgents).mockResolvedValue([hostAgent('h1', 'Remote One')] as never);
+
+			await listAgents({ peer: 'build-box' });
+
+			expect(formatAgents).toHaveBeenCalledWith(
+				[expect.objectContaining({ id: 'h1', peer: 'build-box' })],
+				undefined,
+				{ peer: 'build-box' }
+			);
+		});
+
+		it('exits with the resolver exit code and its message when the peer is down', async () => {
+			vi.mocked(connectPeer).mockRejectedValue(
+				new PeerResolveError(
+					'host-down',
+					'No Maestro host is running on peer "build-box". Start it with: maestro-cli remote-host start build-box',
+					3,
+					'build-box'
+				)
+			);
+
+			await expect(listAgents({ peer: 'build-box', json: true })).rejects.toThrow(
+				'process.exit(3)'
+			);
+			const reported = JSON.parse(consoleErrorSpy.mock.calls[0][0]);
+			expect(reported).toEqual({
+				error: expect.stringContaining('maestro-cli remote-host start build-box'),
+				peer: 'build-box',
+				code: 'host-down',
+			});
+			expect(consoleSpy).not.toHaveBeenCalled();
+		});
+
+		it('releases the connection when the host refuses the agent list', async () => {
+			const conn = connection('build-box');
+			vi.mocked(connectPeer).mockResolvedValue(conn as never);
+			vi.mocked(listHostAgents).mockRejectedValue(new Error('socket closed'));
+
+			await expect(listAgents({ peer: 'build-box' })).rejects.toThrow('process.exit(1)');
+			expect(conn.release).toHaveBeenCalledTimes(1);
+			expect(consoleErrorSpy).toHaveBeenCalledWith(
+				expect.stringContaining('Could not list the agents on peer "build-box": socket closed')
+			);
+		});
+
+		it('--all-peers lists local agents first, then each peer one after another', async () => {
+			vi.mocked(readSessions).mockReturnValue([mockSession({ id: 'local-1', name: 'Local' })]);
+			vi.mocked(listFederationPeers).mockReturnValue([
+				{ peer: 'alpha', remote: {} },
+				{ peer: 'beta', remote: {} },
+			] as never);
+			let inFlight = 0;
+			let maxInFlight = 0;
+			vi.mocked(connectPeer).mockImplementation(async (peer: string) => {
+				inFlight++;
+				maxInFlight = Math.max(maxInFlight, inFlight);
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				return {
+					peer,
+					release: vi.fn(async () => {
+						inFlight--;
+					}),
+				} as never;
+			});
+			vi.mocked(listHostAgents).mockImplementation(async (conn: { peer: string }) => [
+				hostAgent(`${conn.peer}-1`, `${conn.peer} agent`) as never,
+			]);
+
+			await listAgents({ allPeers: true, json: true });
+
+			expect(maxInFlight).toBe(1);
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.map((row: { id: string; peer: string | null }) => [row.id, row.peer])).toEqual([
+				['local-1', null],
+				['alpha-1', 'alpha'],
+				['beta-1', 'beta'],
+			]);
+		});
+
+		it('--all-peers keeps listing past an unreachable peer, then reports it and exits non-zero', async () => {
+			vi.mocked(readSessions).mockReturnValue([]);
+			vi.mocked(listFederationPeers).mockReturnValue([
+				{ peer: 'down', remote: {} },
+				{ peer: 'up', remote: {} },
+			] as never);
+			vi.mocked(connectPeer).mockImplementation(async (peer: string) => {
+				if (peer === 'down') {
+					throw new PeerResolveError(
+						'host-down',
+						'No Maestro host is running on peer "down".',
+						3,
+						'down'
+					);
+				}
+				return connection(peer) as never;
+			});
+			vi.mocked(listHostAgents).mockResolvedValue([hostAgent('u1', 'Up agent')] as never);
+
+			await expect(listAgents({ allPeers: true })).rejects.toThrow('process.exit(3)');
+			expect(formatAgents).toHaveBeenCalledWith(
+				[expect.objectContaining({ id: 'u1', peer: 'up' })],
+				undefined,
+				{ peer: undefined }
+			);
+			expect(consoleErrorSpy).toHaveBeenCalledWith(
+				expect.stringContaining('No Maestro host is running on peer "down".')
+			);
+		});
+
+		it('refuses --peer together with --all-peers, or with --group', async () => {
+			await expect(listAgents({ peer: 'a', allPeers: true })).rejects.toThrow('process.exit(2)');
+			await expect(listAgents({ peer: 'a', group: 'g1' })).rejects.toThrow('process.exit(2)');
+			expect(connectPeer).not.toHaveBeenCalled();
+		});
+
+		it('refuses the peer flags while Federation is off', async () => {
+			vi.mocked(requireEncore).mockImplementationOnce(() => {
+				throw new Error('process.exit(1)');
+			});
+
+			await expect(listAgents({ peer: 'build-box' })).rejects.toThrow('process.exit(1)');
+			expect(connectPeer).not.toHaveBeenCalled();
+		});
+
+		it('leaves a plain listing local: no Encore read and no peer field', () => {
+			vi.mocked(readSessions).mockReturnValue([mockSession({ id: 'a1' })]);
+
+			listAgents({ json: true });
+
+			expect(requireEncore).not.toHaveBeenCalled();
+			expect(listFederationPeers).not.toHaveBeenCalled();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])[0]).not.toHaveProperty('peer');
 		});
 	});
 });

@@ -53,6 +53,7 @@ Built-in features work with the community plugin subsystem switched off - that i
 | [Computer History](./computer-history) | Data       | -                                      | Records what you read and type across your apps, locally, so any agent can recall it                                                  |
 | [MaestroRun](./maestro-run)            | Automation | -                                      | macOS only. Installs a signed launcher that holds one Full Disk Access grant for your scheduled scripts                               |
 | [Dataview](./dataview)                 | Data       | -                                      | Renders Obsidian Dataview queries as live tables, lists, and task lists in File Preview and the Auto Run preview                      |
+| [Federation](./federation)             | Agents     | -                                      | Reaches a `maestro-cli host` on an SSH remote, so its agents keep working after your laptop sleeps                                    |
 
 Features without a shortcut are not opened from the keyboard: they change how something you already use behaves, rather than putting a new surface on screen.
 

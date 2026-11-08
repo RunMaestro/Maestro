@@ -113,6 +113,9 @@ export const MODAL_PRIORITIES = {
 	/** Import Agent modal (Left Bar right-click on a group) */
 	AGENT_IMPORT: 829,
 
+	/** Move to Host modal (Federation lift: Left Bar right-click or palette on an SSH agent) */
+	MOVE_TO_HOST: 828,
+
 	/** Create new group modal */
 	CREATE_GROUP: 800,
 

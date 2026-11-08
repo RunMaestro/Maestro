@@ -408,23 +408,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					return;
 				}
 
-				// Check if session is busy (should have been checked by web server,
-				// but double-check). `force: true` (from `dispatch --force`) opts
-				// out of the guard so a queued follow-up can land on a busy tab.
-				if (targetSession.state === 'busy' && !force) {
-					logger.warn(
-						'[useRemoteIntegration] Session is busy, dropping command. State:',
-						undefined,
-						targetSession.state
-					);
-					rejectDelivery('session-busy');
-					return;
-				}
-				logger.info(
-					'[useRemoteIntegration] Session state check passed:',
-					undefined,
-					targetSession.state
-				);
+				// No busy check here: busy is decided per TAB in handleRemoteCommand,
+				// which resolves the target tab. An agent-level check at this point
+				// would refuse an idle tab just because a sibling tab is working.
 
 				// If web provided an inputMode, sync the session state before executing
 				// This ensures the renderer uses the same mode the web intended
@@ -735,10 +721,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		);
 
 		// Handle remote "new AI tab with prompt" from CLI (dispatch --new-tab).
-		// Atomically creates a fresh AI tab and delivers the prompt into it. An
-		// IDLE agent is dispatched through the same maestro:remoteCommand event
-		// path a plain dispatch uses, so downstream spawn/history/state flows are
-		// identical; a BUSY agent has the prompt queued for the new tab instead.
+		// Atomically creates a fresh AI tab and delivers the prompt into it through
+		// the same maestro:remoteCommand event path a plain dispatch uses, so
+		// downstream spawn/history/state flows are identical. A fresh tab is never
+		// mid-turn, so the prompt runs now even while another tab of the agent is
+		// working - the same as opening a new desktop tab and sending.
 		// A background dispatch (the default) creates the new tab without focus so
 		// the user's current view is preserved; `dispatch --focus` makes the new
 		// tab active instead. A hidden dispatch (the `dispatch --new-tab` default)
@@ -786,13 +773,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						ack({ success: false, error: 'A terminal agent cannot receive a new AI tab prompt' });
 						return;
 					}
-					// A BUSY agent is deliberately NOT a refusal here. Busy is an
-					// agent-level state, so a brand-new tab inherits it even though it
-					// owns no process, and `dispatch --new-tab` rejects both --force and
-					// --queue as meaningless ("a fresh tab is never busy") - which left
-					// no flag able to express what the caller wanted and turned every
-					// dispatch at a working agent into a dropped prompt (#1602). The
-					// prompt is queued below instead.
+					// A BUSY agent is deliberately NOT a refusal here (#1602), and no
+					// longer a reason to queue either: busy is an agent-level state, but
+					// the turn runs in the fresh tab, which owns no process.
 					if (control && planCrossAgentMentions(prompt, sessionId, mentionRouting)) {
 						ack({ success: false, error: 'DispatchMentionRoutingUnavailable' });
 						return;
@@ -878,7 +861,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 					// Re-read the agent rather than trusting the snapshot taken before
 					// the tab was created: the store write above is the only thing that
-					// ran in between, but the decision below is about live state.
+					// ran in between, but the supervised refusal below is about live
+					// state. A busy agent does not hold back an unsupervised prompt: the
+					// fresh tab runs its own turn beside the one already working.
 					const isBusy = sessionsRef.current.find((s) => s.id === sessionId)?.state === 'busy';
 					const commandName = prompt.trim().split(/\s/, 1)[0];
 					const isSlashCommand =
@@ -894,12 +879,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						ack({ success: false, error: 'Supervised new-tab queue admission is unavailable' });
 						return;
 					}
-					if (isBusy || isSlashCommand) {
-						// Busy agents wait for their current turn. Slash commands also use
-						// the command queue on idle agents, as the composer does: its drain
-						// resolves custom and project commands and substitutes $ARGUMENTS.
-						// Sending them as plain messages would skip that resolution when
-						// busy, while the direct remote-command path lacks project commands.
+					if (isSlashCommand) {
+						// Slash commands use the command queue, as the composer does: its
+						// drain resolves custom and project commands and substitutes
+						// $ARGUMENTS. The direct remote-command path lacks project commands.
 						const queued = enqueuePromptForTab({
 							sessionId,
 							tabId: createdTabId,
@@ -1385,11 +1368,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						return;
 					}
 
-					// Idle target: no line to wait in, dispatch now through the shared
-					// remote-command path (identical to a plain `dispatch`). Respect the
-					// dispatch --focus opt-in via `background`. A held send (Queue Held,
-					// `dispatch --queue --held`) never dispatches now: it waits paused.
-					if (session.state !== 'busy' && !held) {
+					// Idle target TAB with nothing queued for it: no line to wait in,
+					// dispatch now through the shared remote-command path (identical to a
+					// plain `dispatch`). Another tab of the agent being busy is not a line:
+					// that tab's turn runs beside this one, as desktop tabs do. Respect
+					// the dispatch --focus opt-in via `background`. A held send (Queue
+					// Held, `dispatch --queue --held`) never dispatches now: it waits paused.
+					const lineForTab = (session.executionQueue ?? []).some(
+						(item) => item.tabId === resolvedTabId
+					);
+					if (targetTab.state !== 'busy' && !lineForTab && !held) {
 						if (!background) {
 							setActiveSessionId(sessionId);
 						}

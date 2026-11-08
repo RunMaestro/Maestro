@@ -19,6 +19,8 @@
 import type { AgentRepository } from '../agents/repository';
 import type { EventBus } from '../client/event-bus';
 import type {
+	AgentImportInput,
+	AgentImportReceipt,
 	AutoRunApi,
 	ClientError,
 	ClientErrorCode,
@@ -133,6 +135,32 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 		return fail(method, 'failed', `The settings file could not be read: ${read.reason}`);
 	}
 
+	/**
+	 * Store the agent, then hand its queued messages to the turn service in order: the queue is in
+	 * memory, so it is the turn service's to hold. The first starts as soon as the agent is free,
+	 * the rest wait behind it. A message the service refuses is reported, never retried: the agent
+	 * is already here.
+	 */
+	async function importAgent(input: AgentImportInput): Promise<ClientResult<AgentImportReceipt>> {
+		const imported = await repository.importAgent(input);
+		if (!imported.ok) return imported;
+		const { agentId } = imported.value;
+		let queued = 0;
+		const notices: string[] = [];
+		for (const item of input.queue ?? []) {
+			const sent = await deps.turns.send(agentId, item.tabId, {
+				text: item.text,
+				...(item.images && item.images.length > 0 ? { images: item.images } : {}),
+			});
+			if (sent.ok) queued += 1;
+			else
+				notices.push(
+					`A queued message for tab ${item.tabId} was not queued: ${sent.error.message}`
+				);
+		}
+		return ok({ agentId, queued, ...(notices.length > 0 ? { notices } : {}) });
+	}
+
 	return {
 		connection: {
 			discover: () => guarded('connection.discover', () => ok(host)),
@@ -151,6 +179,7 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 					return agent ? ok(agent) : fail('agents.get', 'not-found', `No agent ${agentId}.`);
 				}),
 			create: (input) => guarded('agents.create', () => repository.createAgent(input)),
+			import: (input) => guarded('agents.import', () => importAgent(input)),
 			update: (agentId, patch) =>
 				guarded('agents.update', () => repository.updateAgent(agentId, patch)),
 			rename: (agentId, name) =>

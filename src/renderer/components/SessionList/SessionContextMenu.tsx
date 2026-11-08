@@ -25,6 +25,7 @@ import {
 	Pencil,
 	Check,
 	PackageOpen,
+	ServerCog,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useAnchoredMenuPosition, useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -39,6 +40,8 @@ import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { useLiftedMirrorTarget, useMoveToHostPeer } from '../../hooks/federation/useAgentLift';
+import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
 
 interface SessionContextMenuProps {
 	x: number;
@@ -227,6 +230,10 @@ export function SessionContextMenu({
 	onRenameWindow,
 }: SessionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
+	// Federation (FED-SSH-06): offered only while the feature is on and the agent's remote is a
+	// connected peer; a lifted agent offers the jump to where it moved instead.
+	const moveToHostPeer = useMoveToHostPeer(session);
+	const liftedTarget = useLiftedMirrorTarget(session.liftedTo);
 
 	// Inline window-rename state. While a row is being renamed, the Move to Window
 	// flyout must NOT auto-close on mouse-leave (it would unmount the input
@@ -394,6 +401,38 @@ export function SessionContextMenu({
 				>
 					<PackageOpen className="w-3.5 h-3.5" />
 					Export Agent...
+				</button>
+			)}
+
+			{moveToHostPeer && (
+				<button
+					type="button"
+					onClick={() => {
+						requestMoveToHost(session.id);
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+					title={`Lift this agent onto the maestro-cli host on ${moveToHostPeer.name}`}
+				>
+					<ServerCog className="w-3.5 h-3.5" />
+					Move to Host ({moveToHostPeer.name})...
+				</button>
+			)}
+
+			{liftedTarget && (
+				<button
+					type="button"
+					onClick={() => {
+						openLiftedAgent(session);
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+					title={`This agent moved to ${liftedTarget.ref}`}
+				>
+					<ServerCog className="w-3.5 h-3.5" />
+					Open on Host ({liftedTarget.ref})
 				</button>
 			)}
 

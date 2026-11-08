@@ -41,6 +41,8 @@ import {
 import { validateSshOption } from '../../../shared/sshOptions';
 import { useSaveShortcut } from '../../hooks';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { ToggleSwitch } from '../ui/ToggleSwitch';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 /**
  * SSH config host entry from ~/.ssh/config
@@ -123,6 +125,10 @@ export function SshRemoteModal({
 	const [nextSshOptionId, setNextSshOptionId] = useState(0);
 	const [useSshConfig, setUseSshConfig] = useState(false);
 	const [sshConfigHost, setSshConfigHost] = useState<string | undefined>(undefined);
+	// Kept and saved even while the Encore Feature is off, so editing a remote
+	// then does not silently drop its opt-in. Only the toggle is hidden.
+	const [federation, setFederation] = useState(false);
+	const federationEnabled = useSettingsStore((s) => s.encoreFeatures.federation);
 
 	// SSH config state
 	const [sshConfigHosts, setSshConfigHosts] = useState<SshConfigHost[]>([]);
@@ -256,6 +262,7 @@ export function SshRemoteModal({
 				setShowSshOptions(optionRows.length > 0);
 				setUseSshConfig(initialConfig.useSshConfig || false);
 				setSshConfigHost(initialConfig.sshConfigHost);
+				setFederation(initialConfig.federation === true);
 			} else {
 				// Reset to defaults for new config
 				setName('');
@@ -272,6 +279,7 @@ export function SshRemoteModal({
 				setShowSshOptions(false);
 				setUseSshConfig(false);
 				setSshConfigHost(undefined);
+				setFederation(false);
 			}
 			setError(null);
 			setTestResult(null);
@@ -326,6 +334,7 @@ export function SshRemoteModal({
 			enabled,
 			useSshConfig,
 			sshConfigHost,
+			federation: federation || undefined,
 		};
 	}, [
 		initialConfig,
@@ -339,6 +348,7 @@ export function SshRemoteModal({
 		enabled,
 		useSshConfig,
 		sshConfigHost,
+		federation,
 	]);
 
 	// Handle selecting an SSH config host
@@ -806,40 +816,64 @@ export function SshRemoteModal({
 					}
 				/>
 
-				{/* Enabled Toggle */}
-				<div
-					className="flex items-center justify-between p-3 rounded border"
-					style={{
-						borderColor: theme.colors.border,
-						backgroundColor: theme.colors.bgMain,
-					}}
-				>
-					<div>
-						<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
-							Enable this remote
-						</div>
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							Disabled remotes won&apos;t be available for selection
-						</div>
-					</div>
-					<button
-						type="button"
-						onClick={() => setEnabled(!enabled)}
-						className="w-12 h-6 rounded-full transition-colors relative"
-						style={{
-							backgroundColor: enabled ? theme.colors.accent : theme.colors.bgActivity,
-						}}
-					>
-						<div
-							className="absolute top-1 w-4 h-4 rounded-full bg-white transition-transform"
-							style={{
-								transform: enabled ? 'translateX(26px)' : 'translateX(4px)',
-							}}
-						/>
-					</button>
-				</div>
+				<SwitchRow
+					theme={theme}
+					label="Enable this remote"
+					description="Disabled remotes won't be available for selection"
+					checked={enabled}
+					onChange={setEnabled}
+				/>
+
+				{federationEnabled && (
+					<SwitchRow
+						theme={theme}
+						label="Federation"
+						description="Let Maestro look for a maestro-cli host on this remote and reach its agents over SSH. Maestro never probes a remote with this off."
+						checked={federation}
+						onChange={setFederation}
+						testId="ssh-remote-federation-toggle"
+					/>
+				)}
 			</div>
 		</Modal>
+	);
+}
+
+/** A labeled on/off row in the remote editor. */
+function SwitchRow({
+	theme,
+	label,
+	description,
+	checked,
+	onChange,
+	testId,
+}: {
+	theme: Theme;
+	label: string;
+	description: string;
+	checked: boolean;
+	onChange: (checked: boolean) => void;
+	testId?: string;
+}) {
+	return (
+		<div
+			className="flex items-center justify-between gap-3 p-3 rounded border"
+			style={{
+				borderColor: theme.colors.border,
+				backgroundColor: theme.colors.bgMain,
+			}}
+			data-testid={testId}
+		>
+			<div>
+				<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
+					{label}
+				</div>
+				<div className="text-xs" style={{ color: theme.colors.textDim }}>
+					{description}
+				</div>
+			</div>
+			<ToggleSwitch checked={checked} onChange={onChange} theme={theme} ariaLabel={label} />
+		</div>
 	);
 }
 

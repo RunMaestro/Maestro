@@ -96,6 +96,7 @@
 					"computer-history",
 					"dataview",
 					"maestro-run",
+					"federation",
 					{
 						"group": "Maestro Cue",
 						"icon": "bolt",
