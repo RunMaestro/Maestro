@@ -121,6 +121,26 @@ async function readLocalManifest(app: App): Promise<MarketplaceManifest | null> 
 	}
 }
 
+/**
+ * `documents[].filename` names a document WITHOUT its `.md` extension, and
+ * every consumer appends one: the fetch URL, the file the import writes, the
+ * saved playbook entry, and the label in the Marketplace modal. Some official
+ * manifest entries carry the extension anyway (`Agent-Prompt.md`), so the
+ * fetch asked GitHub for `Agent-Prompt.md.md`, got a 404, and the whole import
+ * failed (MAESTRO-QB). Strip it once, here, so every consumer agrees.
+ */
+function withExtensionlessDocuments(playbook: MarketplacePlaybook): MarketplacePlaybook {
+	if (!Array.isArray(playbook.documents)) return playbook;
+	return {
+		...playbook,
+		documents: playbook.documents.map((doc) =>
+			typeof doc?.filename === 'string'
+				? { ...doc, filename: doc.filename.replace(/\.md$/i, '') }
+				: doc
+		),
+	};
+}
+
 function mergeManifests(
 	official: MarketplaceManifest | null,
 	local: MarketplaceManifest | null
@@ -131,13 +151,19 @@ function mergeManifests(
 	if (official && !local) {
 		return {
 			...official,
-			playbooks: official.playbooks.map((p) => ({ ...p, source: 'official' as const })),
+			playbooks: official.playbooks.map((p) => ({
+				...withExtensionlessDocuments(p),
+				source: 'official' as const,
+			})),
 		};
 	}
 	if (!official && local) {
 		return {
 			...local,
-			playbooks: local.playbooks.map((p) => ({ ...p, source: 'local' as const })),
+			playbooks: local.playbooks.map((p) => ({
+				...withExtensionlessDocuments(p),
+				source: 'local' as const,
+			})),
 		};
 	}
 	const officialPlaybooks = official!.playbooks;
@@ -154,7 +180,7 @@ function mergeManifests(
 			logger.warn(`Local playbook "${playbook.id}" missing required fields, skipping`, LOG_CONTEXT);
 			continue;
 		}
-		localMap.set(playbook.id, { ...playbook, source: 'local' });
+		localMap.set(playbook.id, { ...withExtensionlessDocuments(playbook), source: 'local' });
 	}
 	const mergedPlaybooks = officialPlaybooks.map((official) => {
 		const localOverride = localMap.get(official.id);
@@ -162,7 +188,7 @@ function mergeManifests(
 			logger.info(`Local playbook "${official.id}" overrides official version`, LOG_CONTEXT);
 			return localOverride;
 		}
-		return { ...official, source: 'official' as const };
+		return { ...withExtensionlessDocuments(official), source: 'official' as const };
 	});
 	const officialIds = new Set(officialPlaybooks.map((p) => p.id));
 	const localOnlyPlaybooks = Array.from(localMap.values()).filter(
