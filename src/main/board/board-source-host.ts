@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import { listBoardWorkers } from './board-workspace-storage';
 import { BOARD_SOURCE_PROJECT_PREFIX } from '../../shared/board/types';
 import type { BoardCommandTarget } from '../../shared/board/commands';
 import { boardMigrationSourceKey } from './board-migration';
@@ -184,15 +185,16 @@ export async function prepareBoardMutationTarget(
 			.get(target.sourceKey)
 	)
 		throw new BoardStorageError('protected-field', 'Board target source is suppressed');
-	if (
-		admitted &&
-		!target.projectRoot.startsWith(BOARD_SOURCE_PROJECT_PREFIX) &&
-		!admitted.has(target.projectRoot)
-	)
-		throw new Error('Board isolation target root is not registered');
 	const query = { projectRoot: target.projectRoot, sourceKey: target.sourceKey };
 	const prepared = await storage.prepareQuery(query);
 	requireBoardEnabled();
+	// Admit the freshly resolved source root, preserving supported caller aliases.
+	if (
+		admitted &&
+		!prepared.projectRoot!.startsWith(BOARD_SOURCE_PROJECT_PREFIX) &&
+		!admitted.has(prepared.projectRoot!)
+	)
+		throw new Error('Board isolation target root is not registered');
 	const verifyCollection = () => {
 		if (!storage.sourceKeys(prepared.projectRoot!).includes(target.sourceKey))
 			throw new BoardStorageError(
@@ -217,22 +219,72 @@ export async function prepareBoardMutationTarget(
 		)
 			throw new BoardStorageError('identity-mismatch', 'Persisted Board source identity changed');
 	}
-	const association = (items: BoardSourceSession[]) =>
-		canonicalJson(
-			source
-				? items.filter((item) => {
-						const location = resolveBoardLocation(item);
-						return (
-							(item.projectRoot || item.dir) === source.path &&
-							location.kind === source.location.kind &&
-							(location.kind !== 'ssh' ||
-								source.location.kind !== 'ssh' ||
-								location.remoteId === source.location.remoteId)
-						);
-					})
-				: []
-		);
-	const associated = association(registered);
+	// Existing repository access is a probe-selection hint, never mutation authority.
+	// It identifies registered aliases for an opaque target without scanning foreign roots.
+	const relatedAgents = new Set(
+		source?.location.kind === 'local'
+			? listBoardWorkers(storage.db)
+					.filter(
+						(worker) =>
+							Array.isArray(worker.payload.allowedRepositoryIds) &&
+							worker.payload.allowedRepositoryIds.includes(`source:${target.sourceKey}`)
+					)
+					.map((worker) => worker.agentId)
+			: []
+	);
+	const association = async (items: BoardSourceSession[]) => {
+		const matched: unknown[] = [];
+		const observed: BoardSourceSession[] = [];
+		for (const item of JSON.parse(canonicalJson(items)) as BoardSourceSession[]) {
+			if (!source) break;
+			const location = resolveBoardLocation(item);
+			const raw = item.projectRoot || item.dir;
+			if (location.kind !== source.location.kind || !raw) continue;
+			if (location.kind === 'ssh') {
+				if (
+					source.location.kind === 'ssh' &&
+					location.remoteId === source.location.remoteId &&
+					raw === source.path
+				) {
+					matched.push(item);
+					observed.push(item);
+				}
+				continue;
+			}
+			if (raw !== source.path && raw !== target.projectRoot && !relatedAgents.has(item.id))
+				continue;
+			observed.push(item);
+			try {
+				const root = await fs.promises.realpath(raw);
+				requireBoardEnabled();
+				const entry = await fs.promises.lstat(raw);
+				requireBoardEnabled();
+				if (root === source.path)
+					matched.push({ registration: item, root, entry: [entry.dev, entry.ino] });
+			} catch (error) {
+				if (
+					!['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'ELOOP'].includes(
+						(error as NodeJS.ErrnoException).code ?? ''
+					)
+				)
+					throw error;
+			}
+		}
+		const latest = sessions();
+		if (
+			observed.some(
+				(item) =>
+					canonicalJson(latest.filter((current) => current.id === item.id)) !==
+					canonicalJson([item])
+			)
+		)
+			throw new BoardStorageError(
+				'stale-revision',
+				'Board source registration changed during alias validation'
+			);
+		return canonicalJson(matched);
+	};
+	const associated = await association(registered);
 	let physical: unknown;
 	if (source) {
 		if (associated === '[]' && !(source.location.kind === 'local' && admitted?.has(source.path)))
@@ -288,12 +340,14 @@ export async function prepareBoardMutationTarget(
 	requireBoardEnabled();
 	const current = sessions();
 	admittedSources(current, remote);
+	const currentAssociation = await association(current);
+	requireBoardEnabled();
 	if (
 		after.projectRoot !== prepared.projectRoot ||
 		storage.sourceIdentity(target.sourceKey) !== before ||
 		canonicalJson(storage.sourceLocation(target.sourceKey) ?? null) !==
 			canonicalJson(source ?? null) ||
-		association(current) !== associated
+		currentAssociation !== associated
 	)
 		throw new BoardStorageError('stale-revision', 'Board target source changed during admission');
 	verifyCollection();
