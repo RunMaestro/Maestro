@@ -88,6 +88,48 @@ describe('session list command', () => {
 		expect(output.sessions).toEqual([]);
 	});
 
+	describe('hidden tabs (#2008)', () => {
+		const entries = [
+			{ tabId: 'tab-visible', agentId: 'agent-a', agentName: 'Backend', hidden: false },
+			{ tabId: 'tab-consult', agentId: 'agent-a', agentName: 'Backend', hidden: true },
+			// An older desktop omits the field; that tab is not hidden.
+			{ tabId: 'tab-legacy', agentId: 'agent-a', agentName: 'Backend' },
+		];
+		const mockDesktop = () => {
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'desktop_sessions_list',
+				success: true,
+				sessions: entries,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+		};
+
+		it('leaves hidden tabs out by default', async () => {
+			mockDesktop();
+			await sessionList({ json: true });
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.sessions.map((s: { tabId: string }) => s.tabId)).toEqual([
+				'tab-visible',
+				'tab-legacy',
+			]);
+		});
+
+		it('lists hidden tabs, flagged, with --include-hidden', async () => {
+			mockDesktop();
+			await sessionList({ json: true, includeHidden: true });
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.sessions.map((s: { tabId: string }) => s.tabId)).toEqual([
+				'tab-visible',
+				'tab-consult',
+				'tab-legacy',
+			]);
+			expect(output.sessions[1].hidden).toBe(true);
+		});
+	});
+
 	it('renders a human-readable table when --json is omitted', async () => {
 		const mockSendCommand = vi.fn().mockResolvedValue({
 			type: 'desktop_sessions_list',

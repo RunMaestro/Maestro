@@ -117,6 +117,11 @@ export function registerSessionCallbacks(
 		for (const s of sessions) {
 			const aiTabs = (s.aiTabs as Array<Record<string, any>> | undefined) ?? [];
 			const cliBusy = cliBusySessionIds.has(s.id);
+			const orderedAiTabIds = new Set(
+				((s.unifiedTabOrder as Array<{ type?: string; id?: string }> | undefined) ?? [])
+					.filter((ref) => ref?.type === 'ai')
+					.map((ref) => ref.id)
+			);
 			for (const tab of aiTabs) {
 				if (!tab || typeof tab.id !== 'string') continue;
 				const isActiveTab = tab.id === s.activeTabId;
@@ -146,6 +151,10 @@ export function registerSessionCallbacks(
 					starred: tab.starred === true,
 					active: isActiveTab,
 					hasUnread: tab.hasUnread === true,
+					// Same rule as the renderer's `isAiTabHidden`: the tab bar draws no
+					// chip for a hidden (consult) tab.
+					hidden: tab.hidden === true,
+					inTabOrder: orderedAiTabIds.has(tab.id),
 					saveToHistory: tab.saveToHistory === true,
 					readOnly: tab.readOnlyMode === true,
 					thinking: asThinkingMode(tab.showThinking) ?? 'off',
