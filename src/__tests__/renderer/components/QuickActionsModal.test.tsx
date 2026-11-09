@@ -167,6 +167,7 @@ const createDefaultProps = (
 	sessions: [createMockSession()],
 	setSessions: vi.fn(),
 	activeSessionId: 'session-1',
+	activeGroupChatId: null,
 	groups: [],
 	setGroups: vi.fn(),
 	shortcuts: mockShortcuts,
@@ -2545,6 +2546,51 @@ describe('QuickActionsModal', () => {
 			const backdrop = screen.getByRole('dialog').parentElement as HTMLElement;
 			expect(backdrop.style.zIndex).toBe(String(Z_LAYERS.QUICK_ACTIONS));
 			expect(Z_LAYERS.QUICK_ACTIONS).toBeGreaterThan(Z_LAYERS.TOAST);
+		});
+	});
+
+	describe('Group Chat room gating', () => {
+		it('withholds edit last queued, tab star, and clear terminal while a room is open', () => {
+			const session = createMockSession({
+				inputMode: 'terminal',
+				activeTerminalTabId: 'term-1',
+				executionQueue: [{ id: 'q1', type: 'message', text: 'prompt' }] as any,
+				aiTabs: [
+					{ id: 'tab-1', name: 'Tab 1', logs: [], agentSessionId: 'ag-1', starred: false },
+				] as any,
+			});
+			const onClearActiveTerminal = vi.fn();
+			const props = createDefaultProps({
+				activeGroupChatId: 'chat-1',
+				sessions: [session],
+				onClearActiveTerminal,
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.queryByText('Edit Last Queued Message')).not.toBeInTheDocument();
+			expect(screen.queryByText('Star Session')).not.toBeInTheDocument();
+			expect(screen.queryByText('Clear Terminal History')).not.toBeInTheDocument();
+		});
+
+		it('shows edit last queued, tab star, or clear terminal outside a room', () => {
+			const session = createMockSession({
+				inputMode: 'terminal',
+				activeTerminalTabId: 'term-1',
+				executionQueue: [{ id: 'q1', type: 'message', text: 'prompt' }] as any,
+				aiTabs: [
+					{ id: 'tab-1', name: 'Tab 1', logs: [], agentSessionId: 'ag-1', starred: false },
+				] as any,
+			});
+			const onClearActiveTerminal = vi.fn();
+			const props = createDefaultProps({
+				activeGroupChatId: null,
+				sessions: [session],
+				onClearActiveTerminal,
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Edit Last Queued Message')).toBeInTheDocument();
+			expect(screen.getByText('Clear Terminal History')).toBeInTheDocument();
 		});
 	});
 });
