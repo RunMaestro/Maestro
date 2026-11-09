@@ -79,6 +79,19 @@ interface RunRow {
 	outcome_json: string | null;
 }
 
+/** The identity persisted by normal acquisition and explicit native legacy recovery. */
+export function boardRuntimeProcessIdentity(lock: BoardRuntimeLock): string {
+	const { pid, startedAt, bootTime, token, pidNsInode, platform, hostIdentity } = lock.info;
+	return canonicalJson({
+		pid,
+		startedAt,
+		bootTime: bootTime ?? null,
+		...(token ? { token } : {}),
+		...(pidNsInode === undefined ? {} : { pidNsInode }),
+		...(platform && hostIdentity ? { platform, hostIdentity } : {}),
+	});
+}
+
 export class BoardRuntime {
 	private epoch: number | null = null;
 	readonly processIdentity: string;
@@ -93,15 +106,7 @@ export class BoardRuntime {
 		private readonly onCompleted: (spec: BoardRunSpecification) => void = () => {},
 		private readonly onTransitions?: BoardTransitionsListener
 	) {
-		const { pid, startedAt, bootTime, token, pidNsInode, platform, hostIdentity } = lock.info;
-		this.processIdentity = canonicalJson({
-			pid,
-			startedAt,
-			bootTime: bootTime ?? null,
-			...(token ? { token } : {}),
-			...(pidNsInode === undefined ? {} : { pidNsInode }),
-			...(platform && hostIdentity ? { platform, hostIdentity } : {}),
-		});
+		this.processIdentity = boardRuntimeProcessIdentity(lock);
 	}
 
 	/** Layer the SQLite epoch on the caller's existing runtime lock. */

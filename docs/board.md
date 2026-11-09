@@ -293,6 +293,30 @@ A few behaviors worth knowing:
 
 Cards display their explicit agent or group scope and the host's current waiting reasons. Capture responses and global Refresh use the same read-only worker eligibility checks as claims, including current membership, role and repository access. Empty eligible scopes, paused intake, durable reservations, native busy/dormant workers, required start approval and Hold remain visible. Missing native occupancy evidence is reported as unknown. An otherwise available card waits for Cue's final dispatch checks; reading a card never claims, releases or renews a reservation. Intake pause prevents new Board starts while existing work continues.
 
+### Idle legacy runtime ownership
+
+The native Board window reports a conflicting runtime owner without treating a
+missing PID or an old heartbeat as permission to take over. On Linux, an idle
+legacy identity containing only PID, boot time and start time can be reviewed
+through **Review legacy runtime ownership**. The current desktop must prove its
+own native Cue lock. Both Board and Maestro Cue must be enabled. Modern,
+malformed, different-boot or still-present owners, any stored run/reservation or
+imported worker hold, and unresolved card attempts remain blocked.
+
+The confirmation asks the human to establish that the previous host is no longer
+running Board work. Its preview is bound to the exact owner, epoch, Board evidence
+and native main frame, expires after one minute, and can be used once. Confirmation
+rechecks those conditions in a SQLite transaction, advances the owner epoch and
+records the original identity and human decision. A change or failed receipt write
+leaves ownership unchanged. No card, source, result or worker permission is changed.
+This is ownership recovery, not approval to start or accept a card. Normal Cue
+admission, claims and required human decisions still apply afterward.
+
+There is no CLI, WebSocket or browser recovery grant. Those transports continue
+to report `owner-conflict` until the native human confirmation succeeds. Manual
+recovery on other operating systems and owners with ambiguous legacy evidence
+remain unavailable; normal proven-dead recovery is unchanged.
+
 ### Managed worker transport
 
 Admission-managed headless turns use Current control. Native control is rejected
