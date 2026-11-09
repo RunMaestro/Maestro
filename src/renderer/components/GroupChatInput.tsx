@@ -28,7 +28,16 @@ import type {
 	Shortcut,
 } from '../types';
 import { QueuedItemsList } from './QueuedItemsList';
-import { ChatComposer, GROUP_CHAT_COMPOSER_CAPABILITIES } from './ChatComposer';
+import {
+	ChatComposer,
+	deriveGroupChatComposerCapabilities,
+	clipboardHasImage,
+	canModeratorReadImages,
+	flashModeratorCannotReadImages,
+	REMOVE_ATTACHED_IMAGES_TO_SEND_DETAIL,
+} from './ChatComposer';
+import { useGroupChatStore } from '../stores/groupChatStore';
+import { useAgentCapabilities } from '../hooks/agent/useAgentCapabilities';
 import { PhoneSheetSwitchRow } from './ui/PhoneSheetRows';
 import { shortcutSuffix } from './ui/ShortcutHint';
 import { logger } from '../utils/logger';
@@ -72,6 +81,8 @@ interface GroupChatInputProps {
 	participants: GroupChatParticipant[];
 	groups?: Group[];
 	groupChatId: string;
+	/** The room's moderator provider ID (e.g. 'claude-code', 'codex'). */
+	moderatorAgentId?: string;
 	draftMessage?: string;
 	onDraftChange?: (draft: string, groupChatId: string) => void;
 	onOpenPromptComposer?: () => void;
@@ -116,6 +127,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	participants: _participants,
 	groups,
 	groupChatId,
+	moderatorAgentId,
 	draftMessage,
 	onDraftChange,
 	onOpenPromptComposer,
@@ -184,6 +196,32 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		};
 	}, [draftFlushRef, flushDraft]);
 
+	const storeModeratorId = useGroupChatStore(
+		useCallback(
+			(s) => s.groupChats.find((c) => c.id === groupChatId)?.moderatorAgentId,
+			[groupChatId]
+		)
+	);
+	const effectiveModeratorId = moderatorAgentId ?? storeModeratorId;
+	const {
+		capabilities: agentCaps,
+		loading: agentLoading,
+		error: agentError,
+	} = useAgentCapabilities(effectiveModeratorId);
+	const canAttachImages = canModeratorReadImages(effectiveModeratorId, {
+		loading: agentLoading,
+		error: agentError,
+		capabilities: agentCaps,
+	});
+	const capabilities = useMemo(
+		() => deriveGroupChatComposerCapabilities({ canAttachImages }),
+		[canAttachImages]
+	);
+	const stagedImagesWarning =
+		stagedImages.length > 0 && !capabilities.imageAttach
+			? "Moderator can't read images"
+			: undefined;
+
 	// Narrow mention-shaped sessions so streaming logs do not rebuild @mentions.
 	const storedSessions = useStoreWithEqualityFn(
 		useSessionStore,
@@ -221,13 +259,30 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 
 	const handleSend = useCallback(() => {
 		// Allow sending even when busy - messages will be queued in App.tsx
-		if (message.trim()) {
-			onSend(message.trim(), stagedImages.length > 0 ? stagedImages : undefined, readOnlyMode);
-			cancelDraft();
-			setMessage('');
-			setStagedImages([]);
-			onDraftChange?.('', groupChatId);
+		if (!message.trim()) return;
+
+		// Read live moderator from store at submit time so a change between render and Enter is honored
+		const liveChat = useGroupChatStore.getState().groupChats.find((c) => c.id === groupChatId);
+		const liveModeratorId = liveChat?.moderatorAgentId ?? moderatorAgentId;
+		const canSendImages =
+			liveModeratorId === effectiveModeratorId
+				? canModeratorReadImages(liveModeratorId, {
+						loading: agentLoading,
+						error: agentError,
+						capabilities: agentCaps,
+					})
+				: canModeratorReadImages(liveModeratorId);
+
+		if (stagedImages.length > 0 && !canSendImages) {
+			flashModeratorCannotReadImages(REMOVE_ATTACHED_IMAGES_TO_SEND_DETAIL);
+			return;
 		}
+
+		onSend(message.trim(), stagedImages.length > 0 ? stagedImages : undefined, readOnlyMode);
+		cancelDraft();
+		setMessage('');
+		setStagedImages([]);
+		onDraftChange?.('', groupChatId);
 	}, [
 		message,
 		onSend,
@@ -237,6 +292,11 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		groupChatId,
 		stagedImages,
 		setStagedImages,
+		moderatorAgentId,
+		effectiveModeratorId,
+		agentLoading,
+		agentError,
+		agentCaps,
 	]);
 
 	const handleChange = useCallback(
@@ -249,15 +309,22 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 
 	const handlePasteWrapped = useCallback(
 		(e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+			if (clipboardHasImage(e.clipboardData) && !capabilities.imageAttach) {
+				e.preventDefault();
+				flashModeratorCannotReadImages();
+				return;
+			}
 			handlePaste?.(e);
 		},
-		[handlePaste]
+		[capabilities.imageAttach, handlePaste]
 	);
 
 	const handleDropWrapped = useCallback(
 		(e: React.DragEvent<HTMLTextAreaElement>) => {
 			e.stopPropagation();
 			flushDraft();
+			// Let the shared handler decide per file: it refuses the images and
+			// keeps the documents from a mixed drop, and flashes once.
 			handleDrop?.(e);
 		},
 		[flushDraft, handleDrop]
@@ -439,7 +506,8 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			onChange={handleChange}
 			draftKey={groupChatId}
 			inputRef={inputRef}
-			capabilities={GROUP_CHAT_COMPOSER_CAPABILITIES}
+			capabilities={capabilities}
+			stagedImagesWarning={stagedImagesWarning}
 			isBusy={isBusy}
 			warningBorder={readOnlyMode}
 			placeholder={isBusy ? 'Type to queue message...' : 'Type a message... (@ to mention agent)'}

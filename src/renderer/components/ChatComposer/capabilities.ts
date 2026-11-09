@@ -13,7 +13,53 @@
  */
 
 import type { AgentCapabilities } from '../../../shared/types';
+import { agentCanReadImages } from '../../../shared/maestro-lib/providers/capabilities';
 import type { ComposerCommandMode } from '../../utils/shellCommandInput';
+import { getCachedCapabilities } from '../../hooks/agent/useAgentCapabilities';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
+
+export const MODERATOR_CANNOT_READ_IMAGES_MESSAGE = "This room's moderator can't read images";
+export const REMOVE_ATTACHED_IMAGES_TO_SEND_DETAIL = 'Remove the attached images to send';
+
+/**
+ * Flash a standard yellow center notification explaining that the room's
+ * moderator cannot read images.
+ */
+export function flashModeratorCannotReadImages(detail?: string): void {
+	notifyCenterFlash({
+		message: MODERATOR_CANNOT_READ_IMAGES_MESSAGE,
+		color: 'yellow',
+		...(detail ? { detail } : {}),
+	});
+}
+
+export interface ModeratorCapabilitiesState {
+	loading?: boolean;
+	error?: unknown;
+	capabilities?: AgentCapabilities;
+}
+
+/**
+ * Answers whether the room's moderator can read attached images.
+ *
+ * Rules:
+ * - If capabilities are unknown (loading, failed fetch, or not yet cached),
+ *   we keep the pre-change behavior and return true.
+ * - Only a known, successfully loaded `supportsImageInput: false` returns false.
+ */
+export function canModeratorReadImages(
+	moderatorAgentId?: string | null,
+	state?: ModeratorCapabilitiesState
+): boolean {
+	if (!moderatorAgentId) return true;
+	if (state) {
+		if (state.loading || state.error) return true;
+		if (state.capabilities) {
+			return agentCanReadImages(state.capabilities);
+		}
+	}
+	return agentCanReadImages(getCachedCapabilities(moderatorAgentId));
+}
 
 export interface ComposerCapabilities {
 	/** Attach Image button and its file picker. */
@@ -33,10 +79,10 @@ export interface ComposerCapabilities {
 }
 
 /**
- * Group Chat's composer. Every per-tab agent setting is off: a room has no tab
- * to save history from, mixes providers, and keeps its own Read-Only toggle.
- * `imageAttach` stays on because the room offers Attach today; deriving it from
- * the moderator's provider is a later step.
+ * Group Chat's composer baseline. Every per-tab agent setting is off: a room
+ * has no tab to save history from, mixes providers, and keeps its own Read-Only
+ * toggle. `imageAttach` defaults to true on the frozen baseline; call
+ * `deriveGroupChatComposerCapabilities` to gate on the moderator's provider.
  */
 export const GROUP_CHAT_COMPOSER_CAPABILITIES: Readonly<ComposerCapabilities> = Object.freeze({
 	imageAttach: true,
@@ -47,6 +93,24 @@ export const GROUP_CHAT_COMPOSER_CAPABILITIES: Readonly<ComposerCapabilities> = 
 	thinking: false,
 	modelEffort: false,
 });
+
+export interface GroupChatComposerCapabilitiesInput {
+	/** Result of `canModeratorReadImages()`; omitted means the preserved default. */
+	canAttachImages?: boolean;
+}
+
+/**
+ * Group Chat's composer capabilities, with `imageAttach` gated on whether
+ * the moderator's provider can read images.
+ */
+export function deriveGroupChatComposerCapabilities(
+	input?: GroupChatComposerCapabilitiesInput
+): ComposerCapabilities {
+	return {
+		...GROUP_CHAT_COMPOSER_CAPABILITIES,
+		imageAttach: input?.canAttachImages ?? true,
+	};
+}
 
 export interface AiImageAttachInput {
 	/** The AI composer's command-mode rung. */
