@@ -23,7 +23,24 @@ vi.mock('../../../renderer/services/voiceListening', () => ({
 import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
+import {
+	setCapabilitiesCache,
+	DEFAULT_CAPABILITIES,
+} from '../../../renderer/hooks/agent/useAgentCapabilities';
+
+vi.mock('../../../renderer/stores/centerFlashStore', async () => {
+	const actual = await vi.importActual<typeof import('../../../renderer/stores/centerFlashStore')>(
+		'../../../renderer/stores/centerFlashStore'
+	);
+	return {
+		...actual,
+		notifyCenterFlash: vi.fn(),
+	};
+});
 import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
 import type { Session, Group, GroupChatParticipant } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
@@ -73,6 +90,8 @@ function createDefaultProps(
 	overrides: Partial<Parameters<typeof GroupChatInput>[0]> & { sessions?: Session[] } = {}
 ) {
 	const { sessions = [], ...rest } = overrides;
+	const moderatorAgentId =
+		'moderatorAgentId' in overrides ? overrides.moderatorAgentId : 'claude-code';
 	useSessionStore.setState({ sessions });
 	return {
 		theme: createMockTheme(),
@@ -80,6 +99,7 @@ function createDefaultProps(
 		onSend: vi.fn(),
 		participants: [],
 		groupChatId: 'test-group-chat',
+		moderatorAgentId,
 		...rest,
 	};
 }
@@ -150,8 +170,25 @@ describe('GroupChatInput', () => {
 		expect(screen.queryByRole('button', { name: 'Talk to group chat' })).not.toBeInTheDocument();
 	});
 	beforeEach(() => {
-		resetStores(useSessionStore, useImageAnnotatorStore, useSettingsStore, useVoiceSessionStore);
+		resetStores(
+			useSessionStore,
+			useImageAnnotatorStore,
+			useSettingsStore,
+			useVoiceSessionStore,
+			useGroupChatStore
+		);
 		useVoiceUiStore.setState({ loaded: true });
+		vi.mocked(notifyCenterFlash).mockClear();
+		setCapabilitiesCache('claude-code', {
+			...DEFAULT_CAPABILITIES,
+			supportsImageInput: true,
+			supportsImageInputOnResume: true,
+		});
+		setCapabilitiesCache('terminal', {
+			...DEFAULT_CAPABILITIES,
+			supportsImageInput: false,
+			supportsImageInputOnResume: false,
+		});
 	});
 
 	afterEach(() => {
@@ -1103,6 +1140,199 @@ describe('GroupChatInput', () => {
 			});
 		});
 
+		describe('Tab with @ picker closed', () => {
+			it('completes a single matching agent reference and appends a space', () => {
+				const sessions = [createMockSession('session-1', 'Maestro', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@Mae');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@Maestro ');
+			});
+
+			it('opens the picker when multiple agents match', () => {
+				const sessions = [
+					createMockSession('session-1', 'Maestro-1', 'claude-code'),
+					createMockSession('session-2', 'Maestro-2', 'claude-code'),
+				];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@Mae');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				expect(screen.queryByText('Maestro-1')).not.toBeInTheDocument();
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(screen.getByText('Maestro-1')).toBeInTheDocument();
+				expect(screen.getByText('Maestro-2')).toBeInTheDocument();
+				expect(textarea.value).toBe('@Mae');
+			});
+
+			it('completes quoted partial mention on single match with caret at end', () => {
+				const sessions = [createMockSession('session-1', 'Alice Bob', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@"Alice B');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@Alice-Bob ');
+			});
+
+			it('completes quoted partial mention on single match with caret mid-token', async () => {
+				const sessions = [createMockSession('session-1', 'Alice Bob', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@"Alice B" and more');
+				textarea.selectionStart = textarea.selectionEnd = 7;
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+				await act(async () => {
+					await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+				});
+
+				expect(textarea.value).toBe('@Alice-Bob and more');
+				expect(textarea.selectionStart).toBe('@Alice-Bob '.length);
+			});
+
+			it('opens picker on multiple matches for quoted partial and accepts cleanly', () => {
+				const sessions = [
+					createMockSession('session-1', 'Alice Bob', 'claude-code'),
+					createMockSession('session-2', 'Alice Brown', 'claude-code'),
+				];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@"Alice B');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				expect(screen.queryByText('Alice Bob')).not.toBeInTheDocument();
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+				expect(screen.getByText('Alice Bob')).toBeInTheDocument();
+				expect(screen.getByText('Alice Brown')).toBeInTheDocument();
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+				expect(textarea.value).toBe('@Alice-Bob ');
+			});
+
+			it('completes a dotted agent name with the caret mid-token', () => {
+				const sessions = [createMockSession('session-1', 'RunMaestro.ai', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@RunMaestr.ai');
+				textarea.selectionStart = textarea.selectionEnd = 10;
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@RunMaestro.ai ');
+			});
+
+			it('keeps the sentence full stop when completing a dotted agent name', () => {
+				const sessions = [createMockSession('session-1', 'RunMaestro.ai', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@RunMaestro.ai.');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@RunMaestro.ai .');
+			});
+
+			it('never offers or completes a dormant Pianola agent', () => {
+				useSettingsStore.setState({
+					encoreFeatures: {
+						...useSettingsStore.getState().encoreFeatures,
+						pianola: false,
+					},
+				} as any);
+				const sessions = [
+					createMockSession('session-1', 'Pia', 'claude-code'),
+					{
+						...createMockSession('session-2', 'Pianola', 'claude-code'),
+						isPianola: true,
+					} as Session,
+				];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@pia');
+
+				expect(screen.getByText('Pia')).toBeInTheDocument();
+				expect(screen.queryByText('Pianola')).not.toBeInTheDocument();
+
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@Pia ');
+			});
+
+			it('does not complete group mentions on Tab with picker closed', () => {
+				const groups = [createMockGroup('group-1', 'PROJECTS')];
+				const sessions = [
+					{ ...createMockSession('session-1', 'Agent1', 'claude-code'), groupId: 'group-1' },
+				];
+				render(<GroupChatInput {...createDefaultProps({ sessions, groups })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@PROJ');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+				textarea.dispatchEvent(event);
+
+				expect(textarea.value).toBe('@PROJ');
+				expect(event.defaultPrevented).toBe(false);
+			});
+
+			it('does not prevent default on plain Tab with no @ token', () => {
+				render(<GroupChatInput {...createDefaultProps()} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, 'hello world');
+
+				const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+				textarea.dispatchEvent(event);
+
+				expect(event.defaultPrevented).toBe(false);
+				expect(textarea.value).toBe('hello world');
+			});
+
+			it('yields Tab to an active IME composition', () => {
+				const sessions = [createMockSession('session-1', 'Maestro', 'claude-code')];
+				render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, '@Mae');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				const event = new KeyboardEvent('keydown', {
+					key: 'Tab',
+					bubbles: true,
+					cancelable: true,
+				});
+				Object.defineProperty(event, 'isComposing', { value: true });
+				textarea.dispatchEvent(event);
+
+				expect(textarea.value).toBe('@Mae');
+				expect(event.defaultPrevented).toBe(false);
+			});
+		});
+
 		describe('Cmd+F', () => {
 			beforeEach(() => {
 				useUIStore.setState({ outputSearchByKey: {} });
@@ -1236,6 +1466,333 @@ describe('GroupChatInput', () => {
 			paste(screen.getByRole('textbox') as HTMLTextAreaElement, '', ['image/png']);
 
 			expect(handlePaste).toHaveBeenCalled();
+		});
+	});
+
+	describe('moderator attach gate', () => {
+		function paste(textarea: HTMLTextAreaElement, text: string, types = ['text/plain']) {
+			fireEvent.paste(textarea, {
+				clipboardData: {
+					items: types.map((type) => ({ type })),
+					getData: () => text,
+				},
+			});
+		}
+
+		it('shows the Attach Image button when the moderator supports image input', () => {
+			render(<GroupChatInput {...createDefaultProps({ moderatorAgentId: 'claude-code' })} />);
+			expect(screen.getByTitle('Attach Image')).toBeInTheDocument();
+		});
+
+		it('shows the Attach Image button while capabilities are loading', () => {
+			render(
+				<GroupChatInput {...createDefaultProps({ moderatorAgentId: 'uncached-loading-agent' })} />
+			);
+			expect(screen.getByTitle('Attach Image')).toBeInTheDocument();
+		});
+
+		it('shows the Attach Image button and allows send after the capability fetch fails', async () => {
+			vi.mocked(window.maestro.agents.getCapabilities).mockRejectedValueOnce(
+				new Error('IPC failed')
+			);
+			const onSend = vi.fn();
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						moderatorAgentId: 'failing-agent',
+						stagedImages: ['data:image/png;base64,sample'],
+						onSend,
+						enterToSendAI: true,
+					})}
+				/>
+			);
+
+			// Let the rejected fetch settle. Until it does the hook reports
+			// `loading`, and the gate allows images for that reason, so asserting
+			// here without waiting would pass even if the error branch hid Attach.
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+			expect(window.maestro.agents.getCapabilities).toHaveBeenCalledWith('failing-agent');
+
+			expect(screen.queryByTestId('staged-images-warning')).not.toBeInTheDocument();
+			expect(screen.getByTitle('Attach Image')).toBeInTheDocument();
+
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'allowed despite error');
+			fireEvent.keyDown(textarea, { key: 'Enter' });
+
+			expect(onSend).toHaveBeenCalledWith(
+				'allowed despite error',
+				['data:image/png;base64,sample'],
+				false
+			);
+		});
+
+		it('omits the Attach Image button when the moderator does not support image input', () => {
+			render(<GroupChatInput {...createDefaultProps({ moderatorAgentId: 'terminal' })} />);
+			expect(screen.queryByTitle('Attach Image')).not.toBeInTheDocument();
+		});
+
+		it('refuses image paste and flashes warning when moderator does not support image input', () => {
+			const handlePaste = vi.fn();
+			render(
+				<GroupChatInput {...createDefaultProps({ moderatorAgentId: 'terminal', handlePaste })} />
+			);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+			paste(textarea, '', ['image/png']);
+
+			expect(notifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+			});
+			expect(handlePaste).not.toHaveBeenCalled();
+		});
+
+		it('allows text paste when moderator does not support image input', () => {
+			render(<GroupChatInput {...createDefaultProps({ moderatorAgentId: 'terminal' })} />);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+			paste(textarea, '  regular text\n', ['text/plain']);
+
+			expect(notifyCenterFlash).not.toHaveBeenCalled();
+			expect(textarea.value).toBe('regular text');
+		});
+
+		it('delegates image drops to the shared handler, which does the refusal', () => {
+			const handleDrop = vi.fn();
+			render(
+				<GroupChatInput {...createDefaultProps({ moderatorAgentId: 'terminal', handleDrop })} />
+			);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+			fireEvent.drop(textarea, {
+				dataTransfer: {
+					files: [new File(['dummy'], 'photo.png', { type: 'image/png' })],
+				},
+			});
+
+			expect(handleDrop).toHaveBeenCalledTimes(1);
+			// The refusal flash belongs to the shared handler, so the wrapper must
+			// not flash first (that would double it).
+			expect(notifyCenterFlash).not.toHaveBeenCalled();
+		});
+
+		it('delegates mixed drops so the shared handler can keep the non-image files', () => {
+			const handleDrop = vi.fn();
+			render(
+				<GroupChatInput {...createDefaultProps({ moderatorAgentId: 'terminal', handleDrop })} />
+			);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+			fireEvent.drop(textarea, {
+				dataTransfer: {
+					files: [
+						new File(['img1'], 'photo.png', { type: 'image/png' }),
+						new File(['doc'], 'notes.pdf', { type: 'application/pdf' }),
+					],
+				},
+			});
+
+			expect(handleDrop).toHaveBeenCalledTimes(1);
+			expect(notifyCenterFlash).not.toHaveBeenCalled();
+		});
+
+		it('shows warning badge beside staged strip when images are staged but moderator cannot read images', () => {
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						moderatorAgentId: 'terminal',
+						stagedImages: ['data:image/png;base64,sample'],
+					})}
+				/>
+			);
+
+			const warning = screen.getByTestId('staged-images-warning');
+			expect(warning).toBeInTheDocument();
+			expect(warning).toHaveTextContent("Moderator can't read images");
+		});
+
+		it('omits warning badge when images are staged and moderator can read images', () => {
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						moderatorAgentId: 'claude-code',
+						stagedImages: ['data:image/png;base64,sample'],
+					})}
+				/>
+			);
+
+			expect(screen.queryByTestId('staged-images-warning')).not.toBeInTheDocument();
+		});
+
+		it('refuses submit via Enter, Cmd+Enter, and Send button when images are staged and moderator cannot read them', () => {
+			const onSend = vi.fn();
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						moderatorAgentId: 'terminal',
+						stagedImages: ['data:image/png;base64,sample'],
+						onSend,
+						enterToSendAI: true,
+					})}
+				/>
+			);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'message with image');
+
+			// Enter
+			fireEvent.keyDown(textarea, { key: 'Enter' });
+			expect(notifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+				detail: 'Remove the attached images to send',
+			});
+			expect(onSend).not.toHaveBeenCalled();
+			expect(textarea.value).toBe('message with image');
+
+			// Cmd+Enter
+			vi.mocked(notifyCenterFlash).mockClear();
+			fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
+			expect(notifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+				detail: 'Remove the attached images to send',
+			});
+			expect(onSend).not.toHaveBeenCalled();
+
+			// Send button click
+			vi.mocked(notifyCenterFlash).mockClear();
+			const sendBtn = screen.getByTitle('Send message');
+			fireEvent.click(sendBtn);
+			expect(notifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+				detail: 'Remove the attached images to send',
+			});
+			expect(onSend).not.toHaveBeenCalled();
+			expect(textarea.value).toBe('message with image');
+		});
+
+		it('allows submit once staged images are removed', () => {
+			const onSend = vi.fn();
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						moderatorAgentId: 'terminal',
+						stagedImages: [],
+						onSend,
+						enterToSendAI: true,
+					})}
+				/>
+			);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'text only');
+
+			fireEvent.keyDown(textarea, { key: 'Enter' });
+
+			expect(onSend).toHaveBeenCalledWith('text only', undefined, false);
+		});
+
+		it('switching moderator live from incapable to capable clears warning and sends with images', () => {
+			const onSend = vi.fn();
+			const chat = {
+				id: 'test-group-chat',
+				name: 'Test Room',
+				moderatorAgentId: 'terminal',
+				participants: [],
+				createdAt: 1,
+				lastActivityAt: 1,
+			};
+			useGroupChatStore.setState({ groupChats: [chat] });
+
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						groupChatId: 'test-group-chat',
+						moderatorAgentId: undefined,
+						stagedImages: ['data:image/png;base64,sample'],
+						onSend,
+						enterToSendAI: true,
+					})}
+				/>
+			);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'send later');
+
+			// Staged warning badge is visible
+			expect(screen.getByTestId('staged-images-warning')).toBeInTheDocument();
+
+			// Submitting is blocked
+			fireEvent.keyDown(textarea, { key: 'Enter' });
+			expect(notifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+				detail: 'Remove the attached images to send',
+			});
+			expect(onSend).not.toHaveBeenCalled();
+
+			// Switch moderator live to claude-code
+			act(() => {
+				useGroupChatStore.setState({
+					groupChats: [{ ...chat, moderatorAgentId: 'claude-code' }],
+				});
+			});
+
+			// Warning badge disappears
+			expect(screen.queryByTestId('staged-images-warning')).not.toBeInTheDocument();
+
+			// Submitting now succeeds
+			vi.mocked(notifyCenterFlash).mockClear();
+			fireEvent.keyDown(textarea, { key: 'Enter' });
+			expect(onSend).toHaveBeenCalledWith('send later', ['data:image/png;base64,sample'], false);
+			expect(notifyCenterFlash).not.toHaveBeenCalled();
+		});
+
+		it('switching moderator live from capable to incapable blocks send even if rendered when capable', () => {
+			const onSend = vi.fn();
+			const chat = {
+				id: 'test-group-chat',
+				name: 'Test Room',
+				moderatorAgentId: 'claude-code',
+				participants: [],
+				createdAt: 1,
+				lastActivityAt: 1,
+			};
+			useGroupChatStore.setState({ groupChats: [chat] });
+
+			render(
+				<GroupChatInput
+					{...createDefaultProps({
+						groupChatId: 'test-group-chat',
+						moderatorAgentId: undefined,
+						stagedImages: ['data:image/png;base64,sample'],
+						onSend,
+						enterToSendAI: true,
+					})}
+				/>
+			);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'send while changing');
+
+			// Switch moderator live to terminal
+			act(() => {
+				useGroupChatStore.setState({
+					groupChats: [{ ...chat, moderatorAgentId: 'terminal' }],
+				});
+			});
+
+			// Submitting is refused
+			fireEvent.keyDown(textarea, { key: 'Enter' });
+			expect(notifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+				detail: 'Remove the attached images to send',
+			});
+			expect(onSend).not.toHaveBeenCalled();
+			expect(textarea.value).toBe('send while changing');
 		});
 	});
 

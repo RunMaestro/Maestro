@@ -64,6 +64,7 @@ import {
 	submitMessage,
 } from '../../group-chat/group-chat-queue';
 import type { GroupChatQueuedItem } from '../../../shared/group-chat-types';
+import { moderatorImagesRefusal } from '../../../shared/maestro-lib/groupchat/image-gate';
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
 
 // Group chat moderator imports
@@ -661,6 +662,17 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		readOnly?: boolean
 	): Promise<void> => {
 		assertGroupChatProviderProcessesEnabled();
+
+		// A message queued under one moderator can drain after a switch to a
+		// provider that cannot read images. Decide from the room as it is at send
+		// time, before anything is logged or handed over.
+		let chatForSend: GroupChat | null | undefined;
+		if (images?.length) {
+			chatForSend = await loadGroupChat(id);
+			const refusal = moderatorImagesRefusal(chatForSend, images);
+			if (refusal) throw new Error(refusal);
+		}
+
 		logger.info(`[GroupChat:Debug] ========== USER MESSAGE RECEIVED ==========`);
 		logger.info(`[GroupChat:Debug] Group Chat ID: ${id}`);
 		logger.info(
@@ -678,7 +690,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		// Auto-restart moderator if it exited (e.g., after completing a turn)
 		if (!isModeratorActive(id) && processManager) {
 			logger.info(`[GroupChat:Debug] Moderator not active, auto-restarting...`);
-			const chat = await loadGroupChat(id);
+			const chat = chatForSend ?? (await loadGroupChat(id));
 			if (!chat) {
 				throw new Error(`Group chat not found: ${id}`);
 			}

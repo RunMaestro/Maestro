@@ -26,7 +26,6 @@ import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { ComposerTextarea } from './ComposerTextarea';
 import { ChatComposerFrame, useChatComposerFold } from './ChatComposerFrame';
 import { AtMentionPopover } from '../InputArea/overlays/AtMentionPopover';
-import { moveStagedImage } from '../../utils/stagedImageOrder';
 import { applyTrimmedTextPaste, clipboardHasImage } from './pasteTrim';
 import { getAtMentionTrigger } from '../InputArea/utils/inputTriggers';
 import {
@@ -35,8 +34,12 @@ import {
 	type MentionPickerItem,
 } from '../../hooks/input/useMentionPicker';
 import type { AtMentionSuggestion } from '../../hooks/input/useAtMentionCompletion';
-import { buildKnownMentionNameSet } from '../../hooks/input/useAgentMentionCompletion';
 import {
+	buildKnownMentionNameSet,
+	useAgentMentionCompletion,
+} from '../../hooks/input/useAgentMentionCompletion';
+import {
+	handleComposerAgentTabKey,
 	handleComposerFindKey,
 	handleComposerPickerKey,
 	handleComposerSendKey,
@@ -76,6 +79,8 @@ export interface ChatComposerProps {
 	imageInputId?: string;
 	imageReportComponent?: string;
 	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
+	/** Optional visible warning badge beside the staged images strip. */
+	stagedImagesWarning?: string;
 
 	// Keyboard & focus
 	enterToSend?: boolean;
@@ -131,6 +136,7 @@ export const ChatComposer = React.memo(function ChatComposer({
 	imageInputId,
 	imageReportComponent,
 	onOpenLightbox,
+	stagedImagesWarning,
 	enterToSend = false,
 	setEnterToSend,
 	resolveSearchKey,
@@ -179,6 +185,12 @@ export const ChatComposer = React.memo(function ChatComposer({
 		currentSessionId: undefined,
 		fileSuggestions: NO_FILE_SUGGESTIONS,
 	});
+
+	const { getSuggestions: getAgentSuggestions } = useAgentMentionCompletion(
+		sessions,
+		groups,
+		undefined
+	);
 
 	const hasMentionCandidate = value.includes('@');
 	const knownMentionNames = useMemo(
@@ -293,6 +305,32 @@ export const ChatComposer = React.memo(function ChatComposer({
 			) {
 				return;
 			}
+			if (
+				handleComposerAgentTabKey(e, {
+					inputRef,
+					getInputValue: () => value,
+					getAgentSuggestions,
+					accept: (selected, startIndex, filter) => {
+						const accept = buildMentionAccept(value, startIndex, filter, selected);
+						onChange(accept.value);
+						closeAtMention();
+						inputRef.current?.focus();
+						requestAnimationFrame(() => {
+							const el = inputRef.current;
+							if (el) el.selectionStart = el.selectionEnd = accept.caretPos;
+						});
+					},
+					openPicker: (startIndex, filter) => {
+						setAtMentionOpen(true);
+						setAtMentionFilter(filter);
+						setAtMentionStartIndex(startIndex);
+						setSelectedAtMentionIndex(0);
+					},
+					isolateFromWindowKeys,
+				})
+			) {
+				return;
+			}
 			handleComposerSendKey(e, {
 				enterToSend,
 				send: handleSend,
@@ -311,6 +349,9 @@ export const ChatComposer = React.memo(function ChatComposer({
 			inputRef,
 			enterToSend,
 			handleSend,
+			value,
+			getAgentSuggestions,
+			onChange,
 		]
 	);
 
@@ -348,11 +389,6 @@ export const ChatComposer = React.memo(function ChatComposer({
 		onFocus?.();
 	}, [onFocus]);
 
-	const handleReorderStagedImages = useCallback(
-		(from: number, to: number) => setStagedImages?.((prev) => moveStagedImage(prev, from, to)),
-		[setStagedImages]
-	);
-
 	const setLightboxImageCallback = useCallback(
 		(img: string | null, contextImages?: string[], source?: 'staged' | 'history') => {
 			if (img) onOpenLightbox?.(img, contextImages, source);
@@ -387,6 +423,7 @@ export const ChatComposer = React.memo(function ChatComposer({
 			isBusy={isBusy}
 			hasDraft={phoneHandleHasDraft}
 			warningBorder={warningBorder}
+			stagedImagesWarning={stagedImagesWarning}
 			aboveComposer={aboveComposer}
 			overlays={
 				<AtMentionPopover
@@ -430,7 +467,8 @@ export const ChatComposer = React.memo(function ChatComposer({
 			sheetExtras={sheetExtras}
 			stagedImages={stagedImages}
 			setStagedImages={setStagedImages}
-			onReorderStagedImages={handleReorderStagedImages}
+			draftValue={value}
+			onDraftChange={onChange}
 			setLightboxImage={setLightboxImageCallback}
 			openAnnotator={openAnnotatorCallback}
 			checkImageFile={checkImageFile}

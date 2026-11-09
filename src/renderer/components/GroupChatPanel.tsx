@@ -253,6 +253,7 @@ export function GroupChatPanel({
 				groups={groups}
 				groupChatId={groupChat.id}
 				groupChatName={groupChat.name}
+				moderatorAgentId={groupChat.moderatorAgentId}
 				draftMessage={groupChat.draftMessage}
 				onDraftChange={onDraftChange}
 				onOpenPromptComposer={onOpenPromptComposer}

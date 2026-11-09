@@ -29,6 +29,7 @@ import type {
 import { GroomingAgentError } from '../../../../main/utils/context-groomer';
 import type { GroupChatMessage } from '../../../../main/group-chat/group-chat-log';
 import type { GroupChatHistoryEntry } from '../../../../shared/group-chat-types';
+import { MODERATOR_CANNOT_READ_IMAGES_REASON } from '../../../../shared/maestro-lib/groupchat/image-gate';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -818,6 +819,125 @@ describe('groupChat IPC handlers', () => {
 				mockAgentDetector,
 				true,
 				undefined
+			);
+		});
+
+		const chatWithModerator = (id: string, moderatorAgentId: string): GroupChat => ({
+			id,
+			name: 'Image gate chat',
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			moderatorAgentId,
+			moderatorSessionId: '',
+			participants: [],
+			logPath: `/tmp/${id}.log`,
+			imagesDir: `/tmp/${id}-images`,
+		});
+
+		it('routes images when the moderator can read them', async () => {
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(
+				chatWithModerator('gc-img-ok', 'claude-code')
+			);
+			vi.mocked(groupChatRouter.routeUserMessage).mockResolvedValue(undefined);
+
+			await handlers.get('groupChat:sendToModerator')!(
+				{} as any,
+				'gc-img-ok',
+				'look at this',
+				['/images/a.png'],
+				false
+			);
+
+			expect(groupChatRouter.routeUserMessage).toHaveBeenCalledWith(
+				'gc-img-ok',
+				'look at this',
+				mockProcessManager,
+				mockAgentDetector,
+				false,
+				['/images/a.png']
+			);
+		});
+
+		it('refuses images from a known text-only moderator before routing them', async () => {
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(
+				chatWithModerator('gc-img-no', 'terminal')
+			);
+
+			await expect(
+				handlers.get('groupChat:sendToModerator')!(
+					{} as any,
+					'gc-img-no',
+					'look',
+					['/images/a.png'],
+					false
+				)
+			).rejects.toThrow(MODERATOR_CANNOT_READ_IMAGES_REASON);
+			expect(groupChatRouter.routeUserMessage).not.toHaveBeenCalled();
+		});
+
+		it('ignores a custom binary when reading the provider capability', async () => {
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue({
+				...chatWithModerator('gc-img-custom', 'terminal'),
+				moderatorConfig: { customPath: '/custom/claude' },
+			});
+
+			await expect(
+				handlers.get('groupChat:sendToModerator')!(
+					{} as any,
+					'gc-img-custom',
+					'look',
+					['/images/a.png'],
+					false
+				)
+			).rejects.toThrow(MODERATOR_CANNOT_READ_IMAGES_REASON);
+			expect(groupChatRouter.routeUserMessage).not.toHaveBeenCalled();
+		});
+
+		it('never gates a text-only message, even from a text-only moderator', async () => {
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(
+				chatWithModerator('gc-text-only', 'terminal')
+			);
+			vi.mocked(groupChatRouter.routeUserMessage).mockResolvedValue(undefined);
+
+			await handlers.get('groupChat:sendToModerator')!(
+				{} as any,
+				'gc-text-only',
+				'just text',
+				undefined,
+				false
+			);
+
+			expect(groupChatRouter.routeUserMessage).toHaveBeenCalledWith(
+				'gc-text-only',
+				'just text',
+				mockProcessManager,
+				mockAgentDetector,
+				false,
+				undefined
+			);
+		});
+
+		it('allows images when the moderator provider is unknown', async () => {
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(
+				chatWithModerator('gc-img-unknown', 'not-a-provider')
+			);
+			vi.mocked(groupChatRouter.routeUserMessage).mockResolvedValue(undefined);
+
+			await handlers.get('groupChat:sendToModerator')!(
+				{} as any,
+				'gc-img-unknown',
+				'look',
+				['/images/a.png'],
+				false
+			);
+
+			expect(groupChatRouter.routeUserMessage).toHaveBeenCalledWith(
+				'gc-img-unknown',
+				'look',
+				mockProcessManager,
+				mockAgentDetector,
+				false,
+				['/images/a.png']
 			);
 		});
 
@@ -1689,6 +1809,97 @@ describe('groupChat IPC handlers', () => {
 			};
 			expect(queue.items).toEqual([expect.objectContaining({ id: 'kept-item' })]);
 			expect(queue.items[0].sending).toBeUndefined();
+		});
+	});
+
+	describe('P10: the image gate runs when a queued message is actually sent', () => {
+		const chatIds: string[] = [];
+		const freshChatId = (label: string) => {
+			const id = `gc-p10-${label}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+			chatIds.push(id);
+			return id;
+		};
+
+		const chatWithModerator = (id: string, moderatorAgentId: string): GroupChat => ({
+			id,
+			name: 'P10 chat',
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			moderatorAgentId,
+			moderatorSessionId: '',
+			participants: [],
+			logPath: `/tmp/${id}.log`,
+			imagesDir: `/tmp/${id}-images`,
+		});
+
+		afterEach(async () => {
+			await waitForQueueSettledForTests();
+			for (const id of chatIds.splice(0)) {
+				await rm(groupChatStorage.getGroupChatDir(id), { recursive: true, force: true });
+			}
+		});
+
+		it('pauses a queued image message after a moderator switch and delivers the same images when the room can read them again', async () => {
+			const chatId = freshChatId('switch');
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(
+				chatWithModerator(chatId, 'claude-code')
+			);
+			vi.mocked(groupChatRouter.routeUserMessage).mockResolvedValue(undefined);
+
+			groupChatEmitters.emitStateChange?.(chatId, 'moderator-thinking');
+			await handlers.get('groupChat:submitMessage')!({} as never, chatId, {
+				id: 'p10-img',
+				timestamp: Date.now(),
+				text: 'look at this',
+				images: ['/images/a.png'],
+			});
+			expect(groupChatRouter.routeUserMessage).not.toHaveBeenCalled();
+
+			// The moderator changes while the item waits. The drain must ask the room
+			// it is about to hand the images to, not the room the item was queued under.
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(
+				chatWithModerator(chatId, 'terminal')
+			);
+			groupChatEmitters.emitStateChange?.(chatId, 'idle');
+			await waitForQueueSettledForTests();
+
+			const failed = (await handlers.get('groupChat:getQueue')!({} as never, chatId)) as {
+				items: Array<{ failed?: boolean; failureReason?: string }>;
+				paused: boolean;
+			};
+			expect(failed.paused).toBe(true);
+			expect(failed.items).toEqual([
+				expect.objectContaining({
+					failed: true,
+					failureReason: MODERATOR_CANNOT_READ_IMAGES_REASON,
+				}),
+			]);
+			expect(groupChatRouter.routeUserMessage).not.toHaveBeenCalled();
+
+			// A refusal is final for this attempt: idling again must not spin.
+			groupChatEmitters.emitStateChange?.(chatId, 'idle');
+			await waitForQueueSettledForTests();
+			expect(groupChatRouter.routeUserMessage).not.toHaveBeenCalled();
+
+			// Switching back makes the failed item deliverable again, images included.
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(
+				chatWithModerator(chatId, 'claude-code')
+			);
+			await handlers.get('groupChat:queueResume')!({} as never, chatId);
+			await waitForQueueSettledForTests();
+
+			expect(groupChatRouter.routeUserMessage).toHaveBeenCalledWith(
+				chatId,
+				'look at this',
+				mockProcessManager,
+				mockAgentDetector,
+				undefined,
+				['/images/a.png']
+			);
+			const after = (await handlers.get('groupChat:getQueue')!({} as never, chatId)) as {
+				items: unknown[];
+			};
+			expect(after.items).toHaveLength(0);
 		});
 	});
 });

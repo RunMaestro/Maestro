@@ -129,6 +129,37 @@ const MENTION_SCAN_SOURCE = `${QUOTED_MENTION_SOURCE}|@[${BODY_CHAR}]+`;
 /** Sentence-ending punctuation trimmed off the tail of a BARE match. */
 const TRAILING_PUNCTUATION = /[.,;:!?)\]}>'"]+$/;
 
+/** One mention-body code point, for boundary scans that walk a string by hand. */
+// eslint-disable-next-line no-misleading-character-class
+const BODY_CHAR_RE = new RegExp(`^[${BODY_CHAR}]$`, 'u');
+
+/**
+ * The exclusive end of the bare mention body that starts at `from`.
+ *
+ * A dot IS a body character, because an agent name can contain one
+ * (`@RunMaestro.ai`). Stopping at the first dot is what left the tail of a
+ * dotted name behind when Tab completed a reference with the caret mid-name.
+ * The scan walks by code point so astral emoji in a name are consumed whole.
+ */
+export function mentionBodyEndAt(text: string, from: number): number {
+	let end = from;
+	for (const char of text.slice(from)) {
+		if (!BODY_CHAR_RE.test(char)) break;
+		end += char.length;
+	}
+	return end;
+}
+
+/**
+ * Remove sentence punctuation from the tail of a bare mention body, so
+ * `RunMaestro.ai.` searches as `RunMaestro.ai` and the full stop stays in the
+ * draft. Used when completing a reference whose caret sits just after the
+ * punctuation that ends the sentence.
+ */
+export function trimMentionBodyPunctuation(body: string): string {
+	return body.replace(TRAILING_PUNCTUATION, '');
+}
+
 /**
  * The opening mention quote of `text` (a mention body, or the picker's raw
  * filter - i.e. whatever follows the `@`), or null when it is unquoted.

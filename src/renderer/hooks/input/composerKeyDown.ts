@@ -3,13 +3,14 @@
  *
  * Shared by the AI composer (`useInputKeyDown`) and the Group Chat composer
  * (`GroupChatInput`): Cmd+F to Find, the `@` picker's Up / Down / Tab / Enter /
- * Escape, Enter or Cmd+Enter to send, and Escape to leave the composer. Each
- * function handles one branch and returns true when it consumed the key, so a
- * surface calls them in its own order around the branches only it has (the AI
- * composer's command ladder, slash commands, shell completion, category
- * cycling, steer and Forced Parallel Send). They know nothing about sessions,
- * tabs or rooms: every value a surface owns arrives as an argument, read by the
- * caller at call time, so a keystroke never subscribes a component to a store.
+ * Escape, Tab on a partial `@agent` reference with the picker closed, Enter or
+ * Cmd+Enter to send, and Escape to leave the composer. Each function handles one
+ * branch and returns true when it consumed the key, so a surface calls them in
+ * its own order around the branches only it has (the AI composer's command
+ * ladder, slash commands, shell completion, category cycling, steer and Forced
+ * Parallel Send). They know nothing about sessions, tabs or rooms: every value
+ * a surface owns arrives as an argument, read by the caller at call time, so a
+ * keystroke never subscribes a component to a store.
  *
  * `isolateFromWindowKeys`: the window keyboard handlers (`handleTabNavigation`
  * and `handleEscapeInMain` in `useKeyboardNavigation`, and the Cmd+F routing in
@@ -36,6 +37,14 @@ import type React from 'react';
 import { useUIStore } from '../../stores/uiStore';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
 import { isImeComposing } from '../../utils/ime';
+import { getAtMentionTrigger } from '../../../shared/maestro-lib/mentions/trigger';
+import {
+	mentionBodyEndAt,
+	mentionQuoteChar,
+	stripMentionQuotes,
+	trimMentionBodyPunctuation,
+} from '../../../shared/mentionPatterns';
+import type { AgentMentionSuggestion } from './useAgentMentionCompletion';
 
 interface WindowIsolation {
 	/** See the module comment. Off for the AI composer. */
@@ -147,6 +156,120 @@ export function handleComposerPickerKey<T>(
 		return true;
 	}
 	return false;
+}
+
+export interface PartialMentionTrigger {
+	startIndex: number;
+	filter: string;
+}
+
+/**
+ * Locate a partial `@name` reference under the caret. Returns null when the
+ * caret is not inside or at the end of an `@name` token, when the trigger boundary
+ * is invalid (e.g. an email address), or when there is whitespace between `@`
+ * and the caret.
+ *
+ * Trailing characters after the caret up to whitespace or sentence punctuation
+ * are included in `filter` so completing a mention with the caret mid-token
+ * replaces the whole token rather than leaving trailing characters behind.
+ */
+export function findPartialMentionAtCursor(
+	value: string,
+	cursorPosition: number
+): PartialMentionTrigger | null {
+	const trigger = getAtMentionTrigger(value, cursorPosition);
+	if (!trigger) return null;
+
+	const openQuote = mentionQuoteChar(trigger.filter);
+	if (openQuote) {
+		let tail = '';
+		let idx = cursorPosition;
+		while (idx < value.length && value[idx] !== openQuote && value[idx] !== '\n') {
+			tail += value[idx];
+			idx++;
+		}
+		return { startIndex: trigger.startIndex, filter: trigger.filter + tail };
+	}
+
+	// Walk the rest of the bare token by code point. A dot is a NAME character
+	// (`@RunMaestro.ai`), so the scan must not stop at it; only sentence
+	// punctuation that ends the token is trimmed back off, leaving it in the
+	// draft.
+	const bodyEnd = mentionBodyEndAt(value, cursorPosition);
+	const rawFilter = trigger.filter + value.slice(cursorPosition, bodyEnd);
+	return {
+		startIndex: trigger.startIndex,
+		filter: trimMentionBodyPunctuation(rawFilter),
+	};
+}
+
+export interface ComposerAgentTabOptions extends WindowIsolation {
+	/** Ref to the textarea to read selection and focus. */
+	inputRef: React.RefObject<HTMLTextAreaElement | null>;
+	/** Read the composer text at call time. */
+	getInputValue: () => string;
+	/**
+	 * Return the mentionable agent rows matching `filter`. Groups and terminal
+	 * agents must already be excluded (see `buildAgentMentionSuggestions`).
+	 */
+	getAgentSuggestions: (filter: string) => readonly AgentMentionSuggestion[];
+	/**
+	 * Accept a single matching agent. The surface writes the text (via
+	 * `buildMentionAccept`) and places the caret after the trailing space.
+	 */
+	accept: (item: AgentMentionSuggestion, startIndex: number, filter: string) => void;
+	/**
+	 * Open the picker when multiple agents match, filtered to `filter` starting
+	 * at `startIndex`.
+	 */
+	openPicker: (startIndex: number, filter: string) => void;
+}
+
+/**
+ * Tab with the `@` picker closed: completes a partly typed `@agent` reference.
+ * One match completes it; several open the picker filtered to them; none does
+ * what Tab did before on that surface. Mid-composition the key is left to the IME.
+ * Groups are never targets, so a matching group does not complete.
+ */
+export function handleComposerAgentTabKey(
+	e: React.KeyboardEvent,
+	options: ComposerAgentTabOptions
+): boolean {
+	if (e.key !== 'Tab') return false;
+	if (e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return false;
+	if (isImeComposing(e)) return false;
+
+	const el = options.inputRef.current;
+	if (
+		el &&
+		el.selectionStart !== null &&
+		el.selectionEnd !== null &&
+		el.selectionStart !== el.selectionEnd
+	) {
+		return false;
+	}
+
+	const value = options.getInputValue();
+	const cursorPosition = el?.selectionStart ?? value.length;
+	const partial = findPartialMentionAtCursor(value, cursorPosition);
+	if (!partial) return false;
+
+	const suggestions = options.getAgentSuggestions(stripMentionQuotes(partial.filter));
+	const agentMatches = suggestions.filter((item) => item.kind === 'agent');
+
+	if (agentMatches.length === 0) {
+		return false;
+	}
+
+	consume(e, options);
+
+	if (agentMatches.length === 1) {
+		options.accept(agentMatches[0], partial.startIndex, partial.filter);
+	} else {
+		options.openPicker(partial.startIndex, partial.filter);
+	}
+
+	return true;
 }
 
 export interface ComposerSendKeyOptions extends WindowIsolation {

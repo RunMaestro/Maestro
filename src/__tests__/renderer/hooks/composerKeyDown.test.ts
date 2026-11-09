@@ -1,12 +1,16 @@
 import type React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+	findPartialMentionAtCursor,
+	handleComposerAgentTabKey,
 	handleComposerFindKey,
 	handleComposerPickerKey,
 	handleComposerSendKey,
 	PICKER_KEYS,
 	yieldKeyToIme,
 } from '../../../renderer/hooks/input/composerKeyDown';
+import type { AgentMentionSuggestion } from '../../../shared/maestro-lib/mentions/roster';
+import { buildMentionAccept } from '../../../renderer/hooks/input/useMentionPicker';
 import { isImeComposing } from '../../../renderer/utils/ime';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../../../renderer/hooks/ui/useOutputSearchLayer';
@@ -490,5 +494,496 @@ describe('handleComposerSendKey', () => {
 				expect(stopPropagation).toHaveBeenCalled();
 			}
 		});
+	});
+});
+
+describe('findPartialMentionAtCursor', () => {
+	it('detects a partial reference at the end of input', () => {
+		expect(findPartialMentionAtCursor('ask @co', 7)).toEqual({
+			startIndex: 4,
+			filter: 'co',
+		});
+	});
+
+	it('detects a partial reference with cursor in mid-word', () => {
+		expect(findPartialMentionAtCursor('ask @co and more', 7)).toEqual({
+			startIndex: 4,
+			filter: 'co',
+		});
+		expect(findPartialMentionAtCursor('ask @co-dy more', 7)).toEqual({
+			startIndex: 4,
+			filter: 'co-dy',
+		});
+	});
+
+	it('detects bare @ trigger', () => {
+		expect(findPartialMentionAtCursor('ask @', 5)).toEqual({
+			startIndex: 4,
+			filter: '',
+		});
+	});
+
+	it('detects a completed name without a trailing space', () => {
+		expect(findPartialMentionAtCursor('ask @cody', 9)).toEqual({
+			startIndex: 4,
+			filter: 'cody',
+		});
+	});
+
+	it('returns null when preceded by non-whitespace (email address)', () => {
+		expect(findPartialMentionAtCursor('user@example.com', 8)).toBeNull();
+	});
+
+	it('returns null when cursor is past a trailing space', () => {
+		expect(findPartialMentionAtCursor('ask @cody ', 10)).toBeNull();
+		expect(findPartialMentionAtCursor('ask @cody please', 12)).toBeNull();
+	});
+
+	it('returns null when newline sits between @ and cursor', () => {
+		expect(findPartialMentionAtCursor('ask @cody\nnext', 13)).toBeNull();
+	});
+
+	it('stops tail before sentence punctuation', () => {
+		expect(findPartialMentionAtCursor('ask @cody, please', 9)).toEqual({
+			startIndex: 4,
+			filter: 'cody',
+		});
+	});
+
+	it('includes the rest of a dotted agent name with the caret mid-token', () => {
+		expect(findPartialMentionAtCursor('ask @RunMaestr.ai', 14)).toEqual({
+			startIndex: 4,
+			filter: 'RunMaestr.ai',
+		});
+	});
+
+	it('includes dots in a dotted agent name with the caret at the end', () => {
+		expect(findPartialMentionAtCursor('ask @RunMaestro.ai', 18)).toEqual({
+			startIndex: 4,
+			filter: 'RunMaestro.ai',
+		});
+	});
+
+	it('keeps the sentence full stop out of the filter', () => {
+		expect(findPartialMentionAtCursor('ask @RunMaestro.ai.', 19)).toEqual({
+			startIndex: 4,
+			filter: 'RunMaestro.ai',
+		});
+	});
+
+	it('preserves opening quote and includes quoted tail across spaces', () => {
+		// Caret at end without closing quote
+		expect(findPartialMentionAtCursor('ask @"Alice B', 13)).toEqual({
+			startIndex: 4,
+			filter: '"Alice B',
+		});
+		// Caret mid-token without closing quote
+		expect(findPartialMentionAtCursor('ask @"Alice B', 10)).toEqual({
+			startIndex: 4,
+			filter: '"Alice B',
+		});
+		// Caret mid-token with closing quote
+		expect(findPartialMentionAtCursor('ask @"Alice B" more', 10)).toEqual({
+			startIndex: 4,
+			filter: '"Alice B',
+		});
+		// Caret right before closing quote
+		expect(findPartialMentionAtCursor('ask @"Alice B"', 13)).toEqual({
+			startIndex: 4,
+			filter: '"Alice B',
+		});
+		// Caret past closing quote (completed mention, not a partial trigger)
+		expect(findPartialMentionAtCursor('ask @"Alice B"', 14)).toBeNull();
+	});
+});
+
+describe('handleComposerAgentTabKey', () => {
+	const agentA: AgentMentionSuggestion = {
+		kind: 'agent',
+		displayText: 'Codex',
+		value: '@Codex ',
+		targetSessionId: 'sess-a',
+		score: 10,
+	};
+	const agentB: AgentMentionSuggestion = {
+		kind: 'agent',
+		displayText: 'Copilot',
+		value: '@Copilot ',
+		targetSessionId: 'sess-b',
+		score: 8,
+	};
+	const groupA: AgentMentionSuggestion = {
+		kind: 'group',
+		displayText: 'Core Team',
+		value: '@Core-Team ',
+		groupId: 'grp-1',
+		memberMentionValue: '@Codex @Copilot ',
+		score: 12,
+	};
+
+	it('ignores non-Tab keys and Tab with modifiers', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 7;
+
+		const enter = keyEvent({ key: 'Enter' });
+		expect(
+			handleComposerAgentTabKey(enter.event, {
+				inputRef,
+				getInputValue: () => 'ask @co',
+				getAgentSuggestions: () => [agentA],
+				accept: vi.fn(),
+				openPicker: vi.fn(),
+			})
+		).toBe(false);
+
+		for (const mod of [
+			{ shiftKey: true },
+			{ altKey: true },
+			{ metaKey: true },
+			{ ctrlKey: true },
+		]) {
+			const tabMod = keyEvent({ key: 'Tab', ...mod });
+			expect(
+				handleComposerAgentTabKey(tabMod.event, {
+					inputRef,
+					getInputValue: () => 'ask @co',
+					getAgentSuggestions: () => [agentA],
+					accept: vi.fn(),
+					openPicker: vi.fn(),
+				})
+			).toBe(false);
+		}
+	});
+
+	it('leaves Tab to the IME during an active composition', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 7;
+
+		for (const ime of [CHROMIUM_COMPOSING, SAFARI_CONFIRM]) {
+			const { event, preventDefault } = keyEvent({ key: 'Tab', ...ime });
+			const accept = vi.fn();
+			const openPicker = vi.fn();
+
+			const handled = handleComposerAgentTabKey(event, {
+				inputRef,
+				getInputValue: () => 'ask @co',
+				getAgentSuggestions: () => [agentA],
+				accept,
+				openPicker,
+			});
+
+			expect(handled).toBe(false);
+			expect(preventDefault).not.toHaveBeenCalled();
+			expect(accept).not.toHaveBeenCalled();
+			expect(openPicker).not.toHaveBeenCalled();
+		}
+	});
+
+	it('ignores Tab when text is selected', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co';
+		inputRef.current!.selectionStart = 4;
+		inputRef.current!.selectionEnd = 7;
+
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @co',
+			getAgentSuggestions: () => [agentA],
+			accept: vi.fn(),
+			openPicker: vi.fn(),
+		});
+
+		expect(handled).toBe(false);
+		expect(preventDefault).not.toHaveBeenCalled();
+	});
+
+	it('ignores Tab when there is no @ reference under cursor', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask something';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 13;
+
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask something',
+			getAgentSuggestions: () => [agentA],
+			accept: vi.fn(),
+			openPicker: vi.fn(),
+		});
+
+		expect(handled).toBe(false);
+		expect(preventDefault).not.toHaveBeenCalled();
+	});
+
+	it('completes when exactly one agent matches', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 7;
+
+		const { event, preventDefault, stopPropagation } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+		const openPicker = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @co',
+			getAgentSuggestions: (filter) => {
+				expect(filter).toBe('co');
+				return [agentA];
+			},
+			accept,
+			openPicker,
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		expect(stopPropagation).not.toHaveBeenCalled();
+		expect(accept).toHaveBeenCalledWith(agentA, 4, 'co');
+		expect(openPicker).not.toHaveBeenCalled();
+	});
+
+	it('completes a dotted name mid-token and leaves the sentence full stop', () => {
+		const value = 'ask @RunMaestr.ai.';
+		const inputRef = textareaRef();
+		inputRef.current!.value = value;
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 14;
+
+		const agent: AgentMentionSuggestion = {
+			kind: 'agent',
+			displayText: 'RunMaestro.ai',
+			value: '@RunMaestro.ai ',
+			targetSessionId: 'sess-dot',
+			score: 10,
+		};
+		const { event } = keyEvent({ key: 'Tab' });
+		let accepted = '';
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => value,
+			getAgentSuggestions: (filter) => {
+				expect(filter).toBe('RunMaestr.ai');
+				return [agent];
+			},
+			accept: (selected, startIndex, filter) => {
+				accepted = buildMentionAccept(value, startIndex, filter, selected).value;
+			},
+			openPicker: vi.fn(),
+		});
+
+		expect(handled).toBe(true);
+		expect(accepted).toBe('ask @RunMaestro.ai .');
+	});
+
+	it('stops propagation when isolated from window keys', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 7;
+
+		const { event, preventDefault, stopPropagation } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @co',
+			getAgentSuggestions: () => [agentA],
+			accept,
+			openPicker: vi.fn(),
+			isolateFromWindowKeys: true,
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		expect(stopPropagation).toHaveBeenCalled();
+		expect(accept).toHaveBeenCalledWith(agentA, 4, 'co');
+	});
+
+	it('opens the picker when multiple agents match', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 7;
+
+		const { event, preventDefault, stopPropagation } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+		const openPicker = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @co',
+			getAgentSuggestions: () => [agentA, agentB],
+			accept,
+			openPicker,
+			isolateFromWindowKeys: true,
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		expect(stopPropagation).toHaveBeenCalled();
+		expect(openPicker).toHaveBeenCalledWith(4, 'co');
+		expect(accept).not.toHaveBeenCalled();
+	});
+
+	it('does not complete or open picker when only a group matches', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @core';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 9;
+
+		const { event, preventDefault, stopPropagation } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+		const openPicker = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @core',
+			getAgentSuggestions: () => [groupA],
+			accept,
+			openPicker,
+		});
+
+		expect(handled).toBe(false);
+		expect(preventDefault).not.toHaveBeenCalled();
+		expect(stopPropagation).not.toHaveBeenCalled();
+		expect(accept).not.toHaveBeenCalled();
+		expect(openPicker).not.toHaveBeenCalled();
+	});
+
+	it('completes the single matching agent even when a group also matches', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 7;
+
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @co',
+			getAgentSuggestions: () => [groupA, agentA],
+			accept,
+			openPicker: vi.fn(),
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		expect(accept).toHaveBeenCalledWith(agentA, 4, 'co');
+	});
+
+	it('completes when token is already a full name without space', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @Codex';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 10;
+
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @Codex',
+			getAgentSuggestions: () => [agentA],
+			accept,
+			openPicker: vi.fn(),
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		expect(accept).toHaveBeenCalledWith(agentA, 4, 'Codex');
+	});
+
+	it('completes with cursor mid-token', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @co-dex please';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 7;
+
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @co-dex please',
+			getAgentSuggestions: (filter) => {
+				expect(filter).toBe('co-dex');
+				return [agentA];
+			},
+			accept,
+			openPicker: vi.fn(),
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		expect(accept).toHaveBeenCalledWith(agentA, 4, 'co-dex');
+	});
+
+	it('completes quoted partial mention on single match passing raw filter to accept', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @"Alice B';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 13;
+
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+		const agentAlice: AgentMentionSuggestion = {
+			kind: 'agent',
+			displayText: 'Alice Bob',
+			value: '@"Alice Bob" ',
+			targetSessionId: 'sess-alice',
+			score: 10,
+		};
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @"Alice B',
+			getAgentSuggestions: (filter) => {
+				// Search term is stripped of quotes
+				expect(filter).toBe('Alice B');
+				return [agentAlice];
+			},
+			accept,
+			openPicker: vi.fn(),
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		// Accept receives raw filter so spliceMentionLiteral can measure the replaced span
+		expect(accept).toHaveBeenCalledWith(agentAlice, 4, '"Alice B');
+	});
+
+	it('opens picker with raw filter on multiple matches for quoted partial mention', () => {
+		const inputRef = textareaRef();
+		inputRef.current!.value = 'ask @"Alice B';
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 13;
+
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const openPicker = vi.fn();
+		const agent1: AgentMentionSuggestion = {
+			kind: 'agent',
+			displayText: 'Alice Bob',
+			value: '@"Alice Bob" ',
+			targetSessionId: 'sess-1',
+			score: 10,
+		};
+		const agent2: AgentMentionSuggestion = {
+			kind: 'agent',
+			displayText: 'Alice Brown',
+			value: '@"Alice Brown" ',
+			targetSessionId: 'sess-2',
+			score: 9,
+		};
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => 'ask @"Alice B',
+			getAgentSuggestions: (filter) => {
+				expect(filter).toBe('Alice B');
+				return [agent1, agent2];
+			},
+			accept: vi.fn(),
+			openPicker,
+		});
+
+		expect(handled).toBe(true);
+		expect(preventDefault).toHaveBeenCalled();
+		expect(openPicker).toHaveBeenCalledWith(4, '"Alice B');
 	});
 });
