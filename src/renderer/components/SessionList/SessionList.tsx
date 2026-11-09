@@ -2082,7 +2082,7 @@ function SessionListInner(props: SessionListProps) {
 													}}
 													onKeyDown={(e) => {
 														e.stopPropagation();
-														if (e.key === 'Enter') {
+														if (e.key === 'Enter' && !isImeComposing(e)) {
 															ignoreNextBlurRef.current = true;
 															finishRenamingGroup(group.id, e.currentTarget.value);
 														}

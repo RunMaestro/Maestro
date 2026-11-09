@@ -198,7 +198,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 			// Block Enter (any modifier combo) from triggering send while the wizard is
 			// busy - otherwise the message gets eaten by processInput's clear and the
 			// user's draft is lost. Shift+Enter is allowed so newlines still work.
-			if (isBusy && e.key === 'Enter' && !e.shiftKey) {
+			if (isBusy && e.key === 'Enter' && !e.shiftKey && !isImeComposing(e)) {
 				e.preventDefault();
 				return;
 			}

@@ -110,6 +110,7 @@ export function useSettingsSearch({
 				e.stopPropagation();
 				setSelectedIndex((i) => (i - 1 + results.length) % results.length);
 			} else if (e.key === 'Enter') {
+				if (isImeComposing(e)) return;
 				const target = results[selectedIndex] ?? results[0];
 				if (target) {
 					e.preventDefault();

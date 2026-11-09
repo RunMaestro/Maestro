@@ -320,6 +320,42 @@ describe('LeaderboardRegistrationModal', () => {
 		});
 	});
 
+	describe('Enter to submit', () => {
+		it('leaves Enter to the input method during an IME composition, and submits on a normal Enter', async () => {
+			const existingRegistration: LeaderboardRegistration = {
+				displayName: 'Test User',
+				email: 'test@example.com',
+				registeredAt: Date.now(),
+				emailConfirmed: true,
+				authToken: 'test-auth-token',
+			};
+
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={existingRegistration}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
+
+			const nameInput = screen.getByDisplayValue('Test User');
+			for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+				expect(fireEvent.keyDown(nameInput, { key: 'Enter', ...ime })).toBe(true);
+			}
+			expect(window.maestro.leaderboard.submit).not.toHaveBeenCalled();
+
+			await act(async () => {
+				fireEvent.keyDown(nameInput, { key: 'Enter' });
+			});
+			await waitFor(() => {
+				expect(window.maestro.leaderboard.submit).toHaveBeenCalledTimes(1);
+			});
+		});
+	});
+
 	describe('Form submission', () => {
 		it('should include Bluesky handle in API submission', async () => {
 			// Use existing registration with Bluesky handle to test submission includes it

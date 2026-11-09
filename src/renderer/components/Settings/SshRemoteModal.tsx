@@ -229,7 +229,7 @@ export function SshRemoteModal({
 		} else if (e.key === 'ArrowUp') {
 			e.preventDefault();
 			setSshConfigHighlightIndex((prev) => (prev > 0 ? prev - 1 : 0));
-		} else if (e.key === 'Enter') {
+		} else if (e.key === 'Enter' && !isImeComposing(e)) {
 			e.preventDefault();
 			if (filteredSshConfigHosts.length > 0 && filteredSshConfigHosts[sshConfigHighlightIndex]) {
 				handleSelectSshConfigHost(filteredSshConfigHosts[sshConfigHighlightIndex]);
