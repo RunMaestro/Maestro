@@ -18,6 +18,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { useSettingsStore, selectACappellaEnabled } from '../../stores/settingsStore';
 import { useVoiceUiStore } from '../../stores/voiceUiStore';
+import { usePermissionRequestStore } from '../../stores/permissionRequestStore';
 import { isDocumentScope } from '../../../shared/acappella/document-scope';
 import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
 import { startDocumentVoice } from '../../services/documentVoice';
@@ -57,6 +58,8 @@ export interface UseDocumentChatOptions {
 }
 
 export interface UseDocumentChatReturn extends DocumentChatView {
+	/** A live request for this tab, never another tab belonging to the same agent. */
+	waitingFor: 'permission' | 'answer' | null;
 	draft: string;
 	setDraft: (value: string) => void;
 	/** Send the draft (or explicit text) and clear the box. */
@@ -115,6 +118,15 @@ export function useDocumentChat({
 	const voiceEnabled = useSettingsStore(selectACappellaEnabled);
 	const holdThresholdMs = useVoiceUiStore((s) => s.holdThresholdMs);
 	const agentSessionId = useSessionStore((s) => resolveSession(s, sessionId)?.id);
+	const waitingFor = usePermissionRequestStore((s) => {
+		if (!agentSessionId || !tab) return null;
+		const request = s.queue.find(
+			(request) =>
+				request.sessionId === `${agentSessionId}-ai-${tab.id}` ||
+				(request.sessionId === agentSessionId && request.tabId === tab.id)
+		);
+		return request ? (request.kind === 'question' ? 'answer' : 'permission') : null;
+	});
 
 	// Matched on the PATH rather than on "a session exists", so the button only
 	// reads as active for the document it belongs to. A conversation about some
@@ -195,6 +207,7 @@ export function useDocumentChat({
 
 	return {
 		...view,
+		waitingFor,
 		history,
 		keep,
 		cycleThinking,

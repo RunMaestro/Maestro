@@ -619,7 +619,7 @@ export function SessionContextMenu({
 										onDismiss();
 									}}
 									className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-									style={{ color: theme.colors.accent }}
+									style={{ color: theme.colors.textMain }}
 								>
 									<FolderPlus className="w-3.5 h-3.5" />
 									Create New Group
@@ -695,7 +695,7 @@ export function SessionContextMenu({
 									onDismiss();
 								}}
 								className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-								style={{ color: theme.colors.accent }}
+								style={{ color: theme.colors.textMain }}
 							>
 								<Plus className="w-3.5 h-3.5" />
 								New Window
@@ -745,7 +745,7 @@ export function SessionContextMenu({
 											}}
 											className="shrink-0 p-0.5 rounded hover:bg-white/10"
 											title="Save window name"
-											style={{ color: theme.colors.accent }}
+											style={{ color: theme.colors.textMain }}
 										>
 											<Check className="w-3.5 h-3.5" />
 										</button>
@@ -810,21 +810,36 @@ export function SessionContextMenu({
 							repository.open();
 						}}
 						badge={
-							(gitActions.pushRunning || gitActions.pullRunning || gitActions.prRunning) && (
-								<GitRunningBadge
-									theme={theme}
-									label={[
-										gitActions.pushRunning && 'Pushing',
-										gitActions.pullRunning && 'Pulling',
-										gitActions.prRunning && 'Creating PR',
-									]
-										.filter(Boolean)
-										.join(', ')}
-									className="flex items-center gap-1 text-2xs"
-									testId="session-context-repository-running"
-									title="Git operations are running in the background - open Repository for details"
-								/>
-							)
+							<>
+								{gitActions.changes.fileCount > 0 && (
+									<span
+										data-testid="session-context-repository-changes"
+										title={formatGitChangeSummary(gitActions.changes)}
+									>
+										<GitChangeCounts
+											theme={theme}
+											totals={gitActions.changes}
+											filesOnly
+											className="flex items-center gap-1 text-2xs"
+										/>
+									</span>
+								)}
+								{(gitActions.pushRunning || gitActions.pullRunning || gitActions.prRunning) && (
+									<GitRunningBadge
+										theme={theme}
+										label={[
+											gitActions.pushRunning && 'Pushing',
+											gitActions.pullRunning && 'Pulling',
+											gitActions.prRunning && 'Creating PR',
+										]
+											.filter(Boolean)
+											.join(', ')}
+										className="flex items-center gap-1 text-2xs"
+										testId="session-context-repository-running"
+										title="Git operations are running in the background - open Repository for details"
+									/>
+								)}
+							</>
 						}
 					>
 						{gitActions.isGitRepo && (
@@ -948,7 +963,7 @@ export function SessionContextMenu({
 											onDismiss();
 										}}
 										className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between gap-2"
-										style={{ color: theme.colors.accent }}
+										style={{ color: theme.colors.textMain }}
 										data-testid="session-context-create-pr"
 									>
 										<span className="flex items-center gap-2">
@@ -982,7 +997,7 @@ export function SessionContextMenu({
 											onDismiss();
 										}}
 										className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-										style={{ color: theme.colors.accent }}
+										style={{ color: theme.colors.textMain }}
 									>
 										<GitBranch className="w-3.5 h-3.5" />
 										Create Worktree
@@ -996,7 +1011,7 @@ export function SessionContextMenu({
 											onDismiss();
 										}}
 										className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-										style={{ color: theme.colors.accent }}
+										style={{ color: theme.colors.textMain }}
 									>
 										<Settings className="w-3.5 h-3.5" />
 										Configure Worktrees
@@ -1028,7 +1043,7 @@ export function SessionContextMenu({
 								onDismiss();
 							}}
 							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-							style={{ color: '#06b6d4' }}
+							style={{ color: theme.colors.textMain }}
 						>
 							<Zap className="w-3.5 h-3.5" />
 							Configure Maestro Cue

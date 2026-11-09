@@ -523,6 +523,10 @@ describe('working indicator', () => {
 			})
 		);
 		expect(screen.getByText(/^Working for 5s$/)).toBeTruthy();
+		expect(screen.getByTestId('quick-chat-working').querySelector('.animate-spin')).toHaveAttribute(
+			'aria-hidden',
+			'true'
+		);
 	});
 
 	it('says Working without a frozen 0s when the start is unknown', async () => {

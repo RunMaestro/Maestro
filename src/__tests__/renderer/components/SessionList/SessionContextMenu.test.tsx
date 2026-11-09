@@ -160,6 +160,9 @@ describe('SessionContextMenu', () => {
 		const flyout = screen.getByTestId('session-context-flyout');
 		expect(screen.getByTestId('session-context-menu')).not.toContainElement(flyout);
 		expect(flyout).toHaveTextContent('Configure Maestro Cue');
+		expect(screen.getByRole('button', { name: 'Configure Maestro Cue' })).toHaveStyle({
+			color: mockTheme.colors.textMain,
+		});
 		expect(flyout).toHaveTextContent('Export Agent...');
 		expect(flyout).toHaveTextContent('Copy Agent GUID');
 		fireEvent.mouseDown(screen.getByText('Duplicate...'));
@@ -199,6 +202,11 @@ describe('SessionContextMenu', () => {
 		expect(screen.getByTestId('session-context-flyout')).toContainElement(
 			screen.getByText('Configure Worktrees')
 		);
+		for (const name of ['Create Worktree', 'Configure Worktrees']) {
+			expect(screen.getByRole('button', { name })).toHaveStyle({
+				color: mockTheme.colors.textMain,
+			});
+		}
 		fireEvent.click(screen.getByText('Create Worktree'));
 		expect(props.onQuickCreateWorktree).toHaveBeenCalledOnce();
 		expect(props.onDismiss).toHaveBeenCalledOnce();
@@ -213,6 +221,9 @@ describe('SessionContextMenu', () => {
 		expect(screen.getByTestId('session-context-git-push')).toBeInTheDocument();
 		expect(screen.getByTestId('session-context-change-branch')).toBeInTheDocument();
 		expect(screen.getByTestId('session-context-create-pr')).toBeInTheDocument();
+		expect(screen.getByTestId('session-context-create-pr')).toHaveStyle({
+			color: mockTheme.colors.textMain,
+		});
 	});
 
 	it('hides the git actions for a non-git agent', () => {
@@ -254,6 +265,7 @@ describe('SessionContextMenu', () => {
 		});
 		renderMenu();
 		expect(screen.getByTestId('session-context-repository-running')).toHaveTextContent('Pushing');
+		expect(screen.getByTestId('session-context-repository-changes')).toHaveTextContent('5');
 		expect(screen.queryByTestId('session-context-git-push-running')).not.toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
@@ -300,6 +312,9 @@ describe('SessionContextMenu', () => {
 	// Without this the row offered a diff without saying whether there was one.
 	it('badges the diff row with the working-tree change counts', () => {
 		renderMenu();
+		const summary = screen.getByTestId('session-context-repository-changes');
+		expect(summary).toHaveTextContent(/^5$/);
+		expect(summary).toHaveAttribute('title', '+206 −37 ~5 in 5 files');
 		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 		const row = screen.getByTestId('session-context-git-diff');
 		expect(row).toHaveTextContent('206');
@@ -316,6 +331,7 @@ describe('SessionContextMenu', () => {
 		});
 		mockGetFileCount.mockReturnValue(4);
 		renderMenu();
+		expect(screen.getByTestId('session-context-repository-changes')).toHaveTextContent(/^4$/);
 		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		const row = screen.getByTestId('session-context-git-diff');
@@ -326,6 +342,7 @@ describe('SessionContextMenu', () => {
 	it('leaves the diff row unbadged on a clean tree', () => {
 		mockGetFileCount.mockReturnValue(0);
 		renderMenu();
+		expect(screen.queryByTestId('session-context-repository-changes')).not.toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: /^Repository/ }));
 
 		const row = screen.getByTestId('session-context-git-diff');
@@ -500,9 +517,16 @@ describe('SessionContextMenu', () => {
 		}
 
 		it('renders the Move to Group flyout outside the menu container', () => {
-			renderMenu({ groups: GROUPS, session: makeSession({ groupId: 'g1' }) });
+			renderMenu({
+				groups: GROUPS,
+				session: makeSession({ groupId: 'g1' }),
+				onCreateGroup: vi.fn(),
+			});
 
 			const flyout = openFlyout('Move to Group');
+			expect(screen.getByRole('button', { name: 'Create New Group' })).toHaveStyle({
+				color: mockTheme.colors.textMain,
+			});
 
 			expect(screen.getByTestId('session-context-menu')).not.toContainElement(flyout);
 			expect(flyout).toContainElement(screen.getByText('Ungrouped'));
@@ -531,6 +555,9 @@ describe('SessionContextMenu', () => {
 			});
 
 			const flyout = openFlyout('Move to Window');
+			expect(screen.getByRole('button', { name: 'New Window' })).toHaveStyle({
+				color: mockTheme.colors.textMain,
+			});
 
 			expect(screen.getByTestId('session-context-menu')).not.toContainElement(flyout);
 			expect(flyout).toContainElement(screen.getByText('Window 2'));

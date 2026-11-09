@@ -3,8 +3,9 @@ release/
 node_modules/
 coverage/
 .worktrees/
-# Local browser research and performance captures are not source artifacts.
+# Local browser research, preview renders, and performance captures are not source artifacts.
 .interceptor-research/
+output/
 *.min.js
 .gitignore
 .husky/_/

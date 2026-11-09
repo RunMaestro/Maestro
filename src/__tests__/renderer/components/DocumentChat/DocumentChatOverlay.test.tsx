@@ -15,8 +15,10 @@ import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useVoiceSessionStore } from '../../../../renderer/stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../../../renderer/stores/voiceUiStore';
+import { usePermissionRequestStore } from '../../../../renderer/stores/permissionRequestStore';
 import { sendDocumentChatMessage } from '../../../../renderer/services/documentChat';
 import { createMockSession } from '../../../helpers/mockSession';
+import { createMockAITab } from '../../../helpers/mockTab';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -53,7 +55,9 @@ function enableVoice(enabled: boolean): void {
 }
 
 beforeEach(() => {
+	useSettingsStore.setState({ modalSizes: {} });
 	useVoiceSessionStore.getState().reset();
+	usePermissionRequestStore.setState({ queue: [] });
 	// Font size is a persisted reading preference; give each case fresh storage.
 	installLocalStorageMock();
 	useSessionStore.setState({
@@ -70,6 +74,126 @@ afterEach(() => {
 });
 
 describe('DocumentChatOverlay', () => {
+	it('labels a queued message before the agent starts it', () => {
+		sendDocumentChatMessage({ path: DOC_PATH, text: 'please review' });
+		render(<Harness />);
+		expect(screen.getByTestId('document-chat-status')).toHaveTextContent(
+			'Queued · waiting for the agent'
+		);
+		expect(screen.getByTestId('document-chat-message-you')).toHaveTextContent('Queued');
+		expect(screen.queryByTestId('document-chat-working')).not.toBeInTheDocument();
+	});
+
+	it('keeps elapsed progress outside the transcript and returns to Ready when idle', () => {
+		vi.useFakeTimers();
+		const tab = createMockAITab({
+			id: 'document-tab',
+			documentOrigin: { path: DOC_PATH },
+			state: 'busy',
+			thinkingStartTime: Date.now() - 5000,
+		});
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: SESSION_ID, aiTabs: [tab] })],
+		});
+		render(<Harness />);
+		expect(screen.getByTestId('document-chat-status')).toHaveTextContent('Working for 5s');
+		expect(screen.queryByTestId('document-chat-messages')).not.toBeInTheDocument();
+		act(() => vi.advanceTimersByTime(2000));
+		expect(screen.getByTestId('document-chat-status')).toHaveTextContent('Working for 7s');
+		act(() => {
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: SESSION_ID, aiTabs: [{ ...tab, state: 'idle' }] })],
+			});
+		});
+		expect(screen.getByTestId('document-chat-status')).toHaveTextContent('Ready');
+		expect(screen.queryByTestId('document-chat-working')).not.toBeInTheDocument();
+	});
+
+	it('shows queued follow-ups alongside a running reply', () => {
+		const tab = createMockAITab({
+			id: 'document-tab',
+			documentOrigin: { path: DOC_PATH },
+			state: 'busy',
+		});
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: SESSION_ID, aiTabs: [tab] })],
+		});
+		sendDocumentChatMessage({ path: DOC_PATH, text: 'follow up' });
+		render(<Harness />);
+		expect(screen.getByTestId('document-chat-status')).toHaveTextContent('Working…');
+		expect(screen.getByTestId('document-chat-status')).toHaveTextContent('1 message queued');
+	});
+
+	it.each([
+		{
+			sessionId: `${SESSION_ID}-ai-document-tab`,
+			kind: undefined,
+			label: 'Waiting for permission',
+		},
+		{ sessionId: SESSION_ID, kind: 'question' as const, label: 'Waiting for your answer' },
+	])('shows $label for a request belonging to this tab', ({ sessionId, kind, label }) => {
+		const tab = createMockAITab({
+			id: 'document-tab',
+			documentOrigin: { path: DOC_PATH },
+			state: 'busy',
+		});
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: SESSION_ID, aiTabs: [tab] })],
+		});
+		usePermissionRequestStore.setState({
+			queue: [
+				{
+					requestId: 'permission-1',
+					sessionId,
+					tabId: tab.id,
+					kind,
+					toolName: 'Edit',
+					input: {},
+					createdAt: Date.now(),
+				},
+			],
+		});
+		render(<Harness />);
+		expect(screen.getByTestId('document-chat-status')).toHaveTextContent(label);
+		expect(screen.queryByTestId('document-chat-working')).not.toBeInTheDocument();
+		act(() => usePermissionRequestStore.setState({ queue: [] }));
+		expect(screen.getByTestId('document-chat-working')).toBeInTheDocument();
+	});
+
+	it.each([
+		{ sessionId: `${SESSION_ID}-ai-other-tab`, tabId: 'other-tab' },
+		{ sessionId: SESSION_ID, tabId: 'other-tab' },
+		{ sessionId: 'another-agent', tabId: 'document-tab' },
+	])('ignores requests for another conversation: $sessionId / $tabId', (request) => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: SESSION_ID,
+					aiTabs: [
+						createMockAITab({
+							id: 'document-tab',
+							documentOrigin: { path: DOC_PATH },
+							state: 'busy',
+						}),
+					],
+				}),
+			],
+		});
+		usePermissionRequestStore.setState({
+			queue: [
+				{
+					requestId: 'permission-1',
+					...request,
+					toolName: 'Edit',
+					input: {},
+					createdAt: Date.now(),
+				},
+			],
+		});
+		render(<Harness />);
+		expect(screen.getByTestId('document-chat-status')).toHaveTextContent('Working…');
+	});
+
 	it('anchors the panel above the visible bottom-left icon within the preview', () => {
 		render(<Harness />);
 		expect(screen.getByTestId('document-chat-button')).toHaveClass(
@@ -85,8 +209,68 @@ describe('DocumentChatOverlay', () => {
 		);
 		expect(screen.getByTestId('document-chat-panel')).not.toHaveClass('mx-auto');
 		expect(screen.getByTestId('document-chat-panel')).toHaveStyle({
-			width: 'calc(100% - 2rem)',
-			maxWidth: '36rem',
+			width: '576px',
+			maxWidth: 'min(90vw, calc(100% - 2rem))',
+			maxHeight: 'min(90vh, calc(100% - 6rem))',
+		});
+	});
+
+	it('offers only the edges that preserve its bottom-left anchor', () => {
+		render(<Harness />);
+		for (const direction of ['n', 'e', 'ne']) {
+			expect(screen.getByTestId(`document-chat-resize-${direction}`)).toBeInTheDocument();
+		}
+		for (const direction of ['s', 'se', 'sw', 'w', 'nw']) {
+			expect(screen.queryByTestId(`document-chat-resize-${direction}`)).not.toBeInTheDocument();
+		}
+	});
+
+	it('resizes both axes, remembers the size, and resets to automatic transcript growth', () => {
+		sendDocumentChatMessage({ path: DOC_PATH, text: 'review this document' });
+		const { rerender } = render(<Harness />);
+		const panel = screen.getByTestId('document-chat-panel');
+		vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 576, 400));
+		expect(screen.getByTestId('document-chat-messages')).toHaveStyle({
+			maxHeight: 'min(64vh, 640px)',
+		});
+		fireEvent.mouseDown(screen.getByTestId('document-chat-resize-ne'), {
+			clientX: 576,
+			clientY: 100,
+		});
+		fireEvent.mouseMove(document, { clientX: 676, clientY: 0 });
+		fireEvent.mouseUp(document);
+		expect(panel).toHaveStyle({ width: '676px', height: '500px' });
+		expect(useSettingsStore.getState().modalSizes['document-chat']).toEqual({
+			width: 676,
+			height: 500,
+		});
+		expect(screen.getByTestId('document-chat-messages')).toHaveClass('flex-1');
+		expect(screen.getByTestId('document-chat-messages').style.maxHeight).toBe('');
+		rerender(<Harness open={false} />);
+		rerender(<Harness />);
+		expect(screen.getByTestId('document-chat-panel')).toHaveStyle({
+			width: '676px',
+			height: '500px',
+		});
+		fireEvent.doubleClick(screen.getByTestId('document-chat-resize-ne'));
+		expect(useSettingsStore.getState().modalSizes['document-chat']).toBeUndefined();
+		expect(screen.getByTestId('document-chat-panel').style.height).toBe('auto');
+		expect(screen.getByTestId('document-chat-messages')).toHaveStyle({
+			maxHeight: 'min(64vh, 640px)',
+		});
+	});
+
+	it('clamps a remembered size to a smaller document preview', () => {
+		useSettingsStore.setState({ modalSizes: { 'document-chat': { width: 800, height: 650 } } });
+		const { rerender } = render(<Harness />);
+		const preview = screen.getByTestId('document-chat-panel').parentElement!;
+		vi.spyOn(preview, 'offsetWidth', 'get').mockReturnValue(600);
+		vi.spyOn(preview, 'offsetHeight', 'get').mockReturnValue(500);
+		rerender(<Harness open={false} />);
+		rerender(<Harness />);
+		expect(screen.getByTestId('document-chat-panel')).toHaveStyle({
+			width: '568px',
+			height: '404px',
 		});
 	});
 
@@ -315,7 +499,7 @@ describe('DocumentChatOverlay', () => {
 		expect(screen.getByTestId('document-chat-panel')).toHaveTextContent('system-overview.md');
 		expect(screen.queryByTestId('document-chat-messages')).not.toBeInTheDocument();
 		expect(screen.getByTestId('document-chat-input')).toHaveFocus();
-		expect(screen.getByTestId('document-chat-panel').style.height).toBe('');
+		expect(screen.getByTestId('document-chat-panel').style.height).toBe('auto');
 		expect(screen.getByTestId('document-chat-panel')).toHaveClass('absolute');
 		expect(screen.getByTestId('document-chat-composer')).toHaveStyle({
 			backgroundColor: mockTheme.colors.bgActivity,
@@ -327,17 +511,11 @@ describe('DocumentChatOverlay', () => {
 });
 
 describe('DocumentChatMessages', () => {
-	it('shows progress even before the first transcript message arrives', () => {
-		render(<DocumentChatMessages theme={mockTheme} messages={[]} busy />);
-		expect(screen.getByTestId('document-chat-thinking')).toHaveTextContent('Thinking...');
-	});
-
 	it('keeps error text literal and distinct from replies', () => {
 		render(
 			<DocumentChatMessages
 				theme={mockTheme}
 				messages={[{ id: 'error-1', kind: 'system', text: 'Cannot read **file**', ts: 1 }]}
-				busy={false}
 			/>
 		);
 		expect(screen.getByTestId('document-chat-message-system')).toHaveTextContent(

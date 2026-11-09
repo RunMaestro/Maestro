@@ -4,7 +4,7 @@
  * Conversation state stays in the bound AI tab across closing the panel and restarting the app.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MessageSquare } from 'lucide-react';
 import type { Theme } from '../../types';
 import { EscCloseButton } from '../ui/EscCloseButton';
@@ -15,6 +15,10 @@ import { getBasename, formatRelativeTime } from '../../../shared/formatters';
 import { DocumentChatComposer } from './DocumentChatComposer';
 import { DocumentChatMessages } from './DocumentChatMessages';
 import { QuickChatPicker } from '../../quickChat/QuickChatPicker';
+import { ChatWorkingLine } from '../ui/ChatWorkingLine';
+import { ResizeHandles } from '../ui/ResizeHandles';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { useElementWidth, useElementHeight } from '../../hooks/ui/useElementWidth';
 
 export interface DocumentChatOverlayProps {
 	theme: Theme;
@@ -43,6 +47,25 @@ export const DocumentChatOverlay = React.memo(function DocumentChatOverlay({
 	shortcutHint,
 }: DocumentChatOverlayProps) {
 	const [historyOpen, setHistoryOpen] = useState(false);
+	const previewRef = useRef<HTMLElement | null>(null);
+	useLayoutEffect(() => {
+		previewRef.current = overlayRef.current?.parentElement ?? null;
+	}, [open, overlayRef]);
+	const previewWidth = useElementWidth(previewRef, open);
+	const previewHeight = useElementHeight(previewRef, open);
+	const resize = useResizableModal({
+		resizeKey: 'document-chat',
+		defaultSize: { width: 576, height: 640 },
+		minSize: { width: 320, height: 240 },
+		maxSize: {
+			width: previewWidth > 0 ? Math.max(1, previewWidth - 32) : undefined,
+			height: previewHeight > 0 ? Math.max(1, previewHeight - 96) : undefined,
+		},
+		anchor: 'bottom-left',
+		autoHeight: true,
+		enabled: open,
+		externalRef: overlayRef,
+	});
 	const chat = useDocumentChat({ path, sessionId, includeHistory: open && historyOpen });
 	const fontScale = useFontScale('documentChat.fontScale');
 	const documentName = getBasename(path) || path;
@@ -91,9 +114,9 @@ export const DocumentChatOverlay = React.memo(function DocumentChatOverlay({
 					data-testid="document-chat-panel"
 					className="absolute bottom-16 left-4 z-20 min-h-0 rounded-[20px] shadow-2xl overflow-hidden flex flex-col select-none origin-bottom-left animate-in fade-in slide-in-from-bottom-2 duration-200"
 					style={{
-						width: 'calc(100% - 2rem)',
-						maxWidth: '36rem',
-						maxHeight: 'calc(100% - 6rem)',
+						...resize.style,
+						maxWidth: 'min(90vw, calc(100% - 2rem))',
+						maxHeight: 'min(90vh, calc(100% - 6rem))',
 						backgroundColor: theme.colors.bgMain,
 						border: `1px solid ${theme.colors.border}`,
 					}}
@@ -166,9 +189,39 @@ export const DocumentChatOverlay = React.memo(function DocumentChatOverlay({
 					<DocumentChatMessages
 						theme={theme}
 						messages={chat.messages}
-						busy={chat.busy}
 						fontScale={fontScale.fontScale}
+						fillHeight={resize.canReset || resize.isResizing}
 					/>
+					<div
+						role="status"
+						data-testid="document-chat-status"
+						className="mt-auto shrink-0 px-5 pb-2 text-xs flex flex-wrap items-center gap-x-2 gap-y-1"
+						style={{
+							color:
+								chat.waitingFor || chat.pending > 0 ? theme.colors.warning : theme.colors.textDim,
+						}}
+					>
+						{chat.waitingFor ? (
+							<span>
+								{chat.waitingFor === 'answer'
+									? 'Waiting for your answer'
+									: 'Waiting for permission'}
+							</span>
+						) : chat.busy ? (
+							<ChatWorkingLine
+								theme={theme}
+								since={chat.tab?.thinkingStartTime ?? null}
+								testId="document-chat-working"
+							/>
+						) : (
+							<span>{chat.pending > 0 ? 'Queued · waiting for the agent' : 'Ready'}</span>
+						)}
+						{chat.pending > 0 && (chat.busy || chat.waitingFor) && (
+							<span>
+								· {chat.pending} {chat.pending === 1 ? 'message' : 'messages'} queued
+							</span>
+						)}
+					</div>
 
 					<div className="px-3 pb-3 shrink-0">
 						<DocumentChatComposer
@@ -187,6 +240,15 @@ export const DocumentChatOverlay = React.memo(function DocumentChatOverlay({
 							onStopVoice={chat.stopVoice}
 						/>
 					</div>
+					<ResizeHandles
+						onResizeStart={resize.onResizeStart}
+						onResetSize={resize.onResetSize}
+						canReset={resize.canReset}
+						accentColor={theme.colors.accent}
+						directions={['n', 'e', 'ne']}
+						contained
+						testIdPrefix="document-chat-resize"
+					/>
 				</div>
 			)}
 		</>

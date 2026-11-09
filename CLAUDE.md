@@ -469,6 +469,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Segmented toolbar (sort/filter pill bar):** `<SegmentedControl>` in `src/renderer/components/ui/SegmentedControl.tsx`
 - **Tabs across the top of a modal:** `<ModalTabStrip>`, `useModalTabs()`, `useModalTabCycling()`, `tabPanelProps()` in `src/renderer/components/ui/ModalTabStrip.tsx`
 - **Compact chat presentation:** `<ChatComposerSurface>`, `<ChatSendButton>`, `<ChatUserMessage>`, `<ChatTooltip>`, `<ChatIconButton>`, `<ChatThinkingButton>` in `src/renderer/components/ui/ChatSurface.tsx`
+- **Live chat progress:** `<ChatWorkingLine>` in `src/renderer/components/ui/ChatWorkingLine.tsx`
 - **Compact chat image drafts:** `useChatImageDraft()` in `src/renderer/hooks/input/useChatImageDraft.ts`
 - **The agent settings form (tabs and panels):** `buildAgentSettingsTabs()`, `firstTabWithError()`, `AGENT_SETTINGS_FIELD_TAB`, `<AgentProviderSelect>`, `<BrowseFolderButton>`, `<GeneralTab>` / `<ProviderTab>` / `<ModelsTab>` / `<PeersTab>` / `<SshTab>` in `src/renderer/components/AgentSettings/`
 - **The tabs of the agent settings form (ids and labels):** `AGENT_SETTINGS_TAB_IDS`, `AGENT_SETTINGS_TAB_LABELS`, `AgentSettingsTabId` in `src/shared/agentSettingsTabs.ts`; `AGENT_SETTINGS_SURFACE_TABS` in `src/shared/uiSurfaces.ts`

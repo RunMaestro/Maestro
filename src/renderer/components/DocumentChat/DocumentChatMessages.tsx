@@ -12,33 +12,33 @@ import type { DocumentChatMessage } from '../../services/documentChat';
 interface DocumentChatMessagesProps {
 	theme: Theme;
 	messages: DocumentChatMessage[];
-	/** True while the agent is working on this conversation. */
-	busy: boolean;
 	fontScale?: number;
+	/** A manually sized panel gives the transcript all remaining height. */
+	fillHeight?: boolean;
 }
 
 export const DocumentChatMessages = React.memo(function DocumentChatMessages({
 	theme,
 	messages,
-	busy,
 	fontScale = 1,
+	fillHeight = false,
 }: DocumentChatMessagesProps) {
 	// Keyed on the conversation's length plus its tail so a streaming reply keeps
 	// the box pinned as it grows, not only when a new message arrives.
 	const scrollRef = useStickToBottom(
-		`${messages.length}:${messages[messages.length - 1]?.text.length ?? 0}:${busy}`
+		`${messages.length}:${messages[messages.length - 1]?.text.length ?? 0}`
 	);
 
-	if (messages.length === 0 && !busy) return null;
+	if (messages.length === 0) return null;
 
 	return (
 		<div
 			ref={scrollRef}
 			data-testid="document-chat-messages"
-			className="min-h-0 overflow-y-auto px-5 pb-3 flex flex-col gap-4"
+			className={`min-h-0 overflow-y-auto px-5 pb-3 flex flex-col gap-4 ${fillHeight ? 'flex-1' : ''}`}
 			style={{
 				overscrollBehavior: 'contain',
-				maxHeight: 'min(32vh, 320px)',
+				maxHeight: fillHeight ? undefined : 'min(64vh, 640px)',
 				fontSize: `${0.875 * fontScale}rem`,
 			}}
 			onWheel={(e) => e.stopPropagation()}
@@ -46,16 +46,6 @@ export const DocumentChatMessages = React.memo(function DocumentChatMessages({
 			{messages.map((message) => (
 				<DocumentChatBubble key={message.id} theme={theme} message={message} />
 			))}
-
-			{busy && (
-				<div
-					data-testid="document-chat-thinking"
-					className="text-2xs px-2 py-1 self-start animate-pulse"
-					style={{ color: theme.colors.textDim }}
-				>
-					Thinking...
-				</div>
-			)}
 		</div>
 	);
 });
@@ -95,6 +85,11 @@ function DocumentChatBubble({ theme, message }: { theme: Theme; message: Documen
 					</div>
 				)}
 				{message.text}
+				{message.pending && (
+					<div className="mt-1 text-xs" style={{ color: theme.colors.warning }}>
+						Queued
+					</div>
+				)}
 			</ChatUserMessage>
 		);
 	}

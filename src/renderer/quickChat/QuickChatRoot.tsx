@@ -67,7 +67,8 @@ import { QuickChatAgentPicker } from './QuickChatAgentPicker';
 import { QuickChatVoiceButton } from './QuickChatVoiceButton';
 import { QuickChatTabPicker, tabChoiceFromPickerId } from './QuickChatTabPicker';
 import { QuickChatHistoryPicker } from './QuickChatHistoryPicker';
-import { QuickChatRouteLine, QuickChatWorkingLine } from './QuickChatRouteLine';
+import { QuickChatRouteLine } from './QuickChatRouteLine';
+import { ChatWorkingLine } from '../components/ui/ChatWorkingLine';
 import { StagedImageTile } from '../components/InputArea/components/StagedImageTile';
 import { useChatImageDraft } from '../hooks/input/useChatImageDraft';
 import { isMacOSPlatform } from '../utils/platformUtils';
@@ -963,9 +964,7 @@ function QuickChatWindow() {
 									onMoveToNewTab={moveMessageToNewTab}
 									onSteer={steerMessage}
 								/>
-								{turn?.status === 'running' && (
-									<QuickChatWorkingLine since={turn.since} theme={theme} />
-								)}
+								{turn?.status === 'running' && <ChatWorkingLine since={turn.since} theme={theme} />}
 							</Fragment>
 						);
 					})}
