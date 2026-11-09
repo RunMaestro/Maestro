@@ -11,7 +11,9 @@ import {
 	claudeSubagentDir,
 	computeClaudeSessionUsage,
 	computeClaudeUsageWithSubagents,
+	isAbsentTranscriptError,
 	iterateClaudeSubagentTranscripts,
+	listClaudeSubagentTranscriptPaths,
 	readClaudeSubagentTranscripts,
 	readClaudeSubagentTranscriptsSync,
 } from '../../shared/claudeSessionUsage';
@@ -39,6 +41,25 @@ describe('claudeSessionUsage', () => {
 
 	it('locates subagents in a folder named after the session', () => {
 		expect(claudeSubagentDir(sessionFile)).toBe(path.join(dir, 'abc', 'subagents'));
+	});
+
+	it('lists subagent transcript paths in a stable order, skipping non-transcripts', async () => {
+		expect(await listClaudeSubagentTranscriptPaths(sessionFile)).toEqual([]);
+		const subagents = claudeSubagentDir(sessionFile);
+		await fs.mkdir(subagents, { recursive: true });
+		await fs.writeFile(path.join(subagents, 'agent-b.jsonl'), '');
+		await fs.writeFile(path.join(subagents, 'agent-a.jsonl'), '');
+		await fs.writeFile(path.join(subagents, 'notes.txt'), '');
+		expect(await listClaudeSubagentTranscriptPaths(sessionFile)).toEqual([
+			path.join(subagents, 'agent-a.jsonl'),
+			path.join(subagents, 'agent-b.jsonl'),
+		]);
+	});
+
+	it('treats a missing or unreadable transcript as absent, and anything else as an error', () => {
+		expect(isAbsentTranscriptError(Object.assign(new Error('x'), { code: 'ENOENT' }))).toBe(true);
+		expect(isAbsentTranscriptError(Object.assign(new Error('x'), { code: 'EIO' }))).toBe(false);
+		expect(isAbsentTranscriptError(new Error('x'))).toBe(false);
 	});
 
 	it('reads nothing when the session spawned no subagents', async () => {

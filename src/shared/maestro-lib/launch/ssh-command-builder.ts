@@ -139,6 +139,23 @@ function buildNodeVersionManagerPathSnippet(): string {
 }
 
 /**
+ * Wrap a remote shell command so it runs under `/bin/bash --norc --noprofile`
+ * with the PATH an agent spawn gets: the base directories above plus the Node
+ * version managers. A non-interactive SSH shell reads no profile, so its PATH
+ * is short; this is how `claude`, `codex` and `maestro-cli` are found there
+ * without sourcing rc files that break `-c` embedding. The whole command is
+ * single-quoted, so the remote login shell (often zsh) passes it to bash
+ * untouched. Shared by every one-shot SSH command that must find a binary the
+ * user installed (agent spawns, Federation's remote host discovery).
+ */
+export function wrapRemoteCommandWithPath(remoteCommand: string): string {
+	const pathSetup = `export PATH="${BASE_SSH_PATH_DIRS.join(':')}:$PATH"`;
+	const versionManagerSetup = buildNodeVersionManagerPathSnippet();
+	const fullBashCommand = `${pathSetup}; ${versionManagerSetup}; ${remoteCommand}`;
+	return `/bin/bash --norc --noprofile -c ${shellEscape(fullBashCommand)}`;
+}
+
+/**
  * Result of building an SSH command.
  * Contains the command and arguments to pass to spawn().
  */
@@ -656,10 +673,7 @@ export async function buildSshCommand(
 	// Single quotes are parsed literally by zsh - it just passes the content to bash as-is.
 	//
 	// The inner command uses shellEscape() which handles embedded single quotes via '\'' pattern.
-	const pathSetup = `export PATH="${BASE_SSH_PATH_DIRS.join(':')}:$PATH"`;
-	const versionManagerSetup = buildNodeVersionManagerPathSnippet();
-	const fullBashCommand = `${pathSetup}; ${versionManagerSetup}; ${remoteCommand}`;
-	const wrappedCommand = `/bin/bash --norc --noprofile -c ${shellEscape(fullBashCommand)}`;
+	const wrappedCommand = wrapRemoteCommandWithPath(remoteCommand);
 	args.push(wrappedCommand);
 
 	// Log the exact command being built - use info level so it appears in system logs

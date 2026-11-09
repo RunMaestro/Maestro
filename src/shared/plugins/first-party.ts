@@ -45,7 +45,8 @@ export type FirstPartyEncoreFlag =
 	| 'quickChat'
 	| 'maestroRun'
 	| 'throughputGauge'
-	| 'dataview';
+	| 'dataview'
+	| 'federation';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -1460,6 +1461,92 @@ export const DATAVIEW_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 };
 
 /**
+ * Federation reaches a `maestro-cli host` that runs on an SSH remote and
+ * drives the agents it owns, so work continues after this machine sleeps.
+ * The transport is the SSH remote the user already configured: discovery and
+ * the port forward run over it, and only remotes with their own `federation`
+ * flag set are ever contacted (probing every remote at once storms SSH).
+ */
+export const FEDERATION_FIRST_PARTY_PLUGIN_ID = 'com.maestro.federation';
+
+export const FEDERATION_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: FEDERATION_FIRST_PARTY_PLUGIN_ID,
+	name: 'Federation',
+	description:
+		'Reach a maestro-cli host on an SSH remote and drive its agents, so work continues after this machine sleeps.',
+	firstParty: true,
+	category: 'agents',
+	permissions: [
+		{
+			capability: 'settings:read',
+			reason: 'Re-read the Federation flag and which SSH remotes opted in to it.',
+		},
+		{
+			// Loopback only: the WebSocket dials the local end of the SSH forward,
+			// never the remote directly.
+			capability: 'net:connect',
+			scope: '127.0.0.1',
+			reason: 'Hold the WebSocket to the remote host through the local end of the SSH forward.',
+		},
+		{
+			capability: 'background:service',
+			reason:
+				'Keep one SSH forward per remote while something uses it, and restart it when it drops.',
+		},
+	],
+	// NOTE: `process:spawn` is deliberately ABSENT (same doctrine as Usage &
+	// Stats and Symphony): the two ssh invocations per remote (endpoint
+	// discovery, and the `-N -L` port forward) are HOST-OWNED supervised calls
+	// with fixed argv built from the remote's own record, not broker calls.
+	settingsNamespace: 'federation',
+	encoreFlag: 'federation',
+	releaseDate: '2026-11-06',
+	backgroundServices: [
+		{
+			id: 'federation.ssh-forward',
+			kind: 'supervised',
+			description:
+				'One SSH port forward per opted-in remote, shared by every caller; restarts with backoff, and everything stops when the feature is disabled.',
+		},
+	],
+	usage: {
+		overview: [
+			'Run `maestro-cli host` on a box you reach over SSH, start agents there, and close your laptop: the work continues on the host. Federation reaches that host over the SSH remote you already configured, with no new port to open and no new credential to manage.',
+			'Each connect reads the host port, token, and CLI secret over SSH and keeps them in memory only. SSH is the authentication.',
+		],
+		steps: [
+			{
+				title: 'Install the CLI on the remote',
+				body: 'The remote needs `maestro-cli`: Maestro.app on a Mac, or the server bundle on Linux. Maestro does not install it for you.',
+			},
+			{
+				title: 'Opt the remote in',
+				body: 'Turn on Federation for that remote in Settings > SSH Remotes. Maestro never contacts a remote without the flag.',
+			},
+			{
+				title: 'Check or start the host',
+				body: 'Run `maestro-cli remote-host status <ssh-remote>`, then `maestro-cli remote-host start <ssh-remote>` if it is not running.',
+			},
+		],
+		agentCommands: [
+			{
+				label: 'Report whether the remote host is installed and running',
+				command: 'maestro-cli remote-host status <ssh-remote>',
+			},
+			{
+				label: 'Start the host on the remote',
+				command: 'maestro-cli remote-host start <ssh-remote>',
+			},
+		],
+		notes: [
+			'Only SSH remotes with their own Federation flag are ever contacted.',
+			'The host runs as your SSH user, the same user your SSH agents already run as.',
+			'Turning this off stops every forward and connection. Hosts keep running on their remotes.',
+		],
+	},
+};
+
+/**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
  */
@@ -1479,6 +1566,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 	THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN,
 	DATAVIEW_FIRST_PARTY_PLUGIN,
+	FEDERATION_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -1505,4 +1593,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	maestroRun: MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 	throughputGauge: THROUGHPUT_GAUGE_FIRST_PARTY_PLUGIN,
 	dataview: DATAVIEW_FIRST_PARTY_PLUGIN,
+	federation: FEDERATION_FIRST_PARTY_PLUGIN,
 };

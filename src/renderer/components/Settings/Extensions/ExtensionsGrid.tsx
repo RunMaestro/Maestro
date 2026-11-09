@@ -23,6 +23,7 @@ import {
 	ScanEye,
 	KeyRound,
 	Gauge,
+	Network,
 	ShieldCheck,
 	ShieldAlert,
 	ShieldX,
@@ -67,6 +68,7 @@ const BUILTIN_ICONS: Record<string, LucideIcon> = {
 	computerHistory: ScanEye,
 	maestroRun: KeyRound,
 	throughputGauge: Gauge,
+	federation: Network,
 };
 
 const TRUST_META: Record<

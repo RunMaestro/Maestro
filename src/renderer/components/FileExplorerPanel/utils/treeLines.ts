@@ -19,10 +19,22 @@ export const INDENT_STEP = 20;
 /** Left offset of the guide line for depth level `i`, in px. */
 export const GUIDE_OFFSET = 12;
 /**
- * Length of the horizontal elbow arm, in px. Stops 4px short of the row's
- * chevron slot so the connector reads as pointing at the icon, not touching it.
+ * Length of the horizontal elbow arm on a folder row, in px. Stops 4px short of
+ * the row's chevron slot, so the arm meets the chevron the way a branch meets
+ * its node.
  */
 export const CONNECTOR_ARM_WIDTH = 12;
+
+/**
+ * Length of the elbow arm on a row, in px. A file's chevron slot is an empty
+ * spacer, so a folder-length arm stopped in blank space a full indent step
+ * short of the file icon. A file's arm crosses that slot and its gap
+ * ({@link INDENT_STEP}) to reach the icon the same way a folder's arm reaches
+ * its chevron.
+ */
+export function connectorArmWidth(isFolder: boolean): number {
+	return isFolder ? CONNECTOR_ARM_WIDTH : CONNECTOR_ARM_WIDTH + INDENT_STEP;
+}
 
 /** Left edge of the guide line for depth level `i`, in px. */
 export function guideLeft(level: number): number {

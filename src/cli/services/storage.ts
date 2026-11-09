@@ -570,9 +570,13 @@ function resolveId(partialId: string, allIds: string[]): IdResolution {
  *
  * `sessions` defaults to the LIVE agents in Maestro's data directory (a dormant
  * Pianola never resolves; naming it throws a "turned off" error); pass a list
- * read from somewhere else (`bundle export --data-dir`) to resolve against it.
+ * read from somewhere else (`bundle export --data-dir`, a Federation peer's host)
+ * to resolve against it. Only `id` and `name` are read.
  */
-export function resolveAgentId(partialId: string, sessionList?: SessionInfo[]): string {
+export function resolveAgentId(
+	partialId: string,
+	sessionList?: ReadonlyArray<Pick<SessionInfo, 'id' | 'name'>>
+): string {
 	const sessions = sessionList ?? readLiveSessions();
 	const allIds = sessions.map((s) => s.id);
 	const resolution = resolveId(partialId, allIds);

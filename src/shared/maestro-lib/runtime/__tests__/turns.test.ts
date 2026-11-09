@@ -299,6 +299,16 @@ describe('runtime turns', () => {
 			expect(argvFiles).toEqual([]);
 		});
 
+		it('refuses a lifted agent with a pointer at peer:agentId, and starts nothing', async () => {
+			const runtime = await start([
+				seedAgent({ liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 } }),
+			]);
+			const error = errorOf(await runtime.turns.send('a1', 't1', { text: 'hello' }));
+			expect(error.code).toBe('rejected');
+			expect(error.message).toContain('Send to build-box:host-1 instead.');
+			expect(argvFiles).toEqual([]);
+		});
+
 		it('answers host-unavailable once the runtime is closed', async () => {
 			const runtime = await start();
 			await runtime.connection.close();

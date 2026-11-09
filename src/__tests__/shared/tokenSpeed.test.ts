@@ -5,6 +5,7 @@ import {
 	TOKEN_SPEED_PEAK_MIN_BUCKET_MS,
 	TokenSpeedBucketer,
 	computeClaudeTokenSpeed,
+	createClaudeSpeedSampler,
 	emptyTokenSpeedSummary,
 	extractClaudeSpeedSamples,
 	localHourStart,
@@ -12,6 +13,7 @@ import {
 	tokenSpeedGranularityFor,
 	tokenSpeedSliceStart,
 	type TokenSpeedBucket,
+	type TokenSpeedSample,
 	type TokenSpeedSummaryOptions,
 } from '../../shared/tokenSpeed';
 
@@ -145,6 +147,26 @@ describe('extractClaudeSpeedSamples', () => {
 	it('tolerates malformed lines', () => {
 		const content = [userLine(0), '{"usage": not json', assistantLine(2, { id: 'm1' })].join('\n');
 		expect(extractClaudeSpeedSamples(content)).toHaveLength(1);
+	});
+});
+
+describe('createClaudeSpeedSampler', () => {
+	it('times a transcript fed line by line the same as the whole transcript', () => {
+		const lines = [
+			userLine(0),
+			assistantLine(4, { id: 'm1', output: 50, input: 5 }),
+			assistantLine(10, { id: 'm1', output: 60, input: 5 }),
+			userLine(20),
+			assistantLine(26, { id: 'm2', output: 30, input: 5 }),
+		];
+		const samples: TokenSpeedSample[] = [];
+		const sampler = createClaudeSpeedSampler((sample) => samples.push(sample));
+		for (const transcriptLine of lines) sampler.addLine(transcriptLine);
+		// The last response is still open until the transcript ends.
+		expect(samples).toHaveLength(1);
+		sampler.finish();
+		expect(samples).toEqual(extractClaudeSpeedSamples(lines.join('\n')));
+		expect(samples).toHaveLength(2);
 	});
 });
 

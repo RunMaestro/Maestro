@@ -12,6 +12,11 @@ vi.mock('../../../cli/services/storage', () => ({
 	readSettingValue: vi.fn(),
 }));
 
+// The Federation Encore Feature flag
+vi.mock('../../../cli/utils/encore-gate', () => ({
+	isEncoreEnabled: vi.fn(() => false),
+}));
+
 // Mock formatter
 vi.mock('../../../cli/output/formatter', () => ({
 	formatSshRemotes: vi.fn((remotes) => {
@@ -23,6 +28,7 @@ vi.mock('../../../cli/output/formatter', () => ({
 import { listSshRemotes } from '../../../cli/commands/list-ssh-remotes';
 import { readSshRemotes, readSettingValue } from '../../../cli/services/storage';
 import { formatSshRemotes } from '../../../cli/output/formatter';
+import { isEncoreEnabled } from '../../../cli/utils/encore-gate';
 
 const mockRemote = (overrides: Partial<SshRemoteConfig> = {}): SshRemoteConfig => ({
 	id: 'remote-1',
@@ -41,6 +47,7 @@ describe('list-ssh-remotes command', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		vi.mocked(isEncoreEnabled).mockReturnValue(false);
 	});
 
 	describe('human-readable output', () => {
@@ -145,6 +152,33 @@ describe('list-ssh-remotes command', () => {
 			listSshRemotes({ json: true });
 
 			expect(consoleSpy).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('federation field', () => {
+		it('is left out of JSON while the Encore Feature is off', () => {
+			vi.mocked(isEncoreEnabled).mockReturnValue(false);
+			vi.mocked(readSshRemotes).mockReturnValue([mockRemote({ federation: true })]);
+			vi.mocked(readSettingValue).mockReturnValue(null);
+
+			listSshRemotes({ json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).not.toHaveProperty('federation');
+		});
+
+		it('reports each remote as opted in or not while the feature is on', () => {
+			vi.mocked(isEncoreEnabled).mockReturnValue(true);
+			vi.mocked(readSshRemotes).mockReturnValue([
+				mockRemote({ id: 'r1', federation: true }),
+				mockRemote({ id: 'r2' }),
+			]);
+			vi.mocked(readSettingValue).mockReturnValue(null);
+
+			listSshRemotes({ json: true });
+
+			expect(isEncoreEnabled).toHaveBeenCalledWith('federation');
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).federation).toBe(true);
+			expect(JSON.parse(consoleSpy.mock.calls[1][0]).federation).toBe(false);
 		});
 	});
 });
