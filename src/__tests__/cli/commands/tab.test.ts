@@ -13,6 +13,7 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn((id: string) => id),
 	readActiveAgentId: vi.fn(() => null),
+	readLiveSessions: vi.fn(() => []),
 }));
 vi.mock('../../../cli/output/formatter', () => ({
 	formatError: vi.fn((msg) => `Error: ${msg}`),
@@ -45,7 +46,7 @@ import {
 	tabPinsShow,
 } from '../../../cli/commands/tab';
 import { withMaestroClient, CommandTimeoutError } from '../../../cli/services/maestro-client';
-import { resolveAgentId, readActiveAgentId } from '../../../cli/services/storage';
+import { resolveAgentId, readActiveAgentId, readLiveSessions } from '../../../cli/services/storage';
 import { formatError } from '../../../cli/output/formatter';
 
 // agent-1 owns three tabs in tab-bar order so reordering has something to move
@@ -398,6 +399,72 @@ describe('tab commands', () => {
 			mockTab({ success: true, closedTabs: [] });
 			await expect(tabClosed({})).rejects.toThrow('__exit__');
 			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('No active agent'));
+		});
+
+		describe('tab closed --all', () => {
+			const mockFleet = (replies: Record<string, unknown>) => {
+				vi.mocked(readLiveSessions).mockReturnValue([
+					{ id: 'agent-1', name: 'Backend' },
+					{ id: 'agent-2', name: 'Docs' },
+					{ id: 'agent-3', name: 'Empty' },
+				] as never);
+				const send = vi.fn(async (payload: { sessionId: string }) => replies[payload.sessionId]);
+				vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+					action({ sendCommand: send } as never)
+				);
+				return send;
+			};
+
+			it('asks every agent over one connection and groups the stacks by agent', async () => {
+				const send = mockFleet({
+					'agent-1': { success: true, closedTabs: CLOSED },
+					'agent-2': { success: true, closedTabs: [CLOSED[0]] },
+					'agent-3': { success: true, closedTabs: [] },
+				});
+				await tabClosed({ all: true, json: true });
+				expect(withMaestroClient).toHaveBeenCalledTimes(1);
+				expect(send).toHaveBeenCalledTimes(3);
+				expect(send).toHaveBeenCalledWith(
+					{ type: 'closed_tab_command', action: 'list', sessionId: 'agent-2' },
+					'closed_tab_command_result'
+				);
+				const printed = JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
+				expect(printed.total).toBe(3);
+				expect(printed.agents.map((a: { sessionId: string }) => a.sessionId)).toEqual([
+					'agent-1',
+					'agent-2',
+				]);
+				expect(printed.errors).toEqual([]);
+			});
+
+			it('reports an agent the desktop could not answer for without failing the rest', async () => {
+				mockFleet({
+					'agent-1': { success: true, closedTabs: CLOSED },
+					'agent-2': { success: false, error: 'Maestro window is not available' },
+					'agent-3': { success: true, closedTabs: [] },
+				});
+				await tabClosed({ all: true });
+				const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+				expect(printed).toContain('Backend (agent-1)');
+				expect(printed).toContain('2 closed tabs across 1 agent(s)');
+				expect(printed).toContain('could not read Docs (agent-2): Maestro window is not available');
+				expect(processExitSpy).not.toHaveBeenCalled();
+			});
+
+			it('fails when no agent answered', async () => {
+				mockFleet({
+					'agent-1': { success: false, error: 'down' },
+					'agent-2': { success: false, error: 'down' },
+					'agent-3': { success: false, error: 'down' },
+				});
+				await expect(tabClosed({ all: true })).rejects.toThrow('__exit__');
+				expect(formatError).toHaveBeenCalledWith(expect.stringContaining('No agent answered'));
+			});
+
+			it('refuses --agent together with --all', async () => {
+				mockFleet({});
+				await expect(tabClosed({ all: true, agent: 'agent-1' })).rejects.toThrow('__exit__');
+			});
 		});
 
 		it('tab reopen with no target restores the newest entry and focuses it', async () => {

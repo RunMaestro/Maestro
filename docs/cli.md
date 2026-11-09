@@ -928,6 +928,7 @@ maestro-cli tab move <tab-id> 2
 # Reopen a closed tab, as Cmd+Shift+T does. "tab closed" lists the stack,
 # newest first; reopen takes the newest, or one entry by --index or --tab.
 maestro-cli tab closed -a <agent-id>
+maestro-cli tab closed --all                          # every agent's stack, grouped by agent
 maestro-cli tab reopen -a <agent-id>
 maestro-cli tab reopen -a <agent-id> --index 2
 maestro-cli tab reopen -a <agent-id> --tab <closed-tab-id> --background

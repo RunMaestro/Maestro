@@ -1937,10 +1937,11 @@ Move a tab to a position in its agent's tab bar (0-based, or "first"/"last")
 
 List the closed tabs an agent can reopen, newest first (index 0 = Cmd+Shift+T)
 
-| Option             | Description                                                    | Default |
-| ------------------ | -------------------------------------------------------------- | ------- |
-| `-a, --agent <id>` | Whose closed tabs (default: the agent selected in the desktop) | -       |
-| `--json`           | Output as JSON (for scripting)                                 | -       |
+| Option             | Description                                                                 | Default |
+| ------------------ | --------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose closed tabs (default: the agent selected in the desktop)              | -       |
+| `--all`            | Every agent's closed tabs, grouped by agent (agents with none are left out) | -       |
+| `--json`           | Output as JSON (for scripting)                                              | -       |
 
 ## `maestro-cli tab reopen`
 
