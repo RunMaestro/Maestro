@@ -10,6 +10,10 @@ export {
 	type ImageAttachInputProps,
 	type StageImageFilesOptions,
 } from './ImageAttachInput';
+export {
+	PhoneComposerHandle,
+	type PhoneComposerHandleProps,
+} from '../InputArea/components/PhoneComposerHandle';
 export { applyTrimmedTextPaste, clipboardHasImage } from './pasteTrim';
 export {
 	GROUP_CHAT_COMPOSER_CAPABILITIES,
