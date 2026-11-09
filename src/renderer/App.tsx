@@ -3472,6 +3472,7 @@ function MaestroConsoleInner() {
 									inputRef={groupChatInputRef}
 									handlePaste={handlePaste}
 									handleDrop={handleGroupChatDrop}
+									onUploadFiles={handleUploadFiles}
 									onOpenLightbox={handleSetLightboxImage}
 									queueState={activeGroupChatId ? groupChatQueues[activeGroupChatId] : undefined}
 									onRemoveQueuedItem={handleRemoveGroupChatQueueItem}

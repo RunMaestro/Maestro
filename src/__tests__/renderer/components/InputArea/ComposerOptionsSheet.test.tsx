@@ -147,4 +147,12 @@ describe('ComposerOptionsSheet', () => {
 		expect(screen.queryByTestId('composer-options-effort')).not.toBeInTheDocument();
 		expect(screen.queryByTestId('composer-options-model')).not.toBeInTheDocument();
 	});
+
+	it('draws the surface rows after the built-in sections', () => {
+		renderSheet({ extraRows: <div data-testid="extra-row">Extra</div> });
+
+		const extra = screen.getByTestId('extra-row');
+		const model = screen.getByTestId('composer-options-model');
+		expect(model.compareDocumentPosition(extra) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
 });

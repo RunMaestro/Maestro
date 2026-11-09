@@ -296,6 +296,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Trimming a text paste in a composer:** `applyTrimmedTextPaste(e, currentValue, setValue)` / `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
 - **Composer keys both chat composers share (Cmd+F, `@` picker, Enter / Cmd+Enter, Escape):** `handleComposerFindKey()`, `handleComposerPickerKey()`, `handleComposerSendKey()` in `src/renderer/hooks/input/composerKeyDown.ts`
 - **Which optional controls a composer toolbar offers:** `ComposerCapabilities`, `deriveAiComposerCapabilities()`, `aiCanAttachImages()`, `GROUP_CHAT_COMPOSER_CAPABILITIES` in `src/renderer/components/ChatComposer/capabilities.ts`
+- **A chat composer's textarea with live `@mention` chips:** `<ComposerTextarea>` in `src/renderer/components/ChatComposer/ComposerTextarea.tsx`
 - **Detecting an active IME composition:** `isImeComposing()` in `src/renderer/utils/ime.ts`
 - **Shell tab completion:** `useTabCompletion()` in `src/renderer/hooks/input/useTabCompletion.ts` (terminal composer and command mode)
 - **Revealing output the user asked for, past a paused auto-scroll:** `requestTranscriptScrollToBottom(sessionId, tabId)` in `src/renderer/services/transcriptScroll.ts`
@@ -495,7 +496,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Touch primitives:** `isCoarsePointer()`, `triggerHaptic()`, `supportsHaptics()`, `HAPTIC_PATTERNS`, `GESTURE_THRESHOLDS`, `MIN_TOUCH_TARGET` in `src/renderer/utils/touch.ts`
 - **Long-press gesture:** `useLongPress()` in `src/renderer/hooks/utils/useLongPress.ts` (never `setTimeout` + `touchmove`)
 - **A bottom sheet on a phone:** `<PhoneBottomSheet>` in `src/renderer/components/ui/PhoneBottomSheet.tsx`
-- **Rows inside a `PhoneBottomSheet`:** `PhoneSheetSection`, `PhoneSheetOptionRow`, `PhoneSheetActionRow` in `src/renderer/components/ui/PhoneSheetRows.tsx`
+- **Rows inside a `PhoneBottomSheet`:** `PhoneSheetSection`, `PhoneSheetOptionRow`, `PhoneSheetActionRow`, `PhoneSheetSwitchRow` in `src/renderer/components/ui/PhoneSheetRows.tsx`
 - **A tab chip's action menu shell:** `<TabOverlayPortal>` in `src/renderer/components/TabBar/TabOverlayPortal.tsx`
 - **The file preview toolbar on a phone:** `<FilePreviewActionsSheet>` in `src/renderer/components/FilePreview/FilePreviewActionsSheet.tsx`
 - **Every composer setting on a phone:** `<ComposerOptionsSheet>` in `src/renderer/components/InputArea/components/ComposerOptionsSheet.tsx`
