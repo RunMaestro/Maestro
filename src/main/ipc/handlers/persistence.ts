@@ -39,6 +39,7 @@ import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { clearGhCache } from '../../utils/cliDetection';
 import { mergeUsagePeaks, type UsagePeaks } from '../../../shared/usagePeaks';
 import { mergeAutoRunStats } from '../../../shared/autoRunStatsMerge';
+import { dropOrphanedTabs } from '../../../shared/tabStripMembership';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
 import {
 	mergeDeferredSessionContent,
@@ -456,6 +457,11 @@ export function registerPersistenceHandlers(
 	});
 
 	// Sessions persistence
+	// The orphan repair runs on the first load of this process only, before any
+	// renderer holds state. A later load (a reload, a second window, a browser
+	// bootstrap) races renderers that are mid-write, where dropping a record is
+	// never safe.
+	let orphanRepairDone = false;
 	const loadStoredSessions = async (): Promise<StoredSession[]> => {
 		const sessions = sessionsStore.get('sessions', []);
 		// Heal legacy sessions files: relocate any images still stored inline as
@@ -468,12 +474,22 @@ export function registerPersistenceHandlers(
 		try {
 			const { sessions: relocated, relocated: imageCount } = await relocateSessionImages(sessions);
 			let toolOutputCount = 0;
+			// Tabs with no slot in the strip are closes that did not fully apply
+			// (#2008). Restore would put each one back as a chip, so finish the
+			// close here. Their transcripts stay in their provider sessions.
+			let orphanedTabCount = 0;
+			const repairOrphans = !orphanRepairDone;
+			orphanRepairDone = true;
 			const compacted = relocated.map((session) => {
-				const result = compactSessionToolOutputs(session);
+				const { session: repaired, dropped } = repairOrphans
+					? dropOrphanedTabs(session)
+					: { session, dropped: 0 };
+				orphanedTabCount += dropped;
+				const result = compactSessionToolOutputs(repaired);
 				toolOutputCount += result.compacted;
 				return result.session;
 			});
-			if (imageCount > 0 || toolOutputCount > 0) {
+			if (imageCount > 0 || toolOutputCount > 0 || orphanedTabCount > 0) {
 				sessionsStore.set('sessions', compacted);
 				if (imageCount > 0) {
 					logger.info(
@@ -484,6 +500,12 @@ export function registerPersistenceHandlers(
 				if (toolOutputCount > 0) {
 					logger.info(
 						`Compacted ${toolOutputCount} oversized tool result(s) in maestro-sessions.json`,
+						'Sessions'
+					);
+				}
+				if (orphanedTabCount > 0) {
+					logger.info(
+						`Removed ${orphanedTabCount} closed tab(s) left without a tab-strip slot in maestro-sessions.json`,
 						'Sessions'
 					);
 				}

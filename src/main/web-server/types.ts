@@ -967,7 +967,9 @@ export interface GetSessionHistoryOptions {
 }
 
 /** Callback to enumerate all open AI tabs across all desktop agents. */
-export type ListDesktopSessionsCallback = () => DesktopSessionEntry[];
+export type ListDesktopSessionsCallback = () =>
+	| DesktopSessionEntry[]
+	| import('../../shared/desktopTabs').DesktopTabListing;
 
 /** Callback to fetch a tab's full conversation history by tabId. */
 export type GetSessionHistoryCallback = (

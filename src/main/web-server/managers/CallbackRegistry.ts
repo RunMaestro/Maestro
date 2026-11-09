@@ -156,7 +156,6 @@ import type {
 	ListDesktopSessionsCallback,
 	GetSessionHistoryCallback,
 	GetSessionHistoryOptions,
-	DesktopSessionEntry,
 	SessionHistoryResult,
 } from '../types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
@@ -1118,7 +1117,7 @@ export class CallbackRegistry {
 		return this.callbacks.importMarketplacePlaybook(sessionId, playbookId, targetFolderName);
 	}
 
-	listDesktopSessions(): DesktopSessionEntry[] {
+	listDesktopSessions(): ReturnType<ListDesktopSessionsCallback> {
 		return this.callbacks.listDesktopSessions?.() ?? [];
 	}
 

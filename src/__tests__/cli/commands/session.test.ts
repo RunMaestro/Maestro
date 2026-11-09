@@ -169,6 +169,181 @@ describe('session list command', () => {
 		expect(line.split('  ').filter(Boolean).length).toBeGreaterThanOrEqual(4);
 	});
 
+	describe('visible / hidden / orphaned scope (#2008)', () => {
+		const tab = (
+			tabId: string,
+			visibility?: 'visible' | 'hidden' | 'orphaned',
+			hiddenReason: string | null = null
+		) => ({
+			tabId,
+			sessionId: tabId,
+			agentId: 'agent-a',
+			agentName: 'Backend',
+			toolType: 'claude-code',
+			name: tabId,
+			agentSessionId: null,
+			state: 'idle',
+			createdAt: 1714268000000,
+			starred: false,
+			...(visibility === undefined
+				? {}
+				: { hidden: visibility === 'hidden', hiddenReason, visibility }),
+		});
+		const stripTab = (tabId: string, tabType: string, visibility: string, target: string) => ({
+			tabId,
+			tabType,
+			agentId: 'agent-a',
+			agentName: 'Backend',
+			name: tabId,
+			target,
+			active: false,
+			visibility,
+		});
+		const mockList = (sessions: unknown[], tabs?: unknown[]) => {
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'desktop_sessions_list',
+				success: true,
+				sessions,
+				...(tabs ? { tabs } : {}),
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand: mockSendCommand } as never)
+			);
+			return mockSendCommand;
+		};
+		const fleet = [
+			tab('visible-1', 'visible'),
+			tab('consult-1', 'hidden', 'consult'),
+			tab('dispatch-1', 'hidden', 'background'),
+			tab('closed-1', 'orphaned'),
+			// A desktop that predates the field: treated as visible.
+			tab('legacy-1'),
+		];
+		const strip = [
+			stripTab('file-1', 'file', 'visible', '/repo/README.md'),
+			stripTab('web-1', 'browser', 'visible', 'https://example.test/'),
+			stripTab('term-1', 'terminal', 'orphaned', '/repo'),
+		];
+
+		it('lists only the tabs the tab strips draw by default, and counts the rest', async () => {
+			mockList(fleet);
+			await sessionList({ json: true });
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.scope).toBe('visible');
+			expect(output.type).toBe('ai');
+			expect(output.sessions.map((s: { tabId: string }) => s.tabId)).toEqual([
+				'visible-1',
+				'legacy-1',
+			]);
+			expect(output.counts).toEqual({ visible: 2, hidden: 2, orphaned: 1 });
+			expect(output).not.toHaveProperty('tabs');
+		});
+
+		it('flags a desktop that does not report visibility', async () => {
+			mockList([tab('legacy-1'), tab('legacy-2')]);
+			await sessionList({ json: true });
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.visibilityReported).toBe(false);
+			expect(output.sessions).toHaveLength(2);
+
+			consoleSpy.mockClear();
+			mockList(fleet);
+			await sessionList({ json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).visibilityReported).toBe(true);
+		});
+
+		it('--hidden lists only hidden tabs; --include-hidden adds them to the visible ones', async () => {
+			mockList(fleet);
+			await sessionList({ json: true, hidden: true });
+			let output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.scope).toBe('hidden');
+			expect(output.sessions.map((s: { tabId: string }) => s.tabId)).toEqual([
+				'consult-1',
+				'dispatch-1',
+			]);
+
+			consoleSpy.mockClear();
+			mockList(fleet);
+			await sessionList({ json: true, includeHidden: true });
+			output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.scope).toBe('visible+hidden');
+			expect(output.sessions.map((s: { tabId: string }) => s.tabId)).not.toContain('closed-1');
+			expect(output.sessions).toHaveLength(4);
+		});
+
+		it('--all lists every tab, orphans included', async () => {
+			mockList(fleet);
+			await sessionList({ json: true, all: true });
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.scope).toBe('all');
+			expect(output.sessions).toHaveLength(5);
+			expect(
+				output.sessions.find((s: { tabId: string }) => s.tabId === 'closed-1').visibility
+			).toBe('orphaned');
+		});
+
+		it('--type all adds file, browser and terminal tabs under "tabs"', async () => {
+			mockList(fleet, strip);
+			await sessionList({ json: true, type: 'all' });
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.sessions.map((s: { tabId: string }) => s.tabId)).toEqual([
+				'visible-1',
+				'legacy-1',
+			]);
+			expect(output.tabs.map((t: { tabId: string }) => t.tabId)).toEqual(['file-1', 'web-1']);
+			expect(output.counts).toEqual({ visible: 4, hidden: 2, orphaned: 2 });
+		});
+
+		it('--type file lists only file tabs and no AI tabs', async () => {
+			mockList(fleet, strip);
+			await sessionList({ json: true, type: 'file' });
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.sessions).toEqual([]);
+			expect(output.tabs).toEqual([strip[0]]);
+			expect(output.counts).toEqual({ visible: 1, hidden: 0, orphaned: 0 });
+		});
+
+		it('refuses a non-AI --type against a desktop that does not report those tabs', async () => {
+			mockList(fleet);
+			await sessionList({ json: true, type: 'terminal' });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('UNSUPPORTED');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('rejects an unknown --type before contacting the desktop', async () => {
+			const send = mockList(fleet);
+			await sessionList({ json: true, type: 'tiles' });
+			expect(send).not.toHaveBeenCalled();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('INVALID_OPTION');
+		});
+
+		it('marks hidden and orphaned rows and names what was left out in text mode', async () => {
+			mockList(fleet, strip);
+			await sessionList({ all: true, type: 'all' });
+			const lines = consoleSpy.mock.calls.map((c) => c[0] as string);
+			expect(lines.find((l) => l.includes('consult-1'))).toContain('[hidden]');
+			expect(lines.find((l) => l.includes('closed-1'))).toContain('[orphaned');
+			expect(lines.find((l) => l.includes('visible-1'))).not.toContain('[');
+			expect(lines.find((l) => l.includes('web-1'))).toContain('https://example.test/');
+			expect(lines.find((l) => l.includes('term-1'))).toMatch(/^terminal .*\[orphaned/);
+
+			consoleSpy.mockClear();
+			mockList(fleet);
+			await sessionList({});
+			const footer = consoleSpy.mock.calls.at(-1)?.[0] as string;
+			expect(footer).toContain('2 hidden, 1 orphaned not shown');
+			expect(footer).toContain('--include-hidden');
+		});
+
+		it('rejects more than one scope flag before contacting the desktop', async () => {
+			const send = mockList(fleet);
+			await sessionList({ json: true, includeHidden: true, all: true });
+			expect(send).not.toHaveBeenCalled();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('INVALID_OPTION');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
 	it('preserves an unknown desktop state in human-readable output', async () => {
 		const mockSendCommand = vi.fn().mockResolvedValue({
 			type: 'desktop_sessions_list',

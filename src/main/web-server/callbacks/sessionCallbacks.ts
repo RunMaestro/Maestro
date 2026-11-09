@@ -7,6 +7,8 @@ import { getSessionIdsBusyWithCli } from '../../../shared/cli-activity';
 import { isAiTabProcessActive } from '../../utils/agent-busy';
 import { isImageRef, resolveToDataUrlSync } from '../../storage/session-image-store';
 import { findStoredAiTab } from '../../stores/deferred-session-content';
+import type { DesktopTabEntry, DesktopStripTabEntry } from '../../../shared/desktopTabs';
+import { tabStripSlotKeys, tabStripVisibility } from '../../../shared/tabStripMembership';
 
 export function registerSessionCallbacks(
 	server: WebServer,
@@ -113,9 +115,11 @@ export function registerSessionCallbacks(
 		// Resolved once: this used to be a per-agent call that re-read and
 		// re-parsed the CLI activity file on every iteration.
 		const cliBusySessionIds = getSessionIdsBusyWithCli();
-		const entries = [];
+		const entries: DesktopTabEntry[] = [];
+		const stripTabs: DesktopStripTabEntry[] = [];
 		for (const s of sessions) {
 			const aiTabs = (s.aiTabs as Array<Record<string, any>> | undefined) ?? [];
+			const slots = tabStripSlotKeys(s);
 			const cliBusy = cliBusySessionIds.has(s.id);
 			const orderedAiTabIds = new Set(
 				((s.unifiedTabOrder as Array<{ type?: string; id?: string }> | undefined) ?? [])
@@ -155,6 +159,7 @@ export function registerSessionCallbacks(
 					// chip for a hidden (consult) tab.
 					hidden: tab.hidden === true,
 					inTabOrder: orderedAiTabIds.has(tab.id),
+					visibility: tabStripVisibility('ai', tab, slots),
 					saveToHistory: tab.saveToHistory === true,
 					readOnly: tab.readOnlyMode === true,
 					thinking: asThinkingMode(tab.showThinking) ?? 'off',
@@ -166,8 +171,36 @@ export function registerSessionCallbacks(
 					enterToSend: typeof tab.enterToSend === 'boolean' ? tab.enterToSend : null,
 				});
 			}
+			// File, browser and terminal tabs, for `session list --type`. Same store,
+			// same slot rules, so a count here matches the Usage Dashboard's.
+			const stripKinds = [
+				['file', s.filePreviewTabs, s.activeFileTabId, 'path'],
+				['browser', s.browserTabs, s.activeBrowserTabId, 'url'],
+				['terminal', s.terminalTabs, s.activeTerminalTabId, 'cwd'],
+			] as const;
+			for (const [tabType, tabs, activeId, targetField] of stripKinds) {
+				for (const tab of Array.isArray(tabs) ? (tabs as Array<Record<string, any>>) : []) {
+					if (!tab || typeof tab.id !== 'string') continue;
+					const name =
+						tabType === 'browser'
+							? (tab.customTitle ?? tab.title ?? null)
+							: typeof tab.name === 'string'
+								? tab.name
+								: null;
+					stripTabs.push({
+						tabId: tab.id,
+						tabType,
+						agentId: s.id,
+						agentName: s.name,
+						name: typeof name === 'string' && name ? name : null,
+						target: typeof tab[targetField] === 'string' ? tab[targetField] : null,
+						active: tab.id === activeId,
+						visibility: tabStripVisibility(tabType, tab, slots),
+					});
+				}
+			}
 		}
-		return entries;
+		return { sessions: entries, tabs: stripTabs };
 	});
 
 	// `maestro-cli session show <tabId>` - return the tab's conversation

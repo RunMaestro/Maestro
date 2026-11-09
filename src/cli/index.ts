@@ -675,6 +675,16 @@ session
 	.command('list')
 	.description('List open desktop AI tabs and their tab/session IDs')
 	.option('--include-hidden', 'Also list hidden tabs (consults) the tab bar does not show')
+	.option('--hidden', 'List only hidden tabs (consults and other tabs the tab bar does not show)')
+	.option(
+		'--all',
+		'List every tab, visible, hidden, and orphaned (no tab-strip slot), with a visibility field'
+	)
+	.option(
+		'--type <kind>',
+		'Which tabs: ai (default), file, browser, terminal, or all. Non-AI tabs are listed under "tabs" in JSON',
+		'ai'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(sessionList);
 

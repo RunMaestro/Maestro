@@ -418,11 +418,13 @@ export function handleListDesktopSessions(
 	client: WebClient,
 	message: WebClientMessage
 ): void {
-	const sessions = ctx.callbacks.listDesktopSessions ? ctx.callbacks.listDesktopSessions() : [];
+	const listing = ctx.callbacks.listDesktopSessions ? ctx.callbacks.listDesktopSessions() : [];
 	ctx.send(client, {
 		type: 'desktop_sessions_list',
 		success: true,
-		sessions,
+		// A bare array is the AI tabs alone (older callbacks); a listing also
+		// carries the file, browser and terminal tabs (`session list --type`).
+		...(Array.isArray(listing) ? { sessions: listing } : listing),
 		requestId: message.requestId,
 	});
 }

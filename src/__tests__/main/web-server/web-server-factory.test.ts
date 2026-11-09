@@ -735,7 +735,15 @@ describe('web-server/web-server-factory', () => {
 			const createWebServer = createWebServerFactory(deps);
 			const server = createWebServer();
 			const setter = server.setListDesktopSessionsCallback as ReturnType<typeof vi.fn>;
-			return setter.mock.calls[0][0];
+			const callback = setter.mock.calls[0][0];
+			// The listing carries AI tabs in `sessions`; these tests read those.
+			return () => callback().sessions;
+		};
+		const getListing = () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+			const setter = server.setListDesktopSessionsCallback as ReturnType<typeof vi.fn>;
+			return setter.mock.calls[0][0]();
 		};
 
 		it('reports a persisted busy tab as busy without a managed process', () => {
@@ -837,6 +845,47 @@ describe('web-server/web-server-factory', () => {
 				['tab-a', false, true],
 				['tab-consult', true, true],
 				['tab-orphan', false, false],
+			]);
+			expect(entries.map((e: { visibility: string }) => e.visibility)).toEqual([
+				'visible',
+				'hidden',
+				'orphaned',
+			]);
+		});
+
+		it('lists file, browser and terminal tabs with their visibility (#2008)', () => {
+			vi.mocked(mockSessionsStore.get).mockReturnValue([
+				{
+					id: 'agent-a',
+					name: 'Backend',
+					toolType: 'claude-code',
+					aiTabs: [{ id: 'tab-a' }],
+					filePreviewTabs: [{ id: 'f1', name: 'README.md', path: '/repo/README.md' }],
+					browserTabs: [{ id: 'b1', title: 'Docs', url: 'https://example.test/' }],
+					terminalTabs: [{ id: 't1', name: 'Shell', cwd: '/repo' }],
+					activeFileTabId: 'f1',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'tab-a' },
+						{ type: 'file', id: 'f1' },
+						{ type: 'browser', id: 'b1' },
+					],
+				},
+			]);
+
+			const { tabs } = getListing();
+			expect(tabs).toEqual([
+				{
+					tabId: 'f1',
+					tabType: 'file',
+					agentId: 'agent-a',
+					agentName: 'Backend',
+					name: 'README.md',
+					target: '/repo/README.md',
+					active: true,
+					visibility: 'visible',
+				},
+				expect.objectContaining({ tabId: 'b1', name: 'Docs', target: 'https://example.test/' }),
+				expect.objectContaining({ tabId: 't1', target: '/repo', visibility: 'orphaned' }),
 			]);
 		});
 	});

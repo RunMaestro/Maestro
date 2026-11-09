@@ -818,6 +818,46 @@ describe('persistence IPC handlers', () => {
 			expect(result).toEqual([]);
 		});
 
+		it('drops slotless closed tabs on the first load only (#2008)', async () => {
+			const session = () => ({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{ id: 'open', logs: [] },
+					{ id: 'closed', logs: [] },
+					{ id: 'consult', hidden: true, logs: [] },
+				],
+				filePreviewTabs: [{ id: 'tiled' }, { id: 'stale-file' }],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'open' },
+					{ type: 'group', id: 'g1' },
+				],
+				tabGroups: [
+					{ id: 'g1', layout: { kind: 'leaf', id: 'l1', tab: { type: 'file', id: 'tiled' } } },
+				],
+			});
+			mockSessionsStore.get.mockReturnValue([session()]);
+
+			const first = (await handlers.get('sessions:getAll')!({} as any)) as any[];
+
+			expect(first[0].aiTabs.map((tab: { id: string }) => tab.id)).toEqual(['open', 'consult']);
+			expect(first[0].filePreviewTabs).toEqual([{ id: 'tiled' }]);
+			expect(mockSessionsStore.set).toHaveBeenCalledWith('sessions', first);
+
+			mockSessionsStore.set.mockClear();
+			mockSessionsStore.get.mockReturnValue([session()]);
+			const later = (await handlers.get('sessions:getAll')!({} as any)) as any[];
+			expect(later[0].aiTabs).toHaveLength(3);
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
+		});
+
+		it('leaves a legacy record with no tab order alone', async () => {
+			const legacy = { id: 'session-1', toolType: 'claude-code', aiTabs: [{ id: 'a', logs: [] }] };
+			mockSessionsStore.get.mockReturnValue([legacy]);
+			const result = (await handlers.get('sessions:getAll')!({} as any)) as any[];
+			expect(result[0].aiTabs).toEqual(legacy.aiTabs);
+		});
+
 		it('should compact oversized tool output before returning legacy sessions', async () => {
 			const oversizedOutput = 'x'.repeat(50_000);
 			const sessions = [
