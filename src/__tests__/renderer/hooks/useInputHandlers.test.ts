@@ -1414,6 +1414,74 @@ describe('useInputHandlers', () => {
 			expect(dropEvent.preventDefault).toHaveBeenCalled();
 		});
 
+		it('inserts a dragged staged-image reference once in a room draft', () => {
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [
+					{ id: 'group-1', draftMessage: 'compare', moderatorAgentId: 'claude-code' } as any,
+				],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-staged-image'
+							? '1'
+							: type === 'text/plain'
+								? 'Screenshot 2'
+								: '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const chat = useGroupChatStore.getState().groupChats.find((c) => c.id === 'group-1');
+			expect(chat?.draftMessage).toBe('compare Screenshot 2 ');
+			expect(chat?.draftMessage?.match(/Screenshot 2/g)).toHaveLength(1);
+			// The image was already staged; the drop only writes text, so the
+			// room's image gate is not bypassed.
+			expect(mockSetGroupChatStagedImages).not.toHaveBeenCalled();
+		});
+
+		it('inserts a dragged staged-image reference once in the AI draft', () => {
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			act(() => {
+				result.current.setInputValue('compare');
+			});
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-staged-image'
+							? '1'
+							: type === 'text/plain'
+								? 'Screenshot 2'
+								: '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const draft = inputVal();
+			expect(draft).toBe('compare Screenshot 2 ');
+			expect(draft.match(/Screenshot 2/g)).toHaveLength(1);
+		});
+
 		it('refuses image drop in group chat mode when moderator cannot read images and flashes once for multiple images', () => {
 			clearCapabilitiesCache();
 			setCapabilitiesCache('terminal', {

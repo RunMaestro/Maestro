@@ -51,11 +51,6 @@ import { useAiCommandStore, selectAiCommandEntry, aiCommandKey } from '../../sto
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 import { codifyTurnSettings } from '../../utils/providerTabSessions';
 import { hasStandardApprovalChannel } from '../../../shared/agentMetadata';
-import {
-	buildSlotRemap,
-	moveStagedImage,
-	renumberScreenshotReferences,
-} from '../../utils/stagedImageOrder';
 
 /** localStorage key for the phone composer fold (see PhoneComposerHandle). */
 export const PHONE_COMPOSER_COLLAPSED_KEY = 'phone.composer.collapsed';
@@ -301,24 +296,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		[]
 	);
 	const getAiValueAtCallTime = useMemo(() => () => useComposerInputStore.getState().aiValue, []);
-
-	// Reordering the strip reorders what the agent receives, so any `Screenshot N`
-	// already sitting in the draft is now pointing at the wrong picture. Rewrite
-	// those references through the same permutation, in one place, so the strip
-	// and the organizer modal cannot drift on it.
-	const handleReorderStagedImages = useCallback(
-		(from: number, to: number) => {
-			const remap = buildSlotRemap(stagedImages.length, from, to);
-			if (remap.size === 0) return;
-			setStagedImages((prev) => moveStagedImage(prev, from, to));
-			// Read at call time: this fires on a drop, so the store always holds the
-			// live draft and subscribing here would re-render on every keystroke.
-			const draft = useComposerInputStore.getState().aiValue;
-			const renumbered = renumberScreenshotReferences(draft, remap);
-			if (renumbered !== draft) setInputValue(renumbered);
-		},
-		[stagedImages.length, setStagedImages, setInputValue]
-	);
 
 	// thinkingItems is now passed directly from App.tsx (pre-filtered) for better performance
 
@@ -779,7 +756,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			stagedImages={stagedImages}
 			stagedImagesVisible={session.inputMode === 'ai'}
 			setStagedImages={setStagedImages}
-			onReorderStagedImages={handleReorderStagedImages}
+			draftValue={inputValue}
+			onDraftChange={setInputValue}
 			setLightboxImage={setLightboxImage}
 			openAnnotator={openAnnotator}
 			enterToSend={enterToSend}
