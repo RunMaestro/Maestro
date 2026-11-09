@@ -2,7 +2,7 @@
 
 Verified against `origin/rc` at `bc203be21` (2026-10-19). Paths are relative to `src/renderer/` unless they start with `src/`. "AI chat" is `components/InputArea/` plus `hooks/input/`; "Group Chat" is `components/GroupChatInput.tsx` (860 lines) mounted by `components/GroupChatPanel.tsx`.
 
-**Status (2026-11-09):** Steps 1-9 are merged into rc; the last merge is `7e39141` (#1996). `fix/ime-enter-guards` (#1998) is still open.
+**Status (2026-11-09):** Steps 1-9 and the IME Enter guards are merged into rc; the last merge is `ad50524` (#1998).
 
 Status values: **Shared** (one implementation used by both), **Reimpl, identical** (two copies, same behaviour), **Reimpl, drifted** (two copies that differ), **Missing** (AI chat only), **GC only**.
 
@@ -159,7 +159,7 @@ The review settled every proposal. Applied as follows:
 
 ## Progress
 
-Steps 1-9 are merged into rc. The table records the rows each step completed and where it landed. Steps 4, 6, 7, the step 8 AI half, 9b and 9c landed inside their base branch's merge, so their "On rc in" column names the PR that carried them. `fix/ime-enter-guards` (PR #1998) is still open on the step 8 AI half. Each step's commit message lists the room behaviour changes; the rows below are what those messages describe. Every branch carries the CLAUDE.md index trim (2026-10-28) and the `origin/rc` catch-ups, which change no rows.
+Steps 1-9 are merged into rc. The table records the rows each step completed and where it landed. Steps 4, 6, 7, the step 8 AI half, 9b and 9c landed inside their base branch's merge, so their "On rc in" column names the PR that carried them. Each step's commit message lists the room behaviour changes; the rows below are what those messages describe. Every branch carries the CLAUDE.md index trim (2026-10-28) and the `origin/rc` catch-ups, which change no rows.
 
 | Step   | PR    | Merged into         | On rc in           | Rows completed                                    | Rows partly completed                                                        |
 | ------ | ----- | ------------------- | ------------------ | ------------------------------------------------- | ---------------------------------------------------------------------------- |
@@ -176,7 +176,7 @@ Steps 1-9 are merged into rc. The table records the rows each step completed and
 | 9b     | #1997 | 9a, `139e0f366`     | #1996, `7e3914133` | 23                                                | None                                                                         |
 | 9c     | #2007 | 9b, `0153a9d88`     | #1996, `7e3914133` | 21, 28                                            | None                                                                         |
 
-`fix/ime-enter-guards` (#1998, P8 and P11 IME Enter guards) sits on the step 8 AI half and is still open; its guards are not on rc yet (see [Open items](#open-items)).
+`fix/ime-enter-guards` (#1998, P8 and P11 IME Enter guards) was based on the step 8 AI half and merged into rc as `ad50524`.
 
 The individual fix commits and the `origin/rc` catch-ups are recorded under [Findings fixed](#findings-fixed); they change no rows.
 
@@ -226,11 +226,10 @@ There is no flag for the Prompt Composer button (it shows when its callback is p
 - K2 (one global read-only flag for every room).
 - Deferred capability flags from step 4: `commandMode`, `slashCommands`, `shellTabCompletion`, `fileMentions`, `mentionRouting`, `sendMenu` (each added by the step that first reads it).
 - Room shortcuts outside the composer: `useMainKeyboardHandler.ts` still acts on the hidden agent behind an open room. The three clearly wrong ones (toggle tab star, edit last queued message, clear terminal) are being fixed today on a separate branch off rc; they are not merged yet. The judgment calls (new terminal tab, tile-below, open batch runner, move to group, bookmark, fuzzy file search) are listed under [Parity gaps](#parity-gaps-noticed-outside-the-composer-not-audited).
-- #1998 (`fix/ime-enter-guards`) is open. Its 2026-11-09 CI run hit a 10s hook timeout in `pianola-dispatch-admission.test.ts` on windows shard 2/2, unrelated to its IME guards. The P8 and P11 guards are on the branch, not on rc.
 
 ### Findings fixed
 
-P1, P2, P5 and P6 are on step 3 (#1891, `fc9215753`). P4 is on step 6 (#1952, `1c98ee5bf`). P7 is on the step 8 AI half (#1991, `79e584ce8`). P8 and P11 are on the open `fix/ime-enter-guards` (#1998). P9 and P12 are on 9b (#1997, `139e0f366`), with the Greptile fixes on 9a and 9b. P10 is on `fix/group-chat-send-image-gate`, merged into 9b (`b04b4f14d`). P13 is on 9a (#1996, `7e3914133`). The Escape-during-composition fix and right-click Send menu pin are also on step 3.
+P1, P2, P5 and P6 are on step 3 (#1891, `fc9215753`). P4 is on step 6 (#1952, `1c98ee5bf`). P7 is on the step 8 AI half (#1991, `79e584ce8`). P8 and P11 are on `fix/ime-enter-guards` (#1998, merged into rc as `ad50524`). P9 and P12 are on 9b (#1997, `139e0f366`), with the Greptile fixes on 9a and 9b. P10 is on `fix/group-chat-send-image-gate`, merged into 9b (`b04b4f14d`). P13 is on 9a (#1996, `7e3914133`). The Escape-during-composition fix and right-click Send menu pin are also on step 3.
 
 - **P1, AI chat `@` picker Escape blurred the composer.** The picker closed, then the key reached `handleEscapeInMain`, which blurs the composer. Fixed in `21ebee936`: `handleComposerPickerKey` stops propagation for the picker's Escape on every surface. Escape with the picker closed is unchanged.
 - **P2, IME Enter could send half-composed text.** The Enter branch of `handleComposerSendKey` had no `isComposing` guard, in both composers. Fixed in `e30be29f9`: one check, `isImeComposing()` (`isComposing`, or keyCode 229 for Safari), keeps Enter from sending and the picker keys from acting while a composition is active. The AI composer's steer chord, Forced Parallel Send and category cycling use the same check.
