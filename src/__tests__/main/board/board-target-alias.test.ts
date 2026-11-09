@@ -212,3 +212,25 @@ it.each([
 	expect(result.result.error.code).not.toBe('invalid-input');
 	expect(result.unchanged).toBe(true);
 });
+
+it('admits the current physical project alias for a default worker without an additional source grant', async () => {
+	const value = await run('default-alias-valid');
+	expect(value.defaultWorker.payload.allowedRepositoryIds).toEqual([]);
+	expect(value.productionSourceAdapter).toBe(true);
+	expect(value.result.ok, value.result.error?.code).toBe(true);
+	expect(value.result.value.name).toBe('Default alias edit');
+});
+it.each([
+	'retarget-await',
+	'retarget-queue',
+	'missing-queue',
+	'current-ssh-present',
+	'current-invalid-present',
+])('keeps default-worker alias source guards at %s', async (mode) => {
+	const value = await run('default-alias-' + mode);
+	expect(value.defaultWorker.payload.allowedRepositoryIds).toEqual([]);
+	expect(value.result.ok).toBe(false);
+	expect(value.result.error.code).not.toBe('invalid-input');
+	expect(value.unchanged).toBe(true);
+	expect(value.foreignProbes).toBe(0);
+});

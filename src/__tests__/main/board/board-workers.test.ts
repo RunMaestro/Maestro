@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
+import { usesOwnBoardRepository } from '../../../shared/board/worker-options';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { openBoardDb } from '../../../main/board/board-db';
 import {
@@ -187,4 +188,58 @@ describe('Board worker registry', () => {
 			db.close();
 		}
 	});
+});
+
+it('preserves explicit legacy restrictions and retains automatic own access when adding a default worker grant', () => {
+	let db = openBoardDb(fixture.contract.db);
+	try {
+		registerBoardWorker(db, 'default');
+		registerBoardWorker(db, 'legacy');
+		db.prepare('INSERT INTO repositories VALUES (?,?)').run(
+			'extra',
+			canonicalJson({ id: 'extra', workingDirectory: 'synthetic-extra' })
+		);
+		const legacy = canonicalJson({
+			roleRefs: [],
+			allowedRepositoryIds: [],
+			accessManaged: true,
+			migration: { sourceKey: 'original' },
+		});
+		db.prepare('UPDATE workers SET payload_json=? WHERE agent_id=?').run(legacy, 'legacy');
+		expect(
+			usesOwnBoardRepository(
+				listBoardWorkers(db).find((worker) => worker.agentId === 'default')!.payload
+			)
+		).toBe(true);
+		setBoardWorkerAccess(db, 'default', [], ['extra']);
+		setBoardWorkerAccess(db, 'legacy', [], []);
+		db.close();
+		db = openBoardDb(fixture.contract.db);
+		const workers = listBoardWorkers(db);
+		expect(
+			usesOwnBoardRepository(workers.find((worker) => worker.agentId === 'default')!.payload)
+		).toBe(true);
+		expect(workers.find((worker) => worker.agentId === 'default')!.payload).toMatchObject({
+			allowedRepositoryIds: ['extra'],
+			repositoryAccess: 'own-and-grants',
+		});
+		expect(canonicalJson(workers.find((worker) => worker.agentId === 'legacy')!.payload)).toBe(
+			legacy
+		);
+		expect(
+			usesOwnBoardRepository(workers.find((worker) => worker.agentId === 'legacy')!.payload)
+		).toBe(false);
+		expect(usesOwnBoardRepository({ allowedRepositoryIds: ['extra'] })).toBe(false);
+		expect(
+			usesOwnBoardRepository({ allowedRepositoryIds: [], repositoryAccess: 'unknown-mode' })
+		).toBe(false);
+		expect(
+			usesOwnBoardRepository({
+				repositoryAccess: 'own-and-grants',
+				allowedRepositoryIds: 'invalid',
+			})
+		).toBe(false);
+	} finally {
+		db.close();
+	}
 });

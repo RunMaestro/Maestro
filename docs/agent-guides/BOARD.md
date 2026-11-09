@@ -24,6 +24,20 @@ The separate Profiles feature still reads and writes project `profiles.yaml` thr
 
 Workers are explicitly registered centrally. At claim time the host rechecks the card's agent or group scope, current membership, role grants, optional pin, repository access, pause and occupancy. Legacy `boardWorker` session flags are migration provenance, not the active dispatch pool. A missing or busy worker waits; it does not authorize fallback outside scope. A worker's configured model, effort, prompt and arguments remain separate from role overrides.
 
+`board-repository-access.ts` observes the current native agent CWD and local Git common directory, physical identities and Git worktree registration. An ordinary default worker can use that verified own repository and its registered worktrees without an extra checkbox. Equal remote URLs and path prefixes never establish identity; SSH or unresolved native identities do not acquire automatic access. Scope, roles, pause, approval, reservation and run-attempt checks still apply. Preparation is asynchronous; claim/final-start/result authority rechecks its native path read set and current registers. Diagnostic projections never become launch authority.
+
+| Stored worker policy                                         | Repository behavior                                                    |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| Default/unmanaged empty list, no `repositoryAccess` override | Verified own local Git identity only                                   |
+| Legacy explicitly managed list, including empty              | Preserve that exact restriction                                        |
+| Existing nonempty legacy list without the new mode           | Preserve the explicit list; no automatic widening                      |
+| `repositoryAccess: 'own-and-grants'`                         | Verified own identity plus explicitly stored additional repository IDs |
+| Malformed/unknown policy or unproven identity                | No automatic grant                                                     |
+
+Editing additional access on a default worker retains its own-repository mode; opening/upgrading a database does not rewrite old workers or migration provenance. The Workers view groups repositories by the same native identity observation, shows automatic own access separately, and retains individual explicit grants within a group. A session binding change invalidates the displayed observation; start authority is always rechecked independently.
+
+Capture replies acknowledge the committed, revision-fenced save without waiting for unrelated repository diagnostics. Their pure readiness projection reports missing proof as `repository-unknown`; the normal read-only asynchronous query computes fresh diagnostic observations afterward. Neither projection can approve a run. Missing native Cue ownership and a conflicting/unproven Board owner retain distinct refusal messages/codes; neither permits takeover or reservation release.
+
 `ready` is host-derived and `running` represents a claimed attempt. Successful work enters review only with the required summary and clean bound artifact; incomplete evidence blocks with a recoverable retry path. Linked review and a trusted human decision precede final `done`. Retain attempt history, approvals and reservation fences across cancellation and recovery. Worktree isolation and remote limitations are described in [Board](../board.md).
 
 ## CLI and integration

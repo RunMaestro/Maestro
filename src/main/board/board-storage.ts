@@ -1,3 +1,8 @@
+import {
+	prepareBoardRepositoryAccess,
+	projectBoardRepositoryAccess,
+	type BoardRepositoryObservation,
+} from './board-repository-access';
 import { requireBoardEnabled } from './board-feature';
 /** Central Board facade. Legacy project roots resolve only to explicitly registered or imported sources.
  * YAML is migration input only; no fallback reader or exporter exists here.
@@ -38,6 +43,7 @@ import {
 import { hasCycle } from '../../shared/board/graph';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { generateUUID } from '../../shared/uuid';
+import { usesOwnBoardRepository } from '../../shared/board/worker-options';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import { captureException } from '../utils/sentry';
 import { logger } from '../utils/logger';
@@ -126,7 +132,10 @@ export function resolveLocalBoardSourceKeys(projectRoot: string): string[] {
 	}
 }
 
-let hostRegisters: () => Pick<BoardCaptureCatalog, 'agents' | 'groups'> = () => ({
+let hostRegisters: () => {
+	agents: import('./board-repository-access').BoardRepositoryAgent[];
+	groups: { id: string }[];
+} = () => ({
 	agents: [],
 	groups: [],
 });
@@ -147,6 +156,7 @@ export function configureBoardReadinessHost(provider: typeof readinessHost): voi
 /** Ephemeral read evidence, never an authorization or a persisted cache. */
 export interface PreparedDiagnosticObservations {
 	workspaceRevision: number;
+	repositoryAccess?: BoardRepositoryObservation;
 	cards: {
 		sourceKey: string;
 		collectionKey: string;
@@ -162,6 +172,35 @@ export interface PreparedDiagnosticObservations {
 
 /** Injectable facade: fixtures and host share the same SQLite adapter and source resolver. */
 export class BoardStorageFacade {
+	async prepareRepositoryAccess(repositories = this.captureCatalog().repositories) {
+		const workers = new Set(
+			listStoredBoardWorkers(this.db)
+				.filter((worker) => usesOwnBoardRepository(worker.payload))
+				.map((worker) => worker.agentId)
+		);
+		return prepareBoardRepositoryAccess(
+			this.repositoryAgents().filter((agent) => workers.has(agent.id)),
+			repositories
+		);
+	}
+	projectRepositoryAccess(observation: BoardRepositoryObservation | undefined) {
+		if (!observation) return {};
+		const repositories = new Set(
+			(JSON.parse(observation.repositories) as { id: string }[]).map((repo) => repo.id)
+		);
+		const agents = new Set(
+			(JSON.parse(observation.agents) as { id: string }[]).map((agent) => agent.id)
+		);
+		return projectBoardRepositoryAccess(
+			observation,
+			this.repositoryAgents().filter((agent) => agents.has(agent.id)),
+			this.captureCatalog().repositories.filter((repo) => repositories.has(repo.id))
+		);
+	}
+	/** Native caller-owned registers; this is never populated from a command/catalog response. */
+	repositoryAgents() {
+		return hostRegisters().agents;
+	}
 	readonly workspace: BoardWorkspaceStorage;
 	/** No transport authority is accepted here; runtime liveness/owner evidence is injected. */
 	claim(
@@ -348,7 +387,15 @@ export class BoardStorageFacade {
 				};
 			})
 		);
-		return { workspaceRevision, cards };
+		return {
+			workspaceRevision,
+			cards,
+			repositoryAccess: await this.prepareRepositoryAccess(
+				catalog.repositories.filter((repo) =>
+					inputs.some((input) => input.repository?.id === repo.id)
+				)
+			),
+		};
 	}
 
 	async captureReadinessAsync(board: Board) {
@@ -375,13 +422,28 @@ export class BoardStorageFacade {
 				? worker.payload.allowedRepositoryIds
 				: [],
 		}));
+		const ownRepositoryIds = this.projectRepositoryAccess(observations?.repositoryAccess);
 		const context = {
 			...catalog,
 			defaultStartMode:
 				board.defaultStartMode === 'direct' ? ('direct' as const) : ('approval' as const),
 			canRelaxStartPolicy: false,
 			workers,
+			ownRepositoryIds,
 			repositoryIds: catalog.repositories.filter((repo) => repo.validated).map((repo) => repo.id),
+		};
+		const workerReason = (
+			options: Parameters<typeof evaluateClaimWorker>[0],
+			agentId: string
+		): BoardReadinessReason | null => {
+			const reason = evaluateClaimWorker(options, agentId, context);
+			// A synchronous save receipt has no fresh native Git observation. Report
+			// unknown proof, not a request to configure a grant the default does not need.
+			return reason === 'worker-repository-mismatch' &&
+				ownRepositoryIds !== observations?.repositoryAccess?.owners &&
+				usesOwnBoardRepository(workers.find((worker) => worker.agentId === agentId)?.payload)
+				? 'repository-unknown'
+				: reason;
 		};
 		const ref = board.storage;
 		const current = ref && this.workspace.readCollection(ref);
@@ -432,7 +494,7 @@ export class BoardStorageFacade {
 							assigneeProfileId: undefined,
 							assigneeAgentId: card.reviewerAgentId,
 						};
-						const reason = evaluateClaimWorker(reviewOptions, card.reviewerAgentId, context);
+						const reason = workerReason(reviewOptions, card.reviewerAgentId);
 						if (reason) reasons.push(reason);
 						else if (host?.agentStates[card.reviewerAgentId]?.busy) reasons.push('worker-busy');
 						else
@@ -451,7 +513,7 @@ export class BoardStorageFacade {
 				const candidates = catalog.agents
 					.map((agent) => ({
 						agentId: agent.id,
-						reason: captureFailure ?? evaluateClaimWorker(captureInput, agent.id, context),
+						reason: captureFailure ?? workerReason(captureInput, agent.id),
 					}))
 					.filter((entry) => entry.reason !== 'worker-outside-scope');
 				const eligible = candidates.filter((entry) => entry.reason === null);
@@ -1435,7 +1497,11 @@ export async function captureBoardCard(
 	return {
 		ok: true as const,
 		value: board,
-		readiness: await storage().captureReadinessAsync(board),
+		// Persistence and authority fences have completed. Unrelated filesystem/Git
+		// diagnostics must not hold the write queue or the correlated save reply.
+		// Query reloads compute fresh diagnostic observations; this pure projection
+		// explicitly reports unknown proof and can never authorize a claim/start.
+		readiness: storage().captureReadiness(board),
 	};
 }
 
@@ -1443,8 +1509,48 @@ export async function captureBoardCard(
 export function listBoardWorkers() {
 	return listStoredBoardWorkers(storage().db);
 }
-export function listBoardWorkerAccessOptions() {
-	return listStoredBoardWorkerAccessOptions(storage().db);
+export async function listBoardWorkerAccessOptions(): Promise<
+	ReturnType<typeof listStoredBoardWorkerAccessOptions> & {
+		repositoryGroups?: import('../../shared/board/worker-options').BoardWorkerRepositoryGroup[];
+	}
+> {
+	const facade = storage();
+	const options = listStoredBoardWorkerAccessOptions(facade.db);
+	const observation = await prepareBoardRepositoryAccess(
+		facade.repositoryAgents(),
+		facade.captureCatalog().repositories
+	);
+	requireBoardEnabled();
+	const owners = facade.projectRepositoryAccess(observation);
+	const groups = new Map<
+		string,
+		import('../../shared/board/worker-options').BoardWorkerRepositoryGroup
+	>();
+	for (const repository of options.repositories) {
+		const identity = observation.identities[repository.id];
+		const id =
+			identity && owners === observation.owners
+				? createHash('sha256')
+						.update(
+							canonicalJson([
+								identity.common,
+								identity.paths.find((entry) => entry.path === identity.common)?.identity,
+							])
+						)
+						.digest('hex')
+				: repository.id;
+		let group = groups.get(id);
+		if (!group) {
+			group = { id, name: repository.name, repositoryIds: [], ownWorkerIds: [] };
+			groups.set(id, group);
+		}
+		group.repositoryIds.push(repository.id);
+		for (const [agentId, repositories] of Object.entries(owners)) {
+			if (repositories.includes(repository.id) && !group.ownWorkerIds.includes(agentId))
+				group.ownWorkerIds.push(agentId);
+		}
+	}
+	return { ...options, repositoryGroups: [...groups.values()] };
 }
 export function registerBoardWorker(agentId: string) {
 	return registerStoredBoardWorker(storage().db, agentId);

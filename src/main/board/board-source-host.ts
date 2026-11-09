@@ -253,7 +253,10 @@ export async function prepareBoardMutationTarget(
 			if (!source) break;
 			// A known source-bound current registration is present even when its
 			// location/root is now invalid. The hint never grants a physical match.
-			const related = relatedAgents.has(item.id);
+			const related =
+				relatedAgents.has(item.id) ||
+				(source.location.kind === 'local' &&
+					(item.dir === source.path || item.projectRoot === source.path));
 			if (related) observed.push(item);
 			const location = resolveBoardLocation(item);
 			const raw = item.projectRoot || item.dir;

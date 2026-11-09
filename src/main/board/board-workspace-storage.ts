@@ -8,6 +8,7 @@ import { canonicalJson } from '../../shared/canonicalJson';
 import {
 	parseBoardWorkerOptionsPatch,
 	readBoardWorkerOptions,
+	usesOwnBoardRepository,
 } from '../../shared/board/worker-options';
 import type { BoardWorkerOptionsPatch, StoredBoardWorker } from '../../shared/board/worker-options';
 export type { StoredBoardWorker } from '../../shared/board/worker-options';
@@ -212,7 +213,13 @@ export function setBoardWorkerAccess(
 			)
 				throw new Error('Board worker repository not found');
 		}
-		const next = canonicalJson({ ...payload, roleRefs, allowedRepositoryIds, accessManaged: true });
+		const next = canonicalJson({
+			...payload,
+			roleRefs,
+			allowedRepositoryIds,
+			accessManaged: true,
+			...(usesOwnBoardRepository(existing) ? { repositoryAccess: 'own-and-grants' } : {}),
+		});
 		if (canonicalJson(payload) === next) return;
 		db.prepare('UPDATE workers SET payload_json = ? WHERE agent_id = ?').run(next, agentId);
 		db.prepare('UPDATE workspace SET revision = revision + 1 WHERE id = 1').run();
@@ -274,6 +281,7 @@ export interface BoardCollectionWrite extends BoardCollectionKey, BoardWorkspace
 
 export type BoardWorkspaceErrorCode =
 	| 'owner-identity-unavailable'
+	| 'owner-conflict'
 	| 'runtime-unavailable'
 	| 'invalid-input'
 	| 'invalid-payload'

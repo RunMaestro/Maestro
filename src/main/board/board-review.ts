@@ -255,7 +255,8 @@ export function recoverIncompleteBoardReview(
  * A missing/removed reviewer leaves work in Review. Busy reviewers get a normal queued task. */
 export function queueBoardReviews(
 	storage: BoardStorageFacade,
-	onTransitions?: BoardTransitionsListener
+	onTransitions?: BoardTransitionsListener,
+	ownRepositoryIds?: Readonly<Record<string, readonly string[]>>
 ): void {
 	storage.db
 		.transaction(() => {
@@ -357,6 +358,7 @@ export function queueBoardReviews(
 					};
 					const reason = evaluateClaimWorker(review, work.reviewerAgentId, {
 						...catalog,
+						ownRepositoryIds,
 						canRelaxStartPolicy: true,
 						repositoryIds: catalog.repositories
 							.filter((repo) => repo.validated)
@@ -388,7 +390,8 @@ export function applyBoardReviewResult(
 	review: BoardCard,
 	runId: string,
 	verdict: 'clean' | 'findings',
-	summary: string
+	summary: string,
+	ownRepositoryIds?: Readonly<Record<string, readonly string[]>>
 ): boolean {
 	const handoff = review.reviewHandoff;
 	if (!handoff || !summary.trim()) return false;
@@ -410,6 +413,7 @@ export function applyBoardReviewResult(
 			review.assigneeAgentId!,
 			{
 				...catalog,
+				ownRepositoryIds,
 				canRelaxStartPolicy: true,
 				repositoryIds: catalog.repositories.filter((repo) => repo.validated).map((repo) => repo.id),
 				workers: listBoardWorkers(storage.db).map((worker) => ({

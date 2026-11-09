@@ -5000,9 +5000,7 @@ interface MaestroAPI {
 			query?: import('../shared/board/types').BoardWorkspaceQuery
 		) => Promise<import('../shared/board/types').BoardWorkspaceQueryResponse>;
 		listWorkerAccessOptions: () => Promise<
-			ReturnType<
-				typeof import('../main/board/board-workspace-storage').listBoardWorkerAccessOptions
-			>
+			Awaited<ReturnType<typeof import('../main/board/board-storage').listBoardWorkerAccessOptions>>
 		>;
 		listWorkers: () => Promise<import('../main/board/board-workspace-storage').StoredBoardWorker[]>;
 		setWorkerOptions: (

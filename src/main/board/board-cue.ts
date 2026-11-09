@@ -6,6 +6,10 @@ import { refreshBoardSources } from './board-source-host';
 import { queueBoardReviews } from './board-review';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { generateUUID } from '../../shared/uuid';
+import { evaluateClaimWorker, persistedCaptureInput } from '../../shared/board/domain';
+import { usesOwnBoardRepository } from '../../shared/board/worker-options';
+import type { BoardCard } from '../../shared/board/types';
+import { listBoardWorkers } from './board-workspace-storage';
 import type { BoardClaimHostContext, BoardRunSpecification } from './board-claims';
 import { BoardRuntime, type BoardRunService, type BoardRuntimeLock } from './board-runtime';
 import { executeBoardRuntimeCommand } from './board-runtime-host';
@@ -13,6 +17,11 @@ import { BoardStorageError, type BoardStorageFacade } from './board-storage';
 import type { BoardTickResult } from '../../shared/board/commands';
 import type { BoardCardKey } from './board-workspace-storage';
 import type { BoardTransitionsListener } from './board-transitions';
+import {
+	prepareBoardRepositoryAccess,
+	currentBoardRepositoryAccess,
+	type BoardRepositoryObservation,
+} from './board-repository-access';
 
 /** Native IO evidence belongs to one runtime lookup and its launch attempt. */
 export type BoardPreparedContext = Pick<BoardClaimHostContext, 'repository' | 'reviewArtifact'>;
@@ -43,13 +52,75 @@ export class BoardCueHost {
 		requireBoardEnabled();
 		const lock = await this.deps.lock();
 		requireBoardEnabled();
-		if (!lock || !lock.verify().ok) return null;
+		if (!lock)
+			throw new BoardStorageError(
+				'runtime-unavailable',
+				'Board runtime unavailable: native Cue ownership is not held by this process'
+			);
+		const verified = lock.verify();
+		if (!verified.ok)
+			throw new BoardStorageError(
+				'owner-conflict',
+				'Board runtime refused: native Cue ownership could not be verified'
+			);
 		const id = canonicalJson([key, lock.info]);
 		// Control-only lookups may reuse the adapter. A preparation must never
 		// overwrite evidence being consumed by another asynchronous lookup.
 		if (!prepare && this.runtimes.has(id)) return this.runtimes.get(id)!;
+		let repositoryAccess: BoardRepositoryObservation | undefined;
+		// Probe selection only. Authority still comes from native Git and the complete
+		// claim checks; unrelated agents/repositories do not enter this start's IO path.
+		const repositoryAgents = () => {
+			const storage = this.deps.storage();
+			const card = storage.workspace
+				.readCollection(key)
+				?.cards.find((card) => card.cardId === key.cardId)?.payload;
+			if (!card) return [];
+			const catalog = storage.captureCatalog();
+			const workers = listBoardWorkers(storage.db).map((worker) => ({
+				...worker,
+				roleRefs: Array.isArray(worker.payload.roleRefs) ? worker.payload.roleRefs : [],
+				allowedRepositoryIds: Array.isArray(worker.payload.allowedRepositoryIds)
+					? worker.payload.allowedRepositoryIds
+					: [],
+			}));
+			const candidates = new Set(
+				workers
+					.filter((worker) => {
+						if (!usesOwnBoardRepository(worker.payload)) return false;
+						if (worker.agentId === card.reviewerAgentId) return true;
+						const reason = evaluateClaimWorker(
+							persistedCaptureInput(card as unknown as BoardCard, card),
+							worker.agentId,
+							{
+								...catalog,
+								canRelaxStartPolicy: true,
+								workers,
+								repositoryIds: catalog.repositories
+									.filter((repo) => repo.validated)
+									.map((repo) => repo.id),
+							},
+							'result'
+						);
+						return reason === null || reason === 'worker-repository-mismatch';
+					})
+					.map((worker) => worker.agentId)
+			);
+			return storage.repositoryAgents().filter((agent) => candidates.has(agent.id));
+		};
+		const prepareAttempt = async (target: BoardCardKey) => {
+			const fresh = await this.deps.prepare(target);
+			requireBoardEnabled();
+			const storage = this.deps.storage();
+			repositoryAccess = await prepareBoardRepositoryAccess(
+				repositoryAgents(),
+				storage.captureCatalog().repositories.filter((repo) => repo.id === fresh.repository?.id)
+			);
+			requireBoardEnabled();
+			return fresh;
+		};
 		let prepared: BoardPreparedContext = prepare
-			? await this.deps.prepare(key)
+			? await prepareAttempt(key)
 			: { repository: null, reviewArtifact: null };
 		const service: BoardRunService = {
 			...this.deps.service,
@@ -57,8 +128,8 @@ export class BoardCueHost {
 				requireBoardEnabled();
 				// Revoke this attempt's previous evidence before fresh launch IO.
 				prepared = { repository: null, reviewArtifact: null };
-				const task = this.deps
-					.prepare(spec.key)
+				repositoryAccess = undefined;
+				const task = prepareAttempt(spec.key)
 					.then((fresh) => {
 						requireBoardEnabled();
 						prepared = fresh;
@@ -74,7 +145,20 @@ export class BoardCueHost {
 		const runtime = new BoardRuntime(
 			this.deps.storage(),
 			lock,
-			() => this.deps.context(key, prepared),
+			() => {
+				const context = this.deps.context(key, prepared);
+				const storage = this.deps.storage();
+				return {
+					...context,
+					ownRepositoryIds: currentBoardRepositoryAccess(
+						repositoryAccess,
+						repositoryAgents(),
+						storage
+							.captureCatalog()
+							.repositories.filter((repo) => repo.id === context.repository?.id)
+					),
+				};
+			},
 			service,
 			this.deps.ownerLiveness,
 			this.deps.onChanged,
@@ -83,15 +167,15 @@ export class BoardCueHost {
 		);
 		const acquired = runtime.acquire();
 		if (!acquired.ok) {
+			this.deps.onWait(key, acquired.reason);
 			// Keep the admission failure visible to intake and future native probes.
 			if (acquired.reason === 'owner-identity-unavailable') {
-				this.deps.onWait(key, acquired.reason);
 				throw new BoardStorageError(
 					acquired.reason,
 					'Board owner identity unavailable; native host proof is required'
 				);
 			}
-			return null;
+			throw new BoardStorageError(acquired.reason, 'Board runtime refused: ' + acquired.reason);
 		}
 		this.runtimes.set(id, runtime);
 		return runtime;
@@ -103,7 +187,30 @@ export class BoardCueHost {
 		if (!isBoardEnabled()) return;
 		// All registered sources, including projects without an open Left Bar agent.
 		const storage = this.deps.storage();
-		queueBoardReviews(storage, this.deps.onTransitions);
+		const awaitingReview = storage
+			.query()
+			.collections.flatMap((entry) => entry.board.cards)
+			.filter(
+				(card) => card.status === 'review' && !!card.reviewerAgentId && !!card.workflow?.workRunId
+			);
+		const reviewers = new Set(awaitingReview.map((card) => card.reviewerAgentId));
+		const repositories = new Set(awaitingReview.map((card) => card.repositoryId));
+		const reviewRepositories = storage
+			.captureCatalog()
+			.repositories.filter((repo) => repositories.has(repo.id));
+		const reviewAgents = () =>
+			storage.repositoryAgents().filter((agent) => reviewers.has(agent.id));
+		const reviewAccess = await prepareBoardRepositoryAccess(reviewAgents(), reviewRepositories);
+		if (!isBoardEnabled()) return;
+		queueBoardReviews(
+			storage,
+			this.deps.onTransitions,
+			currentBoardRepositoryAccess(
+				reviewAccess,
+				reviewAgents(),
+				storage.captureCatalog().repositories.filter((repo) => repositories.has(repo.id))
+			)
+		);
 		for (const initial of storage.query().collections) {
 			await yieldToEventLoop();
 			const entry = storage.workspace.readCollection(initial);

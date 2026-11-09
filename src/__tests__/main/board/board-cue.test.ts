@@ -795,7 +795,7 @@ describe('global Cue intake on the shared persistent runtime', () => {
 		expect(reserved()).toHaveLength(0);
 		lockValid = false;
 		await tick();
-		expect(waits.some((w) => w.reason === 'runtime-unavailable')).toBe(true);
+		expect(waits.some((w) => w.reason === 'owner-conflict')).toBe(true);
 	});
 	it('rechecks membership after asynchronous preparation before launch', async () => {
 		edit({ heldByUser: true }, 1);

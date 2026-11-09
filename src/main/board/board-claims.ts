@@ -75,6 +75,8 @@ export interface BoardClaimHostContext {
 	owner: { processIdentity: string; epoch: number };
 	registryRevision: number;
 	dispatchEnabled: boolean;
+	/** Ephemeral native observation, revalidated at claim and final launch. */
+	ownRepositoryIds?: Readonly<Record<string, readonly string[]>>;
 	/** Canonical handoff most recently verified against native Git by this host. */
 	reviewArtifact?: string | null;
 	agentStates: Readonly<
@@ -342,6 +344,7 @@ export function claimBoardCard(
 					command.workerAgentId,
 					{
 						...host.catalog,
+						ownRepositoryIds: host.ownRepositoryIds,
 						canRelaxStartPolicy: true,
 						workers,
 						repositoryIds: host.catalog.repositories

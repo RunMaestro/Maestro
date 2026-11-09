@@ -12,6 +12,7 @@ import { configureBoardFeatures } from '../../main/board/board-feature';
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import {
 	boardIsolationChildEnv,
 	readBoardIsolationRegistries,
@@ -20,7 +21,11 @@ import {
 import { canonicalJson } from '../../shared/canonicalJson';
 import { BOOTSTRAP_STORE_FILE } from '../../shared/syncPath';
 
-export function createBoardIsolationFixture(options: { syncInUserData?: boolean } = {}) {
+export function createBoardIsolationFixture(
+	options: { syncInUserData?: boolean; privateHome?: boolean } = {}
+) {
+	const privateHome =
+		options.privateHome ?? (!!process.env.HOME && process.env.HOME !== os.userInfo().homedir);
 	const worktree = fs.realpathSync.native(path.resolve(__dirname, '../../..'));
 	const isolated = path.join(worktree, 'isolated');
 	fs.mkdirSync(isolated, { recursive: true, mode: 0o700 });
@@ -52,7 +57,10 @@ export function createBoardIsolationFixture(options: { syncInUserData?: boolean 
 		);
 		fs.writeFileSync(
 			path.join(sync, 'maestro-settings.json'),
-			canonicalJson({ encoreFeatures: { board: true, maestroCue: true } }),
+			canonicalJson({
+				checkForUpdatesOnStartup: false,
+				encoreFeatures: { board: true, maestroCue: true },
+			}),
 			{ mode: 0o600 }
 		);
 		fs.writeFileSync(
@@ -61,11 +69,19 @@ export function createBoardIsolationFixture(options: { syncInUserData?: boolean 
 			{ mode: 0o600 }
 		);
 
-		// Never reuse inherited fixture/transport/evidence paths or redirect HOME.
+		// Never reuse inherited fixture/transport/evidence paths. A private runner's
+		// HOME must be moved beneath this admitted root rather than escaping it.
 		const explicit: NodeJS.ProcessEnv = { ...process.env };
 		for (const key of Object.keys(explicit)) if (key.startsWith('BOARD_')) delete explicit[key];
 		delete explicit.MAESTRO_DEMO_DIR;
 		delete explicit.MAESTRO_DATA_DIR;
+		if (privateHome) {
+			for (const key of ['HOME', 'CODEX_HOME'] as const) {
+				const directory = path.join(root, key.toLowerCase());
+				fs.mkdirSync(directory, { mode: 0o700 });
+				explicit[key] = directory;
+			}
+		}
 		Object.assign(explicit, {
 			BOARD_ISOLATION_ID: path.basename(root),
 			BOARD_ISOLATED_ROOT: root,
@@ -104,6 +120,7 @@ export function createBoardIsolationFixture(options: { syncInUserData?: boolean 
 					'MAESTRO_USER_DATA',
 					'MAESTRO_DEMO_DIR',
 					'MAESTRO_DATA_DIR',
+					...(privateHome ? ['HOME', 'CODEX_HOME'] : []),
 				]);
 				saved = new Map([...keys].map((key) => [key, process.env[key]]));
 				try {

@@ -537,6 +537,7 @@ describe('authoritative host capture over real SQLite and preload/IPC', () => {
 		});
 		expect(facade.read(dir, 'b')).toEqual(before);
 		expect(result.readiness.c).toEqual([
+			'repository-unknown',
 			'approval-required',
 			'emptyEligibleWorkers',
 			'worker-unregistered',
@@ -569,7 +570,9 @@ describe('authoritative host capture over real SQLite and preload/IPC', () => {
 		);
 		expect(captured).toMatchObject({
 			ok: true,
-			readiness: { c: ['emptyEligibleWorkers', 'worker-unregistered', 'runtime-unknown'] },
+			readiness: {
+				c: ['repository-unknown', 'emptyEligibleWorkers', 'worker-unregistered', 'runtime-unknown'],
+			},
 			value: {
 				cards: [
 					expect.objectContaining({
@@ -607,6 +610,7 @@ describe('authoritative host capture over real SQLite and preload/IPC', () => {
 		expect(response.ok).toBe(true);
 		if (!response.ok) throw Error(response.error.message);
 		expect(response.readiness.c).toEqual([
+			'repository-unknown',
 			'review-artifact-unresolved',
 			'emptyEligibleWorkers',
 			'worker-unregistered',
@@ -787,7 +791,7 @@ describe('authoritative host capture over real SQLite and preload/IPC', () => {
 			ok: true,
 			readiness: {
 				c: [
-					'repository-unresolved',
+					'repository-unknown',
 					'approval-required',
 					'emptyEligibleWorkers',
 					'worker-unregistered',
@@ -795,6 +799,15 @@ describe('authoritative host capture over real SQLite and preload/IPC', () => {
 				],
 			},
 		});
+		const fresh = await api.queryWorkspace();
+		if (!fresh.ok) throw new Error(fresh.error.message);
+		expect(fresh.value.collections.find((entry) => entry.board.id === 'b')!.readiness!.c).toEqual([
+			'repository-unresolved',
+			'approval-required',
+			'emptyEligibleWorkers',
+			'worker-unregistered',
+			'runtime-unknown',
+		]);
 	});
 	it('reports a later membership conflict and deleted role pin from current host state', async () => {
 		expect((await api.captureCard(command())).ok).toBe(true);
@@ -1149,6 +1162,7 @@ describe('read-only current host diagnosis across capture and global reload', ()
 		);
 		if (!captured.ok) throw new Error(captured.error.message);
 		expect(captured.readiness.c).toEqual([
+			'repository-unknown',
 			'approval-required',
 			'emptyEligibleWorkers',
 			'worker-unregistered',

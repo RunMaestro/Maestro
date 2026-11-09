@@ -23,7 +23,10 @@ import {
 	refreshBoardSources,
 } from '../../../../main/board/board-source-host';
 import type { BoardSourceSession } from '../../../../main/board/board-source-core';
-import { listBoardWorkers } from '../../../../main/board/board-workspace-storage';
+import {
+	listBoardWorkers,
+	registerBoardWorker,
+} from '../../../../main/board/board-workspace-storage';
 import { executeBoardCommand } from '../../../../main/board/board-command-host';
 import { createMaestroRuntime } from '../../../../shared/maestro-lib/runtime';
 import { startRuntimeServer } from '../../../../shared/maestro-lib/runtime/server';
@@ -41,6 +44,8 @@ process.once(
 		mode: string;
 		cliBundle?: string;
 	}) => {
+		const defaultAlias = input.mode.startsWith('default-alias-');
+		if (defaultAlias) input.mode = input.mode.slice('default-alias-'.length);
 		let db: ReturnType<typeof openBoardDb> | undefined;
 		let server: Awaited<ReturnType<typeof startRuntimeServer>> | undefined;
 		let client: BridgeConnection | undefined;
@@ -89,7 +94,12 @@ process.once(
 			configureBoardStorage(storage);
 			configureBoardCaptureHost(() => ({ agents: [{ id: 'a' }], groups: [] }));
 			const registered: BoardSourceSession[] = [
-				{ id: 'a', dir: alias, projectRoot: alias, boardWorker: true },
+				{
+					id: 'a',
+					dir: defaultAlias ? root : alias,
+					projectRoot: alias,
+					boardWorker: !defaultAlias,
+				},
 				{ id: 'foreign', dir: foreign },
 			];
 			configureBoardSourceHost(() =>
@@ -118,6 +128,7 @@ process.once(
 					})
 				);
 			}
+			if (defaultAlias) registerBoardWorker(db, 'a');
 			const collection = storage.query().collections.find((c) => c.board.id === 'b')!;
 			if (!collection) throw new Error('Canonical alias discovery did not import collection');
 			if (input.mode.startsWith('orphan-')) {
@@ -141,7 +152,7 @@ process.once(
 					Array.isArray(worker.payload.allowedRepositoryIds) &&
 					worker.payload.allowedRepositoryIds.includes(`source:${collection.sourceKey}`)
 			);
-			if (currentChange && !relatedWorkerBound)
+			if (currentChange && !relatedWorkerBound && !defaultAlias)
 				throw new Error('Current registration case requires the canonical source-bound worker');
 			const changeCurrentRegistration = () => {
 				let item = registered.find((item) => item.id === 'a');
@@ -407,8 +418,9 @@ process.once(
 				return result;
 			};
 			let settled = false;
-			const request =
-				input.mode === 'orphan-forged-human'
+			const request = defaultAlias
+				? { action: 'rename' as const, target: command.target, name: 'Default alias edit' }
+				: input.mode === 'orphan-forged-human'
 					? { ...command, human: true }
 					: input.mode === 'orphan-foreign-actor'
 						? { ...command, actor: { agentId: 'foreign' } }
@@ -475,6 +487,9 @@ process.once(
 				backgroundPending: input.mode === 'barrier' && !backgroundDone,
 				productionSourceAdapter: true,
 				relatedWorkerBound,
+				defaultWorker: defaultAlias
+					? listBoardWorkers(db).find((worker) => worker.agentId === 'a')
+					: undefined,
 				dag:
 					input.mode === 'orphan-dag'
 						? storage

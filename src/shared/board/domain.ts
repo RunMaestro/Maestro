@@ -1,5 +1,6 @@
 /** Pure global Board capture rules. Registry snapshots are supplied by the host. */
 import { isAbsolutePath } from '../formatters';
+import { usesOwnBoardRepository } from './worker-options';
 import type { AgentProfile } from '../profiles/types';
 import type { BoardCaptureOptions, BoardRoleRef, BoardStartMode } from './types';
 
@@ -254,12 +255,15 @@ export function evaluateClaimWorker(
 	workerAgentId: string,
 	context: BoardCaptureContext & {
 		repositoryIds: readonly string[];
+		/** Fresh native host proof, never read from card input or a saved source row. */
+		ownRepositoryIds?: Readonly<Record<string, readonly string[]>>;
 		workers: readonly {
 			agentId: string;
 			enabled: boolean;
 			paused: boolean;
 			roleRefs: readonly BoardRoleRef[];
 			allowedRepositoryIds: readonly string[];
+			payload?: Record<string, unknown>;
 		}[];
 	},
 	phase: 'start' | 'result' = 'start'
@@ -292,7 +296,13 @@ export function evaluateClaimWorker(
 		)
 	)
 		return 'worker-role-mismatch';
-	if (!worker.allowedRepositoryIds.includes(options.repositoryId!))
+	if (
+		!worker.allowedRepositoryIds.includes(options.repositoryId!) &&
+		!(
+			usesOwnBoardRepository(worker.payload) &&
+			context.ownRepositoryIds?.[workerAgentId]?.includes(options.repositoryId!)
+		)
+	)
 		return 'worker-repository-mismatch';
 	return null;
 }

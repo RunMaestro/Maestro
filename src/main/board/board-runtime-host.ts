@@ -59,16 +59,26 @@ export async function executeBoardRuntimeCommand(
 	if (!entry) throw new BoardStorageError('not-found', 'Board collection not found');
 	if (entry.revision !== target.expectedRevision)
 		throw new BoardStorageError('stale-revision', 'Board changed since read');
-	const failed = (reason: string): BoardCommandResult => ({
+	const failed = (reason: string, message = reason): BoardCommandResult => ({
 		ok: false,
-		error: { code: reason, message: reason, reason },
+		error: { code: reason, message, reason },
 	});
 	if (command.action === 'tick') {
 		const results: BoardTickResult[] = [];
+		const lookupFailures = new Map<string, BoardStorageError>();
 		const lookup = async (key: BoardCardKey, prepare: boolean) => {
 			try {
 				return await runtimeFor(key, prepare);
 			} catch (error) {
+				if (
+					error instanceof BoardStorageError &&
+					['runtime-unavailable', 'owner-conflict', 'owner-identity-unavailable'].includes(
+						error.code
+					)
+				) {
+					lookupFailures.set(key.cardId, error);
+					return null;
+				}
 				// A mid-tick toggle must not erase already-returned dispatch receipts.
 				// Unexpected preparation/storage/admission errors still propagate.
 				if (
@@ -109,8 +119,14 @@ export async function executeBoardRuntimeCommand(
 						'Board project alias changed during runtime preparation'
 					);
 				if (!waitingRuntime) {
-					if (!results.some((result) => result.ok)) return failed('runtime-unavailable');
-					results.push({ cardId: card.id, ok: false, reason: 'runtime-unavailable' });
+					const refusal = lookupFailures.get(card.id);
+					if (!results.some((result) => result.ok))
+						return failed(refusal?.code ?? 'runtime-unavailable', refusal?.message);
+					results.push({
+						cardId: card.id,
+						ok: false,
+						reason: refusal?.code ?? 'runtime-unavailable',
+					});
 					continue;
 				}
 				const current = waitingRuntime.storage.workspace.readCollection(key);
@@ -166,8 +182,14 @@ export async function executeBoardRuntimeCommand(
 					'Board project alias changed during runtime preparation'
 				);
 			if (!runtime) {
-				if (!results.some((result) => result.ok)) return failed('runtime-unavailable');
-				results.push({ cardId: card.id, ok: false, reason: 'runtime-unavailable' });
+				const refusal = lookupFailures.get(card.id);
+				if (!results.some((result) => result.ok))
+					return failed(refusal?.code ?? 'runtime-unavailable', refusal?.message);
+				results.push({
+					cardId: card.id,
+					ok: false,
+					reason: refusal?.code ?? 'runtime-unavailable',
+				});
 				continue;
 			}
 			const storage = runtime.storage;

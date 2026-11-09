@@ -1808,6 +1808,53 @@ describe('observed worker runs', () => {
 });
 
 describe('Board worker registry interactions', () => {
+	it('groups verified own repositories and worktrees without automatically granting foreign access', async () => {
+		installApis([{ id: 'b1', name: 'Board', cards: [] }]);
+		const payload = { roleRefs: [], allowedRepositoryIds: [] };
+		const setWorkerAccess = vi.fn().mockResolvedValue([]);
+		Object.assign(boardApi, {
+			listWorkers: vi
+				.fn()
+				.mockResolvedValue([{ agentId: 's1', enabled: true, paused: false, payload }]),
+			setWorkerAccess,
+			listWorkerAccessOptions: vi.fn().mockResolvedValue({
+				roles: [],
+				repositories: [
+					{ id: 'own', name: 'Own checkout' },
+					{ id: 'worktree', name: 'Registered worktree' },
+					{ id: 'foreign', name: 'Foreign repository' },
+				],
+				repositoryGroups: [
+					{
+						id: 'git-one',
+						name: 'Own Git identity',
+						repositoryIds: ['own', 'worktree'],
+						ownWorkerIds: ['s1'],
+					},
+					{
+						id: 'git-two',
+						name: 'Other Git identity',
+						repositoryIds: ['foreign'],
+						ownWorkerIds: [],
+					},
+				],
+			}),
+		});
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(screen.getByRole('tab', { name: 'Workers' }));
+		fireEvent.click(await screen.findByRole('button', { name: /Test Session.*Enabled/ }));
+		expect(
+			await screen.findByText(/Own repository automatically available: Own Git identity/)
+		).toBeInTheDocument();
+		const group = screen.getByRole('group', { name: 'Own Git identity' });
+		expect(within(group).getByRole('checkbox', { name: 'Own checkout' })).toBeChecked();
+		expect(within(group).getByRole('checkbox', { name: 'Own checkout' })).toBeDisabled();
+		expect(within(group).getByRole('checkbox', { name: 'Registered worktree' })).toBeChecked();
+		fireEvent.click(screen.getByRole('checkbox', { name: 'Foreign repository' }));
+		await waitFor(() => expect(setWorkerAccess).toHaveBeenCalledWith('s1', [], ['foreign']));
+		expect(payload).toEqual({ roleRefs: [], allowedRepositoryIds: [] });
+	});
+
 	it('shows session changes, missing agents and observed runs without asserting a reservation', async () => {
 		const card = makeCard({
 			id: 'run',

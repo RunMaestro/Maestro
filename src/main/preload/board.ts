@@ -67,7 +67,7 @@ export function createBoardApi() {
 		queryWorkspace: (query?: BoardWorkspaceQuery): Promise<BoardWorkspaceQueryResponse> =>
 			ipcRenderer.invoke('board:queryWorkspace', query),
 		listWorkerAccessOptions: (): Promise<
-			ReturnType<typeof import('../board/board-workspace-storage').listBoardWorkerAccessOptions>
+			Awaited<ReturnType<typeof import('../board/board-storage').listBoardWorkerAccessOptions>>
 		> => ipcRenderer.invoke('board:listWorkerAccessOptions'),
 		listWorkers: (): Promise<StoredBoardWorker[]> => ipcRenderer.invoke('board:listWorkers'),
 		setWorkerOptions: (command: BoardWorkerOptionsCommand): Promise<StoredBoardWorker[]> =>

@@ -1,3 +1,4 @@
+import { usesOwnBoardRepository } from '../../shared/board/worker-options';
 import { observeElementOffsetWhileMounted } from '../utils/virtualizer';
 import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import { isSessionRemote } from '../utils/sessionHelpers';
@@ -349,12 +350,41 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				window.maestro.board.listWorkers(),
 				window.maestro.board.listWorkerAccessOptions(),
 			]);
-			if (revision === workersRevision.current) setWorkers(registered);
-			setWorkerAccessOptions(options);
+			if (revision === workersRevision.current) {
+				setWorkers(registered);
+				setWorkerAccessOptions(options);
+			}
 		} catch (err) {
 			notifyToast({ color: 'red', title: 'Board workers', message: ipcErrorMessage(err) });
 		}
 	}, []);
+	const workerRepositoryBindings = useMemo(
+		() =>
+			canonicalJson(
+				allSessions.map(
+					({ id, cwd, projectRoot, groupId, sshRemoteId, sessionSshRemoteConfig }) => ({
+						id,
+						cwd,
+						projectRoot,
+						groupId,
+						sshRemoteId,
+						sessionSshRemoteConfig: sessionSshRemoteConfig
+							? {
+									enabled: sessionSshRemoteConfig.enabled,
+									remoteId: sessionSshRemoteConfig.remoteId,
+								}
+							: sessionSshRemoteConfig,
+					})
+				)
+			),
+		[allSessions]
+	);
+	useEffect(() => {
+		if (view !== 'workers') return;
+		workersRevision.current++;
+		setWorkerAccessOptions((previous) => ({ ...previous, repositoryGroups: undefined }));
+		void refreshWorkers();
+	}, [view, workerRepositoryBindings, refreshWorkers]);
 	const changeWorker = useCallback(async (action: () => Promise<StoredBoardWorker[]>) => {
 		workersRevision.current++;
 		setWorkerBusy(true);
@@ -1680,7 +1710,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					activeTab={view}
 					onChange={(next) => {
 						setView(next);
-						if (next === 'workers') void refreshWorkers();
 					}}
 					label="Board views"
 					idPrefix="board-view"
@@ -1828,6 +1857,11 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 									const observedRun = observedRuns.get(session.id);
 									const roles = worker?.payload.roleRefs;
 									const repos = worker?.payload.allowedRepositoryIds;
+									const ownGroups = usesOwnBoardRepository(worker?.payload)
+										? (workerAccessOptions.repositoryGroups?.filter((group) =>
+												group.ownWorkerIds.includes(session.id)
+											) ?? [])
+										: [];
 									const validAccess =
 										Array.isArray(roles) &&
 										roles.every(
@@ -1909,6 +1943,19 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 											</div>
 											{worker && (
 												<div>
+													{ownGroups.length > 0 ? (
+														<p>
+															Own repository automatically available:{' '}
+															{ownGroups.map((group) => group.name).join(', ')}. No additional grant
+															required.
+														</p>
+													) : usesOwnBoardRepository(worker?.payload) ? (
+														<p>
+															No verified own local repository. Host and source checks still apply.
+														</p>
+													) : (
+														<p>Configured repository restrictions are preserved.</p>
+													)}
 													Provider: {session.toolType}
 													<br />
 													Agent state: {session.state}; global occupancy unknown
@@ -1978,28 +2025,63 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 														})}
 													</div>
 													<div>
-														Repositories:{' '}
-														{workerAccessOptions.repositories.map((repo) => (
-															<label key={repo.id} className="ml-2">
-																<input
-																	type="checkbox"
-																	disabled={workerBusy}
-																	checked={repos.includes(repo.id)}
-																	onChange={() =>
-																		void changeWorker(() =>
-																			window.maestro.board.setWorkerAccess(
-																				session.id,
-																				roles,
-																				repos.includes(repo.id)
-																					? repos.filter((id) => id !== repo.id)
-																					: [...repos, repo.id]
-																			)
-																		)
-																	}
-																/>{' '}
-																{repo.name}
-															</label>
-														))}
+														Repositories (additional access outside the verified own repository):
+														{(
+															workerAccessOptions.repositoryGroups ??
+															workerAccessOptions.repositories.map((repo) => ({
+																id: repo.id,
+																name: repo.name,
+																repositoryIds: [repo.id],
+																ownWorkerIds: [],
+															}))
+														).map((group) => {
+															const automatic =
+																usesOwnBoardRepository(worker?.payload) &&
+																group.ownWorkerIds.includes(session.id);
+															return (
+																<fieldset
+																	key={group.id}
+																	className="rounded border p-2 my-2"
+																	style={{ borderColor: theme.colors.border }}
+																>
+																	<legend>{group.name}</legend>
+																	{automatic && (
+																		<p style={{ color: theme.colors.success }}>
+																			Own repository — automatically available, including registered
+																			worktrees.
+																		</p>
+																	)}
+																	{group.repositoryIds.map((id) => (
+																		<label key={id} className="block ml-2">
+																			<input
+																				type="checkbox"
+																				disabled={workerBusy || automatic}
+																				checked={automatic || repos.includes(id)}
+																				onChange={() =>
+																					void changeWorker(() =>
+																						window.maestro.board.setWorkerAccess(
+																							session.id,
+																							roles,
+																							repos.includes(id)
+																								? repos.filter((repo) => repo !== id)
+																								: [...repos, id]
+																						)
+																					)
+																				}
+																			/>{' '}
+																			{workerAccessOptions.repositories.find(
+																				(repo) => repo.id === id
+																			)?.name ?? id}
+																		</label>
+																	))}
+																</fieldset>
+															);
+														})}
+														{!usesOwnBoardRepository(worker?.payload) && (
+															<p style={{ color: theme.colors.textDim }}>
+																Previously configured repository restrictions are preserved.
+															</p>
+														)}
 													</div>
 												</details>
 											)}

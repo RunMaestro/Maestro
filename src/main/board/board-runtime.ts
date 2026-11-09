@@ -626,6 +626,7 @@ export class BoardRuntime {
 			spec.workerAgentId,
 			{
 				...catalog,
+				ownRepositoryIds: this.context().ownRepositoryIds,
 				canRelaxStartPolicy: true,
 				workers,
 				repositoryIds: catalog.repositories.filter((repo) => repo.validated).map((repo) => repo.id),
@@ -811,7 +812,8 @@ export class BoardRuntime {
 									card,
 									token.runId,
 									verdict,
-									summary
+									summary,
+									this.context().ownRepositoryIds
 								)
 							) {
 								card.status = verdict === 'clean' ? 'ready-for-human' : 'blocked';
@@ -856,7 +858,8 @@ export class BoardRuntime {
 					'result',
 					this.onTransitions
 				);
-				if (isBoardEnabled()) queueBoardReviews(this.storage, this.onTransitions);
+				if (isBoardEnabled())
+					queueBoardReviews(this.storage, this.onTransitions, this.context().ownRepositoryIds);
 				queueMicrotask(() => {
 					// Match this completion, including an identical retry after outer rollback.
 					try {

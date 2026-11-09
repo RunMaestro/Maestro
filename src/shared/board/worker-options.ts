@@ -8,6 +8,31 @@ export interface StoredBoardWorker {
 	payload: Record<string, unknown>;
 }
 
+export interface BoardWorkerRepositoryGroup {
+	id: string;
+	name: string;
+	repositoryIds: string[];
+	/** Native observed owners; display evidence only, never returned as a grant. */
+	ownWorkerIds: string[];
+}
+
+/** Default registration owns its verified local Git identity. Legacy configured lists
+ * remain explicit restrictions; editing a default worker preserves its additive policy. */
+export function usesOwnBoardRepository(payload: Record<string, unknown> | undefined): boolean {
+	if (
+		!payload ||
+		!Array.isArray(payload.allowedRepositoryIds) ||
+		!payload.allowedRepositoryIds.every((id) => typeof id === 'string' && !!id.trim())
+	)
+		return false;
+	return (
+		payload.repositoryAccess === 'own-and-grants' ||
+		(payload.repositoryAccess === undefined &&
+			(payload.accessManaged === undefined || payload.accessManaged === false) &&
+			payload.allowedRepositoryIds.length === 0)
+	);
+}
+
 /** Worker-local edits only. null removes an override and restores inheritance. */
 export type BoardWorkerOptionsPatch = {
 	[K in keyof ProfileSpawnOverrides]?: string | null;
