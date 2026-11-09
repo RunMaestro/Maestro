@@ -6,6 +6,7 @@ import { execGitReadOnly } from '../utils/remote-git';
 import { foldPathCase, isPathWithin } from '../utils/real-path-containment';
 import { resolveBoardLocation } from './board-location';
 import { requireBoardEnabled } from './board-feature';
+import { captureException } from '../utils/sentry';
 
 /** Native registers, not card input or a saved source hint. */
 export interface BoardRepositoryAgent {
@@ -293,7 +294,14 @@ export function currentBoardRepositoryAccess(
 				return {};
 		}
 		return observation.owners;
-	} catch {
-		return {};
-	} // A read failure is absence of authority, never permission.
+	} catch (error) {
+		if (
+			['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'ELOOP'].includes(
+				(error as NodeJS.ErrnoException)?.code ?? ''
+			)
+		)
+			return {}; // Expected unavailable paths never confer authority.
+		void captureException(error, { operation: 'board:repository-authority' });
+		return {}; // Reporting cannot confer authority or discard a pending result.
+	}
 }

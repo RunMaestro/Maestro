@@ -52,7 +52,8 @@ import { createBoardAgentAdmission } from '../../../main/board/board-claims';
 import { runProcess } from '../../../main/cue/cue-process-lifecycle';
 import { prepareBoardReviewHandoff } from '../../../main/board/board-review';
 import { snapshotSqlite, compareSqliteSnapshots } from '../../helpers/sqliteSnapshot';
-import { beforeAll, afterAll, expect, it } from 'vitest';
+import { beforeAll, afterAll, expect, it, vi } from 'vitest';
+import * as sentry from '../../../main/utils/sentry';
 import { build } from 'esbuild';
 import { promisify } from 'node:util';
 import { canonicalJson } from '../../../shared/canonicalJson';
@@ -76,6 +77,32 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 	const evidence: Record<string, unknown> = {};
 	let releaseBarrier = () => {};
 	let restoreStat = () => {};
+	let restoreFence = () => {};
+	const reported: { error: unknown; context: unknown }[] = [];
+	// Isolate only the external diagnostic sink; native authority/process guards stay real.
+	const report = vi.spyOn(sentry, 'captureException').mockImplementation(async (error, context) => {
+		reported.push({ error, context });
+	});
+	const fault = Object.assign(new Error('owned-native-fence-fault'), {
+		code: mode.includes('missing')
+			? 'ENOENT'
+			: mode.includes('denied')
+				? 'EACCES'
+				: mode.includes('-io-')
+					? 'EIO'
+					: undefined,
+	});
+	const injectFenceFault = () => {
+		const native = fs.realpathSync.native;
+		fs.realpathSync.native = ((...args: Parameters<typeof native>) => {
+			if (String(args[0]) === path.join(root, '.git', 'config')) throw fault;
+			return native(...args);
+		}) as typeof native;
+		restoreFence = () => {
+			fs.realpathSync.native = native;
+		};
+		evidence.injectedFault = fault;
+	};
 	let background: Promise<unknown> | undefined;
 	let pendingCapture: Promise<unknown> | undefined;
 	try {
@@ -372,7 +399,13 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 									fs.unlinkSync(agent.cwd);
 									fs.symlinkSync(fixture.sources.two, agent.cwd, 'junction');
 								}
-								return callbacks.beforeLaunch();
+								if (mode.startsWith('fence-') && mode.endsWith('-launch')) injectFenceFault();
+								try {
+									return callbacks.beforeLaunch();
+								} catch (error) {
+									evidence.launchFault = error;
+									throw error;
+								}
 							},
 							onStarted: (pid) => {
 								started++;
@@ -387,6 +420,7 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 						executionStarted: result.executionStarted,
 						terminationConfirmed: result.terminationConfirmed,
 					};
+					if (mode === 'fence-unexpected-result') injectFenceFault();
 					return {
 						artifactBase,
 						output: result.stdout,
@@ -418,7 +452,14 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 			runtime: runtime.runtime,
 			token: 'owned-repo',
 			cliSecret: 'owned-fixture-secret',
-			boardHost: executeBoardCommand,
+			boardHost: async (command) => {
+				try {
+					return await executeBoardCommand(command);
+				} catch (error) {
+					evidence.hostFault = error;
+					throw error;
+				}
+			},
 			onStopRequested() {},
 		});
 		const manifestPath = path.join(c.userData, 'endpoint.json');
@@ -749,6 +790,10 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 				1,
 				0
 			);
+		const cardsBeforeTick = canonicalJson(
+			db.prepare('SELECT * FROM cards ORDER BY collection_key,id').all()
+		);
+		if (mode.startsWith('fence-') && mode.endsWith('-claim')) injectFenceFault();
 		let reply: import('../../../shared/board/commands').BoardCommandReply | undefined;
 		if (mode === 'own-cli') {
 			const bundle = path.join(c.root, 'own-repository-cli.cjs');
@@ -822,6 +867,12 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 			});
 		}
 		await cue.settle();
+		restoreFence();
+		evidence.cardsUnchanged =
+			cardsBeforeTick ===
+			canonicalJson(db.prepare('SELECT * FROM cards ORDER BY collection_key,id').all());
+		evidence.reportedFaults = reported;
+		evidence.runRows = db.prepare('SELECT lifecycle_json,outcome_json FROM runs').all();
 		if (['own', 'own-cli', 'own-engine', 'worktree', 'alias', 'foreign-grant'].includes(mode)) {
 			collection = storage
 				.query()
@@ -888,6 +939,8 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 		return evidence;
 	} finally {
 		releaseBarrier();
+		report.mockRestore();
+		restoreFence();
 		restoreStat();
 		await background;
 		await pendingCapture;
@@ -997,4 +1050,79 @@ it('keeps pause as an intake fence under the automatic own-repository policy', a
 
 it('pauses a real native repository observation after an awaited read without further IO or SQLite mutation', async () => {
 	expect(await run('proof-pause')).toMatchObject({ paused: true, noFurtherIO: true });
+});
+
+// Filesystem dependency faults pass through the actual WS/claim/final native fence.
+it.each(['fence-missing-claim', 'fence-denied-claim'])(
+	'refuses expected native fence absence at %s without a claim or mutation',
+	async (mode) => {
+		const result = await run(mode);
+		expect(result.hostFault).toBeUndefined();
+		expect(result.reportedFaults).toEqual([]);
+		expect(result.started).toBe(0);
+		expect(result.runs).toEqual({ n: 0 });
+		expect(result.reservations).toEqual({ n: 0 });
+		expect(result.cardsUnchanged).toBe(true);
+		expect(result.reply).toMatchObject({
+			value: [{ ok: false, reason: 'worker-repository-mismatch' }],
+		});
+	}
+);
+it.each(['fence-unexpected-claim', 'fence-io-claim'])(
+	'reports unexpected native fence faults at %s without a claim or mutation',
+	async (mode) => {
+		const result = await run(mode);
+		expect(result.reportedFaults).toContainEqual({
+			error: result.injectedFault,
+			context: { operation: 'board:repository-authority' },
+		});
+		expect(result.started).toBe(0);
+		expect(result.runs).toEqual({ n: 0 });
+		expect(result.reservations).toEqual({ n: 0 });
+		expect(result.cardsUnchanged).toBe(true);
+	}
+);
+it('reports an unexpected final native fence fault without authorizing a spawn', async () => {
+	const result = await run('fence-unexpected-launch');
+	expect(result.reportedFaults).toContainEqual({
+		error: result.injectedFault,
+		context: { operation: 'board:repository-authority' },
+	});
+	expect(result.started).toBe(0);
+	expect(result.nativeCompletion).toMatchObject({ executionStarted: false });
+	expect(result.reservations).toEqual({ n: 0 });
+});
+it('reports unexpected result-authority faults and retains the actual native completion behind its reservation', async () => {
+	const result = await run('fence-unexpected-result');
+	expect(result.reportedFaults).toContainEqual({
+		error: result.injectedFault,
+		context: { operation: 'board:repository-authority' },
+	});
+	expect(result.started).toBe(1);
+	expect(result.nativeCompletion).toMatchObject({
+		executionStarted: true,
+		terminationConfirmed: true,
+		exitCode: 0,
+	});
+	expect(result.reservations).toEqual({ n: 1 });
+	const rows = result.runRows as { outcome_json: string | null; lifecycle_json: string }[];
+	expect(rows).toHaveLength(1);
+	expect(rows[0].outcome_json).toBeNull();
+	const life = JSON.parse(rows[0].lifecycle_json);
+	expect(life).toMatchObject({
+		phase: 'uncertain',
+		reason: 'worker-repository-mismatch',
+		pendingResult: { executionStarted: true, terminationConfirmed: true, exitCode: 0 },
+	});
+	expect(life.pendingResult.output).toContain('Analysis committed; fixture check passed');
+	expect(life.pendingResult.artifact).toEqual(
+		expect.objectContaining({ commit: expect.any(String) })
+	);
+});
+it('refuses expected missing identity at final native launch without starting', async () => {
+	const result = await run('fence-missing-launch');
+	expect(result.launchFault).toBeUndefined();
+	expect(result.started).toBe(0);
+	expect(result.nativeCompletion).toMatchObject({ executionStarted: false });
+	expect(result.reservations).toEqual({ n: 0 });
 });

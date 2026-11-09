@@ -343,6 +343,11 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	const [workerAccessOptions, setWorkerAccessOptions] = useState<
 		Awaited<ReturnType<typeof window.maestro.board.listWorkerAccessOptions>>
 	>({ roles: [], repositories: [] });
+	const workerRepositoriesById = useMemo(
+		() =>
+			new Map(workerAccessOptions.repositories.map((repository) => [repository.id, repository])),
+		[workerAccessOptions.repositories]
+	);
 	const refreshWorkers = useCallback(async () => {
 		const revision = workersRevision.current;
 		try {
@@ -2069,9 +2074,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 																					)
 																				}
 																			/>{' '}
-																			{workerAccessOptions.repositories.find(
-																				(repo) => repo.id === id
-																			)?.name ?? id}
+																			{workerRepositoriesById.get(id)?.name ?? id}
 																		</label>
 																	))}
 																</fieldset>
