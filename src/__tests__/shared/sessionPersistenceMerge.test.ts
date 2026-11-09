@@ -314,11 +314,69 @@ describe('consumed execution queue entries', () => {
 	});
 
 	it('still retains edited rows in other collections', () => {
-		const baseline = { aiTabs: [{ id: 'edited', name: 'before' }] };
-		const stored = { aiTabs: [{ id: 'edited', name: 'after' }] };
-		expect(mergeSessionPersistenceChanges({ aiTabs: [] }, stored, baseline).aiTabs).toEqual(
-			stored.aiTabs
+		const baseline = { aiLogs: [{ id: 'edited', text: 'before' }] };
+		const stored = { aiLogs: [{ id: 'edited', text: 'after' }] };
+		expect(mergeSessionPersistenceChanges({ aiLogs: [] }, stored, baseline).aiLogs).toEqual(
+			stored.aiLogs
 		);
+	});
+});
+
+describe('closed tabs (#2008)', () => {
+	it.each([
+		['aiTabs', 'ai'],
+		['filePreviewTabs', 'file'],
+		['browserTabs', 'browser'],
+		['terminalTabs', 'terminal'],
+	] as const)(
+		'a close the client observed removes the %s record even when the stored copy changed',
+		(field, type) => {
+			const tab = { id: 'closed', name: 'before' };
+			const kept = { id: 'kept' };
+			const baseline = {
+				[field]: [tab, kept],
+				unifiedTabOrder: [
+					{ type, id: 'closed' },
+					{ type, id: 'kept' },
+				],
+			};
+			// A newer turn (or a stored normalization) changed the record after the
+			// client's baseline; the ref is unchanged, as refs always are.
+			const stored = { ...baseline, [field]: [{ ...tab, name: 'after' }, kept] };
+			const incoming = { [field]: [kept], unifiedTabOrder: [{ type, id: 'kept' }] };
+			const merged = mergeSessionPersistenceChanges(incoming, stored, baseline);
+			expect(merged[field]).toEqual([kept]);
+			expect(merged.unifiedTabOrder).toEqual([{ type, id: 'kept' }]);
+		}
+	);
+
+	it('keeps a tab a peer opened that this client never saw', () => {
+		const baseline = { aiTabs: [{ id: 'a' }], unifiedTabOrder: [{ type: 'ai', id: 'a' }] };
+		const stored = {
+			aiTabs: [{ id: 'a' }, { id: 'peer' }],
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'a' },
+				{ type: 'ai', id: 'peer' },
+			],
+		};
+		const incoming = { aiTabs: [], unifiedTabOrder: [] };
+		const merged = mergeSessionPersistenceChanges(incoming, stored, baseline);
+		expect(merged.aiTabs).toEqual([{ id: 'peer' }]);
+		expect(merged.unifiedTabOrder).toEqual([{ type: 'ai', id: 'peer' }]);
+	});
+
+	it('does not leave a snoozed tab behind in aiTabs', () => {
+		const tab = { id: 'parked', name: 'before' };
+		const baseline = { aiTabs: [tab], snoozedTabs: [] };
+		const stored = { aiTabs: [{ ...tab, name: 'after' }], snoozedTabs: [] };
+		const incoming = { aiTabs: [], snoozedTabs: [{ id: 's1', type: 'ai', tab }] };
+		const merged = mergeSessionPersistenceChanges<Record<string, unknown>>(
+			incoming,
+			stored,
+			baseline
+		);
+		expect(merged.aiTabs).toEqual([]);
+		expect(merged.snoozedTabs).toEqual([{ id: 's1', type: 'ai', tab }]);
 	});
 });
 

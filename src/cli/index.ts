@@ -2427,6 +2427,7 @@ tab
 	.command('closed')
 	.description('List the closed tabs an agent can reopen, newest first (index 0 = Cmd+Shift+T)')
 	.option('-a, --agent <id>', 'Whose closed tabs (default: the agent selected in the desktop)')
+	.option('--all', "Every agent's closed tabs, grouped by agent (agents with none are left out)")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => tabClosed(options));
 
