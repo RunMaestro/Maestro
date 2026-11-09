@@ -362,6 +362,19 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						// SynopsisData.sessionConfig has no effort field.
 						const runModelOverride =
 							deps.getBatchStateRef.current?.(actualSessionId)?.runModelOverride;
+						// Without a run override, resume on the model this tab's turn was
+						// codified with at send (`turnModel`, which is the tab override
+						// falling back to the agent's). The synopsis resumes the SAME
+						// provider session, so a different model writes a model switch into
+						// that thread: Codex then warns "This session was recorded with model
+						// X but is resuming with Y" on the next real turn, and both turns
+						// read the whole transcript cold. An undefined `turnModel` means the
+						// provider default ran, so it is passed through as-is. A turn from a
+						// provider the agent has since left keeps the agent's model.
+						const turnModel =
+							completedTab?.turnProvider === currentSession.toolType
+								? completedTab.turnModel
+								: currentSession.customModel;
 						synopsisData = {
 							sessionId: actualSessionId,
 							cwd: currentSession.cwd,
@@ -379,7 +392,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								customPath: currentSession.customPath,
 								customArgs: currentSession.customArgs,
 								customEnvVars: currentSession.customEnvVars,
-								customModel: runModelOverride ?? currentSession.customModel,
+								customModel: runModelOverride ?? turnModel,
 								customContextWindow: currentSession.customContextWindow,
 								// Carry the agent's Claude token source into the synopsis spawn so
 								// it resolves the same TUI/Dynamic/API mode as a normal turn.
