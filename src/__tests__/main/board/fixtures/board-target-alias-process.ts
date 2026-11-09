@@ -22,6 +22,8 @@ import {
 	configureBoardSourceHost,
 	refreshBoardSources,
 } from '../../../../main/board/board-source-host';
+import type { BoardSourceSession } from '../../../../main/board/board-source-core';
+import { listBoardWorkers } from '../../../../main/board/board-workspace-storage';
 import { executeBoardCommand } from '../../../../main/board/board-command-host';
 import { createMaestroRuntime } from '../../../../shared/maestro-lib/runtime';
 import { startRuntimeServer } from '../../../../shared/maestro-lib/runtime/server';
@@ -86,7 +88,7 @@ process.once(
 			const storage = new BoardStorageFacade(db);
 			configureBoardStorage(storage);
 			configureBoardCaptureHost(() => ({ agents: [{ id: 'a' }], groups: [] }));
-			const registered = [
+			const registered: BoardSourceSession[] = [
 				{ id: 'a', dir: alias, projectRoot: alias, boardWorker: true },
 				{ id: 'foreign', dir: foreign },
 			];
@@ -129,6 +131,34 @@ process.once(
 				fs.unlinkSync(alias);
 				fs.rmSync(root, { recursive: true });
 			}
+
+			const currentChange = input.mode.match(
+				/current-(ssh|invalid|no-root)-(present|await|queue)$/
+			);
+			const relatedWorkerBound = listBoardWorkers(db).some(
+				(worker) =>
+					worker.agentId === 'a' &&
+					Array.isArray(worker.payload.allowedRepositoryIds) &&
+					worker.payload.allowedRepositoryIds.includes(`source:${collection.sourceKey}`)
+			);
+			if (currentChange && !relatedWorkerBound)
+				throw new Error('Current registration case requires the canonical source-bound worker');
+			const changeCurrentRegistration = () => {
+				let item = registered.find((item) => item.id === 'a');
+				if (!item) {
+					item = { id: 'a', dir: root, projectRoot: root, boardWorker: true };
+					registered.push(item);
+				}
+				if (currentChange![1] === 'no-root') {
+					delete item.dir;
+					delete item.projectRoot;
+				} else {
+					item.sshRemoteId = 'changed-remote';
+					if (currentChange![1] === 'invalid')
+						item.sessionSshRemoteConfig = { enabled: true, remoteId: 'conflicting-remote' };
+				}
+			};
+			if (currentChange?.[2] === 'present') changeCurrentRegistration();
 
 			const started = await createMaestroRuntime({
 				dataDir: contract.userData,
@@ -329,6 +359,10 @@ process.once(
 						enter();
 						await barrier;
 					}
+					if (args[0] === alias && currentChange?.[2] === 'await' && !changed) {
+						changed = true;
+						changeCurrentRegistration();
+					}
 					if (args[0] === alias && input.mode === 'retarget-await' && !changed) {
 						changed = true;
 						fs.unlinkSync(alias);
@@ -345,7 +379,8 @@ process.once(
 			}
 			if (
 				['retarget-queue', 'replace-queue', 'cwd-queue', 'missing-queue'].includes(input.mode) ||
-				input.mode.startsWith('orphan-queue-')
+				input.mode.startsWith('orphan-queue-') ||
+				currentChange?.[2] === 'queue'
 			) {
 				background = enqueueBoardWrite(
 					input.mode.startsWith('orphan-')
@@ -389,7 +424,9 @@ process.once(
 				// The final association proof returns, then admission/enqueue microtasks finish.
 				await new Promise<void>((resolve) => setImmediate(resolve));
 				if (settled) throw new Error('Expected command pending behind the held canonical queue');
-				if (input.mode === 'orphan-queue-source') {
+				if (currentChange?.[2] === 'queue') {
+					changeCurrentRegistration();
+				} else if (input.mode === 'orphan-queue-source') {
 					db.prepare(
 						"UPDATE board_source_locations SET payload_json=payload_json || ' ' WHERE source_key=?"
 					).run(collection.sourceKey);
@@ -437,6 +474,7 @@ process.once(
 				foreignProbes: probes,
 				backgroundPending: input.mode === 'barrier' && !backgroundDone,
 				productionSourceAdapter: true,
+				relatedWorkerBound,
 				dag:
 					input.mode === 'orphan-dag'
 						? storage

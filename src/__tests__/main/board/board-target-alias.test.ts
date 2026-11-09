@@ -183,3 +183,32 @@ it('preserves DAG parent adoption and unrelated cards when archiving an orphan c
 	expect(result.dag).toHaveLength(3);
 	expect(result.orphanProof.archives).toEqual({ n: 1 });
 });
+
+it.each(['ssh', 'invalid', 'no-root'])(
+	'refuses a known present current %s registration instead of orphan archival',
+	async (kind) => {
+		const result = await run(`orphan-current-${kind}-present`);
+		expect(result.relatedWorkerBound).toBe(true);
+		expect(result.foreignProbes).toBe(0);
+		expect
+			.soft(result.result)
+			.toMatchObject({ ok: false, error: { code: 'legacy-mapping-missing' } });
+		expect.soft(result.unchanged).toBe(true);
+		expect.soft(result.orphanProof.archives).toEqual({ n: 0 });
+	}
+);
+it.each([
+	'ssh-await',
+	'invalid-await',
+	'no-root-await',
+	'ssh-queue',
+	'invalid-queue',
+	'no-root-queue',
+])('refuses a known current registration changed at %s without mutation', async (change) => {
+	const result = await run(`current-${change}`);
+	expect(result.relatedWorkerBound).toBe(true);
+	expect(result.foreignProbes).toBe(0);
+	expect(result.result.ok).toBe(false);
+	expect(result.result.error.code).not.toBe('invalid-input');
+	expect(result.unchanged).toBe(true);
+});

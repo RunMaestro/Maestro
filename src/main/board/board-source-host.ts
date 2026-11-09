@@ -251,6 +251,10 @@ export async function prepareBoardMutationTarget(
 		const observed: BoardSourceSession[] = [];
 		for (const item of JSON.parse(canonicalJson(items)) as BoardSourceSession[]) {
 			if (!source) break;
+			// A known source-bound current registration is present even when its
+			// location/root is now invalid. The hint never grants a physical match.
+			const related = relatedAgents.has(item.id);
+			if (related) observed.push(item);
 			const location = resolveBoardLocation(item);
 			const raw = item.projectRoot || item.dir;
 			if (location.kind !== source.location.kind || !raw) continue;
@@ -261,13 +265,12 @@ export async function prepareBoardMutationTarget(
 					raw === source.path
 				) {
 					matched.push(item);
-					observed.push(item);
+					if (!related) observed.push(item);
 				}
 				continue;
 			}
-			if (raw !== source.path && raw !== target.projectRoot && !relatedAgents.has(item.id))
-				continue;
-			observed.push(item);
+			if (raw !== source.path && raw !== target.projectRoot && !related) continue;
+			if (!related) observed.push(item);
 			try {
 				const root = await fs.promises.realpath(raw);
 				requireBoardEnabled();
