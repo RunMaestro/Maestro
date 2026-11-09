@@ -77,6 +77,7 @@ import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { CodexTransport } from '../../shared/codexTransport';
 import type { HarnessControlMode } from '../../shared/maestro-lib/providers/native-control';
+import type { LiftedToPointer } from '../../shared/maestro-lib/agents/lift-pointer';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -1570,6 +1571,9 @@ export interface Session {
 	// SSH Remote context (session-wide, for all operations - file explorer, git, auto run, etc.)
 	sshRemoteId?: string; // ID of SSH remote config being used (flattened from sshRemote.id)
 	remoteCwd?: string; // Current working directory on remote host
+	// Federation: set once this SSH agent was lifted onto its remote's host. Every tab and
+	// transcript stays; sends are refused with a pointer at `peer:agentId` (liftedSendRefusal()).
+	liftedTo?: LiftedToPointer;
 
 	// Inline wizard state for /wizard command
 	// Keeps per-session/per-tab wizard state for creating or iterating on Auto Run documents
@@ -1904,6 +1908,10 @@ export interface EncoreFeatureFlags {
 	// Run preview. Off by default. Optional so older fixtures and persisted
 	// settings remain valid.
 	dataview?: boolean;
+	// Federation - reach a `maestro-cli host` on an SSH remote and drive its
+	// agents from this machine. Off by default. Optional so older fixtures and
+	// persisted settings remain valid.
+	federation?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

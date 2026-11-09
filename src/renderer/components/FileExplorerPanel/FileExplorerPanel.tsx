@@ -89,7 +89,6 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		onShowFlash,
 		showHiddenFiles,
 		fileExplorerIconTheme,
-		fileTreeBranchConnectors,
 		setShowHiddenFiles,
 		onFocusFileInGraph,
 		onOpenBrowserTabAt,
@@ -892,7 +891,6 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 											selectedPathsRef={selectedPathsRef}
 											setSelectedPaths={setSelectedPaths}
 											fileExplorerIconTheme={fileExplorerIconTheme}
-											fileTreeBranchConnectors={fileTreeBranchConnectors}
 											fileTreeFilter={fileTreeFilter}
 											htmlDoubleClickOpensInBrowser={htmlDoubleClickOpensInBrowser}
 											sshRemoteId={sshRemoteId}

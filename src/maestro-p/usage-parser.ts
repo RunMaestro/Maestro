@@ -266,14 +266,16 @@ function parseUsageText(text: string, nowIso: string, configDir: string): Status
 
 	const markers = findSectionMarkers(lines);
 
-	const sessionExtract = extractSection(
-		lines,
-		markers,
-		'session',
-		nowIso,
-		/* allowInlineScan */ true
-	);
-	if (!sessionExtract) return null;
+	// The session window is optional: claude 2.1.317 stopped painting a
+	// "Current session" block on /usage, so a panel with only the weekly bars is
+	// a complete reading. A session header that WAS painted but carries no
+	// readable percentage is still a damaged capture, so that case keeps failing
+	// the parse and the caller retries.
+	const hasSessionHeader = markers.some((m) => m.kind === 'session');
+	const sessionExtract = hasSessionHeader
+		? extractSection(lines, markers, 'session', nowIso, /* allowInlineScan */ true)
+		: null;
+	if (hasSessionHeader && !sessionExtract) return null;
 
 	const allModelsExtract = extractSection(
 		lines,
@@ -298,7 +300,7 @@ function parseUsageText(text: string, nowIso: string, configDir: string): Status
 	return {
 		type: 'status',
 		config_dir: configDir,
-		session: toWireWindow(sessionExtract),
+		...(sessionExtract ? { session: toWireWindow(sessionExtract) } : {}),
 		week_all_models: toWireWindow(allModelsExtract),
 		week_sonnet_only: toWireWindow(secondaryWeekExtract),
 	};
@@ -323,18 +325,25 @@ function compressedKey(line: string): string {
 	return line.replace(/\s+/g, '').toLowerCase();
 }
 
-// Keep only the final paint of the panel. Each repaint opens with a fresh
-// "Current session" header, painted in order session → week(all) → week(sonnet),
-// so the last such header marks the start of the settled paint and everything
-// after it is that paint's data. Returns the input unchanged when no session
-// header is present (the section extractors then fail cleanly, as before) or
-// when the header appears exactly once.
+// Keep only the final paint of the panel. Each repaint opens with a fresh copy
+// of its FIRST section header, painted in order session → week(all) →
+// week(sonnet), so the last such header marks the start of the settled paint
+// and everything after it is that paint's data. The first section is "Current
+// session" when the panel has one and "Current week (all models)" when it does
+// not (claude 2.1.317 dropped the session block), so the anchor falls back to
+// the all-models header. Returns the input unchanged when neither header is
+// present (the section extractors then fail cleanly) or when the anchor sits
+// on the first line.
 function sliceToFinalPanel(lines: string[]): string[] {
 	let lastSessionIdx = -1;
+	let lastAllModelsIdx = -1;
 	for (let i = 0; i < lines.length; i++) {
-		if (SESSION_HEADER_RE.test(compressedKey(lines[i]))) lastSessionIdx = i;
+		const key = compressedKey(lines[i]);
+		if (SESSION_HEADER_RE.test(key)) lastSessionIdx = i;
+		else if (ALL_MODELS_HEADER_RE.test(key)) lastAllModelsIdx = i;
 	}
-	return lastSessionIdx <= 0 ? lines : lines.slice(lastSessionIdx);
+	const anchor = lastSessionIdx >= 0 ? lastSessionIdx : lastAllModelsIdx;
+	return anchor <= 0 ? lines : lines.slice(anchor);
 }
 
 function findSectionMarkers(lines: string[]): SectionMarker[] {

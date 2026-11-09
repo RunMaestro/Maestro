@@ -27,6 +27,8 @@ export interface AITabProps {
 	/** Session-level agentSessionId fallback for tab title display */
 	sessionAgentSessionId?: string | null;
 	canClose: boolean;
+	/** Select only: no drag and no hover menu (see `TabBarProps.readOnly`). */
+	readOnly?: boolean;
 	/** Stable callback - receives tabId as first argument */
 	onSelect: (tabId: string) => void;
 	/** Stable callback - receives tabId as first argument */
@@ -110,6 +112,7 @@ export const AITab = memo(function AITab({
 	sessionId,
 	sessionAgentSessionId,
 	canClose,
+	readOnly = false,
 	onSelect,
 	onClose,
 	onDragStart,
@@ -172,6 +175,8 @@ export const AITab = memo(function AITab({
 	} = useTabHoverOverlay({
 		registerRef,
 		shouldOpen: () => {
+			// A read-only tab offers no actions: every overlay entry acts on the tab.
+			if (readOnly) return false;
 			// Only show overlay if there's something meaningful to show:
 			// - Tabs with sessions or logs: always show (for session/context actions)
 			// - Tabs without sessions or logs: show only when a reorder action is
@@ -505,12 +510,12 @@ export const AITab = memo(function AITab({
 					handleTabSelect();
 				}
 			}}
-			draggable
-			onDragStart={handleTabDragStart}
-			onDrag={handleTabDrag}
-			onDragOver={handleTabDragOver}
-			onDragEnd={onDragEnd}
-			onDrop={handleTabDrop}
+			draggable={!readOnly}
+			onDragStart={readOnly ? undefined : handleTabDragStart}
+			onDrag={readOnly ? undefined : handleTabDrag}
+			onDragOver={readOnly ? undefined : handleTabDragOver}
+			onDragEnd={readOnly ? undefined : onDragEnd}
+			onDrop={readOnly ? undefined : handleTabDrop}
 		>
 			{/* Agent error pill - highlights tabs that have an active error for quick triage */}
 			{tab.agentError && (

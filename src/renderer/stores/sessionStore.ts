@@ -22,6 +22,7 @@ import { hasRunnableQueueItem } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
 import { persistActiveSessionId } from '../utils/activeSessionPersistence';
 import { useUIStore } from './uiStore';
+import { usePeerMirrorStore } from './peerMirrorStore';
 import {
 	normalizeGroupHierarchy,
 	removeGroupAndPromoteChildren,
@@ -271,6 +272,9 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 		// highlight never lingers. The cycle re-sets it afterward when it lands on
 		// a starred row (see useCycleSession.activateVisualItem).
 		useUIStore.getState().setSidebarExtraSelection(null);
+		// Choosing a local agent leaves a Federation mirror the Main Window may be showing, even
+		// when the id is the one already active (the mirror hid it, it did not replace it).
+		usePeerMirrorStore.getState().clearMirrorSelection();
 		// Fire-and-forget: persist for restore on next launch. Not awaited - UI
 		// state must update synchronously; if the write fails the only consequence
 		// is the session won't be pre-selected on next launch (falls back to first
@@ -281,8 +285,11 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 
 	hydrateActiveSessionId: (id) => set({ activeSessionId: id, cyclePosition: -1 }),
 
-	setActiveSessionIdInternal: (v) =>
-		set((s) => ({ activeSessionId: resolve(v, s.activeSessionId) })),
+	setActiveSessionIdInternal: (v) => {
+		set((s) => ({ activeSessionId: resolve(v, s.activeSessionId) }));
+		// Session cycling lands on a local agent: leave any mirror shown (see setActiveSessionId).
+		usePeerMirrorStore.getState().clearMirrorSelection();
+	},
 
 	// Groups
 	setGroups: (v) =>

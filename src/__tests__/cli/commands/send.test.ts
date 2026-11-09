@@ -612,6 +612,21 @@ describe('send command', () => {
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
+	it('refuses a lifted agent with AGENT_LIFTED and a pointer at peer:agentId', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValueOnce(
+			mockAgent({ liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 } })
+		);
+
+		await send('agent-abc', 'Hello', {});
+
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output.success).toBe(false);
+		expect(output.code).toBe('AGENT_LIFTED');
+		expect(output.error).toContain('build-box:host-1');
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
 	it('should exit with error for unsupported agent type', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-term-1');
 		vi.mocked(getSessionById).mockReturnValue(

@@ -227,7 +227,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	 */
 	'qwen3-coder': {
 		supportsResume: true, // --resume <sessionId> headless resume (resumeArgs wired)
-		supportsReadOnlyMode: false, // Prompt-only enforcement via -y
+		supportsReadOnlyMode: true, // CLI-enforced via --approval-mode plan (readOnlyArgs in definitions.ts)
 		supportsStandardPermissionMode: true, // Native ACP approval requests (opt-in transport)
 		supportsJsonOutput: true,
 		supportsSessionId: true,

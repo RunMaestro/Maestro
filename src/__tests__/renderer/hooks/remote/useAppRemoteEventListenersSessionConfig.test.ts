@@ -15,6 +15,7 @@ import { renderHook } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { useAppRemoteEventListeners } from '../../../../renderer/hooks/remote/useAppRemoteEventListeners';
 import { createMockSession } from '../../../helpers/mockSession';
+import { createMockAITab } from '../../../helpers/mockTab';
 import type { Session } from '../../../../renderer/types';
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
@@ -371,5 +372,76 @@ describe('provider migration parity', () => {
 		expect(ack).toHaveBeenCalledWith('ch', report);
 		expect(setSessions).not.toHaveBeenCalled();
 		expect(setMany).not.toHaveBeenCalled();
+	});
+});
+
+describe('Federation lift pointer (maestro-cli lift)', () => {
+	const pointer = { peer: 'build-box', agentId: 'host-1', at: 1_700_000_000_000 };
+
+	it('sets liftedTo, keeps every tab, drops only the moved queue items, and flushes before the ack', async () => {
+		const session = createMockSession({
+			id: 'agent',
+			executionQueue: [
+				{ id: 'q1', timestamp: 1, tabId: 't', type: 'message', text: 'moves' },
+				{ id: 'q2', timestamp: 2, tabId: 't', type: 'command', command: '/commit' },
+			] as any,
+		});
+		const { setSessions } = setup([session]);
+
+		dispatchPatch(session.id, { liftedTo: pointer, liftedQueueItemIds: ['q1'] });
+		await flush();
+
+		const [updated] = applyUpdate(setSessions, [session]);
+		expect(updated.liftedTo).toEqual(pointer);
+		expect(updated.aiTabs).toBe(session.aiTabs);
+		expect(updated.executionQueue.map((item) => item.id)).toEqual(['q2']);
+		expect(setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ id: session.id, liftedTo: pointer })],
+			[]
+		);
+		expect(ack).toHaveBeenCalledWith('ch', { success: true });
+	});
+
+	it('rejects a malformed pointer', async () => {
+		const session = createMockSession({ id: 'agent' });
+		const { setSessions } = setup([session]);
+
+		dispatchPatch(session.id, { liftedTo: { peer: 'build-box' } });
+		await flush();
+
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith('ch', {
+			success: false,
+			error: "Invalid value for field 'liftedTo'",
+		});
+	});
+
+	it('refuses an agent that was already lifted', async () => {
+		const session = createMockSession({ id: 'agent', liftedTo: pointer });
+		const { setSessions } = setup([session]);
+
+		dispatchPatch(session.id, { liftedTo: { ...pointer, agentId: 'host-2' } });
+		await flush();
+
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith('ch', { success: false, error: 'Agent was already lifted' });
+	});
+
+	it('refuses while a tab runs a turn, so the CLI rolls the host copy back', async () => {
+		const session = createMockSession({
+			id: 'agent',
+			name: 'Docs',
+			aiTabs: [createMockAITab({ id: 't1', name: 'Main', state: 'busy' })],
+		});
+		const { setSessions } = setup([session]);
+
+		dispatchPatch(session.id, { liftedTo: pointer });
+		await flush();
+
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith('ch', {
+			success: false,
+			error: expect.stringContaining('A running turn cannot move'),
+		});
 	});
 });

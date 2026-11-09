@@ -2,7 +2,7 @@
 
 Style guide for anything rendered inside the Settings modal (`src/renderer/components/Settings/`).
 
-Read this **before** adding or editing a settings section. Every rule here is derived from an audit of all 73 `.tsx` files under `src/renderer/components/Settings/` and all 21 themes in `src/shared/themes.ts`. Where a rule exists because the codebase disagrees with itself, the audit numbers are quoted so you know which side is canonical.
+Read this **before** adding or editing a settings section. Every rule here is derived from an audit of the `.tsx` files under `src/renderer/components/Settings/` (82 non-test files today) and every theme in `src/shared/themes.ts` (20 ids today, 6 of them light; the contrast table below records the audit-time measurement). Where a rule exists because the codebase disagrees with itself, the audit numbers are quoted so you know which side is canonical.
 
 Related: [UI-PATTERNS.md](docs/agent-guides/UI-PATTERNS.md) (modals, layer stack, text selection), [WIDGET-LIBRARY.md](docs/agent-guides/WIDGET-LIBRARY.md) (stat cards, charts, inputs), [[CLAUDE-PATTERNS.md]] §3 (settings persistence plumbing).
 
@@ -30,7 +30,7 @@ This is "double-dimming". Each channel dims independently, so stacking them mult
 
 Measured contrast against each theme's `bgMain` (WCAG needs 3:1 for secondary text, 4.5:1 for body):
 
-| Dimming approach                                    | Passes 3:1         | Dracula (default theme) |
+| Dimming approach                                    | Passed 3:1 (audit) | Dracula (default theme) |
 | --------------------------------------------------- | ------------------ | ----------------------- |
 | `opacity-70` on inherited `textMain` (the standard) | **21 / 21 themes** | 7.34:1                  |
 | `textDim`, no opacity utility                       | 21 / 21 themes     | 3.03:1                  |
@@ -41,7 +41,7 @@ Double-dimming costs an average of **1.21 contrast points** and fails the 3:1 fl
 
 ### Why the standard is `opacity-70`, not `opacity-50`
 
-`opacity-50` used to be the convention and it fails 3:1 in 6 themes, **5 of which are light**. This is structural, not a per-theme accident: on a light background an opacity utility blends dark text _toward_ the background, so even a pure-black `textMain` tops out around 3.9:1. You cannot fix it by editing the theme. `opacity-70` clears 3:1 in all 21 themes (worst is `ayu-light` at 3.12:1) while still reading as clearly secondary against a 100% title.
+`opacity-50` used to be the convention and it fails 3:1 in 6 themes, **5 of which are light**. This is structural, not a per-theme accident: on a light background an opacity utility blends dark text _toward_ the background, so even a pure-black `textMain` tops out around 3.9:1. You cannot fix it by editing the theme. `opacity-70` clears 3:1 in every theme (worst is `ayu-light` at 3.12:1; `settingsStyleGuide.test.ts` re-measures all of `THEMES` on every run) while still reading as clearly secondary against a 100% title.
 
 ### The trap that produces it
 
@@ -104,12 +104,15 @@ All four already exist. Hand-rolling them is the root cause of the drift this gu
 
 Current adoption:
 
-| Tab            | Files | `SettingsSectionHeading` | `ToggleSettingRow` | Double-dim defects |
-| -------------- | ----- | ------------------------ | ------------------ | ------------------ |
-| **DisplayTab** | 21    | 16 of 18                 | 27 of 28           | **0**              |
-| GeneralTab     | 21    | **18 of 18**             | 0 of 10            | **0**              |
-| Settings root  | 20    | 0 of 13                  | n/a                | **0**              |
-| EncoreTab      | 6     | 0 of 3                   | n/a                | **0**              |
+| Tab                      | Files | `SettingsSectionHeading`                 | `ToggleSettingRow`                             | Double-dim defects |
+| ------------------------ | ----- | ---------------------------------------- | ---------------------------------------------- | ------------------ |
+| **DisplayTab**           | 26    | 21 files; 2 hand-rolled in Accessibility | the norm                                       | **0**              |
+| GeneralTab               | 23    | every section                            | 1 section (`WebInterfaceSection`); 8 files raw | **0**              |
+| Settings root            | 14    | 0 (2 hand-rolled, see Remaining)         | n/a                                            | **0**              |
+| EncoreTab (Plugins tab)  | 6     | 0 of 3 settings bodies                   | n/a                                            | **0**              |
+| Extensions (marketplace) | 8     | 0 (hand-rolled, see Remaining)           | n/a                                            | **0**              |
+
+Double-dim is 0 everywhere because `settingsStyleGuide.test.ts` fails the build on it; the other columns are the live grep.
 
 ### `SettingsSectionHeading` note
 
@@ -123,7 +126,7 @@ Pass an intro paragraph as `description`, do not write your own `<p>` after the 
 
 It takes a `ReactNode`, so state-dependent copy and inline `<kbd>` still work. The component owns the gap between the two lines: with a description the label drops to `mb-1` and only the paragraph carries the `mb-2` to the card below. That is the same distance the hand-rolled version produced with `mb-2` plus a `-mt-1`, written once instead of set and then subtracted. `settingsStyleGuide.test.ts` fails on any `-mt-*` in the tree.
 
-**`DisplayTab` is the reference implementation.** When you need a template, read `ContextWarningsSection.tsx`, `WindowChromeSection.tsx`, or `TabOptionsSection.tsx`. `GeneralTab` now matches on headings and dimming but still hand-rolls its card bodies and toggle rows, so copy its heading, not its card.
+**`DisplayTab` is the reference implementation.** When you need a template, read `ContextWarningsSection.tsx`, `WindowChromeSection.tsx`, or `TabOptionsSection.tsx`. `GeneralTab` matches on headings and dimming; `WebInterfaceSection.tsx` is its one section on `SectionCard` + `ToggleSettingRow`, the rest still hand-roll their card bodies and toggle rows, so copy `WebInterfaceSection`, not its neighbours.
 
 ### `SectionCard` note
 
@@ -138,11 +141,11 @@ Only these four roles exist. If you find yourself inventing a fifth, you are pro
 | Role                  | Classes                                                                 | Color                            |
 | --------------------- | ----------------------------------------------------------------------- | -------------------------------- |
 | Section heading       | via `SettingsSectionHeading` (`text-xs font-bold opacity-70 uppercase`) | inherit (never override)         |
-| Setting title         | `font-medium` (or `text-sm font-medium` inside dense rows)              | `theme.colors.textMain`          |
+| Setting title         | `text-sm` (what `ToggleSettingRow` renders; no `font-medium`)           | `theme.colors.textMain`          |
 | Description / helper  | `text-xs opacity-70`                                                    | **inherit - do not set a color** |
 | Micro-note / footnote | `text-[11px] opacity-55`                                                | inherit                          |
 
-**There are exactly two dim levels: `opacity-70` for descriptions and `opacity-55` for micro-notes.** Do not invent a third. The tree previously carried five (`40`, `50`, `60`, `70`, `80`) across 93 sites, which is why neighbouring descriptions looked like different design languages.
+**Two dim levels for text: `opacity-70` for descriptions and `opacity-55` for micro-notes.** Do not invent a third. The tree previously carried five (`40`, `50`, `60`, `70`, `80`) across 93 sites, which is why neighbouring descriptions looked like different design languages. `settingsStyleGuide.test.ts` bans only `opacity-60` on text; five off-scale text sites remain as known debt (`opacity-50` in `GeneralTab/components/PowerSection.tsx:90`, `UtilityAgentSection.tsx:83`, `SshRemotesSection.tsx:194`, `IgnorePatternsSection.tsx:133`; `opacity-40` in `SettingsSearch.tsx:173`). Fix them when you touch the file, and do not add a sixth. `disabled:opacity-*` and a conditional opacity on an inactive control are not text dimming and are fine.
 
 Sizes: `text-xs` for descriptions, `text-sm` only inside dense rows, `text-[11px]` for a genuine third-level footnote. Never go below `text-[10px]`.
 
@@ -152,7 +155,7 @@ Sizes: `text-xs` for descriptions, `text-sm` only inside dense rows, `text-[11px
 
 ## 5. Color
 
-Pull every color from `theme.colors`. Never hard-code a hex for text, borders, or surfaces: there are 21 themes including 4 light ones, and a literal will be unreadable in most of them.
+Pull every color from `theme.colors`. Never hard-code a hex for text, borders, or surfaces: there are 20 themes including 6 light ones (`github-light`, `solarized-light`, `one-light`, `gruvbox-light`, `catppuccin-latte`, `ayu-light`), and a literal will be unreadable in most of them.
 
 | Token                     | Use for                                               |
 | ------------------------- | ----------------------------------------------------- |
@@ -233,11 +236,11 @@ Set `clickableRow` on `ToggleSettingRow` so the whole row is a hit target. It al
 
 A settings control is not done when it renders. All six steps or it will not persist, will not survive restart, or will not be findable:
 
-1. `src/shared/settingsMetadata.ts` - add to `SETTINGS_METADATA` with `description`, `type`, `default`, `category`.
-2. `src/renderer/stores/settingsStore.ts` - **five** edits: interface field, setter signature, initial-state default, setter action (which must call `window.maestro.settings.set`), and the `allSettings[...]` hydration mapping. Skipping hydration is the classic "setting resets on restart" bug.
+1. Settings metadata - `SETTINGS_METADATA` in `src/shared/settingsMetadata.ts` is assembled from seven domain files (`settingsMetadataAppearance`, `Editor`, `Core`, `Connectivity`, `Automation`, `Experience`, `Features`). Add the key to the matching domain file with `description`, `type`, `default`, `category`.
+2. Store - in `src/renderer/stores/settingsStore.ts` or the domain slice that owns it (`settings*Slice.ts`: annotator, wakatime, file explorer, notifications, left panel display, browser tabs, shortcuts, theme): interface field, initial-state default, setter action (which must call `window.maestro.settings.set`), and the `allSettings[...]` hydration in `loadAllSettings()` or the slice's `hydrate*Settings()`. Skipping hydration is the classic "setting resets on restart" bug.
 3. `src/renderer/hooks/settings/useSettings.ts` - add the field and setter to `UseSettingsReturn`. The store is spread at runtime, but the type is curated, so TS fails without this.
-4. `src/main/stores/defaults.ts` - **only** if `MaestroSettings` requires the key. Editor/input-behavior settings deliberately do not live here; their default comes from `settingsMetadata.ts`.
-5. `src/renderer/components/Settings/searchableSettings.ts` - add a `SearchableSetting` whose `id` exactly matches the `data-setting-id` on your section root. Put every user-visible string from the section into `keywords`.
+4. `src/main/stores/defaults.ts` - **only** if `MaestroSettings` requires the key. Editor/input-behavior settings deliberately do not live here; their default comes from the metadata file.
+5. Searchable registry - add a `SearchableSetting` to the per-tab file (`searchableSettingsGeneral.ts`, `searchableSettingsDisplay.ts`, `searchableSettingsMisc.ts`, `searchableSettingsNotifications.ts`, `searchableSettingsEncore.ts`; `searchableSettings.ts` only composes them) whose `id` exactly matches the `data-setting-id` on your section root. Put every user-visible string from the section into `keywords`.
 6. Render it and thread props from the tab.
 
 `searchableSettings.test.ts` enforces DOM parity in both directions: a `data-setting-id` with no registry entry fails, and a registry entry with no `data-setting-id` fails. It also asserts that specific user-typed phrases surface your section, so add your visible strings to that `it.each` table.
@@ -256,7 +259,7 @@ Before you call a settings change done:
 - [ ] Order is title -> description -> warning -> control
 - [ ] Control spans full width (except an inline `ToggleSwitch`)
 - [ ] No hard-coded hex, no hard-coded `Cmd`/`Ctrl`
-- [ ] `data-setting-id` matches the `searchableSettings.ts` entry
+- [ ] `data-setting-id` matches the entry in the per-tab `searchableSettings<Tab>.ts` file
 - [ ] Checked against a light theme (`ayu-light` is the tightest at 3.12:1) and `solarized-dark`
 - [ ] `settingsStyleGuide.test.ts` passes
 - [ ] `npm run lint` and `lint:eslint` clean
@@ -275,15 +278,16 @@ Before you call a settings change done:
 | **Heading `description`**                | `SettingsSectionHeading` grew an optional `description` slot and lost its contradictory `block ... flex` className. The four sections that hand-rolled the paragraph (`FontsSection` x2, `FontZoomSection`, `TypographyResetSection`) now pass it through, which removed their `-mt-1` hacks.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | **`ThemeTab` / `ShortcutsTab` headings** | The three mode headings and the two shortcut-group headings were hand-rolled at full brightness with `textDim` and no icon. All five migrated to `SettingsSectionHeading`, which also brought them onto the `opacity-70` dim channel.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | **Tab rhythm**                           | `EncoreTab` (`space-y-6`), `ShortcutsTab` (`space-y-4`) and `ThemeTab`'s picker block (`space-y-6`) unified on `space-y-5`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| **Opacity scale**                        | 84 sites collapsed from five values (`40/50/60/70/80`) to two: `opacity-70` for descriptions, `opacity-55` for micro-notes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| **Low-contrast themes**                  | `solarized-light`'s `textMain` raised from `#5f737b` (4.61:1) to Solarized base02 `#073642` (12.05:1). With `opacity-70`, **all 21 themes now clear 3:1** (worst: `ayu-light` at 3.12:1).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **Opacity scale**                        | 84 sites collapsed from five values (`40/50/60/70/80`) toward two: `opacity-70` for descriptions, `opacity-55` for micro-notes. The test bans `opacity-60` only; the five remaining `opacity-50` / `opacity-40` text sites are listed in §4.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Low-contrast themes**                  | `solarized-light`'s `textMain` raised from `#5f737b` (4.61:1) to Solarized base02 `#073642` (12.05:1). With `opacity-70`, **every theme clears 3:1** (worst: `ayu-light` at 3.12:1), and the test re-measures on every run.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 Note on the theme fix: the original plan was to brighten all six failing themes, but the measurement showed no theme's `textDim` was ever below 3:1 and five of the six failures were _light_ themes, where an opacity utility blends text toward the background and even pure-black `textMain` caps near 3.9:1. That is a property of the dimming approach, not of the themes, so raising the description opacity was the actual fix. Only `solarized-light` additionally needed a theme edit.
 
 ### Remaining
 
-- **`GeneralTab` still hand-rolls its card bodies and toggle rows** - 10 raw `ToggleSwitch` rows and no `SectionCard`. Migrating these normalises padding and border color, but each row's click/keyboard behaviour needs verifying, so it deserves its own PR. Do it opportunistically when you are already in a section, or as one deliberate pass.
-- **Other tabs still hand-roll section headings** - `EncoreTab` (3), `DisplayTab` (2), plus `SettingsModal`, `MaestroPromptsTab`, `EnvironmentTab`, `SshRemoteModal`. The style-guide test enforces `GeneralTab`, `ThemeTab` and `ShortcutsTab`; add each remaining tab to `MIGRATED_HEADING_SCOPES` as it is migrated.
+- **`GeneralTab` mostly hand-rolls its card bodies and toggle rows** - 8 files still use a raw `ToggleSwitch`; only `WebInterfaceSection` is on `SectionCard` + `ToggleSettingRow`. Migrating the rest normalises padding and border color, but each row's click/keyboard behaviour needs verifying, so it deserves its own PR. Do it opportunistically when you are already in a section, or as one deliberate pass.
+- **Hand-rolled `text-xs font-bold uppercase` headings remain** in the Plugins tab settings bodies (`EncoreTab/components/SymphonyRegistrySection.tsx`, `DirectorNotesSection.tsx`, `CueSettingsSection.tsx`), `DisplayTab/components/AccessibilitySection.tsx` (2), `MaestroPromptsTab.tsx`, `EnvironmentTab.tsx`, the Settings-root `SshRemotesSection.tsx:194` and `IgnorePatternsSection.tsx:133` (both also `opacity-50`), and the marketplace panes `Extensions/WebLoginUsers.tsx` (2), `Extensions/AgentDispatchAllowlist.tsx`, `Extensions/ExtensionDetails.tsx` (4). The style-guide test enforces `GeneralTab`, `ThemeTab` and `ShortcutsTab`; add each remaining scope to `MIGRATED_HEADING_SCOPES` as it is migrated.
+- **Off-scale text opacity** - the five `opacity-50` / `opacity-40` text sites in §4. The test only bans `opacity-60`, so these do not fail the build.
 - **Sections that follow a heading with their own `<p>`** - the `description` slot exists now, but only the four sections that carried a `-mt-1` have been moved onto it. The rest render an identical paragraph a line lower; migrate them opportunistically.
 
 ---

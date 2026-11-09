@@ -2991,7 +2991,6 @@ export function getSettingsActions() {
 		setBionifyAlgorithm: state.setBionifyAlgorithm,
 		setShowHiddenFiles: state.setShowHiddenFiles,
 		setFileExplorerIconTheme: state.setFileExplorerIconTheme,
-		setFileTreeBranchConnectors: state.setFileTreeBranchConnectors,
 		setToastWidth: state.setToastWidth,
 		setToastPosition: state.setToastPosition,
 		setTerminalWidth: state.setTerminalWidth,

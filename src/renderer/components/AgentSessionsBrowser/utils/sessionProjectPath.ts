@@ -7,7 +7,14 @@ export interface SessionProjectPath {
 	isRemoteSession: boolean;
 }
 
-export function resolveSessionProjectPath(activeSession: Session | undefined): SessionProjectPath {
+/** The agent fields that decide where its provider sessions live. */
+export type SessionProjectPathSource = Partial<
+	Pick<Session, 'projectRoot' | 'remoteCwd' | 'sshRemoteId' | 'sessionSshRemoteConfig'>
+>;
+
+export function resolveSessionProjectPath(
+	activeSession: SessionProjectPathSource | undefined
+): SessionProjectPath {
 	// Never read `sshRemoteId` alone: it is runtime-only, cleared on restart and
 	// set again only when the agent next spawns.
 	const sshRemoteId = getSessionSshRemoteId(activeSession);
