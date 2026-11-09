@@ -16,7 +16,11 @@ import { inspectTabProvider } from '../../desktopTabs';
 import { parseConsultChain } from '../../consultBudget';
 import type { AgentRecord } from '../store/records';
 import { parseProcessId } from '../client/bridge-frames';
+import type { ThinkingMode, UsageStats } from '../../types';
 import type {
+	AgentCreateInput,
+	AgentImportQueuedMessage,
+	AgentImportTab,
 	AgentPatch,
 	ClientResult,
 	MaestroClient,
@@ -306,6 +310,74 @@ function sendFailure(
 		: refusal(type, errorText(result), { sessionId: agentId });
 }
 
+/**
+ * The agent fields of a `create_session` or `import_agent` message, in `create_session`'s
+ * spelling (the record's keys), as an agent input. The SSH settings are the caller's: an import
+ * refuses them.
+ */
+function agentInputFromMessage(message: Request): Omit<AgentCreateInput, 'ssh'> {
+	return {
+		name: str(message.name) ?? '',
+		provider: str(message.toolType) ?? '',
+		cwd: str(message.cwd) ?? '',
+		...(str(message.groupId) ? { groupId: str(message.groupId) } : {}),
+		...(str(message.customModel) ? { model: str(message.customModel) } : {}),
+		...(str(message.customEffort) ? { effort: str(message.customEffort) } : {}),
+		...(num(message.customContextWindow) !== undefined
+			? { contextWindow: num(message.customContextWindow) }
+			: {}),
+		...(str(message.customPath) ? { customPath: str(message.customPath) } : {}),
+		...(str(message.customArgs) ? { customArgs: str(message.customArgs) } : {}),
+		...(obj(message.customEnvVars)
+			? { env: obj(message.customEnvVars) as Record<string, string> }
+			: {}),
+		...(str(message.autoRunFolderPath)
+			? { autoRunFolderPath: str(message.autoRunFolderPath) }
+			: {}),
+		...(str(message.nudgeMessage) ? { nudgeMessage: str(message.nudgeMessage) } : {}),
+		...(str(message.newSessionMessage)
+			? { newSessionMessage: str(message.newSessionMessage) }
+			: {}),
+	};
+}
+
+/** An `import_agent` tab, as the record spells it, back to the client's tab input. */
+function importTabFromWire(entry: unknown): AgentImportTab | undefined {
+	const tab = obj(entry);
+	const id = str(tab?.id);
+	if (!tab || !id) return undefined;
+	return {
+		id,
+		// Passed as sent: the import rule is what refuses a tab without a transcript.
+		logs: tab.logs as AgentImportTab['logs'],
+		...(typeof tab.name === 'string' || tab.name === null
+			? { name: tab.name as string | null }
+			: {}),
+		...(bool(tab.starred) !== undefined ? { starred: bool(tab.starred) } : {}),
+		...(str(tab.agentSessionId) ? { agentSessionId: str(tab.agentSessionId) } : {}),
+		...(num(tab.createdAt) !== undefined ? { createdAt: num(tab.createdAt) } : {}),
+		...(bool(tab.saveToHistory) !== undefined ? { saveToHistory: bool(tab.saveToHistory) } : {}),
+		...(str(tab.showThinking) ? { showThinking: str(tab.showThinking) as ThinkingMode } : {}),
+		...(bool(tab.readOnlyMode) !== undefined ? { readOnlyMode: bool(tab.readOnlyMode) } : {}),
+		...(str(tab.customModel) ? { model: str(tab.customModel) } : {}),
+		...(str(tab.customEffort) ? { effort: str(tab.customEffort) } : {}),
+		...(obj(tab.usageStats) ? { usageStats: obj(tab.usageStats) as unknown as UsageStats } : {}),
+	};
+}
+
+/** An `import_agent` queued message back to the client's input. */
+function importQueueItemFromWire(entry: unknown): AgentImportQueuedMessage | undefined {
+	const item = obj(entry);
+	const tabId = str(item?.tabId);
+	if (!item || !tabId) return undefined;
+	const images = imagesOf(item);
+	return {
+		tabId,
+		text: typeof item.text === 'string' ? item.text : '',
+		...(images ? { images } : {}),
+	};
+}
+
 // ---------------------------------------------------------------------------
 // The handler
 // ---------------------------------------------------------------------------
@@ -378,32 +450,43 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 			// -- agents -----------------------------------------------------
 			case 'create_session': {
 				const result = await client.agents.create({
-					name: str(message.name) ?? '',
-					provider: str(message.toolType) ?? '',
-					cwd: str(message.cwd) ?? '',
-					...(str(message.groupId) ? { groupId: str(message.groupId) } : {}),
-					...(str(message.customModel) ? { model: str(message.customModel) } : {}),
-					...(str(message.customEffort) ? { effort: str(message.customEffort) } : {}),
-					...(num(message.customContextWindow) !== undefined
-						? { contextWindow: num(message.customContextWindow) }
-						: {}),
-					...(str(message.customPath) ? { customPath: str(message.customPath) } : {}),
-					...(str(message.customArgs) ? { customArgs: str(message.customArgs) } : {}),
-					...(obj(message.customEnvVars)
-						? { env: obj(message.customEnvVars) as Record<string, string> }
-						: {}),
+					...agentInputFromMessage(message),
 					...(obj(message.sessionSshRemoteConfig)
 						? { ssh: obj(message.sessionSshRemoteConfig) as never }
 						: {}),
-					...(str(message.autoRunFolderPath)
-						? { autoRunFolderPath: str(message.autoRunFolderPath) }
-						: {}),
-					...(str(message.nudgeMessage) ? { nudgeMessage: str(message.nudgeMessage) } : {}),
-					...(str(message.newSessionMessage)
-						? { newSessionMessage: str(message.newSessionMessage) }
-						: {}),
 				});
 				return outcome('create_session_result', result, (value) => ({ sessionId: value.agentId }));
+			}
+			case 'import_agent': {
+				const type = 'import_agent_result';
+				// `sessionSshRemoteConfig` is passed through so the rule that refuses it can say why.
+				const agent = obj(message.agent) ?? {};
+				const tabs = Array.isArray(message.tabs) ? message.tabs.map(importTabFromWire) : [];
+				if (tabs.some((tab) => tab === undefined)) {
+					return refusal(type, 'Every imported tab needs an id.');
+				}
+				const queue = Array.isArray(message.queue)
+					? message.queue.map(importQueueItemFromWire)
+					: [];
+				if (queue.some((item) => item === undefined)) {
+					return refusal(type, 'Every queued message needs the tab it is for.');
+				}
+				const result = await client.agents.import({
+					agent: {
+						...agentInputFromMessage(agent),
+						...(obj(agent.sessionSshRemoteConfig)
+							? { ssh: obj(agent.sessionSshRemoteConfig) as never }
+							: {}),
+					},
+					tabs: tabs as AgentImportTab[],
+					...(str(message.activeTabId) ? { activeTabId: str(message.activeTabId) } : {}),
+					...(queue.length > 0 ? { queue: queue as AgentImportQueuedMessage[] } : {}),
+				});
+				return outcome(type, result, (value) => ({
+					sessionId: value.agentId,
+					queued: value.queued,
+					...(value.notices ? { notices: value.notices } : {}),
+				}));
 			}
 			case 'rename_session':
 				return outcome(

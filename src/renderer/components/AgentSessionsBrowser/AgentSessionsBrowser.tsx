@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { isImeComposing } from '../../utils/ime';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
@@ -397,7 +398,7 @@ export function AgentSessionsBrowser({
 							if (e.key === 'Enter') {
 								e.preventDefault();
 								submitRename(viewingSession.sessionId);
-							} else if (e.key === 'Escape') {
+							} else if (e.key === 'Escape' && !isImeComposing(e)) {
 								e.preventDefault();
 								cancelRename();
 							}
@@ -463,7 +464,7 @@ export function AgentSessionsBrowser({
 						theme={theme}
 						onSearchChange={handleSearchChange}
 						onSearchKeyDown={(e) => {
-							if (e.key === 'Escape') {
+							if (e.key === 'Escape' && !isImeComposing(e)) {
 								e.preventDefault();
 								e.stopPropagation();
 								setShowSearchPanel(false);

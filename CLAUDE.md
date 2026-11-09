@@ -192,12 +192,25 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a Claude turn runs the maestro-p TUI or `claude --print`:** `resolveClaudeSpawnModeCore()`, `applyClaudeSpawnDecision()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
 - **Timing out a supervised agent process:** `createIdleWatchdog()` in `src/main/utils/idle-watchdog.ts`, events in `src/main/utils/agent-liveness.ts` (the budget is silence, not wall clock)
 - **A one-shot answer from a cheap model (no tab, no tools):** `window.maestro.context.groomContext()` with `cheapTurn` / `readOnly` / `disableTools` / `timeoutMs`, over `groomContext()` in `src/main/utils/context-groomer.ts`
-- **Whether a working directory can be spawned into:** `unusableCwdReason(cwd)` in `src/main/process-manager/utils/spawnCwd.ts`
+- **Whether a working directory can be spawned into:** `unusableCwdReason(cwd)`, `unusableDirectoryReason(dir, label)` in `src/main/process-manager/utils/spawnCwd.ts`
 - **Whether an agent is working right now (main process):** `isAgentBusy()`, `isAiTabProcessActive()` in `src/main/utils/agent-busy.ts` (never the persisted `state`)
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`
 - **Resuming a provider session a background synopsis may still hold:** `awaitSynopsisWriters()` in `src/main/process-manager/utils/synopsisWriterGate.ts` (already called by `process:spawn`; no per-send-path busy check)
 - **A path handed to a REMOTE shell (`cd`, `ls`, `stat` over SSH):** `shellEscapeRemotePath()` in `src/main/utils/shell-escape.ts` (`shellEscape()` stops `~` from expanding)
 - **SSH connection options (`ssh -o`):** `resolveSshOptions()`, `buildSshOptionArgs()`, `validateSshOption()` in `src/shared/sshOptions.ts`
+- **A one-shot SSH command that must find a binary the user installed:** `wrapRemoteCommandWithPath()` in `src/shared/maestro-lib/launch/ssh-command-builder.ts`
+- **Finding the `maestro-cli host` on an SSH remote (Federation):** `discoverRemoteHost()`, `startRemoteHost()`, `remoteVersionSkew()`, `buildRemoteMaestroCliScript()`, `buildRemoteScriptArgs()` in `src/shared/maestro-lib/client/remote-discovery.ts`
+- **Forwarding a Federation remote's host to the laptop:** `getSshForwardManager().acquire(remote)`, `buildSshForwardArgs()` in `src/shared/maestro-lib/client/ssh-forward.ts`
+- **Which env vars a Federation lift sends:** `planLiftEnv()`, `providerSessionDirSelector()`, `liftSessionDirProblem()` in `src/shared/maestro-lib/agents/lift-env.ts`
+- **A lifted agent's pointer and send refusal (Federation):** `readLiftedTo()`, `liftedSendRefusal()`, `liftedAgentRef()`, `liftedOwnerOfProcess()`, `peerAgentRef()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
+- **Planning a Federation lift (refusals, payload, plan):** `liftRefusal()`, `planAgentLift()`, `liftRemoteCwd()`, `liftSshRemoteId()` in `src/shared/maestro-lib/agents/lift-plan.ts`; `liftBusyReason()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
+- **Running a Federation lift (CLI and desktop Move to Host):** `runLift()`, `formatLiftPlan()`, `LiftRunError`, `providerEnvVarsOf()` in `src/shared/maestro-lib/agents/lift-run.ts`; `liftAgentFromDesktop()` in `src/main/federation/lift.ts`
+- **A `peer:agent` target on the CLI (Federation):** `routeAgentTarget()`, `resolvePeerAgent()`, `withPeerAgent()`, `connectPeer()`, `listHostAgents()`, `listFederationPeers()`, `findPeerRemote()`, `peerIdFor()`, `watchPeerConnection()`, `hostCallError()`, `peerErrorCode()` in `src/cli/services/peer-resolver.ts`
+- **Connecting to a Federation peer's host (CLI and desktop):** `connectPeerClient()`, `federationPeersOf()`, `peerIdFor()`, `peerForwardError()`, `watchPeerConnection()`, `PeerConnectError` in `src/shared/maestro-lib/client/peer-connection.ts`
+- **Driving a Federation peer's agent (CLI and desktop):** `runPeerAgentAction()`, `parsePeerAgentAction()` in `src/shared/maestro-lib/client/peer-actions.ts`; `PeerMirrorService.act()` in `src/main/federation/`
+- **Mirroring a Federation peer in memory (desktop):** `applyPeerEvent()`, `mirrorKey()`, `replacePeerAgents()` in `src/shared/maestro-lib/client/peer-mirror.ts`; `foldLiveTurn()`, `coalesceTurnEvents()` in `src/shared/maestro-lib/client/live-turn.ts`; `getPeerMirrorService()` in `src/main/federation/index.ts`
+- **Showing a Federation peer's mirrored agent (renderer):** `usePeerMirrorStore`, `isMirrorShown()` in `src/renderer/stores/peerMirrorStore.ts`; `buildMirrorViewSession()` in `src/renderer/utils/peerMirrorView.ts`; `gateKeyForMirror()` in `src/renderer/hooks/keyboard/mirrorKeyboardGate.ts`
+- **A loopback port for an SSH local forward:** `availableLocalPort()`, `waitForLocalPort()` in `src/shared/maestro-lib/client/local-port.ts`
 - **Building or delivering the Maestro system prompt:** `assembleMaestroSystemPrompt()` in `src/shared/maestroSystemPrompt.ts`; `applySystemPromptDelivery()` in `src/main/utils/system-prompt-delivery.ts`; `buildMaestroSystemPromptForSession()` in `src/main/utils/maestro-system-prompt.ts`
 - **Expanding `{{INCLUDE:name}}` in a prompt:** `resolvePromptIncludes()`, `findPromptIncludeNames()` in `src/shared/promptIncludes.ts`
 - **The system-prompt envelope for a provider with no `--append-system-prompt`:** `embedSystemPromptInPrompt()`, `stripEmbeddedSystemPrompt()`, `hasEmbeddedSystemPrompt()` in `src/shared/embeddedSystemPrompt.ts` (a wire format; never template it inline)
@@ -323,9 +336,15 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Run a shell command from the chat:** `dispatchShellCommand()`, `runShellCommand()`, `cancelShellCommand()`, `resolveCommandCwd()` in `src/renderer/services/shellCommand.ts`
 - **Running a shell code fence from an agent's reply:** `requestCodeFenceCommand()` / `CODE_FENCE_COMMAND_EVENT` in `src/renderer/services/codeFenceCommand.ts`, `isRunnableShellLanguage()` / `commandFromShellFence()` in `src/renderer/utils/shellCommandInput.ts`, drawn by `<CodeRunButton>`
 - **Ask the model for a shell command (AI command mode):** `requestAiCommand()`, `acceptAiCommand()`, `dismissAiCommand()` in `src/renderer/services/aiCommand.ts`; prompt in `src/prompts/ai-command.md`
-- **A composer's send column (notification bell + Send):** `<ComposerSendColumn>` in `src/renderer/components/ChatComposer/ComposerSendColumn.tsx`; the AI composer wraps it as `NotificationSendControls` (Send menu), Group Chat passes disabled / warning tone. Do NOT copy the bell or the Send button into a new composer.
-- **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx` (duplicate check, read error and abort reported); buttons click it through the ref, never `getElementById`.
+- **A composer's send column (notification bell + Send):** `<ComposerSendColumn>` in `src/renderer/components/ChatComposer/ComposerSendColumn.tsx`
+- **The A Cappella microphone under a composer's Send:** `<ComposerVoiceSessionButton>` in `src/renderer/components/ChatComposer/ComposerVoiceSessionButton.tsx`, passed as `sendColumnExtras` (`belowSend` on `<ComposerSendColumn>`)
+- **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx`
 - **Trimming a text paste in a composer:** `applyTrimmedTextPaste(e, currentValue, setValue)` / `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
+- **Composer keys both chat composers share (Cmd+F, `@` picker, Enter / Cmd+Enter, Escape):** `handleComposerFindKey()`, `handleComposerPickerKey()`, `handleComposerSendKey()` in `src/renderer/hooks/input/composerKeyDown.ts`
+- **Which optional controls a composer toolbar offers:** `ComposerCapabilities`, `deriveAiComposerCapabilities()`, `aiCanAttachImages()`, `GROUP_CHAT_COMPOSER_CAPABILITIES` in `src/renderer/components/ChatComposer/capabilities.ts`
+- **A chat composer's textarea with live `@mention` chips:** `<ComposerTextarea>` in `src/renderer/components/ChatComposer/ComposerTextarea.tsx`
+- **The chat composer shell both surfaces render:** `<ChatComposerFrame>`, `useChatComposerFold()` in `src/renderer/components/ChatComposer/ChatComposerFrame.tsx`
+- **Detecting an active IME composition:** `isImeComposing()` in `src/renderer/utils/ime.ts`
 - **Shell tab completion:** `useTabCompletion()` in `src/renderer/hooks/input/useTabCompletion.ts` (terminal composer and command mode)
 - **Revealing output the user asked for, past a paused auto-scroll:** `requestTranscriptScrollToBottom(sessionId, tabId)` in `src/renderer/services/transcriptScroll.ts`
 - **Appending to a transcript entry:** `canAppendToLogEntry(entry, source)` / `isSelfContainedCard(entry)` in `src/renderer/utils/logEntries.ts`
@@ -647,7 +666,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Touch primitives:** `isCoarsePointer()`, `triggerHaptic()`, `supportsHaptics()`, `HAPTIC_PATTERNS`, `GESTURE_THRESHOLDS`, `MIN_TOUCH_TARGET` in `src/renderer/utils/touch.ts`
 - **Long-press gesture:** `useLongPress()` in `src/renderer/hooks/utils/useLongPress.ts` (never `setTimeout` + `touchmove`)
 - **A bottom sheet on a phone:** `<PhoneBottomSheet>` in `src/renderer/components/ui/PhoneBottomSheet.tsx`
-- **Rows inside a `PhoneBottomSheet`:** `PhoneSheetSection`, `PhoneSheetOptionRow`, `PhoneSheetActionRow` in `src/renderer/components/ui/PhoneSheetRows.tsx`
+- **Rows inside a `PhoneBottomSheet`:** `PhoneSheetSection`, `PhoneSheetOptionRow`, `PhoneSheetActionRow`, `PhoneSheetSwitchRow` in `src/renderer/components/ui/PhoneSheetRows.tsx`
 - **A tab chip's action menu shell:** `<TabOverlayPortal>` in `src/renderer/components/TabBar/TabOverlayPortal.tsx`
 - **The file preview toolbar on a phone:** `<FilePreviewActionsSheet>` in `src/renderer/components/FilePreview/FilePreviewActionsSheet.tsx`
 - **Every composer setting on a phone:** `<ComposerOptionsSheet>` in `src/renderer/components/InputArea/components/ComposerOptionsSheet.tsx`

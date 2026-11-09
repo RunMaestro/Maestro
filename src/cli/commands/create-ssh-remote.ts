@@ -6,6 +6,7 @@ import { formatError, formatSuccess } from '../output/formatter';
 import type { SshRemoteConfig } from '../../shared/types';
 import { parseSshOptionAssignments } from '../../shared/sshOptions';
 import { ExitCode, exitWith } from '../exit-codes';
+import { parseCliBool } from '../utils/parse';
 
 interface CreateSshRemoteOptions {
 	host: string;
@@ -17,6 +18,8 @@ interface CreateSshRemoteOptions {
 	sshConfig?: boolean;
 	disabled?: boolean;
 	setDefault?: boolean;
+	/** `on` / `off`; a Federation option, refused in `index.ts` while that Encore Feature is off */
+	federation?: string;
 	json?: boolean;
 }
 
@@ -78,6 +81,21 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 		exitWith(ExitCode.GeneralError);
 	}
 
+	let federation: boolean | undefined;
+	if (options.federation !== undefined) {
+		try {
+			federation = parseCliBool(options.federation, '--federation');
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			if (options.json) {
+				console.log(JSON.stringify({ success: false, error: msg }));
+			} else {
+				console.error(formatError(msg));
+			}
+			exitWith(ExitCode.GeneralError);
+		}
+	}
+
 	const config: SshRemoteConfig = {
 		id: crypto.randomUUID(),
 		name,
@@ -90,6 +108,8 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 		enabled: !options.disabled,
 		useSshConfig: options.sshConfig || undefined,
 		sshConfigHost: options.sshConfig ? options.host : undefined,
+		// Stored only when on, so a remote that never opted in carries no trace.
+		federation: federation || undefined,
 	};
 
 	// Validate: name and host must be non-empty
@@ -125,7 +145,13 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 
 	if (options.json) {
 		console.log(
-			JSON.stringify({ success: true, id: config.id, name: config.name, host: config.host })
+			JSON.stringify({
+				success: true,
+				id: config.id,
+				name: config.name,
+				host: config.host,
+				...(options.federation !== undefined ? { federation: config.federation === true } : {}),
+			})
 		);
 	} else {
 		console.log(formatSuccess(`Created SSH remote "${config.name}"`));
@@ -138,6 +164,9 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 		}
 		for (const [key, value] of Object.entries(config.sshOptions ?? {})) {
 			console.log(`  -o    ${key}=${value}`);
+		}
+		if (config.federation) {
+			console.log(`  Federation: on`);
 		}
 		if (options.setDefault) {
 			console.log(`  Set as default`);

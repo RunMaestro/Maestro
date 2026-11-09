@@ -20,6 +20,7 @@ import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { AgentVoiceIndicator } from './SessionList/AgentVoiceIndicator';
 import { WindowBadge } from './SessionList/WindowBadge';
+import { LiftedPointerChip } from './SessionList/LiftedPointerChip';
 import { AutoRunErrorBadge } from './SessionList/AutoRunErrorBadge';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -538,6 +539,7 @@ export const SessionItem = memo(function SessionItem({
 							{getAgentDisplayName(session.toolType)}
 							{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 						</span>
+						<LiftedPointerChip theme={theme} liftedTo={session.liftedTo} />
 					</div>
 				)}
 				{/* Host-owned secondary actions stay outside session identity and SSH/status indicators. */}

@@ -13,13 +13,25 @@
 //
 // So: `ask` when you want an answer, `dispatch` when you want the other agent to
 // go do something.
+//
+// A `peer:agent` target (Federation) sends the same `cross_agent_ask` to that
+// peer's host and reads the reply the same way. `--from` and `--with-context`
+// name a LOCAL agent and its transcript, which the host cannot see, so they are
+// refused there rather than dropped.
 
-import { resolveAgentId } from '../services/storage';
-import { withMaestroClient } from '../services/maestro-client';
+import { getSessionById, resolveAgentId } from '../services/storage';
+import { AGENT_LIFTED_CODE, liftedSendRefusal } from '../../shared/maestro-lib/agents/lift-pointer';
+import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
 import { readCallerIdentity } from '../../shared/agentDelegation';
 import { admitCliConsult } from '../services/consult-budget-guard';
 import { ExitCode, exitWith } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
+import {
+	PeerResolveError,
+	peerErrorCode,
+	routeAgentTarget,
+	withPeerAgent,
+} from '../services/peer-resolver';
 
 export interface AskOptions {
 	/**
@@ -65,17 +77,60 @@ export async function ask(agentId: string, question: string, options: AskOptions
 	 * would still consult the agent, and the tests that prove a bad invocation
 	 * consults nobody can only do that if the guard actually stops.
 	 */
-	const fail = (message: string, code?: string) => {
+	const fail = (
+		message: string,
+		extra: Record<string, unknown> = {},
+		exitCode: ExitCode = ExitCode.GeneralError
+	) => {
 		if (options.json) {
-			console.log(JSON.stringify({ success: false, error: message, ...(code ? { code } : {}) }));
+			console.log(JSON.stringify({ success: false, error: message, ...extra }));
 		} else {
 			console.error(`Error: ${message}`);
 		}
-		exitWith(ExitCode.GeneralError);
+		exitWith(exitCode);
 	};
 
 	if (!question.trim()) {
 		fail('question cannot be empty');
+		return;
+	}
+
+	const timeoutError = `--timeout must be between ${MIN_TIMEOUT_SECONDS} and ${MAX_TIMEOUT_SECONDS} seconds`;
+
+	const route = routeAgentTarget(agentId);
+	if (route.kind === 'peer') {
+		if (options.from !== undefined || options.withContext) {
+			fail(
+				`${options.from !== undefined ? '--from' : '--with-context'} names a local agent, which the host on peer "${route.target.peer}" cannot see. Ask without it.`,
+				{},
+				ExitCode.InvalidUsage
+			);
+			return;
+		}
+		const peerTimeoutMs = parseTimeoutMs(options.timeout);
+		if (peerTimeoutMs === null) {
+			fail(timeoutError);
+			return;
+		}
+		// A peer consult spends from this machine's chain like a local one. The
+		// chain id is not forwarded: the host keeps its own budget ledger.
+		const peerAdmission = admitCliConsult();
+		if (!peerAdmission.allowed) {
+			fail(peerAdmission.message, { code: peerAdmission.code });
+			return;
+		}
+		try {
+			await withPeerAgent(route.target, ({ agent, peer, withBridge }) =>
+				consult(withBridge, agent.id, question, {}, peerTimeoutMs, options, fail, { peer })
+			);
+		} catch (error) {
+			if (!(error instanceof PeerResolveError)) throw error;
+			fail(
+				error.message,
+				{ code: peerErrorCode(error.code), ...(error.peer ? { peer: error.peer } : {}) },
+				error.exitCode
+			);
+		}
 		return;
 	}
 
@@ -84,6 +139,12 @@ export async function ask(agentId: string, question: string, options: AskOptions
 		targetSessionId = resolveAgentId(agentId);
 	} catch (error) {
 		fail(error instanceof Error ? error.message : String(error));
+		return;
+	}
+	// A lifted agent answers on its host now, so the question goes there.
+	const liftedRefusal = liftedSendRefusal(getSessionById(targetSessionId) ?? {});
+	if (liftedRefusal) {
+		fail(liftedRefusal, { code: AGENT_LIFTED_CODE });
 		return;
 	}
 
@@ -107,19 +168,11 @@ export async function ask(agentId: string, question: string, options: AskOptions
 	// `--from` naming some other agent must not borrow this shell's tab.
 	const fromTabId = caller?.tabId && fromSessionId === caller.agentId ? caller.tabId : undefined;
 
-	let seconds = DEFAULT_TIMEOUT_SECONDS;
-	if (options.timeout !== undefined) {
-		seconds = Number(options.timeout);
-		if (
-			!Number.isFinite(seconds) ||
-			seconds < MIN_TIMEOUT_SECONDS ||
-			seconds > MAX_TIMEOUT_SECONDS
-		) {
-			fail(`--timeout must be between ${MIN_TIMEOUT_SECONDS} and ${MAX_TIMEOUT_SECONDS} seconds`);
-			return;
-		}
+	const timeoutMs = parseTimeoutMs(options.timeout);
+	if (timeoutMs === null) {
+		fail(timeoutError);
+		return;
 	}
-	const timeoutMs = Math.round(seconds * 1000);
 
 	// The consult budget, checked last so an ask that was never going to start
 	// spends nothing. An ask from an agent's shell is a consult made while
@@ -132,22 +185,59 @@ export async function ask(agentId: string, question: string, options: AskOptions
 	// delegates is counted against the same budget (see admitConsult).
 	const admission = admitCliConsult();
 	if (!admission.allowed) {
-		fail(admission.message, admission.code);
+		fail(admission.message, { code: admission.code });
 		return;
 	}
 
+	await consult(
+		withMaestroClient,
+		targetSessionId,
+		question,
+		{ fromSessionId, ...(fromTabId ? { fromTabId } : {}), consultChain: admission.chain },
+		timeoutMs,
+		options,
+		fail
+	);
+}
+
+/** `--timeout` in ms, the default when absent, or null when it is out of bounds. */
+function parseTimeoutMs(timeout: string | undefined): number | null {
+	if (timeout === undefined) return DEFAULT_TIMEOUT_SECONDS * 1000;
+	const seconds = Number(timeout);
+	if (!Number.isFinite(seconds) || seconds < MIN_TIMEOUT_SECONDS || seconds > MAX_TIMEOUT_SECONDS) {
+		return null;
+	}
+	return Math.round(seconds * 1000);
+}
+
+/** Runs one bridge call: the local desktop's, or a peer host's (`withBridge`). */
+type BridgeRunner = <T>(action: (client: MaestroClient) => Promise<T>) => Promise<T>;
+
+/**
+ * Send `cross_agent_ask` through `run` and print the reply. One body for the local desktop and a
+ * peer's host, which answers the same message with the same fields. `extra` is merged into the
+ * JSON (a peer's name).
+ */
+async function consult(
+	run: BridgeRunner,
+	targetSessionId: string,
+	question: string,
+	fromFields: Record<string, unknown>,
+	timeoutMs: number,
+	options: AskOptions,
+	fail: (message: string) => void,
+	extra: Record<string, unknown> = {}
+): Promise<void> {
 	try {
-		const result = await withMaestroClient(async (client) =>
+		const result = await run(async (client) =>
 			client.sendCommand<AskResponse>(
 				{
 					type: 'cross_agent_ask',
 					sessionId: targetSessionId,
 					question,
-					fromSessionId,
-					...(fromTabId ? { fromTabId } : {}),
+					...fromFields,
 					withContext: options.withContext === true,
 					timeoutMs,
-					consultChain: admission.chain,
 				},
 				'cross_agent_ask_result',
 				timeoutMs + CLIENT_TIMEOUT_GRACE_MS
@@ -164,6 +254,7 @@ export async function ask(agentId: string, question: string, options: AskOptions
 					agentId: targetSessionId,
 					agentName: result.targetAgentName,
 					tabId: result.targetTabId,
+					...extra,
 				})
 			);
 			if (!result.success) exitWith(ExitCode.GeneralError);
@@ -186,6 +277,8 @@ export async function ask(agentId: string, question: string, options: AskOptions
 			console.error(`Note: ${result.targetAgentName ?? 'The agent'} answered with nothing`);
 		}
 	} catch (error) {
+		// A peer that could not be attached is reported by the caller, with its code and exit code.
+		if (error instanceof PeerResolveError) throw error;
 		exitIfMaestroNotRunning(error, { json: options.json });
 		fail(error instanceof Error ? error.message : String(error));
 	}

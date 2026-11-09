@@ -11,6 +11,7 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 }));
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn((id: string) => (id === 'nope' ? undefined : id)),
+	getSessionById: vi.fn(() => undefined),
 	readSettingValue: vi.fn(() => undefined),
 }));
 

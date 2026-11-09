@@ -401,10 +401,12 @@ maestro-cli list groups --json
 
 List all agents
 
-| Option             | Description                          | Default |
-| ------------------ | ------------------------------------ | ------- |
-| `-g, --group <id>` | Filter by group ID                   | -       |
-| `--json`           | Output as JSON lines (for scripting) | -       |
+| Option             | Description                                                                   | Default |
+| ------------------ | ----------------------------------------------------------------------------- | ------- |
+| `-g, --group <id>` | Filter by group ID                                                            | -       |
+| `--peer <name>`    | List the agents on one Federation peer (an SSH remote's name)                 | -       |
+| `--all-peers`      | List local agents, then the agents on every SSH remote opted in to Federation | -       |
+| `--json`           | Output as JSON lines (for scripting)                                          | -       |
 
 ```bash
 maestro-cli list agents --group <group-id> --json
@@ -2067,6 +2069,7 @@ Start a detached host that serves this data directory over the bridge
 | `--port <port>`          | Port to listen on (default: any free port)                                                         | -       |
 | `--foreground`           | Serve in this process instead of detaching (what the detached child runs)                          | -       |
 | `--stop-grace <seconds>` | On SIGTERM/SIGINT, wait this long for work in flight before stopping (default 30; 0 stops at once) | -       |
+| `--no-prevent-sleep`     | macOS: let the Mac sleep even while work is in flight (default: caffeinate holds it awake)         | -       |
 | `--json`                 | Output as JSON (for scripting)                                                                     | -       |
 
 ```bash
@@ -2087,6 +2090,20 @@ Report the host: pid, uptime, lock holder, Cue state, and work in flight
 maestro-cli host status --dev --json
 ```
 
+## `maestro-cli host endpoint`
+
+Print this data directory's host endpoint (port, token, CLI secret) for Federation over SSH
+
+| Option              | Description                                                     | Default |
+| ------------------- | --------------------------------------------------------------- | ------- |
+| `--data-dir <path>` | Maestro data directory (default: resolved like the desktop app) | -       |
+| `--dev`             | Use the development data directory                              | -       |
+| `--json`            | Output as JSON, with the token and the CLI secret               | -       |
+
+```bash
+maestro-cli host endpoint --json
+```
+
 ## `maestro-cli host stop`
 
 Stop the host (refuses while a turn, Auto Run or Cue run is in flight, unless --wait or --force)
@@ -2101,6 +2118,78 @@ Stop the host (refuses while a turn, Auto Run or Cue run is in flight, unless --
 
 ```bash
 maestro-cli host stop --dev --wait
+```
+
+## `maestro-cli remote-host`
+
+Check and start the maestro-cli host on an SSH remote that is opted in to Federation
+
+## `maestro-cli remote-host status <ssh-remote>`
+
+Report whether Maestro is installed on the remote, whether its host runs, and the version skew
+
+| Option                | Description                                                  | Default |
+| --------------------- | ------------------------------------------------------------ | ------- |
+| `--timeout <seconds>` | Give up on the SSH call after this many seconds (default 60) | -       |
+| `--json`              | Output as JSON (for scripting)                               | -       |
+
+```bash
+maestro-cli remote-host status <ssh-remote> --json
+```
+
+## `maestro-cli remote-host start <ssh-remote>`
+
+Start the host on the remote (as the SSH user) when none runs, then report status
+
+| Option                | Description                                                   | Default |
+| --------------------- | ------------------------------------------------------------- | ------- |
+| `--timeout <seconds>` | Give up on each SSH call after this many seconds (default 60) | -       |
+| `--json`              | Output as JSON (for scripting)                                | -       |
+
+```bash
+maestro-cli remote-host start <ssh-remote> --timeout 120
+```
+
+## `maestro-cli lift <agent>`
+
+Move an SSH remote agent, with its tabs, transcripts, provider sessions and queue, onto the host on its remote
+
+| Option       | Description                                            | Default |
+| ------------ | ------------------------------------------------------ | ------- |
+| `--dry-run`  | Print what would move and what stays, then stop        | -       |
+| `--with-env` | Send secret env vars too (non-secret ones always move) | -       |
+| `--json`     | Output as JSON (for scripting)                         | -       |
+
+```bash
+maestro-cli lift <agent-id> --dry-run
+```
+
+## `maestro-cli federation`
+
+List and reconnect the Federation peers the desktop app mirrors in its Left Bar
+
+## `maestro-cli federation peers`
+
+List the peers the desktop mirrors, with connection state and agent count
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli federation peers --json
+```
+
+## `maestro-cli federation reconnect <peer>`
+
+Force the desktop to reconnect to a peer and reload its agent list
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli federation reconnect <peer>
 ```
 
 ## `maestro-cli completions <shell>`
@@ -2944,6 +3033,7 @@ Create a new SSH remote configuration
 | `--ssh-option <KEY=VALUE>` | Extra ssh -o option, e.g. ProxyCommand=... or ConnectTimeout=45 (repeatable) | `[]`    |
 | `--ssh-config`             | Use ~/.ssh/config for connection settings (host becomes Host pattern)        | -       |
 | `--disabled`               | Create in disabled state                                                     | -       |
+| `--federation <on\|off>`   | Opt this remote in to Federation (on/off)                                    | -       |
 | `--set-default`            | Set as the global default SSH remote                                         | -       |
 | `--json`                   | Output as JSON (for scripting)                                               | -       |
 
@@ -2981,6 +3071,7 @@ Update an existing SSH remote configuration
 | `--enable-ssh-option <KEY>`  | Switch a previously disabled ssh -o option back on (repeatable) | `[]`    |
 | `--ssh-config <bool>`        | Use ~/.ssh/config for connection settings (true/false)          | -       |
 | `--enabled <bool>`           | Enable or disable this remote (true/false)                      | -       |
+| `--federation <on\|off>`     | Opt this remote in to Federation (on/off)                       | -       |
 | `--set-default`              | Set as the global default SSH remote                            | -       |
 | `--json`                     | Output as JSON (for scripting)                                  | -       |
 

@@ -24,6 +24,7 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => {
 
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
+	getSessionById: vi.fn(() => undefined),
 	readSettingValue: vi.fn(),
 	readLiveSessions: vi.fn(() => []),
 	readGroups: vi.fn(() => []),
@@ -40,6 +41,7 @@ import { dispatch, runDispatch } from '../../../cli/commands/dispatch';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import {
 	resolveAgentId,
+	getSessionById,
 	readSettingValue,
 	readLiveSessions,
 	readGroups,
@@ -1020,6 +1022,26 @@ describe('dispatch command', () => {
 			expect(output.success).toBe(false);
 			expect(output.code).toBe('AGENT_NOT_FOUND');
 			expect(output.error).toBe('No agent matching "bogus"');
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('refuses a lifted agent with AGENT_LIFTED before reaching the desktop', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('lifted-agent');
+			vi.mocked(getSessionById).mockReturnValueOnce({
+				id: 'lifted-agent',
+				name: 'Lifted',
+				toolType: 'claude-code',
+				cwd: '/p',
+				projectRoot: '/p',
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			});
+
+			await dispatch('lifted-agent', 'Hello', {});
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('AGENT_LIFTED');
+			expect(output.error).toContain('build-box:host-1');
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 	});

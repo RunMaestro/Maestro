@@ -1,6 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { NotificationSendControls } from '../../../../../renderer/components/InputArea/components/NotificationSendControls';
+import { ComposerSendColumn } from '../../../../../renderer/components/ChatComposer';
+import { useAiSendMenu } from '../../../../../renderer/components/InputArea/hooks/useAiSendMenu';
+import type { Theme } from '../../../../../renderer/types';
 import { inputAreaTheme } from '../_fixtures';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useComposerInputStore } from '../../../../../renderer/stores/composerInputStore';
@@ -10,6 +12,30 @@ import { createMockAITab, createMockSession } from '../../../../helpers';
 vi.mock('../../../../../renderer/components/InputArea/components/SendMenuPopover', () => ({
 	SendMenuPopover: vi.fn(() => <div data-testid="send-menu-popover" />),
 }));
+
+/**
+ * The AI composer's send column as ChatComposerFrame builds it for InputArea:
+ * the shared column with the AI Send menu and the terminal-mode title.
+ */
+function NotificationSendControls({
+	theme,
+	isTerminalMode,
+	processInput,
+}: {
+	theme: Theme;
+	isTerminalMode: boolean;
+	processInput: () => void;
+}) {
+	const sendMenu = useAiSendMenu(theme, isTerminalMode, processInput);
+	return (
+		<ComposerSendColumn
+			theme={theme}
+			onSend={processInput}
+			sendTitle={isTerminalMode ? 'Run command (Enter)' : 'Send message'}
+			sendMenu={sendMenu}
+		/>
+	);
+}
 
 function seedWorkingAgent(draft: string) {
 	const session = createMockSession({
@@ -29,7 +55,7 @@ vi.mock('../../../../../renderer/components/NotificationPopover', () => ({
 	)),
 }));
 
-describe('NotificationSendControls', () => {
+describe('useAiSendMenu in the send column', () => {
 	afterEach(() => {
 		useSessionStore.setState({ sessions: [], activeSessionId: '' });
 		useComposerInputStore.setState({ aiValue: '' });
@@ -61,58 +87,6 @@ describe('NotificationSendControls', () => {
 		fireEvent.click(screen.getByTitle('Run command (Enter)'));
 
 		expect(processInput).toHaveBeenCalled();
-	});
-
-	describe('the A Cappella microphone', () => {
-		it('is absent unless A Cappella owns the composer microphone', () => {
-			// The default. With the Encore Feature off the button stays the Web Speech
-			// one in the toolbar row, so this column must not draw a second mic.
-			render(
-				<NotificationSendControls
-					theme={inputAreaTheme}
-					isTerminalMode={false}
-					processInput={vi.fn()}
-				/>
-			);
-
-			expect(screen.queryByTestId('composer-voice-button')).toBeNull();
-		});
-
-		it('starts a voice session when clicked', () => {
-			const onToggleVoice = vi.fn();
-			render(
-				<NotificationSendControls
-					theme={inputAreaTheme}
-					isTerminalMode={false}
-					processInput={vi.fn()}
-					showVoiceButton
-					onToggleVoice={onToggleVoice}
-				/>
-			);
-
-			fireEvent.click(screen.getByTestId('composer-voice-button'));
-
-			expect(onToggleVoice).toHaveBeenCalledTimes(1);
-		});
-
-		it('offers to END the session while the floor is open', () => {
-			// The one button here that can leave a microphone running, so it must not
-			// read the same open as shut.
-			render(
-				<NotificationSendControls
-					theme={inputAreaTheme}
-					isTerminalMode={false}
-					processInput={vi.fn()}
-					showVoiceButton
-					isVoiceListening
-					onToggleVoice={vi.fn()}
-				/>
-			);
-
-			const button = screen.getByTestId('composer-voice-button');
-			expect(button.getAttribute('aria-pressed')).toBe('true');
-			expect(button.getAttribute('aria-label')).toBe('End the voice session');
-		});
 	});
 
 	it('opens the send menu instead of sending while the agent works', () => {

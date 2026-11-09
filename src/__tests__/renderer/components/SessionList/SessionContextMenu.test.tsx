@@ -18,6 +18,15 @@ import { usePRCreationStore, prRunKey } from '../../../../renderer/stores/prCrea
 import type { Session } from '../../../../renderer/types';
 import { mockTheme } from '../../../helpers/mockTheme';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { openLiftedAgent, requestMoveToHost } from '../../../../renderer/services/agentLift';
+import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+	setPeerConnection,
+	type PeerMirrorConnection,
+} from '../../../../shared/maestro-lib/client/peer-mirror';
+import { resetStores } from '../../../helpers';
 
 const DEFAULT_BRANCH_INFO = { branch: 'feature/login', remote: '', ahead: 2, behind: 3 };
 const mockGetBranchInfo = vi.fn(() => DEFAULT_BRANCH_INFO);
@@ -41,7 +50,10 @@ vi.mock('../../../../renderer/services/git', () => ({
 	gitService: { getDiff: vi.fn().mockResolvedValue({ diff: 'diff --git a/x b/x' }) },
 }));
 
-vi.mock('../../../../renderer/stores/centerFlashStore', () => ({
+// Spread the real module: `resetStores` (from the helpers) imports the store
+// itself, so a factory that only returns `notifyCenterFlash` throws at import.
+vi.mock('../../../../renderer/stores/centerFlashStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/stores/centerFlashStore')>()),
 	notifyCenterFlash: vi.fn(),
 }));
 
@@ -55,6 +67,11 @@ vi.mock('../../../../renderer/stores/modalStore', async (importOriginal) => ({
 		vi.fn((selector) => selector({ openModal: mockOpenModal })),
 		{ getState: () => ({ openModal: mockOpenModal }) }
 	),
+}));
+
+vi.mock('../../../../renderer/services/agentLift', () => ({
+	requestMoveToHost: vi.fn(),
+	openLiftedAgent: vi.fn(),
 }));
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -586,6 +603,61 @@ describe('SessionContextMenu', () => {
 			fireEvent.mouseDown(document.body);
 
 			expect(props.onDismiss).toHaveBeenCalled();
+		});
+	});
+
+	// Move to Host and Open on Host live in the Agent Tools submenu beside Duplicate and Export.
+	describe('Federation (Move to Host)', () => {
+		const sshSession = (overrides: Partial<Session> = {}) =>
+			makeSession({
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				...overrides,
+			});
+
+		function mirror(connection: PeerMirrorConnection = 'connected') {
+			const { peer } = replacePeerAgents(
+				createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Build Box' }),
+				[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [] }],
+				[],
+				1
+			);
+			usePeerMirrorStore.getState().hydrate([setPeerConnection(peer, connection).peer]);
+		}
+
+		beforeEach(() => {
+			resetStores(usePeerMirrorStore);
+		});
+
+		it('offers nothing while Federation is off', () => {
+			renderMenu({ session: sshSession() });
+			fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
+			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
+		});
+
+		it('offers Move to Host for an SSH agent whose remote is a connected peer', () => {
+			mirror();
+			const props = renderMenu({ session: sshSession() });
+			fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
+			fireEvent.click(screen.getByText('Move to Host (Build Box)...'));
+			expect(requestMoveToHost).toHaveBeenCalledWith('session-1');
+			expect(props.onDismiss).toHaveBeenCalled();
+		});
+
+		it('hides Move to Host for a local agent or a peer that is not connected', () => {
+			mirror('lost');
+			renderMenu({ session: sshSession() });
+			fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
+			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
+		});
+
+		it('offers Open on Host instead once the agent moved', () => {
+			mirror();
+			const session = sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } });
+			renderMenu({ session });
+			fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
+			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
+			fireEvent.click(screen.getByText('Open on Host (box:h1)'));
+			expect(openLiftedAgent).toHaveBeenCalledWith(session);
 		});
 	});
 });

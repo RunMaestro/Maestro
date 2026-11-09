@@ -4,7 +4,7 @@ import type { ComponentProps, RefObject } from 'react';
 import { InputTextarea } from '../../../../../renderer/components/InputArea/components/InputTextarea';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../../../../../renderer/utils/textareaSizing';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
-import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
+import { inputAreaTheme } from '../_fixtures';
 
 /**
  * jsdom performs no layout, so the browser's scroll clamping (scrollTop can
@@ -39,7 +39,9 @@ type TextareaProps = ComponentProps<typeof InputTextarea>;
 function renderTextarea(overrides: Partial<TextareaProps> = {}) {
 	const inputRef: RefObject<HTMLTextAreaElement> = { current: null };
 	const props: TextareaProps = {
-		session: createInputAreaSession(),
+		agentId: 'session-1',
+		agentName: 'MySession',
+		toolType: 'claude-code',
 		theme: inputAreaTheme,
 		isTerminalMode: false,
 		inputValue: 'first line',

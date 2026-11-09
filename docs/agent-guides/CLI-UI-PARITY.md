@@ -510,6 +510,14 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Left Bar group right-click, Import Agent... (or palette Import Agent)                                                                                                                                                                                                                                                                                                                                           | `bundle import <zip> --group <id> [-w <key=path>] [--no-local] [--dry-run] [--force]`                                                                                                                                                                                                                                                                                                                                                                                               |
 | Usage-data scan progress (modal / corner card)                                                                                                                                                                                                                                                                                                                                                                  | `stats-indexing [--wait] [--timeout <s>] [--json]` (Hide / background are view-only)                                                                                                                                                                                                                                                                                                                                                                                                |
 | Left Bar: Archive / Unarchive a group chat                                                                                                                                                                                                                                                                                                                                                                      | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Opt an SSH remote in to Federation (Federation Encore Feature; SSH remote dialog toggle)                                                                                                                                                                                                                                                                                                                        | `create-ssh-remote --federation on\|off`, `update-ssh-remote --federation on\|off` (read back with `list ssh-remotes --json`)                                                                                                                                                                                                                                                                                                                                                       |
+| See the Federation peers the desktop mirrors: one Left Bar group per peer with its connection dot and agent count (Federation Encore Feature)                                                                                                                                                                                                                                                                   | `federation peers` (`--json`), over `federation_command` (`action: 'peers'`) to the same `PeerMirrorService.peers()` the `federation:peers` IPC reads                                                                                                                                                                                                                                                                                                                               |
+| Reconnect a peer (peer group right-click Reconnect, the disconnected banner's Reconnect, palette Reconnect Peer)                                                                                                                                                                                                                                                                                                | `federation reconnect <peer>` (`--json`), over `federation_command` (`action: 'reconnect'`) to the same `PeerMirrorService.reconnect()` the `federation:reconnect` IPC calls; read back with `federation peers`                                                                                                                                                                                                                                                                     |
+| Send to a mirrored agent (the Federation peer agent's composer; a send while the peer is disconnected is an error toast, never queued)                                                                                                                                                                                                                                                                          | `send <peer:agent> <message>`; both run `runPeerAgentAction()` (`turns.send`): the composer through `federation:act` and `PeerMirrorService.act()`, the CLI over its own forward. Read back with `show agent <peer:agent>`                                                                                                                                                                                                                                                          |
+| Stop a mirrored agent's turn (the Stop pill above the peer agent's composer)                                                                                                                                                                                                                                                                                                                                    | `interrupt <peer:agent>` (`--tab`), the same `runPeerAgentAction()` `interrupt` action                                                                                                                                                                                                                                                                                                                                                                                              |
+| New tab, rename tab, star or unstar tab on a mirrored agent (the controls beside the peer agent's tab strip; Cmd+T and the Toggle Tab Star chord while the mirror is shown)                                                                                                                                                                                                                                     | `tab new --agent <peer:agent>`, `tab rename <tab-id> <name> --agent <peer:agent>`, `tab star\|unstar <tab-id> --agent <peer:agent>`, the same `runPeerAgentAction()` tab actions; read back with `show agent <peer:agent>`                                                                                                                                                                                                                                                          |
+| Move an SSH agent onto its Federation host (Left Bar right-click Move to Host, palette Move to Host; the modal shows the dry-run plan first and offers the secret env vars choice), and open a lifted agent on its host (the Left Bar `on <peer>` chip, right-click Open on Host, palette Open on Host)                                                                                                         | `lift <agent>` (`--dry-run` for the plan, `--with-env`, `--json`); both run `runLift()` (`src/shared/maestro-lib/agents/lift-run.ts`): the desktop through `federation:lift` over the mirror's held client, the CLI over its own forward. Read back with `list agents --json` (`liftedTo`); the jump's CLI counterpart is `show agent <peer:agentId>`                                                                                                                               |
+| Federation host endpoint (pairing plumbing a laptop reads over SSH on every connect; never shown in a UI, so no UI counterpart)                                                                                                                                                                                                                                                                                 | `host endpoint --json` (on the host; owner-only, hidden from `--help` while Federation is off)                                                                                                                                                                                                                                                                                                                                                                                      |
 
 ### Isolated Lite connection controls
 
@@ -753,6 +761,25 @@ delegationGraphLayouts`, and return a scope to the automatic layout with
   design choice. Enabling a private listener requires the host owner's review;
   no CLI verbs expose these controls.
 
+### Federation: CLI first, desktop pending
+
+The Federation Encore Feature ships its CLI verbs first (FED-SSH-01, 02 and 04);
+the desktop halves arrive in FED-SSH-05 (read-only Left Bar mirror) and
+FED-SSH-06 (input for mirrored agents: send, Stop, and the tab actions are in
+Covered, and `dispatch <peer:agent>` is covered by the composer on a new tab;
+`lift <agent>` is covered by Move to Host).
+Until then each verb below is CLI-only. Close a row by moving it to Covered when its UI half lands, through
+the same bridge message the CLI sends.
+
+| CLI verb                                                                     | Missing UI half                                                   | Arrives in                                                                       |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `remote-host status <ssh-remote>`                                            | Host state per peer (connection dot on the peer's Left Bar group) | FED-SSH-05                                                                       |
+| `remote-host start <ssh-remote>`                                             | A Start Host control for a stopped peer                           | No phase plans one yet; FED-SSH-05 mirrors only running hosts                    |
+| `list agents --peer <name>`, `list agents --all-peers`                       | One Left Bar group per peer, with its mirrored agents             | FED-SSH-05                                                                       |
+| `show agent <peer:agent>`                                                    | Open a mirrored agent: tabs, transcript, live output (read-only)  | FED-SSH-05                                                                       |
+| `ask <peer:agent> <question>`                                                | An `@mention` of a mirrored agent from a local composer           | No phase plans one yet; FED-SSH-06 covers send, interrupt, new tab, rename, star |
+| Worktrees for host-owned agents (no verb either: `create-worktree` is local) | Worktree create and scan for a mirrored agent                     | Out of scope for v1 (decision D5)                                                |
+
 ### Audit backlog (2026-09-27, re-verified 2026-10-19)
 
 A full sweep of the palette, shortcuts, context menus, and modals found these
@@ -820,11 +847,22 @@ entry needs a stated reason, the same way a Covered row needs a verb.
   the file preview's `ImageViewer`, which shares the same `usePanZoom`, and
   an agent can write a diagram to a `.mmd` file and `open-file` it. Pure
   viewing; there is no result for an agent to read back.
-- **Drag-resized pane sizes kept in renderer localStorage** (the Auto Run
-  document dropdown's height via `useResizableDropdownHeight`, the Document
-  Graph preview width via `usePersistedPanelWidth`). Pure view preferences
-  with nothing for an agent to act on; the values never reach main, so a
-  verb needs a renderer round trip. Double-click on the grip resets them.
+- **Drag-resized pane sizes and phone composer folds kept in renderer
+  localStorage** (the Auto Run document dropdown's height via
+  `useResizableDropdownHeight`, the Document Graph preview width via
+  `usePersistedPanelWidth`, and the phone composer fold in `InputArea` and
+  `GroupChatInput` via `usePersistedToggle` under `phone.composer.collapsed` and
+  `phone.groupChatComposer.collapsed`). Pure per-device view preferences with
+  nothing for an agent to act on; the values never reach main, so a verb needs
+  a renderer round trip. Double-click on the grip resets pane sizes; a tap or
+  swipe on `PhoneComposerHandle` toggles the fold.
+- **Quit When Idle** (the `QuitConfirmModal` checkbox when the user quits while
+  operations are running, and the read-only `QuitWhenIdleIndicator` pill with
+  its Cancel button above the AI and Group Chat composers). Armed from the
+  native desktop quit-confirmation flow (`useQuitWhenIdle` polls
+  `collectActiveOperations`, including busy group chats, and calls
+  `confirmQuit` once everything goes idle); a CLI agent never quits the host
+  desktop app.
 - **Log in to a provider account** (Usage Dashboard quota row "Log in",
   palette "Reauthenticate Provider"). The login is an interactive OAuth or
   device-code flow in a PTY, so there is nothing a non-interactive verb could
@@ -856,6 +894,13 @@ entry needs a stated reason, the same way a Covered row needs a verb.
   `dataview query` on a `dataviewjs` block exits 2. The block's source is
   readable with `dataview query <file> --json`; there is no rendered output
   for an agent to read back.
+- **Upload local files to the host from a composer** (the Upload button on
+  the AI composer and, since step 5 of the composer parity plan, the Group
+  Chat composer). Web-desktop only: it copies files from the BROWSER's device
+  to the host and appends their `@path` mentions to the draft. There is no
+  CLI verb, and none is planned: an agent runs on the host, so the files it
+  would upload are already there, and it can mention them in `dispatch` or
+  `group-chat` text directly.
 
 ### Backstage plugin updates
 

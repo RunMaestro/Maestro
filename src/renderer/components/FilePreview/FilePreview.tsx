@@ -33,6 +33,7 @@ import { captureException } from '../../utils/sentry';
 import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
+import { isImeComposing } from '../../utils/ime';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { requestFileDeletion } from '../../services/fileDeletion';
@@ -1792,7 +1793,7 @@ export const FilePreview = React.memo(
 		const handleKeyDown = (e: React.KeyboardEvent) => {
 			// Handle Escape key - dismiss overlays in priority order
 			// In tab mode, layer system isn't registered, so we handle Escape directly here
-			if (e.key === 'Escape') {
+			if (e.key === 'Escape' && !isImeComposing(e)) {
 				// The chat bubble goes first: it is the innermost floating panel, and
 				// Escape pressed with the caret in its box has to take the panel away
 				// rather than the preview under it. In tab mode this chain is the ONLY
@@ -2312,7 +2313,7 @@ export const FilePreview = React.memo(
 										value={searchQuery}
 										onChange={(e) => setSearchQuery(e.target.value)}
 										onKeyDown={(e) => {
-											if (e.key === 'Escape') {
+											if (e.key === 'Escape' && !isImeComposing(e)) {
 												e.preventDefault();
 												e.stopPropagation();
 												if (showJqHelp) {
@@ -2615,7 +2616,7 @@ export const FilePreview = React.memo(
 									e.preventDefault();
 									e.stopPropagation();
 									handleSave();
-								} else if (e.key === 'Escape') {
+								} else if (e.key === 'Escape' && !isImeComposing(e)) {
 									e.preventDefault();
 									e.stopPropagation();
 									setMarkdownEditMode(false);

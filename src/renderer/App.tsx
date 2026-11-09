@@ -261,6 +261,7 @@ import { useSettingsStore } from './stores/settingsStore';
 import { filterLiveAgents } from '../shared/agentVisibility';
 import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
+import { usePeerMirrorBridge } from './hooks/federation/usePeerMirrorBridge';
 
 /** Coordinates the desktop workspace, shared listeners, and app-level surfaces. */
 function MaestroConsoleInner() {
@@ -2227,6 +2228,9 @@ function MaestroConsoleInner() {
 	// replays menu clicks as keystrokes through the handler above.
 	useAppMenuBridge();
 
+	// Federation: follow the main-process peer mirror (memory only; nothing while the feature is off).
+	usePeerMirrorBridge();
+
 	// Persist sessions to electron-store using debounced persistence (reduces disk writes from 100+/sec to <1/sec during streaming)
 	// The hook handles: debouncing, flush-on-unmount, flush-on-visibility-change, flush-on-beforeunload
 	const { flushNow: flushSessionPersistence } = useDebouncedPersistence(initialLoadComplete);
@@ -3473,6 +3477,7 @@ function MaestroConsoleInner() {
 									inputRef={groupChatInputRef}
 									handlePaste={handlePaste}
 									handleDrop={handleGroupChatDrop}
+									onUploadFiles={handleUploadFiles}
 									onOpenLightbox={handleSetLightboxImage}
 									queueState={activeGroupChatId ? groupChatQueues[activeGroupChatId] : undefined}
 									onRemoveQueuedItem={handleRemoveGroupChatQueueItem}

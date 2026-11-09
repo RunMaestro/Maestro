@@ -32,6 +32,7 @@ import type { ManagedQueueRoutingProgress } from '../../../../shared/crossAgentT
  * - computer_history_command: Computer History writes, CLI clients only (CLI: `computer-history`)
  * - throughput_gauge_command: Show, hide, configure, or read the Throughput Gauge (CLI: `throughput-gauge`)
  * - live_command: Read or switch Live mode and Remote Control, CLI clients only (CLI: `live`)
+ * - federation_command: List or reconnect the Federation peers the desktop mirrors, CLI clients only (CLI: `federation`)
  *
  * Auto Run message types (refresh_auto_run_docs, configure_auto_run, get_auto_run_docs,
  * get_auto_run_state, get_auto_run_document, save_auto_run_document, stop_auto_run, etc.)
@@ -173,6 +174,7 @@ import { handleClosedTabCommand } from './closedTabs';
 import { handleMessagePinCommand } from './messagePins';
 import { handleComputerHistoryCommand } from './computerHistory';
 import { handleLiveCommand } from './live';
+import { handleFederationCommand } from './federation';
 import { handleMaestroRunCommand } from './maestroRun';
 import { handleDataviewCommand } from './dataview';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
@@ -466,6 +468,10 @@ export class WebSocketMessageHandler {
 
 			case 'live_command':
 				handleLiveCommand(this.ctx, client, message);
+				break;
+
+			case 'federation_command':
+				void handleFederationCommand(this.ctx, client, message);
 				break;
 
 			case 'maestro_run_command':

@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ToolbarControls } from '../../../../../renderer/components/InputArea/components/ToolbarControls';
 import { usePhoneLayout } from '../../../../../renderer/hooks/ui/useViewportBreakpoint';
-import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
+import { inputAreaTheme } from '../_fixtures';
 import { restorePointer, setCoarsePointer } from '../../../../helpers/mockPointer';
 import {
 	resetDictationStore,
@@ -12,7 +12,6 @@ import type { DictationTarget } from '../../../../../renderer/utils/dictationTar
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { isWebDesktop } from '../../../../../renderer/utils/runtimeContext';
 import { useOptionalContentFits } from '../../../../../renderer/hooks/ui/useOptionalLabelFits';
-import type { RunOnTarget } from '../../../../../shared/local-models/run-on';
 
 vi.mock('../../../../../renderer/hooks/ui/useOptionalLabelFits', () => ({
 	useOptionalContentFits: vi.fn(() => true),
@@ -22,11 +21,31 @@ vi.mock('../../../../../renderer/utils/runtimeContext', async (importOriginal) =
 	...(await importOriginal<typeof import('../../../../../renderer/utils/runtimeContext')>()),
 	isWebDesktop: vi.fn(() => false),
 }));
+import type { ComposerCapabilities } from '../../../../../renderer/components/ChatComposer';
 
-const mockUpdateSessionWith = vi.fn();
-vi.mock('../../../../../renderer/stores/sessionStore', () => ({
-	updateSessionWith: (...args: unknown[]) => mockUpdateSessionWith(...args),
-}));
+/** An AI-mode agent that supports every optional control. */
+const AI_CAPABILITIES: ComposerCapabilities = {
+	imageAttach: true,
+	upload: false,
+	voice: true,
+	saveToHistory: true,
+	permission: true,
+	thinking: true,
+	modelEffort: true,
+	enterToSendToggle: false,
+};
+
+/** Terminal mode: the toolbar offers none of the optional controls. */
+const TERMINAL_CAPABILITIES: ComposerCapabilities = {
+	imageAttach: false,
+	upload: false,
+	voice: false,
+	saveToHistory: false,
+	permission: false,
+	thinking: false,
+	modelEffort: false,
+	enterToSendToggle: false,
+};
 
 vi.mock('../../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
 	...(await importOriginal<
@@ -40,7 +59,6 @@ describe('ToolbarControls', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		restorePointer();
-		mockUpdateSessionWith.mockClear();
 		mockedUsePhoneLayout.mockReturnValue(false);
 		vi.mocked(isWebDesktop).mockReturnValue(false);
 		vi.mocked(useOptionalContentFits).mockReturnValue(true);
@@ -50,13 +68,16 @@ describe('ToolbarControls', () => {
 	function renderToolbar(overrides = {}) {
 		return render(
 			<ToolbarControls
-				session={createInputAreaSession()}
 				theme={inputAreaTheme}
+				capabilities={AI_CAPABILITIES}
 				isTerminalMode={false}
-				isReadOnlyMode={false}
-				canAttachImages
-				hasReadOnlyCapability
+				agentId="claude-code"
 				hasStandardCapability
+				permissionMode="full"
+				onPermissionModeChange={vi.fn()}
+				onThinkingModeChange={vi.fn()}
+				enterToSend
+				setEnterToSend={vi.fn()}
 				setStagedImages={vi.fn()}
 				onOpenPromptComposer={vi.fn()}
 				shortcuts={{ openPromptComposer: { keys: ['Meta', 'p'], description: '' } as any }}
@@ -65,7 +86,6 @@ describe('ToolbarControls', () => {
 				onToggleTabSaveToHistory={vi.fn()}
 				tabShowThinking="off"
 				onToggleTabShowThinking={vi.fn()}
-				supportsThinking
 				availableModels={[]}
 				availableEfforts={[]}
 				modelMenuOpen={false}
@@ -107,23 +127,11 @@ describe('ToolbarControls', () => {
 	});
 
 	it.each([false, true])('shows the effective Run on target on phone=%s', (phone) => {
+		// InputArea resolves the label from the tab's provider projection
+		// (useComposerModelChoices); the toolbar shows it in place of the model.
 		mockedUsePhoneLayout.mockReturnValue(phone);
-		useSettingsStore.setState({
-			localModelEndpoints: [
-				{
-					id: 'ollama',
-					name: 'Ollama',
-					kind: 'ollama',
-					baseUrl: 'http://127.0.0.1:11434',
-					enabled: true,
-				},
-			],
-		});
 		renderToolbar({
-			session: createInputAreaSession({
-				toolType: 'claude-code',
-				runOn: { type: 'source', endpointId: 'ollama', model: 'deepseek-v4.1-flash:cloud' },
-			}),
+			runOn: 'deepseek-v4.1-flash:cloud · Ollama',
 			currentModel: 'opus[1m]',
 			availableModels: ['opus[1m]', 'sonnet'],
 			onModelChange: vi.fn(),
@@ -134,59 +142,18 @@ describe('ToolbarControls', () => {
 		expect(screen.queryByText('opus[1m]')).not.toBeInTheDocument();
 	});
 
-	it.each([
-		[{ type: 'provider' }, 'opus[1m]'],
-		[{ type: 'source', endpointId: 'ollama', model: 'tab-model' }, 'tab-model · Ollama'],
-	] satisfies [RunOnTarget, string][])('honors the tab Run on override %j', (runOn, expected) => {
-		useSettingsStore.setState({
-			localModelEndpoints: [
-				{
-					id: 'ollama',
-					name: 'Ollama',
-					kind: 'ollama',
-					baseUrl: 'http://127.0.0.1:11434',
-					enabled: true,
-				},
-			],
-		});
-		const session = createInputAreaSession({
-			toolType: 'claude-code',
-			runOn: { type: 'source', endpointId: 'ollama', model: 'agent-model' },
-		});
-		session.aiTabs[0].runOn = runOn;
+	it('shows the Auto pill when no Run on target replaces it', () => {
 		renderToolbar({
-			session,
-			currentModel: 'opus[1m]',
-			availableModels: ['opus[1m]'],
-			onModelChange: vi.fn(),
-		});
-
-		expect(screen.getByRole('button', { name: expected })).toBeInTheDocument();
-		expect(screen.queryByText('agent-model · Ollama')).not.toBeInTheDocument();
-	});
-
-	it('keeps Auto visible when routing may choose another Run on target', () => {
-		renderToolbar({
-			session: createInputAreaSession({
-				toolType: 'claude-code',
-				runOn: { type: 'source', endpointId: 'ollama', model: 'agent-model' },
-			}),
 			currentModel: 'auto',
-			availableModels: ['opus[1m]'],
+			availableModels: ['auto', 'opus[1m]'],
 			onModelChange: vi.fn(),
 		});
 
 		expect(screen.getByRole('button', { name: 'Auto' })).toBeInTheDocument();
-		expect(screen.queryByText('agent-model')).not.toBeInTheDocument();
 	});
 
-	it('uses the selected tab provider for permission labels', () => {
-		const session = createInputAreaSession();
-		session.toolType = 'claude-code';
-		session.aiTabs = [
-			{ ...session.aiTabs[0], id: session.activeTabId, tabProvider: 'codex', readOnlyMode: true },
-		];
-		renderToolbar({ session });
+	it('reads the permission label in the words of the provider it is given', () => {
+		renderToolbar({ agentId: 'codex', permissionMode: 'readonly' });
 		expect(screen.getByRole('button', { name: 'Read-Only' })).toBeInTheDocument();
 		expect(screen.getByText('Read-Only')).toBeInTheDocument();
 	});
@@ -207,24 +174,18 @@ describe('ToolbarControls', () => {
 			expect(screen.getByTestId('composer-dictation-button')).toBeInTheDocument();
 		});
 
-		it('draws none in terminal mode, where the composer is a shell line', () => {
+		it('draws none when the surface passes no target (the AI composer in terminal mode)', () => {
 			useDictationStore.setState({ availability: { state: 'ready', source: 'Parakeet' } });
-			renderToolbar({
-				dictationTarget,
-				isTerminalMode: true,
-				session: createInputAreaSession({ inputMode: 'terminal' }),
-			});
+			renderToolbar({ capabilities: TERMINAL_CAPABILITIES, isTerminalMode: true });
 			expect(screen.queryByTestId('composer-dictation-button')).toBeNull();
 		});
 	});
 
 	it('renders terminal cwd in terminal mode', () => {
 		renderToolbar({
-			session: createInputAreaSession({
-				inputMode: 'terminal',
-				shellCwd: '/Users/test/project/src',
-			}),
+			capabilities: TERMINAL_CAPABILITIES,
 			isTerminalMode: true,
+			terminalCwd: '~/project/src',
 		});
 
 		expect(screen.getByText('~/project/src')).toBeInTheDocument();
@@ -247,9 +208,9 @@ describe('ToolbarControls', () => {
 		vi.mocked(useOptionalContentFits).mockReturnValue(labelsFit);
 		const onToggleTabSaveToHistory = vi.fn();
 		const onToggleTabShowThinking = vi.fn();
-		const session = createInputAreaSession();
+		const onPermissionModeChange = vi.fn();
 		renderToolbar({
-			session,
+			onPermissionModeChange,
 			onToggleTabSaveToHistory,
 			onToggleTabShowThinking,
 		});
@@ -270,12 +231,7 @@ describe('ToolbarControls', () => {
 		expect(!!screen.queryByText('Thinking')).toBe(labelsFit);
 		expect(screen.queryByTitle(/Switch to/)).not.toBeInTheDocument();
 
-		expect(mockUpdateSessionWith).toHaveBeenCalledWith(session.id, expect.any(Function));
-		const updater = mockUpdateSessionWith.mock.calls[0][1];
-		const updatedSession = updater(session);
-		const updatedTab = updatedSession.aiTabs.find((t: { id: string }) => t.id === 'tab-1');
-		expect(updatedTab.permissionMode).toBe('standard');
-		expect(updatedTab.readOnlyMode).toBe(false);
+		expect(onPermissionModeChange).toHaveBeenCalledWith('standard');
 	});
 
 	it('exposes active history and sticky thinking states to assistive technology', () => {
@@ -302,13 +258,60 @@ describe('ToolbarControls', () => {
 
 	it('hides AI-only controls in terminal mode', () => {
 		renderToolbar({
-			session: createInputAreaSession({ inputMode: 'terminal' }),
+			capabilities: TERMINAL_CAPABILITIES,
 			isTerminalMode: true,
+			onOpenPromptComposer: undefined,
 		});
 
 		expect(screen.queryByTitle(/Open Prompt Composer/)).not.toBeInTheDocument();
 		expect(screen.queryByTitle('Attach Image')).not.toBeInTheDocument();
 		expect(screen.queryByTitle(/Save to History/)).not.toBeInTheDocument();
+	});
+
+	it('hides each optional control its capability turns off', () => {
+		renderToolbar({
+			capabilities: {
+				...AI_CAPABILITIES,
+				imageAttach: false,
+				saveToHistory: false,
+				permission: false,
+				thinking: false,
+			},
+		});
+
+		expect(screen.queryByTitle('Attach Image')).not.toBeInTheDocument();
+		expect(screen.queryByTitle(/Save to History/)).not.toBeInTheDocument();
+		expect(screen.queryByTitle(/^Full Access/)).not.toBeInTheDocument();
+		expect(screen.queryByTitle(/Show Thinking/)).not.toBeInTheDocument();
+		// Still offered: the prompt composer has no flag.
+		expect(screen.getByTitle(/Open Prompt Composer/)).toBeInTheDocument();
+	});
+
+	it('draws the Enter toggle only for a surface that offers it, and flips it', () => {
+		const setEnterToSend = vi.fn();
+		const { unmount } = renderToolbar({ setEnterToSend });
+		// The AI composer leaves Enter-to-send to Settings.
+		expect(screen.queryByTitle(/Switch to/)).not.toBeInTheDocument();
+		unmount();
+
+		renderToolbar({
+			capabilities: { ...AI_CAPABILITIES, enterToSendToggle: true },
+			setEnterToSend,
+		});
+		fireEvent.click(screen.getByTitle(/Switch to/));
+		expect(setEnterToSend).toHaveBeenCalledWith(false);
+	});
+
+	it('draws toolbarExtras beside the Enter toggle, before it', () => {
+		renderToolbar({
+			capabilities: { ...AI_CAPABILITIES, enterToSendToggle: true },
+			toolbarExtras: <button>Extra</button>,
+		});
+
+		const extra = screen.getByRole('button', { name: 'Extra' });
+		const enterToggle = screen.getByTitle(/Switch to/);
+		expect(extra.parentElement).toBe(enterToggle.parentElement);
+		expect(extra.nextElementSibling).toBe(enterToggle);
 	});
 
 	describe('phone layout', () => {
@@ -364,8 +367,8 @@ describe('ToolbarControls', () => {
 		});
 
 		it('writes a permission mode picked in the sheet, not the next one in the cycle', () => {
-			const session = createInputAreaSession();
-			renderPhoneToolbar({ session });
+			const onPermissionModeChange = vi.fn();
+			renderPhoneToolbar({ onPermissionModeChange });
 
 			fireEvent.click(screen.getByTestId('composer-options-button'));
 			fireEvent.click(screen.getByTestId('composer-options-access'));
@@ -373,23 +376,91 @@ describe('ToolbarControls', () => {
 			// 'readonly' proves the sheet names a mode rather than stepping.
 			fireEvent.click(screen.getByRole('button', { name: /Read Only|Plan/ }));
 
-			const updater = mockUpdateSessionWith.mock.calls.at(-1)![1];
-			const updatedTab = updater(session).aiTabs.find((t: { id: string }) => t.id === 'tab-1');
-			expect(updatedTab.permissionMode).toBe('readonly');
-			expect(updatedTab.readOnlyMode).toBe(true);
+			expect(onPermissionModeChange).toHaveBeenLastCalledWith('readonly');
 		});
 
 		it('writes a thinking mode picked in the sheet', () => {
-			const session = createInputAreaSession();
-			renderPhoneToolbar({ session });
+			const onThinkingModeChange = vi.fn();
+			renderPhoneToolbar({ onThinkingModeChange });
 
 			fireEvent.click(screen.getByTestId('composer-options-button'));
 			fireEvent.click(screen.getByTestId('composer-options-thinking'));
 			fireEvent.click(screen.getByRole('button', { name: 'Sticky' }));
 
-			const updater = mockUpdateSessionWith.mock.calls.at(-1)![1];
-			const updatedTab = updater(session).aiTabs.find((t: { id: string }) => t.id === 'tab-1');
-			expect(updatedTab.showThinking).toBe('sticky');
+			expect(onThinkingModeChange).toHaveBeenLastCalledWith('sticky');
+		});
+
+		it('draws the ... in terminal mode with no sheet behind it, as before', () => {
+			// Terminal mode offers no sheet section, so nothing mounts behind the
+			// button (AI mode is covered by "opens the options sheet" above).
+			renderPhoneToolbar({
+				capabilities: TERMINAL_CAPABILITIES,
+				isTerminalMode: true,
+				terminalCwd: '~/project',
+			});
+
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			expect(screen.queryByTestId('composer-options-sheet')).not.toBeInTheDocument();
+		});
+
+		it('leaves out the sheet sections the surface does not offer', () => {
+			renderPhoneToolbar({
+				capabilities: { ...TERMINAL_CAPABILITIES, saveToHistory: true },
+			});
+
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			expect(screen.getByTestId('composer-options-history')).toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-access')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-thinking')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-model')).not.toBeInTheDocument();
+		});
+
+		it('draws no "..." when the sheet would be empty', () => {
+			renderPhoneToolbar({ capabilities: TERMINAL_CAPABILITIES });
+
+			expect(screen.queryByTestId('composer-options-button')).not.toBeInTheDocument();
+		});
+
+		it('mounts the sheet for surface rows alone, drawn after the sections', () => {
+			renderPhoneToolbar({
+				capabilities: TERMINAL_CAPABILITIES,
+				sheetExtras: <div data-testid="surface-row">Surface</div>,
+			});
+
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			expect(screen.getByTestId('surface-row')).toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-history')).not.toBeInTheDocument();
+		});
+
+		it('takes the Send title, disabled state and tone from the surface', () => {
+			const processInput = vi.fn();
+			const { rerender } = renderPhoneToolbar({
+				processInput,
+				sendTitle: 'Queue message',
+				sendDisabled: true,
+			});
+			const send = screen.getByRole('button', { name: 'Queue message' });
+			expect(send).toBeDisabled();
+			expect(send).toHaveStyle({ backgroundColor: inputAreaTheme.colors.border });
+			fireEvent.click(send);
+			expect(processInput).not.toHaveBeenCalled();
+
+			rerender(
+				<ToolbarControls
+					theme={inputAreaTheme}
+					capabilities={AI_CAPABILITIES}
+					isTerminalMode={false}
+					enterToSend
+					setEnterToSend={vi.fn()}
+					setStagedImages={vi.fn()}
+					processInput={processInput}
+					sendTitle="Queue message"
+					sendTone="warning"
+				/>
+			);
+			expect(screen.getByRole('button', { name: 'Queue message' })).toHaveStyle({
+				backgroundColor: inputAreaTheme.colors.warning,
+			});
 		});
 
 		it('renders exactly one image file input', () => {
@@ -399,37 +470,27 @@ describe('ToolbarControls', () => {
 		});
 	});
 
-	// Auto is added here, where the agent is known, so the desktop pill and the
-	// phone sheet list the same thing.
+	// InputArea adds Auto where it can act (useComposerModelChoices); the toolbar
+	// lists what it is given, the same in the desktop pill and the phone sheet.
 	describe('the Auto model choice', () => {
-		const AXES = 'Auto: picks the model and the effort for each turn.';
-
-		beforeEach(() => {
-			// The shipped defaults: no harness tier overrides, the model router off.
-			useSettingsStore.setState({
-				harnessTierDefaults: {},
-				localModelAssignments: {},
-				localModelEndpoints: [],
-			});
-		});
+		const AUTO_TITLE = 'Auto: picks the model and the effort for each turn. Decided by System One.';
 
 		function renderWithModels(overrides = {}) {
 			return renderToolbar({
-				availableModels: ['', 'opus', 'sonnet'],
+				availableModels: ['', 'auto', 'opus', 'sonnet'],
+				autoModelTitle: AUTO_TITLE,
 				onModelChange: vi.fn(),
 				modelMenuOpen: true,
 				...overrides,
 			});
 		}
 
-		it('offers Auto after (default) in the model menu of a Claude Code agent', () => {
+		it('lists Auto in the model menu with its tooltip, and picks it', () => {
 			const onModelChange = vi.fn();
 			renderWithModels({ onModelChange });
 
 			const row = screen.getByText('Auto').closest('button')!;
-			expect(row.getAttribute('title')).toContain(AXES);
-			expect(row.getAttribute('title')).toContain('The model router is off');
-			// Right after the leading (default) row, ahead of the provider's models.
+			expect(row.getAttribute('title')).toBe(AUTO_TITLE);
 			const rows = Array.from(row.parentElement!.querySelectorAll('button')).map(
 				(b) => b.textContent
 			);
@@ -439,34 +500,11 @@ describe('ToolbarControls', () => {
 			expect(onModelChange).toHaveBeenCalledWith('auto');
 		});
 
-		it('offers no Auto for an agent it would change nothing for', () => {
-			// OpenCode has no effort ladder Maestro can name, and none of this
-			// agent's tiers is mapped to a model.
-			renderWithModels({ session: createInputAreaSession({ toolType: 'opencode' }) });
-
-			expect(screen.getByText('opus')).toBeInTheDocument();
-			expect(screen.queryByText('Auto')).not.toBeInTheDocument();
-		});
-
-		it('offers Auto for that agent once one of its tiers is mapped', () => {
-			renderWithModels({
-				session: createInputAreaSession({
-					toolType: 'opencode',
-					tierTargets: { medium: { type: 'provider-model', model: 'opus' } },
-				}),
-			});
-
-			expect(screen.getByText('Auto')).toBeInTheDocument();
-		});
-
 		it('says on the pill who decides while Auto is the model', () => {
-			useSettingsStore.setState({
-				localModelAssignments: { 'model-routing': { type: 'system-one' } },
-			});
 			renderWithModels({ currentModel: 'auto', modelMenuOpen: false });
 
 			const pill = screen.getByText('Auto').closest('button')!;
-			expect(pill.getAttribute('title')).toContain(`${AXES} Decided by System One.`);
+			expect(pill.getAttribute('title')).toContain(AUTO_TITLE);
 		});
 
 		it('lists the same Auto in the phone options sheet', () => {
@@ -478,24 +516,10 @@ describe('ToolbarControls', () => {
 			fireEvent.click(screen.getByTestId('composer-options-model'));
 			const row = screen.getByRole('button', { name: /^Auto/ });
 			// The tooltip has no hover on a phone: it is the row's description.
-			expect(row).toHaveTextContent(AXES);
+			expect(row).toHaveTextContent('Auto: picks the model and the effort for each turn.');
 
 			fireEvent.click(row);
 			expect(onModelChange).toHaveBeenCalledWith('auto');
-		});
-
-		it('lists no Auto in the phone options sheet for an agent it would change nothing for', () => {
-			mockedUsePhoneLayout.mockReturnValue(true);
-			renderWithModels({
-				processInput: vi.fn(),
-				modelMenuOpen: false,
-				session: createInputAreaSession({ toolType: 'opencode' }),
-			});
-
-			fireEvent.click(screen.getByTestId('composer-options-button'));
-			fireEvent.click(screen.getByTestId('composer-options-model'));
-			expect(screen.getByRole('button', { name: 'opus' })).toBeInTheDocument();
-			expect(screen.queryByRole('button', { name: /^Auto/ })).not.toBeInTheDocument();
 		});
 	});
 
@@ -552,7 +576,7 @@ describe('ToolbarControls', () => {
 		it('hides the mic in terminal mode', () => {
 			setCoarsePointer(true);
 			renderToolbar({
-				session: createInputAreaSession({ inputMode: 'terminal' }),
+				capabilities: TERMINAL_CAPABILITIES,
 				isTerminalMode: true,
 				voiceSupported: true,
 				onToggleVoiceInput: vi.fn(),

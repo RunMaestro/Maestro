@@ -54,6 +54,7 @@ Built-in features work with the community plugin subsystem switched off - that i
 | [MaestroRun](./maestro-run)            | Automation | -                                      | macOS only. Installs a signed launcher that holds one Full Disk Access grant for your scheduled scripts                               |
 | [A Cappella](./voice-mode)             | UI         | `Cmd+Alt+V` / `Ctrl+Alt+V`             | Voice interface (Beta): speak a request, have it routed to an agent, and hear the reply read back                                     |
 | [Dataview](./dataview)                 | Data       | -                                      | Renders Obsidian Dataview queries as live tables, lists, and task lists in File Preview and the Auto Run preview                      |
+| [Federation](./federation)             | Agents     | -                                      | Reaches a `maestro-cli host` on an SSH remote, so its agents keep working after your laptop sleeps                                    |
 
 Features without a shortcut are not opened from the keyboard: they change how something you already use behaves, rather than putting a new surface on screen.
 

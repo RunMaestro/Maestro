@@ -20,6 +20,7 @@ import { jumpToMessageEdge, isTextInputTarget } from '../../utils/messageScrollN
 import { QueuedItemsList } from '../QueuedItemsList';
 import { SaveMarkdownModal } from '../SaveMarkdownModal';
 import { Spinner } from '../ui/Spinner';
+import { isImeComposing } from '../../utils/ime';
 import {
 	TerminalSelectionContextMenu,
 	type TerminalSelectionContextMenuState,
@@ -71,6 +72,7 @@ export const TerminalOutput = memo(
 	forwardRef<HTMLDivElement, TerminalOutputProps>((props, ref) => {
 		const {
 			session,
+			readOnly = false,
 			theme,
 			fontFamily,
 			activeFocus: _activeFocus,
@@ -439,7 +441,8 @@ export const TerminalOutput = memo(
 			filteredLogsLength: filteredLogs.length,
 			onScrollPositionChange,
 			onAtBottomChange,
-			onNearTop: historyBackfill.loadEarlier,
+			// A read-only view has no local provider history to page in.
+			onNearTop: readOnly ? undefined : historyBackfill.loadEarlier,
 		});
 
 		useEffect(() => {
@@ -545,7 +548,7 @@ export const TerminalOutput = memo(
 					}
 					// Escape handling removed - delegated to layer stack for search
 					// When search is not open, Escape should still focus back to input
-					if (e.key === 'Escape' && !outputSearchOpen) {
+					if (e.key === 'Escape' && !outputSearchOpen && !isImeComposing(e)) {
 						e.preventDefault();
 						e.stopPropagation();
 						// Focus back to text input
@@ -801,7 +804,7 @@ export const TerminalOutput = memo(
 									onReplayMessage={onReplayMessage}
 									onForkConversation={onForkConversation}
 									isPinned={pinnedRowIds?.has(log.id) ?? false}
-									onTogglePin={handleTogglePin}
+									onTogglePin={readOnly ? undefined : handleTogglePin}
 									onShowPins={handleShowPins}
 									sessionId={session.id}
 									onSessionRecover={onSessionRecover}
@@ -817,7 +820,7 @@ export const TerminalOutput = memo(
 											: undefined
 									}
 									onShowErrorDetails={onShowErrorDetails}
-									onSaveToFile={handleSaveToFile}
+									onSaveToFile={readOnly ? undefined : handleSaveToFile}
 									ghCliAvailable={ghCliAvailable}
 									onPublishGist={onPublishMessageGist}
 									publishedGistUrl={publishedGists[log.id]?.gistUrl}

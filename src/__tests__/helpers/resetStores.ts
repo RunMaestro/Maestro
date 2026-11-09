@@ -30,6 +30,7 @@ import { useMessageGistStore } from '../../renderer/stores/messageGistStore';
 import { useModalStore } from '../../renderer/stores/modalStore';
 import { useNotificationStore } from '../../renderer/stores/notificationStore';
 import { useOperationStore } from '../../renderer/stores/operationStore';
+import { usePeerMirrorStore } from '../../renderer/stores/peerMirrorStore';
 import { useQuitWhenIdleStore } from '../../renderer/stores/quitWhenIdleStore';
 import { useRestartPendingStore } from '../../renderer/stores/restartPendingStore';
 import { useRetryStore } from '../../renderer/stores/retryStore';
@@ -134,6 +135,7 @@ export const ALL_RENDERER_STORES: ResettableStore[] = [
 	useCoworkingBackgroundBrowserStore,
 	useCoworkingBrowserKeepAliveStore,
 	useImageAnnotatorStore,
+	usePeerMirrorStore,
 ];
 
 /**

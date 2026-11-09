@@ -11,6 +11,7 @@ import { shouldShowAppTitleStrip } from '../utils/appTitleStrip';
 import { SessionList } from './SessionList';
 import { RightPanel, type RightPanelHandle } from './RightPanel';
 import { MainPanel, type MainPanelHandle } from './MainPanel';
+import { PeerAgentPanel } from './PeerAgentPanel';
 import { EmptyStateView } from './EmptyStateView';
 import { AgentsLoadingView } from './AgentsLoadingView';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -34,6 +35,7 @@ import { VoiceHud } from './ACappella';
 import { useCadenzaStore } from '../stores/cadenzaStore';
 import { useMovementStore } from '../stores/movementStore';
 import { selectActiveSession, useSessionStore } from '../stores/sessionStore';
+import { selectActiveMirrorKey, usePeerMirrorStore } from '../stores/peerMirrorStore';
 import type { Group, GroupChat, Theme } from '../types';
 
 type SessionListProps = ComponentProps<typeof SessionList>;
@@ -134,6 +136,17 @@ export function AppShell({
 		);
 	});
 	const hasTitleSession = useSessionStore((s) => !!selectActiveSession(s));
+	// A Federation peer's mirrored agent replaces MainPanel and RightPanel while it is shown. The
+	// local active agent stays selected underneath, so neither panel is mounted against it. A group
+	// chat outranks it (selecting one clears the mirror; this keeps a frame of overlap safe too).
+	const activeMirrorKey = usePeerMirrorStore(selectActiveMirrorKey);
+	const showMirror = !!activeMirrorKey && !activeGroupChatId;
+	const mirrorTitle = usePeerMirrorStore((s) => {
+		const selection = s.activeMirror;
+		const peer = selection ? s.peers[selection.peerId] : undefined;
+		const agent = peer?.agents.find((candidate) => candidate.id === selection?.agentId);
+		return peer && agent ? `${peer.name} | ${agent.name}` : null;
+	});
 	// Unmounting the Concerto surfaces only hides them; their Zustand stores live
 	// outside React. Clear both stores when the feature is disabled so stale views
 	// do not return if the user enables it again later.
@@ -189,6 +202,13 @@ export function AppShell({
 						>
 							Maestro Group Chat:{' '}
 							{groupChats.find((c) => c.id === activeGroupChatId)?.name || 'Unknown'}
+						</span>
+					) : showMirror && mirrorTitle ? (
+						<span
+							className="text-xs select-none opacity-50"
+							style={{ color: theme.colors.textDim }}
+						>
+							Maestro Peer: {mirrorTitle}
 						</span>
 					) : (
 						hasTitleSession &&
@@ -275,8 +295,14 @@ export function AppShell({
 
 			{groupChatView}
 
-			{hasSessions && !activeGroupChatId && !logViewerOpen && (
+			{hasSessions && !activeGroupChatId && !logViewerOpen && !showMirror && (
 				<MainPanel ref={mainPanelRef} {...mainPanelProps} />
+			)}
+
+			{hasSessions && showMirror && !logViewerOpen && (
+				<ErrorBoundary>
+					<PeerAgentPanel theme={theme} setLightboxImage={mainPanelProps.setLightboxImage} />
+				</ErrorBoundary>
 			)}
 
 			<PluginPanelSlot
@@ -285,7 +311,7 @@ export function AppShell({
 				className="flex flex-col flex-1 min-w-0 overflow-hidden"
 			/>
 
-			{!isMobileLandscape && hasSessions && !activeGroupChatId && !logViewerOpen && (
+			{!isMobileLandscape && hasSessions && !activeGroupChatId && !logViewerOpen && !showMirror && (
 				<ErrorBoundary>
 					<div
 						className="contents"

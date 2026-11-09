@@ -3,6 +3,7 @@ import {
 	buildSshCommand,
 	buildRemoteCommand,
 	buildSshCommandWithStdin,
+	wrapRemoteCommandWithPath,
 } from '../../../main/utils/ssh-command-builder';
 import type { SshRemoteConfig } from '../../../shared/types';
 import * as os from 'os';
@@ -1408,6 +1409,23 @@ describe('ssh-command-builder', () => {
 			// Verify exec line doesn't have the prompt
 			const execLine = result.stdinScript?.split('\n').find((line) => line.startsWith('exec '));
 			expect(execLine).not.toContain('{"type"');
+		});
+	});
+
+	describe('wrapRemoteCommandWithPath', () => {
+		it('runs the command under a profile-free bash with the agent PATH', () => {
+			const wrapped = wrapRemoteCommandWithPath('maestro-cli --version');
+			expect(wrapped.startsWith("/bin/bash --norc --noprofile -c '")).toBe(true);
+			expect(wrapped).toContain('$HOME/.local/bin');
+			expect(wrapped).toContain('_nvm_dir');
+			expect(wrapped.endsWith("; maestro-cli --version'")).toBe(true);
+		});
+
+		it('is the wrapper buildSshCommand uses, so an agent spawn and a one-shot probe share one PATH', async () => {
+			const result = await buildSshCommand(baseConfig, { command: 'claude', args: ['--version'] });
+			expect(result.args[result.args.length - 1]).toBe(
+				wrapRemoteCommandWithPath(buildRemoteCommand({ command: 'claude', args: ['--version'] }))
+			);
 		});
 	});
 });

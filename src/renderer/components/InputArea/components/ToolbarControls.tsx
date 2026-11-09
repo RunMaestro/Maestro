@@ -1,54 +1,88 @@
-import React, { memo, useCallback, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useRef, useState, type ReactNode } from 'react';
 import {
 	ArrowUp,
 	Brain,
 	Eye,
 	History,
 	ImageIcon,
+	Keyboard,
 	Mic,
 	MoreHorizontal,
 	PenLine,
 	Pin,
+	Upload,
 	X,
 } from 'lucide-react';
-import type { Shortcut, Session, Theme, ThinkingMode } from '../../../types';
-import {
-	getPermissionModeLabel,
-	getPermissionModeTooltip,
-	resolveTabPermissionMode,
-} from '../../../../shared/agentMetadata';
+import type { Shortcut, Theme, ThinkingMode } from '../../../types';
+import { formatEnterToSend, formatEnterToSendTooltip } from '../../../utils/shortcutFormatter';
+import { getPermissionModeLabel, getPermissionModeTooltip } from '../../../../shared/agentMetadata';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { shortcutSuffix } from '../../ui/ShortcutHint';
 import { DictationButton } from '../../ui/DictationButton';
 import type { DictationTarget } from '../../../utils/dictationTargets';
-import { updateSessionWith } from '../../../stores/sessionStore';
 import { isCoarsePointer } from '../../../utils/touch';
 import { useViewportBreakpoint } from '../../../hooks/ui';
 import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
 import { useOptionalContentFits } from '../../../hooks/ui/useOptionalLabelFits';
-import { useAutoModelChoice } from '../../../hooks/agent/useAutoModelChoice';
-import { withAutoModelOption } from '../../../../shared/autoTurn';
-import { isAutoModel } from '../../../../shared/autoModel';
-import {
-	nextPermissionMode,
-	permissionModeFields,
-	setShowThinkingFields,
-} from '../../../utils/tabHelpers';
-import { ImageAttachInput } from '../../ChatComposer';
-import { formatTerminalCwd } from '../utils/terminalPath';
-import { ComposerOptionsSheet } from './ComposerOptionsSheet';
+import { nextPermissionMode } from '../../../utils/tabHelpers';
+import { ImageAttachInput, type ComposerCapabilities } from '../../ChatComposer';
+import { ComposerOptionsSheet, type PermissionMode } from './ComposerOptionsSheet';
 import { ModelEffortPills } from './ModelEffortPills';
 import { isWebDesktop } from '../../../utils/runtimeContext';
-import { projectTabProvider, turnRunOnLabel } from '../../../utils/providerTabSessions';
 
-interface ToolbarControlsProps {
-	session: Session;
+/**
+ * The composer toolbar. It knows nothing about agents, tabs or rooms: which
+ * optional controls it offers comes from `capabilities`, the values it shows
+ * come in as props, and every change goes back out through a callback, so the
+ * AI composer and the Group Chat composer can both render it.
+ */
+export interface ToolbarControlsProps {
 	theme: Theme;
+	/** Which optional controls this surface offers (see ComposerCapabilities). */
+	capabilities: ComposerCapabilities;
 	isTerminalMode: boolean;
-	canAttachImages: boolean;
-	hasReadOnlyCapability: boolean;
+	/** The shell's working directory, shown in place of the controls in terminal mode. */
+	terminalCwd?: string;
+	/** Provider id, so the permission pill reads as the agent's own word for it. */
+	agentId?: string;
+	onUploadFiles?: (files: File[]) => void;
+	/**
+	 * Surface-specific controls, drawn after the toggle pills and just before
+	 * the Enter-to-send toggle. Not drawn on a phone; see `sheetExtras`.
+	 */
+	toolbarExtras?: ReactNode;
+	/**
+	 * Surface-specific rows for the phone options sheet, built with the
+	 * PhoneSheetRows primitives. The phone counterpart of `toolbarExtras`.
+	 */
+	sheetExtras?: ReactNode;
+	/** Element id for the hidden image input, a stable hook for tests. Defaults to the AI composer's. */
+	imageInputId?: string;
+	/** Names this surface in image read-error reports. Defaults to the AI composer's. */
+	imageReportComponent?: string;
+	/** Refuses a picked image before it is read (see ImageAttachInput). */
+	checkImageFile?: (file: File) => string | null;
+	/** Phone Send title and accessible name. Defaults to Send message / Run command. */
+	sendTitle?: string;
+	/** Phone Send drawn muted and refusing clicks. */
+	sendDisabled?: boolean;
+	/** Phone Send tint; `warning` marks a send that will queue. */
+	sendTone?: 'accent' | 'warning';
+
+	// The per-tab agent settings below are read only when the matching
+	// capability is on (permission, thinking, saveToHistory, modelEffort), so a
+	// surface that turns those off need not supply them.
+
 	/** Whether `standard` mode is functional for this agent (has a working relay). */
-	hasStandardCapability: boolean;
+	hasStandardCapability?: boolean;
+	/** The permission mode in effect, shown by the pill and the phone sheet. */
+	permissionMode?: PermissionMode;
+	/** Set a permission mode (the pill steps to the next one; the sheet names one). */
+	onPermissionModeChange?: (mode: PermissionMode) => void;
+	/** Set a thinking mode by name (the phone sheet). */
+	onThinkingModeChange?: (mode: ThinkingMode) => void;
+	enterToSend: boolean;
+	setEnterToSend: (value: boolean) => void;
 	setStagedImages: React.Dispatch<React.SetStateAction<string[]>>;
 	/** Whether the browser supports the Web Speech API (from useVoiceInput). */
 	voiceSupported?: boolean;
@@ -57,11 +91,11 @@ interface ToolbarControlsProps {
 	/** Toggle voice dictation on/off. Stable identity (see InputArea). */
 	onToggleVoiceInput?: () => void;
 	/**
-	 * A Cappella owns the composer's microphone, so this row must not draw one.
-	 *
-	 * The A Cappella button lives under Send in `NotificationSendControls`, where
-	 * it is visible on every pointer type. Without this flag a touch device with
-	 * the Encore Feature on would show two microphones wired to the same toggle.
+	 * A Cappella owns the composer's microphone, so this row must not draw the
+	 * Web Speech one. The A Cappella button lives under Send in the send column,
+	 * where it is visible on every pointer type; on a phone, where that column is
+	 * gone, this row draws it instead. Without this flag a touch device with the
+	 * Encore Feature on would show two microphones wired to the same toggle.
 	 */
 	voiceHandledElsewhere?: boolean;
 	/**
@@ -73,25 +107,28 @@ interface ToolbarControlsProps {
 	onOpenPromptComposer?: () => void;
 	shortcuts?: Record<string, Shortcut>;
 	showFlashNotification?: (message: string) => void;
-	tabSaveToHistory: boolean;
+	tabSaveToHistory?: boolean;
 	onToggleTabSaveToHistory?: () => void;
-	tabShowThinking: ThinkingMode;
+	tabShowThinking?: ThinkingMode;
 	onToggleTabShowThinking?: () => void;
-	supportsThinking: boolean;
 	currentModel?: string;
+	/** Where the model runs when the agent has a Run on target: the model pill shows it instead. */
+	runOn?: string;
+	/** Tooltip for the Auto model choice, when `availableModels` offers it. */
+	autoModelTitle?: string;
 	currentEffort?: string;
-	availableModels: string[];
-	availableEfforts: string[];
+	availableModels?: string[];
+	availableEfforts?: string[];
 	onModelChange?: (model: string) => void;
 	onEffortChange?: (effort: string) => void;
 	onRefreshModels?: () => void;
 	refreshingModels?: boolean;
-	modelMenuOpen: boolean;
-	setModelMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-	modelMenuRef: React.RefObject<HTMLDivElement>;
-	effortMenuOpen: boolean;
-	setEffortMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-	effortMenuRef: React.RefObject<HTMLDivElement>;
+	modelMenuOpen?: boolean;
+	setModelMenuOpen?: React.Dispatch<React.SetStateAction<boolean>>;
+	modelMenuRef?: React.RefObject<HTMLDivElement>;
+	effortMenuOpen?: boolean;
+	setEffortMenuOpen?: React.Dispatch<React.SetStateAction<boolean>>;
+	effortMenuRef?: React.RefObject<HTMLDivElement>;
 	/**
 	 * Send the composer's contents. Only used on a phone, where the send button
 	 * moves into this row (see the phone branch below); the desktop keeps it in
@@ -100,44 +137,63 @@ interface ToolbarControlsProps {
 	processInput?: () => void;
 }
 
+// Stable stand-ins for the per-tab settings a surface without them omits.
+const NO_OPTIONS: string[] = [];
+const UNUSED_MENU_REF: React.RefObject<HTMLDivElement> = { current: null };
+function noop(): void {}
+
 export const ToolbarControls = memo(function ToolbarControls({
-	session,
 	theme,
+	capabilities,
 	isTerminalMode,
-	canAttachImages,
-	hasReadOnlyCapability,
-	hasStandardCapability,
+	terminalCwd,
+	agentId,
+	onUploadFiles,
+	hasStandardCapability = false,
+	permissionMode: rawPermissionMode = 'full',
+	onPermissionModeChange = noop,
+	onThinkingModeChange = noop,
+	toolbarExtras,
+	sheetExtras,
+	imageInputId = 'image-file-input',
+	imageReportComponent = 'InputArea.ToolbarControls',
+	checkImageFile,
+	sendTitle,
+	sendDisabled = false,
+	sendTone = 'accent',
+	enterToSend,
+	setEnterToSend,
 	setStagedImages,
 	voiceSupported,
 	isVoiceListening,
 	onToggleVoiceInput,
-	voiceHandledElsewhere,
+	voiceHandledElsewhere = false,
 	dictationTarget,
 	onOpenPromptComposer,
 	shortcuts,
 	showFlashNotification,
-	tabSaveToHistory,
+	tabSaveToHistory = false,
 	onToggleTabSaveToHistory,
-	tabShowThinking,
+	tabShowThinking = 'off',
 	onToggleTabShowThinking,
-	supportsThinking,
 	currentModel,
+	runOn,
+	autoModelTitle,
 	currentEffort,
-	availableModels,
-	availableEfforts,
+	availableModels = NO_OPTIONS,
+	availableEfforts = NO_OPTIONS,
 	onModelChange,
 	onEffortChange,
 	onRefreshModels,
 	refreshingModels,
-	modelMenuOpen,
-	setModelMenuOpen,
-	modelMenuRef,
-	effortMenuOpen,
-	setEffortMenuOpen,
-	effortMenuRef,
+	modelMenuOpen = false,
+	setModelMenuOpen = noop,
+	modelMenuRef = UNUSED_MENU_REF,
+	effortMenuOpen = false,
+	setEffortMenuOpen = noop,
+	effortMenuRef = UNUSED_MENU_REF,
 	processInput,
 }: ToolbarControlsProps) {
-	const isAiMode = session.inputMode === 'ai';
 	const { isNarrow: isNarrowViewport } = useViewportBreakpoint();
 	const phone = usePhoneLayout();
 	const [toolbarExpanded, setToolbarExpanded] = useState(false);
@@ -145,12 +201,27 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// On a phone every toggle moves into the options sheet, so the inline group
 	// never renders there however the "..." was last left.
 	const showToggleGroup = !phone && (!isNarrowViewport || toolbarExpanded);
-	const toggleGroupRef = useRef<HTMLDivElement>(null);
-	const toggleCount = isAiMode
-		? Number(!!onToggleTabSaveToHistory) +
-			Number(hasReadOnlyCapability) +
-			Number(supportsThinking && !!onToggleTabShowThinking)
-		: 0;
+	const fileUploadControl =
+		capabilities.upload && isWebDesktop() && onUploadFiles ? (
+			<label
+				className="flex items-center justify-center p-1 rounded hover:bg-white/10 cursor-pointer"
+				title="Upload local files to the host"
+				aria-label="Upload local files to the host"
+			>
+				<Upload className="w-5 h-5" />
+				<input
+					type="file"
+					multiple
+					className="hidden"
+					aria-label="Choose local files to upload to the host"
+					onChange={(event) => {
+						const files = Array.from(event.target.files ?? []);
+						event.target.value = '';
+						if (files.length > 0) onUploadFiles(files);
+					}}
+				/>
+			</label>
+		) : null;
 
 	// Voice dictation is a primary touch affordance, so it stays in the always-
 	// visible left action group (next to attach-image) rather than the collapsing
@@ -159,33 +230,37 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// supported AND the primary pointer is coarse (touch), so mouse/keyboard
 	// desktop users never see it.
 	const showVoiceButton =
-		isAiMode &&
+		capabilities.voice &&
 		!!voiceSupported &&
 		!!onToggleVoiceInput &&
 		!voiceHandledElsewhere &&
 		isCoarsePointer();
 
-	// A Cappella owns the microphone through NotificationSendControls, and that
-	// whole column is dropped on a phone (see the phone branch below), so this
-	// row is the only place left to draw one there. Web Speech support is beside
-	// the point for it: the voice session runs in the main process, not in the
+	// A Cappella owns the microphone through the send column, and that whole
+	// column is dropped on a phone (see the phone branch below), so this row is
+	// the only place left to draw one there. Web Speech support is beside the
+	// point for it: the voice session runs in the main process, not in the
 	// browser's recognizer. Without this the one layout with no keyboard is also
 	// the one layout with no microphone.
 	const showACappellaVoiceButton =
-		phone && isAiMode && !!onToggleVoiceInput && !!voiceHandledElsewhere;
+		phone && capabilities.voice && !!onToggleVoiceInput && voiceHandledElsewhere;
 
-	const activeTab = session.aiTabs?.find((t) => t.id === session.activeTabId);
-	const provider = useMemo(() => projectTabProvider(session, activeTab), [session, activeTab]);
-	const endpoints = useSettingsStore((s) => s.localModelEndpoints);
-	const runOn = isAutoModel(currentModel) ? undefined : turnRunOnLabel(provider.agent, endpoints);
-	const rawPermissionMode: 'full' | 'standard' | 'readonly' = resolveTabPermissionMode(activeTab);
 	// Hide `standard` for agents without a working relay: if a stale tab is
 	// somehow in `standard`, display it as `full` so we never surface a
 	// non-functional mode.
 	const currentPermissionMode: 'full' | 'standard' | 'readonly' =
 		rawPermissionMode === 'standard' && !hasStandardCapability ? 'full' : rawPermissionMode;
+
+	// The toggle pills drop their labels to icons when the row is too narrow for
+	// them, instead of wrapping onto a second line. `toggleCount` reserves the
+	// icon row so wrapping never clips an action.
+	const toggleGroupRef = useRef<HTMLDivElement>(null);
+	const showSaveToHistoryToggle = capabilities.saveToHistory && !!onToggleTabSaveToHistory;
+	const showThinkingToggle = capabilities.thinking && !!onToggleTabShowThinking;
+	const toggleCount =
+		Number(showSaveToHistoryToggle) + Number(capabilities.permission) + Number(showThinkingToggle);
 	const toggleLabelsFit = useOptionalContentFits(toggleGroupRef, {
-		contentKey: `${showToggleGroup}:${isAiMode}:${!!onToggleTabSaveToHistory}:${hasReadOnlyCapability}:${supportsThinking && !!onToggleTabShowThinking}:${provider.agent.toolType}:${currentPermissionMode}:${tabShowThinking}`,
+		contentKey: `${showToggleGroup}:${showSaveToHistoryToggle}:${capabilities.permission}:${showThinkingToggle}:${agentId}:${currentPermissionMode}:${tabShowThinking}`,
 	});
 
 	// Advertise the full-screen model/effort switcher from inside the dropdowns
@@ -202,21 +277,10 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// a cleared binding from drawing a bare "Try: ".
 	const modelEffortKeys = shortcuts?.openModelEffort?.keys;
 
-	// Auto is a model choice like any other, offered only for an agent it can
-	// act on. It is added here, where the agent is known, so the desktop pill and
-	// the phone sheet below list the same thing.
-	const autoModel = useAutoModelChoice(provider.agent);
-	const modelOptions = useMemo(
-		() => withAutoModelOption(availableModels, autoModel),
-		[availableModels, autoModel]
-	);
-
 	// The three tab-scoped toggles below are all bindable chords. Read them live
 	// from the tab shortcut map rather than spelling the default combo into the
 	// tooltip: a user who rebinds one should see their own chord, not ours.
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
-
-	const activeTabId = activeTab?.id;
 
 	// One hidden file input, rendered by whichever row (phone or desktop) is on
 	// screen. The attach buttons reach it through this ref rather than an element
@@ -226,42 +290,27 @@ export const ToolbarControls = memo(function ToolbarControls({
 	const imageFileInput = (
 		<ImageAttachInput
 			ref={imageInputRef}
-			id="image-file-input"
+			id={imageInputId}
 			setStagedImages={setStagedImages}
 			showFlashNotification={showFlashNotification}
-			reportComponent="InputArea.ToolbarControls"
+			reportComponent={imageReportComponent}
+			checkFile={checkImageFile}
 		/>
 	);
 
-	// The sheet NAMES a mode rather than stepping to the next one, so both
-	// writes go through the shared field patches instead of a second inline copy
-	// of "keep readOnlyMode and permissionMode in lockstep" / "clear the
-	// thinking logs when the mode goes off".
-	const handlePermissionModeChange = useCallback(
-		(mode: 'full' | 'standard' | 'readonly') => {
-			if (!activeTabId) return;
-			updateSessionWith(session.id, (s) => ({
-				...s,
-				aiTabs: s.aiTabs.map((t) =>
-					t.id === activeTabId ? { ...t, ...permissionModeFields(mode) } : t
-				),
-			}));
-		},
-		[session.id, activeTabId]
-	);
-
-	const handleThinkingModeChange = useCallback(
-		(mode: ThinkingMode) => {
-			if (!activeTabId) return;
-			updateSessionWith(session.id, (s) => ({
-				...s,
-				aiTabs: s.aiTabs.map((t) =>
-					t.id === activeTabId ? { ...t, ...setShowThinkingFields(t, mode) } : t
-				),
-			}));
-		},
-		[session.id, activeTabId]
-	);
+	// The phone sheet mounts only when it has something to show: a section, judged
+	// by the same flags its sections read, or the surface's own rows.
+	const sheetHasContent =
+		capabilities.saveToHistory ||
+		capabilities.permission ||
+		capabilities.thinking ||
+		capabilities.modelEffort ||
+		!!sheetExtras;
+	// The "..." is drawn only when it opens something. Terminal mode keeps the
+	// button it has always drawn even though no sheet is behind it there: a
+	// known gap, left as it is until it is fixed on its own.
+	const showOptionsButton = sheetHasContent || isTerminalMode;
+	const phoneSendTitle = sendTitle ?? (isTerminalMode ? 'Run command' : 'Send message');
 
 	// Phone: the row holds only what a thumb reaches for mid-sentence - attach an
 	// image, send, and the "..." that opens every other setting as a half-screen
@@ -279,10 +328,10 @@ export const ToolbarControls = memo(function ToolbarControls({
 							className="text-xs font-mono opacity-60 px-2 truncate min-w-0 flex-1"
 							style={{ color: theme.colors.textDim }}
 						>
-							{formatTerminalCwd(session)}
+							{terminalCwd}
 						</div>
 					)}
-					{isAiMode && canAttachImages && (
+					{capabilities.imageAttach && (
 						<button
 							onClick={openImagePicker}
 							className="flex h-9 w-9 items-center justify-center rounded opacity-70"
@@ -292,6 +341,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 							<ImageIcon className="w-5 h-5" />
 						</button>
 					)}
+					{fileUploadControl}
 					{(showVoiceButton || showACappellaVoiceButton) && (
 						<button
 							type="button"
@@ -318,55 +368,65 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<button
 							type="button"
 							onClick={() => processInput()}
+							disabled={sendDisabled}
 							className="mx-auto flex h-9 w-14 items-center justify-center rounded-lg shadow-sm transition-all"
 							style={{
-								backgroundColor: theme.colors.accent,
-								color: theme.colors.accentForeground,
+								backgroundColor: sendDisabled
+									? theme.colors.border
+									: sendTone === 'warning'
+										? theme.colors.warning
+										: theme.colors.accent,
+								color: sendDisabled ? theme.colors.textDim : theme.colors.accentForeground,
 							}}
-							title={isTerminalMode ? 'Run command' : 'Send message'}
-							aria-label={isTerminalMode ? 'Run command' : 'Send message'}
+							title={phoneSendTitle}
+							aria-label={phoneSendTitle}
 						>
 							<ArrowUp className="w-5 h-5" />
 						</button>
 					)}
-					<button
-						type="button"
-						onClick={() => setOptionsSheetOpen(true)}
-						className="flex h-9 w-9 items-center justify-center rounded-full transition-all opacity-70"
-						style={{ color: theme.colors.textDim, border: `1px solid ${theme.colors.border}` }}
-						title="More options"
-						aria-label="More options"
-						aria-haspopup="dialog"
-						aria-expanded={optionsSheetOpen}
-						data-testid="composer-options-button"
-					>
-						<MoreHorizontal className="w-5 h-5" />
-					</button>
+					{showOptionsButton && (
+						<button
+							type="button"
+							onClick={() => setOptionsSheetOpen(true)}
+							className="flex h-9 w-9 items-center justify-center rounded-full transition-all opacity-70"
+							style={{ color: theme.colors.textDim, border: `1px solid ${theme.colors.border}` }}
+							title="More options"
+							aria-label="More options"
+							aria-haspopup="dialog"
+							aria-expanded={optionsSheetOpen}
+							data-testid="composer-options-button"
+						>
+							<MoreHorizontal className="w-5 h-5" />
+						</button>
+					)}
 				</div>
-				{isAiMode && (
+				{sheetHasContent && (
 					<ComposerOptionsSheet
-						key={provider.agent.toolType}
+						key={agentId}
 						open={optionsSheetOpen}
 						onClose={() => setOptionsSheetOpen(false)}
 						theme={theme}
-						agentId={provider.agent.toolType}
+						agentId={agentId}
 						tabSaveToHistory={tabSaveToHistory}
-						onToggleTabSaveToHistory={onToggleTabSaveToHistory}
-						hasReadOnlyCapability={hasReadOnlyCapability}
+						onToggleTabSaveToHistory={
+							capabilities.saveToHistory ? onToggleTabSaveToHistory : undefined
+						}
+						hasReadOnlyCapability={capabilities.permission}
 						hasStandardCapability={hasStandardCapability}
 						permissionMode={currentPermissionMode}
-						onPermissionModeChange={handlePermissionModeChange}
-						supportsThinking={supportsThinking}
+						onPermissionModeChange={onPermissionModeChange}
+						supportsThinking={capabilities.thinking}
 						tabShowThinking={tabShowThinking}
-						onThinkingModeChange={onToggleTabShowThinking ? handleThinkingModeChange : undefined}
+						onThinkingModeChange={onToggleTabShowThinking ? onThinkingModeChange : undefined}
 						currentModel={currentModel}
 						runOn={runOn}
-						availableModels={modelOptions}
-						autoModelTitle={autoModel?.title}
-						onModelChange={onModelChange}
+						availableModels={availableModels}
+						autoModelTitle={autoModelTitle}
+						onModelChange={capabilities.modelEffort ? onModelChange : undefined}
 						currentEffort={currentEffort}
 						availableEfforts={availableEfforts}
-						onEffortChange={onEffortChange}
+						onEffortChange={capabilities.modelEffort ? onEffortChange : undefined}
+						extraRows={sheetExtras}
 					/>
 				)}
 			</>
@@ -385,10 +445,10 @@ export const ToolbarControls = memo(function ToolbarControls({
 						className="text-xs font-mono opacity-60 px-2 truncate"
 						style={{ color: theme.colors.textDim }}
 					>
-						{formatTerminalCwd(session)}
+						{terminalCwd}
 					</div>
 				)}
-				{isAiMode && onOpenPromptComposer && (
+				{onOpenPromptComposer && (
 					<button
 						onClick={onOpenPromptComposer}
 						className="p-1 hover:bg-white/10 rounded opacity-50 hover:opacity-100"
@@ -397,7 +457,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<PenLine className="w-4 h-4" />
 					</button>
 				)}
-				{isAiMode && canAttachImages && (
+				{capabilities.imageAttach && (
 					<button
 						onClick={openImagePicker}
 						className="p-1 hover:bg-white/10 rounded opacity-50 hover:opacity-100"
@@ -406,6 +466,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<ImageIcon className="w-4 h-4" />
 					</button>
 				)}
+				{fileUploadControl}
 				{showVoiceButton && (
 					<button
 						type="button"
@@ -425,7 +486,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<Mic className="w-4 h-4" />
 					</button>
 				)}
-				{isAiMode && dictationTarget && (
+				{dictationTarget && (
 					<DictationButton
 						theme={theme}
 						target={dictationTarget}
@@ -434,16 +495,16 @@ export const ToolbarControls = memo(function ToolbarControls({
 				)}
 				{imageFileInput}
 				<ModelEffortPills
-					key={provider.agent.toolType}
-					isVisible={isAiMode}
+					key={agentId}
+					isVisible={capabilities.modelEffort}
 					theme={theme}
 					shortcutKeys={modelEffortKeys}
 					currentModel={currentModel}
 					runOn={runOn}
 					currentEffort={currentEffort}
-					availableModels={modelOptions}
+					availableModels={availableModels}
 					availableEfforts={availableEfforts}
-					autoModelTitle={autoModel?.title}
+					autoModelTitle={autoModelTitle}
 					onModelChange={onModelChange}
 					onEffortChange={onEffortChange}
 					onRefreshModels={onRefreshModels}
@@ -486,7 +547,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 				data-tour="toolbar-toggles"
 			>
 				<div className="ml-auto flex w-max items-center gap-1">
-					{isAiMode && onToggleTabSaveToHistory && (
+					{showSaveToHistoryToggle && (
 						<button
 							onClick={onToggleTabSaveToHistory}
 							className={`inline-flex h-7 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap text-2xs rounded-full cursor-pointer transition-all ${toggleLabelsFit ? 'px-2' : 'w-7'} ${
@@ -507,10 +568,10 @@ export const ToolbarControls = memo(function ToolbarControls({
 							{toggleLabelsFit && <span>History</span>}
 						</button>
 					)}
-					{isAiMode && hasReadOnlyCapability && (
+					{capabilities.permission && (
 						<button
 							onClick={() =>
-								handlePermissionModeChange(
+								onPermissionModeChange(
 									nextPermissionMode(currentPermissionMode, hasStandardCapability)
 								)
 							}
@@ -539,19 +600,17 @@ export const ToolbarControls = memo(function ToolbarControls({
 							}}
 							title={`${getPermissionModeTooltip(
 								currentPermissionMode,
-								provider.agent.toolType
+								agentId
 							)}${shortcutSuffix(tabShortcuts.toggleReadOnlyMode?.keys)}`}
-							aria-label={getPermissionModeLabel(currentPermissionMode, provider.agent.toolType)}
+							aria-label={getPermissionModeLabel(currentPermissionMode, agentId)}
 						>
 							<Eye className="w-3.5 h-3.5" />
 							{toggleLabelsFit && (
-								<span>
-									{getPermissionModeLabel(currentPermissionMode, provider.agent.toolType)}
-								</span>
+								<span>{getPermissionModeLabel(currentPermissionMode, agentId)}</span>
 							)}
 						</button>
 					)}
-					{isAiMode && supportsThinking && onToggleTabShowThinking && (
+					{showThinkingToggle && (
 						<button
 							onClick={onToggleTabShowThinking}
 							className={`relative inline-flex h-7 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap text-2xs rounded-full cursor-pointer transition-all ${toggleLabelsFit ? 'px-2' : 'w-7'} ${
@@ -596,6 +655,24 @@ export const ToolbarControls = memo(function ToolbarControls({
 					)}
 				</div>
 			</div>
+
+			{/* Surface extras and the Enter toggle sit outside the collapsing pill
+			    group: they have no icon-only form, so they must never be clipped. */}
+			{(toolbarExtras || capabilities.enterToSendToggle) && (
+				<div className={`flex shrink-0 items-center gap-1 ${showToggleGroup ? '' : 'hidden'}`}>
+					{toolbarExtras}
+					{capabilities.enterToSendToggle && (
+						<button
+							onClick={() => setEnterToSend(!enterToSend)}
+							className="flex items-center gap-1 text-2xs opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5 whitespace-nowrap"
+							title={formatEnterToSendTooltip(enterToSend)}
+						>
+							<Keyboard className="w-3 h-3" />
+							{formatEnterToSend(enterToSend)}
+						</button>
+					)}
+				</div>
+			)}
 		</div>
 	);
 });

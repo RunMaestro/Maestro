@@ -5,8 +5,9 @@ import type { PianolaDispatchReceipt } from '../../pianola/pianola-dispatch';
  * desktop's WebSocket bridge (milestone M1).
  *
  * Follows `Plans/maestro-tui-client-api.md`. In short:
- *   - discovery reads `cli-server.json` from the caller's data dir; the socket
- *     is dialed on 127.0.0.1 with the per-boot `cliSecret`;
+ *   - discovery reads `cli-server.json` from the caller's data dir, or takes
+ *     the explicit endpoint the caller gave (a Federation remote's SSH
+ *     forward); the socket is dialed on 127.0.0.1 with the per-boot `cliSecret`;
  *   - the client stays a dashboard client (it never sends `subscribe`), and
  *     turn streams come from `bridge.event` `process:*` frames (C3);
  *   - mutations are typed bridge messages; `bridge.invoke` is only for full
@@ -28,6 +29,7 @@ import {
 	buildAgentConfigPatch,
 	buildTabConfigPatch,
 	checkAgentCreateInput,
+	checkAgentImportInput,
 	MAX_AGENT_NAME_LENGTH,
 } from '../agents/rules';
 import { createEventBus } from './event-bus';
@@ -58,7 +60,12 @@ import {
 	ConnectionClosedError,
 	UnsupportedCommandError,
 } from './bridge-connection';
-import { isPidAlive, readCliServerInfoFrom, type CliServerInfo } from './discovery';
+import {
+	isDialableEndpoint,
+	isPidAlive,
+	readCliServerInfoFrom,
+	type ExplicitHostEndpoint,
+} from './discovery';
 import {
 	CUSTOM_COMMANDS_STORE_KEY,
 	THEME_STORE_KEY,
@@ -75,6 +82,9 @@ import {
 import { ClientMirror, type ProjectedAgent, type ProjectedTab } from './mirror';
 import type {
 	AgentCreateInput,
+	AgentImportInput,
+	AgentImportReceipt,
+	AgentImportTab,
 	AgentPatch,
 	AgentPatchField,
 	AgentUpdateReceipt,
@@ -125,6 +135,9 @@ const MAX_CHAT_NAME_LENGTH = 100;
 
 const TOO_OLD_MESSAGE = 'The running Maestro is too old for the TUI; update the desktop app.';
 
+/** The least time an `import_agent` gets: it carries every transcript the agent has. */
+const IMPORT_TIMEOUT_MS = 60_000;
+
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
@@ -145,6 +158,53 @@ function asString(value: unknown): string | undefined {
  * A headless host's `autorun_ended` outcome, or `undefined` for anything else: a status this
  * client does not know is dropped rather than passed on as one it does.
  */
+/**
+ * An agent input in `create_session`'s spelling (the record's keys), for `create_session` and
+ * `import_agent`. `name` is the checked name. Blank env values are dropped: blank means unset.
+ */
+function agentWireFields(
+	input: Omit<AgentCreateInput, 'ssh'> & { ssh?: AgentCreateInput['ssh'] },
+	name: string
+): Record<string, unknown> {
+	const env = input.env ? stripBlankEnvVars(input.env) : undefined;
+	const fields: Record<string, unknown> = { name, toolType: input.provider, cwd: input.cwd };
+	const optional: Array<[string, unknown]> = [
+		['groupId', input.groupId],
+		['nudgeMessage', input.nudgeMessage],
+		['newSessionMessage', input.newSessionMessage],
+		['customPath', input.customPath],
+		['customArgs', input.customArgs],
+		['customEnvVars', env && Object.keys(env).length > 0 ? env : undefined],
+		['customModel', input.model],
+		['customEffort', input.effort],
+		['customContextWindow', input.contextWindow],
+		['sessionSshRemoteConfig', input.ssh],
+		['autoRunFolderPath', input.autoRunFolderPath],
+	];
+	for (const [key, value] of optional) if (value !== undefined && value !== '') fields[key] = value;
+	if (input.contextWindow !== undefined) fields.contextWindowSource = 'user-edited';
+	return fields;
+}
+
+/** An imported tab in the record's spelling, as `import_agent` carries it. */
+function importTabWireFields(tab: AgentImportTab): Record<string, unknown> {
+	const fields: Record<string, unknown> = { id: tab.id, logs: tab.logs };
+	const optional: Array<[string, unknown]> = [
+		['name', tab.name],
+		['starred', tab.starred],
+		['agentSessionId', tab.agentSessionId],
+		['createdAt', tab.createdAt],
+		['saveToHistory', tab.saveToHistory],
+		['showThinking', tab.showThinking],
+		['readOnlyMode', tab.readOnlyMode],
+		['customModel', tab.model],
+		['customEffort', tab.effort],
+		['usageStats', tab.usageStats],
+	];
+	for (const [key, value] of optional) if (value !== undefined) fields[key] = value;
+	return fields;
+}
+
 function parseAutoRunOutcome(value: unknown): AutoRunOutcome | undefined {
 	if (!isObject(value)) return undefined;
 	const reason = asString(value.reason) ?? '';
@@ -244,7 +304,7 @@ class WsMaestroClient implements MaestroClient {
 
 	readonly connection = {
 		discover: async (): Promise<ClientResult<HostInfo>> => {
-			const found = this.discoverHost('connection.discover');
+			const found = await this.discoverHost('connection.discover');
 			return found.ok ? ok(found.value.host) : found;
 		},
 		connect: (): Promise<ClientResult<HostInfo>> => this.connectPublic(),
@@ -261,6 +321,7 @@ class WsMaestroClient implements MaestroClient {
 		},
 		get: (agentId: string) => this.agentsGet(agentId),
 		create: (input: AgentCreateInput) => this.agentsCreate(input),
+		import: (input: AgentImportInput) => this.agentsImport(input),
 		update: (agentId: string, patch: AgentPatch) => this.agentsUpdate(agentId, patch),
 		rename: (agentId: string, name: string) => this.agentsRename(agentId, name),
 		remove: (agentId: string) => this.agentsRemove(agentId),
@@ -546,9 +607,14 @@ class WsMaestroClient implements MaestroClient {
 	// Connection
 	// =======================================================================
 
-	private discoverHost(
+	/**
+	 * Find the host to dial: the explicit endpoint when the caller gave one, else the local
+	 * `cli-server.json`. Every attempt asks again, since a host's port and secret change per boot.
+	 */
+	private async discoverHost(
 		method: ClientMethod
-	): ClientResult<{ info: CliServerInfo; host: HostInfo }> {
+	): Promise<ClientResult<{ endpoint: ExplicitHostEndpoint | undefined; host: HostInfo }>> {
+		if (this.options.endpoint !== undefined) return this.resolveExplicitEndpoint(method);
 		const info = readCliServerInfoFrom(this.options.userDataDir);
 		if (!info) {
 			return this.fail(
@@ -567,13 +633,51 @@ class WsMaestroClient implements MaestroClient {
 		}
 		const kind = info.hostKind === 'headless' ? 'headless' : 'desktop';
 		return ok({
-			info,
+			endpoint: undefined,
 			host: {
 				kind,
 				pid: info.pid,
 				...(info.version ? { version: info.version } : {}),
 				startedAt: info.startedAt,
 				label: `${kind} pid ${info.pid}`,
+			},
+		});
+	}
+
+	/**
+	 * The explicit endpoint, resolved and checked. Its pid is a label only: it can belong to
+	 * another machine, so liveness is the socket answering, not a pid probe.
+	 */
+	private async resolveExplicitEndpoint(
+		method: ClientMethod
+	): Promise<ClientResult<{ endpoint: ExplicitHostEndpoint; host: HostInfo }>> {
+		const source = this.options.endpoint;
+		let endpoint: ExplicitHostEndpoint;
+		try {
+			endpoint = typeof source === 'function' ? await source() : source!;
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			return this.fail(method, 'host-unavailable', `The host endpoint is not available: ${reason}`);
+		}
+		this.secrets = [endpoint?.token ?? '', endpoint?.cliSecret ?? ''];
+		if (!endpoint || !isDialableEndpoint(endpoint)) {
+			return this.fail(
+				method,
+				'invalid',
+				'The host endpoint is not valid: expected a TCP port and a URL-safe path token.'
+			);
+		}
+		const kind = endpoint.hostKind === 'headless' ? 'headless' : 'desktop';
+		return ok({
+			endpoint,
+			host: {
+				kind,
+				...(endpoint.pid !== undefined ? { pid: endpoint.pid } : {}),
+				...(endpoint.version ? { version: endpoint.version } : {}),
+				label:
+					endpoint.pid !== undefined
+						? `${kind} pid ${endpoint.pid}`
+						: `${kind} 127.0.0.1:${endpoint.port}`,
 			},
 		});
 	}
@@ -635,9 +739,9 @@ class WsMaestroClient implements MaestroClient {
 		method: 'connection.connect' | 'connection.reconnect',
 		resume: boolean
 	): Promise<ClientResult<{ host: HostInfo; resumed: boolean }>> {
-		const found = this.discoverHost(method);
+		const found = await this.discoverHost(method);
 		if (!found.ok) return found;
-		const { host } = found.value;
+		const { host, endpoint } = found.value;
 
 		let settle!: Attempt['settleHandshake'];
 		const handshake = new Promise<HandshakeResult>((resolve) => {
@@ -655,7 +759,7 @@ class WsMaestroClient implements MaestroClient {
 		};
 		const query = resume && this.epoch ? { since: this.lastSeq, epoch: this.epoch } : undefined;
 		const conn = new BridgeConnection({
-			userDataDir: this.options.userDataDir,
+			...(endpoint ? { endpoint } : { userDataDir: this.options.userDataDir }),
 			strictReplies: true,
 			...(query ? { query } : {}),
 			WebSocketImpl: this.options.WebSocketImpl,
@@ -1237,33 +1341,12 @@ class WsMaestroClient implements MaestroClient {
 	private async agentsCreate(input: AgentCreateInput): Promise<ClientResult<{ agentId: string }>> {
 		const inputCheck = checkAgentCreateInput(input);
 		if (!inputCheck.ok) return this.fail('agents.create', inputCheck.code, inputCheck.message);
-		const { name } = inputCheck.value;
 
-		const env = input.env ? stripBlankEnvVars(input.env) : undefined;
 		const message: Record<string, unknown> = {
 			type: 'create_session',
-			name,
-			toolType: input.provider,
-			cwd: input.cwd,
+			...agentWireFields(input, inputCheck.value.name),
 			background: true,
 		};
-		const optional: Array<[string, unknown]> = [
-			['groupId', input.groupId],
-			['nudgeMessage', input.nudgeMessage],
-			['newSessionMessage', input.newSessionMessage],
-			['customPath', input.customPath],
-			['customArgs', input.customArgs],
-			['customEnvVars', env && Object.keys(env).length > 0 ? env : undefined],
-			['customModel', input.model],
-			['customEffort', input.effort],
-			['customContextWindow', input.contextWindow],
-			['sessionSshRemoteConfig', input.ssh],
-			['autoRunFolderPath', input.autoRunFolderPath],
-		];
-		for (const [key, value] of optional)
-			if (value !== undefined && value !== '') message[key] = value;
-		if (input.contextWindow !== undefined) message.contextWindowSource = 'user-edited';
-
 		const sent = await this.send('agents.create', message, 'create_session_result');
 		if (!sent.ok) return sent;
 		const checked = this.checkResult('agents.create', sent.value);
@@ -1272,6 +1355,38 @@ class WsMaestroClient implements MaestroClient {
 		if (!agentId)
 			return this.fail('agents.create', 'failed', 'The desktop did not report the new agent.');
 		return ok({ agentId });
+	}
+
+	private async agentsImport(input: AgentImportInput): Promise<ClientResult<AgentImportReceipt>> {
+		const inputCheck = checkAgentImportInput(input);
+		if (!inputCheck.ok) return this.fail('agents.import', inputCheck.code, inputCheck.message);
+
+		const message: Record<string, unknown> = {
+			type: 'import_agent',
+			agent: agentWireFields(input.agent, inputCheck.value.name),
+			tabs: input.tabs.map(importTabWireFields),
+			...(input.activeTabId ? { activeTabId: input.activeTabId } : {}),
+			...(input.queue && input.queue.length > 0 ? { queue: input.queue } : {}),
+		};
+		// A long transcript is a large frame: give it the time a large frame takes.
+		const sent = await this.send('agents.import', message, 'import_agent_result', {
+			timeoutMs: Math.max(this.requestTimeoutMs, IMPORT_TIMEOUT_MS),
+		});
+		if (!sent.ok) return sent;
+		const checked = this.checkResult('agents.import', sent.value);
+		if (!checked.ok) return checked;
+		const agentId = asString(sent.value.sessionId);
+		if (!agentId) {
+			return this.fail('agents.import', 'failed', 'The host did not report the imported agent.');
+		}
+		const notices = Array.isArray(sent.value.notices)
+			? sent.value.notices.filter((notice): notice is string => typeof notice === 'string')
+			: [];
+		return ok({
+			agentId,
+			queued: typeof sent.value.queued === 'number' ? sent.value.queued : 0,
+			...(notices.length > 0 ? { notices } : {}),
+		});
 	}
 
 	private async agentsRename(agentId: string, name: string): Promise<ClientResult<void>> {
@@ -2162,7 +2277,8 @@ class WsMaestroClient implements MaestroClient {
 // ---------------------------------------------------------------------------
 
 /**
- * Create the `MaestroClient` for the desktop running against `userDataDir`.
+ * Create the `MaestroClient` for the desktop running against `userDataDir`, or for the
+ * host at an explicit `endpoint`.
  * Nothing is opened until `client.connection.connect()`.
  */
 export function createWsMaestroClient(options: WsMaestroClientOptions): MaestroClient {

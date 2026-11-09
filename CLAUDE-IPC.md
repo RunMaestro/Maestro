@@ -81,6 +81,7 @@ visible and show an error. Preserve logs appended while deletion is pending.
 - `webserver` - getUrl, getConnectedClients
 - `tunnel` - Cloudflare tunnel: isCloudflaredInstalled, start, stop, getStatus
 - `webLogin` - Web Login accounts: listUsers, createUser, setPassword, setDisplayName, setDisabled, deleteUser
+- `federation` - Mirror of Federation peers (desktop-only, memory only): status, peers, snapshot, transcript, reconnect, act (send, Stop, new tab, rename and star a tab on a mirrored agent; never queued), lift (Move to Host: `maestro-cli lift` for a local SSH agent, `dryRun` for the plan; the pointer comes back through the window's `remote:updateSessionConfig`), onEvent (`federation:event`), onReset (`federation:reset`). No service, and `status()` reads `{ enabled: false }`, while the Encore Feature is off
 
 ## Automation
 

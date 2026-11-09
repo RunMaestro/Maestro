@@ -37,6 +37,8 @@ export interface ComposerSendColumnProps {
 	sendMenu?: ComposerSendMenu;
 	/** Extra classes for the column, e.g. its alignment in the surface's row. */
 	className?: string;
+	/** Drawn under Send, e.g. the A Cappella microphone (ComposerVoiceSessionButton). */
+	belowSend?: ReactNode;
 }
 
 export const ComposerSendColumn = memo(function ComposerSendColumn({
@@ -47,6 +49,7 @@ export const ComposerSendColumn = memo(function ComposerSendColumn({
 	sendTone = 'accent',
 	sendMenu,
 	className,
+	belowSend,
 }: ComposerSendColumnProps) {
 	const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
 	const [sendMenuOpen, setSendMenuOpen] = useState(false);
@@ -120,6 +123,7 @@ export const ComposerSendColumn = memo(function ComposerSendColumn({
 				<ArrowUp className="w-4 h-4" />
 			</button>
 			{sendMenuOpen && sendMenu?.render(sendBtnRef, () => setSendMenuOpen(false))}
+			{belowSend}
 		</div>
 	);
 });

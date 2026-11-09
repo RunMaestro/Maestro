@@ -48,6 +48,12 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'host start': ['maestro-cli host start --dev'],
 	'host status': ['maestro-cli host status --dev --json'],
 	'host stop': ['maestro-cli host stop --dev --wait'],
+	'host endpoint': ['maestro-cli host endpoint --json'],
+	'remote-host status': ['maestro-cli remote-host status <ssh-remote> --json'],
+	'remote-host start': ['maestro-cli remote-host start <ssh-remote> --timeout 120'],
+	lift: ['maestro-cli lift <agent-id> --dry-run'],
+	'federation peers': ['maestro-cli federation peers --json'],
+	'federation reconnect': ['maestro-cli federation reconnect <peer>'],
 	// Dataview commands introduced by RC also participate in the CLI help audit.
 	'dataview query': ['maestro-cli dataview query <file> --agent <agent-id> --json'],
 	'dataview eval': ['maestro-cli dataview eval <file> "LIST FROM #meeting" --json'],

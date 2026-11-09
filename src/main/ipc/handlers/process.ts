@@ -39,6 +39,10 @@ import { getDefaultShell, resolveConfiguredShell } from '../../stores/defaults';
 import { handleProcessSpawn, cancelPendingDesktopSpawns } from './process/handle-spawn';
 import type { SpawnProcessConfig } from './process/spawn-types';
 import {
+	liftedOwnerOfProcess,
+	liftedSendRefusal,
+} from '../../../shared/maestro-lib/agents/lift-pointer';
+import {
 	initPermissionRelay,
 	resolvePermissionResponse,
 	type PermissionDecision,
@@ -202,6 +206,13 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Spawn a new process for a session
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
 	ipcMain.handle('process:spawn', async (event, config: SpawnProcessConfig) => {
+		// A lifted agent runs on its Federation host now. Its local copy keeps every tab, but no turn
+		// of it may start here: it would resume the provider session the host owns. Shell tabs stay.
+		if (config.toolType !== 'terminal') {
+			const lifted = liftedOwnerOfProcess(deps.sessionsStore.get('sessions', []), config.sessionId);
+			const refusal = lifted && liftedSendRefusal(lifted);
+			if (refusal) throw new Error(refusal);
+		}
 		// A web/CLI caller cannot assert the native renderer's submitted log boundary.
 		if ('clientId' in event || (event as { type?: string }).type === 'bridge')
 			config = { ...config, transcriptBoundaryId: undefined };

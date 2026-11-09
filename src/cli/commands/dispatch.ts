@@ -7,10 +7,12 @@ import type { PianolaDispatchReceipt } from '../../shared/pianola/pianola-dispat
 
 import {
 	resolveAgentId,
+	getSessionById,
 	readSettingValue,
 	readLiveSessions,
 	readGroups,
 } from '../services/storage';
+import { AGENT_LIFTED_CODE, liftedSendRefusal } from '../../shared/maestro-lib/agents/lift-pointer';
 import { withMaestroClient, UnsupportedCommandError } from '../services/maestro-client';
 import { MaestroNotRunningError, MAESTRO_NOT_RUNNING_CODE } from '../services/maestro-not-running';
 import { getSettingDefault } from '../../shared/settingsMetadata';
@@ -25,6 +27,16 @@ import { resolveMentionedTargetSessionIds } from '../../shared/maestro-lib/menti
 import { admitCliConsult } from '../services/consult-budget-guard';
 import type { ConsultChain } from '../../shared/consultBudget';
 import { ExitCode, exitWith } from '../exit-codes';
+import {
+	PeerResolveError,
+	peerErrorCode,
+	resolvePeerAgent,
+	routeAgentTarget,
+	type PeerTarget,
+} from '../services/peer-resolver';
+
+/** Runs one bridge call: on the local desktop, or on a peer's host (`withBridge`). */
+type BridgeRunner = typeof withMaestroClient;
 
 export interface DispatchOptions {
 	dispatchId?: string;
@@ -128,6 +140,10 @@ export interface DispatchResponse {
 	callbackId?: string;
 	/** Caller agent that will be woken when this dispatch finishes. */
 	notifyOnComplete?: string;
+	/** Federation: the peer whose host took the prompt. */
+	peer?: string;
+	/** Federation: the exit code a peer failure carries. Not printed. */
+	exitCode?: ExitCode;
 }
 
 /**
@@ -435,6 +451,11 @@ export async function runDispatch(
 		}
 	}
 
+	const route = routeAgentTarget(agentIdArg);
+	if (route.kind === 'peer') {
+		return runPeerDispatch(route.target, message, options, queue, routingField.routing);
+	}
+
 	let agentId: string;
 	try {
 		agentId = resolveAgentId(agentIdArg);
@@ -442,6 +463,10 @@ export async function runDispatch(
 		const msg = error instanceof Error ? error.message : 'Unknown error';
 		return { success: false, error: msg, code: 'AGENT_NOT_FOUND' };
 	}
+
+	// A lifted agent runs on its host now: queueing here would start a second owner of its session.
+	const liftedRefusal = liftedSendRefusal(getSessionById(agentId) ?? {});
+	if (liftedRefusal) return { success: false, error: liftedRefusal, code: AGENT_LIFTED_CODE };
 
 	// A routing only steers the consults a message's `@mentions` start, so a
 	// message that mentions no other agent has nothing for it to route. Resolved
@@ -493,15 +518,53 @@ export async function runDispatch(
 
 	// --queue routes through the renderer's authoritative execution queue.
 	if (queue) {
-		return runQueueDispatch(agentId, message, options, background, callback.fields, routingFields, {
-			...caller,
-			...chain,
-		});
+		return runQueueDispatch(
+			withMaestroClient,
+			agentId,
+			message,
+			options,
+			background,
+			callback.fields,
+			routingFields,
+			{ ...caller, ...chain }
+		);
 	}
+	return deliverDispatch(withMaestroClient, agentId, message, options, {
+		background,
+		callbackFields: callback.fields,
+		callerAgentId: callback.callerAgentId,
+		routingFields,
+		caller: { ...caller, ...chain },
+	});
+}
+
+/** What a resolved dispatch sends beside the prompt. */
+interface DeliveryFields {
+	background: boolean;
+	callbackFields: Record<string, unknown>;
+	/** Set when a completion callback was asked for; its ack is then required. */
+	callerAgentId?: string;
+	routingFields: Record<string, unknown>;
+	caller: Record<string, unknown>;
+}
+
+/**
+ * Deliver a prompt with `new_ai_tab_with_prompt` (`--new-tab`) or `send_command`, through `run`,
+ * and read the reply. One body for the local desktop and a peer's host, which answers both
+ * messages with the desktop's reply types and fields.
+ */
+async function deliverDispatch(
+	run: BridgeRunner,
+	agentId: string,
+	message: string,
+	options: DispatchOptions,
+	{ background, callbackFields, callerAgentId, routingFields, caller }: DeliveryFields
+): Promise<DispatchResponse> {
+	const callback = { fields: callbackFields, callerAgentId };
 	const dispatchId = options.dispatchId ?? generateUUID();
 	let awaitingDispatchAck = false;
 	try {
-		const dispatched = await withMaestroClient(async (client): Promise<DispatchedPrompt> => {
+		const dispatched = await run(async (client): Promise<DispatchedPrompt> => {
 			if (options.newTab) {
 				awaitingDispatchAck = true;
 				const result = await client.sendCommand<{
@@ -528,7 +591,6 @@ export async function runDispatch(
 						...callback.fields,
 						...routingFields,
 						...caller,
-						...chain,
 					},
 					'new_ai_tab_with_prompt_result'
 				);
@@ -593,7 +655,6 @@ export async function runDispatch(
 					...callback.fields,
 					...routingFields,
 					...caller,
-					...chain,
 				},
 				'command_result'
 			);
@@ -666,6 +727,8 @@ export async function runDispatch(
 			...(callback.callerAgentId ? { notifyOnComplete: callback.callerAgentId } : {}),
 		};
 	} catch (error) {
+		// A peer that could not be attached is reported by the peer path, with its code.
+		if (error instanceof PeerResolveError) throw error;
 		if (awaitingDispatchAck)
 			return {
 				success: false,
@@ -689,6 +752,7 @@ export async function runDispatch(
  * app is down - exactly like every other dispatch mode.
  */
 async function runQueueDispatch(
+	run: BridgeRunner,
 	agentId: string,
 	message: string,
 	options: DispatchOptions,
@@ -701,7 +765,7 @@ async function runQueueDispatch(
 	const dispatchId = options.dispatchId ?? generateUUID();
 	let awaitingQueueAck = false;
 	try {
-		const result = await withMaestroClient(async (client) => {
+		const result = await run(async (client) => {
 			awaitingQueueAck = true;
 			const reply = await client.sendCommand<{
 				success?: boolean;
@@ -786,6 +850,7 @@ async function runQueueDispatch(
 				: {}),
 		};
 	} catch (error) {
+		if (error instanceof PeerResolveError) throw error;
 		if (awaitingQueueAck)
 			return {
 				success: false,
@@ -797,6 +862,86 @@ async function runQueueDispatch(
 					'Queue acknowledgment lost. Reconcile with the same --dispatch-id; do not resend with a new ID.',
 			};
 		return mapDispatchError(error, agentId);
+	}
+}
+
+/** A peer failure as a dispatch response: the `PEER_*` code, the peer, and the exit code. */
+function peerFailureResponse(error: PeerResolveError): DispatchResponse {
+	return {
+		success: false,
+		error: error.message,
+		code: peerErrorCode(error.code),
+		exitCode: error.exitCode,
+		...(error.peer ? { peer: error.peer } : {}),
+	};
+}
+
+/**
+ * Dispatch to an agent on a peer's host: the same `send_command`, `new_ai_tab_with_prompt` or
+ * `enqueue_command` the desktop path sends, over the peer's bridge. What only this machine can
+ * resolve is refused before anything is sent: a completion callback names a LOCAL agent the host
+ * cannot wake, a routing steers consults of LOCAL @mentions, and the caller's hand-off marker
+ * belongs in a LOCAL transcript. Nothing is queued or replayed here: a lost acknowledgement is
+ * `DISPATCH_UNKNOWN`, reconciled with the same `--dispatch-id`, as it is locally.
+ */
+async function runPeerDispatch(
+	target: PeerTarget,
+	message: string,
+	options: DispatchOptions,
+	queue: boolean,
+	routing: MentionRouting | undefined
+): Promise<DispatchResponse> {
+	const localOnly = options.notifyOnComplete
+		? '--notify-on-complete'
+		: options.callbackTab !== undefined ||
+			  options.callbackPrompt !== undefined ||
+			  options.callbackTimeout !== undefined
+			? '--callback-tab / --callback-prompt / --callback-timeout'
+			: routing
+				? '--routing'
+				: undefined;
+	if (localOnly) {
+		return {
+			success: false,
+			error: `${localOnly} cannot reach across to peer "${target.peer}": a callback wakes a local agent, and a routing steers local @mentions. Dispatch without it.`,
+			code: 'INVALID_OPTIONS',
+			peer: target.peer,
+		};
+	}
+
+	// A peer dispatch spends from this machine's chain like a local one. The chain id is not
+	// forwarded: the host keeps its own budget ledger.
+	if (!options.skipConsultBudget) {
+		const admission = admitCliConsult();
+		if (!admission.allowed) {
+			return { success: false, error: admission.message, code: admission.code, peer: target.peer };
+		}
+	}
+
+	let resolved;
+	try {
+		resolved = await resolvePeerAgent(target);
+	} catch (error) {
+		if (error instanceof PeerResolveError) return peerFailureResponse(error);
+		throw error;
+	}
+	const { agent, peer, withBridge } = resolved;
+	const background = resolveBackgroundFlag(options, 'dispatch-new-tab');
+	try {
+		const response = queue
+			? await runQueueDispatch(withBridge, agent.id, message, options, background, {}, {}, {})
+			: await deliverDispatch(withBridge, agent.id, message, options, {
+					background,
+					callbackFields: {},
+					routingFields: {},
+					caller: {},
+				});
+		return { ...response, peer };
+	} catch (error) {
+		if (error instanceof PeerResolveError) return peerFailureResponse(error);
+		throw error;
+	} finally {
+		await resolved.release();
 	}
 }
 
@@ -812,10 +957,25 @@ export async function dispatch(
 	const result = await runDispatch(agentIdArg, message, options);
 
 	if (!result.success) {
-		if (result.unknown || result.admission) console.log(JSON.stringify(result, null, 2));
-		else emitErrorJson(result.error ?? 'Unknown error', result.code ?? 'UNKNOWN');
+		const { exitCode, ...printed } = result;
+		if (printed.unknown || printed.admission) console.log(JSON.stringify(printed, null, 2));
+		else if (printed.peer) {
+			console.log(
+				JSON.stringify(
+					{
+						success: false,
+						error: printed.error ?? 'Unknown error',
+						code: printed.code ?? 'UNKNOWN',
+						peer: printed.peer,
+					},
+					null,
+					2
+				)
+			);
+		} else emitErrorJson(printed.error ?? 'Unknown error', printed.code ?? 'UNKNOWN');
 		exitWith(
-			result.code === MAESTRO_NOT_RUNNING_CODE ? ExitCode.NotRunning : ExitCode.GeneralError
+			exitCode ??
+				(printed.code === MAESTRO_NOT_RUNNING_CODE ? ExitCode.NotRunning : ExitCode.GeneralError)
 		);
 		return;
 	}
@@ -837,6 +997,7 @@ export async function dispatch(
 				...(result.itemId ? { itemId: result.itemId } : {}),
 				...(result.callbackId ? { callbackId: result.callbackId } : {}),
 				...(result.notifyOnComplete ? { notifyOnComplete: result.notifyOnComplete } : {}),
+				...(result.peer ? { peer: result.peer } : {}),
 			},
 			null,
 			2
