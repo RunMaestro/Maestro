@@ -99,8 +99,9 @@ vi.mock('fs', () => ({
 	existsSync: vi.fn(),
 	readdirSync: vi.fn(),
 	accessSync: vi.fn(),
-	constants: { R_OK: 4 },
+	constants: { F_OK: 0, R_OK: 4 },
 	promises: {
+		access: vi.fn(),
 		readdir: vi.fn(),
 		readFile: vi.fn(),
 	},
@@ -2396,7 +2397,7 @@ describe('agents IPC handlers', () => {
 
 			expect(getAllSpy).toHaveBeenCalled();
 			expect(result).toHaveProperty('/Users/me/.claude');
-			expect(result['/Users/me/.claude'].session.percent).toBe(42);
+			expect(result['/Users/me/.claude'].session?.percent).toBe(42);
 			getAllSpy.mockRestore();
 		});
 
@@ -2409,6 +2410,78 @@ describe('agents IPC handlers', () => {
 
 			expect(result).toEqual({});
 			getAllSpy.mockRestore();
+		});
+
+		// Snapshots are retained for weeks, and the dashboard draws a row for
+		// every snapshot key, so a deleted config dir kept its row long after the
+		// account list had forgotten it. Its snapshot is dropped and forgotten here.
+		it('drops and forgets the snapshot of an account whose dir was deleted', async () => {
+			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
+			const snapshot = (configDirKey: string) => ({
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey,
+				weekAllModels: { percent: 7 },
+				weekSonnetOnly: { percent: 3 },
+			});
+			const retainedSpy = vi.spyOn(claudeUsageStore, 'getRetainedSnapshots').mockReturnValue({
+				'/Users/me/.claude-smash': snapshot('/Users/me/.claude-smash'),
+				'/Users/me/.claude-adrian': snapshot('/Users/me/.claude-adrian'),
+			});
+			const forgetSpy = vi.spyOn(claudeUsageStore, 'forgetSnapshots').mockImplementation(() => {});
+			vi.mocked(fs.promises.access).mockImplementation(async (target) => {
+				if (String(target).endsWith('.claude-adrian')) {
+					throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+				}
+			});
+
+			try {
+				const handler = handlers.get('agents:getClaudeUsageSnapshots')!;
+				const result = await handler({} as any);
+
+				expect(Object.keys(result)).toEqual(['/Users/me/.claude-smash']);
+				expect(forgetSpy).toHaveBeenCalledWith(new Set(['/Users/me/.claude-adrian']));
+			} finally {
+				vi.mocked(fs.promises.access).mockReset();
+				retainedSpy.mockRestore();
+				forgetSpy.mockRestore();
+			}
+		});
+	});
+
+	describe('agents:getCodexUsageSnapshots', () => {
+		it('drops and forgets the snapshot of a Codex home that was deleted', async () => {
+			const codexUsageStore = await import('../../../../main/stores/codexUsageStore');
+			const snapshot = (codexHomeKey: string) => ({
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey,
+				authState: 'authenticated' as const,
+			});
+			const retainedSpy = vi
+				.spyOn(codexUsageStore, 'getRetainedCodexUsageSnapshots')
+				.mockReturnValue({
+					'/Users/me/.codex': snapshot('/Users/me/.codex'),
+					'/Users/me/.codex-old': snapshot('/Users/me/.codex-old'),
+				} as any);
+			const forgetSpy = vi
+				.spyOn(codexUsageStore, 'forgetCodexUsageSnapshots')
+				.mockImplementation(() => {});
+			vi.mocked(fs.promises.access).mockImplementation(async (target) => {
+				if (String(target).endsWith('.codex-old')) {
+					throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+				}
+			});
+
+			try {
+				const handler = handlers.get('agents:getCodexUsageSnapshots')!;
+				const result = await handler({} as any);
+
+				expect(Object.keys(result)).toEqual(['/Users/me/.codex']);
+				expect(forgetSpy).toHaveBeenCalledWith(new Set(['/Users/me/.codex-old']));
+			} finally {
+				vi.mocked(fs.promises.access).mockReset();
+				retainedSpy.mockRestore();
+				forgetSpy.mockRestore();
+			}
 		});
 	});
 

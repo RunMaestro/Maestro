@@ -104,6 +104,7 @@ function TabBarInner({
 	colorBlindMode,
 	sshRemote,
 	leadingSlot,
+	readOnly = false,
 }: TabBarProps) {
 	// Dev-time warnings for missing handlers when unified tabs are provided
 	if (process.env.NODE_ENV !== 'production' && unifiedTabs) {
@@ -632,7 +633,8 @@ function TabBarInner({
 		theme,
 		sessionId,
 		sessionAgentSessionId,
-		canClose: true,
+		canClose: !readOnly,
+		readOnly,
 		onSelect: onTabSelect,
 		onClose: onTabClose,
 		onDragStart: handleDragStart,
@@ -682,8 +684,8 @@ function TabBarInner({
 			// Accept a tiled pane's title-bar drag dropped onto the bar background to
 			// promote it back to a standalone tab. Chip reorder is unaffected (it
 			// targets sibling chips).
-			onDragOver={handleBarDragOver}
-			onDrop={handleBarDrop}
+			onDragOver={readOnly ? undefined : handleBarDragOver}
+			onDrop={readOnly ? undefined : handleBarDrop}
 			style={{
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
@@ -713,27 +715,29 @@ function TabBarInner({
 						snoozedTabCount={snoozedTabCount}
 					/>
 				)}
-				<button
-					onClick={toggleUnreadFilter}
-					className="relative flex items-center justify-center w-6 h-6 rounded transition-colors"
-					style={{
-						color: showUnreadOnly ? theme.colors.accentForeground : theme.colors.textDim,
-						backgroundColor: showUnreadOnly ? theme.colors.accent : undefined,
-					}}
-					title={
-						showUnreadOnly
-							? `Showing unread only (${formatShortcutKeys(tabShortcuts.filterUnreadTabs?.keys ?? ['Meta', 'u'])})`
-							: `Filter unread tabs (${formatShortcutKeys(tabShortcuts.filterUnreadTabs?.keys ?? ['Meta', 'u'])})`
-					}
-				>
-					<Bell className="w-4 h-4" />
-					{hasUnreadVisibleTab(tabs) && (
-						<div
-							className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full"
-							style={{ backgroundColor: theme.colors.error }}
-						/>
-					)}
-				</button>
+				{!readOnly && (
+					<button
+						onClick={toggleUnreadFilter}
+						className="relative flex items-center justify-center w-6 h-6 rounded transition-colors"
+						style={{
+							color: showUnreadOnly ? theme.colors.accentForeground : theme.colors.textDim,
+							backgroundColor: showUnreadOnly ? theme.colors.accent : undefined,
+						}}
+						title={
+							showUnreadOnly
+								? `Showing unread only (${formatShortcutKeys(tabShortcuts.filterUnreadTabs?.keys ?? ['Meta', 'u'])})`
+								: `Filter unread tabs (${formatShortcutKeys(tabShortcuts.filterUnreadTabs?.keys ?? ['Meta', 'u'])})`
+						}
+					>
+						<Bell className="w-4 h-4" />
+						{hasUnreadVisibleTab(tabs) && (
+							<div
+								className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full"
+								style={{ backgroundColor: theme.colors.error }}
+							/>
+						)}
+					</button>
+				)}
 				{leadingSlot && (
 					<span
 						aria-hidden="true"
@@ -1011,18 +1015,20 @@ function TabBarInner({
 			<PluginUiItemsSlot surface="tabBar" className="shrink-0 self-center mb-1" />
 
 			{/* New tab button + popover */}
-			<NewTabPopover
-				theme={theme}
-				onNewTab={onNewTab}
-				onNewFileTab={onNewFileTab}
-				onNewBrowserTab={onNewBrowserTab}
-				onNewTerminalTab={onNewTerminalTab}
-				newTabKeys={tabShortcuts.newTab?.keys ?? ['Meta', 't']}
-				fileTabKeys={tabShortcuts.newFileTab?.keys ?? ['Alt', 'n']}
-				browserTabKeys={tabShortcuts.newBrowserTab?.keys ?? ['Meta', 'b']}
-				terminalKeys={shortcuts.toggleMode?.keys ?? ['Meta', 'j']}
-				isOverflowing={isOverflowing}
-			/>
+			{!readOnly && (
+				<NewTabPopover
+					theme={theme}
+					onNewTab={onNewTab}
+					onNewFileTab={onNewFileTab}
+					onNewBrowserTab={onNewBrowserTab}
+					onNewTerminalTab={onNewTerminalTab}
+					newTabKeys={tabShortcuts.newTab?.keys ?? ['Meta', 't']}
+					fileTabKeys={tabShortcuts.newFileTab?.keys ?? ['Alt', 'n']}
+					browserTabKeys={tabShortcuts.newBrowserTab?.keys ?? ['Meta', 'b']}
+					terminalKeys={shortcuts.toggleMode?.keys ?? ['Meta', 'j']}
+					isOverflowing={isOverflowing}
+				/>
+			)}
 		</div>
 	);
 }

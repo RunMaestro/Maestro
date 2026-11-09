@@ -162,9 +162,10 @@ export function handleSendCommand(
 	// the active tab (legacy `send --live` behavior). Used by
 	// `maestro-cli dispatch --session <tabId>` to address a specific tab.
 	const requestedTabId = typeof message.tabId === 'string' ? message.tabId : undefined;
-	// force=true bypasses the busy-state guard below, allowing callers to
-	// dispatch concurrent writes to an already-running agent. Used by
-	// `maestro-cli dispatch --force`.
+	// force=true lets the prompt land in a tab that is itself mid-turn
+	// (`maestro-cli dispatch --force`, gated CLI-side by `allowConcurrentSend`).
+	// The busy guard is per tab and lives in the renderer, the only place that
+	// knows which tab is working.
 	const force = message.force === true;
 	// background=true suppresses the desktop's focus side effect (switching
 	// to the target agent/tab). `maestro-cli dispatch` sets this by default;
@@ -181,6 +182,21 @@ export function handleSendCommand(
 		LOG_CONTEXT
 	);
 
+	// Every refusal answers as `command_result` carrying the caller's
+	// requestId. A bare `error` frame has no requestId and no matching type, so
+	// the CLI never matched it and sat there until its own timeout.
+	const reject = (error: string, code?: string) => {
+		ctx.send(client, {
+			type: 'command_result',
+			success: false,
+			sessionId,
+			...(requestedTabId ? { tabId: requestedTabId } : {}),
+			error,
+			...(code ? { code } : {}),
+			requestId: message.requestId,
+		});
+	};
+
 	// Image-only sends are valid in AI mode (the composer lets users paste
 	// images and submit without typing), so the guard accepts either a
 	// non-empty command OR at least one image. Normalize a missing command
@@ -191,7 +207,7 @@ export function handleSendCommand(
 			`[Web Command] Missing sessionId or command/images: sessionId=${sessionId}, commandLen=${command?.length}, images=${images?.length ?? 0}`,
 			LOG_CONTEXT
 		);
-		ctx.sendError(client, 'Missing sessionId or command');
+		reject('Missing sessionId or command', 'INVALID_OPTIONS');
 		return;
 	}
 	const effectiveCommand = command ?? '';
@@ -201,7 +217,7 @@ export function handleSendCommand(
 	// behind a caller who asked for another.
 	const routingField = parseMentionRoutingField(message.mentionRouting);
 	if (!routingField.ok) {
-		ctx.sendError(client, routingField.error, { sessionId });
+		reject(routingField.error, 'INVALID_OPTIONS');
 		return;
 	}
 	const mentionRouting = routingField.routing;
@@ -209,7 +225,7 @@ export function handleSendCommand(
 	// Get session details to check state and determine how to handle
 	const sessionDetail = ctx.callbacks.getSessionDetail?.(sessionId);
 	if (!sessionDetail) {
-		ctx.sendError(client, 'Session not found');
+		reject(`Session not found: ${sessionId}`, 'SESSION_NOT_FOUND');
 		return;
 	}
 
@@ -231,13 +247,20 @@ export function handleSendCommand(
 					dispatchId,
 					requestedTabId ?? priorDispatch?.targetTabId ?? sessionDetail.activeTabId
 				);
-	// Check if session is busy - prevent race conditions between desktop and web.
-	// `force: true` opts out of this guard (see `maestro-cli send --live --force`).
-	if (sessionDetail.state === 'busy' && !force && !(coverage.managed && priorDispatch)) {
-		ctx.sendError(client, 'Session is busy - please wait for the current operation to complete', {
-			sessionId,
-		});
-		logger.debug(`Command rejected - session ${sessionId} is busy`, LOG_CONTEXT);
+	// No agent-level busy guard here. A busy AGENT only means some tab of it
+	// is working; an idle tab beside it takes its own turn in parallel, the way
+	// the desktop's tabs do. Only a busy TARGET tab is refused, and the renderer
+	// decides that (see handleRemoteCommand) because this snapshot has no
+	// per-tab state.
+	//
+	// Supervised (Pianola-managed) dispatch is the exception: its admission
+	// enrolls the target before the renderer sees the prompt, and the release
+	// step refuses a busy agent anyway, so a busy agent is refused here, before
+	// anything is enrolled. A reconcile of an admission already on record
+	// (`priorDispatch`) is never refused: it answers with the recorded outcome.
+	if (coverage.managed && !priorDispatch && sessionDetail.state === 'busy' && !force) {
+		reject('Session is busy - please wait for the current operation to complete', 'SESSION_BUSY');
+		logger.debug(`Supervised command rejected - session ${sessionId} is busy`, LOG_CONTEXT);
 		return;
 	}
 	if (sessionDetail.state === 'busy' && force) {
@@ -343,9 +366,7 @@ export function handleSendCommand(
 	let sendCallbackId: string | undefined;
 	if (typeof message.notifyOnComplete === 'string' && message.notifyOnComplete) {
 		if (!requestedTabId) {
-			ctx.sendError(client, '--notify-on-complete requires an explicit target tab', {
-				sessionId,
-			});
+			reject('--notify-on-complete requires an explicit target tab', 'INVALID_OPTIONS');
 			return;
 		}
 		const armed = armDispatchCallback(ctx, message, {
@@ -355,7 +376,7 @@ export function handleSendCommand(
 			isNewTab: false,
 		});
 		if (armed.error) {
-			ctx.sendError(client, armed.error, { sessionId });
+			reject(armed.error, 'INVALID_OPTIONS');
 			return;
 		}
 		sendCallbackId = armed.callbackId;
@@ -393,6 +414,13 @@ export function handleSendCommand(
 						: {}),
 					...(resolvedTabId ? { tabId: resolvedTabId } : {}),
 					...(success && sendCallbackId ? { callbackId: sendCallbackId } : {}),
+					...(success
+						? {}
+						: {
+								error:
+									'Maestro declined the dispatch: the target tab is mid-turn (use --queue to wait, or --force with allowConcurrentSend), the tab no longer exists, or the agent cannot take a remote prompt',
+								code: 'DISPATCH_REFUSED',
+							}),
 					requestId: message.requestId,
 				});
 				if (!success) {
@@ -417,10 +445,15 @@ export function handleSendCommand(
 					{ sessionId, mode, requestId: message.requestId },
 					'Failed to execute command'
 				);
+				// reportHandlerError's frame carries no requestId; answer the caller too.
+				reject(
+					`Failed to execute command: ${error instanceof Error ? error.message : String(error)}`,
+					'COMMAND_FAILED'
+				);
 			});
 	} else {
 		cancelArmedCallback();
-		ctx.sendError(client, 'Command execution not configured');
+		reject('Command execution not configured', 'COMMAND_FAILED');
 	}
 }
 

@@ -164,6 +164,18 @@ describe('probeAvailability', () => {
 		await expect(probeAvailability(makeLimitPausedSession())).resolves.toBe(false);
 	});
 
+	// claude 2.1.317 paints no 5-hour window, so the snapshot has no `session`;
+	// availability then rests on the weekly window alone.
+	it('decides on the weekly window alone when the snapshot has no session window', async () => {
+		const { session: _omitted, ...open } = makeSnapshot(0, 50);
+		useClaudeUsageStore.getState().setSnapshots({ '/home/.claude': open });
+		await expect(probeAvailability(makeLimitPausedSession())).resolves.toBe(true);
+
+		const { session: _alsoOmitted, ...capped } = makeSnapshot(0, 100);
+		useClaudeUsageStore.getState().setSnapshots({ '/home/.claude': capped });
+		await expect(probeAvailability(makeLimitPausedSession())).resolves.toBe(false);
+	});
+
 	it('returns false when no snapshot is available', async () => {
 		await expect(probeAvailability(makeLimitPausedSession())).resolves.toBe(false);
 	});

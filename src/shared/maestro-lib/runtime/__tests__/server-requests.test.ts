@@ -173,6 +173,257 @@ describe('update_session_config', () => {
 	);
 });
 
+describe('import_agent', () => {
+	let dir: string;
+	let workDir: string;
+	let configDir: string;
+	let runtime: MaestroRuntime;
+	let handle: RequestHandler;
+
+	beforeEach(async () => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-import-'));
+		workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-import-cwd-'));
+		configDir = path.join(workDir, '.claude-work');
+		fs.mkdirSync(configDir);
+		let id = 0;
+		const started = await createMaestroRuntime({
+			dataDir: dir,
+			mode: 'host',
+			// No `checkCwd` seam: the import must apply the runtime's real directory check.
+			deps: {
+				pid: 100,
+				now: () => 5_000,
+				bootTime: () => 1_000,
+				isPidAlive: (pid) => pid === 100,
+				hostname: () => 'testhost',
+				rules: { newId: () => `id-${++id}`, now: () => 2_000, random: () => 0 },
+				readTabDefaults: async () => DEFAULT_TAB_DEFAULTS,
+				watchDirectory: () => ({ close: () => undefined }),
+				probeBinary: async (binaryName) => ({ exists: true, path: `/fake/bin/${binaryName}` }),
+			},
+		});
+		if (!started.ok) throw new Error(`refused: ${started.refusal.message}`);
+		runtime = started.runtime;
+		handle = createRequestHandler(runtime);
+	});
+
+	afterEach(async () => {
+		await runtime.connection.close();
+		fs.rmSync(dir, { recursive: true, force: true });
+		fs.rmSync(workDir, { recursive: true, force: true });
+	});
+
+	const logs = [
+		{ id: 'l1', timestamp: 10, source: 'user', text: 'first' },
+		{ id: 'l2', timestamp: 11, source: 'ai', text: 'answer' },
+	];
+	const message = (overrides: Record<string, unknown> = {}) => ({
+		type: 'import_agent',
+		agent: {
+			name: 'Lifted',
+			toolType: 'claude-code',
+			cwd: workDir,
+			customModel: 'opus',
+			customEffort: 'high',
+			customArgs: '--verbose',
+			customEnvVars: { CLAUDE_CONFIG_DIR: configDir },
+		},
+		tabs: [
+			{ id: 't1', name: 'Main', starred: true, agentSessionId: 'sess-1', logs },
+			{ id: 't2', agentSessionId: 'sess-2', logs: [], customModel: 'sonnet', readOnlyMode: true },
+		],
+		activeTabId: 't2',
+		...overrides,
+	});
+
+	it('creates the agent with every tab, its transcript, and the same provider session ids', async () => {
+		const reply = await handle(message());
+		expect(reply).toMatchObject({ type: 'import_agent_result', success: true, queued: 0 });
+		const agentId = (reply as { sessionId: string }).sessionId;
+
+		const agent = await runtime.agents.get(agentId);
+		if (!agent.ok) throw new Error(agent.error.message);
+		expect(agent.value).toMatchObject({
+			name: 'Lifted',
+			toolType: 'claude-code',
+			cwd: workDir,
+			customModel: 'opus',
+			customEffort: 'high',
+			customArgs: '--verbose',
+			customEnvVars: { CLAUDE_CONFIG_DIR: configDir },
+			activeTabId: 't2',
+			unifiedTabOrder: [
+				{ type: 'ai', id: 't1' },
+				{ type: 'ai', id: 't2' },
+			],
+		});
+		expect(agent.value).not.toHaveProperty('sessionSshRemoteConfig');
+
+		const tabs = await runtime.tabs.list(agentId);
+		if (!tabs.ok) throw new Error(tabs.error.message);
+		expect(tabs.value).toEqual([
+			expect.objectContaining({
+				id: 't1',
+				name: 'Main',
+				starred: true,
+				agentSessionId: 'sess-1',
+				state: 'idle',
+			}),
+			expect.objectContaining({
+				id: 't2',
+				agentSessionId: 'sess-2',
+				customModel: 'sonnet',
+				readOnlyMode: true,
+				state: 'idle',
+			}),
+		]);
+		expect(await runtime.tabs.transcript(agentId, 't1')).toEqual({ ok: true, value: logs });
+	});
+
+	it('refuses a working directory that does not exist on the host, and creates nothing', async () => {
+		const missing = path.join(workDir, 'gone');
+		const reply = await handle(
+			message({ agent: { name: 'Lifted', toolType: 'claude-code', cwd: missing } })
+		);
+		expect(reply).toEqual({
+			type: 'import_agent_result',
+			success: false,
+			error: `Working directory does not exist: ${missing}`,
+		});
+		expect(await runtime.agents.list()).toEqual({ ok: true, value: [] });
+	});
+
+	it('refuses a session-dir selector naming a directory the host lacks, and creates nothing', async () => {
+		const missing = path.join(workDir, '.claude-gone');
+		const reply = await handle(
+			message({
+				agent: {
+					name: 'Lifted',
+					toolType: 'claude-code',
+					cwd: workDir,
+					customEnvVars: { CLAUDE_CONFIG_DIR: missing },
+				},
+			})
+		);
+		expect(reply).toMatchObject({ type: 'import_agent_result', success: false });
+		const error = (reply as { error: string }).error;
+		expect(error).toContain(
+			`The provider session directory set by CLAUDE_CONFIG_DIR does not exist: ${missing}`
+		);
+		expect(error).toContain('start a new session');
+		expect(await runtime.agents.list()).toEqual({ ok: true, value: [] });
+	});
+
+	it('imports an agent with no session-dir selector: the provider default dir is the SSH one', async () => {
+		const reply = await handle(
+			message({ agent: { name: 'Lifted', toolType: 'claude-code', cwd: workDir } })
+		);
+		expect(reply).toMatchObject({ type: 'import_agent_result', success: true });
+	});
+
+	it.each([
+		['no tabs', { tabs: [] }, 'An imported agent needs at least one tab.'],
+		['a tab without an id', { tabs: [{ logs: [] }] }, 'Every imported tab needs an id.'],
+		['a tab without a transcript', { tabs: [{ id: 't1' }] }, 'Imported tab t1 has no transcript.'],
+		[
+			'a queued message for a tab it does not bring',
+			{ queue: [{ tabId: 'tX', text: 'next' }] },
+			'A queued message is for tab tX, which is not imported.',
+		],
+		[
+			'an SSH remote',
+			{
+				agent: {
+					name: 'Lifted',
+					toolType: 'claude-code',
+					cwd: '/x',
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				},
+			},
+			'An imported agent runs on this host, so it cannot carry an SSH remote. Send it without one.',
+		],
+	])('refuses %s', async (_label, overrides, error) => {
+		expect(await handle(message(overrides))).toEqual({
+			type: 'import_agent_result',
+			success: false,
+			error,
+		});
+		expect(await runtime.agents.list()).toEqual({ ok: true, value: [] });
+	});
+
+	it('refuses a name another agent on the host already has', async () => {
+		expect(await handle(message())).toMatchObject({ success: true });
+		expect(await handle(message())).toEqual({
+			type: 'import_agent_result',
+			success: false,
+			error: 'An agent named "Lifted" already exists',
+		});
+	});
+});
+
+describe('import_agent queued messages', () => {
+	it('hands the queue to the client with the agent, and replies with what was queued', async () => {
+		let received: unknown;
+		const client = {
+			agents: {
+				import: async (input: unknown) => {
+					received = input;
+					return ok({ agentId: 'host-1', queued: 1, notices: ['one was not queued'] });
+				},
+			},
+		} as unknown as MaestroClient;
+		const reply = await createRequestHandler(client)({
+			type: 'import_agent',
+			agent: { name: 'A', toolType: 'codex', cwd: '/w' },
+			tabs: [{ id: 't1', logs: [] }],
+			queue: [
+				{ tabId: 't1', text: 'one', images: ['data:image/png;base64,AA'] },
+				{ tabId: 't1', text: 'two' },
+			],
+		});
+		expect(reply).toEqual({
+			type: 'import_agent_result',
+			success: true,
+			sessionId: 'host-1',
+			queued: 1,
+			notices: ['one was not queued'],
+		});
+		expect(received).toMatchObject({
+			agent: { name: 'A', provider: 'codex', cwd: '/w' },
+			tabs: [{ id: 't1', logs: [] }],
+			queue: [
+				{ tabId: 't1', text: 'one', images: ['data:image/png;base64,AA'] },
+				{ tabId: 't1', text: 'two' },
+			],
+		});
+	});
+
+	it('refuses a queued message that does not name its tab, before importing anything', async () => {
+		let called = false;
+		const client = {
+			agents: {
+				import: async () => {
+					called = true;
+					return ok({ agentId: 'x', queued: 0 });
+				},
+			},
+		} as unknown as MaestroClient;
+		expect(
+			await createRequestHandler(client)({
+				type: 'import_agent',
+				agent: { name: 'A', toolType: 'codex', cwd: '/w' },
+				tabs: [{ id: 't1', logs: [] }],
+				queue: [{ text: 'orphan' }],
+			})
+		).toEqual({
+			type: 'import_agent_result',
+			success: false,
+			error: 'Every queued message needs the tab it is for.',
+		});
+		expect(called).toBe(false);
+	});
+});
+
 /** A client that records what it is asked and answers from a script. Only what these messages reach exists. */
 function recordingClient(
 	options: {

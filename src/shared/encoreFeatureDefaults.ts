@@ -30,6 +30,7 @@ export const ENCORE_FEATURE_DEFAULTS = {
 	maestroRun: false,
 	throughputGauge: false,
 	dataview: false,
+	federation: false,
 } as const satisfies Readonly<Record<string, boolean>>;
 
 /** The flag shape these defaults describe, derived so the two cannot drift. */

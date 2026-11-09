@@ -74,6 +74,7 @@ import {
 import { isCodexTransport } from '../../../shared/codexTransport';
 import { isHarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
+import { liftBusyReason, readLiftedTo } from '../../../shared/maestro-lib/agents/lift-pointer';
 import {
 	TAB_CONTEXT_OP_EVENT,
 	runRemoteTabContextOp,
@@ -1834,6 +1835,47 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					: undefined,
 			});
 			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, report);
+			return;
+		}
+
+		// Federation lift (`maestro-cli lift`): the host now owns the agent, so this
+		// copy becomes a pointer. Every tab and transcript stays. The queued
+		// messages that moved with the agent leave this queue, by id, so nothing
+		// waits here for a turn that will never start. Refused while a turn runs:
+		// the CLI then removes the host's copy, so the agent has one owner.
+		if ('liftedTo' in patchObj) {
+			const pointer = readLiftedTo(patchObj.liftedTo);
+			const refusal = !pointer
+				? "Invalid value for field 'liftedTo'"
+				: readLiftedTo(session.liftedTo)
+					? 'Agent was already lifted'
+					: liftBusyReason(session);
+			if (refusal || !pointer) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: refusal ?? "Invalid value for field 'liftedTo'",
+				});
+				return;
+			}
+			const moved = new Set(
+				Array.isArray(patchObj.liftedQueueItemIds)
+					? patchObj.liftedQueueItemIds.filter((id): id is string => typeof id === 'string')
+					: []
+			);
+			const applyLift = (s: Session): Session => ({
+				...s,
+				liftedTo: pointer,
+				executionQueue: (s.executionQueue ?? []).filter((item) => !moved.has(item.id)),
+			});
+			setSessions((prev: Session[]) => prev.map((s) => (s.id === sessionId ? applyLift(s) : s)));
+			try {
+				await window.maestro.sessions.setMany([applyLift(session) as any], []);
+			} catch (persistErr) {
+				logger.error('[Remote] Failed to persist lift pointer:', undefined, persistErr);
+			}
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: true,
+			});
 			return;
 		}
 

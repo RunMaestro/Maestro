@@ -50,8 +50,33 @@ describe('startRuntimeHost', () => {
 		stop: async () => undefined,
 		answer: async () => undefined,
 	});
+	/** A sleep guard that records what it was asked, so no test spawns a real caffeinate. */
+	const recordingGuard = () => {
+		const calls: boolean[] = [];
+		let held = false;
+		let stopped = false;
+		return {
+			calls,
+			stopped: () => stopped,
+			guard: {
+				update: (hasWork: boolean) => {
+					calls.push(hasWork);
+					held = hasWork;
+				},
+				holding: () => held,
+				stop: () => {
+					stopped = true;
+					held = false;
+				},
+			},
+		};
+	};
 	// The temp directory is no bundle, so the prompt probe is answered for it.
-	const noCue = { startCue: async () => idleCue(), promptsLoad: () => true };
+	const noCue = {
+		startCue: async () => idleCue(),
+		promptsLoad: () => true,
+		createSleepGuard: () => recordingGuard().guard,
+	};
 
 	async function start(): Promise<RunningHost> {
 		const host = await startRuntimeHost(options(), noCue);
@@ -217,6 +242,71 @@ describe('startRuntimeHost', () => {
 		expect(readCliServerInfoFrom(dir)?.pid).toBe(process.pid);
 	});
 
+	describe('sleep prevention', () => {
+		it('holds while a Cue run is in flight, releases when idle, and reports it in status', async () => {
+			const recorded = recordingGuard();
+			const createSleepGuard = vi.fn(() => recorded.guard);
+			let cueRuns = 0;
+			let workChanged: (() => void) | undefined;
+			const host = await startRuntimeHost(options(), {
+				...noCue,
+				createSleepGuard,
+				startCue: async (context) => {
+					workChanged = context.onWorkChanged;
+					return { ...idleCue(), activeRuns: () => cueRuns };
+				},
+			});
+			running.push(host);
+			expect(createSleepGuard).toHaveBeenCalledWith(
+				expect.objectContaining({ enabled: true, pid: process.pid })
+			);
+
+			cueRuns = 1;
+			workChanged?.();
+			// A burst of changes is one look, taken on the next turn of the event loop.
+			workChanged?.();
+			await vi.waitFor(() => expect(recorded.calls).toEqual([true]));
+			expect(await requestHostStatus(dir)).toMatchObject({ preventingSleep: true });
+
+			cueRuns = 0;
+			workChanged?.();
+			await vi.waitFor(() => expect(recorded.calls).toEqual([true, false]));
+			expect(await requestHostStatus(dir)).toMatchObject({ preventingSleep: false });
+
+			await host.stop();
+			expect(recorded.stopped()).toBe(true);
+		});
+
+		it('looks at the work again on a runtime event', async () => {
+			const recorded = recordingGuard();
+			const host = await startRuntimeHost(options(), {
+				...noCue,
+				createSleepGuard: () => recorded.guard,
+			});
+			running.push(host);
+
+			const client = createWsMaestroClient({ userDataDir: dir, reconcileIntervalMs: 0 });
+			try {
+				await client.connection.connect();
+				// Renaming the agent raises `agent.updated` in the runtime.
+				await client.agents.update('a1', { name: 'Renamed' });
+				await vi.waitFor(() => expect(recorded.calls).toContain(false));
+			} finally {
+				await client.connection.close();
+			}
+		});
+
+		it('is off under --no-prevent-sleep', async () => {
+			const createSleepGuard = vi.fn(() => recordingGuard().guard);
+			const host = await startRuntimeHost(
+				{ ...options(), preventSleep: false },
+				{ ...noCue, createSleepGuard }
+			);
+			running.push(host);
+			expect(createSleepGuard).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
+		});
+	});
+
 	describe('Cue in the host', () => {
 		it('hands Cue the runtime it serves', async () => {
 			const startCue = vi.fn(async () => idleCue());
@@ -227,6 +317,7 @@ describe('startRuntimeHost', () => {
 				userDataDir: dir,
 				settingsFile: path.join(dir, 'maestro-settings.json'),
 				runtime: host.runtime,
+				onWorkChanged: expect.any(Function),
 			});
 		});
 

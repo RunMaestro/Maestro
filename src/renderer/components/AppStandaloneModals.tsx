@@ -34,6 +34,7 @@ import type { SymphonyContributionData } from './SymphonyModal';
 import type { MindMapLayoutType } from './DocumentGraph/mindMapLayouts';
 import { HostFolderPicker } from './HostFolderPicker';
 import { AgentBundleModals } from './Bundles/AgentBundleModals';
+import { MoveToHostModalHost } from './MoveToHostModal';
 
 import type {
 	Theme,
@@ -329,6 +330,7 @@ function AppStandaloneModalsInner({
 		<>
 			<HostFolderPicker theme={theme} />
 			<AgentBundleModals theme={theme} />
+			<MoveToHostModalHost theme={theme} />
 			{notificationCenterEnabled && <NotificationCenterHost theme={theme} />}
 			{/* --- DEBUG PACKAGE MODAL --- */}
 			<DebugPackageModal

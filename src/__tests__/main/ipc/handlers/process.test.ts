@@ -620,6 +620,45 @@ describe('process IPC handlers', () => {
 			}
 		);
 
+		it('refuses every agent turn of a lifted agent with its peer:agentId pointer, but not a shell', async () => {
+			const lifted = {
+				id: 'lifted-agent',
+				name: 'Lifted',
+				toolType: 'claude-code',
+				cwd: '/project',
+				aiTabs: [{ id: 'tab' }],
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			};
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? [lifted] : fallback
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				path: '/usr/bin/claude',
+				requiresPty: false,
+			});
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+			const spawn = (sessionId: string, toolType: string) =>
+				handlers.get('process:spawn')!(
+					{},
+					{ sessionId, toolType, cwd: '/project', command: 'claude', args: [] }
+				);
+
+			await expect(spawn('lifted-agent-ai-tab', 'claude-code')).rejects.toThrow(
+				'Send to build-box:host-1 instead.'
+			);
+			await expect(spawn('lifted-agent-batch-1', 'claude-code')).rejects.toThrow(
+				'build-box:host-1'
+			);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+
+			// A shell tab is not a turn: it is never refused for the lift.
+			const shell = await spawn('lifted-agent-terminal-1', 'terminal').catch(
+				(error: Error) => error
+			);
+			expect(shell instanceof Error ? shell.message : '').not.toContain('build-box');
+		});
+
 		it('binds an announced first desktop provider id before a CLI resume can start', async () => {
 			writerGate.enabled = true;
 			const events = new EventEmitter();
@@ -3303,6 +3342,7 @@ describe('process IPC handlers', () => {
 				getAgentDetector: () => null,
 				agentConfigsStore: mockAgentConfigsStore as any,
 				settingsStore: mockSettingsStore as any,
+				sessionsStore: mockSessionsStore as any,
 			};
 
 			// Re-register handlers with null agent detector

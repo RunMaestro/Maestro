@@ -412,6 +412,10 @@ export interface StandaloneCueEngineOptions {
 	onLockLost?: () => void;
 	/** See `CueEngineDeps.onDrainPhase`. */
 	onDrainPhase?: CueEngineDeps['onDrainPhase'];
+	/** See `CueEngineDeps.onPreventSleep`: a run (`cue:run:<id>`) or a schedule began. */
+	onPreventSleep?: CueEngineDeps['onPreventSleep'];
+	/** See `CueEngineDeps.onAllowSleep`: a run or a schedule ended. */
+	onAllowSleep?: CueEngineDeps['onAllowSleep'];
 	/**
 	 * Told every `action: notify` run and every run that failed on an expired
 	 * agent login (`--notify-webhook`). Must not throw or block; it is called
@@ -453,6 +457,8 @@ export function buildStandaloneCueEngineDeps(
 		runnerMode: 'standalone',
 		...(options.onLockLost ? { onLockLost: options.onLockLost } : {}),
 		...(options.onDrainPhase ? { onDrainPhase: options.onDrainPhase } : {}),
+		...(options.onPreventSleep ? { onPreventSleep: options.onPreventSleep } : {}),
+		...(options.onAllowSleep ? { onAllowSleep: options.onAllowSleep } : {}),
 		// The drain's process accounting. Before the first run fires the
 		// executors are not loaded, so there is nothing alive to count or kill.
 		countLiveCueProcesses: () => settledExecutors?.countLiveCueProcesses() ?? 0,

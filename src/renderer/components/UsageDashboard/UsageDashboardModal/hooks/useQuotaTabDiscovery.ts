@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useClaudeUsageStore } from '../../../../stores/claudeUsageStore';
 import { useCodexUsageStore } from '../../../../stores/codexUsageStore';
-import { logger } from '../../../../utils/logger';
 import {
 	hasUsefulAnthropicQuotaDetails,
 	hasUsefulCodexQuotaDetails,
@@ -34,24 +33,12 @@ export function useQuotaTabDiscovery(isOpen: boolean, usageStatsTabEnabled: bool
 
 			const jobs: Promise<unknown>[] = [];
 			if (!claudeHasData) {
-				jobs.push(
-					window.maestro.agents
-						.refreshClaudeUsageSnapshots()
-						.then(() => useClaudeUsageStore.getState().refresh())
-						.catch((err) => {
-							logger.warn('Failed to sample Anthropic usage details:', undefined, err);
-						})
-				);
+				// The store owns the sample, so the panel's Refresh button shows it
+				// in flight and a click while it runs joins it instead of stacking.
+				jobs.push(useClaudeUsageStore.getState().sample());
 			}
 			if (!codexHasData) {
-				jobs.push(
-					window.maestro.agents
-						.refreshCodexUsageSnapshots()
-						.then(() => useCodexUsageStore.getState().refresh())
-						.catch((err) => {
-							logger.warn('Failed to sample OpenAI usage details:', undefined, err);
-						})
-				);
+				jobs.push(useCodexUsageStore.getState().sample());
 			}
 			await Promise.all(jobs);
 		})();

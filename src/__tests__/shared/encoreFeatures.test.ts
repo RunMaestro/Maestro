@@ -29,6 +29,10 @@ describe('ENCORE_FEATURE_DEFAULTS', () => {
 	it('ships Dataview off', () => {
 		expect(ENCORE_FEATURE_DEFAULTS.dataview).toBe(false);
 	});
+
+	it('ships Federation off', () => {
+		expect(ENCORE_FEATURE_DEFAULTS.federation).toBe(false);
+	});
 });
 
 describe('resolveEncoreFeatures', () => {

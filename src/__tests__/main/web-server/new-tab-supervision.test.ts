@@ -566,10 +566,14 @@ describe('existing-tab production dispatch admission', () => {
 			inputMode: 'ai',
 			tabId: 'tab',
 		});
-		expect(f.ctx.sendError).toHaveBeenCalledWith(
+		expect(f.ctx.send).toHaveBeenCalledWith(
 			f.client,
-			expect.stringContaining('busy'),
-			expect.anything()
+			expect.objectContaining({
+				type: 'command_result',
+				success: false,
+				code: 'SESSION_BUSY',
+				error: expect.stringContaining('busy'),
+			})
 		);
 		expect(f.executeCommand).not.toHaveBeenCalled();
 		expect(f.newTab).not.toHaveBeenCalled();
