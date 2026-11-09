@@ -26,9 +26,16 @@ export {
 export { applyTrimmedTextPaste, clipboardHasImage } from './pasteTrim';
 export {
 	GROUP_CHAT_COMPOSER_CAPABILITIES,
+	MODERATOR_CANNOT_READ_IMAGES_MESSAGE,
+	REMOVE_ATTACHED_IMAGES_TO_SEND_DETAIL,
 	aiCanAttachImages,
+	canModeratorReadImages,
 	deriveAiComposerCapabilities,
+	deriveGroupChatComposerCapabilities,
+	flashModeratorCannotReadImages,
 	type AiComposerCapabilitiesInput,
 	type AiImageAttachInput,
 	type ComposerCapabilities,
+	type GroupChatComposerCapabilitiesInput,
+	type ModeratorCapabilitiesState,
 } from './capabilities';

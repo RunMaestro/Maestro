@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createGroupChatOperations } from '../chat-ops';
 import type { GroupChat, GroupChatLauncher } from '../types';
+import { MODERATOR_CANNOT_READ_IMAGES_REASON } from '../image-gate';
 
 const chatOf = (overrides: Partial<GroupChat> = {}): GroupChat => ({
 	id: 'c1',
@@ -157,6 +158,9 @@ describe('group chat operations', () => {
 			const h = harness();
 			await h.ops.sendUserMessage('c1', 'hello', { readOnly: true, images: ['x.png'] });
 
+			// An image send asks the room's current provider even when the moderator
+			// is already running.
+			expect(h.store.loadGroupChat).toHaveBeenCalledWith('c1');
 			expect(h.engine.routeUserMessage).toHaveBeenCalledWith('c1', 'hello', h.launcher, true, [
 				'x.png',
 			]);
@@ -167,6 +171,29 @@ describe('group chat operations', () => {
 			const h = harness({ moderatorActive: false });
 			await h.ops.sendUserMessage('c1', 'hello');
 			expect(h.order).toEqual(['spawnModerator', 'routeUserMessage']);
+		});
+
+		it('refuses images when the moderator provider cannot read them', async () => {
+			const h = harness({ loaded: chatOf({ moderatorAgentId: 'terminal' }) });
+
+			await expect(h.ops.sendUserMessage('c1', 'look', { images: ['x.png'] })).rejects.toThrow(
+				MODERATOR_CANNOT_READ_IMAGES_REASON
+			);
+			expect(h.engine.routeUserMessage).not.toHaveBeenCalled();
+		});
+
+		it('routes a text-only message even from a text-only moderator', async () => {
+			const h = harness({ loaded: chatOf({ moderatorAgentId: 'terminal' }) });
+
+			await h.ops.sendUserMessage('c1', 'hello');
+
+			expect(h.engine.routeUserMessage).toHaveBeenCalledWith(
+				'c1',
+				'hello',
+				h.launcher,
+				undefined,
+				undefined
+			);
 		});
 
 		it('says so when the chat is gone', async () => {
