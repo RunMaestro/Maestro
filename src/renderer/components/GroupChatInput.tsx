@@ -31,13 +31,17 @@ import type {
 import { QueuedItemsList } from './QueuedItemsList';
 import {
 	ComposerSendColumn,
+	ComposerTextarea,
 	GROUP_CHAT_COMPOSER_CAPABILITIES,
+	PhoneComposerHandle,
 	applyTrimmedTextPaste,
 	clipboardHasImage,
 } from './ChatComposer';
+import { QuitWhenIdleIndicator } from './QuitWhenIdleIndicator';
 import { ToolbarControls } from './InputArea/components/ToolbarControls';
 import { PhoneSheetSwitchRow } from './ui/PhoneSheetRows';
 import { shortcutSuffix } from './ui/ShortcutHint';
+import { usePersistedToggle } from '../hooks/ui/usePersistedToggle';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { useStableCallback } from '../hooks/utils/useStableCallback';
 import { useVoiceInput } from '../hooks/utils/useVoiceInput';
@@ -68,11 +72,9 @@ import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
 import type { SteerEligibility } from '../utils/executionQueue';
 import { groupChatSteerBlockedReason } from '../../shared/groupChatSteering';
 import { buildKnownMentionNameSet } from '../hooks/input/useAgentMentionCompletion';
-import {
-	MENTION_OVERLAY_TYPOGRAPHY,
-	MentionChipOverlay,
-	useMentionChipOverlay,
-} from './MentionChipOverlay';
+
+/** localStorage key for the room's phone composer fold (separate from AI chat's). */
+export const GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY = 'phone.groupChatComposer.collapsed';
 
 /** Maximum image file size in bytes (10MB) */
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -104,9 +106,6 @@ function checkGroupChatImageFile(file: File): string | null {
  * `@` picker's `fileSuggestions` input is always this stable empty array.
  */
 const NO_FILE_SUGGESTIONS: AtMentionSuggestion[] = [];
-
-/** Mention overlay padding; must mirror the textarea's `pl-3 pt-3 pr-3` exactly. */
-const OVERLAY_PADDING = '0.75rem 0.75rem 0 0.75rem';
 
 interface GroupChatInputProps {
 	theme: Theme;
@@ -270,12 +269,6 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		() => (hasMentionCandidate ? buildKnownMentionNameSet(sessions, groups, undefined) : undefined),
 		[hasMentionCandidate, sessions, groups]
 	);
-	const mentionOverlay = useMentionChipOverlay({
-		inputRef,
-		value: message,
-		enabled: true,
-		knownMentionNames,
-	});
 
 	const atMentionItemRefs = useScrollIntoView<HTMLButtonElement>(
 		atMentionOpen,
@@ -504,16 +497,27 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		[setStagedImages]
 	);
 
+	const isBusy = state !== 'idle';
+	// Phone: the whole composer folds away behind a slim handle so the room's
+	// transcript gets the screen, remembered under the room's own key and
+	// starting folded like AI chat's. The handle carries a busy dot while the
+	// room is working and a pencil when an unsent draft or staged images wait.
+	const phone = usePhoneLayout();
+	const composerFold = usePersistedToggle(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY, true);
+	const phoneHandleHasDraft = message.trim().length > 0 || stagedImages.length > 0;
+	const isFolded = phone && composerFold.value;
+
 	// Auto-resize textarea as content changes (matches InputArea behavior), keeping
-	// the caret visible once the composer is tall enough to scroll.
+	// the caret visible once the composer is tall enough to scroll. Passing the
+	// room id and fold state through resetKey ensures that reopening a folded draft
+	// (or opening a room whose restored draft starts folded) re-measures the
+	// newly mounted textarea to its full height instead of leaving it at one row.
 	useAutosizeTextarea({
 		textareaRef: inputRef,
 		value: message,
 		maxHeight: KEYSTROKE_TEXTAREA_MAX_HEIGHT,
+		resetKey: `${groupChatId}:${isFolded}`,
 	});
-
-	const isBusy = state !== 'idle';
-	const phone = usePhoneLayout();
 
 	// The room's Read-Only toggle (one flag for every room, sent per message to
 	// main). The toolbar draws it in its toggle group on desktop and as a sheet
@@ -595,12 +599,41 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		[queueState, isBusy]
 	);
 
+	// Folded: nothing but the handle. Every hook above has already run, so the
+	// draft, staged images, voice and autosize all survive the fold, and the
+	// wrapper keeps the toast-avoid zone measured at the handle's height.
+	if (isFolded) {
+		return (
+			<div ref={toastAvoidRef}>
+				<PhoneComposerHandle
+					theme={theme}
+					collapsed
+					onToggle={composerFold.toggle}
+					busy={isBusy}
+					hasDraft={phoneHandleHasDraft}
+				/>
+			</div>
+		);
+	}
+
 	return (
 		<div
 			ref={toastAvoidRef}
-			className="relative p-4 border-t"
+			className={`relative border-t ${phone ? 'px-3 pb-3 pt-0' : 'p-4'}`}
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>
+			{phone && (
+				<PhoneComposerHandle
+					theme={theme}
+					collapsed={false}
+					onToggle={composerFold.toggle}
+					busy={isBusy}
+				/>
+			)}
+
+			{/* QuitWhenIdleIndicator - app-wide deferred quit, which also waits for a busy room */}
+			<QuitWhenIdleIndicator theme={theme} />
+
 			{/* Paused banner. A paused queue sends nothing, so it has to say so and
 			    offer the way out - otherwise the user sees messages sitting there
 			    with no clue why and no control to release them. */}
@@ -694,46 +727,26 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						backgroundColor: readOnlyMode ? `${theme.colors.warning}15` : theme.colors.bgMain,
 					}}
 				>
-					<div className="relative flex items-start">
-						<MentionChipOverlay overlay={mentionOverlay} theme={theme} padding={OVERLAY_PADDING} />
-						<textarea
-							ref={inputRef}
-							value={message}
-							onChange={(e) => {
-								mentionOverlay.onSelectionChange(e.currentTarget);
-								handleChange(e);
-							}}
-							onSelect={(e) => mentionOverlay.onSelectionChange(e.currentTarget)}
-							onScroll={mentionOverlay.onScroll}
-							// The window Escape handler only acts while focus is in the main
-							// area, so claim it here the way the AI composer does. A click on
-							// the Left Bar leaves it on 'sidebar' otherwise.
-							onFocus={() => useUIStore.getState().setActiveFocus('main')}
-							onBlur={() => {
-								mentionOverlay.onBlur();
-								flushDraft();
-							}}
-							onKeyDown={handleKeyDown}
-							onPaste={handlePasteWrapped}
-							onDrop={handleDropWrapped}
-							onDragOver={(e) => e.preventDefault()}
-							placeholder={
-								isBusy ? 'Type to queue message...' : 'Type a message... (@ to mention agent)'
-							}
-							spellCheck={spellCheckEnabled}
-							rows={1}
-							className="relative flex-1 bg-transparent text-sm outline-none pl-3 pt-3 pr-3 resize-none min-h-[2.5rem] scrollbar-thin"
-							style={{
-								// Shared with the mention overlay so the pills sit exactly under
-								// their tokens.
-								...MENTION_OVERLAY_TYPOGRAPHY,
-								color: theme.colors.textMain,
-								maxHeight: '11rem',
-								// Above the decorative overlay so the caret + native selection win.
-								zIndex: mentionOverlay.overlayRendered ? 1 : undefined,
-							}}
-						/>
-					</div>
+					<ComposerTextarea
+						theme={theme}
+						value={message}
+						inputRef={inputRef}
+						placeholder={
+							isBusy ? 'Type to queue message...' : 'Type a message... (@ to mention agent)'
+						}
+						spellCheck={spellCheckEnabled}
+						knownMentionNames={knownMentionNames}
+						rows={1}
+						onChange={handleChange}
+						onKeyDown={handleKeyDown}
+						onPaste={handlePasteWrapped}
+						onDrop={handleDropWrapped}
+						// The window Escape handler only acts while focus is in the main
+						// area, so claim it here the way the AI composer does. A click on
+						// the Left Bar leaves it on 'sidebar' otherwise.
+						onFocus={() => useUIStore.getState().setActiveFocus('main')}
+						onBlur={flushDraft}
+					/>
 
 					<ToolbarControls
 						theme={theme}

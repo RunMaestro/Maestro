@@ -6,7 +6,12 @@
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
+import {
+	GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY,
+	GroupChatInput,
+} from '../../../renderer/components/GroupChatInput';
+import { PHONE_COMPOSER_COLLAPSED_KEY } from '../../../renderer/components/InputArea/InputArea';
+import { useQuitWhenIdleStore } from '../../../renderer/stores/quitWhenIdleStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
@@ -60,6 +65,13 @@ describe('GroupChatInput toolbar', () => {
 	afterEach(() => {
 		mockedUsePhoneLayout.mockReturnValue(false);
 		mockedIsWebDesktop.mockReturnValue(false);
+		useQuitWhenIdleStore.setState({ armed: false });
+		try {
+			window.localStorage?.removeItem(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY);
+			window.localStorage?.removeItem(PHONE_COMPOSER_COLLAPSED_KEY);
+		} catch {
+			/* storage may be absent */
+		}
 		restorePointer();
 		Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
 		vi.unstubAllGlobals();
@@ -101,9 +113,40 @@ describe('GroupChatInput toolbar', () => {
 			expectNoAgentPills();
 		});
 
+		// jsdom does no layout, so a width bug cannot be measured here. What it can
+		// see is the structure the width depends on: the bordered box is a column
+		// flex container, which stretches a direct child to its full width. A
+		// wrapper row in between made ComposerTextarea's root a row flex item
+		// without flex-1, so it shrank to the textarea's intrinsic ~200px.
+		it("mounts the textarea's root directly in the bordered composer box", () => {
+			const { textarea } = renderRoom();
+			const root = textarea.parentElement!;
+			expect(root).toHaveClass('relative', 'flex', 'items-start');
+			expect(root.parentElement).toHaveClass('border', 'rounded-lg', 'flex', 'flex-col');
+		});
+
 		it('keeps the room send column with its bell beside the composer', () => {
 			renderRoom();
 			expect(screen.getByTitle('Notification Settings')).toBeInTheDocument();
+		});
+
+		it('draws no phone fold handle on desktop', () => {
+			renderRoom();
+			expect(screen.queryByTestId('phone-composer-handle')).not.toBeInTheDocument();
+			expect(screen.getByRole('textbox')).toBeInTheDocument();
+		});
+
+		it('shows the quit-when-idle pill in a room only while a quit is armed', () => {
+			const { rerender, props } = renderRoom();
+			expect(screen.queryByText('Quitting When All Operations Finish')).not.toBeInTheDocument();
+
+			act(() => useQuitWhenIdleStore.getState().arm());
+			rerender(<GroupChatInput {...props} />);
+			expect(screen.getByText('Quitting When All Operations Finish')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /Cancel/ }));
+			expect(useQuitWhenIdleStore.getState().armed).toBe(false);
+			expect(screen.queryByText('Quitting When All Operations Finish')).not.toBeInTheDocument();
 		});
 	});
 
@@ -266,6 +309,159 @@ describe('GroupChatInput toolbar', () => {
 	describe('phone', () => {
 		beforeEach(() => {
 			mockedUsePhoneLayout.mockReturnValue(true);
+			window.localStorage?.setItem(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY, 'false');
+		});
+
+		it('starts folded by default, unfolds on a tap, and folds back', () => {
+			window.localStorage?.removeItem(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY);
+			useSessionStore.setState({ sessions: [] });
+			render(
+				<GroupChatInput
+					theme={theme}
+					state="idle"
+					onSend={vi.fn()}
+					participants={[]}
+					groupChatId="room-1"
+				/>
+			);
+
+			const handle = screen.getByTestId('phone-composer-handle');
+			expect(handle).toHaveAttribute('aria-expanded', 'false');
+			expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+			fireEvent.click(handle);
+			expect(screen.getByRole('textbox')).toBeInTheDocument();
+			expect(screen.getByTestId('phone-composer-handle')).toHaveAttribute('aria-expanded', 'true');
+
+			fireEvent.click(screen.getByTestId('phone-composer-handle'));
+			expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+		});
+
+		it('persists the room fold separately from AI chat', () => {
+			window.localStorage?.removeItem(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY);
+			window.localStorage?.setItem(PHONE_COMPOSER_COLLAPSED_KEY, 'false');
+			useSessionStore.setState({ sessions: [] });
+			render(
+				<GroupChatInput
+					theme={theme}
+					state="idle"
+					onSend={vi.fn()}
+					participants={[]}
+					groupChatId="room-1"
+				/>
+			);
+
+			// AI chat being unfolded does not unfold the room.
+			expect(screen.getByTestId('phone-composer-handle')).toHaveAttribute('aria-expanded', 'false');
+			expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByTestId('phone-composer-handle'));
+			expect(window.localStorage?.getItem(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY)).toBe('false');
+			// Folding the room back leaves AI chat's key untouched.
+			fireEvent.click(screen.getByTestId('phone-composer-handle'));
+			expect(window.localStorage?.getItem(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY)).toBe('true');
+			expect(window.localStorage?.getItem(PHONE_COMPOSER_COLLAPSED_KEY)).toBe('false');
+		});
+
+		it('keeps the draft and staged images across a fold and marks the handle', () => {
+			const { textarea } = renderRoom({
+				state: 'moderator-thinking',
+				stagedImages: ['data:image/png;base64,AAA'],
+			});
+			fireEvent.change(textarea, { target: { value: 'keep me' } });
+
+			// Fold the composer.
+			fireEvent.click(screen.getByTestId('phone-composer-handle'));
+			expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+			expect(screen.getByTestId('phone-composer-handle-busy')).toBeInTheDocument();
+			expect(screen.getByTestId('phone-composer-handle-draft')).toBeInTheDocument();
+
+			// Unfold: both the typed text and the staged image are still there.
+			fireEvent.click(screen.getByTestId('phone-composer-handle'));
+			expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('keep me');
+			expect(screen.getByRole('button', { name: 'Staged image 1' })).toBeInTheDocument();
+		});
+
+		it('measures a saved draft to its full height on first unfold when opened folded', () => {
+			window.localStorage?.removeItem(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY);
+			useSessionStore.setState({ sessions: [] });
+			const scrollHeightSpy = vi
+				.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+				.mockReturnValue(140);
+			try {
+				render(
+					<GroupChatInput
+						theme={theme}
+						state="idle"
+						onSend={vi.fn()}
+						participants={[]}
+						groupChatId="room-1"
+						draftMessage={'line 1\nline 2\nline 3\nline 4'}
+					/>
+				);
+
+				// Initially folded: textbox is unmounted
+				expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+				// Unfold
+				fireEvent.click(screen.getByTestId('phone-composer-handle'));
+
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				expect(textarea).toBeInTheDocument();
+				expect(textarea.style.height).toBe('140px');
+			} finally {
+				scrollHeightSpy.mockRestore();
+			}
+		});
+
+		it('re-measures a multi-line draft to its full height after folding and reopening', () => {
+			window.localStorage?.setItem(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY, 'false');
+			useSessionStore.setState({ sessions: [] });
+			const scrollHeightSpy = vi
+				.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+				.mockReturnValue(140);
+			try {
+				render(
+					<GroupChatInput
+						theme={theme}
+						state="idle"
+						onSend={vi.fn()}
+						participants={[]}
+						groupChatId="room-1"
+						draftMessage={'line 1\nline 2\nline 3\nline 4'}
+					/>
+				);
+
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				expect(textarea.style.height).toBe('140px');
+
+				// Fold the composer
+				fireEvent.click(screen.getByTestId('phone-composer-handle'));
+				expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+				// Reopen (unfold) the composer
+				fireEvent.click(screen.getByTestId('phone-composer-handle'));
+				const reopenedTextarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				expect(reopenedTextarea.style.height).toBe('140px');
+			} finally {
+				scrollHeightSpy.mockRestore();
+			}
+		});
+
+		it('marks the folded handle when only staged images are waiting', () => {
+			window.localStorage?.removeItem(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY);
+			useSessionStore.setState({ sessions: [] });
+			render(
+				<GroupChatInput
+					theme={theme}
+					state="idle"
+					onSend={vi.fn()}
+					participants={[]}
+					groupChatId="room-1"
+					stagedImages={['data:image/png;base64,AAA']}
+				/>
+			);
+			expect(screen.getByTestId('phone-composer-handle-draft')).toBeInTheDocument();
 		});
 
 		it('moves Send into the row, disabled until there is text', () => {

@@ -3,12 +3,17 @@ export {
 	type ComposerSendColumnProps,
 	type ComposerSendMenu,
 } from './ComposerSendColumn';
+export { ComposerTextarea, type ComposerTextareaProps } from './ComposerTextarea';
 export {
 	ImageAttachInput,
 	stageImageFiles,
 	type ImageAttachInputProps,
 	type StageImageFilesOptions,
 } from './ImageAttachInput';
+export {
+	PhoneComposerHandle,
+	type PhoneComposerHandleProps,
+} from '../InputArea/components/PhoneComposerHandle';
 export { applyTrimmedTextPaste, clipboardHasImage } from './pasteTrim';
 export {
 	GROUP_CHAT_COMPOSER_CAPABILITIES,
