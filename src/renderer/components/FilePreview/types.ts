@@ -106,6 +106,13 @@ export interface FilePreviewProps {
 	/** Called after FilePreview has scrolled to pendingScrollToLine so the
 	 *  caller can clear it (otherwise we'd re-jump every render). */
 	onPendingScrollToLineConsumed?: () => void;
+	/**
+	 * Whether the floating controls over the content (font zoom, Table of
+	 * Contents) are drawn. Defaults to true. A tiled pane passes its focus state
+	 * so only the focused document shows them and the background tiles stay
+	 * clean; the controls come back the moment the pane takes focus.
+	 */
+	showFloatingControls?: boolean;
 }
 
 export interface FilePreviewHandle {

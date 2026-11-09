@@ -201,10 +201,16 @@ export const FilePreview = React.memo(
 			onHtmlRenderModeChange,
 			pendingScrollToLine,
 			onPendingScrollToLineConsumed,
+			showFloatingControls = true,
 		},
 		ref
 	) {
 		const [showTocOverlay, setShowTocOverlay] = useState(false);
+		// A tiled pane that loses focus hides its floating controls. Close an open
+		// ToC with them, so it does not pop back open when the pane is refocused.
+		useEffect(() => {
+			if (!showFloatingControls) setShowTocOverlay(false);
+		}, [showFloatingControls]);
 		// The `#` heading palette - a filtered, keyboard-driven twin of the ToC.
 		const [showHeadingPalette, setShowHeadingPalette] = useState(false);
 		// Reader font zoom for the preview / edit pane. One shared preference
@@ -2150,7 +2156,7 @@ export const FilePreview = React.memo(
 					    Sticky (not absolute) so it stays put while the pane scrolls
 					    without depending on a positioned ancestor. Drops below the
 					    find bar when that is open so the two never overlap. */}
-					{canScaleFont && (
+					{canScaleFont && showFloatingControls && (
 						<div
 							className={`sticky z-20 h-0 flex items-start justify-end pointer-events-none ${
 								searchOpen ? 'top-14' : 'top-0'
@@ -2858,20 +2864,22 @@ export const FilePreview = React.memo(
 					)}
 
 					{/* Table of Contents */}
-					<FilePreviewToc
-						theme={theme}
-						tocEntries={tocEntries}
-						tocWidth={tocWidth}
-						showTocOverlay={showTocOverlay}
-						setShowTocOverlay={setShowTocOverlay}
-						scrollMarkdownToBoundary={scrollMarkdownToBoundary}
-						tocButtonRef={tocButtonRef}
-						tocOverlayRef={tocOverlayRef}
-						isMarkdown={isMarkdown}
-						markdownEditMode={markdownEditMode}
-						onJumpToHeading={jumpToHeading}
-						activeIndex={activeTocIndex}
-					/>
+					{showFloatingControls && (
+						<FilePreviewToc
+							theme={theme}
+							tocEntries={tocEntries}
+							tocWidth={tocWidth}
+							showTocOverlay={showTocOverlay}
+							setShowTocOverlay={setShowTocOverlay}
+							scrollMarkdownToBoundary={scrollMarkdownToBoundary}
+							tocButtonRef={tocButtonRef}
+							tocOverlayRef={tocOverlayRef}
+							isMarkdown={isMarkdown}
+							markdownEditMode={markdownEditMode}
+							onJumpToHeading={jumpToHeading}
+							activeIndex={activeTocIndex}
+						/>
+					)}
 
 					{/* Heading palette - `#` opens the same list with a fuzzy filter */}
 					{showHeadingPalette && isMarkdown && !markdownEditMode && tocEntries.length > 0 && (
