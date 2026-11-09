@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Filter, PlusCircle, MinusCircle } from 'lucide-react';
 import type { Theme } from '../types';
+import { isImeComposing } from '../utils/ime';
 
 // ============================================================================
 // LogFilterControls - Local filter controls for log entries
@@ -118,7 +119,7 @@ export const LogFilterControls: React.FC<LogFilterControlsProps> = ({
 					value={filterQuery}
 					onChange={(e) => onSetFilterQuery(logId, e.target.value)}
 					onKeyDown={(e) => {
-						if (e.key === 'Escape') {
+						if (e.key === 'Escape' && !isImeComposing(e)) {
 							e.stopPropagation();
 							onClearFilter(logId);
 						}

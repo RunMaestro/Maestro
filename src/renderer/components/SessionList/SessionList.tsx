@@ -28,6 +28,7 @@ import {
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
+import { isImeComposing } from '../../utils/ime';
 import { NotificationCenter } from '../NotificationCenter';
 import {
 	subscribeSidebarReveal,
@@ -1661,7 +1662,7 @@ function SessionListInner(props: SessionListProps) {
 								value={sessionFilter}
 								onChange={(e) => setSessionFilter(e.target.value)}
 								onKeyDown={(e) => {
-									if (e.key === 'Escape') {
+									if (e.key === 'Escape' && !isImeComposing(e)) {
 										setSessionFilterOpen(false);
 										setSessionFilter('');
 									}

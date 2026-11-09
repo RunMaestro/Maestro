@@ -16,6 +16,7 @@
  */
 
 import React from 'react';
+import { isImeComposing } from '../utils/ime';
 import {
 	Star,
 	Play,
@@ -193,7 +194,7 @@ export const SessionListItem = React.memo(function SessionListItem({
 								if (e.key === 'Enter') {
 									e.preventDefault();
 									onSubmitRename(session.sessionId);
-								} else if (e.key === 'Escape') {
+								} else if (e.key === 'Escape' && !isImeComposing(e)) {
 									e.preventDefault();
 									onCancelRename();
 								}

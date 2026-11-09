@@ -28,6 +28,7 @@ import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 import { revealAgentInSidebar } from '../../services/agentNavigation';
 import { buildSessionJumpSlotMap } from '../../utils/sessionJumpSlots';
+import { isImeComposing } from '../../utils/ime';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
@@ -1173,7 +1174,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			if (e.key === 'Enter') {
 				e.preventDefault();
 				handleRenameSession();
-			} else if (e.key === 'Escape') {
+			} else if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();
 				setRenamingSession(false);
 			}
@@ -1187,7 +1188,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			if (e.key === 'Enter') {
 				e.preventDefault();
 				commitRenameCurrentWindow();
-			} else if (e.key === 'Escape') {
+			} else if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();
 				setRenamingWindow(false);
 			}

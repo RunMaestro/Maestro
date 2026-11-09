@@ -23,6 +23,7 @@ import {
 	renderFuzzyHighlight,
 } from '../../utils/search';
 import { useListNavigation } from '../../hooks/keyboard/useListNavigation';
+import { isImeComposing } from '../../utils/ime';
 import { useScrollIntoView } from '../../hooks/ui/useScrollIntoView';
 import { useFocusOnMount } from '../../hooks/utils/useFocusAfterRender';
 import { EscCloseButton } from '../ui/EscCloseButton';
@@ -90,6 +91,7 @@ export const HeadingPalette = React.memo(function HeadingPalette({
 	);
 
 	const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+		if (isImeComposing(e)) return;
 		// Everything typed here belongs to the palette. Without this the preview
 		// container underneath also sees the key and scrolls the document, and a
 		// bare `-` or `0` would zoom the pane out from under the search box.
