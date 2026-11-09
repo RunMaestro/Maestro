@@ -202,5 +202,38 @@ describe('create-ssh-remote command', () => {
 			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('Invalid --env format'));
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
+
+		it('should reject a --federation value that is not on or off', () => {
+			createSshRemote('Bad Federation', { host: 'server.com', federation: 'maybe' });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--federation'));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
+	describe('federation opt-in', () => {
+		it('stores federation: true for --federation on and echoes it in JSON', () => {
+			createSshRemote('Host Box', { host: 'box', federation: 'on', json: true });
+
+			expect(writeSshRemotes).toHaveBeenCalledWith([
+				expect.objectContaining({ name: 'Host Box', federation: true }),
+			]);
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed).toMatchObject({ success: true, federation: true });
+		});
+
+		it('leaves no federation field for --federation off', () => {
+			createSshRemote('Host Box', { host: 'box', federation: 'off' });
+
+			const written = vi.mocked(writeSshRemotes).mock.calls[0][0][0];
+			expect(written.federation).toBeUndefined();
+		});
+
+		it('leaves the field out of the record and the JSON when the flag is not passed', () => {
+			createSshRemote('Plain', { host: 'box', json: true });
+
+			expect(vi.mocked(writeSshRemotes).mock.calls[0][0][0].federation).toBeUndefined();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).not.toHaveProperty('federation');
+		});
 	});
 });

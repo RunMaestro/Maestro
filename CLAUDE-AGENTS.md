@@ -8,16 +8,17 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 | --------------- | --------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `claude-code`   | Claude Code     | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                                                                          |
 | `codex`         | Codex           | **Active** | Full support, `--json`, YOLO mode default                                                                                                                                               |
-| `opencode`      | OpenCode        | **Active** | Multi-provider support (75+ LLMs), stub provider session storage                                                                                                                        |
-| `factory-droid` | Factory Droid   | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                                                                         |
+| `opencode`      | OpenCode        | **Beta**   | Multi-provider support (75+ LLMs), SQLite `opencode.db` session storage with JSON fallback                                                                                              |
+| `factory-droid` | Factory Droid   | **Beta**   | Factory's AI coding assistant, `-o stream-json`                                                                                                                                         |
 | `copilot-cli`   | Copilot-CLI     | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker                                                     |
-| `grok`          | Grok CLI        | **Beta**   | `-p` headless, `--output-format streaming-json` (JSONL), `--resume`, `--permission-mode plan`, thought/text deltas, models_cache.json model picker                                      |
+| `grok`          | Grok CLI        | **Beta**   | `-p` headless, `--output-format streaming-json` (JSONL), `--resume`, `--permission-mode plan --deny Bash(*)`, thought/text deltas, models_cache.json model picker                       |
 | `antigravity`   | Antigravity CLI | **Beta**   | `agy -p`, `--output-format stream-json`, `--conversation <id>`, `--model` / `--effort`, 30m `--print-timeout`, thinking, exit codes, and History from its SQLite stores, images by path |
 | `qwen3-coder`   | Qwen3 Coder     | **Beta**   | Gemini CLI fork, stream-json headless interface, `--resume`                                                                                                                             |
 | `hermes`        | Hermes          | **Beta**   | Nous Research's coding agent                                                                                                                                                            |
 | `pi`            | Pi              | **Beta**   | Bring-your-own agent harness                                                                                                                                                            |
 | `omp`           | Oh My Pi        | **Beta**   | Multi-model coding agent; prompt must be a positional arg, never stdin                                                                                                                  |
 | `terminal`      | Terminal        | Internal   | Hidden from UI, used for shell sessions                                                                                                                                                 |
+| `gemini-cli`    | Gemini CLI      | Hidden     | Back-compat only: `hidden: true` in definitions, picker entry `null`, placeholder capabilities. Superseded by `antigravity`; not pickable                                               |
 
 ## Native control transports
 
@@ -25,35 +26,39 @@ The current CLI/PTY transport remains the default. Qualified providers can opt i
 
 ## Agent Capabilities
 
-Each agent declares capabilities that control UI feature availability. See `src/main/agents/capabilities.ts` for the full interface (24 boolean flags + 1 optional). The table below shows key capabilities; see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) for the complete list.
+Each agent declares capabilities that control UI feature availability. The `AgentCapabilities` interface lives in `src/shared/types.ts` (27 required booleans + 2 optional: `supportsStandardPermissionMode?`, `imageResumeMode?`); `src/main/agents/capabilities.ts` re-exports it alongside the per-agent `AGENT_CAPABILITIES` record. The table below shows key capabilities; see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) for the complete list.
 
-| Capability                    | Description                              | UI Feature Controlled      |
-| ----------------------------- | ---------------------------------------- | -------------------------- |
-| `supportsResume`              | Can resume previous conversations        | Resume button              |
-| `supportsReadOnlyMode`        | Has plan/read-only mode                  | Read-only toggle           |
-| `supportsJsonOutput`          | Emits structured JSON                    | Output parsing             |
-| `supportsSessionId`           | Emits provider session ID                | Session ID pill            |
-| `supportsImageInput`          | Accepts image attachments                | Attach image button        |
-| `supportsImageInputOnResume`  | Accepts images when resuming             | Attach button on resume    |
-| `supportsSlashCommands`       | Has discoverable commands                | Slash autocomplete         |
-| `supportsSessionStorage`      | Persists browsable provider sessions     | Sessions browser           |
-| `supportsCostTracking`        | Reports token costs                      | Cost widget                |
-| `supportsUsageStats`          | Reports token counts                     | Context window widget      |
-| `supportsBatchMode`           | Runs per-message                         | Batch processing           |
-| `requiresPromptToStart`       | No eager spawn - needs prompt            | Deferred spawn             |
-| `supportsStreaming`           | Streams output                           | Real-time display          |
-| `supportsModelSelection`      | Supports --model flag                    | Model dropdown             |
-| `supportsResultMessages`      | Distinguishes final result               | Message classification     |
-| `supportsThinkingDisplay`     | Emits thinking/reasoning content         | Thinking panel             |
-| `supportsContextMerge`        | Can receive merged context               | Merge option               |
-| `supportsContextExport`       | Can export context                       | Export option              |
-| `supportsWizard`              | Supports inline wizard structured output | Wizard agent selection     |
-| `supportsGroupChatModeration` | Can serve as group chat moderator        | Moderator dropdown         |
-| `usesJsonLineOutput`          | Uses JSONL output in batch mode          | CLI batch parsing strategy |
-| `usesCombinedContextWindow`   | Uses combined input+output context       | Context bar display mode   |
-| `supportsStreamJsonInput`     | Accepts stream-json input via stdin      | Image input method         |
-| `supportsPromptViaStdin`      | CLI reads the prompt from stdin          | Windows prompt delivery    |
-| `imageResumeMode?`            | Image handling on resume (optional)      | Resume image strategy      |
+| Capability                        | Description                                          | UI Feature Controlled                                |
+| --------------------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
+| `supportsResume`                  | Can resume previous conversations                    | Resume button                                        |
+| `supportsReadOnlyMode`            | Has plan/read-only mode                              | Read-only toggle                                     |
+| `supportsStandardPermissionMode?` | Live permission relay works (Claude only)            | `standard` in permission toggle                      |
+| `supportsJsonOutput`              | Emits structured JSON                                | Output parsing                                       |
+| `supportsSessionId`               | Emits provider session ID                            | Session ID pill                                      |
+| `supportsImageInput`              | Accepts image attachments                            | Attach image button                                  |
+| `supportsImageInputOnResume`      | Accepts images when resuming                         | Attach button on resume                              |
+| `supportsSlashCommands`           | Has discoverable commands                            | Slash autocomplete                                   |
+| `supportsSessionStorage`          | Persists browsable provider sessions                 | Sessions browser                                     |
+| `supportsCostTracking`            | Reports token costs                                  | Cost widget                                          |
+| `supportsUsageStats`              | Reports token counts                                 | Context window widget                                |
+| `supportsBatchMode`               | Runs per-message                                     | Batch processing                                     |
+| `requiresPromptToStart`           | No eager spawn - needs prompt                        | Deferred spawn                                       |
+| `supportsStreaming`               | Streams output                                       | Real-time display                                    |
+| `supportsModelSelection`          | Supports --model flag                                | Model dropdown                                       |
+| `supportsResultMessages`          | Distinguishes final result                           | Message classification                               |
+| `supportsThinkingDisplay`         | Emits thinking/reasoning content                     | Thinking panel                                       |
+| `supportsContextMerge`            | Can receive merged context                           | Merge option                                         |
+| `supportsContextExport`           | Can export context                                   | Export option                                        |
+| `supportsWizard`                  | Supports inline wizard structured output             | Wizard agent selection                               |
+| `supportsGroupChatModeration`     | Can serve as group chat moderator                    | Moderator dropdown                                   |
+| `usesJsonLineOutput`              | Uses JSONL output in batch mode                      | CLI batch parsing strategy                           |
+| `usesCombinedContextWindow`       | Uses combined input+output context                   | Context bar display mode                             |
+| `supportsStreamJsonInput`         | Accepts stream-json input via stdin                  | Image input method                                   |
+| `supportsPromptViaStdin`          | CLI reads the prompt from stdin                      | Windows prompt delivery                              |
+| `supportsAppendSystemPrompt`      | Has `--append-system-prompt`                         | System prompt delivery (else embedded in first turn) |
+| `supportsProjectMemory`           | Keeps a browsable memory store on disk               | Memory Viewer                                        |
+| `supportsAdditionalDirectories`   | CLI can grant extra dirs (needs `additionalDirArgs`) | Enforced vs advisory Additional Directories          |
+| `imageResumeMode?`                | Image handling on resume (optional)                  | Resume image strategy                                |
 
 ### Accessing Capabilities
 
@@ -72,7 +77,7 @@ Centralized in `src/shared/agentMetadata.ts` (importable from any process):
 - `getAgentLoginCommand(agentId, customPath?)` - the shell command that re-authenticates the provider
 - `getAgentPickerMeta(agentId)` / `PICKABLE_AGENT_IDS` - which providers a user may choose, and how they present
 
-The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-private. Use the functions above to access it.
+The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is exported but marked `@internal`. Use the functions above to access it.
 
 ### Provider Pickers: One Registry, Three Surfaces
 
@@ -110,8 +115,9 @@ moderator dropdown does not filter on it, and offers any installed provider.
 - **JSON Output:** `--output-format stream-json`
 - **Resume:** `--resume <session-id>`
 - **Read-only:** `--permission-mode plan`
-- **Standard mode:** permission relay (`--permission-prompt-tool` + `--mcp-config`), also carries `AskUserQuestion` ask-backs; absent in full/read-only/SSH/interactive (TUI wrapper) paths
-- **Session Storage:** `~/.claude/projects/<encoded-path>/`
+- **Full access:** `--dangerously-skip-permissions`
+- **Standard mode:** permission relay (`--permission-prompt-tool` + `--mcp-config`), also carries `AskUserQuestion` ask-backs; absent in full/read-only/interactive (TUI wrapper) paths. Over SSH, standard mode fails the spawn with an error rather than running without the relay (`handle-spawn.ts`)
+- **Session Storage:** `<CLAUDE_CONFIG_DIR or ~/.claude>/projects/<encoded-path>/` (root follows the agent's resolved account dir)
 
 ### Codex
 
@@ -121,17 +127,19 @@ moderator dropdown does not filter on it, and offers any installed provider.
 - **Resume:** `resume <thread_id>` (v0.30.0+)
 - **Read-only:** `--sandbox read-only`
 - **YOLO Mode:** `--dangerously-bypass-approvals-and-sandbox` (enabled by default)
-- **Session Storage:** `~/.codex/sessions/YYYY/MM/DD/*.jsonl`
+- **Session Storage:** `<CODEX_HOME or ~/.codex>/sessions/YYYY/MM/DD/*.jsonl` (root follows the agent's account dir)
 - **Tool Display:** `exec --json` items `command_execution` (the `/bin/zsh -lc '...'` wrapper is unwrapped to the real command; a non-zero exit or `status: failed` is a failed badge), `file_change` (`apply_patch`, one line per file), `mcp_tool_call` (`mcp__server__tool`), `web_search`, and `todo_list` (`update_plan` checklist)
 
 ### OpenCode
 
 - **Binary:** `opencode`
-- **JSON Output:** `--format json`
+- **JSON Output:** `--format json --thinking` (`--thinking` is what makes `run` emit `reasoning` events; it rides `jsonOutputArgs` so read-only runs keep it)
 - **Batch Mode:** `run` subcommand
 - **Resume:** `--session <session-id>`
-- **Read-only:** `--agent plan`
-- **YOLO Mode:** Auto-enabled in batch mode (no flag needed)
+- **Read-only:** `--agent plan` (CLI-enforced)
+- **YOLO Mode:** No flag; `OPENCODE_CONFIG_CONTENT` env var (`"permission":{"*":"allow",...}`, question tool disabled) is set on every spawn, read-only included, so batch mode never blocks on a stdin prompt
+- **Session Storage:** SQLite `opencode.db` (v1.2+) with a fallback to the older `storage/` JSON folder, under `$XDG_DATA_HOME/opencode`, `~/.local/share/opencode`, or `%APPDATA%\opencode`
+- **Server transport:** opt-in `opencode serve` SDK path (`OpencodeServerSpawner`) behind the `encoreFeatures.opencodeServer` Encore gate, off by default, local + interactive + text prompts only; everything else stays on the CLI path
 - **Multi-Provider:** Supports 75+ LLMs including Ollama, LM Studio, llama.cpp
 
 ### Copilot-CLI
@@ -139,9 +147,10 @@ moderator dropdown does not filter on it, and offers any installed provider.
 - **Agent ID:** `copilot-cli`
 - **Binary:** `copilot`
 - **JSON Output:** `--output-format json`
-- **Batch Mode:** `-p, --prompt <text>`
-- **Resume:** `--continue`, `--resume[=session-id]`
+- **Batch Mode:** `-p, --prompt <text>` with `--allow-all` (unattended full permissions)
+- **Resume:** `--resume=<session-id>` (the only form Maestro emits; `--continue` is never used)
 - **Read-only:** CLI-enforced via `--allow-tool=read,url`, `--deny-tool=write,shell,memory,github`, `--no-ask-user`
+- **YOLO Mode:** `--allow-all` (same as batch mode; Copilot treats `--yolo` as an alias)
 - **Thinking Display:** Streams `assistant.reasoning_delta` / `assistant.reasoning` into Maestro's thinking panel
 - **Images:** Prompt-embedded `@/tmp/...` mentions (maps Maestro uploads to Copilot file/image mentions)
 - **Session Storage:** `~/.copilot/session-state/<session-id>/` (local and SSH-remote)
@@ -155,11 +164,12 @@ moderator dropdown does not filter on it, and offers any installed provider.
 - **JSON Output:** `--output-format streaming-json` (JSONL: `thought`, `text`, `tool_call`, `tool_call_update`, `end`, `error` events)
 - **Batch Mode:** `-p/--single <prompt>` (headless, no subcommand)
 - **Resume:** `--resume <session-id>` (session ID is a UUIDv7, emitted only on the final `end` event)
-- **Read-only:** `--permission-mode plan` (CLI-enforced)
+- **Read-only:** `--permission-mode plan --deny Bash(*)` (CLI-enforced; plan mode alone lets a cancelled headless permission prompt kill the whole turn, the deny rule resolves by policy so the turn survives)
 - **YOLO Mode:** `--always-approve` (also used for batch mode)
 - **Thinking Display:** Streams `thought` deltas into Maestro's thinking panel
+- **Tool Events:** grok 1.x emits `tool_call` / `tool_call_update` and the parser reads them (0.2.93 emitted none)
 - **Session Storage:** `~/.grok/sessions/<percent-encoded-cwd>/<session-uuid>/` (local and SSH-remote)
-- **Model Discovery:** Reads `~/.grok/models_cache.json` (grok-4.5 at 500K context, grok-composer-2.5-fast at 200K), with a static fallback list
+- **Model Discovery:** Reads `<GROK_HOME or ~/.grok>/models_cache.json` (grok-4.5 at 500K context, grok-composer-2.5-fast at 200K), then parses `grok models` output, then a static fallback list
 - **Reasoning Effort:** `--reasoning-effort` with none, minimal, low, medium, high, xhigh, max (grok-4.5 rejects `none`)
 - **Tool Display:** `tool_call` / `tool_call_update` become tool badges. Output comes from the ACP `content` blocks (shell text, file contents, edit diffs), never the raw `rawOutput` object, and a non-zero `exit_code` marks the call failed even though grok reports `completed`
 - **Images:** The temp image path is named in the prompt (`imagePromptBuilder`) and grok opens it with `read_file`; there is no attachment flag
@@ -167,20 +177,79 @@ moderator dropdown does not filter on it, and offers any installed provider.
 - **Known Limitations:**
   - **Batch-only:** interactive PTY mode is not wired (same posture as Codex)
 
+### Factory Droid
+
+- **Binary:** `droid`
+- **JSON Output:** `-o stream-json`
+- **Batch Mode:** `exec` subcommand with `--skip-permissions-unsafe`
+- **Resume:** `-s <session-id>` (requires a prompt)
+- **Read-only:** Default for `exec`, no flag needed (CLI-enforced)
+- **YOLO Mode:** `--skip-permissions-unsafe` (same as batch mode)
+- **Session Storage:** `~/.factory/sessions/<encoded-project-path>/<uuid>.jsonl` (plus `<uuid>.settings.json` metadata)
+
+### Antigravity CLI
+
+- **Binary:** `agy`
+- **JSON Output:** `--output-format stream-json`
+- **Batch Mode:** `-p` (headless only; `requiresPromptToStart`)
+- **Resume:** `--conversation <id>` (emitted as `conversation_id` on every event)
+- **Read-only:** Not supported (`supportsReadOnlyMode: false`). `--sandbox` is best-effort: it restricts terminal commands, but workspace reads and writes stay auto-allowed
+- **YOLO Mode:** `--dangerously-skip-permissions`
+- **Known Limitations:** no session storage (on-disk format undocumented), no thinking display (only `thinking_tokens` counts), and no tool-disabling flag, so a tab-naming run (`readOnlyMode: true`, empty `noToolsArgs`) can still touch workspace files
+
+### Qwen3 Coder
+
+- **Binary:** `qwen` (Gemini CLI fork)
+- **JSON Output:** `--output-format stream-json`
+- **Batch Mode:** `-y` (no subcommand)
+- **Resume:** `--resume <session-id>`
+- **Read-only:** `--approval-mode plan` (`readOnlyCliEnforced: true` in definitions)
+- **YOLO Mode:** `-y`
+- **Working Directory:** `--include-directories <dir>`
+- **Login:** bare `qwen`, then `/auth` (the binary in `AGENT_LOGIN_COMMANDS` must equal the definition's `binaryName`; `definitions.test.ts` enforces that and the read-only parity for every agent)
+
+### Hermes
+
+- **Binary:** `hermes`
+- **Batch Mode:** `chat -Q --yolo`
+- **Prompt:** `-q <prompt>`, or `--query-file -` to read it from stdin
+- **Model:** `-m <model>`
+- **YOLO Mode:** `--yolo`
+- **Known Limitations:** plain-text output only (`supportsJsonOutput: false`, no parser), no resume, no read-only mode, no session storage, no thinking display
+
+### Pi
+
+- **Binary:** `pi`
+- **JSON Output:** `--mode json`
+- **Batch Mode:** `-p` (no `--` prompt separator; `noPromptSeparator: true`)
+- **Resume:** `--session <session-id>`
+- **Read-only:** `--tools read,grep,find,ls` (CLI-enforced)
+- **Known Limitations:** no session storage
+
+### Oh My Pi
+
+- **Binary:** `omp`
+- **JSON Output:** `--mode json`
+- **Batch Mode:** `-p`, prompt as a positional arg after `--` (never stdin)
+- **Resume:** `--resume <session-id>`
+- **Read-only:** `--tools read,grep,glob` (CLI-enforced)
+- **Session Storage:** `~/.omp/agent/sessions/<cwd-slug>/<ISO-timestamp>_<sessionId>.jsonl`, local only (SSH returns no sessions)
+- **Model Discovery:** `omp models --json` across every configured provider
+
 ## Adding New Agents
 
 To add support for a new agent:
 
 1. Add agent ID to `src/shared/agentIds.ts` → `AGENT_IDS` tuple
 2. Add agent definition to `src/main/agents/definitions.ts` → `AGENT_DEFINITIONS`
-3. Define capabilities in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` (24 boolean flags)
+3. Define capabilities in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` (27 required booleans + 2 optional)
 4. Add display name and beta status to `src/shared/agentMetadata.ts` (internal maps, accessed via `getAgentDisplayName()` / `isBetaAgent()`)
 5. Add context window default to `src/shared/agentConstants.ts` → `DEFAULT_CONTEXT_WINDOWS`
 6. **Register it in the pickers**: add an entry to `AGENT_PICKER_META` in `src/shared/agentMetadata.ts`, or `null` to withhold it. This is what makes the provider appear in the New Agent modal, the wizard tile strip, and the Group Chat moderator dropdown
 7. Add a re-auth command to `AGENT_LOGIN_COMMANDS` in `src/shared/agentMetadata.ts`
 8. Draw the tile logo: a `case` in `AgentSelectionScreen/components/AgentLogo.tsx`, plus a glyph in `src/renderer/constants/agentIcons.ts`
 9. Add install locations to `src/main/agents/path-prober.ts` if the binary does not always land on `$PATH`
-10. Sync `AgentCapabilities` interface in renderer: `useAgentCapabilities.ts`, `types/index.ts`, `global.d.ts`
+10. New capability flags go in `AgentCapabilities` and `DEFAULT_CAPABILITIES` in `src/shared/types.ts`; the renderer (`useAgentCapabilities.ts`, `types/index.ts`, `global.d.ts`) imports that shared type, so there is nothing to sync by hand
 11. (If `supportsJsonOutput`) Create output parser in `src/main/parsers/{agent}-output-parser.ts`, register in `src/main/parsers/index.ts`
 12. (If `supportsSessionStorage`) Create session storage extending `BaseSessionStorage` in `src/main/storage/`
 13. (If the agent has an output parser) Add error patterns to `src/shared/agentErrorPatterns.ts` - required, not optional: `agent-completeness.test.ts` fails CI when a registered parser has no patterns. The bank is shared so the renderer wizard classifies through the same patterns; `src/main/parsers/error-patterns.ts` is the main-process face of it

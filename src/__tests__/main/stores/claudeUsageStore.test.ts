@@ -63,6 +63,7 @@ import {
 	getSnapshot,
 	getAllSnapshots,
 	getRetainedSnapshots,
+	forgetSnapshots,
 	clear,
 	resolveConfigDirKey,
 	SNAPSHOT_RETENTION_MS,
@@ -319,6 +320,30 @@ describe('claudeUsageStore', () => {
 			expect(getSnapshot(smash.configDirKey)).toEqual(smash);
 			expect(getSnapshot(gmail.configDirKey)?.session.percent).toBe(50);
 			expect(getSnapshot(smash.configDirKey)?.session.percent).toBe(80);
+		});
+	});
+
+	describe('forgetSnapshots', () => {
+		it('drops only the named keys, expired ones included', () => {
+			setSnapshot(makeSnapshot({ configDirKey: '/a' }));
+			setSnapshot(
+				makeSnapshot({
+					configDirKey: '/b',
+					sampledAt: new Date(FROZEN_NOW - SNAPSHOT_TTL_MS - 1000).toISOString(),
+				})
+			);
+			setSnapshot(makeSnapshot({ configDirKey: '/c' }));
+
+			forgetSnapshots(['/b', '/c']);
+
+			expect(Object.keys(getRetainedSnapshots())).toEqual(['/a']);
+		});
+
+		it('is a no-op for unknown keys and an empty list', () => {
+			setSnapshot(makeSnapshot({ configDirKey: '/a' }));
+			forgetSnapshots([]);
+			forgetSnapshots(['/nope']);
+			expect(Object.keys(getRetainedSnapshots())).toEqual(['/a']);
 		});
 	});
 

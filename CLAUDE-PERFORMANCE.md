@@ -113,8 +113,9 @@ fsPromises.unlink(tempFile).catch(() => {});
 
 **Use debouncing for persistence:**
 
-Session persistence is debounced through `useDebouncedPersistence(sessions, initialLoadComplete, delay)`
-in `src/renderer/hooks/utils/useDebouncedPersistence.ts` - it returns
+Session persistence is debounced through `useDebouncedPersistence(initialLoadComplete, delay = 2000)`
+in `src/renderer/hooks/utils/useDebouncedPersistence.ts` - it subscribes to
+`useSessionStore` itself (no sessions argument) and returns
 `{ isPending, flushNow }`. The hook already wires up `visibilitychange` and
 `beforeunload` to flush pending writes internally; do **not** add a second set
 of handlers in your component.
@@ -155,8 +156,8 @@ const { sortedFilteredSessions } = useSessionCategories(deferredFilter, ...);
 ```
 
 In jsdom/RTL the deferred value equals the immediate value synchronously, so
-existing tests keep passing - see `src/__tests__/renderer/hooks/useInputHandlers.test.ts:353`
-for the precedent.
+existing tests keep passing. The production use is `deferredSessionFilter` in
+`src/renderer/components/SessionList/SessionList.tsx`, fed to `useSessionCategories`.
 
 **Use throttling for high-frequency events:**
 
@@ -181,7 +182,7 @@ const handleScroll = useThrottledCallback(() => {
 // - appendLog (accumulated via string chunks)
 // - setStatus (last wins)
 // - updateUsage (accumulated)
-// - updateContextUsage (high water mark - never decreases)
+// - updateContextUsage (last write wins; the high water mark was removed)
 ```
 
 ## Virtual Scrolling
@@ -208,7 +209,7 @@ the full list (in-page search, jump-to-message). Use
 `useProgressiveRenderWindow()` in `src/renderer/hooks/utils/` instead:
 
 ```typescript
-// See: src/renderer/components/TerminalOutput.tsx (issue #1342)
+// See: src/renderer/components/TerminalOutput/TerminalOutput.tsx (issue #1342)
 const { startIndex, revealTo } = useProgressiveRenderWindow(
 	logs.length,
 	`${session.id}-${activeTabId}`, // resets the window on conversation switch
@@ -264,7 +265,9 @@ ship the entire collection on every change:
 window.maestro.sessions.setAll(allSessions);
 
 // GOOD: track dirty IDs in the store; ship only the changed subset.
-window.maestro.sessions.setMany([sessionId]);
+// Signature: setMany(updates: StoredSession[], removeIds: string[] = [])
+// (src/main/preload/settings.ts)
+window.maestro.sessions.setMany([changedSession], removedIds);
 ```
 
 Even when the disk write is debounced, `prepare*ForPersistence` allocates a
@@ -304,6 +307,16 @@ const [branches, remotes, status] = await Promise.all([
 	git.status(cwd),
 ]);
 ```
+
+**Keep transcript parsing off the main thread:**
+
+Every session-transcript scan in the main process goes through
+`runTranscriptParse(task)` in `src/main/transcript-parse/transcript-parse-pool.ts`
+(task bodies in `transcript-parse-tasks.ts`, which must stay electron-free). The
+pool starts workers lazily up to `transcriptParsePoolSize()`, `unref`s them so
+they never hold the process open at quit, and terminates a worker idle for
+`TRANSCRIPT_PARSE_IDLE_SHUTDOWN_MS` (30s). Do not parse a transcript inline in
+an IPC handler.
 
 ## Visibility-Aware Operations
 
@@ -457,12 +470,14 @@ For React DevTools profiling workflow, see [[CONTRIBUTING.md#profiling]].
 
 ### CDP Snapshot (dev mode)
 
-Maestro exposes Chrome DevTools Protocol on `ws://localhost:12345` in dev mode
-(see `src/main/index.ts` `--remote-debugging-port`). Useful for taking a quick
-performance snapshot from a script without opening DevTools:
+CDP is opt-in: set `MAESTRO_CDP_PORT=<port>` before `npm run dev` and
+`scripts/dev.mjs` passes `--remote-debugging-port=<port>` to Electron. There is
+no default port. Useful for taking a quick performance snapshot from a script
+without opening DevTools:
 
 ```bash
 # Get the renderer page id
+MAESTRO_CDP_PORT=12345 npm run dev
 curl -s http://localhost:12345/json/list
 ```
 
@@ -493,9 +508,9 @@ The Chrome DevTools Performance panel's "Save profile" button fails in Electron 
 NotAllowedError: The request is not allowed by the user agent or the platform in the current context.
 ```
 
-This occurs because Electron 28 doesn't fully support the File System Access API (`showSaveFilePicker`). Full support was added in Electron 30+ ([electron/electron#41419](https://github.com/electron/electron/pull/41419)).
+This was observed on Electron 28, which did not fully support the File System Access API (`showSaveFilePicker`); support landed in Electron 30+ ([electron/electron#41419](https://github.com/electron/electron/pull/41419)). `package.json` now pins Electron 41, so the workarounds below are likely obsolete (not retested). Try the plain Save button first; prefer the Field Performance Trace capture below for anything shareable.
 
-**Workarounds:**
+**Workarounds (likely obsolete):**
 
 1. **Launch with experimental flag** (enables FSAA):
 
@@ -611,12 +626,10 @@ agent activity. Do not add in-app trace parsing.
    field trace is routinely past V8's 512MB max string length, and that is
    exactly how this script used to fail on every capture worth reading.
 
-   > **Known limit:** the script reads the whole trace into one string, so a
-   > `trace.json` over ~512MB fails with `Cannot create a string longer than
-0x1fffffe8 characters`. A full-buffer capture can easily exceed that. Until
-   > it streams, analyze a trace that large by reading `trace.json` line by line
-   > (Chromium emits one event per line) with `readline` and aggregating
-   > yourself.
+   > **Remaining limit:** a `.zip` or `.gz` input is still decompressed fully
+   > into memory before being fed to `readline` in 4MB chunks. If a bundle is
+   > too large to inflate, unzip it and pass `trace.json` directly, which is
+   > the streaming path.
 
 3. **For frame-level detail**, load `trace.json` into <https://ui.perfetto.dev>
    (or `chrome://tracing`) and jump to the task start times the script reported.

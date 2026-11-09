@@ -122,6 +122,8 @@ export function registerSshRemoteHandlers(deps: SshRemoteHandlerDependencies): v
 					enabled: config.enabled ?? true,
 					useSshConfig: config.useSshConfig,
 					sshConfigHost: config.sshConfigHost,
+					// Stored only when on, so a remote that never opted in carries no trace.
+					federation: config.federation === true ? true : undefined,
 				};
 
 				// Validate the configuration

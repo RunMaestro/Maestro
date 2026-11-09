@@ -243,6 +243,7 @@ describe('searchableSettings', () => {
 				'encore-quick-chat',
 				'encore-throughput-gauge',
 				'encore-dataview',
+				'encore-federation',
 				'encore-plugins',
 			]);
 			for (const entry of tiles) expect(tileIds.has(entry.id), entry.id).toBe(false);

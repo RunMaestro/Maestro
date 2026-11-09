@@ -835,7 +835,7 @@ export function getNavigableTabs(session: Session, showUnreadOnly = false): AITa
  * @param session - The Maestro session
  * @returns The active AITab or undefined if no tabs exist
  */
-export function getActiveTab(session: Session): AITab | undefined {
+export function getActiveTab(session: Pick<Session, 'aiTabs' | 'activeTabId'>): AITab | undefined {
 	if (!session || !session.aiTabs || session.aiTabs.length === 0) {
 		return undefined;
 	}
