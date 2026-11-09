@@ -286,6 +286,22 @@ describe('native idle legacy owner recovery', () => {
 		storage.db.prepare('DELETE FROM runs').run();
 		storage.db.prepare('DELETE FROM workers').run();
 	});
+
+	it('binds the exact original identity bytes, even when a replacement parses to the same legacy fields', async () => {
+		const id = await preview();
+		storage.db
+			.prepare('UPDATE runtime_owner SET process_identity=?')
+			.run(JSON.stringify({ bootTime: boot, pid: deadPid, startedAt: legacyStartedAt }));
+		const before = snapshotSqlite(storage.db);
+		expect(await recovery.confirm(event, id)).toEqual({
+			ok: false,
+			error: {
+				code: 'owner-recovery-refused',
+				message: 'Owner or Board evidence changed since preview',
+			},
+		});
+		expect(snapshotSqlite(storage.db)).toEqual(before);
+	});
 	it('rolls back the owner update if its durable human receipt cannot be stored', async () => {
 		const id = await preview();
 		storage.db.exec(
