@@ -1,15 +1,14 @@
 /**
  * GroupChatInput.tsx
  *
- * Input area for the Group Chat view. Supports:
- * - Text input with Enter to send
- * - @mention autocomplete for all agents (sessions)
- * - Read-only mode toggle (styled like direct agent chat)
- * - Attach image button
- * - Prompt composer button
- * - Enter/Cmd+Enter toggle
- * - Execution queue for messages when busy
- * - Disabled state when moderator/agent is working
+ * Input area for the Group Chat view, adapted over ChatComposer. Supports:
+ * - Text input with Enter/Cmd+Enter to send
+ * - @mention autocomplete for all live agents and groups
+ * - Room read-only mode toggle (desktop toolbar button and phone sheet switch)
+ * - Attach image with 10MB cap and type allowlist
+ * - Prompt composer integration
+ * - Execution queue display and steer handling for busy rooms
+ * - Local draft persistence debounced via useDraftPersistence
  */
 
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
@@ -29,49 +28,14 @@ import type {
 	Shortcut,
 } from '../types';
 import { QueuedItemsList } from './QueuedItemsList';
-import {
-	ComposerSendColumn,
-	ComposerTextarea,
-	GROUP_CHAT_COMPOSER_CAPABILITIES,
-	PhoneComposerHandle,
-	applyTrimmedTextPaste,
-	clipboardHasImage,
-} from './ChatComposer';
-import { QuitWhenIdleIndicator } from './QuitWhenIdleIndicator';
-import { ToolbarControls } from './InputArea/components/ToolbarControls';
+import { ChatComposer, GROUP_CHAT_COMPOSER_CAPABILITIES } from './ChatComposer';
 import { PhoneSheetSwitchRow } from './ui/PhoneSheetRows';
 import { shortcutSuffix } from './ui/ShortcutHint';
-import { usePersistedToggle } from '../hooks/ui/usePersistedToggle';
-import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
-import { useStableCallback } from '../hooks/utils/useStableCallback';
-import { useVoiceInput } from '../hooks/utils/useVoiceInput';
-import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { logger } from '../utils/logger';
 import { useDraftPersistence } from '../hooks/input/useDraftPersistence';
-import {
-	useMentionPicker,
-	buildMentionAccept,
-	type MentionPickerItem,
-} from '../hooks/input/useMentionPicker';
-import type { AtMentionSuggestion } from '../hooks/input/useAtMentionCompletion';
-import { AtMentionPopover } from './InputArea/overlays/AtMentionPopover';
-import { getAtMentionTrigger } from './InputArea/utils/inputTriggers';
-import { useScrollIntoView } from '../hooks/ui/useScrollIntoView';
-import {
-	handleComposerFindKey,
-	handleComposerPickerKey,
-	handleComposerSendKey,
-} from '../hooks/input/composerKeyDown';
-import { StagedImagesStrip } from './InputArea/components/StagedImagesStrip';
-import { moveStagedImage } from '../utils/stagedImageOrder';
-import { useUIStore } from '../stores/uiStore';
 import { groupChatOutputSearchKey } from '../utils/outputSearch';
-import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
-import { useToastAvoidZone } from '../hooks/ui/useToastAvoidZone';
-import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
 import type { SteerEligibility } from '../utils/executionQueue';
 import { groupChatSteerBlockedReason } from '../../shared/groupChatSteering';
-import { buildKnownMentionNameSet } from '../hooks/input/useAgentMentionCompletion';
 
 /** localStorage key for the room's phone composer fold (separate from AI chat's). */
 export const GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY = 'phone.groupChatComposer.collapsed';
@@ -100,12 +64,6 @@ function checkGroupChatImageFile(file: File): string | null {
 	}
 	return null;
 }
-
-/**
- * Group Chat has no file/directory mentions, only agents and groups - the unified
- * `@` picker's `fileSuggestions` input is always this stable empty array.
- */
-const NO_FILE_SUGGESTIONS: AtMentionSuggestion[] = [];
 
 interface GroupChatInputProps {
 	theme: Theme;
@@ -181,16 +139,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	shortcuts,
 	onUploadFiles,
 }: GroupChatInputProps): JSX.Element {
-	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
 	const [message, setMessage] = useState(draftMessage || '');
-	// Unified `@` mention picker state (see useMentionPicker/AtMentionPopover).
-	// Local rather than lifted through InputArea's useInputContext - that context
-	// also orchestrates slash commands and tab completion, neither of which
-	// Group Chat has.
-	const [atMentionOpen, setAtMentionOpen] = useState(false);
-	const [atMentionFilter, setAtMentionFilter] = useState('');
-	const [atMentionStartIndex, setAtMentionStartIndex] = useState(-1);
-	const [selectedAtMentionIndex, setSelectedAtMentionIndex] = useState(0);
 	// Use lifted state if provided, otherwise local state
 	const [localReadOnlyMode, setLocalReadOnlyMode] = useState(false);
 	const readOnlyMode = readOnlyModeProp ?? localReadOnlyMode;
@@ -206,6 +155,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	const inputRef = inputRefProp ?? localInputRef;
 	const prevGroupChatIdRef = useRef(groupChatId);
 	const lastPersistedDraftRef = useRef<{ groupChatId: string; draft: string } | null>(null);
+
 	// Shared with AI Chat's own draft write-back (useInputSync) - see
 	// useDraftPersistence's doc comment for why a key (here, groupChatId)
 	// switch flushes the old key immediately rather than dropping it.
@@ -225,8 +175,6 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		(draft: string, targetGroupChatId: string) => queueDraftFlush(targetGroupChatId, draft),
 		[queueDraftFlush]
 	);
-	// Toasts lift above the composer instead of covering it (Right Bar closed).
-	const toastAvoidRef = useToastAvoidZone();
 
 	useEffect(() => {
 		if (!draftFlushRef) return;
@@ -248,66 +196,16 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		() => filterLiveAgents(storedSessions, { pianola: pianolaEnabled }),
 		[storedSessions, pianolaEnabled]
 	);
-
-	// Unified `@` mention picker, locked to the Agents category (Group Chat has
-	// no file/directory mentions) and with no `currentSessionId` to exclude -
-	// group chat isn't itself a mentioning agent, so every non-terminal session
-	// stays eligible, same as the hand-rolled version this replaced.
-	const { items: atMentionItems } = useMentionPicker({
-		filter: atMentionFilter,
-		category: 'agents',
-		sessions,
-		groups,
-		currentSessionId: undefined,
-		fileSuggestions: NO_FILE_SUGGESTIONS,
-	});
-	// Live `@mention` pills, the same decoration the AI composer draws. Built
-	// from the same roster the picker offers, so a name chips exactly when the
-	// picker could have inserted it.
-	const hasMentionCandidate = message.includes('@');
-	const knownMentionNames = useMemo(
-		() => (hasMentionCandidate ? buildKnownMentionNameSet(sessions, groups, undefined) : undefined),
-		[hasMentionCandidate, sessions, groups]
-	);
-
-	const atMentionItemRefs = useScrollIntoView<HTMLButtonElement>(
-		atMentionOpen,
-		selectedAtMentionIndex,
-		atMentionItems.length
-	);
-
-	// Set the draft and persist it, as typing does. AtMentionPopover's own
-	// click-to-accept path and voice dictation both write through this.
-	const setDraftValue = useCallback(
-		(value: string) => {
-			setMessage(value);
-			persistDraft(value, groupChatId);
-		},
-		[persistDraft, groupChatId]
-	);
-
-	// Voice dictation: interim results live-update the draft and persist it like
-	// typing. The hook is a no-op where the Web Speech API is unavailable.
-	// A dictation started in one room writes that room's text through that
-	// room's id, so it is cancelled when the room changes or its draft is sent:
-	// a late result would otherwise land in the next room's draft (saved under
-	// the old id) or put the sent text back.
-	const voice = useVoiceInput({
-		currentValue: message,
-		onTranscriptionChange: setDraftValue,
-		focusRef: inputRef,
-	});
-	const { cancelVoiceInput } = voice;
+	const mentionRoster = useMemo(() => ({ sessions, groups }), [sessions, groups]);
 
 	// Sync message state when switching to a different group chat
 	useEffect(() => {
 		if (groupChatId !== prevGroupChatIdRef.current) {
-			cancelVoiceInput();
 			flushDraft();
 			setMessage(draftMessage || '');
 			prevGroupChatIdRef.current = groupChatId;
 		}
-	}, [groupChatId, draftMessage, flushDraft, cancelVoiceInput]);
+	}, [groupChatId, draftMessage, flushDraft]);
 
 	// Sync message when draftMessage changes externally (e.g., from PromptComposer)
 	useEffect(() => {
@@ -325,7 +223,6 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		// Allow sending even when busy - messages will be queued in App.tsx
 		if (message.trim()) {
 			onSend(message.trim(), stagedImages.length > 0 ? stagedImages : undefined, readOnlyMode);
-			cancelVoiceInput();
 			cancelDraft();
 			setMessage('');
 			setStagedImages([]);
@@ -335,127 +232,26 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		message,
 		onSend,
 		readOnlyMode,
-		cancelVoiceInput,
 		cancelDraft,
 		onDraftChange,
 		groupChatId,
 		stagedImages,
+		setStagedImages,
 	]);
 
-	const closeAtMention = useCallback(() => {
-		setAtMentionOpen(false);
-		setAtMentionFilter('');
-		setAtMentionStartIndex(-1);
-	}, []);
-
-	// Keyboard-driven accept (Tab/Enter). A row clicked directly in the popover
-	// is instead accepted by AtMentionPopover's own internal handler, wired
-	// through the setInputValue/setOpen/... props passed to it below.
-	const acceptAtMention = useCallback(
-		(item: MentionPickerItem) => {
-			// The category is locked to 'agents' here, so every row is an agent or a
-			// group - never a directory - and `buildMentionAccept`'s drill-in
-			// (`keepOpen`) branch, used by the unified file picker, never applies.
-			const accept = buildMentionAccept(message, atMentionStartIndex, atMentionFilter, item);
-			setMessage(accept.value);
-			persistDraft(accept.value, groupChatId);
-			closeAtMention();
-			inputRef.current?.focus();
-			// Land the caret right after the inserted token, deferred a frame so it
-			// runs after the controlled value commits (matches AtMentionPopover's own
-			// click-to-accept timing).
-			requestAnimationFrame(() => {
-				const el = inputRef.current;
-				if (el) el.selectionStart = el.selectionEnd = accept.caretPos;
-			});
-		},
-		[message, atMentionStartIndex, atMentionFilter, persistDraft, groupChatId, closeAtMention]
-	);
-
-	// The shared composer keys, in the AI composer's order: Find, the `@`
-	// picker, then send. The window keyboard handlers only know the AI composer,
-	// so every key handled here is isolated from them. Escape with the picker
-	// closed is left to the window's handleEscapeInMain, which knows where the
-	// room's transcript is. The read-only and image carousel chords are not
-	// handled here and bubble to the window handler, which acts on the room.
-	const handleKeyDown = useCallback(
-		(e: React.KeyboardEvent) => {
-			if (
-				handleComposerFindKey(e, {
-					resolveSearchKey: () => groupChatOutputSearchKey(groupChatId),
-					isolateFromWindowKeys: true,
-				})
-			) {
-				return;
-			}
-			if (
-				handleComposerPickerKey(e, {
-					open: atMentionOpen,
-					items: atMentionItems,
-					selectedIndex: selectedAtMentionIndex,
-					setSelectedIndex: setSelectedAtMentionIndex,
-					accept: acceptAtMention,
-					close: closeAtMention,
-					inputRef,
-					isolateFromWindowKeys: true,
-				})
-			) {
-				return;
-			}
-			handleComposerSendKey(e, {
-				enterToSend,
-				send: handleSend,
-				inputRef,
-				isolateFromWindowKeys: true,
-			});
-		},
-		[
-			handleSend,
-			atMentionOpen,
-			atMentionItems,
-			selectedAtMentionIndex,
-			acceptAtMention,
-			closeAtMention,
-			enterToSend,
-			groupChatId,
-			inputRef,
-		]
-	);
-
 	const handleChange = useCallback(
-		(e: React.ChangeEvent<HTMLTextAreaElement>) => {
-			const value = e.target.value;
+		(value: string) => {
 			setMessage(value);
 			persistDraft(value, groupChatId);
-
-			// Check for @mention trigger, using the same canonical detector InputArea
-			// uses so a trigger fires on identical text/caret shapes on both surfaces.
-			const trigger = getAtMentionTrigger(value, e.target.selectionStart ?? value.length);
-			if (trigger) {
-				setAtMentionOpen(true);
-				setAtMentionFilter(trigger.filter);
-				setAtMentionStartIndex(trigger.startIndex);
-				setSelectedAtMentionIndex(0);
-			} else {
-				setAtMentionOpen(false);
-			}
 		},
 		[persistDraft, groupChatId]
 	);
 
-	// Wrapped paste handler that trims text and delegates images to prop handler
 	const handlePasteWrapped = useCallback(
 		(e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-			if (clipboardHasImage(e.clipboardData)) {
-				handlePaste?.(e);
-				return;
-			}
-			applyTrimmedTextPaste(e, message, (newValue) => {
-				setMessage(newValue);
-				persistDraft(newValue, groupChatId);
-			});
+			handlePaste?.(e);
 		},
-		[message, persistDraft, groupChatId, handlePaste]
+		[handlePaste]
 	);
 
 	const handleDropWrapped = useCallback(
@@ -482,42 +278,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		[flushDraft, onUploadFiles]
 	);
 
-	// Both close over the live draft; stable identities keep the memoized
-	// toolbar from re-rendering on every keystroke.
-	const handleToggleVoiceInput = useStableCallback(voice.toggleVoiceInput);
-	const handleSendStable = useStableCallback(handleSend);
-
-	// Reordering the strip reorders what the agent receives (every send path
-	// walks stagedImages in order - see stagedImageOrder.ts). Group Chat has no
-	// "Screenshot N" text-reference convention the way AI Chat's InputArea does
-	// (nothing here ever writes that text into the draft), so unlike InputArea's
-	// own handleReorderStagedImages there is no accompanying text to renumber.
-	const handleReorderStagedImages = useCallback(
-		(from: number, to: number) => setStagedImages((prev) => moveStagedImage(prev, from, to)),
-		[setStagedImages]
-	);
-
 	const isBusy = state !== 'idle';
-	// Phone: the whole composer folds away behind a slim handle so the room's
-	// transcript gets the screen, remembered under the room's own key and
-	// starting folded like AI chat's. The handle carries a busy dot while the
-	// room is working and a pencil when an unsent draft or staged images wait.
-	const phone = usePhoneLayout();
-	const composerFold = usePersistedToggle(GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY, true);
-	const phoneHandleHasDraft = message.trim().length > 0 || stagedImages.length > 0;
-	const isFolded = phone && composerFold.value;
-
-	// Auto-resize textarea as content changes (matches InputArea behavior), keeping
-	// the caret visible once the composer is tall enough to scroll. Passing the
-	// room id and fold state through resetKey ensures that reopening a folded draft
-	// (or opening a room whose restored draft starts folded) re-measures the
-	// newly mounted textarea to its full height instead of leaving it at one row.
-	useAutosizeTextarea({
-		textareaRef: inputRef,
-		value: message,
-		maxHeight: KEYSTROKE_TEXTAREA_MAX_HEIGHT,
-		resetKey: `${groupChatId}:${isFolded}`,
-	});
 
 	// The room's Read-Only toggle (one flag for every room, sent per message to
 	// main). The toolbar draws it in its toggle group on desktop and as a sheet
@@ -599,195 +360,112 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		[queueState, isBusy]
 	);
 
-	// Folded: nothing but the handle. Every hook above has already run, so the
-	// draft, staged images, voice and autosize all survive the fold, and the
-	// wrapper keeps the toast-avoid zone measured at the handle's height.
-	if (isFolded) {
-		return (
-			<div ref={toastAvoidRef}>
-				<PhoneComposerHandle
-					theme={theme}
-					collapsed
-					onToggle={composerFold.toggle}
-					busy={isBusy}
-					hasDraft={phoneHandleHasDraft}
-				/>
-			</div>
-		);
-	}
+	const aboveComposer = useMemo(
+		() => (
+			<>
+				{/* Paused banner. A paused queue sends nothing, so it has to say so and
+				    offer the way out - otherwise the user sees messages sitting there
+				    with no clue why and no control to release them. */}
+				{(queuePaused || failedItem) && (
+					<div
+						className="mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs"
+						style={{
+							borderColor: theme.colors.warning,
+							backgroundColor: `color-mix(in srgb, ${theme.colors.warning} 10%, transparent)`,
+							color: theme.colors.textMain,
+						}}
+					>
+						<span className="flex-1 min-w-0">
+							{failedItem
+								? `Queue paused: ${failedItem.failureReason ?? 'a message could not be sent'}`
+								: 'Queue paused'}
+						</span>
+						{onResumeQueue && (
+							<button
+								type="button"
+								onClick={onResumeQueue}
+								className="shrink-0 px-2 py-0.5 rounded text-2xs font-bold"
+								style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
+							>
+								Resume
+							</button>
+						)}
+					</div>
+				)}
 
-	return (
-		<div
-			ref={toastAvoidRef}
-			className={`relative border-t ${phone ? 'px-3 pb-3 pt-0' : 'p-4'}`}
-			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
-		>
-			{phone && (
-				<PhoneComposerHandle
-					theme={theme}
-					collapsed={false}
-					onToggle={composerFold.toggle}
-					busy={isBusy}
-				/>
-			)}
+				{/* One message is on its way to the moderator and cannot be removed. */}
+				{sendingItem && (
+					<div className="mb-2 px-1 text-2xs" style={{ color: theme.colors.textDim }}>
+						Sending, cannot remove
+					</div>
+				)}
 
-			{/* QuitWhenIdleIndicator - app-wide deferred quit, which also waits for a busy room */}
-			<QuitWhenIdleIndicator theme={theme} />
-
-			{/* Paused banner. A paused queue sends nothing, so it has to say so and
-			    offer the way out - otherwise the user sees messages sitting there
-			    with no clue why and no control to release them. */}
-			{(queuePaused || failedItem) && (
-				<div
-					className="mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs"
-					style={{
-						borderColor: theme.colors.warning,
-						backgroundColor: `color-mix(in srgb, ${theme.colors.warning} 10%, transparent)`,
-						color: theme.colors.textMain,
-					}}
-				>
-					<span className="flex-1 min-w-0">
-						{failedItem
-							? `Queue paused: ${failedItem.failureReason ?? 'a message could not be sent'}`
-							: 'Queue paused'}
-					</span>
-					{onResumeQueue && (
-						<button
-							type="button"
-							onClick={onResumeQueue}
-							className="shrink-0 px-2 py-0.5 rounded text-2xs font-bold"
-							style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
-						>
-							Resume
-						</button>
-					)}
-				</div>
-			)}
-
-			{/* One message is on its way to the moderator and cannot be removed. */}
-			{sendingItem && (
-				<div className="mb-2 px-1 text-2xs" style={{ color: theme.colors.textDim }}>
-					Sending, cannot remove
-				</div>
-			)}
-
-			{/* Queued messages display */}
-			{hasQueuedItems && (
-				<QueuedItemsList
-					executionQueue={executionQueue}
-					theme={theme}
-					onRemoveQueuedItem={onRemoveQueuedItem}
-					onReorderItems={onReorderQueuedItems}
-					onOpenLightbox={onOpenLightbox}
-					getSteerContext={onSteerQueuedItem ? getSteerContext : undefined}
-					onSteerQueuedItem={onSteerQueuedItem}
-				/>
-			)}
-
-			<AtMentionPopover
-				isOpen={atMentionOpen}
-				isTerminalMode={false}
-				items={atMentionItems}
-				category="agents"
-				showCategoryBar={false}
-				selectedIndex={selectedAtMentionIndex}
-				filter={atMentionFilter}
-				startIndex={atMentionStartIndex}
-				inputValue={message}
-				itemRefs={atMentionItemRefs}
-				theme={theme}
-				setInputValue={setDraftValue}
-				setOpen={setAtMentionOpen}
-				setFilter={setAtMentionFilter}
-				setStartIndex={setAtMentionStartIndex}
-				setSelectedIndex={setSelectedAtMentionIndex}
-				inputRef={inputRef}
-			/>
-
-			<StagedImagesStrip
-				isVisible
-				stagedImages={stagedImages}
-				theme={theme}
-				setLightboxImage={(img, contextImages, source) => {
-					if (img) onOpenLightbox?.(img, contextImages, source);
-				}}
-				setStagedImages={setStagedImages}
-				openAnnotator={(img, onSave) =>
-					useImageAnnotatorStore.getState().openAnnotator(img, onSave)
-				}
-				onReorder={handleReorderStagedImages}
-			/>
-
-			<div className="flex gap-3">
-				{/* Main input area */}
-				<div
-					className="flex-1 relative border rounded-lg bg-opacity-50 flex flex-col"
-					style={{
-						borderColor: readOnlyMode ? theme.colors.warning : theme.colors.border,
-						backgroundColor: readOnlyMode ? `${theme.colors.warning}15` : theme.colors.bgMain,
-					}}
-				>
-					<ComposerTextarea
+				{/* Queued messages display */}
+				{hasQueuedItems && (
+					<QueuedItemsList
+						executionQueue={executionQueue}
 						theme={theme}
-						value={message}
-						inputRef={inputRef}
-						placeholder={
-							isBusy ? 'Type to queue message...' : 'Type a message... (@ to mention agent)'
-						}
-						spellCheck={spellCheckEnabled}
-						knownMentionNames={knownMentionNames}
-						rows={1}
-						onChange={handleChange}
-						onKeyDown={handleKeyDown}
-						onPaste={handlePasteWrapped}
-						onDrop={handleDropWrapped}
-						// The window Escape handler only acts while focus is in the main
-						// area, so claim it here the way the AI composer does. A click on
-						// the Left Bar leaves it on 'sidebar' otherwise.
-						onFocus={() => useUIStore.getState().setActiveFocus('main')}
-						onBlur={flushDraft}
-					/>
-
-					<ToolbarControls
-						theme={theme}
-						capabilities={GROUP_CHAT_COMPOSER_CAPABILITIES}
-						isTerminalMode={false}
-						enterToSend={enterToSend}
-						setEnterToSend={setEnterToSend}
-						setStagedImages={setStagedImages}
-						imageInputId="group-chat-image-input"
-						imageReportComponent="GroupChatInput"
-						checkImageFile={checkGroupChatImageFile}
-						onUploadFiles={onUploadFiles ? handleUploadFiles : undefined}
-						voiceSupported={voice.voiceSupported}
-						isVoiceListening={voice.isListening}
-						onToggleVoiceInput={handleToggleVoiceInput}
-						onOpenPromptComposer={onOpenPromptComposer ? handleOpenPromptComposer : undefined}
-						shortcuts={shortcuts}
-						showFlashNotification={showFlashNotification}
-						toolbarExtras={readOnlyToggle}
-						sheetExtras={readOnlySheetRow}
-						processInput={handleSendStable}
-						sendTitle={isBusy ? 'Queue message' : 'Send message'}
-						sendDisabled={!message.trim()}
-						sendTone={isBusy ? 'warning' : 'accent'}
-					/>
-				</div>
-
-				{/* Notifications & Send Button - Right Side. No Send menu: a busy
-				    room queues through main. On a phone the column is gone and Send
-				    sits in the toolbar row, as in AI chat. */}
-				{!phone && (
-					<ComposerSendColumn
-						theme={theme}
-						className="self-end"
-						onSend={handleSend}
-						sendTitle={isBusy ? 'Queue message' : 'Send message'}
-						sendDisabled={!message.trim()}
-						sendTone={isBusy ? 'warning' : 'accent'}
+						onRemoveQueuedItem={onRemoveQueuedItem}
+						onReorderItems={onReorderQueuedItems}
+						onOpenLightbox={onOpenLightbox}
+						getSteerContext={onSteerQueuedItem ? getSteerContext : undefined}
+						onSteerQueuedItem={onSteerQueuedItem}
 					/>
 				)}
-			</div>
-		</div>
+			</>
+		),
+		[
+			queuePaused,
+			failedItem,
+			theme,
+			onResumeQueue,
+			sendingItem,
+			hasQueuedItems,
+			executionQueue,
+			onRemoveQueuedItem,
+			onReorderQueuedItems,
+			onOpenLightbox,
+			onSteerQueuedItem,
+			getSteerContext,
+		]
+	);
+
+	const resolveSearchKey = useCallback(() => groupChatOutputSearchKey(groupChatId), [groupChatId]);
+
+	return (
+		<ChatComposer
+			theme={theme}
+			value={message}
+			onChange={handleChange}
+			draftKey={groupChatId}
+			inputRef={inputRef}
+			capabilities={GROUP_CHAT_COMPOSER_CAPABILITIES}
+			isBusy={isBusy}
+			warningBorder={readOnlyMode}
+			placeholder={isBusy ? 'Type to queue message...' : 'Type a message... (@ to mention agent)'}
+			phoneFoldStorageKey={GROUP_CHAT_PHONE_COMPOSER_COLLAPSED_KEY}
+			stagedImages={stagedImages}
+			setStagedImages={setStagedImages}
+			checkImageFile={checkGroupChatImageFile}
+			imageInputId="group-chat-image-input"
+			imageReportComponent="GroupChatInput"
+			onOpenLightbox={onOpenLightbox}
+			onPaste={handlePasteWrapped}
+			onDrop={handleDropWrapped}
+			onUploadFiles={onUploadFiles ? handleUploadFiles : undefined}
+			onOpenPromptComposer={onOpenPromptComposer ? handleOpenPromptComposer : undefined}
+			shortcuts={shortcuts}
+			showFlashNotification={showFlashNotification}
+			enterToSend={enterToSend}
+			setEnterToSend={setEnterToSend}
+			resolveSearchKey={resolveSearchKey}
+			isolateFromWindowKeys={true}
+			mentionRoster={mentionRoster}
+			toolbarExtras={readOnlyToggle}
+			sheetExtras={readOnlySheetRow}
+			aboveComposer={aboveComposer}
+			onSubmit={handleSend}
+			onBlur={flushDraft}
+		/>
 	);
 });
