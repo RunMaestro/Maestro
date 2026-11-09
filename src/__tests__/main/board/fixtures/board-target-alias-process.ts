@@ -250,8 +250,8 @@ process.once(
 
 			if (input.mode === 'orphan-no-namespace')
 				db.prepare('DELETE FROM board_sources WHERE source_key=?').run(collection.sourceKey);
-			if (input.mode === 'orphan-stale') command.target.expectedRevision--;
-			if (input.mode === 'orphan-stale-card') command.cards[0].cardRevision--;
+			if (input.mode === 'orphan-stale') command.target.expectedRevision++;
+			if (input.mode === 'orphan-stale-card') command.cards[0].cardRevision++;
 			if (input.mode === 'orphan-unknown') {
 				command.target.sourceKey = 'f'.repeat(64);
 				command.target.projectRoot = BOARD_SOURCE_PROJECT_PREFIX + command.target.sourceKey;

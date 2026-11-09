@@ -89,13 +89,7 @@ it.each(['retarget-await', 'retarget-queue', 'replace-queue', 'cwd-queue', 'miss
 	'refuses an alias changed at %s without mutation',
 	async (mode) => {
 		const result = await run(mode);
-		if (mode.startsWith('off-'))
-			expect(result.result).toMatchObject({
-				type: 'error',
-				success: false,
-				error: mode === 'off-cue' ? 'CueDisabled' : 'BoardDisabled',
-			});
-		else expect(result.result.ok).toBe(false);
+		expect(result.result.ok).toBe(false);
 		expect(result.unchanged).toBe(true);
 	}
 );
@@ -168,7 +162,11 @@ it.each([
 			success: false,
 			error: mode === 'off-cue' ? 'CueDisabled' : 'BoardDisabled',
 		});
-	else expect(result.result.ok).toBe(false);
+	else {
+		expect(result.result.ok).toBe(false);
+		if (mode === 'stale' || mode === 'stale-card')
+			expect(result.result.error.code).toBe('stale-revision');
+	}
 	expect(result.unchanged).toBe(true);
 });
 
