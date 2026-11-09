@@ -393,13 +393,6 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'rich',
 		category: 'appearance',
 	},
-	fileTreeBranchConnectors: {
-		description:
-			"Draw elbow connectors from a folder's guide line into each of its children in the Files pane, and stop the guide at the folder's last child. Off by default, which draws plain full-height indent guides.",
-		type: 'boolean',
-		default: false,
-		category: 'appearance',
-	},
 	toastWidth: {
 		description:
 			"Width of toast notifications. Options: small, medium, large, dynamic (default, matches the width of the side bar on the toast's side).",

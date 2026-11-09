@@ -272,7 +272,9 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 	onShowAccountAgents,
 }: CodexPlanUsageProps) {
 	const snapshots = useCodexUsageStore((s) => s.snapshots);
-	const refreshing = useCodexUsageStore((s) => s.refreshing);
+	// A sample in flight counts as busy even when this panel did not start it
+	// (it outlives a tab switch), so a remount shows the spinner, not an idle button.
+	const refreshing = useCodexUsageStore((s) => s.refreshing || s.sampling);
 
 	const { configuredAccountKeys, agentCountsByAccount, setSelectedKey, effectiveSelectedKey } =
 		useQuotaAccounts({
@@ -340,16 +342,9 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 			? configuredAccountKeys
 			: configuredAccountKeys.filter((k) => !hiddenSet.has(k));
 
-	// Trigger the main re-sample, then re-pull the store. The store re-pull runs
-	// even when the sampler IPC throws so the dashboard reflects the latest cache.
-	const doRefresh = useCallback(async () => {
-		try {
-			await window.maestro.agents.refreshCodexUsageSnapshots();
-		} catch {
-			// Main logs carry the detailed failure.
-		}
-		await useCodexUsageStore.getState().refresh();
-	}, []);
+	// The store owns the sample, not this panel: leaving the tab mid-sample
+	// does not abandon it, and the result lands in the store when it finishes.
+	const doRefresh = useCallback(() => useCodexUsageStore.getState().sample(), []);
 
 	const { isBusy, refreshIntervalMs, setRefreshIntervalMs, handleRefresh } = useQuotaRefresh({
 		providerId: PROVIDER_ID,

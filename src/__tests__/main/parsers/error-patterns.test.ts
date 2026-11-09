@@ -64,6 +64,27 @@ describe('error-patterns', () => {
 			expect(Object.keys(OPENCODE_ERROR_PATTERNS).length).toBeGreaterThan(0);
 		});
 
+		describe('rate_limited patterns', () => {
+			// MAESTRO-17W: the OpenCode Go plan quota message.
+			it('should match "Go usage limit exceeded" as a plan quota', () => {
+				const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, 'Go usage limit exceeded');
+				expect(result?.type).toBe('rate_limited');
+				expect(result?.message).toBe('Usage limit reached. Please wait or check your plan quota.');
+			});
+
+			it('should match "quota exceeded"', () => {
+				const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, 'Monthly quota exceeded');
+				expect(result?.type).toBe('rate_limited');
+				expect(result?.message).toBe('Your API quota has been exceeded. Resume when quota resets.');
+			});
+
+			it('should still match a plain rate limit', () => {
+				const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, 'rate limit hit');
+				expect(result?.type).toBe('rate_limited');
+				expect(result?.message).toBe('Rate limit exceeded. Please wait.');
+			});
+		});
+
 		describe('network_error patterns', () => {
 			it('should match "connection failed"', () => {
 				const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, 'connection failed');

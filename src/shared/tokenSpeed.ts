@@ -203,6 +203,14 @@ function toCount(value: unknown): number {
 	return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+/** Times one Claude transcript's API calls, fed one line at a time. */
+export interface ClaudeSpeedSampler {
+	/** Read one transcript line. */
+	addLine(line: string): void;
+	/** End of the transcript: emit the call still open. Call once, after the last line. */
+	finish(): void;
+}
+
 /**
  * Time every API call in ONE Claude transcript (a session file or one subagent
  * file - never several joined together, since the line before a file's first
@@ -214,15 +222,16 @@ function toCount(value: unknown): number {
  * attachments) are skipped entirely: they are written at unrelated moments, and
  * treating one as the request time is what produces impossible speeds.
  */
-export function extractClaudeSpeedSamples(content: string): TokenSpeedSample[] {
-	const samples: TokenSpeedSample[] = [];
+export function createClaudeSpeedSampler(
+	onSample: (sample: TokenSpeedSample) => void
+): ClaudeSpeedSampler {
 	let prevMs: number | null = null;
 	let cur: (TokenSpeedSample & { key: string; startMs: number }) | null = null;
 
 	const flush = () => {
 		if (cur) {
 			cur.durationMs = cur.endMs - cur.startMs;
-			samples.push({
+			onSample({
 				endMs: cur.endMs,
 				durationMs: cur.durationMs,
 				model: cur.model,
@@ -233,11 +242,11 @@ export function extractClaudeSpeedSamples(content: string): TokenSpeedSample[] {
 		cur = null;
 	};
 
-	for (const line of content.split('\n')) {
+	const addLine = (line: string): void => {
 		// Cheap prefilter: only assistant lines (which carry usage) and user lines
 		// can move the clock. Progress lines can embed a nested user message, so
 		// the top-level type is still checked after parsing.
-		if (line.indexOf('"usage"') === -1 && line.indexOf('"type":"user"') === -1) continue;
+		if (line.indexOf('"usage"') === -1 && line.indexOf('"type":"user"') === -1) return;
 		let entry: {
 			type?: unknown;
 			timestamp?: unknown;
@@ -247,11 +256,11 @@ export function extractClaudeSpeedSamples(content: string): TokenSpeedSample[] {
 		try {
 			entry = JSON.parse(line);
 		} catch {
-			continue;
+			return;
 		}
-		if (entry.type !== 'user' && entry.type !== 'assistant') continue;
+		if (entry.type !== 'user' && entry.type !== 'assistant') return;
 		const ts = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
-		if (!Number.isFinite(ts)) continue;
+		if (!Number.isFinite(ts)) return;
 
 		if (entry.type === 'assistant') {
 			const id = entry.message?.id;
@@ -262,7 +271,7 @@ export function extractClaudeSpeedSamples(content: string): TokenSpeedSample[] {
 				// Usage is repeated per block; keep the largest output count seen.
 				if (usage) cur.outputTokens = Math.max(cur.outputTokens, toCount(usage.output_tokens));
 				prevMs = ts;
-				continue;
+				return;
 			}
 			flush();
 			const model = typeof entry.message?.model === 'string' ? entry.message.model : '';
@@ -284,8 +293,20 @@ export function extractClaudeSpeedSamples(content: string): TokenSpeedSample[] {
 			flush();
 		}
 		prevMs = ts;
-	}
-	flush();
+	};
+
+	return { addLine, finish: flush };
+}
+
+/**
+ * Time every API call in ONE Claude transcript already in hand. See
+ * {@link createClaudeSpeedSampler} for the rules.
+ */
+export function extractClaudeSpeedSamples(content: string): TokenSpeedSample[] {
+	const samples: TokenSpeedSample[] = [];
+	const sampler = createClaudeSpeedSampler((sample) => samples.push(sample));
+	for (const line of content.split('\n')) sampler.addLine(line);
+	sampler.finish();
 	return samples;
 }
 

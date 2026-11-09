@@ -41,8 +41,7 @@ export interface FlattenedNode {
 	 * ancestor at depth `i` still has a following sibling, so its guide line
 	 * passes straight through this row. Column `depth - 1` is this row's own
 	 * elbow column and is drawn from {@link isLastChild}, so it is never set
-	 * here. Only consumed when branch connectors are on; the plain indent-guide
-	 * rendering draws every column full height.
+	 * here.
 	 */
 	ancestorGuideMask: number;
 }
@@ -158,8 +157,6 @@ export interface FileExplorerPanelProps {
 	onShowFlash?: (message: string) => void;
 	showHiddenFiles: boolean;
 	fileExplorerIconTheme: FileExplorerIconTheme;
-	/** Settings > Display: draw elbow connectors instead of plain indent guides. */
-	fileTreeBranchConnectors: boolean;
 	setShowHiddenFiles: (value: boolean) => void;
 	/** Callback to open graph view focused on a specific file (relative path to session.cwd) */
 	onFocusFileInGraph?: (relativePath: string) => void;

@@ -24,6 +24,7 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => {
 
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
+	getSessionById: vi.fn(() => undefined),
 	readSettingValue: vi.fn(),
 	readLiveSessions: vi.fn(() => []),
 	readGroups: vi.fn(() => []),
@@ -33,6 +34,7 @@ import { dispatch, runDispatch } from '../../../cli/commands/dispatch';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import {
 	resolveAgentId,
+	getSessionById,
 	readSettingValue,
 	readLiveSessions,
 	readGroups,
@@ -175,6 +177,52 @@ describe('dispatch command', () => {
 				tabId: 'tab-active-99',
 			});
 			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('reports a desktop refusal as a failure with its reason, not as success', async () => {
+			// The desktop answers a refusal (target tab mid-turn, tab gone) as a
+			// command_result with success: false. It used to be printed as
+			// success: true, telling the caller a prompt was running when none was.
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'command_result',
+				success: false,
+				tabId: 'tab-busy',
+				error: 'Maestro declined the dispatch: the target tab is mid-turn',
+				code: 'DISPATCH_REFUSED',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			await dispatch('agent-abc', 'Hello world', { tab: 'tab-busy' });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('DISPATCH_REFUSED');
+			expect(output.error).toContain('mid-turn');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('passes through the desktop code on a refusal (e.g. SESSION_NOT_FOUND)', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockResolvedValue({
+						type: 'command_result',
+						success: false,
+						error: 'Session not found: agent-abc-123',
+						code: 'SESSION_NOT_FOUND',
+					}),
+				};
+				return action(mockClient as never);
+			});
+
+			await dispatch('agent-abc', 'Hello world', {});
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toMatchObject({ success: false, code: 'SESSION_NOT_FOUND' });
 		});
 
 		it('returns null tab/session IDs when the desktop omits tabId (no active tab)', async () => {
@@ -329,7 +377,7 @@ describe('dispatch command', () => {
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 
-		it('reports queued: true when --new-tab queued the prompt behind a running turn', async () => {
+		it('passes through queued: true from an older desktop that queued a --new-tab prompt', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
 				type: 'new_ai_tab_with_prompt_result',
@@ -952,6 +1000,26 @@ describe('dispatch command', () => {
 			expect(output.success).toBe(false);
 			expect(output.code).toBe('AGENT_NOT_FOUND');
 			expect(output.error).toBe('No agent matching "bogus"');
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('refuses a lifted agent with AGENT_LIFTED before reaching the desktop', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('lifted-agent');
+			vi.mocked(getSessionById).mockReturnValueOnce({
+				id: 'lifted-agent',
+				name: 'Lifted',
+				toolType: 'claude-code',
+				cwd: '/p',
+				projectRoot: '/p',
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			});
+
+			await dispatch('lifted-agent', 'Hello', {});
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('AGENT_LIFTED');
+			expect(output.error).toContain('build-box:host-1');
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 	});
