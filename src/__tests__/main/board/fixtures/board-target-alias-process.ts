@@ -118,6 +118,18 @@ process.once(
 			}
 			const collection = storage.query().collections.find((c) => c.board.id === 'b')!;
 			if (!collection) throw new Error('Canonical alias discovery did not import collection');
+			if (input.mode.startsWith('orphan-')) {
+				// Central data survives a closed project; no completed import is required.
+				db.prepare('INSERT OR IGNORE INTO board_sources(source_key) VALUES (?)').run(
+					collection.sourceKey
+				);
+				db.prepare('DELETE FROM migration_blockers WHERE source_key=?').run(collection.sourceKey);
+				db.prepare('DELETE FROM migrations WHERE source_key=?').run(collection.sourceKey);
+				registered.splice(0, 1);
+				fs.unlinkSync(alias);
+				fs.rmSync(root, { recursive: true });
+			}
+
 			const started = await createMaestroRuntime({
 				dataDir: contract.userData,
 				mode: 'host',
@@ -131,7 +143,7 @@ process.once(
 				boardHost: executeBoardCommand,
 				onStopRequested() {},
 			});
-			if (input.mode.startsWith('retained-ssh-cli-')) {
+			if (input.mode.startsWith('retained-ssh-cli-') || input.mode === 'orphan-cli') {
 				if (!input.cliBundle) throw new Error('CLI bundle must be parent-owned');
 				assertBoardIsolationPath(contract, input.cliBundle);
 				fs.writeFileSync(
@@ -173,8 +185,24 @@ process.once(
 						).stdout
 					);
 				const operation = input.mode.slice('retained-ssh-cli-'.length);
+				const cliBefore = snapshotSqlite(db);
 				let response;
-				if (operation === 'closed') {
+				if (input.mode === 'orphan-cli') {
+					fs.writeFileSync(sessionsFile, JSON.stringify({ sessions: [] }));
+					response = await run(
+						'remove-cards',
+						'--source',
+						collection.sourceKey,
+						'--collection',
+						collection.collectionKey,
+						'--revision',
+						String(collection.revision),
+						'--cards',
+						JSON.stringify([
+							{ cardId: 'c', cardRevision: collection.board.cards[0].storageRevision! },
+						])
+					);
+				} else if (operation === 'closed') {
 					fs.writeFileSync(sessionsFile, JSON.stringify({ sessions: [] }));
 					response = await run(
 						'rename',
@@ -186,9 +214,18 @@ process.once(
 				} else if (operation === 'rename')
 					response = await run('rename', 'b', 'Renamed remote', '--agent', 'remote-agent');
 				else response = await run(operation, '--agent', 'remote-agent');
+				const cliAfter = snapshotSqlite(db);
 				process.send?.({
+					changedTables: Object.keys(cliAfter).filter(
+						(name) => cliAfter[name].sha256 !== cliBefore[name].sha256
+					),
 					actualCli: true,
 					operation,
+					deleted: input.mode === 'orphan-cli' ? response.cards : undefined,
+					archives:
+						input.mode === 'orphan-cli'
+							? db.prepare('SELECT count(*) AS n FROM card_archives').get()
+							: undefined,
 					listed: operation === 'list' ? response.map((b: { id: string }) => b.id) : undefined,
 					replyType: response.type,
 					name: storage.read(BOARD_SOURCE_PROJECT_PREFIX + collection.sourceKey, 'b').name,
@@ -210,6 +247,70 @@ process.once(
 				},
 				cards: [{ cardId: 'c', cardRevision: collection.board.cards[0].storageRevision! }],
 			};
+
+			if (input.mode === 'orphan-no-namespace')
+				db.prepare('DELETE FROM board_sources WHERE source_key=?').run(collection.sourceKey);
+			if (input.mode === 'orphan-stale') command.target.expectedRevision--;
+			if (input.mode === 'orphan-stale-card') command.cards[0].cardRevision--;
+			if (input.mode === 'orphan-unknown') {
+				command.target.sourceKey = 'f'.repeat(64);
+				command.target.projectRoot = BOARD_SOURCE_PROJECT_PREFIX + command.target.sourceKey;
+			}
+			if (input.mode === 'orphan-crosscollection')
+				command.target.collectionKey = 'foreign-collection';
+			if (input.mode === 'orphan-physical') command.target.projectRoot = root;
+			if (input.mode === 'orphan-suppressed')
+				db.prepare('INSERT INTO board_source_suppressions(source_key) VALUES (?)').run(
+					collection.sourceKey
+				);
+			if (input.mode === 'orphan-malformed-source')
+				db.prepare(
+					"UPDATE board_source_locations SET payload_json=json_set(payload_json,'$.path',?) WHERE source_key=?"
+				).run(foreign, collection.sourceKey);
+			if (input.mode === 'orphan-running')
+				db.prepare(
+					"UPDATE cards SET payload_json=json_set(payload_json,'$.status','running') WHERE collection_key=?"
+				).run(collection.collectionKey);
+			if (input.mode === 'orphan-reservation') {
+				db.prepare("INSERT INTO workers VALUES ('held',1,0,'{}')").run();
+				db.prepare(
+					"INSERT INTO runs(run_id,collection_key,card_id,attempt,specification_json,outcome_json) VALUES ('attempt',?,'c',1,'{}',NULL)"
+				).run(collection.collectionKey);
+				db.prepare("INSERT INTO reservations VALUES ('held',?,'c','attempt',1,1,'unknown')").run(
+					collection.collectionKey
+				);
+			}
+
+			if (input.mode === 'orphan-linked-review' || input.mode === 'orphan-dag') {
+				const put = (id: string, extra: object) =>
+					db!
+						.prepare('INSERT INTO cards(collection_key,id,payload_json,revision) VALUES (?,?,?,0)')
+						.run(
+							collection.collectionKey,
+							id,
+							JSON.stringify({ ...collection.board.cards[0], id, ...extra })
+						);
+				if (input.mode === 'orphan-linked-review')
+					put('parent', {
+						status: 'review',
+						workflow: { version: 1, corrections: 0, reviewCardId: 'c' },
+					});
+				else {
+					put('g', { parents: [] });
+					put('d', { parents: ['c'] });
+					put('unrelated', { parents: [] });
+					db.prepare(
+						"UPDATE cards SET payload_json=json_set(payload_json,'$.parents',json('[\"g\"]')) WHERE collection_key=? AND id='c'"
+					).run(collection.collectionKey);
+				}
+			}
+			if (input.mode.startsWith('orphan-off-'))
+				configureBoardFeatures({
+					get: () => ({
+						board: input.mode === 'orphan-off-cue',
+						maestroCue: input.mode === 'orphan-off-board',
+					}),
+				});
 			let changed = false;
 			let enter!: () => void;
 			const entered = new Promise<void>((r) => {
@@ -242,14 +343,22 @@ process.once(
 				});
 				await entered;
 			}
-			if (['retarget-queue', 'replace-queue', 'cwd-queue', 'missing-queue'].includes(input.mode)) {
-				background = enqueueBoardWrite(root, async () => {
-					enter();
-					await barrier;
-				});
+			if (
+				['retarget-queue', 'replace-queue', 'cwd-queue', 'missing-queue'].includes(input.mode) ||
+				input.mode.startsWith('orphan-queue-')
+			) {
+				background = enqueueBoardWrite(
+					input.mode.startsWith('orphan-')
+						? BOARD_SOURCE_PROJECT_PREFIX + collection.sourceKey
+						: root,
+					async () => {
+						enter();
+						await barrier;
+					}
+				);
 				await entered;
 			}
-			const before = snapshotSqlite(db);
+			let before = snapshotSqlite(db);
 			let admissionReady!: () => void;
 			const admitted = new Promise<void>((r) => {
 				admissionReady = r;
@@ -263,16 +372,49 @@ process.once(
 				return result;
 			};
 			let settled = false;
-			const reply = requestBoardCommand(client, command).then((r) => {
+			const request =
+				input.mode === 'orphan-forged-human'
+					? { ...command, human: true }
+					: input.mode === 'orphan-foreign-actor'
+						? { ...command, actor: { agentId: 'foreign' } }
+						: input.mode === 'orphan-rename'
+							? { action: 'rename' as const, target: command.target, name: 'Must remain unchanged' }
+							: command;
+			const reply = requestBoardCommand(client, request).then((r) => {
 				settled = true;
 				return r;
 			});
-			if (input.mode.endsWith('-queue')) {
+			if (input.mode.endsWith('-queue') || input.mode.startsWith('orphan-queue-')) {
 				await admitted;
 				// The final association proof returns, then admission/enqueue microtasks finish.
 				await new Promise<void>((resolve) => setImmediate(resolve));
 				if (settled) throw new Error('Expected command pending behind the held canonical queue');
-				if (input.mode === 'cwd-queue') {
+				if (input.mode === 'orphan-queue-source') {
+					db.prepare(
+						"UPDATE board_source_locations SET payload_json=payload_json || ' ' WHERE source_key=?"
+					).run(collection.sourceKey);
+				} else if (input.mode === 'orphan-queue-registration') {
+					registered.push({ id: 'a', dir: root, projectRoot: root, boardWorker: true });
+				} else if (input.mode === 'orphan-queue-suppression') {
+					db.prepare('INSERT INTO board_source_suppressions(source_key) VALUES (?)').run(
+						collection.sourceKey
+					);
+				} else if (input.mode === 'orphan-queue-new-card') {
+					db.prepare(
+						'INSERT INTO cards(collection_key,id,payload_json,revision) VALUES (?,?,?,0)'
+					).run(
+						collection.collectionKey,
+						'new-card',
+						JSON.stringify({ ...collection.board.cards[0], id: 'new-card' })
+					);
+					db.prepare('UPDATE collections SET revision=revision+1 WHERE collection_key=?').run(
+						collection.collectionKey
+					);
+				} else if (input.mode === 'orphan-queue-revision') {
+					db.prepare('UPDATE collections SET revision=revision+1 WHERE collection_key=?').run(
+						collection.collectionKey
+					);
+				} else if (input.mode === 'cwd-queue') {
 					registered[0].dir = foreign;
 					registered[0].projectRoot = foreign;
 				} else {
@@ -280,16 +422,39 @@ process.once(
 					if (input.mode !== 'missing-queue')
 						fs.symlinkSync(input.mode === 'retarget-queue' ? foreign : root, alias, 'junction');
 				}
+				if (input.mode.startsWith('orphan-queue-')) before = snapshotSqlite(db);
 				release();
 			}
 			const result = await reply;
-			const unchanged = canonicalJson(snapshotSqlite(db)) === canonicalJson(before);
+			const after = snapshotSqlite(db);
+			const unchanged = canonicalJson(after) === canonicalJson(before);
 			process.send?.({
 				result,
 				unchanged,
+				changedTables: Object.keys(after).filter(
+					(name) => after[name].sha256 !== before[name].sha256
+				),
 				foreignProbes: probes,
 				backgroundPending: input.mode === 'barrier' && !backgroundDone,
 				productionSourceAdapter: true,
+				dag:
+					input.mode === 'orphan-dag'
+						? storage
+								.read(BOARD_SOURCE_PROJECT_PREFIX + collection.sourceKey, 'b')
+								.cards.map((c) => ({ id: c.id, parents: c.parents }))
+						: undefined,
+				orphanProof: input.mode.startsWith('orphan-')
+					? {
+							folderAbsent: !fs.existsSync(root),
+							ledgerAbsent: !db
+								.prepare('SELECT 1 FROM migrations WHERE source_key=?')
+								.get(collection.sourceKey),
+							archives: db.prepare('SELECT count(*) AS n FROM card_archives').get(),
+							cards: storage.workspace
+								.readCollection(collection)!
+								.cards.filter((card) => !card.archived).length,
+						}
+					: undefined,
 			});
 		} catch (e) {
 			process.send?.({ error: e instanceof Error ? e.stack : String(e) });

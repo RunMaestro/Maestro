@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { listBoardWorkers } from './board-workspace-storage';
 import { BOARD_SOURCE_PROJECT_PREFIX } from '../../shared/board/types';
-import type { BoardCommandTarget } from '../../shared/board/commands';
+import type { BoardCommand, BoardCommandTarget } from '../../shared/board/commands';
 import { boardMigrationSourceKey } from './board-migration';
 import { resolveBoardLocation } from './board-location';
 import { probeBoardRemoteRepository } from './board-remote-source';
@@ -169,7 +169,8 @@ export function refreshBoardSources(): Promise<void> {
  * which remains in the facade's current actor/specification/reservation checks.
  */
 export async function prepareBoardMutationTarget(
-	target: BoardCommandTarget
+	target: BoardCommandTarget,
+	action: BoardCommand['action']
 ): Promise<{ projectRoot: string; identity: string }> {
 	requireBoardEnabled();
 	const storage = getBoardStorage();
@@ -295,7 +296,7 @@ export async function prepareBoardMutationTarget(
 				'stale-revision',
 				'Board source registration changed during alias validation'
 			);
-		return canonicalJson(matched);
+		return { matched: canonicalJson(matched), registered: canonicalJson(observed) };
 	};
 	const associated = await association(registered);
 	// A completed SSH import is also a retained central namespace. Explicit central
@@ -323,16 +324,29 @@ export async function prepareBoardMutationTarget(
 			return undefined;
 		return createHash('sha256').update(ledger.snapshot).digest('hex');
 	};
-	const retained = associated === '[]' ? retainedRemoteIdentity() : undefined;
+	const retained = associated.matched === '[]' ? retainedRemoteIdentity() : undefined;
+	// Only bulk card archival may use a closed local namespace. No filesystem,
+	// repository, run or human authority is inferred from the persisted location.
+	// Observed-but-invalid registrations (including aliases) must never become orphans.
+	const centralDeletion =
+		action === 'delete-cards' &&
+		source?.location.kind === 'local' &&
+		target.projectRoot === BOARD_SOURCE_PROJECT_PREFIX + target.sourceKey &&
+		associated.registered === '[]' &&
+		!admitted?.has(source.path);
+
 	let physical: unknown;
 	if (source) {
 		if (
-			associated === '[]' &&
+			associated.matched === '[]' &&
 			!retained &&
+			!centralDeletion &&
 			!(source.location.kind === 'local' && admitted?.has(source.path))
 		)
 			throw new BoardStorageError('legacy-mapping-missing', 'Board target is no longer registered');
-		if (source.location.kind === 'local') {
+		if (centralDeletion) {
+			physical = ['central-card-archival', target.sourceKey];
+		} else if (source.location.kind === 'local') {
 			try {
 				const root = await fs.promises.realpath(source.path);
 				requireBoardEnabled();
@@ -392,10 +406,16 @@ export async function prepareBoardMutationTarget(
 		storage.sourceIdentity(target.sourceKey) !== before ||
 		canonicalJson(storage.sourceLocation(target.sourceKey) ?? null) !==
 			canonicalJson(source ?? null) ||
-		currentAssociation !== associated ||
+		canonicalJson(currentAssociation) !== canonicalJson(associated) ||
 		(retained !== undefined && retainedRemoteIdentity() !== retained)
 	)
 		throw new BoardStorageError('stale-revision', 'Board target source changed during admission');
+	if (
+		storage.db
+			.prepare('SELECT 1 FROM board_source_suppressions WHERE source_key=?')
+			.get(target.sourceKey)
+	)
+		throw new BoardStorageError('protected-field', 'Board target source is suppressed');
 	verifyCollection();
 	return {
 		projectRoot: prepared.projectRoot!,

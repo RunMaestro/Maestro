@@ -89,7 +89,13 @@ it.each(['retarget-await', 'retarget-queue', 'replace-queue', 'cwd-queue', 'miss
 	'refuses an alias changed at %s without mutation',
 	async (mode) => {
 		const result = await run(mode);
-		expect(result.result.ok).toBe(false);
+		if (mode.startsWith('off-'))
+			expect(result.result).toMatchObject({
+				type: 'error',
+				success: false,
+				error: mode === 'off-cue' ? 'CueDisabled' : 'BoardDisabled',
+			});
+		else expect(result.result.ok).toBe(false);
 		expect(result.unchanged).toBe(true);
 	}
 );
@@ -108,4 +114,74 @@ it.each([
 ] as const)('preserves actual CLI SSH %s through real auth WS', async (operation, expected) => {
 	const result = await run('retained-ssh-cli-' + operation);
 	expect(result).toMatchObject({ actualCli: true, operation, ...expected });
+});
+
+it('archives an orphan local central card over real auth WS without a directory or migration ledger', async () => {
+	const result = await run('orphan-valid');
+	expect(result.changedTables).toEqual(['card_archives', 'cards', 'collections', 'workspace']);
+	expect(result.result.ok, result.result.error?.code).toBe(true);
+	expect(result.orphanProof).toEqual({
+		folderAbsent: true,
+		ledgerAbsent: true,
+		archives: { n: 1 },
+		cards: 0,
+	});
+});
+
+it('archives an orphan local central card through the actual CLI and canonical WS client', async () => {
+	const result = await run('orphan-cli');
+	expect(result.changedTables).toEqual(['card_archives', 'cards', 'collections', 'workspace']);
+	expect(result).toMatchObject({
+		actualCli: true,
+		deleted: [{ cardId: 'c', deleted: true }],
+		archives: { n: 1 },
+	});
+});
+it.each([
+	'rename',
+	'physical',
+	'stale',
+	'stale-card',
+	'unknown',
+	'crosscollection',
+	'suppressed',
+	'malformed-source',
+	'no-namespace',
+	'running',
+	'reservation',
+	'queue-source',
+	'queue-registration',
+	'queue-suppression',
+	'queue-revision',
+	'queue-new-card',
+	'linked-review',
+	'forged-human',
+	'foreign-actor',
+	'off-both',
+	'off-board',
+	'off-cue',
+])('refuses orphan local central deletion at %s without command writes', async (mode) => {
+	const result = await run('orphan-' + mode);
+	if (mode.startsWith('off-'))
+		expect(result.result).toMatchObject({
+			type: 'error',
+			success: false,
+			error: mode === 'off-cue' ? 'CueDisabled' : 'BoardDisabled',
+		});
+	else expect(result.result.ok).toBe(false);
+	expect(result.unchanged).toBe(true);
+});
+
+it('preserves DAG parent adoption and unrelated cards when archiving an orphan central card', async () => {
+	const result = await run('orphan-dag');
+	expect(result.result.ok, result.result.error?.code).toBe(true);
+	expect(result.dag).toEqual(
+		expect.arrayContaining([
+			{ id: 'g', parents: [] },
+			{ id: 'd', parents: ['g'] },
+			{ id: 'unrelated', parents: [] },
+		])
+	);
+	expect(result.dag).toHaveLength(3);
+	expect(result.orphanProof.archives).toEqual({ n: 1 });
 });

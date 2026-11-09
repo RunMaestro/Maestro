@@ -173,7 +173,9 @@ export const executeBoardCommand: BoardCommandHost = async (command) => {
 			return { ok: true, value: null };
 		}
 		const prepared =
-			command.action === 'create' ? undefined : await prepareBoardMutationTarget(command.target);
+			command.action === 'create'
+				? undefined
+				: await prepareBoardMutationTarget(command.target, command.action);
 		const projectRoot = command.action === 'create' ? command.projectRoot : prepared!.projectRoot;
 		const result = await enqueueBoardWrite(projectRoot, async () => {
 			if (command.action === 'create') {
@@ -187,7 +189,7 @@ export const executeBoardCommand: BoardCommandHost = async (command) => {
 				};
 			}
 			const target = command.target;
-			const current = await prepareBoardMutationTarget(target);
+			const current = await prepareBoardMutationTarget(target, command.action);
 			if (current.projectRoot !== projectRoot || current.identity !== prepared!.identity)
 				throw new BoardStorageError('stale-revision', 'Board project alias changed while queued');
 			const snapshot = queryBoardWorkspace({ projectRoot, sourceKey: target.sourceKey });
