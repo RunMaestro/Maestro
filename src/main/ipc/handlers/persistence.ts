@@ -17,7 +17,10 @@ import * as fs from 'fs/promises';
 import { logger } from '../../utils/logger';
 import { noteSentryAgentInventory } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
-import { broadcastBridgeEvent } from '../../web-server/handlers/bridgeHandlers';
+import {
+	broadcastBridgeEvent,
+	isBridgeInvokeEvent,
+} from '../../web-server/handlers/bridgeHandlers';
 import { forgetAgentActors } from '../../web-server/auth/turn-attribution';
 import { getThemeById } from '../../themes';
 import { WebServer } from '../../web-server';
@@ -266,6 +269,31 @@ export function registerPersistenceHandlers(
 			return false;
 		});
 	};
+
+	/**
+	 * The sessions of a web-desktop write, with each stored agent's AI tabs kept
+	 * as stored.
+	 *
+	 * The desktop owns the AI tab inventory: a browser client creates and closes
+	 * tabs by asking the desktop (`web:requestNewTab` / `web:requestCloseTab`)
+	 * and mirrors the result from its `tabs_changed` snapshots. Its own copy of
+	 * `aiTabs` is therefore never newer than the store, and can be much older: a
+	 * phone that resumes after hours suspended flushes the tree it held before it
+	 * caught up, and merging that copy closed every tab the desktop opened while
+	 * it was away and reverted every rename (issue #1985). Agents the store does
+	 * not hold yet keep the client's tabs, since there is nothing to protect.
+	 */
+	const keepStoredAiTabs = (
+		sessions: StoredSession[],
+		storedById: Map<string, StoredSession>
+	): StoredSession[] =>
+		sessions.map((session) => {
+			const stored = storedById.get(session.id);
+			if (!stored || !Array.isArray(stored.aiTabs) || session.aiTabs === stored.aiTabs) {
+				return session;
+			}
+			return { ...session, aiTabs: stored.aiTabs };
+		});
 
 	// PERF: coalesce activeSessionId disk writes.
 	//
@@ -594,7 +622,10 @@ export function registerPersistenceHandlers(
 			const previousMap = new Map(previousSessions.map((s) => [s.id, s]));
 			// Drop any agent this write would resurrect: another client closed it
 			// moments ago and this flush was already in flight with a stale copy.
-			const updates = dropResurrections(relocatedUpdates, new Set(previousMap.keys()));
+			const liveUpdates = dropResurrections(relocatedUpdates, new Set(previousMap.keys()));
+			const updates = isBridgeInvokeEvent(event)
+				? keepStoredAiTabs(liveUpdates, previousMap)
+				: liveUpdates;
 			const removeSet = new Set(removeIds);
 			const updateMap = new Map(updates.map((s) => [s.id, s]));
 
@@ -751,7 +782,10 @@ export function registerPersistenceHandlers(
 			const previousSessionMap = new Map(previousSessions.map((s) => [s.id, s]));
 			// Same resurrection guard as setMany: a client that loaded before another
 			// closed an agent still carries it, and this path would write it back.
-			const sessions = dropResurrections(relocatedSessions, new Set(previousSessionMap.keys()));
+			const liveSessions = dropResurrections(relocatedSessions, new Set(previousSessionMap.keys()));
+			const sessions = isBridgeInvokeEvent(event)
+				? keepStoredAiTabs(liveSessions, previousSessionMap)
+				: liveSessions;
 			const incomingIds = new Set(sessions.map((s) => s.id));
 			// setAll is a client's opening snapshot, so an omitted id means the client
 			// never saw that agent. Only setMany's explicit removeIds may delete one.
