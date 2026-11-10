@@ -3991,6 +3991,25 @@ describe('Board card reading and explicit actions', () => {
 		expect(boardApi.deleteCards).not.toHaveBeenCalled();
 		expect(boardApi.captureCard).not.toHaveBeenCalled();
 	});
+	it('opens details on a fresh deliberate pointer gesture after an unchanged card drag', async () => {
+		installApis([
+			{ id: 'b1', name: 'Board', cards: [makeCard({ id: 'read', title: 'Read this' })] },
+		]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		const tile = await screen.findByRole('button', { name: 'Read this, To Do' });
+		fireEvent.pointerDown(tile);
+		fireEvent.dragStart(tile);
+		expect(tile).toHaveStyle({ opacity: '0.4' });
+		fireEvent.dragEnd(tile);
+		expect(tile).toHaveStyle({ opacity: '1' });
+		// Native drag need not dispatch a click. The next down begins an independent gesture.
+		fireEvent.pointerDown(tile);
+		fireEvent.click(tile);
+		expect(await screen.findByRole('region', { name: 'Card details' })).toBeVisible();
+		expect(boardApi.readCardRun).not.toHaveBeenCalled();
+		expect(boardApi.captureCard).not.toHaveBeenCalled();
+		expect(boardApi.runtimeCommand).not.toHaveBeenCalled();
+	});
 	it('reads a saved central attempt without requiring a filesystem location or active project', async () => {
 		const card = makeCard({
 			id: 'read',

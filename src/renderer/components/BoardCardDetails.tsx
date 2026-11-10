@@ -126,7 +126,7 @@ export function BoardCardDetails({
 					<ThemedSelect
 						theme={theme}
 						aria-label="Attempt"
-						value={runId ?? ''}
+						value={runId ?? `legacy-${run.attempt}`}
 						options={runs.map((entry) => ({
 							value: entry.runId ?? `legacy-${entry.attempt}`,
 							label: `Attempt ${entry.attempt} · ${entry.startedAt} · ${entry.outcome ?? 'in progress'}`,

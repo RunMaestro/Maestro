@@ -2756,6 +2756,8 @@ const BoardCardTile = memo(function BoardCardTile({
 			tabIndex={0}
 			aria-label={`${card.title}, ${STATUS_META[card.status].label}`}
 			onPointerDownCapture={(event) => {
+				// A new pointer gesture is independent of a drag that produced no click.
+				wasDragged.current = false;
 				controlGesture.current = !!(event.target as HTMLElement).closest(
 					'button, a, input, select, textarea'
 				);

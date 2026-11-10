@@ -141,6 +141,20 @@ describe('Board card attempt reading', () => {
 		).toBeVisible();
 		expect(read).not.toHaveBeenCalled();
 	});
+	it('keeps the selected legacy attempt label when switching between saved legacy records', () => {
+		const legacy = { ...card, runs: card.runs!.map(({ runId: _runId, ...run }) => run) };
+		render(view(legacy));
+		const selector = screen.getByLabelText('Attempt');
+		expect(selector).toHaveTextContent('Attempt 2');
+		fireEvent.click(selector);
+		fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: /Attempt 1/ }));
+		expect(selector).toHaveTextContent('Attempt 1');
+		expect(
+			screen.getByText('Full attempt data is unavailable for this legacy record.')
+		).toBeVisible();
+		expect(read).not.toHaveBeenCalled();
+		expect(screen.queryByRole('heading', { name: 'Complete analysis' })).toBeNull();
+	});
 	it('reports a typed read failure without showing an answer from another request', async () => {
 		read.mockResolvedValue({
 			ok: false,
