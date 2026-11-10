@@ -11,7 +11,7 @@
  */
 
 import path from 'node:path';
-import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 
 vi.mock('fs', () => ({
 	existsSync: vi.fn(),
@@ -86,7 +86,15 @@ describe('open-graph command', () => {
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+		// The suite may run inside a Maestro agent or terminal tab; its own shell
+		// identity would otherwise pick the target agent.
+		vi.stubEnv('MAESTRO_CALLER_AGENT_ID', '');
+		vi.stubEnv('MAESTRO_TERMINAL_AGENT_ID', '');
 		vi.mocked(existsSync).mockReturnValue(true);
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
 	});
 
 	it('sends explicit markdown files as an absolute file list', async () => {
