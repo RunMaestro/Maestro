@@ -756,10 +756,17 @@ async function tabClosedFleet(json?: boolean): Promise<void> {
 								: reply.error || errorFrameMessage(reply) || 'Closed-tab command failed';
 							return error ? { closedTabs: [], error } : { closedTabs: reply.closedTabs ?? [] };
 						} catch (error) {
-							if (error instanceof CommandTimeoutError) {
-								return { closedTabs: [], error: 'Maestro did not answer in time' };
-							}
-							throw error;
+							// One agent's failure is its own entry, never the whole listing's.
+							// A connect() failure still reaches the outer catch.
+							return {
+								closedTabs: [],
+								error:
+									error instanceof CommandTimeoutError
+										? 'Maestro did not answer in time'
+										: error instanceof Error
+											? error.message
+											: String(error),
+							};
 						}
 					})
 				);
