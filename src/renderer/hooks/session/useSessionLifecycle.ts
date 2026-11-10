@@ -566,6 +566,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	}, []);
 
 	const toggleTabStar = useCallback(() => {
+		if (useGroupChatStore.getState().activeGroupChatId) {
+			return;
+		}
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 		// Star toggle only applies when an AI tab is the visible view - not when a

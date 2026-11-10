@@ -1049,4 +1049,103 @@ describe('agent-switch window scoping', () => {
 
 		expect(ids).not.toContain('changeModelEffort');
 	});
+
+	it('withholds clearTerminal while a group chat owns the view', () => {
+		const session = createMockSession({
+			id: 's1',
+			inputMode: 'terminal',
+			activeTerminalTabId: 'term-1',
+		});
+		const args = {
+			activeSession: session,
+			isAiMode: false,
+			activeTabInfo: {
+				isTerminalMode: true,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 1,
+				activeTabType: 'terminal' as const,
+			},
+			enterToSendAI: true,
+			onClearActiveTerminal: vi.fn(),
+			setQuickActionOpen: close,
+			shortcuts: {
+				clearTerminal: {
+					id: 'clearTerminal',
+					label: 'Clear Terminal',
+					keys: ['Meta', 'Shift', 'k'],
+				},
+			},
+			toggleInputMode: vi.fn(),
+		};
+
+		expect(buildTabCommands(args).find((a) => a.id === 'clearTerminal')).toBeDefined();
+		expect(
+			buildTabCommands({ ...args, activeGroupChatId: 'chat-1' }).find(
+				(a) => a.id === 'clearTerminal'
+			)
+		).toBeUndefined();
+	});
+
+	it('withholds editLastQueuedMessage while a group chat owns the view', () => {
+		const session = createMockSession({
+			id: 's1',
+			executionQueue: [{ id: 'q1', type: 'message', text: 'hello' }] as any,
+		});
+		const args = {
+			activeSession: session,
+			canSummarizeActiveTab: true,
+			hasActiveSessionCapability: () => true,
+			setQuickActionOpen: close,
+			setSuccessFlashNotification: vi.fn(),
+			setAgentSessionsOpen: vi.fn(),
+			setActiveAgentSessionId: vi.fn(),
+			bionifyReadingMode: false,
+			setBionifyReadingMode: vi.fn(),
+			audioFeedbackEnabled: false,
+			setAudioFeedbackEnabled: vi.fn(),
+			idleNotificationEnabled: false,
+			setIdleNotificationEnabled: vi.fn(),
+			showStarredSessionsSection: true,
+			setShowStarredSessionsSection: vi.fn(),
+			shortcuts: {},
+		};
+
+		expect(buildFeatureCommands(args).find((a) => a.id === 'editLastQueuedMessage')).toBeDefined();
+		expect(
+			buildFeatureCommands({ ...args, activeGroupChatId: 'chat-1' }).find(
+				(a) => a.id === 'editLastQueuedMessage'
+			)
+		).toBeUndefined();
+	});
+
+	it('withholds toggleStarTab while a group chat owns the view', () => {
+		const session = createMockSession({
+			id: 's1',
+			activeTabId: 'tab-1',
+			aiTabs: [
+				{ id: 'tab-1', name: 'Tab', logs: [], agentSessionId: 'ag-1', starred: false },
+			] as any,
+		});
+		const args = {
+			activeSession: session,
+			activeSessionId: 's1',
+			activeTabType: 'ai' as const,
+			setSessions,
+			setQuickActionOpen: close,
+			safeClipboardWrite: async () => true,
+			flashCopiedToClipboard: vi.fn(),
+			toggleTabStarShortcut: {
+				id: 'toggleTabStar',
+				label: 'Toggle Tab Star',
+				keys: ['Meta', 'Shift', 's'],
+			},
+		};
+
+		expect(buildActiveTabContextCommands(args).find((a) => a.id === 'toggleStarTab')).toBeDefined();
+		const roomCommands = buildActiveTabContextCommands({ ...args, activeGroupChatId: 'chat-1' });
+		expect(roomCommands.find((a) => a.id === 'toggleStarTab')).toBeUndefined();
+		expect(roomCommands.find((a) => a.id === 'copySessionId')).toBeDefined();
+		expect(roomCommands.find((a) => a.id === 'markTabUnread')).toBeDefined();
+	});
 });

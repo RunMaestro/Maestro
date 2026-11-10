@@ -851,6 +851,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		}),
 		...buildFeatureCommands({
 			activeSession,
+			activeGroupChatId,
 			activeTabType,
 			canSummarizeActiveTab,
 			markdownEditMode,
@@ -907,6 +908,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildActiveTabContextCommands({
 			activeSession,
 			activeSessionId,
+			activeGroupChatId,
 			activeTabType,
 			ghCliAvailable,
 			setSessions,
