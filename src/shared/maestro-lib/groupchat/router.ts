@@ -64,6 +64,7 @@ import {
 import { extractFirstSentence, type GroupChatStore } from './storage';
 import { GROUP_CHAT_MODERATOR_NAME, resolveGroupChatTurnKey } from './turn-metrics';
 import type { GroupChatTurnMetrics } from './turn-metrics';
+import { mediaSubtype, parseBase64DataUrl } from '../../dataUrl';
 import type {
 	GroupChatAgentDirectory,
 	GroupChatEventSink,
@@ -1195,10 +1196,11 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 			savedImageFilenames = [];
 			for (const dataUrl of images) {
 				// Extract base64 data and extension from data URL
-				const match = dataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
-				if (match) {
-					const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
-					const buffer = Buffer.from(match[2], 'base64');
+				const parsed = parseBase64DataUrl(dataUrl);
+				const subtype = parsed ? mediaSubtype(parsed.mediaType) : null;
+				if (parsed && subtype && /^\w+$/.test(subtype)) {
+					const ext = subtype === 'jpeg' ? 'jpg' : subtype;
+					const buffer = Buffer.from(parsed.base64, 'base64');
 					const filename = await saveImage(chat.imagesDir, buffer, `image.${ext}`);
 					savedImageFilenames.push(filename);
 				}
