@@ -19,6 +19,7 @@ import {
 	registerMarketplaceHandlers,
 	MarketplaceHandlerDependencies,
 } from '../../../../main/ipc/handlers/marketplace';
+import { rebaseAssetReferences } from '../../../../main/services/marketplace-service';
 import type { MarketplaceManifest, MarketplaceCache } from '../../../../shared/marketplace-types';
 import type { SshRemoteConfig } from '../../../../shared/types';
 
@@ -1545,6 +1546,63 @@ describe('marketplace IPC handlers', () => {
 				expect(result.importedAssets).toEqual(['config.yaml', 'logo.png']);
 			});
 
+			it('points {{AUTORUN_FOLDER}}/assets references at the import folder', async () => {
+				const manifestWithPrompt: MarketplaceManifest = {
+					...sampleManifest,
+					playbooks: sampleManifest.playbooks.map((p) =>
+						p.id === 'test-playbook-with-assets'
+							? { ...p, prompt: 'Load {{AUTORUN_FOLDER}}/assets/config.yaml first.' }
+							: p
+					),
+				};
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: manifestWithPrompt,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache)) // cache
+					.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+					.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file (no existing)
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+				mockFetch
+					.mockResolvedValueOnce({
+						ok: true,
+						text: () =>
+							Promise.resolve(
+								'Read `{{AUTORUN_FOLDER}}/assets/config.yaml` and list `{{AUTORUN_FOLDER}}/assets`.'
+							),
+					})
+					.mockResolvedValueOnce({
+						ok: true,
+						arrayBuffer: () => Promise.resolve(Buffer.from('yaml: content').buffer),
+					})
+					.mockResolvedValueOnce({
+						ok: true,
+						arrayBuffer: () => Promise.resolve(Buffer.from([0x89, 0x50]).buffer),
+					});
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'test-playbook-with-assets',
+					'with-assets',
+					'/autorun/folder',
+					'session-123'
+				);
+
+				expect(fs.writeFile).toHaveBeenCalledWith(
+					path.join('/autorun/folder', 'with-assets', 'main-doc.md'),
+					'Read `{{AUTORUN_FOLDER}}/with-assets/assets/config.yaml` and list `{{AUTORUN_FOLDER}}/with-assets/assets`.',
+					'utf-8'
+				);
+				expect(result.playbook.prompt).toBe(
+					'Load {{AUTORUN_FOLDER}}/with-assets/assets/config.yaml first.'
+				);
+			});
+
 			it('should continue importing when individual asset fetch fails', async () => {
 				const validCache: MarketplaceCache = {
 					fetchedAt: Date.now(),
@@ -2156,5 +2214,42 @@ describe('marketplace IPC handlers', () => {
 				}
 			}
 		});
+	});
+});
+
+describe('rebaseAssetReferences', () => {
+	it('inserts the import folder into every asset reference', () => {
+		expect(
+			rebaseAssetReferences(
+				'cp "{{AUTORUN_FOLDER}}/assets/a.py" x; ls {{AUTORUN_FOLDER}}/assets',
+				'message-bus'
+			)
+		).toBe(
+			'cp "{{AUTORUN_FOLDER}}/message-bus/assets/a.py" x; ls {{AUTORUN_FOLDER}}/message-bus/assets'
+		);
+	});
+
+	it('matches the variable case-insensitively, as template substitution does', () => {
+		expect(rebaseAssetReferences('{{autorun_folder}}/assets/kb.yaml', 'market')).toBe(
+			'{{AUTORUN_FOLDER}}/market/assets/kb.yaml'
+		);
+	});
+
+	it('leaves look-alike paths and other folders alone', () => {
+		const text =
+			'{{AUTORUN_FOLDER}}/assets-old/x {{AUTORUN_FOLDER}}/assets.bak {{AUTORUN_FOLDER}}/vault';
+		expect(rebaseAssetReferences(text, 'market')).toBe(text);
+	});
+
+	it('keeps a folder name containing $ literal', () => {
+		expect(rebaseAssetReferences('{{AUTORUN_FOLDER}}/assets/x', 'a$&b')).toBe(
+			'{{AUTORUN_FOLDER}}/a$&b/assets/x'
+		);
+	});
+
+	it('returns the text unchanged for an empty folder name', () => {
+		expect(rebaseAssetReferences('{{AUTORUN_FOLDER}}/assets/x', '  ')).toBe(
+			'{{AUTORUN_FOLDER}}/assets/x'
+		);
 	});
 });
