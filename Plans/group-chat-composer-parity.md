@@ -62,7 +62,7 @@ The review settled every proposal. Applied as follows:
 | 23  | Attach image button and file picker                                   | Reimpl, drifted        | Share, GC behaviour | One picker; room gates on the moderator's provider.            | decided  |
 | 24  | Image paste                                                           | Shared                 | Share               | Already shared.                                                |          |
 | 25  | Image drop                                                            | Shared                 | Share               | Already shared.                                                |          |
-| 26  | External file drop inserts `@path`                                    | Shared (drifted root)  | Left out            | Room keeps today's drop; its path root bug is item K1.         | decided  |
+| 26  | External file drop inserts `@path`                                    | Shared (drifted root)  | Left out            | Room keeps today's drop; its path root bug is fixed in #2023.  | decided  |
 | 27  | Files panel drag inserts `@path` or stages image                      | Missing                | N/A                 | A room has no Files tab (Right Bar is Participants / History). |          |
 | 28  | Drag a thumbnail into the text as `Screenshot N`                      | Missing                | Share               | Same convention as row 21.                                     | decided  |
 | 29  | Upload local files to host (web-desktop)                              | Missing                | Share               | Handler already supports rooms; only the control is absent.    |          |
@@ -178,6 +178,14 @@ Steps 1-9 are merged into rc. The table records the rows each step completed and
 
 `fix/ime-enter-guards` (#1998, P8 and P11 IME Enter guards) was based on the step 8 AI half and merged into rc as `ad50524`.
 
+On 2026-11-10, three follow-ups merged into rc: the room shortcut guards (#2017, `96f40cf12`), P3 (#2021, `1360d710f`) and K1 (#2023, `cead4b28d`). The federation peer composer IME Enter guard is open as #2022 at `3bdcf90ea`, based on rc, with every CI check green (lint and both Ubuntu and Windows test shards) on 2026-11-10. It delegates the composer's Enter and Escape to `handleComposerSendKey()` with `isolateFromWindowKeys`, so a composing Cmd/Ctrl+Enter stops at the composer without `preventDefault`; with Enter-to-send on, Cmd/Ctrl+Enter now sends there, matching AI chat and Group Chat.
+
+### Verification 2026-11-10
+
+`origin/rc` at `cead4b28d` passed `npm run lint`, `npm run lint:eslint` and `npm run docs:verify` (1323 asserted paths, 399 index entries, 0 findings), plus the targeted composer and room suites (7 files, 645 tests). The federation branch at `3bdcf90ea` passed the same three gates and 100 tests across `PeerAgentComposer.test.tsx`, `PeerAgentPanel.test.tsx` and `composerKeyDown.test.ts`.
+
+In the running rc app at 390px (web-desktop): the AI composer's options sheet opens; the command terminal shows the key bar and no "..."; Quick Actions offers "Edit Last Queued Message" outside a room and hides it inside; the chord reports "Nothing queued to edit" outside and does nothing inside. The seeded demo has no federation peer, so #2022 was not exercised in the app. The drop path cannot be exercised headlessly: a synthetic `File` has no OS path and `webUtils.getPathForFile()` returns empty, so the drop falls into the upload branch instead of the mention branch.
+
 The individual fix commits and the `origin/rc` catch-ups are recorded under [Findings fixed](#findings-fixed); they change no rows.
 
 Row 34 stays left out: step 5 moves the room's Read-Only toggle into the shared toolbar unchanged, and the global flag is still item K2. Row 1 (autosize) is not part of step 6: each surface keeps its own sizing, so the row waits for step 8.
@@ -215,21 +223,17 @@ Row 34 stays left out: step 5 moves the room's Read-Only toggle into the shared 
 
 There is no flag for the Prompt Composer button (it shows when its callback is passed) or for the phone options sheet (it mounts when a section flag is on or the surface passes rows). `GROUP_CHAT_COMPOSER_CAPABILITIES` keeps `imageAttach` on as the default; since 9b the room derives it from the moderator's provider with `deriveGroupChatComposerCapabilities`.
 
-### Findings from steps 2-9 (not fixed)
-
-- **P3, AI terminal mode "..." on a phone opens nothing.** The phone branch of `ToolbarControls` keeps the "..." in terminal mode with no sheet behind it, pinned by a test. This predates the plan; step 5 left it as it was.
-
 ### Open items
 
-- P3 (phone AI terminal "..." opens nothing, predates this plan).
-- K1 (external drop path root: uses the active agent's project root, not the room's).
+- **K1 follow-up, Windows drive-letter paths (new on 2026-11-10, not fixed).** A room drop on Windows keeps its drive letter and `toMentionPath()` only forward-slash normalises it to `C:/Users/...`. `formatFileMention()` leaves a space-free path bare, and the mention scanner's bare body has no `:`, so `tokenizeMentions('@C:/Users/...')` returns one text segment and never a file chip. Paths with spaces are quoted and fine. Reproduced on 2026-11-10 with a temporary test. Minimal fix: quote a drive-letter path in `formatFileMention()` (or allow `:` only after a drive letter) and add a round-trip test. Space-free Windows room drops are all affected; AI chat drops outside a project root carry the same pre-existing bug.
 - K2 (one global read-only flag for every room).
 - Deferred capability flags from step 4: `commandMode`, `slashCommands`, `shellTabCompletion`, `fileMentions`, `mentionRouting`, `sendMenu` (each added by the step that first reads it).
-- Room shortcuts outside the composer: `useMainKeyboardHandler.ts` still acts on the hidden agent behind an open room. The three clearly wrong ones (toggle tab star, edit last queued message, clear terminal) are being fixed today on a separate branch off rc; they are not merged yet. The judgment calls (new terminal tab, tile-below, open batch runner, move to group, bookmark, fuzzy file search) are listed under [Parity gaps](#parity-gaps-noticed-outside-the-composer-not-audited).
+- Room shortcuts outside the composer: the three clearly wrong ones (toggle tab star, edit last queued message, clear terminal) are fixed and merged (#2017, `96f40cf12`). The judgment calls (new terminal tab, tile-below, open batch runner, move to group, bookmark, fuzzy file search) are still open and listed under [Parity gaps](#parity-gaps-noticed-outside-the-composer-not-audited).
+- #2022, the federation peer composer IME Enter guard, is open at `3bdcf90ea`, not merged. See [Progress](#progress).
 
 ### Findings fixed
 
-P1, P2, P5 and P6 are on step 3 (#1891, `fc9215753`). P4 is on step 6 (#1952, `1c98ee5bf`). P7 is on the step 8 AI half (#1991, `79e584ce8`). P8 and P11 are on `fix/ime-enter-guards` (#1998, merged into rc as `ad50524`). P9 and P12 are on 9b (#1997, `139e0f366`), with the Greptile fixes on 9a and 9b. P10 is on `fix/group-chat-send-image-gate`, merged into 9b (`b04b4f14d`). P13 is on 9a (#1996, `7e3914133`). The Escape-during-composition fix and right-click Send menu pin are also on step 3.
+P1, P2, P5 and P6 are on step 3 (#1891, `fc9215753`). P4 is on step 6 (#1952, `1c98ee5bf`). P7 is on the step 8 AI half (#1991, `79e584ce8`). P8 and P11 are on `fix/ime-enter-guards` (#1998, merged into rc as `ad50524`). P9 and P12 are on 9b (#1997, `139e0f366`), with the Greptile fixes on 9a and 9b. P10 is on `fix/group-chat-send-image-gate`, merged into 9b (`b04b4f14d`). P13 is on 9a (#1996, `7e3914133`). P3 is on #2021 (`1360d710f`). K1 is on #2023 (`cead4b28d`). The three room shortcut guards are on #2017 (`96f40cf12`). The Escape-during-composition fix and right-click Send menu pin are also on step 3.
 
 - **P1, AI chat `@` picker Escape blurred the composer.** The picker closed, then the key reached `handleEscapeInMain`, which blurs the composer. Fixed in `21ebee936`: `handleComposerPickerKey` stops propagation for the picker's Escape on every surface. Escape with the picker closed is unchanged.
 - **P2, IME Enter could send half-composed text.** The Enter branch of `handleComposerSendKey` had no `isComposing` guard, in both composers. Fixed in `e30be29f9`: one check, `isImeComposing()` (`isComposing`, or keyCode 229 for Safari), keeps Enter from sending and the picker keys from acting while a composition is active. The AI composer's steer chord, Forced Parallel Send and category cycling use the same check.
@@ -247,6 +251,9 @@ P1, P2, P5 and P6 are on step 3 (#1891, `fc9215753`). P4 is on step 6 (#1952, `1
 - **P13, picking an `@agent` mid-sentence left a double space.** The inserted literal carried a trailing space and the text after the token kept its own. Fixed in `b5d4a0f31` on 9a: the leading blanks after a literal that already ends with a space are dropped before splicing. Tests pin the one-space result on both surfaces.
 - **Escape during an IME composition.** In `composerKeyDown.ts` and `useInputKeyDown.ts`, pressing Escape while composing an IME candidate closed the composer or blurred to the transcript instead of letting the input method dismiss the candidate list. Fixed in `8f8e08b4e`: `yieldKeyToIme` yields Escape when composing, and `useKeyboardNavigation.ts` skips its Escape blur branch when `isImeComposing()` is true.
 - **Right-click Send menu in rooms.** Following `origin/rc` changes adding a right-click context menu to the Send button (`ddd211af9`), right-click Send in a room could have opened an unsupported Send menu. Pinned in `0e74a2ce8` and `806e94e1e` on step 3: right-click Send is a no-op when no `sendMenu` is provided, verified against `send-menu-popover`.
+- **P3, AI terminal mode "..." on a phone opened nothing.** The phone branch of `ToolbarControls` kept the "..." in terminal mode with no sheet behind it, pinned by a test. Fixed in `aab52115e` on #2021 (`1360d710f`): `showOptionsButton` is now `sheetHasContent` in every mode, so terminal mode draws no "..." and keeps the cwd and Run command button. Note for the next reader: in the running app this terminal-mode branch is not reachable, because `MainPanelContent.tsx` hides `InputArea` whenever `session.inputMode === 'terminal'`, so no phone terminal composer mounts. The fix is real and pinned by `ToolbarControls.test.tsx`, but the screen the original report came from must have been a different path; re-check the repro if P3 comes back.
+- **K1, external drop path root.** The dropped path was made relative to the ACTIVE AGENT's project root, which has nothing to do with the room. Fixed in `5dfeba9b9` on #2023 (`cead4b28d`): a room omits `projectRoot` on external drops, so files and folders stay absolute; AI chat keeps its relative-inside-root behaviour. Two limitations from the PR remain: a local path cannot resolve for a participant on an SSH remote host, and internal Files-panel drags are still ignored in rooms because that tree is the background agent's workspace. The Windows drive-letter follow-up above is new.
+- **Room shortcut guards.** Behind an open room the hidden agent stayed the active session, so the star, edit-last-queued and clear-terminal shortcuts and palette entries acted on it. Fixed in `8954fe0c9` on #2017 (`96f40cf12`): all three are guarded in `useMainKeyboardHandler`, the palette builders and the underlying services, and a skipped branch no longer counts as a used shortcut. No CLI change is needed because the CLI verbs target agents explicitly. Checked in the running rc app on 2026-11-10: "Edit Last Queued Message" is in Quick Actions outside a room and absent inside, and the chord flashes "Nothing queued to edit" outside and does nothing inside. Unit tests also cover the star-on-an-AI-tab case that the earlier fixture missed.
 
 ## Kept Group Chat behaviour
 
@@ -260,7 +267,7 @@ Left-out rows where Group Chat already has its own version. The version stays; a
 | 39  | Send needs text; images ride along with it            | None          |
 | 41  | Steer button on a queued card, main-owned             | None          |
 
-- **K1, external drop path root.** The dropped path is made relative to the ACTIVE AGENT's project root (`hooks/input/useInputHandlers.ts:1210`), which has nothing to do with the room. Needs its own decision: absolute path, or the moderator's cwd.
+- **K1, external drop path root.** The dropped path was made relative to the ACTIVE AGENT's project root (`hooks/input/useInputHandlers.ts:1210`), which has nothing to do with the room. Fixed on #2023 (`5dfeba9b9`, merged as `cead4b28d`): a room now omits `projectRoot` on external drops and keeps every path absolute. The Windows drive-letter follow-up is still open; see [Open items](#open-items).
 - **K2, one Read-Only flag for every room.** `groupChatReadOnlyMode` (`stores/groupChatStore.ts:226`) is global, so toggling it in one room changes all of them.
 
 Rows 11, 35, 36, 40, 43 and 45 have no Group Chat version, so nothing is kept.
@@ -279,7 +286,7 @@ Rows 11, 35, 36, 40, 43 and 45 have no Group Chat version, so nothing is kept.
   - Clear terminal (`:738`): when the hidden agent is in terminal mode, a no-op (no xterm is mounted) that is still tracked as used. Clearly wrong, harmless.
   - Agent-level actions: open batch runner (`:1201`), move to group (`:674`), bookmark (`:849`), fuzzy file search (`:843`). Each acts on the hidden agent. Judgment call: may be intended, as agent-level actions rather than chat ones.
   - Jump to bottom (`:1157`) is harmless: `logsEndRef` is not mounted in a room, so nothing scrolls.
-- The three clearly wrong ones (toggle tab star, edit last queued message, clear terminal) are being fixed today on a separate branch off rc. They are not merged yet.
+- The three clearly wrong ones (toggle tab star, edit last queued message, clear terminal) are fixed on #2017 (`8954fe0c9`, merged into rc as `96f40cf12`). The judgment calls above remain open.
 - In a room shown in another window, the organizer chord with 2+ room images is tracked as used though no strip is mounted here to open (`useMainKeyboardHandler.ts:863`).
 - Transcript rendering differs (`GroupChatMessages.tsx` vs `TerminalOutput` / `LogItem`), including message actions; not compared here.
 
