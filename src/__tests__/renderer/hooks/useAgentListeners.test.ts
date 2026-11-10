@@ -2367,7 +2367,7 @@ describe('useAgentListeners', () => {
 				const { event, remainingState } = scenario;
 				const pausedError = 'pausedError' in scenario;
 				const keepPending = 'keepPending' in scenario;
-				const processQueuedItem = vi.fn();
+				const processQueuedItem = vi.fn().mockResolvedValue(undefined);
 				const deps = createMockDeps({ processQueuedItemRef: { current: processQueuedItem } });
 				const agentError: AgentError = {
 					type: 'unknown',
@@ -2421,6 +2421,8 @@ describe('useAgentListeners', () => {
 						agentId: 'opencode',
 					});
 				}
+				// Exit dispatches queued work on a timer; let it run before asserting no send.
+				await new Promise((resolve) => setTimeout(resolve, 50));
 				const updated = useSessionStore.getState().sessions[0];
 				expect(updated.state).toBe(pausedError ? 'error' : remainingState);
 				if (pausedError) {
