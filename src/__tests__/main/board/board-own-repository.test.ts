@@ -103,7 +103,8 @@ function run(
 async function runOwned(
 	mode: string,
 	signal: AbortSignal,
-	finalizerFault?: Parameters<typeof run>[2]
+	finalizerFault?: Parameters<typeof run>[2],
+	capturedBatch?: (count: number) => Promise<void>
 ): Promise<Record<string, unknown>> {
 	const c = fixture.contract;
 	let engine: CueEngine | undefined;
@@ -824,6 +825,7 @@ async function runOwned(
 				});
 				expect(result.ok).toBe(true);
 				latencies.push(performance.now() - startedAt);
+				if (i % 5 === 0) await capturedBatch?.(i + 1);
 			}
 			const selected = storage
 				.query()
@@ -1166,10 +1168,81 @@ it('reports an unproven existing Board owner without taking over or starting', a
 	]);
 });
 
-it('captures sixteen complete synthetic analysis requests over WS, preserves approval stops and reopens without logical mutation', async () => {
-	const evidence = await run('sixteen');
-	expect(evidence).toMatchObject({ cardCount: 16, started: 0, reopenPreserved: true });
-});
+// One continuous authenticated WS/SQLite scenario, owned by this sequential suite.
+// Independent command batches and final validation each keep the normal 10s budget.
+describe.sequential(
+	'captures sixteen complete synthetic analysis requests over WS, preserves approval stops and reopens without logical mutation',
+	() => {
+		const controller = new AbortController();
+		const batches = Array.from({ length: 3 }, () => ({
+			ready: Promise.withResolvers<number>(),
+			resume: Promise.withResolvers<void>(),
+		}));
+		let outcome: Promise<
+			{ ok: true; value: Record<string, unknown> } | { ok: false; error: unknown }
+		>;
+		let scenarioDb: ReturnType<typeof openBoardDb>;
+		let detachAbort = () => {};
+		beforeEach(({ signal }) => {
+			const abort = () => controller.abort(signal.reason);
+			signal.addEventListener('abort', abort, { once: true });
+			detachAbort = () => signal.removeEventListener('abort', abort);
+		});
+		afterEach(async ({ task }) => {
+			detachAbort();
+			if (task.result?.state === 'fail') {
+				controller.abort(new Error('Owned sixteen-card phase failed'));
+				for (const batch of batches) batch.resume.resolve();
+				if (outcome) await outcome;
+			}
+		});
+		afterAll(async () => {
+			controller.abort(new Error('Owned sixteen-card suite finished'));
+			for (const batch of batches) batch.resume.resolve();
+			if (outcome) {
+				const result = await outcome;
+				if (!result.ok) throw result.error;
+			}
+		});
+		it.each([0, 1, 2])(
+			'captures sequential batch %i through the same real WS host and database',
+			async (batch) => {
+				if (batch === 0) {
+					let completed = 0;
+					// This suite owns the in-flight scenario through afterAll, not one test body.
+					outcome = runOwned('sixteen', controller.signal, undefined, async (count) => {
+						const checkpoint = batches[completed++];
+						checkpoint.ready.resolve(count);
+						await checkpoint.resume.promise;
+						controller.signal.throwIfAborted();
+					}).then(
+						(value) => ({ ok: true as const, value }),
+						(error: unknown) => ({ ok: false as const, error })
+					);
+				} else batches[batch - 1].resume.resolve();
+				const count = await Promise.race([
+					batches[batch].ready.promise,
+					outcome.then((result) => {
+						if (!result.ok) throw result.error;
+						throw new Error('Scenario finished before its capture checkpoint');
+					}),
+				]);
+				expect(count).toBe(6 + 5 * batch);
+				if (batch === 0) scenarioDb = getBoardStorage().db;
+				expect(getBoardStorage().db).toBe(scenarioDb);
+				expect(scenarioDb.open).toBe(true);
+			}
+		);
+		it('validates approval stops and reopens all sixteen cards without logical mutation', async () => {
+			batches[2].resume.resolve();
+			const result = await outcome;
+			if (!result.ok) throw result.error;
+			const evidence = result.value;
+			expect(evidence).toMatchObject({ cardCount: 16, started: 0, reopenPreserved: true });
+			expect(scenarioDb.open).toBe(false);
+		});
+	}
+);
 
 it('acknowledges durable exact-target capture while unrelated repository diagnostics remain pending', async () => {
 	expect(await run('crud-barrier')).toMatchObject({ ackWhileUnrelatedDiagnosticPending: true });
