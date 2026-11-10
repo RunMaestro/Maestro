@@ -132,7 +132,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { resolveUserDataDir } from '../../shared/userDataDir';
-import { isWindows } from '../../shared/platformDetection';
+import { isWindows, isLinux } from '../../shared/platformDetection';
 import { isPidAlive } from '../../shared/maestro-lib/client/discovery';
 import {
 	CUE_ENGINE_LOCK_SPEC,
@@ -598,13 +598,7 @@ function withGenerationClaim<T>(
 	}
 }
 
-/** Keep a synchronous host handover inside the SAME generation claim used by
- * acquisition/heartbeat/release. No PID/age-based grant: only this process's
- * complete native token can enter. The action must not return a Promise. */
-export function withOwnedCueEngineLock<T>(
-	action: (info: CueEngineLockInfo) => T,
-	dataDir?: string
-): ClaimOutcome<T> | { ok: false; reason: 'not-owner' } {
+function readOwnedCueSnapshot(dataDir?: string): ReturnType<typeof readLockSnapshot> {
 	const current = readLockSnapshot(dataDir);
 	const info = current?.info;
 	if (
@@ -614,11 +608,28 @@ export function withOwnedCueEngineLock<T>(
 		info.pid !== process.pid ||
 		!isCueEngineLockOwnedByThisProcess(info) ||
 		!isLockLive(info) ||
-		(process.platform === 'linux' &&
+		(isLinux() &&
 			(!Number.isSafeInteger(currentPidNsInode) || info.pidNsInode !== currentPidNsInode))
 	)
-		return { ok: false, reason: 'not-owner' };
-	return withGenerationClaim(current.generation, () => action(info), dataDir);
+		return null;
+	return current;
+}
+
+/** Fresh observation only: no claim, heartbeat, acquisition or lock-file write. */
+export function readOwnedCueEngineLock(dataDir?: string): CueEngineLockInfo | null {
+	return readOwnedCueSnapshot(dataDir)?.info ?? null;
+}
+
+/** Keep a synchronous host handover inside the SAME generation claim used by
+ * acquisition/heartbeat/release. No PID/age-based grant: only this process's
+ * complete native token can enter. The action must not return a Promise. */
+export function withOwnedCueEngineLock<T>(
+	action: (info: CueEngineLockInfo) => T,
+	dataDir?: string
+): ClaimOutcome<T> | { ok: false; reason: 'not-owner' } {
+	const current = readOwnedCueSnapshot(dataDir);
+	if (!current?.info) return { ok: false, reason: 'not-owner' };
+	return withGenerationClaim(current.generation, () => action(current.info!), dataDir);
 }
 
 /**

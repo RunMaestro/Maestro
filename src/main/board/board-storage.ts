@@ -145,10 +145,14 @@ export function configureBoardCaptureHost(provider: typeof hostRegisters): void 
 }
 
 /** Reads the same native intake evidence as Cue; never prepares or claims a run. */
-let readinessHost: () => Pick<
-	BoardClaimHostContext,
-	'agentStates' | 'dispatchEnabled'
-> | null = () => null;
+let readinessHost: (db: Database.Database) =>
+	| (Pick<BoardClaimHostContext, 'agentStates' | 'dispatchEnabled'> & {
+			runtimeReason?: Extract<
+				BoardReadinessReason,
+				'runtime-unavailable' | 'owner-conflict' | 'owner-identity-unavailable'
+			> | null;
+	  })
+	| null = () => null;
 export function configureBoardReadinessHost(provider: typeof readinessHost): void {
 	readinessHost = provider;
 }
@@ -414,7 +418,7 @@ export class BoardStorageFacade {
 		}
 	) {
 		const catalog = snapshot?.catalog ?? this.captureCatalog();
-		const host = snapshot ? snapshot.host : readinessHost();
+		const host = snapshot ? snapshot.host : readinessHost(this.db);
 		const workers = (snapshot?.workers ?? listStoredBoardWorkers(this.db)).map((worker) => ({
 			...worker,
 			roleRefs: Array.isArray(worker.payload.roleRefs) ? worker.payload.roleRefs : [],
@@ -544,6 +548,7 @@ export class BoardStorageFacade {
 				}
 				if (!host) reasons.push('runtime-unknown');
 				else if (!host.dispatchEnabled) reasons.push('runtime-unavailable');
+				else if (host.runtimeReason) reasons.push(host.runtimeReason);
 				// Readiness is a snapshot, never a dispatch/claim receipt.
 				if (!reasons.length) reasons.push('awaiting-cue');
 				return [card.id, reasons];
@@ -994,7 +999,7 @@ export class BoardStorageFacade {
 			const readinessSnapshot = selected.length
 				? {
 						catalog: this.captureCatalog(),
-						host: readinessHost(),
+						host: readinessHost(this.db),
 						workers: listStoredBoardWorkers(this.db),
 					}
 				: undefined;

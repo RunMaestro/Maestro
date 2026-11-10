@@ -112,6 +112,8 @@ const READINESS_LABELS: Record<BoardReadinessReason, string> = {
 	'worker-location-invalid':
 		'Worker SSH identities conflict or are missing; check agent SSH settings',
 	'occupancy-unknown': 'Worker availability is unknown',
+	'owner-conflict': 'Board runtime ownership is blocked by another or unverified process',
+	'owner-identity-unavailable': 'Native Board host identity could not be verified',
 	'runtime-unknown': 'Runtime status is unknown',
 	'runtime-unavailable': 'Runtime is unavailable',
 	'awaiting-cue': 'Scheduler has not run yet',

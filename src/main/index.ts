@@ -1,4 +1,4 @@
-import { configureBoardFeatures, requireBoardEnabled } from './board/board-feature';
+import { configureBoardFeatures, requireBoardEnabled, isBoardEnabled } from './board/board-feature';
 import { createPluginSessionLifecycle } from './plugins/plugin-session-lifecycle';
 import type { ConfirmQueueItem, ReleaseQueueItem } from './stores/queue-item-receipt';
 import { flushPendingSessionWrites } from './stores/instances';
@@ -254,12 +254,14 @@ import {
 	createBoardOwnerHostIdentityReader,
 } from './board/board-owner-liveness';
 import { BoardCueHost, type BoardPreparedContext } from './board/board-cue';
+import { readBoardRuntimeReadiness } from './board/board-runtime';
 import { configureBoardRuntimeHost } from './board/board-runtime-host';
 import type { BoardClaimHostContext } from './board/board-claims';
 import { resolveBoardLocation } from './board/board-location';
 import type { BoardCardKey } from './board/board-workspace-storage';
 import {
 	readCueEngineLock,
+	readOwnedCueEngineLock,
 	isCueEngineLockOwnedByThisProcess,
 	isLeftByEarlierHolderOfOurPid,
 } from './cue/cue-engine-lock';
@@ -1626,7 +1628,6 @@ app
 				),
 			};
 		};
-		configureBoardReadinessHost(boardIntakeState);
 		const boardContext = (
 			_key: BoardCardKey,
 			prepared: BoardPreparedContext
@@ -1676,15 +1677,13 @@ app
 		let boardOwnerHostIdentity: string | undefined;
 		const readBoardOwnerIdentity = createBoardOwnerHostIdentityReader();
 		let boardOwnerInfo: ReturnType<typeof readCueEngineLock> = null;
-		const readBoardRuntimeLock = async () => {
-			requireBoardEnabled();
-			boardOwnerHostIdentity = await readBoardOwnerIdentity();
-			requireBoardEnabled();
-			const held = readCueEngineLock();
+		const readBoardRuntimeLockSnapshot = () => {
+			if (!isBoardEnabled()) return null;
+			const held = readOwnedCueEngineLock();
 			if (!held || !isCueEngineLockOwnedByThisProcess(held)) return null;
-			// Cue rewrites boot-time samples on each heartbeat. Pin this process's
-			// identity once; verify the native random ownership token on every use.
-			const info = (boardOwnerInfo ??= held);
+			// Reuse acquisition's pinned identity. Diagnostics observe the current token
+			// without pinning an adapter or probing/caching native host identity.
+			const info = boardOwnerInfo ?? held;
 			return {
 				info: {
 					pid: info.pid,
@@ -1706,6 +1705,31 @@ app
 				},
 			};
 		};
+		const readBoardRuntimeLock = async () => {
+			requireBoardEnabled();
+			boardOwnerHostIdentity = await readBoardOwnerIdentity();
+			requireBoardEnabled();
+			const lock = readBoardRuntimeLockSnapshot();
+			if (lock) boardOwnerInfo ??= lock.info;
+			return lock;
+		};
+		const readBoardOwnerLiveness = (identity: string) =>
+			boardOwnerLiveness(identity, {
+				platform: process.platform,
+				hostIdentity: boardOwnerHostIdentity,
+				current: readCueEngineLock(),
+				ownsCurrent: isCueEngineLockOwnedByThisProcess,
+				isPidAlive,
+				earlierHolder: isLeftByEarlierHolderOfOurPid,
+			});
+		configureBoardReadinessHost((db) => ({
+			...boardIntakeState(),
+			runtimeReason: readBoardRuntimeReadiness(
+				db,
+				readBoardRuntimeLockSnapshot(),
+				readBoardOwnerLiveness
+			),
+		}));
 		const globalBoardHost = new BoardCueHost({
 			storage: getBoardStorage,
 			lock: readBoardRuntimeLock,
@@ -1787,15 +1811,7 @@ app
 			},
 			onTask: (task) => cueEngine?.trackBoardTask(task),
 			service: createBoardRunService(boardSpawnContext),
-			ownerLiveness: (identity) =>
-				boardOwnerLiveness(identity, {
-					platform: process.platform,
-					hostIdentity: boardOwnerHostIdentity,
-					current: readCueEngineLock(),
-					ownsCurrent: isCueEngineLockOwnedByThisProcess,
-					isPidAlive,
-					earlierHolder: isLeftByEarlierHolderOfOurPid,
-				}),
+			ownerLiveness: readBoardOwnerLiveness,
 			onWait: (key, reason) =>
 				logger.cue(`[Board] ${key.collectionKey}/${key.cardId}: ${reason}`, 'Cue'),
 		});

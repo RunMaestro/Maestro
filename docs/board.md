@@ -314,6 +314,8 @@ identity remains fenced. Existing runs/reservations, imported recovery holds and
 unresolved legacy attempts prevent idle handover and remain available for their
 normal reconciliation paths; nothing is discarded or released by age. Normal
 proven-dead restart recovery remains unchanged. Board/Cue off pauses intake.
+Read-only card readiness reports a current owner conflict, unavailable native runtime or missing host-identity proof in the Board UI and authenticated CLI. It observes the existing native lock and current SQLite owner without acquiring, starting, probing native host identity or exposing ownership proofs. Resolved conflicts disappear on the next read; the normal Cue claim still revalidates independently.
+
 Acquiring runtime ownership approves no card or final result, never promotes
 Triage to To Do, and changes no worker/repository grants. Analysis/review still
 stops for the existing required human decisions.

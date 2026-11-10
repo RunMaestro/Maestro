@@ -7,10 +7,11 @@ import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture
 import { snapshotSqlite } from '../../helpers/sqliteSnapshot';
 import {
 	BoardRuntime,
+	readBoardRuntimeReadiness,
 	boardRuntimeProcessIdentity,
 	type BoardRuntimeLock,
 } from '../../../main/board/board-runtime';
-import { BoardStorageFacade } from '../../../main/board/board-storage';
+import { configureBoardReadinessHost, BoardStorageFacade } from '../../../main/board/board-storage';
 import { openBoardDb } from '../../../main/board/board-db';
 import { configureBoardFeatures } from '../../../main/board/board-feature';
 import { boardOwnerLiveness } from '../../../main/board/board-owner-liveness';
@@ -81,6 +82,7 @@ beforeEach(() => {
 });
 afterEach(() => {
 	__setCueEngineLockTestHook(undefined);
+	configureBoardReadinessHost(() => null);
 	vi.restoreAllMocks();
 	releaseCueEngineLock();
 	storage.db.close();
@@ -232,3 +234,103 @@ it.each(['board-off', 'cue-off', 'lost-lock'] as const)(
 		expect(snapshotSqlite(storage.db)).toEqual(before);
 	}
 );
+
+function readReadiness() {
+	return readBoardRuntimeReadiness(storage.db, lock, boardOwnerLiveness);
+}
+it('observes the known idle legacy owner without acquiring, changing tables or taking a native generation claim', () => {
+	__setCueEngineLockTestHook(() => {
+		throw new Error('A diagnostic read must not claim native ownership');
+	});
+	const before = snapshotSqlite(storage.db);
+	expect(readReadiness()).toBeNull();
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+it('projects a fresh modern conflict through workspace readiness without exposing proof or retaining a last error', () => {
+	const identity = {
+		...JSON.parse(old),
+		pid: process.ppid,
+		token: 'private-owned-proof',
+		pidNsInode: lock.info.pidNsInode,
+	};
+	storage.db.prepare('UPDATE runtime_owner SET process_identity=?').run(JSON.stringify(identity));
+	configureBoardReadinessHost((db) => ({
+		agentStates: {},
+		dispatchEnabled: true,
+		runtimeReason: readBoardRuntimeReadiness(db, lock, boardOwnerLiveness),
+	}));
+	let before = snapshotSqlite(storage.db);
+	const view = storage.query();
+	const reasons = view.collections[0].readiness?.['issue-0'];
+	expect(reasons).toBeDefined();
+	expect(reasons).toContain('owner-conflict');
+	expect(reasons).not.toContain('awaiting-cue');
+	expect(JSON.stringify(view)).not.toContain('private-owned-proof');
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+	storage.db
+		.prepare('UPDATE runtime_owner SET process_identity=?')
+		.run(boardRuntimeProcessIdentity(lock));
+	before = snapshotSqlite(storage.db);
+	expect(readReadiness()).toBeNull();
+	const freshReasons = storage.query().collections[0].readiness?.['issue-0'];
+	expect(freshReasons).toBeDefined();
+	expect(freshReasons).not.toContain('owner-conflict');
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+it('reports current native lock loss instead of a stale owner conflict without acquiring', () => {
+	releaseCueEngineLock();
+	const before = snapshotSqlite(storage.db);
+	expect(readReadiness()).toBe('runtime-unavailable');
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+it('observes a provably dead modern owner without taking it over', () => {
+	storage.db.prepare('UPDATE runtime_owner SET process_identity=?').run(
+		JSON.stringify({
+			...JSON.parse(old),
+			token: 'finished-owned-token',
+			pidNsInode: lock.info.pidNsInode,
+			platform: lock.info.platform,
+			hostIdentity: lock.info.hostIdentity,
+		})
+	);
+	const before = snapshotSqlite(storage.db);
+	expect(readReadiness()).toBeNull();
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+it.each([
+	{ board: false, maestroCue: false },
+	{ board: false, maestroCue: true },
+	{ board: true, maestroCue: false },
+])('does not read storage or take a native claim for disabled diagnostics %j', (gates) => {
+	const before = snapshotSqlite(storage.db);
+	storage.db.close();
+	configureBoardFeatures({ get: () => gates });
+	expect(readReadiness()).toBe('runtime-unavailable');
+	configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
+	storage = new BoardStorageFacade(openBoardDb(fixture.env.BOARD_DB_PATH!));
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+it('does not hide an unexpected diagnostic storage error behind awaiting-cue', () => {
+	storage.db.close();
+	try {
+		expect(() => readReadiness()).toThrow(/not open/i);
+	} finally {
+		storage = new BoardStorageFacade(openBoardDb(fixture.env.BOARD_DB_PATH!));
+	}
+});
+it.each(['darwin', 'win32'] as const)(
+	'reports unproven current %s identity without a host probe or database mutation',
+	(platform) => {
+		lock.info.platform = platform;
+		lock.info.hostIdentity = undefined;
+		const before = snapshotSqlite(storage.db);
+		expect(readReadiness()).toBe('owner-identity-unavailable');
+		expect(snapshotSqlite(storage.db)).toEqual(before);
+	}
+);
+it('observes fresh empty ownership without initializing it', () => {
+	storage.db.prepare('DELETE FROM runtime_owner').run();
+	const before = snapshotSqlite(storage.db);
+	expect(readReadiness()).toBeNull();
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});

@@ -243,6 +243,8 @@ export type BoardReadinessReason =
 	| 'worker-location-mismatch'
 	| 'worker-location-invalid'
 	| 'occupancy-unknown'
+	| 'owner-conflict'
+	| 'owner-identity-unavailable'
 	| 'runtime-unknown'
 	| 'runtime-unavailable'
 	| 'awaiting-cue';

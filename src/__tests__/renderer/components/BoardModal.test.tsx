@@ -3303,6 +3303,43 @@ describe('Board host wait explanations', () => {
 			).toBeInTheDocument();
 	});
 
+	it('refreshes concrete owner diagnostics without recovery controls or runtime commands', async () => {
+		const board: Board = {
+			id: 'b1',
+			name: 'Board',
+			cards: [makeCard({ id: 'conflict', title: 'Owned task', status: 'todo' })],
+		};
+		installApis([board]);
+		let reasons: BoardReadinessReason[] = ['owner-conflict'];
+		boardApi.queryWorkspace.mockImplementation(async () => {
+			const response = workspaceResponse([board]);
+			if (response.ok) response.value.collections[0].readiness = { conflict: reasons };
+			return response;
+		});
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		expect(
+			await screen.findByText(
+				'Waiting: Board runtime ownership is blocked by another or unverified process'
+			)
+		).toBeVisible();
+		expect(
+			screen.queryByRole('button', { name: /recover.*owner|resume.*owner|force/i })
+		).not.toBeInTheDocument();
+		reasons = ['owner-identity-unavailable'];
+		fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+		expect(
+			await screen.findByText('Waiting: Native Board host identity could not be verified')
+		).toBeVisible();
+		reasons = ['awaiting-cue'];
+		fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+		expect(await screen.findByText('Waiting: Scheduler has not run yet')).toBeVisible();
+		expect(
+			screen.queryByText(/ownership is blocked|host identity could not/i)
+		).not.toBeInTheDocument();
+		expect(boardApi.runtimeCommand).not.toHaveBeenCalled();
+		expect(boardApi.captureCard).not.toHaveBeenCalled();
+	});
+
 	it('shows exact scopes and refreshed host reasons after reload and filtering, without sending runtime commands', async () => {
 		const board: Board = {
 			id: 'b1',

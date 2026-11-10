@@ -8,46 +8,60 @@ import { foldPathCase } from '../utils/real-path-containment';
 import { boardDbPath } from './board-db';
 import { validateBoardCard } from '../../shared/board/types';
 import { isBoardEnabled } from './board-feature';
-import { withOwnedCueEngineLock } from '../cue/cue-engine-lock';
+import {
+	withOwnedCueEngineLock,
+	readOwnedCueEngineLock,
+	type CueEngineLockInfo,
+} from '../cue/cue-engine-lock';
 import { CUE_ENGINE_LOCK_SPEC } from '../../shared/maestro-lib/runtime/lock';
 import type { BoardRuntimeLock } from './board-runtime';
 
 /** Native proof is read from the real configured Cue lock, never caller fields.
  * The SQLite connection must belong to that configured data directory/contract. */
-export function withBoardOwnerLease<T>(
+function boardOwnerLeaseMatches(
 	db: Database.Database,
 	lock: BoardRuntimeLock,
-	operation: () => T
-): { ok: true; value: T } | { ok: false } {
-	if (!isBoardEnabled() || !lock.verify().ok) return { ok: false };
-
-	if (!path.isAbsolute(db.name)) return { ok: false };
+	held: CueEngineLockInfo | null
+): boolean {
+	if (!isBoardEnabled() || !lock.verify().ok || !held || !path.isAbsolute(db.name)) return false;
 	try {
 		if (foldPathCase(realpathSync(db.name)) !== foldPathCase(realpathSync(boardDbPath())))
-			return { ok: false };
+			return false;
 	} catch (error) {
 		if (
 			['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'ELOOP'].includes(
 				(error as NodeJS.ErrnoException).code ?? ''
 			)
 		)
-			return { ok: false };
+			return false;
 		throw error;
 	}
+	const info = lock.info;
+	return (
+		info.pid === held.pid &&
+		info.mode === held.mode &&
+		info.token === held.token &&
+		info.platform === process.platform &&
+		info.pidNsInode === held.pidNsInode &&
+		Number.isFinite(info.bootTime) &&
+		Math.abs(info.bootTime! - held.bootTime!) <= CUE_ENGINE_LOCK_SPEC.bootToleranceMs
+	);
+}
+
+/** Read-only counterpart of the actual handover fence, not a lease or grant. */
+export function hasBoardOwnerLease(db: Database.Database, lock: BoardRuntimeLock): boolean {
+	if (!isBoardEnabled() || !lock.verify().ok) return false;
+	return boardOwnerLeaseMatches(db, lock, readOwnedCueEngineLock());
+}
+
+export function withBoardOwnerLease<T>(
+	db: Database.Database,
+	lock: BoardRuntimeLock,
+	operation: () => T
+): { ok: true; value: T } | { ok: false } {
+	if (!hasBoardOwnerLease(db, lock)) return { ok: false };
 	const result = withOwnedCueEngineLock((held) => {
-		const info = lock.info;
-		if (
-			!isBoardEnabled() ||
-			!lock.verify().ok ||
-			info.pid !== held.pid ||
-			info.mode !== held.mode ||
-			info.token !== held.token ||
-			info.platform !== process.platform ||
-			info.pidNsInode !== held.pidNsInode ||
-			!Number.isFinite(info.bootTime) ||
-			Math.abs(info.bootTime! - held.bootTime!) > CUE_ENGINE_LOCK_SPEC.bootToleranceMs
-		)
-			return { matched: false } as const;
+		if (!boardOwnerLeaseMatches(db, lock, held)) return { matched: false } as const;
 		return { matched: true, value: operation() } as const;
 	});
 	if (!result.ok || !result.value.matched) return { ok: false };

@@ -1,4 +1,9 @@
-import { withBoardOwnerLease, isIdleLegacyBoardOwner } from './board-owner-lifecycle';
+import type Database from 'better-sqlite3';
+import {
+	withBoardOwnerLease,
+	hasBoardOwnerLease,
+	isIdleLegacyBoardOwner,
+} from './board-owner-lifecycle';
 import { isBoardEnabled } from './board-feature';
 import { captureException } from '../utils/sentry';
 import { parseCardMarkers } from '../../shared/board/cardMarkers';
@@ -93,6 +98,40 @@ export function boardRuntimeProcessIdentity(lock: BoardRuntimeLock): string {
 	});
 }
 
+function hasBoardRuntimeIdentity(lock: BoardRuntimeLock): boolean {
+	return (
+		Number.isFinite(lock.info.bootTime) &&
+		Number.isFinite(Date.parse(lock.info.startedAt)) &&
+		!(
+			(lock.info.platform === 'darwin' || lock.info.platform === 'win32') &&
+			!lock.info.hostIdentity
+		)
+	);
+}
+
+/** Current native-owner observation. Never prepares, acquires, caches or mutates.
+ * A null result only means this read found no blocker; claim/start still fence. */
+export function readBoardRuntimeReadiness(
+	db: Database.Database,
+	lock: BoardRuntimeLock | null,
+	ownerLiveness: (identity: string) => 'alive' | 'dead' | 'unknown'
+): 'runtime-unavailable' | 'owner-identity-unavailable' | 'owner-conflict' | null {
+	if (!isBoardEnabled() || !lock?.verify().ok) return 'runtime-unavailable';
+	if (!hasBoardRuntimeIdentity(lock)) return 'owner-identity-unavailable';
+	const old = db
+		.prepare('SELECT process_identity,epoch,heartbeat FROM runtime_owner WHERE id=1')
+		.get() as { process_identity: string; epoch: number; heartbeat: number } | undefined;
+	if (
+		!old ||
+		old.process_identity === boardRuntimeProcessIdentity(lock) ||
+		ownerLiveness(old.process_identity) === 'dead'
+	)
+		return null;
+	return hasBoardOwnerLease(db, lock) && isIdleLegacyBoardOwner(db, old, lock)
+		? null
+		: 'owner-conflict';
+}
+
 export class BoardRuntime {
 	private epoch: number | null = null;
 	readonly processIdentity: string;
@@ -122,14 +161,7 @@ export class BoardRuntime {
 			this.storage.db
 				.transaction((): ReturnType<BoardRuntime['acquire']> => {
 					if (!this.lock.verify().ok) return { ok: false, reason: 'runtime-unavailable' };
-					if (
-						!Number.isFinite(this.lock.info.bootTime) ||
-						!Number.isFinite(Date.parse(this.lock.info.startedAt)) ||
-						// Native Mac/Windows recovery needs a platform-bound host proof.
-						// A valid Cue lock alone must not create an irrecoverable owner row.
-						((this.lock.info.platform === 'darwin' || this.lock.info.platform === 'win32') &&
-							!this.lock.info.hostIdentity)
-					)
+					if (!hasBoardRuntimeIdentity(this.lock))
 						return { ok: false, reason: 'owner-identity-unavailable' };
 					const old = this.storage.db.prepare('SELECT * FROM runtime_owner WHERE id = 1').get() as
 						| { process_identity: string; epoch: number; heartbeat: number }
