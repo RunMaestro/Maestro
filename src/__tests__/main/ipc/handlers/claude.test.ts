@@ -1822,6 +1822,8 @@ not valid json at all
 			const writtenContent = vi.mocked(fs.default.writeFile).mock.calls[0][1] as string;
 			// The tool_result message should be gone since its tool_use was deleted
 			expect(writtenContent).not.toContain('tool-123');
+			// A tool result is not a new turn: the reply after it goes with the pair
+			expect(writtenContent).not.toContain('Here is the file content');
 			// But the "Next question" message should still be there
 			expect(writtenContent).toContain('Next question');
 		});

@@ -13,7 +13,12 @@ import fs from 'fs/promises';
 import path from 'path';
 import { ClaudeSessionStorage } from '../../../main/storage/claude-session-storage';
 import { captureException } from '../../../main/utils/sentry';
-import { listDirWithStatsRemote } from '../../../main/utils/remote-fs';
+import {
+	listDirWithStatsRemote,
+	readFileRemote,
+	renameRemote,
+	writeFileRemote,
+} from '../../../main/utils/remote-fs';
 import type { SshRemoteConfig } from '../../../shared/types';
 import type Store from 'electron-store';
 import type { ClaudeSessionOriginsData } from '../../../main/storage/claude-session-storage';
@@ -77,6 +82,8 @@ vi.mock('../../../main/agents/provider-account-dirs', () => ({
 vi.mock('../../../main/utils/remote-fs', () => ({
 	readFileRemote: vi.fn(),
 	listDirWithStatsRemote: vi.fn(),
+	writeFileRemote: vi.fn(),
+	renameRemote: vi.fn(),
 }));
 
 // Mock statsCache
@@ -376,6 +383,79 @@ describe('ClaudeSessionStorage', () => {
 				expect(sessionPath).toContain('session-123.jsonl');
 				expect(sessionPath).toContain('~/.claude/projects');
 			});
+		});
+	});
+
+	describe('deleteMessagePair on an SSH remote', () => {
+		const sshConfig: SshRemoteConfig = {
+			id: 'test-remote',
+			name: 'Test Remote',
+			host: 'remote.example.com',
+			port: 22,
+			username: 'testuser',
+			privateKeyPath: '~/.ssh/id_rsa',
+			enabled: true,
+			useSshConfig: false,
+		};
+		const transcript =
+			[
+				JSON.stringify({ type: 'user', uuid: 'u1', message: { content: 'first' } }),
+				JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'a1' }] } }),
+				JSON.stringify({ type: 'user', uuid: 'u2', message: { content: 'second' } }),
+				JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'a2' }] } }),
+			].join('\n') + '\n';
+
+		it('rewrites the remote transcript through a temp file and a rename', async () => {
+			vi.mocked(readFileRemote).mockResolvedValue({ success: true, data: transcript });
+			vi.mocked(writeFileRemote).mockResolvedValue({ success: true });
+			vi.mocked(renameRemote).mockResolvedValue({ success: true });
+
+			const result = await storage.deleteMessagePair(
+				'/remote/project',
+				'session-123',
+				'maestro-log-id',
+				'second',
+				sshConfig
+			);
+
+			expect(result).toEqual({ success: true, linesRemoved: 2 });
+			const remotePath = storage.getSessionPath('/remote/project', 'session-123', sshConfig)!;
+			expect(readFileRemote).toHaveBeenCalledWith(remotePath, sshConfig);
+			const [tempPath, written] = vi.mocked(writeFileRemote).mock.calls[0];
+			expect(tempPath).not.toBe(remotePath);
+			expect(String(written)).toContain('"first"');
+			expect(String(written)).not.toContain('"second"');
+			expect(renameRemote).toHaveBeenCalledWith(tempPath, remotePath, sshConfig);
+			expect(fs.writeFile).not.toHaveBeenCalled();
+		});
+
+		it('reports a remote read failure and writes nothing', async () => {
+			vi.mocked(readFileRemote).mockResolvedValue({ success: false, error: 'File not found: x' });
+
+			const result = await storage.deleteMessagePair('/p', 's', 'id', 'second', sshConfig);
+
+			expect(result).toEqual({ success: false, error: 'File not found: x' });
+			expect(writeFileRemote).not.toHaveBeenCalled();
+		});
+
+		it('leaves the transcript alone when the message is not in it', async () => {
+			vi.mocked(readFileRemote).mockResolvedValue({ success: true, data: transcript });
+
+			const result = await storage.deleteMessagePair('/p', 's', 'id', 'not there', sshConfig);
+
+			expect(result).toEqual({ success: false, error: 'User message not found' });
+			expect(writeFileRemote).not.toHaveBeenCalled();
+			expect(renameRemote).not.toHaveBeenCalled();
+		});
+
+		it('does not rename when the temp write fails', async () => {
+			vi.mocked(readFileRemote).mockResolvedValue({ success: true, data: transcript });
+			vi.mocked(writeFileRemote).mockResolvedValue({ success: false, error: 'Permission denied' });
+
+			const result = await storage.deleteMessagePair('/p', 's', 'id', 'second', sshConfig);
+
+			expect(result).toEqual({ success: false, error: 'Permission denied' });
+			expect(renameRemote).not.toHaveBeenCalled();
 		});
 	});
 
