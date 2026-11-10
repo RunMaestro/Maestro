@@ -5,6 +5,7 @@ import * as os from 'os';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { resolveToBytesSync } from '../../storage/session-image-store';
+import { parseBase64DataUrl } from '../../../shared/dataUrl';
 
 /**
  * Resolve an image value to base64 + media type.
@@ -21,8 +22,10 @@ export function parseDataUrl(value: string): { base64: string; mediaType: string
 	// Inline data URL (freshly pasted): return the original base64 substring
 	// verbatim - no decode/re-encode - so this path stays byte-identical to the
 	// historical behavior (re-encoding would canonicalize padding/whitespace).
-	const match = value.match(/^data:(image\/[^;]+);base64,(.+)$/);
-	if (match) return { mediaType: match[1], base64: match[2] };
+	// Header-only parse: a `(.+)$` capture overflowed V8's regexp backtrack
+	// stack on multi-megabyte screenshots (see src/shared/dataUrl.ts).
+	const inline = parseBase64DataUrl(value);
+	if (inline && inline.mediaType.startsWith('image/')) return inline;
 
 	// maestro-image ref (persisted image relocated to the content-addressed
 	// store): read the bytes off disk and encode them for the agent hand-off.
