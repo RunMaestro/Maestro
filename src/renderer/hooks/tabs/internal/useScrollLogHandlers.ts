@@ -6,6 +6,7 @@ import { getActiveTab } from '../../../utils/tabHelpers';
 import { logger } from '../../../utils/logger';
 import { projectTabProvider, resolveTabNativeProvider } from '../../../utils/providerTabSessions';
 import { notifyToast } from '../../../stores/notificationStore';
+import { resolveSessionProjectPath } from '../../../components/AgentSessionsBrowser/utils/sessionProjectPath';
 import { deleteShellCommandLog } from './deleteShellCommandLog';
 import type { ScrollLogHandlersReturn } from './types';
 
@@ -79,15 +80,18 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 			const agentSessionId = projected.tab?.agentSessionId;
 			if (agentSessionId) {
 				try {
-					if (projected.agent.sessionSshRemoteConfig?.enabled) {
-						throw new Error('Delete is not supported for remote sessions.');
-					}
+					// A remote agent's transcript lives on its SSH remote, under the
+					// remote working directory rather than the local cwd.
+					const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(
+						projected.agent
+					);
 					const result = await window.maestro.agentSessions.deleteMessagePair(
 						provider,
-						currentSession.cwd,
+						sshRemoteId ? (projectPathForSessions ?? currentSession.cwd) : currentSession.cwd,
 						agentSessionId,
 						logId,
-						log.text
+						log.text,
+						sshRemoteId
 					);
 					if (!result.success) throw new Error(result.error || 'The provider refused deletion.');
 				} catch (error) {

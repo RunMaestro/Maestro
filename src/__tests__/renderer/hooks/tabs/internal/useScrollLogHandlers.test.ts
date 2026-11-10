@@ -76,7 +76,8 @@ describe('useScrollLogHandlers', () => {
 			'/repo',
 			'agent-1',
 			'u1',
-			'run tests'
+			'run tests',
+			undefined
 		);
 	});
 
@@ -105,7 +106,8 @@ describe('useScrollLogHandlers', () => {
 			'/repo',
 			'ses-opencode',
 			'u1',
-			'unrelated request'
+			'unrelated request',
+			undefined
 		);
 		expect(window.maestro.claude.deleteMessagePair).not.toHaveBeenCalled();
 		expect(getSession().aiTabs[0].logs).toEqual(tab.logs);
@@ -140,13 +142,51 @@ describe('useScrollLogHandlers', () => {
 			'/repo',
 			'claude-parked',
 			'u1',
-			'old request'
+			'old request',
+			undefined
 		);
 		expect(getSession().aiTabs[0].logs).toEqual([]);
 		expect(getSession().aiTabs[0].agentSessionId).toBe('codex-current');
 	});
 
-	it('keeps remote messages without attempting local transcript deletion', async () => {
+	it("deletes a remote agent's message on its SSH remote, under the remote cwd", async () => {
+		const tab = createMockAITab({
+			id: 'ai-1',
+			agentSessionId: 'remote-session',
+			logs: [{ id: 'u1', source: 'user', text: 'remote request', timestamp: Date.now() }],
+		});
+		setupSession({
+			cwd: '/local/repo',
+			aiTabs: [tab],
+			aiCommandHistory: ['remote request'],
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/remote/repo',
+			},
+		});
+		const { result } = renderHook(() => useScrollLogHandlers());
+		await act(async () => {
+			await result.current.handleDeleteLog('u1');
+		});
+		expect(window.maestro.agentSessions.deleteMessagePair).toHaveBeenCalledWith(
+			'claude-code',
+			'/remote/repo',
+			'remote-session',
+			'u1',
+			'remote request',
+			'remote-1'
+		);
+		expect(getSession().aiTabs[0].logs).toEqual([]);
+		expect(getSession().aiCommandHistory).toEqual([]);
+		expect(notifyToast).not.toHaveBeenCalled();
+	});
+
+	it('keeps a remote message when the remote refuses the delete', async () => {
+		vi.mocked(window.maestro.agentSessions.deleteMessagePair).mockResolvedValue({
+			success: false,
+			error: 'SSH remote not found or disabled: remote-1',
+		});
 		const tab = createMockAITab({
 			id: 'ai-1',
 			agentSessionId: 'remote-session',
@@ -162,12 +202,12 @@ describe('useScrollLogHandlers', () => {
 		await act(async () => {
 			expect(await result.current.handleDeleteLog('u1')).toBeNull();
 		});
-		expect(window.maestro.agentSessions.deleteMessagePair).not.toHaveBeenCalled();
 		expect(getSession().aiTabs[0].logs).toEqual(tab.logs);
 		expect(getSession().aiCommandHistory).toEqual(['remote request']);
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({
-				message: expect.stringContaining('remote sessions'),
+				title: 'Message was not deleted',
+				message: expect.stringContaining('SSH remote not found'),
 			})
 		);
 	});
@@ -230,7 +270,8 @@ describe('useScrollLogHandlers', () => {
 			'/repo',
 			'ses-opencode',
 			'u1',
-			'remove me'
+			'remove me',
+			undefined
 		);
 		expect(getSession().aiTabs[0].logs).toEqual([appended]);
 	});
