@@ -137,12 +137,42 @@ describe('PeerAgentComposer', () => {
 		}
 	});
 
+	it('keeps a composing Cmd/Ctrl+Enter at the composer without preventing default', async () => {
+		const onWindowKeyDown = vi.fn();
+		window.addEventListener('keydown', onWindowKeyDown);
+		try {
+			for (const enterToSend of [true, false]) {
+				const { unmount } = renderComposer({ id: 't1', enterToSend });
+				fireEvent.change(textbox(), { target: { value: 'composing' } });
+				for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+					for (const modifier of [{ metaKey: true }, { ctrlKey: true }]) {
+						onWindowKeyDown.mockClear();
+						const label = JSON.stringify({ enterToSend, ime, modifier });
+						const handled = fireEvent.keyDown(textbox(), {
+							key: 'Enter',
+							...modifier,
+							...ime,
+						});
+						expect(handled, label).toBe(true);
+						expect(onWindowKeyDown, label).not.toHaveBeenCalled();
+					}
+				}
+				await flush();
+				expect(act$).not.toHaveBeenCalled();
+				expect(draft()).toBe('composing');
+				unmount();
+			}
+		} finally {
+			window.removeEventListener('keydown', onWindowKeyDown);
+		}
+	});
+
 	it('keeps normal, shift and modified Enter behavior under both Enter-to-send settings', async () => {
 		const cases = [
 			{ enterToSend: true, keys: { key: 'Enter' }, sends: true, prevented: true },
 			{ enterToSend: true, keys: { key: 'Enter', shiftKey: true }, sends: false, prevented: false },
-			{ enterToSend: true, keys: { key: 'Enter', metaKey: true }, sends: false, prevented: true },
-			{ enterToSend: true, keys: { key: 'Enter', ctrlKey: true }, sends: false, prevented: true },
+			{ enterToSend: true, keys: { key: 'Enter', metaKey: true }, sends: true, prevented: true },
+			{ enterToSend: true, keys: { key: 'Enter', ctrlKey: true }, sends: true, prevented: true },
 			{ enterToSend: false, keys: { key: 'Enter' }, sends: false, prevented: false },
 			{
 				enterToSend: false,

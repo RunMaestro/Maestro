@@ -20,8 +20,8 @@ import type { AITabRecord } from '../../../shared/maestro-lib/store/records';
 import { ComposerSendColumn, applyTrimmedTextPaste, clipboardHasImage } from '../ChatComposer';
 import { StopTurnButton } from '../ui/StopTurnButton';
 import { useAutosizeTextarea } from '../../hooks/ui/useAutosizeTextarea';
+import { handleComposerSendKey } from '../../hooks/input/composerKeyDown';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../../utils/textareaSizing';
-import { isImeComposing } from '../../utils/ime';
 import { mirrorDraftKey, usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -119,19 +119,12 @@ export function PeerAgentComposer({
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			if (e.key !== 'Enter' || isImeComposing(e)) return;
-			const modified = e.metaKey || e.ctrlKey;
-			if (modified) {
-				// Cmd+Enter never reaches the window handler from here, whichever setting is on.
-				e.preventDefault();
-				e.stopPropagation();
-				if (!enterToSend) void handleSend();
-				return;
-			}
-			if (enterToSend && !e.shiftKey) {
-				e.preventDefault();
-				void handleSend();
-			}
+			handleComposerSendKey(e, {
+				enterToSend,
+				send: () => void handleSend(),
+				inputRef,
+				isolateFromWindowKeys: true,
+			});
 		},
 		[enterToSend, handleSend]
 	);
