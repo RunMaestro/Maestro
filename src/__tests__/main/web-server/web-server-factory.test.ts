@@ -46,6 +46,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setSelectTabCallback = vi.fn();
 			setNewTabCallback = vi.fn();
 			setCloseTabCallback = vi.fn();
+			setReopenClosedTabCallback = vi.fn();
 			setRenameTabCallback = vi.fn();
 			setStarTabCallback = vi.fn();
 			setSnoozeCommandCallback = vi.fn();
