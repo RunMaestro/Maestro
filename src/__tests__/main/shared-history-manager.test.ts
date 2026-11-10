@@ -48,6 +48,7 @@ vi.mock('fs', async (importOriginal) => {
 		appendFileSync: vi.fn(),
 		readFileSync: vi.fn(),
 		writeFileSync: vi.fn(),
+		renameSync: vi.fn(),
 		readdirSync: vi.fn(),
 	};
 });
@@ -148,15 +149,16 @@ describe('SharedHistoryManager', () => {
 
 			writeEntryLocal('/test/project', createMockEntry(), 2);
 
-			expect(fs.writeFileSync).toHaveBeenCalledWith(
-				path.join(
-					'/test/project',
-					'.maestro/history',
-					`history-${LOCAL_HOSTNAME.replace(/[^a-zA-Z0-9._-]/g, '_')}.jsonl`
-				),
-				'{"id":"2"}\n{"id":"3"}\n',
-				'utf-8'
+			// Written to a temporary file, then renamed over the original, so a reader never
+			// sees the file half written.
+			const own = path.join(
+				'/test/project',
+				'.maestro/history',
+				`history-${LOCAL_HOSTNAME.replace(/[^a-zA-Z0-9._-]/g, '_')}.jsonl`
 			);
+			const tmp = `${own}.${process.pid}.tmp`;
+			expect(fs.writeFileSync).toHaveBeenCalledWith(tmp, '{"id":"2"}\n{"id":"3"}\n', 'utf-8');
+			expect(fs.renameSync).toHaveBeenCalledWith(tmp, own);
 		});
 
 		it('does not rotate when the append failed', () => {

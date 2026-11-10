@@ -146,6 +146,13 @@ describe('shared History files on disk', () => {
 			expect(fs.readFileSync(file, 'utf-8')).toBe(jsonl([entry('b', 2), entry('c', 3)]));
 		});
 
+		it('replaces the file through a temporary file, leaving none behind', () => {
+			const file = write('h', jsonl([entry('a', 1), entry('b', 2), entry('c', 3)]));
+			expect(rotateSharedHistoryFile(file, 1)).toBe(true);
+			expect(fs.readdirSync(path.dirname(file))).toEqual([path.basename(file)]);
+			expect(fs.readFileSync(file, 'utf-8')).toBe(jsonl([entry('c', 3)]));
+		});
+
 		it('throws for a file that is not there', () => {
 			expect(() => rotateSharedHistoryFile(path.join(project, 'missing.jsonl'), 5)).toThrow();
 		});

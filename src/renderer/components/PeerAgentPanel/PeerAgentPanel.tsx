@@ -138,6 +138,8 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 	);
 	// The queue actions the host serves: remove, and Hold / Resume. Edit, merge, reorder, Force
 	// Send, and steer stay off: the queued cards draw only the controls they get a handler for.
+	// They stay wired while the peer is disconnected: the cards always draw Remove, and the
+	// action then fails with a toast that says so, rather than closing its confirm silently.
 	const handleRemoveQueuedItem = useCallback(
 		(itemId: string) => {
 			if (selection) void removeMirrorQueuedItem(selection.peerId, selection.agentId, itemId);
@@ -376,8 +378,8 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 								markdownEditMode={chatRawTextMode}
 								setMarkdownEditMode={useSettingsStore.getState().setChatRawTextMode}
 								userMessageAlignment={userMessageAlignment}
-								onRemoveQueuedItem={disconnected ? undefined : handleRemoveQueuedItem}
-								onTogglePauseQueuedItem={disconnected ? undefined : handleTogglePauseQueuedItem}
+								onRemoveQueuedItem={handleRemoveQueuedItem}
+								onTogglePauseQueuedItem={handleTogglePauseQueuedItem}
 							/>
 						)
 					)}

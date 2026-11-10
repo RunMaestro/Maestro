@@ -204,13 +204,15 @@ describe('PeerAgentPanel', () => {
 		expect(useSessionStore.getState().sessions).toEqual([]);
 	});
 
-	it('offers no queue actions while the peer is disconnected', () => {
+	it('keeps the queue actions wired while the peer is disconnected, so a refusal is visible', () => {
+		// The queued cards always draw Remove. Without a handler its confirm would close and do
+		// nothing; with one, the action fails with the "not connected" toast.
 		show(peerWith([agent()], 'lost', 'socket closed'));
 		renderPanel();
 		landRead('t1');
 		expect(terminalProps.current).not.toBeNull();
-		expect(terminalProps.current?.onRemoveQueuedItem).toBeUndefined();
-		expect(terminalProps.current?.onTogglePauseQueuedItem).toBeUndefined();
+		expect(terminalProps.current?.onRemoveQueuedItem).toBeTypeOf('function');
+		expect(terminalProps.current?.onTogglePauseQueuedItem).toBeTypeOf('function');
 	});
 
 	it('shows a select-only TabBar and switches tabs in peerMirrorStore only', () => {

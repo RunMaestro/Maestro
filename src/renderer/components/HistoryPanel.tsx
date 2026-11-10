@@ -223,6 +223,11 @@ export const HistoryPanel = React.memo(
 		// machine running the agent locally never sees foreign-host entries
 		// even when the JSONL files are sitting right there on disk.
 		const projectPathForHistory = session.projectRoot || session.cwd || undefined;
+		// Bumped when the source says "read again" (a peer's host: a turn ended, the peer
+		// reconnected). Being part of `loadPage`'s identity is what makes the pagination hook
+		// reload from the top AND drop a read still in flight, whose answer is older. A
+		// `jumpToTop()` call would be skipped while that read runs.
+		const [sourceResetToken, setSourceResetToken] = useState(0);
 		const loadPage = useCallback(
 			async (offset: number, limit: number): Promise<PaginatedPage<HistoryEntry>> => {
 				return historySource.getPage({
@@ -260,7 +265,15 @@ export const HistoryPanel = React.memo(
 					pagination: { offset, limit },
 				});
 			},
-			[historySource, graphLookbackHours, activeFilters, selectedHost, groupCueEntries, isSearching]
+			[
+				historySource,
+				sourceResetToken,
+				graphLookbackHours,
+				activeFilters,
+				selectedHost,
+				groupCueEntries,
+				isSearching,
+			]
 		);
 
 		// Which collapsed Cue rows are open, and how a row fetches the runs
@@ -337,11 +350,11 @@ export const HistoryPanel = React.memo(
 				// A source that cannot stream single entries (a peer's host) says
 				// "read again": back to the newest page, and a fresh graph.
 				onReset: () => {
-					void jumpToTop();
+					setSourceResetToken((token) => token + 1);
 					refreshGraphData();
 				},
 			});
-		}, [historySource, refreshGraphData, prependLiveEntry, jumpToTop]);
+		}, [historySource, refreshGraphData, prependLiveEntry]);
 
 		// Load persisted graph lookback preference for this session
 		useEffect(() => {

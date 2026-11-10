@@ -73,14 +73,20 @@ export function parseSharedHistoryJsonl(
 	return { entries, malformedLines };
 }
 
-/** Keep only the newest `maxEntries` lines of a shared file (the end of the file is newest). */
+/**
+ * Keep only the newest `maxEntries` lines of a shared file (the end of the file is newest). The
+ * trimmed text goes to a temporary file that is renamed over the original, so another Maestro
+ * reading the file never sees it half written.
+ */
 export function rotateSharedHistoryFile(file: string, maxEntries: number): boolean {
 	const lines = fs
 		.readFileSync(file, 'utf-8')
 		.split('\n')
 		.filter((line) => line.trim());
 	if (lines.length <= maxEntries) return false;
-	fs.writeFileSync(file, `${lines.slice(lines.length - maxEntries).join('\n')}\n`, 'utf-8');
+	const tmp = `${file}.${process.pid}.tmp`;
+	fs.writeFileSync(tmp, `${lines.slice(lines.length - maxEntries).join('\n')}\n`, 'utf-8');
+	fs.renameSync(tmp, file);
 	return true;
 }
 
