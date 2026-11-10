@@ -83,9 +83,13 @@ afterEach(async () => {
 	await Promise.allSettled([...inFlightRuns]);
 	expect(inFlightRuns.size).toBe(0);
 });
-function run(mode: string, signal = runSignal): Promise<Record<string, unknown>> {
+function run(
+	mode: string,
+	signal = runSignal,
+	finalizerFault?: { capturePending?: () => void; background?: Error }
+): Promise<Record<string, unknown>> {
 	signal.throwIfAborted();
-	const pending = runOwned(mode, signal).then((value) => {
+	const pending = runOwned(mode, signal, finalizerFault).then((value) => {
 		signal.throwIfAborted();
 		return value;
 	});
@@ -96,7 +100,11 @@ function run(mode: string, signal = runSignal): Promise<Record<string, unknown>>
 	);
 	return pending;
 }
-async function runOwned(mode: string, signal: AbortSignal): Promise<Record<string, unknown>> {
+async function runOwned(
+	mode: string,
+	signal: AbortSignal,
+	finalizerFault?: Parameters<typeof run>[2]
+): Promise<Record<string, unknown>> {
 	const c = fixture.contract;
 	let engine: CueEngine | undefined;
 	let cue: BoardCueHost | undefined;
@@ -173,6 +181,7 @@ async function runOwned(mode: string, signal: AbortSignal): Promise<Record<strin
 	};
 	let background: Promise<unknown> | undefined;
 	let pendingCapture: Promise<unknown> | undefined;
+	let bodyFailure: { error: unknown } | undefined;
 	try {
 		const git = (...args: string[]) =>
 			execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
@@ -693,9 +702,19 @@ async function runOwned(mode: string, signal: AbortSignal): Promise<Record<strin
 				reached = resolve;
 			});
 			let released = false;
+			let capturing = false;
+			let captureReached!: () => void;
+			const captureWaiting = new Promise<void>((resolve) => {
+				captureReached = resolve;
+			});
+			let releaseCapture!: () => void;
+			const captureBarrier = new Promise<void>((resolve) => {
+				releaseCapture = resolve;
+			});
 			const barrier = new Promise<void>((resolve) => {
 				releaseBarrier = () => {
 					released = true;
+					releaseCapture();
 					resolve();
 				};
 			});
@@ -706,6 +725,11 @@ async function runOwned(mode: string, signal: AbortSignal): Promise<Record<strin
 					if (probes > 1) targetProbe();
 					reached();
 					await barrier;
+					if (finalizerFault?.background) throw finalizerFault.background;
+				}
+				if (capturing && String(args[0]) === root && finalizerFault?.capturePending) {
+					captureReached();
+					await captureBarrier;
 				}
 				return value;
 			}) as typeof nativeStat;
@@ -717,6 +741,7 @@ async function runOwned(mode: string, signal: AbortSignal): Promise<Record<strin
 				sourceKey: collection.sourceKey,
 			});
 			await waiting;
+			capturing = true;
 			const saving = requestBoardCommand(client, {
 				action: 'capture',
 				target: target(),
@@ -731,6 +756,11 @@ async function runOwned(mode: string, signal: AbortSignal): Promise<Record<strin
 				},
 			});
 			pendingCapture = saving;
+			if (finalizerFault?.capturePending) {
+				await captureWaiting;
+				expect(hostRequests.size).toBeGreaterThan(0);
+				finalizerFault.capturePending();
+			}
 			const winner = await Promise.race([
 				saving.then((reply) => ({ kind: 'reply' as const, reply })),
 				targetWaiting.then((kind) => ({ kind })),
@@ -1016,34 +1046,58 @@ async function runOwned(mode: string, signal: AbortSignal): Promise<Record<strin
 		};
 		signal.throwIfAborted();
 		return evidence;
+	} catch (error) {
+		bodyFailure = { error };
+		throw error;
 	} finally {
 		const cleanupAt = performance.now();
 		stages.aborted = signal.aborted;
-		releaseBarrier();
-		await background;
-		await pendingCapture;
-		if (background && db?.open) await enqueueBoardWrite(root, () => {});
-		for (const [key, value] of Object.entries(gitEnvironment)) {
-			if (value === undefined) delete process.env[key];
-			else process.env[key] = value;
+		// Join every actual consumer before closing SQLite/restoring its adapters.
+		// A rejected join must not skip later cleanup or hide the original failure.
+		const failures = new Set<unknown>(bodyFailure ? [bodyFailure.error] : []);
+		const cleanupSteps: (() => unknown)[] = [
+			releaseBarrier,
+			() => background,
+			() => pendingCapture,
+			() => (background && db?.open ? enqueueBoardWrite(root, () => {}) : undefined),
+			() => {
+				for (const [key, value] of Object.entries(gitEnvironment)) {
+					if (value === undefined) delete process.env[key];
+					else process.env[key] = value;
+				}
+			},
+			() => signal.removeEventListener('abort', disconnectOnAbort),
+			() => client?.disconnect(),
+			() => server?.close(),
+			async () => {
+				// Socket closure alone does not join asynchronous command handlers.
+				const handlers = await Promise.allSettled([...hostRequests]);
+				for (const result of handlers)
+					if (result.status === 'rejected') failures.add(result.reason);
+			},
+			() => cue?.settle(),
+			() => ownedRuntime?.connection.close(),
+			() => engine?.stop(),
+			() => releaseCueEngineLock(c.userData),
+			() => report.mockRestore(),
+			() => restoreFence(),
+			() => restoreStat(),
+			() => db?.close(),
+			...['', '-wal', '-shm'].map((suffix) => () => fs.rmSync(c.db + suffix, { force: true })),
+			...Object.values(fixture.sources).map(
+				(source) => () => fs.rmSync(source, { recursive: true, force: true })
+			),
+		];
+		for (const cleanup of cleanupSteps) {
+			try {
+				await cleanup();
+			} catch (error) {
+				failures.add(error);
+			}
 		}
-		signal.removeEventListener('abort', disconnectOnAbort);
-		client?.disconnect();
-		await server?.close();
-		// Closing sockets alone does not join asynchronous command handlers.
-		await Promise.allSettled([...hostRequests]);
-		await cue?.settle();
-		await ownedRuntime?.connection.close();
-		engine?.stop();
-		releaseCueEngineLock(c.userData);
-		report.mockRestore();
-		restoreFence();
-		restoreStat();
-		db?.close();
-		for (const suffix of ['', '-wal', '-shm']) fs.rmSync(c.db + suffix, { force: true });
-		for (const source of Object.values(fixture.sources))
-			fs.rmSync(source, { recursive: true, force: true });
 		stages.cleanupMs = performance.now() - cleanupAt;
+		if (failures.size === 1) throw failures.values().next().value;
+		if (failures.size > 1) throw new AggregateError(failures, 'Owned fixture cleanup failed');
 	}
 }
 let sourceConfigured = false;
@@ -1288,3 +1342,56 @@ describe.sequential('cancellation across fixture boundaries', () => {
 		restoreStat();
 	});
 });
+
+// Both failure paths use the real CRUD dependency barrier and authenticated WS request.
+it.each(['pending capture cancellation', 'background read rejection'])(
+	'closes owned resources and restores adapters after %s before database reuse',
+	async (failure) => {
+		const originalStat = fs.promises.stat;
+		const originalFence = fs.realpathSync.native;
+		const controller = new AbortController();
+		const combined = AbortSignal.any([runSignal, controller.signal]);
+		const background = new Error('owned background read rejected');
+		let reachedPendingCapture = false;
+		const result = await run('crud-barrier', combined, {
+			...(failure === 'pending capture cancellation'
+				? {
+						capturePending: () => {
+							reachedPendingCapture = true;
+							controller.abort(new Error('owned pending capture cancelled'));
+						},
+					}
+				: { background }),
+		}).then(
+			() => ({ ok: true as const }),
+			(error: unknown) => ({ ok: false as const, error })
+		);
+		const dbOpenBeforeReuse = getBoardStorage().db.open;
+		const statRestored = fs.promises.stat === originalStat;
+		const fenceRestored = fs.realpathSync.native === originalFence;
+		const reportRestored = !vi.isMockFunction(sentry.captureException);
+		console.info(
+			'[board-owned-finalizer-rejection]',
+			JSON.stringify({
+				failure,
+				reachedPendingCapture,
+				dbOpenBeforeReuse,
+				statRestored,
+				fenceRestored,
+				reportRestored,
+			})
+		);
+		expect(result.ok).toBe(false);
+		if (result.ok) throw new Error('Expected the original resource rejection');
+		if (failure === 'pending capture cancellation') {
+			expect(reachedPendingCapture).toBe(true);
+			expect(result.error).toMatchObject({ name: 'ConnectionClosedError', closedByCaller: true });
+		} else expect(result.error).toBe(background);
+		expect(dbOpenBeforeReuse).toBe(false);
+		expect(statRestored).toBe(true);
+		expect(fenceRestored).toBe(true);
+		expect(reportRestored).toBe(true);
+		expect(readCueEngineLock(fixture.contract.userData)).toBeNull();
+		expect(await run('off-both')).toMatchObject({ off: true, unchanged: true });
+	}
+);
