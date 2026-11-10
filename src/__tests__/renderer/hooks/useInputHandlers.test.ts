@@ -2544,7 +2544,7 @@ describe('useInputHandlers', () => {
 			expect(inputVal()).toBe('@src/a.ts @docs ');
 		});
 
-		it('updates group chat draftMessage when external files are dropped during group chat', () => {
+		it('updates group chat draftMessage with absolute path even when inside active agent project root', () => {
 			const initialChat = {
 				id: 'group-1',
 				name: 'g',
@@ -2583,7 +2583,103 @@ describe('useInputHandlers', () => {
 
 			expect(setGroupChats).toHaveBeenCalled();
 			const updated = useGroupChatStore.getState().groupChats[0];
-			expect(updated.draftMessage).toBe('@src/a.ts ');
+			expect(updated.draftMessage).toBe('@/test/src/a.ts ');
+		});
+
+		it('inserts an absolute path in group chat when dropping a file outside active agent project root', () => {
+			const initialChat = {
+				id: 'group-1',
+				name: 'g',
+				draftMessage: '',
+				participants: [],
+				messages: [],
+			};
+			const setGroupChats = vi.fn((updater: any) => {
+				const next = typeof updater === 'function' ? updater([initialChat as any]) : updater;
+				useGroupChatStore.setState({ groupChats: next } as any);
+			});
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [initialChat as any],
+				setGroupChats,
+				setGroupChatStagedImages: vi.fn(),
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: { type: 'text/plain', name: 'notes.txt', path: '/other/path/notes.txt' },
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const updated = useGroupChatStore.getState().groupChats[0];
+			expect(updated.draftMessage).toBe('@/other/path/notes.txt ');
+		});
+
+		it('normalises Windows-style backslash paths to forward slashes as absolute paths in group chat', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						projectRoot: 'C:\\Users\\Alice\\proj',
+						fullPath: 'C:\\Users\\Alice\\proj',
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+
+			const initialChat = {
+				id: 'group-1',
+				name: 'g',
+				draftMessage: '',
+				participants: [],
+				messages: [],
+			};
+			const setGroupChats = vi.fn((updater: any) => {
+				const next = typeof updater === 'function' ? updater([initialChat as any]) : updater;
+				useGroupChatStore.setState({ groupChats: next } as any);
+			});
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [initialChat as any],
+				setGroupChats,
+				setGroupChatStagedImages: vi.fn(),
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: {
+							type: 'text/plain',
+							name: 'index.ts',
+							path: 'C:\\Users\\Alice\\proj\\src\\index.ts',
+						},
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const updated = useGroupChatStore.getState().groupChats[0];
+			expect(updated.draftMessage).toBe('@C:/Users/Alice/proj/src/index.ts ');
 		});
 
 		it('appends to existing group chat draft with a separating space', () => {
@@ -2627,7 +2723,7 @@ describe('useInputHandlers', () => {
 			});
 
 			const updated = useGroupChatStore.getState().groupChats[0];
-			expect(updated.draftMessage).toBe('check @README.md ');
+			expect(updated.draftMessage).toBe('check @/test/README.md ');
 		});
 
 		it('ignores files without a path (browser-only drops have no fs path)', () => {

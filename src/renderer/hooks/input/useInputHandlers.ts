@@ -89,7 +89,8 @@ const EMPTY_STAGED_IMAGES: string[] = [];
  * Convert an absolute filesystem path into the form used inside an `@` mention:
  * if it sits inside `projectRoot`, return the relative path; otherwise return
  * the absolute path unchanged. Forward-slash normalised so Windows drops still
- * produce a clean mention.
+ * produce a clean mention. Group chat rooms omit `projectRoot` on external
+ * drops so every dropped path remains absolute.
  */
 function toMentionPath(absolutePath: string, projectRoot?: string): string {
 	const norm = absolutePath.replace(/\\/g, '/');
@@ -1207,7 +1208,12 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const externalPaths: string[] = [];
 			// Files with no resolvable path (browser drops) get uploaded instead.
 			const pathlessFiles: File[] = [];
-			const projectRoot = activeSession?.projectRoot ?? activeSession?.fullPath;
+			// In a room, dropped paths must be absolute: a room has no single project
+			// root, and the moderator's working directory is arbitrary. Only an
+			// absolute path resolves for every participant.
+			const projectRoot = isGroupChatActive
+				? undefined
+				: (activeSession?.projectRoot ?? activeSession?.fullPath);
 
 			let roomModeratorRefusedImages = false;
 			if (isGroupChatActive) {
