@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, afterAll, afterEach, expect, it, vi } from 'vite
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import { snapshotSqlite } from '../../helpers/sqliteSnapshot';
 import {
@@ -213,3 +214,21 @@ it.each([
 	expect(runtime().acquire()).toEqual({ ok: false, reason: 'runtime-unavailable' });
 	expect(snapshotSqlite(storage.db)).toEqual(before);
 });
+
+it.each(['board-off', 'cue-off', 'lost-lock'] as const)(
+	'refuses %s at the native generation boundary without owner or receipt writes',
+	(change) => {
+		const before = snapshotSqlite(storage.db);
+		__setCueEngineLockTestHook((point) => {
+			if (point !== 'afterClaim') return;
+			if (change === 'lost-lock')
+				fs.unlinkSync(path.join(fixture.env.MAESTRO_USER_DATA!, 'cue-engine.lock'));
+			else
+				configureBoardFeatures({
+					get: () => ({ board: change !== 'board-off', maestroCue: change !== 'cue-off' }),
+				});
+		});
+		expect(runtime().acquire().ok).toBe(false);
+		expect(snapshotSqlite(storage.db)).toEqual(before);
+	}
+);
