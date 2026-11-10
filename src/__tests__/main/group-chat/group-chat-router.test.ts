@@ -85,6 +85,8 @@ import {
 	setModeratorResponseTimeout,
 	clearModeratorResponseTimeout,
 	noteGroupChatActivity,
+	addParticipantByAgentId,
+	findParticipantForMention,
 	type GroupChatSessionInfo,
 } from '../../../main/group-chat/group-chat-router';
 import {
@@ -931,6 +933,167 @@ describe('group-chat-router', () => {
 			expect(warnings[0].content).not.toContain('types');
 			const log = await readLog(chat.logPath);
 			expect(log.some((m) => m.from === 'system' && m.content.includes('@Nobody-Here'))).toBe(true);
+		});
+	});
+
+	// ===========================================================================
+	// Test 5.3b: Agents referenced by GUID, and participants linked by GUID
+	// Agent names change; a GUID does not. Participants store the GUID of the
+	// agent they came from so a rename does not break an existing chat.
+	// ===========================================================================
+	describe('agents referenced by GUID', () => {
+		const ISABELLE_ID = '8dac9050-cc32-4bfa-a0e3-33bd62d8a503';
+		const isabelle = (name = 'Isabelle Quinn'): GroupChatSessionInfo => ({
+			id: ISABELLE_ID,
+			name,
+			toolType: 'codex',
+			cwd: '/tmp/isabelle',
+		});
+
+		it('auto-adds an agent mentioned by its full GUID and links it by GUID', async () => {
+			const chat = await createTestChatWithModerator('GUID Mention Test');
+			setGetSessionsCallback(() => [isabelle()]);
+
+			await routeUserMessage(
+				chat.id,
+				`@${ISABELLE_ID} please join`,
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const updated = await loadGroupChat(chat.id);
+			expect(updated?.participants).toEqual([
+				expect.objectContaining({ name: 'Isabelle Quinn', sourceSessionId: ISABELLE_ID }),
+			]);
+		});
+
+		it('does not warn about a GUID mention', async () => {
+			const chat = await createTestChatWithModerator('GUID Mention No Warning Test');
+			const emitMessage = vi.fn();
+			groupChatEmitters.emitMessage = emitMessage;
+			setGetSessionsCallback(() => [isabelle()]);
+
+			await routeUserMessage(chat.id, `@${ISABELLE_ID} hi`, mockProcessManager, mockAgentDetector);
+
+			const warnings = emitMessage.mock.calls.filter(([, m]) => m.from === 'system');
+			expect(warnings).toEqual([]);
+		});
+
+		it('keeps a participant linked after its agent is renamed', async () => {
+			const chat = await createTestChatWithModerator('Rename Survival Test');
+			setGetSessionsCallback(() => [isabelle()]);
+			await routeUserMessage(chat.id, '@Isabelle-Quinn hi', mockProcessManager, mockAgentDetector);
+
+			// The agent is renamed. Mentioning the new name must reach the same
+			// participant, not add the agent a second time.
+			setGetSessionsCallback(() => [isabelle('CyberForce Isabelle')]);
+			await routeUserMessage(
+				chat.id,
+				'@CyberForce-Isabelle hi again',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const updated = await loadGroupChat(chat.id);
+			expect(updated?.participants).toHaveLength(1);
+			expect(
+				findParticipantForMention('CyberForce-Isabelle', updated!.participants, [
+					isabelle('CyberForce Isabelle'),
+				])?.name
+			).toBe('Isabelle Quinn');
+			expect(findParticipantForMention(ISABELLE_ID, updated!.participants)?.name).toBe(
+				'Isabelle Quinn'
+			);
+		});
+
+		it('links a participant saved before GUID links existed (migration)', async () => {
+			const chat = await createTestChatWithModerator('Legacy Participant Test');
+			// The old add path stored no sourceSessionId.
+			await addParticipant(chat.id, 'Isabelle Quinn', 'codex', mockProcessManager);
+			expect((await loadGroupChat(chat.id))?.participants[0].sourceSessionId).toBeUndefined();
+			setGetSessionsCallback(() => [isabelle()]);
+
+			await routeUserMessage(chat.id, 'hello', mockProcessManager, mockAgentDetector);
+
+			expect((await loadGroupChat(chat.id))?.participants[0].sourceSessionId).toBe(ISABELLE_ID);
+		});
+
+		it('resolves !autorun @<guid>:file.md to the linked participant', () => {
+			const participants: GroupChatParticipant[] = [
+				{
+					name: 'Isabelle Quinn',
+					agentId: 'codex',
+					sessionId: 'p1',
+					addedAt: 0,
+					sourceSessionId: ISABELLE_ID,
+				},
+			];
+			const { autoRunDirectives } = extractAutoRunDirectives(`!autorun @${ISABELLE_ID}:plan.md`, [
+				ISABELLE_ID,
+			]);
+			expect(autoRunDirectives).toEqual([{ participantName: ISABELLE_ID, filename: 'plan.md' }]);
+			expect(findParticipantForMention(ISABELLE_ID, participants)?.name).toBe('Isabelle Quinn');
+			expect(extractMentions(`@${ISABELLE_ID} go`, participants)).toEqual(['Isabelle Quinn']);
+		});
+
+		describe('addParticipantByAgentId', () => {
+			it('adds the agent, links it by GUID and tells the chat', async () => {
+				const chat = await createTestChatWithModerator('Add By ID Test');
+				const emitMessage = vi.fn();
+				groupChatEmitters.emitMessage = emitMessage;
+				setGetSessionsCallback(() => [isabelle('👩‍💻 CyberForce: Isabelle Quinn')]);
+
+				const result = await addParticipantByAgentId(
+					chat.id,
+					ISABELLE_ID,
+					mockProcessManager,
+					mockAgentDetector
+				);
+
+				expect(result.alreadyMember).toBe(false);
+				expect(result.participant).toMatchObject({
+					name: '👩‍💻 CyberForce: Isabelle Quinn',
+					agentId: 'codex',
+					sourceSessionId: ISABELLE_ID,
+				});
+				const log = await readLog(chat.logPath);
+				expect(
+					log.some(
+						(m) =>
+							m.from === 'system' && m.content === '@👩‍💻-CyberForce:-Isabelle-Quinn joined the chat.'
+					)
+				).toBe(true);
+			});
+
+			it('reports an agent that is already a participant', async () => {
+				const chat = await createTestChatWithModerator('Add By ID Twice Test');
+				setGetSessionsCallback(() => [isabelle()]);
+				await addParticipantByAgentId(chat.id, ISABELLE_ID, mockProcessManager, mockAgentDetector);
+
+				const again = await addParticipantByAgentId(
+					chat.id,
+					ISABELLE_ID,
+					mockProcessManager,
+					mockAgentDetector
+				);
+
+				expect(again.alreadyMember).toBe(true);
+				expect((await loadGroupChat(chat.id))?.participants).toHaveLength(1);
+			});
+
+			it('refuses an unknown agent ID and a terminal agent', async () => {
+				const chat = await createTestChatWithModerator('Add By ID Refusal Test');
+				setGetSessionsCallback(() => [
+					{ id: 'term-1', name: 'Shell', toolType: 'terminal', cwd: '/tmp' },
+				]);
+
+				await expect(
+					addParticipantByAgentId(chat.id, ISABELLE_ID, mockProcessManager, mockAgentDetector)
+				).rejects.toThrow(`No agent with ID ${ISABELLE_ID}`);
+				await expect(
+					addParticipantByAgentId(chat.id, 'term-1', mockProcessManager, mockAgentDetector)
+				).rejects.toThrow('is a terminal agent');
+			});
 		});
 	});
 

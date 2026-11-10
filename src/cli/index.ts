@@ -43,6 +43,7 @@ import {
 	groupChatStatus,
 	groupChatStop,
 	groupChatArchive,
+	groupChatAdd,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -751,6 +752,14 @@ groupChat
 	.description("Stop a group chat's moderator and participants")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(groupChatStop);
+
+groupChat
+	.command('add <chat> <agent>')
+	.description(
+		'Add an agent (ID, ID prefix, or name) to a group chat without an @mention; linked by ID'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatAdd);
 
 groupChat
 	.command('archive <chat>')

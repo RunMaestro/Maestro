@@ -46,7 +46,10 @@ const bootstrapStore = new Store<BootstrapSettings>({
  */
 export interface GroupChatParticipant {
 	name: string;
+	/** Provider type (e.g. `claude-code`), NOT the Maestro agent. See `sourceSessionId`. */
 	agentId: string;
+	/** GUID of the Maestro agent this participant was added from (survives a rename). */
+	sourceSessionId?: string;
 	/** Internal process session ID (used for routing) */
 	sessionId: string;
 	/** Agent's session ID (e.g., Claude Code's session GUID for continuity) */
@@ -491,6 +494,7 @@ export type ParticipantUpdate = Partial<
 		| 'processingTimeMs'
 		| 'agentSessionId'
 		| 'totalCost'
+		| 'sourceSessionId'
 	>
 >;
 

@@ -141,6 +141,7 @@ import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
+import { addParticipantByAgentId } from './group-chat/group-chat-router';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import {
 	captureException,
@@ -719,6 +720,33 @@ const createWebServer = createWebServerFactory({
 	getCueActivityLog: () => {
 		if (!cueEngine) return [];
 		return cueEngine.getActivityLog();
+	},
+	addGroupChatParticipant: async (chatId, agentId) => {
+		if (!processManager) return { success: false, error: 'Process manager not initialized' };
+		try {
+			const { participant, alreadyMember } = await addParticipantByAgentId(
+				chatId,
+				agentId,
+				processManager,
+				agentDetector ?? undefined
+			);
+			return { success: true, participantName: participant.name, alreadyMember };
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			// Expected refusals (unknown chat or agent, inactive moderator) go back
+			// to the caller as text. Anything else is a bug: report it as well.
+			const expected = [
+				'Group chat not found',
+				'No agent with ID',
+				'is a terminal agent',
+				'Moderator must be active',
+				'Agent list is not available',
+			].some((fragment) => message.includes(fragment));
+			if (!expected) {
+				void captureException(error, { operation: 'groupChat:addParticipantByAgentId', chatId });
+			}
+			return { success: false, error: message };
+		}
 	},
 });
 

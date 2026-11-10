@@ -331,6 +331,68 @@ export function splitAutoRunTarget(
 	return { name: reading.name, filename };
 }
 
+/** True when `text` is a full agent GUID, e.g. `8dac9050-cc32-4bfa-a0e3-33bd62d8a503`. */
+export function isAgentGuid(text: string): boolean {
+	return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text);
+}
+
+/**
+ * The agent a mention names when the mention is that agent's full GUID
+ * (`@8dac9050-...`), so a script can address an agent that has since been
+ * renamed. Only a full GUID counts: a prefix in prose could be any word.
+ */
+export function findAgentByGuidMention<T extends { id: string }>(
+	mentionedName: string,
+	agents: readonly T[]
+): T | undefined {
+	const cleaned = cleanMentionName(mentionedName);
+	if (!isAgentGuid(cleaned)) return undefined;
+	const lower = cleaned.toLowerCase();
+	return agents.find((agent) => agent.id.toLowerCase() === lower);
+}
+
+/**
+ * Conservative name match from a persisted participant name to the agent it
+ * came from: exact (4), legacy (3) or safe-normalized (2) matches only, and no
+ * pick on a tie. Priority-1 ("safe folded") matches collapse bracket styles
+ * ("Review Bot [Linux]" vs "Review Bot (Linux)") and could borrow the wrong
+ * agent's cwd, SSH config or settings.
+ */
+export function findAgentForParticipantName<T extends { name: string }>(
+	participantName: string,
+	agents: readonly T[]
+): T | undefined {
+	let bestPriority = 0;
+	let bestMatches: T[] = [];
+	for (const agent of agents) {
+		const priority = getMentionMatchPriority(participantName, agent.name);
+		if (priority < 2) continue;
+		if (priority > bestPriority) {
+			bestPriority = priority;
+			bestMatches = [agent];
+		} else if (priority === bestPriority) {
+			bestMatches.push(agent);
+		}
+	}
+	return bestMatches.length === 1 ? bestMatches[0] : undefined;
+}
+
+/**
+ * The Maestro agent a participant was added from. By `sourceSessionId` when
+ * the participant has one, so a renamed agent stays linked and a deleted one
+ * resolves to nothing (never to a newer agent that took its name). Chats
+ * saved before the field existed fall back to a conservative name match.
+ */
+export function findParticipantSourceAgent<T extends { id: string; name: string }>(
+	participant: { name: string; sourceSessionId?: string },
+	agents: readonly T[]
+): T | undefined {
+	if (participant.sourceSessionId) {
+		return agents.find((agent) => agent.id === participant.sourceSessionId);
+	}
+	return findAgentForParticipantName(participant.name, agents);
+}
+
 // ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================
@@ -340,7 +402,16 @@ export function splitAutoRunTarget(
  */
 export interface GroupChatParticipant {
 	name: string;
+	/** Provider type (e.g. `claude-code`), NOT the Maestro agent. See `sourceSessionId`. */
 	agentId: string;
+	/**
+	 * GUID of the Maestro agent (`Session.id`) this participant was added from.
+	 * It is the participant's link back to that agent's cwd, SSH config and
+	 * settings, so the link survives a rename. Chats saved before this field
+	 * existed have none; the router backfills it by name (see
+	 * `findParticipantSourceAgent`).
+	 */
+	sourceSessionId?: string;
 	/** Internal process session ID (used for routing) */
 	sessionId: string;
 	/** Agent's session ID (e.g., Claude Code's session GUID for continuity) */
