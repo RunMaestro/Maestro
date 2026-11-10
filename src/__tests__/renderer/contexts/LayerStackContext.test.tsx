@@ -12,13 +12,14 @@
  * - Error boundary for context usage outside provider
  */
 
+import { ThemedSelect } from '../../../renderer/components/shared/ThemedSelect';
+import type { Theme } from '../../../renderer/types';
+
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, renderHook, act, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { LayerStackProvider, useLayerStack } from '../../../renderer/contexts/LayerStackContext';
-import { ThemedSelect } from '../../../renderer/components/shared/ThemedSelect';
-import type { Theme } from '../../../renderer/types';
 
 // Mock the useLayerStack hook from the hooks module
 vi.mock('../../../renderer/hooks/ui/useLayerStack', () => {
@@ -64,6 +65,29 @@ describe('LayerStackContext', () => {
 	});
 
 	describe('LayerStackProvider', () => {
+		it.each(['composing', 'safari', 'ordinary'])(
+			'preserves RC IME Escape handling: %s',
+			async (mode) => {
+				vi.mocked(mockLayerStackAPI.getTopLayer).mockReturnValue({} as never);
+				render(
+					<LayerStackProvider>
+						<div>Owned modal</div>
+					</LayerStackProvider>
+				);
+				const event = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+				});
+				if (mode === 'composing') Object.defineProperty(event, 'isComposing', { value: true });
+				if (mode === 'safari') Object.defineProperty(event, 'keyCode', { value: 229 });
+				await act(async () => {
+					window.dispatchEvent(event);
+				});
+				expect(mockLayerStackAPI.closeTopLayer).toHaveBeenCalledTimes(mode === 'ordinary' ? 1 : 0);
+				expect(event.defaultPrevented).toBe(mode === 'ordinary');
+			}
+		);
 		it.each(['search', 'close', 'option'])(
 			'closes a filterable popup from %s focus before its parent layer',
 			async (focusTarget) => {

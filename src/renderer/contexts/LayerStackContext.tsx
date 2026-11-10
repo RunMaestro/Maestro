@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, ReactNode } from 'react';
 import { useLayerStack as useLayerStackHook, type LayerStackAPI } from '../hooks/ui/useLayerStack';
 import { useLayerSwipeDismiss } from '../hooks/ui/useLayerSwipeDismiss';
+import { isImeComposing } from '../utils/ime';
 
 // Create context with null as default (will throw if used outside provider)
 const LayerStackContext = createContext<LayerStackAPI | null>(null);
@@ -32,13 +33,14 @@ export function LayerStackProvider({ children }: LayerStackProviderProps) {
 
 	useEffect(() => {
 		const handleEscape = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') {
-				// A focused select popup owns its first Escape. Let its keyboard
-				// handler close the popup and restore focus before closing the modal.
-				if (e.target instanceof Element && e.target.closest('[data-select-escape]')) return;
+			if (e.key === 'Escape' && !isImeComposing(e)) {
 				const stack = layerStackRef.current;
 				const topLayer = stack.getTopLayer();
 				if (topLayer) {
+					// A focused select popup owns its first Escape. Let its keyboard
+					// handler close the popup and restore focus before closing the modal.
+					if (e.target instanceof Element && e.target.closest('[data-select-escape]')) return;
+
 					// Prevent default Escape behavior and stop propagation
 					e.preventDefault();
 					e.stopPropagation();
