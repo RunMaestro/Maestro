@@ -30,6 +30,7 @@ import { JsonEmitter, type EmitResultOptions } from './json-emitter';
 import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
 import { isSlashCommandPrompt, localCommandOutput } from './local-command-row';
 import { extractExitPlanText } from './plan-mode';
+import { extractAskUserQuestionText } from './ask-user-question';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
 import { isPreTurnRow } from './turn-start';
 import { collectAssistantText, ReplyText } from './reply-text';
@@ -691,6 +692,17 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			const planText = extractExitPlanText(message);
 			if (planText !== null) {
 				reply.appendIfMissing(planText);
+				finalize({ isError: false, exitCode: 0 });
+				return;
+			}
+
+			// AskUserQuestion parks the TUI on a picker the same way, and nothing
+			// answers it here (the permission relay is an API-path feature). End
+			// the turn with the questions as the reply; the user answers in their
+			// next message. See ask-user-question.ts.
+			const questionText = extractAskUserQuestionText(message);
+			if (questionText !== null) {
+				reply.appendIfMissing(questionText);
 				finalize({ isError: false, exitCode: 0 });
 				return;
 			}
