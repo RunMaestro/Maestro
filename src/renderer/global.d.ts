@@ -2360,13 +2360,14 @@ interface MaestroAPI {
 			sessionId: string,
 			sshRemoteId?: string
 		) => Promise<string | null>;
-		// Delete a message pair from a session (not supported for SSH remote sessions)
+		// Delete a message pair from a session (local, or on the agent's SSH remote)
 		deleteMessagePair: (
 			agentId: string,
 			projectPath: string,
 			sessionId: string,
 			userMessageUuid: string,
-			fallbackContent?: string
+			fallbackContent?: string,
+			sshRemoteId?: string
 		) => Promise<{
 			success: boolean;
 			error?: string;
