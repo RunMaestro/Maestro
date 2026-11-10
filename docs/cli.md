@@ -24,6 +24,20 @@ node "%ProgramFiles%\Maestro\resources\maestro-cli.js" %*
 "@ | Out-File -FilePath "$env:ProgramFiles\Maestro\maestro-cli.cmd" -Encoding ASCII
 ```
 
+**Linux AppImage.** A running AppImage lives in a temporary mount (`/tmp/.mount_*`) that gets a new name on every launch, so a hand-written wrapper cannot point into it. Use **Settings > Install / Update CLI**: it writes a shim that re-enters the AppImage in node mode, plus a bootstrap beside it that resolves the bundled CLI from the mount that run creates. The shim keeps working after a restart and while the desktop app is closed. After an AppImage update that renames the file, launch the new AppImage once so Maestro can repair the shim. Maestro also repairs an older shim that pointed at a `/tmp/.mount_*` path at the next launch.
+
+For a mount-free wrapper, extract the AppImage once to a directory that stays, and point the wrapper there:
+
+```bash
+# Extracts to ./squashfs-root; repeat after each AppImage update
+./maestro-<version>-x86_64.AppImage --appimage-extract
+rm -rf "$HOME/maestro-app"               # replace the previous extraction
+mv squashfs-root "$HOME/maestro-app"     # any directory you keep
+printf '#!/bin/bash\nELECTRON_RUN_AS_NODE=1 "%s/maestro-app/maestro" "%s/maestro-app/resources/maestro-cli.js" "$@"\n' "$HOME" "$HOME" | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
+```
+
+If a Settings-installed shim at `~/.local/bin/maestro-cli` takes precedence in `PATH`, remove it and its bootstrap with `rm -f "$HOME/.local/bin/maestro-cli" "$HOME/.local/bin/maestro-cli-bootstrap.js"`. Then check that `command -v maestro-cli` resolves to `/usr/local/bin/maestro-cli`.
+
 Alternatively, run directly with Node.js:
 
 ```bash
