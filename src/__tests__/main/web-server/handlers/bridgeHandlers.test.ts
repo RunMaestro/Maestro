@@ -498,6 +498,38 @@ describe('broadcastBridgeEvent', () => {
 		uninstallWebContentsBridgeHook();
 	});
 
+	it.each([
+		'localModels:progress',
+		'localModels:runtimes:progress',
+		'localModels:semanticIndex:progress',
+		'localModels:server:changed',
+		'localModels:server:progress',
+		'localModels:systemOne:changed',
+		'localModels:userModels:changed',
+	])('fans out the Local Models push %s, so a browser sees downloads land', (channel) => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+		broadcastBridgeEvent(channel, [{ phase: 'downloading' }]);
+		expect(broadcastToAll).toHaveBeenCalledWith(expect.objectContaining({ channel }));
+
+		uninstallWebContentsBridgeHook();
+	});
+
+	it('never fans out a dictation interruption, which belongs to the one window recording', () => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+		broadcastBridgeEvent('localModels:dictation:interrupted', [{ code: 'device-lost' }]);
+		expect(broadcastToAll).not.toHaveBeenCalled();
+
+		uninstallWebContentsBridgeHook();
+	});
+
 	it('stops broadcasting after uninstall', () => {
 		const broadcastToAll = vi.fn();
 		installWebContentsBridgeHook({
@@ -896,22 +928,51 @@ describe('local model task readiness over the bridge', () => {
 		}
 	);
 
-	it.each(['download', 'runTask', 'server:start', 'server:key', 'systemOne:setKey'])(
-		'keeps localModels:%s private',
-		async (operation) => {
-			const channel = `localModels:${operation}`;
-			const handler = vi.fn();
-			invokeHandlers.set(channel, handler);
-			const send = vi.fn();
-			await handleBridgeInvoke(
-				makeClient(),
-				{ type: 'bridge.invoke', requestId: 'private', channel, args: [] },
-				send
-			);
-			expect(handler).not.toHaveBeenCalled();
-			expect(send.mock.calls[0][1]).toMatchObject({ ok: false });
-		}
-	);
+	it.each([
+		'download',
+		'runTask',
+		'server:start',
+		'systemOne:set',
+		'hf:add',
+		'userModels',
+		'dictation:transcribe',
+		'dictation:cancel',
+		'semanticIndex:clear',
+	])('serves localModels:%s to the web interface', async (operation) => {
+		const channel = `localModels:${operation}`;
+		const handler = vi.fn(async () => 'host answer');
+		invokeHandlers.set(channel, handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 'served', channel, args: ['arg'] },
+			send
+		);
+		expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'bridge' }), 'arg');
+		expect(send.mock.calls[0][1]).toMatchObject({ ok: true, result: 'host answer' });
+	});
+
+	// Credentials stay on the host, and the host's microphone is not where a
+	// browser user is speaking.
+	it.each([
+		'server:key',
+		'systemOne:setKey',
+		'systemOne:clearKey',
+		'dictation:start',
+		'dictation:stop',
+	])('keeps localModels:%s private', async (operation) => {
+		const channel = `localModels:${operation}`;
+		const handler = vi.fn();
+		invokeHandlers.set(channel, handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 'private', channel, args: [] },
+			send
+		);
+		expect(handler).not.toHaveBeenCalled();
+		expect(send.mock.calls[0][1]).toMatchObject({ ok: false });
+	});
 });
 
 describe('notification history over the bridge', () => {

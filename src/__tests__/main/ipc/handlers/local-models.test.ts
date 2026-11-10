@@ -300,6 +300,11 @@ const dictation = vi.hoisted(() => {
 			audioMs: 900,
 		})),
 		cancelDictation: vi.fn(async (_ownerId: string) => {}),
+		transcribeDictationClipRequest: vi.fn(async (_ownerId: string, _request: unknown) => ({
+			status: 'ok',
+			text: 'From the browser.',
+			audioMs: 700,
+		})),
 		onDictationInterrupted: vi.fn((listener: (ownerId: string, interruption: unknown) => void) => {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
@@ -1021,6 +1026,29 @@ describe('dictation channels', () => {
 		expect(dictation.startDictation).not.toHaveBeenCalled();
 		expect(dictation.stopDictation).not.toHaveBeenCalled();
 		expect(dictation.cancelDictation).not.toHaveBeenCalled();
+	});
+
+	it("transcribes a bridge client's own clip as that client, and lets only it cancel", async () => {
+		const bridge = { type: 'bridge', clientId: 'browser-7' };
+		const request = { audio: 'data:audio/wav;base64,UklGRg==' };
+
+		await expect(
+			handlerFor('localModels:dictation:transcribe')(bridge, request)
+		).resolves.toMatchObject({ status: 'ok', text: 'From the browser.' });
+		expect(dictation.transcribeDictationClipRequest).toHaveBeenCalledWith(
+			'client:browser-7',
+			request
+		);
+
+		await handlerFor('localModels:dictation:cancel')(bridge);
+		expect(dictation.cancelDictation).toHaveBeenCalledWith('client:browser-7');
+	});
+
+	it('refuses a clip that belongs to no caller', async () => {
+		await expect(
+			handlerFor('localModels:dictation:transcribe')({}, { audio: 'data:audio/wav;base64,' })
+		).rejects.toThrow(/caller/);
+		expect(dictation.transcribeDictationClipRequest).not.toHaveBeenCalled();
 	});
 
 	it('tells only the owning window that its recording ended, and never broadcasts it', async () => {

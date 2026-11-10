@@ -992,6 +992,7 @@ const mockMaestro = {
 			}),
 			stop: vi.fn().mockResolvedValue({ status: 'idle' }),
 			cancel: vi.fn().mockResolvedValue(undefined),
+			transcribe: vi.fn().mockResolvedValue({ status: 'off' }),
 			onInterrupted: vi.fn().mockReturnValue(() => {}),
 		},
 	},

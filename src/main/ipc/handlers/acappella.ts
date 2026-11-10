@@ -164,7 +164,7 @@ import {
 	runWakeEnrollmentRequest,
 } from '../../acappella/wake/wake-enrollment-service';
 import { enrolledWakeRevision } from '../../acappella/wake/wake-enrollment-store';
-import { ClipCapture } from '../../acappella/audio/clip-capture';
+import { ClipCapture } from '../../../shared/local-models/clip-capture';
 import { NoticeSpeech } from '../../acappella/audio/notice-speech';
 import { registerDictationMicrophone } from '../../local-models/dictation';
 import { cancelSpokenNotices, registerNoticeSpeaker } from '../../local-models/spoken-notices';
@@ -467,7 +467,7 @@ let handsFree: HandsFreeListener | null = null;
  * Module state like the wake word, and built whether or not the A Cappella
  * Encore Feature is on: dictation is a core feature that only borrows this
  * capture path. Building it opens no device; a clip does, when a user asks for
- * one. See `acappella/audio/clip-capture.ts`.
+ * one. See `src/shared/local-models/clip-capture.ts`.
  */
 let clipCapture: ClipCapture | null = null;
 let releaseDictationMicrophone: (() => void) | null = null;
@@ -1474,6 +1474,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 				sendAudioHostCommand({ kind: 'stop-capture' });
 			}
 		},
+		log: (message) => logger.info(message, LOG_CONTEXT),
 	});
 	releaseDictationMicrophone ??= registerDictationMicrophone(clipCapture, async () =>
 		buildSpeechVocabulary(

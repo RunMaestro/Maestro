@@ -49,6 +49,7 @@ import type { LocalModelTaskId } from '../../shared/local-models/tasks';
 import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
 import type { PullRequestDraftRequest, PullRequestDraftResult } from '../../shared/gitDrafts';
 import type {
+	DictationClipRequest,
 	DictationInterruption,
 	DictationResult,
 	DictationStartResult,
@@ -386,6 +387,14 @@ function createDictationApi() {
 
 		/** Close the microphone and discard the recording and any pending transcript. */
 		cancel: (): Promise<void> => ipcRenderer.invoke('localModels:dictation:cancel'),
+
+		/**
+		 * Transcribe a clip this client recorded on its OWN microphone: the web
+		 * interface's path, where the person is not at this computer. `cancel()`
+		 * aborts it. Answers like `stop()`.
+		 */
+		transcribe: (request: DictationClipRequest): Promise<DictationResult> =>
+			ipcRenderer.invoke('localModels:dictation:transcribe', request),
 
 		/**
 		 * This window's recording ended on its own (the microphone was lost, or

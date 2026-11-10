@@ -8,6 +8,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
+const runtime = vi.hoisted(() => ({ web: false }));
+vi.mock('../../../../../renderer/utils/runtimeContext', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../../renderer/utils/runtimeContext')>()),
+	isWebDesktop: () => runtime.web,
+}));
+
 import type { Theme } from '../../../../../renderer/types';
 import {
 	SystemOneEngineCard,
@@ -105,6 +111,27 @@ const keyInput = () => field('system-one-key-input');
 describe('SystemOneEngineCard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		runtime.web = false;
+	});
+
+	it('on the web interface, says where a key is set and offers no field to paste one', () => {
+		runtime.web = true;
+		const systemOne = hook({
+			report: report({
+				keys: { 'jev-cloud': { source: 'stored', storage: 'os' }, openjev: { source: 'none' } },
+			}),
+		});
+		render(<SystemOneEngineCard theme={theme} systemOne={systemOne} />);
+
+		expect(screen.getByTestId('system-one-key-source')).toHaveTextContent(
+			'Stored sealed by the system key store.'
+		);
+		expect(screen.getByTestId('system-one-key-host-only')).toHaveTextContent(
+			'maestro-cli s1 key set'
+		);
+		expect(screen.queryByTestId('system-one-key-input')).toBeNull();
+		expect(screen.queryByTestId('system-one-key-save')).toBeNull();
+		expect(screen.queryByTestId('system-one-key-clear')).toBeNull();
 	});
 
 	it('says it is reading until the first report arrives, and shows a read failure', () => {

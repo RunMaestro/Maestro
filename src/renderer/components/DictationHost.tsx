@@ -6,8 +6,9 @@
  *   - **Readiness.** It asks the main process whether the `dictation` Local
  *     Models task would run, and mirrors the answer into `dictationStore`.
  *     Every `<DictationButton>` reads that mirror, so a dozen text boxes cost
- *     one IPC call. A web-desktop client is always `hidden`: the microphone is
- *     on the desktop, and the main process refuses it as `no-microphone`.
+ *     one IPC call. A web-desktop client records on the browser's own
+ *     microphone (`services/browserDictation.ts`); where the browser has none
+ *     (plain HTTP), the button says so instead.
  *   - **The shortcut's press.** The keyboard handler reports the `dictate`
  *     chord going down; this classifies it as a tap (toggle) or a hold (record
  *     while held) against the focused text box. The release is ANY key coming
@@ -40,6 +41,7 @@ import {
 	setDictationAvailabilityRefresher,
 	stopDictation,
 } from '../services/dictation';
+import { browserDictationBlocker } from '../services/browserDictation';
 import { useDictationStore, type DictationAvailability } from '../stores/dictationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useVoiceUiStore } from '../stores/voiceUiStore';
@@ -51,13 +53,21 @@ import { Spinner } from './ui/Spinner';
  * What a button may draw, from the main process's verdict. `off` and
  * `utility-agent` both mean nobody assigned dictation a speech model, so
  * nothing is offered.
+ *
+ * `microphoneBlocker` is why THIS client cannot record even with a ready model
+ * (a browser over plain HTTP has no microphone API), or null when it can. The
+ * button is still drawn, with that reason, so the feature is visible and says
+ * what to do.
  */
 export function dictationAvailabilityFromReadiness(
 	verdict: LocalModelTaskReadiness | undefined,
 	endpoints: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[],
-	webDesktop: boolean
+	microphoneBlocker: string | null = null
 ): DictationAvailability {
-	if (webDesktop || !verdict) return { state: 'hidden' };
+	if (!verdict) return { state: 'hidden' };
+	if (verdict.state === 'ready' && microphoneBlocker) {
+		return { state: 'unavailable', reason: microphoneBlocker };
+	}
 	if (verdict.state === 'ready') {
 		return {
 			state: 'ready',
@@ -88,7 +98,11 @@ export function DictationHost({ theme }: { theme: Theme }) {
 
 	useEffect(() => {
 		useDictationStore.setState({
-			availability: dictationAvailabilityFromReadiness(verdict, endpoints, isWebDesktop()),
+			availability: dictationAvailabilityFromReadiness(
+				verdict,
+				endpoints,
+				isWebDesktop() ? browserDictationBlocker() : null
+			),
 		});
 	}, [verdict, endpoints]);
 

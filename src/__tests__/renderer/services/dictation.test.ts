@@ -20,6 +20,23 @@ vi.mock('../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.f
 vi.mock('../../../renderer/stores/centerFlashStore', () => ({ notifyCenterFlash: vi.fn() }));
 vi.mock('../../../renderer/utils/platformUtils', () => ({ getPlatform: () => 'darwin' }));
 
+const runtime = vi.hoisted(() => ({ web: false }));
+vi.mock('../../../renderer/utils/runtimeContext', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/utils/runtimeContext')>()),
+	isWebDesktop: () => runtime.web,
+}));
+const browser = vi.hoisted(() => ({
+	transport: {
+		start: vi.fn(),
+		stop: vi.fn(),
+		cancel: vi.fn(),
+		onInterrupted: vi.fn(() => () => {}),
+	},
+}));
+vi.mock('../../../renderer/services/browserDictation', () => ({
+	getBrowserDictation: () => browser.transport,
+}));
+
 import {
 	__resetDictationService,
 	cancelDictation,
@@ -55,6 +72,7 @@ const phase = () => useDictationStore.getState().phase;
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	runtime.web = false;
 	__resetDictationService();
 	resetDictationStore();
 	useDictationStore.setState({ availability: { state: 'ready', source: 'Parakeet' } });
@@ -260,6 +278,53 @@ describe('refusals', () => {
 		});
 		await startDictation(fakeTarget().target);
 		expect(notifyToast).not.toHaveBeenCalled();
+	});
+});
+
+describe('on the web interface', () => {
+	beforeEach(() => {
+		runtime.web = true;
+		browser.transport.start.mockResolvedValue({ started: true });
+		browser.transport.stop.mockResolvedValue({
+			status: 'ok',
+			text: 'from the phone',
+			audioMs: 800,
+		});
+		browser.transport.cancel.mockResolvedValue(undefined);
+	});
+
+	it("records on the browser's own microphone, never the host's", async () => {
+		const { target, insert } = fakeTarget();
+
+		await startDictation(target);
+		await stopDictation();
+
+		expect(browser.transport.start).toHaveBeenCalledTimes(1);
+		expect(browser.transport.stop).toHaveBeenCalledTimes(1);
+		expect(api.start).not.toHaveBeenCalled();
+		expect(api.stop).not.toHaveBeenCalled();
+		expect(insert).toHaveBeenCalledWith('from the phone');
+	});
+
+	it('discards through the browser transport too', async () => {
+		await startDictation(fakeTarget().target);
+		await cancelDictation();
+		expect(browser.transport.cancel).toHaveBeenCalledTimes(1);
+		expect(api.cancel).not.toHaveBeenCalled();
+	});
+
+	it("points a denied microphone at the browser's settings, not the host's", async () => {
+		browser.transport.start.mockResolvedValue({
+			started: false,
+			code: 'permission-denied',
+			message: 'Permission denied.',
+		});
+		await startDictation(fakeTarget().target);
+
+		const toast = vi.mocked(notifyToast).mock.calls[0][0];
+		expect(toast.title).toBe('Microphone access denied');
+		expect(toast.message).toContain("browser's settings");
+		expect(toast.onClick).toBeUndefined();
 	});
 });
 

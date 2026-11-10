@@ -18,6 +18,7 @@
  * and reaches a model only when the user assigned one to Git drafts.
  * `dictation:start` is the one call here that opens a device: the microphone,
  * and only for the window that asked, only while the Dictation task is ready.
+ * `dictation:transcribe` takes a clip a browser recorded on its own microphone.
  * `spokenNotices:*` makes sound on this machine: `agentFinished` only when the
  * user switched spoken notices on, `speak` because a person or an agent asked.
  * `hf:preview` and `hf:add` ask Hugging Face to describe the one repo the user
@@ -52,6 +53,7 @@ import {
 	onDictationInterrupted,
 	startDictation,
 	stopDictation,
+	transcribeDictationClipRequest,
 } from '../../local-models/dictation';
 import { draftPullRequestRequest } from '../../local-models/git-drafts';
 import { testAgentRunOn } from '../../local-models/run-on-test';
@@ -224,6 +226,20 @@ function dictationOwner(event: unknown): WebContents | null {
 	const sender = (event as { sender?: Partial<WebContents> } | null)?.sender;
 	return sender && typeof sender.id === 'number' && typeof sender.send === 'function'
 		? (sender as WebContents)
+		: null;
+}
+
+/**
+ * The owner id for any dictation caller: a window of this app, or a client of
+ * the web bridge, which records on its own microphone and sends the clip. Null
+ * when the call carries neither.
+ */
+function dictationCallerId(event: unknown): string | null {
+	const window = dictationOwner(event);
+	if (window) return claimDictationOwner(window);
+	const bridge = event as { type?: unknown; clientId?: unknown } | null;
+	return bridge?.type === 'bridge' && typeof bridge.clientId === 'string' && bridge.clientId
+		? `client:${bridge.clientId}`
 		: null;
 }
 
@@ -730,8 +746,17 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 	);
 	const dictationCancel = withIpcErrorLogging(
 		handlerOpts('dictation:cancel'),
-		async (owner: WebContents | null): Promise<void> => {
-			if (owner) await cancelDictation(claimDictationOwner(owner));
+		async (ownerId: string | null): Promise<void> => {
+			if (ownerId) await cancelDictation(ownerId);
+		}
+	);
+	// A clip the caller recorded on its own microphone (a browser on the web
+	// interface). A cancel from the same caller aborts it.
+	const dictationTranscribe = withIpcErrorLogging(
+		handlerOpts('dictation:transcribe'),
+		async (ownerId: string | null, request: unknown): Promise<DictationResult> => {
+			if (!ownerId) throw new Error('A dictation clip needs a caller to belong to.');
+			return transcribeDictationClipRequest(ownerId, request);
 		}
 	);
 	ipcMain.handle('localModels:dictation:start', (event) =>
@@ -741,6 +766,9 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		dictationStop(event, dictationOwner(event))
 	);
 	ipcMain.handle('localModels:dictation:cancel', (event) =>
-		dictationCancel(event, dictationOwner(event))
+		dictationCancel(event, dictationCallerId(event))
+	);
+	ipcMain.handle('localModels:dictation:transcribe', (event, request: unknown) =>
+		dictationTranscribe(event, dictationCallerId(event), request)
 	);
 }

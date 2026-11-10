@@ -83,66 +83,64 @@ afterAll(() => {
 
 describe('local model task readiness over the renderer bridge', () => {
 	it.each<LocalModelTaskId | undefined>([undefined, 'dictation', 'semantic-search', 'git-drafts'])(
-		'sends no readiness frames on mount, revision or manual refresh (task: %s)',
+		'asks the host on mount and on manual refresh, and shows its answer (task: %s)',
 		async (taskId) => {
-			const handler = vi.fn(async () => []);
-			host.handlers.set('localModels:taskReadiness', handler);
-			const { result, rerender } = renderHook(
-				({ revision }) => useLocalModelTaskReadiness(revision, taskId),
-				{ initialProps: { revision: 'first' } }
-			);
-			await waitFor(() => expect(result.current.loading).toBe(false));
-			rerender({ revision: 'changed-settings' });
-			await act(async () => {
-				await result.current.refresh();
-			});
-			expect(
-				socket.frames.filter((frame) => frame.channel === 'localModels:taskReadiness')
-			).toEqual([]);
-			expect(handler).not.toHaveBeenCalled();
-			expect(result.current.readiness).toEqual({});
-			expect(result.current).toMatchObject({
-				loading: false,
-				error: 'Local model tasks are only available in the desktop app.',
-			});
-			expect(document.getElementById('maestro-submission-notice')).toBeNull();
-		}
-	);
-
-	it('keeps the current explicit readiness read working over the same wire', async () => {
-		const readiness: LocalModelTaskReadiness[] = [
-			{
-				taskId: 'git-drafts',
-				label: 'Git drafts',
+			const answer: LocalModelTaskReadiness = {
+				taskId: taskId ?? 'git-drafts',
+				label: 'A task',
 				needs: 'text-gen',
 				assignment: { type: 'off' },
 				state: 'off',
 				detail: 'This task is switched off.',
-			},
-		];
-		const handler = vi.fn(async () => readiness);
-		host.handlers.set('localModels:taskReadiness', handler);
-		await expect(window.maestro.localModels.taskReadiness('git-drafts')).resolves.toEqual(
-			readiness
+			};
+			const handler = vi.fn(async () => [answer]);
+			host.handlers.set('localModels:taskReadiness', handler);
+			const { result } = renderHook(
+				({ revision }) => useLocalModelTaskReadiness(revision, taskId),
+				{ initialProps: { revision: 'first' } }
+			);
+			await waitFor(() => expect(result.current.loading).toBe(false));
+			await act(async () => {
+				await result.current.refresh();
+			});
+			expect(
+				socket.frames.filter((frame) => frame.channel === 'localModels:taskReadiness').length
+			).toBeGreaterThanOrEqual(2);
+			expect(handler).toHaveBeenCalled();
+			expect(result.current.error).toBeNull();
+			expect(result.current.readiness[answer.taskId]).toEqual(answer);
+			expect(document.getElementById('maestro-submission-notice')).toBeNull();
+		}
+	);
+
+	it('serves a model download from the browser, without a submission alert', async () => {
+		const installed = { status: 'installed' };
+		const handler = vi.fn(async () => installed);
+		host.handlers.set('localModels:download', handler);
+		await expect(window.maestro.localModels.download('whisper-base')).resolves.toEqual(installed);
+		expect(handler).toHaveBeenCalledWith(
+			expect.objectContaining({ type: 'bridge' }),
+			'whisper-base'
 		);
-		expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'bridge' }), 'git-drafts');
-		expect(socket.frames).toContainEqual(
-			expect.objectContaining({ channel: 'localModels:taskReadiness', args: ['git-drafts'] })
-		);
+		expect(document.getElementById('maestro-submission-notice')).toBeNull();
 	});
 
-	it('still denies an explicit private download before the host handler runs', async () => {
+	it('serves the list a Settings tab mounts with (userModels was the first refusal)', async () => {
+		host.handlers.set(
+			'localModels:userModels',
+			vi.fn(async () => [])
+		);
+		await expect(window.maestro.localModels.huggingFace.list()).resolves.toEqual([]);
+	});
+
+	it('still keeps a credential write on the host, before the host handler runs', async () => {
 		const handler = vi.fn();
-		host.handlers.set('localModels:download', handler);
-		await expect(window.maestro.localModels.download('whisper-base')).rejects.toThrow(
-			'Channel "localModels:download" is not available over the web interface'
+		host.handlers.set('localModels:systemOne:setKey', handler);
+		await expect(
+			window.maestro.localModels.systemOne.setKey({ engine: 'jev-cloud', key: 'k' })
+		).rejects.toThrow(
+			'Channel "localModels:systemOne:setKey" is not available over the web interface'
 		);
 		expect(handler).not.toHaveBeenCalled();
-		expect(socket.frames).toContainEqual(
-			expect.objectContaining({ channel: 'localModels:download', args: ['whisper-base'] })
-		);
-		expect(document.getElementById('maestro-submission-notice')?.textContent).toContain(
-			'Submission rejected for localModels:download'
-		);
 	});
 });

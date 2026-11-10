@@ -6,7 +6,7 @@ icon: hard-drive
 
 Maestro does a lot of small model work besides your agents' own turns: it names new tabs, writes context summaries, turns a plain-English request into a shell command, and more. By default most of that runs through the **Utility Agent**, an ordinary agent spawn. **Local Models** lets you point each of those jobs somewhere else: a small model Maestro downloads and runs itself, or a model server you already run, such as Ollama or LM Studio. A model on one of those can also be the model behind one of your agents: see [Run on](#run-on).
 
-Open it from **Settings -> Models**, or run **Open Models Settings** from the command palette. From a terminal, `maestro-cli open settings --tab models` opens it, and `--sub-tab system-one` (or `overview`, `library`, `sources`, `system-two`, `gateway`) lands on one of its panels. A Library section takes a path: `--sub-tab library/speech` (or `library/engines`, `library/agents`, `library/housekeeping`, `library/search`, `library/custom`). The old name still works: `--tab local-models` opens the same tab. It is a core part of Maestro, not an Encore Feature, and it starts empty.
+Open it from **Settings -> Models**, or run **Open Models Settings** from the command palette. From a terminal, `maestro-cli open settings --tab models` opens it, and `--sub-tab system-one` (or `overview`, `library`, `sources`, `system-two`, `gateway`) lands on one of its panels. A Library section takes a path: `--sub-tab library/speech` (or `library/engines`, `library/agents`, `library/housekeeping`, `library/search`, `library/custom`). The old name still works: `--tab local-models` opens the same tab. It is a core part of Maestro, not an Encore Feature, and it starts empty. The whole tab also works from the web interface: downloads, endpoints, the model server, System One, and every task run on the computer running Maestro, whichever screen you press the button on.
 
 <Note>
 	**Nothing downloads on its own.** Opening the tab, or enabling anything else in Maestro, fetches
@@ -257,7 +257,7 @@ You can also dictate from the keyboard. Open **Settings**, then **Shortcuts**, a
 
 Dictation is not a voice session. Nothing is sent to an agent, nothing is spoken back, and the text is not submitted for you: it is typed into the box and you send it when you are ready. In the AI composer, dictated text never changes the command mode, so a sentence cannot become a shell command by accident.
 
-If the microphone is dimmed, its tooltip says why (the model is not downloaded, the endpoint is not reachable) and what to do. Dictation does not run on a different source instead. The first time you dictate, your operating system asks for microphone access; if access is denied, Maestro says so and offers to open the system setting. A recording stops by itself after 5 minutes and keeps what it captured. Dictation is not available from the web interface, because the microphone is on the computer that runs Maestro. It also cannot start while an A Cappella voice session is open, since speech is already going to that session.
+If the microphone is dimmed, its tooltip says why (the model is not downloaded, the endpoint is not reachable) and what to do. Dictation does not run on a different source instead. The first time you dictate, your operating system asks for microphone access; if access is denied, Maestro says so and offers to open the system setting. A recording stops by itself after 5 minutes and keeps what it captured. From the web interface, dictation records on the microphone of the device you are using (your browser asks for access the first time) and the computer running Maestro transcribes it with the same assigned model. A browser opens its microphone only over HTTPS, so over a plain `http://` address the microphone stays dimmed and says so: open Maestro through Remote Control instead. Dictation also cannot start while an A Cappella voice session is open, since speech is already going to that session.
 
 ### Spoken notices
 
@@ -365,6 +365,8 @@ A key is write-only. Maestro stores it sealed with your operating system's key s
 | **Stored**                       | You saved it in the card or with `maestro-cli s1 key set`. Used first.                   |
 | **`TYPESAFE_API_KEY`**           | Read from **Settings -> Environment**, then from the environment Maestro was started in. |
 | **`~/.config/typesafe/api_key`** | The file the `jev` command reads.                                                        |
+
+A key is set on the computer running Maestro. From the web interface the card shows where the key in force comes from, but has no field to paste one: keys never cross the web interface.
 
 The last two are read-only fallbacks for Jev. An OpenJev server is only ever sent a key stored for it, so your TypeSafe key never goes to somebody else's machine. If a stored key cannot be opened (a reset key store, a file from another computer), Maestro says so and sends nothing. It does not fall through to another source. **Replace** or **Clear** is your call.
 

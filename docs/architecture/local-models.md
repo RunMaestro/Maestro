@@ -281,7 +281,7 @@ A Cappella keeps everything that is about voice and imports everything that is a
   providers keep only the live streaming policy (`chunked-stt.ts`) and LEASE their model from the
   shared `SpeechToTextPool`, as does the transcription wake word, so one loaded copy serves a voice
   session, the wake word, and a dictated clip.
-- `src/main/acappella/audio/clip-capture.ts`: the audio host's microphone in a mode with no voice
+- `src/shared/local-models/clip-capture.ts`: the audio host's microphone in a mode with no voice
   session behind it, registered with the core as dictation's microphone.
 - `providers/local/assigned-brain.ts` (`AssignedBrainProvider`) is the Conductor Brain on a Local
   Models source. It owns no model and picks no source: each turn is `runLocalTask('voice-routing')`,
@@ -2407,7 +2407,7 @@ flowchart LR
 	subgraph voice["src/main/acappella/"]
 		chunked["providers/local/chunked-stt.ts<br/>live streaming policy"]
 		wake["wake/transcription-wake.ts"]
-		clip["audio/clip-capture.ts<br/>microphone, no session"]
+		clip["shared/local-models/clip-capture.ts<br/>microphone, no session"]
 		host["audio host window<br/>(the one capture path)"]
 	end
 	chunked -- lease --> pool
@@ -2478,7 +2478,7 @@ dictation is refused as `no-microphone`. Wire shapes (`DictationStartResult`, `D
 `DictationRefusalCode`) are in `src/shared/local-models/dictation.ts`.
 
 The microphone is A Cappella's audio host in a session-less mode, `ClipCapture`
-(`src/main/acappella/audio/clip-capture.ts`):
+(`src/shared/local-models/clip-capture.ts`):
 
 - **No session, no floor.** It is given no session service. It sends `start-capture` /
   `stop-capture` to the host and taps the frames the host already ships, like the wake word Test.
@@ -2497,8 +2497,18 @@ Transport: `localModels:dictation:{start,stop,cancel}` (`window.maestro.localMod
 dictation is owned by the window that started it (`window:<webContents id>`): only that window can
 stop it, its interruption is sent to that window alone on `localModels:dictation:interrupted`
 (never broadcast), and it is cancelled if the window is destroyed or reloads. A web-desktop client
-reaches handlers with no sender; it is refused as `no-microphone`, because the microphone is on the
-computer running Maestro and not where that person is speaking.
+reaches handlers with no sender; `dictation:start` refuses it as `no-microphone`, because the
+microphone is on the computer running Maestro and not where that person is speaking.
+
+A browser on the web interface records on its OWN microphone instead
+(`src/renderer/services/browserDictation.ts`). It runs the same `ClipCapture`, with A Cappella's
+`MicCapture` graph as the device, and sends the finished clip as a 16-bit WAV `data:` URL to
+`localModels:dictation:transcribe` (`transcribeDictationClipRequest()`), which returns the same
+`DictationResult` through the same Dictation assignment. That caller is owned as
+`client:<bridge client id>`, so its `dictation:cancel` aborts its own transcription and nobody
+else's. `services/dictation.ts` picks the transport, so the renderer state machine is one. A browser
+has a microphone only in a secure context (HTTPS, localhost); over plain HTTP the button stays
+visible as `unavailable` with that reason (`browserDictationBlocker()`).
 
 ### Dictation in the renderer
 

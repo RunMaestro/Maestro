@@ -16,12 +16,8 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
-vi.mock('../../../../main/utils/logger', () => ({
-	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
-
-import { ClipCapture, type ClipCaptureDeps } from '../../../../main/acappella/audio/clip-capture';
-import type { DictationInterruption } from '../../../../shared/local-models/dictation';
+import { ClipCapture, type ClipCaptureDeps } from '../../../shared/local-models/clip-capture';
+import type { DictationInterruption } from '../../../shared/local-models/dictation';
 
 const DEVICE = { deviceId: 'mic-1', label: 'Built-in Microphone' };
 const CAPTURE_START = {

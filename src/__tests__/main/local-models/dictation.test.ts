@@ -55,11 +55,12 @@ import {
 	transcribeAudioFileRequest,
 	transcribeClip,
 	resolveLocalClipTranscriber,
-	type DictationClip,
-	type DictationMicrophone,
+	transcribeDictationClipRequest,
 } from '../../../main/local-models/dictation';
 import type {
+	DictationClip,
 	DictationInterruption,
+	DictationMicrophone,
 	DictationStartResult,
 } from '../../../shared/local-models/dictation';
 import { encodeWav } from '../../../shared/audio/pcm';
@@ -429,6 +430,94 @@ describe('interruptions and the microphone registration', () => {
 		expect(microphone.cancel).toHaveBeenCalledTimes(1);
 		expect(isDictationRecording()).toBe(false);
 		await expect(startDictation('window:1')).resolves.toMatchObject({ code: 'no-microphone' });
+	});
+});
+
+describe('transcribeDictationClipRequest', () => {
+	/** A clip as a browser sends it: a 16-bit WAV as a data: URL. */
+	function wavDataUrl(samples: Int16Array, sampleRate = 16000): string {
+		return `data:audio/wav;base64,${Buffer.from(encodeWav(samples, sampleRate)).toString('base64')}`;
+	}
+
+	it('decodes a browser clip and answers like a recording made here', async () => {
+		const result = await transcribeDictationClipRequest('client:browser-1', {
+			audio: wavDataUrl(new Int16Array([0, 16384, -16384, 32767])),
+		});
+
+		expect(result).toEqual({ status: 'ok', text: 'Ship it.', audioMs: 1000 });
+		const [taskId, input] = router.runSpeechToTextTask.mock.calls[0];
+		expect(taskId).toBe('dictation');
+		expect(input.sampleRate).toBe(16000);
+		expect(input.audio).toHaveLength(4);
+		expect(input.audio[1]).toBeCloseTo(0.5, 2);
+	});
+
+	it('carries a recording that ended on its own through to the answer', async () => {
+		const interruption = { code: 'max-duration', message: 'Stopped after 5 minutes.' } as const;
+		await expect(
+			transcribeDictationClipRequest('client:browser-1', {
+				audio: wavDataUrl(new Int16Array(16)),
+				interruption,
+			})
+		).resolves.toMatchObject({ status: 'ok', interruption });
+	});
+
+	it('drops an interruption whose code it does not know', async () => {
+		const result = await transcribeDictationClipRequest('client:browser-1', {
+			audio: wavDataUrl(new Int16Array(16)),
+			interruption: { code: 'made-up', message: 'x' },
+		});
+		expect(result).not.toHaveProperty('interruption');
+	});
+
+	it('answers a task that is off, never throws for it', async () => {
+		router.runSpeechToTextTask.mockResolvedValue({ status: 'off' });
+		await expect(
+			transcribeDictationClipRequest('client:browser-1', { audio: wavDataUrl(new Int16Array(16)) })
+		).resolves.toEqual({ status: 'off' });
+	});
+
+	it.each([
+		['no audio', {}],
+		['a non-WAV data URL', { audio: 'data:image/png;base64,AAAA' }],
+		['a bare string', { audio: 'RIFF' }],
+		['nothing at all', null],
+	])('refuses %s by name', async (_label, request) => {
+		await expect(transcribeDictationClipRequest('client:browser-1', request)).rejects.toThrow(
+			/dictation clip/
+		);
+		expect(router.runSpeechToTextTask).not.toHaveBeenCalled();
+	});
+
+	it('refuses a clip longer than a dictation may be, before decoding it', async () => {
+		const tooLong = 'A'.repeat(40 * 1024 * 1024);
+		await expect(
+			transcribeDictationClipRequest('client:browser-1', {
+				audio: `data:audio/wav;base64,${tooLong}`,
+			})
+		).rejects.toThrow(/at most 5 minutes/);
+		expect(router.runSpeechToTextTask).not.toHaveBeenCalled();
+	});
+
+	it("is aborted by its own caller's cancel, and by nobody else's", async () => {
+		let signal: AbortSignal | undefined;
+		const result = deferred<unknown>();
+		router.runSpeechToTextTask.mockImplementation(async (_task, input) => {
+			signal = input.signal;
+			return result.promise;
+		});
+		const pending = transcribeDictationClipRequest('client:browser-1', {
+			audio: wavDataUrl(new Int16Array(16)),
+		});
+		await vi.waitFor(() => expect(signal).toBeDefined());
+
+		await cancelDictation('client:browser-2');
+		expect(signal!.aborted).toBe(false);
+		await cancelDictation('client:browser-1');
+		expect(signal!.aborted).toBe(true);
+
+		result.resolve({ status: 'cancelled' });
+		await expect(pending).resolves.toEqual({ status: 'cancelled' });
 	});
 });
 

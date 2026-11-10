@@ -75,7 +75,28 @@ const READ_ONLY_CHANNELS = new Set([
 	'history:reload',
 	'images:resolve',
 	'journey:path',
+	'localModels:endpoints:detect',
+	'localModels:endpoints:listModels',
+	'localModels:footprint',
+	'localModels:hardware',
+	'localModels:hf:preview',
+	'localModels:proxy:block',
+	'localModels:proxy:report',
+	'localModels:routeTurn',
+	'localModels:runtimes:footprint',
+	'localModels:runtimes:list',
+	'localModels:semanticIndex:browse',
+	'localModels:semanticIndex:status',
+	'localModels:semanticIndex:storage',
+	'localModels:server:report',
+	'localModels:suggestTabCleanup',
+	'localModels:systemOne:agentAccess',
+	'localModels:systemOne:ledger',
+	'localModels:systemOne:report',
+	'localModels:systemOne:usage',
 	'localModels:taskReadiness',
+	'localModels:tiers:options',
+	'localModels:userModels',
 	'memory:orphans',
 	'pianola:supervisor-list',
 	'feedback:drafts:list',
@@ -166,9 +187,49 @@ function isPersistenceChannel(channel: string): boolean {
 		channel === 'sessions:setMany' || channel === 'sessions:setAll' || channel === 'groups:setAll'
 	);
 }
-function requestTimeoutMs(channel: string): number {
+/**
+ * Local Models calls that resolve only when a transfer ends: a model of several
+ * gigabytes, a runtime, the model server engine. Progress arrives as events
+ * meanwhile, and a second call joins the first, so a timeout here would only
+ * report a live download as failed.
+ */
+const LOCAL_MODEL_TRANSFER_CHANNELS = new Set([
+	'localModels:download',
+	'localModels:resume',
+	'localModels:runtimes:install',
+	'localModels:server:installEngine',
+]);
+const LOCAL_MODEL_TRANSFER_TIMEOUT_MS = 6 * 60 * 60_000;
+
+/** Local Models calls that run a model or hash a file, and take as long as that does. */
+const LOCAL_MODEL_WORK_CHANNELS = new Set([
+	'localModels:dictation:transcribe',
+	'localModels:draftPullRequest',
+	'localModels:endpoints:listModels',
+	'localModels:endpoints:test',
+	'localModels:hf:add',
+	'localModels:remove-all',
+	'localModels:runOn:test',
+	'localModels:runTask',
+	'localModels:runtimes:remove-all',
+	'localModels:search',
+	'localModels:semanticIndex:clear',
+	'localModels:server:start',
+	'localModels:suggestTabCleanup',
+	'localModels:systemOne:test',
+	'localModels:tiers:options',
+	'localModels:verify',
+]);
+
+export function requestTimeoutMs(channel: string): number {
+	if (LOCAL_MODEL_TRANSFER_CHANNELS.has(channel)) return LOCAL_MODEL_TRANSFER_TIMEOUT_MS;
 	// Repository transfers and recursive filesystem reads legitimately outlast ordinary UI requests.
-	if (channel.startsWith('git:') || channel === 'fs:directorySize') return 600_000;
+	if (
+		channel.startsWith('git:') ||
+		channel === 'fs:directorySize' ||
+		LOCAL_MODEL_WORK_CHANNELS.has(channel)
+	)
+		return 600_000;
 	return isSubmissionChannel(channel) ? BRIDGE_MUTATION_TIMEOUT_MS : BRIDGE_READ_TIMEOUT_MS;
 }
 

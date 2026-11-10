@@ -14,7 +14,7 @@
  * through a {@link DictationMicrophone} that whoever owns a capture device
  * registers. Today that is A Cappella's audio host, in a mode that starts no
  * voice session and never opens the voice floor
- * (`src/main/acappella/audio/clip-capture.ts`). The core does not import it:
+ * (`src/shared/local-models/clip-capture.ts`). The core does not import it:
  * with no microphone registered (the standalone runner, a test) a dictation is
  * refused by name, exactly like any other missing capability.
  *
@@ -33,13 +33,16 @@
  *     reaches for a hosted recogniser.
  */
 
-import { int16ToFloat32 } from '../../shared/audio/pcm';
+import { decodeWavPcm16, int16ToFloat32 } from '../../shared/audio/pcm';
 import { readPcmWavFile } from '../utils/wav-file';
-import type {
-	DictationInterruption,
-	DictationRefusalCode,
-	DictationResult,
-	DictationStartResult,
+import {
+	DICTATION_MAX_CLIP_MS,
+	type DictationClip,
+	type DictationInterruption,
+	type DictationMicrophone,
+	type DictationRefusalCode,
+	type DictationResult,
+	type DictationStartResult,
 } from '../../shared/local-models/dictation';
 import { resolveTaskReadiness } from './task-readiness';
 import { getLocalModel } from '../../shared/local-models/model-catalog';
@@ -120,36 +123,6 @@ export async function transcribeAudioFileRequest(
 // ---------------------------------------------------------------------------
 // The microphone seam
 // ---------------------------------------------------------------------------
-
-/** What a microphone hands back when a recording stops. */
-export interface DictationClip {
-	/** Mono audio, normalised to -1..1. Empty when nothing was recorded. */
-	audio: Float32Array;
-	sampleRate: number;
-	/** Present when the recording ended on its own before it was stopped. */
-	interruption?: DictationInterruption;
-}
-
-/**
- * A capture device a dictation can record through. Implemented by whoever owns
- * one; the core only sequences the calls.
- */
-export interface DictationMicrophone {
-	/**
-	 * Open the microphone. Resolves once audio is flowing, or with the classified
-	 * reason it is not. Must not start a voice session.
-	 */
-	start(): Promise<DictationStartResult>;
-	/** Close the microphone and hand back everything recorded. */
-	stop(): Promise<DictationClip>;
-	/** Close the microphone and discard the audio. Also aborts a pending start. */
-	cancel(): Promise<void>;
-	/**
-	 * Subscribe to a recording ending on its own (device lost, the length cap).
-	 * @returns The unsubscribe.
-	 */
-	onInterrupted(listener: (interruption: DictationInterruption) => void): () => void;
-}
 
 type InterruptionListener = (ownerId: string, interruption: DictationInterruption) => void;
 
@@ -289,20 +262,104 @@ export async function stopDictation(ownerId: string): Promise<DictationResult> {
 	}
 
 	active = null;
+	return withCancellableTranscription(ownerId, async (signal) => {
+		// Own cancellation while the microphone is still releasing the clip.
+		const clip = await dictation.microphone.stop();
+		if (signal.aborted) return { status: 'cancelled' };
+		const result = await transcribeClip(clip.audio, clip.sampleRate, { signal });
+		return toDictationResult(result, clip);
+	});
+}
+
+/**
+ * Run one transcription for `ownerId` that {@link cancelDictation} can abort.
+ * Several may be in flight for one owner: a recording decoding while the next
+ * one is made.
+ */
+async function withCancellableTranscription(
+	ownerId: string,
+	work: (signal: AbortSignal) => Promise<DictationResult>
+): Promise<DictationResult> {
 	const abort = new AbortController();
 	const inFlight = transcribing.get(ownerId) ?? new Set<AbortController>();
 	inFlight.add(abort);
 	transcribing.set(ownerId, inFlight);
 	try {
-		// Own cancellation while the microphone is still releasing the clip.
-		const clip = await dictation.microphone.stop();
-		if (abort.signal.aborted) return { status: 'cancelled' };
-		const result = await transcribeClip(clip.audio, clip.sampleRate, { signal: abort.signal });
-		return toDictationResult(result, clip);
+		return await work(abort.signal);
 	} finally {
 		inFlight.delete(abort);
 		if (inFlight.size === 0) transcribing.delete(ownerId);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// A clip the client recorded itself
+// ---------------------------------------------------------------------------
+
+/**
+ * The largest WAV a client clip may carry: {@link DICTATION_MAX_CLIP_MS} of
+ * 16-bit mono at 48 kHz (the highest rate a browser capture runs at), plus its
+ * header. A 16 kHz clip is a third of that.
+ */
+const MAX_CLIENT_CLIP_BYTES = (DICTATION_MAX_CLIP_MS / 1000) * 48_000 * 2 + 1024;
+
+const CLIENT_INTERRUPTION_CODES: ReadonlySet<DictationInterruption['code']> = new Set([
+	'max-duration',
+	'permission-denied',
+	'no-device',
+	'device-lost',
+	'unsupported',
+	'audio-init-failed',
+]);
+
+function readClientInterruption(value: unknown): DictationInterruption | undefined {
+	if (!value || typeof value !== 'object') return undefined;
+	const { code, message } = value as { code?: unknown; message?: unknown };
+	if (typeof code !== 'string' || !CLIENT_INTERRUPTION_CODES.has(code as never)) return undefined;
+	return {
+		code: code as DictationInterruption['code'],
+		message: typeof message === 'string' ? message.slice(0, 500) : '',
+	};
+}
+
+/**
+ * Transcribe a dictation a client recorded on its own microphone: a browser on
+ * the web interface, whose user is not in the room with this computer's
+ * microphone. The clip is a 16-bit PCM WAV as a `data:` URL (`audio` in
+ * {@link DictationClipRequest}); the answer is the same {@link DictationResult}
+ * a recording made here ends in, and {@link cancelDictation} with the same
+ * `ownerId` aborts it.
+ *
+ * `request` arrives untrusted from the bridge, so it is validated and bounded
+ * before it is decoded.
+ *
+ * @throws When the request is malformed or the clip is not a WAV this build
+ *         can decode. A task that is off or unavailable is an answer.
+ */
+export async function transcribeDictationClipRequest(
+	ownerId: string,
+	request: unknown
+): Promise<DictationResult> {
+	const audio = (request as { audio?: unknown } | null)?.audio;
+	if (typeof audio !== 'string') {
+		throw new Error('A dictation clip must carry its audio as a WAV data: URL.');
+	}
+	const match = /^data:audio\/(?:wav|wave|x-wav);base64,/.exec(audio);
+	if (!match) throw new Error('A dictation clip must be a WAV data: URL.');
+	const base64 = audio.slice(match[0].length);
+	// Base64 is 4 characters per 3 bytes; refuse before allocating the decode.
+	if ((base64.length * 3) / 4 > MAX_CLIENT_CLIP_BYTES) {
+		throw new Error(
+			`A dictation clip may be at most ${DICTATION_MAX_CLIP_MS / 60_000} minutes long.`
+		);
+	}
+	const clip = decodeWavPcm16(Buffer.from(base64, 'base64'));
+	const interruption = readClientInterruption((request as { interruption?: unknown }).interruption);
+
+	return withCancellableTranscription(ownerId, async (signal) => {
+		const result = await transcribeClip(int16ToFloat32(clip.pcm), clip.sampleRate, { signal });
+		return toDictationResult(result, interruption ? { interruption } : {});
+	});
 }
 
 /**
@@ -322,7 +379,10 @@ export async function cancelDictation(ownerId: string): Promise<void> {
 	await dictation.microphone.cancel();
 }
 
-function toDictationResult(result: SpeechToTextTaskResult, clip: DictationClip): DictationResult {
+function toDictationResult(
+	result: SpeechToTextTaskResult,
+	clip: Pick<DictationClip, 'interruption'>
+): DictationResult {
 	switch (result.status) {
 		case 'ok':
 			return {

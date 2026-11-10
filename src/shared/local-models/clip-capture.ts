@@ -1,10 +1,20 @@
 /**
- * Clip capture - the audio host's microphone, with no voice session behind it.
+ * Clip capture - a microphone, with no voice session behind it.
  *
  * Dictation needs one thing from A Cappella: its capture path. The hidden audio
  * host already opens the microphone through Chromium's audio processing,
  * resamples to 16 kHz in a worklet, and ships 20 ms frames to main. This module
- * is the mode of that path that records a clip and does nothing else:
+ * is the mode of that path that records a clip and does nothing else.
+ *
+ * It is shared because the same capture graph (`MicCapture` in
+ * `src/renderer/acappella-audio/capture.ts`) runs in a browser on the web
+ * interface, whose user is not in the room with the host's microphone. There
+ * the deps open the browser's own microphone and the clip is sent to the host
+ * to be transcribed (`src/renderer/services/browserDictation.ts`). One state
+ * machine, so the two cannot disagree about starting, the length cap, or a
+ * device lost mid-sentence.
+ *
+ * On the host:
  *
  *   - **No session.** Nothing here touches `VoiceSessionService`. No floor is
  *     opened, nothing is routed, nothing is spoken, and no protocol event is
@@ -21,24 +31,23 @@
  *
  * It implements the core's `DictationMicrophone` seam and is registered at
  * startup, so dictation works whether or not the A Cappella Encore Feature is
- * on. Free of Electron: the host commands, the permission ask, and the frame
- * and status feeds are injected (see `src/main/ipc/handlers/acappella.ts`).
+ * on. Free of Electron and of the main process: the host commands, the
+ * permission ask, the frame and status feeds, and the log are injected (see
+ * `src/main/ipc/handlers/acappella.ts`).
  */
 
-import type { AudioHostStatus } from '../../../shared/acappella/audio-host';
-import { ACAPPELLA_AUDIO_SAMPLE_RATE } from '../../../shared/acappella/audio-host';
-import type { MicPermission } from '../../../shared/acappella/protocol';
-import { int16ToFloat32 } from '../../../shared/audio/pcm';
+import type { AudioHostStatus } from '../acappella/audio-host';
+import { ACAPPELLA_AUDIO_SAMPLE_RATE } from '../acappella/audio-host';
+import type { MicPermission } from '../acappella/protocol';
+import { int16ToFloat32 } from '../audio/pcm';
 import {
 	DICTATION_MAX_CLIP_MS,
+	type DictationClip,
 	type DictationInterruption,
+	type DictationMicrophone,
 	type DictationRefusalCode,
 	type DictationStartResult,
-} from '../../../shared/local-models/dictation';
-import type { DictationClip, DictationMicrophone } from '../../local-models/dictation';
-import { logger } from '../../utils/logger';
-
-const LOG_CONTEXT = 'ACappella';
+} from './dictation';
 
 /**
  * How long the microphone may take to open. The first clip after launch also
@@ -69,6 +78,8 @@ export interface ClipCaptureDeps {
 	maxClipMs?: number;
 	/** Defaults to {@link CLIP_CAPTURE_START_TIMEOUT_MS}. */
 	startTimeoutMs?: number;
+	/** Where a recording that ended on its own is noted. The host passes its logger. */
+	log?(message: string): void;
 }
 
 type ClipCaptureState = 'idle' | 'starting' | 'recording' | 'ended';
@@ -264,7 +275,7 @@ export class ClipCapture implements DictationMicrophone {
 		if (this.state !== 'recording') return;
 		this.state = 'ended';
 		this.interruption = interruption;
-		logger.info(`Dictation recording ended (${interruption.code})`, LOG_CONTEXT);
+		this.deps.log?.(`Dictation recording ended (${interruption.code})`);
 		// The microphone goes back now, not when the owner gets round to stopping:
 		// an indicator nobody dismissed must not hold a device open.
 		this.closeMicrophone();

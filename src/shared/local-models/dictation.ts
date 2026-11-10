@@ -5,7 +5,10 @@
  * voice session behind it: nothing is routed, nothing is spoken back, and the
  * voice floor is never opened. The recording happens in the main process (the
  * app window has no microphone; see `src/main/local-models/dictation.ts`), so a
- * renderer only ever says start, stop, or cancel and reads these answers.
+ * renderer only ever says start, stop, or cancel and reads these answers. A
+ * browser on the web interface is the exception: its user is not in the room
+ * with that microphone, so it records on its own and sends the clip
+ * ({@link DictationClipRequest}).
  *
  * Every refusal carries a closed `code` a surface can switch on and a `message`
  * written for a person. There is no bare "failed".
@@ -67,6 +70,49 @@ export type DictationStartResult =
 export interface DictationInterruption {
 	code: 'max-duration' | DictationCaptureFailure;
 	message: string;
+}
+
+/** What a microphone hands back when a recording stops. */
+export interface DictationClip {
+	/** Mono audio, normalised to -1..1. Empty when nothing was recorded. */
+	audio: Float32Array;
+	sampleRate: number;
+	/** Present when the recording ended on its own before it was stopped. */
+	interruption?: DictationInterruption;
+}
+
+/**
+ * A capture device a dictation can record through. Implemented by whoever owns
+ * one (the host's audio host, a browser's own microphone); the caller only
+ * sequences the calls.
+ */
+export interface DictationMicrophone {
+	/**
+	 * Open the microphone. Resolves once audio is flowing, or with the classified
+	 * reason it is not. Must not start a voice session.
+	 */
+	start(): Promise<DictationStartResult>;
+	/** Close the microphone and hand back everything recorded. */
+	stop(): Promise<DictationClip>;
+	/** Close the microphone and discard the audio. Also aborts a pending start. */
+	cancel(): Promise<void>;
+	/**
+	 * Subscribe to a recording ending on its own (device lost, the length cap).
+	 * @returns The unsubscribe.
+	 */
+	onInterrupted(listener: (interruption: DictationInterruption) => void): () => void;
+}
+
+/**
+ * A dictation a client recorded on its OWN microphone (a browser on the web
+ * interface), sent to the computer running Maestro to be transcribed by the
+ * Dictation assignment. Answered with a {@link DictationResult}.
+ */
+export interface DictationClipRequest {
+	/** 16-bit PCM WAV, mono, as a `data:audio/wav;base64,` URL. */
+	audio: string;
+	/** Present when the recording ended on its own before it was stopped. */
+	interruption?: DictationInterruption;
 }
 
 /**

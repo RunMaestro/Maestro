@@ -48,6 +48,7 @@ import { LOCAL_JUDGE_TASK_ID, LOCAL_MODEL_TASKS } from '../../../../../shared/lo
 import type { SystemOneHookState } from '../../../../hooks/localModels';
 import type { Theme } from '../../../../types';
 import { FormInput } from '../../../ui/FormInput';
+import { isWebDesktop } from '../../../../utils/runtimeContext';
 import { SettingsSectionHeading } from '../../SettingsSectionHeading';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
 import { CardButton } from './CardButton';
@@ -283,18 +284,7 @@ interface KeyRowProps {
 }
 
 function KeyRow({ theme, engine, info, systemOne, disabled }: KeyRowProps) {
-	const [draft, setDraft] = useState('');
-	// A key typed for one engine is not offered to another.
-	useEffect(() => setDraft(''), [engine]);
-
 	const stored = info.source === 'stored';
-	const problem = draft === '' ? null : systemOneKeyProblem(draft);
-	const ready = draft !== '' && problem === null;
-	const save = async () => {
-		if (!ready) return;
-		// The field is emptied only once main has the key, so a refused key can be fixed in place.
-		if (await systemOne.setKey(engine, draft.trim())) setDraft('');
-	};
 
 	return (
 		<div className="space-y-2" data-testid="system-one-key">
@@ -312,6 +302,47 @@ function KeyRow({ theme, engine, info, systemOne, disabled }: KeyRowProps) {
 						: ''}
 				</p>
 			)}
+			{isWebDesktop() ? (
+				// Keys are credentials, and the web bridge carries no credential
+				// writes (see bridgeDenyList.ts). Say where the key is set instead.
+				<p className="text-xs opacity-70" data-testid="system-one-key-host-only">
+					Keys are stored on the computer running Maestro: set this one in its Settings, or there
+					with <code>pbpaste | maestro-cli s1 key set</code>.
+				</p>
+			) : (
+				<KeyEditor
+					theme={theme}
+					engine={engine}
+					stored={stored}
+					systemOne={systemOne}
+					disabled={disabled}
+				/>
+			)}
+		</div>
+	);
+}
+
+function KeyEditor({
+	theme,
+	engine,
+	stored,
+	systemOne,
+	disabled,
+}: Omit<KeyRowProps, 'info'> & { stored: boolean }) {
+	const [draft, setDraft] = useState('');
+	// A key typed for one engine is not offered to another.
+	useEffect(() => setDraft(''), [engine]);
+
+	const problem = draft === '' ? null : systemOneKeyProblem(draft);
+	const ready = draft !== '' && problem === null;
+	const save = async () => {
+		if (!ready) return;
+		// The field is emptied only once main has the key, so a refused key can be fixed in place.
+		if (await systemOne.setKey(engine, draft.trim())) setDraft('');
+	};
+
+	return (
+		<>
 			<FormInput
 				theme={theme}
 				type="password"
@@ -346,7 +377,7 @@ function KeyRow({ theme, engine, info, systemOne, disabled }: KeyRowProps) {
 					/>
 				)}
 			</div>
-		</div>
+		</>
 	);
 }
 

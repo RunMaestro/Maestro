@@ -179,7 +179,7 @@ import type { RosterAgent, VoiceEvent } from '../../../../shared/acappella/proto
 import type { QuickChatVoiceHost } from '../../../../main/acappella/dispatch/quick-chat-dispatch';
 import { runVoiceControlRequest } from '../../../../main/acappella/voice-control-service';
 import { EMPTY_QUICK_CHAT_SNAPSHOT, type QuickChatStatus } from '../../../../shared/quickChat';
-import type { DictationMicrophone } from '../../../../main/local-models/dictation';
+import type { DictationMicrophone } from '../../../../shared/local-models/dictation';
 import type { NoticeSpeaker } from '../../../../main/local-models/spoken-notices';
 import type { VoiceSessionSnapshot } from '../../../../main/acappella';
 import type { StoredSession } from '../../../../main/stores/types';

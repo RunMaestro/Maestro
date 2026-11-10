@@ -66,14 +66,14 @@ beforeEach(() => {
 
 describe('dictationAvailabilityFromReadiness', () => {
 	it('hides dictation until main has answered, and while the task is off', () => {
-		expect(dictationAvailabilityFromReadiness(undefined, [], false)).toEqual({ state: 'hidden' });
-		expect(dictationAvailabilityFromReadiness(verdict({ state: 'off' }), [], false)).toEqual({
+		expect(dictationAvailabilityFromReadiness(undefined, [])).toEqual({ state: 'hidden' });
+		expect(dictationAvailabilityFromReadiness(verdict({ state: 'off' }), [])).toEqual({
 			state: 'hidden',
 		});
 	});
 
 	it('is ready when the assigned source would answer', () => {
-		expect(dictationAvailabilityFromReadiness(verdict({}), [], false).state).toBe('ready');
+		expect(dictationAvailabilityFromReadiness(verdict({}), []).state).toBe('ready');
 	});
 
 	it('carries the reason and the recovery when the source cannot run', () => {
@@ -84,8 +84,7 @@ describe('dictationAvailabilityFromReadiness', () => {
 					detail: 'Parakeet is not downloaded.',
 					suggestedAction: 'Download it in Settings -> Local Models.',
 				}),
-				[],
-				false
+				[]
 			)
 		).toEqual({
 			state: 'unavailable',
@@ -93,8 +92,27 @@ describe('dictationAvailabilityFromReadiness', () => {
 		});
 	});
 
-	it('is always hidden on a web-desktop client, which has no microphone here', () => {
-		expect(dictationAvailabilityFromReadiness(verdict({}), [], true)).toEqual({ state: 'hidden' });
+	it('shows a ready source as unavailable, with the reason, where this client cannot record', () => {
+		expect(
+			dictationAvailabilityFromReadiness(
+				verdict({}),
+				[],
+				'A browser opens its microphone only over HTTPS.'
+			)
+		).toEqual({ state: 'unavailable', reason: 'A browser opens its microphone only over HTTPS.' });
+	});
+
+	it('lets a client that cannot record still read why the task itself is off or unavailable', () => {
+		expect(dictationAvailabilityFromReadiness(verdict({ state: 'off' }), [], 'no mic')).toEqual({
+			state: 'hidden',
+		});
+		expect(
+			dictationAvailabilityFromReadiness(
+				verdict({ state: 'unavailable', detail: 'Parakeet is not downloaded.' }),
+				[],
+				'no mic'
+			)
+		).toEqual({ state: 'unavailable', reason: 'Parakeet is not downloaded.' });
 	});
 });
 

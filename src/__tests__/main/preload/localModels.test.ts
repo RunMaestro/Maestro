@@ -60,3 +60,17 @@ describe('Local Models proxy block preload', () => {
 		).rejects.toBe(failure);
 	});
 });
+
+describe('Local Models dictation preload', () => {
+	beforeEach(() => {
+		vi.resetAllMocks();
+	});
+
+	it('sends a clip the browser recorded itself to the host for transcription', async () => {
+		const request = { audio: 'data:audio/wav;base64,UklGRg==' };
+		const answer = { status: 'ok', text: 'Ship it.', audioMs: 700 };
+		mockInvoke.mockResolvedValueOnce(answer);
+		await expect(createLocalModelsApi().dictation.transcribe(request)).resolves.toBe(answer);
+		expect(mockInvoke).toHaveBeenCalledExactlyOnceWith('localModels:dictation:transcribe', request);
+	});
+});

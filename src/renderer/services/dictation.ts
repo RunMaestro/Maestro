@@ -1,7 +1,8 @@
 /**
  * Dictation - speech into whichever text box the user is in.
  *
- * One clip of speech is recorded by the main process and transcribed by the
+ * One clip of speech is recorded by the main process (or, on the web
+ * interface, by the browser: `browserDictation.ts`) and transcribed by the
  * `dictation` Local Models assignment (`window.maestro.localModels.dictation`);
  * this module is everything the renderer does around that: it sequences
  * start / stop / cancel, remembers WHICH text box the words belong to, and puts
@@ -44,6 +45,8 @@ import { useDictationStore } from '../stores/dictationStore';
 import { notifyToast } from '../stores/notificationStore';
 import { dictationTargetForElement, type DictationTarget } from '../utils/dictationTargets';
 import { getPlatform } from '../utils/platformUtils';
+import { isWebDesktop } from '../utils/runtimeContext';
+import { getBrowserDictation, type DictationTransport } from './browserDictation';
 import { taskAssignmentLocation } from '../../shared/local-models/settings-location';
 
 /** Raised by the keyboard handler when the `dictate` chord goes down. */
@@ -130,6 +133,15 @@ export function setDictationAvailabilityRefresher(refresh: () => void): () => vo
 let generation = 0;
 let interruptionListenerInstalled = false;
 
+/**
+ * Who records. The desktop records on the computer running Maestro; a browser
+ * on the web interface records on its own microphone and sends the clip there
+ * (`browserDictation.ts`). Both answer the same shapes.
+ */
+function dictationTransport(): DictationTransport {
+	return isWebDesktop() ? getBrowserDictation() : window.maestro.localModels.dictation;
+}
+
 function reset(): void {
 	useDictationStore.setState({ phase: 'idle', target: null });
 }
@@ -146,7 +158,7 @@ function errorMessage(error: unknown): string {
 function ensureInterruptionListener(): void {
 	if (interruptionListenerInstalled) return;
 	interruptionListenerInstalled = true;
-	window.maestro.localModels.dictation.onInterrupted(() => {
+	dictationTransport().onInterrupted(() => {
 		if (useDictationStore.getState().phase === 'recording') void stopDictation();
 	});
 }
@@ -163,7 +175,7 @@ export async function startDictation(target: DictationTarget): Promise<void> {
 
 	let result: DictationStartResult;
 	try {
-		result = await window.maestro.localModels.dictation.start();
+		result = await dictationTransport().start();
 	} catch (error) {
 		if (generation !== mine) return;
 		reset();
@@ -201,7 +213,7 @@ export async function stopDictation(): Promise<void> {
 
 	let result: DictationResult;
 	try {
-		result = await window.maestro.localModels.dictation.stop();
+		result = await dictationTransport().stop();
 	} catch (error) {
 		if (generation !== mine) return;
 		reset();
@@ -219,7 +231,7 @@ export async function cancelDictation(): Promise<void> {
 	if (useDictationStore.getState().phase === 'idle') return;
 	generation += 1;
 	reset();
-	await window.maestro.localModels.dictation.cancel();
+	await dictationTransport().cancel();
 }
 
 /** The tap: start into `target` when idle, stop when recording. */
@@ -307,6 +319,17 @@ function reportRefusal(result: Extract<DictationStartResult, { started: false }>
 			notifyToast({ color: 'yellow', title: TOAST_TITLE, message: result.message });
 			return;
 		case 'permission-denied': {
+			// A browser's microphone is the browser's to grant, not the host's
+			// settings pane, which is on a computer this person is not at.
+			if (isWebDesktop()) {
+				notifyToast({
+					color: 'red',
+					title: 'Microphone access denied',
+					message: `${result.message} Allow the microphone for this site in your browser's settings.`,
+					dismissible: true,
+				});
+				return;
+			}
 			// The one refusal the OS settings pane can fix, so it is the one that
 			// offers to open it: the same channel the voice HUD's notice uses.
 			const platform = getPlatform();

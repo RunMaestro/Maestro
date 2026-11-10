@@ -70,6 +70,7 @@ let ipcRenderer: typeof import('../../web-desktop/electron-shim').ipcRenderer;
 let webFrame: typeof import('../../web-desktop/electron-shim').webFrame;
 let BRIDGE_HEARTBEAT_INTERVAL_MS: number;
 let BRIDGE_PONG_TIMEOUT_MS: number;
+let requestTimeoutMs: typeof import('../../web-desktop/electron-shim').requestTimeoutMs;
 const reconcileInPlace = (event: Event) => {
 	const detail = (event as CustomEvent).detail;
 	if (detail?.authoritative) detail.waitUntil(Promise.resolve());
@@ -84,8 +85,13 @@ beforeEach(async () => {
 		writable: true,
 		value: { ...originalLocation, reload: vi.fn() },
 	});
-	({ ipcRenderer, webFrame, BRIDGE_HEARTBEAT_INTERVAL_MS, BRIDGE_PONG_TIMEOUT_MS } =
-		await import('../../web-desktop/electron-shim'));
+	({
+		ipcRenderer,
+		webFrame,
+		BRIDGE_HEARTBEAT_INTERVAL_MS,
+		BRIDGE_PONG_TIMEOUT_MS,
+		requestTimeoutMs,
+	} = await import('../../web-desktop/electron-shim'));
 	window.addEventListener('maestro:webBridgeReconcile', reconcileInPlace);
 });
 afterEach(() => {
@@ -711,6 +717,9 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 			'Channel "cross-agent:consultBudget" is not available over the web interface',
 		],
 		['localModels:taskReadiness', 'Readiness unavailable'],
+		['localModels:userModels', 'Store unavailable'],
+		['localModels:server:report', 'Report unavailable'],
+		['localModels:systemOne:report', 'Report unavailable'],
 		[
 			'acappella:input-devices',
 			'Channel "acappella:input-devices" is not available over the web interface',
@@ -907,5 +916,27 @@ describe('web-desktop electron-shim bridge heartbeat', () => {
 		).toEqual([]);
 		await vi.advanceTimersByTimeAsync(0);
 		expect((window as any).__MAESTRO_BRIDGE_STATE__).toBe('connected');
+	});
+});
+
+describe('request timeouts for Local Models', () => {
+	it.each([
+		'localModels:download',
+		'localModels:resume',
+		'localModels:runtimes:install',
+		'localModels:server:installEngine',
+	])('lets the transfer %s run for hours, not the two minutes a mutation gets', (channel) => {
+		expect(requestTimeoutMs(channel)).toBeGreaterThanOrEqual(60 * 60_000);
+	});
+
+	it.each(['localModels:runTask', 'localModels:dictation:transcribe', 'localModels:verify'])(
+		'gives model work like %s ten minutes',
+		(channel) => {
+			expect(requestTimeoutMs(channel)).toBe(600_000);
+		}
+	);
+
+	it('keeps the ordinary read timeout for a Local Models read', () => {
+		expect(requestTimeoutMs('localModels:list')).toBe(requestTimeoutMs('settings:getAll'));
 	});
 });
