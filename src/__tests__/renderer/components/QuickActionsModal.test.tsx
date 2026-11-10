@@ -2550,7 +2550,7 @@ describe('QuickActionsModal', () => {
 	});
 
 	describe('Group Chat room gating', () => {
-		it('withholds edit last queued, tab star, and clear terminal while a room is open', () => {
+		it('withholds edit last queued and clear terminal while a room is open', () => {
 			const session = createMockSession({
 				inputMode: 'terminal',
 				activeTerminalTabId: 'term-1',
@@ -2568,11 +2568,10 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.queryByText('Edit Last Queued Message')).not.toBeInTheDocument();
-			expect(screen.queryByText('Star Session')).not.toBeInTheDocument();
 			expect(screen.queryByText('Clear Terminal History')).not.toBeInTheDocument();
 		});
 
-		it('shows edit last queued, tab star, or clear terminal outside a room', () => {
+		it('shows edit last queued and clear terminal outside a room', () => {
 			const session = createMockSession({
 				inputMode: 'terminal',
 				activeTerminalTabId: 'term-1',
@@ -2591,6 +2590,36 @@ describe('QuickActionsModal', () => {
 
 			expect(screen.getByText('Edit Last Queued Message')).toBeInTheDocument();
 			expect(screen.getByText('Clear Terminal History')).toBeInTheDocument();
+		});
+
+		it('withholds tab star for an AI tab while a room is open', () => {
+			const session = createMockSession({
+				aiTabs: [
+					{ id: 'tab-1', name: 'Tab 1', logs: [], agentSessionId: 'ag-1', starred: false },
+				] as any,
+			});
+			const props = createDefaultProps({
+				activeGroupChatId: 'chat-1',
+				sessions: [session],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.queryByText('Star Session')).not.toBeInTheDocument();
+		});
+
+		it('shows tab star for an AI tab outside a room', () => {
+			const session = createMockSession({
+				aiTabs: [
+					{ id: 'tab-1', name: 'Tab 1', logs: [], agentSessionId: 'ag-1', starred: false },
+				] as any,
+			});
+			const props = createDefaultProps({
+				activeGroupChatId: null,
+				sessions: [session],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Star Session')).toBeInTheDocument();
 		});
 	});
 });
