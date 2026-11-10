@@ -109,8 +109,8 @@ maestro-cli federation reconnect build-box
 
 Click a mirrored agent to open it. Its tabs, transcript, and live output come from the host. The composer works as it does for a local agent:
 
-- **Send** a message. While a tab is busy, the message queues on the host, not here.
-- **Stop** the running turn.
+- **Send** a message. While a tab is busy, the message queues on the host, not here. It shows as a queued card under the transcript, as a local queued message does, and leaves the list when the host starts it. **Remove** and **Hold** / **Resume** on a card act on the host's queue.
+- **Stop** the running turn. The Thinking pill above the composer shows a busy mirrored tab with its elapsed time, the same as a local one, and its Stop button stops the turn on the host.
 - **New tab**, **rename**, and **star** a tab, from the controls beside the tab strip.
 
 Some things stay off, with a tooltip that says why, because the host does not serve them:
@@ -120,6 +120,22 @@ Some things stay off, with a tooltip that says why, because the host does not se
 - **Images.** The host receives text only for now.
 
 A send while the peer is disconnected fails at once with an error toast. It is **never** queued here or sent later. Your draft stays in the composer.
+
+A busy tab on a connected peer also shows on the Thinking pill while you look at a local agent, named `<agent> on <peer>`. Click it to open the mirrored agent. Its Stop button stops that turn on the host.
+
+### Close the lid, open it again
+
+The queue and the turns belong to the host, so they keep going while your laptop sleeps. When it wakes, Maestro reconnects each peer and reads its current state again: the agent list, which tabs are busy and since when, the messages still waiting in each queue, and the transcript of the tab you look at. A turn that started while you were away shows as busy with its real elapsed time, and a message the host already ran is gone from the queue and present in the transcript. The History column reads the host again too.
+
+### History
+
+Toggle the Right Bar, or press <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>, to show a mirrored agent's History beside its transcript. It is the same History panel a local agent has: the activity graph, the type, host, and sender filters, search, and the detail view. It is read-only, because the host owns the entries.
+
+The entries come from the host. They are the agent's own History, plus the shared History of its project (`<project>/.maestro/history/`). That is the same shared History desktops already use when several people work one project over SSH, so the host's entries and theirs appear together:
+
+- Each turn's entry names the machine it was sent from. A message you send from your laptop shows your laptop's hostname. A turn the host starts itself (Auto Run, Cue) shows the host's hostname.
+- The host writes its entries to its own file, `history-<hostname>.host.jsonl`. A desktop on the same machine keeps `history-<hostname>.jsonl`, so neither hides the other.
+- Sharing is opt-in, as on a desktop. The host writes the shared file for an agent when the project already has a `.maestro/history/` folder (a desktop with **Sync history** on creates it), or when the agent's record has `shareHistoryToProjectDir` on. Otherwise the host keeps the entries in its own History only, and the mirror still shows them.
 
 The same actions work from the CLI with a `peer:agent` target, through the same code the desktop uses:
 
@@ -172,4 +188,7 @@ Run the host as the same user your SSH agents run as. The host then reads the sa
 - **No worktrees for host-owned agents.** You cannot create or scan worktrees for a mirrored agent.
 - **No `@mention` of a mirrored agent** from a local composer. Use `maestro-cli ask peer:agent` instead.
 - **Auto Run and Cue status are not mirrored.** They run on the host. Check them there with `maestro-cli` over SSH.
+- **History of Auto Run and Cue runs refreshes on the next turn.** The History column reads again when a chat turn ends, the peer reconnects, or the laptop wakes. A host-started run's entry shows up at the next of those.
+- **Some queue actions are local only.** On a mirrored agent's queued cards you can remove, hold, and resume a message. Edit, merge, reorder, Force Send, and steer stay off, because the host does not serve them.
+- **The queue lives in the host's memory.** If the host process stops or the machine reboots, the messages still waiting are lost, and a turn that was running is recorded as interrupted. Run the host as a service (see [Durability](#durability)).
 - **No Start Host control in the desktop app.** Start a stopped host with `maestro-cli remote-host start`.

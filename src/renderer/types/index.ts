@@ -937,9 +937,23 @@ export interface AITab {
 
 // A single "thinking item" - one busy tab within a session.
 // Used by ThinkingStatusPill to show all active work across all agents.
-export interface ThinkingItem {
-	session: Session;
+/**
+ * The agent fields the Thinking pill reads. A local agent passes its `Session`; a Federation peer's
+ * mirrored agent passes a view built by `buildMirrorThinkingItems()`, which is never a `Session`.
+ */
+export type ThinkingItemAgent = Pick<
+	Session,
+	'id' | 'name' | 'state' | 'agentSessionId' | 'thinkingStartTime' | 'currentCycleTokens'
+>;
+
+export interface ThinkingItem<S extends ThinkingItemAgent = ThinkingItemAgent> {
+	session: S;
 	tab: AITab | null; // null for legacy sessions without tab-level tracking
+	/**
+	 * Set for a peer's mirrored agent: `session.id` is then its mirror key (`peerId:agentId`), a
+	 * click opens the mirror, and Stop reaches the host.
+	 */
+	mirror?: { peerId: string; agentId: string };
 }
 
 // An Auto Run in progress on an agent other than the one being viewed. Auto Run

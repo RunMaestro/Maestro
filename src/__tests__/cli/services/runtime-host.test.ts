@@ -148,6 +148,28 @@ describe('startRuntimeHost', () => {
 		});
 	});
 
+	it('serves an agent History with the project shared History, skipping its own <hostname>.host file', async () => {
+		const sharedDir = path.join(dir, '.maestro', 'history');
+		fs.mkdirSync(sharedDir, { recursive: true });
+		const line = (id: string) =>
+			`${JSON.stringify({ id, type: 'USER', timestamp: 1, summary: id, projectPath: dir })}\n`;
+		fs.writeFileSync(path.join(sharedDir, 'history-laptop.jsonl'), line('from-laptop'));
+		const ownLabel = `${os.hostname()}.host`.replace(/[^a-zA-Z0-9._-]/g, '_');
+		fs.writeFileSync(path.join(sharedDir, `history-${ownLabel}.jsonl`), line('own-copy'));
+		await start();
+
+		const client = createWsMaestroClient({ userDataDir: dir, reconcileIntervalMs: 0 });
+		try {
+			expect((await client.connection.connect()).ok).toBe(true);
+			const listed = await client.history.list('a1');
+			expect(listed.ok && listed.value.map((entry) => [entry.id, entry.hostname])).toEqual([
+				['from-laptop', 'laptop'],
+			]);
+		} finally {
+			await client.connection.close();
+		}
+	});
+
 	it('serves the Cue answers of the engine it runs, and echoes the ones it cannot give', async () => {
 		const host = await startRuntimeHost(options(), {
 			...noCue,

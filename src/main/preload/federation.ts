@@ -14,6 +14,10 @@ import type { MirrorPeerSummary, MirrorPush } from '../../shared/maestro-lib/cli
 import type { PeerAgentAction } from '../../shared/maestro-lib/client/peer-actions';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { DesktopLiftAnswer, DesktopLiftOptions } from '../federation/lift';
+import type { PeerHistoryPageQuery } from '../federation/peer-history';
+import type { PaginatedResult } from '../../shared/history';
+import type { HistoryEntry, HistoryEntryType } from '../../shared/types';
+import type { HistoryGraphData } from '../utils/history-bucket-builder';
 import type {
 	PeerActionAnswer,
 	PeerMirrorSnapshot,
@@ -38,6 +42,40 @@ export function createFederationApi() {
 			options?: TranscriptReadOptions
 		): Promise<LogEntryRecord[]> =>
 			ipcRenderer.invoke('federation:transcript', peerId, agentId, tabId, options ?? {}),
+		/**
+		 * One page of a mirrored agent's History, newest first, after the lookback and the type and
+		 * host filters: the host's entries and the shared History of the agent's project.
+		 */
+		historyPage: (
+			peerId: string,
+			agentId: string,
+			query?: PeerHistoryPageQuery
+		): Promise<PaginatedResult<HistoryEntry>> =>
+			ipcRenderer.invoke('federation:historyPage', peerId, agentId, query ?? {}),
+		/** The activity graph of a mirrored agent's History. */
+		historyGraph: (
+			peerId: string,
+			agentId: string,
+			bucketCount: number,
+			lookbackHours: number | null
+		): Promise<HistoryGraphData> =>
+			ipcRenderer.invoke('federation:historyGraph', peerId, agentId, bucketCount, lookbackHours),
+		/** The page offset a bar of a mirrored agent's activity graph jumps to. */
+		historyOffset: (
+			peerId: string,
+			agentId: string,
+			timestamp: number,
+			lookbackHours: number | null,
+			types?: HistoryEntryType[]
+		): Promise<number> =>
+			ipcRenderer.invoke(
+				'federation:historyOffset',
+				peerId,
+				agentId,
+				timestamp,
+				lookbackHours,
+				types
+			),
 		/** Restart the forward or the client when down, then reload the peer's agents. */
 		reconnect: (peerId: string): Promise<PeerReconnectResult> =>
 			ipcRenderer.invoke('federation:reconnect', peerId),

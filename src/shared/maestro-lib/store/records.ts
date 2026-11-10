@@ -46,6 +46,11 @@ export interface AITabRecord extends UnknownFields {
 	logs?: unknown[];
 	createdAt?: number;
 	state?: 'idle' | 'busy';
+	/**
+	 * When the running turn started, epoch ms. A headless host sets it, with `state: 'busy'`, from
+	 * its live process registry on every record it sends (`withLiveTabState`); it is never stored.
+	 */
+	thinkingStartTime?: number;
 	hasUnread?: boolean;
 	/** A consult tab not drawn in the tab strip (see `isAiTabHidden`). */
 	hidden?: boolean;

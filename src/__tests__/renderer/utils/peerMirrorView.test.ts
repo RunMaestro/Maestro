@@ -12,8 +12,11 @@ import {
 	setPeerConnection,
 	type MirroredPeer,
 } from '../../../shared/maestro-lib/client/peer-mirror';
+import { liveTurnKey } from '../../../shared/maestro-lib/client/live-turn';
+import type { QueuedTurn } from '../../../shared/maestro-lib/client/types';
 import type { LogEntryRecord } from '../../../shared/maestro-lib/store/transcript';
 import {
+	buildMirrorThinkingItems,
 	buildMirrorViewSession,
 	isPeerDisconnected,
 	liftedMirrorTarget,
@@ -22,6 +25,8 @@ import {
 	mirroredAgentState,
 	mirrorSendBlockReason,
 	mirrorLogEntry,
+	mirrorQueuedItem,
+	mirrorTab,
 	mirrorTabEntries,
 	mirrorTabs,
 	peerConnectionDotState,
@@ -92,6 +97,45 @@ describe('tabs', () => {
 		expect(resolveMirrorTabId({ ...agent, activeTabId: 't3' })).toBe('t1');
 		expect(resolveMirrorTabId({ ...agent, aiTabs: [] })).toBeUndefined();
 	});
+
+	it('carries the host turn start only on a busy tab', () => {
+		expect(mirrorTab({ id: 't1', state: 'busy', thinkingStartTime: 42 }).thinkingStartTime).toBe(
+			42
+		);
+		expect(
+			mirrorTab({ id: 't1', state: 'idle', thinkingStartTime: 42 }).thinkingStartTime
+		).toBeUndefined();
+		expect(mirrorTab({ id: 't1', thinkingStartTime: 42 }).thinkingStartTime).toBeUndefined();
+	});
+});
+
+const queued = (itemId: string, extra: Partial<QueuedTurn> = {}): QueuedTurn => ({
+	itemId,
+	tabId: 't1',
+	queuedAt: 100,
+	kind: 'message',
+	text: `text ${itemId}`,
+	paused: false,
+	...extra,
+});
+
+describe('mirrorQueuedItem', () => {
+	it('maps a waiting host message onto a queued card item', () => {
+		expect(mirrorQueuedItem(queued('q1'))).toEqual({
+			id: 'q1',
+			timestamp: 100,
+			tabId: 't1',
+			type: 'message',
+			text: 'text q1',
+		});
+	});
+
+	it('marks a held message paused and draws a host command as its text', () => {
+		const item = mirrorQueuedItem(queued('q2', { kind: 'command', text: '/x y', paused: true }));
+		expect(item.type).toBe('message');
+		expect(item.text).toBe('/x y');
+		expect(item.paused).toBe(true);
+	});
 });
 
 describe('mirrorTabEntries', () => {
@@ -129,6 +173,81 @@ describe('buildMirrorViewSession', () => {
 		expect(view.projectRoot).toBeUndefined();
 		expect(view.aiTabs.find((tab) => tab.id === 't1')?.logs).toHaveLength(1);
 		expect(view.aiTabs.find((tab) => tab.id === 't2')?.logs).toEqual([]);
+	});
+
+	it('fills the execution queue from the host queue, in order', () => {
+		const view = buildMirrorViewSession({
+			peerId: 'buildbox',
+			agent,
+			tabId: 't1',
+			entries: [],
+			queue: [queued('q1'), queued('q2', { paused: true })],
+		});
+		expect(view.executionQueue.map((item) => item.id)).toEqual(['q1', 'q2']);
+		expect(view.executionQueue[1].paused).toBe(true);
+	});
+});
+
+describe('buildMirrorThinkingItems', () => {
+	const hostAgent: AgentRecord = {
+		id: 'a1',
+		name: 'Builder',
+		toolType: 'codex',
+		aiTabs: [
+			{ id: 't1', name: 'Work', state: 'busy', thinkingStartTime: 50 },
+			{ id: 't2', state: 'busy' },
+			{ id: 't3', state: 'busy', hidden: true },
+			{ id: 't4', state: 'idle' },
+		],
+	};
+	const peerOf = (
+		peerId: string,
+		agents: AgentRecord[],
+		connection: MirroredPeer['connection'] = 'connected'
+	): MirroredPeer =>
+		setPeerConnection(
+			replacePeerAgents(
+				createMirroredPeer({ peerId, remoteId: `r-${peerId}`, name: `Peer ${peerId}` }),
+				agents,
+				[],
+				1
+			).peer,
+			connection
+		).peer;
+
+	it('lists each visible busy tab of a connected peer, keyed and named for the mirror', () => {
+		const peer = peerOf('box', [hostAgent]);
+		const items = buildMirrorThinkingItems({ box: peer }, ['box']);
+		expect(items.map((item) => item.tab?.id)).toEqual(['t1', 't2']);
+		expect(items[0].session).toEqual({ id: 'box:a1', name: 'Builder on Peer box', state: 'busy' });
+		expect(items[0].mirror).toEqual({ peerId: 'box', agentId: 'a1' });
+		expect(items[0].tab?.thinkingStartTime).toBe(50);
+		expect(items[0].tab?.name).toBe('Work');
+	});
+
+	it('falls back to the live turn start when the host sent none', () => {
+		const peer: MirroredPeer = {
+			...peerOf('box', [hostAgent]),
+			liveTurns: { [liveTurnKey('a1', 't2')]: { startedAt: 77, entries: [], busy: true } },
+		};
+		const items = buildMirrorThinkingItems({ box: peer }, ['box']);
+		expect(items.find((item) => item.tab?.id === 't2')?.tab?.thinkingStartTime).toBe(77);
+	});
+
+	it('shows nothing for a peer that is not connected, or one missing from the map', () => {
+		const lost = peerOf('box', [hostAgent], 'lost');
+		expect(buildMirrorThinkingItems({ box: lost }, ['box'])).toEqual([]);
+		expect(buildMirrorThinkingItems({}, ['gone'])).toEqual([]);
+	});
+
+	it('follows the peer order and skips an agent with no busy tab', () => {
+		const idle: AgentRecord = { id: 'a2', name: 'Idle', toolType: 'codex', aiTabs: [{ id: 'x' }] };
+		const peers = {
+			box: peerOf('box', [hostAgent, idle]),
+			gpu: peerOf('gpu', [{ ...hostAgent, id: 'g1', aiTabs: [{ id: 'gt', state: 'busy' }] }]),
+		};
+		const ids = buildMirrorThinkingItems(peers, ['gpu', 'box']).map((item) => item.session.id);
+		expect(ids).toEqual(['gpu:g1', 'box:a1', 'box:a1']);
 	});
 });
 

@@ -79,6 +79,8 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'new-tab': 'Could not open a tab',
 	'rename-tab': 'Could not rename the tab',
 	'star-tab': 'Could not change the star',
+	'remove-queued': 'Could not remove the queued message',
+	'pause-queued': 'Could not hold or resume the queued message',
 };
 
 /**
@@ -146,6 +148,68 @@ export async function renameMirrorTab(
 	name: string
 ): Promise<void> {
 	await actOnMirroredAgent(peerId, agentId, { kind: 'rename-tab', tabId, name });
+}
+
+/**
+ * Take a waiting message out of a mirrored agent's host queue (the queued card's remove button).
+ * The host's `queue.changed` then updates every window. A message that already started is not an
+ * error to fix, so it is a notice, not a red toast.
+ */
+export async function removeMirrorQueuedItem(
+	peerId: string,
+	agentId: string,
+	itemId: string
+): Promise<void> {
+	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'remove-queued', itemId });
+	if (result?.kind === 'remove-queued' && !result.removed) {
+		notifyToast({
+			color: 'yellow',
+			title: 'Message not removed',
+			message: 'It no longer waits on the host: it may have started already.',
+		});
+	}
+}
+
+/**
+ * Hold a waiting message on its host, or release it (the queued card's Hold / Resume). A message
+ * that already started is a notice, not a red toast.
+ */
+export async function setMirrorQueuedItemPaused(
+	peerId: string,
+	agentId: string,
+	itemId: string,
+	paused: boolean
+): Promise<void> {
+	const result = await actOnMirroredAgent(peerId, agentId, {
+		kind: 'pause-queued',
+		itemId,
+		paused,
+	});
+	if (result?.kind === 'pause-queued' && !result.found) {
+		notifyToast({
+			color: 'yellow',
+			title: paused ? 'Message not held' : 'Message not resumed',
+			message: 'It no longer waits on the host: it may have started already.',
+		});
+	}
+}
+
+/**
+ * Show the mirrored agent `key` (`peerId:agentId`) names, on `tabId` when given. False when no
+ * mirrored agent has that key, so a caller can treat the id as a local agent's instead.
+ */
+export function openMirroredAgentByKey(key: string, tabId?: string): boolean {
+	const store = usePeerMirrorStore.getState();
+	for (const peerId of store.order) {
+		const agent = store.peers[peerId]?.agents.find(
+			(candidate) => mirrorKey(peerId, candidate.id) === key
+		);
+		if (!agent) continue;
+		store.selectMirroredAgent(peerId, agent.id);
+		if (tabId) store.selectMirrorTab(peerId, agent.id, tabId);
+		return true;
+	}
+	return false;
 }
 
 /** Star or unstar a mirrored tab on its host. */

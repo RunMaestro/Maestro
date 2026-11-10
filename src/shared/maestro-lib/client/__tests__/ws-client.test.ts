@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createWsMaestroClient } from '../ws-client';
+import { normalizeOriginHost } from '../types';
 import type {
 	MaestroClient,
 	MaestroEvent,
@@ -851,6 +852,20 @@ describe('createWsMaestroClient', () => {
 			expect(turnKinds()).toEqual(['started']);
 		});
 
+		it('sends the origin host on enqueue_command, trimmed, and leaves out one that is not a hostname', async () => {
+			bridge.typed.set(
+				'enqueue_command',
+				reply('enqueue_command_result', { tabId: A1_TAB, queued: false })
+			);
+			await client.turns.send(A1, A1_TAB, { text: 'one', originHost: '  laptop.local ' });
+			await client.turns.send(A1, A1_TAB, { text: 'two', originHost: 'bad\nhost' });
+			await client.turns.send(A1, A1_TAB, { text: 'three' });
+			const sent = bridge.sent('enqueue_command');
+			expect(sent[0]).toMatchObject({ command: 'one', originHost: 'laptop.local' });
+			expect(sent[1]).not.toHaveProperty('originHost');
+			expect(sent[2]).not.toHaveProperty('originHost');
+		});
+
 		it('preserves managed unknown queue receipts and never emits a native start', async () => {
 			const dispatchId = '22222222-2222-4222-8222-222222222222';
 			const admission = { dispatchId, outcome: 'unknown' };
@@ -996,6 +1011,123 @@ describe('createWsMaestroClient', () => {
 				value: { removed: true },
 			});
 			expect(bridge.sent('remove_queue_item')[0]).toMatchObject({ sessionId: A1, itemId: 'q1' });
+		});
+
+		describe('history.list', () => {
+			const good = { id: 'h1', type: 'USER', timestamp: 5, summary: 's', projectPath: '/p' };
+
+			it('reads get_history, with the limit when given, and keeps only well-formed entries', async () => {
+				bridge.typed.set(
+					'get_history',
+					reply('get_history_result', {
+						entries: [
+							good,
+							'not an entry',
+							null,
+							{ ...good, id: 7 },
+							{ ...good, id: 'h2', timestamp: '5' },
+							{ id: 'h3', timestamp: 6 },
+							{ ...good, id: 'h4', hostname: 'laptop' },
+						],
+					})
+				);
+				expect(await client.history.list(A1, { limit: 10 })).toEqual({
+					ok: true,
+					value: [good, { ...good, id: 'h4', hostname: 'laptop' }],
+				});
+				await client.history.list(A1);
+				expect(bridge.sent('get_history')).toEqual([
+					expect.objectContaining({ type: 'get_history', sessionId: A1, limit: 10 }),
+					expect.not.objectContaining({ limit: expect.anything() }),
+				]);
+			});
+
+			it('answers an empty list for a reply with no entries array', async () => {
+				bridge.typed.set('get_history', reply('get_history_result', { entries: 'nope' }));
+				expect(await client.history.list(A1)).toEqual({ ok: true, value: [] });
+			});
+
+			it('reports a refused read as a failure', async () => {
+				bridge.typed.set('get_history', () => ({
+					type: 'get_history_result',
+					success: false,
+					error: 'No agent a1.',
+				}));
+				const result = await client.history.list(A1);
+				expect(result.ok).toBe(false);
+				expect(!result.ok && result.error.method).toBe('history.list');
+			});
+
+			it('answers unsupported from a desktop bridge that does not know get_history', async () => {
+				const result = await client.history.list(A1);
+				expect(result).toMatchObject({ ok: false, error: { code: 'unsupported' } });
+			});
+		});
+
+		it('holds and releases a queued item with set_queue_item_paused', async () => {
+			bridge.typed.set('set_queue_item_paused', (message) => ({
+				type: 'set_queue_item_paused_result',
+				success: true,
+				found: message.itemId === 'q1',
+				paused: message.paused,
+			}));
+
+			expect(await client.turns.queue.setPaused(A1, 'q1', true)).toEqual({
+				ok: true,
+				value: { found: true, paused: true },
+			});
+			expect(await client.turns.queue.setPaused(A1, 'gone', false)).toEqual({
+				ok: true,
+				value: { found: false, paused: false },
+			});
+			expect(bridge.sent('set_queue_item_paused')).toEqual([
+				expect.objectContaining({ sessionId: A1, itemId: 'q1', paused: true }),
+				expect.objectContaining({ sessionId: A1, itemId: 'gone', paused: false }),
+			]);
+		});
+
+		it('reports a refused set_queue_item_paused as a failure', async () => {
+			bridge.typed.set('set_queue_item_paused', () => ({
+				type: 'set_queue_item_paused_result',
+				success: false,
+				error: 'Missing sessionId, itemId, or paused',
+			}));
+			const result = await client.turns.queue.setPaused(A1, 'q1', true);
+			expect(result.ok).toBe(false);
+		});
+
+		it("reads a headless host's queue_changed into queue.changed, and drops one it cannot read", async () => {
+			await connect();
+			bridge.push({
+				type: 'queue_changed',
+				sessionId: A1,
+				items: [
+					{ id: 'q1', timestamp: 5, tabId: A1_TAB, type: 'message', text: 'next', paused: true },
+				],
+			});
+			bridge.push({ type: 'queue_changed', items: [] });
+			bridge.push({ type: 'queue_changed', sessionId: A1, items: 'nope' });
+			bridge.push({ type: 'queue_changed', sessionId: A1, items: [] });
+			await vi.waitFor(() =>
+				expect(events.filter((event) => event.type === 'queue.changed')).toHaveLength(2)
+			);
+			expect(events.filter((event) => event.type === 'queue.changed')).toEqual([
+				{
+					type: 'queue.changed',
+					agentId: A1,
+					items: [
+						{
+							itemId: 'q1',
+							tabId: A1_TAB,
+							queuedAt: 5,
+							kind: 'message',
+							text: 'next',
+							paused: true,
+						},
+					],
+				},
+				{ type: 'queue.changed', agentId: A1, items: [] },
+			]);
 		});
 
 		describe('event stream', () => {
@@ -2214,5 +2346,24 @@ describe('createWsMaestroClient', () => {
 			await client.connection.connect();
 			expect(seen).toEqual([]);
 		});
+	});
+});
+
+describe('normalizeOriginHost', () => {
+	it('trims a hostname and keeps it', () => {
+		expect(normalizeOriginHost('laptop.local')).toBe('laptop.local');
+		expect(normalizeOriginHost('  box  ')).toBe('box');
+	});
+
+	it('drops anything that is not a printable string of at most 253 characters', () => {
+		expect(normalizeOriginHost(undefined)).toBeUndefined();
+		expect(normalizeOriginHost(42)).toBeUndefined();
+		expect(normalizeOriginHost('')).toBeUndefined();
+		expect(normalizeOriginHost('   ')).toBeUndefined();
+		expect(normalizeOriginHost('a\u0000b')).toBeUndefined();
+		expect(normalizeOriginHost('a\tb')).toBeUndefined();
+		expect(normalizeOriginHost('a\u007fb')).toBeUndefined();
+		expect(normalizeOriginHost('x'.repeat(254))).toBeUndefined();
+		expect(normalizeOriginHost('x'.repeat(253))).toBe('x'.repeat(253));
 	});
 });

@@ -20,6 +20,14 @@ function fakeClient() {
 		turns: {
 			send: vi.fn(async () => ok({ status: 'started' as const })),
 			interrupt: vi.fn(async (_agentId: string, tabId: string) => ok({ stopped: tabId !== 't3' })),
+			queue: {
+				remove: vi.fn(async (_agentId: string, itemId: string) =>
+					ok({ removed: itemId !== 'gone' })
+				),
+				setPaused: vi.fn(async (_agentId: string, itemId: string, paused: boolean) =>
+					ok({ found: itemId !== 'gone', paused })
+				),
+			},
 		},
 		tabs: {
 			create: vi.fn(async () => ok({ tabId: 't-new' })),
@@ -58,6 +66,36 @@ describe('runPeerAgentAction', () => {
 			text: 'hi',
 			dispatchId: 'd1',
 		});
+	});
+
+	it('adds the caller origin host to a send, and to no other action', async () => {
+		const { client, asClient } = fakeClient();
+		await runPeerAgentAction(
+			asClient,
+			agent,
+			{ kind: 'send', tabId: 't2', text: 'hi', dispatchId: 'd1' },
+			{ originHost: 'laptop.local' }
+		);
+		expect(client.turns.send).toHaveBeenLastCalledWith('a1', 't2', {
+			text: 'hi',
+			dispatchId: 'd1',
+			originHost: 'laptop.local',
+		});
+		// An empty origin is left out.
+		await runPeerAgentAction(
+			asClient,
+			agent,
+			{ kind: 'send', tabId: 't2', text: 'hi' },
+			{ originHost: '' }
+		);
+		expect(client.turns.send).toHaveBeenLastCalledWith('a1', 't2', { text: 'hi' });
+		await runPeerAgentAction(
+			asClient,
+			agent,
+			{ kind: 'rename-tab', tabId: 't2', name: 'Plan' },
+			{ originHost: 'laptop.local' }
+		);
+		expect(client.tabs.rename).toHaveBeenLastCalledWith('a1', 't2', 'Plan');
 	});
 
 	it('stops every busy tab without a tab, and reports which ones stopped', async () => {
@@ -103,6 +141,57 @@ describe('runPeerAgentAction', () => {
 		expect(client.tabs.star).toHaveBeenCalledWith('a1', 't1', false);
 	});
 
+	it('removes a waiting message with turns.queue.remove and reports whether it was there', async () => {
+		const { client, asClient } = fakeClient();
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'remove-queued', itemId: 'q1' })
+		).toEqual(ok({ kind: 'remove-queued', itemId: 'q1', removed: true }));
+		expect(client.turns.queue.remove).toHaveBeenCalledWith('a1', 'q1');
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'remove-queued', itemId: 'gone' })
+		).toEqual(ok({ kind: 'remove-queued', itemId: 'gone', removed: false }));
+	});
+
+	it('holds and resumes a waiting message with turns.queue.setPaused', async () => {
+		const { client, asClient } = fakeClient();
+		expect(
+			await runPeerAgentAction(asClient, agent, {
+				kind: 'pause-queued',
+				itemId: 'q1',
+				paused: true,
+			})
+		).toEqual(ok({ kind: 'pause-queued', itemId: 'q1', found: true, paused: true }));
+		expect(client.turns.queue.setPaused).toHaveBeenCalledWith('a1', 'q1', true);
+		expect(
+			await runPeerAgentAction(asClient, agent, {
+				kind: 'pause-queued',
+				itemId: 'gone',
+				paused: false,
+			})
+		).toEqual(ok({ kind: 'pause-queued', itemId: 'gone', found: false, paused: false }));
+	});
+
+	it('passes a failed queue call through untouched', async () => {
+		const { client, asClient } = fakeClient();
+		const failure = {
+			ok: false as const,
+			error: { code: 'not-found' as const, message: 'No agent a1.', method: 'turns.queue.remove' },
+		};
+		client.turns.queue.remove.mockResolvedValueOnce(failure as never);
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'remove-queued', itemId: 'q1' })
+		).toEqual(failure);
+		const paused = { ...failure, error: { ...failure.error, method: 'turns.queue.setPaused' } };
+		client.turns.queue.setPaused.mockResolvedValueOnce(paused as never);
+		expect(
+			await runPeerAgentAction(asClient, agent, {
+				kind: 'pause-queued',
+				itemId: 'q1',
+				paused: true,
+			})
+		).toEqual(paused);
+	});
+
 	it('passes a refused send through untouched, so the caller keeps its unknown flag', async () => {
 		const { client, asClient } = fakeClient();
 		const refused = {
@@ -143,6 +232,15 @@ describe('parsePeerAgentAction', () => {
 			tabId: 't1',
 			name: '',
 		});
+		expect(parsePeerAgentAction({ kind: 'remove-queued', itemId: 'q1', tabId: 't1' })).toEqual({
+			kind: 'remove-queued',
+			itemId: 'q1',
+		});
+		expect(parsePeerAgentAction({ kind: 'pause-queued', itemId: 'q1', paused: false })).toEqual({
+			kind: 'pause-queued',
+			itemId: 'q1',
+			paused: false,
+		});
 	});
 
 	it('refuses what no host call can take', () => {
@@ -158,6 +256,19 @@ describe('parsePeerAgentAction', () => {
 		);
 		expect(() => parsePeerAgentAction({ kind: 'star-tab', tabId: 't1', starred: 'yes' })).toThrow(
 			'starred must be true or false'
+		);
+		expect(() => parsePeerAgentAction({ kind: 'remove-queued' })).toThrow('Missing queued item id');
+		expect(() => parsePeerAgentAction({ kind: 'remove-queued', itemId: '' })).toThrow(
+			'Missing queued item id'
+		);
+		expect(() => parsePeerAgentAction({ kind: 'pause-queued', paused: true })).toThrow(
+			'Missing queued item id'
+		);
+		expect(() =>
+			parsePeerAgentAction({ kind: 'pause-queued', itemId: 'q1', paused: 'yes' })
+		).toThrow('paused must be true or false');
+		expect(() => parsePeerAgentAction({ kind: 'pause-queued', itemId: 'q1' })).toThrow(
+			'paused must be true or false'
 		);
 	});
 });

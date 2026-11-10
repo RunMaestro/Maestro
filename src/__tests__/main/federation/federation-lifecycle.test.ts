@@ -84,6 +84,8 @@ function fakeTransport() {
 			agents: { list: vi.fn(async () => ({ ok: true, value: [] })) },
 			groups: { list: vi.fn(async () => ({ ok: true, value: [] })) },
 			tabs: { transcript: vi.fn(async () => ({ ok: true, value: [] })) },
+			// The service reads every agent's host queue once it attaches.
+			turns: { queue: { list: vi.fn(async () => ({ ok: true, value: [] })) } },
 			events: {
 				subscribe: (listener: (event: unknown) => void) => {
 					listeners.add(listener);

@@ -1,4 +1,5 @@
 import { generateUUID } from '../../shared/uuid';
+import * as os from 'os';
 import { isPianolaScopeId } from '../../shared/pianola/pianola-scope';
 import type { PianolaDispatchReceipt } from '../../shared/pianola/pianola-dispatch';
 // Dispatch command - hand off a prompt to the Maestro desktop app and return
@@ -885,14 +886,17 @@ async function runPeerDispatch(
 	}
 	const { agent, peer, withBridge } = resolved;
 	const background = resolveBackgroundFlag(options, 'dispatch-new-tab');
+	// The host stamps the turn's History entry with this machine, so the shared History names
+	// whose work it was. A desktop ignores the field.
+	const origin = { originHost: os.hostname() };
 	try {
 		const response = queue
-			? await runQueueDispatch(withBridge, agent.id, message, options, background, {}, {}, {})
+			? await runQueueDispatch(withBridge, agent.id, message, options, background, {}, {}, origin)
 			: await deliverDispatch(withBridge, agent.id, message, options, {
 					background,
 					callbackFields: {},
 					routingFields: {},
-					caller: {},
+					caller: origin,
 				});
 		return { ...response, peer };
 	} catch (error) {

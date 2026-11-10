@@ -16,6 +16,7 @@
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useUIStore } from '../../stores/uiStore';
 import { openMirrorTab, starMirrorTab } from '../../services/peerMirror';
 import { resolveMirrorTabId } from '../../utils/peerMirrorView';
 
@@ -25,6 +26,8 @@ import { resolveMirrorTabId } from '../../utils/peerMirrorView';
  */
 export const MIRROR_SAFE_SHORTCUT_IDS: readonly string[] = [
 	'toggleSidebar',
+	// Shows or hides the mirrored agent's History column (and the Right Bar of a local agent).
+	'toggleRightPanel',
 	'cyclePrev',
 	'cycleNext',
 	'navBack',
@@ -129,6 +132,12 @@ export function gateKeyForMirror(
 	if (selection && matchers.isTabShortcut(e, 'newTab')) {
 		e.preventDefault();
 		if (!matchers.hasOpenLayers?.()) void openMirrorTab(selection.peerId, selection.agentId);
+		return 'handled';
+	}
+	// The History tab of a mirrored agent is its History column: open it, and touch no local tab.
+	if (selection && matchers.isShortcut(e, 'goToHistory')) {
+		e.preventDefault();
+		if (!matchers.hasOpenLayers?.()) useUIStore.getState().setRightPanelOpen(true);
 		return 'handled';
 	}
 	if (selection && matchers.isShortcut(e, 'toggleTabStar')) {

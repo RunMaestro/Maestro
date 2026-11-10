@@ -7,6 +7,10 @@
  * window as `federation:event` and answers reads (`peers`, `snapshot`, `transcript`) for the IPC
  * handler and the CLI bridge. `act()` drives a mirrored agent over the same held client.
  *
+ * Each agent's host queue rides the host's `queue.changed` events. Those are live only: whenever
+ * the mirror may have missed some (a first attach, a resync, a wake), the service reads every
+ * agent's queue again (`refreshQueues`), so the window shows what waits on the host right now.
+ *
  * Hard rules:
  * - Memory only. A mirrored agent never reaches `sessionStore`, `maestro-sessions.json`, or any
  *   persisted store. The service has no reference to one; its only outputs are its own memory
@@ -19,6 +23,8 @@
  *
  * Constructed only while the Federation Encore Feature is on (`createFederationSupervisorHooks`).
  */
+
+import * as os from 'os';
 
 import { generateUUID } from '../../shared/uuid';
 import {
@@ -33,6 +39,7 @@ import {
 	createMirroredPeer,
 	markAllTabsStale,
 	replacePeerAgents,
+	setAgentQueue,
 	setPeerConnection,
 	summarizePeer,
 	type MirrorContext,
@@ -55,6 +62,7 @@ import type {
 } from '../../shared/maestro-lib/client/ssh-forward';
 import type { MaestroClient, TurnEvent } from '../../shared/maestro-lib/client/types';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
+import type { HistoryEntry } from '../../shared/types';
 import type { SshRemoteConfig } from '../../shared/types';
 
 /** Per-tab turn pushes are batched this long, so a fast stream is not one IPC per chunk. */
@@ -79,6 +87,8 @@ export interface PeerMirrorServiceDeps {
 	newId?(): string;
 	/** Report a failure that is not a peer's own state (a bug, not a down host). */
 	onError?(error: unknown, operation: string): void;
+	/** This machine's hostname, stamped on the History of a turn sent from here. Default `os.hostname()`. */
+	originHost?: string;
 	/** Test seam for the turn coalescing timer. */
 	setTimer?(callback: () => void, ms: number): unknown;
 	clearTimer?(handle: unknown): void;
@@ -113,6 +123,11 @@ interface PeerEntry {
 	unsubscribes: Array<() => void>;
 	/** Set when the entry is dropped, so a queued task or a late event for it does nothing. */
 	dropped: boolean;
+	/**
+	 * Bumped per agent on every `queue.changed`, so a queue read that started before one cannot
+	 * overwrite it with an older answer.
+	 */
+	queueVersions: Map<string, number>;
 }
 
 export class PeerMirrorService {
@@ -130,6 +145,11 @@ export class PeerMirrorService {
 	>();
 	private turnTimer: unknown = null;
 	private readonly transcriptCache = new Map<string, LogEntryRecord[]>();
+	/**
+	 * Each mirrored agent's History as the host last sent it, by `peerId` NUL `agentId`. Dropped
+	 * when a turn of the agent ends, and for the whole peer on a reload, so the next read is fresh.
+	 */
+	private readonly historyCache = new Map<string, Promise<HistoryEntry[]>>();
 	private unwatchRemotes: (() => void) | null = null;
 	private started = false;
 	private stopped = false;
@@ -177,6 +197,7 @@ export class PeerMirrorService {
 				state: createMirroredPeer({ peerId: peer, remoteId: remote.id, name: remote.name }),
 				unsubscribes: [],
 				dropped: false,
+				queueVersions: new Map(),
 			};
 			this.entries.set(remote.id, created);
 			this.emit(created, { type: 'peer.state', peer: summarizePeer(created.state) });
@@ -235,6 +256,36 @@ export class PeerMirrorService {
 	}
 
 	/**
+	 * A mirrored agent's History, newest first: what the host recorded and the shared History of
+	 * the agent's project (`client.history.list`). Read once and kept until a turn of the agent
+	 * ends or the peer reloads; the History panel pages and filters it (`peer-history.ts`). A peer
+	 * that is not attached is an error that names it.
+	 */
+	async history(peerId: string, agentId: string): Promise<HistoryEntry[]> {
+		const entry = this.entryForPeer(peerId);
+		const client = entry.connection?.client;
+		if (!client) {
+			throw new Error(
+				`Peer "${peerId}" is not connected.${entry.state.error ? ` ${entry.state.error}` : ''}`
+			);
+		}
+		const key = `${peerId}\u0000${agentId}`;
+		const cached = this.historyCache.get(key);
+		if (cached) return cached;
+		const read = (async () => {
+			const listed = await client.history.list(agentId);
+			if (!listed.ok) throw new Error(`Peer "${peerId}": ${listed.error.message}`);
+			return listed.value;
+		})();
+		this.historyCache.set(key, read);
+		// A failed read is not kept: the next open asks again.
+		read.catch(() => {
+			if (this.historyCache.get(key) === read) this.historyCache.delete(key);
+		});
+		return read;
+	}
+
+	/**
 	 * Drive a mirrored agent (FED-SSH-06): send, Stop, new tab, rename or star a tab, through the
 	 * same `runPeerAgentAction()` the CLI's `peer:agent` verbs run. Never queued: a peer that is not
 	 * connected right now answers an error at once, and nothing is held for a reconnect. The host's
@@ -259,7 +310,9 @@ export class PeerMirrorService {
 		if (!agent) {
 			return { ok: false, error: `Peer "${peerId}" has no agent ${agentId}.` };
 		}
-		const result = await runPeerAgentAction(client, agent, action);
+		const result = await runPeerAgentAction(client, agent, action, {
+			originHost: this.deps.originHost ?? os.hostname(),
+		});
 		if (!result.ok) {
 			return {
 				ok: false,
@@ -343,6 +396,7 @@ export class PeerMirrorService {
 		}
 		this.turnBuffer.clear();
 		this.transcriptCache.clear();
+		this.historyCache.clear();
 		const entries = [...this.entries.values()];
 		this.entries.clear();
 		this.pending.clear();
@@ -418,6 +472,8 @@ export class PeerMirrorService {
 		entry.unsubscribes = unsubscribes;
 		// The client reports `host.connected` from inside `connect()`; make sure the state says so.
 		this.commit(entry, setPeerConnection(entry.state, 'connected'));
+		// The snapshot that came with the attach carries no queues: read what waits.
+		await this.refreshQueues(entry);
 	}
 
 	/** Reconnect when needed, then replace the whole agent list and mark every tab stale. */
@@ -453,11 +509,43 @@ export class PeerMirrorService {
 		);
 		this.commit(entry, setPeerConnection(entry.state, 'connected'));
 		this.commit(entry, markAllTabsStale(entry.state));
+		await this.refreshQueues(entry);
+	}
+
+	/**
+	 * Read every agent's host queue and replace what the mirror holds. A read that fails (the host
+	 * dropped, the agent went away) leaves that agent's queue as it was: the connection state says
+	 * why, and the next attach reads again.
+	 */
+	private async refreshQueues(entry: PeerEntry): Promise<void> {
+		const client = entry.connection?.client;
+		if (!client || entry.dropped || this.stopped) return;
+		const reads = entry.state.agents.map(async (agent) => {
+			const version = entry.queueVersions.get(agent.id) ?? 0;
+			const read = await client.turns.queue.list(agent.id);
+			return { agentId: agent.id, version, read };
+		});
+		for (const { agentId, version, read } of await Promise.all(reads)) {
+			if (entry.dropped || this.stopped) return;
+			// A `queue.changed` landed while the read was out: it is newer than this answer.
+			if (!read.ok || (entry.queueVersions.get(agentId) ?? 0) !== version) continue;
+			this.commit(entry, setAgentQueue(entry.state, agentId, read.value));
+		}
 	}
 
 	private onEvent(entry: PeerEntry, event: Parameters<typeof applyPeerEvent>[1]): void {
 		if (entry.dropped || this.stopped) return;
+		if (event.type === 'queue.changed') {
+			entry.queueVersions.set(event.agentId, (entry.queueVersions.get(event.agentId) ?? 0) + 1);
+		}
 		this.commit(entry, applyPeerEvent(entry.state, event, this.ctx));
+		// A resync after a connection that could not resume: the queues may have moved meanwhile.
+		// The first attach reads them itself, once `connect()` holds the client.
+		if (event.type === 'snapshot' && entry.connection) {
+			this.refreshQueues(entry).catch((error) =>
+				this.deps.onError?.(error, 'federation:queue-refresh')
+			);
+		}
 	}
 
 	private onLeaseState(entry: PeerEntry, state: ReturnType<SshForwardLease['state']>): void {
@@ -473,9 +561,15 @@ export class PeerMirrorService {
 	private commit(entry: PeerEntry, step: MirrorStep): void {
 		entry.state = step.peer;
 		for (const event of step.push) {
-			if (event.type === 'tab.stale') this.forgetTranscript(entry, event.agentId, event.tabId);
-			else if (event.type === 'peer.stale' || event.type === 'peer.agents') {
+			if (event.type === 'tab.stale') {
+				this.forgetTranscript(entry, event.agentId, event.tabId);
+				// A turn ended: it wrote a History entry on the host.
+				this.forgetHistory(entry, event.agentId);
+			} else if (event.type === 'agent.removed') {
+				this.forgetHistory(entry, event.agentId);
+			} else if (event.type === 'peer.stale' || event.type === 'peer.agents') {
 				this.forgetTranscripts(entry);
+				this.forgetHistory(entry);
 			}
 			this.emit(entry, event);
 		}
@@ -538,12 +632,23 @@ export class PeerMirrorService {
 		}
 	}
 
+	/** Forget one agent's cached History, or every agent's of the peer. */
+	private forgetHistory(entry: PeerEntry, agentId?: string): void {
+		const prefix = `${entry.state.peerId}\u0000${agentId ?? ''}`;
+		for (const key of [...this.historyCache.keys()]) {
+			if (agentId !== undefined ? key === prefix : key.startsWith(prefix)) {
+				this.historyCache.delete(key);
+			}
+		}
+	}
+
 	/** Stop mirroring one remote: close its client, drop its forward, tell every window. */
 	private drop(remoteId: string): void {
 		const entry = this.entries.get(remoteId);
 		if (!entry) return;
 		this.entries.delete(remoteId);
 		this.forgetTranscripts(entry);
+		this.forgetHistory(entry);
 		for (const key of [...this.turnBuffer.keys()]) {
 			if (key.startsWith(`${entry.state.peerId}\u0000`)) this.turnBuffer.delete(key);
 		}
