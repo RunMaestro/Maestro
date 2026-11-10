@@ -256,10 +256,8 @@ export const ToolbarControls = memo(function ToolbarControls({
 		capabilities.thinking ||
 		capabilities.modelEffort ||
 		!!sheetExtras;
-	// The "..." is drawn only when it opens something. Terminal mode keeps the
-	// button it has always drawn even though no sheet is behind it there: a
-	// known gap, left as it is until it is fixed on its own.
-	const showOptionsButton = sheetHasContent || isTerminalMode;
+	// The "..." is drawn only when the sheet has something to show, in every mode.
+	const showOptionsButton = sheetHasContent;
 	const phoneSendTitle = sendTitle ?? (isTerminalMode ? 'Run command' : 'Send message');
 
 	// Phone: the row holds only what a thumb reaches for mid-sentence - attach an
