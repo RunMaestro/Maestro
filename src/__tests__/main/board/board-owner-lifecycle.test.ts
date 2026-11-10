@@ -19,10 +19,12 @@ import {
 	acquireCueEngineLock,
 	readCueEngineLock,
 	isCueEngineLockOwnedByThisProcess,
+	isLeftByEarlierHolderOfOurPid,
 	releaseCueEngineLock,
 	__setCueEngineLockTestHook,
 } from '../../../main/cue/cue-engine-lock';
 import { canonicalJson } from '../../../shared/canonicalJson';
+import { isPidAlive } from '../../../shared/maestro-lib/client/discovery';
 const fixture = createBoardIsolationFixture();
 let storage: BoardStorageFacade, lock: BoardRuntimeLock, deadPid: number, old: string;
 const runtime = () =>
@@ -236,7 +238,16 @@ it.each(['board-off', 'cue-off', 'lost-lock'] as const)(
 );
 
 function readReadiness() {
-	return readBoardRuntimeReadiness(storage.db, lock, boardOwnerLiveness);
+	return readBoardRuntimeReadiness(storage.db, lock, (identity) =>
+		boardOwnerLiveness(identity, {
+			platform: lock.info.platform ?? process.platform,
+			hostIdentity: lock.info.hostIdentity,
+			current: readCueEngineLock(),
+			ownsCurrent: isCueEngineLockOwnedByThisProcess,
+			isPidAlive,
+			earlierHolder: isLeftByEarlierHolderOfOurPid,
+		})
+	);
 }
 it('observes the known idle legacy owner without acquiring, changing tables or taking a native generation claim', () => {
 	__setCueEngineLockTestHook(() => {
@@ -283,20 +294,25 @@ it('reports current native lock loss instead of a stale owner conflict without a
 	expect(readReadiness()).toBe('runtime-unavailable');
 	expect(snapshotSqlite(storage.db)).toEqual(before);
 });
-it('observes a provably dead modern owner without taking it over', () => {
-	storage.db.prepare('UPDATE runtime_owner SET process_identity=?').run(
-		JSON.stringify({
-			...JSON.parse(old),
-			token: 'finished-owned-token',
-			pidNsInode: lock.info.pidNsInode,
-			platform: lock.info.platform,
-			hostIdentity: lock.info.hostIdentity,
-		})
-	);
-	const before = snapshotSqlite(storage.db);
-	expect(readReadiness()).toBeNull();
-	expect(snapshotSqlite(storage.db)).toEqual(before);
-});
+it.each(['linux', 'darwin', 'win32'] as const)(
+	'observes a provably dead modern owner without taking it over on %s',
+	(platform) => {
+		lock.info.platform = platform;
+		lock.info.hostIdentity = 'trusted-native-host-fixture';
+		storage.db.prepare('UPDATE runtime_owner SET process_identity=?').run(
+			JSON.stringify({
+				...JSON.parse(old),
+				token: 'finished-owned-token',
+				pidNsInode: lock.info.pidNsInode,
+				platform: lock.info.platform,
+				hostIdentity: lock.info.hostIdentity,
+			})
+		);
+		const before = snapshotSqlite(storage.db);
+		expect(readReadiness()).toBeNull();
+		expect(snapshotSqlite(storage.db)).toEqual(before);
+	}
+);
 it.each([
 	{ board: false, maestroCue: false },
 	{ board: false, maestroCue: true },
