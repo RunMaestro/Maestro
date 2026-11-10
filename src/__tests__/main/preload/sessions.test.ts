@@ -249,7 +249,24 @@ describe('Sessions Preload API', () => {
 					'/project',
 					'session-123',
 					'uuid-456',
+					undefined,
 					undefined
+				);
+			});
+
+			it('passes the SSH remote id for a remote agent', async () => {
+				mockInvoke.mockResolvedValue({ success: true });
+
+				await api.deleteMessagePair('claude-code', '/remote', 's', 'uuid', 'text', 'remote-1');
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'agentSessions:deleteMessagePair',
+					'claude-code',
+					'/remote',
+					's',
+					'uuid',
+					'text',
+					'remote-1'
 				);
 			});
 		});
