@@ -103,6 +103,9 @@ describe('useRemoteIntegration', () => {
 	let onRemoteReorderTabHandler:
 		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
 		| undefined;
+	let onRemoteReopenClosedTabHandler:
+		| ((sessionId: string, background: boolean, responseChannel: string) => void)
+		| undefined;
 	let onRemoteSnoozeCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
@@ -208,6 +211,11 @@ describe('useRemoteIntegration', () => {
 			onRemoteReorderTabHandler = handler;
 			return () => {};
 		}),
+		onRemoteReopenClosedTab: vi.fn().mockImplementation((handler) => {
+			onRemoteReopenClosedTabHandler = handler;
+			return () => {};
+		}),
+		sendRemoteReopenClosedTabResponse: vi.fn(),
 		onRemoteSnoozeCommand: vi.fn().mockImplementation((handler) => {
 			onRemoteSnoozeCommandHandler = handler;
 			return () => {};
@@ -1837,6 +1845,51 @@ describe('useRemoteIntegration', () => {
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
 			expect(updated?.aiTabs.some((t) => t.id === 'tab-1')).toBe(false);
+		});
+	});
+
+	describe('remote reopen closed tab', () => {
+		const sent = () =>
+			window.maestro.process.sendRemoteReopenClosedTabResponse as ReturnType<typeof vi.fn>;
+
+		it('answers with the tab it restored', () => {
+			const closed = createMockTab({ id: 'closed-tab', agentSessionId: 'closed-provider' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockTab()],
+				unifiedClosedTabHistory: [{ type: 'ai', tab: closed, unifiedIndex: 1, closedAt: 1 }],
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteReopenClosedTabHandler?.('session-1', false, 'reopen-response');
+			});
+
+			expect(sent()).toHaveBeenCalledWith(
+				'reopen-response',
+				expect.objectContaining({ success: true, tabType: 'ai', background: false })
+			);
+		});
+
+		it('answers a failure when there is nothing to reopen', () => {
+			const deps = createDeps({
+				sessions: [
+					createMockSession({ id: 'session-1', unifiedClosedTabHistory: [], closedTabHistory: [] }),
+				],
+			});
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteReopenClosedTabHandler?.('session-1', true, 'reopen-response');
+			});
+
+			expect(sent()).toHaveBeenCalledWith(
+				'reopen-response',
+				expect.objectContaining({ success: false })
+			);
 		});
 	});
 

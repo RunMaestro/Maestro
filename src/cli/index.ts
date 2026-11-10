@@ -147,6 +147,7 @@ import {
 	tabClose,
 	tabRename,
 	tabStar,
+	tabReopen,
 	tabMove,
 	tabUnread,
 	tabSaveToHistory,
@@ -1554,6 +1555,15 @@ tab
 tabTargetOptions(tab.command('close <tab-id>'))
 	.description('Close a tab (owning agent is resolved automatically)')
 	.action((tabId, options) => tabClose(tabId, options));
+
+tab
+	.command('reopen')
+	.description("Reopen an agent's most recently closed tab (same as Cmd+Shift+T)")
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('--background', "Restore the tab without changing the agent's visible tab")
+	.option('--focus', 'Make the reopened tab the visible one (default)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => tabReopen(options));
 
 tabTargetOptions(tab.command('rename <tab-id> <new-name>'))
 	.description('Rename a tab')

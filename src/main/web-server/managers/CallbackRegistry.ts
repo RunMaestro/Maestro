@@ -25,6 +25,7 @@ import type {
 	RenameTabCallback,
 	RenameTabResult,
 	StarTabCallback,
+	ReopenClosedTabCallback,
 	SnoozeCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
@@ -159,6 +160,7 @@ import type {
 	SessionHistoryResult,
 } from '../types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { ReopenClosedTabResult } from '../../../shared/reopenClosedTab';
 import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
@@ -189,6 +191,7 @@ export interface WebServerCallbacks {
 	closeTab: CloseTabCallback | null;
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
+	reopenClosedTab: ReopenClosedTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
@@ -299,6 +302,7 @@ export class CallbackRegistry {
 		closeTab: null,
 		renameTab: null,
 		starTab: null,
+		reopenClosedTab: null,
 		snoozeCommand: null,
 		autoRunSteeringCommand: null,
 		windowCommand: null,
@@ -482,6 +486,13 @@ export class CallbackRegistry {
 	async starTab(sessionId: string, tabId: string, starred: boolean): Promise<boolean> {
 		if (!this.callbacks.starTab) return false;
 		return this.callbacks.starTab(sessionId, tabId, starred);
+	}
+
+	async reopenClosedTab(sessionId: string, background: boolean): Promise<ReopenClosedTabResult> {
+		if (!this.callbacks.reopenClosedTab) {
+			return { success: false, error: 'Reopen closed tab is not configured' };
+		}
+		return this.callbacks.reopenClosedTab(sessionId, background);
 	}
 
 	async snoozeCommand(request: SnoozeCommandRequest): Promise<SnoozeCommandResult> {
@@ -1194,6 +1205,10 @@ export class CallbackRegistry {
 
 	setStarTabCallback(callback: StarTabCallback): void {
 		this.callbacks.starTab = callback;
+	}
+
+	setReopenClosedTabCallback(callback: ReopenClosedTabCallback): void {
+		this.callbacks.reopenClosedTab = callback;
 	}
 
 	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {

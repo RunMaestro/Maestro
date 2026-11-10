@@ -1206,6 +1206,17 @@ Close a tab (owning agent is resolved automatically)
 | `-a, --agent <id>` | Whose active tab, when &lt;tab-id> is "active" | -       |
 | `--json`           | Output as JSON (for scripting)                 | -       |
 
+## `maestro-cli tab reopen`
+
+Reopen an agent's most recently closed tab (same as Cmd+Shift+T)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent ID                                          | -       |
+| `--background`     | Restore the tab without changing the agent's visible tab | -       |
+| `--focus`          | Make the reopened tab the visible one (default)          | -       |
+| `--json`           | Output as JSON (for scripting)                           | -       |
+
 ## `maestro-cli tab rename <tab-id> <new-name>`
 
 Rename a tab

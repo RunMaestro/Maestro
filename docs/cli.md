@@ -788,6 +788,11 @@ maestro-cli tab rename <tab-id> "Docs"
 maestro-cli tab star <tab-id>
 maestro-cli tab unstar <tab-id>
 
+# Reopen the agent's most recently closed tab (same as Cmd+Shift+T). Add
+# --background to restore it without changing the tab the agent is showing.
+maestro-cli tab reopen -a <agent-id>
+maestro-cli tab reopen -a <agent-id> --background
+
 # Flag a tab for the human with the unread dot, or clear it
 maestro-cli tab unread <tab-id>
 maestro-cli tab read <tab-id>

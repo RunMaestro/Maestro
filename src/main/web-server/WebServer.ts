@@ -92,6 +92,7 @@ import type {
 	CloseTabCallback,
 	RenameTabCallback,
 	StarTabCallback,
+	ReopenClosedTabCallback,
 	SnoozeCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
@@ -555,6 +556,10 @@ export class WebServer {
 
 	setStarTabCallback(callback: StarTabCallback): void {
 		this.callbackRegistry.setStarTabCallback(callback);
+	}
+
+	setReopenClosedTabCallback(callback: ReopenClosedTabCallback): void {
+		this.callbackRegistry.setReopenClosedTabCallback(callback);
 	}
 
 	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
@@ -1196,6 +1201,8 @@ export class WebServer {
 				this.callbackRegistry.renameTab(sessionId, tabId, newName),
 			starTab: async (sessionId: string, tabId: string, starred: boolean) =>
 				this.callbackRegistry.starTab(sessionId, tabId, starred),
+			reopenClosedTab: async (sessionId: string, background: boolean) =>
+				this.callbackRegistry.reopenClosedTab(sessionId, background),
 			snoozeCommand: async (request: SnoozeCommandRequest) =>
 				this.callbackRegistry.snoozeCommand(request),
 			autoRunSteeringCommand: async (request: SteeringCommandRequest) =>

@@ -122,6 +122,7 @@ import {
 	handleCloseTab,
 	handleRenameTab,
 	handleStarTab,
+	handleReopenClosedTab,
 	handleReorderTab,
 	handleToggleBookmark,
 	handleOpenFileTab,
@@ -317,6 +318,10 @@ export class WebSocketMessageHandler {
 
 			case 'star_tab':
 				handleStarTab(this.ctx, client, message);
+				break;
+
+			case 'reopen_closed_tab':
+				handleReopenClosedTab(this.ctx, client, message);
 				break;
 
 			case 'snooze_command':

@@ -23,8 +23,10 @@ import { logger } from '../../utils/logger';
 import { buildQueuedMessageItem } from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
+import { reopenClosedTabInAgent } from '../../services/reopenClosedTab';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { ReopenClosedTabResult } from '../../../shared/reopenClosedTab';
 import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
@@ -951,6 +953,25 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle a remote Reopen Closed Tab (`maestro-cli tab reopen`). The
+		// closed-tab history lives only here, so the renderer answers with what
+		// came back - the same tiling-aware restore Cmd+Shift+T runs.
+		const unsubscribeReopenClosedTab = window.maestro.process.onRemoteReopenClosedTab(
+			(sessionId, background, responseChannel) => {
+				const reply = (result: ReopenClosedTabResult) =>
+					window.maestro.process.sendRemoteReopenClosedTabResponse(responseChannel, result);
+				try {
+					reply(reopenClosedTabInAgent(sessionId, { background }));
+				} catch (error) {
+					logger.error('[useRemoteIntegration] Reopen closed tab failed', undefined, error);
+					reply({
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
 		// Handle a remote snooze verb (`maestro-cli snooze`). The renderer owns the
 		// authoritative snooze state - the parked tabs themselves live in
 		// `session.snoozedTabs` - so every verb is answered here, through the same
@@ -1190,6 +1211,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeCloseTab();
 			unsubscribeRenameTab();
 			unsubscribeStarTab();
+			unsubscribeReopenClosedTab();
 			unsubscribeSnoozeCommand();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();

@@ -6,6 +6,7 @@
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
+import type { ReopenClosedTabResult } from '../../shared/reopenClosedTab';
 import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
@@ -399,6 +400,15 @@ export type StarTabCallback = (
  * thrown error there reads as a broken command instead of "no such snooze".
  */
 export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<SnoozeCommandResult>;
+/**
+ * Reopen an agent's most recently closed tab (`maestro-cli tab reopen`). The
+ * closed-tab history lives only in the renderer, so it answers. Resolves rather
+ * than rejects on a miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type ReopenClosedTabCallback = (
+	sessionId: string,
+	background: boolean
+) => Promise<ReopenClosedTabResult>;
 /**
  * One Auto Run steering verb, forwarded to the renderer - which holds the notes
  * its run loop reads - and answered with whatever it did. Resolves rather than

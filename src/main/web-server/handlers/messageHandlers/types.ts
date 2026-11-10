@@ -44,6 +44,7 @@ import type {
 	ConsultAgentResult,
 	RenameTabResult,
 	SnoozeCommandCallback,
+	ReopenClosedTabCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	OpenFileTabOptions,
@@ -155,6 +156,8 @@ export interface MessageHandlerCallbacks {
 		newName: string
 	) => Promise<boolean | RenameTabResult>;
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
+	/** `maestro-cli tab reopen` - restore an agent's most recently closed tab. */
+	reopenClosedTab: ReopenClosedTabCallback;
 	/** `maestro-cli snooze` - park, list, wake, dismiss, reschedule, history. */
 	snoozeCommand: SnoozeCommandCallback;
 	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */

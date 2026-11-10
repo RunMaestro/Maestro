@@ -2,6 +2,7 @@ import { ipcRenderer } from 'electron';
 import type { AITabData } from '../../web-server/types';
 import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { ReopenClosedTabResult } from '../../../shared/reopenClosedTab';
 
 export function createTabRemoteApi() {
 	return {
@@ -83,6 +84,31 @@ export function createTabRemoteApi() {
 				callback(sessionId, tabId, starred);
 			ipcRenderer.on('remote:starTab', handler);
 			return () => ipcRenderer.removeListener('remote:starTab', handler);
+		},
+
+		/**
+		 * Subscribe to a remote Reopen Closed Tab (`maestro-cli tab reopen`). A
+		 * round trip: the answer names the tab that came back, or says the
+		 * agent's closed-tab history was empty.
+		 */
+		onRemoteReopenClosedTab: (
+			callback: (sessionId: string, background: boolean, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				background: boolean,
+				responseChannel: string
+			) => callback(sessionId, background, responseChannel);
+			ipcRenderer.on('remote:reopenClosedTab', handler);
+			return () => ipcRenderer.removeListener('remote:reopenClosedTab', handler);
+		},
+
+		sendRemoteReopenClosedTabResponse: (
+			responseChannel: string,
+			result: ReopenClosedTabResult
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
 		/**

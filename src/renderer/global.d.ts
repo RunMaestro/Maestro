@@ -218,6 +218,7 @@ import type { MemoryApi } from '../main/preload/memory';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
+import type { ReopenClosedTabResult } from '../shared/reopenClosedTab';
 import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
@@ -494,6 +495,13 @@ interface MaestroAPI {
 		onRemoteStarTab: (
 			callback: (sessionId: string, tabId: string, starred: boolean) => void
 		) => () => void;
+		onRemoteReopenClosedTab: (
+			callback: (sessionId: string, background: boolean, responseChannel: string) => void
+		) => () => void;
+		sendRemoteReopenClosedTabResponse: (
+			responseChannel: string,
+			result: ReopenClosedTabResult
+		) => void;
 		onRemoteSnoozeCommand: (
 			callback: (request: SnoozeCommandRequest, responseChannel: string) => void
 		) => () => void;
