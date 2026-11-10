@@ -408,7 +408,11 @@ describe('tab commands', () => {
 					{ id: 'agent-2', name: 'Docs' },
 					{ id: 'agent-3', name: 'Empty' },
 				] as never);
-				const send = vi.fn(async (payload: { sessionId: string }) => replies[payload.sessionId]);
+				const send = vi.fn(async (payload: { sessionId: string }) => {
+					const reply = replies[payload.sessionId];
+					if (reply instanceof Error) throw reply;
+					return reply;
+				});
 				vi.mocked(withMaestroClient).mockImplementation(async (action) =>
 					action({ sendCommand: send } as never)
 				);
@@ -448,6 +452,19 @@ describe('tab commands', () => {
 				expect(printed).toContain('Backend (agent-1)');
 				expect(printed).toContain('2 closed tabs across 1 agent(s)');
 				expect(printed).toContain('could not read Docs (agent-2): Maestro window is not available');
+				expect(processExitSpy).not.toHaveBeenCalled();
+			});
+
+			it('reports an agent whose request rejected without discarding the others', async () => {
+				mockFleet({
+					'agent-1': { success: true, closedTabs: CLOSED },
+					'agent-2': new Error('socket reset'),
+					'agent-3': { success: true, closedTabs: [] },
+				});
+				await tabClosed({ all: true });
+				const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+				expect(printed).toContain('2 closed tabs across 1 agent(s)');
+				expect(printed).toContain('could not read Docs (agent-2): socket reset');
 				expect(processExitSpy).not.toHaveBeenCalled();
 			});
 
