@@ -42,6 +42,27 @@ describe('stripMaestroMarkers', () => {
 	it('is tolerant of whitespace-only marker bodies', () => {
 		expect(stripMaestroMarkers('x <!--   maestro:progress   45   --> y')).toBe('x  y');
 	});
+
+	it('removes a plan block together with its body', () => {
+		const text = [
+			'Migrated the schema.',
+			'',
+			'<!-- maestro:plan -->',
+			'- [x] Map the auth flow <!-- id:a1 -->',
+			'- [ ] Write the migration <!-- id:new -->',
+			'<!-- /maestro:plan -->',
+			'',
+			'Tests are next.',
+			'<!-- maestro:progress 30 -->',
+		].join('\n');
+		expect(stripMaestroMarkers(text)).toBe('Migrated the schema.\n\nTests are next.');
+	});
+
+	it('removes every plan block when the agent wrote more than one', () => {
+		const text =
+			'a\n<!-- maestro:plan -->\n- [ ] one\n<!-- /maestro:plan -->\nb\n<!--maestro:plan-->\n- [ ] two\n<!-- / maestro:plan -->\nc';
+		expect(stripMaestroMarkers(text)).toBe('a\n\nb\n\nc');
+	});
 });
 
 describe('parseGoalMarkers', () => {
