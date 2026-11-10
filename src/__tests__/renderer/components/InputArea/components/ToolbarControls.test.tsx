@@ -4,7 +4,10 @@ import { ToolbarControls } from '../../../../../renderer/components/InputArea/co
 import { usePhoneLayout } from '../../../../../renderer/hooks/ui/useViewportBreakpoint';
 import { inputAreaTheme } from '../_fixtures';
 import { restorePointer, setCoarsePointer } from '../../../../helpers/mockPointer';
-import type { ComposerCapabilities } from '../../../../../renderer/components/ChatComposer';
+import {
+	GROUP_CHAT_COMPOSER_CAPABILITIES,
+	type ComposerCapabilities,
+} from '../../../../../renderer/components/ChatComposer';
 
 /** An AI-mode agent that supports every optional control. */
 const AI_CAPABILITIES: ComposerCapabilities = {
@@ -137,6 +140,21 @@ describe('ToolbarControls', () => {
 		expect(screen.queryByTitle(/Save to History/)).not.toBeInTheDocument();
 	});
 
+	it('keeps desktop layout unchanged in terminal mode with cwd and Enter toggle', () => {
+		renderToolbar({
+			capabilities: TERMINAL_CAPABILITIES,
+			isTerminalMode: true,
+			terminalCwd: '~/project/src',
+			onOpenPromptComposer: undefined,
+			enterToSend: true,
+		});
+
+		expect(screen.getByText('~/project/src')).toBeInTheDocument();
+		expect(screen.getByTitle(/Switch to .*Enter to send/)).toBeInTheDocument();
+		expect(screen.getByText('Enter')).toBeInTheDocument();
+		expect(screen.queryByTestId('composer-options-button')).not.toBeInTheDocument();
+	});
+
 	it('hides each optional control its capability turns off', () => {
 		renderToolbar({
 			capabilities: {
@@ -242,17 +260,29 @@ describe('ToolbarControls', () => {
 			expect(onThinkingModeChange).toHaveBeenLastCalledWith('sticky');
 		});
 
-		it('draws the ... in terminal mode with no sheet behind it, as before', () => {
-			// Terminal mode offers no sheet section, so nothing mounts behind the
-			// button (AI mode is covered by "opens the options sheet" above).
+		it('draws no "..." or sheet in terminal mode, keeping the cwd and Run command button', () => {
 			renderPhoneToolbar({
 				capabilities: TERMINAL_CAPABILITIES,
 				isTerminalMode: true,
 				terminalCwd: '~/project',
 			});
 
-			fireEvent.click(screen.getByTestId('composer-options-button'));
+			expect(screen.queryByTestId('composer-options-button')).not.toBeInTheDocument();
 			expect(screen.queryByTestId('composer-options-sheet')).not.toBeInTheDocument();
+			expect(screen.getByText('~/project')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Run command' })).toBeInTheDocument();
+		});
+
+		it('still shows the "..." and opens the sheet in a room with sheet content', () => {
+			renderPhoneToolbar({
+				capabilities: GROUP_CHAT_COMPOSER_CAPABILITIES,
+				sheetExtras: <div data-testid="room-readonly-row">Read-Only</div>,
+			});
+
+			expect(screen.getByTestId('composer-options-button')).toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			expect(screen.getByTestId('composer-options-sheet')).toBeInTheDocument();
+			expect(screen.getByTestId('room-readonly-row')).toBeInTheDocument();
 		});
 
 		it('leaves out the sheet sections the surface does not offer', () => {
