@@ -3499,6 +3499,7 @@ interface MaestroAPI {
 		pollAuthStatus: (clientToken: string) => Promise<{
 			status: 'pending' | 'confirmed' | 'expired' | 'error';
 			authToken?: string;
+			email?: string;
 			message?: string;
 			error?: string;
 		}>;

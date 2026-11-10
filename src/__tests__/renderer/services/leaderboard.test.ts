@@ -21,6 +21,7 @@ import {
 	LEADERBOARD_UNCOMMITTED_KEY,
 	LEADERBOARD_DRIFT_NOTIFIED_KEY,
 	type PendingLeaderboardDelta,
+	authStatusMatchesEmail,
 } from '../../../renderer/services/leaderboard';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { captureMessage } from '../../../renderer/utils/sentry';
@@ -228,5 +229,19 @@ describe('reportLeaderboardDrift', () => {
 
 		expect(captureMessage).toHaveBeenCalled();
 		expect(notifyToast).not.toHaveBeenCalled();
+	});
+});
+
+describe('authStatusMatchesEmail (#2011)', () => {
+	it('matches the same email regardless of case and surrounding space', () => {
+		expect(authStatusMatchesEmail('user@example.com', '  User@Example.COM ')).toBe(true);
+	});
+
+	it('rejects a token resolved to a different email', () => {
+		expect(authStatusMatchesEmail('old@example.com', 'new@example.com')).toBe(false);
+	});
+
+	it('accepts an answer that names no email (older server)', () => {
+		expect(authStatusMatchesEmail(undefined, 'new@example.com')).toBe(true);
 	});
 });
