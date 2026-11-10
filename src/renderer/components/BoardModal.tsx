@@ -1,21 +1,24 @@
+import type { BoardDeleteCardsResult } from '../../shared/board/commands';
+import { BoardCardDetails } from './BoardCardDetails';
 import { usesOwnBoardRepository } from '../../shared/board/worker-options';
 import { observeElementOffsetWhileMounted } from '../utils/virtualizer';
 import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import { isSessionRemote } from '../utils/sessionHelpers';
 import { BOARD_SOURCE_PROJECT_PREFIX } from '../../shared/board/types';
-import {
-	memo,
-	useCallback,
-	useEffect,
-	useId,
-	useLayoutEffect,
-	useMemo,
-	useRef,
-	useState,
-} from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { defaultRangeExtractor, measureElement, useVirtualizer } from '@tanstack/react-virtual';
 import { createPortal } from 'react-dom';
-import { X, KanbanSquare, Plus, Trash2, RefreshCw, ChevronLeft, Square, Play } from 'lucide-react';
+import {
+	X,
+	KanbanSquare,
+	Plus,
+	Trash2,
+	Pencil,
+	RefreshCw,
+	ChevronLeft,
+	Square,
+	Play,
+} from 'lucide-react';
 import type { Theme } from '../types';
 import type {
 	Board,
@@ -48,14 +51,11 @@ import { useModalStore, selectModalOpen } from '../stores/modalStore';
 import { notifyToast } from '../stores/notificationStore';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { generateUUID } from '../../shared/uuid';
-import { formatElapsedTime, truncatePath } from '../../shared/formatters';
 import type { BoardReadinessReason } from '../../shared/board/domain';
-import { BOARD_DELETE_CARDS_LIMIT, type BoardDeleteCardsResult } from '../../shared/board/commands';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { triggerHaptic, HAPTIC_PATTERNS, isCoarsePointer } from '../utils/touch';
-import { openUrl } from '../utils/openUrl';
 import { observedWorkerRuns } from '../utils/boardWorkerStatus';
 import { BoardWorkerOptions } from './BoardWorkerOptions';
 import { ThemedSelect } from './shared/ThemedSelect';
@@ -197,7 +197,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	const activeSession = useSessionStore(selectActiveSession);
 	const [collections, setCollections] = useState<BoardWorkspaceCollection[]>([]);
 	const [sourceRoots, setSourceRoots] = useState<Record<string, string>>({});
-	const [sourceLabels, setSourceLabels] = useState<Record<string, string>>({});
 	const [groupFilter, setGroupFilter] = useState('all');
 	const [agentFilter, setAgentFilter] = useState('all');
 	const groups = useSessionStore((s) => s.groups);
@@ -461,36 +460,40 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	const [projectFilter, setProjectFilter] = useState('all');
 	const [kindFilter, setKindFilter] = useState<BoardCardKind | 'all' | 'unspecified'>('all');
 	const [statusFilter, setStatusFilter] = useState<CardStatus | 'all'>('all');
-	const [bulkSelection, setBulkSelection] = useState<
-		Record<string, { card: BoardCard; collection: BoardWorkspaceCollection }>
-	>({});
-	// Index the selected read snapshots once, rather than scanning the selection
-	// for every unselected tile on every render. The updater below still checks
-	// current state so batched clicks cannot bypass the limit or revision fence.
-	const bulkSelectionByCollection = useMemo(() => {
-		const sources = new Map<string, Map<string, { count: number; revisions: Set<number> }>>();
-		for (const { collection } of Object.values(bulkSelection)) {
-			let collections = sources.get(collection.sourceKey);
-			if (!collections) {
-				collections = new Map();
-				sources.set(collection.sourceKey, collections);
-			}
-			let selected = collections.get(collection.collectionKey);
-			if (!selected) {
-				selected = { count: 0, revisions: new Set() };
-				collections.set(collection.collectionKey, selected);
-			}
-			selected.count++;
-			selected.revisions.add(collection.revision);
-		}
-		return sources;
-	}, [bulkSelection]);
-	const [bulkPreview, setBulkPreview] = useState(false);
-	const [bulkPending, setBulkPending] = useState(false);
-	const bulkPendingRef = useRef(false);
-	const [bulkResults, setBulkResults] = useState<
-		{ message: string; collection: BoardWorkspaceCollection; cards: BoardCard[] }[]
-	>([]);
+	const detailOpener = useRef<HTMLElement | null>(null);
+	const [detailTarget, setDetailTarget] = useState<{
+		sourceKey: string;
+		collectionKey: string;
+		cardId: string;
+	} | null>(null);
+	const detailCollection =
+		detailTarget &&
+		collections.find(
+			(entry) =>
+				entry.sourceKey === detailTarget.sourceKey &&
+				entry.collectionKey === detailTarget.collectionKey
+		);
+	const detailCard = detailCollection?.board.cards.find(
+		(entry) => entry.id === detailTarget?.cardId
+	);
+	const openCardDetails = useCallback(
+		(card: BoardCard, _focusMove: boolean, collection: BoardWorkspaceCollection) => {
+			detailOpener.current =
+				document.activeElement instanceof HTMLElement ? document.activeElement : null;
+			setDetailTarget({
+				sourceKey: collection.sourceKey,
+				collectionKey: collection.collectionKey,
+				cardId: card.id,
+			});
+		},
+		[]
+	);
+	const closeCardDetails = useCallback(() => {
+		setDetailTarget(null);
+		requestAnimationFrame(() => {
+			if (detailOpener.current?.isConnected) detailOpener.current.focus();
+		});
+	}, []);
 
 	// Editor state: null = board view, otherwise the card editor is showing.
 	const [cycleError, setCycleError] = useState<string | null>(null);
@@ -565,10 +568,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					if (generation !== loadGenerationRef.current) continue;
 					if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`);
 					const roots: Record<string, string> = {};
-					const labels: Record<string, string> = {};
 					for (const source of response.value.sources) {
 						if (source.location) {
-							labels[source.sourceKey] = source.location.path;
 							roots[source.sourceKey] =
 								source.location.location.kind === 'local'
 									? source.location.path
@@ -577,7 +578,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					}
 
 					setSourceRoots(roots);
-					setSourceLabels(labels);
 					setCollections(response.value.collections);
 					setLoadError(null);
 					setCaptureResult(null);
@@ -800,12 +800,16 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	 * Escape closes the modal, asking first when the editor holds unsaved edits.
 	 */
 	const handleEscape = useCallback(() => {
+		if (detailTarget) {
+			closeCardDetails();
+			return;
+		}
 		if (isDraftDirty) {
 			setPendingDiscard('modal');
 			return;
 		}
 		onClose();
-	}, [isDraftDirty, onClose]);
+	}, [isDraftDirty, onClose, detailTarget, closeCardDetails]);
 
 	useModalLayer(MODAL_PRIORITIES.BOARD_MODAL, 'Board', handleEscape);
 
@@ -1129,12 +1133,19 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			try {
 				const card = board.cards.find((item) => item.id === cardId);
 				if (card?.storageRevision === undefined) throw new Error('Card revision unavailable');
-				const updated = await window.maestro.board.deleteCard(projectRoot, board.id, cardId, {
-					sourceKey: collection.sourceKey,
-					collectionKey: collection.collectionKey,
-					revision: collection.revision,
-					cardRevision: card.storageRevision,
+				const response = await window.maestro.board.deleteCards({
+					action: 'delete-cards',
+					target: {
+						projectRoot,
+						sourceKey: collection.sourceKey,
+						collectionKey: collection.collectionKey,
+						expectedRevision: collection.revision,
+					},
+					cards: [{ cardId, cardRevision: card.storageRevision }],
 				});
+				if (!response.ok) throw new Error(response.error.message);
+				const updated = (response.value as BoardDeleteCardsResult).board;
+
 				applyBoard(updated, collection);
 				if (draft?.id === cardId && draft.collection.collectionKey === collection.collectionKey)
 					closeEditor();
@@ -1150,93 +1161,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		},
 		[sourceRoots, draft, closeEditor, applyBoard]
 	);
-
-	const deleteSelectedCards = useCallback(async () => {
-		if (bulkPendingRef.current) return;
-		bulkPendingRef.current = true;
-		setBulkPending(true);
-		const groups = new Map<
-			string,
-			{ collection: BoardWorkspaceCollection; entries: [string, BoardCard][] }
-		>();
-		for (const [key, { card, collection }] of Object.entries(bulkSelection)) {
-			const groupKey = JSON.stringify([collection.sourceKey, collection.collectionKey]);
-			const group = groups.get(groupKey) ?? { collection, entries: [] };
-			group.entries.push([key, card]);
-			groups.set(groupKey, group);
-		}
-		const results: { message: string; collection: BoardWorkspaceCollection; cards: BoardCard[] }[] =
-			[];
-		try {
-			for (const { collection, entries } of groups.values()) {
-				try {
-					const response = await window.maestro.board.deleteCards({
-						action: 'delete-cards',
-						target: {
-							projectRoot: `${BOARD_SOURCE_PROJECT_PREFIX}${collection.sourceKey}`,
-							sourceKey: collection.sourceKey,
-							collectionKey: collection.collectionKey,
-							expectedRevision: collection.revision,
-						},
-						cards: entries.map(([, card]) => ({
-							cardId: card.id,
-							cardRevision: card.storageRevision!,
-						})),
-					});
-					if (!response.ok) {
-						results.push({
-							collection,
-							cards: entries.map(([, card]) => card),
-							message: `${collection.board.name}: no cards deleted. ${response.error.code === 'stale-revision' ? 'The board changed; refresh and select the cards again.' : 'Check the cards and try again.'}`,
-						});
-						continue;
-					}
-					const receipt = response.value as BoardDeleteCardsResult;
-					setCollections((prev) =>
-						prev.map((entry) =>
-							entry.sourceKey === collection.sourceKey &&
-							entry.collectionKey === collection.collectionKey &&
-							entry.revision === collection.revision
-								? {
-										...entry,
-										board: receipt.board,
-										revision: receipt.revision,
-										readiness: undefined,
-									}
-								: entry
-						)
-					);
-					setBulkSelection((prev) => {
-						const next = { ...prev };
-						for (const [key] of entries) delete next[key];
-						return next;
-					});
-					results.push({
-						collection,
-						cards: entries.map(([, card]) => card),
-						message: `${collection.board.name}: deleted ${entries.length} ${entries.length === 1 ? 'card' : 'cards'}: ${entries.map(([, card]) => card.title).join(', ')}.`,
-					});
-				} catch (error) {
-					captureException(error, {
-						extra: {
-							operation: 'board:deleteCards',
-							source: collection.sourceKey,
-							collection: collection.collectionKey,
-						},
-					});
-					results.push({
-						collection,
-						cards: entries.map(([, card]) => card),
-						message: `${collection.board.name}: no cards deleted. Check the connection and try again.`,
-					});
-				}
-			}
-		} finally {
-			setBulkResults(results);
-			setBulkPending(false);
-			bulkPendingRef.current = false;
-		}
-	}, [bulkSelection]);
 
 	const handleCancelCard = useCallback(
 		async (cardId: string, collection: BoardWorkspaceCollection) => {
@@ -1648,7 +1572,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 						<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
 							card DAG · dispatched on the Cue tick
 						</span>
-						{board && !draft && (
+						{board && !draft && !detailTarget && (
 							<ThemedSelect
 								aria-label="Board start policy"
 								theme={theme}
@@ -2195,8 +2119,28 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 						/>
 					)}
 
+					{detailTarget &&
+						!draft &&
+						(detailCollection && detailCard ? (
+							<BoardCardDetails
+								key={JSON.stringify(detailTarget)}
+								theme={theme}
+								card={detailCard}
+								projectRoot={
+									sourceRoots[detailCollection.sourceKey] ??
+									`${BOARD_SOURCE_PROJECT_PREFIX}${detailCollection.sourceKey}`
+								}
+								collection={detailCollection}
+								onBack={closeCardDetails}
+							/>
+						) : (
+							<section className="p-4">
+								<p>Card is no longer available.</p>
+								<button onClick={closeCardDetails}>Back to board</button>
+							</section>
+						))}
 					{/* Kanban columns */}
-					{board && !draft && (
+					{board && !draft && !detailTarget && (
 						<div className="flex flex-wrap gap-3 px-4 pt-3">
 							<div className="flex items-center gap-1">
 								<span>Project</span>
@@ -2277,117 +2221,14 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 									]}
 								/>
 							</div>
-							<button
-								type="button"
-								className="rounded border px-2 py-1"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								disabled={!Object.keys(bulkSelection).length || bulkPending}
-								onClick={() => {
-									setBulkPreview(true);
-									setBulkResults([]);
-								}}
-							>
-								Review {Object.keys(bulkSelection).length} selected
-							</button>
 						</div>
 					)}
-					{board && !draft && bulkPreview && (
-						<section
-							className="mx-4 mt-3 rounded border p-3 text-sm"
-							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
-							aria-label="Delete selected cards preview"
-						>
-							<p>
-								Selection includes cards hidden by filters. Each collection commits separately; a
-								conflict leaves that collection unchanged. Reservations are checked by the host when
-								deletion is submitted. Select at most {BOARD_DELETE_CARDS_LIMIT} cards per
-								collection.
-							</p>
-							<ul>
-								{Object.entries(bulkSelection).map(([key, { card, collection }]) => (
-									<li key={key}>
-										{card.title} ({collection.board.name}
-										{card.workingDirectory ? ` · ${truncatePath(card.workingDirectory, 40)}` : ''});
-										Source: {sourceLabels[collection.sourceKey] ?? 'Unknown source'}.{' '}
-										<details>
-											<summary>Card identity details</summary>
-											Source: {collection.sourceKey}; collection: {collection.collectionKey}; card:{' '}
-											{card.id}; revision: {card.storageRevision}
-										</details>
-										{
-											collection.board.cards.filter((other) => other.parents.includes(card.id))
-												.length
-										}{' '}
-										direct dependents inherit its parents.{' '}
-										<button
-											type="button"
-											style={{ color: theme.colors.textMain }}
-											disabled={bulkPending}
-											onClick={() =>
-												setBulkSelection((prev) => {
-													const next = { ...prev };
-													delete next[key];
-													return next;
-												})
-											}
-										>
-											Remove from selection
-										</button>
-									</li>
-								))}
-							</ul>
-							<button
-								type="button"
-								className="rounded border px-2 py-1 mr-2"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								disabled={bulkPending || !Object.keys(bulkSelection).length}
-								onClick={() => void deleteSelectedCards()}
-							>
-								Delete selected
-							</button>
-							<button
-								type="button"
-								className="rounded border px-2 py-1"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								disabled={bulkPending}
-								onClick={() => setBulkPreview(false)}
-							>
-								Close preview
-							</button>
-							{bulkResults.map((result) => (
-								<div
-									key={JSON.stringify([
-										result.collection.sourceKey,
-										result.collection.collectionKey,
-									])}
-									role="status"
-								>
-									<p>
-										{result.message} Source:{' '}
-										{sourceLabels[result.collection.sourceKey] ?? 'Unknown source'}.
-									</p>
-									<ul>
-										{result.cards.map((card) => (
-											<li key={card.id}>
-												{card.title}
-												<details>
-													<summary>Card identity details</summary>Source:{' '}
-													{result.collection.sourceKey}; collection:{' '}
-													{result.collection.collectionKey}; card: {card.id}; revision:{' '}
-													{card.storageRevision}
-												</details>
-											</li>
-										))}
-									</ul>
-								</div>
-							))}
-						</section>
-					)}
+
 					{board && (
 						<div
-							hidden={!!draft}
+							hidden={!!draft || !!detailTarget}
 							className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden p-4"
-							style={{ display: draft ? 'none' : undefined }}
+							style={{ display: draft || detailTarget ? 'none' : undefined }}
 						>
 							<div className="flex gap-3 h-full" style={{ minWidth: 'min-content' }}>
 								{WORKFLOW_COLUMNS.map((status) => {
@@ -2445,93 +2286,38 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 												status={status}
 												cards={cards}
 												filterKey={filterKey}
-												visible={view === 'cards' && !draft}
+												visible={view === 'cards' && !draft && !detailTarget}
 												dragCard={dragCard}
 												registerColumn={registerColumn}
-												renderCard={({ card, collection, key }, index) => {
-													const selection = bulkSelectionByCollection
-														.get(collection.sourceKey)
-														?.get(collection.collectionKey);
-													return (
-														<div key={key}>
-															<label className="text-xs" style={{ color: theme.colors.textDim }}>
-																<input
-																	type="checkbox"
-																	style={{ accentColor: theme.colors.accent }}
-																	checked={!!bulkSelection[key]}
-																	disabled={
-																		bulkPending ||
-																		(!bulkSelection[key] &&
-																			(card.status === 'running' ||
-																				card.storageRevision === undefined ||
-																				(selection !== undefined &&
-																					(selection.count >= BOARD_DELETE_CARDS_LIMIT ||
-																						selection.revisions.size !== 1 ||
-																						!selection.revisions.has(collection.revision)))))
-																	}
-																	onChange={(event) => {
-																		const checked = event.target.checked;
-																		setBulkSelection((prev) => {
-																			const next = { ...prev };
-																			if (checked) {
-																				const sameCollection = Object.values(prev).filter(
-																					(selected) =>
-																						selected.collection.sourceKey ===
-																							collection.sourceKey &&
-																						selected.collection.collectionKey ===
-																							collection.collectionKey
-																				);
-																				if (
-																					!prev[key] &&
-																					(sameCollection.length >= BOARD_DELETE_CARDS_LIMIT ||
-																						sameCollection.some(
-																							(selected) =>
-																								selected.collection.revision !== collection.revision
-																						))
-																				)
-																					return prev;
-																				next[key] = { card, collection };
-																			} else delete next[key];
-																			return next;
-																		});
-																	}}
-																/>{' '}
-																{card.status === 'running'
-																	? 'Running: excluded'
-																	: card.storageRevision === undefined
-																		? 'Revision unavailable'
-																		: 'Select for deletion'}
-															</label>
-															<BoardCardTile
-																key={key}
-																theme={theme}
-																card={card}
-																readiness={collection.readiness?.[card.id]}
-																board={collection.board}
-																profileName={profileName}
-																agentName={agentName}
-																projectAgents={projectAgents}
-																onJumpToAgent={handleJumpToAgent}
-																dragging={
-																	dragCard?.cardId === card.id &&
-																	dragCard.collection.sourceKey === collection.sourceKey &&
-																	dragCard.collection.collectionKey === collection.collectionKey
-																}
-																collection={collection}
-																column={status}
-																index={index}
-																onDragStart={handleDragStart}
-																onDragEnd={handleDragEnd}
-																onClick={openEditCard}
-																onNavigate={navigateTiles}
-																onDelete={handleDeleteCard}
-																onCancelRun={handleCancelCard}
-																onResume={handleResumeCard}
-																onRecover={requestRecovery}
-															/>
-														</div>
-													);
-												}}
+												renderCard={({ card, collection, key }, index) => (
+													<BoardCardTile
+														key={key}
+														theme={theme}
+														card={card}
+														readiness={collection.readiness?.[card.id]}
+														board={collection.board}
+														agentName={agentName}
+														projectAgents={projectAgents}
+														onJumpToAgent={handleJumpToAgent}
+														dragging={
+															dragCard?.cardId === card.id &&
+															dragCard.collection.sourceKey === collection.sourceKey &&
+															dragCard.collection.collectionKey === collection.collectionKey
+														}
+														collection={collection}
+														column={status}
+														index={index}
+														onDragStart={handleDragStart}
+														onDragEnd={handleDragEnd}
+														onClick={openCardDetails}
+														onEdit={openEditCard}
+														onNavigate={navigateTiles}
+														onDelete={handleDeleteCard}
+														onCancelRun={handleCancelCard}
+														onResume={handleResumeCard}
+														onRecover={requestRecovery}
+													/>
+												)}
 											/>
 											{cards.length === 0 && (
 												<div
@@ -2551,7 +2337,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 
 				{/* Keyboard hint footer: the mouse affordances (drag, hover trash) are
 				    invisible to keyboard users otherwise. */}
-				{view === 'cards' && board && !draft && (
+				{view === 'cards' && board && !draft && !detailTarget && (
 					<div
 						className="shrink-0 px-4 py-2 border-t text-xs-plus"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
@@ -2606,35 +2392,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			)}
 		</div>,
 		document.body
-	);
-}
-
-// ---------------------------------------------------------------------------
-
-interface RunElapsedProps {
-	/** ISO timestamp the run started. */
-	startedAt: string;
-	className?: string;
-	style?: React.CSSProperties;
-}
-
-/**
- * Ticking elapsed-time label for an in-flight run. Isolated in its own component
- * so the 1-second interval re-renders one label, never the whole board, and it
- * only exists while a `running` tile is on screen.
- */
-function RunElapsed({ startedAt, className, style }: RunElapsedProps) {
-	const [now, setNow] = useState(() => Date.now());
-	useEffect(() => {
-		const id = window.setInterval(() => setNow(Date.now()), 1000);
-		return () => window.clearInterval(id);
-	}, []);
-	const started = Date.parse(startedAt);
-	if (!Number.isFinite(started)) return null;
-	return (
-		<span className={className} style={style}>
-			{formatElapsedTime(Math.max(0, now - started))}
-		</span>
 	);
 }
 
@@ -2843,7 +2600,6 @@ interface BoardCardTileProps {
 	theme: Theme;
 	card: BoardCard;
 	board: Board;
-	profileName: (id: string) => string;
 	agentName: (id: string) => string;
 	/** Project agents, used to check whether a run's worker still exists. */
 	projectAgents: { id: string; name: string; isWorker: boolean }[];
@@ -2856,6 +2612,7 @@ interface BoardCardTileProps {
 	onDragStart: (cardId: string, collection: BoardWorkspaceCollection) => void;
 	onDragEnd: () => void;
 	onClick: (card: BoardCard, focusMove: boolean, collection: BoardWorkspaceCollection) => void;
+	onEdit: (card: BoardCard, focusMove: boolean, collection: BoardWorkspaceCollection) => void;
 	/** Arrow-key navigation request; the board decides which tile gets focus. */
 	onNavigate: (column: CardStatus, index: number, key: string) => void;
 	onDelete: (cardId: string, collection: BoardWorkspaceCollection) => Promise<void>;
@@ -2873,7 +2630,6 @@ const BoardCardTile = memo(function BoardCardTile({
 	theme,
 	card,
 	board,
-	profileName,
 	agentName,
 	projectAgents,
 	onJumpToAgent,
@@ -2884,6 +2640,7 @@ const BoardCardTile = memo(function BoardCardTile({
 	onDragStart,
 	onDragEnd,
 	onClick,
+	onEdit,
 	onNavigate,
 	onDelete,
 	onCancelRun,
@@ -2894,10 +2651,11 @@ const BoardCardTile = memo(function BoardCardTile({
 	// Delete is armed by the first click and fires on the second, mirroring the
 	// "click again to confirm" idiom the browser tab's clear-data button uses.
 	// It disarms itself so a stray click never leaves a live trigger sitting there.
-	const projectDescriptionId = useId();
 	const [deleteArmed, setDeleteArmed] = useState(false);
 	const [deleting, setDeleting] = useState(false);
 	const deletingRef = useRef(false);
+	const wasDragged = useRef(false);
+	const controlGesture = useRef(false);
 	const [focused, setFocused] = useState(false);
 	const disarmTimerRef = useRef<number | null>(null);
 	useEffect(
@@ -2939,7 +2697,7 @@ const BoardCardTile = memo(function BoardCardTile({
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLDivElement>) => {
 			// Never hijack typing inside a nested control (the summary disclosure).
-			if (e.target !== e.currentTarget) return;
+			if (e.target !== e.currentTarget || e.nativeEvent.isComposing || e.keyCode === 229) return;
 			switch (e.key) {
 				case 'Enter':
 				case ' ':
@@ -2949,7 +2707,7 @@ const BoardCardTile = memo(function BoardCardTile({
 				case 'm':
 				case 'M':
 					e.preventDefault();
-					onClick(card, true, collection);
+					onEdit(card, true, collection);
 					return;
 				case 'Delete':
 				case 'Backspace':
@@ -2966,72 +2724,30 @@ const BoardCardTile = memo(function BoardCardTile({
 				default:
 			}
 		},
-		[onClick, onNavigate, armOrDelete, card, collection, column, index]
+		[onClick, onEdit, onNavigate, armOrDelete, card, collection, column, index]
 	);
 
-	const priorityMeta = PRIORITY_META[card.priority ?? 'normal'];
 	const blockers = getBlockers(card, board);
-	// Cards that list this one as a parent: deleting re-parents them onto this
-	// card's own parents, which the confirm copy has to say out loud.
 	const dependents = board.cards.filter((c) => c.parents.includes(card.id)).length;
 	const deleteTitle = deleting
 		? 'Deleting card…'
 		: deleteArmed
 			? dependents > 0
-				? `Click again to delete "${card.title}". Its ${dependents} dependent card${
-						dependents === 1 ? '' : 's'
-					} will be re-parented to this card's parents.`
+				? `Click again to delete "${card.title}". Its ${dependents} dependent card${dependents === 1 ? '' : 's'} will be re-parented to this card's parents.`
 				: `Click again to delete "${card.title}".`
 			: 'Delete card';
-	// Hover-only affordances are invisible to keyboard and touch users: reveal on
-	// focus-within, and keep it permanently visible on a touch device (where there
-	// is no hover at all).
-	const coarsePointer = useMemo(() => isCoarsePointer(), []);
-	const deleteVisibility =
-		coarsePointer || deleteArmed || deleting
-			? 'opacity-100'
-			: 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100';
-	// The most recent run's handoff summary (from a `card-complete | summary`
-	// marker), surfaced as optional expandable metadata.
-	const latestRun = card.runs?.[card.runs.length - 1];
-	const latestSummary = latestRun?.summary;
-	// Phase 4: when the last attempt ran in an isolated worktree, say which branch
-	// holds its output - nothing merges or removes it automatically.
-	const runBranch = latestRun?.worktreeBranch;
-	const runWorktreePath = latestRun?.worktreePath;
-	// X1: the PR-on-done outcome of the last run. A successful attempt stamps
-	// `prUrl`; a failed one stamps `prError` and leaves the card `done`. Display
-	// only - there is deliberately no retry button here, because the PR gate
-	// keys on `prUrl` alone, so moving the card out of `done` and back re-fires
-	// the flow.
-	const runPrUrl = latestRun?.prUrl;
-	const runPrError = latestRun?.prError;
-	// Phase 6: a running card says how long it has been going, which attempt this
-	// is, and which pooled worker claimed it.
+	const latestRun = card.runs?.at(-1);
 	const isRunning = card.status === 'running';
-	// AB1: a card the user stopped stays in To Do but carries an explicit hold the
-	// promote pass honours, so it needs a visible reason and a way back.
 	const isHeld = !!card.heldByUser;
-	const workerAgentId = latestRun?.workerAgentId ?? null;
-	const workerText = workerAgentId ? agentName(workerAgentId) : null;
+	const workerAgentId =
+		(isRunning ? latestRun?.workerAgentId : undefined) ??
+		card.assigneeAgentId ??
+		(card.executionScope?.kind === 'agent' ? card.executionScope.agentId : undefined) ??
+		latestRun?.workerAgentId ??
+		null;
+	const workerText = workerAgentId ? agentName(workerAgentId) : 'Unassigned';
+	const workerAgentExists = projectAgents.some((agent) => agent.id === workerAgentId);
 	const showWaitReason = !['running', 'ready-for-human', 'done'].includes(card.status);
-	// The worker chip is a jump affordance only while the worker agent still
-	// exists; a deleted agent renders a non-interactive span instead.
-	const workerAgentExists = workerAgentId
-		? projectAgents.some((a) => a.id === workerAgentId)
-		: false;
-	// Keep the execution boundary visible even when a card has no pin or role.
-	const roleText = card.assigneeProfileId ? profileName(card.assigneeProfileId) : null;
-	const pinText = card.assigneeAgentId ? `📌 ${agentName(card.assigneeAgentId)}` : null;
-	const scopeText =
-		card.executionScope?.kind === 'agent'
-			? `Agent: ${agentName(card.executionScope.agentId)} (${card.executionScope.agentId})`
-			: card.executionScope?.kind === 'group'
-				? `Group: ${card.executionScope.groupId}`
-				: 'Unassigned scope';
-	const assigneeText = [scopeText, roleText, pinText].filter(Boolean).join(' · ');
-	// The run details disclosure is available WHILE running too, not just after.
-	const showRunDetails = !!latestSummary || !!runBranch || (isRunning && !!latestRun);
 	return (
 		<div
 			data-board-card={card.id}
@@ -3039,10 +2755,32 @@ const BoardCardTile = memo(function BoardCardTile({
 			role="button"
 			tabIndex={0}
 			aria-label={`${card.title}, ${STATUS_META[card.status].label}`}
-			aria-describedby={projectDescriptionId}
-			onDragStart={() => onDragStart(card.id, collection)}
+			onPointerDownCapture={(event) => {
+				controlGesture.current = !!(event.target as HTMLElement).closest(
+					'button, a, input, select, textarea'
+				);
+			}}
+			onDragStart={(event) => {
+				if (
+					controlGesture.current ||
+					(event.target as HTMLElement).closest('button, a, input, select, textarea') ||
+					window.getSelection()?.toString()
+				) {
+					event.preventDefault();
+					return;
+				}
+				wasDragged.current = true;
+				onDragStart(card.id, collection);
+			}}
 			onDragEnd={onDragEnd}
-			onClick={() => onClick(card, false, collection)}
+			onClick={() => {
+				if (controlGesture.current) return;
+				if (wasDragged.current) {
+					wasDragged.current = false;
+					return;
+				}
+				if (!dragging && !window.getSelection()?.toString()) onClick(card, false, collection);
+			}}
 			onKeyDown={handleKeyDown}
 			onFocus={(e) => {
 				if (e.target === e.currentTarget) setFocused(true);
@@ -3112,9 +2850,29 @@ const BoardCardTile = memo(function BoardCardTile({
 						</button>
 					)}
 					<button
+						type="button"
+						aria-label={`Edit ${card.title}`}
+						title="Edit card"
+						draggable={false}
+						onPointerDown={(event) => event.stopPropagation()}
+						onMouseDown={(event) => event.stopPropagation()}
+						onClick={(event) => {
+							event.stopPropagation();
+							onEdit(card, false, collection);
+						}}
+						className="p-1 rounded hover:bg-white/10"
+						style={{ color: theme.colors.textDim }}
+					>
+						<Pencil className="w-3.5 h-3.5" />
+					</button>
+					<button
+						type="button"
+						draggable={false}
+						onPointerDown={(event) => event.stopPropagation()}
+						onMouseDown={(event) => event.stopPropagation()}
 						onClick={handleDeleteClick}
 						disabled={deleting}
-						className={`p-0.5 rounded hover:bg-white/10 transition-opacity ${deleteVisibility}`}
+						className="p-1 rounded hover:bg-white/10"
 						style={{ color: deleteArmed ? theme.colors.error : theme.colors.textDim }}
 						aria-label={
 							deleting
@@ -3130,213 +2888,44 @@ const BoardCardTile = memo(function BoardCardTile({
 					</button>
 				</div>
 			</div>
-			<div className="mt-1 flex items-center gap-1.5 flex-wrap">
-				{priorityMeta.badge && (
-					<span
-						className="text-2xs font-semibold rounded px-1.5 py-0.5 uppercase tracking-wide"
-						style={{
-							backgroundColor: theme.colors[priorityMeta.colorKey] + '22',
-							color: theme.colors[priorityMeta.colorKey],
-						}}
-						title={`${priorityMeta.label} priority - ${priorityMeta.hint}`}
-					>
-						{priorityMeta.badge}
-					</span>
-				)}
-				<span
-					className="text-2xs rounded px-1.5 py-0.5 break-words min-w-0 max-w-full"
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-					title={assigneeText}
-				>
-					{assigneeText}
-				</span>
-				<div className="text-2xs min-w-0 w-full" style={{ color: theme.colors.textDim }}>
-					<div>{STATUS_META[card.status].label}</div>
-					<div className="truncate" title={card.workingDirectory || card.repositoryId || 'not set'}>
-						<span id={projectDescriptionId} className="sr-only">
-							Project: {card.workingDirectory || card.repositoryId || 'not set'}
-						</span>
-						<span aria-hidden="true">
-							Project: {truncatePath(card.workingDirectory || card.repositoryId || 'not set', 30)}
-						</span>
-					</div>
-					<div className="break-words">
-						Reviewer: {card.reviewerAgentId ? agentName(card.reviewerAgentId) : 'not assigned'}
-					</div>
-				</div>
-				{((showWaitReason && readiness?.length) ||
-					!workerText ||
-					['triage', 'todo', 'ready', 'blocked'].includes(card.status)) && (
-					<div className="text-2xs" style={{ color: theme.colors.textDim }}>
-						{showWaitReason && readiness?.length
-							? `Waiting: ${readiness.map((reason) => READINESS_LABELS[reason as BoardReadinessReason] ?? reason).join(', ')}`
-							: ['triage', 'todo', 'ready', 'blocked'].includes(card.status)
-								? 'Waiting: host diagnosis unknown'
-								: 'Worker: not recorded'}
-					</div>
-				)}
-				{isHeld && (
-					<span
-						className="text-2xs rounded px-1.5 py-0.5"
-						style={{
-							backgroundColor: theme.colors.warning + '22',
-							color: theme.colors.warning,
-						}}
-						title="You stopped this card. It stays put until you resume it."
-					>
-						held
-					</span>
-				)}
-				{isRunning && latestRun && (
-					<span
-						className="text-2xs rounded px-1.5 py-0.5"
-						style={{
-							backgroundColor: theme.colors.warning + '22',
-							color: theme.colors.warning,
-						}}
-						title={`Attempt ${latestRun.attempt}, started ${latestRun.startedAt}`}
-					>
-						attempt {latestRun.attempt} ·{' '}
-						<RunElapsed startedAt={latestRun.startedAt} style={{ color: theme.colors.warning }} />
-					</span>
-				)}
-				{workerText &&
-					workerAgentId &&
-					(workerAgentExists ? (
-						<button
-							onClick={(e) => {
-								// Don't also trigger the tile's editor-opening onClick.
-								e.stopPropagation();
-								onJumpToAgent(workerAgentId);
-							}}
-							className="text-2xs rounded px-1.5 py-0.5 truncate max-w-full hover:bg-white/10 transition-colors"
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-							title={
-								isRunning
-									? `Running on worker "${workerText}" - click to open`
-									: `Open worker "${workerText}"`
-							}
-						>
-							⚙ {workerText}
-						</button>
-					) : (
-						<span
-							className="text-2xs rounded px-1.5 py-0.5 truncate max-w-full"
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-							title="This worker agent has been deleted"
-						>
-							⚙ {workerText}
-						</span>
-					))}
-				{card.parents.length > 0 && (
-					<span
-						className="text-2xs rounded px-1.5 py-0.5"
-						style={{
-							backgroundColor:
-								blockers.length > 0 ? theme.colors.warning + '22' : theme.colors.bgActivity,
-							color: blockers.length > 0 ? theme.colors.warning : theme.colors.textDim,
-						}}
-						title={
-							blockers.length > 0
-								? `Waiting on ${blockers.length} of ${card.parents.length} parent(s)`
-								: `${card.parents.length} parent(s), all done`
-						}
-					>
-						{blockers.length > 0
-							? `waiting on ${blockers.length}`
-							: `${card.parents.length} parent${card.parents.length === 1 ? '' : 's'}`}
-					</span>
-				)}
-				{runBranch && (
-					<span
-						className="text-2xs rounded px-1.5 py-0.5 truncate max-w-full select-text"
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-						title={`Last run used the worktree at ${runWorktreePath ?? 'an isolated checkout'} on branch ${runBranch}`}
-					>
-						🌳 {runBranch}
-					</span>
-				)}
-				{runPrUrl && (
+			<div
+				className="mt-1 flex items-center gap-1.5 flex-wrap text-xs"
+				style={{ color: theme.colors.textDim }}
+			>
+				<span>{STATUS_META[card.status].label}</span>
+				{workerAgentId && workerAgentExists ? (
 					<button
-						onClick={(e) => {
-							// Don't also open the card editor behind the link.
-							e.stopPropagation();
-							openUrl(runPrUrl, { ctrlKey: e.ctrlKey || e.metaKey });
+						type="button"
+						className="rounded px-1 hover:bg-white/10"
+						onClick={(event) => {
+							event.stopPropagation();
+							onJumpToAgent(workerAgentId);
 						}}
-						className="text-2xs rounded px-1.5 py-0.5 truncate max-w-full hover:bg-white/10 transition-colors"
-						style={{ backgroundColor: theme.colors.success + '22', color: theme.colors.success }}
-						title={`Pull request opened for this card: ${runPrUrl}`}
 					>
-						🔗 PR
+						⚙ {workerText}
 					</button>
-				)}
-				{!runPrUrl && runPrError && (
-					<span
-						className="text-2xs rounded px-1.5 py-0.5 truncate max-w-full select-text"
-						style={{ backgroundColor: theme.colors.error + '22', color: theme.colors.error }}
-						title={`PR on done failed: ${runPrError}. Move the card out of Done and back to retry.`}
-					>
-						⚠ PR failed
+				) : (
+					<span title={workerAgentId ? 'This worker agent has been deleted' : undefined}>
+						{workerText}
 					</span>
+				)}
+				{isHeld && <span style={{ color: theme.colors.warning }}>Held until resumed</span>}
+				{blockers.length > 0 && (
+					<span style={{ color: theme.colors.warning }}>Waiting on {blockers.length}</span>
+				)}
+				{showWaitReason && !!readiness?.length && (
+					<span>
+						Waiting:{' '}
+						{readiness
+							.map((reason) => READINESS_LABELS[reason as BoardReadinessReason] ?? reason)
+							.join(', ')}
+					</span>
+				)}
+				{showWaitReason && !readiness?.length && <span>Waiting: host diagnosis unknown</span>}
+				{!latestRun?.prUrl && latestRun?.prError && (
+					<span style={{ color: theme.colors.error }}>PR failed — see details</span>
 				)}
 			</div>
-			{/* Non-running cards surface the last run's handoff summary as a 2-line
-			    preview on the tile face - the run's durable payoff, no longer buried
-			    in the "Full run details" disclosure below. */}
-			{!isRunning && latestSummary && (
-				<div
-					className="mt-1.5 text-2xs leading-snug line-clamp-2 select-text"
-					style={{ color: theme.colors.textDim }}
-				>
-					{latestSummary}
-				</div>
-			)}
-			{showRunDetails && latestRun && (
-				<details
-					className="mt-1.5 select-text"
-					// Stop the click bubbling to the tile so toggling the summary doesn't
-					// open the card editor.
-					onClick={(e) => e.stopPropagation()}
-				>
-					<summary
-						className="text-2xs cursor-pointer list-none opacity-70 hover:opacity-100"
-						style={{ color: theme.colors.textDim }}
-					>
-						{isRunning ? 'Run details' : 'Full run details'}
-					</summary>
-					{/* Board runs are headless `executeCuePrompt` spawns with no visible
-					    tab, so this is the live view: status, elapsed, worker, branch. */}
-					<div className="mt-1 text-2xs leading-snug" style={{ color: theme.colors.textDim }}>
-						{isRunning ? 'Running' : (latestRun.outcome ?? 'finished')} · attempt{' '}
-						{latestRun.attempt}
-						{isRunning && (
-							<>
-								{' · '}
-								<RunElapsed startedAt={latestRun.startedAt} />
-							</>
-						)}
-						{workerText ? ` · worker ${workerText}` : ''}
-					</div>
-					{latestSummary && (
-						<div
-							className="mt-1 text-2xs leading-snug whitespace-pre-wrap"
-							style={{ color: theme.colors.textDim }}
-						>
-							{latestSummary}
-						</div>
-					)}
-					{runBranch && (
-						<div
-							className="mt-1 text-2xs leading-snug break-all"
-							style={{ color: theme.colors.textDim }}
-						>
-							Worktree branch <span style={{ color: theme.colors.textMain }}>{runBranch}</span>
-							{runWorktreePath ? ` at ${runWorktreePath}` : ''}. Review and merge it yourself -
-							Maestro never merges or removes a card branch.
-						</div>
-					)}
-				</details>
-			)}
 		</div>
 	);
 });

@@ -4968,6 +4968,9 @@ interface MaestroAPI {
 
 	// Board API (persistent task DAG stored in .maestro/board.yaml)
 	board: {
+		readCardRun: (
+			command: import('../shared/board/commands').BoardCardRunRead
+		) => Promise<import('../shared/board/commands').BoardCommandResult>;
 		deleteCards: (
 			command: Extract<import('../shared/board/commands').BoardCommand, { action: 'delete-cards' }>
 		) => Promise<import('../shared/board/commands').BoardCommandResult>;

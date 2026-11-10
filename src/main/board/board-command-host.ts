@@ -1,3 +1,4 @@
+import { readBoardCardRun } from './board-card-run-read';
 import { requireBoardEnabled } from './board-feature';
 import {
 	previewBoardSourceCleanup,
@@ -39,6 +40,7 @@ import {
 export const executeBoardCommand: BoardCommandHost = async (command) => {
 	requireBoardEnabled();
 	try {
+		if (command.action === 'read-card-run') return { ok: true, value: readBoardCardRun(command) };
 		if (
 			command.action === 'source-preview' ||
 			command.action === 'source-export' ||

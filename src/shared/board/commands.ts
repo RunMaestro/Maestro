@@ -56,7 +56,25 @@ export interface BoardTickResult {
 	reason?: string;
 	runToken?: BoardRuntimeToken;
 }
+/** Exact display read; never confers run, filesystem or human authority. */
+export interface BoardCardRunRead {
+	action: 'read-card-run';
+	target: BoardCommandTarget;
+	cardId: string;
+	cardRevision: number;
+	runId: string;
+}
+export interface BoardCardRunView {
+	runId: string;
+	attempt: number;
+	/** Stored claim-time card instructions, not a reconstruction of the full provider launch envelope. */
+	instructions: string | null;
+	output: string | null;
+	phase: string | null;
+	exitCode: number | null;
+}
 export type BoardCommand =
+	| BoardCardRunRead
 	| BoardRuntimeCommand
 	| BoardRoleCommand
 	| { action: 'source-preview'; sourceKey: string }
@@ -122,6 +140,7 @@ export type BoardCommandResult =
 	| {
 			ok: true;
 			value:
+				| BoardCardRunView
 				| Record<string, unknown>
 				| BoardSourceReceipt
 				| BoardDeleteCardsResult
@@ -196,6 +215,7 @@ export function parseBoardCommand(message: Record<string, unknown>): BoardComman
 		'delete-card': ['target', 'cardId', 'cardRevision'],
 		'delete-cards': ['target', 'cards'],
 		status: ['target', 'cardId', 'cardRevision', 'status'],
+		'read-card-run': ['target', 'cardId', 'cardRevision', 'runId'],
 		tick: ['target', 'operationId'],
 		control: ['target', 'cardId', 'cardRevision', 'operation', 'runToken'],
 	};
@@ -328,6 +348,16 @@ export function parseBoardCommand(message: Record<string, unknown>): BoardComman
 		!revision(target.expectedRevision)
 	)
 		return;
+	if (action === 'read-card-run')
+		return text(message.cardId) && revision(message.cardRevision) && text(message.runId)
+			? {
+					action,
+					target: target as unknown as BoardCommandTarget,
+					cardId: message.cardId,
+					cardRevision: message.cardRevision,
+					runId: message.runId,
+				}
+			: undefined;
 	if (action === 'delete-cards') {
 		const cards = parseBoardDeleteCardsSelection(message.cards);
 		return cards ? { action, target: target as unknown as BoardCommandTarget, cards } : undefined;

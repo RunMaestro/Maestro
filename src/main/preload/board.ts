@@ -32,6 +32,10 @@ export type { Board, BoardCard, CardStatus } from '../../shared/board/types';
  */
 export function createBoardApi() {
 	return {
+		readCardRun: (
+			command: import('../../shared/board/commands').BoardCardRunRead
+		): Promise<import('../../shared/board/commands').BoardCommandResult> =>
+			ipcRenderer.invoke('board:readCardRun', command),
 		deleteCards: (
 			command: Extract<
 				import('../../shared/board/commands').BoardCommand,

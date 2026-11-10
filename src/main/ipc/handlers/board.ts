@@ -146,6 +146,27 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 			}
 			return listener(event, ...args);
 		});
+	handle('board:readCardRun', async (event, input: Record<string, unknown>) => {
+		const window = deps.getMainWindow?.();
+		if (
+			!window ||
+			window.isDestroyed() ||
+			event.sender !== window.webContents ||
+			event.senderFrame !== window.webContents.mainFrame
+		)
+			return {
+				ok: false,
+				error: {
+					code: 'protected-field',
+					message: 'Board attempt reads require the desktop main frame',
+				},
+			};
+
+		const command = input && parseBoardCommand(input);
+		if (!command || command.action !== 'read-card-run')
+			return { ok: false, error: { code: 'invalid-input', message: 'Invalid Board attempt read' } };
+		return executeBoardCommand(command);
+	});
 	handle('board:deleteCards', async (_event, input: Record<string, unknown>) => {
 		const command = input && parseBoardCommand(input);
 		if (!command || command.action !== 'delete-cards')

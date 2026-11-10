@@ -1,3 +1,4 @@
+import { configureBoardFeatures } from '../../../main/board/board-feature';
 import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
@@ -1714,5 +1715,156 @@ describe('single-collection host batch deletion', () => {
 			error: { code: 'invalid-input' },
 		});
 		expect(persistedState()).toEqual(before);
+	});
+});
+
+describe('fenced card attempt display read', () => {
+	function seedAttemptRead() {
+		const board = facade.capture(command());
+		const target = {
+			projectRoot: dir,
+			sourceKey: board.storage!.sourceKey,
+			collectionKey: board.storage!.collectionKey,
+			expectedRevision: board.storage!.expectedRevision!,
+		};
+		const key = { sourceKey: target.sourceKey, collectionKey: target.collectionKey, cardId: 'c' };
+		const specification = {
+			key,
+			attempt: 1,
+			card: { body: 'Stored original instructions' },
+			runToken: { secret: 'MUST_NOT_LEAK' },
+			owner: { secret: 'MUST_NOT_LEAK' },
+		};
+		db.prepare(
+			'INSERT INTO runs (run_id,collection_key,card_id,attempt,specification_json,lifecycle_json,outcome_json) VALUES (?,?,?,?,?,?,?)'
+		).run(
+			'display-run',
+			target.collectionKey,
+			'c',
+			1,
+			JSON.stringify(specification),
+			JSON.stringify({ phase: 'finished' }),
+			JSON.stringify({
+				result: { output: '# Full answer\n\n**Saved** decision.', exitCode: 0 },
+				privateProof: 'MUST_NOT_LEAK',
+			})
+		);
+		return {
+			action: 'read-card-run' as const,
+			target,
+			cardId: 'c',
+			cardRevision: board.storage!.cardRevisions.c,
+			runId: 'display-run',
+		};
+	}
+	it('reads only the exact saved instructions and response through preload without logical writes or authority proof', async () => {
+		const input = seedAttemptRead();
+		const before = db.serialize();
+		const answer = await api.readCardRun(input);
+		expect(answer).toEqual({
+			ok: true,
+			value: {
+				runId: 'display-run',
+				attempt: 1,
+				instructions: 'Stored original instructions',
+				output: '# Full answer\n\n**Saved** decision.',
+				phase: 'finished',
+				exitCode: 0,
+			},
+		});
+		expect(JSON.stringify(answer)).not.toContain('MUST_NOT_LEAK');
+		expect(db.serialize()).toEqual(before);
+	});
+	it('displays retained unaccepted output without completing or releasing an uncertain attempt', async () => {
+		const input = seedAttemptRead();
+		db.prepare('UPDATE runs SET outcome_json=NULL,lifecycle_json=? WHERE run_id=?').run(
+			JSON.stringify({
+				phase: 'uncertain',
+				pendingResult: {
+					output: 'Retained actual output',
+					exitCode: 1,
+					terminationConfirmed: true,
+					privateProof: 'MUST_NOT_LEAK',
+				},
+			}),
+			input.runId
+		);
+		const before = db.serialize();
+		expect(await api.readCardRun(input)).toEqual({
+			ok: true,
+			value: {
+				runId: 'display-run',
+				attempt: 1,
+				instructions: 'Stored original instructions',
+				output: 'Retained actual output',
+				phase: 'uncertain',
+				exitCode: 1,
+			},
+		});
+		expect(db.serialize()).toEqual(before);
+	});
+
+	it('refuses foreign collection, stale card or collection revisions, and a foreign attempt without writes', async () => {
+		const input = seedAttemptRead();
+		const before = db.serialize();
+		for (const changed of [
+			{ ...input, target: { ...input.target, sourceKey: 'foreign' } },
+			{ ...input, cardId: 'absent' },
+			{ ...input, cardRevision: input.cardRevision + 1 },
+			{
+				...input,
+				target: { ...input.target, expectedRevision: input.target.expectedRevision + 1 },
+			},
+			{ ...input, runId: 'foreign-run' },
+		]) {
+			expect(await api.readCardRun(changed)).toMatchObject({
+				ok: false,
+				error: { code: expect.stringMatching(/not-found|stale-revision|identity-mismatch/) },
+			});
+			expect(db.serialize()).toEqual(before);
+		}
+	});
+	it.each([
+		{ board: false, maestroCue: false },
+		{ board: true, maestroCue: false },
+		{ board: false, maestroCue: true },
+	])('refuses read admission with gates %j without changing the bound database', async (gates) => {
+		const input = seedAttemptRead();
+		const before = db.serialize();
+		configureBoardFeatures({ get: () => gates });
+		try {
+			await expect(api.readCardRun(input)).rejects.toThrow(/BoardDisabled|CueDisabled/);
+			expect(db.serialize()).toEqual(before);
+		} finally {
+			configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
+		}
+	});
+	it('refuses suppressed source output without changing the database', async () => {
+		const input = seedAttemptRead();
+		db.prepare('INSERT INTO board_source_suppressions(source_key) VALUES (?)').run(
+			input.target.sourceKey
+		);
+		const before = db.serialize();
+		expect(await api.readCardRun(input)).toMatchObject({ ok: false, error: { code: 'not-found' } });
+		expect(db.serialize()).toEqual(before);
+	});
+	it('refuses a subframe caller and supplied authority fields before any attempt read', async () => {
+		const input = seedAttemptRead();
+		const before = db.serialize();
+		const original = transport.event;
+		transport.event = { ...original, senderFrame: {} };
+		try {
+			expect(await api.readCardRun(input)).toMatchObject({
+				ok: false,
+				error: { code: 'protected-field' },
+			});
+		} finally {
+			transport.event = original;
+		}
+		expect(await api.readCardRun({ ...input, human: true } as typeof input)).toMatchObject({
+			ok: false,
+			error: { code: 'invalid-input' },
+		});
+		expect(db.serialize()).toEqual(before);
 	});
 });

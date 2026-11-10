@@ -8,6 +8,14 @@ The **Board** is a central, persistent graph of work across projects. Cards carr
 
 Board and Maestro Cue are Encore Features and both must be enabled for automatic dispatch.
 
+### Reading and editing cards
+
+Click a card (or focus it and press Enter) to read its current instructions and saved responses. Choose an attempt to read that attempt's stored instructions and complete output; changed current instructions are labeled separately. Stored attempt instructions are not a reconstruction of the full provider launch envelope. Missing, running, failed and retained/unaccepted results remain explicit. Viewing never starts work or approves a result.
+
+The pencil next to the trash opens the existing editor. The trash retains its two-step confirmation and host revision/running-attempt guards; there is no separate selection checkbox or bulk-selection toolbar. Cards show title, status, responsible agent and actionable warnings; technical metadata and summaries remain available in details.
+
+The lazy `read-card-run` host command checks exact source/collection/card/run identity and collection/card revisions in one SQLite read transaction. It returns only display fields, never owner/run proofs or launch overrides. Native preload reads require the desktop main frame; authenticated WebSocket reads keep the existing live-session/revocation checks. Both Board/Cue gates remain required, with no source discovery or runtime acquisition for this read.
+
 ## Central storage and migration
 
 For developer-only rendered qualification, see [[board-rendered-fixture]] for the

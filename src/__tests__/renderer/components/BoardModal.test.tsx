@@ -1,3 +1,5 @@
+import { BOARD_SOURCE_PROJECT_PREFIX } from '../../../shared/board/types';
+import type { BoardCommandResult } from '../../../shared/board/commands';
 /**
  * @file BoardModal.test.tsx
  * @description Interaction tests for the Board kanban modal (Phase 4): creating
@@ -80,6 +82,7 @@ function makeCard(overrides: Partial<BoardCard> & { id: string; title: string })
 // Board IPC stub, reassigned per test. The global test harness does not include
 // the board/profiles namespaces, so install them here.
 let boardApi: {
+	readCardRun: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
 	roleCommand: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
 	runtimeCommand: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
 	sourceCommand: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
@@ -228,7 +231,20 @@ function installApis(initialBoards: Board[], profiles?: unknown[]): void {
 		updateCard: vi.fn().mockResolvedValue(initialBoards[0]),
 		setCardStatus: vi.fn().mockResolvedValue(initialBoards[0]),
 		deleteCard: vi.fn().mockResolvedValue(initialBoards[0]),
-		deleteCards: vi.fn(),
+		deleteCards: vi.fn().mockResolvedValue({
+			ok: true,
+			value: {
+				sourceKey: 'source-one',
+				collectionKey: initialBoards[0]?.id,
+				previousRevision: 1,
+				board: initialBoards[0],
+				cards: [],
+				revision: 2,
+			},
+		}),
+		readCardRun: vi
+			.fn()
+			.mockResolvedValue({ ok: false, error: { code: 'not-found', message: 'No saved attempt' } }),
 		cancelCard: vi.fn().mockResolvedValue(initialBoards[0]),
 		resumeCard: vi.fn().mockResolvedValue(initialBoards[0]),
 		onBoardChanged: vi.fn((cb: (payload: { projectRoot: string }) => void) => {
@@ -549,7 +565,7 @@ describe('BoardModal card creation', () => {
 			};
 		});
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Original'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Original' }));
 		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
 			target: { value: 'Edited' },
 		});
@@ -595,7 +611,7 @@ describe('BoardModal destructive actions', () => {
 	it('keeps a running card visible when the host refuses its deletion', async () => {
 		const running = makeCard({ id: 'active', title: 'Active work', status: 'running' });
 		installApis([{ id: 'b1', name: 'Board', cards: [running] }]);
-		boardApi.deleteCard.mockRejectedValueOnce(new Error('Cannot delete a running card'));
+		boardApi.deleteCards.mockRejectedValueOnce(new Error('Cannot delete a running card'));
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 		fireEvent.click(await screen.findByRole('button', { name: 'Delete Active work' }));
 		fireEvent.click(screen.getByRole('button', { name: 'Confirm delete Active work' }));
@@ -607,16 +623,18 @@ describe('BoardModal destructive actions', () => {
 			)
 		);
 		expect(screen.getByText('Active work')).toBeVisible();
-		expect(boardApi.deleteCard).toHaveBeenCalledTimes(1);
+		expect(boardApi.deleteCards).toHaveBeenCalledTimes(1);
+		expect(boardApi.readCardRun).not.toHaveBeenCalled();
+		expect(screen.queryByPlaceholderText('e.g. Design the schema')).toBeNull();
 	});
 
 	it('shows a pending deletion and prevents repeated requests until the host replies', async () => {
 		const card = makeCard({ id: 'cardA', title: 'Card A' });
 		const board: Board = { id: 'b1', name: 'My Board', cards: [card] };
 		installApis([board]);
-		let finish!: (value: Board) => void;
-		boardApi.deleteCard.mockReturnValueOnce(
-			new Promise<Board>((resolve) => {
+		let finish!: (value: BoardCommandResult) => void;
+		boardApi.deleteCards.mockReturnValueOnce(
+			new Promise<BoardCommandResult>((resolve) => {
 				finish = resolve;
 			})
 		);
@@ -626,8 +644,18 @@ describe('BoardModal destructive actions', () => {
 		const pending = screen.getByRole('button', { name: 'Deleting Card A' });
 		expect(pending).toBeDisabled();
 		fireEvent.click(pending);
-		expect(boardApi.deleteCard).toHaveBeenCalledTimes(1);
-		finish({ ...board, cards: [] });
+		expect(boardApi.deleteCards).toHaveBeenCalledTimes(1);
+		finish({
+			ok: true,
+			value: {
+				sourceKey: 'source-one',
+				collectionKey: 'b1',
+				previousRevision: 1,
+				board: { ...board, cards: [] },
+				cards: [{ cardId: 'cardA', previousRevision: 0, revision: 1, deleted: true }],
+				revision: 2,
+			},
+		});
 		await waitFor(() =>
 			expect(screen.queryByRole('button', { name: 'Deleting Card A' })).toBeNull()
 		);
@@ -642,17 +670,21 @@ describe('BoardModal destructive actions', () => {
 
 		const trash = await screen.findByRole('button', { name: /^Delete Card A$/i });
 		fireEvent.click(trash);
-		expect(boardApi.deleteCard).not.toHaveBeenCalled();
+		expect(boardApi.deleteCards).not.toHaveBeenCalled();
 
 		// Armed: the button relabels itself, and only now does a click delete.
 		const armed = screen.getByRole('button', { name: /Confirm delete Card A/i });
 		fireEvent.click(armed);
 		await waitFor(() =>
-			expect(boardApi.deleteCard).toHaveBeenCalledWith(PROJECT_ROOT, 'b1', 'cardA', {
-				sourceKey: 'source-one',
-				collectionKey: 'b1',
-				revision: 1,
-				cardRevision: 0,
+			expect(boardApi.deleteCards).toHaveBeenCalledWith({
+				action: 'delete-cards',
+				target: {
+					projectRoot: PROJECT_ROOT,
+					sourceKey: 'source-one',
+					collectionKey: 'b1',
+					expectedRevision: 1,
+				},
+				cards: [{ cardId: 'cardA', cardRevision: 0 }],
 			})
 		);
 	});
@@ -678,7 +710,7 @@ describe('BoardModal destructive actions', () => {
 		installApis([board]);
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Card A'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Card A' }));
 
 		const titleInput = await screen.findByPlaceholderText('e.g. Design the schema');
 		fireEvent.change(titleInput, { target: { value: 'Card A edited' } });
@@ -709,7 +741,7 @@ describe('BoardModal destructive actions', () => {
 		installApis([board]);
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Card A'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Card A' }));
 		await screen.findByPlaceholderText('e.g. Design the schema');
 
 		fireEvent.click(screen.getByRole('button', { name: /Back to board/i }));
@@ -724,7 +756,7 @@ describe('BoardModal destructive actions', () => {
 		installApis([{ id: 'b1', name: 'My Board', cards: [card] }]);
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Card A'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Card A' }));
 		const body = await screen.findByPlaceholderText('Instructions handed to the assignee agent.');
 		fireEvent.change(body, { target: { value: 'Changed instructions' } });
 		fireEvent.click(screen.getByRole('button', { name: /Back to board/i }));
@@ -794,7 +826,7 @@ describe('BoardModal run cancellation', () => {
 		const resume = await screen.findByRole('button', { name: /Resume Card A/i });
 		expect(screen.queryByRole('button', { name: /Resume Card B/i })).toBeNull();
 		// The tile says why it is sitting still.
-		expect(screen.getByText('held')).toBeInTheDocument();
+		expect(screen.getByText('Held until resumed')).toBeInTheDocument();
 
 		fireEvent.click(resume);
 		await waitFor(() => expect(boardApi.resumeCard).toHaveBeenCalledTimes(1));
@@ -832,7 +864,7 @@ describe('BoardModal live updates', () => {
 		installApis([board]);
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Card A'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Card A' }));
 
 		const titleInput = await screen.findByPlaceholderText('e.g. Design the schema');
 		fireEvent.change(titleInput, { target: { value: 'Edited in flight' } });
@@ -873,7 +905,7 @@ describe('BoardModal cycle rejection', () => {
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 
 		// Open the editor for card B.
-		const bTile = await screen.findByText('Card B');
+		const bTile = await screen.findByRole('button', { name: 'Edit Card B' });
 		fireEvent.click(bTile);
 
 		// Candidate parents lists card A; select it (creating the cycle). Named
@@ -896,7 +928,7 @@ describe('BoardModal status conflict', () => {
 		installApis([{ id: 'b1', name: 'My Board', cards: [card] }]);
 		boardApi.captureCard.mockRejectedValue(new Error('Repository is unavailable'));
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Card A'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Card A' }));
 		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
 			target: { value: 'Unsaved title' },
 		});
@@ -918,7 +950,7 @@ describe('BoardModal status conflict', () => {
 		boardApi.captureCard.mockRejectedValue(new Error('Card status changed'));
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Card A'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Card A' }));
 		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
 			target: { value: 'Unsaved title' },
 		});
@@ -936,7 +968,7 @@ describe('BoardModal status conflict', () => {
 
 		fireEvent.click(screen.getByRole('button', { name: /Back to board/i }));
 		fireEvent.click(await screen.findByRole('button', { name: /^Discard$/i }));
-		fireEvent.click(await screen.findByRole('button', { name: /^Card A, In Progress$/i }));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Card A' }));
 		expect(await screen.findByLabelText('Move to')).toHaveTextContent('In Progress');
 		expect(screen.getByPlaceholderText('e.g. Design the schema')).toHaveValue('Card A');
 	});
@@ -1011,7 +1043,9 @@ describe('BoardModal worktree isolation (Phase 4)', () => {
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 
-		expect(await screen.findByText(/🌳 board\/b1\/cardA/)).toBeInTheDocument();
+		fireEvent.click(await screen.findByRole('button', { name: 'Card A, Done' }));
+		fireEvent.click(screen.getByText('Technical details'));
+		expect(screen.getByText(/Worktree branch board\/b1\/cardA/)).toBeVisible();
 	});
 });
 
@@ -1029,7 +1063,7 @@ describe('BoardModal keyboard operability (Phase 6)', () => {
 		expect(screen.getByRole('group', { name: /^To Do, 0 cards$/i })).toBeInTheDocument();
 	});
 
-	it('focuses a tile and opens its editor with Enter', async () => {
+	it('focuses a tile and opens read-only details with Enter', async () => {
 		const cardA = makeCard({ id: 'cardA', title: 'Card A' });
 		const board: Board = { id: 'b1', name: 'My Board', cards: [cardA] };
 		installApis([board]);
@@ -1041,7 +1075,8 @@ describe('BoardModal keyboard operability (Phase 6)', () => {
 		expect(tile).toHaveFocus();
 
 		fireEvent.keyDown(tile, { key: 'Enter' });
-		expect(await screen.findByPlaceholderText('e.g. Design the schema')).toHaveValue('Card A');
+		expect(await screen.findByRole('heading', { name: 'Current instructions' })).toBeVisible();
+		expect(screen.queryByPlaceholderText('e.g. Design the schema')).toBeNull();
 	});
 
 	it('walks tiles with the arrow keys, down a column and across to the next', async () => {
@@ -1080,17 +1115,21 @@ describe('BoardModal keyboard operability (Phase 6)', () => {
 		const tile = await screen.findByRole('button', { name: /^Card A, To Do$/i });
 		tile.focus();
 		fireEvent.keyDown(tile, { key: 'Delete' });
-		expect(boardApi.deleteCard).not.toHaveBeenCalled();
+		expect(boardApi.deleteCards).not.toHaveBeenCalled();
 		// Armed state is visible on the trash button, not just internal.
 		expect(screen.getByRole('button', { name: /Confirm delete Card A/i })).toBeInTheDocument();
 
 		fireEvent.keyDown(tile, { key: 'Delete' });
 		await waitFor(() =>
-			expect(boardApi.deleteCard).toHaveBeenCalledWith(PROJECT_ROOT, 'b1', 'cardA', {
-				sourceKey: 'source-one',
-				collectionKey: 'b1',
-				revision: 1,
-				cardRevision: 0,
+			expect(boardApi.deleteCards).toHaveBeenCalledWith({
+				action: 'delete-cards',
+				target: {
+					projectRoot: PROJECT_ROOT,
+					sourceKey: 'source-one',
+					collectionKey: 'b1',
+					expectedRevision: 1,
+				},
+				cards: [{ cardId: 'cardA', cardRevision: 0 }],
 			})
 		);
 	});
@@ -1132,7 +1171,7 @@ describe('BoardModal keyboard operability (Phase 6)', () => {
 });
 
 describe('BoardModal running-card visibility (Phase 6)', () => {
-	it('shows attempt, elapsed time and the pooled worker on a running tile', async () => {
+	it('keeps the worker on a slim running tile and the attempt timestamp in details', async () => {
 		const running = makeCard({
 			id: 'cardA',
 			title: 'Card A',
@@ -1149,14 +1188,11 @@ describe('BoardModal running-card visibility (Phase 6)', () => {
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 
-		// Attempt + a formatted elapsed reading (formatElapsedTime: "1m 5s"). Shown
-		// on the tile badge and again inside the run-details disclosure.
-		expect((await screen.findAllByText(/attempt 2/i)).length).toBeGreaterThan(0);
-		expect(screen.getAllByText(/1m \d+s/).length).toBeGreaterThan(0);
-		// The worker is a Left Bar agent, resolved through the session store.
-		expect(screen.getAllByText(/Test Session/).length).toBeGreaterThan(0);
-		// The run details disclosure is available WHILE running, not only after.
-		expect(screen.getByText('Run details')).toBeInTheDocument();
+		const tile = await screen.findByRole('button', { name: 'Card A, In Progress' });
+		expect(within(tile).getByText(/Test Session/)).toBeVisible();
+		expect(within(tile).queryByText(/attempt 2/i)).toBeNull();
+		fireEvent.click(tile);
+		expect(screen.getByText(/Attempt 2 · Started/)).toHaveTextContent(running.runs![0].startedAt);
 	});
 });
 
@@ -1219,18 +1255,18 @@ describe('BoardModal worker chip + summary discoverability (I1)', () => {
 		expect(screen.queryByRole('button', { name: /ghost/ })).toBeNull();
 	});
 
-	it('shows the run summary as a clamped preview on the tile face', async () => {
+	it('moves the full run summary off the card face into readable technical details', async () => {
 		const SUMMARY = 'Refactored the auth flow and added regression coverage.';
 		const card = doneCard({ summary: SUMMARY });
 		installApis([{ id: 'b1', name: 'My Board', cards: [card] }]);
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 
-		// The summary now appears on the tile face (line-clamp-2 preview) in addition
-		// to the collapsed "Full run details" disclosure.
-		const matches = await screen.findAllByText(SUMMARY);
-		const preview = matches.find((el) => el.className.includes('line-clamp-2'));
-		expect(preview).toBeTruthy();
+		const tile = await screen.findByRole('button', { name: 'Card A, Done' });
+		expect(within(tile).queryByText(SUMMARY)).toBeNull();
+		fireEvent.click(tile);
+		fireEvent.click(screen.getByText('Technical details'));
+		expect(screen.getByText(SUMMARY)).toBeVisible();
 	});
 });
 
@@ -1258,7 +1294,9 @@ describe('BoardModal PR-on-done outcome on the card (X1)', () => {
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 
-		const link = await screen.findByRole('button', { name: /🔗 PR/ });
+		fireEvent.click(await screen.findByRole('button', { name: 'Card A, Done' }));
+		fireEvent.click(screen.getByText('Technical details'));
+		const link = screen.getByRole('button', { name: /🔗 PR/ });
 		expect(link).toHaveAttribute('title', expect.stringContaining(PR_URL));
 
 		fireEvent.click(link);
@@ -1273,11 +1311,13 @@ describe('BoardModal PR-on-done outcome on the card (X1)', () => {
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 
-		const badge = await screen.findByText(/⚠ PR failed/);
-		expect(badge).toHaveAttribute('title', expect.stringContaining(REASON));
+		await screen.findByText(/PR failed/);
+		fireEvent.click(screen.getByRole('button', { name: 'Card A, Done' }));
+		fireEvent.click(screen.getByText('Technical details'));
+		expect(screen.getByText(REASON)).toBeVisible();
 		// Display only: a failed PR never gets a retry button, and the card stays Done.
 		expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
-		expect(screen.getByRole('button', { name: /^Card A, Done$/i })).toBeInTheDocument();
+		expect(screen.getByRole('region', { name: 'Card details' })).toHaveTextContent('done');
 	});
 
 	it('prefers the link over the error badge when a later attempt succeeded', async () => {
@@ -1288,8 +1328,10 @@ describe('BoardModal PR-on-done outcome on the card (X1)', () => {
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 
-		expect(await screen.findByRole('button', { name: /🔗 PR/ })).toBeInTheDocument();
-		expect(screen.queryByText(/⚠ PR failed/)).toBeNull();
+		fireEvent.click(await screen.findByRole('button', { name: 'Card A, Done' }));
+		fireEvent.click(screen.getByText('Technical details'));
+		expect(screen.getByRole('button', { name: /🔗 PR/ })).toBeVisible();
+		expect(screen.queryByText('stale reason')).toBeNull();
 	});
 });
 
@@ -1465,10 +1507,12 @@ describe('BoardModal review column (F2)', () => {
 		const order = labels.map((label) => label.split(',')[0]);
 		expect(order).toEqual(['To Do', 'In Progress', 'Review', 'Ready for Human', 'Done']);
 
-		// The reason the agent left behind is visible on the tile face.
 		expect(
-			screen.getAllByText('Schema change needs a human to eyeball the migration.').length
-		).toBeGreaterThan(0);
+			within(column).queryByText('Schema change needs a human to eyeball the migration.')
+		).toBeNull();
+		fireEvent.click(within(column).getByRole('button', { name: 'Card A, Review' }));
+		fireEvent.click(screen.getByText('Technical details'));
+		expect(screen.getByText('Schema change needs a human to eyeball the migration.')).toBeVisible();
 	});
 
 	it('requires a separate confirmed final decision and never treats a Done move as approval', async () => {
@@ -1636,7 +1680,7 @@ describe('BoardModal PR-on-done controls (F3)', () => {
 		installApis([{ id: 'b1', name: 'My Board', cards: [card] }]);
 
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Card A'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Card A' }));
 
 		// The editor reflects what was persisted.
 		expect(await screen.findByLabelText(/Open PR when done/i)).toBeChecked();
@@ -2355,6 +2399,9 @@ describe('BoardModal central workspace identity', () => {
 		await screen.findByText('Project one card');
 		const tile = screen.getByText('Project two card').closest('[tabindex]')!;
 		fireEvent.keyDown(tile, { key: 'Enter' });
+		await screen.findByRole('heading', { name: 'Current instructions' });
+		fireEvent.click(screen.getByRole('button', { name: 'Back to board' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Edit Project two card' }));
 		expect(await screen.findByPlaceholderText('e.g. Design the schema')).toHaveValue(
 			'Project two card'
 		);
@@ -2376,7 +2423,7 @@ describe('BoardModal central workspace identity', () => {
 	it('refreshes other projects centrally while retaining the editor collection revision and unsaved draft', async () => {
 		const value = installWorkspace();
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Project one card'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Project one card' }));
 		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
 			target: { value: 'Keep this draft' },
 		});
@@ -2422,7 +2469,7 @@ describe('BoardModal central workspace identity', () => {
 			readiness: {},
 		});
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Project one card'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Project one card' }));
 		fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Edited closed source' } });
 		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
 		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
@@ -2459,7 +2506,7 @@ describe('BoardModal central workspace identity', () => {
 				readiness: {},
 			});
 			render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-			fireEvent.click(await screen.findByText('Project one card'));
+			fireEvent.click(await screen.findByRole('button', { name: 'Edit Project one card' }));
 			fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Edited SSH card' } });
 			fireEvent.click(screen.getByRole('button', { name: 'Revalidate selected source' }));
 			await waitFor(() =>
@@ -2510,7 +2557,7 @@ describe('BoardModal central workspace identity', () => {
 			},
 		});
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Unmapped card'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Unmapped card' }));
 		expect(await screen.findByRole('button', { name: /Save changes/ })).toBeEnabled();
 		expect(boardApi.updateCard).not.toHaveBeenCalled();
 		expect(boardApi.captureCard).not.toHaveBeenCalled();
@@ -2657,7 +2704,7 @@ describe('BoardModal host capture editor', () => {
 		Object.assign(original, { profileNamespace: 'namespace-one' });
 		installCapture(original);
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Keep role origin'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Keep role origin' }));
 		const picker = screen.getByLabelText('Required role (optional)');
 		for (const namespace of ['namespace-two', 'namespace-one'])
 			choose(picker, new RegExp(`Reviewer \\(${namespace} / same-role\\)`));
@@ -2685,7 +2732,7 @@ describe('BoardModal host capture editor', () => {
 			});
 			installCapture(original);
 			render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-			fireEvent.click(await screen.findByText('Legacy role'));
+			fireEvent.click(await screen.findByRole('button', { name: 'Edit Legacy role' }));
 			const picker = screen.getByLabelText('Required role (optional)');
 			expect(picker).toHaveTextContent('Unresolved role: deleted-source / old-role');
 			const role = { namespace: 'namespace-two', profileId: 'same-role' };
@@ -2739,9 +2786,7 @@ describe('BoardModal host capture editor', () => {
 		await openNew();
 		selectScope({ kind: 'agent', agentId: 's1' });
 		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
-		fireEvent.click(
-			await screen.findByText('Explicit capture', { selector: '[class*="font-medium"]' })
-		);
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Explicit capture' }));
 		const approve = screen.getByRole('button', { name: 'Approve start' });
 		fireEvent.click(approve);
 		expect(boardApi.runtimeCommand).toHaveBeenCalledWith({
@@ -2786,7 +2831,7 @@ describe('BoardModal host capture editor', () => {
 			})
 		);
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Refresh approval'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Refresh approval' }));
 		boardApi.runtimeCommand.mockResolvedValue({ ok: true, value: { accepted: true } });
 		boardApi.queryWorkspace.mockResolvedValue({
 			ok: false,
@@ -2821,7 +2866,7 @@ describe('BoardModal host capture editor', () => {
 					error: { code, message: 'Approval rejected' },
 				});
 			render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-			fireEvent.click(await screen.findByText('Approval draft'));
+			fireEvent.click(await screen.findByRole('button', { name: 'Edit Approval draft' }));
 			fireEvent.change(screen.getByLabelText('Body / instructions'), {
 				target: { value: 'Unsaved instructions' },
 			});
@@ -2915,7 +2960,7 @@ describe('BoardModal host capture editor', () => {
 		expect(screen.getByLabelText(/Pin to agent/)).toHaveTextContent('foreign');
 		choose(screen.getByLabelText(/Pin to agent/), 'Test Session');
 		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
-		await screen.findByText('Explicit capture', { selector: '[class*="font-medium"]' });
+		await screen.findByRole('button', { name: 'Edit Explicit capture' });
 		expect(boardApi.captureCard.mock.calls[1][0].card).toMatchObject({
 			body: 'Preserve this body',
 			assigneeAgentId: 's1',
@@ -2990,7 +3035,7 @@ describe('BoardModal host capture editor', () => {
 			'target-missing, repository-unresolved'
 		);
 		expect(screen.getByRole('status')).toHaveTextContent('Start approval: required');
-		fireEvent.click(screen.getByText('Host title'));
+		fireEvent.click(screen.getByRole('button', { name: 'Edit Host title' }));
 		expect(screen.getByLabelText('Title')).toHaveValue('Host title');
 		expect(screen.getByLabelText('Execution scope')).toHaveTextContent('Missing agent: gone');
 		fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Re-edit host value' } });
@@ -3010,7 +3055,7 @@ describe('BoardModal host capture editor', () => {
 			error: { code: 'stale-revision', message: 'Card changed since read' },
 		});
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Original'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Original' }));
 		fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Unsaved title' } });
 		boardApi.list.mockResolvedValue([
 			{
@@ -3058,7 +3103,7 @@ describe('BoardModal host capture editor', () => {
 		});
 		installCapture(original);
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Held card'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Held card' }));
 		fireEvent.change(screen.getByLabelText('Body / instructions'), {
 			target: { value: 'Only instructions changed' },
 		});
@@ -3098,7 +3143,7 @@ describe('BoardModal host capture editor', () => {
 			},
 		});
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Missing references'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Missing references' }));
 		expect(screen.queryByLabelText('Role (profile)')).not.toBeInTheDocument();
 		expect(screen.getByLabelText('Repository')).toHaveTextContent(
 			'Missing repository: deleted-repo'
@@ -3124,7 +3169,7 @@ describe('BoardModal host capture editor', () => {
 		Object.assign(original, legacy);
 		installCapture(original);
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Legacy card'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Legacy card' }));
 		fireEvent.change(screen.getByLabelText('Body / instructions'), {
 			target: { value: 'Updated' },
 		});
@@ -3143,7 +3188,7 @@ describe('BoardModal host capture editor', () => {
 			cards: [{ ...original, status: 'blocked', storageRevision: 4 }],
 		});
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Move then edit'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Move then edit' }));
 		fireEvent.change(screen.getByLabelText('Body / instructions'), {
 			target: { value: 'Keep these instructions' },
 		});
@@ -3205,7 +3250,7 @@ describe('separate review card', () => {
 		});
 		installApis([{ id: 'b1', name: 'Board', cards: [work] }]);
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Implement'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Implement' }));
 		fireEvent.click(screen.getByRole('button', { name: 'Add review' }));
 		expect(screen.getByLabelText('Task type')).toHaveTextContent('Review');
 		expect(screen.getByLabelText('Review branch')).toHaveValue('feature/x');
@@ -3376,8 +3421,12 @@ describe('Board host wait explanations', () => {
 			return response;
 		});
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		expect(await screen.findByText('Group: allowed-group')).toBeInTheDocument();
-		expect(screen.getByText(/Agent: .*s1/)).toBeInTheDocument();
+		fireEvent.click(await screen.findByRole('button', { name: 'Group work, To Do' }));
+		expect(screen.getByText('Group: allowed-group')).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Back to board' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Agent work, To Do' }));
+		expect(screen.getByText('Agent: s1')).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Back to board' }));
 		expect(
 			screen.getByText(
 				'Waiting: No eligible workers, Assigned worker is paused, Approval is required'
@@ -3422,7 +3471,7 @@ describe('Board host wait explanations', () => {
 			readiness: { c: ['emptyEligibleWorkers'] },
 		});
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		fireEvent.click(await screen.findByText('Captured'));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit Captured' }));
 		fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Saved card' } });
 		fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
 		expect(await screen.findByRole('status')).toHaveTextContent('emptyEligibleWorkers');
@@ -3462,10 +3511,10 @@ describe('Board host wait explanations', () => {
 describe('BoardModal initialization and workflow visibility', () => {
 	it('keeps a card visible and reports a rejected deletion after confirmation', async () => {
 		installApis([{ id: 'b1', name: 'Board', cards: [makeCard({ id: 'c1', title: 'Keep me' })] }]);
-		boardApi.deleteCard.mockRejectedValueOnce(new Error('Card changed since read'));
+		boardApi.deleteCards.mockRejectedValueOnce(new Error('Card changed since read'));
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 		fireEvent.click(await screen.findByRole('button', { name: 'Delete Keep me' }));
-		expect(boardApi.deleteCard).not.toHaveBeenCalled();
+		expect(boardApi.deleteCards).not.toHaveBeenCalled();
 		fireEvent.click(screen.getByRole('button', { name: 'Confirm delete Keep me' }));
 		await waitFor(() =>
 			expect(notifyToast).toHaveBeenCalledWith(
@@ -3531,12 +3580,10 @@ describe('BoardModal initialization and workflow visibility', () => {
 		installApis([{ id: 'b1', name: 'Board', cards: [card] }]);
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 		const tile = await screen.findByRole('button', { name: 'Long path, To Do' });
-		const project = within(tile).getByTitle(projectPath);
-		expect(
-			within(project).getByText(`Project: ...${path.sep}path${path.sep}fixture-repository`)
-		).toHaveAttribute('aria-hidden', 'true');
-		expect(within(project).getByText(`Project: ${projectPath}`)).toHaveClass('sr-only');
-		expect(tile).toHaveAccessibleDescription(`Project: ${projectPath}`);
+		expect(within(tile).queryByText(/Project:/)).toBeNull();
+		fireEvent.click(tile);
+		fireEvent.click(screen.getByText('Technical details'));
+		expect(screen.getByRole('region', { name: 'Card details' })).toHaveTextContent(projectPath);
 	});
 
 	it('shows internal intake states in To Do with scope, reviewer and host waiting reason', async () => {
@@ -3556,13 +3603,17 @@ describe('BoardModal initialization and workflow visibility', () => {
 		});
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 		const column = await screen.findByRole('group', { name: 'To Do, 1 card' });
-		expect(within(column).getByText(/Group: team/)).toBeInTheDocument();
 		expect(within(column).getByText('Blocked')).toBeInTheDocument();
-		expect(
-			within(column).getByTitle(path.join(os.tmpdir(), 'fixture', 'repo'))
-		).toBeInTheDocument();
-		expect(within(column).getByText('Reviewer: reviewer')).toBeInTheDocument();
 		expect(within(column).getByText('Waiting: Assigned worker is busy')).toBeInTheDocument();
+		fireEvent.click(within(column).getByRole('button', { name: 'Held task, Blocked' }));
+		fireEvent.click(screen.getByText('Technical details'));
+		expect(screen.getByText('Group: team')).toBeVisible();
+		expect(screen.getByRole('region', { name: 'Card details' })).toHaveTextContent(
+			'Reviewer: reviewer'
+		);
+		expect(screen.getByRole('region', { name: 'Card details' })).toHaveTextContent(
+			path.join(os.tmpdir(), 'fixture', 'repo')
+		);
 	});
 
 	it('keeps the new-card action available after initialization fails and retries', async () => {
@@ -3588,179 +3639,6 @@ describe('BoardModal initialization and workflow visibility', () => {
 				.getAllByRole('group')
 				.filter((element) => /, 0 cards$/.test(element.getAttribute('aria-label') ?? ''))
 		).toHaveLength(5);
-	});
-});
-
-describe('Board bulk deletion', () => {
-	it('identifies duplicate names in mixed success and conflict receipts', async () => {
-		const boards: Board[] = [
-			{ id: 'one', name: 'Same board', cards: [makeCard({ id: 'a', title: 'Same card' })] },
-			{ id: 'two', name: 'Same board', cards: [makeCard({ id: 'b', title: 'Same card' })] },
-		];
-		installApis(boards);
-		const response = workspaceResponse(boards);
-		if (!response.ok) throw new Error('Expected workspace fixture');
-		response.value.collections[1].sourceKey = 'source-two';
-		response.value.sources.push({
-			sourceKey: 'source-two',
-			projectRef: { sourceKey: 'source-two' },
-			location: { location: { kind: 'local' }, path: '/other/project' },
-		});
-		boardApi.queryWorkspace.mockResolvedValue(response);
-		boardApi.deleteCards
-			.mockResolvedValueOnce({
-				ok: true,
-				value: { revision: 2, board: { ...boards[0], cards: [] } },
-			})
-			.mockResolvedValueOnce({ ok: false, error: { code: 'stale-revision' } });
-		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		await screen.findAllByText('Same card');
-		for (const check of screen.getAllByRole('checkbox', { name: 'Select for deletion' }))
-			fireEvent.click(check);
-		fireEvent.click(screen.getByRole('button', { name: 'Review 2 selected' }));
-		expect(screen.getByLabelText('Delete selected cards preview')).toHaveTextContent(
-			'/other/project'
-		);
-		fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }));
-		await screen.findByText(/no cards deleted.*board changed/);
-		const statuses = screen.getAllByRole('status');
-		expect(
-			statuses.some(
-				(status) =>
-					status.textContent?.includes('/other/project') &&
-					status.textContent?.includes('Same card')
-			)
-		).toBe(true);
-		expect(
-			statuses.some(
-				(status) =>
-					status.textContent?.includes(PROJECT_ROOT) &&
-					status.textContent?.includes('deleted 1 card')
-			)
-		).toBe(true);
-		expect(screen.getByRole('button', { name: 'Review 1 selected' })).toBeEnabled();
-	});
-	it('keeps stale selections removable and isolates revision conflicts by source and collection', async () => {
-		const boards: Board[] = [
-			{
-				id: 'shared',
-				name: 'First',
-				cards: [makeCard({ id: 'a', title: 'First A' }), makeCard({ id: 'b', title: 'First B' })],
-			},
-			{
-				id: 'shared',
-				name: 'Second',
-				cards: [makeCard({ id: 'c', title: 'Second C' })],
-			},
-		];
-		installApis(boards);
-		const response = workspaceResponse(boards);
-		if (!response.ok) throw new Error('Expected workspace fixture');
-		response.value.collections[1].sourceKey = 'source-two';
-		response.value.collections[1].board.storage!.sourceKey = 'source-two';
-		boardApi.queryWorkspace.mockResolvedValue(response);
-		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		await screen.findByText('First A');
-		let checks = screen.getAllByRole('checkbox', { name: 'Select for deletion' });
-		fireEvent.click(checks[0]);
-
-		// Replace the host snapshot rather than mutating the selected read token.
-		const refreshed = structuredClone(response);
-		refreshed.value.collections[0].revision = 2;
-		refreshed.value.collections[0].board.storage!.expectedRevision = 2;
-		refreshed.value.collections[0].board.cards[1].title = 'Refreshed B';
-		boardApi.queryWorkspace.mockResolvedValue(refreshed);
-		act(() => emitBoardChanged());
-		await screen.findByText('Refreshed B');
-		checks = screen.getAllByRole('checkbox', { name: 'Select for deletion' });
-		expect(checks[0]).toBeChecked();
-		expect(checks[0]).toBeEnabled();
-		expect(checks[1]).toBeDisabled();
-		expect(checks[2]).toBeEnabled();
-		fireEvent.click(checks[2]);
-		expect(screen.getByRole('button', { name: 'Review 2 selected' })).toBeEnabled();
-		fireEvent.click(checks[0]);
-		expect(checks[1]).toBeEnabled();
-		expect(checks[2]).toBeChecked();
-		fireEvent.click(checks[1]);
-		expect(screen.getByRole('button', { name: 'Review 2 selected' })).toBeEnabled();
-		expect(boardApi.deleteCards).not.toHaveBeenCalled();
-	});
-
-	it('keeps rejected selections, displays committed receipts and avoids duplicate requests and catalog refresh', async () => {
-		const boards: Board[] = [
-			{
-				id: 'first',
-				name: 'First',
-				cards: [
-					makeCard({ id: 'a', title: 'Eligible' }),
-					makeCard({ id: 'run', title: 'Running', status: 'running' }),
-				],
-			},
-			{ id: 'second', name: 'Second', cards: [makeCard({ id: 'b', title: 'Rejected' })] },
-		];
-		installApis(boards);
-		let release!: (value: unknown) => void;
-		boardApi.deleteCards
-			.mockImplementationOnce(
-				() =>
-					new Promise((resolve) => {
-						release = resolve;
-					})
-			)
-			.mockResolvedValueOnce({
-				ok: false,
-				error: { code: 'stale-revision', message: 'Changed since preview' },
-			});
-		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		await screen.findByText('Eligible');
-		const checks = screen.getAllByRole('checkbox', { name: 'Select for deletion' });
-		fireEvent.click(checks[0]);
-		fireEvent.click(checks[1]);
-		expect(screen.getByRole('checkbox', { name: 'Running: excluded' })).toBeDisabled();
-		fireEvent.click(screen.getByRole('button', { name: 'Review 2 selected' }));
-		const catalogCalls = boardApi.captureCatalog.mock.calls.length;
-		const deleteButton = screen.getByRole('button', { name: 'Delete selected' });
-		fireEvent.click(deleteButton);
-		fireEvent.click(deleteButton);
-		expect(boardApi.deleteCards).toHaveBeenCalledTimes(1);
-		await act(async () =>
-			release({
-				ok: true,
-				value: {
-					revision: 2,
-					cards: [{ cardId: 'a', revision: 1, deleted: true }],
-					board: { ...boards[0], cards: [] },
-				},
-			})
-		);
-		await screen.findByText(/Second: no cards deleted.*board changed/);
-		expect(screen.getByText(/First: deleted 1 card: Eligible/)).toBeInTheDocument();
-		expect(screen.getByText(/Rejected \(Second\)/)).toBeInTheDocument();
-		expect(boardApi.deleteCards).toHaveBeenCalledTimes(2);
-		expect(boardApi.deleteCards).toHaveBeenNthCalledWith(
-			1,
-			expect.objectContaining({
-				target: expect.objectContaining({
-					sourceKey: 'source-one',
-					collectionKey: 'first',
-					expectedRevision: 1,
-				}),
-				cards: [{ cardId: 'a', cardRevision: 0 }],
-			})
-		);
-		expect(boardApi.deleteCards).toHaveBeenNthCalledWith(
-			2,
-			expect.objectContaining({
-				target: expect.objectContaining({
-					sourceKey: 'source-one',
-					collectionKey: 'second',
-					expectedRevision: 1,
-				}),
-				cards: [{ cardId: 'b', cardRevision: 0 }],
-			})
-		);
-		expect(boardApi.captureCatalog).toHaveBeenCalledTimes(catalogCalls);
 	});
 });
 
@@ -3795,34 +3673,6 @@ describe('BoardModal windowed columns', () => {
 		vi.unstubAllGlobals();
 	});
 
-	it('enforces the per-collection limit and permits deselection at the boundary', async () => {
-		// This boundary test uses a deliberately tall viewport to select 500 in one batch.
-		vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (
-			this: HTMLElement
-		) {
-			return this.getAttribute('role') === 'list' ? 100000 : 160;
-		});
-		const cards = Array.from({ length: 501 }, (_, i) =>
-			makeCard({ id: `limit-${i}`, title: `Limit ${i}` })
-		);
-		installApis([
-			{ id: 'limit', name: 'Limit', cards },
-			{ id: 'other', name: 'Other', cards: [makeCard({ id: 'other', title: 'Other card' })] },
-		]);
-		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		await screen.findByText('Limit 0');
-		const checks = screen.getAllByRole('checkbox', { name: 'Select for deletion' });
-		act(() => {
-			for (let i = 0; i < 500; i++) fireEvent.click(checks[i]);
-		});
-		expect(checks[500]).toBeDisabled();
-		expect(checks[0]).toBeEnabled();
-		expect(checks[501]).toBeEnabled();
-		fireEvent.click(screen.getByRole('button', { name: 'Review 500 selected' }));
-		expect(screen.getByText(/Select at most 500 cards per collection/)).toBeInTheDocument();
-		fireEvent.click(checks[0]);
-		expect(checks[500]).toBeEnabled();
-	}, 150000);
 	function largeBoard() {
 		return {
 			id: 'large',
@@ -3905,7 +3755,7 @@ describe('BoardModal windowed columns', () => {
 		expect(screen.getByRole('list', { name: 'To Do cards' })).toBe(list);
 		expect(visibleCard()).toBe(firstWindowCard);
 		fireEvent.click(within(list).getAllByRole('button', { name: /Window card .*To Do/ })[0]);
-		fireEvent.click(await screen.findByRole('button', { name: 'Cancel', exact: true }));
+		fireEvent.click(await screen.findByRole('button', { name: /^Back to board$/ }));
 		expect(screen.getByRole('list', { name: 'To Do cards' })).toBe(list);
 		expect(visibleCard()).toBe(firstWindowCard);
 	});
@@ -3950,37 +3800,6 @@ describe('BoardModal windowed columns', () => {
 		fireEvent.click(screen.getByRole('tab', { name: 'Cards' }));
 		expect(list.scrollTop).toBe(offset);
 		expect(within(list).getAllByRole('listitem')[0]).toHaveAttribute('data-index', first);
-	});
-
-	it('retains offscreen bulk selections and submits both original card and collection revisions', async () => {
-		const board = largeBoard();
-		installApis([board]);
-		boardApi.deleteCards.mockResolvedValue({
-			ok: true,
-			value: { revision: 2, board: { ...board, cards: [] } },
-		});
-		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
-		await screen.findByText('Window card 0');
-		const list = screen.getByRole('list', { name: 'To Do cards' });
-		fireEvent.click(within(list).getAllByRole('checkbox')[0]);
-		fireEvent.scroll(list, { target: { scrollTop: 35000 } });
-		expect(screen.queryByText('Window card 0')).not.toBeInTheDocument();
-		const secondTitle = within(list)
-			.getAllByRole('button', { name: /Window card .*To Do/ })[0]
-			.getAttribute('data-board-card');
-		fireEvent.click(within(list).getAllByRole('checkbox')[0]);
-		fireEvent.click(screen.getByRole('button', { name: 'Review 2 selected' }));
-		const preview = screen.getByLabelText('Delete selected cards preview');
-		expect(preview).toHaveTextContent('Window card 0');
-		fireEvent.click(within(preview).getByRole('button', { name: 'Delete selected', exact: true }));
-		await waitFor(() => expect(boardApi.deleteCards).toHaveBeenCalledOnce());
-		expect(boardApi.deleteCards.mock.calls[0][0]).toMatchObject({
-			target: { sourceKey: 'source-one', collectionKey: 'large', expectedRevision: 1 },
-			cards: [
-				{ cardId: 'card-0', cardRevision: 0 },
-				{ cardId: secondTitle, cardRevision: 0 },
-			],
-		});
 	});
 
 	it('keeps the dragged tile mounted during scroll and drops into an empty column with fences', async () => {
@@ -4075,6 +3894,147 @@ describe('BoardModal retained attempt recovery', () => {
 		expect(
 			screen.queryByRole('button', { name: 'Recover Uncertain work' })
 		).not.toBeInTheDocument();
+		expect(boardApi.runtimeCommand).not.toHaveBeenCalled();
+	});
+});
+
+describe('Board card reading and explicit actions', () => {
+	it('opens instructions read-only without editing or fetching attempts for an unrun card', async () => {
+		installApis([
+			{
+				id: 'b1',
+				name: 'Board',
+				cards: [makeCard({ id: 'read', title: 'Read this', body: 'Full saved instructions' })],
+			},
+		]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByRole('button', { name: 'Read this, To Do' }));
+		expect(await screen.findByRole('heading', { name: 'Current instructions' })).toBeVisible();
+		expect(screen.getByText('Full saved instructions')).toBeVisible();
+		expect(screen.getByText('No attempts recorded.')).toBeVisible();
+		expect(screen.queryByPlaceholderText('e.g. Design the schema')).toBeNull();
+		expect(boardApi.captureCard).not.toHaveBeenCalled();
+		expect(boardApi.runtimeCommand).not.toHaveBeenCalled();
+	});
+	it('offers only trash and explicit edit, with a slim card front', async () => {
+		installApis([
+			{
+				id: 'b1',
+				name: 'Board',
+				cards: [
+					makeCard({
+						id: 'read',
+						title: 'Read this',
+						body: 'Hidden instructions',
+						workingDirectory: '/synthetic/project',
+					}),
+				],
+			},
+		]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		const tile = await screen.findByRole('button', { name: 'Read this, To Do' });
+		expect(screen.queryByText('Select for deletion')).toBeNull();
+		expect(screen.queryByRole('button', { name: /Review .* selected/ })).toBeNull();
+		expect(within(tile).queryByText(/Project:/)).toBeNull();
+		expect(within(tile).queryByText('Hidden instructions')).toBeNull();
+		fireEvent.click(within(tile).getByRole('button', { name: 'Edit Read this' }));
+		expect(
+			await screen.findByPlaceholderText('Instructions handed to the assignee agent.')
+		).toHaveValue('Hidden instructions');
+		expect(screen.queryByRole('heading', { name: 'Current instructions' })).toBeNull();
+		expect(boardApi.readCardRun).not.toHaveBeenCalled();
+	});
+	it('keeps IME, text selection and drags separate from detail activation', async () => {
+		installApis([
+			{ id: 'b1', name: 'Board', cards: [makeCard({ id: 'read', title: 'Read this' })] },
+		]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		const tile = await screen.findByRole('button', { name: 'Read this, To Do' });
+		fireEvent.keyDown(tile, { key: 'Enter', isComposing: true });
+		fireEvent.keyDown(tile, { key: 'Enter', keyCode: 229 });
+		expect(screen.queryByRole('region', { name: 'Card details' })).toBeNull();
+		const range = document.createRange();
+		range.selectNodeContents(within(tile).getByText('Read this'));
+		window.getSelection()!.removeAllRanges();
+		window.getSelection()!.addRange(range);
+		expect(window.getSelection()!.toString()).toBe('Read this');
+		fireEvent.click(tile);
+		expect(screen.queryByRole('region', { name: 'Card details' })).toBeNull();
+		window.getSelection()!.removeAllRanges();
+		fireEvent.dragStart(within(tile).getByRole('button', { name: 'Edit Read this' }));
+		expect(tile).toHaveStyle({ opacity: '1' });
+		fireEvent.dragStart(tile);
+		fireEvent.dragEnd(tile);
+		fireEvent.click(tile);
+		expect(screen.queryByRole('region', { name: 'Card details' })).toBeNull();
+		fireEvent.click(tile);
+		expect(await screen.findByRole('region', { name: 'Card details' })).toBeVisible();
+		expect(boardApi.readCardRun).not.toHaveBeenCalled();
+		expect(boardApi.captureCard).not.toHaveBeenCalled();
+		expect(boardApi.runtimeCommand).not.toHaveBeenCalled();
+	});
+	it('refuses native card dragstart after a pointer gesture began on edit or trash', async () => {
+		installApis([
+			{ id: 'b1', name: 'Board', cards: [makeCard({ id: 'read', title: 'Read this' })] },
+		]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		const tile = await screen.findByRole('button', { name: 'Read this, To Do' });
+		for (const name of ['Edit Read this', 'Delete Read this']) {
+			const control = within(tile).getByRole('button', { name });
+			fireEvent.pointerDown(control);
+			fireEvent.mouseDown(control);
+			fireEvent.dragStart(tile);
+			expect(tile).toHaveStyle({ opacity: '1' });
+			fireEvent.dragEnd(tile);
+		}
+		expect(boardApi.readCardRun).not.toHaveBeenCalled();
+		expect(boardApi.deleteCards).not.toHaveBeenCalled();
+		expect(boardApi.captureCard).not.toHaveBeenCalled();
+	});
+	it('reads a saved central attempt without requiring a filesystem location or active project', async () => {
+		const card = makeCard({
+			id: 'read',
+			title: 'Central work',
+			runs: [
+				{
+					runId: 'central-run',
+					attempt: 1,
+					startedAt: '2026-01-01T00:00:00Z',
+					endedAt: '2026-01-01T00:01:00Z',
+					outcome: 'review',
+				},
+			],
+		});
+		const board = { id: 'b1', name: 'Board', cards: [card] };
+		installApis([board]);
+		const response = workspaceResponse([board]);
+		if (!response.ok) throw new Error('Expected fixture');
+		delete response.value.sources[0].location;
+		boardApi.queryWorkspace.mockResolvedValue(response);
+		boardApi.readCardRun.mockResolvedValue({
+			ok: true,
+			value: {
+				runId: 'central-run',
+				attempt: 1,
+				instructions: 'Original central instructions',
+				output: 'Central saved response',
+				phase: 'finished',
+				exitCode: 0,
+			},
+		});
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByRole('button', { name: 'Central work, To Do' }));
+		expect(await screen.findByText('Central saved response')).toBeVisible();
+		expect(boardApi.readCardRun).toHaveBeenCalledWith(
+			expect.objectContaining({
+				target: expect.objectContaining({
+					projectRoot: BOARD_SOURCE_PROJECT_PREFIX + 'source-one',
+					sourceKey: 'source-one',
+					collectionKey: 'b1',
+				}),
+			})
+		);
+		expect(boardApi.captureCard).not.toHaveBeenCalled();
 		expect(boardApi.runtimeCommand).not.toHaveBeenCalled();
 	});
 });
