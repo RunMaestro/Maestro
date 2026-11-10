@@ -381,7 +381,7 @@ Both verbs talk to the running desktop over the same WebSocket as `dispatch`. Th
 
 #### List Open Tabs
 
-Flatten every open AI tab across every Maestro agent into addressable entries:
+Flatten the open tabs across every Maestro agent into addressable entries. By default the list holds the AI tabs the tab strips draw, so its count matches the screen:
 
 ```bash
 # Default: compact text (one tab per line)
@@ -389,15 +389,37 @@ maestro-cli session list
 
 # JSON for scripting
 maestro-cli session list --json
+
+# Hidden tabs only, visible plus hidden, or every tab with its visibility
+maestro-cli session list --hidden
+maestro-cli session list --include-hidden --json
+maestro-cli session list --all
+
+# File, browser, and terminal tabs too (or one kind: file, browser, terminal)
+maestro-cli session list --type all
 ```
 
-Default text columns: `state` (`busy` / `idle`), star (`★` if starred), `tabId`, agent name + id, tab name, `createdAt` (relative). One tab per line so the output pipes cleanly into `grep`, `awk`, etc.
+Every entry carries a `visibility`:
 
-JSON envelope:
+| `visibility` | Meaning                                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------------------------------- |
+| `visible`    | The tab strip draws a chip for it, standalone or inside a tiled group                                      |
+| `hidden`     | A real tab the tab bar does not show, such as the transcript a `maestro-cli ask` consult leaves behind     |
+| `orphaned`   | The tab has no slot in the strip at all: a close that did not fully apply. Maestro clears these at startup |
+
+The default lists `visible` tabs only; `--hidden` lists the hidden ones, `--include-hidden` lists both, and `--all` adds orphans. `session list --type all` with no scope flag counts the same tabs as the Usage Dashboard **Open Tabs** card. AI entries also carry `hidden` and `inTabOrder` (whether the agent's tab order holds a ref for the tab; a tab tiled into a group has none but is still on screen).
+
+Default text columns: `state` (`busy` / `idle`), star (`★` if starred), `tabId`, agent name + id, tab name, `createdAt` (relative), and `[hidden]` or `[orphaned: ...]` on a tab that is not visible. A file, browser, or terminal row shows its kind, `*` if it is the agent's selected tab of that kind, `tabId`, agent, name, and the file path, URL, or shell directory. One tab per line so the output pipes cleanly into `grep`, `awk`, etc. A last line counts the tabs the chosen scope left out.
+
+JSON envelope. `scope` is `visible`, `hidden`, `visible+hidden`, or `all`; `type` is the `--type` value; `counts` holds every tab of the chosen type by visibility, whatever the scope listed; `visibilityReported` is `false` when the running Maestro is too old to tell hidden tabs apart. AI tabs are always in `sessions`. With a `--type` other than `ai`, the file, browser, and terminal tabs are in `tabs`:
 
 ```json
 {
 	"success": true,
+	"scope": "visible",
+	"type": "all",
+	"counts": { "visible": 567, "hidden": 528, "orphaned": 0 },
+	"visibilityReported": true,
 	"sessions": [
 		{
 			"tabId": "tab-1",
@@ -409,7 +431,22 @@ JSON envelope:
 			"agentSessionId": "claude-uuid-1",
 			"state": "idle",
 			"createdAt": 1714268000000,
-			"starred": false
+			"starred": false,
+			"hidden": false,
+			"inTabOrder": true,
+			"visibility": "visible"
+		}
+	],
+	"tabs": [
+		{
+			"tabId": "f1e2d3c4-...",
+			"tabType": "file",
+			"agentId": "a1b2c3d4-...",
+			"agentName": "Backend",
+			"name": "README.md",
+			"target": "/repo/README.md",
+			"active": false,
+			"visibility": "visible"
 		}
 	]
 }

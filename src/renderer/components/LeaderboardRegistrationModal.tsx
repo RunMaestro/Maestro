@@ -33,6 +33,8 @@ import {
 	flushLeaderboardOutbox,
 	submitLeaderboardTimeDelta,
 	LEADERBOARD_DRIFT_TOLERANCE_MS,
+	authStatusMatchesEmail,
+	normalizeLeaderboardEmail,
 } from '../services/leaderboard';
 import { formatDurationCompact } from '../../shared/duration';
 import {
@@ -134,6 +136,10 @@ function generateClientToken(): string {
 const AUTH_TOKEN_LOST_MESSAGE =
 	'Your email is confirmed but we seem to have lost your auth token. Click "Resend Confirmation" below to receive a new confirmation email with your auth token.';
 
+// Error message when this install's token was rejected or belongs to another email
+const AUTH_TOKEN_REJECTED_MESSAGE =
+	'The leaderboard did not accept this install\'s auth token for this email. Click "Resend Confirmation" below to link this install to this email again.';
+
 export function LeaderboardRegistrationModal({
 	theme,
 	autoRunStats,
@@ -169,7 +175,9 @@ export function LeaderboardRegistrationModal({
 	const [showOptOutConfirm, setShowOptOutConfirm] = useState(false);
 
 	// Polling state - generate clientToken once if not already persisted
-	const [clientToken] = useState(() => existingRegistration?.clientToken || generateClientToken());
+	const [clientToken, setClientToken] = useState(
+		() => existingRegistration?.clientToken || generateClientToken()
+	);
 	const [_isPolling, setIsPolling] = useState(false);
 	const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -248,6 +256,33 @@ export function LeaderboardRegistrationModal({
 		setIsPolling(false);
 	}, []);
 
+	/**
+	 * Give this install a fresh clientToken and drop its dead auth token.
+	 *
+	 * Called when the server rejected the stored token for this email, or when
+	 * `auth-status` answered with another email's token. Either way nothing the
+	 * current clientToken can fetch will work: the server resolves it to the
+	 * wrong subscriber row. A fresh clientToken sits on no row yet, so the next
+	 * Resend Confirmation binds it to this email alone (issue #2011). Reads the
+	 * stored registration rather than the prop so a save made earlier in the
+	 * same flow is not overwritten with stale fields.
+	 */
+	const rebindInstall = useCallback(() => {
+		const fresh = generateClientToken();
+		setClientToken(fresh);
+		const stored = useSettingsStore.getState().leaderboardRegistration;
+		if (stored) {
+			onSave({ ...stored, clientToken: fresh, authToken: undefined });
+		}
+		// Dropping the token would otherwise trip the on-mount recovery poll,
+		// which cannot find the fresh clientToken and replaces this message.
+		setRecoveryAttempted(true);
+		setSubmitState('error');
+		setResendSuccess(false);
+		setShowManualTokenEntry(true);
+		setErrorMessage(AUTH_TOKEN_REJECTED_MESSAGE);
+	}, [onSave]);
+
 	// Poll for auth token
 	const pollForAuthToken = useCallback(
 		async (token: string) => {
@@ -256,6 +291,12 @@ export function LeaderboardRegistrationModal({
 
 				if (result.status === 'confirmed' && result.authToken) {
 					stopPolling();
+					if (!authStatusMatchesEmail(result.email, email)) {
+						// The token belongs to another email this install confirmed.
+						// Saving it would 401 every later submit and Pull Down.
+						rebindInstall();
+						return;
+					}
 					// Save the auth token
 					const registration: LeaderboardRegistration = {
 						email: email.trim(),
@@ -301,6 +342,7 @@ export function LeaderboardRegistrationModal({
 			existingRegistration,
 			onSave,
 			stopPolling,
+			rebindInstall,
 		]
 	);
 
@@ -325,6 +367,17 @@ export function LeaderboardRegistrationModal({
 
 		setSubmitState('submitting');
 		setErrorMessage('');
+
+		// A clientToken stays on every subscriber row it ever confirmed, and the
+		// server's auth-status answers with the oldest one. So a new email must
+		// not reuse the old clientToken or send the old email's auth token: start
+		// it on a fresh clientToken instead (issue #2011).
+		const emailChanged =
+			!!existingRegistration &&
+			normalizeLeaderboardEmail(existingRegistration.email) !== normalizeLeaderboardEmail(email);
+		const submitClientToken = emailChanged ? generateClientToken() : clientToken;
+		const submitAuthToken = emailChanged ? undefined : existingRegistration?.authToken;
+		if (emailChanged) setClientToken(submitClientToken);
 
 		try {
 			// Format longest run date if available
@@ -361,8 +414,8 @@ export function LeaderboardRegistrationModal({
 				longestRunMs: autoRunStats.longestRunMs || undefined,
 				longestRunDate,
 				theme: theme.id,
-				clientToken,
-				authToken: existingRegistration?.authToken,
+				clientToken: submitClientToken,
+				authToken: submitAuthToken,
 				// Keyboard mastery data (aligned with RunMaestro.ai server schema)
 				keyboardMasteryLevel,
 				keyboardMasteryTitle,
@@ -386,8 +439,8 @@ export function LeaderboardRegistrationModal({
 					registeredAt: existingRegistration?.registeredAt || Date.now(),
 					emailConfirmed: !result.pendingEmailConfirmation,
 					lastSubmissionAt: Date.now(),
-					clientToken,
-					authToken: existingRegistration?.authToken,
+					clientToken: submitClientToken,
+					authToken: submitAuthToken,
 				};
 				onSave(registration);
 
@@ -395,7 +448,7 @@ export function LeaderboardRegistrationModal({
 					setSubmitState('awaiting_confirmation');
 					setSuccessMessage('Please check your email to confirm your registration.');
 					// Start polling for confirmation
-					startPolling(clientToken);
+					startPolling(submitClientToken);
 				} else {
 					setSubmitState('success');
 					// Profile submitted - stats sync via delta mode from Auto Runs or Pull Down
@@ -406,11 +459,21 @@ export function LeaderboardRegistrationModal({
 			} else if (result.authTokenRequired) {
 				// Email is confirmed but auth token is missing/invalid - try to recover it automatically
 				let recovered = false;
-				if (clientToken) {
+				if (submitClientToken) {
 					setSubmitState('submitting');
 					setErrorMessage('');
 					try {
-						const pollResult = await window.maestro.leaderboard.pollAuthStatus(clientToken);
+						const pollResult = await window.maestro.leaderboard.pollAuthStatus(submitClientToken);
+						if (
+							pollResult.status === 'confirmed' &&
+							pollResult.authToken &&
+							!authStatusMatchesEmail(pollResult.email, email)
+						) {
+							// This clientToken resolves to another email's row, so the token
+							// it returns would be rejected again. Rebind instead (#2011).
+							rebindInstall();
+							return;
+						}
 						if (pollResult.status === 'confirmed' && pollResult.authToken) {
 							// Token recovered! Save it and retry submission
 							const registration: LeaderboardRegistration = {
@@ -424,7 +487,7 @@ export function LeaderboardRegistrationModal({
 								registeredAt: existingRegistration?.registeredAt || Date.now(),
 								emailConfirmed: true,
 								lastSubmissionAt: Date.now(),
-								clientToken,
+								clientToken: submitClientToken,
 								authToken: pollResult.authToken,
 							};
 							onSave(registration);
@@ -454,7 +517,7 @@ export function LeaderboardRegistrationModal({
 								longestRunMs: autoRunStats.longestRunMs || undefined,
 								longestRunDate,
 								theme: theme.id,
-								clientToken,
+								clientToken: submitClientToken,
 								authToken: pollResult.authToken,
 								// Keyboard mastery data (aligned with RunMaestro.ai server schema)
 								keyboardMasteryLevel,
@@ -509,6 +572,7 @@ export function LeaderboardRegistrationModal({
 		theme.id,
 		clientToken,
 		startPolling,
+		rebindInstall,
 		keyboardMasteryLevel,
 		keyboardMasteryTitle,
 		keyboardCoveragePercent,
@@ -658,6 +722,9 @@ export function LeaderboardRegistrationModal({
 		setSyncMessage('');
 		setErrorMessage('');
 		setDriftMs(0);
+		// A banner left from an earlier step ("Email confirmed!") hides the error
+		// box, which would make a failed Pull Down look like a no-op (#2011).
+		setSubmitState((state) => (state === 'success' ? 'idle' : state));
 
 		try {
 			// Drain anything still owed first, so a queue that simply had not been
@@ -721,7 +788,10 @@ export function LeaderboardRegistrationModal({
 						'Email not yet confirmed. Please check your inbox for the confirmation email.'
 					);
 				} else if (result.errorCode === 'INVALID_TOKEN') {
-					setErrorMessage('Invalid auth token. Please re-register to get a new token.');
+					// The server holds a different token for this email, so this one is
+					// dead for good. Re-registering would resend it and fail again;
+					// rebind and offer Resend Confirmation instead.
+					rebindInstall();
 				} else {
 					setErrorMessage(result.error || 'Failed to sync from server');
 				}
@@ -731,7 +801,13 @@ export function LeaderboardRegistrationModal({
 		} finally {
 			setIsSyncing(false);
 		}
-	}, [existingRegistration?.authToken, email, autoRunStats.cumulativeTimeMs, onSyncStats]);
+	}, [
+		existingRegistration?.authToken,
+		email,
+		autoRunStats.cumulativeTimeMs,
+		onSyncStats,
+		rebindInstall,
+	]);
 
 	/**
 	 * Ship the measured gap to the server as one explicit delta. User-initiated
@@ -796,7 +872,14 @@ export function LeaderboardRegistrationModal({
 				.pollAuthStatus(existingRegistration.clientToken)
 				.then((result) => {
 					setIsRecovering(false);
-					if (result.status === 'confirmed' && result.authToken) {
+					if (
+						result.status === 'confirmed' &&
+						result.authToken &&
+						!authStatusMatchesEmail(result.email, existingRegistration.email)
+					) {
+						// Another email's token: storing it would 401 everything (#2011).
+						rebindInstall();
+					} else if (result.status === 'confirmed' && result.authToken) {
 						// Token recovered! Save it
 						const registration: LeaderboardRegistration = {
 							...existingRegistration,
@@ -819,7 +902,7 @@ export function LeaderboardRegistrationModal({
 					setErrorMessage(AUTH_TOKEN_LOST_MESSAGE);
 				});
 		}
-	}, [needsAuthTokenRecovery, existingRegistration, onSave, recoveryAttempted]);
+	}, [needsAuthTokenRecovery, existingRegistration, onSave, recoveryAttempted, rebindInstall]);
 
 	// Handle opt-out (clears local registration)
 	const handleOptOut = useCallback(() => {

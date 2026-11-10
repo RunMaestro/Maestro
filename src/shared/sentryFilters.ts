@@ -181,6 +181,16 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	// ---- 5. Network failures (user offline) ----
 
 	if (/MarketplaceFetchError: Network error fetching .*: fetch failed/i.test(haystack)) return true;
+	// The same unreachable GitHub, worded by our own 30s fetch timeout instead of
+	// undici: a connection that stalls rather than refuses (slow or filtered
+	// network). The refresh already falls back to the cached manifest. (MAESTRO-18K)
+	if (
+		/MarketplaceFetchError: Network error fetching .*: Request to \S+ timed out after \d+ms/i.test(
+			haystack
+		)
+	) {
+		return true;
+	}
 
 	// GitHub raw rate-limits us (429) and serves 5xx during its own incidents.
 	// The import still fails visibly in the UI; there's nothing to fix on our

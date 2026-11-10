@@ -70,6 +70,7 @@ describe('error-patterns', () => {
 				const result = matchErrorPattern(OPENCODE_ERROR_PATTERNS, 'Go usage limit exceeded');
 				expect(result?.type).toBe('rate_limited');
 				expect(result?.message).toBe('Usage limit reached. Please wait or check your plan quota.');
+				expect(result?.recoverable).toBe(true);
 			});
 
 			it('should match "quota exceeded"', () => {
