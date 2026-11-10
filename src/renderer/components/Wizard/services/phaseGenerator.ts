@@ -12,6 +12,7 @@ import {
 	substituteTemplateVariables,
 	type TemplateContext,
 } from '../../../utils/templateVariables';
+import { createGenericErrorMessage } from './wizardErrorDetection';
 
 let cachedPhaseGenDocPrompt: string | null = null;
 let phaseGeneratorPromptsLoaded = false;
@@ -587,8 +588,11 @@ export function deriveSshRemoteId(sshConfig?: {
 class PhaseGenerator {
 	private isGenerating = false;
 	private outputBuffer = '';
+	/** stderr for the current run: the only place a CLI that fails on startup says why (#1983). */
+	private stderrBuffer = '';
 	private dataListenerCleanup?: () => void;
 	private exitListenerCleanup?: () => void;
+	private stderrListenerCleanup?: () => void;
 	private currentWatchPath?: string;
 	private pollIntervalId?: ReturnType<typeof setInterval>;
 
@@ -609,6 +613,7 @@ class PhaseGenerator {
 
 		this.isGenerating = true;
 		this.outputBuffer = '';
+		this.stderrBuffer = '';
 
 		// Start debug logging session
 		wizardDebugLogger.startSession(config);
@@ -957,6 +962,13 @@ class PhaseGenerator {
 				}
 			});
 
+			// Set up stderr listener (kept out of outputBuffer so it never reaches the parser)
+			this.stderrListenerCleanup = window.maestro.process.onStderr((sid: string, data: string) => {
+				if (sid === sessionId) {
+					this.stderrBuffer += data;
+				}
+			});
+
 			// Set up exit listener
 			this.exitListenerCleanup = window.maestro.process.onExit((sid: string, code: number) => {
 				if (sid === sessionId) {
@@ -1012,11 +1024,15 @@ class PhaseGenerator {
 						wizardDebugLogger.log('error', `Agent failed with exit code ${code}`, {
 							exitCode: code,
 							bufferPreview: this.outputBuffer.slice(0, 1000),
+							stderrLength: this.stderrBuffer.length,
+							stderrPreview: this.stderrBuffer.slice(-1000),
 						});
 
 						resolve({
 							success: false,
-							error: `Agent exited with code ${code}`,
+							error: this.stderrBuffer.trim()
+								? createGenericErrorMessage(this.stderrBuffer, code)
+								: `Agent exited with code ${code}`,
 							rawOutput: this.outputBuffer,
 						});
 					}
@@ -1267,6 +1283,10 @@ class PhaseGenerator {
 		if (this.exitListenerCleanup) {
 			this.exitListenerCleanup();
 			this.exitListenerCleanup = undefined;
+		}
+		if (this.stderrListenerCleanup) {
+			this.stderrListenerCleanup();
+			this.stderrListenerCleanup = undefined;
 		}
 		// Stop watching the Auto Run folder
 		if (this.currentWatchPath) {
