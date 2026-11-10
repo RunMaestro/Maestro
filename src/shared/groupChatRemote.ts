@@ -74,7 +74,7 @@ export function toRemoteGroupChatState(
  * to the chat.
  */
 export function withParticipantMentions(body: string, participantNames: string[]): string {
-	const mentioned = extractAllMentions(body);
+	const mentioned = extractAllMentions(body, participantNames);
 	const missing = participantNames.filter(
 		(name) => !mentioned.some((m) => mentionMatches(m, name))
 	);

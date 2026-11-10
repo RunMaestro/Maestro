@@ -30,13 +30,13 @@ import {
 	type GroupChatHistoryEntry,
 	GROUP_CHAT_USER_NAME,
 	extractAllMentions,
+	findUnmatchedMentions,
 	findUniqueMentionMatch,
 	getMentionNameForContext,
 	getMentionMatchPriority,
-	stripUnmatchedTrailingClosers,
 	normalizeMentionName,
 	requiresIdleParticipants,
-	stripMarkdownFormatting,
+	splitAutoRunTarget,
 } from '../../shared/group-chat-types';
 import {
 	IProcessManager,
@@ -684,7 +684,8 @@ export function setSshStore(store: SshRemoteSettingsStore): void {
  */
 export function extractMentions(text: string, participants: GroupChatParticipant[]): string[] {
 	const mentions: string[] = [];
-	for (const mentionedName of extractAllMentions(text)) {
+	const participantNames = participants.map((p) => p.name);
+	for (const mentionedName of extractAllMentions(text, participantNames)) {
 		const matchingParticipant = findUniqueMentionMatch(mentionedName, participants, (p) => p.name);
 		if (matchingParticipant && !mentions.includes(matchingParticipant.name)) {
 			mentions.push(matchingParticipant.name);
@@ -750,6 +751,53 @@ function resolveSessionToAutoAdd(
 	return best?.session ?? undefined;
 }
 
+/**
+ * Every name a mention in this chat may resolve to: its participants and the
+ * agents that could be auto-added. Terminal agents are left out, as in
+ * `resolveSessionToAutoAdd`.
+ */
+function mentionableNames(
+	participants: readonly GroupChatParticipant[],
+	sessions: readonly GroupChatSessionInfo[]
+): string[] {
+	return [
+		...participants.map((p) => p.name),
+		...sessions.filter((s) => s.toolType !== 'terminal').map((s) => s.name),
+	];
+}
+
+/**
+ * Report @mentions that match no participant and no agent. Before this, such a
+ * mention did nothing and said nothing, so a misread name looked like an agent
+ * that ignored the chat.
+ *
+ * Every unmatched mention is logged. Only the user's own message also gets a
+ * line in the chat: moderator prose often holds literal @tokens (`@example`,
+ * decorators), and commit 600b4b9ed1 removed the chat warning for those on
+ * purpose.
+ */
+async function warnAboutUnmatchedMentions(
+	groupChatId: string,
+	logPath: string,
+	text: string,
+	knownNames: readonly string[],
+	source: 'user' | 'moderator'
+): Promise<void> {
+	const unmatched = findUnmatchedMentions(text, knownNames);
+	if (unmatched.length === 0) return;
+	logger.warn(`Group chat ${source} @mention matched no agent`, LOG_CONTEXT, {
+		groupChatId,
+		unmatched,
+	});
+	if (source !== 'user') return;
+	const list = unmatched.map((name) => `@${name}`).join(', ');
+	await announceToChat(
+		groupChatId,
+		logPath,
+		`⚠️ No agent matches ${list}. Mention an agent by its name as shown in the Left Bar, with spaces written as hyphens.`
+	);
+}
+
 // Re-exported for existing callers; the parser lives in shared so the CLI/web
 // start path mentions agents exactly the way this router reads them.
 export { extractAllMentions };
@@ -768,7 +816,10 @@ export interface AutoRunDirective {
 	filename?: string;
 }
 
-export function extractAutoRunDirectives(text: string): {
+export function extractAutoRunDirectives(
+	text: string,
+	knownNames?: readonly string[]
+): {
 	autoRunDirectives: AutoRunDirective[];
 	/** @deprecated use autoRunDirectives */
 	autoRunParticipants: string[];
@@ -776,16 +827,19 @@ export function extractAutoRunDirectives(text: string): {
 } {
 	const autoRunDirectives: AutoRunDirective[] = [];
 	// Matches: !autorun @AgentName  OR  !autorun @AgentName:filename.md
-	const autoRunPattern = /!autorun\s+@([^\s@:,;!?'"<>]+)(?::([^\s,;!?'"<>]+))?/g;
+	// The target is captured whole, colons included, and split by
+	// splitAutoRunTarget: an agent name may itself hold a colon
+	// (`@Tome:-RSSidian:plan.md`), so known names decide where the file starts.
+	const autoRunPattern = /!autorun\s+@([^\s@,;!?'"<>]+)/g;
 	let match;
 
 	while ((match = autoRunPattern.exec(text)) !== null) {
-		const participantName = stripMarkdownFormatting(match[1]);
-		if (!participantName) continue;
-		// Trim unmatched trailing closers so a directive wrapped in punctuation,
-		// e.g. "(!autorun @Agent:plan.md)", yields "plan.md" not "plan.md)" while
+		// splitAutoRunTarget trims unmatched trailing closers from the file, so
+		// "(!autorun @Agent:plan.md)" yields "plan.md" not "plan.md)" while
 		// balanced brackets in names like "Phase-01-(Setup).md" are preserved.
-		const filename = match[2] ? stripUnmatchedTrailingClosers(match[2]) || undefined : undefined;
+		const target = splitAutoRunTarget(match[1], knownNames);
+		if (!target) continue;
+		const { name: participantName, filename } = target;
 		if (!autoRunDirectives.some((d) => d.participantName === participantName)) {
 			autoRunDirectives.push({ participantName, filename });
 		}
@@ -793,7 +847,7 @@ export function extractAutoRunDirectives(text: string): {
 
 	// Remove !autorun lines from the message for display
 	const cleanedText = text
-		.replace(/^.*!autorun\s+@[^\s@:,;!?'"<>]+.*$/gm, '')
+		.replace(/^.*!autorun\s+@[^\s@,;!?'"<>]+.*$/gm, '')
 		.replace(/\n{3,}/g, '\n\n')
 		.trim();
 
@@ -855,8 +909,8 @@ export async function routeUserMessage(
 	// A routing retry reuses the already-resolved participant set and must not
 	// reinterpret its correction prompt as a new user turn.
 	if (!routingRetry && processManager && agentDetector && getSessionsCallback) {
-		const userMentions = extractAllMentions(message);
 		const sessions = getSessionsCallback();
+		const userMentions = extractAllMentions(message, mentionableNames(chat.participants, sessions));
 		const existingParticipantNames = new Set(chat.participants.map((p) => p.name));
 
 		for (const mentionedName of userMentions) {
@@ -974,6 +1028,17 @@ export async function routeUserMessage(
 			...(images && images.length > 0 && { images }),
 		};
 		groupChatEmitters.emitMessage?.(groupChatId, userMessage);
+
+		// Without the agent list every non-participant would read as unmatched.
+		if (getSessionsCallback) {
+			await warnAboutUnmatchedMentions(
+				groupChatId,
+				chat.logPath,
+				message,
+				mentionableNames(chat.participants, getSessionsCallback()),
+				'user'
+			);
+		}
 
 		// Record the prompt itself in history. Every other entry is something an
 		// agent did in reaction to this line, so a history without it shows effects
@@ -1567,7 +1632,11 @@ export async function routeModeratorResponse(
 	// Strip internal !autorun directives from the message before logging/display.
 	// These are machine-to-machine commands; storing them in the chat log causes
 	// the synthesis moderator to see them in history and potentially re-trigger them.
-	const { autoRunDirectives, cleanedText: displayMessage } = extractAutoRunDirectives(message);
+	const moderatorKnownNames = mentionableNames(chat.participants, getSessionsCallback?.() ?? []);
+	const { autoRunDirectives, cleanedText: displayMessage } = extractAutoRunDirectives(
+		message,
+		moderatorKnownNames
+	);
 
 	// Only persist/emit the moderator message if it has visible content after stripping directives
 	const shouldPersistModeratorMessage = displayMessage.trim().length > 0;
@@ -1577,7 +1646,7 @@ export async function routeModeratorResponse(
 	// summary ('synthesis'), or was a plain final response ('response').
 
 	// Extract ALL mentions from the message
-	const allMentions = extractAllMentions(message);
+	const allMentions = extractAllMentions(message, moderatorKnownNames);
 	logger.debug(`[GroupChat:Debug] Extracted @mentions: ${allMentions.join(', ') || '(none)'}`);
 
 	const existingParticipantNames = new Set(chat.participants.map((p) => p.name));
@@ -1779,6 +1848,16 @@ export async function routeModeratorResponse(
 		};
 		groupChatEmitters.emitMessage?.(groupChatId, moderatorMessage);
 		logger.debug(`[GroupChat:Debug] Emitted moderator message to renderer`);
+
+		if (getSessionsCallback) {
+			await warnAboutUnmatchedMentions(
+				groupChatId,
+				chat.logPath,
+				displayMessage,
+				mentionableNames(updatedChat.participants, getSessionsCallback()),
+				'moderator'
+			);
+		}
 	}
 
 	// Track participants that will need to respond for synthesis round
