@@ -294,25 +294,41 @@ it('reports current native lock loss instead of a stale owner conflict without a
 	expect(readReadiness()).toBe('runtime-unavailable');
 	expect(snapshotSqlite(storage.db)).toEqual(before);
 });
-it.each(['linux', 'darwin', 'win32'] as const)(
-	'observes a provably dead modern owner without taking it over on %s',
-	(platform) => {
-		lock.info.platform = platform;
-		lock.info.hostIdentity = 'trusted-native-host-fixture';
-		storage.db.prepare('UPDATE runtime_owner SET process_identity=?').run(
-			JSON.stringify({
-				...JSON.parse(old),
-				token: 'finished-owned-token',
-				pidNsInode: lock.info.pidNsInode,
-				platform: lock.info.platform,
-				hostIdentity: lock.info.hostIdentity,
-			})
-		);
-		const before = snapshotSqlite(storage.db);
-		expect(readReadiness()).toBeNull();
-		expect(snapshotSqlite(storage.db)).toEqual(before);
-	}
-);
+// This integration fixture uses the actual native Cue lock and its OS evidence.
+// Explicit cross-platform evidence belongs to board-owner-liveness.test.ts.
+it('observes a provably dead modern owner with actual native evidence without taking it over', () => {
+	storage.db.prepare('UPDATE runtime_owner SET process_identity=?').run(
+		JSON.stringify({
+			...JSON.parse(old),
+			token: 'finished-owned-token',
+			pidNsInode: lock.info.pidNsInode,
+			platform: lock.info.platform,
+			hostIdentity: lock.info.hostIdentity,
+		})
+	);
+	const before = snapshotSqlite(storage.db);
+	expect(readReadiness()).toBeNull();
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+it('refuses Linux evidence without a namespace even for a terminated owned child', () => {
+	// A non-Linux native lock cannot become Linux proof by changing its label.
+	// Do not invent a namespace: preserve this exact counterfactual as a refusal.
+	lock.info.platform = 'linux';
+	lock.info.pidNsInode = undefined;
+	storage.db.prepare('UPDATE runtime_owner SET process_identity=?').run(
+		JSON.stringify({
+			...JSON.parse(old),
+			token: 'finished-owned-token',
+			platform: 'linux',
+		})
+	);
+	__setCueEngineLockTestHook(() => {
+		throw new Error('A diagnostic read must not claim native ownership');
+	});
+	const before = snapshotSqlite(storage.db);
+	expect(readReadiness()).toBe('owner-conflict');
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
 it.each([
 	{ board: false, maestroCue: false },
 	{ board: false, maestroCue: true },
