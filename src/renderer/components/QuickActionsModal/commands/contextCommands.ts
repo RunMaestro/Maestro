@@ -8,6 +8,7 @@ import type { ActiveTabInfo, QuickAction } from '../types';
 interface BuildActiveTabContextCommandsArgs {
 	activeSession: Session | undefined;
 	activeSessionId: string;
+	activeGroupChatId?: string | null;
 	/**
 	 * Resolved type of the active tab. Selects the action noun and command set:
 	 * Context (ai) / Buffer (terminal) / Content (browser) / none (file).
@@ -30,6 +31,7 @@ interface BuildActiveTabContextCommandsArgs {
 export function buildActiveTabContextCommands({
 	activeSession,
 	activeSessionId,
+	activeGroupChatId,
 	activeTabType,
 	ghCliAvailable,
 	setSessions,
@@ -158,25 +160,27 @@ export function buildActiveTabContextCommands({
 			},
 		});
 
-		commands.push({
-			id: 'toggleStarTab',
-			label: activeTab.starred ? 'Unstar Session' : 'Star Session',
-			shortcut: toggleTabStarShortcut,
-			action: () => {
-				setSessions((prev) =>
-					prev.map((session) => {
-						if (session.id !== activeSessionId) return session;
-						return {
-							...session,
-							aiTabs: session.aiTabs.map((tab) =>
-								tab.id === activeTab.id ? { ...tab, starred: !tab.starred } : tab
-							),
-						};
-					})
-				);
-				setQuickActionOpen(false);
-			},
-		});
+		if (!activeGroupChatId) {
+			commands.push({
+				id: 'toggleStarTab',
+				label: activeTab.starred ? 'Unstar Session' : 'Star Session',
+				shortcut: toggleTabStarShortcut,
+				action: () => {
+					setSessions((prev) =>
+						prev.map((session) => {
+							if (session.id !== activeSessionId) return session;
+							return {
+								...session,
+								aiTabs: session.aiTabs.map((tab) =>
+									tab.id === activeTab.id ? { ...tab, starred: !tab.starred } : tab
+								),
+							};
+						})
+					);
+					setQuickActionOpen(false);
+				},
+			});
+		}
 
 		commands.push({
 			id: 'markTabUnread',

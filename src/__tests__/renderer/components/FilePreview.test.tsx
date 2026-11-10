@@ -1300,6 +1300,45 @@ print("world")
 			expect(screen.queryByTitle('Table of Contents')).not.toBeInTheDocument();
 		});
 
+		it('hides the floating ToC and font zoom when showFloatingControls is false (unfocused tile)', () => {
+			const markdownWithHeadings = '# Heading 1\n## Heading 2\nContent here';
+			const file = { name: 'doc.md', content: markdownWithHeadings, path: '/test/doc.md' };
+			const { rerender } = render(
+				<FilePreview {...defaultProps} file={file} markdownEditMode={false} />
+			);
+
+			expect(screen.getByTitle('Table of Contents')).toBeInTheDocument();
+			expect(screen.getByTestId('file-preview-font-scale')).toBeInTheDocument();
+			// Open the ToC so blurring the tile has an open overlay to close.
+			fireEvent.click(screen.getByTitle('Table of Contents'));
+			expect(screen.getByText('Contents')).toBeInTheDocument();
+
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					file={file}
+					markdownEditMode={false}
+					showFloatingControls={false}
+				/>
+			);
+			expect(screen.queryByTitle('Table of Contents')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('file-preview-font-scale')).not.toBeInTheDocument();
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+
+			// Refocusing the tile brings the buttons back, with the ToC closed.
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					file={file}
+					markdownEditMode={false}
+					showFloatingControls={true}
+				/>
+			);
+			expect(screen.getByTitle('Table of Contents')).toBeInTheDocument();
+			expect(screen.getByTestId('file-preview-font-scale')).toBeInTheDocument();
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+		});
+
 		it('opens TOC overlay when button is clicked', () => {
 			const markdownWithHeadings = '# Heading 1\n## Heading 2\n### Heading 3';
 			render(

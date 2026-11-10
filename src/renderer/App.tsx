@@ -33,6 +33,10 @@ import { captureException } from './utils/sentry';
 
 // Group Chat Components
 import { GroupChatPanel } from './components/GroupChatPanel';
+import {
+	canModeratorReadImages,
+	flashModeratorCannotReadImages,
+} from './components/ChatComposer/capabilities';
 import { GroupChatRightPanel } from './components/GroupChatRightPanel';
 
 // Import custom hooks
@@ -843,6 +847,23 @@ function MaestroConsoleInner() {
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatError = useGroupChatStore((s) => s.groupChatError);
 	const groupChatInitiatorWindowId = useGroupChatStore((s) => s.initiatorWindowId);
+
+	// The room's Prompt Composer stages into the SAME image list as the room
+	// composer, so it has to obey the same moderator gate. `canModeratorReadImages`
+	// is the one rule; the state lets a later capability load take effect.
+	const activeGroupChatModeratorAgentId = groupChats.find(
+		(c) => c.id === activeGroupChatId
+	)?.moderatorAgentId;
+	const {
+		capabilities: roomModeratorCapabilities,
+		loading: roomModeratorCapabilitiesLoading,
+		error: roomModeratorCapabilitiesError,
+	} = useAgentCapabilities(activeGroupChatModeratorAgentId);
+	const roomCanAttachImages = canModeratorReadImages(activeGroupChatModeratorAgentId, {
+		loading: roomModeratorCapabilitiesLoading,
+		error: roomModeratorCapabilitiesError,
+		capabilities: roomModeratorCapabilities,
+	});
 
 	// Multi-window: which window initiated the active group chat. The panel renders
 	// only there (gated below via isGroupChatVisibleInWindow). Optional context, so
@@ -2001,6 +2022,10 @@ function MaestroConsoleInner() {
 		flushGroupChatDraft();
 		setPromptComposerOpen(true);
 	}, [flushGroupChatDraft, setPromptComposerOpen]);
+
+	const handlePromptImageAttachBlocked = useCallback(() => {
+		flashModeratorCannotReadImages();
+	}, []);
 
 	const handleGroupChatDrop = useCallback(
 		(e: React.DragEvent) => {
@@ -3472,6 +3497,7 @@ function MaestroConsoleInner() {
 									inputRef={groupChatInputRef}
 									handlePaste={handlePaste}
 									handleDrop={handleGroupChatDrop}
+									onUploadFiles={handleUploadFiles}
 									onOpenLightbox={handleSetLightboxImage}
 									queueState={activeGroupChatId ? groupChatQueues[activeGroupChatId] : undefined}
 									onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
@@ -3756,10 +3782,15 @@ function MaestroConsoleInner() {
 						}
 						setPromptComposerStagedImages={
 							activeGroupChatId
-								? setGroupChatStagedImages
+								? roomCanAttachImages
+									? setGroupChatStagedImages
+									: undefined
 								: canAttachImages
 									? setStagedImages
 									: undefined
+						}
+						onPromptImageAttachBlocked={
+							activeGroupChatId && !roomCanAttachImages ? handlePromptImageAttachBlocked : undefined
 						}
 						onPromptOpenLightbox={handleSetLightboxImage}
 						promptTabSaveToHistory={activeGroupChatId ? false : promptTabSaveToHistory}

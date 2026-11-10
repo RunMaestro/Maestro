@@ -122,6 +122,7 @@ export type { GroupChatMessage } from './groupchat/log';
 export {
 	createGroupChatEngine,
 	isDeletedGroupChatFailure,
+	isRemovedParticipantFailure,
 	extractMentions,
 	extractAutoRunDirectives,
 } from './groupchat/router';

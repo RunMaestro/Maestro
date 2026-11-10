@@ -96,6 +96,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **An image file the user named on the CLI:** `readCliImageFile(input, maxBytes)` in `src/cli/utils/imageFiles.ts`
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
+- **Parsing a base64 data URL (an image payload):** `parseBase64DataUrl()`, `mediaSubtype()` in `src/shared/dataUrl.ts` (never a `base64,(.+)$` capture)
 - **Guarding a serialized JSON payload before it overwrites a file:** `assertSerializedJsonIsSafe(serialized, target)` in `src/shared/jsonUtils.ts`
 - **UTF-8 size of a JSON payload (a message size cap):** `serializedJsonByteLength(value)` in `src/shared/jsonUtils.ts`
 - **Deterministic JSON (same value, same text):** `canonicalJson(value)` in `src/shared/canonicalJson.ts` (never hash or compare `JSON.stringify` output)
@@ -207,6 +208,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Two-letter labels for a set of agents:** `buildAgentInitials(agents)`, `agentInitialCandidates(name)` in `src/shared/agentInitials.ts`
 - **Which providers a user can pick:** `AGENT_PICKER_META`, `PICKABLE_AGENT_IDS`, `getAgentPickerMeta()`, `AGENT_AUTOSELECT_ORDER` in `src/shared/agentMetadata.ts`
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
+- **Whether a provider can read images:** `agentCanReadImages()`, `agentIdCanReadImages()` in `src/shared/maestro-lib/providers/capabilities.ts`
 - **Which provider account an agent runs as:** `resolveAgentProfile()`, `resolveAgentAccountKey()`, `effectiveAgentCustomEnvVars()`, `resolveAgentBillingCredential()` in `src/shared/providerProfiles.ts`; `useProviderProfiles()` in `src/renderer/hooks/stats/useProviderProfiles.ts`
 - **An agent's model list, and refreshing it:** `discoverAgentModels()` in `src/main/agents/model-discovery.ts`; `refreshModels()` on `useAgentModelEffortOptions()`; `MODELS_REFRESHED_CHANNEL` in `src/shared/agentModelsRefresh.ts`
 - **Which account dirs exist for a provider (main):** `getProviderAccountDirs(toolType, options?)` in `src/main/agents/provider-account-dirs.ts`
@@ -257,6 +259,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Any CLI verb that can move the Maestro view:** `resolveBackgroundFlag()` (CLI) / `readBackgroundField()` (handler) in `src/shared/focusPlacement.ts` (never `message.background !== false`)
 - **Which tab a tab-scoped action targets:** `resolveActiveTabRef(session)`, `resolveTabRefRenameValue()`, `resolveTabRefTitle()` in `src/renderer/utils/panelLayout.ts`
 - **Whether an AI tab is drawn in the tab strip:** `isAiTabHidden(tab)`, `visibleAiTabs(tabs)`, `hasUnreadVisibleTab(tabs)` in `src/renderer/utils/unifiedTabOrderUtils.ts` (never `aiTabs.length` or `aiTabs.some((t) => t.hasUnread)`)
+- **Counting or listing an agent's tabs by visibility:** `tabStripSlotKeys()`, `tabStripVisibility()`, `countTabStrip()`, `countOpenTabs()`, `dropOrphanedTabs()`, `collectGroupMemberTabKeys()` in `src/shared/tabStripMembership.ts`
 - **What an unnamed tab is called:** `getTabDisplayName(tab)`, `isSessionIdLabel()` in `src/renderer/utils/tabHelpers`, over `formatSessionId(agentSessionId)`
 - **Where a closed tab's name still exists:** `HistoryEntry.sessionName` only; pass it as the third argument of `handleResumeSession`
 - **Reading a past conversation back into a tab:** `loadResumableSession()` in `src/renderer/services/resumableSession.ts`
@@ -293,9 +296,14 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Run a shell command from the chat:** `dispatchShellCommand()`, `runShellCommand()`, `cancelShellCommand()`, `resolveCommandCwd()` in `src/renderer/services/shellCommand.ts`
 - **Running a shell code fence from an agent's reply:** `requestCodeFenceCommand()` / `CODE_FENCE_COMMAND_EVENT` in `src/renderer/services/codeFenceCommand.ts`, `isRunnableShellLanguage()` / `commandFromShellFence()` in `src/renderer/utils/shellCommandInput.ts`, drawn by `<CodeRunButton>`
 - **Ask the model for a shell command (AI command mode):** `requestAiCommand()`, `acceptAiCommand()`, `dismissAiCommand()` in `src/renderer/services/aiCommand.ts`; prompt in `src/prompts/ai-command.md`
-- **A composer's send column (notification bell + Send):** `<ComposerSendColumn>` in `src/renderer/components/ChatComposer/ComposerSendColumn.tsx`; the AI composer wraps it as `NotificationSendControls` (Send menu), Group Chat passes disabled / warning tone. Do NOT copy the bell or the Send button into a new composer.
-- **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx` (duplicate check, read error and abort reported); buttons click it through the ref, never `getElementById`.
+- **A composer's send column (notification bell + Send):** `<ComposerSendColumn>` in `src/renderer/components/ChatComposer/ComposerSendColumn.tsx`
+- **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx`
 - **Trimming a text paste in a composer:** `applyTrimmedTextPaste(e, currentValue, setValue)` / `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
+- **Composer keys both chat composers share (Cmd+F, `@` picker, Tab, Enter / Cmd+Enter, Escape):** `handleComposerFindKey()`, `handleComposerPickerKey()`, `handleComposerAgentTabKey()`, `handleComposerSendKey()` in `src/renderer/hooks/input/composerKeyDown.ts`
+- **Which optional controls a composer toolbar offers:** `deriveAiComposerCapabilities()`, `deriveGroupChatComposerCapabilities()`, `aiCanAttachImages()`, `canModeratorReadImages()`, `flashModeratorCannotReadImages()`, `GROUP_CHAT_COMPOSER_CAPABILITIES` in `src/renderer/components/ChatComposer/capabilities.ts`
+- **A chat composer's textarea with live `@mention` chips:** `<ComposerTextarea>` in `src/renderer/components/ChatComposer/ComposerTextarea.tsx`
+- **The chat composer shell both surfaces render:** `<ChatComposerFrame>`, `useChatComposerFold()` in `src/renderer/components/ChatComposer/ChatComposerFrame.tsx`
+- **Detecting an active IME composition:** `isImeComposing()` in `src/renderer/utils/ime.ts`
 - **Shell tab completion:** `useTabCompletion()` in `src/renderer/hooks/input/useTabCompletion.ts` (terminal composer and command mode)
 - **Revealing output the user asked for, past a paused auto-scroll:** `requestTranscriptScrollToBottom(sessionId, tabId)` in `src/renderer/services/transcriptScroll.ts`
 - **Appending to a transcript entry:** `canAppendToLogEntry(entry, source)` / `isSelfContainedCard(entry)` in `src/renderer/utils/logEntries.ts`
@@ -357,6 +365,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which pipelines belong to an agent:** `pipelinesForSession()`, `pipelineInvolvesSession()`, `pipelineNamesDeclaredBySession()` in `src/renderer/components/CuePipelineEditor/utils/pipelineMembership.ts`
 - **Where a pipeline is drawn (its one home agent):** `resolvePipelineHomes()` in `src/renderer/components/CuePipelineEditor/utils/pipelineMembership.ts`; cluster box geometry `agentClusterBounds()` in `nodeFootprint.ts`
 - **What a group chat does with a message it cannot send yet:** pure rules in `src/shared/groupChatQueueModel.ts`, driven by `src/main/group-chat/group-chat-queue.ts` (the queue is owned by MAIN; the renderer holds a mirror)
+- **Refusing an image-bearing group chat send:** `moderatorImagesRefusal()`, `MODERATOR_CANNOT_READ_IMAGES_REASON` in `src/shared/maestro-lib/groupchat/image-gate.ts`
 - **How much work happened in a group chat:** `computeGroupChatActivity(entries)` in `src/shared/groupChatActivity.ts` (never the first-to-last message span)
 - **Bucketing Director's Notes bullets:** `bucketNarrativeItems()`, `shouldRenderBuckets()`, `buildNarrativeGroupLookup()` in `src/shared/directorNotesGrouping.ts`
 - **Which agent a persisted group chat participant came from:** `findSessionForParticipantName(participantName, sessions)` in `src/shared/group-chat-types.ts`
@@ -460,6 +469,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a DataviewJS block may run:** `dataviewJsRunPolicy()`, `isTrustedDataviewRoot()` in `src/shared/dataview/trust.ts`; `useDataviewJsRunPolicy()` in `src/renderer/hooks/file/useDataviewJsRunPolicy.ts`
 - **A message from the DataviewJS sandbox:** `parseSandboxMessage(raw, from)` in `src/shared/dataview/sandboxProtocol.ts`
 - **What a Dataview block shows while it computes:** `DataviewSkeleton`, `DataviewRefreshing`, `DataviewInlineRefreshing`, `DataviewCalculatingPill`, `useDataviewRefreshIndicator()` in `src/renderer/components/Markdown/components/DataviewLoading.tsx`
+- **Highlighting a `dataview` or `dataviewjs` fence:** `DQL_TOKEN_RULES` in `src/shared/dataview/syntax.ts`; adapters in `src/renderer/utils/dataviewSyntax.ts`; editor fences via `fenceLanguage()` in `src/renderer/components/FilePreview/giantPreview/languageLoader.ts`
 - **What counts as a wiki link, embed, or file path in markdown text:** `WIKI_LINK_PATTERN`, `IMAGE_EMBED_PATTERN`, `PATH_PATTERN` in `src/shared/fileLinkPatterns.ts`
 
 #### Layout, scroll, sizing, and hook utilities
@@ -494,7 +504,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Touch primitives:** `isCoarsePointer()`, `triggerHaptic()`, `supportsHaptics()`, `HAPTIC_PATTERNS`, `GESTURE_THRESHOLDS`, `MIN_TOUCH_TARGET` in `src/renderer/utils/touch.ts`
 - **Long-press gesture:** `useLongPress()` in `src/renderer/hooks/utils/useLongPress.ts` (never `setTimeout` + `touchmove`)
 - **A bottom sheet on a phone:** `<PhoneBottomSheet>` in `src/renderer/components/ui/PhoneBottomSheet.tsx`
-- **Rows inside a `PhoneBottomSheet`:** `PhoneSheetSection`, `PhoneSheetOptionRow`, `PhoneSheetActionRow` in `src/renderer/components/ui/PhoneSheetRows.tsx`
+- **Rows inside a `PhoneBottomSheet`:** `PhoneSheetSection`, `PhoneSheetOptionRow`, `PhoneSheetActionRow`, `PhoneSheetSwitchRow` in `src/renderer/components/ui/PhoneSheetRows.tsx`
 - **A tab chip's action menu shell:** `<TabOverlayPortal>` in `src/renderer/components/TabBar/TabOverlayPortal.tsx`
 - **The file preview toolbar on a phone:** `<FilePreviewActionsSheet>` in `src/renderer/components/FilePreview/FilePreviewActionsSheet.tsx`
 - **Every composer setting on a phone:** `<ComposerOptionsSheet>` in `src/renderer/components/InputArea/components/ComposerOptionsSheet.tsx`

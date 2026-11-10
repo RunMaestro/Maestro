@@ -2,6 +2,7 @@ import { canonicalJson } from '../../canonicalJson';
 import * as path from 'node:path';
 import { hasEmbeddedSystemPrompt, stripEmbeddedSystemPrompt } from '../../embeddedSystemPrompt';
 import { translationArtifact, translationHash } from './identity';
+import { parseBase64DataUrl } from '../../dataUrl';
 import type {
 	PortableBlock,
 	PortableConversation,
@@ -171,12 +172,10 @@ export function extractNativeConversation(
 					case 'image':
 					case 'input_image': {
 						const dataUrl =
-							typeof block.image_url === 'string'
-								? /^data:([^;]+);base64,(.+)$/.exec(block.image_url)
-								: null;
-						const data = block.source?.type === 'base64' ? block.source.data : dataUrl?.[2];
+							typeof block.image_url === 'string' ? parseBase64DataUrl(block.image_url) : null;
+						const data = block.source?.type === 'base64' ? block.source.data : dataUrl?.base64;
 						const mediaType =
-							block.source?.media_type ?? dataUrl?.[1] ?? 'application/octet-stream';
+							block.source?.media_type ?? dataUrl?.mediaType ?? 'application/octet-stream';
 						const id = translationHash(canonicalJson({ origin, index: blocks.length }));
 						if (typeof data === 'string') {
 							if (!/^[a-zA-Z0-9+/\s]*={0,2}$/.test(data) || !data.trim())

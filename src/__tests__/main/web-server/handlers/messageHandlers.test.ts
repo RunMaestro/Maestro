@@ -5344,6 +5344,20 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.capturedAt).toBeGreaterThanOrEqual(before);
 			expect(response.capturedAt).toBeLessThanOrEqual(Date.now());
 		});
+
+		it('spreads a listing so file, browser and terminal tabs reach the CLI', () => {
+			(callbacks.listDesktopSessions as any).mockReturnValue({
+				sessions: [],
+				tabs: [{ tabId: 'f1', tabType: 'file' }],
+			});
+			handler.setCallbacks(callbacks);
+
+			handler.handleMessage(client, { type: 'list_desktop_sessions', requestId: 'req-1' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.sessions).toEqual([]);
+			expect(response.tabs).toEqual([{ tabId: 'f1', tabType: 'file' }]);
+		});
 	});
 
 	describe('Get Session History (CLI → Desktop)', () => {

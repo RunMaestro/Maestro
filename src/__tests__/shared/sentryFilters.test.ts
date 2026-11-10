@@ -339,6 +339,35 @@ describe('shouldDropSentryEvent', () => {
 			).toBe(true);
 		});
 
+		// Regression (MAESTRO-18K): a stalled connection trips our own fetch
+		// timeout, so the wrapped message says "timed out" instead of "fetch failed".
+		it('drops marketplace fetches that hit the request timeout', () => {
+			expect(
+				shouldDropSentryEvent({
+					exception: {
+						values: [
+							{
+								type: 'TimeoutError',
+								value:
+									'Request to https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main/manifest.json timed out after 30000ms',
+							},
+							{
+								type: 'MarketplaceFetchError',
+								value:
+									'Network error fetching manifest: Request to https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main/manifest.json timed out after 30000ms',
+							},
+						],
+					},
+				})
+			).toBe(true);
+			// A bare timeout from anywhere else is not this rule's business.
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent('TimeoutError', 'Request to https://example.com timed out after 30000ms')
+				)
+			).toBe(false);
+		});
+
 		// Regression (MAESTRO-TY): GitHub raw rate-limits playbook imports.
 		it('drops marketplace fetches rejected by GitHub rate limiting or a 5xx', () => {
 			expect(

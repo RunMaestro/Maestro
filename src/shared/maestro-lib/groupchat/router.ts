@@ -64,6 +64,7 @@ import {
 import { extractFirstSentence, type GroupChatStore } from './storage';
 import { GROUP_CHAT_MODERATOR_NAME, resolveGroupChatTurnKey } from './turn-metrics';
 import type { GroupChatTurnMetrics } from './turn-metrics';
+import { mediaSubtype, parseBase64DataUrl } from '../../dataUrl';
 import type {
 	GroupChatAgentDirectory,
 	GroupChatEventSink,
@@ -327,6 +328,29 @@ type TurnStopper = Pick<GroupChatTurnRunner, 'stop'>;
 export function isDeletedGroupChatFailure(error: unknown): boolean {
 	const message = error instanceof Error ? error.message : String(error ?? '');
 	return /^Group chat not found: /i.test(message);
+}
+
+/**
+ * True when routing a participant's response failed only because the user
+ * removed that participant while it was still working.
+ *
+ * `removeParticipant` kills the participant's process and drops it from the
+ * chat; it is the only code path that removes a participant once added, and
+ * `addParticipant` persists before anything is spawned. So the exit that the
+ * kill produces routes into a chat that no longer lists the participant, and
+ * `routeAgentResponse` throws `Participant '<name>' not found in group chat`.
+ * The listener already recovers (participant marked done), and the fallback
+ * path retried the same routing, so each removal produced two Sentry events
+ * (MAESTRO-WJ).
+ */
+export function isRemovedParticipantFailure(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error ?? '');
+	return /^Participant '.*' not found in group chat$/i.test(message);
+}
+
+/** Routing failures caused by a user deleting the chat or removing the participant. */
+function isExpectedRoutingFailure(error: unknown): boolean {
+	return isDeletedGroupChatFailure(error) || isRemovedParticipantFailure(error);
 }
 
 /** What the engine is built over. */
@@ -1195,10 +1219,11 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 			savedImageFilenames = [];
 			for (const dataUrl of images) {
 				// Extract base64 data and extension from data URL
-				const match = dataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
-				if (match) {
-					const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
-					const buffer = Buffer.from(match[2], 'base64');
+				const parsed = parseBase64DataUrl(dataUrl);
+				const subtype = parsed ? mediaSubtype(parsed.mediaType) : null;
+				if (parsed && subtype && /^\w+$/.test(subtype)) {
+					const ext = subtype === 'jpeg' ? 'jpg' : subtype;
+					const buffer = Buffer.from(parsed.base64, 'base64');
 					const filename = await saveImage(chat.imagesDir, buffer, `image.${ext}`);
 					savedImageFilenames.push(filename);
 				}
@@ -3165,7 +3190,7 @@ Review the agent responses above. Either:
 			// Mark AFTER routing completes. No text means no response to route: done.
 			await markAndMaybeSynthesize();
 		} catch (err) {
-			if (!isDeletedGroupChatFailure(err)) void captureException(err);
+			if (!isExpectedRoutingFailure(err)) void captureException(err);
 			logger.error(
 				'[GroupChat] Failed to load chat for participant output parsing',
 				'ProcessListener',
@@ -3178,7 +3203,7 @@ Review the agent responses above. Either:
 				}
 				await markAndMaybeSynthesize();
 			} catch (routeErr) {
-				if (!isDeletedGroupChatFailure(routeErr)) void captureException(routeErr);
+				if (!isExpectedRoutingFailure(routeErr)) void captureException(routeErr);
 				logger.error('[GroupChat] Failed to route agent response', 'ProcessListener', {
 					error: String(routeErr),
 					participant: participantName,

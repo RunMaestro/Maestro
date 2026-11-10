@@ -33,6 +33,7 @@ import {
 import { formatSize } from '../../shared/formatters';
 import { useUIStore } from '../stores/uiStore';
 import { Spinner } from './ui/Spinner';
+import { isImeComposing } from '../utils/ime';
 import { AccountPill, ghAccountLabel } from './ui/AccountPill';
 import { GitHubLoginModal } from './GitHubLoginModal';
 import { safeClipboardWrite } from '../utils/clipboard';
@@ -850,6 +851,7 @@ export function FeedbackChatView({
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
 			if (e.key === 'Enter' && !e.shiftKey) {
+				if (isImeComposing(e)) return;
 				e.preventDefault();
 				sendMessage();
 			}

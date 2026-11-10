@@ -18,6 +18,7 @@ import type { Session, AITab } from '../../../renderer/types';
 import { useQuickActionsHandlers } from '../../../renderer/hooks/modal/useQuickActionsHandlers';
 import type { UseQuickActionsHandlersDeps } from '../../../renderer/hooks/modal/useQuickActionsHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { createMockFileTab } from '../../helpers/mockTab';
@@ -113,6 +114,8 @@ function createDeps(
 
 beforeEach(() => {
 	vi.clearAllMocks();
+
+	useGroupChatStore.setState({ activeGroupChatId: null });
 
 	useSessionStore.setState({
 		sessions: [],
@@ -1476,6 +1479,37 @@ describe('useQuickActionsHandlers', () => {
 			});
 
 			expect(deps.handlePublishTabGist).toHaveBeenCalledWith('tab-789');
+		});
+	});
+
+	describe('handleQuickActionsClearActiveTerminal', () => {
+		it('clears active terminal when outside a group chat', () => {
+			const clearActiveTerminal = vi.fn();
+			const deps = createDeps({
+				mainPanelRef: { current: { clearActiveTerminal } as any },
+			});
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			act(() => {
+				result.current.handleQuickActionsClearActiveTerminal();
+			});
+
+			expect(clearActiveTerminal).toHaveBeenCalledTimes(1);
+		});
+
+		it('does nothing when inside a group chat room', () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'chat-1' });
+			const clearActiveTerminal = vi.fn();
+			const deps = createDeps({
+				mainPanelRef: { current: { clearActiveTerminal } as any },
+			});
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			act(() => {
+				result.current.handleQuickActionsClearActiveTerminal();
+			});
+
+			expect(clearActiveTerminal).not.toHaveBeenCalled();
 		});
 	});
 });

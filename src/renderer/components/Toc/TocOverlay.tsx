@@ -102,7 +102,7 @@ interface TocOverlayProps {
 	emptyMessage?: string;
 	/** Custom row content inside the row button. Default: the entry's text. */
 	renderEntry?: (entry: TocEntry, index: number, isActive: boolean) => ReactNode;
-	/** Controls drawn at the end of a row, beside (not inside) its button. */
+	/** Controls drawn at the end of a row, beside (not inside) its button, stacked vertically. */
 	renderEntryActions?: (entry: TocEntry, index: number) => ReactNode;
 	/**
 	 * Replaces a row's button while it returns non-null, for in-place editing
@@ -446,7 +446,7 @@ export const TocOverlay = React.memo(function TocOverlay({
 									className="group/toc-row flex items-center gap-1"
 								>
 									{button}
-									<div className="flex items-center gap-0.5 pr-1 opacity-0 group-hover/toc-row:opacity-100 group-focus-within/toc-row:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
+									<div className="flex flex-col items-center gap-0.5 pr-1 opacity-0 group-hover/toc-row:opacity-100 group-focus-within/toc-row:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
 										{actions}
 									</div>
 								</div>

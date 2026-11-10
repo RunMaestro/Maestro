@@ -434,7 +434,7 @@ export function buildTabCommands({
 		});
 	}
 
-	if (activeSession && isTerminalMode && onClearActiveTerminal) {
+	if (activeSession && isTerminalMode && onClearActiveTerminal && !activeGroupChatId) {
 		commands.push({
 			id: 'clearTerminal',
 			label: 'Clear Terminal History',

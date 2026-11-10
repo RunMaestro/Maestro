@@ -43,6 +43,7 @@ import { useSaveShortcut } from '../../hooks';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 import { ToggleSwitch } from '../ui/ToggleSwitch';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { isImeComposing } from '../../utils/ime';
 
 /**
  * SSH config host entry from ~/.ssh/config
@@ -216,7 +217,7 @@ export function SshRemoteModal({
 
 	// Handle keyboard navigation in dropdown
 	const handleDropdownKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Escape') {
+		if (e.key === 'Escape' && !isImeComposing(e)) {
 			e.preventDefault();
 			e.stopPropagation();
 			setShowSshConfigDropdown(false);
@@ -228,7 +229,7 @@ export function SshRemoteModal({
 		} else if (e.key === 'ArrowUp') {
 			e.preventDefault();
 			setSshConfigHighlightIndex((prev) => (prev > 0 ? prev - 1 : 0));
-		} else if (e.key === 'Enter') {
+		} else if (e.key === 'Enter' && !isImeComposing(e)) {
 			e.preventDefault();
 			if (filteredSshConfigHosts.length > 0 && filteredSshConfigHosts[sshConfigHighlightIndex]) {
 				handleSelectSshConfigHost(filteredSshConfigHosts[sshConfigHighlightIndex]);

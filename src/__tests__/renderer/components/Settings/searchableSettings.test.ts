@@ -335,6 +335,9 @@ describe('searchableSettings', () => {
 			['typo', 'general-spell-check'],
 			['user journey', 'general-user-journey'],
 			['record the files', 'general-user-journey'],
+			// Theme tab
+			['follow system', 'theme-follow-system'],
+			['prefers-color-scheme', 'theme-follow-system'],
 			['group cue', 'general-group-cue-entries'],
 			['collapse cue runs', 'general-group-cue-entries'],
 			['repeated', 'general-group-cue-entries'],

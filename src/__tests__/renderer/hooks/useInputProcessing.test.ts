@@ -44,6 +44,7 @@ import {
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useAgentStore } from '../../../renderer/stores/agentStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { agentAlreadyRunningMessage } from '../../../shared/processErrors';
 import {
@@ -3196,6 +3197,86 @@ describe('useInputProcessing', () => {
 			// Active tab transitions to busy and its banner error is cleared too
 			expect(updated.aiTabs[0].state).toBe('busy');
 			expect(updated.aiTabs[0].agentError).toBeUndefined();
+		});
+
+		// Regression: a tab errored while another tab's message already waited in
+		// the queue. The next send queued behind that item, and the queue never
+		// drained because an agent in 'error' only drains once the error is
+		// cleared - which only the banner's X did. Sending must clear it, as the
+		// direct send above does.
+		describe('a send queued behind earlier work', () => {
+			const realClearAgentError = useAgentStore.getState().clearAgentError;
+			const mockClearAgentError = vi.fn();
+
+			beforeEach(() => {
+				useAgentStore.setState({ clearAgentError: mockClearAgentError });
+			});
+
+			afterEach(() => {
+				useAgentStore.setState({ clearAgentError: realClearAgentError });
+			});
+
+			const sendBehindQueuedWork = async (errorType: 'unknown' | 'rate_limited') => {
+				const priorError = {
+					type: errorType,
+					message: 'Claude Code stopped with an error before finishing the turn.',
+					timestamp: Date.now(),
+					raw: '',
+				};
+				const waitingTab = createMockTab({ state: 'idle' });
+				const erroredTab = createMockTab({ state: 'idle', agentError: priorError });
+				const session = createMockSession({
+					state: 'error',
+					busySource: undefined,
+					agentError: priorError,
+					agentErrorTabId: erroredTab.id,
+					agentErrorPaused: true,
+					aiTabs: [waitingTab, erroredTab],
+					activeTabId: erroredTab.id,
+				});
+				session.executionQueue = [
+					{
+						id: 'queued-earlier',
+						timestamp: 1,
+						tabId: waitingTab.id,
+						type: 'message',
+						text: 'sent while the other tab was busy',
+					},
+				];
+				const deps = createDeps({
+					activeSession: session,
+					activeSessionId: session.id,
+					sessionsRef: { current: [session] },
+					inputValue: 'try again',
+				});
+				const { result } = renderHook(() => useInputProcessing(deps));
+
+				await act(async () => {
+					await result.current.processInput();
+				});
+
+				const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+				return { session, updated };
+			};
+
+			it('clears the error so the queue drains', async () => {
+				const { session, updated } = await sendBehindQueuedWork('unknown');
+
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(updated.executionQueue.map((i: { id: string }) => i.id)).toEqual([
+					'queued-earlier',
+					expect.any(String),
+				]);
+				expect(updated.executionQueue[1].text).toBe('try again');
+				expect(mockClearAgentError).toHaveBeenCalledWith(session.id);
+			});
+
+			it('leaves a provider-limit pause for the auto-resume coordinator', async () => {
+				const { updated } = await sendBehindQueuedWork('rate_limited');
+
+				expect(updated.executionQueue).toHaveLength(2);
+				expect(mockClearAgentError).not.toHaveBeenCalled();
+			});
 		});
 	});
 

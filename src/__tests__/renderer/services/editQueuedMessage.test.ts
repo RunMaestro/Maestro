@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { requestEditLastQueuedMessage } from '../../../renderer/services/editQueuedMessage';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
@@ -61,6 +62,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	useUIStore.setState({ editingQueuedItemId: null } as never);
 	useSessionStore.setState({ sessions: [], activeSessionId: null } as never);
+	useGroupChatStore.setState({ activeGroupChatId: null } as never);
 });
 
 describe('requestEditLastQueuedMessage', () => {
@@ -171,5 +173,18 @@ describe('requestEditLastQueuedMessage', () => {
 	it('reports no agent rather than throwing when nothing is selected', () => {
 		expect(requestEditLastQueuedMessage()).toBe(false);
 		expect(flashMessage()).toBe('No agent selected');
+	});
+
+	it('does nothing and shows no flash when a group chat room is open', () => {
+		seed({
+			aiTabs: [tab('tab-1')],
+			activeTabId: 'tab-1',
+			executionQueue: [queued('q1', 'tab-1')],
+		});
+		useGroupChatStore.setState({ activeGroupChatId: 'chat-1' } as never);
+
+		expect(requestEditLastQueuedMessage()).toBe(false);
+		expect(useUIStore.getState().editingQueuedItemId).toBeNull();
+		expect(notifyCenterFlash).not.toHaveBeenCalled();
 	});
 });

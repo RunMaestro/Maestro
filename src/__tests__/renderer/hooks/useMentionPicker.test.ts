@@ -233,13 +233,73 @@ describe('buildMentionAccept', () => {
 		expect(res.caretPos).toBe(res.value.length);
 	});
 
-	it('preserves text after the mention when accepting', () => {
-		// caret splice replaces only the `@filter` span, keeping the trailing text
+	it('leaves exactly one space before the text that follows', () => {
+		// The literal carries its own trailing space; the space after the token
+		// must not be doubled.
 		const res = buildMentionAccept('@te done', 0, 'te', fileItem('test.ts'));
-		expect(res.value).toBe('@test.ts  done');
-		// Caret lands right after the inserted token (not jumped to end of field),
-		// so a mid-text mention keeps typing where the user was.
+		expect(res.value).toBe('@test.ts done');
+		// Caret lands right after that space (not jumped to end of field), so a
+		// mid-text mention keeps typing where the user was.
 		expect(res.caretPos).toBe('@test.ts '.length);
 		expect(res.value.slice(0, res.caretPos)).toBe('@test.ts ');
+		expect(res.value[res.caretPos]).toBe('d');
+	});
+
+	it('collapses every blank in the run after the token to one space', () => {
+		const res = buildMentionAccept('@te \t  done', 0, 'te', fileItem('test.ts'));
+		expect(res.value).toBe('@test.ts done');
+		expect(res.caretPos).toBe('@test.ts '.length);
+	});
+
+	it('leaves a newline after the token alone', () => {
+		const res = buildMentionAccept('@te\ndone', 0, 'te', fileItem('test.ts'));
+		expect(res.value).toBe('@test.ts \ndone');
+		expect(res.caretPos).toBe('@test.ts '.length);
+	});
+
+	it('leaves punctuation after the token alone', () => {
+		const res = buildMentionAccept('@te, done', 0, 'te', fileItem('test.ts'));
+		expect(res.value).toBe('@test.ts , done');
+		expect(res.caretPos).toBe('@test.ts '.length);
+	});
+
+	it('leaves the end of the text unchanged', () => {
+		const res = buildMentionAccept('@te', 0, 'te', fileItem('test.ts'));
+		expect(res.value).toBe('@test.ts ');
+		expect(res.caretPos).toBe(res.value.length);
+	});
+
+	it('does not double the space after a quoted name', () => {
+		const quotedFile: MentionPickerItem = {
+			kind: 'file',
+			value: '@"my notes.md" ',
+			displayText: 'my notes.md',
+			fullPath: 'my notes.md',
+			score: 0,
+		};
+		const res = buildMentionAccept('see @"my no here', 4, '"my no', quotedFile);
+		expect(res.value).toBe('see @"my notes.md" here');
+		expect(res.value.slice(0, res.caretPos)).toBe('see @"my notes.md" ');
+	});
+
+	it('does not collapse text after a directory drill-in (no trailing space)', () => {
+		const res = buildMentionAccept('@sr  done', 0, 'sr', dirItem('src'));
+		expect(res.value).toBe('@src/  done');
+		expect(res.caretPos).toBe('@src/'.length);
+	});
+
+	it('does not double the space after a group expansion', () => {
+		const groupItem: MentionPickerItem = {
+			kind: 'group',
+			value: '@Squad ',
+			displayText: 'Squad',
+			groupId: 'g1',
+			memberSessionIds: ['a', 'b'],
+			memberMentionValue: '@Alpha @Beta ',
+			score: 0,
+		};
+		const res = buildMentionAccept('ping @sq  now', 5, 'sq', groupItem);
+		expect(res.value).toBe('ping @Alpha @Beta now');
+		expect(res.value.slice(0, res.caretPos)).toBe('ping @Alpha @Beta ');
 	});
 });

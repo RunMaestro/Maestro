@@ -612,6 +612,55 @@ describe('marketplace IPC handlers', () => {
 			]);
 		});
 
+		// Regression (MAESTRO-QB): four official playbooks list their document as
+		// `Agent-Prompt.md`, extension included. The import appended another `.md`,
+		// fetched `Agent-Prompt.md.md`, got a 404, and failed the whole import.
+		it('imports a document whose manifest filename already carries .md', async () => {
+			const manifestWithExtension: MarketplaceManifest = {
+				...sampleManifest,
+				playbooks: [
+					{
+						...sampleManifest.playbooks[0],
+						documents: [{ filename: 'Agent-Prompt.md', resetOnCompletion: false }],
+					},
+				],
+			};
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(
+					JSON.stringify({ fetchedAt: Date.now(), manifest: manifestWithExtension })
+				)
+				.mockRejectedValueOnce({ code: 'ENOENT' });
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			mockFetch.mockResolvedValueOnce({
+				ok: true,
+				text: () => Promise.resolve('# Agent Prompt'),
+			});
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'test-playbook-1',
+				'My Test Playbook',
+				'/autorun/folder',
+				'session-123'
+			);
+
+			expect(mockFetch).toHaveBeenCalledWith(
+				expect.stringMatching(/\/playbooks\/test-playbook-1\/Agent-Prompt\.md$/),
+				expect.anything()
+			);
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join('/autorun/folder', 'My Test Playbook', 'Agent-Prompt.md'),
+				'# Agent Prompt',
+				'utf-8'
+			);
+			expect(result.importedDocs).toEqual(['Agent-Prompt']);
+			expect(result.playbook.documents).toEqual([
+				{ filename: 'My Test Playbook/Agent-Prompt', resetOnCompletion: false },
+			]);
+		});
+
 		it('should store empty string for null prompt (Maestro default fallback)', async () => {
 			// Setup cache with playbook that has prompt: null
 			const validCache: MarketplaceCache = {

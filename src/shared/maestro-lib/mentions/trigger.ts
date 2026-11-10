@@ -82,6 +82,13 @@ export function spliceMentionLiteral(
 	let afterIndex = startIndex + 1 + filter.length;
 	const openQuote = mentionQuoteChar(filter);
 	if (openQuote && inputValue[afterIndex] === openQuote) afterIndex += 1;
-	const afterFilter = inputValue.substring(afterIndex);
+	let afterFilter = inputValue.substring(afterIndex);
+
+	// A mention literal closes with its own space (agents, files, groups). When
+	// the user already had text after the token, keep that text but drop its
+	// leading blanks so accepting mid-sentence leaves exactly one space. A
+	// newline is a real separator, not a doubled space, so it stays.
+	if (literal.endsWith(' ')) afterFilter = afterFilter.replace(/^[ \t]+/, '');
+
 	return { value: beforeAt + literal + afterFilter, caretPos: startIndex + literal.length };
 }

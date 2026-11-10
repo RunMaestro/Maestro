@@ -13,6 +13,7 @@
  */
 
 import { selectActiveSession, updateSessionWith, useSessionStore } from '../stores/sessionStore';
+import { useGroupChatStore } from '../stores/groupChatStore';
 import { useUIStore } from '../stores/uiStore';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { aiTabFocusFields, setActiveTab } from '../utils/tabHelpers';
@@ -23,6 +24,10 @@ import { aiTabFocusFields, setActiveTab } from '../utils/tabHelpers';
  * is what the keyboard path uses to decide whether the shortcut counts as used.
  */
 export function requestEditLastQueuedMessage(): boolean {
+	if (useGroupChatStore.getState().activeGroupChatId) {
+		return false;
+	}
+
 	const session = selectActiveSession(useSessionStore.getState()) ?? undefined;
 	const queue = session?.executionQueue ?? [];
 	// Commands are the only thing skipped - they carry no editable prompt

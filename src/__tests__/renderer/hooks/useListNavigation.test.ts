@@ -22,22 +22,28 @@ function createKeyboardEvent(key: string, options: Partial<KeyboardEvent> = {}):
 // Helper to create React-like keyboard events
 function createReactKeyboardEvent(
 	key: string,
-	options: { metaKey?: boolean; ctrlKey?: boolean } = {}
+	options: {
+		metaKey?: boolean;
+		ctrlKey?: boolean;
+		isComposing?: boolean;
+		keyCode?: number;
+	} = {}
 ): React.KeyboardEvent {
-	let preventDefaultCalled = false;
-	let stopPropagationCalled = false;
-
 	return {
 		key,
+		keyCode: options.keyCode ?? 0,
+		isComposing: options.isComposing ?? false,
 		metaKey: options.metaKey ?? false,
 		ctrlKey: options.ctrlKey ?? false,
-		preventDefault: vi.fn(() => {
-			preventDefaultCalled = true;
-		}),
-		stopPropagation: vi.fn(() => {
-			stopPropagationCalled = true;
-		}),
-		nativeEvent: createKeyboardEvent(key, options),
+		preventDefault: vi.fn(),
+		stopPropagation: vi.fn(),
+		nativeEvent: {
+			key,
+			keyCode: options.keyCode ?? 0,
+			isComposing: options.isComposing ?? false,
+			metaKey: options.metaKey ?? false,
+			ctrlKey: options.ctrlKey ?? false,
+		} as unknown as KeyboardEvent,
 	} as unknown as React.KeyboardEvent;
 }
 
@@ -223,6 +229,47 @@ describe('useListNavigation', () => {
 
 			expect(onSelect).toHaveBeenCalledWith(3);
 			expect(onSelectAlternate).not.toHaveBeenCalled();
+		});
+
+		it('should ignore Enter during active IME composition (isComposing: true)', () => {
+			const onSelect = vi.fn();
+			const onSelectAlternate = vi.fn();
+			const { result } = renderHook(() =>
+				useListNavigation({
+					listLength: 5,
+					onSelect,
+					onSelectAlternate,
+					initialIndex: 2,
+				})
+			);
+
+			const event = createReactKeyboardEvent('Enter', { isComposing: true });
+			act(() => {
+				result.current.handleKeyDown(event);
+			});
+
+			expect(onSelect).not.toHaveBeenCalled();
+			expect(onSelectAlternate).not.toHaveBeenCalled();
+			expect(event.preventDefault).not.toHaveBeenCalled();
+		});
+
+		it('should ignore Enter during Safari IME confirmation (keyCode 229)', () => {
+			const onSelect = vi.fn();
+			const { result } = renderHook(() =>
+				useListNavigation({
+					listLength: 5,
+					onSelect,
+					initialIndex: 2,
+				})
+			);
+
+			const event = createReactKeyboardEvent('Enter', { keyCode: 229 });
+			act(() => {
+				result.current.handleKeyDown(event);
+			});
+
+			expect(onSelect).not.toHaveBeenCalled();
+			expect(event.preventDefault).not.toHaveBeenCalled();
 		});
 
 		it('should preventDefault on navigation keys', () => {

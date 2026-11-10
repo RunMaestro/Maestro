@@ -400,9 +400,16 @@ describe('useAgentExitListener', () => {
 	// which sets up the synopsis and dispatches it via runExitSynopsis (reaching
 	// spawnBackgroundSynopsisRef), so the run-scoped model override must reach the
 	// synopsis spawn config here for parity with the CLI batch processor.
-	function setupSynopsisRun(opts: { sessionCustomModel?: string; runModelOverride?: string }) {
+	function setupSynopsisRun(opts: {
+		sessionCustomModel?: string;
+		runModelOverride?: string;
+		turnProvider?: string;
+		turnModel?: string;
+	}) {
 		const tab = createMockAITab({
 			id: 'tab-1',
+			turnProvider: opts.turnProvider,
+			turnModel: opts.turnModel,
 			state: 'busy',
 			thinkingStartTime: 0,
 			agentSessionId: 'asid-1',
@@ -421,6 +428,7 @@ describe('useAgentExitListener', () => {
 			aiTabs: [tab],
 			activeTabId: 'tab-1',
 			state: 'busy',
+			toolType: 'codex',
 			customModel: opts.sessionCustomModel,
 		});
 		useSessionStore.setState({ sessions: [session] } as any);
@@ -473,6 +481,57 @@ describe('useAgentExitListener', () => {
 		expect(spawn).toHaveBeenCalledTimes(1);
 		const sessionConfig = spawn.mock.calls[0][5];
 		expect(sessionConfig.customModel).toBe('session-sonnet');
+	});
+
+	async function synopsisModelFor(opts: Parameters<typeof setupSynopsisRun>[0]) {
+		const { deps, spawn } = setupSynopsisRun(opts);
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 0);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+		expect(spawn).toHaveBeenCalledTimes(1);
+		return spawn.mock.calls[0][5].customModel;
+	}
+
+	// The synopsis resumes the tab's own provider session. Resuming it on another
+	// model writes a model switch into that thread (Codex warns "This session was
+	// recorded with model X" on the next turn), so it runs on the model the turn
+	// was codified with at send.
+	it('resumes the synopsis on the tab turn model, not the agent default', async () => {
+		const model = await synopsisModelFor({
+			sessionCustomModel: 'gpt-6.1-sol',
+			turnProvider: 'codex',
+			turnModel: 'gpt-6-astra',
+		});
+		expect(model).toBe('gpt-6-astra');
+	});
+
+	it('passes an undefined turn model through so the provider default runs again', async () => {
+		const model = await synopsisModelFor({
+			sessionCustomModel: 'gpt-6.1-sol',
+			turnProvider: 'codex',
+			turnModel: undefined,
+		});
+		expect(model).toBeUndefined();
+	});
+
+	it('keeps the run model override ahead of the tab turn model', async () => {
+		const model = await synopsisModelFor({
+			runModelOverride: 'run-opus',
+			turnProvider: 'codex',
+			turnModel: 'gpt-6-astra',
+		});
+		expect(model).toBe('run-opus');
+	});
+
+	it('ignores a turn model stamped under a provider the agent has since left', async () => {
+		const model = await synopsisModelFor({
+			sessionCustomModel: 'gpt-6.1-sol',
+			turnProvider: 'claude-code',
+			turnModel: 'opus',
+		});
+		expect(model).toBe('gpt-6.1-sol');
 	});
 
 	// Agent Resilience: the exiting turn failed and a resend is counting down.

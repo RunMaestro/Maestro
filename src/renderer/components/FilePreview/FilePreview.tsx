@@ -33,6 +33,7 @@ import { captureException } from '../../utils/sentry';
 import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
+import { isImeComposing } from '../../utils/ime';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { requestFileDeletion } from '../../services/fileDeletion';
@@ -200,10 +201,16 @@ export const FilePreview = React.memo(
 			onHtmlRenderModeChange,
 			pendingScrollToLine,
 			onPendingScrollToLineConsumed,
+			showFloatingControls = true,
 		},
 		ref
 	) {
 		const [showTocOverlay, setShowTocOverlay] = useState(false);
+		// A tiled pane that loses focus hides its floating controls. Close an open
+		// ToC with them, so it does not pop back open when the pane is refocused.
+		useEffect(() => {
+			if (!showFloatingControls) setShowTocOverlay(false);
+		}, [showFloatingControls]);
 		// The `#` heading palette - a filtered, keyboard-driven twin of the ToC.
 		const [showHeadingPalette, setShowHeadingPalette] = useState(false);
 		// Reader font zoom for the preview / edit pane. One shared preference
@@ -1732,7 +1739,7 @@ export const FilePreview = React.memo(
 		const handleKeyDown = (e: React.KeyboardEvent) => {
 			// Handle Escape key - dismiss overlays in priority order
 			// In tab mode, layer system isn't registered, so we handle Escape directly here
-			if (e.key === 'Escape') {
+			if (e.key === 'Escape' && !isImeComposing(e)) {
 				if (showHeadingPalette) {
 					e.preventDefault();
 					e.stopPropagation();
@@ -2149,7 +2156,7 @@ export const FilePreview = React.memo(
 					    Sticky (not absolute) so it stays put while the pane scrolls
 					    without depending on a positioned ancestor. Drops below the
 					    find bar when that is open so the two never overlap. */}
-					{canScaleFont && (
+					{canScaleFont && showFloatingControls && (
 						<div
 							className={`sticky z-20 h-0 flex items-start justify-end pointer-events-none ${
 								searchOpen ? 'top-14' : 'top-0'
@@ -2238,7 +2245,7 @@ export const FilePreview = React.memo(
 										value={searchQuery}
 										onChange={(e) => setSearchQuery(e.target.value)}
 										onKeyDown={(e) => {
-											if (e.key === 'Escape') {
+											if (e.key === 'Escape' && !isImeComposing(e)) {
 												e.preventDefault();
 												e.stopPropagation();
 												if (showJqHelp) {
@@ -2251,7 +2258,9 @@ export const FilePreview = React.memo(
 													containerRef.current?.focus();
 												}
 											} else if (searchMode === 'text' && searchKind !== 'line') {
-												if (e.key === 'Enter' && !e.shiftKey) {
+												if (e.key === 'Enter' && isImeComposing(e)) {
+													// Leave the key to the input method.
+												} else if (e.key === 'Enter' && !e.shiftKey) {
 													e.preventDefault();
 													goToNextMatch();
 												} else if (e.key === 'Enter' && e.shiftKey) {
@@ -2541,7 +2550,7 @@ export const FilePreview = React.memo(
 									e.preventDefault();
 									e.stopPropagation();
 									handleSave();
-								} else if (e.key === 'Escape') {
+								} else if (e.key === 'Escape' && !isImeComposing(e)) {
 									e.preventDefault();
 									e.stopPropagation();
 									setMarkdownEditMode(false);
@@ -2855,20 +2864,22 @@ export const FilePreview = React.memo(
 					)}
 
 					{/* Table of Contents */}
-					<FilePreviewToc
-						theme={theme}
-						tocEntries={tocEntries}
-						tocWidth={tocWidth}
-						showTocOverlay={showTocOverlay}
-						setShowTocOverlay={setShowTocOverlay}
-						scrollMarkdownToBoundary={scrollMarkdownToBoundary}
-						tocButtonRef={tocButtonRef}
-						tocOverlayRef={tocOverlayRef}
-						isMarkdown={isMarkdown}
-						markdownEditMode={markdownEditMode}
-						onJumpToHeading={jumpToHeading}
-						activeIndex={activeTocIndex}
-					/>
+					{showFloatingControls && (
+						<FilePreviewToc
+							theme={theme}
+							tocEntries={tocEntries}
+							tocWidth={tocWidth}
+							showTocOverlay={showTocOverlay}
+							setShowTocOverlay={setShowTocOverlay}
+							scrollMarkdownToBoundary={scrollMarkdownToBoundary}
+							tocButtonRef={tocButtonRef}
+							tocOverlayRef={tocOverlayRef}
+							isMarkdown={isMarkdown}
+							markdownEditMode={markdownEditMode}
+							onJumpToHeading={jumpToHeading}
+							activeIndex={activeTocIndex}
+						/>
+					)}
 
 					{/* Heading palette - `#` opens the same list with a fuzzy filter */}
 					{showHeadingPalette && isMarkdown && !markdownEditMode && tocEntries.length > 0 && (

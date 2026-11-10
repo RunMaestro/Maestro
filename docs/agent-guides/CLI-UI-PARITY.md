@@ -606,11 +606,22 @@ entry needs a stated reason, the same way a Covered row needs a verb.
   the file preview's `ImageViewer`, which shares the same `usePanZoom`, and
   an agent can write a diagram to a `.mmd` file and `open-file` it. Pure
   viewing; there is no result for an agent to read back.
-- **Drag-resized pane sizes kept in renderer localStorage** (the Auto Run
-  document dropdown's height via `useResizableDropdownHeight`, the Document
-  Graph preview width via `usePersistedPanelWidth`). Pure view preferences
-  with nothing for an agent to act on; the values never reach main, so a
-  verb needs a renderer round trip. Double-click on the grip resets them.
+- **Drag-resized pane sizes and phone composer folds kept in renderer
+  localStorage** (the Auto Run document dropdown's height via
+  `useResizableDropdownHeight`, the Document Graph preview width via
+  `usePersistedPanelWidth`, and the phone composer fold in `InputArea` and
+  `GroupChatInput` via `usePersistedToggle` under `phone.composer.collapsed` and
+  `phone.groupChatComposer.collapsed`). Pure per-device view preferences with
+  nothing for an agent to act on; the values never reach main, so a verb needs
+  a renderer round trip. Double-click on the grip resets pane sizes; a tap or
+  swipe on `PhoneComposerHandle` toggles the fold.
+- **Quit When Idle** (the `QuitConfirmModal` checkbox when the user quits while
+  operations are running, and the read-only `QuitWhenIdleIndicator` pill with
+  its Cancel button above the AI and Group Chat composers). Armed from the
+  native desktop quit-confirmation flow (`useQuitWhenIdle` polls
+  `collectActiveOperations`, including busy group chats, and calls
+  `confirmQuit` once everything goes idle); a CLI agent never quits the host
+  desktop app.
 - **Log in to a provider account** (Usage Dashboard quota row "Log in",
   palette "Reauthenticate Provider"). The login is an interactive OAuth or
   device-code flow in a PTY, so there is nothing a non-interactive verb could
@@ -642,6 +653,25 @@ entry needs a stated reason, the same way a Covered row needs a verb.
   `dataview query` on a `dataviewjs` block exits 2. The block's source is
   readable with `dataview query <file> --json`; there is no rendered output
   for an agent to read back.
+- **Upload local files to the host from a composer** (the Upload button on
+  the AI composer and, since step 5 of the composer parity plan, the Group
+  Chat composer). Web-desktop only: it copies files from the BROWSER's device
+  to the host and appends their `@path` mentions to the draft. There is no
+  CLI verb, and none is planned: an agent runs on the host, so the files it
+  would upload are already there, and it can mention them in `dispatch` or
+  `group-chat` text directly.
+- **Attach images to a Group Chat room** (the Attach button, paste, and drag-and-drop
+  in the Group Chat composer). The room gates image attach on whether its
+  moderator's provider supports image input (`supportsImageInput`). The CLI's
+  `group-chat send` verb accepts text only (`<message>` or `--message-file`) and
+  has no image attachment flag, so the moderator capability gate is not needed
+  on the CLI send path.
+- **Reorder a staged image, or drag one into a Group Chat room draft.** The
+  room's strip renumbers `Screenshot N` when a thumbnail moves, and a drag
+  inserts that reference once. `group-chat send` takes the final text, so an
+  agent can write `Screenshot N` directly; the CLI stages no images and has no
+  strip to reorder. The action exists to keep the desktop thumbnails and the
+  draft in sync, which is a view operation with nothing to read back.
 
 ### Backstage plugin updates
 

@@ -28,6 +28,7 @@ import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 import { revealAgentInSidebar } from '../../services/agentNavigation';
 import { buildSessionJumpSlotMap } from '../../utils/sessionJumpSlots';
+import { isImeComposing } from '../../utils/ime';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
@@ -850,6 +851,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		}),
 		...buildFeatureCommands({
 			activeSession,
+			activeGroupChatId,
 			activeTabType,
 			canSummarizeActiveTab,
 			markdownEditMode,
@@ -906,6 +908,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildActiveTabContextCommands({
 			activeSession,
 			activeSessionId,
+			activeGroupChatId,
 			activeTabType,
 			ghCliAvailable,
 			setSessions,
@@ -1170,10 +1173,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		// Handle rename mode separately
 		if (renamingSession) {
-			if (e.key === 'Enter') {
+			if (e.key === 'Enter' && !isImeComposing(e)) {
 				e.preventDefault();
 				handleRenameSession();
-			} else if (e.key === 'Escape') {
+			} else if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();
 				setRenamingSession(false);
 			}
@@ -1184,10 +1187,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		// the command list. Handled here so neither the list nav nor the modal's
 		// Escape-to-close fires while the input is focused.
 		if (renamingWindow) {
-			if (e.key === 'Enter') {
+			if (e.key === 'Enter' && !isImeComposing(e)) {
 				e.preventDefault();
 				commitRenameCurrentWindow();
-			} else if (e.key === 'Escape') {
+			} else if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();
 				setRenamingWindow(false);
 			}
