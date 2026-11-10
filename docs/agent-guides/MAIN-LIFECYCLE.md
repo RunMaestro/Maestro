@@ -273,6 +273,66 @@ The `createWindowManager()` factory returns a `WindowManager` with a `createWind
    - **Development**: Dev server URL (`http://localhost:{port}`), installs React DevTools
    - **Production**: Loads renderer HTML file from disk
 
+### Worktree retirement client ownership
+
+The shared window factory admits each primary/secondary window through
+`worktreeRetirement.admitClient()` before constructing its `BrowserWindow`.
+WebSocket upgrades use the same fence after authentication and before initial
+sync or client callbacks. Additional windows and web clients block preparation
+until their actual close event; an error or close request does not release them.
+New clients are refused while any retirement is preparing or removing.
+
+`prepareForRenderer()` requires the actual Main-owned IPC sender to match the
+sole loaded primary window. Main-frame document navigation, renderer loss and
+window closure invalidate its prepared token; same-document navigation and
+subframe navigation do not. Once removal starts, owner loss cannot release the
+reservation. Loading does not constitute an authoritative renderer freeze
+acknowledgement. Cleanup still requires the renderer freeze and reconciliation
+transaction before it can be enabled.
+
+`prepareRegisteredForRenderer(sessionId, sender)` reads the authoritative Main
+session store in the same serialized lane as session writes and durable flushes.
+Admission precedes the lane's first microtask. The Main-owned generation advances
+for every attempted write, including failed partial writes. Ownership verification
+requires a unique local child/primary-parent registration, canonical non-overlapping
+roots, a shared Git common directory, linked child Git administration, the primary
+parent in Git's NUL-delimited worktree registry, the registered branch and exact
+local HEAD. Duplicate aliases, unknown local registrations, SSH, locked/prunable
+or detached checkouts refuse preparation. No renderer-provided path is trusted.
+
+The resulting reservation also fences the surviving parent's Git administration;
+pending writes to either checkout block preparation. `revalidateRegistered(token)`
+rechecks the generation and Git ownership while preparation remains held. Changed
+ownership or owner loss refuses validation; failures require explicit abort. Parent
+admission resumes after completed removal, while an in-flight removal remains
+fenced. These internal APIs do not expose cleanup or prove PR merge/renderer freeze.
+
+`WorktreeRetirementHost.remove()` is the internal checked transaction over that
+reservation. It independently rediscovers the PR and confirms its merged REST
+detail, repository, branch, base and exact original head; merge, squash and rebase
+are supported without requiring the original head to be an ancestor of the base.
+After revalidating the renderer and Git ownership it refuses tracked, untracked,
+ignored, assume-unchanged/skip-worktree and submodule data. The only destructive
+command is `git worktree remove -- <path>` from the surviving primary parent.
+Concurrent commits share one runner, with no force or recursive fallback. Failure
+after Git starts retains the fence; settlement retries never rerun removal. The
+watcher callback, durable archive and renderer completion must all succeed before
+the parent is released. Real local Git fixtures exercise these paths with mocked
+GitHub responses. This transaction is not exposed through IPC yet: durable crash
+recovery, concrete watcher settlement and policy/UI admission remain prerequisites.
+
+Restored, fully present checkouts can be cancelled through the desktop Git API's
+`getWorktreeRetirementRecoveries()` / `cancelWorktreeRetirementRecovery(id)`.
+Main verifies the sole loaded primary and its document revision, both saved
+registrations, surviving Git registry and canonical child ownership in the
+existing sessions write lane. Only a durable `cancelled` journal acknowledgement
+releases that recovery token. Failed writes, reloads, replaced checkouts and
+removed/partial outcomes remain fenced. Cancellation preserves registrations,
+files and history; any later removal needs a new preparation and journal id.
+Startup retains cancelled journal history without restoring its fence. This API
+does not repeat Git removal or provide a cleanup UI; removed-outcome watcher and
+renderer recovery settlement still needs integration.
+
 ### Security Hardening
 
 - **Window open handler**: All popup/new-window requests are denied

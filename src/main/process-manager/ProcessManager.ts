@@ -51,6 +51,7 @@ import { cleanupTempFiles } from './utils/imageUtils';
 import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-signal';
 import { HarnessControlRegistry } from '../harness-control/HarnessControlRegistry';
 import type { HarnessControlCapabilities } from '../../shared/harness-control/types';
+import { worktreeRetirement } from '../git/worktreeRetirement';
 
 export interface ProcessManagerOptions {
 	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
@@ -105,8 +106,15 @@ export class ProcessManager extends EventEmitter {
 		this.on('exit', (sessionId: string) => this.harnessControls.forget(sessionId));
 		this.isCoworkingEnabled = options.isCoworkingEnabled ?? (() => true);
 		this.bufferManager = new DataBufferManager(this.processes, this);
-		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager);
-		this.childProcessSpawner = new ChildProcessSpawner(this.processes, this, this.bufferManager);
+		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager, (config, handle) =>
+			this.retainRetirementAdmission(config, { ptyProcess: handle })
+		);
+		this.childProcessSpawner = new ChildProcessSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config, handle) => this.retainRetirementAdmission(config, { childProcess: handle })
+		);
 		// The OpenCode SDK path falls back to the CLI spawner when the shared
 		// server can't start, so local OpenCode never regresses to "broken".
 		this.opencodeServerSpawner = new OpencodeServerSpawner(
@@ -172,6 +180,20 @@ export class ProcessManager extends EventEmitter {
 	 * creation attaches to a live handle; generic terminal spawn can still replace it.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
+		const admission = worktreeRetirement.admit(
+			config.sshRemoteId ? null : [expandTilde(config.cwd)]
+		);
+		if (!admission.ok) throw new Error(admission.reason);
+		try {
+			return this.spawnAdmitted(config);
+		} finally {
+			// Concrete spawners acquire an overlapping hold before returning. A
+			// pending desktop handler can now release without exposing a gap.
+			admission.release();
+		}
+	}
+
+	private spawnAdmitted(config: ProcessConfig): SpawnResult {
 		const existing = this.processes.get(config.sessionId);
 		if (
 			config.reuseTerminal &&
@@ -317,6 +339,7 @@ export class ProcessManager extends EventEmitter {
 		// resulting env-less MCP subprocess (its parent is the shared serve PID, not a
 		// tracked agent CLI), so the tools are cleanly unavailable, never mis-scoped.
 		if (this.shouldUseOpencodeServer(config)) {
+			if (!config.sshRemoteId) worktreeRetirement.excludeUnsupportedExecution(config.cwd);
 			const serveResult = this.opencodeServerSpawner.spawn(config);
 			// The same `spawn` seam the CLI path emits below. This transport
 			// reports `exit` through the shared handlers, so a listener that pairs
@@ -366,6 +389,7 @@ export class ProcessManager extends EventEmitter {
 		// any CLI spawn and is routed after the injection.
 		let result: SpawnResult;
 		if (configWithCoworkingSession.harnessControlMode === 'native') {
+			if (!config.sshRemoteId) worktreeRetirement.excludeUnsupportedExecution(config.cwd);
 			if (configWithCoworkingSession.toolType === 'hermes') {
 				result = this.hermesApiSpawner.spawn(configWithCoworkingSession);
 			} else if (configWithCoworkingSession.toolType === 'claude-code') {
@@ -382,6 +406,7 @@ export class ProcessManager extends EventEmitter {
 				result = this.childProcessSpawner.spawn(configWithCoworkingSession);
 			}
 		} else if (this.shouldUseCodexAppServer(configWithCoworkingSession)) {
+			if (!config.sshRemoteId) worktreeRetirement.excludeUnsupportedExecution(config.cwd);
 			result = this.codexAppServerSpawner.spawn(configWithCoworkingSession);
 		} else if (this.shouldUsePty(configWithCoworkingSession)) {
 			result = this.ptySpawner.spawn(configWithCoworkingSession);
@@ -417,8 +442,35 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	private fallbackToCli(config: ProcessConfig): SpawnResult {
-		this.harnessControls.forget(config.sessionId);
-		return this.childProcessSpawner.spawn(config);
+		// Native transports may invoke this asynchronously, outside spawn().
+		const admission = worktreeRetirement.admit(
+			config.sshRemoteId ? null : [expandTilde(config.cwd)]
+		);
+		if (!admission.ok) throw new Error(admission.reason);
+		try {
+			this.harnessControls.forget(config.sessionId);
+			return this.childProcessSpawner.spawn(config);
+		} finally {
+			admission.release();
+		}
+	}
+
+	/** Bind to the actual handle, independent of kill(), map replacement or synthetic exit. */
+	private retainRetirementAdmission(
+		config: ProcessConfig,
+		handle: Pick<ManagedProcess, 'childProcess' | 'ptyProcess'>
+	): void {
+		const admission = worktreeRetirement.admit(
+			config.sshRemoteId ? null : [expandTilde(config.cwd)]
+		);
+		if (!admission.ok) throw new Error(admission.reason);
+		if (handle.childProcess) {
+			// Even a spawn error produces close. Do not release on error/exit:
+			// streams can still be draining, and kill only sends a signal.
+			handle.childProcess.once('close', admission.release);
+		} else if (handle.ptyProcess) {
+			handle.ptyProcess.onExit(admission.release);
+		}
 	}
 
 	private registerHarnessControl(config: ProcessConfig): void {
@@ -922,10 +974,17 @@ export class ProcessManager extends EventEmitter {
 		shellEnvVars?: Record<string, string>,
 		sshRemoteConfig?: SshRemoteConfig | null
 	): Promise<CommandResult> {
-		if (sshRemoteConfig) {
-			return this.sshCommandRunner.run(sessionId, command, cwd, sshRemoteConfig, shellEnvVars);
+		const admission = worktreeRetirement.admit(sshRemoteConfig ? null : [expandTilde(cwd)]);
+		if (!admission.ok) return Promise.reject(new Error(admission.reason));
+		try {
+			const run = sshRemoteConfig
+				? this.sshCommandRunner.run(sessionId, command, cwd, sshRemoteConfig, shellEnvVars)
+				: this.localCommandRunner.run(sessionId, command, cwd, shell, shellEnvVars);
+			return run.finally(admission.release);
+		} catch (error) {
+			admission.release();
+			throw error;
 		}
-		return this.localCommandRunner.run(sessionId, command, cwd, shell, shellEnvVars);
 	}
 
 	/**

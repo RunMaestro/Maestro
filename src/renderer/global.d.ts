@@ -4,6 +4,15 @@ import type {
 	TranslationReport,
 } from '../shared/maestro-lib/translation/types';
 import type {
+	WorktreePullRequestDiscoveryRequest,
+	WorktreePullRequestDiscoveryResult,
+	WorktreePullRequestSnapshot,
+	WorktreePullRequestMergePreflightRequest,
+	WorktreePullRequestMergePreflight,
+	WorktreePullRequestMergeRequest,
+	WorktreePullRequestMergeResult,
+} from '../shared/worktreePullRequests';
+import type {
 	HarnessInteractionRequest,
 	HarnessInteractionResolveResult,
 	HarnessInteractionResponse,
@@ -1793,6 +1802,43 @@ interface MaestroAPI {
 			createIfMissing: boolean,
 			sshRemoteId?: string
 		) => Promise<GitWorktreeCheckoutResult>;
+		discoverWorktreePullRequest: (
+			request: WorktreePullRequestDiscoveryRequest
+		) => Promise<WorktreePullRequestDiscoveryResult>;
+		refreshWorktreePullRequest: (
+			request: WorktreePullRequestDiscoveryRequest
+		) => Promise<WorktreePullRequestSnapshot>;
+		prepareWorktreeRetirement: (
+			sessionId: string
+		) => Promise<import('../shared/worktreeRetirement').RetirementPreparationResult>;
+		removeWorktreeRetirement: (
+			token: string
+		) => Promise<import('../shared/worktreeRetirement').RetirementRemovalResult>;
+		abortWorktreeRetirement: (token: string) => Promise<boolean>;
+		getWorktreeRetirementRecoveries: () => Promise<
+			import('../shared/worktreeRetirement').PendingRetirementRecovery[]
+		>;
+		cancelWorktreeRetirementRecovery: (
+			id: string
+		) => Promise<import('../shared/worktreeRetirement').RetirementRecoveryCancellation>;
+		completeWorktreeRetirementRecovery: (
+			id: string
+		) => Promise<import('../shared/worktreeRetirement').RetirementRemovalResult>;
+		onRetirementRendererRequest: (
+			handler: (
+				command: import('../shared/worktreeRetirement').RetirementRendererCommand
+			) => import('../shared/worktreeRetirement').RetirementRendererReply
+		) => () => void;
+		onRetirementRendererRelease: (
+			handler: (sessionId: string, token: string) => void
+		) => () => void;
+		preflightWorktreePullRequestMerge: (
+			request: WorktreePullRequestMergePreflightRequest
+		) => Promise<WorktreePullRequestMergePreflight>;
+		mergeWorktreePullRequest: (
+			request: WorktreePullRequestMergeRequest
+		) => Promise<WorktreePullRequestMergeResult>;
+		invalidateWorktreePullRequest: (worktreePath: string) => Promise<void>;
 		createPR: (
 			worktreePath: string,
 			baseBranch: string,

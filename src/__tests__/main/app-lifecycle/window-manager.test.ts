@@ -359,6 +359,71 @@ describe('app-lifecycle/window-manager', () => {
 	});
 
 	describe('createWindow', () => {
+		it.each(['did-start-navigation', 'render-process-gone', 'destroyed', 'closed'])(
+			'invalidates preparation when primary owner emits %s',
+			async (event) => {
+				const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+				const { worktreeRetirement: fence } = await import('../../../main/git/worktreeRetirement');
+				const manager = createWindowManager({
+					windowStateStore:
+						mockWindowStateStore as unknown as WindowManagerDependencies['windowStateStore'],
+					isDevelopment: true,
+					preloadPath: '/path/to/preload.js',
+					rendererProductionUrl: 'app://app/index.html',
+					devServerUrl: 'http://localhost:5173',
+					useNativeTitleBar: false,
+					autoHideMenuBar: false,
+				});
+				const checkout = { path: process.cwd(), head: 'abc', generation: 1 };
+				expect(fence.register(checkout)).toBe(true);
+				manager.createWindow();
+				expect(fence.prepareForRenderer(checkout, mockWebContents).ok).toBe(false);
+				webContentsEventHandlers.get('did-finish-load')!();
+				const prepared = fence.prepareForRenderer(checkout, mockWebContents);
+				if (!prepared.ok) throw new Error(prepared.reason);
+				if (event === 'closed') {
+					windowClosedHandlers.forEach((handler) => handler());
+				} else {
+					const handler = mockWebContents.on.mock.calls.find(([name]) => name === event)![1];
+					if (event === 'did-start-navigation') {
+						handler({}, 'app://app/index.html', true, true);
+						expect(fence.state(checkout.path)).toBe('preparing');
+						handler({}, 'app://app/index.html', false, false);
+						expect(fence.state(checkout.path)).toBe('preparing');
+						handler({}, 'app://app/index.html', false, true);
+					} else handler();
+				}
+				expect(fence.state(checkout.path)).toBe('available');
+				expect(fence.commit(prepared.token)).toBe(false);
+				expect(fence.prepareForRenderer(checkout, mockWebContents).ok).toBe(false);
+			}
+		);
+		it('refuses secondary construction during preparation and holds it until closed', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+			const { worktreeRetirement: fence } = await import('../../../main/git/worktreeRetirement');
+			const manager = createWindowManager({
+				windowStateStore:
+					mockWindowStateStore as unknown as WindowManagerDependencies['windowStateStore'],
+				isDevelopment: true,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+			const checkout = { path: process.cwd(), head: 'abc', generation: 1 };
+			expect(fence.register(checkout)).toBe(true);
+			const prepared = fence.prepare(checkout);
+			if (!prepared.ok) throw new Error(prepared.reason);
+			expect(() => manager.createSecondaryWindow([])).toThrow('retirement');
+			expect(lastBrowserWindowOptions).toBeNull();
+			fence.abort(prepared.token);
+			manager.createSecondaryWindow([]);
+			expect(fence.prepare(checkout).ok).toBe(false);
+			windowClosedHandlers.forEach((handler) => handler());
+			expect(fence.prepare(checkout).ok).toBe(true);
+		});
+
 		it('should create BrowserWindow and return it', async () => {
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 

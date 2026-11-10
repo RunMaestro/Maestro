@@ -1,3 +1,4 @@
+import { useRetirementDialogState } from '../../../hooks/worktree/useRetirementDialogState';
 import { useCallback, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Session } from '../../../types';
@@ -58,16 +59,16 @@ export function useFileOperations({
 	onShowFlash,
 }: UseFileOperationsArgs): UseFileOperationsResult {
 	// Rename modal state
-	const [renameModal, setRenameModal] = useState<RenameModalState | null>(null);
+	const [renameModal, setRenameModal] = useRetirementDialogState<RenameModalState>();
 	const [renameValue, setRenameValue] = useState('');
 	const [renameError, setRenameError] = useState<string | null>(null);
 
 	// Delete confirmation modal state
-	const [deleteModal, setDeleteModal] = useState<DeleteModalState | null>(null);
+	const [deleteModal, setDeleteModal] = useRetirementDialogState<DeleteModalState>();
 	const [isDeleting, setIsDeleting] = useState(false);
 
 	// New-file modal state
-	const [newFileModal, setNewFileModal] = useState<NewFileModalState | null>(null);
+	const [newFileModal, setNewFileModal] = useRetirementDialogState<NewFileModalState>();
 	const [newFileValue, setNewFileValue] = useState('');
 	const [newFileError, setNewFileError] = useState<string | null>(null);
 	const [isCreatingFile, setIsCreatingFile] = useState(false);

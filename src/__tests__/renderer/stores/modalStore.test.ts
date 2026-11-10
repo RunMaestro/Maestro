@@ -1360,6 +1360,7 @@ describe('modalStore', () => {
 					'settings',
 					'systemLogs',
 					'usageDashboard',
+					'viewWorktreePRDetails',
 				].sort()
 			);
 		});

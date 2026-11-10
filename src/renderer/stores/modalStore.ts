@@ -14,7 +14,10 @@
  * Once all consumers are migrated, ModalContext can be removed.
  */
 
-import { create } from 'zustand';
+import {
+	createRetirementStore,
+	assertRetirementStoreUpdate,
+} from '../services/worktreeRetirementStoreGuard';
 import type { Session, SettingsTab, AgentError } from '../types';
 import type { GitStreamingOperation } from '../../shared/gitUtils';
 import type { SerializableWizardState } from '../components/Wizard';
@@ -429,6 +432,7 @@ export type ModalId =
 	| 'groupChatInfo'
 	// Git
 	| 'gitDiff'
+	| 'worktreePRDetails'
 	| 'gitLog'
 	| 'gitCommandRunner'
 	| 'branchSwitcher'
@@ -517,6 +521,7 @@ export const DESTINATION_MODALS: ReadonlySet<ModalId> = new Set<ModalId>([
 	'logViewer',
 	'agentSessions',
 	'memoryViewer',
+	'worktreePRDetails',
 ]);
 
 /**
@@ -615,6 +620,7 @@ export interface ModalDataMap {
 	renameGroupChat: GroupChatModalData;
 	editGroupChat: GroupChatModalData;
 	gitDiff: GitDiffModalData;
+	worktreePRDetails: { sessionId: string };
 	gitLog: GitLogModalData;
 	gitCommandRunner: GitCommandRunnerData;
 	branchSwitcher: BranchSwitcherModalData;
@@ -705,11 +711,17 @@ export type ModalStore = ModalStoreState & ModalStoreActions;
 // Store Implementation
 // ============================================================================
 
-export const useModalStore = create<ModalStore>()((set, get) => ({
+export const useModalStore = createRetirementStore<ModalStore>('modals')((set, get) => ({
 	modals: new Map(),
 	promptComposerFullscreen: readStoredPromptComposerFullscreen(),
 
 	openModal: (id, data) => {
+		// Admission must precede external destination callbacks as well as the
+		// eventual store write; refusing an editor must not close another surface.
+		assertRetirementStoreUpdate('modals', get(), {
+			...get(),
+			modals: new Map([[id, { open: true, data }]]),
+		});
 		const isDestination = DESTINATION_MODALS.has(id);
 		// Hand the window over from any non-modal destination (Document Graph)
 		// before this one opens, so the two can't be up at once.

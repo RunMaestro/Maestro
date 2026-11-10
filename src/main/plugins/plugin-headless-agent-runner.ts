@@ -1,3 +1,4 @@
+import { worktreeRetirement } from '../git/worktreeRetirement';
 import { acquireProviderSessionWriter } from '../utils/provider-session-writer';
 import { isAutoModel } from '../../shared/autoModel';
 /** One host-owned, headless provider turn, shared by plugin send and CLI send. */
@@ -136,7 +137,7 @@ export function createPluginHeadlessAgentRunner(
 			let prepared;
 			try {
 				prepared = await Promise.race([
-					(async () => {
+					worktreeRetirement.runFilesystemMutation(local ? [agent.cwd] : [], async () => {
 						if (isStopped()) return undefined;
 						const customBinary =
 							local && agent.customPath ? await checkCustomPath(agent.customPath) : undefined;
@@ -156,7 +157,7 @@ export function createPluginHeadlessAgentRunner(
 									? await attachment.waitFor(deps.prepareSystemPrompt(agent))
 									: await deps.prepareSystemPrompt(agent);
 						return { detection, systemPrompt };
-					})(),
+					}),
 					stopped,
 				]);
 			} finally {
@@ -230,7 +231,9 @@ export function createPluginHeadlessAgentRunner(
 				};
 			}
 			const result = await deps.spawn(agent.toolType, agent.cwd, prompt, providerSessionId, {
-				...(attachment ? { requireProcessExit: true } : {}),
+				// CLI supervision may return after a forced-stop deadline; retirement
+				// requires the concrete child exit even for ordinary sends.
+				requireProcessExit: true,
 				customModel: agent.customModel,
 				customEffort: agent.customEffort,
 				customArgs: agent.customArgs,
@@ -311,7 +314,7 @@ export function createPluginHeadlessAgentRunner(
 			}
 		}
 	};
-	return async (...args) => {
+	const runWithWriter: HeadlessAgentRunner = async (...args) => {
 		const [agentId, , providerSessionId, signal] = args;
 		if (!providerSessionId || args[8]) return run(...args);
 		const agent = deps.getAgent(agentId);
@@ -339,5 +342,12 @@ export function createPluginHeadlessAgentRunner(
 		} finally {
 			release();
 		}
+	};
+	return (...args) => {
+		const agent = deps.getAgent(args[0]);
+		return worktreeRetirement.runFilesystemMutation(
+			agent?.sessionSshRemoteConfig?.enabled ? [] : [agent?.cwd ?? ''],
+			() => runWithWriter(...args)
+		);
 	};
 }

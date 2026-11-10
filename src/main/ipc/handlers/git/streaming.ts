@@ -1,3 +1,4 @@
+import { worktreeRetirement } from '../../../git/worktreeRetirement';
 import { ipcMain } from 'electron';
 import { execFileStreaming } from '../../../utils/execFile';
 import { execGit } from '../../../utils/remote-git';
@@ -204,11 +205,18 @@ async function spawnStreamingGitCommand(
 		sendToInvoker(event, 'git:commandOutput', { runId, stream, chunk });
 	};
 
-	const handle = execFileStreaming(command, args, {
-		cwd: spawnCwd,
-		env,
-		onChunk: send,
-	});
+	// Cancellation can settle `result` on exit while a hook still owns pipes.
+	// Keep a separate hold through close without delaying the UI's cancel result.
+	const childAdmission = sshRemote ? undefined : worktreeRetirement.admit([cwd]);
+	if (childAdmission && !childAdmission.ok) throw new Error(childAdmission.reason);
+	let handle: ReturnType<typeof execFileStreaming>;
+	try {
+		handle = execFileStreaming(command, args, { cwd: spawnCwd, env, onChunk: send });
+	} catch (error) {
+		if (childAdmission?.ok) childAdmission.release();
+		throw error;
+	}
+	if (childAdmission?.ok) void handle.closed.then(childAdmission.release);
 	streamingGitRuns.set(runId, handle.cancel);
 	// Cancel may have arrived while we were still setting up.
 	if (pendingGitCancels.delete(runId)) handle.cancel();
@@ -257,14 +265,16 @@ export function registerStreamingHandlers(): void {
 		): Promise<GitRunCommandResult> => {
 			const { runId, operation, cwd, sshRemoteId, remoteCwd, setUpstream } = options;
 			try {
-				return await runStreamingGitCommand(event, {
-					runId,
-					operation,
-					cwd,
-					sshRemoteId,
-					remoteCwd,
-					setUpstream,
-				});
+				return await worktreeRetirement.runFilesystemMutation(sshRemoteId ? [] : [cwd], () =>
+					runStreamingGitCommand(event, {
+						runId,
+						operation,
+						cwd,
+						sshRemoteId,
+						remoteCwd,
+						setUpstream,
+					})
+				);
 			} catch (error) {
 				logger.error('runCommand error', LOG_CONTEXT, {
 					operation,

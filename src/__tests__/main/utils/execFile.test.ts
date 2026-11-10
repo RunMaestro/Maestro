@@ -171,6 +171,7 @@ describe('execFile.ts', () => {
 				onChunk: (chunk, stream) => chunks.push([chunk, stream]),
 			});
 			const result = await handle.result;
+			await expect(handle.closed).resolves.toBeUndefined();
 
 			expect(chunks).toContainEqual(['hello', 'stdout']);
 			expect(result.stdout).toBe('hello');
@@ -187,6 +188,7 @@ describe('execFile.ts', () => {
 				{ onChunk: (_chunk, stream) => streams.push(stream) }
 			);
 			const result = await handle.result;
+			await expect(handle.closed).resolves.toBeUndefined();
 
 			expect(streams).toEqual(['stderr']);
 			expect(result.stderr).toBe('boom');
@@ -205,6 +207,7 @@ describe('execFile.ts', () => {
 				}
 			);
 			const result = await handle.result;
+			await expect(handle.closed).resolves.toBeUndefined();
 
 			expect(result.exitCode).toBe('SIGTERM');
 			expect(result.stdout).toBe('up');
@@ -235,6 +238,7 @@ describe('execFile.ts', () => {
 			});
 
 			const result = await handle.result;
+			await expect(handle.closed).resolves.toBeUndefined();
 			expect(result.exitCode).toBe('SIGTERM');
 			expect(grandchildPid).toBeGreaterThan(0);
 
@@ -254,6 +258,7 @@ describe('execFile.ts', () => {
 				onChunk: () => {},
 			});
 			const result = await handle.result;
+			await expect(handle.closed).resolves.toBeUndefined();
 
 			expect(result.exitCode).toBe('ENOENT');
 			expect(result.stderr).toBeTruthy();

@@ -361,6 +361,8 @@ export function rebasePendingSessionChanges(hostSessions: Session[]): Session[] 
 
 export interface SessionPersistenceBaseline {
 	sessions: Session[];
+	/** Main has durably archived these ids under a renderer freeze. */
+	removedIds?: string[];
 	recovered?: boolean;
 }
 
@@ -768,7 +770,27 @@ export function useDebouncedPersistence(
 		if ((event as CustomEvent<{ state: string }>).detail?.state === 'connected') void flushNow();
 	});
 	useEventListener(SESSION_PERSISTENCE_BASELINE_EVENT, (event) => {
-		const { sessions, recovered } = (event as CustomEvent<SessionPersistenceBaseline>).detail;
+		const { sessions, recovered, removedIds } = (event as CustomEvent<SessionPersistenceBaseline>)
+			.detail;
+		if (removedIds?.length) {
+			const removed = new Set(removedIds);
+			recoveryGenerationRef.current++;
+			sessionsRef.current = useSessionStore.getState().sessions;
+			previouslyPersistedRef.current =
+				previouslyPersistedRef.current?.filter((s) => !removed.has(s.id)) ?? null;
+			mountedSessionsRef.current =
+				mountedSessionsRef.current?.filter((s) => !removed.has(s.id)) ?? null;
+			if (uncertainBaselineRef.current)
+				uncertainBaselineRef.current = uncertainBaselineRef.current.filter(
+					(s) => !removed.has(s.id)
+				);
+			attemptedSessionsRef.current = null;
+			for (const id of removed) {
+				peerBaselinesRef.current.delete(id);
+				queueRemovalsRef.current.delete(id);
+				submittedQueueRemovalsRef.current?.delete(id);
+			}
+		}
 		if (recovered) {
 			recoveryGenerationRef.current++;
 			if (timerRef.current) clearTimeout(timerRef.current);

@@ -15,11 +15,24 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
+import { WorktreePullRequestDetailsHost } from '../../../renderer/components/WorktreePullRequestDetails';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useWorktreeCleanupStore } from '../../../renderer/stores/worktreeCleanupStore';
 import { SessionItem } from '../../../renderer/components/SessionItem';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Session, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+
+const { prState } = vi.hoisted(() => ({
+	prState: { current: {} as Record<string, unknown>, refresh: vi.fn() },
+}));
+vi.mock('../../../renderer/hooks/worktree/useWorktreePullRequest', () => ({
+	useWorktreePullRequest: () => ({ loading: false, refresh: prState.refresh, ...prState.current }),
+}));
+vi.mock('../../../renderer/utils/openUrl', () => ({ openUrl: vi.fn() }));
 
 const defaultTheme: Theme = {
 	id: 'dracula',
@@ -262,5 +275,310 @@ describe('SessionItem worktree collapse toggle', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Collapse worktrees' }));
 
 		expect(onSelect).not.toHaveBeenCalled();
+	});
+});
+
+describe('worktree PR summary', () => {
+	beforeEach(() => {
+		useModalStore.getState().closeModal('worktreePRDetails');
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		useWorktreeCleanupStore.setState({
+			runs: {},
+			recoveries: [],
+			recoveryRuns: {},
+			recoveryError: undefined,
+		});
+	});
+	afterEach(() => useModalStore.getState().closeModal('worktreePRDetails'));
+
+	it('opens accessible details with PR, checks and local divergence', () => {
+		const onSelect = vi.fn();
+		prState.current = {
+			snapshot: {
+				discovery: {
+					status: 'found',
+					pullRequest: {
+						identity: { number: 42, repository: { owner: 'a', name: 'b' } },
+						headBranch: 'feat/x',
+						headSha: 'a'.repeat(40),
+						title: 'Example',
+						url: 'https://github.com/a/b/pull/42',
+						state: 'OPEN',
+						isDraft: true,
+						baseBranch: 'rc',
+					},
+				},
+				ci: {
+					status: 'available',
+					checkedAt: '2026-11-04T10:00:00Z',
+					checks: [
+						{
+							kind: 'check-run',
+							id: '1',
+							name: 'Build',
+							state: 'failed',
+							detailsUrl: 'https://github.com/a/b/actions/runs/1',
+							updatedAt: '2026-11-04T10:00:00Z',
+						},
+					],
+				},
+				divergence: { status: 'different', ahead: 2, behind: 1 },
+			},
+		};
+		const target = createMockSession();
+		useSessionStore.setState({ sessions: [target] });
+		render(
+			<LayerStackProvider>
+				<WorktreePullRequestDetailsHost theme={defaultTheme} />
+				<SessionItem {...defaultProps} variant="worktree" session={target} onSelect={onSelect} />
+			</LayerStackProvider>
+		);
+		fireEvent.click(screen.getByRole('button', { name: /Show PR and CI details/ }));
+		expect(screen.getByRole('dialog', { name: 'Worktree PR and CI' })).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'PR #42: Example' })).toHaveAttribute(
+			'href',
+			'https://github.com/a/b/pull/42'
+		);
+		expect(screen.getByText('Draft')).toBeInTheDocument();
+		expect(screen.getByText('rc')).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Build' })).toHaveAttribute(
+			'href',
+			'https://github.com/a/b/actions/runs/1'
+		);
+		expect(screen.getByText(/2 ahead, 1 behind/)).toBeInTheDocument();
+		// Opening status is read-only; mutation controls are revealed deliberately.
+		expect(screen.getByRole('button', { name: 'Check merge readiness' })).not.toBeVisible();
+		expect(screen.getByRole('button', { name: 'Prepare worktree cleanup' })).not.toBeVisible();
+		const mergeSection = screen
+			.getByText('Merge pull request', { selector: 'summary span' })
+			.closest('details')!;
+		expect(mergeSection).not.toHaveAttribute('open');
+		fireEvent.click(mergeSection.querySelector('summary')!);
+		expect(screen.getByRole('button', { name: 'Check merge readiness' })).toBeVisible();
+		expect(onSelect).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByRole('button', { name: 'Close modal' }));
+		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+	});
+	it.each(['authentication required', 'offline'])(
+		'shows %s as unavailable rather than no PR',
+		(message) => {
+			prState.current = {
+				snapshot: { discovery: { status: 'unavailable', reason: 'gh', message } },
+			};
+			render(<SessionItem {...defaultProps} variant="worktree" session={createMockSession()} />);
+			expect(screen.getByRole('button', { name: /unavailable/i })).toHaveAttribute(
+				'title',
+				expect.stringContaining(message)
+			);
+			expect(screen.queryByRole('button', { name: /No PR/ })).not.toBeInTheDocument();
+		}
+	);
+
+	it('updates check details while the dialog remains open', () => {
+		const check = {
+			kind: 'check-run',
+			id: '1',
+			name: 'Build',
+			state: 'pending',
+			detailsUrl: null,
+			updatedAt: null,
+		};
+		prState.current = {
+			snapshot: {
+				discovery: {
+					status: 'found',
+					pullRequest: {
+						identity: { number: 42, repository: { owner: 'a', name: 'b' } },
+						headBranch: 'feat/x',
+						headSha: 'a'.repeat(40),
+						title: 'Example',
+						url: 'https://github.com/a/b/pull/42',
+						state: 'OPEN',
+						baseBranch: 'rc',
+					},
+				},
+				ci: { status: 'available', checkedAt: '2026-11-04T10:00:00Z', checks: [check] },
+			},
+		};
+		const session = createMockSession();
+		useSessionStore.setState({ sessions: [session] });
+		const view = () => (
+			<LayerStackProvider>
+				<WorktreePullRequestDetailsHost theme={defaultTheme} />
+				<SessionItem {...defaultProps} variant="worktree" session={{ ...session }} />
+			</LayerStackProvider>
+		);
+		const { rerender } = render(view());
+		fireEvent.click(screen.getByRole('button', { name: /Show PR and CI details/ }));
+		expect(screen.getByText(/Build/).parentElement).toHaveTextContent('pending');
+		check.state = 'passed';
+		rerender(view());
+		expect(screen.getByText(/Build/).parentElement).toHaveTextContent('passed');
+		check.state = 'failed';
+		rerender(view());
+		expect(screen.getByText(/Build/).parentElement).toHaveTextContent('failed');
+	});
+	it('keeps the target after its row unmounts and active agent changes; closes on Escape', () => {
+		const target = createMockSession({ id: 'target', name: 'Original worktree' });
+		const other = createMockSession({ id: 'other', name: 'Other worktree' });
+		useSessionStore.setState({ sessions: [target, other], activeSessionId: target.id });
+		prState.current = {
+			snapshot: { discovery: { status: 'unavailable', reason: 'gh', message: 'offline' } },
+		};
+		const view = (row: boolean) => (
+			<LayerStackProvider>
+				<WorktreePullRequestDetailsHost theme={defaultTheme} />
+				{row && <SessionItem {...defaultProps} variant="worktree" session={target} />}
+			</LayerStackProvider>
+		);
+		const { rerender } = render(view(true));
+		fireEvent.click(screen.getByRole('button', { name: /Show PR and CI details/ }));
+		act(() => useSessionStore.setState({ activeSessionId: other.id }));
+		rerender(view(false));
+		expect(screen.getByRole('dialog')).toHaveTextContent('Original worktree');
+		expect(screen.getByRole('dialog')).not.toHaveTextContent('Other worktree');
+		fireEvent.keyDown(document, { key: 'Escape' });
+		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+	});
+
+	it('reports a removed target without falling back to the active agent', () => {
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: 'other' })],
+			activeSessionId: 'other',
+		});
+		useModalStore.getState().openModal('worktreePRDetails', { sessionId: 'removed' });
+		render(
+			<LayerStackProvider>
+				<WorktreePullRequestDetailsHost theme={defaultTheme} />
+			</LayerStackProvider>
+		);
+		expect(screen.getByRole('dialog')).toHaveTextContent('no longer available');
+		fireEvent.click(screen.getByRole('button', { name: 'Close modal' }));
+		expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+	});
+	it('reopens the absent original child and retries its parked token from another target', async () => {
+		const target = createMockSession({
+			id: 'retiring-child',
+			name: 'Retiring child',
+			parentSessionId: 'parent',
+		});
+		const parent = createMockSession({ id: 'parent', name: 'Surviving parent' });
+		const prepare = vi.fn().mockResolvedValue({ ok: true, token: 'original', revision: 1 });
+		const remove = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('Reply lost'))
+			.mockResolvedValue({ status: 'removed' });
+		window.maestro.git.prepareWorktreeRetirement = prepare;
+		window.maestro.git.removeWorktreeRetirement = remove;
+		window.maestro.git.getWorktreeRetirementRecoveries = vi.fn().mockResolvedValue([]);
+		useSessionStore.setState({ sessions: [target, parent], activeSessionId: parent.id });
+		prState.current = { snapshot: { discovery: { status: 'no-pr' } } };
+		useModalStore.getState().openModal('worktreePRDetails', { sessionId: target.id });
+		render(
+			<LayerStackProvider>
+				<WorktreePullRequestDetailsHost theme={defaultTheme} />
+			</LayerStackProvider>
+		);
+		fireEvent.click(screen.getByText('Prepare worktree cleanup'));
+		fireEvent.click(await screen.findByText('Confirm worktree removal'));
+		await screen.findByText('Cleanup pending: Reply lost');
+		fireEvent.click(screen.getByRole('button', { name: 'Close modal' }));
+		act(() => {
+			useSessionStore.setState({ sessions: [parent] });
+			useModalStore.getState().openModal('worktreePRDetails', { sessionId: parent.id });
+		});
+		fireEvent.click(screen.getByText('View cleanup for Retiring child'));
+		expect(screen.getByRole('dialog')).toHaveTextContent('no longer available');
+		fireEvent.click(screen.getByText('Retry cleanup settlement'));
+		await screen.findByText(/Worktree removed\. Saved chat/);
+		expect(remove.mock.calls).toEqual([['original'], ['original']]);
+		expect(prepare).toHaveBeenCalledOnce();
+	});
+
+	it('shows CI transitions on one icon and opens details without selecting the worktree', () => {
+		prState.refresh.mockClear();
+		const onSelect = vi.fn();
+		const session = createMockSession({ worktreeBranch: 'feat/x' });
+		const snapshot = {
+			discovery: { status: 'found', pullRequest: { identity: { number: 42 }, state: 'OPEN' } },
+			ci: { status: 'available', checks: [{ state: 'pending' }] },
+		};
+		prState.current = { snapshot };
+		const { rerender } = render(
+			<SessionItem {...defaultProps} variant="worktree" session={session} onSelect={onSelect} />
+		);
+		expect(screen.getByRole('button', { name: /PR #42 OPEN, CI pending/ })).toBeInTheDocument();
+		snapshot.ci.checks[0].state = 'passed';
+		rerender(
+			<SessionItem
+				{...defaultProps}
+				variant="worktree"
+				session={{ ...session }}
+				onSelect={onSelect}
+			/>
+		);
+		expect(screen.getByRole('button', { name: /CI passed/ })).toBeInTheDocument();
+		snapshot.ci.checks[0].state = 'failed';
+		rerender(
+			<SessionItem
+				{...defaultProps}
+				variant="worktree"
+				session={{ ...session }}
+				onSelect={onSelect}
+			/>
+		);
+		const icon = screen.getByRole('button', { name: /CI failed/ });
+		expect(icon).toHaveTextContent('');
+		expect(screen.queryByText('Details')).not.toBeInTheDocument();
+		fireEvent.click(icon);
+		expect(prState.refresh).not.toHaveBeenCalled();
+		expect(useModalStore.getState().getData('worktreePRDetails')?.sessionId).toBe(session.id);
+		expect(onSelect).not.toHaveBeenCalled();
+	});
+
+	it('keeps keyboard actions on the PR controls from selecting the worktree', () => {
+		const onSelect = vi.fn();
+		prState.refresh.mockClear();
+		prState.current = {
+			snapshot: { discovery: { status: 'unavailable', reason: 'gh', message: 'offline' } },
+		};
+		const target = createMockSession();
+		useSessionStore.setState({ sessions: [target] });
+		render(
+			<LayerStackProvider>
+				<WorktreePullRequestDetailsHost theme={defaultTheme} />
+				<SessionItem {...defaultProps} variant="worktree" session={target} onSelect={onSelect} />
+			</LayerStackProvider>
+		);
+		const details = screen.getByRole('button', { name: /Show PR and CI details/ });
+		details.focus();
+		fireEvent.keyDown(details, { key: 'Enter' });
+		fireEvent.click(details);
+		expect(screen.getByRole('dialog', { name: 'Worktree PR and CI' })).toBeInTheDocument();
+		const refresh = screen.getByRole('button', { name: 'Refresh PR status' });
+		refresh.focus();
+		fireEvent.keyDown(refresh, { key: ' ' });
+		fireEvent.click(refresh);
+		expect(prState.refresh).toHaveBeenCalledOnce();
+		expect(onSelect).not.toHaveBeenCalled();
+	});
+
+	it('distinguishes no PR, unknown CI and stale data', () => {
+		const session = createMockSession();
+		prState.current = { snapshot: { discovery: { status: 'no-pr' } } };
+		const { rerender } = render(
+			<SessionItem {...defaultProps} variant="worktree" session={session} />
+		);
+		expect(screen.queryByRole('button', { name: /No PR/ })).not.toBeInTheDocument();
+		prState.current = {
+			snapshot: {
+				discovery: { status: 'found', pullRequest: { identity: { number: 7 }, state: 'OPEN' } },
+			},
+		};
+		rerender(<SessionItem {...defaultProps} variant="worktree" session={{ ...session }} />);
+		expect(screen.getByRole('button', { name: /CI unknown/ })).toBeInTheDocument();
+		prState.current = { ...prState.current, stale: true, error: 'offline' };
+		rerender(<SessionItem {...defaultProps} variant="worktree" session={{ ...session }} />);
+		expect(screen.getByRole('button', { name: /PR status stale: offline/ })).toBeInTheDocument();
 	});
 });

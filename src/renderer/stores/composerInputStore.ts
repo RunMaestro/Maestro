@@ -25,7 +25,7 @@
  * per-session persistence still lives on the session model, exactly as before.
  */
 
-import { create } from 'zustand';
+import { createRetirementStore } from '../services/worktreeRetirementStoreGuard';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MentionRouting } from '../../shared/crossAgentContext';
 
@@ -101,25 +101,27 @@ interface ComposerInputState {
 	adoptAiDraft: (tabId: string) => void;
 }
 
-export const useComposerInputStore = create<ComposerInputState>()((set) => ({
-	aiValue: '',
-	aiValueTabId: null,
-	terminalValue: '',
-	aiCommandMode: 'off',
-	mentionRoutingOverride: null,
-	setAiValue: (value) => set((s) => ({ aiValue: resolve(value, s.aiValue) })),
-	setTerminalValue: (value) => set((s) => ({ terminalValue: resolve(value, s.terminalValue) })),
-	setAiCommandMode: (commandMode) => set({ aiCommandMode: commandMode }),
-	setMentionRoutingOverride: (routing) => set({ mentionRoutingOverride: routing }),
-	loadAiDraft: (tabId, value, commandMode) =>
-		set({
-			aiValue: value,
-			aiValueTabId: tabId,
-			aiCommandMode: commandMode,
-			mentionRoutingOverride: null,
-		}),
-	adoptAiDraft: (tabId) => set({ aiValueTabId: tabId }),
-}));
+export const useComposerInputStore = createRetirementStore<ComposerInputState>('composer')(
+	(set) => ({
+		aiValue: '',
+		aiValueTabId: null,
+		terminalValue: '',
+		aiCommandMode: 'off',
+		mentionRoutingOverride: null,
+		setAiValue: (value) => set((s) => ({ aiValue: resolve(value, s.aiValue) })),
+		setTerminalValue: (value) => set((s) => ({ terminalValue: resolve(value, s.terminalValue) })),
+		setAiCommandMode: (commandMode) => set({ aiCommandMode: commandMode }),
+		setMentionRoutingOverride: (routing) => set({ mentionRoutingOverride: routing }),
+		loadAiDraft: (tabId, value, commandMode) =>
+			set({
+				aiValue: value,
+				aiValueTabId: tabId,
+				aiCommandMode: commandMode,
+				mentionRoutingOverride: null,
+			}),
+		adoptAiDraft: (tabId) => set({ aiValueTabId: tabId }),
+	})
+);
 
 /** Selector: the live AI draft. */
 export const selectAiComposerValue = (s: ComposerInputState): string => s.aiValue;

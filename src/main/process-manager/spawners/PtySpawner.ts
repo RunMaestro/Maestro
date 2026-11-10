@@ -24,7 +24,11 @@ export class PtySpawner {
 	constructor(
 		private processes: Map<string, ManagedProcess>,
 		private emitter: EventEmitter,
-		private bufferManager: DataBufferManager
+		private bufferManager: DataBufferManager,
+		private readonly onStarted?: (
+			config: ProcessConfig,
+			pty: NonNullable<ManagedProcess['ptyProcess']>
+		) => void
 	) {}
 
 	/**
@@ -134,6 +138,8 @@ export class PtySpawner {
 				cwd: cwd,
 				env: ptyEnv as Record<string, string>,
 			});
+			// This independent exit subscription also runs for superseded PTYs.
+			this.onStarted?.(config, ptyProcess);
 
 			const managedProcess: ManagedProcess = {
 				sessionId,

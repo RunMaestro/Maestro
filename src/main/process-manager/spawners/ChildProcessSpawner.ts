@@ -75,7 +75,11 @@ export class ChildProcessSpawner {
 	constructor(
 		private processes: Map<string, ManagedProcess>,
 		private emitter: EventEmitter,
-		private bufferManager: DataBufferManager
+		private bufferManager: DataBufferManager,
+		private readonly onStarted?: (
+			config: ProcessConfig,
+			child: NonNullable<ManagedProcess['childProcess']>
+		) => void
 	) {
 		this.stdoutHandler = new StdoutHandler({
 			processes: this.processes,
@@ -512,6 +516,8 @@ export class ChildProcessSpawner {
 				}
 			);
 			const childProcess = turn.child;
+			// Register before any later setup can fail or publish a spawn event.
+			this.onStarted?.(config, childProcess);
 
 			// A stream error with no listener is an uncaught exception. stdin's is
 			// the common one: EPIPE, from a prompt written to a process that has

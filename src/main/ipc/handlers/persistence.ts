@@ -58,7 +58,6 @@ import {
 import { nativeCurrentTurns } from '../../pianola/current-turn';
 import type { SessionTranscriptPatch } from '../../../shared/sessionTranscript';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
-import { canonicalJson } from '../../../shared/canonicalJson';
 import type {
 	ConfirmQueueItem,
 	ReleaseQueueItem,
@@ -66,6 +65,14 @@ import type {
 	QueueItemReceiptRequest,
 } from '../../stores/queue-item-receipt';
 import { mergeGroupPersistenceChanges } from '../../../shared/groupHierarchy';
+import { worktreeRetirement } from '../../git/worktreeRetirement';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import { readRetirementIntents } from '../../git/worktreeRetirementRecovery';
+import {
+	foldPathCase,
+	isPathWithin,
+	realpathThroughAncestor,
+} from '../../utils/real-path-containment';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -262,57 +269,234 @@ export function registerPersistenceHandlers(
 		onSessionsPersisted,
 	} = deps;
 	const sessionWriteQueue = createKeyedWriteQueue();
+	let registrationGeneration = 0;
+	const retiredSessionIds = new Set(
+		sessionsStore.get('retiredWorktrees', []).map((record) => record.session.id)
+	);
+	worktreeRetirement.bindRegistrationSource({
+		read: () => sessionsStore.get('sessions', []),
+		generation: () => registrationGeneration,
+		enqueue: (operation) => sessionWriteQueue.enqueue('sessions', operation),
+		persistPrepared: async (input, isCurrent) => {
+			const { sessions: relocated } = await relocateSessionImages(input);
+			if (!isCurrent()) throw new Error('Retirement preparation expired before snapshot save');
+			const previous = sessionsStore.get('sessions', []);
+			const updates = new Map(relocated.map((session) => [session.id, session]));
+			const current = previous.map((saved) => {
+				const update = updates.get(saved.id);
+				return update
+					? compactSessionToolOutputs(
+							normalizeStoredClosedTabs(mergeDeferredSessionContent(update, saved))
+						).session
+					: saved;
+			});
+			registrationGeneration++;
+			sessionsStore.set('sessions', current);
+			await flushSessionWrites();
+			await onSessionsPersisted?.(relocated, current, []);
+		},
+		writeRetirementIntent: async (input) => {
+			const [intent] = readRetirementIntents([input]);
+			// No archive, journal or app-data file may disappear with the checkout.
+			for (const storage of [sessionsStore.path, app.getPath('userData')]) {
+				if (
+					typeof storage !== 'string' ||
+					!path.isAbsolute(storage) ||
+					isPathWithin(
+						foldPathCase(realpathThroughAncestor(storage, { strict: true })),
+						foldPathCase(intent.checkout.path)
+					)
+				)
+					throw new Error('Retirement storage must survive outside the checkout');
+			}
+			const journal = readRetirementIntents(sessionsStore.get('worktreeRetirements', []));
+			const previous = journal.find((record) => record.archive.id === intent.archive.id);
+			if (
+				previous &&
+				(canonicalJson({ ...previous, phase: intent.phase }) !== canonicalJson(intent) ||
+					(previous.phase !== 'removing' && intent.phase !== previous.phase))
+			)
+				throw new Error('Retirement journal identity changed');
+			if (
+				!previous &&
+				journal.some(
+					(record) =>
+						record.phase !== 'cancelled' &&
+						(record.archive.session.id === intent.archive.session.id ||
+							record.checkout.path === intent.checkout.path)
+				)
+			)
+				throw new Error('Retirement journal already owns checkout');
+			const sessions = sessionsStore.get('sessions', []);
+			const parents = sessions.filter((s) => s.id === intent.parent.id);
+			if (parents.length !== 1 || canonicalJson(parents[0]) !== canonicalJson(intent.parent))
+				throw new Error('Retirement journal parent changed');
+			const children = sessions.filter((s) => s.id === intent.archive.session.id);
+			if (intent.phase !== 'settled') {
+				if (
+					children.length !== 1 ||
+					canonicalJson(children[0]) !== canonicalJson(intent.archive.session)
+				)
+					throw new Error('Retirement journal child changed');
+				if (
+					intent.phase === 'cancelled' &&
+					(!previous ||
+						sessionsStore
+							.get('retiredWorktrees', [])
+							.some((r) => r.session.id === intent.archive.session.id))
+				)
+					throw new Error('Retirement cancellation requires an unarchived pending checkout');
+			} else {
+				const archives = sessionsStore
+					.get('retiredWorktrees', [])
+					.filter((r) => r.id === intent.archive.id);
+				if (
+					!previous ||
+					children.length ||
+					archives.length !== 1 ||
+					canonicalJson(archives[0]) !== canonicalJson(intent.archive)
+				)
+					throw new Error('Retirement archive settlement pending');
+			}
+			sessionsStore.set(
+				'worktreeRetirements',
+				previous
+					? journal.map((record) => (record.archive.id === intent.archive.id ? intent : record))
+					: [...journal, intent]
+			);
+			await flushSessionWrites();
+		},
+		reconcileRetired: async (record, parent) => {
+			// Called internally in this SAME lane with a Main-owned removing token.
+			// Never accept a renderer's replacement document or a separate IPC bypass.
+			const previous = sessionsStore.get('sessions', []);
+			const parents = previous.filter((session) => session.id === parent.id);
+			if (parents.length !== 1 || canonicalJson(parents[0]) !== canonicalJson(parent))
+				throw new Error('Retirement parent registration changed');
+			const children = previous.filter((session) => session.id === record.session.id);
+			const archive = sessionsStore.get('retiredWorktrees', []);
+			const retained = archive.filter((item) => item.id === record.id);
+			if (retained.length) {
+				// A failed flush may already have updated the deferred store cache.
+				if (
+					retained.length !== 1 ||
+					canonicalJson(retained[0]) !== canonicalJson(record) ||
+					children.length
+				)
+					throw new Error('Retirement retry no longer owns the archived registration');
+			} else if (
+				children.length !== 1 ||
+				canonicalJson(children[0]) !== canonicalJson(record.session) ||
+				archive.some((item) => item.session.id === record.session.id)
+			) {
+				throw new Error('Retirement child registration changed');
+			}
+			const current = previous.filter((session) => session.id !== record.session.id);
+			const active = sessionsStore.get('activeSessionId');
+			// One document revision contains the archive AND registration removal.
+			// History, provider transcripts, image refs and journey files are kept.
+			registrationGeneration++;
+			sessionsStore.set({
+				sessions: current,
+				retiredWorktrees: retained.length ? archive : [...archive, record],
+				...(active === record.session.id ? { activeSessionId: parent.id } : {}),
+			});
+			retiredSessionIds.add(record.session.id);
+			if (pendingActiveSessionId === record.session.id) pendingActiveSessionId = parent.id;
+			if (pendingActivatedSessionId === record.session.id) pendingActivatedSessionId = null;
+			await flushSessionWrites();
+			await onSessionsPersisted?.([], current, [record.session.id]);
+			rememberRemovedSessions([record.session.id]);
+			// The primary renderer is still frozen. Its token-authorized completion
+			// reconciles its stores before ordinary lifecycle broadcasts can resume.
+		},
+	});
+	// Both ends of a registration move matter. Resolve stored identities again
+	// when a queued write starts, since its predecessor may have moved that id.
+	const sessionWritePaths = (input: StoredSession[], removeIds: string[] = []): string[] => {
+		const ids = new Set([...input.map((session) => session.id), ...removeIds]);
+		return [
+			...input,
+			...sessionsStore.get('sessions', []).filter((session) => ids.has(session.id)),
+		].map((session) => session.cwd);
+	};
 	const queueWrite =
-		<TArgs extends unknown[], TResult>(handler: (...args: TArgs) => Promise<TResult>) =>
-		(...args: TArgs): Promise<TResult> =>
-			sessionWriteQueue.enqueue('sessions', () => handler(...args));
+		<TArgs extends unknown[], TResult>(
+			handler: (...args: TArgs) => Promise<TResult>,
+			paths: (...args: TArgs) => string[]
+		) =>
+		(...args: TArgs): Promise<TResult> => {
+			// Admission precedes even the queue's first microtask. Keep it through
+			// relocation, backups, durable flush, and registration callbacks.
+			const initialPaths = paths(...args);
+			const admission = initialPaths.length ? worktreeRetirement.admit(initialPaths) : undefined;
+			if (admission && !admission.ok) return Promise.reject(new Error(admission.reason));
+			return sessionWriteQueue
+				.enqueue('sessions', async () => {
+					const currentPaths = paths(...args);
+					const current = currentPaths.length ? worktreeRetirement.admit(currentPaths) : undefined;
+					if (current && !current.ok) throw new Error(current.reason);
+					try {
+						// Includes failed/partially persisted writes and same-id re-registration.
+						// Read-only ownership verification uses this same serialized lane.
+						registrationGeneration++;
+						return await handler(...args);
+					} finally {
+						current?.release();
+					}
+				})
+				.finally(() => admission?.release());
+		};
 
 	const confirmQueueItem: ConfirmQueueItem = (input) => {
 		// Pin the complete request before waiting behind any pending save. No
 		// caller mutation can retarget the proof while flush/readback is in flight.
 		const expected = canonicalJson(input.item);
 		const request: QueueItemReceiptRequest = { ...input, item: JSON.parse(expected) };
-		return sessionWriteQueue.enqueue('sessions', async (): Promise<QueueItemReceipt> => {
-			if (
-				!request.agentId ||
-				!request.tabId ||
-				!request.itemId ||
-				!request.pendingAdmissionId ||
-				request.item.id !== request.itemId ||
-				request.item.tabId !== request.tabId ||
-				request.item.pendingAdmissionId !== request.pendingAdmissionId ||
-				(request.item.type !== 'message' && request.item.type !== 'command')
-			)
-				return { durable: false, reason: 'invalid-request' };
+		return queueWrite(
+			async (): Promise<QueueItemReceipt> => {
+				if (
+					!request.agentId ||
+					!request.tabId ||
+					!request.itemId ||
+					!request.pendingAdmissionId ||
+					request.item.id !== request.itemId ||
+					request.item.tabId !== request.tabId ||
+					request.item.pendingAdmissionId !== request.pendingAdmissionId ||
+					(request.item.type !== 'message' && request.item.type !== 'command')
+				)
+					return { durable: false, reason: 'invalid-request' };
 
-			// This is the SAME queue as setMany/setAll. Keep its lock through the
-			// flush and authoritative readback; a snapshot from before flush is not
-			// evidence. Errors reject and can never be mistaken for durable=true.
-			await flushSessionWrites();
-			let disk: SessionsData;
-			try {
-				disk = JSON.parse(await fs.readFile(sessionsStore.path, 'utf-8'));
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code === 'ENOENT')
-					return { durable: false, reason: 'store-unavailable' };
-				throw error;
-			}
-			// Both disk and the live cache must agree. A different main-process
-			// mutator during the asynchronous read must not yield stale evidence.
-			for (const sessions of [disk.sessions, sessionsStore.get('sessions', [])]) {
-				const session = sessions?.find((s) => s.id === request.agentId);
-				if (!session) return { durable: false, reason: 'session-missing' };
-				if (!session.aiTabs?.some((tab: { id: string }) => tab.id === request.tabId))
-					return { durable: false, reason: 'tab-missing' };
-				const items = session.executionQueue?.filter(
-					(item: { id: string }) => item.id === request.itemId
-				);
-				if (!items?.length) return { durable: false, reason: 'item-missing' };
-				if (items.length !== 1 || canonicalJson(items[0]) !== expected)
-					return { durable: false, reason: 'item-changed' };
-			}
-			return { durable: true, request };
-		});
+				// This is the SAME queue as setMany/setAll. Keep its lock through the
+				// flush and authoritative readback; a snapshot from before flush is not
+				// evidence. Errors reject and can never be mistaken for durable=true.
+				await flushSessionWrites();
+				let disk: SessionsData;
+				try {
+					disk = JSON.parse(await fs.readFile(sessionsStore.path, 'utf-8'));
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+						return { durable: false, reason: 'store-unavailable' };
+					throw error;
+				}
+				// Both disk and the live cache must agree. A different main-process
+				// mutator during the asynchronous read must not yield stale evidence.
+				for (const sessions of [disk.sessions, sessionsStore.get('sessions', [])]) {
+					const session = sessions?.find((s) => s.id === request.agentId);
+					if (!session) return { durable: false, reason: 'session-missing' };
+					if (!session.aiTabs?.some((tab: { id: string }) => tab.id === request.tabId))
+						return { durable: false, reason: 'tab-missing' };
+					const items = session.executionQueue?.filter(
+						(item: { id: string }) => item.id === request.itemId
+					);
+					if (!items?.length) return { durable: false, reason: 'item-missing' };
+					if (items.length !== 1 || canonicalJson(items[0]) !== expected)
+						return { durable: false, reason: 'item-changed' };
+				}
+				return { durable: true, request };
+			},
+			() => sessionWritePaths([], [request.agentId])
+		)();
 	};
 
 	/** Cancel pending admissions when their queue row or owning tab disappears. */
@@ -343,85 +527,90 @@ export function registerPersistenceHandlers(
 	const releaseQueueItem: ReleaseQueueItem = (input, commit) => {
 		const expected = canonicalJson(input.item);
 		const request = JSON.parse(canonicalJson(input)) as Parameters<ReleaseQueueItem>[0];
-		return sessionWriteQueue.enqueue('sessions', async () => {
-			/** Revalidate tab identity, queue order and exact held intent before release and commit. */
-			const assertRows = (sessions: StoredSession[], releasedGeneration?: string) => {
-				const session = sessions?.find((s) => s.id === request.agentId);
-				const tab = session?.aiTabs?.find((t: { id: string }) => t.id === request.tabId);
-				const rows = session?.executionQueue ?? [];
-				const item = rows.find((r: { id: string }) => r.id === request.itemId);
-				const held = releasedGeneration
-					? { ...request.item, admissionRelease: { generation: releasedGeneration } }
-					: request.item;
-				if (
-					!session ||
-					!tab ||
-					tab.createdAt !== request.tabIdentity.createdAt ||
-					tab.agentSessionId !== request.tabIdentity.agentSessionId ||
-					!item ||
-					request.item.id !== request.itemId ||
-					request.item.tabId !== request.tabId ||
-					request.item.pendingAdmissionId !== request.pendingAdmissionId ||
-					!request.pendingAdmissionId ||
-					item.paused ||
-					session.agentErrorPaused ||
-					rows.filter((r: { id: string }) => r.id === request.itemId).length !== 1 ||
-					rows
-						.slice(0, rows.indexOf(item))
-						.some(
-							(r: {
-								tabId?: string;
-								paused?: boolean;
-								pendingAdmissionId?: string;
-								awaitingConsult?: unknown;
-								waitingForConnection?: boolean;
-							}) =>
-								r.waitingForConnection ||
-								(r.pendingAdmissionId || r.awaitingConsult ? r.tabId === request.tabId : !r.paused)
-						) ||
-					canonicalJson({ ...item, paused: undefined }) !==
-						canonicalJson({ ...held, paused: undefined })
-				)
-					throw new Error('DispatchQueueChangedOrPaused');
-			};
-			if (canonicalJson(request.item) !== expected) throw new Error('DispatchIntentMismatch');
-			assertRows(sessionsStore.get('sessions', []));
-			await flushSessionWrites();
-			const disk = JSON.parse(await fs.readFile(sessionsStore.path, 'utf-8')) as SessionsData;
-			assertRows(disk.sessions);
-			const guard = () => assertRows(sessionsStore.get('sessions', []));
-			guard();
-			// No await between final read, journal intent and cache mutation.
-			const release = commit(guard);
-			guard();
-			const sessions = sessionsStore.get('sessions', []).map((session) =>
-				session.id !== request.agentId
-					? session
-					: {
-							...session,
-							executionQueue: session.executionQueue.map((item: { id: string }) =>
-								item.id !== request.itemId
-									? item
-									: {
-											...item,
-											admissionRelease: { generation: release.generation },
-										}
-							),
-						}
-			);
-			sessionsStore.set('sessions', sessions);
-			await flushSessionWrites();
-			const releasedDisk = JSON.parse(
-				await fs.readFile(sessionsStore.path, 'utf-8')
-			) as SessionsData;
-			assertRows(releasedDisk.sessions, release.generation);
-			const releasedGuard = () => {
-				assertRows(sessionsStore.get('sessions', []), release.generation);
-				release.guard();
-			};
-			releasedGuard();
-			return { generation: release.generation, guard: releasedGuard };
-		});
+		return queueWrite(
+			async () => {
+				/** Revalidate tab identity, queue order and exact held intent before release and commit. */
+				const assertRows = (sessions: StoredSession[], releasedGeneration?: string) => {
+					const session = sessions?.find((s) => s.id === request.agentId);
+					const tab = session?.aiTabs?.find((t: { id: string }) => t.id === request.tabId);
+					const rows = session?.executionQueue ?? [];
+					const item = rows.find((r: { id: string }) => r.id === request.itemId);
+					const held = releasedGeneration
+						? { ...request.item, admissionRelease: { generation: releasedGeneration } }
+						: request.item;
+					if (
+						!session ||
+						!tab ||
+						tab.createdAt !== request.tabIdentity.createdAt ||
+						tab.agentSessionId !== request.tabIdentity.agentSessionId ||
+						!item ||
+						request.item.id !== request.itemId ||
+						request.item.tabId !== request.tabId ||
+						request.item.pendingAdmissionId !== request.pendingAdmissionId ||
+						!request.pendingAdmissionId ||
+						item.paused ||
+						session.agentErrorPaused ||
+						rows.filter((r: { id: string }) => r.id === request.itemId).length !== 1 ||
+						rows
+							.slice(0, rows.indexOf(item))
+							.some(
+								(r: {
+									tabId?: string;
+									paused?: boolean;
+									pendingAdmissionId?: string;
+									awaitingConsult?: unknown;
+									waitingForConnection?: boolean;
+								}) =>
+									r.waitingForConnection ||
+									(r.pendingAdmissionId || r.awaitingConsult
+										? r.tabId === request.tabId
+										: !r.paused)
+							) ||
+						canonicalJson({ ...item, paused: undefined }) !==
+							canonicalJson({ ...held, paused: undefined })
+					)
+						throw new Error('DispatchQueueChangedOrPaused');
+				};
+				if (canonicalJson(request.item) !== expected) throw new Error('DispatchIntentMismatch');
+				assertRows(sessionsStore.get('sessions', []));
+				await flushSessionWrites();
+				const disk = JSON.parse(await fs.readFile(sessionsStore.path, 'utf-8')) as SessionsData;
+				assertRows(disk.sessions);
+				const guard = () => assertRows(sessionsStore.get('sessions', []));
+				guard();
+				// No await between final read, journal intent and cache mutation.
+				const release = commit(guard);
+				guard();
+				const sessions = sessionsStore.get('sessions', []).map((session) =>
+					session.id !== request.agentId
+						? session
+						: {
+								...session,
+								executionQueue: session.executionQueue.map((item: { id: string }) =>
+									item.id !== request.itemId
+										? item
+										: {
+												...item,
+												admissionRelease: { generation: release.generation },
+											}
+								),
+							}
+				);
+				sessionsStore.set('sessions', sessions);
+				await flushSessionWrites();
+				const releasedDisk = JSON.parse(
+					await fs.readFile(sessionsStore.path, 'utf-8')
+				) as SessionsData;
+				assertRows(releasedDisk.sessions, release.generation);
+				const releasedGuard = () => {
+					assertRows(sessionsStore.get('sessions', []), release.generation);
+					release.guard();
+				};
+				releasedGuard();
+				return { generation: release.generation, guard: releasedGuard };
+			},
+			() => sessionWritePaths([], [request.agentId])
+		)();
 	};
 
 	// Ids closed by a client, newest last. Read by every write path to refuse a
@@ -457,6 +646,7 @@ export function registerPersistenceHandlers(
 		storedIds: Set<string>
 	): StoredSession[] => {
 		return sessions.filter((session) => {
+			if (retiredSessionIds.has(session.id)) return false;
 			if (storedIds.has(session.id)) return true;
 			if (!removedSessionTombstones.has(session.id) && !session.deferredContent) return true;
 			logger.debug('Ignored resurrection of a closed session', 'Sessions', {
@@ -509,6 +699,7 @@ export function registerPersistenceHandlers(
 		if (pendingActiveSessionId === null) return;
 		const id = pendingActiveSessionId;
 		pendingActiveSessionId = null;
+		if (retiredSessionIds.has(id)) return;
 		try {
 			sessionsStore.set('activeSessionId', id);
 		} catch (err) {
@@ -539,7 +730,7 @@ export function registerPersistenceHandlers(
 		sessionActivatedTimer = null;
 		const id = pendingActivatedSessionId;
 		pendingActivatedSessionId = null;
-		if (!id || !emitPluginEvent) return;
+		if (!id || !emitPluginEvent || retiredSessionIds.has(id)) return;
 		// Re-focusing the session the plugins were last told about is a no-op.
 		if (id === lastEmittedActivatedSessionId) return;
 		lastEmittedActivatedSessionId = id;
@@ -685,60 +876,65 @@ export function registerPersistenceHandlers(
 	});
 
 	// Sessions persistence
-	const loadStoredSessions = async (): Promise<StoredSession[]> => {
-		const sessions = sessionsStore.get('sessions', []);
-		// Heal legacy sessions files: relocate any images still stored inline as
-		// base64 data URLs into the content-addressed image store, returning
-		// lightweight refs. Before this existed, pasted screenshots ballooned
-		// maestro-sessions.json to hundreds of MB (264MB in one field trace),
-		// freezing the main thread on every read/write. The scan is cheap and a
-		// no-op once healed (already-relocated sessions carry only refs). We
-		// rewrite the store once so the next launch reads the small file.
-		try {
-			const { sessions: relocated, relocated: imageCount } = await relocateSessionImages(sessions);
-			let toolOutputCount = 0;
-			// Closed-tab stacks written before they were stored as pointers (or by a
-			// raw write) carry whole transcripts and the legacy key. Bring them to
-			// the stored form the renderer projects, so its next change merges.
-			let closedTabCount = 0;
-			const compacted = relocated.map((session) => {
-				const normalized = normalizeStoredClosedTabs(session);
-				if (normalized !== session) closedTabCount++;
-				const result = compactSessionToolOutputs(normalized);
-				toolOutputCount += result.compacted;
-				return result.session;
-			});
-			if (imageCount > 0 || toolOutputCount > 0 || closedTabCount > 0) {
-				sessionsStore.set('sessions', compacted);
-				if (imageCount > 0) {
-					logger.info(
-						`Relocated ${imageCount} inline session image(s) out of maestro-sessions.json`,
-						'Sessions'
-					);
+	const loadStoredSessions = queueWrite(
+		async (): Promise<StoredSession[]> => {
+			const sessions = sessionsStore.get('sessions', []);
+			// Heal legacy sessions files: relocate any images still stored inline as
+			// base64 data URLs into the content-addressed image store, returning
+			// lightweight refs. Before this existed, pasted screenshots ballooned
+			// maestro-sessions.json to hundreds of MB (264MB in one field trace),
+			// freezing the main thread on every read/write. The scan is cheap and a
+			// no-op once healed (already-relocated sessions carry only refs). We
+			// rewrite the store once so the next launch reads the small file.
+			try {
+				const { sessions: relocated, relocated: imageCount } =
+					await relocateSessionImages(sessions);
+				let toolOutputCount = 0;
+				// Closed-tab stacks written before they were stored as pointers (or by a
+				// raw write) carry whole transcripts and the legacy key. Bring them to
+				// the stored form the renderer projects, so its next change merges.
+				let closedTabCount = 0;
+				const compacted = relocated.map((session) => {
+					const normalized = normalizeStoredClosedTabs(session);
+					if (normalized !== session) closedTabCount++;
+					const result = compactSessionToolOutputs(normalized);
+					toolOutputCount += result.compacted;
+					return result.session;
+				});
+				if (imageCount > 0 || toolOutputCount > 0 || closedTabCount > 0) {
+					sessionsStore.set('sessions', compacted);
+					await flushSessionWrites();
+					if (imageCount > 0) {
+						logger.info(
+							`Relocated ${imageCount} inline session image(s) out of maestro-sessions.json`,
+							'Sessions'
+						);
+					}
+					if (toolOutputCount > 0) {
+						logger.info(
+							`Compacted ${toolOutputCount} oversized tool result(s) in maestro-sessions.json`,
+							'Sessions'
+						);
+					}
+					if (closedTabCount > 0) {
+						logger.info(
+							`Normalized the closed-tab history of ${closedTabCount} agent(s) in maestro-sessions.json`,
+							'Sessions'
+						);
+					}
+					logger.debug(`Loaded ${compacted.length} sessions from store`, 'Sessions');
+					return compacted;
 				}
-				if (toolOutputCount > 0) {
-					logger.info(
-						`Compacted ${toolOutputCount} oversized tool result(s) in maestro-sessions.json`,
-						'Sessions'
-					);
-				}
-				if (closedTabCount > 0) {
-					logger.info(
-						`Normalized the closed-tab history of ${closedTabCount} agent(s) in maestro-sessions.json`,
-						'Sessions'
-					);
-				}
-				logger.debug(`Loaded ${compacted.length} sessions from store`, 'Sessions');
-				return compacted;
+			} catch (err) {
+				// Never let migration block loading sessions. Fall through and return
+				// the sessions as-is; the write boundary will retry on the next save.
+				logger.warn(`Session migration on load failed: ${(err as Error).message}`, 'Sessions', err);
 			}
-		} catch (err) {
-			// Never let migration block loading sessions. Fall through and return
-			// the sessions as-is; the write boundary will retry on the next save.
-			logger.warn(`Session migration on load failed: ${(err as Error).message}`, 'Sessions', err);
-		}
-		logger.debug(`Loaded ${sessions.length} sessions from store`, 'Sessions');
-		return sessions;
-	};
+			logger.debug(`Loaded ${sessions.length} sessions from store`, 'Sessions');
+			return sessions;
+		},
+		() => sessionsStore.get('sessions', []).map((session) => session.cwd)
+	);
 	ipcMain.handle('sessions:getAll', loadStoredSessions);
 	const transcriptRequests = new Map<
 		string,
@@ -919,6 +1115,7 @@ export function registerPersistenceHandlers(
 	ipcMain.handle('sessions:setActiveSessionId', async (event, id: string) => {
 		// Browser navigation is client-local, never the host's persisted focus.
 		if ((event as { type?: string })?.type === 'bridge') return;
+		if (retiredSessionIds.has(id)) return;
 		// Coalesce rapid navigation into one disk write (see flushActiveSessionId).
 		pendingActiveSessionId = id;
 		if (activeSessionIdTimer) clearTimeout(activeSessionIdTimer);
@@ -1163,172 +1360,177 @@ export function registerPersistenceHandlers(
 				}
 
 				return true;
-			}
+			},
+			(_event, input = [], removeIds = []) => sessionWritePaths(input, removeIds)
 		)
 	);
 
 	ipcMain.handle(
 		'sessions:setAll',
-		queueWrite(async (event, input: StoredSession[], baselines: StoredSession[] = []) => {
-			const baselineMap = await observedBaselineMap(baselines);
-			const remote = (event as { type?: string })?.type === 'bridge';
-			// Relocate inline images (data URLs) out of the sessions before they hit
-			// disk. setAll is the bootstrap/first-flush path, so this also migrates a
-			// legacy in-memory sessions tree the first time it is persisted.
-			const { sessions: relocatedSessions } = await relocateSessionImages(input);
-			// Get previous sessions to detect changes
-			const previousSessions = sessionsStore.get('sessions', []);
-			const previousSessionMap = new Map(previousSessions.map((s) => [s.id, s]));
-			// Same resurrection guard as setMany: a client that loaded before another
-			// closed an agent still carries it, and this path would write it back.
-			const sessions = dropResurrections(relocatedSessions, new Set(previousSessionMap.keys()));
-			if (
-				remote &&
-				sessions.some(
-					(session) => previousSessionMap.has(session.id) && !baselineMap.has(session.id)
-				)
-			) {
-				throw new Error(
-					'Session save rejected: missing observed baseline. Reload the host view before saving.'
-				);
-			}
-			const incomingIds = new Set(sessions.map((s) => s.id));
-			// setAll is a client's opening snapshot, so an omitted id means the client
-			// never saw that agent. Only setMany's explicit removeIds may delete one.
-			for (const previousSession of previousSessions) {
-				if (!incomingIds.has(previousSession.id)) {
-					sessions.push(previousSession);
+		queueWrite(
+			async (event, input: StoredSession[], baselines: StoredSession[] = []) => {
+				const baselineMap = await observedBaselineMap(baselines);
+				const remote = (event as { type?: string })?.type === 'bridge';
+				// Relocate inline images (data URLs) out of the sessions before they hit
+				// disk. setAll is the bootstrap/first-flush path, so this also migrates a
+				// legacy in-memory sessions tree the first time it is persisted.
+				const { sessions: relocatedSessions } = await relocateSessionImages(input);
+				// Get previous sessions to detect changes
+				const previousSessions = sessionsStore.get('sessions', []);
+				const previousSessionMap = new Map(previousSessions.map((s) => [s.id, s]));
+				// Same resurrection guard as setMany: a client that loaded before another
+				// closed an agent still carries it, and this path would write it back.
+				const sessions = dropResurrections(relocatedSessions, new Set(previousSessionMap.keys()));
+				if (
+					remote &&
+					sessions.some(
+						(session) => previousSessionMap.has(session.id) && !baselineMap.has(session.id)
+					)
+				) {
+					throw new Error(
+						'Session save rejected: missing observed baseline. Reload the host view before saving.'
+					);
 				}
-			}
-			const sessionsToPersist = sessions.map((session) =>
-				incomingIds.has(session.id)
-					? compactSessionToolOutputs(
-							normalizeStoredClosedTabs(
-								mergeSessionPersistenceChanges(
-									mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
-									previousSessionMap.get(session.id),
-									baselineMap.get(session.id),
-									remote,
-									false,
-									remote
+				const incomingIds = new Set(sessions.map((s) => s.id));
+				// setAll is a client's opening snapshot, so an omitted id means the client
+				// never saw that agent. Only setMany's explicit removeIds may delete one.
+				for (const previousSession of previousSessions) {
+					if (!incomingIds.has(previousSession.id)) {
+						sessions.push(previousSession);
+					}
+				}
+				const sessionsToPersist = sessions.map((session) =>
+					incomingIds.has(session.id)
+						? compactSessionToolOutputs(
+								normalizeStoredClosedTabs(
+									mergeSessionPersistenceChanges(
+										mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
+										previousSessionMap.get(session.id),
+										baselineMap.get(session.id),
+										remote,
+										false,
+										remote
+									)
 								)
-							)
-						).session
-					: session
-			);
+							).session
+						: session
+				);
 
-			// Log session lifecycle events at DEBUG level
-			for (const session of sessionsToPersist) {
-				const prevSession = previousSessionMap.get(session.id);
-				if (!prevSession) {
-					// New session created
-					logger.debug('Session created', 'Sessions', {
-						sessionId: session.id,
-						name: session.name,
-						toolType: session.toolType,
-						cwd: session.cwd,
-					});
-				}
-			}
-			const webServer = getWebServer();
-			// Detect and broadcast changes to web clients
-			if (webServer && webServer.getWebClientCount() > 0) {
-				// Check for state changes in existing sessions
+				// Log session lifecycle events at DEBUG level
 				for (const session of sessionsToPersist) {
 					const prevSession = previousSessionMap.get(session.id);
-					if (prevSession) {
-						// Session exists - check if state or other tracked properties changed
-						if (
-							prevSession.state !== session.state ||
-							prevSession.inputMode !== session.inputMode ||
-							prevSession.name !== session.name ||
-							prevSession.cwd !== session.cwd ||
-							cliActivityChanged(prevSession.cliActivity, session.cliActivity)
-						) {
-							webServer.broadcastSessionStateChange(session.id, session.state, {
-								name: session.name,
-								toolType: session.toolType,
-								inputMode: session.inputMode,
-								cwd: session.cwd,
-								cliActivity: session.cliActivity,
-							});
-						}
-					} else {
-						// New session added
-						webServer.broadcastSessionAdded({
-							id: session.id,
+					if (!prevSession) {
+						// New session created
+						logger.debug('Session created', 'Sessions', {
+							sessionId: session.id,
 							name: session.name,
 							toolType: session.toolType,
-							state: session.state,
-							inputMode: session.inputMode,
 							cwd: session.cwd,
-							groupId: session.groupId || null,
-							groupName: session.groupName || null,
-							groupEmoji: session.groupEmoji || null,
-							parentSessionId: session.parentSessionId || null,
-							worktreeBranch: session.worktreeBranch || null,
-							autoRunFolderPath: session.autoRunFolderPath || null,
 						});
 					}
 				}
-			}
 
-			try {
-				noteQueueRemovals(sessionsStore.get('sessions', []), sessionsToPersist);
-				sessionsStore.set('sessions', sessionsToPersist);
-				await flushSessionWrites();
-			} catch (err) {
-				// ENOSPC, ENFILE, or JSON serialization failures are recoverable -
-				// the next debounced write will succeed when conditions improve.
-				// Log but don't throw so the renderer doesn't see an unhandled rejection.
-				const code = (err as NodeJS.ErrnoException).code;
-				logger.warn(`Failed to persist sessions: ${code || (err as Error).message}`, 'Sessions');
-				return false;
-			}
-
-			// Crash-report context (agent count + provider types); no-op unless changed.
-			noteSentryAgentInventory(sessionsToPersist);
-
-			// Opening snapshots may add/update observed agents but never infer a
-			// deletion from an omitted id. Explicit removes arrive through setMany.
-			const updatedSessions = sessionsToPersist.filter(
-				(session) =>
-					incomingIds.has(session.id) &&
-					previousSessionMap.has(session.id) &&
-					JSON.stringify(session) !== JSON.stringify(previousSessionMap.get(session.id))
-			);
-			// Tell the other clients about agents this bootstrap flush introduced.
-			await onSessionsPersisted?.(
-				sessionsToPersist.filter((s) => !previousSessionMap.has(s.id)),
-				sessionsToPersist,
-				[]
-			);
-			broadcastSessionLifecycle(senderWebContentsIdOf(event), {
-				added: sessionsToPersist.filter((s) => !previousSessionMap.has(s.id)),
-				removedIds: [],
-				...(updatedSessions.length > 0 && {
-					updated: updatedSessions,
-					baselines: previousSessions.filter((session) =>
-						updatedSessions.some((update) => update.id === session.id)
-					),
-				}),
-			});
-
-			// Surface metadata-only lifecycle events to subscribed plugins
-			// (events:subscribe). Re-authorized per delivery against live grants.
-			if (emitPluginEvent) {
-				const at = new Date().toISOString();
-				for (const event of buildSessionLifecycleEvents(
-					previousSessionMap,
-					sessionsToPersist,
-					at
-				)) {
-					emitPluginEvent(event);
+				const webServer = getWebServer();
+				// Detect and broadcast changes to web clients
+				if (webServer && webServer.getWebClientCount() > 0) {
+					// Check for state changes in existing sessions
+					for (const session of sessionsToPersist) {
+						const prevSession = previousSessionMap.get(session.id);
+						if (prevSession) {
+							// Session exists - check if state or other tracked properties changed
+							if (
+								prevSession.state !== session.state ||
+								prevSession.inputMode !== session.inputMode ||
+								prevSession.name !== session.name ||
+								prevSession.cwd !== session.cwd ||
+								cliActivityChanged(prevSession.cliActivity, session.cliActivity)
+							) {
+								webServer.broadcastSessionStateChange(session.id, session.state, {
+									name: session.name,
+									toolType: session.toolType,
+									inputMode: session.inputMode,
+									cwd: session.cwd,
+									cliActivity: session.cliActivity,
+								});
+							}
+						} else {
+							// New session added
+							webServer.broadcastSessionAdded({
+								id: session.id,
+								name: session.name,
+								toolType: session.toolType,
+								state: session.state,
+								inputMode: session.inputMode,
+								cwd: session.cwd,
+								groupId: session.groupId || null,
+								groupName: session.groupName || null,
+								groupEmoji: session.groupEmoji || null,
+								parentSessionId: session.parentSessionId || null,
+								worktreeBranch: session.worktreeBranch || null,
+								autoRunFolderPath: session.autoRunFolderPath || null,
+							});
+						}
+					}
 				}
-			}
 
-			return true;
-		})
+				try {
+					noteQueueRemovals(sessionsStore.get('sessions', []), sessionsToPersist);
+					sessionsStore.set('sessions', sessionsToPersist);
+					await flushSessionWrites();
+				} catch (err) {
+					// ENOSPC, ENFILE, or JSON serialization failures are recoverable -
+					// the next debounced write will succeed when conditions improve.
+					// Log but don't throw so the renderer doesn't see an unhandled rejection.
+					const code = (err as NodeJS.ErrnoException).code;
+					logger.warn(`Failed to persist sessions: ${code || (err as Error).message}`, 'Sessions');
+					return false;
+				}
+
+				// Crash-report context (agent count + provider types); no-op unless changed.
+				noteSentryAgentInventory(sessionsToPersist);
+
+				// Opening snapshots may add/update observed agents but never infer a
+				// deletion from an omitted id. Explicit removes arrive through setMany.
+				const updatedSessions = sessionsToPersist.filter(
+					(session) =>
+						incomingIds.has(session.id) &&
+						previousSessionMap.has(session.id) &&
+						JSON.stringify(session) !== JSON.stringify(previousSessionMap.get(session.id))
+				);
+				// Tell the other clients about agents this bootstrap flush introduced.
+				await onSessionsPersisted?.(
+					sessionsToPersist.filter((s) => !previousSessionMap.has(s.id)),
+					sessionsToPersist,
+					[]
+				);
+				broadcastSessionLifecycle(senderWebContentsIdOf(event), {
+					added: sessionsToPersist.filter((s) => !previousSessionMap.has(s.id)),
+					removedIds: [],
+					...(updatedSessions.length > 0 && {
+						updated: updatedSessions,
+						baselines: previousSessions.filter((session) =>
+							updatedSessions.some((update) => update.id === session.id)
+						),
+					}),
+				});
+
+				// Surface metadata-only lifecycle events to subscribed plugins
+				// (events:subscribe). Re-authorized per delivery against live grants.
+				if (emitPluginEvent) {
+					const at = new Date().toISOString();
+					for (const event of buildSessionLifecycleEvents(
+						previousSessionMap,
+						sessionsToPersist,
+						at
+					)) {
+						emitPluginEvent(event);
+					}
+				}
+
+				return true;
+			},
+			(_event, input) => sessionWritePaths(input)
+		)
 	);
 
 	// Groups persistence

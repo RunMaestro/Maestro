@@ -4,6 +4,7 @@ import type { GitAgentActions } from '../../../hooks/git/useGitAgentActions';
 import { resolveGitCwd } from '../../../hooks/git/useGitAgentActions';
 import { formatGitChangeSummary } from '../../../../shared/gitUtils';
 import { captureException } from '../../../utils/sentry';
+import { useModalStore } from '../../../stores/modalStore';
 import type { QuickAction } from '../types';
 
 interface BuildGitWorktreeCommandsArgs {
@@ -22,6 +23,7 @@ interface BuildGitWorktreeCommandsArgs {
 	shortcuts: {
 		viewGitDiff?: QuickAction['shortcut'];
 		viewGitLog?: QuickAction['shortcut'];
+		viewWorktreePRDetails?: QuickAction['shortcut'];
 		gitPull?: QuickAction['shortcut'];
 		gitPush?: QuickAction['shortcut'];
 		gitChangeBranch?: QuickAction['shortcut'];
@@ -203,6 +205,19 @@ export function buildGitWorktreeCommands({
 				} else {
 					gitActions.createPR();
 				}
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (activeSession.isGitRepo && activeSession.parentSessionId && activeSession.worktreeBranch) {
+		commands.push({
+			id: 'worktreePRDetails',
+			label: 'Git: Worktree PR and CI',
+			subtext: activeSession.worktreeBranch,
+			shortcut: shortcuts.viewWorktreePRDetails,
+			action: () => {
+				useModalStore.getState().openModal('worktreePRDetails', { sessionId: activeSession.id });
 				setQuickActionOpen(false);
 			},
 		});

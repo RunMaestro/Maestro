@@ -30,6 +30,10 @@ import {
 import type { PermissionRequest } from '../../../main/permission-relay/types';
 
 describe('permission-relay registry', () => {
+	it('keeps worktree PR merge actions desktop-only', () => {
+		expect(isRemoteMethodAllowed('git:preflightWorktreePullRequestMerge')).toBe(false);
+		expect(isRemoteMethodAllowed('git:mergeWorktreePullRequest')).toBe(false);
+	});
 	it('keeps the registry snapshot and status push native-only', () => {
 		expect(isRemoteMethodAllowed('process:getPendingPermissions')).toBe(false);
 		expect(isRemoteEventAllowed('process:pending-permissions')).toBe(false);

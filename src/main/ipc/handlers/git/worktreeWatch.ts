@@ -16,6 +16,12 @@ import { markStaleForDeletedWorktreeUsingStore } from '../../../agent-run/worktr
 import { mapWithConcurrency } from '../../../utils/concurrency';
 import { LOG_CONTEXT, handlerOpts, GitHandlerDependencies } from './shared';
 import { isWorktreeCreatedByMaestro } from './worktreeCreationMarks';
+import { worktreeRetirement, type ManagedCheckout } from '../../../git/worktreeRetirement';
+import {
+	foldPathCase,
+	isPathWithin,
+	realpathThroughAncestor,
+} from '../../../utils/real-path-containment';
 
 /**
  * Directory-scan failures that are environmental rather than bugs: the path was
@@ -40,12 +46,85 @@ function isExpectedScanError(code: string | undefined): boolean {
 	return code !== undefined && EXPECTED_SCAN_ERROR_CODES.has(code);
 }
 
-// Worktree directory watchers keyed by session ID
-const worktreeWatchers = new Map<string, FSWatcher>();
-// Debounce timers keyed by "sessionId:dirPath" so each discovered directory
-// gets its own independent timer (previously keyed by sessionId alone, which
-// caused only the last of multiple near-simultaneous addDir events to fire).
-const worktreeWatchDebounceTimers = new Map<string, NodeJS.Timeout>();
+type WatchState = {
+	sessionId: string;
+	path: string;
+	watcher?: FSWatcher;
+	closed: boolean;
+	closing?: Promise<void>;
+	closeSettled?: boolean;
+	candidates: Map<string, object>;
+	timers: Map<string, NodeJS.Timeout>;
+	pending: Map<Promise<unknown>, string>;
+};
+// Keep superseded watchers until their close/probes actually settle.
+const worktreeWatchers = new Map<string, WatchState>();
+const watchStates = new Set<WatchState>();
+const scans = new Set<{ path: string; settled: Promise<void> }>();
+
+function forgetClosedWatch(state: WatchState): void {
+	if (state.closed && state.closeSettled && !state.pending.size) watchStates.delete(state);
+}
+
+function stopWatch(state: WatchState): Promise<void> {
+	state.closed = true;
+	if (worktreeWatchers.get(state.sessionId) === state) worktreeWatchers.delete(state.sessionId);
+	for (const timer of state.timers.values()) clearTimeout(timer);
+	state.timers.clear();
+	state.candidates.clear();
+	if (!state.closing) {
+		state.closing = (async () => {
+			await state.watcher?.close();
+		})().then(() => {
+			state.closeSettled = true;
+			forgetClosedWatch(state);
+		});
+		// Retain failed closes for a later settlement retry.
+		void state.closing.catch(() => {
+			delete state.closing;
+		});
+	}
+	return state.closing;
+}
+
+/** Internal transaction adapter: stop the retired child's watcher, discard its
+ * parent discovery timers and drain already-started probes/scans before Git.
+ * The Main fence suppresses new target work and late unlink broadcasts while
+ * preserving the parent's unrelated worktree watching. Failed close stays fenced.
+ */
+export async function settleRetiredWorktreeWatchers(
+	checkout: Readonly<ManagedCheckout>
+): Promise<void> {
+	const root = foldPathCase(checkout.path);
+	const touches = (p: string, ancestors = false) => {
+		try {
+			const resolved = foldPathCase(realpathThroughAncestor(p, { strict: true }));
+			return isPathWithin(resolved, root) || (ancestors && isPathWithin(root, resolved));
+		} catch {
+			return true; // Unknown ownership must drain rather than escape settlement.
+		}
+	};
+	const pending: Promise<unknown>[] = [];
+	for (const state of watchStates) {
+		const owned = state.sessionId === checkout.ownership?.sessionId || touches(state.path);
+		if (owned) pending.push(stopWatch(state));
+		for (const [dir, timer] of state.timers) {
+			if (touches(dir, true)) {
+				clearTimeout(timer);
+				state.timers.delete(dir);
+				state.candidates.delete(dir);
+			}
+		}
+		for (const [operation, dir] of state.pending) {
+			if (owned || touches(dir, true)) pending.push(operation);
+		}
+	}
+	for (const scan of scans) if (touches(scan.path, true)) pending.push(scan.settled);
+	await Promise.all(pending);
+	for (const state of watchStates) {
+		forgetClosedWatch(state);
+	}
+}
 
 /**
  * Register worktree filesystem-watcher Git IPC handlers: scanWorktreeDirectory,
@@ -68,294 +147,323 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 		createIpcHandler(
 			handlerOpts('scanWorktreeDirectory'),
 			async (parentPath: string, sshRemoteId?: string) => {
-				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-
-				// Maximum recursion depth below the configured basePath. 1 covers the
-				// common case `<basePath>/<group>/<branch>` from slash-named branches.
-				// Going deeper would multiply git invocations without a real-world need
-				// (git itself rejects nested worktrees inside the main repo).
-				const MAX_DEPTH = 1;
-				const unresolvedPaths = new Set<string>();
-
-				type SubdirEntry = { name: string; isDirectory: boolean };
-				type ScanEntry = {
-					path: string;
-					name: string;
-					isWorktree: boolean;
-					branch: string | null;
-					repoRoot: string | null;
+				const current = sshRemoteId
+					? () => true
+					: worktreeRetirement.captureDiscovery(parentPath, { allowRemovedDescendants: true });
+				if (!current()) return { gitSubdirs: [], scanFailed: true };
+				let finish!: () => void;
+				const scan = {
+					path: parentPath,
+					settled: new Promise<void>((resolve) => {
+						finish = resolve;
+					}),
 				};
+				if (!sshRemoteId) scans.add(scan);
+				try {
+					const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 
-				const joinPath = (parent: string, child: string): string =>
-					sshRemote
-						? parent.endsWith('/')
-							? `${parent}${child}`
-							: `${parent}/${child}`
-						: path.join(parent, child);
+					// Maximum recursion depth below the configured basePath. 1 covers the
+					// common case `<basePath>/<group>/<branch>` from slash-named branches.
+					// Going deeper would multiply git invocations without a real-world need
+					// (git itself rejects nested worktrees inside the main repo).
+					const MAX_DEPTH = 1;
+					const unresolvedPaths = new Set<string>();
 
-				// Preserve saved sessions using either the configured alias or its
-				// physical path. Only errored entries need these extra filesystem probes.
-				const markUnresolvedPath = async (target: string): Promise<void> => {
-					unresolvedPaths.add(target);
-					if (sshRemote) return;
-					const base = path.resolve(parentPath);
-					let ancestor = target;
-					while (true) {
-						try {
-							const physicalAncestor = await fs.realpath(ancestor);
-							unresolvedPaths.add(path.join(physicalAncestor, path.relative(ancestor, target)));
-							return;
-						} catch {
-							// A missing leaf can still be mapped through its closest
-							// reachable parent, including a separately symlinked group.
-							if (path.resolve(ancestor) === base) return;
-							const next = path.dirname(ancestor);
-							const relative = path.relative(base, path.resolve(next));
-							if (
-								next === ancestor ||
-								relative === '..' ||
-								relative.startsWith(`..${path.sep}`) ||
-								path.isAbsolute(relative)
-							) {
+					type SubdirEntry = { name: string; isDirectory: boolean };
+					type ScanEntry = {
+						path: string;
+						name: string;
+						isWorktree: boolean;
+						branch: string | null;
+						repoRoot: string | null;
+					};
+
+					const joinPath = (parent: string, child: string): string =>
+						sshRemote
+							? parent.endsWith('/')
+								? `${parent}${child}`
+								: `${parent}/${child}`
+							: path.join(parent, child);
+
+					// Preserve saved sessions using either the configured alias or its
+					// physical path. Only errored entries need these extra filesystem probes.
+					const markUnresolvedPath = async (target: string): Promise<void> => {
+						unresolvedPaths.add(target);
+						if (sshRemote) return;
+						const base = path.resolve(parentPath);
+						let ancestor = target;
+						while (true) {
+							try {
+								const physicalAncestor = await fs.realpath(ancestor);
+								unresolvedPaths.add(path.join(physicalAncestor, path.relative(ancestor, target)));
 								return;
+							} catch {
+								// A missing leaf can still be mapped through its closest
+								// reachable parent, including a separately symlinked group.
+								if (path.resolve(ancestor) === base) return;
+								const next = path.dirname(ancestor);
+								const relative = path.relative(base, path.resolve(next));
+								if (
+									next === ancestor ||
+									relative === '..' ||
+									relative.startsWith(`..${path.sep}`) ||
+									path.isAbsolute(relative)
+								) {
+									return;
+								}
+								ancestor = next;
 							}
-							ancestor = next;
 						}
-					}
-				};
+					};
 
-				// Throws on read failure (matching local `fs.readdir` behavior) so the
-				// outer try/catch can surface scanFailed: true at the top level. Nested
-				// recursion records its root as unresolved to protect existing children.
-				// Without this, an SSH `readDirRemote` failure would silently return []
-				// and the renderer would bulk-remove every child session.
-				const readSubdirs = async (dir: string): Promise<SubdirEntry[]> => {
-					let entries: Array<{ name: string; isDirectory: boolean | (() => boolean) }>;
-					if (sshRemote) {
-						const result = await readDirRemote(dir, sshRemote);
-						if (!result.success || !result.data) {
-							const err = new Error(
-								`Failed to read remote directory ${dir}: ${result.error || 'unknown error'}`
-							) as NodeJS.ErrnoException;
-							// Tag as ENOENT so the outer catch's Sentry-quieting branch applies -
-							// remote read failures are typically "path no longer exists / not reachable",
-							// not bugs worth paging on.
-							err.code = 'ENOENT';
-							throw err;
-						}
-						entries = result.data;
-					} else {
-						entries = await fs.readdir(dir, { withFileTypes: true });
-					}
-					const subdirs: SubdirEntry[] = [];
-					for (const entry of entries) {
-						let name: string | undefined;
-						try {
-							if (typeof entry?.name !== 'string' || !entry.name) {
-								throw new Error('Invalid directory entry name');
+					// Throws on read failure (matching local `fs.readdir` behavior) so the
+					// outer try/catch can surface scanFailed: true at the top level. Nested
+					// recursion records its root as unresolved to protect existing children.
+					// Without this, an SSH `readDirRemote` failure would silently return []
+					// and the renderer would bulk-remove every child session.
+					const readSubdirs = async (dir: string): Promise<SubdirEntry[]> => {
+						let entries: Array<{ name: string; isDirectory: boolean | (() => boolean) }>;
+						if (sshRemote) {
+							const result = await readDirRemote(dir, sshRemote);
+							if (!result.success || !result.data) {
+								const err = new Error(
+									`Failed to read remote directory ${dir}: ${result.error || 'unknown error'}`
+								) as NodeJS.ErrnoException;
+								// Tag as ENOENT so the outer catch's Sentry-quieting branch applies -
+								// remote read failures are typically "path no longer exists / not reachable",
+								// not bugs worth paging on.
+								err.code = 'ENOENT';
+								throw err;
 							}
-							name = entry.name;
-							const isDirectory =
-								typeof entry.isDirectory === 'function' ? entry.isDirectory() : entry.isDirectory;
-							if (typeof isDirectory !== 'boolean') {
-								throw new Error('Invalid directory entry type');
-							}
-							if (isDirectory && !name.startsWith('.')) subdirs.push({ name, isDirectory: true });
-						} catch (err) {
-							// An unidentifiable record protects this listing's root while
-							// healthy records can still be inspected and discovered.
-							await markUnresolvedPath(name ? joinPath(dir, name) : dir);
-							logger.warn(`${LOG_CONTEXT} Could not read directory entry in ${dir}: ${err}`);
-						}
-					}
-					return subdirs;
-				};
-
-				// A local repo or worktree root always carries a `.git` entry (directory
-				// for a repo, gitfile for a worktree or submodule); a subdirectory
-				// inside one never does. Checking that first keeps the scan from
-				// spawning git for every non-repo sibling under a broad basePath.
-				// Remote scans still go through git: a per-entry remote stat would
-				// cost the same SSH round trip the git call already does.
-				const hasGitEntry = async (dir: string): Promise<boolean> => {
-					if (sshRemote) return true;
-					try {
-						await fs.stat(path.join(dir, '.git'));
-						return true;
-					} catch (error) {
-						const code = (error as NodeJS.ErrnoException).code;
-						if (code === 'ENOENT' || code === 'ENOTDIR') return false;
-						throw error;
-					}
-				};
-
-				// Inspect a single directory: returns the worktree entry if it IS a
-				// git repo/worktree root, or null otherwise. Caller decides whether
-				// to recurse into a null result.
-				const inspectSubdir = async (
-					subdirPath: string,
-					name: string
-				): Promise<ScanEntry | null> => {
-					try {
-						if (!(await hasGitEntry(subdirPath))) return null;
-						const isInsideWorkTree = await execGit(
-							['rev-parse', '--is-inside-work-tree'],
-							subdirPath,
-							sshRemote,
-							subdirPath
-						);
-						if (isInsideWorkTree.exitCode !== 0) {
-							if (isNotAGitRepositoryError(isInsideWorkTree.stderr)) return null;
-							throw new Error(
-								isInsideWorkTree.stderr || 'Could not inspect candidate Git repository'
-							);
-						}
-						if (isInsideWorkTree.stdout.trim() === 'false') return null;
-						if (isInsideWorkTree.stdout.trim() !== 'true') {
-							throw new Error('Invalid candidate Git repository response');
-						}
-
-						// Verify this directory IS a worktree/repo root, not just a subdirectory inside one.
-						// Without this check, subdirectories like "build/" or "src/" inside a worktree
-						// would pass --is-inside-work-tree and be incorrectly treated as separate worktrees.
-						const toplevelResult = await execGit(
-							['rev-parse', '--show-toplevel'],
-							subdirPath,
-							sshRemote,
-							subdirPath
-						);
-						if (toplevelResult.exitCode !== 0 || !toplevelResult.stdout.trim()) {
-							throw new Error(toplevelResult.stderr || 'Could not resolve candidate Git root');
-						}
-						const toplevel = toplevelResult.stdout.trim();
-						// For local paths, canonicalize via realpath so that symlinked base
-						// paths (common on Linux: /home → /data/home; Windows junctions) match
-						// what git rev-parse --show-toplevel returns. path.resolve alone does
-						// NOT follow symlinks, which previously caused every subdir to be
-						// rejected and the entire worktree set to be marked stale.
-						const normalizedSubdir = sshRemote ? subdirPath : await fs.realpath(subdirPath);
-						const normalizedToplevel = sshRemote ? toplevel : await fs.realpath(toplevel);
-						if (normalizedSubdir !== normalizedToplevel) {
-							return null; // Subdirectory inside a repo, not a repo/worktree root
-						}
-
-						// Run remaining git commands in parallel for each subdirectory (SSH-aware via execGit)
-						const [gitDirResult, gitCommonDirResult, branchResult] = await Promise.all([
-							execGit(['rev-parse', '--git-dir'], subdirPath, sshRemote, subdirPath),
-							execGit(['rev-parse', '--git-common-dir'], subdirPath, sshRemote, subdirPath),
-							execGit(['rev-parse', '--abbrev-ref', 'HEAD'], subdirPath, sshRemote, subdirPath),
-						]);
-
-						if (
-							gitDirResult.exitCode !== 0 ||
-							gitCommonDirResult.exitCode !== 0 ||
-							!gitDirResult.stdout.trim() ||
-							!gitCommonDirResult.stdout.trim()
-						) {
-							throw new Error(
-								gitDirResult.stderr ||
-									gitCommonDirResult.stderr ||
-									'Could not read candidate Git identity'
-							);
-						}
-						const gitDir = gitDirResult.stdout.trim();
-						const gitCommonDir = gitCommonDirResult.stdout.trim();
-						const isWorktree = gitDir !== gitCommonDir;
-						const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : null;
-
-						// Get repo root
-						let repoRoot: string | null = null;
-						if (isWorktree && gitCommonDir) {
-							// For SSH, use POSIX path operations
-							if (sshRemote) {
-								const commonDirAbs = gitCommonDir.startsWith('/')
-									? gitCommonDir
-									: `${subdirPath}/${gitCommonDir}`.replace(/\/+/g, '/');
-								// Get parent directory (remove last path component)
-								repoRoot = commonDirAbs.split('/').slice(0, -1).join('/') || '/';
-							} else {
-								const commonDirAbs = path.isAbsolute(gitCommonDir)
-									? gitCommonDir
-									: path.resolve(subdirPath, gitCommonDir);
-								repoRoot = path.dirname(commonDirAbs);
-							}
+							entries = result.data;
 						} else {
-							// For non-worktree git repos, the toplevel IS the repo root -
-							// reuse the value we already fetched above instead of re-running
-							// `git rev-parse --show-toplevel`.
-							repoRoot = toplevel;
+							entries = await fs.readdir(dir, { withFileTypes: true });
 						}
+						const subdirs: SubdirEntry[] = [];
+						for (const entry of entries) {
+							let name: string | undefined;
+							try {
+								if (typeof entry?.name !== 'string' || !entry.name) {
+									throw new Error('Invalid directory entry name');
+								}
+								name = entry.name;
+								const isDirectory =
+									typeof entry.isDirectory === 'function' ? entry.isDirectory() : entry.isDirectory;
+								if (typeof isDirectory !== 'boolean') {
+									throw new Error('Invalid directory entry type');
+								}
+								if (isDirectory && !name.startsWith('.')) subdirs.push({ name, isDirectory: true });
+							} catch (err) {
+								// An unidentifiable record protects this listing's root while
+								// healthy records can still be inspected and discovered.
+								await markUnresolvedPath(name ? joinPath(dir, name) : dir);
+								logger.warn(`${LOG_CONTEXT} Could not read directory entry in ${dir}: ${err}`);
+							}
+						}
+						return subdirs;
+					};
 
+					// A local repo or worktree root always carries a `.git` entry (directory
+					// for a repo, gitfile for a worktree or submodule); a subdirectory
+					// inside one never does. Checking that first keeps the scan from
+					// spawning git for every non-repo sibling under a broad basePath.
+					// Remote scans still go through git: a per-entry remote stat would
+					// cost the same SSH round trip the git call already does.
+					const hasGitEntry = async (dir: string): Promise<boolean> => {
+						if (sshRemote) return true;
+						try {
+							await fs.stat(path.join(dir, '.git'));
+							return true;
+						} catch (error) {
+							const code = (error as NodeJS.ErrnoException).code;
+							if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+							throw error;
+						}
+					};
+
+					// Inspect a single directory: returns the worktree entry if it IS a
+					// git repo/worktree root, or null otherwise. Caller decides whether
+					// to recurse into a null result.
+					const inspectSubdir = async (
+						subdirPath: string,
+						name: string
+					): Promise<ScanEntry | null> => {
+						try {
+							if (
+								!sshRemote &&
+								!worktreeRetirement.captureDiscovery(subdirPath, { includeAncestors: false })()
+							) {
+								unresolvedPaths.add(subdirPath);
+								return null;
+							}
+							if (!current() || !(await hasGitEntry(subdirPath)) || !current()) return null;
+							const isInsideWorkTree = await execGit(
+								['rev-parse', '--is-inside-work-tree'],
+								subdirPath,
+								sshRemote,
+								subdirPath
+							);
+							if (!current()) return null;
+							if (isInsideWorkTree.exitCode !== 0) {
+								if (isNotAGitRepositoryError(isInsideWorkTree.stderr)) return null;
+								throw new Error(
+									isInsideWorkTree.stderr || 'Could not inspect candidate Git repository'
+								);
+							}
+							if (isInsideWorkTree.stdout.trim() === 'false') return null;
+							if (isInsideWorkTree.stdout.trim() !== 'true') {
+								throw new Error('Invalid candidate Git repository response');
+							}
+
+							// Verify this directory IS a worktree/repo root, not just a subdirectory inside one.
+							// Without this check, subdirectories like "build/" or "src/" inside a worktree
+							// would pass --is-inside-work-tree and be incorrectly treated as separate worktrees.
+							const toplevelResult = await execGit(
+								['rev-parse', '--show-toplevel'],
+								subdirPath,
+								sshRemote,
+								subdirPath
+							);
+							if (!current()) return null;
+							if (toplevelResult.exitCode !== 0 || !toplevelResult.stdout.trim()) {
+								throw new Error(toplevelResult.stderr || 'Could not resolve candidate Git root');
+							}
+							const toplevel = toplevelResult.stdout.trim();
+							// For local paths, canonicalize via realpath so that symlinked base
+							// paths (common on Linux: /home → /data/home; Windows junctions) match
+							// what git rev-parse --show-toplevel returns. path.resolve alone does
+							// NOT follow symlinks, which previously caused every subdir to be
+							// rejected and the entire worktree set to be marked stale.
+							const normalizedSubdir = sshRemote ? subdirPath : await fs.realpath(subdirPath);
+							const normalizedToplevel = sshRemote ? toplevel : await fs.realpath(toplevel);
+							if (normalizedSubdir !== normalizedToplevel) {
+								return null; // Subdirectory inside a repo, not a repo/worktree root
+							}
+
+							if (!current()) return null;
+							// Run remaining git commands in parallel for each subdirectory (SSH-aware via execGit)
+							const [gitDirResult, gitCommonDirResult, branchResult] = await Promise.all([
+								execGit(['rev-parse', '--git-dir'], subdirPath, sshRemote, subdirPath),
+								execGit(['rev-parse', '--git-common-dir'], subdirPath, sshRemote, subdirPath),
+								execGit(['rev-parse', '--abbrev-ref', 'HEAD'], subdirPath, sshRemote, subdirPath),
+							]);
+
+							if (
+								gitDirResult.exitCode !== 0 ||
+								gitCommonDirResult.exitCode !== 0 ||
+								!gitDirResult.stdout.trim() ||
+								!gitCommonDirResult.stdout.trim()
+							) {
+								throw new Error(
+									gitDirResult.stderr ||
+										gitCommonDirResult.stderr ||
+										'Could not read candidate Git identity'
+								);
+							}
+							const gitDir = gitDirResult.stdout.trim();
+							const gitCommonDir = gitCommonDirResult.stdout.trim();
+							const isWorktree = gitDir !== gitCommonDir;
+							const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : null;
+
+							// Get repo root
+							let repoRoot: string | null = null;
+							if (isWorktree && gitCommonDir) {
+								// For SSH, use POSIX path operations
+								if (sshRemote) {
+									const commonDirAbs = gitCommonDir.startsWith('/')
+										? gitCommonDir
+										: `${subdirPath}/${gitCommonDir}`.replace(/\/+/g, '/');
+									// Get parent directory (remove last path component)
+									repoRoot = commonDirAbs.split('/').slice(0, -1).join('/') || '/';
+								} else {
+									const commonDirAbs = path.isAbsolute(gitCommonDir)
+										? gitCommonDir
+										: path.resolve(subdirPath, gitCommonDir);
+									repoRoot = path.dirname(commonDirAbs);
+								}
+							} else {
+								// For non-worktree git repos, the toplevel IS the repo root -
+								// reuse the value we already fetched above instead of re-running
+								// `git rev-parse --show-toplevel`.
+								repoRoot = toplevel;
+							}
+
+							return {
+								path: subdirPath,
+								name,
+								isWorktree,
+								branch,
+								repoRoot,
+							};
+						} catch (err) {
+							await markUnresolvedPath(subdirPath);
+							logger.warn(`${LOG_CONTEXT} Could not inspect ${subdirPath}: ${err}`);
+							return null;
+						}
+					};
+
+					// Walk a directory level: inspect each subdir, then recurse into any
+					// non-git subdirs (up to MAX_DEPTH below the original parentPath).
+					// Failures while reading a nested directory protect that group's
+					// existing children without failing the entire scan. Top-level
+					// failure propagates up to the outer
+					// try/catch so scanFailed is surfaced and the renderer skips removal.
+					const scanLevel = async (dir: string, depthRemaining: number): Promise<ScanEntry[]> => {
+						if (!current()) return [];
+						const subdirs = await readSubdirs(dir);
+
+						const results = await mapWithConcurrency(
+							subdirs,
+							WORKTREE_SCAN_CONCURRENCY,
+							async (subdir) => {
+								let subdirPath = dir;
+								try {
+									subdirPath = joinPath(dir, subdir.name);
+									const entry = await inspectSubdir(subdirPath, subdir.name);
+									if (entry) return [entry];
+									if (unresolvedPaths.has(subdirPath)) return [];
+									if (depthRemaining > 0) {
+										return await scanLevel(subdirPath, depthRemaining - 1);
+									}
+								} catch (err) {
+									await markUnresolvedPath(subdirPath);
+									const code = (err as NodeJS.ErrnoException | undefined)?.code;
+									if (!isExpectedScanError(code)) {
+										logger.warn(`${LOG_CONTEXT} Failed to inspect directory ${subdirPath}: ${err}`);
+									}
+								}
+								return [];
+							}
+						);
+
+						return results.flat();
+					};
+
+					try {
+						const gitSubdirs = await scanLevel(parentPath, MAX_DEPTH);
+						if (!current()) return { gitSubdirs: [], scanFailed: true };
 						return {
-							path: subdirPath,
-							name,
-							isWorktree,
-							branch,
-							repoRoot,
+							gitSubdirs,
+							...(unresolvedPaths.size > 0 ? { unresolvedPaths: [...unresolvedPaths] } : {}),
 						};
 					} catch (err) {
-						await markUnresolvedPath(subdirPath);
-						logger.warn(`${LOG_CONTEXT} Could not inspect ${subdirPath}: ${err}`);
-						return null;
-					}
-				};
-
-				// Walk a directory level: inspect each subdir, then recurse into any
-				// non-git subdirs (up to MAX_DEPTH below the original parentPath).
-				// Failures while reading a nested directory protect that group's
-				// existing children without failing the entire scan. Top-level
-				// failure propagates up to the outer
-				// try/catch so scanFailed is surfaced and the renderer skips removal.
-				const scanLevel = async (dir: string, depthRemaining: number): Promise<ScanEntry[]> => {
-					const subdirs = await readSubdirs(dir);
-
-					const results = await mapWithConcurrency(
-						subdirs,
-						WORKTREE_SCAN_CONCURRENCY,
-						async (subdir) => {
-							let subdirPath = dir;
-							try {
-								subdirPath = joinPath(dir, subdir.name);
-								const entry = await inspectSubdir(subdirPath, subdir.name);
-								if (entry) return [entry];
-								if (unresolvedPaths.has(subdirPath)) return [];
-								if (depthRemaining > 0) {
-									return await scanLevel(subdirPath, depthRemaining - 1);
-								}
-							} catch (err) {
-								await markUnresolvedPath(subdirPath);
-								const code = (err as NodeJS.ErrnoException | undefined)?.code;
-								if (!isExpectedScanError(code)) {
-									logger.warn(`${LOG_CONTEXT} Failed to inspect directory ${subdirPath}: ${err}`);
-								}
-							}
-							return [];
+						// The configured parent path is user-supplied, so failing to read it is
+						// an environment condition rather than a bug: ENOENT when it's been moved
+						// or deleted, and EPERM/EACCES when it sits behind macOS TCC (Documents,
+						// Desktop) or has permissions we simply don't hold. Both surface to logs
+						// and to `scanFailed` below; neither should pollute Sentry. (MAESTRO-VQ)
+						const code = (err as NodeJS.ErrnoException | undefined)?.code;
+						if (!isExpectedScanError(code)) {
+							void captureException(err);
 						}
-					);
-
-					return results.flat();
-				};
-
-				try {
-					const gitSubdirs = await scanLevel(parentPath, MAX_DEPTH);
-					return {
-						gitSubdirs,
-						...(unresolvedPaths.size > 0 ? { unresolvedPaths: [...unresolvedPaths] } : {}),
-					};
-				} catch (err) {
-					// The configured parent path is user-supplied, so failing to read it is
-					// an environment condition rather than a bug: ENOENT when it's been moved
-					// or deleted, and EPERM/EACCES when it sits behind macOS TCC (Documents,
-					// Desktop) or has permissions we simply don't hold. Both surface to logs
-					// and to `scanFailed` below; neither should pollute Sentry. (MAESTRO-VQ)
-					const code = (err as NodeJS.ErrnoException | undefined)?.code;
-					if (!isExpectedScanError(code)) {
-						void captureException(err);
+						logger.error(`Failed to scan directory ${parentPath}: ${err}`, LOG_CONTEXT);
+						// Distinguish a failed scan from a successful "no subdirs" result so
+						// the renderer doesn't bulk-flag every existing child session as removed.
+						return { gitSubdirs: [], scanFailed: true };
 					}
-					logger.error(`Failed to scan directory ${parentPath}: ${err}`, LOG_CONTEXT);
-					// Distinguish a failed scan from a successful "no subdirs" result so
-					// the renderer doesn't bulk-flag every existing child session as removed.
-					return { gitSubdirs: [], scanFailed: true };
+				} finally {
+					scans.delete(scan);
+					finish();
 				}
 			}
 		)
@@ -389,209 +497,258 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 					};
 				}
 
-				// Stop existing watcher if any - delete from map BEFORE awaiting close
-				// to prevent race conditions with concurrent unwatch/watch IPC calls
-				const existingWatcher = worktreeWatchers.get(sessionId);
-				if (existingWatcher) {
-					worktreeWatchers.delete(sessionId);
-					await existingWatcher.close();
-				}
+				const watching = worktreeRetirement.captureDiscovery(worktreePath, {
+					includeAncestors: false,
+					watcherSessionId: sessionId,
+				});
+				if (!watching())
+					return { success: false, error: 'Worktree retirement blocks watching this checkout' };
+				const previous = worktreeWatchers.get(sessionId);
+				const closePrevious = previous ? stopWatch(previous) : Promise.resolve();
+				const state: WatchState = {
+					sessionId,
+					path: worktreePath,
+					closed: false,
+					timers: new Map(),
+					candidates: new Map(),
+					pending: new Map(),
+				};
+				worktreeWatchers.set(sessionId, state);
+				watchStates.add(state);
+				const active = () => !state.closed && worktreeWatchers.get(sessionId) === state;
+				const startup = (async () => {
+					try {
+						await closePrevious;
+						if (!active()) return { success: false, error: 'Watcher superseded' };
+						// Verify directory exists
+						await fs.access(worktreePath);
+						if (!active() || !watching())
+							return { success: false, error: 'Watcher superseded or checkout retiring' };
 
-				// Clear any pending debounce timers for this session
-				for (const [key, timer] of worktreeWatchDebounceTimers) {
-					if (key.startsWith(`${sessionId}:`)) {
-						clearTimeout(timer);
-						worktreeWatchDebounceTimers.delete(key);
-					}
-				}
-
-				try {
-					// Verify directory exists
-					await fs.access(worktreePath);
-
-					// Watch one level deep so worktrees from slash-named branches
-					// (e.g. "fix/worktree-removal" → <basePath>/fix/worktree-removal)
-					// also fire addDir/unlinkDir events. The addDir handler validates
-					// every candidate via `is-inside-work-tree` + `show-toplevel`, so
-					// the intermediate group directory (e.g. "fix") is rejected and
-					// only the actual worktree is reported as discovered.
-					const watcher = chokidar.watch(worktreePath, {
-						ignored: [
-							ignoreDotfilesUnder(worktreePath), // Ignore dotfiles below the root, not above it
-							WINDOWS_LOCKED_SYSTEM_FILES,
-						],
-						persistent: true,
-						ignoreInitial: true,
-						depth: 1,
-					});
-
-					// Handler for directory additions
-					watcher.on('addDir', async (dirPath: string) => {
-						// TODO: Remove debug logging after worktree detection is confirmed working
-						logger.warn(`[WT-DEBUG] addDir event: ${dirPath}`);
-						// Skip the root directory itself
-						if (dirPath === worktreePath) return;
-
-						// Per-directory debounce so multiple near-simultaneous worktree
-						// additions each get their own validation pipeline
-						const debounceKey = `${sessionId}:${dirPath}`;
-						const existingTimer = worktreeWatchDebounceTimers.get(debounceKey);
-						if (existingTimer) {
-							clearTimeout(existingTimer);
-						}
-
-						const timer = setTimeout(async () => {
-							try {
-								worktreeWatchDebounceTimers.delete(debounceKey);
-
-								// Maestro just created this worktree itself (`git:worktreeSetup`),
-								// and the renderer that asked for it is already building the child
-								// session. This event is broadcast to every renderer - each
-								// Electron window and every web-desktop bridge client - so letting
-								// it through has each of the others mint a rival child at the same
-								// path under the same parent (issue #1506). Suppress it here, at
-								// the one place all of them share.
-								if (isWorktreeCreatedByMaestro(dirPath)) {
-									logger.warn(`[WT-DEBUG] SKIPPED ${dirPath}: created by Maestro`);
-									return;
-								}
-
-								// Check if this new directory is a git worktree
-								const isInsideWorkTree = await execFileNoThrow(
-									'git',
-									['rev-parse', '--is-inside-work-tree'],
-									dirPath
-								);
-								if (isInsideWorkTree.exitCode !== 0) {
-									logger.warn(
-										`[WT-DEBUG] REJECTED ${dirPath}: not inside work tree (exit=${isInsideWorkTree.exitCode} stderr=${isInsideWorkTree.stderr})`
-									);
-									return;
-								}
-
-								// Verify this IS a worktree/repo root, not a subdirectory inside one
-								const toplevelResult = await execFileNoThrow(
-									'git',
-									['rev-parse', '--show-toplevel'],
-									dirPath
-								);
-								if (toplevelResult.exitCode !== 0) {
-									logger.warn(
-										`[WT-DEBUG] REJECTED ${dirPath}: show-toplevel failed (exit=${toplevelResult.exitCode})`
-									);
-									return;
-								}
-								// Use realpath so symlinked base paths (e.g. /home/user/work →
-								// /data/work on Linux, NTFS junctions on Windows) match git's
-								// canonical toplevel output.
-								const resolvedDir = await fs.realpath(dirPath).catch(() => path.resolve(dirPath));
-								const resolvedToplevel = await fs
-									.realpath(toplevelResult.stdout.trim())
-									.catch(() => path.resolve(toplevelResult.stdout.trim()));
-								if (resolvedDir !== resolvedToplevel) {
-									logger.warn(
-										`[WT-DEBUG] REJECTED ${dirPath}: not repo root (resolved=${resolvedDir} toplevel=${resolvedToplevel})`
-									);
-									return;
-								}
-
-								// Re-check against the realpath: a symlinked basePath (or an
-								// NTFS junction) means the watcher's `dirPath` and the path the
-								// renderer asked `worktreeSetup` for can be spellings of the same
-								// directory, and only one of them is marked.
-								if (isWorktreeCreatedByMaestro(resolvedDir)) {
-									logger.warn(`[WT-DEBUG] SKIPPED ${dirPath}: created by Maestro (realpath)`);
-									return;
-								}
-
-								// Get branch name
-								const branchResult = await execFileNoThrow(
-									'git',
-									['rev-parse', '--abbrev-ref', 'HEAD'],
-									dirPath
-								);
-								const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : null;
-
-								// Skip main/master/HEAD branches
-								if (branch === 'main' || branch === 'master' || branch === 'HEAD') {
-									logger.warn(`[WT-DEBUG] REJECTED ${dirPath}: skippable branch ${branch}`);
-									return;
-								}
-
-								logger.warn(
-									`[WT-DEBUG] ACCEPTED ${dirPath}: branch=${branch}, emitting worktree:discovered`
-								);
-
-								// Emit event to the renderer and web-desktop bridge clients
-								safeSend('worktree:discovered', {
-									sessionId,
-									worktree: {
-										path: dirPath,
-										name: path.basename(dirPath),
-										branch,
-									},
-								});
-
-								logger.info(
-									`${LOG_CONTEXT} New worktree discovered: ${dirPath} (branch: ${branch})`
-								);
-							} catch (err) {
-								logger.warn(
-									`${LOG_CONTEXT} Failed to inspect discovered worktree ${dirPath}: ${err}`
-								);
-							}
-						}, 500); // 500ms debounce
-
-						worktreeWatchDebounceTimers.set(debounceKey, timer);
-					});
-
-					// Handler for directory removals (e.g., `git worktree remove` from CLI).
-					//
-					// With depth: 1 this can fire spuriously for an intermediate group
-					// directory (e.g. <basePath>/fix) when its last nested worktree is
-					// removed and the empty parent is cleaned up. We forward the event
-					// regardless because (a) the dir is gone so we can't run git checks
-					// to validate, and (b) the renderer's onWorktreeRemoved handler
-					// already filters by registered child cwds - an unknown path is a
-					// no-op, not a session removal. See useWorktreeHandlers.ts.
-					watcher.on('unlinkDir', (dirPath: string) => {
-						if (dirPath === worktreePath) return;
-
-						logger.warn(`[WT-DEBUG] unlinkDir event: ${dirPath}`);
-						logger.info(`${LOG_CONTEXT} Worktree directory removed: ${dirPath}`);
-
-						// A deleted worktree is no longer a valid jump/diff target; flag
-						// any non-terminal agent runs bound to it as stale (ISC-6.7/D12).
-						markStaleForDeletedWorktreeUsingStore(dirPath);
-
-						safeSend('worktree:removed', {
-							sessionId,
-							worktreePath: dirPath,
+						// Watch one level deep so worktrees from slash-named branches
+						// (e.g. "fix/worktree-removal" → <basePath>/fix/worktree-removal)
+						// also fire addDir/unlinkDir events. The addDir handler validates
+						// every candidate via `is-inside-work-tree` + `show-toplevel`, so
+						// the intermediate group directory (e.g. "fix") is rejected and
+						// only the actual worktree is reported as discovered.
+						const watcher = chokidar.watch(worktreePath, {
+							ignored: [
+								ignoreDotfilesUnder(worktreePath), // Ignore dotfiles below the root, not above it
+								WINDOWS_LOCKED_SYSTEM_FILES,
+							],
+							persistent: true,
+							ignoreInitial: true,
+							depth: 1,
 						});
-					});
 
-					watcher.on('error', (error) => {
-						logger.error(
-							`${LOG_CONTEXT} Worktree watcher error for session ${sessionId}: ${error}`
+						state.watcher = watcher;
+						// Handler for directory additions
+						watcher.on('addDir', async (dirPath: string) => {
+							// TODO: Remove debug logging after worktree detection is confirmed working
+							logger.warn(`[WT-DEBUG] addDir event: ${dirPath}`);
+							// Skip the root directory itself
+							if (dirPath === worktreePath || !active()) return;
+
+							// Per-directory debounce so multiple near-simultaneous worktree
+							// additions each get their own validation pipeline
+							const discoverable = worktreeRetirement.captureDiscovery(dirPath, {
+								watcherSessionId: sessionId,
+							});
+							if (!discoverable()) return;
+							const candidate = {};
+							state.candidates.set(dirPath, candidate);
+							const current = () => state.candidates.get(dirPath) === candidate && discoverable();
+							const existingTimer = state.timers.get(dirPath);
+							if (existingTimer) {
+								clearTimeout(existingTimer);
+							}
+
+							const timer = setTimeout(async () => {
+								state.timers.delete(dirPath);
+								const operation = (async () => {
+									try {
+										if (!active() || !current()) return;
+
+										// Maestro just created this worktree itself (`git:worktreeSetup`),
+										// and the renderer that asked for it is already building the child
+										// session. This event is broadcast to every renderer - each
+										// Electron window and every web-desktop bridge client - so letting
+										// it through has each of the others mint a rival child at the same
+										// path under the same parent (issue #1506). Suppress it here, at
+										// the one place all of them share.
+										if (isWorktreeCreatedByMaestro(dirPath)) {
+											logger.warn(`[WT-DEBUG] SKIPPED ${dirPath}: created by Maestro`);
+											return;
+										}
+
+										// Check if this new directory is a git worktree
+										const isInsideWorkTree = await execFileNoThrow(
+											'git',
+											['rev-parse', '--is-inside-work-tree'],
+											dirPath
+										);
+										if (!active() || !current()) return;
+										if (isInsideWorkTree.exitCode !== 0) {
+											logger.warn(
+												`[WT-DEBUG] REJECTED ${dirPath}: not inside work tree (exit=${isInsideWorkTree.exitCode} stderr=${isInsideWorkTree.stderr})`
+											);
+											return;
+										}
+
+										// Verify this IS a worktree/repo root, not a subdirectory inside one
+										const toplevelResult = await execFileNoThrow(
+											'git',
+											['rev-parse', '--show-toplevel'],
+											dirPath
+										);
+										if (!active() || !current()) return;
+										if (toplevelResult.exitCode !== 0) {
+											logger.warn(
+												`[WT-DEBUG] REJECTED ${dirPath}: show-toplevel failed (exit=${toplevelResult.exitCode})`
+											);
+											return;
+										}
+										// Use realpath so symlinked base paths (e.g. /home/user/work →
+										// /data/work on Linux, NTFS junctions on Windows) match git's
+										// canonical toplevel output.
+										const resolvedDir = await fs
+											.realpath(dirPath)
+											.catch(() => path.resolve(dirPath));
+										const resolvedToplevel = await fs
+											.realpath(toplevelResult.stdout.trim())
+											.catch(() => path.resolve(toplevelResult.stdout.trim()));
+										if (resolvedDir !== resolvedToplevel) {
+											logger.warn(
+												`[WT-DEBUG] REJECTED ${dirPath}: not repo root (resolved=${resolvedDir} toplevel=${resolvedToplevel})`
+											);
+											return;
+										}
+
+										// Re-check against the realpath: a symlinked basePath (or an
+										// NTFS junction) means the watcher's `dirPath` and the path the
+										// renderer asked `worktreeSetup` for can be spellings of the same
+										// directory, and only one of them is marked.
+										if (isWorktreeCreatedByMaestro(resolvedDir)) {
+											logger.warn(`[WT-DEBUG] SKIPPED ${dirPath}: created by Maestro (realpath)`);
+											return;
+										}
+
+										if (!active() || !current()) return;
+										// Get branch name
+										const branchResult = await execFileNoThrow(
+											'git',
+											['rev-parse', '--abbrev-ref', 'HEAD'],
+											dirPath
+										);
+										if (!active() || !current()) return;
+										const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : null;
+
+										// Skip main/master/HEAD branches
+										if (branch === 'main' || branch === 'master' || branch === 'HEAD') {
+											logger.warn(`[WT-DEBUG] REJECTED ${dirPath}: skippable branch ${branch}`);
+											return;
+										}
+
+										logger.warn(
+											`[WT-DEBUG] ACCEPTED ${dirPath}: branch=${branch}, emitting worktree:discovered`
+										);
+
+										// Emit event to the renderer and web-desktop bridge clients
+										safeSend('worktree:discovered', {
+											sessionId,
+											worktree: {
+												path: dirPath,
+												name: path.basename(dirPath),
+												branch,
+											},
+										});
+
+										logger.info(
+											`${LOG_CONTEXT} New worktree discovered: ${dirPath} (branch: ${branch})`
+										);
+									} catch (err) {
+										logger.warn(
+											`${LOG_CONTEXT} Failed to inspect discovered worktree ${dirPath}: ${err}`
+										);
+									}
+								})();
+								state.pending.set(operation, dirPath);
+								try {
+									await operation;
+								} finally {
+									state.pending.delete(operation);
+									if (state.candidates.get(dirPath) === candidate) state.candidates.delete(dirPath);
+									forgetClosedWatch(state);
+								}
+							}, 500); // 500ms debounce
+
+							state.timers.set(dirPath, timer);
+						});
+
+						// Handler for directory removals (e.g., `git worktree remove` from CLI).
+						//
+						// With depth: 1 this can fire spuriously for an intermediate group
+						// directory (e.g. <basePath>/fix) when its last nested worktree is
+						// removed and the empty parent is cleaned up. We forward the event
+						// regardless because (a) the dir is gone so we can't run git checks
+						// to validate, and (b) the renderer's onWorktreeRemoved handler
+						// already filters by registered child cwds - an unknown path is a
+						// no-op, not a session removal. See useWorktreeHandlers.ts.
+						watcher.on('unlinkDir', (dirPath: string) => {
+							if (dirPath === worktreePath || !active()) return;
+
+							const timer = state.timers.get(dirPath);
+							if (timer) clearTimeout(timer);
+							state.timers.delete(dirPath);
+							state.candidates.delete(dirPath);
+							if (!worktreeRetirement.captureDiscovery(dirPath, { watcherSessionId: sessionId })())
+								return;
+							logger.warn(`[WT-DEBUG] unlinkDir event: ${dirPath}`);
+							logger.info(`${LOG_CONTEXT} Worktree directory removed: ${dirPath}`);
+
+							// A deleted worktree is no longer a valid jump/diff target; flag
+							// any non-terminal agent runs bound to it as stale (ISC-6.7/D12).
+							markStaleForDeletedWorktreeUsingStore(dirPath);
+
+							safeSend('worktree:removed', {
+								sessionId,
+								worktreePath: dirPath,
+							});
+						});
+
+						watcher.on('error', (error) => {
+							logger.error(
+								`${LOG_CONTEXT} Worktree watcher error for session ${sessionId}: ${error}`
+							);
+						});
+
+						logger.info(
+							`${LOG_CONTEXT} Started watching worktree directory: ${worktreePath} for session ${sessionId}`
 						);
-					});
 
-					worktreeWatchers.set(sessionId, watcher);
-					logger.info(
-						`${LOG_CONTEXT} Started watching worktree directory: ${worktreePath} for session ${sessionId}`
-					);
-
-					return { success: true };
-				} catch (err) {
-					// ENOENT is expected when the worktree parent path has been moved
-					// or deleted; the renderer surfaces this as "stale" - no need to
-					// page Sentry on user filesystem state.
-					const code = (err as NodeJS.ErrnoException | undefined)?.code;
-					if (code !== 'ENOENT') {
-						void captureException(err);
+						return { success: true };
+					} catch (err) {
+						// ENOENT is expected when the worktree parent path has been moved
+						// or deleted; the renderer surfaces this as "stale" - no need to
+						// page Sentry on user filesystem state.
+						const code = (err as NodeJS.ErrnoException | undefined)?.code;
+						if (code !== 'ENOENT') {
+							void captureException(err);
+						}
+						logger.error(
+							`${LOG_CONTEXT} Failed to watch worktree directory ${worktreePath}: ${err}`
+						);
+						await stopWatch(state);
+						return { success: false, error: String(err) };
 					}
-					logger.error(`${LOG_CONTEXT} Failed to watch worktree directory ${worktreePath}: ${err}`);
-					return { success: false, error: String(err) };
+				})();
+				state.pending.set(startup, worktreePath);
+				try {
+					return await startup;
+				} finally {
+					state.pending.delete(startup);
+					if (!state.watcher) await stopWatch(state);
+					forgetClosedWatch(state);
 				}
 			}
 		)
@@ -605,24 +762,8 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 			logger.warn(
 				`[WT-DEBUG] unwatchWorktreeDirectory called: session=${sessionId} hasWatcher=${worktreeWatchers.has(sessionId)}`
 			);
-			const watcher = worktreeWatchers.get(sessionId);
-			if (watcher) {
-				// Delete from map BEFORE awaiting close to prevent a race condition:
-				// React StrictMode double-fires effects, so unwatchWorktreeDirectory and
-				// watchWorktreeDirectory can interleave. If we delete after await, the
-				// unwatch can remove a NEW watcher that watchWorktreeDirectory just created.
-				worktreeWatchers.delete(sessionId);
-				await watcher.close();
-				logger.info(`${LOG_CONTEXT} Stopped watching worktree directory for session ${sessionId}`);
-			}
-
-			// Clear any pending debounce timers for this session
-			for (const [key, timer] of worktreeWatchDebounceTimers) {
-				if (key.startsWith(`${sessionId}:`)) {
-					clearTimeout(timer);
-					worktreeWatchDebounceTimers.delete(key);
-				}
-			}
+			const state = worktreeWatchers.get(sessionId);
+			if (state) await stopWatch(state);
 
 			return { success: true };
 		})

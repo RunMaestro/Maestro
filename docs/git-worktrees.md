@@ -195,6 +195,88 @@ the form (or press Escape) and the request keeps going. While it does, the
 where the request got to. When it lands you get a toast with a link to the new
 PR, and if it fails, the error waits for you both in a toast and in the form.
 
+### Pull Request Status and Merge
+
+For a worktree sub-agent, one compact pull-request icon shows the status of its
+current branch. Hover for the PR number and CI summary; click to open its status
+card. Green means checks passed, amber means checks are pending or running, red
+marks failed checks or a closed PR, and the accent color marks a merged PR. Drafts
+and unavailable or stale results are muted. The icon shape and accessible label
+also identify the state. Branches with no matching PR do not add an extra sidebar
+control. A green CI icon does not imply review approval or merge readiness.
+You can also open **Worktree PR and CI** for the active worktree
+from the Left Bar hamburger menu, search **Git: Worktree PR and CI** in the
+command palette, or press **Alt+Cmd+Shift+P** on macOS (**Alt+Ctrl+Shift+P** on
+Windows/Linux). Agents can use `maestro-cli open worktree-pr-details`. The details
+stay attached to their target when the sidebar row collapses or another agent
+becomes active. Close with Escape or the header's X.
+
+Maestro polls while its window is visible, refreshes when it
+becomes visible again, and refreshes after a checkout or successful push. Slow
+requests finish before another automatic refresh starts. Completed PRs can be
+rediscovered after a restart when their repository, branch and head match. A failed refresh can leave the last result marked stale;
+unknown or missing checks are not a passing result.
+
+The status card starts with the PR title, branches and CI summary. Expand the
+check list for individual results and links; failed checks are expanded by default.
+Refresh is available in the footer. Expand **Merge pull request**, then choose
+**Check merge readiness** to check the current PR and checkout
+against GitHub. Local HEAD must match the reviewed PR head, so unpublished
+commits require a push and another refresh before merging. If eligible, choose an allowed merge method or add the PR to the
+repository's required merge queue. Maestro rechecks before the action and
+reports an unknown outcome when it cannot confirm the result. GitHub remains
+responsible for enforcing branch protections and merge requirements.
+
+Discovery and manual merge currently support local worktrees with a GitHub.com
+`origin` and an authenticated `gh`; SSH worktrees are not supported. Automatic
+post-merge worktree cleanup is not available. Merging does not remove the
+checkout; use the explicit removal controls below when appropriate.
+
+Expand **Worktree cleanup** in PR details to find **Prepare worktree cleanup**,
+followed by explicit
+**Confirm worktree removal** or **Keep checkout**. Preparation temporarily
+fences child and parent session updates, queued work, Auto Run starts, composer
+drafts and editor entry points before inspecting live state. Saved idle chat is
+preserved. The supported local primary-renderer CLI path requires file tabs and editing
+dialogs to be closed; renderer paths alone cannot exclude symlink aliases into
+the checkout. Desktop preparation now binds an opaque ID and renderer revision
+to Main's trusted reservation and sole primary window. Timeout or renderer loss
+aborts preparation; an in-flight removal stays fenced. The layer stack also
+blocks preparation while other overlays are open. Preparation does not authorize
+removal without a separate confirmation. Main independently requires the exact
+merged PR head and refuses changed, untracked or ignored data. Saved chat is retained
+before Git runs, startup restores journal reservations, and desktop recovery
+checks disk and Git administration without repeating deletion.
+Uncertain outcomes remain reserved, with a same-token settlement retry in the
+details even after the child registration disappears. Closing or retargeting
+the dialog parks active cleanup and its result. Reopen the original target, or
+choose **View cleanup for…** from another target's details, to resume settlement.
+Unused preparations are released on close; a lost keep reply retries only the
+keep action. A lost success reply can
+be replayed to its original sender without another Git removal. The transaction drains local
+worktree watcher probes/scans and cancels target discovery timers before Git;
+late discovery/removal events cannot recreate the retiring session. Parent
+watching continues for unrelated worktrees. Failed watcher closes block removal.
+Present-outcome recovery can be cancelled after fresh ownership checks. The desktop
+recovery API can now complete a restored, already-removed checkout with a freshly
+loaded sole primary renderer. It freezes the stale or already-absent child and its
+surviving parent, reuses the original journal/archive identity, settles watchers
+and durable registration state, and then releases the parent. Failed writes or
+lost replies retain the fence for retry; reloads require a fresh token and
+revision. In the same PR details, **Refresh cleanup recoveries** lists restored
+pending journals. **Complete removed checkout recovery** settles an already
+removed checkout; **Keep present checkout** cancels recovery only after Main
+verifies that the original checkout and registrations are fully present.
+Results survive dialog close/reopen for the current application document.
+Recovery never repeats Git deletion. A primary document lost during
+an active removal cannot adopt that runner: the result explicitly requires
+restart recovery and the fence stays held. Owner loss during durable intent
+persistence stops before Git starts.
+
+Cleanup currently keeps the checkout by default and asks for each removal.
+Automatic opt-in policy, archived-worktree browsing and policy persistence
+remain in progress. Neither merging nor status polling triggers removal.
+
 ### Removing Worktrees
 
 When removing a worktree, you have two options:

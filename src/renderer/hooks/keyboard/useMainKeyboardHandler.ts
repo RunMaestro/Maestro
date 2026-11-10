@@ -19,6 +19,7 @@ import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrg
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
 import { toggleInAppToasts } from '../../services/inAppToasts';
 import { requestSidebarReveal } from '../../utils/sidebarReveal';
+import { openUiSurface } from '../../utils/openUiSurface';
 import { getGitShortcutActions } from '../../services/gitShortcutActions';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
@@ -1005,6 +1006,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.handleViewGitDiff();
 				trackShortcut('viewGitDiff');
+			} else if (ctx.isShortcut(e, 'viewWorktreePRDetails') && !ctx.activeGroupChatId) {
+				if (openUiSurface('worktree-pr-details').ok) {
+					e.preventDefault();
+					trackShortcut('viewWorktreePRDetails');
+				}
 			} else if (ctx.isShortcut(e, 'viewGitLog') && !ctx.activeGroupChatId) {
 				e.preventDefault();
 				if (activeSession?.isGitRepo) {

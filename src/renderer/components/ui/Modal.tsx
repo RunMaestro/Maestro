@@ -39,7 +39,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { GhostIconButton } from './GhostIconButton';
 import type { Theme } from '../../types';
-import { useModalLayer, type UseModalLayerOptions } from '../../hooks';
+import { useModalLayer, type UseModalLayerOptions } from '../../hooks/ui/useModalLayer';
 import { useResizableModal, type ModalResizeDirection } from '../../hooks/ui/useResizableModal';
 import type { ModalResizeKey, ModalSize } from '../../utils/modalSizing';
 import { ResizeHandles } from './ResizeHandles';

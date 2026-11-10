@@ -26,6 +26,7 @@ import fs from 'fs/promises';
 import { existsSync, createWriteStream } from 'fs';
 import archiver from 'archiver';
 
+import { worktreeRetirement } from '../../git/worktreeRetirement';
 import { logger } from '../../utils/logger';
 import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
 import {
@@ -532,25 +533,33 @@ export function registerFilesystemHandlers(): void {
 	ipcMain.handle(
 		'fs:downloadRemoteFile',
 		async (_, remotePath: string, sshRemoteId: string, localDestPath?: string) => {
-			const sshConfig = getSshRemoteById(sshRemoteId);
-			if (!sshConfig) {
-				throw new Error(`SSH remote not found: ${sshRemoteId}`);
-			}
+			return worktreeRetirement.runFilesystemMutation(
+				[
+					localDestPath ||
+						path.join(os.tmpdir(), 'maestro-remote-downloads', path.basename(remotePath)),
+				],
+				async () => {
+					const sshConfig = getSshRemoteById(sshRemoteId);
+					if (!sshConfig) {
+						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					}
 
-			const result = await readBinaryFileRemoteAsBase64(remotePath, sshConfig);
-			if (!result.success) {
-				throw new Error(result.error || `Failed to download remote file: ${remotePath}`);
-			}
+					const result = await readBinaryFileRemoteAsBase64(remotePath, sshConfig);
+					if (!result.success) {
+						throw new Error(result.error || `Failed to download remote file: ${remotePath}`);
+					}
 
-			let destPath = localDestPath;
-			if (!destPath) {
-				const tempDir = path.join(os.tmpdir(), 'maestro-remote-downloads');
-				await fs.mkdir(tempDir, { recursive: true });
-				destPath = path.join(tempDir, path.basename(remotePath));
-			}
+					let destPath = localDestPath;
+					if (!destPath) {
+						const tempDir = path.join(os.tmpdir(), 'maestro-remote-downloads');
+						await fs.mkdir(tempDir, { recursive: true });
+						destPath = path.join(tempDir, path.basename(remotePath));
+					}
 
-			await fs.writeFile(destPath, Buffer.from(result.data ?? '', 'base64'));
-			return { success: true, path: destPath };
+					await fs.writeFile(destPath, Buffer.from(result.data ?? '', 'base64'));
+					return { success: true, path: destPath };
+				}
+			);
 		}
 	);
 
@@ -765,26 +774,28 @@ export function registerFilesystemHandlers(): void {
 	ipcMain.handle(
 		'fs:writeFile',
 		async (_, filePath: string, content: string, sshRemoteId?: string) => {
-			try {
-				// SSH remote: dispatch to remote fs operations
-				if (sshRemoteId) {
-					const sshConfig = getSshRemoteById(sshRemoteId);
-					if (!sshConfig) {
-						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+			return worktreeRetirement.runFilesystemMutation(sshRemoteId ? [] : [filePath], async () => {
+				try {
+					// SSH remote: dispatch to remote fs operations
+					if (sshRemoteId) {
+						const sshConfig = getSshRemoteById(sshRemoteId);
+						if (!sshConfig) {
+							throw new Error(`SSH remote not found: ${sshRemoteId}`);
+						}
+						const result = await writeFileRemote(filePath, content, sshConfig);
+						if (!result.success) {
+							throw new Error(result.error || 'Failed to write remote file');
+						}
+						return { success: true };
 					}
-					const result = await writeFileRemote(filePath, content, sshConfig);
-					if (!result.success) {
-						throw new Error(result.error || 'Failed to write remote file');
-					}
-					return { success: true };
-				}
 
-				// Local: use standard fs operations
-				await fs.writeFile(filePath, content, 'utf-8');
-				return { success: true };
-			} catch (error) {
-				throw new Error(`Failed to write file: ${error}`);
-			}
+					// Local: use standard fs operations
+					await fs.writeFile(filePath, content, 'utf-8');
+					return { success: true };
+				} catch (error) {
+					throw new Error(`Failed to write file: ${error}`);
+				}
+			});
 		}
 	);
 
@@ -796,81 +807,92 @@ export function registerFilesystemHandlers(): void {
 	ipcMain.handle(
 		'fs:writeImageFile',
 		async (_, filePath: string, dataUrl: string, sshRemoteId?: string) => {
-			try {
-				const commaIndex = dataUrl.indexOf(',');
-				const base64 =
-					commaIndex >= 0 && dataUrl.startsWith('data:') ? dataUrl.slice(commaIndex + 1) : dataUrl;
-				const buffer = Buffer.from(base64, 'base64');
+			return worktreeRetirement.runFilesystemMutation(sshRemoteId ? [] : [filePath], async () => {
+				try {
+					const commaIndex = dataUrl.indexOf(',');
+					const base64 =
+						commaIndex >= 0 && dataUrl.startsWith('data:')
+							? dataUrl.slice(commaIndex + 1)
+							: dataUrl;
+					const buffer = Buffer.from(base64, 'base64');
 
-				// SSH remote: writeFileRemote accepts a Buffer and base64-encodes it
-				// for safe transfer, decoding on the remote side.
-				if (sshRemoteId) {
-					const sshConfig = getSshRemoteById(sshRemoteId);
-					if (!sshConfig) {
-						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					// SSH remote: writeFileRemote accepts a Buffer and base64-encodes it
+					// for safe transfer, decoding on the remote side.
+					if (sshRemoteId) {
+						const sshConfig = getSshRemoteById(sshRemoteId);
+						if (!sshConfig) {
+							throw new Error(`SSH remote not found: ${sshRemoteId}`);
+						}
+						const result = await writeFileRemote(filePath, buffer, sshConfig);
+						if (!result.success) {
+							throw new Error(result.error || 'Failed to write remote file');
+						}
+						return { success: true };
 					}
-					const result = await writeFileRemote(filePath, buffer, sshConfig);
-					if (!result.success) {
-						throw new Error(result.error || 'Failed to write remote file');
-					}
+
+					await fs.writeFile(filePath, buffer);
 					return { success: true };
+				} catch (error) {
+					throw new Error(`Failed to write image file: ${error}`);
 				}
-
-				await fs.writeFile(filePath, buffer);
-				return { success: true };
-			} catch (error) {
-				throw new Error(`Failed to write image file: ${error}`);
-			}
+			});
 		}
 	);
 
 	// Create a directory (supports SSH remote). Recursive so intermediate
 	// parents are created as needed.
 	ipcMain.handle('fs:mkdir', async (_, dirPath: string, sshRemoteId?: string) => {
-		try {
-			// SSH remote: dispatch to remote fs operations
-			if (sshRemoteId) {
-				const sshConfig = getSshRemoteById(sshRemoteId);
-				if (!sshConfig) {
-					throw new Error(`SSH remote not found: ${sshRemoteId}`);
+		return worktreeRetirement.runFilesystemMutation(sshRemoteId ? [] : [dirPath], async () => {
+			try {
+				// SSH remote: dispatch to remote fs operations
+				if (sshRemoteId) {
+					const sshConfig = getSshRemoteById(sshRemoteId);
+					if (!sshConfig) {
+						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					}
+					const result = await mkdirRemote(dirPath, sshConfig, true);
+					if (!result.success) {
+						throw new Error(result.error || 'Failed to create remote directory');
+					}
+					return { success: true };
 				}
-				const result = await mkdirRemote(dirPath, sshConfig, true);
-				if (!result.success) {
-					throw new Error(result.error || 'Failed to create remote directory');
-				}
-				return { success: true };
-			}
 
-			// Local: standard fs mkdir
-			await fs.mkdir(dirPath, { recursive: true });
-			return { success: true };
-		} catch (error) {
-			throw new Error(`Failed to create directory: ${error}`);
-		}
+				// Local: standard fs mkdir
+				await fs.mkdir(dirPath, { recursive: true });
+				return { success: true };
+			} catch (error) {
+				throw new Error(`Failed to create directory: ${error}`);
+			}
+		});
 	});
 
 	// Rename a file or folder (supports SSH remote)
 	ipcMain.handle('fs:rename', async (_, oldPath: string, newPath: string, sshRemoteId?: string) => {
-		try {
-			// SSH remote: dispatch to remote fs operations
-			if (sshRemoteId) {
-				const sshConfig = getSshRemoteById(sshRemoteId);
-				if (!sshConfig) {
-					throw new Error(`SSH remote not found: ${sshRemoteId}`);
-				}
-				const result = await renameRemote(oldPath, newPath, sshConfig);
-				if (!result.success) {
-					throw new Error(result.error || 'Failed to rename remote file');
-				}
-				return { success: true };
-			}
+		return worktreeRetirement.runFilesystemMutation(
+			sshRemoteId ? [] : [oldPath, newPath],
+			async () => {
+				try {
+					// SSH remote: dispatch to remote fs operations
+					if (sshRemoteId) {
+						const sshConfig = getSshRemoteById(sshRemoteId);
+						if (!sshConfig) {
+							throw new Error(`SSH remote not found: ${sshRemoteId}`);
+						}
+						const result = await renameRemote(oldPath, newPath, sshConfig);
+						if (!result.success) {
+							throw new Error(result.error || 'Failed to rename remote file');
+						}
+						return { success: true };
+					}
 
-			// Local: standard fs rename
-			await fs.rename(oldPath, newPath);
-			return { success: true };
-		} catch (error) {
-			throw new Error(`Failed to rename: ${error}`);
-		}
+					// Local: standard fs rename
+					await fs.rename(oldPath, newPath);
+					return { success: true };
+				} catch (error) {
+					throw new Error(`Failed to rename: ${error}`);
+				}
+			}
+		);
 	});
 
 	// Copy a file or folder from an arbitrary source path into a destination path.
@@ -886,31 +908,36 @@ export function registerFilesystemHandlers(): void {
 			destPath: string,
 			options?: { overwrite?: boolean; sshRemoteId?: string }
 		) => {
-			try {
-				const overwrite = options?.overwrite ?? false;
-				const sshRemoteId = options?.sshRemoteId;
+			return worktreeRetirement.runFilesystemMutation(
+				options?.sshRemoteId ? [sourcePath] : [sourcePath, destPath],
+				async () => {
+					try {
+						const overwrite = options?.overwrite ?? false;
+						const sshRemoteId = options?.sshRemoteId;
 
-				// SSH remote: dest lives on the remote host - upload the local source.
-				if (sshRemoteId) {
-					const sshConfig = getSshRemoteById(sshRemoteId);
-					if (!sshConfig) {
-						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+						// SSH remote: dest lives on the remote host - upload the local source.
+						if (sshRemoteId) {
+							const sshConfig = getSshRemoteById(sshRemoteId);
+							if (!sshConfig) {
+								throw new Error(`SSH remote not found: ${sshRemoteId}`);
+							}
+							await uploadLocalPathToRemote(sourcePath, destPath, sshConfig, overwrite);
+							return { success: true };
+						}
+
+						// `recursive: true` copies folders wholesale; for plain files it is a no-op.
+						// `force`/`errorOnExist` encode the conflict decision the renderer already made.
+						await fs.cp(sourcePath, destPath, {
+							recursive: true,
+							force: overwrite,
+							errorOnExist: !overwrite,
+						});
+						return { success: true };
+					} catch (error) {
+						throw new Error(`Failed to copy: ${error}`);
 					}
-					await uploadLocalPathToRemote(sourcePath, destPath, sshConfig, overwrite);
-					return { success: true };
 				}
-
-				// `recursive: true` copies folders wholesale; for plain files it is a no-op.
-				// `force`/`errorOnExist` encode the conflict decision the renderer already made.
-				await fs.cp(sourcePath, destPath, {
-					recursive: true,
-					force: overwrite,
-					errorOnExist: !overwrite,
-				});
-				return { success: true };
-			} catch (error) {
-				throw new Error(`Failed to copy: ${error}`);
-			}
+			);
 		}
 	);
 
@@ -918,27 +945,32 @@ export function registerFilesystemHandlers(): void {
 	ipcMain.handle(
 		'fs:delete',
 		async (_, targetPath: string, options?: { recursive?: boolean; sshRemoteId?: string }) => {
-			try {
-				const sshRemoteId = options?.sshRemoteId;
+			return worktreeRetirement.runFilesystemMutation(
+				options?.sshRemoteId ? [] : [targetPath],
+				async () => {
+					try {
+						const sshRemoteId = options?.sshRemoteId;
 
-				// SSH remote: dispatch to remote fs operations
-				if (sshRemoteId) {
-					const sshConfig = getSshRemoteById(sshRemoteId);
-					if (!sshConfig) {
-						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+						// SSH remote: dispatch to remote fs operations
+						if (sshRemoteId) {
+							const sshConfig = getSshRemoteById(sshRemoteId);
+							if (!sshConfig) {
+								throw new Error(`SSH remote not found: ${sshRemoteId}`);
+							}
+							const result = await deleteRemote(targetPath, sshConfig, options?.recursive ?? true);
+							if (!result.success) {
+								throw new Error(result.error || 'Failed to delete remote file');
+							}
+							return { success: true };
+						}
+
+						await deleteLocalPath(targetPath, options?.recursive ?? true);
+						return { success: true };
+					} catch (error) {
+						throw new Error(`Failed to delete: ${error}`);
 					}
-					const result = await deleteRemote(targetPath, sshConfig, options?.recursive ?? true);
-					if (!result.success) {
-						throw new Error(result.error || 'Failed to delete remote file');
-					}
-					return { success: true };
 				}
-
-				await deleteLocalPath(targetPath, options?.recursive ?? true);
-				return { success: true };
-			} catch (error) {
-				throw new Error(`Failed to delete: ${error}`);
-			}
+			);
 		}
 	);
 
@@ -964,48 +996,54 @@ export function registerFilesystemHandlers(): void {
 			if (!Array.isArray(targetPaths) || targetPaths.length === 0) {
 				return { results: [] };
 			}
+			return worktreeRetirement.runFilesystemMutation(
+				options?.sshRemoteId ? [] : targetPaths,
+				async () => {
+					const recursive = options?.recursive ?? true;
+					const sshRemoteId = options?.sshRemoteId;
 
-			const recursive = options?.recursive ?? true;
-			const sshRemoteId = options?.sshRemoteId;
-
-			// SSH remote: one `rm` for the whole batch rather than one per path.
-			if (sshRemoteId) {
-				const sshConfig = getSshRemoteById(sshRemoteId);
-				if (!sshConfig) {
-					// An unresolvable remote is a configuration failure, not a
-					// per-path one - fail the call rather than reporting 125
-					// identical path errors.
-					throw new Error(`SSH remote not found: ${sshRemoteId}`);
-				}
-				const remoteResults = await deleteManyRemote(targetPaths, sshConfig, recursive);
-				return {
-					results: remoteResults.map((result, index) => ({
-						path: targetPaths[index],
-						success: result.success,
-						...(result.success ? {} : { error: result.error || 'Failed to delete remote file' }),
-					})),
-				};
-			}
-
-			// Local: overlap the deletes so per-file latency stops being additive.
-			const results = await mapWithConcurrency(
-				targetPaths,
-				LOCAL_FILE_DELETE_CONCURRENCY,
-				async (targetPath): Promise<BulkDeleteResult> => {
-					try {
-						await deleteLocalPath(targetPath, recursive);
-						return { path: targetPath, success: true };
-					} catch (error) {
+					// SSH remote: one `rm` for the whole batch rather than one per path.
+					if (sshRemoteId) {
+						const sshConfig = getSshRemoteById(sshRemoteId);
+						if (!sshConfig) {
+							// An unresolvable remote is a configuration failure, not a
+							// per-path one - fail the call rather than reporting 125
+							// identical path errors.
+							throw new Error(`SSH remote not found: ${sshRemoteId}`);
+						}
+						const remoteResults = await deleteManyRemote(targetPaths, sshConfig, recursive);
 						return {
-							path: targetPath,
-							success: false,
-							error: error instanceof Error ? error.message : String(error),
+							results: remoteResults.map((result, index) => ({
+								path: targetPaths[index],
+								success: result.success,
+								...(result.success
+									? {}
+									: { error: result.error || 'Failed to delete remote file' }),
+							})),
 						};
 					}
+
+					// Local: overlap the deletes so per-file latency stops being additive.
+					const results = await mapWithConcurrency(
+						targetPaths,
+						LOCAL_FILE_DELETE_CONCURRENCY,
+						async (targetPath): Promise<BulkDeleteResult> => {
+							try {
+								await deleteLocalPath(targetPath, recursive);
+								return { path: targetPath, success: true };
+							} catch (error) {
+								return {
+									path: targetPath,
+									success: false,
+									error: error instanceof Error ? error.message : String(error),
+								};
+							}
+						}
+					);
+
+					return { results };
 				}
 			);
-
-			return { results };
 		}
 	);
 
@@ -1016,53 +1054,83 @@ export function registerFilesystemHandlers(): void {
 	ipcMain.handle(
 		'fs:compressFolder',
 		async (_, folderPath: string, options?: { sshRemoteId?: string }) => {
-			const sshRemoteId = options?.sshRemoteId;
-			const folderName = path.basename(folderPath.replace(/[\\/]+$/, ''));
-			const parentDir = path.dirname(folderPath.replace(/[\\/]+$/, ''));
+			return worktreeRetirement.runFilesystemMutation(
+				options?.sshRemoteId ? [] : [folderPath, path.dirname(folderPath.replace(/[\\/]+$/, ''))],
+				async () => {
+					const sshRemoteId = options?.sshRemoteId;
+					const folderName = path.basename(folderPath.replace(/[\\/]+$/, ''));
+					const parentDir = path.dirname(folderPath.replace(/[\\/]+$/, ''));
 
-			if (sshRemoteId) {
-				const sshConfig = getSshRemoteById(sshRemoteId);
-				if (!sshConfig) {
-					throw new Error(`SSH remote not found: ${sshRemoteId}`);
-				}
-				// Remote paths are POSIX regardless of what the desktop runs on, so
-				// join with '/' rather than path.join (which uses '\\' on Windows).
-				const destPath = await resolveUniqueZipPath(
-					`${parentDir.replace(/\\/g, '/')}/${folderName}`,
-					async (candidate) => {
-						const result = await existsRemote(candidate, sshConfig);
-						if (!result.success) {
-							throw new Error(result.error || 'Failed to check remote path');
+					if (sshRemoteId) {
+						const sshConfig = getSshRemoteById(sshRemoteId);
+						if (!sshConfig) {
+							throw new Error(`SSH remote not found: ${sshRemoteId}`);
 						}
-						return result.data === true;
+						// Remote paths are POSIX regardless of what the desktop runs on, so
+						// join with '/' rather than path.join (which uses '\\' on Windows).
+						const destPath = await resolveUniqueZipPath(
+							`${parentDir.replace(/\\/g, '/')}/${folderName}`,
+							async (candidate) => {
+								const result = await existsRemote(candidate, sshConfig);
+								if (!result.success) {
+									throw new Error(result.error || 'Failed to check remote path');
+								}
+								return result.data === true;
+							}
+						);
+						const result = await compressFolderRemote(folderPath, destPath, sshConfig);
+						if (!result.success) {
+							throw new Error(result.error || 'Failed to compress remote folder');
+						}
+						return { success: true, path: destPath, name: path.posix.basename(destPath) };
 					}
-				);
-				const result = await compressFolderRemote(folderPath, destPath, sshConfig);
-				if (!result.success) {
-					throw new Error(result.error || 'Failed to compress remote folder');
+
+					const destPath = await resolveUniqueZipPath(
+						path.join(parentDir, folderName),
+						async (candidate) => existsSync(candidate)
+					);
+
+					await new Promise<void>((resolve, reject) => {
+						// Archiver may report an error before its internal file readers finish.
+						// Retain a separate hold on that uncertain outcome for this Main lifetime.
+						const archiveAdmission = worktreeRetirement.admit([folderPath, parentDir]);
+						if (!archiveAdmission.ok) return reject(new Error(archiveAdmission.reason));
+						const output = createWriteStream(destPath);
+						const archive = archiver('zip', { zlib: { level: 9 } });
+						let failed = false;
+						let outputClosed = false;
+						let finalized = false;
+						const finish = () => {
+							if (failed || !outputClosed || !finalized) return;
+							archiveAdmission.release();
+							resolve();
+						};
+						const fail = (error: Error) => {
+							if (failed) return;
+							failed = true;
+							archive.abort();
+							output.destroy();
+							reject(error);
+						};
+						output.on('close', () => {
+							outputClosed = true;
+							finish();
+						});
+						output.on('error', fail);
+						archive.on('error', fail);
+						archive.pipe(output);
+						// Nest everything under the folder's own name so unzipping produces a
+						// single folder rather than spraying its contents into the cwd.
+						archive.directory(folderPath, folderName);
+						void archive.finalize().then(() => {
+							finalized = true;
+							finish();
+						}, fail);
+					});
+
+					return { success: true, path: destPath, name: path.basename(destPath) };
 				}
-				return { success: true, path: destPath, name: path.posix.basename(destPath) };
-			}
-
-			const destPath = await resolveUniqueZipPath(
-				path.join(parentDir, folderName),
-				async (candidate) => existsSync(candidate)
 			);
-
-			await new Promise<void>((resolve, reject) => {
-				const output = createWriteStream(destPath);
-				const archive = archiver('zip', { zlib: { level: 9 } });
-				output.on('close', () => resolve());
-				output.on('error', reject);
-				archive.on('error', reject);
-				archive.pipe(output);
-				// Nest everything under the folder's own name so unzipping produces a
-				// single folder rather than spraying its contents into the cwd.
-				archive.directory(folderPath, folderName);
-				void archive.finalize();
-			});
-
-			return { success: true, path: destPath, name: path.basename(destPath) };
 		}
 	);
 

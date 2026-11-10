@@ -101,6 +101,8 @@ import {
 	buildOmpPrimeEnv,
 } from '../../../agents/omp-model-catalog';
 import type { SpawnProcessConfig } from './spawn-types';
+import { worktreeRetirement } from '../../../git/worktreeRetirement';
+import { expandTilde } from '../../../../shared/pathUtils';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -132,6 +134,23 @@ export interface SpawnHandlerDependencies {
  * apply config overrides, wrap SSH, and delegate to ProcessManager.spawn().
  */
 export async function handleProcessSpawn(
+	config: SpawnProcessConfig,
+	deps: SpawnHandlerDependencies
+) {
+	const admission = worktreeRetirement.admit(
+		config.sessionSshRemoteConfig?.enabled ? null : [expandTilde(config.cwd)]
+	);
+	if (!admission.ok) throw new Error(admission.reason);
+	try {
+		return await handleAdmittedProcessSpawn(config, deps);
+	} finally {
+		// ProcessManager overlaps this pending-start admission with a hold on
+		// the concrete child/PTY until close/onExit; handler return is not exit.
+		admission.release();
+	}
+}
+
+async function handleAdmittedProcessSpawn(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies
 ) {

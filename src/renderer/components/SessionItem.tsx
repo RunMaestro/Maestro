@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { LongPressable, longPressMouseEvent } from './shared/LongPressable';
+import { WorktreePullRequestView } from './WorktreePullRequestDetails';
 import { WorktreePill } from './ui/WorktreePill';
 import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
@@ -489,6 +490,7 @@ export const SessionItem = memo(function SessionItem({
 						/>
 						{/* Worktree badge to visually mark worktree children */}
 						{variant === 'worktree' && showWorktreePill && <WorktreePill theme={theme} />}
+						{variant === 'worktree' && <WorktreePullRequestView session={session} theme={theme} />}
 					</div>
 				)}
 
