@@ -31,7 +31,17 @@ import {
 import type { BoardRuntimeToken } from '../../../shared/board/commands';
 import type { CardSpawnResult } from '../../../main/board/board-dispatcher';
 // @vitest-environment node
-import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+	afterAll,
+	beforeAll,
+	afterEach,
+	onTestFailed,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import WebSocket from 'ws';
@@ -71,7 +81,7 @@ vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 let cliBuildDir: string;
 let cliBuild: BuildContext | undefined;
 let proof: FixtureBridgeAdmission;
-const isolationFixture = createBoardIsolationFixture();
+const isolationFixture = createBoardIsolationFixture({ privateHome: true });
 beforeAll(async () => {
 	isolationFixture.install();
 	const isolation = requireBoardIsolation();
@@ -88,9 +98,15 @@ afterAll(async () => {
 });
 const inFlightCli = new Map<ChildProcess, Promise<unknown>>();
 let cliTeardown = false;
+let cliSignal: AbortSignal;
+const hostRequests = new Set<Promise<unknown>>();
+let cliTimings: { command: string; ms: number }[] = [];
 
 async function cli(...args: string[]) {
+	const signal = cliSignal;
 	if (cliTeardown) throw new Error('CLI fixture teardown has begun');
+	signal.throwIfAborted();
+	const startedAt = performance.now();
 	const isolation = requireBoardIsolation({ expected: proof.contract });
 	const script = path.join(cliBuildDir, 'cli.cjs');
 	try {
@@ -98,6 +114,8 @@ async function cli(...args: string[]) {
 		for (const key of [
 			'PATH',
 			'TMPDIR',
+			'HOME',
+			'CODEX_HOME',
 			'BOARD_ISOLATION_ID',
 			'BOARD_ISOLATION_CONTRACT',
 			'BOARD_ISOLATED_ROOT',
@@ -112,6 +130,11 @@ async function cli(...args: string[]) {
 		]) {
 			if (process.env[key] !== undefined) env[key] = process.env[key];
 		}
+		// Keep native Windows homedir lookup and Git reads inside the same owned
+		// fixture as the parent; omitting HOME would fall back to the OS account.
+		env.USERPROFILE = env.HOME;
+		env.GIT_CONFIG_NOSYSTEM = '1';
+		env.GIT_CONFIG_GLOBAL = path.join(env.HOME!, '.gitconfig');
 		const execution = promisify(execFile)(process.execPath, [script, 'board', ...args], {
 			cwd: isolation.worktree,
 			env,
@@ -119,14 +142,24 @@ async function cli(...args: string[]) {
 			maxBuffer: 1024 * 1024,
 		});
 		inFlightCli.set(execution.child, execution);
+		const stopOnAbort = () =>
+			stopProcess(
+				{ child: execution.child },
+				{ from: 'terminate', graceMs: 0, immediate: true, blocking: true }
+			);
+		signal.addEventListener('abort', stopOnAbort, { once: true });
 		let output;
 		try {
 			output = await execution;
+			signal.throwIfAborted();
 		} finally {
+			signal.removeEventListener('abort', stopOnAbort);
 			inFlightCli.delete(execution.child);
+			cliTimings.push({ command: args[0], ms: performance.now() - startedAt });
 		}
 		return { code: 0, value: JSON.parse(output.stdout) };
 	} catch (error) {
+		signal.throwIfAborted();
 		const failure = error as { code: number; stdout: string; stderr: string };
 		return {
 			code: failure.code,
@@ -197,7 +230,20 @@ const raw = (fields: Record<string, unknown>) =>
 		'board_command_result'
 	);
 
-beforeEach(async () => {
+beforeEach(async ({ signal }) => {
+	cliSignal = signal;
+	cliTimings = [];
+	onTestFailed(() =>
+		console.info(
+			'[board-cli-fixture-lifecycle]',
+			JSON.stringify({
+				commands: cliTimings,
+				inFlight: inFlightCli.size,
+				hostRequests: hostRequests.size,
+				dbOpen: db?.open,
+			})
+		)
+	);
 	cliTeardown = false;
 	expect(inFlightCli.size).toBe(0);
 	dir = '';
@@ -264,7 +310,15 @@ beforeEach(async () => {
 		runtime,
 		token: 'fixture-token',
 		cliSecret: 'parent-owned-fixture-secret',
-		boardHost: executeBoardCommand,
+		boardHost: async (command) => {
+			const pending = executeBoardCommand(command);
+			hostRequests.add(pending);
+			try {
+				return await pending;
+			} finally {
+				hostRequests.delete(pending);
+			}
+		},
 		onStopRequested() {},
 	});
 	const manifestPath = path.join(dir, 'endpoint.json');
@@ -324,6 +378,7 @@ afterEach(async () => {
 		configureBoardRuntimeHost(() => null);
 		connection?.disconnect();
 		await server?.close();
+		await Promise.allSettled([...hostRequests]);
 	} finally {
 		try {
 			await runtime?.connection.close();
@@ -978,82 +1033,93 @@ describe('actual CLI parser, commands, authenticated host and SQLite', () => {
 			(await cli('add-card', '--title', 'Ambiguous', '--agent', 'creator', '--json')).code
 		).toBe(1);
 	});
-	it('captures as an unregistered creator and round-trips explicit identity, revision, scope, role and repository', async () => {
-		const selected = target();
-		const common = [
-			'--agent',
-			'creator',
-			'--source',
-			selected.sourceKey,
-			'--collection',
-			selected.collectionKey,
-			'--json',
-		];
-		expect(
-			(
-				await cli(
-					'add-card',
-					'b',
-					'--title',
-					'Captured',
-					'--scope-group',
-					'g',
-					'--assignee-agent',
-					'a',
-					'--assignee',
-					'role',
-					'--profile-namespace',
-					namespaces[0],
-					'--repository',
-					'repo0',
-					'--working-directory',
-					roots[0],
-					'--start-mode',
-					'approval',
-					'--revision',
-					String(selected.expectedRevision),
-					...common
-				)
-			).code
-		).toBe(0);
-		let saved = facade.read(roots[0], 'b');
-		const id = saved.cards[0].id;
-		expect(saved.cards[0]).toMatchObject({
-			title: 'Captured',
-			role: { namespace: namespaces[0], profileId: 'role' },
-			executionScope: { kind: 'group', groupId: 'g' },
-			capturePolicy: { dispatchApproval: 'required' },
+	describe('unregistered creator CLI capture round-trips identity, revision, scope, role and repository', () => {
+		let common: string[], id: string, saved: Board;
+		// Capture setup is a real CLI call. Each independently asserted operation
+		// has the unchanged 10s test budget and a fresh host/DB lifecycle.
+		beforeEach(async () => {
+			const selected = target();
+			common = [
+				'--agent',
+				'creator',
+				'--source',
+				selected.sourceKey,
+				'--collection',
+				selected.collectionKey,
+				'--json',
+			];
+			expect(
+				(
+					await cli(
+						'add-card',
+						'b',
+						'--title',
+						'Captured',
+						'--scope-group',
+						'g',
+						'--assignee-agent',
+						'a',
+						'--assignee',
+						'role',
+						'--profile-namespace',
+						namespaces[0],
+						'--repository',
+						'repo0',
+						'--working-directory',
+						roots[0],
+						'--start-mode',
+						'approval',
+						'--revision',
+						String(selected.expectedRevision),
+						...common
+					)
+				).code
+			).toBe(0);
+			saved = facade.read(roots[0], 'b');
+			id = saved.cards[0].id;
+			expect(saved.cards[0]).toMatchObject({
+				title: 'Captured',
+				role: { namespace: namespaces[0], profileId: 'role' },
+				executionScope: { kind: 'group', groupId: 'g' },
+				capturePolicy: { dispatchApproval: 'required' },
+			});
+			expect(db.prepare('SELECT * FROM workers').all()).toEqual([]);
 		});
-		expect(db.prepare('SELECT * FROM workers').all()).toEqual([]);
-		expect(
-			(
-				await cli(
-					'update-card',
-					id,
-					'--title',
-					'Edited',
-					'--card-revision',
-					String(saved.cards[0].storageRevision),
-					...common
-				)
-			).code
-		).toBe(0);
-		saved = facade.read(roots[0], 'b');
-		expect(saved.cards[0].title).toBe('Edited');
-		expect((await cli('rename', 'b', 'Renamed', ...common)).code).toBe(0);
-		expect((await cli('show', 'b', ...common)).value.name).toBe('Renamed');
-		expect(
-			(
-				await cli(
-					'remove-card',
-					id,
-					'--card-revision',
-					String(saved.cards[0].storageRevision),
-					...common
-				)
-			).code
-		).toBe(0);
-		expect(facade.read(roots[0], 'b').cards).toEqual([]);
+		it('updates the captured card through the CLI', async () => {
+			expect(
+				(
+					await cli(
+						'update-card',
+						id,
+						'--title',
+						'Edited',
+						'--card-revision',
+						String(saved.cards[0].storageRevision),
+						...common
+					)
+				).code
+			).toBe(0);
+			saved = facade.read(roots[0], 'b');
+			expect(saved.cards[0].title).toBe('Edited');
+		});
+		it('renames and reads the captured collection through the CLI', async () => {
+			expect((await cli('rename', 'b', 'Renamed', ...common)).code).toBe(0);
+			expect((await cli('show', 'b', ...common)).value.name).toBe('Renamed');
+		});
+		it('removes the captured card through the CLI', async () => {
+			expect(
+				(
+					await cli(
+						'remove-card',
+						id,
+						'--card-revision',
+						String(saved.cards[0].storageRevision),
+						...common
+					)
+				).code
+			).toBe(0);
+			expect(facade.read(roots[0], 'b').cards).toEqual([]);
+		});
 	});
 
 	it('creates and deletes a collection without touching a foreign source', async () => {

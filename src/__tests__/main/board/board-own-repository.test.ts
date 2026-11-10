@@ -8,6 +8,7 @@ import { configureBoardFeatures } from '../../../main/board/board-feature';
 import {
 	BoardStorageFacade,
 	configureBoardStorage,
+	getBoardStorage,
 	configureBoardCaptureHost,
 	listBoardWorkerAccessOptions,
 	enqueueBoardWrite,
@@ -52,7 +53,17 @@ import { createBoardAgentAdmission } from '../../../main/board/board-claims';
 import { runProcess } from '../../../main/cue/cue-process-lifecycle';
 import { prepareBoardReviewHandoff } from '../../../main/board/board-review';
 import { snapshotSqlite, compareSqliteSnapshots } from '../../helpers/sqliteSnapshot';
-import { beforeAll, afterAll, expect, it, vi } from 'vitest';
+import {
+	beforeAll,
+	afterAll,
+	beforeEach,
+	afterEach,
+	onTestFailed,
+	describe,
+	expect,
+	it,
+	vi,
+} from 'vitest';
 import * as sentry from '../../../main/utils/sentry';
 import { build } from 'esbuild';
 import { promisify } from 'node:util';
@@ -61,9 +72,50 @@ import { canonicalJson } from '../../../shared/canonicalJson';
 const fixture = createBoardIsolationFixture({ syncInUserData: true, privateHome: true });
 beforeAll(() => fixture.install());
 afterAll(async () => fixture.cleanup());
-async function run(mode: string): Promise<Record<string, unknown>> {
+let runSignal: AbortSignal;
+const inFlightRuns = new Set<Promise<Record<string, unknown>>>();
+beforeEach(({ signal }) => {
+	runSignal = signal;
+});
+afterEach(async () => {
+	// Vitest aborts timed-out test contexts, but does not await their bodies.
+	// Join actual fixture finalizers before the next case reuses this DB/root.
+	await Promise.allSettled([...inFlightRuns]);
+	expect(inFlightRuns.size).toBe(0);
+});
+function run(mode: string, signal = runSignal): Promise<Record<string, unknown>> {
+	signal.throwIfAborted();
+	const pending = runOwned(mode, signal).then((value) => {
+		signal.throwIfAborted();
+		return value;
+	});
+	inFlightRuns.add(pending);
+	void pending.then(
+		() => inFlightRuns.delete(pending),
+		() => inFlightRuns.delete(pending)
+	);
+	return pending;
+}
+async function runOwned(mode: string, signal: AbortSignal): Promise<Record<string, unknown>> {
 	const c = fixture.contract;
 	let engine: CueEngine | undefined;
+	let cue: BoardCueHost | undefined;
+	const hostRequests = new Set<Promise<unknown>>();
+	const beganAt = performance.now();
+	const stages: { setupMs?: number; reopenMs?: number; cleanupMs?: number; aborted?: boolean } = {};
+	const timings: { action: string; ms: number }[] = [];
+	onTestFailed(() =>
+		console.info(
+			'[board-owned-fixture-lifecycle]',
+			JSON.stringify({
+				mode,
+				requests: timings,
+				stages,
+				hostRequests: hostRequests.size,
+				dbOpen: db?.open,
+			})
+		)
+	);
 	let ownedRuntime: MaestroRuntime | undefined;
 	let cueJobCalls = 0;
 	const root = fixture.sources.one;
@@ -71,6 +123,22 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 	let db: ReturnType<typeof openBoardDb> | undefined,
 		server: Awaited<ReturnType<typeof startRuntimeServer>> | undefined,
 		client: Parameters<typeof requestBoardCommand>[0] | undefined;
+	const disconnectOnAbort = () => client?.disconnect();
+	signal.addEventListener('abort', disconnectOnAbort, { once: true });
+	const request = async (command: Parameters<typeof requestBoardCommand>[1]) => {
+		signal.throwIfAborted();
+		const startedAt = performance.now();
+		try {
+			const reply = await requestBoardCommand(client!, command);
+			signal.throwIfAborted();
+			return reply;
+		} catch (error) {
+			signal.throwIfAborted();
+			throw error;
+		} finally {
+			timings.push({ action: command.action, ms: performance.now() - startedAt });
+		}
+	};
 	const gitEnvironment = Object.fromEntries(
 		['GIT_DIR', 'GIT_COMMON_DIR', 'GIT_WORK_TREE'].map((key) => [key, process.env[key]])
 	);
@@ -273,7 +341,7 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 				canonicalJson({ allowedRepositoryIds: [], roleRefs: [], accessManaged: true }),
 				agent.id
 			);
-		const cue = new BoardCueHost({
+		cue = new BoardCueHost({
 			storage: () => storage,
 			lock: () => {
 				const held = readCueEngineLock(c.userData);
@@ -453,11 +521,15 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 			token: 'owned-repo',
 			cliSecret: 'owned-fixture-secret',
 			boardHost: async (command) => {
+				const pending = executeBoardCommand(command);
+				hostRequests.add(pending);
 				try {
-					return await executeBoardCommand(command);
+					return await pending;
 				} catch (error) {
 					evidence.hostFault = error;
 					throw error;
+				} finally {
+					hostRequests.delete(pending);
 				}
 			},
 			onStopRequested() {},
@@ -481,12 +553,15 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 			strictReplies: true,
 			// Parent-admitted fixture implements the canonical public connection surface.
 		}) as unknown as Parameters<typeof requestBoardCommand>[0];
+		signal.throwIfAborted();
 		await client.connect();
+		signal.throwIfAborted();
+		stages.setupMs = performance.now() - beganAt;
 		if (mode === 'sixteen') storage.ensureGlobalBoard();
 		let collection = storage
 			.query()
 			.collections.find((entry) => entry.board.id === executionBoardId)!;
-		const capture = await requestBoardCommand(client, {
+		const capture = await request({
 			action: 'capture',
 			target: {
 				projectRoot: BOARD_SOURCE_PROJECT_PREFIX + collection.sourceKey,
@@ -585,7 +660,7 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 				...original.payload,
 				storageRevision: original.revision,
 			} as unknown as import('../../../shared/board/types').BoardCard;
-			const unrelated = await requestBoardCommand(client, {
+			const unrelated = await request({
 				action: 'capture',
 				target: target(),
 				capture: {
@@ -674,7 +749,7 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 
 		if (mode === 'sixteen') {
 			const initial = storage.workspace.readCollection(collection)!;
-			const catalogue = await requestBoardCommand(client, {
+			const catalogue = await request({
 				action: 'query',
 				query: {
 					projectRoot: BOARD_SOURCE_PROJECT_PREFIX + collection.sourceKey,
@@ -689,7 +764,7 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 					.query()
 					.collections.find((entry) => entry.board.id === executionBoardId)!;
 				const startedAt = performance.now();
-				const result = await requestBoardCommand(client, {
+				const result = await request({
 					action: 'capture',
 					target: {
 						projectRoot: BOARD_SOURCE_PROJECT_PREFIX + collection.sourceKey,
@@ -723,7 +798,7 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 			const selected = storage
 				.query()
 				.collections.find((entry) => entry.board.id === executionBoardId)!;
-			const refusal = await requestBoardCommand(client, {
+			const refusal = await request({
 				action: 'tick',
 				operationId: 'synthetic-approval-stop',
 				target: {
@@ -742,8 +817,11 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 			await cue.settle();
 			expect(started).toBe(0);
 			const before = snapshotSqlite(db);
+			signal.throwIfAborted();
+			const reopenAt = performance.now();
 			db.close();
 			db = openBoardDb(c.db);
+			stages.reopenMs = performance.now() - reopenAt;
 			expect(compareSqliteSnapshots(before, snapshotSqlite(db))).toEqual([]);
 			const reopened = new BoardStorageFacade(db).workspace.readCollection(selected)!;
 			expect(reopened.cards).toHaveLength(16);
@@ -760,7 +838,7 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 			const before = snapshotSqlite(db);
 			features.board = mode === 'off-cue';
 			features.maestroCue = mode === 'off-board';
-			const disabled = await requestBoardCommand(client, {
+			const disabled = await request({
 				action: 'tick',
 				operationId: 'off-native-intake',
 				target: {
@@ -855,7 +933,7 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 			evidence.cli = { type: summary.type, boards: summary.boards };
 			expect(summary.boards[0].accepted).toBe(1);
 		} else {
-			reply = await requestBoardCommand(client, {
+			reply = await request({
 				action: 'tick',
 				operationId: 'owned-default-access',
 				target: {
@@ -877,7 +955,7 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 			collection = storage
 				.query()
 				.collections.find((entry) => entry.board.id === executionBoardId)!;
-			const reviewReply = await requestBoardCommand(client, {
+			const reviewReply = await request({
 				action: 'tick',
 				operationId: 'owned-review',
 				target: {
@@ -936,12 +1014,12 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 			root: git('rev-parse', '--show-toplevel'),
 			commonDir: git('rev-parse', '--git-common-dir'),
 		};
+		signal.throwIfAborted();
 		return evidence;
 	} finally {
+		const cleanupAt = performance.now();
+		stages.aborted = signal.aborted;
 		releaseBarrier();
-		report.mockRestore();
-		restoreFence();
-		restoreStat();
 		await background;
 		await pendingCapture;
 		if (background && db?.open) await enqueueBoardWrite(root, () => {});
@@ -949,15 +1027,23 @@ async function run(mode: string): Promise<Record<string, unknown>> {
 			if (value === undefined) delete process.env[key];
 			else process.env[key] = value;
 		}
+		signal.removeEventListener('abort', disconnectOnAbort);
 		client?.disconnect();
 		await server?.close();
+		// Closing sockets alone does not join asynchronous command handlers.
+		await Promise.allSettled([...hostRequests]);
+		await cue?.settle();
 		await ownedRuntime?.connection.close();
 		engine?.stop();
 		releaseCueEngineLock(c.userData);
+		report.mockRestore();
+		restoreFence();
+		restoreStat();
 		db?.close();
 		for (const suffix of ['', '-wal', '-shm']) fs.rmSync(c.db + suffix, { force: true });
 		for (const source of Object.values(fixture.sources))
 			fs.rmSync(source, { recursive: true, force: true });
+		stages.cleanupMs = performance.now() - cleanupAt;
 	}
 }
 let sourceConfigured = false;
@@ -1125,4 +1211,80 @@ it('refuses expected missing identity at final native launch without starting', 
 	expect(result.started).toBe(0);
 	expect(result.nativeCompletion).toMatchObject({ executionStarted: false });
 	expect(result.reservations).toEqual({ n: 0 });
+});
+
+describe.sequential('cancellation across fixture boundaries', () => {
+	let controller: AbortController;
+	let pending: Promise<unknown>;
+	let settled = false;
+	let cancelledAsExpected = false;
+	let firstDb: ReturnType<typeof openBoardDb>;
+	let release!: () => void;
+	let restoreStat = () => {};
+	it('cancels a real pending host read without awaiting the test body', async ({ signal }) => {
+		controller = new AbortController();
+		const combined = AbortSignal.any([controller.signal, signal]);
+		const nativeStat = fs.promises.stat;
+		let entered!: () => void;
+		const waiting = new Promise<void>((resolve) => {
+			entered = resolve;
+		});
+		const barrier = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let blocked = false;
+		fs.promises.stat = (async (...args: Parameters<typeof nativeStat>) => {
+			const result = await nativeStat(...args);
+			if (!blocked && String(args[0]) === fixture.sources.one) {
+				blocked = true;
+				entered();
+				await barrier;
+			}
+			return result;
+		}) as typeof nativeStat;
+		restoreStat = () => {
+			fs.promises.stat = nativeStat;
+		};
+		combined.addEventListener('abort', () => release(), { once: true });
+		pending = Reflect.apply(run, undefined, ['sixteen', combined]).then(
+			() => {
+				settled = true;
+			},
+			(error) => {
+				cancelledAsExpected = error === combined.reason;
+				settled = true;
+			}
+		);
+		await Promise.race([
+			waiting,
+			pending.then(() => {
+				throw new Error('Fixture ended before read barrier');
+			}),
+		]);
+		firstDb = getBoardStorage().db;
+		expect(firstDb.open).toBe(true);
+		controller.abort(new Error('owned fixture cancelled'));
+		// Intentionally return with the body in flight: the real afterEach must join.
+	});
+	it('has joined the old handle before the next real fixture opens its database', async () => {
+		const settledBeforeReuse = settled;
+		const openBeforeReuse = firstDb.open;
+		const next = await run('off-both').then(
+			(value) => ({ ok: true, value }),
+			(error) => ({ ok: false, error })
+		);
+		console.info(
+			'[board-owned-fixture-cancel-reuse]',
+			JSON.stringify({ settledBeforeReuse, openBeforeReuse, cancelledAsExpected })
+		);
+		expect(settledBeforeReuse).toBe(true);
+		expect(cancelledAsExpected).toBe(true);
+		expect(openBeforeReuse).toBe(false);
+		expect(next).toMatchObject({ ok: true, value: { off: true, unchanged: true } });
+	});
+	afterAll(async () => {
+		release?.();
+		await pending;
+		restoreStat();
+	});
 });
