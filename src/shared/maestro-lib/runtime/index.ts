@@ -40,6 +40,8 @@ import {
 import { createBackgroundTurns, type BackgroundTurnDeps } from './background-turns';
 import { createRuntimeConsults } from './consults';
 import { createRuntimeGroupChats } from './group-chats';
+import { createRuntimeHistory, type SharedHistoryIdentity } from './history';
+import { createHistoryWriter } from '../turns/history';
 import { createProcessRegistry } from './processes';
 import { createRuntimeAutoRun, type RuntimeAutoRun } from './autorun';
 import { createProviderLister } from './providers';
@@ -83,6 +85,12 @@ export interface MaestroRuntimeOptions {
 	quarantineCorruptStores?: boolean;
 	/** What the runtime needs to run turns: the SQLite loader, the CLI script, the bundled prompts. */
 	turns?: RuntimeTurnOptions;
+	/**
+	 * Take part in the shared History of each agent's project (`.maestro/history/`) as this
+	 * identity: a host's own entries are copied there, and the other writers' are read back with
+	 * the agent's. Absent (the TUI): the agent's own History only.
+	 */
+	sharedHistory?: SharedHistoryIdentity;
 	deps?: Partial<RuntimeDeps>;
 }
 
@@ -107,6 +115,12 @@ export interface MaestroRuntime extends MaestroClient {
 	readonly runs: Pick<RuntimeAutoRun, 'activeRuns' | 'latestState'>;
 	/** Chat turns running now. With the rest, the work `host stop` refuses to cut off. */
 	turnsInFlight(): number;
+	/**
+	 * The agent's tabs with a process running now, and when each started (epoch ms). A host lays
+	 * this over every agent record it sends (`withLiveTabState`), because the stored tab state is
+	 * never busy: a client that attaches mid-turn still sees the tab working.
+	 */
+	liveTabs(agentId: string): ReadonlyMap<string, number>;
 	/** Group chats whose moderator or a participant is working (GD24). */
 	roundsInFlight(): number;
 	/** Consults waiting on another agent's answer (GD24). */
@@ -299,12 +313,26 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 	// The run releases what it held back (queued chat messages) when it ends, and the turn service
 	// asks whether a run holds an agent: each needs the other, so the run reaches `turns`, declared
 	// below, only when a run ends.
+	// One History writer for every kind of turn, so each entry is copied to the project's shared
+	// History the same way, whether a chat turn, an Auto Run task, or a consult wrote it.
+	const history = createRuntimeHistory({
+		paths,
+		repository,
+		...(options.sharedHistory ? { shared: options.sharedHistory } : {}),
+	});
+	const historyWriter = createHistoryWriter({
+		paths,
+		fence,
+		onAppended: (agentId, entry) => history.share(agentId, entry),
+	});
+
 	const autoRun = createRuntimeAutoRun({
 		paths,
 		repository,
 		bus,
 		registry,
 		fence,
+		historyWriter,
 		options: options.turns,
 		deps: { probeBinary: deps.probeBinary, ...deps.turns },
 		onRunEnded: (agentId) => turns.drain(agentId),
@@ -315,6 +343,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		bus,
 		registry,
 		fence,
+		historyWriter,
 		rules: deps.rules,
 		autoRunHolds: (agentId) => autoRun.holds(agentId),
 		options: options.turns,
@@ -349,6 +378,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		paths,
 		repository,
 		fence,
+		historyWriter,
 		background,
 		rules: deps.rules,
 		// Where the prompts and the CLI script are, as the chat turns are told.
@@ -413,6 +443,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		autoRun: autoRun.api,
 		groupChats: groupChats.api,
 		consults: { api: consults.api, cancelForSource: consults.cancelForSource },
+		history: history.api,
 	});
 
 	return {
@@ -424,6 +455,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 			runs: { activeRuns: autoRun.activeRuns, latestState: autoRun.latestState },
 			// The registry holds every process the runtime owns; the background ones are counted apart.
 			turnsInFlight: () => registry.size() - background.registeredCount(),
+			liveTabs: (agentId) => registry.runningTabs(agentId),
 			roundsInFlight: groupChats.roundsInFlight,
 			consultsInFlight: consults.inFlight,
 		},

@@ -49,6 +49,7 @@ import type {
 	TurnsApi,
 	Unsubscribe,
 } from '../client/types';
+import { normalizeOriginHost } from '../client/types';
 import { logger } from '../host';
 import { isAgentOwnWorkingDirectory } from '../launch/interactive-mode';
 import type { BinaryDetectionResult } from '../launch/path-prober';
@@ -75,6 +76,7 @@ import {
 	createTurnRecorder,
 	type TurnRecorder,
 } from '../turns/record-turn';
+import type { HistoryWriter } from '../turns/history';
 import { toTurnAgent, toTurnTab } from '../turns/records';
 import { runAgentTurn, type AgentTurnRun } from '../turns/run-agent-turn';
 import { createTurnEventMapper, type UnstampedTurnEvent } from '../turns/turn-events';
@@ -123,6 +125,8 @@ export interface RuntimeTurnsOptions {
 	rules?: Partial<RuleContext>;
 	/** Does an Auto Run hold this agent's working tree? A write message then waits for the run (AE17). */
 	autoRunHolds?(agentId: string): boolean;
+	/** The runtime's one History writer (it shares each entry with the project). Default: the recorder's own. */
+	historyWriter?: HistoryWriter;
 	options?: RuntimeTurnOptions;
 	deps?: Partial<RuntimeTurnDeps>;
 }
@@ -146,9 +150,23 @@ interface TurnItem extends QueueItem {
 	 * so a message still queued when the agent switches runs with the new provider's settings.
 	 */
 	settingsProvider: string;
+	/** The machine the person sent it from, for the History entry (`TurnInput.originHost`). */
+	originHost?: string;
 }
 
 type Verdict = { ok: true } | { ok: false; message: string };
+
+/** A waiting message as a client sees it (`turns.queue.list`, `queue.changed`). */
+function toQueuedTurn(item: TurnItem): QueuedTurn {
+	return {
+		itemId: item.id,
+		tabId: item.tabId,
+		queuedAt: item.queuedAt,
+		kind: 'message',
+		text: item.text,
+		paused: item.paused === true,
+	};
+}
 
 const ok = <T>(value: T): ClientResult<T> => ({ ok: true, value });
 
@@ -182,6 +200,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	const recorder: TurnRecorder = createTurnRecorder({
 		paths,
 		repository,
+		...(options.historyWriter ? { historyWriter: options.historyWriter } : {}),
 		loadSqlite: host.loadSqlite ?? noLoader,
 		fence: options.fence,
 		context: options.rules,
@@ -290,7 +309,14 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			emitTurn(agentId, item.tabId, { kind: 'user', entry: userEntry });
 			emitTurn(agentId, item.tabId, { kind: 'started' });
 
-			done = streamTurn({ agentId, tabId: item.tabId, turn, run, startedAt });
+			done = streamTurn({
+				agentId,
+				tabId: item.tabId,
+				turn,
+				run,
+				startedAt,
+				...(item.originHost ? { originHost: item.originHost } : {}),
+			});
 		} catch (error) {
 			run.terminate();
 			await run.result.catch(() => undefined);
@@ -311,8 +337,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		turn: AssembledTurn;
 		run: AgentTurnRun;
 		startedAt: number;
+		originHost?: string;
 	}): Promise<void> {
-		const { agentId, tabId, turn, run, startedAt } = input;
+		const { agentId, tabId, turn, run, startedAt, originHost } = input;
 		const provider = turn.settings.provider;
 		const mapper = createTurnEventMapper({
 			agentId: provider,
@@ -360,6 +387,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				startedAt,
 				endedAt,
 				userEntryWritten: true,
+				...(originHost ? { originHost } : {}),
 			});
 			if (!recorded.transcript.ok && recorded.transcript.error.code !== 'not-found') {
 				logger.warn(
@@ -389,7 +417,17 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	// Queues
 	// -----------------------------------------------------------------------
 
+	/** Tell every listener what now waits for the agent: the whole list, in order. */
+	function emitQueue(agentId: string): void {
+		const items = queues.get(agentId)?.items() ?? [];
+		bus.emit({ type: 'queue.changed', agentId, items: items.map(toQueuedTurn) });
+	}
+
 	function onQueueEvent(agentId: string, event: QueueEvent<TurnItem>): void {
+		// Every event but a turn's end, and a start that never waited, changes what waits.
+		if (event.type !== 'ended' && !(event.type === 'started' && event.direct)) {
+			emitQueue(agentId);
+		}
 		switch (event.type) {
 			case 'started':
 				verdicts.get(event.item.id)?.({ ok: true });
@@ -491,6 +529,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			},
 			settingsProvider: agent.toolType,
 		};
+		const originHost = normalizeOriginHost(input.originHost);
+		if (originHost) item.originHost = originHost;
 
 		const queue = queueFor(agentId);
 		const attempt = new Promise<Verdict>((resolve) => verdicts.set(item.id, resolve));
@@ -530,25 +570,20 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				if (!repository.getAgent(agentId)) {
 					return fail('turns.queue.list', 'not-found', `No agent ${agentId}.`);
 				}
-				const items = queues.get(agentId)?.items() ?? [];
-				return ok(
-					items.map(
-						(item): QueuedTurn => ({
-							itemId: item.id,
-							tabId: item.tabId,
-							queuedAt: item.queuedAt,
-							kind: 'message',
-							text: item.text,
-							paused: item.paused === true,
-						})
-					)
-				);
+				return ok((queues.get(agentId)?.items() ?? []).map(toQueuedTurn));
 			},
 			remove: async (agentId, itemId) => {
 				if (!repository.getAgent(agentId)) {
 					return fail('turns.queue.remove', 'not-found', `No agent ${agentId}.`);
 				}
 				return ok({ removed: queues.get(agentId)?.remove(itemId) ?? false });
+			},
+			setPaused: async (agentId, itemId, paused) => {
+				if (!repository.getAgent(agentId)) {
+					return fail('turns.queue.setPaused', 'not-found', `No agent ${agentId}.`);
+				}
+				const found = queues.get(agentId)?.setPaused(itemId, paused) ?? false;
+				return ok({ found, paused });
 			},
 		},
 

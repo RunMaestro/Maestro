@@ -133,6 +133,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which store holds a provider session's origin record:** `sessionOriginStoreFor()` in `src/shared/sessionOriginStore.ts`
 - **Recording or reading the User Journey:** `sanitizeJourneyUrl()`, `formatJourneyLine()`, `parseJourneyJsonl()` in `src/shared/userJourney.ts`; `appendJourneyEntry()` in `src/main/user-journey-manager.ts`; `recordJourney()` in `src/renderer/services/userJourney.ts`
 - **What happened around an agent, in time order (the timeline):** `readTimeline()` in `src/shared/maestro-lib/store/read-timeline.ts`; `selectTimelineEvents()`, `formatTimelineLine()`, `timelineFollowUps()` in `src/shared/timeline.ts`; `findHistoryEntries()` in `src/shared/maestro-lib/store/read-history.ts`
+- **A project's shared History (`.maestro/history/history-<label>.jsonl`):** `appendSharedHistoryEntry()`, `readSharedHistoryEntries()`, `hostSharedHistoryLabel()` in `src/shared/maestro-lib/store/shared-history.ts`; `filterHistoryEntries()`, `mergeEntriesById()` in `src/shared/history.ts`
 - **A `--since` / `--until` time the user typed (`30m`, `2h`, `1w`, ISO, epoch):** `parseTimeInput()`, `parseDurationInput()` in `src/shared/timeInput.ts`
 - **Serializing async work on one entity:** `createKeyedWriteQueue()` in `src/shared/keyedWriteQueue.ts` (main imports it via `src/main/utils/atomic-json-store.ts`)
 - **Capping stored tool output:** `compactToolOutput()`, `compactSessionToolOutputs()` in `src/shared/toolOutput.ts`
@@ -194,7 +195,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Assembling the prompt, arguments and launch request of a chat turn:** `assembleTurn()` in `src/shared/maestro-lib/turns/assemble.ts`
 - **Running a chat turn with no desktop (send, queue, stop, per-tab events):** `createRuntimeTurns()` in `src/shared/maestro-lib/runtime/turns.ts`
 - **Recording a finished turn (transcript, History, usage):** `createTurnRecorder()`, `buildTurnTranscript()` in `src/shared/maestro-lib/turns/record-turn.ts`
-- **Serving a runtime to other processes (`maestro-cli host`):** `startRuntimeServer()` in `src/shared/maestro-lib/runtime/server.ts`
+- **Serving a runtime to other processes (`maestro-cli host`):** `startRuntimeServer()` in `src/shared/maestro-lib/runtime/server.ts`, `withLiveTabState()` in `src/shared/maestro-lib/runtime/server-frames.ts`
 
 #### Providers, accounts, and auth
 
@@ -247,6 +248,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Recording wizard usage:** `beginWizardRun()`, `recordWizardDocuments()` in `src/renderer/services/wizardStats.ts`
 - **Leaving inline wizard mode:** `flattenWizardIntoTab(tab, { summary? })` in `src/renderer/utils/tabHelpers/index.ts`
 - **What the Thinking pill lists:** `buildThinkingItems()` in `src/renderer/utils/thinkingItems.ts` (read through `useThinkingItems()`); `useBackgroundAutoRuns()` in `src/renderer/hooks/batch/useBackgroundAutoRuns.ts`
+- **Where a History panel reads from (local agent or Federation mirror):** `localHistorySource()`, `mirrorHistorySource()` in `src/renderer/components/History/historySource.ts`, via `HistoryPanel`'s `source` prop
 - **Whether this renderer owns an app-wide side effect:** `useIsLifecycleOwner()` in `src/renderer/contexts/WindowContext.tsx`
 
 #### Tabs

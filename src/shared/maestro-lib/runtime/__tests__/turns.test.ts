@@ -22,10 +22,16 @@ import {
 	writeFakeTurn,
 } from '../../../../__tests__/shared/maestro-lib/run/fakeAgent';
 import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
-import type { ClientResult, TurnEvent } from '../../client/types';
+import type { ClientResult, QueuedTurn, TurnEvent } from '../../client/types';
 import { readHistory } from '../../store/read-history';
+import { sharedHistoryDir, sharedHistoryFilename } from '../../store/shared-history';
 import { runAgentTurn, type RunAgentTurnOptions } from '../../turns/run-agent-turn';
-import { createMaestroRuntime, type MaestroRuntime, type RuntimeDeps } from '../index';
+import {
+	createMaestroRuntime,
+	type MaestroRuntime,
+	type MaestroRuntimeOptions,
+	type RuntimeDeps,
+} from '../index';
 import type { WatchDirectory } from '../settings-watch';
 
 const T0 = Date.parse('2026-10-04T12:00:00Z');
@@ -115,7 +121,10 @@ describe('runtime turns', () => {
 		...extra,
 	});
 
-	async function start(sessions: unknown[] = [seedAgent()]): Promise<MaestroRuntime> {
+	async function start(
+		sessions: unknown[] = [seedAgent()],
+		extra: Partial<MaestroRuntimeOptions> = {}
+	): Promise<MaestroRuntime> {
 		fs.writeFileSync(
 			path.join(dir, 'maestro-sessions.json'),
 			JSON.stringify({ sessions, activeSessionId: 'a1' }, null, '\t')
@@ -125,6 +134,7 @@ describe('runtime turns', () => {
 			mode: 'tui',
 			deps: deps(),
 			turns: { bundledPromptsDir: BUNDLED_PROMPTS },
+			...extra,
 		});
 		if (!started.ok) throw new Error(`refused: ${started.refusal.message}`);
 		open.push(started.runtime);
@@ -266,6 +276,89 @@ describe('runtime turns', () => {
 			});
 		});
 
+		describe('History host and shared History', () => {
+			const SHARED = { sharedHistory: { label: 'box.host', hostname: 'box' } };
+			const sharedFile = () => path.join(sharedHistoryDir(work), sharedHistoryFilename('box.host'));
+			const readShared = () =>
+				fs
+					.readFileSync(sharedFile(), 'utf-8')
+					.split('\n')
+					.filter(Boolean)
+					.map((line) => JSON.parse(line));
+			const ownEntries = (runtime: MaestroRuntime) => {
+				const history = readHistory(runtime.paths, 'a1');
+				if (history.status !== 'ok') throw new Error(`history ${history.status}`);
+				return history.entries;
+			};
+
+			it('stamps the entry with the machine the send names, and copies it to the project', async () => {
+				fs.mkdirSync(sharedHistoryDir(work), { recursive: true });
+				const runtime = await start([seedAgent()], SHARED);
+				const turn = watch(runtime);
+				value(
+					await runtime.turns.send('a1', 't1', { text: 'hello', originHost: '  laptop.local ' })
+				);
+				await turn.outcome();
+
+				const [own] = ownEntries(runtime);
+				expect(own.hostname).toBe('laptop.local');
+				const shared = readShared();
+				expect(shared).toHaveLength(1);
+				expect(shared[0]).toMatchObject({ id: own.id, hostname: 'laptop.local', type: 'USER' });
+				// The runtime's own shared file is not read back as another writer's.
+				const listed = value(await runtime.history.list('a1'));
+				expect(listed.map((e) => e.id)).toEqual([own.id]);
+			});
+
+			it("gives a copy with no origin the host's own hostname, and drops an origin that is not printable", async () => {
+				fs.mkdirSync(sharedHistoryDir(work), { recursive: true });
+				const runtime = await start([seedAgent()], SHARED);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello', originHost: 'bad\u0007host' }));
+				await turn.outcome();
+
+				const [own] = ownEntries(runtime);
+				expect(own).not.toHaveProperty('hostname');
+				expect(readShared()[0]).toMatchObject({ id: own.id, hostname: 'box' });
+			});
+
+			it('copies nothing for a project that does not share, or without a shared identity', async () => {
+				const runtime = await start([seedAgent()], SHARED);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
+				await turn.outcome();
+				expect(ownEntries(runtime)).toHaveLength(1);
+				expect(fs.existsSync(sharedHistoryDir(work))).toBe(false);
+			});
+
+			it('copies nothing without a shared identity, even where the project shares', async () => {
+				fs.mkdirSync(sharedHistoryDir(work), { recursive: true });
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
+				await turn.outcome();
+				expect(ownEntries(runtime)).toHaveLength(1);
+				expect(fs.readdirSync(sharedHistoryDir(work))).toEqual([]);
+			});
+
+			it('lists the other writers entries with the agent own, newest first', async () => {
+				fs.mkdirSync(sharedHistoryDir(work), { recursive: true });
+				fs.writeFileSync(
+					path.join(sharedHistoryDir(work), sharedHistoryFilename('laptop')),
+					`${JSON.stringify({ id: 'from-laptop', type: 'USER', timestamp: 1, summary: 's', projectPath: work })}\n`
+				);
+				const runtime = await start([seedAgent()], SHARED);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
+				await turn.outcome();
+				const listed = value(await runtime.history.list('a1'));
+				expect(listed).toHaveLength(2);
+				expect(listed[1]).toMatchObject({ id: 'from-laptop', hostname: 'laptop' });
+				expect(value(await runtime.history.list('a1', { limit: 1 }))).toHaveLength(1);
+				expect(errorOf(await runtime.history.list('nope')).code).toBe('not-found');
+			});
+		});
+
 		it('resumes the tab session on the next send, and does not announce the id it resumed', async () => {
 			const runtime = await start();
 			const turn = watch(runtime);
@@ -376,6 +469,25 @@ describe('runtime turns', () => {
 			);
 		});
 
+		it('keeps the origin host on a queued message, so its History entry names the sender', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+
+			hold = false;
+			value(await runtime.turns.send('a1', 't1', { text: 'second', originHost: 'laptop.local' }));
+			expect(value(await runtime.turns.interrupt('a1', 't1'))).toEqual({ stopped: true });
+			await turn.outcome(2);
+
+			const history = readHistory(runtime.paths, 'a1');
+			if (history.status !== 'ok') throw new Error(`history ${history.status}`);
+			// The interrupted first turn writes no entry; the queued one is stamped with its sender.
+			expect(history.entries).toHaveLength(1);
+			expect(history.entries[0].hostname).toBe('laptop.local');
+		});
+
 		it('holds a write on another tab while one runs, since the tabs share a working directory', async () => {
 			hold = true;
 			const runtime = await start();
@@ -411,6 +523,87 @@ describe('runtime turns', () => {
 			value(await runtime.turns.interrupt('a1', 't1'));
 			await turn.outcome();
 			expect(argvFiles).toHaveLength(1);
+		});
+
+		it('says what waits on every queue change, but not for a turn that never waited', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			const changes: QueuedTurn[][] = [];
+			runtime.events.subscribe(
+				(event) => {
+					if (event.type === 'queue.changed') changes.push(event.items);
+				},
+				{ types: ['queue.changed'], agentId: 'a1' }
+			);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			expect(changes).toEqual([]);
+
+			hold = false;
+			const queued = value(await runtime.turns.send('a1', 't1', { text: 'second' }));
+			if (queued.status !== 'queued') throw new Error('expected queued');
+			expect(changes).toEqual([
+				[
+					expect.objectContaining({
+						itemId: queued.itemId,
+						tabId: 't1',
+						kind: 'message',
+						text: 'second',
+						paused: false,
+					}),
+				],
+			]);
+
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome(2);
+			// The waiting message started: nothing waits now.
+			expect(changes).toHaveLength(2);
+			expect(changes[1]).toEqual([]);
+		});
+
+		it('holds and releases a waiting message, and says when none has that id', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			const changes: QueuedTurn[][] = [];
+			runtime.events.subscribe(
+				(event) => {
+					if (event.type === 'queue.changed') changes.push(event.items);
+				},
+				{ types: ['queue.changed'] }
+			);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			const queued = value(await runtime.turns.send('a1', 't1', { text: 'waits' }));
+			if (queued.status !== 'queued') throw new Error('expected queued');
+
+			expect(value(await runtime.turns.queue.setPaused('a1', queued.itemId, true))).toEqual({
+				found: true,
+				paused: true,
+			});
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+				expect.objectContaining({ itemId: queued.itemId, paused: true }),
+			]);
+			expect(changes[changes.length - 1]).toEqual([expect.objectContaining({ paused: true })]);
+
+			expect(value(await runtime.turns.queue.setPaused('a1', queued.itemId, false))).toEqual({
+				found: true,
+				paused: false,
+			});
+			expect(changes[changes.length - 1]).toEqual([expect.objectContaining({ paused: false })]);
+
+			expect(value(await runtime.turns.queue.setPaused('a1', 'missing', true))).toEqual({
+				found: false,
+				paused: true,
+			});
+			expect(errorOf(await runtime.turns.queue.setPaused('nope', queued.itemId, true)).code).toBe(
+				'not-found'
+			);
+
+			value(await runtime.turns.queue.remove('a1', queued.itemId));
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome();
 		});
 
 		it('says nothing was stopped when the tab is idle', async () => {

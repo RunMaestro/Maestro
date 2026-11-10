@@ -204,6 +204,20 @@ describe('turn records', () => {
 		});
 	});
 
+	it('stamps the History entry with the machine the turn was sent from', async () => {
+		const { recorder: records } = await recorder();
+		await records.recordTurn(turn({ originHost: 'laptop.local' }));
+		const [stamped] = await new HistoryManager().getEntries('a1');
+		expect(stamped.hostname).toBe('laptop.local');
+	});
+
+	it('leaves the hostname off when the turn names no origin', async () => {
+		const { recorder: records } = await recorder();
+		await records.recordTurn(turn());
+		const [entry] = await new HistoryManager().getEntries('a1');
+		expect(entry).not.toHaveProperty('hostname');
+	});
+
 	it('names an unnamed tab the way the tab strip does', async () => {
 		seed({}, { name: null });
 		const { recorder: records } = await recorder();

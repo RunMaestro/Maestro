@@ -21,6 +21,7 @@ vi.mock('../../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 import { HistoryManager } from '../../../../main/history-manager';
 import { createHistoryWriter } from '../../../../shared/maestro-lib/turns/history';
 import { readHistory } from '../../../../shared/maestro-lib/store/read-history';
+import { setMaestroLibLogger } from '../../../../shared/maestro-lib/host';
 import type { HistoryEntry } from '../../../../shared/types';
 
 const entry = (id: string, timestamp: number, extra: Partial<HistoryEntry> = {}): HistoryEntry => ({
@@ -142,5 +143,69 @@ describe('createHistoryWriter', () => {
 		expect(result.ok).toBe(true);
 		expect(fs.existsSync(path.join(userData, 'escape.jsonl'))).toBe(false);
 		expect(fs.readdirSync(historyDir)).toHaveLength(1);
+	});
+
+	describe('onAppended', () => {
+		const noop = () => undefined;
+		afterEach(() => {
+			setMaestroLibLogger({ debug: noop, info: noop, warn: noop, error: noop });
+		});
+
+		it('is called with each entry after it is on disk, in append order', async () => {
+			const seen: Array<{ agentId: string; id: string; onDisk: boolean }> = [];
+			const writer = createHistoryWriter({
+				paths: { historyDir },
+				onAppended: (agentId, appended) => {
+					const file = path.join(historyDir, `${agentId}.jsonl`);
+					seen.push({
+						agentId,
+						id: appended.id,
+						onDisk: fs.readFileSync(file, 'utf-8').includes(`"id":"${appended.id}"`),
+					});
+				},
+			});
+			await Promise.all([writer.append('a1', entry('e1', 1)), writer.append('a1', entry('e2', 2))]);
+			await writer.append('b2', entry('e3', 3));
+			expect(seen).toEqual([
+				{ agentId: 'a1', id: 'e1', onDisk: true },
+				{ agentId: 'a1', id: 'e2', onDisk: true },
+				{ agentId: 'b2', id: 'e3', onDisk: true },
+			]);
+		});
+
+		it('is not called when the append did not happen', async () => {
+			const onAppended = vi.fn();
+			const fenced = createHistoryWriter({
+				paths: { historyDir },
+				fence: () => ({ ok: false, reason: 'Another Maestro took over.' }),
+				onAppended,
+			});
+			expect((await fenced.append('a1', entry('e1', 1))).ok).toBe(false);
+			fs.writeFileSync(historyDir, 'a file where the directory should be');
+			const failing = createHistoryWriter({ paths: { historyDir }, onAppended });
+			expect((await failing.append('a1', entry('e2', 2))).ok).toBe(false);
+			expect(onAppended).not.toHaveBeenCalled();
+		});
+
+		it('logs a hook that throws, and the append still succeeds', async () => {
+			const warn = vi.fn();
+			setMaestroLibLogger({ debug: noop, info: noop, warn, error: noop });
+			const writer = createHistoryWriter({
+				paths: { historyDir },
+				onAppended: () => {
+					throw new Error('share failed');
+				},
+			});
+			const result = await writer.append('a1', entry('e1', 1));
+			expect(result).toEqual({ ok: true, file: path.join(historyDir, 'a1.jsonl') });
+			expect(warn).toHaveBeenCalledWith(
+				'After-append hook failed for agent a1: share failed',
+				expect.any(String)
+			);
+			// The queue keeps going after a throwing hook.
+			expect((await writer.append('a1', entry('e2', 2))).ok).toBe(true);
+			const read = readHistory({ historyDir }, 'a1');
+			expect(read.status === 'ok' && read.entries.map((e) => e.id)).toEqual(['e2', 'e1']);
+		});
 	});
 });

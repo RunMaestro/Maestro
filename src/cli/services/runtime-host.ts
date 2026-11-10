@@ -10,6 +10,7 @@
  */
 
 import * as crypto from 'crypto';
+import * as os from 'os';
 
 import {
 	createMaestroRuntime,
@@ -26,6 +27,7 @@ import {
 	type RuntimeServer,
 } from '../../shared/maestro-lib';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
+import { hostSharedHistoryLabel } from '../../shared/maestro-lib/store/shared-history';
 import { cueEngineLockOwnerToken } from '../../main/cue/cue-engine-lock';
 import { startHostCue, type HostCue } from './host-cue';
 import { createHostSleepGuard, type HostSleepGuard } from './host-sleep-guard';
@@ -129,6 +131,9 @@ export async function startRuntimeHost(
 		productionDataDir: paths.productionDataDir,
 		mode: 'host',
 		turns: resolveRuntimeTurnOptions(options.moduleDirectory),
+		// The host takes part in each project's shared History under its own file, so the people
+		// working the project from a desktop see its work, and its clients see theirs.
+		sharedHistory: { label: hostSharedHistoryLabel(os.hostname()), hostname: os.hostname() },
 	});
 	if (!started.ok) throw new HostStartError(started.refusal);
 	const { runtime } = started;

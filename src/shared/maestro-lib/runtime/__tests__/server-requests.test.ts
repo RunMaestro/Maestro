@@ -469,6 +469,13 @@ function recordingClient(
 				return options.launch?.() ?? ok(undefined);
 			},
 		},
+		history: {
+			list: async (agentId: string, listOptions?: unknown) => {
+				note('history.list', agentId, listOptions);
+				if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
+				return ok([{ id: 'h1', type: 'USER', timestamp: 1, summary: 's', projectPath: '/p' }]);
+			},
+		},
 	};
 	const handle = createRequestHandler(client as unknown as MaestroClient);
 	const named = (method: string) => calls.filter((call) => call.method === method);
@@ -760,5 +767,194 @@ describe('dispatch messages', () => {
 				tabId: 'new-1',
 			});
 		});
+	});
+});
+
+describe('origin host on a send', () => {
+	it('passes a trimmed originHost to turns.send on every dispatch path', async () => {
+		const host = recordingClient({ activeTabId: 't-active' });
+		await host.handle({
+			type: 'enqueue_command',
+			sessionId: 'a1',
+			command: 'one',
+			inputMode: 'ai',
+			originHost: ' laptop.local ',
+		});
+		await host.handle({
+			type: 'send_command',
+			sessionId: 'a1',
+			command: 'two',
+			inputMode: 'ai',
+			originHost: 'laptop.local',
+		});
+		await host.handle({
+			type: 'new_ai_tab_with_prompt',
+			sessionId: 'a1',
+			prompt: 'three',
+			originHost: 'laptop.local',
+		});
+		expect(host.named('turns.send').map((call) => call.args[2])).toEqual([
+			{ text: 'one', originHost: 'laptop.local' },
+			{ text: 'two', originHost: 'laptop.local' },
+			{ text: 'three', originHost: 'laptop.local' },
+		]);
+	});
+
+	it('leaves out an originHost that is not a printable hostname', async () => {
+		const host = recordingClient({ activeTabId: 't-active' });
+		for (const originHost of [42, '', '   ', 'a\u0001b', 'x'.repeat(254)]) {
+			await host.handle({
+				type: 'enqueue_command',
+				sessionId: 'a1',
+				command: 'hi',
+				inputMode: 'ai',
+				originHost,
+			});
+		}
+		for (const call of host.named('turns.send')) {
+			expect(call.args[2]).toEqual({ text: 'hi' });
+		}
+	});
+});
+
+describe('get_history', () => {
+	it('answers the agent History, with a whole limit when one is given', async () => {
+		const host = recordingClient();
+		expect(await host.handle({ type: 'get_history', sessionId: 'a1', limit: 5.7 })).toEqual({
+			type: 'get_history_result',
+			success: true,
+			entries: [{ id: 'h1', type: 'USER', timestamp: 1, summary: 's', projectPath: '/p' }],
+		});
+		await host.handle({ type: 'get_history', sessionId: 'a1' });
+		await host.handle({ type: 'get_history', sessionId: 'a1', limit: -1 });
+		await host.handle({ type: 'get_history', sessionId: 'a1', limit: 'ten' });
+		await host.handle({ type: 'get_history', sessionId: 'a1', limit: Number.POSITIVE_INFINITY });
+		expect(host.named('history.list').map((call) => call.args)).toEqual([
+			['a1', { limit: 5 }],
+			['a1', {}],
+			['a1', {}],
+			['a1', {}],
+			['a1', {}],
+		]);
+	});
+
+	it('answers an unknown agent as a failure with the reason', async () => {
+		const host = recordingClient();
+		expect(await host.handle({ type: 'get_history', sessionId: 'nobody' })).toEqual({
+			type: 'get_history_result',
+			success: false,
+			error: 'Not found: No agent nobody.',
+		});
+	});
+});
+
+describe('live tab state and the host queue', () => {
+	const stored = {
+		id: 'a1',
+		name: 'Alpha',
+		toolType: 'claude-code',
+		state: 'idle' as const,
+		aiTabs: [
+			{ id: 't1', state: 'idle' as const },
+			{ id: 't2', state: 'busy' as const, thinkingStartTime: 1 },
+		],
+	};
+
+	/** A client with one stored agent and a queue that knows item `q1`. */
+	function hostClient() {
+		const setPausedCalls: unknown[][] = [];
+		const client = {
+			agents: { list: async () => ok([stored]) },
+			tabs: { list: async () => ok(stored.aiTabs) },
+			turns: {
+				queue: {
+					setPaused: async (agentId: string, itemId: string, paused: boolean) => {
+						setPausedCalls.push([agentId, itemId, paused]);
+						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
+						return ok({ found: itemId === 'q1', paused });
+					},
+				},
+			},
+		} as unknown as MaestroClient;
+		return { client, setPausedCalls };
+	}
+
+	const liveTabs = (agentId: string) =>
+		new Map<string, number>(agentId === 'a1' ? [['t1', 500]] : []);
+
+	it('sends sessions:getBootstrap with each tab busy only while it runs', async () => {
+		const handle = createRequestHandler(hostClient().client, { liveTabs });
+		const reply = await handle({ type: 'bridge.invoke', channel: 'sessions:getBootstrap' });
+		expect(reply).toEqual({
+			type: 'bridge.response',
+			ok: true,
+			result: [
+				{
+					...stored,
+					state: 'busy',
+					aiTabs: [
+						{ id: 't1', state: 'busy', thinkingStartTime: 500 },
+						{ id: 't2', state: 'idle' },
+					],
+				},
+			],
+		});
+	});
+
+	it('sends sessions:getBootstrap as stored without liveTabs', async () => {
+		const handle = createRequestHandler(hostClient().client);
+		const reply = await handle({ type: 'bridge.invoke', channel: 'sessions:getBootstrap' });
+		expect(reply).toMatchObject({ ok: true, result: [stored] });
+	});
+
+	it('projects get_sessions from the live overlay, with the turn start time', async () => {
+		const handle = createRequestHandler(hostClient().client, { liveTabs });
+		const reply = (await handle({ type: 'get_sessions' })) as {
+			sessions: Array<Record<string, unknown>>;
+		};
+		expect(reply.sessions[0]).toMatchObject({ id: 'a1', state: 'busy' });
+		expect(reply.sessions[0].aiTabs).toEqual([
+			{ id: 't1', agentSessionId: null, name: null, state: 'busy', thinkingStartTime: 500 },
+			{ id: 't2', agentSessionId: null, name: null, state: 'idle' },
+		]);
+	});
+
+	it('holds and releases a waiting message with set_queue_item_paused', async () => {
+		const { client, setPausedCalls } = hostClient();
+		const handle = createRequestHandler(client);
+		const base = { type: 'set_queue_item_paused', sessionId: 'a1', itemId: 'q1' };
+		expect(await handle({ ...base, paused: true })).toEqual({
+			type: 'set_queue_item_paused_result',
+			success: true,
+			found: true,
+			paused: true,
+		});
+		expect(await handle({ ...base, itemId: 'gone', paused: false })).toEqual({
+			type: 'set_queue_item_paused_result',
+			success: true,
+			found: false,
+			paused: false,
+		});
+		expect(setPausedCalls).toEqual([
+			['a1', 'q1', true],
+			['a1', 'gone', false],
+		]);
+		expect(await handle({ ...base, sessionId: 'nobody', paused: true })).toMatchObject({
+			success: false,
+		});
+	});
+
+	it('refuses set_queue_item_paused without a boolean paused, and changes nothing', async () => {
+		const { client, setPausedCalls } = hostClient();
+		const handle = createRequestHandler(client);
+		expect(
+			await handle({ type: 'set_queue_item_paused', sessionId: 'a1', itemId: 'q1', paused: 'yes' })
+		).toEqual({
+			type: 'set_queue_item_paused_result',
+			success: false,
+			error: 'Missing sessionId, itemId, or paused',
+			found: false,
+		});
+		expect(setPausedCalls).toEqual([]);
 	});
 });

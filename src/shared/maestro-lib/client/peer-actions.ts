@@ -3,7 +3,9 @@
 //
 // Each action is one call on the host's client, the same bridge message either caller sends:
 // a send is `turns.send` (`enqueue_command`), Stop is `turns.interrupt` (`process:interrupt`) per
-// tab, and the tab actions are `tabs.create`, `tabs.rename`, `tabs.star`. The CLI reaches the host
+// tab, the tab actions are `tabs.create`, `tabs.rename`, `tabs.star`, and the queue actions on a
+// waiting message are `turns.queue.remove` (`remove_queue_item`) and `turns.queue.setPaused`
+// (`set_queue_item_paused`). The CLI reaches the host
 // over its own short-lived forward (`withPeerAgent()`), the desktop over the mirror service's held
 // one; both run the action through `runPeerAgentAction()`, so there is one copy.
 //
@@ -23,7 +25,11 @@ export type PeerAgentAction =
 	| { kind: 'new-tab' }
 	/** An empty name clears it, so the tab shows its session id label again. */
 	| { kind: 'rename-tab'; tabId: string; name: string }
-	| { kind: 'star-tab'; tabId: string; starred: boolean };
+	| { kind: 'star-tab'; tabId: string; starred: boolean }
+	/** Take a message that still waits out of the host's execution queue. */
+	| { kind: 'remove-queued'; itemId: string }
+	/** Hold a waiting message (it keeps its place) or release it. */
+	| { kind: 'pause-queued'; itemId: string; paused: boolean };
 
 export type PeerAgentActionKind = PeerAgentAction['kind'];
 
@@ -39,7 +45,11 @@ export type PeerAgentActionResult =
 	  }
 	| { kind: 'new-tab'; tabId: string }
 	| { kind: 'rename-tab'; tabId: string }
-	| { kind: 'star-tab'; tabId: string; starred: boolean };
+	| { kind: 'star-tab'; tabId: string; starred: boolean }
+	/** `removed: false`: the message no longer waits (it started, or another client removed it). */
+	| { kind: 'remove-queued'; itemId: string; removed: boolean }
+	/** `found: false`: the message no longer waits. */
+	| { kind: 'pause-queued'; itemId: string; found: boolean; paused: boolean };
 
 /** The agent fields an action reads: interrupt picks the busy tabs from the record. */
 export type PeerActionAgent = Pick<AgentRecord, 'id' | 'aiTabs'>;
@@ -50,22 +60,32 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 	'new-tab',
 	'rename-tab',
 	'star-tab',
+	'remove-queued',
+	'pause-queued',
 ];
 
 /**
  * Run one action against the host's agent. A host failure comes back as the client's own
  * `ClientError`, so the CLI keeps its exit codes and the desktop shows the message.
  */
+/** What the caller knows that an action does not carry. */
+export interface PeerActionContext {
+	/** This machine's hostname: a send stamps its History entry with it on the host (`originHost`). */
+	originHost?: string;
+}
+
 export async function runPeerAgentAction(
 	client: MaestroClient,
 	agent: PeerActionAgent,
-	action: PeerAgentAction
+	action: PeerAgentAction,
+	context: PeerActionContext = {}
 ): Promise<ClientResult<PeerAgentActionResult>> {
 	switch (action.kind) {
 		case 'send': {
 			const sent = await client.turns.send(agent.id, action.tabId, {
 				text: action.text,
 				...(action.dispatchId ? { dispatchId: action.dispatchId } : {}),
+				...(context.originHost ? { originHost: context.originHost } : {}),
 			});
 			return sent.ok ? { ok: true, value: { kind: 'send', receipt: sent.value } } : sent;
 		}
@@ -101,6 +121,21 @@ export async function runPeerAgentAction(
 						value: { kind: 'star-tab', tabId: action.tabId, starred: action.starred },
 					}
 				: starred;
+		}
+		case 'remove-queued': {
+			const removed = await client.turns.queue.remove(agent.id, action.itemId);
+			return removed.ok
+				? {
+						ok: true,
+						value: { kind: 'remove-queued', itemId: action.itemId, removed: removed.value.removed },
+					}
+				: removed;
+		}
+		case 'pause-queued': {
+			const set = await client.turns.queue.setPaused(agent.id, action.itemId, action.paused);
+			return set.ok
+				? { ok: true, value: { kind: 'pause-queued', itemId: action.itemId, ...set.value } }
+				: set;
 		}
 	}
 }
@@ -144,6 +179,13 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 		case 'star-tab':
 			if (typeof value.starred !== 'boolean') throw new Error('starred must be true or false');
 			return { kind, tabId: tabId(), starred: value.starred };
+		case 'remove-queued':
+			if (!nonEmptyString(value.itemId)) throw new Error('Missing queued item id');
+			return { kind, itemId: value.itemId };
+		case 'pause-queued':
+			if (!nonEmptyString(value.itemId)) throw new Error('Missing queued item id');
+			if (typeof value.paused !== 'boolean') throw new Error('paused must be true or false');
+			return { kind, itemId: value.itemId, paused: value.paused };
 	}
 }
 

@@ -27,6 +27,7 @@ import {
 import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { useUIStore } from '../../../../renderer/stores/uiStore';
 import { buildEventFromKeys } from '../../../../renderer/utils/shortcutRecorder';
 import { eventMatchesShortcutKeys } from '../../../../renderer/utils/shortcutMatch';
 import { resetStores } from '../../../helpers';
@@ -72,7 +73,7 @@ function showMirror(): void {
 
 describe('gateKeyForMirror', () => {
 	beforeEach(() => {
-		resetStores(usePeerMirrorStore, useSessionStore);
+		resetStores(usePeerMirrorStore, useSessionStore, useUIStore);
 		vi.mocked(openMirrorTab).mockClear();
 		vi.mocked(starMirrorTab).mockClear();
 	});
@@ -163,5 +164,38 @@ describe('gateKeyForMirror', () => {
 		expect(gateKeyForMirror(eventFor('toggleTabStar'), behind)).toBe('handled');
 		expect(openMirrorTab).not.toHaveBeenCalled();
 		expect(starMirrorTab).not.toHaveBeenCalled();
+	});
+
+	it('passes Toggle Right Panel, which shows or hides the mirror History column', () => {
+		showMirror();
+		expect(MIRROR_SAFE_SHORTCUT_IDS).toContain('toggleRightPanel');
+		const event = eventFor('toggleRightPanel');
+		expect(gateKeyForMirror(event, matchers)).toBe('pass');
+		expect(event.defaultPrevented).toBe(false);
+	});
+
+	it('opens the History column for Go to History, and touches no local tab', () => {
+		showMirror();
+		useUIStore.getState().setRightPanelOpen(false);
+		const before = useUIStore.getState().activeRightTab;
+		const event = eventFor('goToHistory');
+		expect(gateKeyForMirror(event, matchers)).toBe('handled');
+		expect(event.defaultPrevented).toBe(true);
+		expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		expect(useUIStore.getState().activeRightTab).toBe(before);
+	});
+
+	it('does not open the History column behind an open modal', () => {
+		showMirror();
+		useUIStore.getState().setRightPanelOpen(false);
+		const event = eventFor('goToHistory');
+		expect(gateKeyForMirror(event, { ...matchers, hasOpenLayers: () => true })).toBe('handled');
+		expect(useUIStore.getState().rightPanelOpen).toBe(false);
+	});
+
+	it('leaves Go to History to the local agent while no mirror is shown', () => {
+		const event = eventFor('goToHistory');
+		expect(gateKeyForMirror(event, matchers)).toBe('pass');
+		expect(event.defaultPrevented).toBe(false);
 	});
 });

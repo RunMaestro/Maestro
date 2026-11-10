@@ -10,6 +10,7 @@
  * and exit non-zero on a dead forward without retrying.
  */
 
+import * as os from 'os';
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import type * as PeerResolverModule from '../../../cli/services/peer-resolver';
 
@@ -44,7 +45,7 @@ import type {
 } from '../../../shared/maestro-lib/client/types';
 import type { SshForwardState } from '../../../shared/maestro-lib/client/ssh-forward';
 import type { AgentRecord, AITabRecord } from '../../../shared/maestro-lib/store/records';
-import type { SshRemoteConfig } from '../../../shared/types';
+import type { HistoryEntry, SshRemoteConfig } from '../../../shared/types';
 
 const PEER = 'buildbox';
 const AGENT_ID = 'a1111111-0000-4000-8000-000000000001';
@@ -100,6 +101,15 @@ function fakePeer(agent: AgentRecord, bridgeReply: Record<string, unknown> = {})
 				hostListeners.push(listener);
 				return () => undefined;
 			}),
+		},
+		// A desktop bridge does not serve History: the default answer of a host that predates it.
+		history: {
+			list: vi.fn(
+				async (): Promise<ClientResult<HistoryEntry[]>> => ({
+					ok: false,
+					error: { code: 'unsupported', message: 'Not served.', method: 'history.list' },
+				})
+			),
 		},
 	};
 	const lease = {
@@ -200,7 +210,7 @@ describe('peer:agent targets', () => {
 	});
 
 	describe('show agent', () => {
-		it('prints the host record in the local shape, with the peer, its tabs and no stats', async () => {
+		it('prints the host record in the local shape, with the peer, its tabs and no stats when the host serves no History', async () => {
 			const { release } = fakePeer(
 				agentWith(
 					[{ id: 'tab-1', name: 'Main', state: 'busy', agentSessionId: 'sess-1' }, { id: 'tab-2' }],
@@ -228,6 +238,77 @@ describe('peer:agent targets', () => {
 				],
 			});
 			expect(release).toHaveBeenCalledTimes(1);
+		});
+
+		it('fills stats and recentHistory from the host History, naming another machine work', async () => {
+			const peer = fakePeer(agentWith([{ id: 'tab-1', state: 'idle' }]));
+			const usage = {
+				inputTokens: 10,
+				outputTokens: 5,
+				cacheReadInputTokens: 2,
+				cacheCreationInputTokens: 1,
+				totalCostUsd: 0.25,
+				contextWindow: 200000,
+			};
+			const entries: HistoryEntry[] = [
+				{
+					id: 'h-old',
+					type: 'USER',
+					timestamp: 100,
+					summary: 'older',
+					projectPath: '/srv/docs',
+					success: false,
+					elapsedTimeMs: 500,
+				},
+				{
+					id: 'h-new',
+					type: 'AUTO',
+					timestamp: 200,
+					summary: 'newer',
+					projectPath: '/srv/docs',
+					success: true,
+					elapsedTimeMs: 1500,
+					usageStats: usage,
+					hostname: 'laptop.local',
+				},
+			];
+			peer.client.history.list.mockResolvedValue({ ok: true, value: entries });
+
+			await showAgent(`${PEER}:docs`, { json: true });
+
+			expect(peer.client.history.list).toHaveBeenCalledWith(AGENT_ID);
+			const [output] = printedJson(logSpy);
+			expect(output.stats).toEqual({
+				historyEntries: 2,
+				successCount: 1,
+				failureCount: 1,
+				totalInputTokens: 10,
+				totalOutputTokens: 5,
+				totalCacheReadTokens: 2,
+				totalCacheCreationTokens: 1,
+				totalCost: 0.25,
+				totalElapsedMs: 2000,
+			});
+			expect(output.recentHistory).toEqual([
+				{
+					id: 'h-new',
+					type: 'AUTO',
+					timestamp: 200,
+					summary: 'newer',
+					success: true,
+					elapsedTimeMs: 1500,
+					cost: 0.25,
+					hostname: 'laptop.local',
+				},
+				{
+					id: 'h-old',
+					type: 'USER',
+					timestamp: 100,
+					summary: 'older',
+					success: false,
+					elapsedTimeMs: 500,
+				},
+			]);
 		});
 
 		it('renders the human view without the local usage stats', async () => {
@@ -414,6 +495,8 @@ describe('peer:agent targets', () => {
 				sessionId: AGENT_ID,
 				command: 'Run the checklist',
 				inputMode: 'ai',
+				// The one caller field a peer dispatch sends: the machine, for the host's History.
+				originHost: os.hostname(),
 			});
 			expect(message).not.toHaveProperty('notifyOnComplete');
 			expect(message).not.toHaveProperty('fromSessionId');
@@ -432,10 +515,14 @@ describe('peer:agent targets', () => {
 			await runDispatch(`${PEER}:docs`, 'one', { newTab: true });
 			await runDispatch(`${PEER}:docs`, 'two', { queue: true });
 
-			const types = sendCommand.mock.calls.map(
-				(call) => (call as unknown as [{ type: string }])[0].type
+			const messages = sendCommand.mock.calls.map(
+				(call) => (call as unknown as [{ type: string; originHost?: string }])[0]
 			);
-			expect(types).toEqual(['new_ai_tab_with_prompt', 'enqueue_command']);
+			expect(messages.map((message) => message.type)).toEqual([
+				'new_ai_tab_with_prompt',
+				'enqueue_command',
+			]);
+			expect(messages.map((message) => message.originHost)).toEqual([os.hostname(), os.hostname()]);
 		});
 
 		it('refuses --notify-on-complete and --routing before dialing the peer', async () => {
@@ -587,7 +674,11 @@ describe('peer:agent targets', () => {
 			await send(`${PEER}:docs`, 'Status?', {});
 
 			expect(peer.client.tabs.create).toHaveBeenCalledWith(AGENT_ID);
-			expect(peer.client.turns.send).toHaveBeenCalledWith(AGENT_ID, 'tab-new', { text: 'Status?' });
+			// The host stamps the turn's History entry with this machine.
+			expect(peer.client.turns.send).toHaveBeenCalledWith(AGENT_ID, 'tab-new', {
+				text: 'Status?',
+				originHost: os.hostname(),
+			});
 			expect(printedJson(logSpy)[0]).toMatchObject({
 				agentId: AGENT_ID,
 				agentName: 'docs',
@@ -644,7 +735,10 @@ describe('peer:agent targets', () => {
 			});
 			await send(`${PEER}:docs`, 'again', { session: 'sess-1' });
 			expect(idle.client.tabs.create).not.toHaveBeenCalled();
-			expect(idle.client.turns.send).toHaveBeenCalledWith(AGENT_ID, 'tab-s', { text: 'again' });
+			expect(idle.client.turns.send).toHaveBeenCalledWith(AGENT_ID, 'tab-s', {
+				text: 'again',
+				originHost: os.hostname(),
+			});
 
 			logSpy.mockClear();
 			const busy = fakePeer(agentWith([{ id: 'tab-s', agentSessionId: 'sess-1', state: 'busy' }]));
