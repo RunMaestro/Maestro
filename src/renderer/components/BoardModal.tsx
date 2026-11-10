@@ -450,14 +450,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		response: Extract<BoardCaptureResponse, { ok: true }>;
 	} | null>(null);
 	const [loading, setLoading] = useState(true);
-	const [ownerStatus, setOwnerStatus] = useState<
-		import('../../shared/board/owner-recovery').BoardOwnerRecoveryStatus | null
-	>(null);
-	const [ownerPreview, setOwnerPreview] = useState<
-		import('../../shared/board/owner-recovery').BoardOwnerRecoveryPreview | null
-	>(null);
-	const [ownerRecoveryBusy, setOwnerRecoveryBusy] = useState(false);
-	const [ownerRecoveryError, setOwnerRecoveryError] = useState<string | null>(null);
 	const [loadError, setLoadError] = useState<string | null>(null);
 	const [dragCard, setDragCard] = useState<{
 		cardId: string;
@@ -580,13 +572,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 									? source.location.path
 									: `${BOARD_SOURCE_PROJECT_PREFIX}${source.sourceKey}`;
 						}
-					}
-
-					if (window.maestro.board.ownerRecoveryStatus) {
-						const status = await window.maestro.board.ownerRecoveryStatus();
-						if (generation !== loadGenerationRef.current) continue;
-						if (status.ok) setOwnerStatus(status.value);
-						else setOwnerRecoveryError(status.error.message);
 					}
 
 					setSourceRoots(roots);
@@ -2562,39 +2547,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					)}
 				</div>
 
-				{(ownerStatus?.conflict || ownerRecoveryError) && (
-					<div
-						role="status"
-						className="px-4 py-3 border-t text-sm"
-						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-					>
-						<p>{ownerRecoveryError || ownerStatus?.message}</p>
-						{ownerStatus?.eligible && (
-							<button
-								type="button"
-								disabled={ownerRecoveryBusy}
-								className="mt-2 px-3 py-1 rounded border"
-								style={{ borderColor: theme.colors.border }}
-								onClick={() => {
-									setOwnerRecoveryBusy(true);
-									void window.maestro.board
-										.previewOwnerRecovery()
-										.then((result) => {
-											if (result.ok) {
-												setOwnerRecoveryError(null);
-												setOwnerPreview(result.value);
-											} else setOwnerRecoveryError(result.error.message);
-										})
-										.catch((error) => setOwnerRecoveryError(ipcErrorMessage(error)))
-										.finally(() => setOwnerRecoveryBusy(false));
-								}}
-							>
-								Review legacy runtime ownership
-							</button>
-						)}
-					</div>
-				)}
-
 				{/* Keyboard hint footer: the mouse affordances (drag, hover trash) are
 				    invisible to keyboard users otherwise. */}
 				{view === 'cards' && board && !draft && (
@@ -2610,32 +2562,6 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 
 			{/* Unsaved-changes gate for Escape / backdrop / "Back to board". One
 			    confirm step, no draft persistence. */}
-			{ownerPreview && (
-				<ConfirmModal
-					theme={theme}
-					title="Resume legacy Board runtime ownership?"
-					confirmLabel="Confirm runtime ownership"
-					message={`The idle legacy owner started at ${ownerPreview.legacyStartedAt} (epoch ${ownerPreview.epoch}). Confirm that its previous host is no longer running Board work. This only resumes runtime ownership; it does not approve or start a card, accept a result, or change worker permissions. This preview expires after one minute.`}
-					onClose={() => setOwnerPreview(null)}
-					onConfirm={() => {
-						const selected = ownerPreview;
-						setOwnerPreview(null);
-						setOwnerRecoveryBusy(true);
-						void window.maestro.board
-							.confirmOwnerRecovery(selected.previewId)
-							.then((result) => {
-								if (result.ok) {
-									setOwnerRecoveryError(null);
-									setOwnerStatus(null);
-									void load();
-								} else setOwnerRecoveryError(result.error.message);
-							})
-							.catch((error) => setOwnerRecoveryError(ipcErrorMessage(error)))
-							.finally(() => setOwnerRecoveryBusy(false));
-					}}
-				/>
-			)}
-
 			{pendingAcceptance && (
 				<ConfirmModal
 					theme={theme}

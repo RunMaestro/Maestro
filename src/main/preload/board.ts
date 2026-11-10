@@ -32,21 +32,6 @@ export type { Board, BoardCard, CardStatus } from '../../shared/board/types';
  */
 export function createBoardApi() {
 	return {
-		ownerRecoveryStatus: (): Promise<
-			import('../../shared/board/owner-recovery').BoardOwnerRecoveryResult<
-				import('../../shared/board/owner-recovery').BoardOwnerRecoveryStatus
-			>
-		> => ipcRenderer.invoke('board:ownerRecoveryStatus'),
-		previewOwnerRecovery: (): Promise<
-			import('../../shared/board/owner-recovery').BoardOwnerRecoveryResult<
-				import('../../shared/board/owner-recovery').BoardOwnerRecoveryPreview
-			>
-		> => ipcRenderer.invoke('board:previewOwnerRecovery'),
-		confirmOwnerRecovery: (
-			previewId: string
-		): Promise<
-			import('../../shared/board/owner-recovery').BoardOwnerRecoveryResult<{ epoch: number }>
-		> => ipcRenderer.invoke('board:confirmOwnerRecovery', previewId),
 		deleteCards: (
 			command: Extract<
 				import('../../shared/board/commands').BoardCommand,

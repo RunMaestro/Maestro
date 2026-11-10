@@ -293,29 +293,30 @@ A few behaviors worth knowing:
 
 Cards display their explicit agent or group scope and the host's current waiting reasons. Capture responses and global Refresh use the same read-only worker eligibility checks as claims, including current membership, role and repository access. Empty eligible scopes, paused intake, durable reservations, native busy/dormant workers, required start approval and Hold remain visible. Missing native occupancy evidence is reported as unknown. An otherwise available card waits for Cue's final dispatch checks; reading a card never claims, releases or renews a reservation. Intake pause prevents new Board starts while existing work continues.
 
-### Idle legacy runtime ownership
+### Automatic native runtime ownership
 
-The native Board window reports a conflicting runtime owner without treating a
-missing PID or an old heartbeat as permission to take over. On Linux, an idle
-legacy identity containing only PID, boot time and start time can be reviewed
-through **Review legacy runtime ownership**. The current desktop must prove its
-own native Cue lock. Both Board and Maestro Cue must be enabled. Modern,
-malformed, different-boot or still-present owners, any stored run/reservation or
-imported worker hold, and unresolved card attempts remain blocked.
+With Board and Maestro Cue enabled, add an existing live agent as a worker in
+the native Workers view or with `board worker-register`. Its verified own local
+Git repository and registered worktrees are available by default. Explicit agent,
+project, file-access and managed repository restrictions remain effective. No
+additional Board/owner permission or recovery confirmation is needed.
 
-The confirmation asks the human to establish that the previous host is no longer
-running Board work. Its preview is bound to the exact owner, epoch, Board evidence
-and native main frame, expires after one minute, and can be used once. Confirmation
-rechecks those conditions in a SQLite transaction, advances the owner epoch and
-records the original identity and human decision. A change or failed receipt write
-leaves ownership unchanged. No card, source, result or worker permission is changed.
-This is ownership recovery, not approval to start or accept a card. Normal Cue
-admission, claims and required human decisions still apply afterward.
+The native Cue lock is the host's exclusive dispatch authority; the SQLite owner
+row is a durable fencing generation. For an idle, known token-less legacy owner,
+the current proven native Cue host holds that lock's generation claim through
+the SQLite transaction, rechecks the exact old owner and idle capacity, advances
+the epoch and retains an automatic handover receipt with the original identity.
+The connection must be the canonical Board database for that host. PID absence,
+heartbeat age or an `unknown` liveness verdict alone never authorize takeover.
 
-There is no CLI, WebSocket or browser recovery grant. Those transports continue
-to report `owner-conflict` until the native human confirmation succeeds. Manual
-recovery on other operating systems and owners with ambiguous legacy evidence
-remain unavailable; normal proven-dead recovery is unchanged.
+A living competing host, missing native proof, changed lock or ambiguous modern
+identity remains fenced. Existing runs/reservations, imported recovery holds and
+unresolved legacy attempts prevent idle handover and remain available for their
+normal reconciliation paths; nothing is discarded or released by age. Normal
+proven-dead restart recovery remains unchanged. Board/Cue off pauses intake.
+Acquiring runtime ownership approves no card or final result, never promotes
+Triage to To Do, and changes no worker/repository grants. Analysis/review still
+stops for the existing required human decisions.
 
 ### Managed worker transport
 

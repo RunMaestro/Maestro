@@ -598,6 +598,29 @@ function withGenerationClaim<T>(
 	}
 }
 
+/** Keep a synchronous host handover inside the SAME generation claim used by
+ * acquisition/heartbeat/release. No PID/age-based grant: only this process's
+ * complete native token can enter. The action must not return a Promise. */
+export function withOwnedCueEngineLock<T>(
+	action: (info: CueEngineLockInfo) => T,
+	dataDir?: string
+): ClaimOutcome<T> | { ok: false; reason: 'not-owner' } {
+	const current = readLockSnapshot(dataDir);
+	const info = current?.info;
+	if (
+		!current ||
+		!info ||
+		!info.token ||
+		info.pid !== process.pid ||
+		!isCueEngineLockOwnedByThisProcess(info) ||
+		!isLockLive(info) ||
+		(process.platform === 'linux' &&
+			(!Number.isSafeInteger(currentPidNsInode) || info.pidNsInode !== currentPidNsInode))
+	)
+		return { ok: false, reason: 'not-owner' };
+	return withGenerationClaim(current.generation, () => action(info), dataDir);
+}
+
 /**
  * After a takeover the old generation can never come back, so every claim on
  * it (ours, and any orphan we stepped past) is dead. Also sweep scratch files

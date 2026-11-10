@@ -255,10 +255,6 @@ import {
 } from './board/board-owner-liveness';
 import { BoardCueHost, type BoardPreparedContext } from './board/board-cue';
 import { configureBoardRuntimeHost } from './board/board-runtime-host';
-import {
-	configureBoardOwnerRecovery,
-	invalidateBoardOwnerRecovery,
-} from './board/board-owner-recovery';
 import type { BoardClaimHostContext } from './board/board-claims';
 import { resolveBoardLocation } from './board/board-location';
 import type { BoardCardKey } from './board/board-workspace-storage';
@@ -880,11 +876,7 @@ registerCadenzaIpcHandlers({ getMainWindow: () => mainWindow, settingsStore: sto
 // read path to refresh plugin discovery.
 // (Stopping the community-plugin runtime when `plugins` turns off is the
 // plugins hook of the Encore lifecycle below.)
-store.onDidChange('encoreFeatures', (encoreFeatures, previousFeatures) => {
-	const current = resolveEncoreFeatures(encoreFeatures);
-	const previous = resolveEncoreFeatures(previousFeatures);
-	if (current.board !== previous.board || current.maestroCue !== previous.maestroCue)
-		invalidateBoardOwnerRecovery();
+store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	nativeCurrentTurns.setEnabled(resolveEncoreFeatures(encoreFeatures).pianola);
 	pianolaMemoryHost?.reconcile();
 	if (!resolveEncoreFeatures(encoreFeatures).concerto) closeCadenzaHudWindow();
@@ -1817,11 +1809,6 @@ app
 			)
 		);
 		configureBoardRuntimeHost(globalBoardHost.runtimeFor);
-		configureBoardOwnerRecovery({
-			storage: getExistingBoardStorage,
-			lock: readBoardRuntimeLock,
-			getMainWindow: () => mainWindow,
-		});
 
 		// Warm any provider the strict startup pass left cold (no auto-refresh
 		// interval picked, no eligible recent maestro-p session, Codex not sampled
@@ -1998,10 +1985,7 @@ app
 			// `board` (Board requires Cue) inside the engine's board pass.
 			board: {
 				tickGlobal: () => globalBoardHost.tick(),
-				stopGlobal: () => {
-					invalidateBoardOwnerRecovery();
-					globalBoardHost.stop();
-				},
+				stopGlobal: () => globalBoardHost.stop(),
 				getEncoreFeatures: () => {
 					const ef = resolveEncoreFeatures(store.get('encoreFeatures'));
 					return { maestroCue: ef.maestroCue, board: ef.board };

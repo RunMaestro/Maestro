@@ -1,3 +1,4 @@
+import { withBoardOwnerLease, isIdleLegacyBoardOwner } from './board-owner-lifecycle';
 import { isBoardEnabled } from './board-feature';
 import { captureException } from '../utils/sentry';
 import { parseCardMarkers } from '../../shared/board/cardMarkers';
@@ -33,7 +34,7 @@ import {
 	recoverIncompleteBoardReview,
 } from './board-review';
 import { evaluateClaimWorker, persistedCaptureInput } from '../../shared/board/domain';
-import { listBoardWorkers } from './board-workspace-storage';
+import { listBoardWorkers, BoardWorkspaceStorageError } from './board-workspace-storage';
 import {
 	recordBoardTransitions,
 	snapshotBoardTransitions,
@@ -79,7 +80,7 @@ interface RunRow {
 	outcome_json: string | null;
 }
 
-/** The identity persisted by normal acquisition and explicit native legacy recovery. */
+/** The identity persisted by normal acquisition and exclusive native lifecycle handover. */
 export function boardRuntimeProcessIdentity(lock: BoardRuntimeLock): string {
 	const { pid, startedAt, bootTime, token, pidNsInode, platform, hostIdentity } = lock.info;
 	return canonicalJson({
@@ -117,40 +118,83 @@ export class BoardRuntime {
 				reason: 'runtime-unavailable' | 'owner-identity-unavailable' | 'owner-conflict';
 		  } {
 		if (!isBoardEnabled()) return { ok: false, reason: 'runtime-unavailable' };
-		return this.storage.db
-			.transaction((): ReturnType<BoardRuntime['acquire']> => {
-				if (!this.lock.verify().ok) return { ok: false, reason: 'runtime-unavailable' };
-				if (
-					!Number.isFinite(this.lock.info.bootTime) ||
-					!Number.isFinite(Date.parse(this.lock.info.startedAt)) ||
-					// Native Mac/Windows recovery needs a platform-bound host proof.
-					// A valid Cue lock alone must not create an irrecoverable owner row.
-					((this.lock.info.platform === 'darwin' || this.lock.info.platform === 'win32') &&
-						!this.lock.info.hostIdentity)
-				)
-					return { ok: false, reason: 'owner-identity-unavailable' };
-				const old = this.storage.db.prepare('SELECT * FROM runtime_owner WHERE id = 1').get() as
-					| { process_identity: string; epoch: number }
-					| undefined;
-				if (
-					old &&
-					old.process_identity !== this.processIdentity &&
-					this.ownerLiveness(old.process_identity) !== 'dead'
-				)
-					return { ok: false, reason: 'owner-conflict' };
-				const epoch =
-					old?.process_identity === this.processIdentity ? old.epoch : (old?.epoch ?? 0) + 1;
-				if (!Number.isSafeInteger(epoch) || epoch < 1) throw new Error('Invalid Board owner epoch');
-				this.storage.db
-					.prepare(
-						`INSERT INTO runtime_owner VALUES (1, ?, ?, ?)
-				ON CONFLICT(id) DO UPDATE SET process_identity=excluded.process_identity, epoch=excluded.epoch, heartbeat=excluded.heartbeat`
+		const acquire = (nativeLease = false) =>
+			this.storage.db
+				.transaction((): ReturnType<BoardRuntime['acquire']> => {
+					if (!this.lock.verify().ok) return { ok: false, reason: 'runtime-unavailable' };
+					if (
+						!Number.isFinite(this.lock.info.bootTime) ||
+						!Number.isFinite(Date.parse(this.lock.info.startedAt)) ||
+						// Native Mac/Windows recovery needs a platform-bound host proof.
+						// A valid Cue lock alone must not create an irrecoverable owner row.
+						((this.lock.info.platform === 'darwin' || this.lock.info.platform === 'win32') &&
+							!this.lock.info.hostIdentity)
 					)
-					.run(this.processIdentity, epoch, Date.now());
-				this.epoch = epoch;
-				return { ok: true };
-			})
-			.immediate();
+						return { ok: false, reason: 'owner-identity-unavailable' };
+					const old = this.storage.db.prepare('SELECT * FROM runtime_owner WHERE id = 1').get() as
+						| { process_identity: string; epoch: number; heartbeat: number }
+						| undefined;
+
+					let legacyHandover = false;
+					if (
+						old &&
+						old.process_identity !== this.processIdentity &&
+						this.ownerLiveness(old.process_identity) !== 'dead'
+					) {
+						if (!nativeLease || !isIdleLegacyBoardOwner(this.storage.db, old, this.lock))
+							return { ok: false, reason: 'owner-conflict' };
+						legacyHandover = true;
+					}
+					const epoch =
+						old?.process_identity === this.processIdentity ? old.epoch : (old?.epoch ?? 0) + 1;
+					if (!Number.isSafeInteger(epoch) || epoch < 1)
+						throw new Error('Invalid Board owner epoch');
+					this.storage.db
+						.prepare(
+							`INSERT INTO runtime_owner VALUES (1, ?, ?, ?)
+				ON CONFLICT(id) DO UPDATE SET process_identity=excluded.process_identity, epoch=excluded.epoch, heartbeat=excluded.heartbeat`
+						)
+						.run(this.processIdentity, epoch, Date.now());
+					if (legacyHandover) {
+						const revision = (
+							this.storage.db.prepare('SELECT revision FROM workspace WHERE id=1').get() as {
+								revision: number;
+							}
+						).revision;
+						this.storage.db.prepare('INSERT INTO commands VALUES (?,?,?,?)').run(
+							`native-owner-handover:${generateUUID()}`,
+							'native-cue-host',
+							canonicalJson({
+								action: 'idle-legacy-owner-handover',
+								oldOwner: old,
+								newEpoch: epoch,
+								decision: 'exclusive-native-cue-generation-and-idle-capacity',
+								at: Date.now(),
+							}),
+							revision
+						);
+					}
+					if (!isBoardEnabled() || !this.lock.verify().ok)
+						throw new BoardWorkspaceStorageError(
+							'owner-conflict',
+							'Native Board ownership changed before commit'
+						);
+					this.epoch = epoch;
+					return { ok: true };
+				})
+				.immediate();
+		const previous = this.storage.db
+			.prepare('SELECT process_identity FROM runtime_owner WHERE id=1')
+			.get() as { process_identity: string } | undefined;
+		if (
+			previous &&
+			previous.process_identity !== this.processIdentity &&
+			this.ownerLiveness(previous.process_identity) !== 'dead'
+		) {
+			const leased = withBoardOwnerLease(this.storage.db, this.lock, () => acquire(true));
+			if (leased.ok) return leased.value;
+		}
+		return acquire();
 	}
 
 	claim(command: BoardClaimCommand, emptyRegistryProbe: boolean | 'readiness' = false) {

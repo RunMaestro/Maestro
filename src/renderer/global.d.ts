@@ -4968,21 +4968,6 @@ interface MaestroAPI {
 
 	// Board API (persistent task DAG stored in .maestro/board.yaml)
 	board: {
-		ownerRecoveryStatus: () => Promise<
-			import('../shared/board/owner-recovery').BoardOwnerRecoveryResult<
-				import('../shared/board/owner-recovery').BoardOwnerRecoveryStatus
-			>
-		>;
-		previewOwnerRecovery: () => Promise<
-			import('../shared/board/owner-recovery').BoardOwnerRecoveryResult<
-				import('../shared/board/owner-recovery').BoardOwnerRecoveryPreview
-			>
-		>;
-		confirmOwnerRecovery: (
-			previewId: string
-		) => Promise<
-			import('../shared/board/owner-recovery').BoardOwnerRecoveryResult<{ epoch: number }>
-		>;
 		deleteCards: (
 			command: Extract<import('../shared/board/commands').BoardCommand, { action: 'delete-cards' }>
 		) => Promise<import('../shared/board/commands').BoardCommandResult>;

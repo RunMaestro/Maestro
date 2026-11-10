@@ -1,4 +1,3 @@
-import { getBoardOwnerRecovery } from '../../board/board-owner-recovery';
 import { requireBoardEnabled } from '../../board/board-feature';
 /**
  * Board IPC Handlers
@@ -147,30 +146,6 @@ export function registerBoardHandlers(deps: BoardHandlerDependencies): void {
 			}
 			return listener(event, ...args);
 		});
-	handle(
-		'board:ownerRecoveryStatus',
-		(event) =>
-			getBoardOwnerRecovery()?.status(event) ?? {
-				ok: false,
-				error: { code: 'runtime-unavailable', message: 'Native Board host is unavailable' },
-			}
-	);
-	handle(
-		'board:previewOwnerRecovery',
-		(event) =>
-			getBoardOwnerRecovery()?.preview(event) ?? {
-				ok: false,
-				error: { code: 'runtime-unavailable', message: 'Native Board host is unavailable' },
-			}
-	);
-	handle(
-		'board:confirmOwnerRecovery',
-		(event, previewId: unknown) =>
-			getBoardOwnerRecovery()?.confirm(event, previewId) ?? {
-				ok: false,
-				error: { code: 'runtime-unavailable', message: 'Native Board host is unavailable' },
-			}
-	);
 	handle('board:deleteCards', async (_event, input: Record<string, unknown>) => {
 		const command = input && parseBoardCommand(input);
 		if (!command || command.action !== 'delete-cards')
