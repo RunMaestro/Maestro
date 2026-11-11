@@ -38,6 +38,7 @@ import { describeSshConnectionError } from '../../sshConnection';
 import type { SshRemoteConfig } from '../../types';
 import { resolveSshPath } from '../launch/ssh-path';
 import { findBundledPromptsDir } from '../prompts/load';
+import { SQLITE_PACKAGE } from '../store/native-sqlite';
 import {
 	RemoteDiscoveryError,
 	buildRemoteScriptArgs,
@@ -238,8 +239,10 @@ export function buildRemoteInstallScript(options: RemoteInstallScriptOptions = {
 		`npmcli=$("$node" -p "${npmCliProbe}" 2>/dev/null)`,
 		'if [ -n "$npmcli" ]; then runnpm() { "$node" "$npmcli" "$@"; }; elif command -v npm >/dev/null 2>&1; then runnpm() { npm "$@"; }; else fail no-npm; fi',
 		`printf '%s\\n' '{"name":"maestro-remote-host","private":true}' > "$stage/package.json"`,
-		`(cd "$stage" && PATH="$(dirname "$node"):$PATH" runnpm install --omit=dev --no-audit --no-fund --loglevel=error "better-sqlite3@${REMOTE_SQLITE_RANGE}") > "$stage/npm.log" 2>&1 || { tail -n 15 "$stage/npm.log" >&2; fail sqlite-install; }`,
-		`(cd "$stage" && "$node" -e "new (require('better-sqlite3'))(':memory:').close()") 2> "$stage/sqlite.log" || { tail -n 5 "$stage/sqlite.log" >&2; fail sqlite-load; }`,
+		`(cd "$stage" && PATH="$(dirname "$node"):$PATH" runnpm install --omit=dev --no-audit --no-fund --loglevel=error "${SQLITE_PACKAGE}@${REMOTE_SQLITE_RANGE}") > "$stage/npm.log" 2>&1 || { tail -n 15 "$stage/npm.log" >&2; fail sqlite-install; }`,
+		// The package name is an argument, not a literal in the code: this module ships in the CLI,
+		// whose plain-Node import guard follows every `require()` it can see.
+		`(cd "$stage" && "$node" -e "new (require(process.argv[1]))(':memory:').close()" ${SQLITE_PACKAGE}) 2> "$stage/sqlite.log" || { tail -n 5 "$stage/sqlite.log" >&2; fail sqlite-load; }`,
 		'ver=$("$node" "$stage/maestro-cli.js" --version 2>/dev/null | head -n 1)',
 		'[ -n "$ver" ] || fail cli-broken',
 		// Swap in the new install, keeping the old one until the new one is in place.
