@@ -30,6 +30,7 @@ import {
 	grokCommandCompletions,
 } from '../../../renderer/slashCommands';
 import { useInputKeyDown } from '../../../renderer/hooks/input/useInputKeyDown';
+import { tokenizeMentions } from '../../../shared/mentionPatterns';
 
 // ============================================================================
 // Mock InputContext
@@ -2530,6 +2531,37 @@ describe('useInputHandlers', () => {
 			expect(inputVal()).toBe('@/Users/somebody/notes ');
 		});
 
+		it('inserts a Windows drive path as one file mention in AI chat when dropped from outside the project', () => {
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: { type: 'text/plain', name: 'a.md', path: 'C:\\Users\\Alice\\a.md' },
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const draft = inputVal().trim();
+			expect(draft).toBe('@C:/Users/Alice/a.md');
+			expect(tokenizeMentions(draft)).toEqual([
+				{
+					kind: 'file',
+					value: '@C:/Users/Alice/a.md',
+					path: 'C:/Users/Alice/a.md',
+					extension: 'md',
+				},
+			]);
+		});
+
 		it('joins multiple external file drops with spaces', () => {
 			const deps = createMockDeps();
 			const { result } = renderHook(() => useInputHandlers(deps));
@@ -2689,6 +2721,79 @@ describe('useInputHandlers', () => {
 
 			const updated = useGroupChatStore.getState().groupChats[0];
 			expect(updated.draftMessage).toBe('@C:/Users/Alice/proj/src/index.ts ');
+			// The dropped path scans back as ONE file mention, so the room shows a
+			// chip rather than `@C` plus plain text.
+			expect(tokenizeMentions(updated.draftMessage.trim())).toEqual([
+				{
+					kind: 'file',
+					value: '@C:/Users/Alice/proj/src/index.ts',
+					path: 'C:/Users/Alice/proj/src/index.ts',
+					extension: 'ts',
+				},
+			]);
+		});
+
+		it('quotes a Windows drive path with spaces so the room draft is one file mention', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						projectRoot: 'C:\\Users\\Alice\\proj',
+						fullPath: 'C:\\Users\\Alice\\proj',
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+
+			const initialChat = {
+				id: 'group-1',
+				name: 'g',
+				draftMessage: '',
+				participants: [],
+				messages: [],
+			};
+			const setGroupChats = vi.fn((updater: any) => {
+				const next = typeof updater === 'function' ? updater([initialChat as any]) : updater;
+				useGroupChatStore.setState({ groupChats: next } as any);
+			});
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [initialChat as any],
+				setGroupChats,
+				setGroupChatStagedImages: vi.fn(),
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: {
+							type: 'text/plain',
+							name: 'a b.md',
+							path: 'C:\\Users\\Alice\\proj\\My Docs\\a b.md',
+						},
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const updated = useGroupChatStore.getState().groupChats[0];
+			expect(updated.draftMessage).toBe('@"C:/Users/Alice/proj/My Docs/a b.md" ');
+			expect(tokenizeMentions(updated.draftMessage.trim())).toEqual([
+				{
+					kind: 'file',
+					value: '@"C:/Users/Alice/proj/My Docs/a b.md"',
+					path: 'C:/Users/Alice/proj/My Docs/a b.md',
+					extension: 'md',
+				},
+			]);
 		});
 
 		it('appends to existing group chat draft with a separating space', () => {

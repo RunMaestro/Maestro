@@ -111,6 +111,7 @@ import {
 	findParticipantForMention,
 	type GroupChatSessionInfo,
 } from '../../../main/group-chat/group-chat-router';
+import { findUnmatchedMentions } from '../../../shared/group-chat-types';
 import {
 	spawnModerator,
 	killModerator,
@@ -689,6 +690,24 @@ describe('group-chat-router', () => {
 			expect(
 				extractAutoRunDirectives('!autorun @Tome:-RSSidian', [tome]).autoRunDirectives
 			).toEqual([{ participantName: 'Tome:-RSSidian', filename: undefined }]);
+		});
+
+		it('never reads a Windows drive path as an agent named after the drive letter', () => {
+			const c = participant('C', '1');
+			const drivePath = '@C:/Users/x/project/a.md please review';
+			// No routing, no auto-add, and no false unmatched warning for `@C`.
+			expect(extractMentions(drivePath, [c])).toEqual([]);
+			expect(extractAllMentions(drivePath, ['C'])).toEqual([]);
+			expect(findUnmatchedMentions(drivePath, ['C'])).toEqual([]);
+			// A bare `@C` is still that agent, and colon syntax still splits.
+			expect(extractMentions('@C please review', [c])).toEqual(['C']);
+			expect(extractAutoRunDirectives('!autorun @C:plan.md', ['C']).autoRunDirectives).toEqual([
+				{ participantName: 'C', filename: 'plan.md' },
+			]);
+			// A drive path is not an autorun target.
+			expect(
+				extractAutoRunDirectives('!autorun @C:/Users/x/a.md', ['C']).autoRunDirectives
+			).toEqual([]);
 		});
 	});
 
