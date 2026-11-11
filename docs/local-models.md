@@ -1013,7 +1013,16 @@ Choosing any mode but Off sets the agent's gateway URL to the proxy for you. Cho
 **Which compress mode to pick.** The note under the control says the same thing in one sentence.
 
 - **Compress** changes nothing about what the model works from: it reads every tool result in full, and the result is shortened only once it is history. The cost is that the result is written to your provider's prompt cache twice, in full and then shortened. Measured on Claude Code, that made a short session (4 to 6 requests) cost between 2% and 36% more than Passthrough, depending on the output, and it pays back only in a longer one. Pick it for long sessions where you want the model to see everything once.
-- **Compress early** shortens a result before the model sees it, so nothing is ever cached in full and it is the cheapest mode. In a measured four-turn session it cost 14% less than Passthrough, where Compress cost 36% more. Because the model never reads the original, Compress early only uses reductions that leave nothing out: it minifies JSON, uses lossless tables, strips terminal escapes, folds repeated lines into one copy and a count, and groups Git status. It never samples a list, cuts a line, or asks a local model to summarize, so a result that only those would shorten goes out whole. Pick it when the tool output is mostly build logs, test runs, and JSON.
+- **Compress early** shortens a result before the model sees it, so nothing is ever cached in full and it is the cheapest mode. In a measured four-turn session it cost 14% less than Passthrough, where Compress cost 36% more. Because the model never reads the original, Compress early only uses reductions that leave nothing out: it minifies JSON, uses lossless tables, strips terminal escapes, folds repeated lines into one copy and a count, and groups Git status. It never samples a list, cuts a line, or asks a local model to summarize, so a result that only those would shorten goes out whole. Pick it when the tool output is mostly build logs, test runs, and JSON. Turn on **Retrieval** (below) to let Compress early leave lines out too.
+
+**Retrieval.** In **Edit Agent -> Models**, a **Retrieval** switch sits beside the Maestro proxy control while the mode is Compress or Compress early. It is off by default. When it is on, the agent's model gets one more tool, `retrieve_compressed_original`: it passes the `sha256=` value from a block's marker and, optionally, a line range, and gets back the original lines (200 at a time by default, at most 1,000 lines or 256 KiB per call) with a first line that says which lines came back and whether more exist. What that changes:
+
+- **Compress early may leave content out.** With the tool, Compress early uses every reduction Compress uses, including sampling a list and summarizing with a local model, because the model can read past anything that was dropped. Without the tool it keeps the reductions that leave nothing out, as above. A launch without the tool never gets a block it could not recover, even in a conversation an earlier launch with the tool shortened.
+- **Compress does not change.** It already lets the model read every result in full once; the switch only gives that model a way to look again.
+- **The tool reaches only originals this machine still holds.** Originals unused for 30 days are pruned (see below). Asking for a pruned or unknown hash is a tool error that says so, and the model works from the shortened text.
+- **A retrieved original is never shortened again.**
+- **Which launches get it.** Claude Code (in both its `claude --print` and its interactive mode) and Codex agents on this machine, in the turns you send from the app. Maestro gives the tool through the same per-launch MCP server it uses for plugin tools, so it works with Plugins off and edits no global config. An agent on an SSH remote, an Auto Run task, a Cue run, a Group Chat, a consult, and `maestro-cli send` do not get it, and those turns keep the lossless reductions.
+- **Applies from the agent's next turn.** Setting the proxy mode to Off, a gateway URL of your own, or another provider turns it off with the proxy. In Passthrough the switch is hidden and has no effect.
 
 What both compress modes do, and do not do:
 
@@ -1031,7 +1040,8 @@ The proxy cannot be used by an agent on an SSH remote (the remote host cannot re
 
 ```bash
 maestro-cli update-agent <agent-id> --proxy-mode compress   # off | passthrough | compress | compress-early
-maestro-cli show agent <agent-id> --json                    # tokenProxyMode
+maestro-cli update-agent <agent-id> --proxy-retrieval on     # on | off; only while compressing
+maestro-cli show agent <agent-id> --json                    # tokenProxyMode, tokenProxyRetrieval
 maestro-cli models proxy status                             # the listener, agents, totals, recent compressions
 maestro-cli models proxy block <hash>                       # a diff of one shortened block
 maestro-cli models proxy block <hash> --original --lines 10:30
@@ -1039,7 +1049,7 @@ maestro-cli models proxy cache                              # entries, size, lea
 maestro-cli models proxy cache prune --older-than 7d        # prune now (never below 1 day)
 ```
 
-`--lines` selects inclusive, 1-based original lines, with a maximum of 1,000 lines and 256 KiB returned text. It requires `--original`. Standard output contains the exact selected text; standard error reports which lines were returned and whether the selection is complete. With `--json`, that metadata is in `block.originalRange`. A request past EOF can return fewer lines; a scan or byte limit fails explicitly. Token totals and the compressed side still describe the whole block. Executable recovery hints await launch-environment proof; compressed markers currently identify the archive by hash.
+`--lines` selects inclusive, 1-based original lines, with a maximum of 1,000 lines and 256 KiB returned text. It requires `--original`. Standard output contains the exact selected text; standard error reports which lines were returned and whether the selection is complete. With `--json`, that metadata is in `block.originalRange`. A request past EOF can return fewer lines; a scan or byte limit fails explicitly. Token totals and the compressed side still describe the whole block. The marker names the archive by hash and carries no shell command; a model reads an original through the Retrieval tool, a person through `models proxy block`.
 
 ### Background requests
 

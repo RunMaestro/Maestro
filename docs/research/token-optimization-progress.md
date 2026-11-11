@@ -651,3 +651,11 @@ Static evidence from this review:
 - `git fetch origin acappella` succeeded; `git rev-list --left-right --count HEAD...origin/acappella` returned `0 0` before the new commit.
 
 Regression cases remain authored but unrun; runtime behavior and task-quality effects remain unvalidated. The normal pre-push hook executes tests through `validate:push`, so this authorized push uses the completed non-test checks and skips that hook to honor the user's standing no-test instruction. Raw research snapshots, scratch evidence and unrelated output files are excluded from the commit.
+
+## 03.4b3b and 03.4b3c: superseded by model-side retrieval
+
+Execution date: 2026-11-11. Tasks 03.4b3b (proof of the actual launch's tool execution environment) and 03.4b3c (emitting an executable shell recovery hint in the compression marker) are superseded by the `2026-11-11-Token-Proxy-Retrieval` playbook (R02.1 to R02.7, branch `feat/token-proxy-retrieval`). They are not to be resumed.
+
+Why: the shell hint could only be emitted once the proxy knew how the actual provider launch runs a shell command (effective shell, a reachable `maestro-cli`, archive visibility), and the sections above show that proof was never complete. The replacement gives the model a tool it calls by name, `retrieve_compressed_original`, served by the per-launch MCP bridge Maestro already injects (`maestro-cli mcp serve`) and answered through `readTokenProxyBlock()`. A tool call needs no proof of the launch's shell. The proxy learns that a launch has the tool from the host-issued launch binding (`registerTokenProxyRecoveryLaunch()` with `{ kind: 'mcp-retrieve-tool' }`), never from the request body, and only then lets `compress-early` use the lossy `full` profile. The marker text is unchanged, so no stored verdict changes bytes, and the shell-command hint stays unemitted.
+
+Design, decisions and the one real-model result (R02.6): "Retrieval: the model asks for an original" in `docs/architecture/local-models.md`. User docs: "The Maestro proxy" in `docs/local-models.md`.
