@@ -140,7 +140,15 @@ const GATEWAY_SUPPORT: Record<AgentId, AgentGatewaySupport> = {
 	),
 	antigravity: unknownVariable('antigravity'),
 	'gemini-cli': unknownVariable('gemini-cli'),
-	'qwen3-coder': unknownVariable('qwen3-coder'),
+	// Not verified (G03.3, 2026-11-11): no `qwen` binary was installed where the
+	// closed-port test runs. Qwen Code documents `OPENAI_BASE_URL` (and a
+	// higher-priority `--openai-base-url` flag) for its OpenAI-compatible auth;
+	// whether a Qwen OAuth login reads either is unknown. Not mapped until a
+	// closed port proves it.
+	'qwen3-coder': notVerified(
+		'qwen3-coder',
+		"With an OpenAI-compatible key it is documented to read OPENAI_BASE_URL: set it in this agent's environment variables."
+	),
 	hermes: unknownVariable('hermes'),
 	// Not verified (G03.3, 2026-11-11): no `pi` binary was installed where the
 	// closed-port test runs. Its docs (pi-coding-agent `docs/models.md`) route a
