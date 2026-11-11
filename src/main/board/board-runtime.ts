@@ -699,6 +699,7 @@ export class BoardRuntime {
 		if (
 			card.kind === 'review' &&
 			(!card.reviewHandoff?.sourceDigest ||
+				canonicalJson(card.reviewHandoff) !== canonicalJson(spec.card.reviewHandoff ?? null) ||
 				boardReviewSourceDigest(this.storage.db, card.reviewHandoff, spec.workerAgentId) !==
 					card.reviewHandoff.sourceDigest ||
 				(catalog.agents.find((agent) => agent.id === spec.workerAgentId)?.groupId ?? null) !==

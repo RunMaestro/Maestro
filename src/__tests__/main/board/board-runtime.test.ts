@@ -2596,6 +2596,32 @@ describe('work, linked review and explicit final human decision', () => {
 		expect(runtime.read(claim.runToken)?.life.phase).toBe('uncertain');
 		expect(reservations()).toHaveLength(1);
 	});
+	it('retains the native result and refuses changed handoff metadata after review start', async () => {
+		setupWorkflow();
+		nativeService();
+		await runWork();
+		const review = storage.read(roots[0], 'board').cards[1];
+		host.reviewArtifact = await prepareBoardReviewHandoff(storage, review.reviewHandoff!);
+		vi.mocked(service.spawn).mockImplementation(async (_spec, callbacks) => {
+			if (!callbacks.beforeLaunch()) throw Error('launch rejected');
+			callbacks.onStarted(202);
+			return new Promise<CardSpawnResult>((resolve) => {
+				settle = resolve;
+			});
+		});
+		const claim = claimFor(review.id, 'reviewer');
+		if (!claim.ok) throw Error(claim.reason);
+		const pending = runtime.start(claim.runToken);
+		db.prepare(
+			"UPDATE cards SET payload_json=json_set(payload_json,'$.reviewHandoff.checks','Changed after native start') WHERE collection_key=? AND id=?"
+		).run(command().collectionKey, review.id);
+		settle({ ...good, artifact: review.reviewHandoff!.artifact });
+		expect(await pending).toMatchObject({ ok: false });
+		expect(card().status).toBe('review');
+		expect(card().workflow?.reviewResult).toBeUndefined();
+		expect(runtime.read(claim.runToken)?.life.pendingResult?.output).toBe(good.output);
+		expect(reservations()).toHaveLength(1);
+	});
 	it('accepts a finished review when intake is paused after native start', async () => {
 		setupWorkflow();
 		nativeService();
