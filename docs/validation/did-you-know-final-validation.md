@@ -205,3 +205,35 @@ no dependency manifest or lockfile changes are included. Logs and the current
 The full suite and live-provider scenarios remain outside the contribution
 playbook's scope; the push hook that runs the full suite is bypassed after the
 checks above. Maintainer-approved CI and visual/editorial review remain required.
+
+## Rebase for maintainer merge (2026-11-10)
+
+Rebased all 58 commits onto upstream `rc` at
+`5fc5bcc7f7e99cec95241181bbcc5aa4154fe1b4`. Preserved the previous head on
+`backup/issue-1555-before-rebase-20261110`. Range-diff shows only the three
+conflict-affected commits changed during replay.
+
+Moved upstream's browser-open Journey recording into the shared opener, retaining
+URL sanitization and the exclusions for private and blank tabs. Preserved browser
+close recording and all upstream group-chat keyboard tests. No dependency
+manifest or lockfile changes were made.
+
+Validation used a clean install from the committed lockfile:
+
+- All 2,837 tests passed across 52 regression files, with no failed or pending
+  tests. This includes upstream browser Journey tests and both Journey utility
+  suites, along with the existing discovery, browser, onboarding, keyboard,
+  settings, and modal coverage.
+- TypeScript, ESLint, repository formatting, main/preload, renderer, and web-desktop builds passed.
+- Documentation checks passed: 1,353 asserted paths, 408 matching utility index
+  entries, and references across 44 documents.
+
+Logs, the test manifest, and the range-diff are in `tmp/readiness-nov10/` locally.
+The October 18 live Electron interaction and visual checks above are historical;
+those interactive checks were not repeated for this rebase. The full local suite
+and live-provider scenarios were not run; the full-suite push hook is bypassed
+under the contribution playbook's validation scope.
+
+The authenticated account has read access but no push, maintain, or admin access
+to RunMaestro/Maestro. It can update this fork PR, but a maintainer must approve CI
+and perform the merge into `rc`.
