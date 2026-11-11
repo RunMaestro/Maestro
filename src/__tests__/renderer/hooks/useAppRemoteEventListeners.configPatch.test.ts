@@ -21,9 +21,14 @@ import type { Session } from '../../../renderer/types';
 const gatewayService = vi.hoisted(() => ({
 	setAgentTokenProxyMode: vi.fn(),
 	setAgentBackgroundRequests: vi.fn(),
+	setAgentTokenProxyRetrieval: vi.fn(),
 	flushAgentToStore: vi.fn(async () => {}),
 	setAgentGatewayUrl: vi.fn(),
-	OFF_TOKEN_PROXY_FIELDS: { tokenProxyMode: undefined, backgroundRequests: undefined },
+	OFF_TOKEN_PROXY_FIELDS: {
+		tokenProxyMode: undefined,
+		backgroundRequests: undefined,
+		tokenProxyRetrieval: undefined,
+	},
 }));
 vi.mock('../../../renderer/services/agentGateway', () => gatewayService);
 
@@ -87,6 +92,7 @@ async function applyPatch(
 beforeEach(() => {
 	gatewayService.setAgentTokenProxyMode.mockReset();
 	gatewayService.setAgentBackgroundRequests.mockReset();
+	gatewayService.setAgentTokenProxyRetrieval.mockReset();
 	vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(undefined as never);
 	// Not part of the shared preload mock in setup.ts, so stub it here rather
 	// than widening the global surface for one branch.
@@ -608,6 +614,136 @@ describe('remoteUpdateSessionConfig - background requests', () => {
 
 		const same = await applyPatch(session(), { gatewayUrl: `${onProxy}/` });
 		expect(same.backgroundRequests).toEqual({ target: QWEN });
+	});
+});
+
+describe('remoteUpdateSessionConfig - retrieval', () => {
+	const onProxy = 'http://127.0.0.1:48123/anthropic';
+
+	beforeEach(() => {
+		vi.mocked(window.maestro.sessions.setMany).mockClear();
+	});
+
+	it('turns it on through the service and carries what it stored', async () => {
+		gatewayService.setAgentTokenProxyRetrieval.mockResolvedValue({ ok: true, retrieval: true });
+		const session = makeSession({ gatewayUrl: onProxy, tokenProxyMode: 'compress-early' });
+
+		const updated = await applyPatch(session, { tokenProxyRetrieval: true });
+
+		expect(gatewayService.setAgentTokenProxyRetrieval).toHaveBeenCalledWith(session.id, true);
+		expect(updated.tokenProxyRetrieval).toBe(true);
+	});
+
+	it('turns it off on null, which removes the field', async () => {
+		gatewayService.setAgentTokenProxyRetrieval.mockResolvedValue({ ok: true, retrieval: false });
+
+		const updated = await applyPatch(
+			makeSession({
+				gatewayUrl: onProxy,
+				tokenProxyMode: 'compress-early',
+				tokenProxyRetrieval: true,
+			}),
+			{ tokenProxyRetrieval: null }
+		);
+
+		expect(gatewayService.setAgentTokenProxyRetrieval).toHaveBeenCalledWith('session-1', null);
+		expect('tokenProxyRetrieval' in updated).toBe(true);
+		expect(updated.tokenProxyRetrieval).toBeUndefined();
+	});
+
+	it('reports the reason the service refused, and writes nothing', async () => {
+		gatewayService.setAgentTokenProxyRetrieval.mockResolvedValue({
+			ok: false,
+			error: 'the proxy does not compress for this agent',
+		});
+
+		const reply = await refusePatch(makeSession(), { tokenProxyRetrieval: true });
+
+		expect(reply).toEqual({
+			success: false,
+			error: 'the proxy does not compress for this agent',
+		});
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it('chooses a compress mode and turns it on in one patch, mode first', async () => {
+		const order: string[] = [];
+		gatewayService.setAgentTokenProxyMode.mockImplementation(async () => {
+			order.push('mode');
+			return { ok: true, mode: 'compress-early', gatewayUrl: onProxy };
+		});
+		gatewayService.setAgentTokenProxyRetrieval.mockImplementation(async () => {
+			order.push('retrieval');
+			return { ok: true, retrieval: true };
+		});
+
+		const updated = await applyPatch(makeSession(), {
+			tokenProxyRetrieval: true,
+			tokenProxyMode: 'compress-early',
+		});
+
+		expect(order).toEqual(['mode', 'retrieval']);
+		expect(updated).toMatchObject({
+			gatewayUrl: onProxy,
+			tokenProxyMode: 'compress-early',
+			tokenProxyRetrieval: true,
+		});
+	});
+
+	it.each([
+		['the proxy mode off', { tokenProxyMode: 'off' }],
+		['a gateway of its own', { gatewayUrl: 'http://127.0.0.1:8787' }],
+	])('refuses turning it on beside %s', async (_what, rest) => {
+		gatewayService.setAgentTokenProxyMode.mockResolvedValue({
+			ok: true,
+			mode: 'off',
+			gatewayUrl: undefined,
+		});
+
+		const reply = await refusePatch(makeSession({ gatewayUrl: onProxy }), {
+			tokenProxyRetrieval: true,
+			...rest,
+		});
+
+		expect(reply.success).toBe(false);
+		expect(reply.error).toContain('compress or compress-early');
+		expect(gatewayService.setAgentTokenProxyRetrieval).not.toHaveBeenCalled();
+	});
+
+	it('drops it when the mode goes off: the write starts from the record before it', async () => {
+		gatewayService.setAgentTokenProxyMode.mockResolvedValue({
+			ok: true,
+			mode: 'off',
+			gatewayUrl: undefined,
+		});
+
+		const updated = await applyPatch(
+			makeSession({
+				gatewayUrl: onProxy,
+				tokenProxyMode: 'compress-early',
+				tokenProxyRetrieval: true,
+			}),
+			{ tokenProxyMode: 'off' }
+		);
+
+		expect('tokenProxyRetrieval' in updated).toBe(true);
+		expect(updated.tokenProxyRetrieval).toBeUndefined();
+	});
+
+	it('drops it when a patch changes the gateway, and keeps it when it does not', async () => {
+		const session = () =>
+			makeSession({
+				gatewayUrl: onProxy,
+				tokenProxyMode: 'compress-early',
+				tokenProxyRetrieval: true,
+			});
+
+		const moved = await applyPatch(session(), { gatewayUrl: 'http://127.0.0.1:8787' });
+		expect(moved.tokenProxyRetrieval).toBeUndefined();
+		cleanup();
+
+		const same = await applyPatch(session(), { gatewayUrl: `${onProxy}/` });
+		expect(same.tokenProxyRetrieval).toBe(true);
 	});
 });
 

@@ -618,6 +618,7 @@ describe('provider-specific model routing after translation', () => {
 		gatewayUrl: 'http://127.0.0.1:48123/anthropic',
 		tokenProxyMode: 'passthrough',
 		backgroundRequests: { target },
+		tokenProxyRetrieval: true,
 	};
 	it('keeps the source target when the destination harness has a recipe', () => {
 		expect(commitTranslationSession(session, 'codex', 'migration', []).runOn).toEqual(target);
@@ -633,6 +634,7 @@ describe('provider-specific model routing after translation', () => {
 		expect(updated.gatewayUrl).toBeUndefined();
 		expect(updated.tokenProxyMode).toBeUndefined();
 		expect(updated.backgroundRequests).toBeUndefined();
+		expect(updated.tokenProxyRetrieval).toBeUndefined();
 		expect(session.gatewayUrl).toBe('http://127.0.0.1:48123/anthropic');
 	});
 });

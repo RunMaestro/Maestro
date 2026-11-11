@@ -289,16 +289,31 @@ export const TOKEN_PROXY_MODES: readonly TokenProxyMode[] = [
 
 /**
  * What an agent's record holds once it is off the Maestro token proxy: no
- * mode, and no background requests target. Every writer that moves an agent's
- * gateway away from the proxy spreads this, so the two cannot drift apart.
+ * mode, no background requests target, and no retrieval. Every writer that
+ * moves an agent's gateway away from the proxy spreads this, so the fields
+ * cannot drift apart.
  *
  * Shared, so the renderer's writers and the pure group-defaults publish
- * (`applyGroupDefaultsToSession`) clear the same two fields.
+ * (`applyGroupDefaultsToSession`) clear the same fields.
  */
 export const OFF_TOKEN_PROXY_FIELDS: Readonly<{
 	tokenProxyMode: undefined;
 	backgroundRequests: undefined;
-}> = Object.freeze({ tokenProxyMode: undefined, backgroundRequests: undefined });
+	tokenProxyRetrieval: undefined;
+}> = Object.freeze({
+	tokenProxyMode: undefined,
+	backgroundRequests: undefined,
+	tokenProxyRetrieval: undefined,
+});
+
+/** Whether a record still holds any field {@link OFF_TOKEN_PROXY_FIELDS} clears. */
+export function holdsTokenProxyFields(
+	record: Readonly<Partial<Record<keyof typeof OFF_TOKEN_PROXY_FIELDS, unknown>>>
+): boolean {
+	return (Object.keys(OFF_TOKEN_PROXY_FIELDS) as Array<keyof typeof OFF_TOKEN_PROXY_FIELDS>).some(
+		(key) => record[key] !== undefined
+	);
+}
 
 /** The part of the mode that is stored on the agent. `off` is the gateway's absence. */
 export type StoredTokenProxyMode = Exclude<TokenProxyMode, 'off'>;
@@ -354,6 +369,42 @@ export const TOKEN_PROXY_MODE_DESCRIPTIONS: Record<TokenProxyMode, string> = {
 /** Whether a mode reads and shortens request bodies. */
 export function isCompressingTokenProxyMode(mode: TokenProxyMode): boolean {
 	return mode === 'compress' || mode === 'compress-early';
+}
+
+/**
+ * Retrieval: the per-agent switch that gives the agent's model the
+ * `retrieve_compressed_original` tool, so it can ask the proxy for the lines a
+ * compressed tool result left out. Stored as `tokenProxyRetrieval: true` on the
+ * agent record; off is the field's absence. It has effect only in a compressing
+ * mode, and it leaves with the proxy ({@link OFF_TOKEN_PROXY_FIELDS}).
+ */
+export const TOKEN_PROXY_RETRIEVAL_FIELD = 'tokenProxyRetrieval';
+
+/** What the switch means in each position, for the Models tab and the CLI. */
+export const TOKEN_PROXY_RETRIEVAL_DESCRIPTIONS: Readonly<Record<'on' | 'off', string>> =
+	Object.freeze({
+		on: 'The model can ask for the original lines of a tool result the proxy shortened, so Compress early may leave lines out. It reaches only originals this machine still holds.',
+		off: 'The model cannot ask for an original, so Compress early only uses reductions that leave nothing out.',
+	});
+
+/** Why turning retrieval on is refused for an agent the proxy does not compress for. */
+export const TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION =
+	'Retrieval works only while the Maestro token proxy compresses this agent: set its proxy mode to compress or compress-early first.';
+
+export type TokenProxyRetrievalEdit =
+	| { ok: true; retrieval: true | undefined }
+	| { ok: false; error: string };
+
+/**
+ * Read a retrieval value from the CLI, the bridge or a click. `true` turns it
+ * on; `false` and `null` remove the field. Anything else is refused by name.
+ */
+export function parseTokenProxyRetrievalEdit(value: unknown): TokenProxyRetrievalEdit {
+	if (value === true) return { ok: true, retrieval: true };
+	if (value === false || value === null || value === undefined) {
+		return { ok: true, retrieval: undefined };
+	}
+	return { ok: false, error: `${TOKEN_PROXY_RETRIEVAL_FIELD} must be true, false or null.` };
 }
 
 /** Narrow a value from the CLI, the bridge or a stored record. Never a cast. */

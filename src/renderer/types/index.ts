@@ -1726,6 +1726,11 @@ export interface Session {
 	// How the Maestro token proxy carries this agent's requests when gatewayUrl
 	// points at it. Absent means passthrough. See shared/local-models/token-proxy.ts.
 	tokenProxyMode?: 'passthrough' | 'compress' | 'compress-early';
+	// Retrieval: true gives this agent's model the retrieve_compressed_original
+	// tool for the lines a compressed tool result left out. Absent means off. Has
+	// effect only in compress or compress-early, and is cleared with the mode. See
+	// OFF_TOKEN_PROXY_FIELDS in shared/local-models/token-proxy.ts.
+	tokenProxyRetrieval?: boolean;
 	// Run on: where this agent's model runs. Absent (or provider) is the
 	// provider's own model; a source target points the same harness at a model on
 	// a Local Models source at launch. See shared/local-models/run-on.ts.

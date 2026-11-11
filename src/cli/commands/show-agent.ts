@@ -218,6 +218,9 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void | Pr
 			// gateway points at it (settable with `update-agent --proxy-mode`).
 			// Null means the default, passthrough.
 			tokenProxyMode: agent.tokenProxyMode ?? null,
+			// Retrieval (settable with `update-agent --proxy-retrieval on|off`).
+			// False is the default: the model has no retrieve tool.
+			tokenProxyRetrieval: agent.tokenProxyRetrieval === true,
 			// Run on (settable with `update-agent --run-on` / `--run-on-context`).
 			// `runOnSpec` is the spelling `--run-on` takes, so a read can be written
 			// back; `runOnLabel` is the target as the desktop names it.

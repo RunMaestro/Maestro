@@ -6,7 +6,8 @@
  * and when an agent's gateway URL means "the Maestro proxy". Also the two
  * things a launch and a mode switch decide: the base URL that carries an
  * agent's id, and an agent's mode (off, passthrough, compress) with the route
- * its provider and credential take.
+ * its provider and credential take. And the retrieval switch: what a write
+ * accepts, and that it leaves with the proxy like the mode does.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -16,8 +17,11 @@ import {
 	classifyTokenProxyPath,
 	defaultTokenProxyUpstreams,
 	gatewayPointsAtTokenProxy,
+	holdsTokenProxyFields,
 	isCompressingTokenProxyMode,
 	isTokenProxyLaunchBinding,
+	OFF_TOKEN_PROXY_FIELDS,
+	parseTokenProxyRetrievalEdit,
 	resolveTokenProxyMode,
 	resolveTokenProxyTarget,
 	TOKEN_PROXY_MODE_DESCRIPTIONS,
@@ -439,5 +443,40 @@ describe('tokenProxyRouteForAgent', () => {
 		expect(copilot.ok).toBe(false);
 		if (!copilot.ok) expect(copilot.error).toContain('Copilot CLI ignores base-URL variables');
 		expect(tokenProxyRouteForAgent('terminal', {}).ok).toBe(false);
+	});
+});
+
+describe('parseTokenProxyRetrievalEdit', () => {
+	it('stores true for on, and removes the field for off', () => {
+		expect(parseTokenProxyRetrievalEdit(true)).toEqual({ ok: true, retrieval: true });
+		for (const off of [false, null, undefined]) {
+			expect(parseTokenProxyRetrievalEdit(off)).toEqual({ ok: true, retrieval: undefined });
+		}
+	});
+
+	it('refuses anything but a boolean or null, by name', () => {
+		for (const value of ['on', 'true', 1, {}]) {
+			const edit = parseTokenProxyRetrievalEdit(value);
+			expect(edit.ok).toBe(false);
+			if (!edit.ok) expect(edit.error).toContain('tokenProxyRetrieval');
+		}
+	});
+});
+
+describe('OFF_TOKEN_PROXY_FIELDS', () => {
+	it('clears the mode, the background requests target and retrieval together', () => {
+		expect(OFF_TOKEN_PROXY_FIELDS).toEqual({
+			tokenProxyMode: undefined,
+			backgroundRequests: undefined,
+			tokenProxyRetrieval: undefined,
+		});
+		expect(Object.keys(OFF_TOKEN_PROXY_FIELDS)).toContain('tokenProxyRetrieval');
+	});
+
+	it('is what holdsTokenProxyFields looks for', () => {
+		expect(holdsTokenProxyFields({})).toBe(false);
+		expect(holdsTokenProxyFields({ ...OFF_TOKEN_PROXY_FIELDS })).toBe(false);
+		expect(holdsTokenProxyFields({ tokenProxyRetrieval: true })).toBe(true);
+		expect(holdsTokenProxyFields({ tokenProxyMode: 'compress' })).toBe(true);
 	});
 });

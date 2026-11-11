@@ -627,6 +627,8 @@ export interface AgentDetailDisplay {
 	effectiveEnv?: Array<{ key: string; value: string; source: string; shadowedBy: string[] }>;
 	gatewayUrl?: string | null;
 	tokenProxyMode?: string | null;
+	/** Whether the model may ask the token proxy for a compressed result's original. */
+	tokenProxyRetrieval?: boolean;
 	/** The Run on target; a source target carries its context size. */
 	runOn?: unknown;
 	runOnLabel?: string | null;
@@ -748,6 +750,8 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	}
 	addConfig('Gateway URL', agent.gatewayUrl ? dim(agent.gatewayUrl) : undefined);
 	addConfig('Token proxy mode', agent.tokenProxyMode ?? undefined);
+	// Shown only when on: off is the default.
+	if (agent.tokenProxyRetrieval) addConfig('Retrieval', 'on');
 	// Shown only for an agent on a source: the provider's own model is the default.
 	if (agent.runOnProblem) {
 		addConfig('Run on', c('red', `unusable target: ${agent.runOnProblem}`));

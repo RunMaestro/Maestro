@@ -1632,6 +1632,7 @@ export function EditAgentModal({
 									gatewayUrl={gatewayUrl}
 									storedMode={(liveSession ?? session).tokenProxyMode}
 									storedBackgroundRequests={(liveSession ?? session).backgroundRequests}
+									storedRetrieval={(liveSession ?? session).tokenProxyRetrieval}
 									sshRemoteName={sshRemoteName}
 									pendingReason={
 										gatewaySkippedReason ??

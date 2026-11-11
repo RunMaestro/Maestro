@@ -570,6 +570,23 @@ describe('applyGroupDefaultsToSession', () => {
 		});
 	});
 
+	it('takes retrieval off an agent whose gateway is replaced, and can undo it', () => {
+		const diff = diffGroupDefaults(
+			{ toolType: 'claude-code' },
+			{ toolType: 'claude-code', gatewayUrl: 'http://127.0.0.1:8787' }
+		);
+		const target = agent({
+			gatewayUrl: 'http://127.0.0.1:48123/anthropic',
+			tokenProxyMode: 'compress-early',
+			tokenProxyRetrieval: true,
+		});
+
+		const { next, undo } = applyGroupDefaultsToSession(target, diff);
+
+		expect(next.tokenProxyRetrieval).toBeUndefined();
+		expect(undo).toMatchObject({ tokenProxyRetrieval: true });
+	});
+
 	it('hands the token proxy fields back to the caller and does not write them', () => {
 		const diff = diffGroupDefaults(
 			{ toolType: 'claude-code' },
