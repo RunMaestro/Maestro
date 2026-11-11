@@ -6,6 +6,8 @@ import {
 	getAgentCapabilities,
 	hasCapability,
 } from '../../../main/agents';
+import { GROK_CAPABILITY_EVIDENCE } from '../../../shared/maestro-lib/providers/capabilities';
+import { isBetaAgent } from '../../../shared/agentMetadata';
 
 describe('agent-capabilities', () => {
 	describe('AgentCapabilities interface', () => {
@@ -314,6 +316,8 @@ describe('agent-capabilities', () => {
 			expect(hasCapability('copilot-cli', 'supportsGroupChatModeration')).toBe(true);
 			expect(hasCapability('factory-droid', 'supportsGroupChatModeration')).toBe(true);
 			expect(hasCapability('terminal', 'supportsGroupChatModeration')).toBe(false);
+			// Grok moderation is refused by the router; the flag stays honest.
+			expect(hasCapability('grok', 'supportsGroupChatModeration')).toBe(false);
 
 			// usesJsonLineOutput
 			expect(hasCapability('claude-code', 'usesJsonLineOutput')).toBe(false);
@@ -321,11 +325,14 @@ describe('agent-capabilities', () => {
 			expect(hasCapability('opencode', 'usesJsonLineOutput')).toBe(true);
 			expect(hasCapability('factory-droid', 'usesJsonLineOutput')).toBe(true);
 			expect(hasCapability('terminal', 'usesJsonLineOutput')).toBe(false);
+			expect(hasCapability('grok', 'usesJsonLineOutput')).toBe(true);
 
 			// usesCombinedContextWindow
 			expect(hasCapability('codex', 'usesCombinedContextWindow')).toBe(true);
 			expect(hasCapability('claude-code', 'usesCombinedContextWindow')).toBe(false);
 			expect(hasCapability('opencode', 'usesCombinedContextWindow')).toBe(false);
+			// signals.json reports one contextTokensUsed; combined gauge math is unverified.
+			expect(hasCapability('grok', 'usesCombinedContextWindow')).toBe(false);
 		});
 	});
 
@@ -375,6 +382,89 @@ describe('agent-capabilities', () => {
 					expect(agentKeys).toContain(key);
 				}
 				// Agent may have optional keys (e.g., imageResumeMode) not in DEFAULT_CAPABILITIES
+			}
+		});
+	});
+
+	// The finalized Grok registry. Every flag is read from the production
+	// table; nothing here forces a value, so a promotion without evidence fails.
+	describe('Grok finalized registry', () => {
+		const grok = AGENT_CAPABILITIES.grok;
+		// supportsStandardPermissionMode is optional (absent from DEFAULT_CAPABILITIES)
+		// but is a claim like any other, so it needs a basis too.
+		const capabilityKeys = [...Object.keys(DEFAULT_CAPABILITIES), 'supportsStandardPermissionMode'];
+
+		it('records a basis for every retained flag and withholds the rest', () => {
+			const retained = Object.keys(GROK_CAPABILITY_EVIDENCE.retained);
+			const withheld = Object.keys(GROK_CAPABILITY_EVIDENCE.withheld);
+			expect(retained.length).toBeGreaterThan(0);
+			expect(withheld.length).toBeGreaterThan(0);
+			for (const flag of [...retained, ...withheld]) {
+				expect(capabilityKeys, flag).toContain(flag);
+			}
+			expect(retained.filter((flag) => withheld.includes(flag))).toEqual([]);
+			for (const flag of retained) {
+				expect(grok[flag as keyof AgentCapabilities], `${flag} is retained`).toBe(true);
+				expect((GROK_CAPABILITY_EVIDENCE.retained as Record<string, string>)[flag].trim()).not.toBe(
+					''
+				);
+			}
+			for (const flag of withheld) {
+				expect(grok[flag as keyof AgentCapabilities], `${flag} is withheld`).toBe(false);
+				expect(hasCapability('grok', flag as keyof AgentCapabilities)).toBe(false);
+			}
+			expect(withheld).toEqual(
+				expect.arrayContaining([
+					'supportsImageInput',
+					'supportsImageInputOnResume',
+					'supportsContextMerge',
+				])
+			);
+		});
+
+		it('qualifies no binary, so the candidate stays beta and unqualified', () => {
+			expect(GROK_CAPABILITY_EVIDENCE.qualifiedVersions).toEqual([]);
+			expect(GROK_CAPABILITY_EVIDENCE.candidateVersion).toBe('1.0.70');
+			expect(GROK_CAPABILITY_EVIDENCE.qualifiedVersions).not.toContain(
+				GROK_CAPABILITY_EVIDENCE.candidateVersion
+			);
+			// Readiness waits for qualification; an unqualified provider is never promoted.
+			expect(isBetaAgent('grok')).toBe(true);
+			expect(Object.isFrozen(GROK_CAPABILITY_EVIDENCE.qualifiedVersions)).toBe(true);
+		});
+
+		it('advertises exactly the finalized set and nothing more', () => {
+			const advertised = capabilityKeys
+				.filter((flag) => grok[flag as keyof AgentCapabilities] === true)
+				.sort();
+			// A new true flag must add a recorded basis and update this list on purpose.
+			expect(advertised).toEqual(
+				[
+					'requiresPromptToStart',
+					'supportsBatchMode',
+					'supportsContextExport',
+					'supportsCostTracking',
+					'supportsJsonOutput',
+					'supportsModelSelection',
+					'supportsReadOnlyMode',
+					'supportsResultMessages',
+					'supportsResume',
+					'supportsSessionId',
+					'supportsSessionStorage',
+					'supportsStandardPermissionMode',
+					'supportsStreaming',
+					'supportsThinkingDisplay',
+					'supportsUsageStats',
+					'supportsWizard',
+					'usesJsonLineOutput',
+				].sort()
+			);
+			// The lookups every consumer uses serve this same object.
+			expect(getAgentCapabilities('grok')).toBe(grok);
+			for (const flag of capabilityKeys) {
+				expect(hasCapability('grok', flag as keyof AgentCapabilities), flag).toBe(
+					grok[flag as keyof AgentCapabilities] === true
+				);
 			}
 		});
 	});

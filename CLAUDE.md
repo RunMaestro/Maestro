@@ -162,6 +162,10 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Starting, streaming, stopping and resuming an agent turn:** `startTurn()` in `src/shared/maestro-lib/run/start-turn.ts`, `runTurn()` / `runToCompletion()` in `src/shared/maestro-lib/run/run-to-completion.ts`, `planSessionTurn()` in `src/shared/maestro-lib/run/session.ts`
 - **Stopping a process (interrupt, terminate, kill the tree):** `stopProcess(target, options)` in `src/shared/maestro-lib/control/termination.ts` (never a bare `kill('SIGTERM')` + `setTimeout`)
 - **Whether a Claude turn runs the maestro-p TUI or `claude --print`:** `resolveClaudeSpawnModeCore()`, `applyClaudeSpawnDecision()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
+- **Which Grok route a turn runs on (ACP or native headless):** `selectGrokRoute()`, `beginGrokAcpNegotiation()`, `completeGrokAcpNegotiation()`, `grokAcpProcessSpec()`, `grokAcpRouteOptions()`, `isGrokRouteDecisionCurrent()` in `src/shared/maestro-lib/grok/route.ts`
+- **The host seams of the Grok ACP route (digest, effect authority):** `sha256Hex()`, `grokInstallationId()`, `GrokEffectAuthority`, `grokEffectGranted()` in `src/shared/maestro-lib/grok/host-seams.ts`
+- **Running a provider probe (bounded, cancellable, Grok refused):** `runProviderProbe()`, `ProviderProbeRefusedError` in `src/main/agents/grok-probe.ts`
+- **Logging a spawn or SSH failure without leaking its message:** `redactedErrorFields(error)` in `src/shared/processErrors.ts`
 - **Timing out a supervised agent process:** `createIdleWatchdog()` in `src/main/utils/idle-watchdog.ts`, events in `src/main/utils/agent-liveness.ts` (the budget is silence, not wall clock)
 - **A one-shot answer from a cheap model (no tab, no tools):** `window.maestro.context.groomContext()` with `cheapTurn` / `readOnly` / `disableTools` / `timeoutMs`, over `groomContext()` in `src/main/utils/context-groomer.ts`
 - **Whether a working directory can be spawned into:** `unusableCwdReason(cwd)`, `unusableDirectoryReason(dir, label)` in `src/main/process-manager/utils/spawnCwd.ts`

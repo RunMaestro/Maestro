@@ -6,11 +6,15 @@
  * the real one where the question is what happens when SQLite is not there.
  */
 import * as fs from 'fs';
-import * as os from 'os';
+import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let userData = '';
+
+vi.mock('fs/promises', async (importOriginal) => ({
+	...(await importOriginal<typeof import('fs/promises')>()),
+}));
 
 vi.mock('electron', () => ({ app: { getPath: vi.fn(() => userData) } }));
 vi.mock('../../../../main/utils/logger', () => ({
@@ -35,6 +39,7 @@ import {
 	type RecordedTurn,
 } from '../../../../shared/maestro-lib/turns/record-turn';
 import type { StatsRecorder } from '../../../../shared/maestro-lib/turns/stats';
+import type { TurnExit } from '../../../../shared/maestro-lib/run/start-turn';
 import type { QueryEvent } from '../../../../shared/stats-types';
 
 const confText = (doc: unknown) => JSON.stringify(doc, null, '\t');
@@ -53,7 +58,7 @@ const USAGE = {
 	contextWindow: 200_000,
 };
 
-const CLEAN_EXIT = {
+const CLEAN_EXIT: TurnExit = {
 	exitCode: 0,
 	signal: null,
 	interrupted: false,
@@ -137,10 +142,15 @@ describe('turn records', () => {
 	}
 
 	beforeEach(() => {
-		userData = fs.mkdtempSync(path.join(os.tmpdir(), 'record-turn-test-'));
+		const scratch = path.join(process.cwd(), 'tmp');
+		fs.mkdirSync(scratch, { recursive: true });
+		userData = fs.mkdtempSync(path.join(scratch, 'record-turn-test-'));
 		paths = resolveMaestroPaths({ env: { MAESTRO_USER_DATA: userData } });
 		statsEvents = [];
 		statsRecorder = {
+			startAutoRun: vi.fn<StatsRecorder['startAutoRun']>(),
+			recordAutoTask: vi.fn<StatsRecorder['recordAutoTask']>(),
+			endAutoRun: vi.fn<StatsRecorder['endAutoRun']>(),
 			recordQuery: async (event) => {
 				statsEvents.push(event);
 				return { ok: true, id: 'stat-1' };
@@ -149,6 +159,7 @@ describe('turn records', () => {
 		seed();
 	});
 	afterEach(() => {
+		vi.restoreAllMocks();
 		fs.rmSync(userData, { recursive: true, force: true });
 	});
 
@@ -179,6 +190,353 @@ describe('turn records', () => {
 			})
 		);
 		expect(statsEvents[0]?.agentType).toBe('codex');
+	});
+
+	it.each([false, true])(
+		'detaches original Grok scope and binding before recording (remote/worktree=%s)',
+		async (remote) => {
+			const scope = { projectPath: '/original/project', isRemote: remote, isWorktree: remote };
+			const binding = {
+				version: 1 as const,
+				state: 'bound' as const,
+				provider: 'grok' as const,
+				nativeSessionId: turn().completed.sessionId!,
+				accountRef: 'grok-account:original',
+				host: { kind: remote ? ('ssh' as const) : ('local' as const), identity: 'original-host' },
+				cwd: scope.projectPath,
+			};
+			const originalBinding = structuredClone(binding);
+			seed({
+				toolType: 'codex',
+				cwd: '/changed/project',
+				parentSessionId: remote ? '' : 'parent',
+				sessionSshRemoteConfig: { enabled: !remote, remoteId: 'changed-host' },
+			});
+			const { recorder: records, repository } = await recorder();
+			const append = repository.appendTranscript.bind(repository);
+			vi.spyOn(repository, 'appendTranscript').mockImplementationOnce(async (...args) => {
+				scope.projectPath = '/mutated/project';
+				scope.isRemote = !remote;
+				scope.isWorktree = !remote;
+				binding.host.identity = 'mutated-host';
+				binding.nativeSessionId = 'mutated-native';
+				return append(...args);
+			});
+			const result = await records.recordTurn(
+				turn({
+					scope,
+					nativeSessionBinding: binding,
+					assembled: {
+						entry: { text: 'hi' },
+						settings: { provider: 'grok', model: 'original-model' },
+					},
+				})
+			);
+			expect(result.history).toMatchObject({ ok: true });
+			const [entry] = await new HistoryManager().getEntries('a1');
+			expect(entry).toMatchObject({
+				projectPath: '/original/project',
+				nativeSessionBinding: originalBinding,
+			});
+			expect(statsEvents[0]).toMatchObject({
+				agentType: 'grok',
+				projectPath: '/original/project',
+				isRemote: remote,
+				isWorktree: remote,
+			});
+			expect(transcriptOf(repository.getTab('a1', 't1')!).at(-1)).toMatchObject({
+				turnModel: 'original-model',
+			});
+		}
+	);
+
+	it('rejects an old transcript queued behind a successor without changing prior History or usage', async () => {
+		seed(
+			{ toolType: 'grok' },
+			{
+				agentSessionId: turn().completed.sessionId,
+				runtimeTurnId: 'original',
+				usageStats: USAGE,
+			}
+		);
+		const { recorder: records, repository } = await recorder();
+		const original = turn({ assembled: { entry: { text: 'hi' }, settings: { provider: 'grok' } } });
+		await records.recordTurn(original);
+		const historyFile = path.join(paths.historyDir, 'a1.jsonl');
+		const historyBefore = fs.readFileSync(historyFile, 'utf-8');
+		const statsBefore = structuredClone(statsEvents);
+		const logsBefore = structuredClone(repository.getTab('a1', 't1')!.logs);
+		const incarnation = repository.captureTabIncarnation('a1', 't1');
+		const writeGuard = () =>
+			incarnation() && repository.getTab('a1', 't1')?.runtimeTurnId === 'original';
+		const successorEntry = buildUserTranscriptEntry({ text: 'successor' }, 2_000, context());
+		// Both calls enter with the original owner; the actual queued mutation sees the successor.
+		const successor = repository.beginTurn('a1', 't1', {
+			turnId: 'successor',
+			provider: 'grok',
+			consumedMergedContext: false,
+			userEntry: successorEntry,
+		});
+		expect(writeGuard()).toBe(true);
+		const recording = records.recordTurn({ ...original, writeGuard });
+		expect((await successor).ok).toBe(true);
+		const result = await recording;
+		expect(result.transcript).toMatchObject({ ok: false, error: { code: 'rejected' } });
+		expect(result.history).toMatchObject({ ok: false, reason: 'not-recorded' });
+		expect(result.stats).toMatchObject({ ok: false });
+		expect(fs.readFileSync(historyFile, 'utf-8')).toBe(historyBefore);
+		expect(statsEvents).toEqual(statsBefore);
+		const stored = JSON.parse(fs.readFileSync(paths.sessionsFile, 'utf-8')).sessions[0].aiTabs[0];
+		expect(stored).toMatchObject({
+			runtimeTurnId: 'successor',
+			agentSessionId: original.completed.sessionId,
+			usageStats: USAGE,
+		});
+		expect(stored.logs).toEqual([...logsBefore!, successorEntry]);
+	});
+
+	it('holds a successor outside the real History append and keeps the original scope through stats', async () => {
+		seed(
+			{ toolType: 'grok' },
+			{
+				agentSessionId: turn().completed.sessionId,
+				runtimeTurnId: 'original',
+			}
+		);
+		const { recorder: records, repository } = await recorder();
+		const incarnation = repository.captureTabIncarnation('a1', 't1');
+		const writeGuard = () =>
+			incarnation() && repository.getTab('a1', 't1')?.runtimeTurnId === 'original';
+		expect(
+			(
+				await repository.updateAgent('a1', {
+					provider: 'codex',
+					cwd: '/changed/project',
+					env: { GROK_HOME: '/changed/account' },
+				})
+			).ok
+		).toBe(true);
+		const recordQuery = statsRecorder.recordQuery;
+		statsRecorder.recordQuery = async (event) => {
+			// The ownership reservation must still cover the actual usage mutation.
+			expect(writeGuard()).toBe(true);
+			return recordQuery(event);
+		};
+		const blocked = Promise.withResolvers<void>();
+		const writing = Promise.withResolvers<void>();
+		const append = fsp.appendFile;
+		vi.spyOn(fsp, 'appendFile').mockImplementationOnce(async (...args) => {
+			writing.resolve();
+			await blocked.promise;
+			return append(...args);
+		});
+		const recording = records.recordTurn(
+			turn({
+				writeGuard,
+				scope: { projectPath: '/original/project', isRemote: true, isWorktree: true },
+				assembled: { entry: { text: 'hi' }, settings: { provider: 'grok' } },
+			})
+		);
+		await writing.promise;
+		let successorCommitted = false;
+		const successor = repository
+			.beginTurn('a1', 't1', {
+				turnId: 'successor',
+				provider: 'codex',
+				consumedMergedContext: false,
+				userEntry: buildUserTranscriptEntry({ text: 'successor' }, 2_000, context()),
+			})
+			.then((result) => {
+				successorCommitted = true;
+				return result;
+			});
+		try {
+			await Promise.resolve();
+			expect(successorCommitted).toBe(false);
+			expect(repository.getTab('a1', 't1')?.runtimeTurnId).toBe('original');
+			expect(statsEvents).toEqual([]);
+		} finally {
+			blocked.resolve();
+		}
+		expect((await recording).history.ok).toBe(true);
+		expect((await successor).ok).toBe(true);
+		const [entry] = await new HistoryManager().getEntries('a1');
+		expect(entry).toMatchObject({
+			agentSessionId: turn().completed.sessionId,
+			projectPath: '/original/project',
+			usageStats: USAGE,
+		});
+		expect(statsEvents).toEqual([
+			expect.objectContaining({
+				agentType: 'grok',
+				projectPath: '/original/project',
+				isRemote: true,
+				isWorktree: true,
+			}),
+		]);
+		const stored = JSON.parse(fs.readFileSync(paths.sessionsFile, 'utf-8')).sessions[0].aiTabs[0];
+		expect(stored.runtimeTurnId).toBe('successor');
+		expect(stored.providerSessions.grok.agentSessionId).toBe(turn().completed.sessionId);
+		expect(stored.logs.map((entry: { text: string }) => entry.text)).toEqual([
+			'hi',
+			turn().completed.answerText,
+			'successor',
+		]);
+	});
+
+	it('records unobserved Grok provenance without borrowing the current account or host', async () => {
+		seed({
+			toolType: 'grok',
+			customEnvVars: { GROK_HOME: '/new/account' },
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'new-host' },
+		});
+		const { recorder: records } = await recorder();
+		await records.recordTurn(
+			turn({
+				assembled: { entry: { text: 'hi' }, settings: { provider: 'grok' } },
+			})
+		);
+		const [entry] = await new HistoryManager().getEntries('a1');
+		expect(entry.nativeSessionBinding).toEqual({
+			version: 1,
+			state: 'unknown',
+			reason: 'unobserved',
+		});
+	});
+
+	it.each([
+		['completed', 'different-native', 'Native session identity mismatch.'],
+		['completed', undefined, 'Native session identity mismatch.'],
+		['crashed', undefined, 'The turn crashed.'],
+		['interrupted', 'original-native', 'The turn interrupted.'],
+	] as const)(
+		'retains Grok History and resume scope after %s with terminal ID %s',
+		async (outcome, sessionId, message) => {
+			const binding = {
+				version: 1 as const,
+				state: 'bound' as const,
+				provider: 'grok' as const,
+				nativeSessionId: 'original-native',
+				accountRef: 'grok-account:original',
+				host: { kind: 'ssh' as const, identity: 'original-endpoint' },
+				cwd: '/original/project',
+			};
+			seed(
+				{ toolType: 'grok' },
+				{
+					agentSessionId: binding.nativeSessionId,
+					nativeSessionBinding: binding,
+					usageStats: USAGE,
+				}
+			);
+			const { recorder: records, repository } = await recorder();
+			const original = turn({
+				assembled: { entry: { text: 'original request' }, settings: { provider: 'grok' } },
+				completed: { ...turn().completed, sessionId: binding.nativeSessionId },
+				nativeSessionBinding: binding,
+				scope: { projectPath: binding.cwd, isRemote: true, isWorktree: false },
+			});
+			expect((await records.recordTurn(original)).history.ok).toBe(true);
+			const historyFile = path.join(paths.historyDir, 'a1.jsonl');
+			const historyBefore = fs.readFileSync(historyFile, 'utf-8');
+			const logsBefore = structuredClone(repository.getTab('a1', 't1')!.logs);
+			const statsBefore = structuredClone(statsEvents);
+			const result = await records.recordTurn({
+				...original,
+				assembled: { entry: { text: 'resume request' }, settings: { provider: 'grok' } },
+				completed: {
+					...original.completed,
+					outcome,
+					sessionId,
+					answerText: 'Partial resume output',
+					exit: {
+						...CLEAN_EXIT,
+						interrupted: outcome === 'interrupted',
+						exitCode: outcome === 'crashed' ? 1 : 0,
+					},
+				},
+			});
+			expect(result.history).toEqual({ ok: false, reason: 'not-recorded', message });
+			expect(result.transcript.ok).toBe(true);
+			expect(fs.readFileSync(historyFile, 'utf-8')).toBe(historyBefore);
+			expect(statsEvents.slice(0, statsBefore.length)).toEqual(statsBefore);
+			// Partial output/spend is retained, but cannot rewrite the resumable identity or prior usage.
+			expect(statsEvents).toHaveLength(statsBefore.length + 1);
+			const { repository: reloaded } = await recorder();
+			const tab = reloaded.getTab('a1', 't1')!;
+			expect(tab).toMatchObject({
+				agentSessionId: binding.nativeSessionId,
+				nativeSessionBinding: binding,
+				usageStats: USAGE,
+			});
+			expect(tab.logs?.slice(0, logsBefore!.length)).toEqual(logsBefore);
+			expect(transcriptOf(tab).some((entry) => entry.text === 'Partial resume output')).toBe(true);
+			const [history] = await new HistoryManager().getEntries('a1');
+			expect(history).toMatchObject({ nativeSessionBinding: binding, usageStats: USAGE });
+		}
+	);
+
+	it('keeps colliding Grok native IDs scoped to each tab and account through History reload', async () => {
+		const tabs = ['t1', 't2'].map((id) => ({
+			id,
+			name: id,
+			logs: [],
+			agentSessionId: 'colliding-native',
+			nativeSessionBinding: {
+				version: 1 as const,
+				state: 'bound' as const,
+				provider: 'grok' as const,
+				nativeSessionId: 'colliding-native',
+				accountRef: `grok-account:${id}`,
+				host: { kind: 'ssh' as const, identity: `endpoint-${id}` },
+				cwd: `/remote/${id}`,
+			},
+		}));
+		seed({ toolType: 'grok', aiTabs: tabs, activeTabId: 't2' });
+		const { recorder: records } = await recorder();
+		const results = await Promise.all(
+			tabs.map((tab) =>
+				records.recordTurn(
+					turn({
+						tabId: tab.id,
+						assembled: { entry: { text: `request-${tab.id}` }, settings: { provider: 'grok' } },
+						completed: {
+							...turn().completed,
+							sessionId: tab.agentSessionId,
+							answerText: `answer-${tab.id}`,
+						},
+						nativeSessionBinding: tab.nativeSessionBinding,
+						scope: { projectPath: tab.nativeSessionBinding.cwd, isRemote: true, isWorktree: false },
+					})
+				)
+			)
+		);
+		expect(results.every((result) => result.history.ok && result.transcript.ok)).toBe(true);
+		const histories = await new HistoryManager().getEntries('a1');
+		expect(histories).toHaveLength(2);
+		const { repository: reloaded } = await recorder();
+		for (const tab of tabs) {
+			expect(histories.find((entry) => entry.tabId === tab.id)).toMatchObject({
+				agentSessionId: 'colliding-native',
+				nativeSessionBinding: tab.nativeSessionBinding,
+				projectPath: tab.nativeSessionBinding.cwd,
+				fullResponse: `answer-${tab.id}`,
+			});
+			const stored = reloaded.getTab('a1', tab.id)!;
+			expect(stored.nativeSessionBinding).toEqual(tab.nativeSessionBinding);
+			expect(stored.agentSessionId).toBe('colliding-native');
+			expect(transcriptOf(stored).map((entry) => entry.text)).toEqual([
+				`request-${tab.id}`,
+				`answer-${tab.id}`,
+			]);
+			expect(statsEvents.filter((entry) => entry.tabId === tab.id)).toEqual([
+				expect.objectContaining({
+					agentType: 'grok',
+					projectPath: tab.nativeSessionBinding.cwd,
+					isRemote: true,
+				}),
+			]);
+		}
 	});
 
 	it('records a USER history entry the desktop reads, built from the answer', async () => {
@@ -314,14 +672,14 @@ describe('turn records', () => {
 		const ctx = context();
 
 		it('words an unclassified crash from the exit facts', () => {
-			const crash = (exit: Partial<typeof CLEAN_EXIT> & { spawnError?: Error }) =>
+			const crash = (exit: Partial<TurnExit>) =>
 				buildTurnTranscript(
 					turn({
 						completed: {
 							...turn().completed,
 							outcome: 'crashed',
 							answerText: undefined,
-							exit: { ...CLEAN_EXIT, ...exit } as never,
+							exit: { ...CLEAN_EXIT, ...exit },
 						},
 					}),
 					ctx
@@ -329,7 +687,7 @@ describe('turn records', () => {
 			expect(crash({ exitCode: 2, stderrText: 'boom\n' })).toBe(
 				'The agent exited with code 2.\nboom'
 			);
-			expect(crash({ exitCode: null, signal: 'SIGKILL' as never })).toBe(
+			expect(crash({ exitCode: null, signal: 'SIGKILL' })).toBe(
 				'The agent was stopped by SIGKILL.'
 			);
 			expect(crash({ spawnError: new Error('ENOENT') })).toBe(

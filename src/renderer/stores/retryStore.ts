@@ -53,6 +53,7 @@ import { getContextCompactCommand } from '../../shared/contextCompaction';
 import {
 	canCompactTabContext,
 	compactTabContext,
+	getTabContextCompactionBlocker,
 	recordContextCompaction,
 	settleContextCompaction,
 	type ContextCompactionRef,
@@ -1066,6 +1067,18 @@ function scheduleContextCompaction(sessionId: string, tabId: string, error: Agen
 
 	const snapshot = snapshots.get(key);
 	if (!snapshot) return false;
+	// A provider whose recovery is an unqualified required feature (Grok) is
+	// declined by name: no entry, no pill, no hidden turn, no resend. The original
+	// error surfaces exactly as before, and nothing reads the decline as success.
+	const blocker = getTabContextCompactionBlocker(sessionId, tabId);
+	if (blocker) {
+		logger.warn('[retry] Context limit hit; compaction is a required-feature blocker', undefined, {
+			key,
+			feature: blocker.feature,
+			parityRows: blocker.parityRows,
+		});
+		return false;
+	}
 	if (!canCompactTabContext(sessionId, tabId)) return false;
 
 	// The turn that failed WAS a compaction the user asked for.

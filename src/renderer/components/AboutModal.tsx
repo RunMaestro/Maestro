@@ -17,7 +17,7 @@ import type { Theme, AutoRunStats, MaestroUsageStats, LeaderboardRegistration } 
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { AchievementCard } from './AchievementCard';
 import { formatTokensCompact } from '../utils/formatters';
-import { formatDurationHuman } from '../../shared/formatters';
+import { formatCost, formatDurationHuman } from '../../shared/formatters';
 import { Modal } from './ui/Modal';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
@@ -48,6 +48,12 @@ export function AboutModal({
 }: AboutModalProps) {
 	const { globalStats, loading, isComplete: isStatsComplete } = useGlobalAgentStats();
 	const badgeEscapeHandlerRef = useRef<(() => boolean) | null>(null);
+	// Cost coverage comes from main (`GlobalAgentStats.costCoverage`); absent
+	// means no counted provider reports one and `hasCostData` alone decides.
+	const costCoverage = globalStats?.costCoverage;
+	const costPartial =
+		!!globalStats?.hasCostData && costCoverage !== undefined && costCoverage !== 'complete';
+	const costUnknown = !!globalStats && !globalStats.hasCostData && costCoverage === 'unknown';
 
 	// Use ref to avoid re-registering layer when onClose changes
 	const onCloseRef = useRef(onClose);
@@ -238,8 +244,11 @@ export function AboutModal({
 									</>
 								)}
 
-								{/* Active Time & Total Cost - show cost only if we have cost data */}
-								{(handsOnTimeMs > 0 || globalStats.hasCostData) && (
+								{/* Active Time & Total Cost. A known amount shows as a total
+								    only when its coverage is complete (or not reported, the
+								    legacy reading); a partial one is labeled a floor, and
+								    sessions with no reported cost read "Unknown", never $0.00. */}
+								{(handsOnTimeMs > 0 || globalStats.hasCostData || costUnknown) && (
 									<div
 										className="flex justify-between col-span-2 pt-2 border-t"
 										style={{ borderColor: theme.colors.border }}
@@ -249,19 +258,39 @@ export function AboutModal({
 												Hands-on Time: {formatDuration(handsOnTimeMs)}
 											</span>
 										)}
-										{!handsOnTimeMs && globalStats.hasCostData && (
+										{!handsOnTimeMs && (globalStats.hasCostData || costUnknown) && (
 											<span style={{ color: theme.colors.textDim }}>Total Cost</span>
 										)}
 										{globalStats.hasCostData && (
 											<span
+												data-testid="about-total-cost"
+												data-cost-coverage={costPartial ? 'partial' : 'complete'}
 												className={`font-mono font-bold ${!isStatsComplete ? 'animate-pulse' : ''}`}
 												style={{ color: theme.colors.success }}
+												title={
+													costPartial
+														? 'At least this amount: some sessions reported a partial or no cost'
+														: undefined
+												}
 											>
-												$
-												{(globalStats.totalCostUsd ?? 0).toLocaleString('en-US', {
-													minimumFractionDigits: 2,
-													maximumFractionDigits: 2,
-												})}
+												{formatCost(globalStats.totalCostUsd ?? 0)}
+												{costPartial && (
+													<span className="font-normal" style={{ color: theme.colors.textDim }}>
+														{' '}
+														(partial)
+													</span>
+												)}
+											</span>
+										)}
+										{costUnknown && (
+											<span
+												data-testid="about-total-cost"
+												data-cost-coverage="unknown"
+												className="font-mono"
+												style={{ color: theme.colors.textDim }}
+												title="Sessions were counted but none reported a cost"
+											>
+												Unknown
 											</span>
 										)}
 									</div>

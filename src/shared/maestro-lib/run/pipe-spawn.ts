@@ -30,7 +30,7 @@ import type { QuerySource } from '../../querySource';
 import { logger } from '../host';
 import { buildChildProcessEnv } from '../launch/env';
 import { buildImagePromptPrefix } from '../launch/image-refs';
-import { buildPromptArgv } from '../launch/prompt-delivery';
+import { buildPromptArgv, type PromptDelivery } from '../launch/prompt-delivery';
 import { buildStreamJsonMessage } from '../launch/stream-json-message';
 import {
 	quoteCommandForCmdShell,
@@ -60,9 +60,13 @@ export interface PipeSpawnConfig {
 	toolType: string;
 	cwd: string;
 	command: string;
-	/** Arguments before the prompt: the prompt is added here, where the provider wants it. */
+	/** Arguments before legacy delivery, or complete launch-plan args for an explicit file plan. */
 	args: string[];
 	prompt?: string;
+	/** Final local file plan. Its args are already in `args`; its artifact is private sink input. */
+	promptDelivery?: Extract<PromptDelivery, { via: 'file' }>;
+	/** Private remote cleanup metadata from SSH preparation; never a local materialization input. */
+	promptArtifactPath?: string;
 	/** Image data URLs. Needs `saveImageToTempFile` unless the provider takes them over stdin. */
 	images?: string[];
 	imageArgs?: (imagePath: string) => string[];
@@ -154,6 +158,34 @@ export function planPipeSpawn(
 
 	const hasImages = images && images.length > 0;
 	const capabilities = getAgentCapabilities(toolType);
+	const fileDelivery = config.promptDelivery;
+	const hasRemoteArtifact = config.promptArtifactPath !== undefined;
+	const hasFileDelivery = !!fileDelivery || hasRemoteArtifact;
+	if (hasRemoteArtifact && (fileDelivery || !config.sshStdinScript)) {
+		throw new Error('Prompt-file delivery does not match its host plan.');
+	}
+	if (fileDelivery) {
+		if (fileDelivery.artifact.owner !== 'local' || config.sshStdinScript) {
+			throw new Error('Remote prompt files must be prepared by the selected SSH transport.');
+		}
+		// The launch planner has already appended the file source. A missing or
+		// changed tail cannot fall through to another source or spawn without it.
+		if (
+			fileDelivery.args.length === 0 ||
+			fileDelivery.args.length > args.length ||
+			!fileDelivery.args.every(
+				(arg, index) => args[args.length - fileDelivery.args.length + index] === arg
+			)
+		) {
+			throw new Error('Prompt-file arguments must match the final launch plan.');
+		}
+	} else if (
+		!hasRemoteArtifact &&
+		getAgentDefinition(toolType)?.promptFile &&
+		(prompt !== undefined || hasImages)
+	) {
+		throw new Error('Explicit prompt-file delivery must be planned before pipe spawning.');
+	}
 
 	// Check if prompt will be sent via stdin instead of command line
 	// This is critical for SSH remote execution to avoid shell escaping issues
@@ -176,12 +208,16 @@ export function planPipeSpawn(
 	let finalArgs: string[];
 	let tempFiles: string[] = [];
 	// effectivePrompt may be modified (e.g., image path prefix prepended for resume mode)
-	let effectivePrompt = prompt;
+	let effectivePrompt = hasFileDelivery ? undefined : prompt;
 	// If the caller pre-embedded the prompt in args (e.g., SSH tab naming wraps it
 	// inside bash -c), skip the appending paths below and treat it as already-added.
-	let promptAddedToArgs = !!config.promptAlreadyInArgs;
+	let promptAddedToArgs = hasFileDelivery || !!config.promptAlreadyInArgs;
 
-	if (hasImages && prompt && capabilities.supportsStreamJsonInput) {
+	if (hasFileDelivery) {
+		// No legacy image writer, prompt builder or stdin assembly may run for
+		// this turn. startTurn owns local files; the SSH script owns remote files.
+		finalArgs = [...args];
+	} else if (hasImages && prompt && capabilities.supportsStreamJsonInput) {
 		// For agents that support stream-json input (like Claude Code)
 		// Always add --input-format stream-json when sending images via stdin.
 		// This flag is required for Claude Code to parse the JSON+base64 message
@@ -264,6 +300,7 @@ export function planPipeSpawn(
 	// Some CLIs need an explicit query source to avoid opening their interactive UI.
 	// SSH scripts own their remote arguments and must not receive local stdin flags.
 	if (
+		!hasFileDelivery &&
 		sendPromptViaStdinRaw &&
 		effectivePrompt &&
 		!config.sshStdinScript &&
@@ -294,6 +331,7 @@ export function planPipeSpawn(
 	// out of the Windows command line without assuming stdin support.
 	const promptFileArgs = getAgentDefinition(toolType)?.promptFileArgs;
 	if (
+		!hasFileDelivery &&
 		isWindows() &&
 		effectivePrompt &&
 		promptAddedToArgs &&
@@ -422,7 +460,7 @@ export function planPipeSpawn(
 		promptArgLength: prompt ? spawnArgs[spawnArgs.length - 1]?.length : undefined,
 	});
 
-	const isBatchMode = !!prompt;
+	const isBatchMode = hasFileDelivery || !!prompt;
 	// Detect JSON streaming mode from args or config flag
 	// IMPORTANT: SSH stdin script mode (sshStdinScript) MUST enable stream-json parsing
 	// because the SSH command wraps the actual agent command. Without this, the output
@@ -470,6 +508,7 @@ export function planPipeSpawn(
 		args: finalArgs,
 		sshStdinScript: config.sshStdinScript,
 		sessionId,
+		...(hasRemoteArtifact ? { promptArtifactPath: config.promptArtifactPath } : {}),
 	});
 
 	let stdinText: string | undefined;
@@ -505,6 +544,7 @@ export function planPipeSpawn(
 			cwd,
 			env,
 			stdin: stdinText,
+			...(fileDelivery ? { promptArtifact: { ...fileDelivery.artifact } } : {}),
 			shell: spawnShell,
 		},
 		args: finalArgs,

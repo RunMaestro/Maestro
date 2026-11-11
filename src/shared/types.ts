@@ -7,6 +7,7 @@ export type { AgentId } from './agentIds';
 import type { LiftedToPointer } from './maestro-lib/agents/lift-pointer';
 import type { CodexTransport } from './codexTransport';
 import type { HarnessControlMode } from './maestro-lib/providers/native-control';
+import type { NativeSessionBinding } from './maestro-lib/agents/providerSwap';
 
 /**
  * Union type of all valid agent IDs.
@@ -358,13 +359,119 @@ export interface SessionInfo {
 	liftedTo?: LiftedToPointer;
 }
 
+/**
+ * A reported USD amount. Tick strings are canonical nonnegative decimal integers
+ * at 10^10 ticks/USD, validated BEFORE numeric coercion. Never reconstruct them
+ * from an unsafe JS number. `costUsd` is a display approximation when ticks exist.
+ * Strings keep exact amounts JSON-safe across IPC, persistence and web clients.
+ */
+export type UsageCostAmount =
+	| { costUsd: number; costUsdTicks?: string }
+	| { costUsd?: number; costUsdTicks: string };
+
+/**
+ * Completeness of a cost observation.
+ * Exact runtime ticks still have source `runtime-stream`, not provider billing
+ * authority. An exact zero requires explicit complete provider cost evidence.
+ */
+export type UsageCost =
+	| { status: 'unknown'; reason?: string }
+	| ({ status: 'exact' } & UsageCostAmount)
+	| { status: 'partial'; costUsd?: number; costUsdTicks?: string; reason?: string }
+	| {
+			status: 'estimated';
+			costUsd: number;
+			model: string;
+			pricingRevision: string;
+			completeness: 'complete' | 'partial' | 'unknown';
+	  };
+
+/** Model/child detail uses the same disjoint buckets as the shared totals. */
+export interface UsageBreakdown extends Partial<
+	Pick<
+		UsageStats,
+		| 'inputTokens'
+		| 'outputTokens'
+		| 'cacheReadInputTokens'
+		| 'cacheCreationInputTokens'
+		| 'reasoningTokens'
+	>
+> {
+	model?: string;
+	callCount?: number;
+	mainAgentRounds?: number;
+	completeness: 'complete' | 'partial' | 'unknown';
+	cost: UsageCost;
+}
+
+/** Where a usage figure was read: a gateway's meter, the provider's billing record, this host's own stream, nowhere. */
+export type UsageSourceKind = 'gateway' | 'provider-billing' | 'runtime-stream' | 'none';
+
+/** Whether cached input tokens were counted inside `inputTokens` (OpenAI) or beside it (Anthropic). */
+export type CacheReadCounting = 'beside-input' | 'inside-input' | 'unknown';
+
+/**
+ * Accounting facts carried unchanged at the parsed/shared usage boundary.
+ * Optional on legacy events; absence means unspecified, never complete/free.
+ * Context occupancy stays in `absoluteUsage`, separate from all spend scopes.
+ */
+export interface UsageAccounting {
+	source: UsageSourceKind;
+	/** Provider selected by the executing host, independent of later agent/provider swaps. */
+	providerId?: string;
+	/** Producer protocol route (for example native-headless or acp), not policy qualification. */
+	route?: string;
+	scope: 'response' | 'turn' | 'process-session' | 'native-session' | 'child';
+	/** A snapshot replaces its scope's prior observations; it is not another delta. */
+	reporting: 'delta' | 'snapshot';
+	/** Opaque account/host scope; native session IDs alone need not be globally unique. */
+	scopeId?: string;
+	providerSessionId?: string;
+	/** Process-session totals reset on a new process, including after resume. */
+	processGeneration?: string;
+	turnId?: string;
+	requestId?: string | number;
+	responseId?: string;
+	/** Final for this scope only. Final does not imply complete usage or success. */
+	final?: boolean;
+	/**
+	 * Describe the accompanying top-level input bucket. Native uncached input uses
+	 * beside-input for both; raw ACP full input uses inside-input for both. After
+	 * normalization both become beside-input. Never subtract a cache bucket twice.
+	 */
+	cacheReadCounting: CacheReadCounting;
+	cacheCreationCounting: CacheReadCounting;
+	completeness: 'complete' | 'partial' | 'unknown';
+	cost: UsageCost;
+	/** An optional estimate must not overwrite a known partial reported ledger. */
+	estimatedCost?: Extract<UsageCost, { status: 'estimated' }>;
+	/** Whether the parent's totals already include completed or still-running children. */
+	childInclusion: 'excluded' | 'completed' | 'all' | 'unknown';
+	childCompleteness: 'complete' | 'partial' | 'unknown';
+	callCount?: number;
+	mainAgentRounds?: number;
+	/** Detail of the same totals, not additional amounts to sum into them. */
+	models?: Array<UsageBreakdown & { model: string }>;
+	children?: Array<
+		UsageBreakdown & {
+			providerSessionId?: string;
+			parentToolUseId?: string;
+			status: 'running' | 'completed' | 'cancelled' | 'failed' | 'unknown';
+			includedInParent: boolean | 'unknown';
+			models?: Array<UsageBreakdown & { model: string }>;
+		}
+	>;
+}
+
 // Usage statistics from AI agent CLI (Claude Code, Codex, etc.)
 export interface UsageStats {
 	inputTokens: number;
 	outputTokens: number;
 	cacheReadInputTokens: number;
 	cacheCreationInputTokens: number;
+	/** Legacy numeric projection; consult accounting.cost before treating zero as free. */
 	totalCostUsd: number;
+	accounting?: UsageAccounting;
 	contextWindow: number;
 	/**
 	 * True when `contextWindow` is an authoritative, runtime-resolved value (the
@@ -477,6 +584,8 @@ export interface HistoryEntry {
 	summary: string;
 	fullResponse?: string;
 	agentSessionId?: string;
+	/** Observed native ownership for this turn; absent legacy scope remains unknown. */
+	nativeSessionBinding?: NativeSessionBinding;
 	sessionName?: string;
 	projectPath: string;
 	sessionId?: string;
@@ -733,6 +842,51 @@ export interface AgentConfigOption {
 	default: any;
 	options?: string[];
 	dynamic?: boolean; // If true, options are fetched at runtime via agents:getConfigOptions IPC
+}
+
+/** Selected values only, never a resolved process environment. */
+export interface AgentDiscoverySelection {
+	/** Required for discovery; absence means the UI has not selected a workspace yet. */
+	cwd?: string;
+	customPath?: string;
+	/** An explicit empty record replaces the provider environment. Blanks unset keys. */
+	customEnvVars?: Record<string, string>;
+	model?: string;
+	effort?: string;
+	sessionSshRemoteConfig?: AgentSshRemoteConfig;
+	/** Observed host identity for an existing remote agent. */
+	sshRemoteId?: string;
+}
+
+/** Serializable input to model/config discovery. The host reads all other layers. */
+export interface AgentDiscoveryRequest {
+	providerId: string;
+	forceRefresh?: boolean;
+	context:
+		| {
+				kind: 'agent';
+				sessionId: string;
+				/** Optional current tab/run selections, above the stored agent defaults. */
+				model?: string;
+				effort?: string;
+		  }
+		| (AgentDiscoverySelection & { kind: 'draft' | 'provider-settings' });
+}
+
+export interface AgentDiscoveryResult {
+	status: 'discovered' | 'unavailable' | 'configured-fallback';
+	/** Includes the configured value when present; omission is never proof of invalidity. */
+	options: string[];
+	configuredValue?: string;
+	/** Fixed diagnostics only: no environment, account paths, cache keys or native errors. */
+	reason?:
+		| 'missing-context'
+		| 'invalid-context'
+		| 'remote-unresolved'
+		| 'remote-unqualified'
+		| 'executable-context-unavailable'
+		| 'metadata-unavailable'
+		| 'discovery-unavailable';
 }
 
 // Agent configuration (serializable subset shared across processes)
@@ -1137,6 +1291,16 @@ export interface ParsedDeepLink {
 // ============================================================================
 
 /**
+ * How much of a stats cost total is backed by reported cost evidence.
+ * `complete`: every counted session reported an exact cost. `partial`: some
+ * amount is known but at least one session's cost is partial or unknown, so the
+ * total is a floor. `unknown`: sessions were counted but none reported a cost,
+ * which is never the same as a free (zero) total. Independent of
+ * `GlobalAgentStats.isComplete`, which only says the calculation finished.
+ */
+export type StatsCostCoverage = 'complete' | 'partial' | 'unknown';
+
+/**
  * Per-provider statistics breakdown
  */
 export interface ProviderStats {
@@ -1144,8 +1308,17 @@ export interface ProviderStats {
 	messages: number;
 	inputTokens: number;
 	outputTokens: number;
+	/** Legacy numeric projection; read `costCoverage` before treating it as a full total. */
 	costUsd: number;
 	hasCostData: boolean;
+	/**
+	 * Present for providers whose stored history carries its own cost observation
+	 * (Grok's `usage.json` ledger). Absent on providers whose cost is derived by
+	 * the legacy rule (`hasCostData` alone decides), so older payloads still read.
+	 */
+	costCoverage?: StatsCostCoverage;
+	/** Exact amount in 10^10 ticks per USD when every summed amount was tick-exact. */
+	costUsdTicks?: string;
 }
 
 /**
@@ -1164,8 +1337,18 @@ export interface GlobalAgentStats {
 	/** Whether any provider contributed cost data */
 	hasCostData: boolean;
 	totalSizeBytes: number;
-	/** Whether stats calculation is complete (used for progressive updates) */
+	/**
+	 * Whether stats calculation is complete (used for progressive updates). Says
+	 * nothing about cost evidence: a finished calculation can still hold a
+	 * partial or unknown cost, which `costCoverage` reports.
+	 */
 	isComplete: boolean;
+	/**
+	 * Coverage of `totalCostUsd` across the providers that report one
+	 * (`ProviderStats.costCoverage`). Absent when no counted provider reports
+	 * coverage, in which case the legacy `hasCostData` reading applies.
+	 */
+	costCoverage?: StatsCostCoverage;
 	/** Per-provider breakdown */
 	byProvider: Record<string, ProviderStats>;
 }

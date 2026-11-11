@@ -12,6 +12,7 @@ describe('useKnownAuthDirs', () => {
 		const knownAuthDirs = {
 			claudeConfigDirs: ['/Users/me/.claude'],
 			codexHomes: ['/Users/me/.codex'],
+			grokHomes: [],
 		};
 		vi.mocked(window.maestro.agents.getKnownAuthDirs).mockResolvedValue(knownAuthDirs);
 

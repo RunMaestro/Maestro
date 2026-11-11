@@ -1,15 +1,22 @@
 import { useEffect, useState } from 'react';
 import { EMPTY_KNOWN_AUTH_DIRS, type KnownAuthDirs } from '../../../shared/authPaths';
 
-function isKnownAuthDirs(value: unknown): value is KnownAuthDirs {
-	if (!value || typeof value !== 'object') return false;
-	if (!('claudeConfigDirs' in value) || !('codexHomes' in value)) return false;
-	return (
-		Array.isArray(value.claudeConfigDirs) &&
-		value.claudeConfigDirs.every((dir) => typeof dir === 'string') &&
-		Array.isArray(value.codexHomes) &&
-		value.codexHomes.every((dir) => typeof dir === 'string')
-	);
+function isStringArray(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every((dir) => typeof dir === 'string');
+}
+
+/**
+ * The bridge payload as a complete `KnownAuthDirs`, or `null` when it is
+ * malformed. `grokHomes` is optional on the wire (a payload without it offers
+ * no Grok suggestions) so the picker never reads an absent list.
+ */
+function toKnownAuthDirs(value: unknown): KnownAuthDirs | null {
+	if (!value || typeof value !== 'object') return null;
+	if (!('claudeConfigDirs' in value) || !('codexHomes' in value)) return null;
+	if (!isStringArray(value.claudeConfigDirs) || !isStringArray(value.codexHomes)) return null;
+	const grokHomes = 'grokHomes' in value ? value.grokHomes : [];
+	if (!isStringArray(grokHomes)) return null;
+	return { claudeConfigDirs: value.claudeConfigDirs, codexHomes: value.codexHomes, grokHomes };
 }
 
 export function useKnownAuthDirs(enabled = true): KnownAuthDirs {
@@ -26,8 +33,9 @@ export function useKnownAuthDirs(enabled = true): KnownAuthDirs {
 		let cancelled = false;
 		void getKnownAuthDirs()
 			.then((dirs) => {
-				if (!cancelled && isKnownAuthDirs(dirs)) {
-					setKnownAuthDirs(dirs);
+				const known = toKnownAuthDirs(dirs);
+				if (!cancelled && known) {
+					setKnownAuthDirs(known);
 				}
 			})
 			.catch(() => {

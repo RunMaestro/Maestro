@@ -566,3 +566,282 @@ describe('document-mode dispatch boundary', () => {
 		expect(only.effort).toBe('medium');
 	});
 });
+
+describe('Grok hints with selected-model effort evidence', () => {
+	afterEach(() => resetEffortRejections());
+
+	it.each([
+		{ name: 'ordered', menu: ['minimal', 'medium', 'max'] },
+		{ name: 'reordered', menu: ['max', 'minimal', 'medium'] },
+		{ name: 'extended', menu: ['ultra', 'none', 'max', 'high', 'medium', 'low', 'minimal'] },
+	])('replays the same dispatch boundaries with a $name menu', ({ menu }) => {
+		let doc = [
+			'<!-- MAESTRO:MODEL effort="low" -->',
+			'- [ ] scan',
+			'- [ ] catalogue',
+			'- [ ] design <!-- MAESTRO:MODEL effort="high" -->',
+			'- [ ] implement <!-- MAESTRO:MODEL effort="medium" -->',
+			'- [ ] tidy',
+		].join('\n');
+		expect(findAllModelHints(doc)).toMatchObject([
+			{ effort: 'low', scopes: { effort: 'document' } },
+			{ effort: 'high', scopes: { effort: 'task' } },
+			{ effort: 'medium', scopes: { effort: 'task' } },
+		]);
+		for (const step of [
+			{ effort: 'minimal', scope: 'document', count: 2, total: 5 },
+			{ effort: 'max', scope: 'task', count: 1, total: 3 },
+			{ effort: 'medium', scope: 'task', count: 1, total: 2 },
+			{ effort: 'minimal', scope: 'document', count: 1, total: 1 },
+		]) {
+			const resolved = resolveTurnSettings(
+				'grok',
+				findActiveModelHint(doc),
+				'chosen-model',
+				'high',
+				menu
+			);
+			expect(resolved).toMatchObject({ model: 'chosen-model', effort: step.effort, warnings: [] });
+			expect(resolved.notes).toHaveLength(1);
+			expect(resolved.notes[0]).toContain(`(${step.scope}) -> ${step.effort}`);
+			expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'high', menu)).toEqual({
+				count: step.count,
+				total: step.total,
+			});
+			// Advance exactly the completed segment, just as the existing replay test does.
+			for (let completed = 0; completed < step.count; completed++) {
+				doc = doc.replace('- [ ]', '- [x]');
+			}
+		}
+		expect(findActiveModelHint(doc)).toBeNull();
+		expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'high', menu)).toEqual({
+			count: 0,
+			total: 0,
+		});
+	});
+
+	it.each([
+		{ name: 'absent', menu: undefined, warning: 'No advertised effort menu is available' },
+		{ name: 'empty', menu: [], warning: 'does not include the rung' },
+		{ name: 'legacy', menu: ['low', 'high', 'xhigh'], warning: 'does not include the rung' },
+		{
+			name: 'selector IDs',
+			menu: ['menu-minimal', 'menu-medium', 'menu-max'],
+			warning: 'does not include the rung',
+		},
+		{
+			name: 'uppercase aliases',
+			menu: ['MINIMAL', 'MEDIUM', 'MAX'],
+			warning: 'does not include the rung',
+		},
+		{ name: 'noncandidate values', menu: ['none', 'ultra'], warning: 'does not include the rung' },
+	])('inherits configured settings and explains an $name menu', ({ menu, warning }) => {
+		const doc = [
+			'- [ ] scan <!-- MAESTRO:MODEL effort="low" -->',
+			'- [ ] implement <!-- MAESTRO:MODEL effort="medium" -->',
+			'- [ ] design <!-- MAESTRO:MODEL effort="high" -->',
+		].join('\n');
+		for (const hint of findAllModelHints(doc)) {
+			const resolved = resolveTurnSettings('grok', hint, 'chosen-model', 'xhigh', menu);
+			expect(resolved).toMatchObject({ model: 'chosen-model', effort: 'xhigh', notes: [] });
+			expect(resolved.warnings).toHaveLength(1);
+			expect(resolved.warnings[0]).toContain(warning);
+			expect(resolved.warnings[0]).toContain(`effort="${hint.effort}"`);
+			expect(resolved.warnings[0]).toContain("using the agent's configured effort");
+		}
+		expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'xhigh', menu)).toEqual({
+			count: 3,
+			total: 3,
+		});
+	});
+
+	it.each([
+		{ level: 'low', menu: ['low', 'medium', 'max'] },
+		{ level: 'medium', menu: ['minimal', 'low', 'high', 'max'] },
+		{ level: 'high', menu: ['minimal', 'medium', 'high', 'xhigh', 'ultra'] },
+	])('never substitutes an adjacent advertised rung for $level', ({ level, menu }) => {
+		const doc = [`- [ ] hinted <!-- MAESTRO:MODEL effort="${level}" -->`, '- [ ] baseline'].join(
+			'\n'
+		);
+		const resolved = resolveTurnSettings(
+			'grok',
+			findActiveModelHint(doc),
+			'chosen-model',
+			'high',
+			menu
+		);
+		expect(resolved).toMatchObject({ model: 'chosen-model', effort: 'high', notes: [] });
+		expect(resolved.warnings).toHaveLength(1);
+		expect(resolved.warnings[0]).toContain('does not include the rung');
+		expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'high', menu)).toEqual({
+			count: 2,
+			total: 2,
+		});
+	});
+
+	it.each(['low', 'medium', 'high'])(
+		'warns for unsupported Grok tier %s without splitting identical settings',
+		(tier) => {
+			const doc = [
+				`- [ ] hinted <!-- MAESTRO:MODEL tier="${tier}" effort="medium" -->`,
+				'- [ ] baseline',
+			].join('\n');
+			const resolved = resolveTurnSettings(
+				'grok',
+				findActiveModelHint(doc),
+				'chosen-model',
+				'medium',
+				['medium']
+			);
+			expect(resolved).toMatchObject({
+				model: 'chosen-model',
+				effort: 'medium',
+				notes: ['effort="medium" (task) -> medium'],
+			});
+			expect(resolved.warnings).toHaveLength(1);
+			expect(resolved.warnings[0]).toContain(
+				`grok has no model tier mapping, so tier="${tier}" was ignored`
+			);
+			expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'medium', ['medium'])).toEqual({
+				count: 2,
+				total: 2,
+			});
+		}
+	);
+
+	it.each([
+		{
+			marker: 'tier="default"',
+			scopes: { tier: 'task', effort: 'document' },
+			effort: 'max',
+			notes: ['effort="high" (document) -> max'],
+			warnings: 0,
+			count: 2,
+		},
+		{
+			marker: 'effort="default"',
+			scopes: { tier: 'document', effort: 'task' },
+			effort: 'xhigh',
+			notes: [],
+			warnings: 1,
+			count: 1,
+		},
+		{
+			marker: 'tier="default" effort="default"',
+			scopes: { tier: 'task', effort: 'task' },
+			effort: 'xhigh',
+			notes: [],
+			warnings: 0,
+			count: 1,
+		},
+		{
+			marker: 'effort="low"',
+			scopes: { tier: 'document', effort: 'task' },
+			effort: 'minimal',
+			notes: ['effort="low" (task) -> minimal'],
+			warnings: 1,
+			count: 1,
+		},
+	])('layers $marker per axis and restores the document after completion', (entry) => {
+		const doc = [
+			'<!-- MAESTRO:MODEL tier="high" effort="high" -->',
+			`- [ ] special <!-- MAESTRO:MODEL ${entry.marker} -->`,
+			'- [ ] ordinary',
+		].join('\n');
+		const menu = ['minimal', 'medium', 'max'];
+		const hint = findActiveModelHint(doc);
+		expect(hint?.scopes).toEqual(entry.scopes);
+		const resolved = resolveTurnSettings('grok', hint, 'chosen-model', 'xhigh', menu);
+		expect(resolved).toMatchObject({
+			model: 'chosen-model',
+			effort: entry.effort,
+			notes: entry.notes,
+		});
+		expect(resolved.warnings).toHaveLength(entry.warnings);
+		expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'xhigh', menu)).toEqual({
+			count: entry.count,
+			total: 2,
+		});
+		const remaining = doc.replace('- [ ]', '- [x]');
+		expect(findActiveModelHint(remaining)?.scopes).toEqual({
+			tier: 'document',
+			effort: 'document',
+		});
+		expect(
+			resolveTurnSettings('grok', findActiveModelHint(remaining), 'chosen-model', 'xhigh', menu)
+		).toMatchObject({
+			model: 'chosen-model',
+			effort: 'max',
+			notes: ['effort="high" (document) -> max'],
+		});
+	});
+
+	it.each([
+		'- [ ] no hint',
+		'<!-- MAESTRO:MODEL tier="high" effort="high" -->\n- [ ] opt out <!-- MAESTRO:MODEL tier="default" effort="default" -->',
+	])('preserves configured or unset values without menu warnings for %s', (doc) => {
+		for (const current of [
+			{ model: 'chosen-model', effort: 'MAX' },
+			{ model: undefined, effort: undefined },
+		]) {
+			expect(
+				resolveTurnSettings('grok', findActiveModelHint(doc), current.model, current.effort)
+			).toEqual({ ...current, notes: [], warnings: [] });
+		}
+	});
+
+	it.each([
+		{ name: 'missing', menu: undefined },
+		{ name: 'empty', menu: [] },
+		{ name: 'advertised again', menu: ['minimal', 'medium', 'max'] },
+	])('keeps a remembered refusal authoritative when the menu is $name', ({ menu }) => {
+		noteEffortRejection('grok', {
+			value: 'MAX',
+			model: 'other-model',
+			supported: ['medium', 'menu-fast'],
+		});
+		const doc = ['- [ ] hinted <!-- MAESTRO:MODEL effort="high" -->', '- [ ] baseline'].join('\n');
+		// Refusal memory is provider-wide. Inheritance never rewrites an explicit choice.
+		for (const effort of ['xhigh', 'MAX']) {
+			const resolved = resolveTurnSettings(
+				'grok',
+				findActiveModelHint(doc),
+				'chosen-model',
+				effort,
+				menu
+			);
+			expect(resolved).toMatchObject({ model: 'chosen-model', effort, notes: [] });
+			expect(resolved.warnings).toHaveLength(1);
+			expect(resolved.warnings[0]).toContain('grok rejected effort "MAX" for other-model');
+			expect(resolved.warnings[0]).not.toContain('advertised effort menu');
+			expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', effort, menu)).toEqual({
+				count: 2,
+				total: 2,
+			});
+		}
+	});
+
+	it.each([
+		{ provider: 'claude-code' as const, model: 'opus', effort: 'max', count: 1 },
+		{ provider: 'codex' as const, model: 'chosen-model', effort: 'xhigh', count: 1 },
+		{ provider: 'opencode' as const, model: 'chosen-model', effort: 'high', count: 2 },
+	])(
+		'leaves $provider dispatch and inspection unchanged when supplied a Grok menu',
+		({ provider, model, effort, count }) => {
+			const doc = [
+				'- [ ] hinted <!-- MAESTRO:MODEL tier="high" effort="high" -->',
+				'- [ ] baseline',
+			].join('\n');
+			const hint = findActiveModelHint(doc);
+			const baseline = resolveTurnSettings(provider, hint, 'chosen-model', 'high');
+			expect(baseline).toMatchObject({ model, effort });
+			for (const menu of [[], ['minimal', 'medium', 'max']]) {
+				expect(resolveTurnSettings(provider, hint, 'chosen-model', 'high', menu)).toEqual(baseline);
+				expect(countTasksUnderActiveHint(doc, provider, 'chosen-model', 'high', menu)).toEqual({
+					count,
+					total: 2,
+				});
+			}
+		}
+	);
+});

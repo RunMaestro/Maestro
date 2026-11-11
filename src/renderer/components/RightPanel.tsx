@@ -137,8 +137,8 @@ interface RightPanelProps {
 	onAbortBatchOnError?: () => void;
 	onResumeAfterError?: () => void;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
-	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
+	onResumeSession?: React.ComponentProps<typeof HistoryPanel>['onResumeSession'];
+	onOpenSessionAsTab?: React.ComponentProps<typeof HistoryPanel>['onOpenSessionAsTab'];
 
 	// Modal handlers
 	onOpenAboutModal?: () => void;

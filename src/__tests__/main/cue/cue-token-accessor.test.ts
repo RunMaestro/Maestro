@@ -66,6 +66,7 @@ vi.mock('../../../main/utils/sentry', () => ({
 
 import {
 	getSessionTokenSummaries,
+	sessionTokenLookupKey,
 	getAgentTypesForSessions,
 	_resetCueTokenAccessorCache,
 } from '../../../main/cue/stats/cue-token-accessor';
@@ -146,7 +147,7 @@ describe('cue-token-accessor', () => {
 			]);
 
 			expect(result.size).toBe(1);
-			const summary = result.get('p-claude');
+			const summary = result.get(sessionTokenLookupKey('m-claude', 'p-claude'));
 			expect(summary).toEqual({
 				sessionId: 'p-claude',
 				agentType: 'claude-code',
@@ -186,7 +187,7 @@ describe('cue-token-accessor', () => {
 				await getSessionTokenSummaries([
 					{ maestroSessionId: 'm-opencode', providerSessionId: 'p-opencode' },
 				])
-			).get('p-opencode');
+			).get(sessionTokenLookupKey('m-opencode', 'p-opencode'));
 
 			expect(summary?.coverage).toBe('full');
 			expect(summary?.inputTokens).toBe(2222);
@@ -221,7 +222,7 @@ describe('cue-token-accessor', () => {
 				await getSessionTokenSummaries([
 					{ maestroSessionId: 'm-droid', providerSessionId: 'p-droid' },
 				])
-			).get('p-droid');
+			).get(sessionTokenLookupKey('m-droid', 'p-droid'));
 
 			expect(summary?.coverage).toBe('full');
 			expect(summary?.costUsd).toBeNull();
@@ -252,7 +253,7 @@ describe('cue-token-accessor', () => {
 				await getSessionTokenSummaries([
 					{ maestroSessionId: 'm-codex', providerSessionId: 'p-codex' },
 				])
-			).get('p-codex');
+			).get(sessionTokenLookupKey('m-codex', 'p-codex'));
 
 			expect(summary?.coverage).toBe('partial');
 			expect(summary?.inputTokens).toBe(800);
@@ -284,7 +285,7 @@ describe('cue-token-accessor', () => {
 				await getSessionTokenSummaries([
 					{ maestroSessionId: 'm-copilot', providerSessionId: 'p-copilot' },
 				])
-			).get('p-copilot');
+			).get(sessionTokenLookupKey('m-copilot', 'p-copilot'));
 
 			expect(summary?.coverage).toBe('partial');
 			expect(summary?.inputTokens).toBe(1500);
@@ -313,7 +314,7 @@ describe('cue-token-accessor', () => {
 				{ maestroSessionId: 'm-agent', providerSessionId: 'p-run' },
 			]);
 
-			expect(result.get('p-run')?.inputTokens).toBe(4242);
+			expect(result.get(sessionTokenLookupKey('m-agent', 'p-run'))?.inputTokens).toBe(4242);
 		});
 
 		it('provider session not present on disk yields partial zeros (not a miss)', async () => {
@@ -333,7 +334,7 @@ describe('cue-token-accessor', () => {
 				await getSessionTokenSummaries([
 					{ maestroSessionId: 'm-agent', providerSessionId: 'p-run' },
 				])
-			).get('p-run');
+			).get(sessionTokenLookupKey('m-agent', 'p-run'));
 
 			expect(summary?.coverage).toBe('partial');
 			expect(summary?.inputTokens).toBe(0);
@@ -356,7 +357,7 @@ describe('cue-token-accessor', () => {
 				await getSessionTokenSummaries([
 					{ maestroSessionId: 'm-unknown', providerSessionId: 'p-unknown' },
 				])
-			).get('p-unknown');
+			).get(sessionTokenLookupKey('m-unknown', 'p-unknown'));
 
 			expect(summary).toEqual({
 				sessionId: 'p-unknown',
@@ -380,7 +381,7 @@ describe('cue-token-accessor', () => {
 			]);
 
 			expect(result.size).toBe(0);
-			expect(result.has('p-missing')).toBe(false);
+			expect(result.has(sessionTokenLookupKey('m-missing', 'p-missing'))).toBe(false);
 		});
 
 		it('empty input returns empty map without touching the DB', async () => {
@@ -452,16 +453,16 @@ describe('cue-token-accessor', () => {
 			]);
 
 			expect(result.size).toBe(3);
-			expect(result.get('p-missing')).toBeUndefined();
+			expect(result.get(sessionTokenLookupKey('m-missing', 'p-missing'))).toBeUndefined();
 
-			expect(result.get('p-claude')).toMatchObject({
+			expect(result.get(sessionTokenLookupKey('m-claude', 'p-claude'))).toMatchObject({
 				agentType: 'claude-code',
 				inputTokens: 100,
 				outputTokens: 50,
 				costUsd: 0.01,
 				coverage: 'full',
 			});
-			expect(result.get('p-codex')).toMatchObject({
+			expect(result.get(sessionTokenLookupKey('m-codex', 'p-codex'))).toMatchObject({
 				agentType: 'codex',
 				inputTokens: 200,
 				outputTokens: 75,
@@ -470,7 +471,7 @@ describe('cue-token-accessor', () => {
 				costUsd: null,
 				coverage: 'partial',
 			});
-			expect(result.get('p-droid')).toMatchObject({
+			expect(result.get(sessionTokenLookupKey('m-droid', 'p-droid'))).toMatchObject({
 				agentType: 'factory-droid',
 				inputTokens: 300,
 				outputTokens: 100,
@@ -524,8 +525,8 @@ describe('cue-token-accessor', () => {
 			]);
 
 			expect(listSessions).toHaveBeenCalledTimes(1);
-			expect(result.get('p-claude-1')?.inputTokens).toBe(11);
-			expect(result.get('p-claude-2')?.inputTokens).toBe(22);
+			expect(result.get(sessionTokenLookupKey('m-claude-1', 'p-claude-1'))?.inputTokens).toBe(11);
+			expect(result.get(sessionTokenLookupKey('m-claude-2', 'p-claude-2'))?.inputTokens).toBe(22);
 		});
 	});
 
@@ -554,11 +555,160 @@ describe('cue-token-accessor', () => {
 				await getSessionTokenSummaries([
 					{ maestroSessionId: 'm-remote', providerSessionId: 'p-remote' },
 				])
-			).get('p-remote');
+			).get(sessionTokenLookupKey('m-remote', 'p-remote'));
 
 			expect(summary?.coverage).toBe('partial');
 			expect(summary?.inputTokens).toBe(0);
 			expect(listSessions).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Grok attribution boundaries', () => {
+		it.each([0, 1])(
+			'keeps native lifetime usage unavailable for is_remote=%s',
+			async (isRemote) => {
+				lookupRows = ['m-account-a', 'm-account-b'].map((session_id) => ({
+					session_id,
+					agent_type: 'grok',
+					project_path: '/proj/shared',
+					is_remote: isRemote,
+				}));
+				registerFakeStorage('grok', [
+					makeInfo({ sessionId: 'p-shared', inputTokens: 90_000, costUsd: 50 }),
+				]);
+				const firstTurn = { maestroSessionId: 'm-account-a', providerSessionId: 'p-shared' };
+				const otherAccount = { maestroSessionId: 'm-account-b', providerSessionId: 'p-shared' };
+				// A resumed turn shares a lookup pair; lifetime data cannot identify either turn's spend.
+				const result = await getSessionTokenSummaries([firstTurn, firstTurn, otherAccount], {
+					sinceMs: Date.parse('2026-04-28T00:00:00Z'),
+					untilMs: Date.parse('2026-04-29T00:00:00Z'),
+				});
+
+				expect(result.size).toBe(2);
+				for (const owner of ['m-account-a', 'm-account-b']) {
+					expect(result.get(sessionTokenLookupKey(owner, 'p-shared'))).toEqual({
+						sessionId: 'p-shared',
+						agentType: 'grok',
+						inputTokens: 0,
+						outputTokens: 0,
+						cacheReadTokens: 0,
+						cacheCreationTokens: 0,
+						costUsd: null,
+						windowStartMs: 0,
+						windowEndMs: 0,
+						coverage: 'partial',
+					});
+				}
+				expect(result.has('p-shared')).toBe(false);
+				expect(storageRegistry.get('grok')!.listSessions).not.toHaveBeenCalled();
+				expect(storageRegistry.get('grok')!.getSessionPath).not.toHaveBeenCalled();
+			}
+		);
+
+		it('isolates colliding native IDs across owners, projects and providers on cache reuse', async () => {
+			lookupRows = [
+				{ session_id: 'm-a', agent_type: 'claude-code', project_path: '/proj/a', is_remote: 0 },
+				{ session_id: 'm-b', agent_type: 'claude-code', project_path: '/proj/b', is_remote: 0 },
+				{ session_id: 'm-grok', agent_type: 'grok', project_path: '/proj/a', is_remote: 0 },
+			];
+			registerFakeStorage('claude-code', []);
+			const list = vi.mocked(storageRegistry.get('claude-code')!.listSessions);
+			list.mockImplementation(async (projectPath) => [
+				makeInfo({
+					sessionId: 'p-shared',
+					projectPath,
+					inputTokens: projectPath === '/proj/a' ? 111 : 222,
+					cacheReadTokens: projectPath === '/proj/a' ? 11 : 22,
+				}),
+			]);
+			const lookups = lookupRows.map((row) => ({
+				maestroSessionId: row.session_id,
+				providerSessionId: 'p-shared',
+			}));
+			for (let poll = 0; poll < 2; poll++) {
+				const result = await getSessionTokenSummaries(lookups);
+				expect(result.size).toBe(3);
+				expect(result.get(sessionTokenLookupKey('m-a', 'p-shared'))).toMatchObject({
+					inputTokens: 111,
+					cacheReadTokens: 11,
+					agentType: 'claude-code',
+				});
+				expect(result.get(sessionTokenLookupKey('m-b', 'p-shared'))).toMatchObject({
+					inputTokens: 222,
+					cacheReadTokens: 22,
+					agentType: 'claude-code',
+				});
+				expect(result.get(sessionTokenLookupKey('m-grok', 'p-shared'))).toMatchObject({
+					inputTokens: 0,
+					costUsd: null,
+					coverage: 'partial',
+					agentType: 'grok',
+				});
+			}
+			expect(list).toHaveBeenCalledTimes(2);
+			expect(mockPrepareAll).toHaveBeenCalledTimes(2);
+		});
+	});
+
+	describe('lifecycle before cache', () => {
+		it.each([
+			'removed',
+			'provider',
+			'project',
+			'remote',
+			'missing-project',
+			'lookup-error',
+		] as const)('does not reuse a stale observation after lifecycle is %s', async (change) => {
+			lookupRows = [
+				{ session_id: 'm-agent', agent_type: 'claude-code', project_path: '/proj/a', is_remote: 0 },
+			];
+			registerFakeStorage('claude-code', [
+				makeInfo({ sessionId: 'p-run', inputTokens: 123, costUsd: 0.5 }),
+			]);
+			registerFakeStorage('grok', [makeInfo({ sessionId: 'p-run', inputTokens: 90_000 })]);
+			const lookups = [{ maestroSessionId: 'm-agent', providerSessionId: 'p-run' }];
+			const key = sessionTokenLookupKey('m-agent', 'p-run');
+			expect((await getSessionTokenSummaries(lookups)).get(key)?.inputTokens).toBe(123);
+			const list = vi.mocked(storageRegistry.get('claude-code')!.listSessions);
+			list.mockResolvedValue([makeInfo({ sessionId: 'p-run', inputTokens: 456 })]);
+			switch (change) {
+				case 'removed':
+					lookupRows = [];
+					break;
+				case 'provider':
+					lookupRows[0].agent_type = 'grok';
+					break;
+				case 'project':
+					lookupRows[0].project_path = '/proj/b';
+					break;
+				case 'remote':
+					lookupRows[0].is_remote = 1;
+					break;
+				case 'missing-project':
+					lookupRows[0].project_path = null;
+					break;
+				case 'lookup-error':
+					mockPrepareAll.mockImplementationOnce(() => {
+						throw new Error('database unavailable');
+					});
+					break;
+			}
+			const result = await getSessionTokenSummaries(lookups);
+			expect(mockPrepareAll).toHaveBeenCalledTimes(2);
+			if (change === 'removed' || change === 'lookup-error') {
+				expect(result.size).toBe(0);
+			} else if (change === 'project') {
+				expect(result.get(key)?.inputTokens).toBe(456);
+				expect(list).toHaveBeenLastCalledWith('/proj/b');
+			} else {
+				expect(result.get(key)).toMatchObject({
+					inputTokens: 0,
+					costUsd: null,
+					coverage: 'partial',
+				});
+			}
+			expect(list).toHaveBeenCalledTimes(change === 'project' ? 2 : 1);
+			expect(storageRegistry.get('grok')!.listSessions).not.toHaveBeenCalled();
 		});
 	});
 
@@ -581,5 +731,83 @@ describe('cue-token-accessor', () => {
 			expect(result.size).toBe(0);
 			expect(mockPrepare).not.toHaveBeenCalled();
 		});
+	});
+});
+
+describe('Grok Cue attribution', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		lookupRows = [];
+		storageRegistry.clear();
+		_resetCueTokenAccessorCache();
+	});
+
+	it('labels a Grok Cue run as grok while its spend stays unknown, beside a legacy provider', async () => {
+		lookupRows = [
+			{ session_id: 'm-grok', agent_type: 'grok', project_path: '/proj/s', is_remote: 0 },
+			{ session_id: 'm-claude', agent_type: 'claude-code', project_path: '/proj/s', is_remote: 0 },
+		];
+		registerFakeStorage('grok', [
+			makeInfo({
+				sessionId: 'p-grok',
+				inputTokens: 500,
+				cacheReadTokens: 50,
+				costUsd: 0,
+				accounting: {
+					completeness: 'complete',
+					cost: { status: 'exact', costUsdTicks: '0' },
+				} as unknown as AgentSessionInfo['accounting'],
+			}),
+		]);
+		registerFakeStorage('claude-code', [
+			makeInfo({ sessionId: 'p-claude', inputTokens: 40, cacheCreationTokens: 4, costUsd: 0.2 }),
+		]);
+		const range = { sinceMs: Date.parse('2026-04-28T00:00:00Z') };
+		const result = await getSessionTokenSummaries(
+			[
+				{ maestroSessionId: 'm-grok', providerSessionId: 'p-grok' },
+				{ maestroSessionId: 'm-claude', providerSessionId: 'p-claude' },
+			],
+			range
+		);
+		const grok = result.get(sessionTokenLookupKey('m-grok', 'p-grok'));
+		// A native exact-zero lifetime is not this event's spend: null, never 0.
+		expect(grok).toMatchObject({ agentType: 'grok', coverage: 'partial', costUsd: null });
+		expect(grok).not.toHaveProperty('accounting');
+		expect(grok!.inputTokens + grok!.cacheReadTokens + grok!.cacheCreationTokens).toBe(0);
+		expect(result.get(sessionTokenLookupKey('m-claude', 'p-claude'))).toMatchObject({
+			agentType: 'claude-code',
+			inputTokens: 40,
+			cacheCreationTokens: 4,
+			costUsd: 0.2,
+			coverage: 'full',
+		});
+		expect(storageRegistry.get('grok')!.listSessions).not.toHaveBeenCalled();
+		expect(getAgentTypesForSessions(['m-grok', 'm-claude'])).toEqual(
+			new Map([
+				['m-grok', 'grok'],
+				['m-claude', 'claude-code'],
+			])
+		);
+	});
+
+	it('keeps Grok partial, not unsupported, with no project or storage and no cached reuse', async () => {
+		lookupRows = [{ session_id: 'm-grok', agent_type: 'grok', project_path: null, is_remote: 0 }];
+		const lookups = [{ maestroSessionId: 'm-grok', providerSessionId: 'p-grok' }];
+		const key = sessionTokenLookupKey('m-grok', 'p-grok');
+		expect((await getSessionTokenSummaries(lookups)).get(key)).toMatchObject({
+			coverage: 'partial',
+			costUsd: null,
+			inputTokens: 0,
+		});
+		// Storage appearing later and a recorded project still cannot attribute it.
+		registerFakeStorage('grok', [makeInfo({ sessionId: 'p-grok', inputTokens: 9 })]);
+		lookupRows[0].project_path = '/proj/s';
+		expect((await getSessionTokenSummaries(lookups)).get(key)).toMatchObject({
+			coverage: 'partial',
+			inputTokens: 0,
+		});
+		expect(storageRegistry.get('grok')!.listSessions).not.toHaveBeenCalled();
+		expect(mockPrepareAll).toHaveBeenCalledTimes(2);
 	});
 });

@@ -2,18 +2,21 @@
  * Tests for the Usage Dashboard export bundle and its CSV rendering.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import fs from 'fs';
 import {
 	buildUsageExport,
 	countUsageExportRows,
 	rowsToCsv,
 	usageExportToCsvFiles,
+	writeUsageExport,
 	USAGE_EXPORT_VERSION,
 	type UsageExportStatsSource,
 } from '../../../main/stats/usage-export';
 import type { CueEventRecord } from '../../../main/cue/cue-db';
 import type { StatsAggregation } from '../../../shared/stats-types';
-import type { TokenUsageAggregate } from '../../../shared/tokenUsage';
+import type { TokenUsageAggregate, TokenUsageGroup } from '../../../shared/tokenUsage';
+import type { UsageCost } from '../../../shared/types';
 import { emptyTokenSpeedSummary } from '../../../shared/tokenSpeed';
 
 const T = Date.UTC(2026, 8, 10, 12, 0, 0);
@@ -284,5 +287,223 @@ describe('usageExportToCsvFiles', () => {
 		expect(row).toContain(`"${T_ISO}"`);
 		expect(row).toContain('"/work/""quoted"", project"');
 		expect(row.endsWith('"0.25"')).toBe(true);
+	});
+});
+
+describe('Grok accounting export', () => {
+	afterEach(() => vi.restoreAllMocks());
+
+	const base = {
+		db: fakeDb(),
+		range: 'month' as const,
+		sinceMs: T,
+		appVersion: '1.2.3',
+		cueEvents: null,
+		notes: [],
+		now: T,
+	};
+
+	it.each<[string, UsageCost | undefined, string, boolean]>([
+		['unknown', { status: 'unknown', reason: 'No billing receipt' }, '', false],
+		['partial without amount', { status: 'partial' }, '', false],
+		['partial with amount', { status: 'partial', costUsdTicks: '1250000000' }, '0.125', false],
+		['partial zero', { status: 'partial', costUsdTicks: '0' }, '0', false],
+		['exact zero', { status: 'exact', costUsdTicks: '0' }, '0', false],
+		[
+			'exact ticks override decimal',
+			{ status: 'exact', costUsdTicks: '1250000000', costUsd: 99 },
+			'0.125',
+			false,
+		],
+		[
+			'estimated',
+			{
+				status: 'estimated',
+				costUsd: 0.25,
+				model: 'grok-raw',
+				pricingRevision: 'fixture',
+				completeness: 'partial',
+			},
+			'0.25',
+			true,
+		],
+		['legacy reported', undefined, '17', false],
+		['legacy estimated', undefined, '17', true],
+	])('exports %s honestly across every token table', (_name, cost, amount, estimated) => {
+		const group: TokenUsageGroup = {
+			...tokenUsage.totals,
+			key: 'grok:selected-account',
+			label: 'grok-raw',
+			cacheReadTokens: 7,
+			cacheCreationTokens: 3,
+			// Deliberately stale compatibility fields must not win over canonical evidence.
+			costUsd: 17,
+			costEstimated: cost ? cost.status !== 'estimated' : estimated,
+			...(cost ? { accounting: { completeness: 'partial' as const, cost } } : {}),
+		};
+		const usage: TokenUsageAggregate = {
+			...tokenUsage,
+			totals: group,
+			byAgent: [group],
+			byModel: [group],
+			byProject: [group],
+			byAccount: [group],
+			timeline: [{ ...group, startMs: T }],
+		};
+		const files = usageExportToCsvFiles(buildUsageExport({ ...base, tokenUsage: usage }));
+		for (const table of ['by-agent', 'by-model', 'by-project', 'by-account', 'timeline']) {
+			const file = files.find((entry) => entry.name === `token-usage-${table}.csv`)!;
+			const [header, row] = file.content.split('\n');
+			expect(header).toContain(
+				'cacheReadTokens,cacheCreationTokens,costUsd,costEstimated,sessionCount,accounting'
+			);
+			expect(row).toContain(`"10","5","7","3","${amount}","${estimated}","1",`);
+			if (cost) expect(row).toContain(`""status"":""${cost.status}""`);
+			else expect(row).toMatch(/,""$/);
+		}
+		const info = JSON.parse(files.find((entry) => entry.name === 'export-info.json')!.content);
+		expect(info.tokenUsageTotals).toEqual(group);
+		// Rendering CSV must leave the original JSON-compatible accounting intact.
+		expect(usage.totals.costUsd).toBe(17);
+		expect(usage.totals.accounting?.cost).toEqual(cost);
+	});
+
+	it('retains colliding raw models in distinct account/provider rows and mixed partial totals', async () => {
+		const grok: TokenUsageGroup = {
+			...tokenUsage.totals,
+			key: 'grok:account-a',
+			label: 'Account A',
+			cacheReadTokens: 7,
+			cacheCreationTokens: 3,
+			costUsd: 0,
+			accounting: { completeness: 'unknown', cost: { status: 'unknown' } },
+		};
+		const grokOther: TokenUsageGroup = {
+			...grok,
+			key: 'grok:account-b',
+			label: 'Account B',
+			inputTokens: 20,
+			accounting: { completeness: 'complete', cost: { status: 'exact', costUsdTicks: '0' } },
+		};
+		const claude: TokenUsageGroup = {
+			...tokenUsage.totals,
+			key: 'claude-code:account-a',
+			label: 'Claude account A',
+			inputTokens: 30,
+			costUsd: 0.25,
+		};
+		const grokCombined: TokenUsageGroup = {
+			...grok,
+			inputTokens: 30,
+			outputTokens: 10,
+			cacheReadTokens: 14,
+			cacheCreationTokens: 6,
+			sessionCount: 2,
+			accounting: { completeness: 'partial', cost: { status: 'partial', costUsdTicks: '0' } },
+		};
+		const usage: TokenUsageAggregate = {
+			...tokenUsage,
+			totals: {
+				...tokenUsage.totals,
+				inputTokens: 60,
+				outputTokens: 15,
+				cacheReadTokens: 14,
+				cacheCreationTokens: 6,
+				sessionCount: 3,
+				costUsd: 0.25,
+				accounting: {
+					completeness: 'partial',
+					cost: { status: 'partial', costUsdTicks: '2500000000' },
+				},
+			},
+			byAccount: [grok, grokOther, claude],
+			byAgent: [
+				{ ...grokCombined, key: 'grok' },
+				{ ...claude, key: 'claude-code' },
+			],
+			byModel: [
+				{ ...grokCombined, key: '["grok","model/raw-v1"]', label: 'model/raw-v1' },
+				{ ...claude, key: '["claude-code","model/raw-v1"]', label: 'model/raw-v1' },
+			],
+		};
+		const streamUsageJson = JSON.stringify({
+			inputTokens: 10,
+			cacheReadInputTokens: 7,
+			cacheCreationInputTokens: 3,
+			accounting: { ...grok.accounting, models: [{ model: 'model/raw-v1' }] },
+		});
+		const bundle = buildUsageExport({
+			...base,
+			tokenUsage: usage,
+			cueEvents: [{ ...cueEvent, streamUsageJson }],
+		});
+		const write = vi.spyOn(fs.promises, 'writeFile').mockResolvedValue();
+		await writeUsageExport('fixture-export.json', 'json', bundle);
+		expect(write).toHaveBeenCalledOnce();
+		expect(write).toHaveBeenCalledWith('fixture-export.json', expect.any(String), 'utf8');
+		expect(JSON.parse(write.mock.calls[0][1] as string).tokenUsage).toEqual(usage);
+		const files = usageExportToCsvFiles(bundle);
+		const accounts = files.find((file) => file.name === 'token-usage-by-account.csv')!.content;
+		expect(accounts).toContain('"grok:account-a","Account A","10","5","7","3","","false","1"');
+		expect(accounts).toContain('"grok:account-b","Account B","20","5","7","3","0","false","1"');
+		expect(accounts).toContain(
+			'"claude-code:account-a","Claude account A","30","5","0","0","0.25","false","1"'
+		);
+		const models = files.find((file) => file.name === 'token-usage-by-model.csv')!.content;
+		expect(models).toContain('"[""grok"",""model/raw-v1""]","model/raw-v1"');
+		expect(models).toContain('"[""claude-code"",""model/raw-v1""]","model/raw-v1"');
+		const info = JSON.parse(files.find((file) => file.name === 'export-info.json')!.content);
+		expect(info.tokenUsageTotals).toEqual(usage.totals);
+		expect(info.rowCounts['token-usage-by-account']).toBe(3);
+		expect(info.rowCounts['token-usage-by-model']).toBe(2);
+		const cueCsv = files.find((file) => file.name === 'cue-events.csv')!.content;
+		expect(cueCsv.split('\n')[0].split(',')).toContain('streamUsageJson');
+		expect(cueCsv).toContain('"' + streamUsageJson.replace(/"/g, '""') + '"');
+		expect(JSON.parse(write.mock.calls[0][1] as string).cueEvents[0].streamUsageJson).toBe(
+			streamUsageJson
+		);
+	});
+
+	it('preserves unsafe-integer tick strings in JSON and CSV accounting evidence', () => {
+		const cost: UsageCost = { status: 'exact', costUsdTicks: '9007199254740993' };
+		const group: TokenUsageGroup = {
+			...tokenUsage.totals,
+			key: 'grok:account-a',
+			label: 'Account A',
+			accounting: { completeness: 'complete', cost },
+		};
+		const bundle = buildUsageExport({
+			...base,
+			tokenUsage: { ...tokenUsage, totals: group, byAccount: [group] },
+		});
+		expect(JSON.parse(JSON.stringify(bundle)).tokenUsage.totals.accounting.cost).toEqual(cost);
+		const files = usageExportToCsvFiles(bundle);
+		expect(files.find((file) => file.name === 'token-usage-by-account.csv')!.content).toContain(
+			'""costUsdTicks"":""9007199254740993""'
+		);
+		expect(
+			JSON.parse(files.find((file) => file.name === 'export-info.json')!.content).tokenUsageTotals
+				.accounting.cost
+		).toEqual(cost);
+	});
+
+	it('keeps missing token usage distinct from a measured zero export', () => {
+		const bundle = buildUsageExport({
+			...base,
+			tokenUsage: null,
+			notes: ['Token scan unavailable'],
+		});
+		expect(JSON.parse(JSON.stringify(bundle))).toMatchObject({
+			tokenUsage: null,
+			notes: ['Token scan unavailable'],
+		});
+		const files = usageExportToCsvFiles(bundle);
+		expect(files.some((file) => file.name.startsWith('token-usage-'))).toBe(false);
+		expect(
+			JSON.parse(files.find((file) => file.name === 'export-info.json')!.content)
+		).toMatchObject({
+			tokenUsageTotals: null,
+			notes: ['Token scan unavailable'],
+		});
 	});
 });

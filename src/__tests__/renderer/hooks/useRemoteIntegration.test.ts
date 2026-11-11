@@ -1668,6 +1668,237 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote new AI tab with prompt', () => {
+		describe('Grok new-tab command producer', () => {
+			beforeEach(() => {
+				window.maestro.agents = {
+					...window.maestro.agents,
+					getConfig: vi.fn().mockResolvedValue({}),
+					discoverSlashCommands: vi.fn().mockResolvedValue({
+						status: 'discovered',
+						commands: [{ name: 'advertised', description: 'Native action', kind: 'skill' }],
+						binding: {
+							route: 'grok-acp',
+							sessionId: 'existing-native',
+							agentVersion: '1.0.70',
+							processGeneration: 'process-a',
+							configGeneration: 'config-a',
+							catalogRevision: 1,
+							observedAt: Date.now(),
+						},
+					}),
+				};
+			});
+
+			it.each(
+				(['idle', 'busy'] as const).flatMap((state) =>
+					['/persisted', '/advertised', '/login', '/unknown'].map((command) => ({ state, command }))
+				)
+			)(
+				'refuses $command on a $state agent before creating or borrowing a conversation',
+				async ({ state, command }) => {
+					const tab = createMockTab({ id: 'existing-tab', agentSessionId: 'existing-native' });
+					const session = createMockSession({
+						id: 'grok-agent',
+						toolType: 'grok',
+						state,
+						aiTabs: [tab],
+						activeTabId: tab.id,
+						agentCommands: [
+							{ command: '/persisted', description: 'Old body', prompt: 'Never expand me' },
+						],
+					});
+					const deps = createDeps({ sessions: [session], activeSessionId: 'other-agent' });
+					const dispatch = vi.spyOn(window, 'dispatchEvent');
+					try {
+						renderHook(() => useRemoteIntegration(deps));
+						await act(async () => {
+							onRemoteNewAITabWithPromptHandler?.(
+								session.id,
+								`  ${command}\tprivate arguments`,
+								'grok-refused',
+								true
+							);
+						});
+						expect(
+							mockProcess.sendRemoteNewAITabWithPromptResponse
+						).toHaveBeenCalledExactlyOnceWith('grok-refused', {
+							success: false,
+							error:
+								'Grok native slash commands require discovery for this conversation. No command was sent.',
+						});
+						expect(useSessionStore.getState().sessions[0]).toBe(session);
+						expect(session.aiTabs).toEqual([tab]);
+						expect(session.executionQueue).toHaveLength(0);
+						expect(window.maestro.agents.discoverSlashCommands).not.toHaveBeenCalled();
+						expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+						expect(dispatch).not.toHaveBeenCalledWith(
+							expect.objectContaining({ type: 'maestro:remoteCommand' })
+						);
+						expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+					} finally {
+						dispatch.mockRestore();
+					}
+				}
+			);
+
+			it.each(
+				(['idle', 'busy'] as const).flatMap((state) =>
+					(
+						[
+							['customAICommandsRef', '', '\t'],
+							['speckitCommandsRef', 'Spec $ARGUMENTS', '\n'],
+							['openspecCommandsRef', 'Open $ARGUMENTS', ' '],
+							['bmadCommandsRef', 'BMAD $ARGUMENTS', '\t'],
+						] as const
+					).map(([source, prompt, separator]) => ({ state, source, prompt, separator }))
+				)
+			)(
+				'queues $source on a $state Grok agent with literal arguments and a fresh native identity',
+				async ({ state, source, prompt, separator }) => {
+					const tab = createMockTab({
+						id: 'existing-tab',
+						agentSessionId: 'existing-native',
+						nativeSessionBinding: {
+							version: 1,
+							state: 'bound',
+							provider: 'grok',
+							nativeSessionId: 'existing-native',
+							accountRef: 'grok:fixture-account-a',
+							host: { kind: 'local', identity: 'fixture-host-a' },
+							cwd: '/fixtures/project',
+						},
+					});
+					const session = createMockSession({
+						id: 'grok-agent',
+						toolType: 'grok',
+						state,
+						aiTabs: [tab],
+						activeTabId: tab.id,
+						agentSessionId: 'legacy-native',
+						customEnvVars: { GROK_HOME: '/fixtures/account-a' },
+						agentCommands: [
+							{
+								command: '/advertised',
+								description: 'Native collision',
+								prompt: 'Never expand native',
+							},
+						],
+					});
+					const macro = { command: '/advertised', description: 'Explicit macro', prompt };
+					const deps = {
+						...createDeps({ sessions: [session], activeSessionId: 'other-agent' }),
+						[source]: { current: [macro] },
+					};
+					const args = '$& $$ $` $\' {{AGENT_NAME}} "quoted"\nnext';
+					const dispatch = vi.spyOn(window, 'dispatchEvent');
+					try {
+						renderHook(() => useRemoteIntegration(deps));
+						await act(async () => {
+							onRemoteNewAITabWithPromptHandler?.(
+								session.id,
+								` /advertised${separator}${args} `,
+								'grok-queued',
+								true,
+								true
+							);
+						});
+						const updated = useSessionStore.getState().sessions[0];
+						const created = updated.aiTabs.at(-1)!;
+						expect(updated.aiTabs).toHaveLength(2);
+						expect(created.id).not.toBe(tab.id);
+						expect(created).toMatchObject({ agentSessionId: null, logs: [], hidden: true });
+						expect(created.nativeSessionBinding).toBeUndefined();
+						expect(updated.aiTabs[0]).toBe(tab);
+						expect(updated.activeTabId).toBe(tab.id);
+						expect(updated.customEnvVars).toEqual(session.customEnvVars);
+						expect(updated.executionQueue).toHaveLength(1);
+						expect(updated.executionQueue[0]).toMatchObject({
+							type: 'command',
+							command: '/advertised',
+							commandArgs: args,
+							tabId: created.id,
+							commandScope: { provider: 'grok' },
+						});
+						expect(updated.executionQueue[0].text).toBeUndefined();
+						expect(macro.prompt).toBe(prompt);
+						expect(
+							mockProcess.sendRemoteNewAITabWithPromptResponse
+						).toHaveBeenCalledExactlyOnceWith('grok-queued', {
+							success: true,
+							tabId: created.id,
+							queued: true,
+						});
+						expect(window.maestro.agents.discoverSlashCommands).not.toHaveBeenCalled();
+						expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+						expect(dispatch).not.toHaveBeenCalledWith(
+							expect.objectContaining({ type: 'maestro:remoteCommand' })
+						);
+						expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+					} finally {
+						dispatch.mockRestore();
+					}
+				}
+			);
+
+			it.each(['removed tab', 'switched provider'] as const)(
+				'reports a failed delivery when creation synchronously encounters a %s',
+				(change) => {
+					const session = createMockSession({ id: 'grok-agent', toolType: 'grok' });
+					const deps = {
+						...createDeps({ sessions: [session] }),
+						customAICommandsRef: {
+							current: [{ command: '/macro', description: 'Macro', prompt: 'Work' }],
+						},
+					};
+					const dispatch = vi.spyOn(window, 'dispatchEvent');
+					let createdId: string | undefined;
+					const unsubscribe = useSessionStore.subscribe(({ sessions }) => {
+						const current = sessions[0];
+						if (createdId || current.aiTabs.length !== 2) return;
+						createdId = current.aiTabs.at(-1)!.id;
+						useSessionStore.setState({
+							sessions: [
+								{
+									...current,
+									...(change === 'removed tab'
+										? { aiTabs: [current.aiTabs[0]] }
+										: { toolType: 'codex' as const }),
+								},
+							],
+						});
+					});
+					try {
+						renderHook(() => useRemoteIntegration(deps));
+						act(() => {
+							onRemoteNewAITabWithPromptHandler?.(
+								session.id,
+								'/macro literal',
+								'grok-changed',
+								true
+							);
+						});
+						expect(createdId).toBeDefined();
+						expect(
+							mockProcess.sendRemoteNewAITabWithPromptResponse
+						).toHaveBeenCalledExactlyOnceWith('grok-changed', {
+							success: false,
+							tabId: createdId,
+							error: 'The new tab target changed before the prompt could be delivered',
+						});
+						expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(0);
+						expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+						expect(dispatch).not.toHaveBeenCalledWith(
+							expect.objectContaining({ type: 'maestro:remoteCommand' })
+						);
+						expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+					} finally {
+						unsubscribe();
+						dispatch.mockRestore();
+					}
+				}
+			);
+		});
+
 		it('refuses supervised mention routing before creating or releasing a tab', async () => {
 			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
 			vi.mocked(planCrossAgentMentions).mockReturnValueOnce({ suppressLocal: true } as never);
@@ -3350,6 +3581,108 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote rename tab', () => {
+		it.each([
+			['grok', undefined],
+			['grok', 'claude-code'],
+			['codex', 'grok'],
+		] as const)(
+			'keeps %s tabs with %s turn ownership locally named',
+			async (toolType, turnProvider) => {
+				const binding: NonNullable<AITab['nativeSessionBinding']> = {
+					version: 1,
+					state: 'bound',
+					provider: 'grok',
+					nativeSessionId: 'shared-native',
+					accountRef: 'grok:fixture-account-a',
+					host: { kind: 'ssh', identity: 'fixture-host-a' },
+					cwd: '/fixture/project',
+				};
+				const tab = createMockTab({
+					id: 'grok-tab',
+					agentSessionId: 'shared-native',
+					name: 'Original label',
+					turnProvider,
+					isGeneratingName: true,
+					nativeSessionBinding: { ...binding, provider: toolType },
+					providerSessions:
+						toolType === 'codex'
+							? { grok: { agentSessionId: 'shared-native', nativeSessionBinding: binding } }
+							: undefined,
+				});
+				const sibling = createMockTab({
+					id: 'sibling',
+					agentSessionId: 'shared-native',
+					name: 'Sibling',
+					nativeSessionBinding: binding,
+				});
+				const session = createMockSession({ id: 'grok-agent', toolType, aiTabs: [tab, sibling] });
+				const others = [
+					{ ...binding, accountRef: 'grok:fixture-account-b' },
+					{ ...binding, host: { kind: 'ssh' as const, identity: 'fixture-host-b' } },
+				].map((nativeSessionBinding, index) =>
+					createMockSession({
+						id: `other-agent-${index}`,
+						toolType: 'grok',
+						aiTabs: [
+							createMockTab({
+								id: `other-tab-${index}`,
+								agentSessionId: 'shared-native',
+								name: 'Other label',
+								nativeSessionBinding,
+							}),
+						],
+					})
+				);
+				const deps = createDeps({ sessions: [session, ...others] });
+				renderHook(() => useRemoteIntegration(deps));
+
+				for (const name of ['Maestro local label', '']) {
+					await act(async () => {
+						await onRemoteRenameTabHandler?.(session.id, tab.id, name, 'grok-rename');
+					});
+					const [renamed, ...unchanged] = useSessionStore.getState().sessions;
+					expect(renamed).toEqual({
+						...session,
+						aiTabs: [{ ...tab, name: name || null, isGeneratingName: false }, sibling],
+					});
+					expect(unchanged).toEqual(others);
+					expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenLastCalledWith('grok-rename', {
+						success: true,
+					});
+				}
+				expect(mockAgentSessions.setSessionName).not.toHaveBeenCalled();
+				expect(mockAgentSessions.updateSessionName).not.toHaveBeenCalled();
+				expect(mockClaude.updateSessionName).not.toHaveBeenCalled();
+				expect(mockHistory.updateSessionName).not.toHaveBeenCalled();
+				expect(captureException).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(['Codex label', ''])(
+			'retains non-Grok metadata and History writes for %j',
+			async (name) => {
+				const tab = createMockTab({ id: 'codex-tab', agentSessionId: 'codex-native', name: 'Old' });
+				const session = createMockSession({ id: 'codex-agent', toolType: 'codex', aiTabs: [tab] });
+				const deps = createDeps({ sessions: [session] });
+				renderHook(() => useRemoteIntegration(deps));
+				await act(async () => {
+					await onRemoteRenameTabHandler?.(session.id, tab.id, name, 'codex-rename');
+				});
+				expect(mockAgentSessions.setSessionName).toHaveBeenCalledWith(
+					'codex',
+					session.projectRoot,
+					'codex-native',
+					name || null
+				);
+				expect(mockHistory.updateSessionName).toHaveBeenCalledWith('codex-native', name);
+				expect(useSessionStore.getState().sessions[0].aiTabs[0].name).toBe(name || null);
+				expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenCalledWith('codex-rename', {
+					success: true,
+				});
+				expect(mockClaude.updateSessionName).not.toHaveBeenCalled();
+			}
+		);
+
 		it('renames tab and persists to agent session before reporting success', async () => {
 			const tab = createMockTab({ id: 'tab-1', agentSessionId: 'agent-session-1' });
 			const session = createMockSession({
@@ -3493,6 +3826,12 @@ describe('useRemoteIntegration', () => {
 				success: false,
 				error: 'history unreadable',
 			});
+			expect(window.maestro.logger.log).toHaveBeenCalledWith(
+				'error',
+				'Failed to persist remote tab name:',
+				undefined,
+				expect.objectContaining({ message: 'history unreadable' })
+			);
 		});
 
 		// `tabCallbacks.ts` stops waiting on a rename after a bounded delay and

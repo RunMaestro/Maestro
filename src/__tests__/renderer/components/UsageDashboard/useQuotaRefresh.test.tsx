@@ -77,4 +77,101 @@ describe('useQuotaRefresh', () => {
 		expect(result.current.isBusy).toBe(false);
 		expect(doRefresh).toHaveBeenCalledTimes(1);
 	});
+
+	describe('Grok quota refresh', () => {
+		const grokOptions = (doRefresh: () => Promise<void>, overrides = {}) => ({
+			providerId: 'grok',
+			refreshing: false,
+			autoRefresh: true,
+			accountCount: 0,
+			snapshotCount: 0,
+			doRefresh,
+			...overrides,
+		});
+
+		it('never auto-samples a provider with no quota accounts', async () => {
+			vi.useFakeTimers();
+			const doRefresh = vi.fn().mockResolvedValue(undefined);
+			const { result } = renderHook(() => useQuotaRefresh(grokOptions(doRefresh)));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(5_000);
+			});
+			expect(doRefresh).not.toHaveBeenCalled();
+			expect(result.current.isBusy).toBe(false);
+		});
+
+		it('reads an unset interval as off, not an inferred cadence, and keeps it per provider', () => {
+			const doRefresh = vi.fn().mockResolvedValue(undefined);
+			useUIStore.setState({ usageRefreshIntervals: { codex: 300_000 } });
+			const grok = renderHook(() => useQuotaRefresh(grokOptions(doRefresh)));
+			const claude = renderHook(() =>
+				useQuotaRefresh(grokOptions(doRefresh, { providerId: 'claude-code' }))
+			);
+
+			expect(grok.result.current.refreshIntervalMs).toBe(0);
+			act(() => grok.result.current.setRefreshIntervalMs(60_000));
+			expect(useUIStore.getState().usageRefreshIntervals).toEqual({ codex: 300_000, grok: 60_000 });
+			expect(grok.result.current.refreshIntervalMs).toBe(60_000);
+			expect(claude.result.current.refreshIntervalMs).toBe(0);
+		});
+
+		it('keeps a cached snapshot instead of auto-sampling over it', async () => {
+			vi.useFakeTimers();
+			const doRefresh = vi.fn().mockResolvedValue(undefined);
+			renderHook(() =>
+				useQuotaRefresh(
+					grokOptions(doRefresh, { providerId: 'codex', accountCount: 2, snapshotCount: 2 })
+				)
+			);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(5_000);
+			});
+			expect(doRefresh).not.toHaveBeenCalled();
+		});
+
+		it('recovers from an auth or permission refusal and allows a later refresh', async () => {
+			vi.useFakeTimers();
+			const doRefresh = vi
+				.fn()
+				.mockRejectedValueOnce(new Error('401 unauthenticated'))
+				.mockResolvedValueOnce(undefined);
+			const { result } = renderHook(() =>
+				useQuotaRefresh(grokOptions(doRefresh, { providerId: 'codex', autoRefresh: false }))
+			);
+
+			let first!: Promise<void>;
+			act(() => {
+				first = result.current.handleRefresh();
+			});
+			expect(result.current.isBusy).toBe(true);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(900);
+				await first;
+			});
+			expect(result.current.isBusy).toBe(false);
+
+			await act(async () => {
+				const second = result.current.handleRefresh();
+				await vi.advanceTimersByTimeAsync(900);
+				await second;
+			});
+			expect(doRefresh).toHaveBeenCalledTimes(2);
+			expect(result.current.isBusy).toBe(false);
+		});
+
+		it('ignores a manual refresh while the provider store reports one in flight', async () => {
+			const doRefresh = vi.fn().mockResolvedValue(undefined);
+			const { result } = renderHook(() =>
+				useQuotaRefresh(grokOptions(doRefresh, { refreshing: true, autoRefresh: false }))
+			);
+
+			await act(async () => {
+				await result.current.handleRefresh();
+			});
+			expect(doRefresh).not.toHaveBeenCalled();
+			expect(result.current.isBusy).toBe(true);
+		});
+	});
 });

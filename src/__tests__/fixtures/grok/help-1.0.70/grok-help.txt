@@ -1,0 +1,203 @@
+Grok Build TUI
+
+Usage: grok [OPTIONS] [PROMPT] [COMMAND]
+
+Arguments:
+  [PROMPT]
+          Initial prompt for the interactive session.
+
+          For example, `grok "fix the bug"` or `grok --worktree=feat "create this feature"`.
+
+Options:
+      --add-dir <DIR>
+          Also work in this folder, beside the working directory (repeatable).
+
+          A relative path starts from the working directory. A resumed session keeps the folders it was created with. Refused if the folder isn't trusted or the agent works only in its working directory.
+
+      --agent <NAME>
+          Agent name or definition file path
+
+      --agents <JSON>
+          Inline subagent definitions as JSON
+
+      --allow <RULE>
+          Permission allow rule (compat aliases: --allowedTools, --allowed-tools)
+
+      --always-approve
+          Auto-approve all tool executions
+
+  -c, --continue
+          Continue the most recent session for the current working directory
+
+      --cwd <CWD>
+          Working directory
+
+      --debug
+          Enable debug logging
+
+      --debug-file <FILE>
+          Write debug logs to FILE
+
+      --deny <RULE>
+          Permission deny rule (compat alias: --disallowedTools)
+
+      --disable-web-search
+          Disable web search and web fetch tools
+
+      --disallowed-tools <TOOLS>
+          Built-in tools to remove (comma-separated)
+
+      --fork-session
+          When resuming, create a new session ID instead of reusing the original.
+
+          Applies to `--resume` / `--continue`. `--session-id` can set the new ID.
+
+      --fullscreen
+          Open in the standard fullscreen TUI for this session.
+
+          Overrides a config `[ui] screen_mode = "minimal"` preference. Session-scoped only, does not write config. Fullscreen-vs-inline still follows the alt-screen policy (--no-alt-screen, [terminal] alt_screen, terminal auto-detection).
+
+  -h, --help
+          Print help (see more with 'grok help')
+
+      --include-partial-messages
+          Emit incremental text and thinking deltas alongside whole messages.
+
+          The deltas are `stream_event` lines. Only affects `--output-format streaming-messages-json`.
+
+      --json-schema <SCHEMA>
+          JSON Schema for structured output.
+
+          When set, the model is constrained to produce JSON matching this schema. Implies --output-format json. Example: --json-schema '{"type":"object","properties":{"name":{"type":"string"}}}'
+
+      --leader-socket <PATH>
+          Use a custom leader socket path instead of the default `~/.grok/leader.sock`.
+
+          A local/branch build can thus run an isolated leader without colliding with the default one already running on the machine. Name it `~/.grok/leader-*.sock` to keep `grok leader list/kill` able to find it; any other location works but won't be auto-discovered. In Grok Build unified, PATH is the leader's own socket, and its shared daemon listens beside it at `PATH.daemon`
+
+  -m, --model <MODEL>
+          Model ID to use
+
+      --max-turns <N>
+          Maximum number of agent turns
+
+      --minimal
+          Experimental: scrollback-native rendering.
+
+          Finalized blocks are printed into the terminal's native scrollback (use the terminal's own scroll / selection). Session-scoped only, does not write config.
+
+      --no-alt-screen
+          Run inline instead of using the terminal alternate screen
+
+      --no-plan
+          Disable plan mode
+
+      --no-subagents
+          Disable subagent spawning
+
+      --oauth
+          Force browser (loopback) login when the welcome screen authenticates
+
+      --output-format <OUTPUT_FORMAT>
+          Output format for headless mode
+
+          Possible values:
+          - plain
+          - json
+          - streaming-json:          NDJSON: one ACP session update per line, the agent's native format
+          - streaming-messages-json: NDJSON in the Anthropic Messages API wire format
+
+          [default: plain]
+
+  -p, --single <PROMPT>
+          Single-turn prompt. Prints the response to stdout and exits
+
+      --permission-mode <MODE>
+          Permission mode
+
+          [possible values: default, acceptEdits, auto, dontAsk, bypassPermissions, plan]
+
+      --prompt-file <PATH>
+          Single-turn prompt from a file
+
+      --prompt-json <JSON>
+          Single-turn prompt as JSON content blocks
+
+  -r, --resume [<SESSION_ID_OR_TITLE>]
+          Resume a session by ID or title, or the most recent if omitted.
+
+          Non-ID values match session titles for the current directory, ignoring letter case; UUID-shaped values always mean IDs. Without an exact match, the same words joined by any separators also match: quote "fix login bug" or write fix-login-bug. Among duplicate titles a sole renamed match wins; otherwise the resume fails as ambiguous.
+
+      --reasoning-effort <EFFORT>
+          Reasoning effort for reasoning models
+
+          [aliases: --effort]
+
+      --restore-code
+          Restore the original session's repository snapshot when resuming.
+
+          Remote sessions require `--worktree` (never checks out into the current directory). Without this flag, resume restores conversation only.
+
+      --rules <RULES>
+          Extra rules to append to the system prompt
+
+  -s, --session-id <SESSION_ID>
+          Use a specific session UUID for a new conversation.
+
+          For a **new** conversation the id must be a valid UUID and must not already exist under the target session directory. With `--resume`/`--continue`, only valid together with `--fork-session` (names the forked session). Does not resume existing sessions, use `--resume` / `--continue` instead.
+
+      --sandbox <PROFILE>
+          Sandbox profile for filesystem and network access
+
+          [env: GROK_SANDBOX=]
+
+      --system-prompt-override <PROMPT>
+          Override the agent's system prompt (compat alias: --system-prompt)
+
+      --tools <TOOLS>
+          Built-in tools to allow (comma-separated)
+
+  -v, --version
+          Print version
+
+      --verbatim
+          Send the prompt exactly as given
+
+  -w, --worktree [<WORKTREE>]
+          Start the session in a new git worktree, optionally named.
+
+          With `--resume` of a remote session, pass `--restore-code` to apply the snapshot codebase (conversation is restored either way).
+
+      --worktree-ref <WORKTREE_REF>
+          Branch, tag, or commit to base the worktree on (with `--worktree`).
+
+          Defaults to the current HEAD of the source checkout when omitted.
+
+          [aliases: --ref]
+
+Commands:
+  agent        Run Grok without the interactive UI
+  clone        Lazy-clone a git repository via grove (NFS on macOS, FUSE on Linux)
+  completions  Generate shell completion scripts (bash, zsh, fish, powershell, ...)
+  dashboard    Open the Agent Dashboard view at startup
+  doctor       Check terminal, clipboard, color, and input support without starting Grok
+  du           Show what the grok home (~/.grok) uses on disk [aliases: disk-usage]
+  export       Export a session transcript as Markdown
+  help         Print this message or the help of the given subcommand(s)
+  inspect      Show the configuration Grok discovers for this directory
+  leader       Manage running leader processes
+  login        Sign in to Grok
+  logout       Sign out and clear cached credentials
+  mcp          Manage MCP server configurations
+  memory       Manage cross-session memory
+  models       List available models and exit
+  plugin       Manage plugins and marketplace sources
+  sessions     List, search, or restore sessions
+  setup        Fetch and install managed configuration
+  trace        Export or upload session trace data
+  update       Check for updates or install a specific version
+  usage        Print persisted token and cost usage for a session
+  version      Print version information [aliases: v]
+  worker       Run this machine as a Cursor private worker
+  worktree     Manage git worktrees
+  wrap         Run any command with local clipboard support

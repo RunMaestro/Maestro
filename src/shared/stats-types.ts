@@ -201,7 +201,11 @@ export interface SessionTokenTotals {
 	outputTokens: number;
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
-	costUsd: number;
+	/**
+	 * Sum of the reported charges, or null when no query in the range carried a
+	 * figure (every charge unknown). Never a fabricated 0.
+	 */
+	costUsd: number | null;
 	/** Number of queries in the range that reported any token usage. */
 	pricedQueries: number;
 }

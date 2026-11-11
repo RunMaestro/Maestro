@@ -27,6 +27,58 @@ async function resolveResourceRoot(root: string): Promise<string> {
 	}
 }
 
+/**
+ * A Grok subagent definition is never carried: Grok's agent loader and its
+ * frontmatter schema are not in the pinned source (only the user guide names
+ * `.grok/agents/`), so a copied file is not a discoverable agent. Blocking when
+ * the user selected it, a warning when it merely sits in the project.
+ */
+export function grokSubagentUnpinned(
+	severity: TranslationLimitation['severity'],
+	resource: string,
+	artifactId?: string
+): TranslationLimitation {
+	return {
+		code: 'subagent-discovery-unpinned',
+		severity,
+		...(artifactId && { artifactId }),
+		message: `${resource}: Grok's subagent definition format and discovery are not pinned, so it is not carried to or from Grok. The source file stays where it is.`,
+	};
+}
+
+/** Count the `*.md` files under a directory; a missing directory has none. */
+async function countMarkdownFiles(directory: string): Promise<number> {
+	try {
+		return (await fs.readdir(directory, { recursive: true })).filter((name) =>
+			name.toLowerCase().endsWith('.md')
+		).length;
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === 'ENOENT' || code === 'ENOTDIR') return 0;
+		throw error;
+	}
+}
+
+/**
+ * Grok project roots whose loader contract is not pinned. Their files are
+ * named in a limitation and never collected: `.grok/rules` is a pinned scan
+ * root (compat.rs `rules_dirs`) but the rule file semantics are not, and
+ * `.grok/agents` has no pinned loader at all. Nothing is read beyond names.
+ */
+async function unpinnedGrokProjectResources(projectRoot: string): Promise<TranslationLimitation[]> {
+	const limitations: TranslationLimitation[] = [];
+	const rules = await countMarkdownFiles(path.join(projectRoot, '.grok', 'rules'));
+	if (rules > 0)
+		limitations.push({
+			code: 'grok-rules-unsupported',
+			severity: 'warning',
+			message: `${rules} rule file${rules === 1 ? '' : 's'} in .grok/rules ${rules === 1 ? 'is' : 'are'} not carried: Grok's rule loader semantics are not pinned, and no other provider reads that folder. The files stay in the project.`,
+		});
+	const agents = await countMarkdownFiles(path.join(projectRoot, '.grok', 'agents'));
+	if (agents > 0) limitations.push(grokSubagentUnpinned('warning', '.grok/agents'));
+	return limitations;
+}
+
 /** Capture only project knowledge and explicitly selected resources, never whole provider homes. */
 export async function collectTranslationResources(
 	identity: TranslationIdentity,
@@ -52,7 +104,9 @@ export async function collectTranslationResources(
 			scope: 'project' as const,
 			prefix: name,
 		})),
-		...['.claude/skills', '.agents/skills', '.codex/skills'].map((name) => ({
+		// `.grok/skills` is one of Grok's always-on skill roots (pinned compat.rs
+		// `skill_config_dirs`); `.agents/skills` is the other and is already here.
+		...['.claude/skills', '.agents/skills', '.codex/skills', '.grok/skills'].map((name) => ({
 			file: path.join(projectRoot, name),
 			kind: 'skill' as const,
 			scope: 'project' as const,
@@ -65,6 +119,7 @@ export async function collectTranslationResources(
 			prefix: name,
 		})),
 	];
+	if (!managedDirectory) limitations.push(...(await unpinnedGrokProjectResources(projectRoot)));
 	for (const name of ['.claude/agent-memory', '.claude/agent-memory-local'])
 		roots.push({
 			file: path.join(projectRoot, name),
@@ -137,6 +192,10 @@ export async function collectTranslationResources(
 				message:
 					'Select individual instruction, memory, skill, or subagent resources inside the source account or host-approved skill roots. Global summaries and account settings are excluded.',
 			});
+			continue;
+		}
+		if (identity.provider === 'grok' && kind === 'subagent') {
+			limitations.push(grokSubagentUnpinned('block', file));
 			continue;
 		}
 

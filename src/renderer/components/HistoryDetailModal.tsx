@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
 	X,
@@ -40,6 +40,7 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { useSettingsStore } from '../stores/settingsStore';
+import type { HistoryEntryItemProps } from './History/HistoryEntryItem';
 
 interface HistoryDetailModalProps {
 	theme: Theme;
@@ -51,7 +52,7 @@ interface HistoryDetailModalProps {
 	 * the entry displays; without it the restored tab falls back to the id octet
 	 * even though the modal it was launched from was showing the real name.
 	 */
-	onResumeSession?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
+	onResumeSession?: HistoryEntryItemProps['onOpenSessionAsTab'];
 	onDelete?: (entryId: string) => void;
 	onUpdate?: (entryId: string, updates: { validated?: boolean }) => Promise<boolean>;
 	// Navigation props for prev/next
@@ -94,6 +95,29 @@ export function HistoryDetailModal({
 	onCloseRef.current = onClose;
 	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 	const deleteButtonRef = useRef<HTMLButtonElement>(null);
+	const resumeRequestRef = useRef(0);
+	useLayoutEffect(() => {
+		return () => {
+			// Navigation or unmount must not let an old resume close a new selection.
+			resumeRequestRef.current++;
+		};
+	}, [entry]);
+	const handleResume = useCallback(async () => {
+		if (!onResumeSession || !entry.agentSessionId) return;
+		const request = ++resumeRequestRef.current;
+		const resumed = await onResumeSession(
+			entry.agentSessionId,
+			entry.projectPath,
+			entry.sessionName,
+			{
+				targetSessionId: entry.sessionId,
+				nativeSessionBinding: entry.nativeSessionBinding
+					? structuredClone(entry.nativeSessionBinding)
+					: undefined,
+			}
+		);
+		if (resumed === true && resumeRequestRef.current === request) onCloseRef.current();
+	}, [entry, onResumeSession]);
 
 	// Generate prose styles for consistent markdown rendering (same as TerminalOutput)
 	const proseStyles = useMemo(
@@ -154,8 +178,7 @@ export function HistoryDetailModal({
 			if (!onResumeSession || !entry.agentSessionId) return;
 			ke.preventDefault();
 			trackShortcutUsage('historyJumpToSession');
-			onResumeSession(entry.agentSessionId, entry.projectPath, entry.sessionName);
-			onClose();
+			void handleResume();
 		}
 	});
 
@@ -399,14 +422,7 @@ export function HistoryDetailModal({
 									{/* Resume button - styled with same padding as other pills */}
 									{onResumeSession && (
 										<button
-											onClick={() => {
-												onResumeSession(
-													entry.agentSessionId!,
-													entry.projectPath,
-													entry.sessionName
-												);
-												onClose();
-											}}
+											onClick={handleResume}
 											className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase transition-colors hover:opacity-80"
 											style={{
 												backgroundColor: theme.colors.success + '20',

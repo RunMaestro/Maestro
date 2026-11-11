@@ -16,7 +16,8 @@ vi.mock('../../../cli/output/formatter', () => ({
 	formatSuccess: vi.fn((msg) => `Success: ${msg}`),
 }));
 
-import { createAgent } from '../../../cli/commands/create-agent';
+import { createAgent, CREATE_AGENT_TYPES } from '../../../cli/commands/create-agent';
+import { AGENT_IDS } from '../../../shared/agentIds';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { formatError, formatSuccess } from '../../../cli/output/formatter';
 
@@ -303,5 +304,114 @@ describe('create-agent command', () => {
 			expect(parsed.success).toBe(false);
 			expect(parsed.error).toBe('Connection refused');
 		});
+	});
+});
+
+// Grok through `create-agent` (stable ID, same bridge message, no
+// provider substitution, background placement, parseable JSON errors).
+describe('create-agent Grok', () => {
+	let logSpy: MockInstance;
+	let exitSpy: MockInstance;
+	const sent: Array<{ payload: Record<string, unknown>; expect: string }> = [];
+	const desktop = (reply: Record<string, unknown>) =>
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({
+				sendCommand: vi.fn(async (payload: Record<string, unknown>, expectType: string) => {
+					sent.push({ payload, expect: expectType });
+					return reply;
+				}),
+			} as never)
+		);
+	const lastJson = () => JSON.parse(String(logSpy.mock.calls.at(-1)![0]));
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		sent.length = 0;
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		// Throwing exit: a refusal must stop before the bridge is touched.
+		exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null) => {
+			throw new Error(`process.exit(${code})`);
+		});
+	});
+
+	it('advertises and accepts exactly the registry IDs except terminal, grok included', () => {
+		expect(CREATE_AGENT_TYPES).toContain('grok');
+		expect(CREATE_AGENT_TYPES).not.toContain('terminal');
+		expect([...CREATE_AGENT_TYPES]).toEqual(AGENT_IDS.filter((id) => id !== 'terminal'));
+	});
+
+	it('creates a Grok agent through the one create_session bridge message with its model and env', async () => {
+		desktop({ type: 'create_session_result', success: true, sessionId: 'grok-agent-1' });
+
+		await createAgent('Grok Worker', {
+			cwd: '/tmp/grok-project',
+			type: 'grok',
+			model: 'grok-code-fast-1',
+			effort: 'high',
+			env: ['GROK_TELEMETRY=0'],
+			background: true,
+			json: true,
+		});
+
+		expect(sent).toHaveLength(1);
+		expect(sent[0].expect).toBe('create_session_result');
+		expect(sent[0].payload).toMatchObject({
+			type: 'create_session',
+			name: 'Grok Worker',
+			toolType: 'grok',
+			customModel: 'grok-code-fast-1',
+			customEffort: 'high',
+			customEnvVars: { GROK_TELEMETRY: '0' },
+			background: true,
+		});
+		expect(exitSpy).not.toHaveBeenCalled();
+		expect(lastJson()).toEqual({
+			success: true,
+			agentId: 'grok-agent-1',
+			name: 'Grok Worker',
+			type: 'grok',
+			background: true,
+		});
+	});
+
+	it('selects the new Grok agent by default and --focus wins over --background', async () => {
+		desktop({ type: 'create_session_result', success: true, sessionId: 'g' });
+		await createAgent('G1', { cwd: '/tmp', type: 'grok' });
+		await createAgent('G2', { cwd: '/tmp', type: 'grok', background: true, focus: true });
+		expect(sent.map((s) => [s.payload.toolType, s.payload.background])).toEqual([
+			['grok', false],
+			['grok', false],
+		]);
+	});
+
+	it.each(['grok-cli', 'Grok', 'xai'])(
+		'refuses %s with a parseable JSON error naming grok, before any bridge call',
+		async (type) => {
+			await expect(createAgent('Bad', { cwd: '/tmp', type, json: true })).rejects.toThrow(
+				'process.exit(1)'
+			);
+			const printed = lastJson();
+			expect(printed.success).toBe(false);
+			expect(printed.error).toContain(`Invalid agent type "${type}"`);
+			expect(printed.error).toMatch(/\bgrok\b/);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		}
+	);
+
+	it('reports a desktop refusal of a Grok create as parseable JSON, never a substituted provider', async () => {
+		exitSpy.mockImplementation(() => undefined as never);
+		desktop({
+			type: 'create_session_result',
+			success: false,
+			error: 'Managed policy refuses provider grok',
+		});
+
+		await createAgent('Grok Worker', { cwd: '/tmp', type: 'grok', json: true });
+
+		expect(sent).toHaveLength(1);
+		expect(sent[0].payload.toolType).toBe('grok');
+		expect(lastJson()).toEqual({ success: false, error: 'Managed policy refuses provider grok' });
+		expect(exitSpy).toHaveBeenCalledWith(1);
 	});
 });

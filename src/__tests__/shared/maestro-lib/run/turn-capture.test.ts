@@ -12,7 +12,8 @@ import type {
 	AgentOutputParser,
 	ParsedEvent,
 } from '../../../../shared/maestro-lib/parsers/agent-output-parser';
-import type { AgentError } from '../../../../shared/types';
+import type { AgentError, UsageAccounting, UsageCost } from '../../../../shared/types';
+import { parsedUsageToStats } from '../../../../shared/maestro-lib/streaming/usage-totals';
 
 type Usage = NonNullable<ParsedEvent['usage']>;
 
@@ -225,6 +226,135 @@ describe('TurnCapture usage', () => {
 			contextWindowResolved: true,
 			absoluteUsage: occupancy,
 		});
+	});
+});
+
+describe('TurnCapture scoped Grok usage', () => {
+	const accounting: UsageAccounting = {
+		source: 'runtime-stream',
+		route: 'acp',
+		scope: 'process-session',
+		reporting: 'snapshot',
+		scopeId: 'fixture-account-host',
+		providerSessionId: 'native-session',
+		processGeneration: 'process-1',
+		cacheReadCounting: 'beside-input',
+		cacheCreationCounting: 'beside-input',
+		completeness: 'complete',
+		childInclusion: 'unknown',
+		childCompleteness: 'unknown',
+		cost: { status: 'exact', costUsdTicks: '100' },
+	};
+	const baseline: Usage = { inputTokens: 100, outputTokens: 10, model: 'grok-fixture', accounting };
+	const report: Usage = {
+		...baseline,
+		inputTokens: 130,
+		outputTokens: 14,
+		accounting: { ...accounting, cost: { status: 'exact', costUsdTicks: '160' } },
+	};
+
+	it('retains attributed partial spend when transport dies before prompt-final usage', () => {
+		const turn = new TurnCapture('grok', stubParser(), {
+			usageIdentity: { turnId: 'turn-1' },
+			processSessionBaseline: parsedUsageToStats(baseline),
+		});
+		turn.handleEvent({ type: 'usage', usage: report });
+		turn.handleEvent({
+			type: 'error',
+			text: 'Disconnected',
+			terminal: { status: 'failed', kind: 'transport' },
+		});
+		expect(turn.usage).toMatchObject({
+			inputTokens: 30,
+			outputTokens: 4,
+			accounting: {
+				scope: 'turn',
+				turnId: 'turn-1',
+				completeness: 'partial',
+				final: false,
+				cost: { status: 'partial', costUsdTicks: '60' },
+			},
+		});
+		expect(turn.usageReports).toEqual([parsedUsageToStats(report)]);
+		expect(turn.resultMessageSeen).toBe(false);
+	});
+
+	it.each([undefined, 'process-2'])(
+		'does not infer spend from an absent/mismatched baseline: %s',
+		(generation) => {
+			const turn = new TurnCapture('grok', stubParser(), {
+				processSessionBaseline: generation
+					? parsedUsageToStats({
+							...baseline,
+							accounting: { ...accounting, processGeneration: generation },
+						})
+					: undefined,
+			});
+			turn.handleEvent({ type: 'usage', usage: report });
+			expect(turn.usage).toBeUndefined();
+			expect(turn.usageReports).toEqual([parsedUsageToStats(report)]);
+		}
+	);
+
+	it.each([undefined, '0', '80'])(
+		'settles final cost %s once without inventing free usage',
+		(ticks) => {
+			const cost: UsageCost =
+				ticks === undefined ? { status: 'unknown' } : { status: 'exact', costUsdTicks: ticks };
+			const turn = new TurnCapture('grok', stubParser(), {
+				processSessionBaseline: parsedUsageToStats(baseline),
+			});
+			turn.handleEvent({ type: 'usage', usage: report });
+			const final: ParsedEvent = {
+				type: 'result',
+				terminal: { status: 'success' },
+				usage: {
+					...report,
+					inputTokens: 40,
+					outputTokens: 5,
+					accounting: { ...accounting, scope: 'turn', final: true, cost },
+				},
+			};
+			turn.handleEvent(final);
+			const settled = structuredClone(turn.usage);
+			turn.handleEvent(final);
+			turn.handleEvent({ type: 'usage', usage: { ...report, inputTokens: 999 } });
+			expect(turn.usage).toEqual(settled);
+			expect(turn.usage).toMatchObject({
+				inputTokens: 40,
+				outputTokens: 5,
+				accounting: {
+					final: true,
+					cost: { status: ticks === undefined ? 'partial' : 'exact', costUsdTicks: ticks ?? '60' },
+				},
+			});
+			expect(turn.usage?.totalCostUsd).toBe(Number(ticks ?? '60') / 1e10);
+		}
+	);
+
+	it('keeps same-model turns independent under a fresh capture and baseline', () => {
+		const first = new TurnCapture('grok', stubParser(), {
+			usageIdentity: { turnId: 'first' },
+			processSessionBaseline: parsedUsageToStats(baseline),
+		});
+		first.handleEvent({ type: 'usage', usage: report });
+		const second = new TurnCapture('grok', stubParser(), {
+			usageIdentity: { turnId: 'second' },
+			processSessionBaseline: parsedUsageToStats(report),
+		});
+
+		second.handleEvent({
+			type: 'usage',
+			usage: {
+				...report,
+				inputTokens: 150,
+				outputTokens: 17,
+				accounting: { ...accounting, cost: { status: 'exact', costUsdTicks: '180' } },
+			},
+		});
+		expect(first.usage).toMatchObject({ inputTokens: 30, outputTokens: 4 });
+		expect(second.usage).toMatchObject({ inputTokens: 20, outputTokens: 3 });
+		expect(second.usage?.accounting?.turnId).toBe('second');
 	});
 });
 

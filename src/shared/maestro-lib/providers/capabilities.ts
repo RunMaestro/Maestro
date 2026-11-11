@@ -20,6 +20,93 @@ export type { AgentCapabilities };
 export { DEFAULT_CAPABILITIES };
 
 /**
+ * Investigation evidence, not public availability or a launch authorization.
+ * The pinned source documents tool approval rules, not CLI root grants, and
+ * rejects additionalDirectories on ACP resume. No binary/version is qualified.
+ */
+export const GROK_DIRECTORY_GRANT_SUPPORT = {
+	cliReadRoots: 'unverified',
+	cliWritableRoots: 'unverified',
+	acpResumeRoots: 'unsupported',
+	supportedVersionRange: null,
+} as const;
+
+/**
+ * What each true Grok capability rests on. Investigation
+ * evidence, not qualification: no Grok binary is qualified (`qualifiedVersions`
+ * is empty, the pinned candidate 1.0.70 has no native case run), so a true flag
+ * here means the production builder and consumers exist and the behavior was
+ * observed on an earlier binary or pinned by deterministic suites, never that
+ * the feature is certified. The version difference is not expressed by the
+ * public boolean: the route selector refuses an unqualified or unbound version
+ * (`selectGrokRoute`, `native.qualified`), managed hosts refuse every Grok
+ * effect, and readiness stays false while Grok is in BETA_AGENTS. A capability
+ * whose production path refuses, or that rests on nothing but a provisional
+ * claim, is false in AGENT_CAPABILITIES.grok and listed under `withheld`.
+ */
+export const GROK_CAPABILITY_EVIDENCE = Object.freeze({
+	candidateVersion: '1.0.70',
+	qualifiedVersions: Object.freeze([] as string[]),
+	retained: Object.freeze({
+		supportsReadOnlyMode:
+			'readOnlyArgs plan + deny Bash(*) observed on 1.0.5; containment unqualified (A11-F05). readOnlyCliEnforced stays true because false would keep --always-approve in CLI read-only runs (resolveCliBatchModeArgs); managed read-only refuses Grok. No --sandbox profile is appended (flagDecisions --sandbox)',
+		supportsCostTracking: 'end.total_cost_usd observed on 1.0.41; unknown cost stays unknown',
+		supportsUsageStats: 'per-call usage and end totals observed on 1.0.41',
+		supportsContextExport:
+			'GrokSessionStorage reads chat_history.jsonl; scoped extraction pinned by phase04 fixtures',
+		supportsWizard:
+			'streaming-json text deltas carry the structured reply; phase05 deterministic suites, native wizard cases not-run',
+		supportsStandardPermissionMode:
+			'A standard plan runs on GrokAcpSpawner (runsOnGrokAcpRoute); each ACP permission request is asked of the person through the permission relay consent session (grokConsentAuthority) and only allow_once is selected; ACP request port suites pin it deterministically, live round trip not-run. Local target only: SSH is refused before spawn (acp-remote-route), managed hosts refuse the grok-acp route',
+	}),
+	withheld: Object.freeze({
+		supportsImageInput:
+			'no host producer of EmbeddedImageSupport: the desktop prompt-file plan refuses every Grok image turn (grok-image-host-bounds-producer-absent)',
+		supportsImageInputOnResume:
+			'same refusal as supportsImageInput; resume image delivery never observed',
+		supportsContextMerge:
+			'PROVISIONAL since the merge formatter landed: deterministic only, grooming relies on unqualified read-only enforcement, every phase 11 native case not-run',
+	}),
+	/**
+	 * What a Maestro-owned launch inherits from other vendors' configuration
+	 * as `grok inspect --json` 1.0.70 reports it with an empty
+	 * isolated GROK_HOME. Probe and decision: src/main/agents/grok-inspect-probe.ts.
+	 */
+	inheritedConfiguration: Object.freeze({
+		compatCells:
+			'Switched off for every Maestro-owned launch (GROK_COMPAT_ISOLATION_ENV_VARS, defaultEnvVars plus readOnlyEnvOverrides). Before: all 13 externalCompat cells enabled, source default, 12 Claude skills enabled. After the ten GROK_{CLAUDE,CURSOR}_{AGENTS,HOOKS,MCPS,RULES,SKILLS}_ENABLED=false vars: those ten cells enabled false, source env, every Claude skill and hook compatibilityStatus disabled; the three sessions cells stay on (documented staged and inert). Offline basis: docs/user-guide/05-configuration.md and 26-config-reference.md (env > config.toml > default).',
+		permissionFiles:
+			'NOT isolable on 1.0.70. permissions.sources still lists ~/.claude/settings.local.json (settings) with 3 rules loaded after every compat cell is off; no compat cell covers it, the binary carries no env var for it (GROK_CLAUDE_* names are the five surfaces only), CLAUDE_CONFIG_DIR does not move it, and a native [permission] table in GROK_HOME/config.toml is merged beside it rather than replacing it. docs/user-guide/22-permissions-and-safety.md section 3 documents the read as unconditional. grokReadOnlyIsolationProblem() names each such file and refuses the read-only composition on an observed report; the probe itself is refused by runProviderProbe (no proven Grok probe lifetime), so no launch consults it yet.',
+		projectTrust:
+			'grok inspect --json reports projectTrusted false for an untrusted folder (the Maestro checkout included); --add-dir is refused there. Maestro grants no trust (no --trust) and records the observed value only.',
+	}),
+	/**
+	 * Project memory: what a listed session now shows of Grok's
+	 * native memory versus what still keeps supportsProjectMemory false.
+	 */
+	projectMemory: Object.freeze({
+		observed:
+			"GrokSessionStorage (src/main/storage/grok-session-storage.ts, parseGrokPromptContext) reads each session's prompt_context.json as a fourth bounded source beside summary.json, chat_history.jsonl and usage.json, and exposes nativeMetadata.nativeMemory: memory_v2_enabled, memory_global_path and memory_workspace_path (kept only under the account root), agents_md_files (kept only under the account or project root; relative entries resolve against the project), prompt_mode and is_non_interactive. File contents are never read; a dropped path is counted, a malformed file marks the source partial (invalid-prompt-context) and the session still lists. Real 1.0.70 sessions record memory_v2_enabled true with memory paths under GROK_HOME/memory-v2 and an empty agents_md_files list, so the entry shape for a loaded AGENTS.md is accepted as a bare path or an object with path, unobserved.",
+		unverified:
+			'supportsProjectMemory stays false: the facts are a per-session record of what the prompt was built from, not a binding. Unverified: that the workspace memory directory Grok picks (memory-v2/workspaces/<slug>) is stable for a Maestro agent cwd and account, that a Maestro-owned launch under an isolated GROK_HOME reads and writes the same scope a person sees, and any live case writing a memory in one turn and reading it back in a resumed one. Rules (AGENTS.md) and translated knowledge do not certify it.',
+	}),
+	/**
+	 * Decisions on native 1.0.70 flags Maestro could emit but does not, each
+	 * with its offline basis. The decided-flags ledger (grok-flag-ledger.ts) points at these.
+	 */
+	flagDecisions: Object.freeze({
+		'--sandbox':
+			'Unused. Offline basis: 1.0.70 writes docs/user-guide/18-sandbox.md into GROK_HOME; built-ins are off, workspace, devbox, read-only, strict, and read-only writes only GROK_HOME and temp dirs; an isolated `grok --sandbox read-only inspect --json` logged ProfileApplied enforced:true on macos/seatbelt. Not appended to readOnlyArgs because the profile is fixed per session: a resume naming another profile is refused ("cannot resume this session under sandbox profile"), every saved session records sandbox_profile "off", so a read-only turn on an existing tab would fail and a later full turn on a read-only session would stay write-confined. Also fails open (a built-in profile that cannot apply warns and runs unenforced) and child-network blocking is a no-op on macOS. Settling probe: a live resume of an "off" session with --sandbox read-only, and a per-session profile record in Maestro before any wiring',
+		'--rules':
+			'Unused; the system prompt stays embedded in the first turn and skipped on resume (supportsAppendSystemPrompt false). Offline basis: `grok --help` 1.0.70 says "Extra rules to append to the system prompt"; docs/user-guide/12-project-rules.md says --rules (alias --append-system-prompt, absent from --help) wraps the text in a <human_rules> block appended after the default prompt, never replacing it; a saved session prompt_context.json records no rules, so a resumed process would need them again, which matches the planner\'s every-turn flag delivery. Semantics match, the planner does not: applySystemPromptDelivery (turns/args.ts) and the CLI spawner emit the literal --append-system-prompt and, on a local Windows host, --append-system-prompt-file, which grok has no form of; the ACP route (`grok agent stdio`, every Standard turn) takes no --rules at all, while the capability is read per provider, not per route; and Maestro\'s multi-kilobyte prompt on argv is the overflow DESIGN.md forbids without a qualified file path. Wiring needs a per-provider append flag in the planner, a route-aware delivery that keeps the embed for ACP, and a live resume case proving --rules applies per process',
+		'--json-schema':
+			'Unused; a utility-turn candidate only. Offline basis: `grok help` 1.0.70 says it constrains output to the schema and implies --output-format json; docs/user-guide/14-headless-mode.md says the result carries structured_output, a failure ends with error_max_structured_output_retries, and a kept plan sends no build follow-up. Chat turns parse --output-format streaming-json events (jsonOutputArgs), so the flag cannot ride a chat turn. Candidate call sites: generateTabName (src/main/ipc/handlers/tabNaming.ts, buildAgentArgs) and the Quick Chat route question (askRoutingModel in src/renderer/services/quickChatRouter.ts through groomContext in src/main/utils/context-groomer.ts). Wiring needs those turns to drop jsonOutputArgs and read structured_output from the single json result, plus a live case for an explicit streaming-json beside it',
+		'--system-prompt-override':
+			"Unused, deliberately. Offline basis: `grok --help` 1.0.70 says it overrides the agent's system prompt (compat alias --system-prompt); docs/user-guide/12-project-rules.md says the text replaces the default prompt verbatim. Maestro's prompt is added context, never a replacement for the provider's tool, safety and environment instructions, and it is no permission control",
+	}),
+});
+
+/**
  * Capability definitions for each supported agent.
  *
  * NOTE: These are the current known capabilities. As agents evolve,
@@ -493,32 +580,32 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	grok: {
 		supportsResume: true, // Verified: -r/--resume <sessionId>; resume turn preserved the same sessionId in the end event
 		supportsReadOnlyMode: true, // Verified: --permission-mode plan (grok --help v0.2.93)
-		supportsStandardPermissionMode: true, // Native ACP approval requests (opt-in transport)
 		supportsJsonOutput: true, // Verified: --output-format streaming-json emits one JSON object per line
 		supportsSessionId: true, // Verified: camelCase sessionId (UUIDv7) on the final end event (no init event exists)
-		supportsImageInput: true, // Verified (grok 1.0.41): image path in the prompt, opened with read_file
-		supportsImageInputOnResume: true, // Verified: same prompt path works with --resume <id>
+		supportsImageInput: false, // Withheld (GROK_CAPABILITY_EVIDENCE): no host image-bounds producer, so the prompt-file plan refuses image turns
+		supportsImageInputOnResume: false, // Withheld with supportsImageInput
 		supportsSlashCommands: false, // Conservative default: not investigated in headless mode
 		supportsSessionStorage: true, // Verified: GrokSessionStorage reads ~/.grok/sessions/<percent-encoded-cwd>/<session-uuid>/
 		supportsCostTracking: true, // Verified (grok 1.0.41): end.total_cost_usd per turn; usage.json costUsdTicks per session
 		supportsUsageStats: true, // Verified (grok 1.0.41): a usage line per model call, turn totals on end
 		supportsBatchMode: true, // Verified: -p/--single <PROMPT> headless mode
-		requiresPromptToStart: true, // Verified: headless runs require -p <prompt>; no interactive PTY integration
+		requiresPromptToStart: true, // Headless turns require a prompt source; no interactive PTY integration
 		supportsStreaming: true, // Verified: token-sized thought/text deltas stream on stdout
 		supportsResultMessages: true, // Verified: distinct final end event with stopReason/sessionId/requestId
 		supportsModelSelection: true, // Verified: -m/--model flag; grok models lists grok-4.5 and grok-composer-2.5-fast
 		supportsStreamJsonInput: false, // Conservative default: no --input-format stream-json equivalent in grok --help
-		supportsPromptViaStdin: true, // Unverified - keeps the pre-existing Windows behavior
+		supportsPromptViaStdin: false, // Pinned native source has no raw-stdin prompt reader; use the owned JSON prompt file
 		supportsThinkingDisplay: true, // Verified: thought delta events precede text deltas
-		supportsContextMerge: false, // Conservative default: not yet exercised
+		supportsContextMerge: false, // Withheld: the merge formatter is pinned deterministically only; live native evidence is not-run
 		supportsContextExport: true, // Verified: session storage reads full transcripts (chat_history.jsonl), same export path as siblings
 		supportsWizard: true, // Streaming-json text deltas carry structured JSON wizard replies; discovery uses --always-approve + --max-turns 8 + --no-subagents (not plan - plan blocks read/fetch needed for discovery)
 		supportsGroupChatModeration: false, // Conservative default: moderation flow not yet exercised
+		supportsStandardPermissionMode: true, // Retained (GROK_CAPABILITY_EVIDENCE): ACP stdio route with in-app approvals, local target only
 		usesJsonLineOutput: true, // Verified: streaming-json is JSONL (one JSON object per line); also gates CLI batch spawning (spawnJsonLineAgent)
 		usesCombinedContextWindow: false, // Conservative default: on-disk signals.json reports a single contextTokensUsed but gauge math is unverified
-		supportsAppendSystemPrompt: false, // Verified absent: no --append-system-prompt equivalent in grok --help
-		supportsProjectMemory: false, // Conservative default: no project memory mechanism observed
-		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
+		supportsAppendSystemPrompt: false, // --rules decided unused (GROK_CAPABILITY_EVIDENCE.flagDecisions): no file form, no ACP form; embed once and skip on resume
+		supportsProjectMemory: false, // Native legacy/v2 memory exists and prompt_context.json facts are observed per session (GROK_CAPABILITY_EVIDENCE.projectMemory); selected account/workspace binding is unverified. Rules and translated knowledge do not certify it.
+		supportsAdditionalDirectories: false, // See GROK_DIRECTORY_GRANT_SUPPORT; no qualified native root-grant builder
 	},
 };
 

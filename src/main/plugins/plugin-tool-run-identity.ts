@@ -21,6 +21,82 @@ export const PLUGIN_TOOL_RUN_LIMITS = Object.freeze({
 });
 
 /** Supplied exclusively by the host's run lifecycle, never by tool arguments. */
+const MAX_ADVERTISED_TOOL_IDS = 256;
+const MAX_TOOL_ID_LENGTH = 200;
+
+/**
+ * What the host itself observed of one run's MCP bridge: how many times a
+ * bridge holding this run's proof listed tools (a reconnect, a restarted
+ * bridge, a native child agent's own MCP client or a discovery meta-tool
+ * listing again each count once), the declared tool ids those listings
+ * returned, and the receipts of executed calls. A provider's own report of
+ * which tools it loaded is never part of this record.
+ */
+export interface PluginToolRunEvidence {
+	advertisements: number;
+	advertisedToolIds: string[];
+	receipts: PluginToolReceipt[];
+	receiptsOverflowed: boolean;
+}
+
+/** Why a run that required plugin tools has no execution evidence for them. */
+export type PluginToolEvidenceProblem =
+	| 'tools-not-advertised'
+	| 'required-tool-not-advertised'
+	| 'receipt-limit-exceeded'
+	| 'receipt-missing';
+
+/**
+ * The one rule for whether a run that required plugin tools proved them.
+ * Required tools need a host-observed listing that returned at least one
+ * declared tool to this run's bridge. A required receipt needs that tool among
+ * the listed ones AND a host receipt of an executed call to it for this agent:
+ * advertisement alone is never execution evidence, and a receipt for a tool
+ * the bridge never listed to this run is not accepted either. A receipt limit
+ * overflow fails rather than guessing which call succeeded. Pure: the caller
+ * decides what to do with the problem (the headless runner fails the turn;
+ * nothing falls back to a run without the bridge).
+ */
+export function pluginToolEvidenceProblem(input: {
+	requirePluginTools: boolean;
+	receiptToolId?: string;
+	agentId: string;
+	evidence: PluginToolRunEvidence;
+}): PluginToolEvidenceProblem | null {
+	const { evidence, receiptToolId } = input;
+	if (!input.requirePluginTools && !receiptToolId) return null;
+	if (evidence.advertisements === 0 || evidence.advertisedToolIds.length === 0) {
+		return 'tools-not-advertised';
+	}
+	if (!receiptToolId) return null;
+	if (!evidence.advertisedToolIds.includes(receiptToolId)) return 'required-tool-not-advertised';
+	if (evidence.receiptsOverflowed) return 'receipt-limit-exceeded';
+	const executed = evidence.receipts.some(
+		(receipt) =>
+			receipt.toolId === receiptToolId &&
+			receipt.agentId === input.agentId &&
+			receipt.messageIds.length > 0
+	);
+	return executed ? null : 'receipt-missing';
+}
+
+/** The user-facing line for a {@link PluginToolEvidenceProblem}. */
+export function pluginToolEvidenceMessage(
+	problem: PluginToolEvidenceProblem,
+	receiptToolId?: string
+): string {
+	switch (problem) {
+		case 'tools-not-advertised':
+			return 'The provider never listed Maestro plugin tools from its MCP bridge during this run';
+		case 'required-tool-not-advertised':
+			return `The provider never listed the required plugin tool "${receiptToolId ?? ''}" during this run`;
+		case 'receipt-limit-exceeded':
+			return 'Plugin tool receipt limit exceeded; inspect recorded receipts before retrying';
+		case 'receipt-missing':
+			return 'Required plugin tool returned no delivery receipt';
+	}
+}
+
 export interface PluginToolRunAuthority {
 	/** Host-stamped execution mode. Unspecified callers conservatively require unattended consent. */
 	readonly unattended?: boolean;
@@ -265,13 +341,22 @@ export class PluginToolRunIdentity {
 			toolId: ttlOrReceipt,
 			receipts: [],
 			overflow: false,
+			advertisements: 0,
+			advertisedToolIds: new Set(),
 		});
 		return token;
 	}
 
 	private readonly receiptRuns = new Map<
 		string,
-		{ runId: string; toolId?: string; receipts: PluginToolReceipt[]; overflow: boolean }
+		{
+			runId: string;
+			toolId?: string;
+			receipts: PluginToolReceipt[];
+			overflow: boolean;
+			advertisements: number;
+			advertisedToolIds: Set<string>;
+		}
 	>();
 	resolve(token: unknown): { readonly callerAgentId: string | null } {
 		try {
@@ -321,6 +406,43 @@ export class PluginToolRunIdentity {
 			typeof token === 'string' &&
 			this.receiptRuns.get(token)?.overflow === true
 		);
+	}
+
+	/**
+	 * Record a listing the host answered for a bridge holding this run's proof.
+	 * The ids are the host's own projection of declared tools, never the
+	 * caller's JSON; an empty listing still counts as a listing that advertised
+	 * nothing. Ids accumulate across listings, so a reconnect that re-lists
+	 * keeps what the run was already shown; the set is bounded.
+	 */
+	recordAdvertisement(token: unknown, toolIds: readonly string[]): void {
+		if (!this.resolve(token).callerAgentId || typeof token !== 'string') return;
+		const run = this.receiptRuns.get(token);
+		if (!run) return;
+		run.advertisements = Math.min(run.advertisements + 1, Number.MAX_SAFE_INTEGER);
+		for (const id of toolIds) {
+			if (run.advertisedToolIds.size >= MAX_ADVERTISED_TOOL_IDS) break;
+			if (typeof id === 'string' && id.length > 0 && id.length <= MAX_TOOL_ID_LENGTH) {
+				run.advertisedToolIds.add(id);
+			}
+		}
+	}
+
+	/** The host-observed record of one live run; empty for an unknown or expired proof. */
+	getEvidence(token: unknown): PluginToolRunEvidence {
+		const run =
+			!this.resolve(token).callerAgentId || typeof token !== 'string'
+				? undefined
+				: this.receiptRuns.get(token);
+		if (!run) {
+			return { advertisements: 0, advertisedToolIds: [], receipts: [], receiptsOverflowed: false };
+		}
+		return {
+			advertisements: run.advertisements,
+			advertisedToolIds: [...run.advertisedToolIds],
+			receipts: this.getReceipts(token),
+			receiptsOverflowed: run.overflow,
+		};
 	}
 
 	/** Resolve exact proofs only. No anonymous fallback can be mistaken for verified authority. */
