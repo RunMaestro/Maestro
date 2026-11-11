@@ -1,6 +1,7 @@
 import React, { memo, useState } from 'react';
 import { Maximize2 } from 'lucide-react';
 import type { Theme } from '../../../types';
+import { MiniBadge } from '../../ui/MiniBadge';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
 import { OPEN_STAGED_IMAGES_ORGANIZER_EVENT } from '../../../services/stagedImagesOrganizer';
 import { StagedImageTile } from './StagedImageTile';
@@ -20,6 +21,8 @@ interface StagedImagesStripProps {
 	openAnnotator: (image: string, onSave: (newDataUrl: string) => void) => void;
 	/** Move an image, renumbering any `Screenshot N` references in the draft. */
 	onReorder: (from: number, to: number) => void;
+	/** Optional visible warning badge when the current agent cannot read images. */
+	warning?: string;
 }
 
 export const StagedImagesStrip = memo(function StagedImagesStrip({
@@ -30,6 +33,7 @@ export const StagedImagesStrip = memo(function StagedImagesStrip({
 	setStagedImages,
 	openAnnotator,
 	onReorder,
+	warning,
 }: StagedImagesStripProps) {
 	const [organizerOpen, setOrganizerOpen] = useState(false);
 	const dnd = useStagedImageDnd(stagedImages.length, onReorder);
@@ -69,6 +73,15 @@ export const StagedImagesStrip = memo(function StagedImagesStrip({
 					>
 						<Maximize2 className="w-4 h-4" />
 					</button>
+				)}
+
+				{warning && (
+					<MiniBadge
+						label={warning}
+						theme={theme}
+						color={theme.colors.warning}
+						testId="staged-images-warning"
+					/>
 				)}
 
 				<div

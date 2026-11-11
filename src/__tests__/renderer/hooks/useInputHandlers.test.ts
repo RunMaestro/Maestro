@@ -136,6 +136,11 @@ vi.mock('../../../renderer/stores/centerFlashStore', async (importOriginal) => (
 
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
+import {
+	setCapabilitiesCache,
+	clearCapabilitiesCache,
+	DEFAULT_CAPABILITIES,
+} from '../../../renderer/hooks/agent/useAgentCapabilities';
 
 const mockNotifyCenterFlash = vi.mocked(notifyCenterFlash);
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
@@ -1282,6 +1287,38 @@ describe('useInputHandlers', () => {
 			expect(mockNotifyCenterFlash).toHaveBeenCalled();
 		});
 
+		it('refuses image paste in group chat mode when moderator cannot read images', () => {
+			clearCapabilitiesCache();
+			setCapabilitiesCache('terminal', {
+				...DEFAULT_CAPABILITIES,
+				supportsImageInput: false,
+			});
+
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [{ id: 'group-1', moderatorAgentId: 'terminal' } as any],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const pasteEvt = imagePasteEvent();
+			mockNotifyCenterFlash.mockClear();
+
+			act(() => {
+				result.current.handlePaste(pasteEvt);
+			});
+
+			expect(pasteEvt.preventDefault).toHaveBeenCalled();
+			expect(mockNotifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+			});
+			expect(mockSetGroupChatStagedImages).not.toHaveBeenCalled();
+		});
+
 		it('ignores a file drop while in command mode', () => {
 			const { result } = renderInCommandMode();
 
@@ -1383,6 +1420,216 @@ describe('useInputHandlers', () => {
 			});
 
 			// The drop handler creates a FileReader - just verify it doesn't throw
+			expect(dropEvent.preventDefault).toHaveBeenCalled();
+		});
+
+		it('inserts a dragged staged-image reference once in a room draft', () => {
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [
+					{ id: 'group-1', draftMessage: 'compare', moderatorAgentId: 'claude-code' } as any,
+				],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-staged-image'
+							? '1'
+							: type === 'text/plain'
+								? 'Screenshot 2'
+								: '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const chat = useGroupChatStore.getState().groupChats.find((c) => c.id === 'group-1');
+			expect(chat?.draftMessage).toBe('compare Screenshot 2 ');
+			expect(chat?.draftMessage?.match(/Screenshot 2/g)).toHaveLength(1);
+			// The image was already staged; the drop only writes text, so the
+			// room's image gate is not bypassed.
+			expect(mockSetGroupChatStagedImages).not.toHaveBeenCalled();
+		});
+
+		it('inserts a dragged staged-image reference once in the AI draft', () => {
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			act(() => {
+				result.current.setInputValue('compare');
+			});
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-staged-image'
+							? '1'
+							: type === 'text/plain'
+								? 'Screenshot 2'
+								: '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const draft = inputVal();
+			expect(draft).toBe('compare Screenshot 2 ');
+			expect(draft.match(/Screenshot 2/g)).toHaveLength(1);
+		});
+
+		it('refuses image drop in group chat mode when moderator cannot read images and flashes once for multiple images', () => {
+			clearCapabilitiesCache();
+			setCapabilitiesCache('terminal', {
+				...DEFAULT_CAPABILITIES,
+				supportsImageInput: false,
+			});
+
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [{ id: 'group-1', moderatorAgentId: 'terminal' } as any],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const img1 = new Blob(['data1'], { type: 'image/png' });
+			Object.defineProperty(img1, 'type', { value: 'image/png' });
+			const img2 = new Blob(['data2'], { type: 'image/png' });
+			Object.defineProperty(img2, 'type', { value: 'image/png' });
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 2,
+						0: img1,
+						1: img2,
+						item: (idx: number) => (idx === 0 ? img1 : img2),
+						[Symbol.iterator]: function* () {
+							yield img1;
+							yield img2;
+						},
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			mockNotifyCenterFlash.mockClear();
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(mockNotifyCenterFlash).toHaveBeenCalledTimes(1);
+			expect(mockNotifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+			});
+			expect(mockSetGroupChatStagedImages).not.toHaveBeenCalled();
+		});
+
+		it('keeps the documents from a mixed drop when the moderator cannot read images', () => {
+			clearCapabilitiesCache();
+			setCapabilitiesCache('terminal', {
+				...DEFAULT_CAPABILITIES,
+				supportsImageInput: false,
+			});
+
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [{ id: 'group-1', moderatorAgentId: 'terminal', draftMessage: '' } as any],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const image = new Blob(['data1'], { type: 'image/png' });
+			Object.defineProperty(image, 'type', { value: 'image/png' });
+			const documentFile = {
+				type: 'application/pdf',
+				name: 'notes.pdf',
+				path: '/tmp/notes.pdf',
+			};
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: [image, documentFile] as any,
+				},
+			} as unknown as React.DragEvent;
+
+			mockNotifyCenterFlash.mockClear();
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(mockNotifyCenterFlash).toHaveBeenCalledTimes(1);
+			expect(mockNotifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+			});
+			expect(mockSetGroupChatStagedImages).not.toHaveBeenCalled();
+			expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('@/tmp/notes.pdf ');
+		});
+
+		it('allows image drop in group chat mode when moderator capabilities are unknown / uncached', () => {
+			clearCapabilitiesCache();
+
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [{ id: 'group-1', moderatorAgentId: 'fresh-uncached-agent' } as any],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const img1 = new Blob(['data1'], { type: 'image/png' });
+			Object.defineProperty(img1, 'type', { value: 'image/png' });
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: img1,
+						item: () => img1,
+						[Symbol.iterator]: function* () {
+							yield img1;
+						},
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			mockNotifyCenterFlash.mockClear();
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(mockNotifyCenterFlash).not.toHaveBeenCalled();
 			expect(dropEvent.preventDefault).toHaveBeenCalled();
 		});
 	});
@@ -2306,7 +2553,7 @@ describe('useInputHandlers', () => {
 			expect(inputVal()).toBe('@src/a.ts @docs ');
 		});
 
-		it('updates group chat draftMessage when external files are dropped during group chat', () => {
+		it('updates group chat draftMessage with absolute path even when inside active agent project root', () => {
 			const initialChat = {
 				id: 'group-1',
 				name: 'g',
@@ -2345,7 +2592,103 @@ describe('useInputHandlers', () => {
 
 			expect(setGroupChats).toHaveBeenCalled();
 			const updated = useGroupChatStore.getState().groupChats[0];
-			expect(updated.draftMessage).toBe('@src/a.ts ');
+			expect(updated.draftMessage).toBe('@/test/src/a.ts ');
+		});
+
+		it('inserts an absolute path in group chat when dropping a file outside active agent project root', () => {
+			const initialChat = {
+				id: 'group-1',
+				name: 'g',
+				draftMessage: '',
+				participants: [],
+				messages: [],
+			};
+			const setGroupChats = vi.fn((updater: any) => {
+				const next = typeof updater === 'function' ? updater([initialChat as any]) : updater;
+				useGroupChatStore.setState({ groupChats: next } as any);
+			});
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [initialChat as any],
+				setGroupChats,
+				setGroupChatStagedImages: vi.fn(),
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: { type: 'text/plain', name: 'notes.txt', path: '/other/path/notes.txt' },
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const updated = useGroupChatStore.getState().groupChats[0];
+			expect(updated.draftMessage).toBe('@/other/path/notes.txt ');
+		});
+
+		it('normalises Windows-style backslash paths to forward slashes as absolute paths in group chat', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						projectRoot: 'C:\\Users\\Alice\\proj',
+						fullPath: 'C:\\Users\\Alice\\proj',
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+
+			const initialChat = {
+				id: 'group-1',
+				name: 'g',
+				draftMessage: '',
+				participants: [],
+				messages: [],
+			};
+			const setGroupChats = vi.fn((updater: any) => {
+				const next = typeof updater === 'function' ? updater([initialChat as any]) : updater;
+				useGroupChatStore.setState({ groupChats: next } as any);
+			});
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [initialChat as any],
+				setGroupChats,
+				setGroupChatStagedImages: vi.fn(),
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: {
+							type: 'text/plain',
+							name: 'index.ts',
+							path: 'C:\\Users\\Alice\\proj\\src\\index.ts',
+						},
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const updated = useGroupChatStore.getState().groupChats[0];
+			expect(updated.draftMessage).toBe('@C:/Users/Alice/proj/src/index.ts ');
 		});
 
 		it('appends to existing group chat draft with a separating space', () => {
@@ -2389,7 +2732,7 @@ describe('useInputHandlers', () => {
 			});
 
 			const updated = useGroupChatStore.getState().groupChats[0];
-			expect(updated.draftMessage).toBe('check @README.md ');
+			expect(updated.draftMessage).toBe('check @/test/README.md ');
 		});
 
 		it('ignores files without a path (browser-only drops have no fs path)', () => {

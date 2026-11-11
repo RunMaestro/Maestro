@@ -23,7 +23,7 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { logger } from '../utils/logger';
 import { createPending, lookupBinding, registerSpawn, resolvePending } from './registry';
-import { parseQuestionRequest } from './question-request';
+import { parseQuestionRequest, parseAutomatableQuestionRequest } from './question-request';
 import type {
 	BridgeToServerMessage,
 	PermissionDecision,
@@ -31,6 +31,9 @@ import type {
 	RelaySpawnBinding,
 	ServerToBridgeMessage,
 } from './types';
+import { rateRisk } from '../../shared/pianola/pianola-risk';
+import { canonicalJson } from '../../shared/canonicalJson';
+import { nativeCurrentTurns } from '../pianola/current-turn';
 
 const LOG_CONTEXT = '[PermissionRelay]';
 
@@ -57,10 +60,17 @@ export interface RelayConsentSession {
 }
 
 export class PermissionRelayServer {
+	private readonly socketId = randomUUID();
 	private server: net.Server | null = null;
 	private socketPath: string | null = null;
 	private onRequest: OnPermissionRequest | null = null;
 	private starting: Promise<string> | null = null;
+	private questionAuthority?: () => string;
+
+	/** Native host policy/owner census; absence keeps question automation unsupported. */
+	setQuestionAuthority(read: () => string): void {
+		this.questionAuthority = read;
+	}
 
 	/** Set the callback that surfaces requests to the user (renderer). */
 	setOnRequest(cb: OnPermissionRequest): void {
@@ -120,15 +130,15 @@ export class PermissionRelayServer {
 	private resolveSocketPath(userDataDir: string): string {
 		if (process.platform === 'win32') {
 			// Named pipes are per-user by default ACL; unique per app instance.
-			return `\\\\.\\pipe\\maestro-permission-relay-${process.pid}`;
+			return `\\\\.\\pipe\\maestro-permission-relay-${process.pid}-${this.socketId}`;
 		}
 		// Prefer userData, but macOS caps unix socket paths at ~104 bytes. Fall
 		// back to tmpdir when the userData-based path would be too long.
 		const preferred = path.join(userDataDir, 'permission-relay.sock');
-		if (preferred.length <= 100) {
+		if (Buffer.byteLength(preferred, 'utf8') <= 100) {
 			return preferred;
 		}
-		return path.join(os.tmpdir(), `maestro-relay-${process.pid}.sock`);
+		return path.join(os.tmpdir(), `mr-${process.pid}-${this.socketId.slice(0, 8)}.sock`);
 	}
 
 	private async start(userDataDir: string): Promise<string> {
@@ -251,7 +261,14 @@ export class PermissionRelayServer {
 			return;
 		}
 
-		const decision = await this.decide(msg.token, binding, msg.toolName, msg.input ?? {});
+		const decision = await this.decide(
+			msg.token,
+			binding,
+			msg.toolName,
+			msg.input ?? {},
+			undefined,
+			socket
+		);
 		this.send(socket, {
 			type: 'permission-response',
 			requestId: bridgeRequestId,
@@ -268,7 +285,8 @@ export class PermissionRelayServer {
 		binding: RelaySpawnBinding,
 		toolName: string,
 		input: Record<string, unknown>,
-		signal?: AbortSignal
+		signal?: AbortSignal,
+		socket?: net.Socket
 	): Promise<PermissionDecision> {
 		const onRequest = this.onRequest;
 		if (!onRequest) {
@@ -297,7 +315,50 @@ export class PermissionRelayServer {
 			message: 'The request was cancelled before a decision.',
 		};
 		if (signal?.aborted) return cancelled;
-		const decisionPromise = createPending(requestId, token);
+		const native = socket
+			? nativeCurrentTurns.readProcessTurn(binding.sessionId, binding.tabId)
+			: undefined;
+		// Raw automation admission must not inherit the human picker's lossy coercions.
+		const question = parseAutomatableQuestionRequest(toolName, input);
+		let authority: string | undefined;
+		try {
+			authority = native && question ? this.questionAuthority?.() : undefined;
+		} catch {
+			/* Human relay remains available. */
+		}
+		let authorityCurrent = !!authority;
+		const decisionPromise = createPending(
+			requestId,
+			token,
+			undefined,
+			native && question
+				? {
+						requestId,
+						processId: binding.sessionId,
+						cursor: native.cursor,
+						createdAt: request.createdAt,
+						question: question.question,
+						observedRisk: rateRisk(canonicalJson(input)),
+						options: question.options.map((o) =>
+							o.description ? `${o.label}: ${o.description}` : o.label
+						),
+					}
+				: undefined,
+			(readAuthority = (read) => read()) => {
+				try {
+					authorityCurrent =
+						authorityCurrent &&
+						!!this.questionAuthority &&
+						readAuthority(this.questionAuthority) === authority;
+				} catch {
+					authorityCurrent = false;
+				}
+				return authorityCurrent && !!socket && !socket.destroyed && socket.writable;
+			}
+		);
+		const onClose = () =>
+			resolvePending(requestId, { behavior: 'deny', message: 'Question transport disconnected.' });
+		socket?.once('close', onClose);
 		const onAbort = () => resolvePending(requestId, cancelled);
 		signal?.addEventListener('abort', onAbort, { once: true });
 		let decision: PermissionDecision;
@@ -306,6 +367,7 @@ export class PermissionRelayServer {
 			decision = await decisionPromise;
 		} finally {
 			signal?.removeEventListener('abort', onAbort);
+			socket?.removeListener('close', onClose);
 		}
 
 		return decision;

@@ -9,9 +9,11 @@
  * output, and report liveness, the provider session id and the end to the service.
  *
  * The emitter is shared app-wide, so every listener filters on this consult's process id, and
- * every listener is removed once the consult ends, is stopped, or fails to start.
+ * every listener is removed once the consult ends or fails to start. Managed Stop retains
+ * observation until the matching native exit; requesting a kill is not terminal evidence.
  */
 
+import { captureException } from '../utils/sentry';
 import type { ProcessManager } from '../process-manager';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { spawnGroupChatAgent } from '../group-chat/spawnGroupChatAgent';
@@ -30,9 +32,18 @@ interface RunningConsult {
 	detach: () => void;
 }
 
+export interface NativeConsultAdmission {
+	/** Positive host proof that the native spawn boundary was never crossed. */
+	notStarted?(): void;
+	beforeSpawn(): void;
+	started(processId: string, pid?: number): void;
+	ended?(processId: string): void;
+}
+
 export function createDesktopConsultRunner(
 	processManager: ProcessManager,
-	sshStore: SshRemoteSettingsStore | null
+	sshStore: SshRemoteSettingsStore | null,
+	nativeAdmission?: NativeConsultAdmission
 ): ConsultRunner {
 	const runs = new Map<string, RunningConsult>();
 
@@ -62,6 +73,15 @@ export function createDesktopConsultRunner(
 				if (sid !== sessionId) return;
 				run.detach();
 				runs.delete(sessionId);
+				try {
+					nativeAdmission?.ended?.(sessionId);
+				} catch (error) {
+					run.error ??= 'Native consult terminal admission failed';
+					void captureException(error, {
+						operation: 'crossAgent:endedJournal',
+						processId: sessionId,
+					});
+				}
 				observer.onEnd({
 					exitCode: code,
 					error: run.error,
@@ -84,16 +104,43 @@ export function createDesktopConsultRunner(
 			processManager.on('session-id', onSessionId);
 			runs.set(sessionId, run);
 
+			let spawnAttempted = false;
 			try {
-				const result = await spawnGroupChatAgent(
-					toSpawnGroupChatAgentConfig(spawn, { processManager, sshStore })
-				);
+				const result = await spawnGroupChatAgent({
+					...toSpawnGroupChatAgentConfig(spawn, { processManager, sshStore }),
+					beforeSpawn: () => {
+						nativeAdmission?.beforeSpawn();
+						spawnAttempted = true;
+					},
+				});
+				if (result.success) {
+					// Admission persistence is not a spawn failure. Keep listeners and the
+					// service's Stop/watchdog ownership after the native child exists.
+					try {
+						nativeAdmission?.started(sessionId, result.pid);
+					} catch (error) {
+						run.error ??= 'Native consult start admission failed';
+						void captureException(error, {
+							operation: 'crossAgent:startedJournal',
+							processId: sessionId,
+						});
+					}
+				}
+				if (!result.success && spawnAttempted) {
+					return { success: false, unknown: true };
+				}
 				if (!result.success) {
+					nativeAdmission?.notStarted?.();
 					run.detach();
 					runs.delete(sessionId);
 				}
 				return result;
 			} catch (err) {
+				if (spawnAttempted) {
+					void captureException(err, { operation: 'crossAgent:spawnAck', processId: sessionId });
+					return { success: false, unknown: true };
+				}
+				nativeAdmission?.notStarted?.();
 				run.detach();
 				runs.delete(sessionId);
 				throw err;
@@ -102,8 +149,12 @@ export function createDesktopConsultRunner(
 
 		stop(processId) {
 			const run = runs.get(processId);
-			run?.detach();
-			runs.delete(processId);
+			// A managed branch still needs its authentic exit after the service has displayed
+			// cancellation. Keep the observer (including for a lost spawn acknowledgement).
+			if (!nativeAdmission) {
+				run?.detach();
+				runs.delete(processId);
+			}
 			try {
 				processManager.kill(processId);
 			} catch {

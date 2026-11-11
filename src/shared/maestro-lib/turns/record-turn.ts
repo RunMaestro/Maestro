@@ -80,6 +80,8 @@ export interface RecordedTurn {
 	 * starts, through `beginTurn`). The entries written here then start at the answer.
 	 */
 	userEntryWritten?: boolean;
+	/** The machine the person sent the turn from (`TurnInput.originHost`): the entry's `hostname`. */
+	originHost?: string;
 }
 
 /** What happened to each record. A skipped record says why. */
@@ -316,6 +318,7 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 				...(completed.usage ? { usageStats: completed.usage } : {}),
 				success: true,
 				elapsedTimeMs: turn.endedAt - turn.startedAt,
+				...(turn.originHost ? { hostname: turn.originHost } : {}),
 			};
 			history = await historyWriter.append(agent.id, entry);
 		}

@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { performance } from 'perf_hooks';
+import type { CallerRunIdentity } from '../../shared/agentDelegation';
 import { PLUGIN_ID_PATTERN } from '../../shared/plugins/plugin-manifest';
 import { assertPluginAuthority } from './plugin-authority';
 import { requirePluginAgentId } from './plugin-authority';
@@ -106,6 +107,8 @@ export interface PluginToolRunAuthority {
 /** Keep this context host-private; a serialized agentId alone is never proof. */
 export interface PluginToolCallerContext extends PluginToolRunAuthority {
 	readonly callerAgentId: string;
+	/** Present only for a host-bound spawn, never inferred from a supplied agent ID. */
+	readonly run?: Readonly<CallerRunIdentity>;
 }
 
 /** A host-private result, never a serialized caller-ID proof. */
@@ -132,6 +135,7 @@ interface PluginLifetime {
 
 interface RunProof {
 	readonly agentId: string;
+	readonly binding?: Readonly<CallerRunIdentity>;
 	readonly unattended: boolean;
 	readonly invocations: Set<string>;
 	readonly expiresAt: number;
@@ -211,7 +215,8 @@ export class PluginToolRunIdentity {
 	private issueAuthorized(
 		agentId: unknown,
 		authority: PluginToolRunAuthority,
-		ttlMs = PLUGIN_TOOL_RUN_LIMITS.defaultTtlMs
+		ttlMs: number | null = PLUGIN_TOOL_RUN_LIMITS.defaultTtlMs,
+		binding?: Readonly<CallerRunIdentity>
 	): string {
 		if (this.issuing) {
 			// No proof exists yet to cancel recursive initial authority/membership checks.
@@ -232,10 +237,13 @@ export class PluginToolRunIdentity {
 			if (!(source instanceof AbortSignal) || typeof callback !== 'function')
 				throw new PluginAuthorityError('PLUGIN_DENIED');
 			const checkRun = callback.bind(authority);
-			if (!Number.isSafeInteger(ttlMs) || ttlMs < 1 || ttlMs > PLUGIN_TOOL_RUN_LIMITS.maxTtlMs)
+			if (
+				ttlMs !== null &&
+				(!Number.isSafeInteger(ttlMs) || ttlMs < 1 || ttlMs > PLUGIN_TOOL_RUN_LIMITS.maxTtlMs)
+			)
 				throw new PluginAuthorityError('PLUGIN_INVALID');
 			// The budget includes synchronous host admission work.
-			const expiresAt = performance.now() + ttlMs;
+			const expiresAt = ttlMs === null ? Infinity : performance.now() + ttlMs;
 			const checkAdmission = () => {
 				if (admission.signal.aborted) throw new PluginAuthorityError('PLUGIN_CANCELED');
 				if (this.stopped || this.revokingAgents.has(agent) || source.aborted)
@@ -261,6 +269,7 @@ export class PluginToolRunIdentity {
 			const proof = token;
 			run = {
 				agentId: agent,
+				binding,
 				unattended: authority.unattended !== false,
 				invocations: new Set(),
 				expiresAt,
@@ -273,8 +282,10 @@ export class PluginToolRunIdentity {
 			this.runs.set(proof, run);
 			source.addEventListener('abort', run.onAbort, { once: true });
 			checkAdmission();
-			run.timer = setTimeout(() => this.revoke(proof), Math.ceil(expiresAt - performance.now()));
-			run.timer.unref();
+			if (ttlMs !== null) {
+				run.timer = setTimeout(() => this.revoke(proof), Math.ceil(expiresAt - performance.now()));
+				run.timer.unref();
+			}
 			this.check(proof, run);
 			checkAdmission();
 			return proof;
@@ -287,6 +298,16 @@ export class PluginToolRunIdentity {
 			// Failed proof removal/abort listeners cannot mint a replacement during cleanup.
 			this.issuing = undefined;
 		}
+	}
+
+	/** Host lifecycle only. Healthy desktop runs have no implicit wall-clock ceiling. */
+	issueBoundRun(binding: CallerRunIdentity, authority: PluginToolRunAuthority): string {
+		const snapshot = Object.freeze({
+			agentId: requirePluginAgentId(binding.agentId),
+			tabId: requirePluginAgentId(binding.tabId),
+			spawnGeneration: requirePluginAgentId(binding.spawnGeneration),
+		});
+		return this.issueAuthorized(snapshot.agentId, authority, null, snapshot);
 	}
 
 	/** Canonical MCP callers supply the verified agent and revoke on exact-run teardown. */
@@ -433,6 +454,7 @@ export class PluginToolRunIdentity {
 		this.check(token, run);
 		const context = Object.freeze({
 			callerAgentId: run.agentId,
+			...(run.binding ? { run: run.binding } : {}),
 			unattended: run.unattended,
 			signal: run.controller.signal,
 			assertActive: () => this.check(token, run),

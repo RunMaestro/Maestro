@@ -14,6 +14,7 @@ import {
 	type AgentSessionsHandlerDependencies,
 } from '../../../../main/ipc/handlers/agentSessions';
 import * as agentSessionStorage from '../../../../main/agents';
+import { getSshRemoteById } from '../../../../main/stores';
 import {
 	GLOBAL_STATS_CACHE_MIN_UPGRADABLE_VERSION,
 	GLOBAL_STATS_CACHE_VERSION,
@@ -1663,9 +1664,67 @@ describe('agentSessions IPC handlers', () => {
 				'/test',
 				'session-1',
 				'uuid-123',
-				'fallback content'
+				'fallback content',
+				undefined
 			);
 			expect(result).toEqual({ success: true, linesRemoved: 3 });
+		});
+
+		it('passes the resolved SSH remote through for a remote agent', async () => {
+			const remote = { id: 'remote-1', enabled: true, host: 'pedbook' };
+			vi.mocked(getSshRemoteById).mockReturnValueOnce(remote as any);
+			const mockStorage = {
+				agentId: 'claude-code',
+				deleteMessagePair: vi.fn().mockResolvedValue({ success: true, linesRemoved: 2 }),
+			};
+			vi.mocked(agentSessionStorage.getSessionStorage).mockReturnValue(
+				mockStorage as unknown as agentSessionStorage.AgentSessionStorage
+			);
+
+			const handler = handlers.get('agentSessions:deleteMessagePair');
+			await handler!(
+				{} as any,
+				'claude-code',
+				'/remote',
+				'session-1',
+				'uuid-1',
+				'text',
+				'remote-1'
+			);
+
+			expect(getSshRemoteById).toHaveBeenCalledWith('remote-1');
+			expect(mockStorage.deleteMessagePair).toHaveBeenCalledWith(
+				'/remote',
+				'session-1',
+				'uuid-1',
+				'text',
+				remote
+			);
+		});
+
+		it('refuses rather than editing a local file when the remote cannot be resolved', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValueOnce(undefined);
+			const mockStorage = { agentId: 'claude-code', deleteMessagePair: vi.fn() };
+			vi.mocked(agentSessionStorage.getSessionStorage).mockReturnValue(
+				mockStorage as unknown as agentSessionStorage.AgentSessionStorage
+			);
+
+			const handler = handlers.get('agentSessions:deleteMessagePair');
+			const result = await handler!(
+				{} as any,
+				'claude-code',
+				'/remote',
+				'session-1',
+				'uuid-1',
+				'text',
+				'gone-remote'
+			);
+
+			expect(result).toEqual({
+				success: false,
+				error: 'SSH remote not found or disabled: gone-remote',
+			});
+			expect(mockStorage.deleteMessagePair).not.toHaveBeenCalled();
 		});
 
 		it('should return error when no storage available', async () => {

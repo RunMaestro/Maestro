@@ -156,6 +156,38 @@ describe('Escape out of command mode (real DOM)', () => {
 		expect(document.activeElement).toBe(composer);
 	});
 
+	it.each(['isComposing', 'keyCode229'])(
+		'does NOT exit command mode on composing Escape (%s)',
+		(shape) => {
+			const { composer, setCommandMode } = setup('');
+
+			const eventInit =
+				shape === 'isComposing'
+					? { key: 'Escape', bubbles: true, isComposing: true }
+					: { key: 'Escape', bubbles: true, keyCode: 229 };
+			fireEvent.keyDown(composer, eventInit);
+
+			expect(setCommandMode).not.toHaveBeenCalled();
+			expect(document.activeElement).toBe(composer);
+		}
+	);
+
+	it.each(['isComposing', 'keyCode229'])(
+		'does NOT exit command mode on composing Backspace (%s)',
+		(shape) => {
+			const { composer, setCommandMode } = setup('');
+
+			const eventInit =
+				shape === 'isComposing'
+					? { key: 'Backspace', bubbles: true, isComposing: true }
+					: { key: 'Backspace', bubbles: true, keyCode: 229 };
+			fireEvent.keyDown(composer, eventInit);
+
+			expect(setCommandMode).not.toHaveBeenCalled();
+			expect(document.activeElement).toBe(composer);
+		}
+	);
+
 	it('still lets Escape blur the composer when NOT in command mode', () => {
 		// Guard against over-reach: the window handler is normal behaviour for an
 		// ordinary chat draft, and this fix must not disable it.
@@ -169,6 +201,75 @@ describe('Escape out of command mode (real DOM)', () => {
 		fireEvent.keyDown(composer, { key: 'Escape', bubbles: true });
 
 		expect(setCommandMode).not.toHaveBeenCalled();
+		expect(document.activeElement).toBe(getByTestId('transcript'));
+	});
+});
+
+describe('Escape in the @ picker (real DOM)', () => {
+	afterEach(() => {
+		mockInputContext.atMentionOpen = false;
+	});
+
+	function setup() {
+		mockInputContext.atMentionOpen = true;
+		const utils = render(<Composer commandMode="off" setCommandMode={vi.fn()} inputValue="@" />);
+		const composer = utils.getByLabelText('composer') as HTMLTextAreaElement;
+		act(() => composer.focus());
+		expect(document.activeElement).toBe(composer);
+		return { ...utils, composer };
+	}
+
+	it('closes the picker and leaves the caret in the composer', () => {
+		const { composer } = setup();
+
+		fireEvent.keyDown(composer, { key: 'Escape', bubbles: true });
+
+		expect(mockInputContext.setAtMentionOpen).toHaveBeenCalledWith(false);
+		expect(document.activeElement).toBe(composer);
+	});
+
+	it('leaves the caret in the composer when Escape cancels an IME composition', () => {
+		const { composer } = setup();
+
+		fireEvent.keyDown(composer, { key: 'Escape', bubbles: true, isComposing: true });
+
+		// The IME owns the key: the picker stays open and the window does not blur.
+		expect(mockInputContext.setAtMentionOpen).not.toHaveBeenCalled();
+		expect(document.activeElement).toBe(composer);
+	});
+});
+
+describe('Escape with the @ picker closed in AI chat (real DOM)', () => {
+	function setup() {
+		mockInputContext.atMentionOpen = false;
+		const utils = render(<Composer commandMode="off" setCommandMode={vi.fn()} inputValue="" />);
+		const composer = utils.getByLabelText('composer') as HTMLTextAreaElement;
+		act(() => composer.focus());
+		expect(document.activeElement).toBe(composer);
+		return { ...utils, composer };
+	}
+
+	it.each(['isComposing', 'keyCode229'])(
+		'leaves the caret in the composer when Escape cancels an IME composition (%s)',
+		(shape) => {
+			const { composer } = setup();
+
+			const eventInit =
+				shape === 'isComposing'
+					? { key: 'Escape', bubbles: true, isComposing: true }
+					: { key: 'Escape', bubbles: true, keyCode: 229 };
+			fireEvent.keyDown(composer, eventInit);
+
+			// Caret must remain in the composer so the user can continue typing.
+			expect(document.activeElement).toBe(composer);
+		}
+	);
+
+	it('blurs the composer and focuses the transcript on normal Escape', () => {
+		const { composer, getByTestId } = setup();
+
+		fireEvent.keyDown(composer, { key: 'Escape', bubbles: true });
+
 		expect(document.activeElement).toBe(getByTestId('transcript'));
 	});
 });

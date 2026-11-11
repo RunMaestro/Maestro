@@ -1,3 +1,4 @@
+import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
 /**
  * CallbackRegistry - Manages callback functions for the WebServer
@@ -133,6 +134,8 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	ArchiveGroupChatCallback,
+	AddGroupChatParticipantCallback,
+	AddGroupChatParticipantResult,
 	SendGroupChatMessageCallback,
 	SteerGroupChatCallback,
 	SteerGroupChatRequest,
@@ -297,6 +300,7 @@ export interface WebServerCallbacks {
 	getGroupChatState: GetGroupChatStateCallback | null;
 	stopGroupChat: StopGroupChatCallback | null;
 	archiveGroupChat: ArchiveGroupChatCallback | null;
+	addGroupChatParticipant: AddGroupChatParticipantCallback | null;
 	sendGroupChatMessage: SendGroupChatMessageCallback | null;
 	steerGroupChat: SteerGroupChatCallback | null;
 	tabContextOp: TabContextOpCallback | null;
@@ -413,6 +417,7 @@ export class CallbackRegistry {
 		getGroupChatState: null,
 		stopGroupChat: null,
 		archiveGroupChat: null,
+		addGroupChatParticipant: null,
 		sendGroupChatMessage: null,
 		steerGroupChat: null,
 		tabContextOp: null,
@@ -475,7 +480,8 @@ export class CallbackRegistry {
 		images?: string[],
 		background?: boolean,
 		mentionRouting?: MentionRouting,
-		requireDeliveryReceipt?: boolean
+		requireDeliveryReceipt?: boolean,
+		pianolaDispatchId?: string
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
 		return this.callbacks.executeCommand(
@@ -487,7 +493,11 @@ export class CallbackRegistry {
 			images,
 			background,
 			mentionRouting,
-			...(requireDeliveryReceipt ? [true] : [])
+			...((pianolaDispatchId
+				? [requireDeliveryReceipt, pianolaDispatchId]
+				: requireDeliveryReceipt
+					? [true]
+					: []) as [boolean?, string?])
 		);
 	}
 
@@ -697,10 +707,18 @@ export class CallbackRegistry {
 		prompt: string,
 		background?: boolean,
 		hidden?: boolean,
-		mentionRouting?: MentionRouting
-	): Promise<{ success: boolean; tabId?: string }> {
+		mentionRouting?: MentionRouting,
+		control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
+	): Promise<import('../types').NewAITabWithPromptResult> {
 		if (!this.callbacks.newAITabWithPrompt) return { success: false };
-		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background, hidden, mentionRouting);
+		return this.callbacks.newAITabWithPrompt(
+			sessionId,
+			prompt,
+			background,
+			hidden,
+			mentionRouting,
+			control
+		);
 	}
 
 	async consultAgent(params: ConsultAgentParams): Promise<ConsultAgentResult> {
@@ -724,7 +742,8 @@ export class CallbackRegistry {
 		background?: boolean,
 		held?: boolean,
 		mentionRouting?: MentionRouting,
-		dispatchCallback?: boolean
+		dispatchCallback?: boolean,
+		control?: PianolaQueueControl
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
 		return this.callbacks.enqueueCommand(
@@ -736,7 +755,8 @@ export class CallbackRegistry {
 			background,
 			held,
 			mentionRouting,
-			dispatchCallback
+			dispatchCallback,
+			control
 		);
 	}
 
@@ -1095,6 +1115,16 @@ export class CallbackRegistry {
 	async archiveGroupChat(chatId: string, archived: boolean): Promise<boolean> {
 		if (!this.callbacks.archiveGroupChat) return false;
 		return this.callbacks.archiveGroupChat(chatId, archived);
+	}
+
+	async addGroupChatParticipant(
+		chatId: string,
+		agentId: string
+	): Promise<AddGroupChatParticipantResult> {
+		if (!this.callbacks.addGroupChatParticipant) {
+			return { success: false, error: 'Group chat not configured' };
+		}
+		return this.callbacks.addGroupChatParticipant(chatId, agentId);
 	}
 
 	async sendGroupChatMessage(chatId: string, message: string): Promise<boolean> {
@@ -1627,6 +1657,10 @@ export class CallbackRegistry {
 
 	setArchiveGroupChatCallback(callback: ArchiveGroupChatCallback): void {
 		this.callbacks.archiveGroupChat = callback;
+	}
+
+	setAddGroupChatParticipantCallback(callback: AddGroupChatParticipantCallback): void {
+		this.callbacks.addGroupChatParticipant = callback;
 	}
 
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {

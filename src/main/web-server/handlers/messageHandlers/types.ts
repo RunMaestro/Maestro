@@ -27,6 +27,7 @@ import type {
 	StartGroupChatOptions,
 	StartGroupChatResult,
 	SteerGroupChatRequest,
+	AddGroupChatParticipantResult,
 	CueSubscriptionInfo,
 	CueActivityEntry,
 	UsageDashboardData,
@@ -141,7 +142,8 @@ export interface MessageHandlerCallbacks {
 		images?: string[],
 		background?: boolean,
 		mentionRouting?: MentionRouting,
-		requireDeliveryReceipt?: boolean
+		requireDeliveryReceipt?: boolean,
+		pianolaDispatchId?: string
 	) => Promise<boolean>;
 	switchMode: (
 		sessionId: string,
@@ -219,8 +221,9 @@ export interface MessageHandlerCallbacks {
 		prompt: string,
 		background?: boolean,
 		hidden?: boolean,
-		mentionRouting?: MentionRouting
-	) => Promise<{ success: boolean; tabId?: string; queued?: boolean; error?: string }>;
+		mentionRouting?: MentionRouting,
+		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
+	) => Promise<import('../../types').NewAITabWithPromptResult>;
 	/** Stop a running turn, the agent's or one tab's (`maestro-cli interrupt`). */
 	interruptSession: InterruptSessionCallback;
 	/** Consult another agent and return its answer (`maestro-cli ask`). */
@@ -235,8 +238,12 @@ export interface MessageHandlerCallbacks {
 		images?: string[],
 		background?: boolean,
 		held?: boolean,
-		mentionRouting?: MentionRouting
+		mentionRouting?: MentionRouting,
+		dispatchCallback?: boolean,
+		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaQueueControl
 	) => Promise<EnqueueCommandResult>;
+	confirmQueueItem?: import('../../../stores/queue-item-receipt').ConfirmQueueItem;
+	releaseQueueItem?: import('../../../stores/queue-item-receipt').ReleaseQueueItem;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;
 		queues: unknown[];
@@ -406,6 +413,10 @@ export interface MessageHandlerCallbacks {
 	getGroupChatState: (chatId: string) => Promise<GroupChatState | null>;
 	stopGroupChat: (chatId: string) => Promise<boolean>;
 	archiveGroupChat: (chatId: string, archived: boolean) => Promise<boolean>;
+	addGroupChatParticipant: (
+		chatId: string,
+		agentId: string
+	) => Promise<AddGroupChatParticipantResult>;
 	sendGroupChatMessage: (chatId: string, message: string) => Promise<boolean>;
 	steerGroupChat?: (
 		chatId: string,

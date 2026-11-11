@@ -122,6 +122,7 @@ export type { GroupChatMessage } from './groupchat/log';
 export {
 	createGroupChatEngine,
 	isDeletedGroupChatFailure,
+	isRemovedParticipantFailure,
 	extractMentions,
 	extractAutoRunDirectives,
 } from './groupchat/router';
@@ -342,3 +343,5 @@ export * from './control/turn-guard';
 
 // Host services
 export * from './host';
+
+export type { CurrentTurnCursor, CurrentTurnMessage, CurrentTurnRead } from '../currentTurn';

@@ -10,6 +10,7 @@ import { buildSpawnConfigForAgent } from '../../utils/sessionHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
+import { isImeComposing } from '../../utils/ime';
 
 const AI_SYSTEM_PROMPT = `You are configuring maestro-cue.yaml for the user. Be terse. Plain text only - no markdown, no code fences, no bullet lists, no formatting.
 
@@ -211,7 +212,7 @@ export function useCueAiChat({
 
 	const handleChatKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			if (e.key === 'Enter' && !e.shiftKey) {
+			if (e.key === 'Enter' && !e.shiftKey && !isImeComposing(e)) {
 				e.preventDefault();
 				handleChatSend();
 			}

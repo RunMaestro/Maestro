@@ -30,6 +30,8 @@ export interface SpawnGroupChatAgentConfig extends Pick<
 	AgentLaunchInput,
 	'remoteCommand' | 'promptBlocks' | 'embeddedImageSupport' | 'hasImages' | 'promptFileDestination'
 > {
+	/** Host capability: final synchronous fence after all asynchronous preparation. */
+	beforeSpawn?: () => void;
 	/** Stable session id for the process manager */
 	sessionId: string;
 	/** Agent id (e.g. 'claude-code', 'codex') - used as `toolType` */
@@ -281,5 +283,6 @@ export async function spawnGroupChatAgent(
 			sshStdinScript: prepared.sshStdinScript,
 			sshRemoteCommand: prepared.sshRemoteCommand,
 		};
+	config.beforeSpawn?.();
 	return processManager.spawn(spawnConfig);
 }

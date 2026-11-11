@@ -15,6 +15,25 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'dracula',
 		category: 'appearance',
 	},
+	themeFollowSystem: {
+		description:
+			"Follow the device's light/dark appearance (prefers-color-scheme) instead of activeThemeId. Each client resolves it on its own, so a phone on the web interface follows the phone and the desktop follows the computer.",
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	lightThemeId: {
+		description: 'Theme shown when themeFollowSystem is on and the device is in light appearance.',
+		type: 'string',
+		default: 'github-light',
+		category: 'appearance',
+	},
+	darkThemeId: {
+		description: 'Theme shown when themeFollowSystem is on and the device is in dark appearance.',
+		type: 'string',
+		default: 'dracula',
+		category: 'appearance',
+	},
 	themeGloss: {
 		description:
 			"How much light the app chrome catches: 'off' (flat, the shipped look), 'sheen', 'strong', or 'max'. Adds highlights and shadows only; it changes no theme color, and it has no effect on light themes.",
@@ -391,13 +410,6 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			'Icon theme for the file explorer sidebar. Options: rich (default, Material Icon Theme style) or flat.',
 		type: 'string',
 		default: 'rich',
-		category: 'appearance',
-	},
-	fileTreeBranchConnectors: {
-		description:
-			"Draw elbow connectors from a folder's guide line into each of its children in the Files pane, and stop the guide at the folder's last child. Off by default, which draws plain full-height indent guides.",
-		type: 'boolean',
-		default: false,
 		category: 'appearance',
 	},
 	toastWidth: {

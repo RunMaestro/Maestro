@@ -30,6 +30,7 @@ import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReader
 import { getTabDisplayName, visibleAiTabs } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { isImeComposing } from '../utils/ime';
 
 /**
  * View modes for the modal
@@ -485,14 +486,16 @@ export function MergeSessionModal({
 
 			// Enter to confirm merge
 			if (e.key === 'Enter') {
-				e.preventDefault();
 				e.stopPropagation();
-				if (viewMode === 'paste' && pastedIdValid && pastedIdMatch) {
-					handleMerge();
-				} else if (viewMode === 'search' && selectedTarget) {
-					handleMerge();
-				} else if (filteredItems[selectedIndex]) {
-					handleSelectItem(filteredItems[selectedIndex]);
+				if (!isImeComposing(e)) {
+					e.preventDefault();
+					if (viewMode === 'paste' && pastedIdValid && pastedIdMatch) {
+						handleMerge();
+					} else if (viewMode === 'search' && selectedTarget) {
+						handleMerge();
+					} else if (filteredItems[selectedIndex]) {
+						handleSelectItem(filteredItems[selectedIndex]);
+					}
 				}
 				return;
 			}

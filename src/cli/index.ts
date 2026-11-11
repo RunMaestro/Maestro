@@ -62,6 +62,7 @@ import {
 	groupChatStatus,
 	groupChatStop,
 	groupChatArchive,
+	groupChatAdd,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -89,7 +90,10 @@ import {
 	cueEngineInspect,
 } from './commands/cue-engine';
 import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './commands/bundle';
-import { hostStart, hostStatus, hostStop } from './commands/host';
+import { hostEndpoint, hostStart, hostStatus, hostStop } from './commands/host';
+import { remoteHostStart, remoteHostStatus } from './commands/remote-host';
+import { lift } from './commands/lift';
+import { federationPeers, federationReconnect } from './commands/federation';
 import { createAgent, CREATE_AGENT_TYPES } from './commands/create-agent';
 import { duplicateAgent } from './commands/duplicate-agent';
 import { liveStatus, liveOn, liveOff, liveTunnel } from './commands/live';
@@ -404,6 +408,19 @@ list
 	.command('agents')
 	.description('List all agents')
 	.option('-g, --group <id>', 'Filter by group ID')
+	// Federation's peer flags: left out of --help while the feature is off, refused if passed.
+	.addOption(
+		new Option(
+			'--peer <name>',
+			"List the agents on one Federation peer (an SSH remote's name)"
+		).hideHelp(!encoreFlags.federation)
+	)
+	.addOption(
+		new Option(
+			'--all-peers',
+			'List local agents, then the agents on every SSH remote opted in to Federation'
+		).hideHelp(!encoreFlags.federation)
+	)
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.action(listAgents);
 
@@ -594,12 +611,16 @@ program
 // callers can address the same tab again without owning a persistent channel.
 program
 	.command('dispatch <agent-id> <message>')
+	.option(
+		'--dispatch-id <uuid>',
+		'For dispatch and --queue: reconcile the same dispatch after an unknown acknowledgment; never generate another send for it'
+	)
 	.description(
 		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
 	)
 	.option(
 		'--new-tab',
-		'Create a fresh AI tab and deliver the prompt into it. The tab is hidden by default: it is named from the prompt but draws no chip until the user opens it from the completion toast or the delegation pill. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).'
+		'Create a fresh AI tab and deliver the prompt into it. The tab is hidden by default: it is named from the prompt but draws no chip until the user opens it from the completion toast or the delegation pill. It runs now, even while another tab of the agent is working.'
 	)
 	.option(
 		'--visible',
@@ -615,7 +636,7 @@ program
 	)
 	.option(
 		'-f, --force',
-		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab, which queues instead)'
+		'Write into a tab that is itself mid-turn (interleaves two answers); requires allowConcurrentSend. An idle tab of a busy agent needs no --force. Cannot be combined with --new-tab.'
 	)
 	.option(
 		'--focus',
@@ -623,7 +644,7 @@ program
 	)
 	.option(
 		'--queue',
-		'If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.'
+		'If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target tab dispatches immediately, even while another tab of the agent is working. Cannot be combined with --new-tab or --force. Returns the queue position.'
 	)
 	.option('--wait', 'Alias for --queue')
 	.option(
@@ -897,6 +918,17 @@ const session = program
 session
 	.command('list')
 	.description('List open desktop AI tabs and their tab/session IDs')
+	.option('--include-hidden', 'Also list hidden tabs (consults) the tab bar does not show')
+	.option('--hidden', 'List only hidden tabs (consults and other tabs the tab bar does not show)')
+	.option(
+		'--all',
+		'List every tab, visible, hidden, and orphaned (no tab-strip slot), with a visibility field'
+	)
+	.option(
+		'--type <kind>',
+		'Which tabs: ai (default), file, browser, terminal, or all. Non-AI tabs are listed under "tabs" in JSON',
+		'ai'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(sessionList);
 
@@ -1015,6 +1047,14 @@ groupChat
 	.action(groupChatStop);
 
 groupChat
+	.command('add <chat> <agent>')
+	.description(
+		'Add an agent (ID, ID prefix, or name) to a group chat without an @mention; linked by ID'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatAdd);
+
+groupChat
 	.command('archive <chat>')
 	.description(
 		'Archive a group chat (stops its moderator and participants); --restore brings it back'
@@ -1034,7 +1074,10 @@ program
 	.description(
 		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)'
 	)
-	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
+	.option(
+		'-a, --agent <id>',
+		"Target agent (defaults to the agent owning this shell or terminal tab, else the file path's owning agent)"
+	)
 	.option(
 		'--background',
 		'Open the preview tab without changing anything currently rendered, on any agent'
@@ -1055,7 +1098,10 @@ program
 program
 	.command('open-graph [paths...]')
 	.description('Open the Document Graph over specific markdown files or a directory')
-	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by path's owning agent)")
+	.option(
+		'-a, --agent <id>',
+		"Target agent (defaults to the agent owning this shell or terminal tab, else the path's owning agent)"
+	)
 	.option('--focus <path>', 'Center the graph on this document (default: the most-linked one)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openGraph);
@@ -1827,6 +1873,10 @@ host
 		'--stop-grace <seconds>',
 		'On SIGTERM/SIGINT, wait this long for work in flight before stopping (default 30; 0 stops at once)'
 	)
+	.option(
+		'--no-prevent-sleep',
+		'macOS: let the Mac sleep even while work is in flight (default: caffeinate holds it awake)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => hostStart(options, cliVersion));
 
@@ -1837,6 +1887,20 @@ host
 	.option('--dev', 'Use the development data directory')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => hostStatus(options));
+
+// Federation pairing P1 (#1716): a laptop reads this over SSH. It is hidden from `--help` while
+// Federation is off here, but not refused: the opt-in lives on the laptop that dials in, and
+// a headless host's own settings rarely carry Encore flags. It prints nothing `cat` of the
+// owner-only discovery file would not.
+host
+	.command('endpoint', { hidden: !encoreFlags.federation })
+	.description(
+		"Print this data directory's host endpoint (port, token, CLI secret) for Federation over SSH"
+	)
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option('--json', 'Output as JSON, with the token and the CLI secret')
+	.action((options) => hostEndpoint(options));
 
 host
 	.command('stop')
@@ -1852,6 +1916,54 @@ host
 	.option('--force', 'Stop even with work in flight; a run records how it ended first')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => hostStop(options));
+
+// Remote host commands - the `maestro-cli host` on a Federation-enabled SSH remote (#1716)
+const remoteHost = encoreCommand(program, 'remote-host', 'federation', encoreFlags).description(
+	'Check and start the maestro-cli host on an SSH remote that is opted in to Federation'
+);
+
+remoteHost
+	.command('status <ssh-remote>')
+	.description(
+		'Report whether Maestro is installed on the remote, whether its host runs, and the version skew'
+	)
+	.option('--timeout <seconds>', 'Give up on the SSH call after this many seconds (default 60)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((ref: string, options) => remoteHostStatus(ref, options, cliVersion));
+
+remoteHost
+	.command('start <ssh-remote>')
+	.description('Start the host on the remote (as the SSH user) when none runs, then report status')
+	.option('--timeout <seconds>', 'Give up on each SSH call after this many seconds (default 60)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((ref: string, options) => remoteHostStart(ref, options, cliVersion));
+
+// Lift - move an SSH remote agent onto the maestro-cli host on its remote (Federation, #1716)
+encoreCommand(program, 'lift <agent>', 'federation', encoreFlags)
+	.description(
+		'Move an SSH remote agent, with its tabs, transcripts, provider sessions and queue, onto the host on its remote'
+	)
+	.option('--dry-run', 'Print what would move and what stays, then stop')
+	.option('--with-env', 'Send secret env vars too (non-secret ones always move)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agent: string, options) => lift(agent, options));
+
+// Federation peer mirror - the peers the desktop mirrors in its Left Bar (FED-SSH-05)
+const federation = encoreCommand(program, 'federation', 'federation', encoreFlags).description(
+	'List and reconnect the Federation peers the desktop app mirrors in its Left Bar'
+);
+
+federation
+	.command('peers')
+	.description('List the peers the desktop mirrors, with connection state and agent count')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationPeers(options));
+
+federation
+	.command('reconnect <peer>')
+	.description('Force the desktop to reconnect to a peer and reload its agent list')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((peer: string, options) => federationReconnect(peer, options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program
@@ -2326,6 +2438,7 @@ tab
 	.command('closed')
 	.description('List the closed tabs an agent can reopen, newest first (index 0 = Cmd+Shift+T)')
 	.option('-a, --agent <id>', 'Whose closed tabs (default: the agent selected in the desktop)')
+	.option('--all', "Every agent's closed tabs, grouped by agent (agents with none are left out)")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => tabClosed(options));
 
@@ -2402,6 +2515,14 @@ tabTargetOptions(tab.command('transfer [tab-id]'))
 	.option('--focus', 'Jump to the new tab (default)')
 	.action((tabId, options) => tabTransfer(tabId, options));
 
+// The per-remote Federation opt-in belongs to the Federation Encore Feature: left
+// out of --help while it is off, and passing it then is refused.
+const FEDERATION_OPTION_KEYS = ['federation'] as const;
+const federationOption = (): Option =>
+	new Option('--federation <on|off>', 'Opt this remote in to Federation (on/off)').hideHelp(
+		!encoreFlags.federation
+	);
+
 // Create SSH remote command - add a new SSH remote configuration
 program
 	.command('create-ssh-remote <name>')
@@ -2427,8 +2548,12 @@ program
 	)
 	.option('--ssh-config', 'Use ~/.ssh/config for connection settings (host becomes Host pattern)')
 	.option('--disabled', 'Create in disabled state')
+	.addOption(federationOption())
 	.option('--set-default', 'Set as the global default SSH remote')
 	.option('--json', 'Output as JSON (for scripting)')
+	.hook('preAction', (_command, action) =>
+		requireEncoreForOptions('federation', action.opts(), FEDERATION_OPTION_KEYS)
+	)
 	.action(createSshRemote);
 
 // Update SSH remote command - edit an existing SSH remote configuration
@@ -2480,8 +2605,12 @@ program
 	)
 	.option('--ssh-config <bool>', 'Use ~/.ssh/config for connection settings (true/false)')
 	.option('--enabled <bool>', 'Enable or disable this remote (true/false)')
+	.addOption(federationOption())
 	.option('--set-default', 'Set as the global default SSH remote')
 	.option('--json', 'Output as JSON (for scripting)')
+	.hook('preAction', (_command, action) =>
+		requireEncoreForOptions('federation', action.opts(), FEDERATION_OPTION_KEYS)
+	)
 	.action(updateSshRemote);
 
 // Remove SSH remote command - delete an SSH remote configuration
@@ -3125,13 +3254,23 @@ const pianolaSupervise = pianola
 
 pianolaSupervise
 	.command('scope')
-	.description('Create or replace an agent/group watch selection (new selections start paused)')
+	.description(
+		'Configure or reconcile an owner-authorized agent/group selection through the desktop host'
+	)
 	.requiredOption('--manager <agent-id>', 'Manager agent id')
 	.requiredOption('--label <label>', 'Selection label')
-	.option('--id <scope-id>', 'Replace an existing selection')
+	.option('--id <scope-id>', 'Existing owner-authorized selection id')
 	.option('--agents <ids>', 'Comma-separated agent IDs')
 	.option('--groups <ids>', 'Comma-separated group IDs')
 	.option('--exclude <ids>', 'Comma-separated excluded agent IDs')
+	.option(
+		'--future-local-agents',
+		'Include future local agents (requires --id or --request-owner-approval)'
+	)
+	.option(
+		'--request-owner-approval',
+		'Request one native owner confirmation for this exact configuration'
+	)
 	.option('--json', 'Output as JSON')
 	.action((options) => pianolaSuperviseScope(options));
 
@@ -3163,6 +3302,7 @@ pianolaSupervise
 pianolaSupervise
 	.command('list')
 	.description('List registered supervised targets')
+	.option('--live', 'Read worker and coverage status from the desktop host')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => pianolaSuperviseList(options));
 

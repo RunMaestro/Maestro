@@ -15,6 +15,7 @@ import {
 	resolveSshOptions,
 } from '../../shared/sshOptions';
 import { setKeysParked, type ParkedRecordPair } from '../../shared/parkedRecords';
+import { isEncoreEnabled } from '../utils/encore-gate';
 
 interface UpdateSshRemoteOptions {
 	name?: string;
@@ -32,6 +33,8 @@ interface UpdateSshRemoteOptions {
 	enableSshOption?: string[];
 	sshConfig?: string;
 	enabled?: string;
+	/** `on` / `off`; a Federation option, refused in `index.ts` while that Encore Feature is off */
+	federation?: string;
 	setDefault?: boolean;
 	json?: boolean;
 }
@@ -149,6 +152,15 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 		}
 	}
 
+	if (options.federation !== undefined) {
+		try {
+			// Stored only when on, so switching it off leaves no trace on the record.
+			updated.federation = parseCliBool(options.federation, '--federation') || undefined;
+		} catch (error) {
+			fail(error instanceof Error ? error.message : String(error), options.json);
+		}
+	}
+
 	// Env and -o options MERGE by default so a single edit does not silently drop
 	// the rest of the set; --clear-* is the explicit way to start over.
 	// --clear-* wipes BOTH records: "remove all" that left parked entries behind
@@ -214,6 +226,7 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 				// override is usually to change one of those, so echoing only the
 				// overrides would not answer "did my ConnectTimeout take effect?"
 				resolvedSshOptions: resolveSshOptions(updated.sshOptions),
+				...(isEncoreEnabled('federation') ? { federation: updated.federation === true } : {}),
 			})
 		);
 		return;
@@ -235,6 +248,9 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 	}
 	for (const key of Object.keys(updated.remoteEnvDisabled ?? {})) {
 		console.log(`  env   ${key} (off)`);
+	}
+	if (updated.federation && isEncoreEnabled('federation')) {
+		console.log(`  Federation: on`);
 	}
 	if (options.setDefault) {
 		console.log(`  Set as default`);

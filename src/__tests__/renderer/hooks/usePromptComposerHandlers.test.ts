@@ -26,6 +26,13 @@ vi.mock('../../../renderer/utils/tabHelpers', async () => {
 	return { ...actual };
 });
 
+vi.mock('../../../renderer/stores/centerFlashStore', async () => {
+	const actual = await vi.importActual<typeof import('../../../renderer/stores/centerFlashStore')>(
+		'../../../renderer/stores/centerFlashStore'
+	);
+	return { ...actual, notifyCenterFlash: vi.fn() };
+});
+
 // ============================================================================
 // Imports (after mocks)
 // ============================================================================
@@ -42,6 +49,13 @@ import {
 } from '../../../renderer/stores/groupChatStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
+import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
+import {
+	setCapabilitiesCache,
+	clearCapabilitiesCache,
+	DEFAULT_CAPABILITIES,
+} from '../../../renderer/hooks/agent/useAgentCapabilities';
+import { REMOVE_ATTACHED_IMAGES_TO_SEND_DETAIL } from '../../../renderer/components/ChatComposer/capabilities';
 
 // ============================================================================
 // Helpers
@@ -153,6 +167,7 @@ const initialGroupChatState = {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	clearCapabilitiesCache();
 
 	useSessionStore.setState({
 		sessions: [],
@@ -424,6 +439,115 @@ describe('usePromptComposerHandlers', () => {
 					['data:image/png;base64,abc', 'data:image/png;base64,def'],
 					false
 				);
+			});
+
+			it('refuses staged images and keeps the draft when the moderator cannot read images', () => {
+				setCapabilitiesCache('terminal', {
+					...DEFAULT_CAPABILITIES,
+					supportsImageInput: false,
+				});
+				useGroupChatStore.setState({
+					activeGroupChatId: 'gc-incapable',
+					groupChats: [
+						{
+							id: 'gc-incapable',
+							name: 'Chat',
+							draftMessage: 'keep me',
+							moderatorAgentId: 'terminal',
+						} as any,
+					],
+					groupChatStagedImagesById: {
+						'gc-incapable': ['data:image/png;base64,abc'],
+					},
+					groupChatReadOnlyMode: false,
+				});
+
+				const deps = createDeps();
+				const { result } = renderHook(() => usePromptComposerHandlers(deps));
+
+				act(() => {
+					result.current.handlePromptComposerSend('keep me');
+				});
+
+				expect(deps.handleSendGroupChatMessage).not.toHaveBeenCalled();
+				expect(notifyCenterFlash).toHaveBeenCalledWith({
+					message: "This room's moderator can't read images",
+					color: 'yellow',
+					detail: REMOVE_ATTACHED_IMAGES_TO_SEND_DETAIL,
+				});
+				// The draft and the images survive so the user can remove them.
+				expect(useGroupChatStore.getState().groupChatStagedImagesById['gc-incapable']).toEqual([
+					'data:image/png;base64,abc',
+				]);
+				expect(
+					useGroupChatStore.getState().groupChats.find((c) => c.id === 'gc-incapable')?.draftMessage
+				).toBe('keep me');
+			});
+
+			it('still sends a text-only message when the moderator cannot read images', () => {
+				setCapabilitiesCache('terminal', {
+					...DEFAULT_CAPABILITIES,
+					supportsImageInput: false,
+				});
+				useGroupChatStore.setState({
+					activeGroupChatId: 'gc-text-only',
+					groupChats: [
+						{
+							id: 'gc-text-only',
+							name: 'Chat',
+							draftMessage: '',
+							moderatorAgentId: 'terminal',
+						} as any,
+					],
+					groupChatStagedImagesById: {},
+					groupChatReadOnlyMode: false,
+				});
+
+				const deps = createDeps();
+				const { result } = renderHook(() => usePromptComposerHandlers(deps));
+
+				act(() => {
+					result.current.handlePromptComposerSend('text only');
+				});
+
+				expect(deps.handleSendGroupChatMessage).toHaveBeenCalledWith('text only', undefined, false);
+				expect(notifyCenterFlash).not.toHaveBeenCalled();
+			});
+
+			it('sends staged images when the moderator can read them', () => {
+				setCapabilitiesCache('claude-code', {
+					...DEFAULT_CAPABILITIES,
+					supportsImageInput: true,
+				});
+				useGroupChatStore.setState({
+					activeGroupChatId: 'gc-capable',
+					groupChats: [
+						{
+							id: 'gc-capable',
+							name: 'Chat',
+							draftMessage: '',
+							moderatorAgentId: 'claude-code',
+						} as any,
+					],
+					groupChatStagedImagesById: {
+						'gc-capable': ['data:image/png;base64,abc'],
+					},
+					groupChatReadOnlyMode: false,
+				});
+
+				const deps = createDeps();
+				const { result } = renderHook(() => usePromptComposerHandlers(deps));
+
+				act(() => {
+					result.current.handlePromptComposerSend('with image');
+				});
+
+				expect(deps.handleSendGroupChatMessage).toHaveBeenCalledWith(
+					'with image',
+					['data:image/png;base64,abc'],
+					false
+				);
+				expect(notifyCenterFlash).not.toHaveBeenCalled();
 			});
 
 			it('passes undefined for images when staged images array is empty', () => {

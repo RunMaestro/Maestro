@@ -965,7 +965,8 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				projectPath: string,
 				sessionId: string,
 				userMessageUuid: string,
-				fallbackContent?: string
+				fallbackContent?: string,
+				sshRemoteId?: string
 			): Promise<{ success: boolean; error?: string; linesRemoved?: number }> => {
 				if (agentId === 'grok') {
 					// This legacy mutation request has no account/host ownership or
@@ -983,7 +984,20 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					return { success: false, error: `No session storage available for agent: ${agentId}` };
 				}
 
-				return storage.deleteMessagePair(projectPath, sessionId, userMessageUuid, fallbackContent);
+				// A remote agent's transcript lives on the remote. When its remote cannot
+				// be resolved, refuse rather than edit a local file of the same name.
+				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				if (sshRemoteId && !sshConfig) {
+					return { success: false, error: `SSH remote not found or disabled: ${sshRemoteId}` };
+				}
+
+				return storage.deleteMessagePair(
+					projectPath,
+					sessionId,
+					userMessageUuid,
+					fallbackContent,
+					sshConfig
+				);
 			}
 		)
 	);

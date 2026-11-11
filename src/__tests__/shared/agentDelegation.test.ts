@@ -2,11 +2,15 @@ import { describe, it, expect } from 'vitest';
 import {
 	CALLER_AGENT_ID_ENV_VAR,
 	CALLER_TAB_ID_ENV_VAR,
+	CALLER_RUN_PROOF_FILE_ENV_VAR,
+	TERMINAL_AGENT_ID_ENV_VAR,
 	buildCallerIdentityEnv,
+	buildTerminalOwnerEnv,
 	callerMessageFields,
 	isSelfDispatch,
 	readCallerIdentity,
 	readCallerMessageFields,
+	readShellOwnerAgentId,
 	withoutCallerIdentityEnv,
 } from '../../shared/agentDelegation';
 
@@ -40,10 +44,34 @@ describe('caller identity env', () => {
 	});
 });
 
+describe('shell owner', () => {
+	it('names a terminal tab owner without stamping a caller identity', () => {
+		const env = buildTerminalOwnerEnv('agent-1');
+		expect(env).toEqual({ [TERMINAL_AGENT_ID_ENV_VAR]: 'agent-1' });
+		// A terminal must never make dispatch/ask record a delegation.
+		expect(readCallerIdentity(env)).toBeUndefined();
+	});
+
+	it("reads an agent turn's identity first, then the terminal owner", () => {
+		expect(readShellOwnerAgentId(buildTerminalOwnerEnv('term'))).toBe('term');
+		expect(
+			readShellOwnerAgentId({ ...buildTerminalOwnerEnv('term'), ...buildCallerIdentityEnv('turn') })
+		).toBe('turn');
+	});
+
+	it('treats a blank or missing owner as none', () => {
+		expect(readShellOwnerAgentId({})).toBeUndefined();
+		expect(readShellOwnerAgentId({ [TERMINAL_AGENT_ID_ENV_VAR]: '  ' })).toBeUndefined();
+	});
+});
+
 describe('withoutCallerIdentityEnv', () => {
 	it('collapses an identity-only record to undefined, like an agent with no overrides', () => {
 		expect(withoutCallerIdentityEnv(buildCallerIdentityEnv('agent-1', 'tab-1'))).toBeUndefined();
 		expect(withoutCallerIdentityEnv(undefined)).toBeUndefined();
+		expect(
+			withoutCallerIdentityEnv({ [CALLER_RUN_PROOF_FILE_ENV_VAR]: '/private/proof' })
+		).toBeUndefined();
 	});
 
 	it('keeps real configuration and leaves the input untouched', () => {

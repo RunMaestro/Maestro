@@ -62,6 +62,15 @@ describe('QueuedItemEditModal keyboard', () => {
 		});
 	});
 
+	it('leaves Cmd+Enter to the input method during an IME composition', () => {
+		const { onSave, onClose, textarea } = setup();
+		for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+			expect(fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true, ...ime })).toBe(true);
+		}
+		expect(onSave).not.toHaveBeenCalled();
+		expect(onClose).not.toHaveBeenCalled();
+	});
+
 	it('leaves plain Enter alone so it inserts a newline', () => {
 		const { onSave, onClose, textarea } = setup();
 		fireEvent.keyDown(textarea, { key: 'Enter' });

@@ -74,12 +74,26 @@ import {
 import { isCodexTransport } from '../../../shared/codexTransport';
 import { isHarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
+import { liftBusyReason, readLiftedTo } from '../../../shared/maestro-lib/agents/lift-pointer';
 import {
 	TAB_CONTEXT_OP_EVENT,
 	runRemoteTabContextOp,
 	type TabContextOpEventDetail,
 	type TabContextOpHandlers,
 } from '../../services/tabContextOps';
+
+/**
+ * True when `autorun:listDocs` failed because the folder itself is missing,
+ * not a folder, or not readable. The IPC wrapper flattens the error to a
+ * string (`Error: ENOENT: no such file or directory, stat '...'`), so match on
+ * the errno code and the handler's own "Path is not a directory".
+ */
+export function isUnreadableFolderError(error: string | undefined): boolean {
+	return (
+		typeof error === 'string' &&
+		/\b(?:ENOENT|ENOTDIR|EACCES|EPERM)\b|Path is not a directory/.test(error)
+	);
+}
 
 // ============================================================================
 // Group update helpers
@@ -749,10 +763,15 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// silently repoint the session at an unreadable folder and the caller
 			// gets a false-positive `{ success: true }`.
 			if (!listResult?.success) {
-				captureMessage('AutoRun listDocs returned failure', {
-					level: 'error',
-					extra: { sessionId, folderPath, responseChannel, sshRemoteId, listResult },
-				});
+				// A folder the caller named that is missing, not a folder, or not
+				// readable is their input, and the error goes straight back to
+				// them below. Only report a failure we cannot explain (MAESTRO-15D).
+				if (!isUnreadableFolderError(listResult?.error)) {
+					captureMessage('AutoRun listDocs returned failure', {
+						level: 'error',
+						extra: { sessionId, folderPath, responseChannel, sshRemoteId, listResult },
+					});
+				}
 				window.maestro.process.sendRemoteSetAutoRunFolderResponse(responseChannel, {
 					success: false,
 					error: listResult?.error || `Could not read folder ${folderPath}`,
@@ -1834,6 +1853,47 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					: undefined,
 			});
 			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, report);
+			return;
+		}
+
+		// Federation lift (`maestro-cli lift`): the host now owns the agent, so this
+		// copy becomes a pointer. Every tab and transcript stays. The queued
+		// messages that moved with the agent leave this queue, by id, so nothing
+		// waits here for a turn that will never start. Refused while a turn runs:
+		// the CLI then removes the host's copy, so the agent has one owner.
+		if ('liftedTo' in patchObj) {
+			const pointer = readLiftedTo(patchObj.liftedTo);
+			const refusal = !pointer
+				? "Invalid value for field 'liftedTo'"
+				: readLiftedTo(session.liftedTo)
+					? 'Agent was already lifted'
+					: liftBusyReason(session);
+			if (refusal || !pointer) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: refusal ?? "Invalid value for field 'liftedTo'",
+				});
+				return;
+			}
+			const moved = new Set(
+				Array.isArray(patchObj.liftedQueueItemIds)
+					? patchObj.liftedQueueItemIds.filter((id): id is string => typeof id === 'string')
+					: []
+			);
+			const applyLift = (s: Session): Session => ({
+				...s,
+				liftedTo: pointer,
+				executionQueue: (s.executionQueue ?? []).filter((item) => !moved.has(item.id)),
+			});
+			setSessions((prev: Session[]) => prev.map((s) => (s.id === sessionId ? applyLift(s) : s)));
+			try {
+				await window.maestro.sessions.setMany([applyLift(session) as any], []);
+			} catch (persistErr) {
+				logger.error('[Remote] Failed to persist lift pointer:', undefined, persistErr);
+			}
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: true,
+			});
 			return;
 		}
 

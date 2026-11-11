@@ -8,11 +8,11 @@
 import { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { GitBranch, Compass } from 'lucide-react';
 import type {
-	Session,
 	Theme,
 	AITab,
 	BatchRunState,
 	ThinkingItem,
+	ThinkingItemAgent,
 	BackgroundAutoRun,
 } from '../types';
 import { formatTokensCompact } from '../utils/formatters';
@@ -21,6 +21,7 @@ import { formatElapsedTicker } from '../../shared/duration';
 import { StopTurnButton } from './ui/StopTurnButton';
 import { useBackgroundAutoRuns } from '../hooks/batch/useBackgroundAutoRuns';
 import { useWindowContextOptional } from '../contexts/WindowContext';
+import { interruptMirroredAgent, openMirroredAgentByKey } from '../services/peerMirror';
 import {
 	selectPendingSteeringNotes,
 	useAutoRunSteeringStore,
@@ -94,7 +95,7 @@ ElapsedTimeDisplay.displayName = 'ElapsedTimeDisplay';
 // Helper to get display name for a thinking item (used in pill and dropdown)
 // Priority: 1. namedSessions lookup, 2. tab name, 3. UUID octet
 function getItemDisplayName(
-	session: Session,
+	session: ThinkingItemAgent,
 	tab: AITab | null,
 	namedSessions?: Record<string, string>
 ): string {
@@ -623,7 +624,7 @@ AutoRunPill.displayName = 'AutoRunPill';
 function ThinkingStatusPillInner({
 	thinkingItems,
 	theme,
-	onSessionClick,
+	onSessionClick: onLocalSessionClick,
 	namedSessions,
 	autoRunState,
 	activeSessionId,
@@ -632,6 +633,16 @@ function ThinkingStatusPillInner({
 	onInterrupt,
 }: ThinkingStatusPillProps) {
 	const [isExpanded, setIsExpanded] = useState(false);
+	// A Federation peer's entry carries its mirror key as its id: a click on it opens the mirrored
+	// agent. Every other id is a local agent, which the caller jumps to.
+	const onSessionClick = useCallback(
+		(...args: [sessionId: string, tabId?: string]) => {
+			if (openMirroredAgentByKey(args[0], args[1])) return;
+			// Forwarded exactly as called: some rows name a tab, an Auto Run row does not.
+			onLocalSessionClick?.(...args);
+		},
+		[onLocalSessionClick]
+	);
 	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	// Auto Runs on other agents. The viewed agent's run arrives as autoRunState.
 	// Multi-window: drop runs on agents another window owns, the same scoping
@@ -745,6 +756,12 @@ function ThinkingStatusPillInner({
 	const hasMultiple = extraCount > 0;
 
 	const { session: primarySession, tab: primaryTab } = primaryItem;
+	// Stop acts on the entry the pill names. A mirrored one is stopped on its host, never through
+	// the caller's local interrupt.
+	const primaryMirror = primaryItem.mirror;
+	const stopPrimary = primaryMirror
+		? () => void interruptMirroredAgent(primaryMirror.peerId, primaryMirror.agentId, primaryTab?.id)
+		: onInterrupt;
 
 	// Get tokens for current thinking cycle only (not cumulative context)
 	const primaryTokens = primarySession.currentCycleTokens || 0;
@@ -887,10 +904,10 @@ function ThinkingStatusPillInner({
 				)}
 
 				{/* Stop/Interrupt button */}
-				{onInterrupt && (
+				{stopPrimary && (
 					<>
 						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
-						<StopTurnButton theme={theme} onClick={onInterrupt} />
+						<StopTurnButton theme={theme} onClick={stopPrimary} />
 					</>
 				)}
 

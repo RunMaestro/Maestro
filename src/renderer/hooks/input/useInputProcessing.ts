@@ -23,6 +23,8 @@ import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionM
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
+import { isLimitPausedSession } from '../agent/useAutoResumeCoordinator';
+import { useAgentStore } from '../../stores/agentStore';
 import { stripShellCommandEscape, type ComposerCommandMode } from '../../utils/shellCommandInput';
 import { dispatchShellCommand } from '../../services/shellCommand';
 import { requestAiCommand } from '../../services/aiCommand';
@@ -60,6 +62,7 @@ import { steerQueuedItemOrExplain } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
 import { admitGrokNativeCommand } from '../../slashCommands';
+import { liftedSendRefusal } from '../../../shared/maestro-lib/agents/lift-pointer';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -447,6 +450,22 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					command: commandText,
 				}).catch((error) => {
 					logger.error('[processInput] Command mode run failed:', undefined, error);
+				});
+				return;
+			}
+
+			// A lifted agent runs on its Federation host now: the local copy keeps its tabs and
+			// transcripts, but a turn here would resume the session the host owns. The draft stays.
+			const liftedRefusal =
+				activeSession.inputMode === 'ai' ? liftedSendRefusal(activeSession) : undefined;
+			if (liftedRefusal) {
+				notifyToast({
+					color: 'yellow',
+					title: 'Message not sent',
+					message: liftedRefusal,
+					dismissible: true,
+					skipCustomNotification: true,
+					skipOsNotification: true,
 				});
 				return;
 			}
@@ -1229,6 +1248,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							executionQueue: [...s.executionQueue, queuedItem],
 						};
 					});
+					// Sending is the user moving past the error, exactly as the direct
+					// send below clears it. A queued send has to say so explicitly: an
+					// agent in 'error' never drains its queue (useQueueProcessing only
+					// dispatches from 'idle'), so a message queued behind work that was
+					// already waiting when the error landed sat there until the user
+					// found the banner's X. A provider-limit pause is the exception: its
+					// queue is held on purpose until the auto-resume coordinator sees the
+					// window reopen, and draining now would only hit the same wall.
+					if (liveSession.state === 'error' && !isLimitPausedSession(liveSession)) {
+						useAgentStore.getState().clearAgentError(resolvedSessionId);
+					}
 					// Steer Running Turn: the draft is a queued item now, which is what a
 					// steer starts from. One that cannot be steered stays queued and the
 					// service says why.
@@ -1691,6 +1721,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// argument builders (resumeArgs, readOnlyArgs, etc.) to construct the final args
 						await window.maestro.process.spawn({
 							sessionId: targetSessionId,
+							transcriptBoundaryId: newEntry.id,
 							querySource,
 							toolType: freshSession.toolType,
 							cwd: freshSession.cwd,

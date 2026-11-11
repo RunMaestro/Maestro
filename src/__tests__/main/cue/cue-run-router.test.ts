@@ -160,7 +160,11 @@ describe('executeCueRunAction', () => {
 	});
 
 	it('prefers the configured customPath over the detector', async () => {
+		// A local agent: the provider-level path names a file on this machine, so
+		// over SSH it never reaches the remote (covered by the SSH cases below).
+		const localSession = { ...SESSION, sessionSshRemoteConfig: { enabled: false, remoteId: null } };
 		const deps = makeDeps({
+			findSession: vi.fn(() => localSession),
 			getAgentConfigValues: vi.fn(() => ({ customPath: '/custom/claude' })),
 		});
 		await executeCueRunAction(deps, params());

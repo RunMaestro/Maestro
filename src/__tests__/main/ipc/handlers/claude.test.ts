@@ -63,6 +63,11 @@ vi.mock('fs/promises', () => ({
 	},
 }));
 
+// Transcript reads stream; feed them from the readFile stub above.
+vi.mock('../../../../main/utils/jsonl-stream', async () =>
+	(await import('../../../helpers/mockJsonlStream')).jsonlStreamFromReadFileMock()
+);
+
 // Mock path - we need to preserve the actual path functionality but mock specific behaviors
 vi.mock('path', async () => {
 	const actual = await vi.importActual<typeof import('path')>('path');
@@ -92,6 +97,8 @@ vi.mock('../../../../shared/claudeSessionUsage', async () => {
 	return {
 		readClaudeSubagentTranscripts: vi.fn(async () => []),
 		readClaudeSubagentTranscriptsSync: vi.fn(() => []),
+		listClaudeSubagentTranscriptPaths: vi.fn(async () => []),
+		isAbsentTranscriptError: vi.fn(() => false),
 		computeClaudeUsageWithSubagents: vi.fn(price),
 		computeClaudeSessionUsage: vi.fn(async (_filePath: string, content: string) => price(content)),
 	};
@@ -1815,6 +1822,8 @@ not valid json at all
 			const writtenContent = vi.mocked(fs.default.writeFile).mock.calls[0][1] as string;
 			// The tool_result message should be gone since its tool_use was deleted
 			expect(writtenContent).not.toContain('tool-123');
+			// A tool result is not a new turn: the reply after it goes with the pair
+			expect(writtenContent).not.toContain('Here is the file content');
 			// But the "Next question" message should still be there
 			expect(writtenContent).toContain('Next question');
 		});

@@ -13,6 +13,14 @@
  * Speech typings stay local (self-contained) but are read off `window` via a
  * cast instead of a global `Window` augmentation, so this coexists with the
  * legacy hook's own `declare global` in the same TypeScript program.
+ *
+ * Stop versus cancel: `stopVoiceInput` is the user saying "I'm done talking",
+ * so the recognizer is asked to `stop()` and its final result still lands in
+ * the draft. `cancelVoiceInput` is for a draft that dictation no longer owns (a
+ * send cleared it, or the composer now shows another conversation): it
+ * `abort()`s, and because a browser can still deliver a result it had already
+ * queued, every later event of that dictation is dropped as well. Each start
+ * opens its own session, so a cancelled one cannot touch a newer one either.
  */
 
 import { useRef, useState, useCallback, useEffect } from 'react';
@@ -120,8 +128,13 @@ export interface UseVoiceInputReturn {
 	voiceSupported: boolean;
 	/** Start voice input. */
 	startVoiceInput: () => void;
-	/** Stop voice input. */
+	/** Stop voice input. The final result still lands in the draft. */
 	stopVoiceInput: () => void;
+	/**
+	 * Abandon the current dictation: abort the recognizer, drop any result it
+	 * still delivers, and show the mic as idle. No-op when not listening.
+	 */
+	cancelVoiceInput: () => void;
 	/** Toggle voice input on/off. */
 	toggleVoiceInput: () => void;
 }
@@ -150,6 +163,8 @@ export function useVoiceInput({
 	const [isListening, setIsListening] = useState(false);
 	const [voiceSupported] = useState(() => isSpeechRecognitionSupported());
 	const recognitionRef = useRef<SpeechRecognition | null>(null);
+	/** The current dictation's cancel flag; see cancelVoiceInput. */
+	const sessionRef = useRef<{ cancelled: boolean } | null>(null);
 
 	/** Initialize speech recognition when voice input starts. */
 	const startVoiceInput = useCallback(() => {
@@ -165,17 +180,21 @@ export function useVoiceInput({
 		recognition.maxAlternatives = 1;
 
 		recognitionRef.current = recognition;
+		const session = { cancelled: false };
+		sessionRef.current = session;
 
 		// Track final results across onresult calls so interim text can be
 		// re-rendered on top of the settled transcript.
 		let finalTranscript = '';
 
 		recognition.onstart = () => {
+			if (session.cancelled) return;
 			setIsListening(true);
 			triggerHaptic(HAPTIC_PATTERNS.send);
 		};
 
 		recognition.onresult = (event: SpeechRecognitionEvent) => {
+			if (session.cancelled) return;
 			let interimTranscript = '';
 
 			for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -197,6 +216,7 @@ export function useVoiceInput({
 		};
 
 		recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+			if (session.cancelled) return;
 			logger.warn('Speech recognition error', 'VoiceInput', event.error);
 			setIsListening(false);
 			recognitionRef.current = null;
@@ -208,6 +228,7 @@ export function useVoiceInput({
 		};
 
 		recognition.onend = () => {
+			if (session.cancelled) return;
 			setIsListening(false);
 			recognitionRef.current = null;
 			triggerHaptic(HAPTIC_PATTERNS.tap);
@@ -232,6 +253,22 @@ export function useVoiceInput({
 				recognitionRef.current.stop();
 			} catch {
 				// Ignore errors when stopping.
+			}
+			recognitionRef.current = null;
+		}
+		setIsListening(false);
+	}, []);
+
+	const cancelVoiceInput = useCallback(() => {
+		const session = sessionRef.current;
+		const recognition = recognitionRef.current;
+		if (session) session.cancelled = true;
+		sessionRef.current = null;
+		if (recognition) {
+			try {
+				recognition.abort();
+			} catch {
+				// Ignore errors when aborting.
 			}
 			recognitionRef.current = null;
 		}
@@ -265,6 +302,7 @@ export function useVoiceInput({
 		voiceSupported,
 		startVoiceInput,
 		stopVoiceInput,
+		cancelVoiceInput,
 		toggleVoiceInput,
 	};
 }

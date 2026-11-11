@@ -20,6 +20,7 @@ import { ModelEffortPills } from './InputArea/components/ModelEffortPills';
 import { useModelEffortMenus } from './InputArea/hooks/useModelEffortMenus';
 import { useAgentModelEffortOptions } from '../hooks/agent/useAgentModelEffortOptions';
 import { codifyTurnSettings } from '../utils/providerTabSessions';
+import { isImeComposing } from '../utils/ime';
 
 interface QueuedItemEditModalProps {
 	item: QueuedItem;
@@ -208,7 +209,7 @@ export function QueuedItemEditModal({
 	// carousel on the first image; once inside, LightboxModal owns the in-carousel
 	// keys (Cmd+E annotate, Cmd+C copy, Delete/Backspace remove, arrows navigate).
 	const handleKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !isImeComposing(e)) {
 			e.preventDefault();
 			e.stopPropagation();
 			handleSave();

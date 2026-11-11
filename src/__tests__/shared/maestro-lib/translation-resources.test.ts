@@ -11,6 +11,7 @@ import {
 } from '../../../shared/maestro-lib/translation/resources';
 import { resolveClaudeMemoryPath } from '../../../shared/maestro-lib/translation/memory';
 import { planResourceProjections } from '../../../shared/maestro-lib/translation/resource-projections';
+import { canonicalJson } from '../../../shared/canonicalJson';
 
 describe('project resource translation', () => {
 	it.each([false, true])(
@@ -290,6 +291,32 @@ describe('project resource translation', () => {
 		expect(projectResourceDefinition(artifact, 'claude-code').limitations[0].code).toBe(
 			'missing-subagent-instructions'
 		);
+	});
+	// #2018: a dated skill in ~/.agents/skills made every provider switch fail.
+	it('keeps YAML frontmatter dates as text so the plan can be fingerprinted', () => {
+		const artifact = translationArtifact(
+			'skill',
+			'/home/.agents/skills/dated/SKILL.md',
+			'skills/dated/SKILL.md',
+			Buffer.from(
+				'---\nname: dated\ndescription: d\nlast_updated: 2025-11-03\nscore: .nan\n---\nbody\n'
+			)
+		);
+		const { metadata } = projectResourceDefinition(artifact, 'codex');
+		expect(metadata.last_updated).toBe('2025-11-03');
+		expect(metadata.score).toBeNull();
+		expect(() => canonicalJson(metadata)).not.toThrow();
+	});
+	it('writes TOML datetimes as text so the plan can be fingerprinted', () => {
+		const artifact = translationArtifact(
+			'subagent',
+			'/source/reviewer.toml',
+			'agents/reviewer.toml',
+			Buffer.from('name = "reviewer"\ndeveloper_instructions = "Review."\ncreated = 2025-11-03\n')
+		);
+		const { metadata } = projectResourceDefinition(artifact, 'claude-code');
+		expect(metadata.created).toBe('2025-11-03');
+		expect(() => canonicalJson(metadata)).not.toThrow();
 	});
 });
 

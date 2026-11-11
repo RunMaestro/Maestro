@@ -25,6 +25,7 @@ import {
 import { logger } from '../../utils/logger';
 import type { Session } from '../../types';
 import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/sessionStore';
+import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { MainPanelHandle } from '../../components/MainPanel';
@@ -279,6 +280,7 @@ export function useQuickActionsHandlers(
 	}, []);
 
 	const handleQuickActionsClearActiveTerminal = useCallback(() => {
+		if (useGroupChatStore.getState().activeGroupChatId) return;
 		mainPanelRef.current?.clearActiveTerminal();
 	}, []);
 

@@ -16,7 +16,7 @@
  *   and then one reverse request `q-1` of method `FAKE_QMETHOD` (default
  *   `_x.ai/ask_user_question`) for session `FAKE_QSESSION` (default its own), with params
  *   `FAKE_QPARAMS` (JSON) or a two-choice question; `FAKE_QREPLAY` sends the same request
- *   twice. The answer is logged as `qanswer <result>` or `qerror <code>`, and then
+ *   again after recording its first answer. The answer is logged as `qanswer <result>` or `qerror <code>`, and then
  *   `FAKE_QTHEN` decides: absent, the turn ends `end_turn`; `permission` asks `perm-1` as the
  *   `permission` mode does; `hold` keeps the prompt open until `session/cancel`.
  * - `FAKE_SESSION`: the native session id `session/new` allocates (default `native-1`).
@@ -34,7 +34,7 @@ import * as path from 'path';
 const PEER_SOURCE = `const fs = require('node:fs');
 const env = process.env;
 const log = (line) => env.FAKE_LOG && fs.appendFileSync(env.FAKE_LOG, line + '\\n');
-let buf = '', pending, sid = env.FAKE_SESSION || 'native-1';
+let buf = '', pending, question, sid = env.FAKE_SESSION || 'native-1';
 const send = (m) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\\n');
 const chunk = (text) => send({ method: 'session/update', params: { sessionId: sid,
 	update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } } });
@@ -49,8 +49,8 @@ const ask = () => {
 	const q = { id: 'q-1', method: env.FAKE_QMETHOD || '_x.ai/ask_user_question', params: {
 		sessionId: env.FAKE_QSESSION || sid, ...(env.FAKE_QPARAMS ? JSON.parse(env.FAKE_QPARAMS)
 			: { questions: [{ question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }] }] }) } };
+	question = q;
 	send(q);
-	if (env.FAKE_QREPLAY) send(q);
 };
 process.stdin.on('data', (d) => {
 	buf += d;
@@ -78,6 +78,9 @@ process.stdin.on('data', (d) => {
 			else { chunk('Hello from ACP'); finish(m.id, 'end_turn', env.FAKE_TICKS ? { costUsdTicks: env.FAKE_TICKS } : {}); }
 		} else if (m.id === 'q-1' && !m.method) {
 			log(m.error ? 'qerror ' + m.error.code : 'qanswer ' + JSON.stringify(m.result));
+			// Replay only after observing the first response: termination on a duplicate
+			// may kill the peer before a buffered response is read.
+			if (env.FAKE_QREPLAY) { send(question); continue; }
 			if (env.FAKE_QTHEN === 'permission') send({ id: 'perm-1', method: 'session/request_permission', params: {
 				sessionId: sid, toolCall: { toolCallId: 'perm-1', title: 'Read', rawInput: { path: 'README.md' } },
 				options: [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' },

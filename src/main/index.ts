@@ -1,3 +1,5 @@
+import { createPluginSessionLifecycle } from './plugins/plugin-session-lifecycle';
+import type { ConfirmQueueItem, ReleaseQueueItem } from './stores/queue-item-receipt';
 import { flushPendingSessionWrites } from './stores/instances';
 import { RelayConversations } from './plugins/relay-conversations';
 import { broadcastSessionLifecycle } from './ipc/handlers/persistence';
@@ -22,6 +24,7 @@ import {
 	getPluginRunProofProtectedPaths,
 	pluginToolRunIdentity,
 } from './plugins/plugin-tool-run-identity';
+import { hostCallerRuns } from './agent-run/caller-identity';
 import {
 	app,
 	BrowserWindow,
@@ -63,7 +66,8 @@ import { CueEngine } from './cue/cue-engine';
 import { hostVisibleProjectRoot } from '../shared/hostVisibleProjectRoot';
 import type { SshRemoteConfig } from '../shared/types';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
-import { PianolaSupervisor, type AutoWatchSession } from './pianola/pianola-supervisor';
+import { nativeCurrentTurns } from './pianola/current-turn';
+import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
 import type { PianolaMemoryHost } from './pianola/memory-host';
 import { createPianolaLifecycle } from './pianola/pianola-lifecycle';
@@ -75,6 +79,7 @@ import { createComputerHistoryForApp } from './computer-history/bootstrap';
 import { getMaestroRunService } from './maestro-run';
 import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { createDataviewSupervisorHooks } from './dataview/dataview-service';
+import { createFederationSupervisorHooks, getPeerMirrorService } from './federation';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { PluginToolRunProofFiles } from './plugins/plugin-tool-run-proof-file';
@@ -218,6 +223,7 @@ import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
+import { addParticipantByAgentId } from './group-chat/group-chat-router';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import {
 	captureException,
@@ -432,6 +438,7 @@ if (disableGpuAcceleration) {
 // Generate installation ID on first run (one-time generation)
 // This creates a unique identifier per Maestro installation for telemetry differentiation
 const store = getSettingsStore();
+nativeCurrentTurns.setEnabled(resolveEncoreFeatures(store.get('encoreFeatures')).pianola);
 let installationId = store.get('installationId');
 // An installationId already on disk means this settings store existed before
 // this boot, i.e. the app has launched before. Record that once, permanently -
@@ -628,6 +635,9 @@ let pluginGroupingRegistry: PluginGroupingRegistry | null = null;
 let pluginBackgroundSupervisor: PluginBackgroundSupervisor | null = null;
 let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
+// Host-only receipt implementation, assigned during IPC bootstrap.
+let releaseQueueItemInPersistence: ReleaseQueueItem | null = null;
+let confirmQueueItemInPersistence: ConfirmQueueItem | null = null;
 // Set by registerPersistenceHandlers (in setupIpcHandlers). Lets the plugin
 // focus verbs record into the persistence layer's `session.activated` dedupe so
 // the two emit paths never desync. Null before IPC setup / when unavailable.
@@ -783,6 +793,7 @@ registerCadenzaIpcHandlers({ getMainWindow: () => mainWindow, settingsStore: sto
 // (Stopping the community-plugin runtime when `plugins` turns off is the
 // plugins hook of the Encore lifecycle below.)
 store.onDidChange('encoreFeatures', (encoreFeatures) => {
+	nativeCurrentTurns.setEnabled(resolveEncoreFeatures(encoreFeatures).pianola);
 	pianolaMemoryHost?.reconcile();
 	if (!resolveEncoreFeatures(encoreFeatures).concerto) closeCadenzaHudWindow();
 	// A switched-off Throughput Gauge leaves no widget window behind.
@@ -921,6 +932,14 @@ const CUE_DISABLED_MESSAGE =
 
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
+	releaseQueueItem: (...args) => {
+		if (!releaseQueueItemInPersistence)
+			return Promise.reject(new Error('DispatchQueueDrainUnavailable'));
+		return releaseQueueItemInPersistence(...args);
+	},
+	confirmQueueItem: (request) =>
+		confirmQueueItemInPersistence?.(request) ??
+		Promise.resolve({ durable: false, reason: 'store-unavailable' }),
 	settingsStore: store,
 	sessionsStore,
 	groupsStore,
@@ -949,6 +968,26 @@ const createWebServer = createWebServerFactory({
 	getCueActivityLog: () => {
 		if (!cueEngine) return [];
 		return cueEngine.getActivityLog();
+	},
+	addGroupChatParticipant: async (chatId, agentId) => {
+		try {
+			const { participant, alreadyMember } = await addParticipantByAgentId(chatId, agentId);
+			return { success: true, participantName: participant.name, alreadyMember };
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			// Expected refusals (unknown chat or agent, inactive moderator) go back
+			// to the caller as text. Anything else is a bug: report it as well.
+			const expected = [
+				'Group chat not found',
+				'No agent with ID',
+				'is a terminal agent',
+				'Moderator must be active',
+			].some((fragment) => message.includes(fragment));
+			if (!expected) {
+				void captureException(error, { operation: 'groupChat:addParticipantByAgentId', chatId });
+			}
+			return { success: false, error: message };
+		}
 	},
 });
 
@@ -1325,6 +1364,11 @@ app
 		// execution queue (or in a new tab when it has none), not as a fresh
 		// headless process.
 		initDispatchCallbacks({
+			onDelivered: async ({ entry, status }) => {
+				if (!entry.admissionId || !['completed', 'failed'].includes(status)) return;
+				const { confirmDispatchCallback } = await import('./pianola/pianola-store-main');
+				confirmDispatchCallback(entry.admissionId, entry.callbackId);
+			},
 			enqueue: async (agentId, prompt, tabId) => {
 				const server = webServer;
 				if (!server) return { success: false, error: 'Desktop web server unavailable' };
@@ -1937,6 +1981,14 @@ app
 				reconcile: () => void startCoworkingService(() => processManager),
 				stopAll: () => void stopCoworkingService(),
 			},
+			// Federation: the read-only peer mirror (FED-SSH-05). One SSH forward and
+			// one host client per opted-in remote, dialed one after another, held in
+			// memory only. Off = no service, no store listener, no ssh.
+			federation: createFederationSupervisorHooks({
+				readRemotes: () => (store.get('sshRemotes', []) ?? []) as SshRemoteConfig[],
+				watchRemotes: (onChange) => store.onDidChange('sshRemotes', () => onChange()),
+				safeSend,
+			}),
 			// OpenCode serve: the shared server spawns lazily on the first OpenCode
 			// turn, so there is nothing to start. Off tears down every server.
 			opencodeServer: {
@@ -2534,104 +2586,15 @@ app
 		};
 		const pluginSessionsGet = (sessionId: string): PluginSessionMetadata | null =>
 			pluginSessionsList().find((s) => s.id === sessionId) ?? null;
-		const pluginSessionsCreate = async (
-			params: Record<string, unknown>
-		): Promise<PluginSessionMetadata> => {
-			const now = Date.now();
-			const sessionId = typeof params.id === 'string' ? params.id : crypto.randomUUID();
-			const tabId = crypto.randomUUID();
-			const title =
-				typeof params.title === 'string'
-					? params.title
-					: typeof params.name === 'string'
-						? params.name
-						: 'Plugin Session';
-			const toolType =
-				typeof params.agentId === 'string'
-					? params.agentId
-					: typeof params.toolType === 'string'
-						? params.toolType
-						: 'claude-code';
-			const cwd =
-				typeof params.projectPath === 'string'
-					? params.projectPath
-					: typeof params.cwd === 'string'
-						? params.cwd
-						: os.homedir();
-			const session = {
-				id: sessionId,
-				name: title,
-				toolType,
-				state: 'idle',
-				cwd,
-				fullPath: cwd,
-				projectRoot: cwd,
-				createdAt: now,
-				updatedAt: now,
-				aiLogs: [],
-				shellLogs: [],
-				workLog: [],
-				contextUsage: 0,
-				inputMode: 'ai',
-				aiPid: 0,
-				terminalPid: 0,
-				port: 0,
-				isLive: false,
-				changedFiles: [],
-				isGitRepo: false,
-				fileTree: [],
-				fileExplorerExpanded: [],
-				fileExplorerScrollPos: 0,
-				executionQueue: [],
-				activeTimeMs: 0,
-				aiTabs: [
-					{
-						id: tabId,
-						agentSessionId: null,
-						name: null,
-						starred: false,
-						logs: [],
-						inputValue: '',
-						stagedImages: [],
-						createdAt: now,
-						state: 'idle',
-					},
-				],
-				activeTabId: tabId,
-				closedTabHistory: [],
-				filePreviewTabs: [],
-				activeFileTabId: null,
-				browserTabs: [],
-				activeBrowserTabId: null,
-				terminalTabs: [],
-				activeTerminalTabId: null,
-				unifiedTabOrder: [{ type: 'ai', id: tabId }],
-				unifiedClosedTabHistory: [],
-			};
-			const previousSessions = pluginSessionsRaw();
-			setPluginSessionsRaw([...previousSessions, session]);
-			if (!previousSessions.some((existing) => existing.id === sessionId)) {
-				try {
-					await pianolaSupervisor?.autoWatchNewSessions(
-						[session],
-						[...previousSessions, session] as AutoWatchSession[],
-						store.get('pianolaAutoWatchNewAgents', false) === true
-					);
-				} catch (error) {
-					logger.error('Could not register new Pianola watch', '[Pianola]', error);
-					void captureException(error, { operation: 'pianola:autoWatchPluginSession' });
-				}
-			}
-			sessionsStore.set('activeSessionId', sessionId);
-			return {
-				id: sessionId,
-				title,
-				agentId: toolType,
-				status: 'idle',
-				createdAt: now,
-				projectPath: cwd,
-			};
-		};
+		const { create: pluginSessionsCreate, remove: pluginSessionsDelete } =
+			createPluginSessionLifecycle({
+				readSessions: pluginSessionsRaw,
+				writeSessions: setPluginSessionsRaw,
+				flush: flushPendingSessionWrites,
+				getActiveSessionId: () => sessionsStore.get('activeSessionId', ''),
+				setActiveSessionId: (id) => sessionsStore.set('activeSessionId', id),
+				getSupervisor: () => pianolaSupervisor,
+			});
 		const pluginSessionsUpdate = async (
 			sessionId: string,
 			patch: Record<string, unknown>
@@ -2652,28 +2615,6 @@ app
 			if (!updated) return null;
 			setPluginSessionsRaw(next);
 			return pluginSessionsGet(sessionId);
-		};
-		const pluginSessionsDelete = async (sessionId: string): Promise<boolean> => {
-			const sessions = pluginSessionsRaw();
-			if (!sessions.some((s) => s.id === sessionId)) return false;
-			const remaining = sessions.filter((s) => s.id !== sessionId);
-			setPluginSessionsRaw(remaining);
-			try {
-				await pianolaSupervisor?.autoWatchNewSessions(
-					[],
-					remaining as unknown as AutoWatchSession[],
-					store.get('pianolaAutoWatchNewAgents', false) === true,
-					[sessionId]
-				);
-			} catch (error) {
-				logger.error('Could not retire Pianola watch', '[Pianola]', error);
-				void captureException(error, { operation: 'pianola:retireAutoWatch' });
-			}
-			if (sessionsStore.get('activeSessionId', '') === sessionId) {
-				const nextActive = pluginSessionsRaw()[0]?.id;
-				sessionsStore.set('activeSessionId', typeof nextActive === 'string' ? nextActive : '');
-			}
-			return true;
 		};
 		const pluginListHistoryEntries = async () => {
 			const all = [];
@@ -3772,6 +3713,12 @@ app
 			getPluginAuthStore: () => pluginAuthStore,
 			getPluginEventBus: () => pluginEventBus,
 			getInteractiveReplayController: () => interactiveReplayController,
+			setReleaseQueueItem: (fn) => {
+				releaseQueueItemInPersistence = fn;
+			},
+			setConfirmQueueItem: (fn) => {
+				confirmQueueItemInPersistence = fn;
+			},
 			setNoteSessionActivated: (fn) => {
 				noteSessionActivatedInPersistence = fn;
 			},
@@ -3917,6 +3864,8 @@ app
 		const bootEncoreFeatures = store.get('encoreFeatures');
 		encoreLifecycle.startIfEnabled('pianola', bootEncoreFeatures);
 		encoreLifecycle.startIfEnabled('plugins', bootEncoreFeatures);
+		// Federation's peer mirror dials only remotes with their own `federation` flag on.
+		encoreLifecycle.startIfEnabled('federation', bootEncoreFeatures);
 
 		// Install the application menu (File / Edit / View / Window on macOS,
 		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the
@@ -3964,6 +3913,13 @@ app
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeGlobalHotkey);
+		app.on('will-quit', () => {
+			try {
+				hostCallerRuns.stop();
+			} catch (error) {
+				captureException(error, { context: 'caller run shutdown' });
+			}
+		});
 		// Release parquet file descriptors (and their cached scans) on the way
 		// out. The idle reaper would get to them eventually, but a preview tab
 		// left open otherwise holds a descriptor until the process dies.
@@ -4049,6 +4005,9 @@ app
 					void captureException(err, { operation: 'cue.reconcileAfterWake' });
 				}
 			}
+			// Federation: reconnect every mirrored peer in turn and reload its agents.
+			// Idempotent against the several resume events one wake raises.
+			getPeerMirrorService()?.reloadAfterWake();
 		});
 	})
 	.catch(async (err) => {

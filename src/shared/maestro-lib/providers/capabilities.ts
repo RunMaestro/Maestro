@@ -314,7 +314,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	 */
 	'qwen3-coder': {
 		supportsResume: true, // --resume <sessionId> headless resume (resumeArgs wired)
-		supportsReadOnlyMode: false, // Prompt-only enforcement via -y
+		supportsReadOnlyMode: true, // CLI-enforced via --approval-mode plan (readOnlyArgs in definitions.ts)
 		supportsStandardPermissionMode: true, // Native ACP approval requests (opt-in transport)
 		supportsJsonOutput: true,
 		supportsSessionId: true,
@@ -617,6 +617,29 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
  */
 export function getAgentCapabilities(agentId: string): AgentCapabilities {
 	return AGENT_CAPABILITIES[agentId] || { ...DEFAULT_CAPABILITIES };
+}
+
+/**
+ * Whether a provider can read attached images.
+ *
+ * The one rule the renderer's attach gate and main's send gate share. Only a
+ * KNOWN `supportsImageInput: false` refuses: a missing capability object (an
+ * unknown provider, a capability lookup that has not settled, or a room with no
+ * moderator) allows, which is the behaviour both surfaces had before the gate.
+ */
+export function agentCanReadImages(
+	capabilities: Pick<AgentCapabilities, 'supportsImageInput'> | null | undefined
+): boolean {
+	return capabilities?.supportsImageInput !== false;
+}
+
+/**
+ * Whether the provider with this id can read attached images. An unknown or
+ * missing id allows: only a provider Maestro knows to be text-only refuses.
+ */
+export function agentIdCanReadImages(agentId: string | null | undefined): boolean {
+	if (!agentId) return true;
+	return agentCanReadImages(AGENT_CAPABILITIES[agentId]);
 }
 
 /**

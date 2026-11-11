@@ -69,8 +69,31 @@ describe('CreatePRModal', () => {
 		renderModal();
 		await clickCreatePR();
 
-		expect(createPR).toHaveBeenCalledWith(WORKTREE, 'main', 'visual polish', '');
+		expect(createPR).toHaveBeenCalledWith(
+			WORKTREE,
+			'main',
+			'visual polish',
+			'',
+			undefined,
+			undefined
+		);
 		expect(usePRCreationStore.getState().runs[KEY]?.status).toBe('running');
+	});
+
+	it('opens a remote PR without a local gh and forwards the SSH remote', async () => {
+		checkGhCli.mockResolvedValue({ installed: false, authenticated: false });
+		renderModal({ sshRemoteId: 'ssh-remote-1' });
+		await clickCreatePR();
+
+		expect(checkGhCli).not.toHaveBeenCalled();
+		expect(createPR).toHaveBeenCalledWith(
+			WORKTREE,
+			'main',
+			'visual polish',
+			'',
+			undefined,
+			'ssh-remote-1'
+		);
 	});
 
 	it('offers Run in Background while the request is in flight', async () => {

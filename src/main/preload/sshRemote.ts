@@ -31,6 +31,8 @@ export interface SshRemoteConfig {
 	useSshConfig?: boolean;
 	/** Original SSH config Host pattern if imported from ~/.ssh/config */
 	sshConfigHost?: string;
+	/** Opted in to Federation; see `SshRemoteConfig.federation` in `src/shared/types.ts` */
+	federation?: boolean;
 }
 
 /**
@@ -61,6 +63,7 @@ export function createSshRemoteApi() {
 			enabled?: boolean;
 			useSshConfig?: boolean;
 			sshConfigHost?: string;
+			federation?: boolean;
 		}) => ipcRenderer.invoke('ssh-remote:saveConfig', config),
 
 		deleteConfig: (id: string) => ipcRenderer.invoke('ssh-remote:deleteConfig', id),

@@ -1233,7 +1233,7 @@ describe('useDebouncedPersistence', () => {
 						{ name: 'README.md', type: 'file' },
 					],
 					fileTreeStats: { fileCount: 2, folderCount: 1, totalSize: 1024 },
-					fileTreeLoading: false,
+					fileTreeLoading: true,
 					fileTreeLastScanTime: Date.now(),
 				});
 
@@ -1248,8 +1248,30 @@ describe('useDebouncedPersistence', () => {
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].fileTree).toEqual([]);
 				expect(persisted[0].fileTreeStats).toBeUndefined();
-				expect(persisted[0].fileTreeLoading).toBeUndefined();
+				expect(persisted[0].fileTreeLoading).toBe(false);
 				expect(persisted[0].fileTreeLastScanTime).toBeUndefined();
+			});
+
+			it('should remove fileTreeLoadedCap and fileTreeTruncated', () => {
+				// Regression: a persisted fileTreeLoadedCap beside the stripped tree
+				// told the auto-loader the empty tree was already loaded, so the
+				// Files panel stayed on "No files found" after every restart.
+				const session = makeSession({
+					fileTreeLoadedCap: 250_000,
+					fileTreeTruncated: true,
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].fileTreeLoadedCap).toBeUndefined();
+				expect(persisted[0].fileTreeTruncated).toBeUndefined();
 			});
 
 			it('should remove fileTreeError and fileTreeRetryAt', () => {

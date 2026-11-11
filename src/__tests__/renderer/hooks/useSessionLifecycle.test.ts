@@ -27,6 +27,7 @@ import {
 	type SessionLifecycleDeps,
 } from '../../../renderer/hooks/session/useSessionLifecycle';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session } from '../../../renderer/types';
@@ -106,6 +107,8 @@ beforeEach(() => {
 		showUnreadOnly: false,
 		preFilterActiveTabId: null,
 	});
+
+	useGroupChatStore.setState({ activeGroupChatId: null });
 
 	// Mock window.maestro APIs
 	(window as any).maestro = {
@@ -1552,6 +1555,27 @@ describe('useSessionLifecycle', () => {
 				activeBrowserTabId: 'browser-tab-1',
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.toggleTabStar();
+			});
+
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].starred).toBe(false);
+			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
+		});
+
+		it('is a no-op when a group chat room is open', () => {
+			const tab = createMockAITab({ id: 'tab-1', starred: false, agentSessionId: 'ag-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code' as any,
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useGroupChatStore.setState({ activeGroupChatId: 'chat-1' });
 
 			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
 

@@ -21,11 +21,12 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => {
 
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
+	getSessionById: vi.fn(() => undefined),
 }));
 
 import { ask } from '../../../cli/commands/ask';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
-import { resolveAgentId } from '../../../cli/services/storage';
+import { getSessionById, resolveAgentId } from '../../../cli/services/storage';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../../shared/agentDelegation';
 
@@ -89,6 +90,27 @@ describe('ask command', () => {
 		expect(sendCommand).not.toHaveBeenCalled();
 		expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('cannot consult itself'));
 		expect(exitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('refuses a lifted agent with AGENT_LIFTED before touching the desktop', async () => {
+		const sendCommand = mockClient({ type: 'cross_agent_ask_result', success: true });
+		vi.mocked(getSessionById).mockReturnValueOnce({
+			id: 'resolved-builder',
+			name: 'Builder',
+			toolType: 'claude-code',
+			cwd: '/p',
+			projectRoot: '/p',
+			liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+		});
+
+		await ask('builder', 'Where is the gate?', { json: true });
+
+		const output = JSON.parse(logSpy.mock.calls[0][0]);
+		expect(output.success).toBe(false);
+		expect(output.code).toBe('AGENT_LIFTED');
+		expect(output.error).toContain('build-box:host-1');
+		expect(exitSpy).toHaveBeenCalledWith(1);
+		expect(sendCommand).not.toHaveBeenCalled();
 	});
 
 	it('rejects an empty question', async () => {

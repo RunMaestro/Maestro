@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Captured callbacks from process events
 let capturedDataCallback: ((sessionId: string, data: string) => void) | null = null;
 let capturedExitCallback: ((sessionId: string, code: number) => void) | null = null;
+let capturedStderrCallback: ((sessionId: string, data: string) => void) | null = null;
 let capturedFileChangedCallback:
 	| ((data: { filename: string; eventType: string; folderPath: string }) => void)
 	| null = null;
@@ -29,6 +30,10 @@ const mockMaestro = {
 		onAgentError: vi.fn(() => vi.fn()),
 		onExit: vi.fn((cb) => {
 			capturedExitCallback = cb;
+			return vi.fn(); // cleanup function
+		}),
+		onStderr: vi.fn((cb) => {
+			capturedStderrCallback = cb;
 			return vi.fn(); // cleanup function
 		}),
 	},
@@ -77,6 +82,7 @@ describe('phaseGenerator - SSH Remote Support', () => {
 		vi.clearAllMocks();
 		capturedDataCallback = null;
 		capturedExitCallback = null;
+		capturedStderrCallback = null;
 		capturedFileChangedCallback = null;
 	});
 
@@ -516,5 +522,35 @@ CONTENT:
 				expect(onError).toHaveBeenCalledExactlyOnceWith(result.error);
 			}
 		);
+	});
+
+	// Lives here because this file holds the phaseGenerator process-event mock.
+	describe('agent stderr (#1983)', () => {
+		it('reports the agent stderr when generation exits non-zero', async () => {
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'codex',
+				available: true,
+				command: 'codex',
+				args: [],
+			});
+			mockMaestro.process.spawn.mockImplementation(async (config: { sessionId: string }) => {
+				const sid = config.sessionId;
+				setTimeout(() => {
+					capturedStderrCallback?.(sid, "error: unexpected argument '--json' found\n");
+					capturedExitCallback?.(sid, 2);
+				}, 10);
+				return { sessionId: sid };
+			});
+
+			const result = await phaseGenerator.generateDocuments({
+				agentType: 'codex',
+				directoryPath: '/local/path',
+				projectName: 'Test Project',
+				conversationHistory: [],
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain("unexpected argument '--json' found");
+		});
 	});
 });

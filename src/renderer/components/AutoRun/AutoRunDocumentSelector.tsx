@@ -23,6 +23,7 @@ import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { useResizableDropdownHeight } from '../../hooks/ui/useResizableDropdownHeight';
+import { isImeComposing } from '../../utils/ime';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
 import { aggregateFolderTaskCounts } from './documentTaskAggregation';
@@ -558,7 +559,7 @@ export const AutoRunDocumentSelector = forwardRef<
 												setHighlightedIndex(
 													(i) => (i - 1 + visibleFiles.length) % visibleFiles.length
 												);
-											} else if (e.key === 'Enter') {
+											} else if (e.key === 'Enter' && !isImeComposing(e)) {
 												const target = visibleFiles[highlightedIndex];
 												if (target) {
 													e.preventDefault();
@@ -714,7 +715,7 @@ export const AutoRunDocumentSelector = forwardRef<
 						}
 					}}
 					onKeyDown={(e) => {
-						if (e.key === 'Escape') {
+						if (e.key === 'Escape' && !isImeComposing(e)) {
 							e.stopPropagation();
 							handleCloseCreateModal();
 						}
@@ -804,7 +805,12 @@ export const AutoRunDocumentSelector = forwardRef<
 									value={newDocName}
 									onChange={(e) => setNewDocName(e.target.value)}
 									onKeyDown={(e) => {
-										if (e.key === 'Enter' && newDocName.trim() && !isDuplicate) {
+										if (
+											e.key === 'Enter' &&
+											newDocName.trim() &&
+											!isDuplicate &&
+											!isImeComposing(e)
+										) {
 											e.preventDefault();
 											handleCreateDocument();
 										}

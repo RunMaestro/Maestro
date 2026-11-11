@@ -52,6 +52,11 @@ export interface HistoryWriterOptions {
 	paths: Pick<MaestroPaths, 'historyDir'>;
 	/** Is this process still the data directory's writer? Asked before every append. Default: always. */
 	fence?: () => DataDirVerdict;
+	/**
+	 * Called with each entry once it is in the agent's own History, in append order (a host copies
+	 * it to the project's shared History here). A throw is logged; the append still succeeded.
+	 */
+	onAppended?(agentId: string, entry: HistoryEntry): void;
 }
 
 export interface HistoryWriter {
@@ -116,6 +121,18 @@ export function createHistoryWriter(options: HistoryWriterOptions): HistoryWrite
 	}
 
 	return {
-		append: (agentId, entry) => queue.enqueue(agentId, () => appendNow(agentId, entry)),
+		append: (agentId, entry) =>
+			queue.enqueue(agentId, async () => {
+				const result = await appendNow(agentId, entry);
+				if (result.ok && options.onAppended) {
+					try {
+						options.onAppended(agentId, entry);
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						logger.warn(`After-append hook failed for agent ${agentId}: ${message}`, LOG_CONTEXT);
+					}
+				}
+				return result;
+			}),
 	};
 }

@@ -358,6 +358,16 @@ export async function collectTranslationResources(
 	return { artifacts, limitations };
 }
 
+/**
+ * Definition metadata ends up in the plan fingerprint, which `canonicalJson`
+ * hashes, so it must hold JSON values only. A TOML datetime parses to a Date
+ * and YAML or TOML `nan` / `inf` to a non-finite number. The round trip writes
+ * a date as its text and a non-finite number as null.
+ */
+function toJsonMetadata(value: unknown): unknown {
+	return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
 /** Translate portable bodies; unsupported execution controls stay in the archive. */
 export function projectResourceDefinition(
 	artifact: TranslationArtifact,
@@ -375,7 +385,10 @@ export function projectResourceDefinition(
 	const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
 	if (frontmatter) {
 		try {
-			const value = yaml.load(frontmatter[1]);
+			// CORE_SCHEMA keeps an unquoted date (`updated: 2025-11-03`) as the
+			// text it was written as. The default schema makes it a Date, which
+			// the plan fingerprint (canonicalJson) refuses (#2018).
+			const value = toJsonMetadata(yaml.load(frontmatter[1], { schema: yaml.CORE_SCHEMA }));
 			if (value && typeof value === 'object' && !Array.isArray(value))
 				metadata = value as Record<string, unknown>;
 		} catch {
@@ -392,7 +405,7 @@ export function projectResourceDefinition(
 		artifact.metadata?.nativeFormat === 'toml'
 	) {
 		try {
-			metadata = parseToml(text);
+			metadata = toJsonMetadata(parseToml(text)) as Record<string, unknown>;
 			body =
 				typeof metadata.developer_instructions === 'string' ? metadata.developer_instructions : '';
 			if (!body)

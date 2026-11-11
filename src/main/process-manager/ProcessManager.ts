@@ -517,7 +517,10 @@ export class ProcessManager extends EventEmitter {
 	 */
 	async spawnChecked(
 		config: ProcessConfig,
-		options: { beforeSpawn?: () => string | undefined | Promise<string | undefined> } = {}
+		options: {
+			beforeSpawn?: () => string | undefined | Promise<string | undefined>;
+			assertSpawnAllowed?: () => void;
+		} = {}
 	): Promise<SpawnResult> {
 		if (config.toolType === 'grok') {
 			const scope = config.nativeSessionScope;
@@ -539,6 +542,8 @@ export class ProcessManager extends EventEmitter {
 		}
 		const refusal = await options.beforeSpawn?.();
 		if (refusal) return { pid: -1, success: false, error: refusal };
+		// Recheck synchronous ownership after the asynchronous launch fence settles.
+		options.assertSpawnAllowed?.();
 		return this.spawn(config);
 	}
 

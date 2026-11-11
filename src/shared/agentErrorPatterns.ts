@@ -386,7 +386,22 @@ const OPENCODE_ERROR_PATTERNS: AgentErrorPatterns = {
 		},
 	],
 
+	// Plan-quota wording comes first, same reasoning as CODEX_ERROR_PATTERNS:
+	// a spent plan window is not a transient throttle. OpenCode Go reports
+	// "Go usage limit exceeded"; without these it parsed as `unknown`, so the
+	// retry paths ignored it and group chat grooming reported it to Sentry as
+	// a Maestro fault (MAESTRO-17W).
 	rate_limited: [
+		{
+			pattern: /usage.?limit|hit your.*limit/i,
+			message: 'Usage limit reached. Please wait or check your plan quota.',
+			recoverable: true,
+		},
+		{
+			pattern: /quota.*exceeded/i,
+			message: 'Your API quota has been exceeded. Resume when quota resets.',
+			recoverable: true,
+		},
 		{
 			pattern: /rate.*limit/i,
 			message: 'Rate limit exceeded. Please wait.',

@@ -29,7 +29,13 @@ let nativeSessionRequestSequence = 0;
  * Configuration for spawning a process
  */
 export interface ProcessConfig {
+	/** Submitted native transcript row; a missing boundary disables full-turn observation. */
+	transcriptBoundaryId?: string;
 	sessionId: string;
+	pianolaDispatchId?: string;
+	/** Owning desktop queue consumer only; host releases and claims within this spawn request. */
+	pianolaQueueItemId?: string;
+	pianolaQueueStepId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;
@@ -57,6 +63,9 @@ export interface ProcessConfig {
  * Response from spawning a process
  */
 export interface ProcessSpawnResponse {
+	error?: string;
+	pianolaRunId?: string;
+	pianolaQueueReconciled?: boolean;
 	pid: number;
 	success: boolean;
 	sshRemote?: { id: string; name: string; host: string };

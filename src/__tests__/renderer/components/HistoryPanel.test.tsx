@@ -22,6 +22,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { HistoryPanel, HistoryPanelHandle } from '../../../renderer/components/HistoryPanel';
+import type {
+	HistorySource,
+	HistorySourceListener,
+} from '../../../renderer/components/History/historySource';
 import type { Session, HistoryEntry, HistoryEntryType } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -2617,6 +2621,143 @@ describe('HistoryPanel', () => {
 			await waitFor(() => {
 				expect(autoFilter).toHaveClass('opacity-40');
 			});
+		});
+	});
+
+	// ===== A SOURCE OTHER THAN THE LOCAL HISTORY (a Federation peer's host) =====
+	describe('with a source', () => {
+		/** A read-only source like a mirrored agent's: no remove, no update, reset-only stream. */
+		function readOnlySource(entries: HistoryEntry[]) {
+			const listeners: HistorySourceListener[] = [];
+			const source = {
+				getPage: vi.fn(
+					async ({ pagination }: { pagination: { offset: number; limit: number } }) => ({
+						entries: entries.slice(pagination.offset, pagination.offset + pagination.limit),
+						hasMore: pagination.offset + pagination.limit < entries.length,
+						total: entries.length,
+					})
+				),
+				getGraphData: vi.fn(async () => ({
+					buckets: Array.from({ length: 24 }, () => ({ auto: 0, user: 0, cue: 0 })),
+					earliestTimestamp: Date.now() - 24 * 60 * 60 * 1000,
+					latestTimestamp: Date.now(),
+					hostCounts: {},
+				})),
+				getOffsetForTimestamp: vi.fn(async () => 0),
+				subscribe: vi.fn((listener: HistorySourceListener) => {
+					listeners.push(listener);
+					return () => listeners.splice(listeners.indexOf(listener), 1);
+				}),
+			};
+			return {
+				source: source as unknown as HistorySource,
+				fake: source,
+				listeners,
+				setEntries: (next: HistoryEntry[]) => {
+					entries = next;
+				},
+			};
+		}
+
+		const view = {
+			id: 'buildbox:a1',
+			cwd: '/srv/app',
+			projectRoot: '/srv/app',
+			toolType: 'claude-code' as const,
+		};
+
+		it('reads only through the source, never the local History', async () => {
+			const { source, fake } = readOnlySource([
+				createMockEntry({ id: 'host-1', summary: 'From the host', hostname: 'box.host' }),
+			]);
+
+			render(<HistoryPanel session={view} source={source} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('From the host')).toBeInTheDocument();
+			});
+			expect(fake.getPage).toHaveBeenCalled();
+			expect(fake.getGraphData).toHaveBeenCalled();
+			expect(fake.subscribe).toHaveBeenCalled();
+			expect(window.maestro.history.getAllPaginated).not.toHaveBeenCalled();
+			expect(window.maestro.history.getGraphData).not.toHaveBeenCalled();
+			expect(window.maestro.directorNotes.onHistoryEntryAdded).not.toHaveBeenCalled();
+		});
+
+		it('draws no delete or update control for a read-only source', async () => {
+			const { source } = readOnlySource([
+				createMockEntry({ id: 'ro', summary: 'Read only entry' }),
+			]);
+
+			render(<HistoryPanel session={view} source={source} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Read only entry')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('Read only entry'));
+			await waitFor(() => {
+				expect(screen.getByTestId('history-detail-modal')).toBeInTheDocument();
+			});
+			expect(screen.queryByTestId('modal-delete')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('modal-update')).not.toBeInTheDocument();
+			expect(mockHistoryDelete).not.toHaveBeenCalled();
+		});
+
+		it('reads again from the top when the source resets', async () => {
+			const fixture = readOnlySource([createMockEntry({ id: 'first', summary: 'First read' })]);
+
+			render(<HistoryPanel session={view} source={fixture.source} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('First read')).toBeInTheDocument();
+			});
+			const graphReads = fixture.fake.getGraphData.mock.calls.length;
+			fixture.setEntries([createMockEntry({ id: 'second', summary: 'After the turn ended' })]);
+			act(() => {
+				fixture.listeners.forEach((listener) => listener.onReset());
+			});
+
+			await waitFor(() => {
+				expect(screen.getByText('After the turn ended')).toBeInTheDocument();
+			});
+			expect(fixture.fake.getGraphData.mock.calls.length).toBeGreaterThan(graphReads);
+		});
+
+		it('passes the panel filters to the source', async () => {
+			const { source, fake } = readOnlySource([]);
+
+			render(<HistoryPanel session={view} source={source} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(fake.getPage).toHaveBeenCalled();
+			});
+			expect(fake.getPage.mock.calls[0][0]).toMatchObject({
+				types: expect.arrayContaining(['AUTO', 'USER']),
+				hostKey: null,
+				pagination: { offset: 0, limit: expect.any(Number) },
+			});
+		});
+
+		it('still deletes through a source that offers remove', async () => {
+			const fixture = readOnlySource([createMockEntry({ id: 'gone', summary: 'Removable entry' })]);
+			const remove = vi.fn(async () => true);
+			const source = { ...fixture.source, remove } as HistorySource;
+
+			render(<HistoryPanel session={view} source={source} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Removable entry')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('Removable entry'));
+			await waitFor(() => {
+				expect(screen.getByTestId('modal-delete')).toBeInTheDocument();
+			});
+			expect(screen.queryByTestId('modal-update')).not.toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('modal-delete'));
+			await waitFor(() => {
+				expect(remove).toHaveBeenCalledWith('gone');
+			});
+			expect(mockHistoryDelete).not.toHaveBeenCalled();
 		});
 	});
 });

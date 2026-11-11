@@ -1108,9 +1108,15 @@ async function stop(): Promise<void> {
 		}
 		if (status !== 'running') continue;
 		if (hasPendingRetry(session.id, turn.tabId)) {
-			cancelRecoveryForTab(session.id, turn.tabId);
 			// What the recovery parked in the queue, if it did, goes with it.
-			if (removeQueuedItem(session.id, turn.queuedItemId)) turn.phase = 'cancelled';
+			// Ending a retry already releases its held prompt (`cancelRetry`), so
+			// look before cancelling; the remove below covers a recovery that
+			// leaves the item behind.
+			const parked = !!findSession(session.id)?.executionQueue?.some(
+				(item) => item.id === turn.queuedItemId
+			);
+			cancelRecoveryForTab(session.id, turn.tabId);
+			if (removeQueuedItem(session.id, turn.queuedItemId) || parked) turn.phase = 'cancelled';
 		}
 		interrupt.add(turn.tabId);
 	}

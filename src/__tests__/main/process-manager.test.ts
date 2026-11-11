@@ -689,6 +689,31 @@ describe('process-manager.ts', () => {
 				}
 			);
 
+			it('rechecks ownership after an asynchronous Grok launch check before spawning', async () => {
+				let release!: () => void;
+				const gate = new Promise<void>((resolve) => {
+					release = resolve;
+				});
+				let owned = true;
+				const assertSpawnAllowed = vi.fn(() => {
+					if (!owned) throw new Error('DispatchTargetUnavailable');
+				});
+				const pending = processManager.spawnChecked(request, {
+					beforeSpawn: async () => {
+						await gate;
+						return undefined;
+					},
+					assertSpawnAllowed,
+				});
+				expect(assertSpawnAllowed).not.toHaveBeenCalled();
+				owned = false;
+				release();
+				await expect(pending).rejects.toThrow('DispatchTargetUnavailable');
+				expect(assertSpawnAllowed).toHaveBeenCalledTimes(1);
+				expect(spawn).not.toHaveBeenCalled();
+				expect(processManager.get(request.sessionId)).toBeUndefined();
+			});
+
 			it('captures the token before a direct synchronous spawn mutates its caller', () => {
 				const register = spawn.getMockImplementation()!;
 				spawn.mockImplementation((config) => {
@@ -1353,8 +1378,9 @@ describe('process-manager.ts', () => {
 
 			it('cancels by protocol (a stop, not a crash), keeps partial usage, then resumes the same native session', async () => {
 				processManager.spawn(config('cancel', { FAKE_MODE: 'hold', FAKE_SESSION: 'native-c' }));
-				await vi.waitFor(() =>
-					expect(logOf('cancel').some((l) => l.startsWith('prompt'))).toBe(true)
+				await vi.waitFor(
+					() => expect(logOf('cancel').some((l) => l.startsWith('prompt'))).toBe(true),
+					{ timeout: 8000 }
 				);
 				expect(processManager.interrupt('cancel')).toBe(true);
 				await exited('cancel');
@@ -1387,8 +1413,9 @@ describe('process-manager.ts', () => {
 				const first = internals().grokAcpSpawner.spawn(
 					config('restart', { FAKE_MODE: 'hold', FAKE_LOG: path.join(dir, 'first.log') })
 				);
-				await vi.waitFor(() =>
-					expect(logOf('first').some((l) => l.startsWith('prompt'))).toBe(true)
+				await vi.waitFor(
+					() => expect(logOf('first').some((l) => l.startsWith('prompt'))).toBe(true),
+					{ timeout: 8000 }
 				);
 				const superseded = processManager.get('restart')!;
 				internals().grokAcpSpawner.spawn(
@@ -1628,7 +1655,7 @@ describe('process-manager.ts', () => {
 							FAKE_SESSION: 'native-qs',
 						})
 					);
-					await vi.waitFor(() => expect(answersOf('qstop')).toHaveLength(1));
+					await vi.waitFor(() => expect(answersOf('qstop')).toHaveLength(1), { timeout: 8000 });
 					expect(processManager.interrupt('qstop')).toBe(true);
 					await exited('qstop');
 					expect(logOf('qstop')).toContain('session/cancel native-qs');
@@ -1695,7 +1722,12 @@ describe('process-manager.ts', () => {
 				});
 				async function liveTurn(key: string, env: Record<string, string>, extra = {}) {
 					expect(processManager.spawn(config(key, env, extra)).success).toBe(true);
-					await vi.waitFor(() => expect(logOf(key).some((l) => l.startsWith('prompt'))).toBe(true));
+					// This launches a real child process; match the bounded exit wait rather
+					// than Vitest's 1s default, which races startup on a busy CI host.
+					await vi.waitFor(
+						() => expect(logOf(key).some((l) => l.startsWith('prompt'))).toBe(true),
+						{ timeout: 8000 }
+					);
 				}
 				function discover(
 					key: string,
@@ -1805,8 +1837,9 @@ describe('process-manager.ts', () => {
 					// A newer spawn on the key takes the advertisement away from the older turn.
 					const next = envFor('disc-life', { FAKE_SESSION: 'native-disc-life-2' });
 					internals().grokAcpSpawner.spawn(config('disc-life', next));
-					await vi.waitFor(() =>
-						expect(logOf('disc-life').filter((l) => l.startsWith('prompt'))).toHaveLength(2)
+					await vi.waitFor(
+						() => expect(logOf('disc-life').filter((l) => l.startsWith('prompt'))).toHaveLength(2),
+						{ timeout: 8000 }
 					);
 					expect(await discover('disc-life', env)).toEqual(unavailable('observation-unavailable'));
 					expect(

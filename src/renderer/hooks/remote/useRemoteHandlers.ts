@@ -162,9 +162,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				 *  to the active tab - callers chaining `--session <tabId>` would
 				 *  otherwise believe the command landed in the requested tab). */
 				tabId?: string;
-				/** When true, bypass the renderer's busy-state guard. Mirrors the
-				 *  server-side `force` bit so `dispatch --force` can land on a
-				 *  busy session without being dropped at this boundary. */
+				/** When true, the prompt may land in a tab that is itself mid-turn
+				 *  (`dispatch --force` behind `allowConcurrentSend`, a Cadenza
+				 *  decision answered mid-turn). An idle tab needs no force. */
 				force?: boolean;
 				/** Optional base64 data URLs pasted from a web/mobile client.
 				 *  Forwarded to the agent spawn so AI tabs can render and send
@@ -179,6 +179,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				 *  command arrived over `remote:executeCommand`; absent for
 				 *  in-renderer synthetic dispatches. */
 				receiptChannel?: string;
+				pianolaDispatchId?: string;
 			}>;
 			const {
 				sessionId,
@@ -190,6 +191,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				literalPrompt,
 				mentionRouting,
 				receiptChannel,
+				pianolaDispatchId,
 			} = customEvent.detail;
 
 			// The CLI's `dispatch` success flag is this ack, not the fact that an
@@ -231,6 +233,19 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				toolType: session.toolType,
 			});
 
+			if (
+				pianolaDispatchId &&
+				(effectiveInputMode !== 'ai' ||
+					!requestedTabId ||
+					session.state === 'busy' ||
+					session.agentErrorPaused ||
+					!session.aiTabs.some(
+						(t) => t.id === requestedTabId && t.state !== 'busy' && !t.agentError
+					))
+			) {
+				reportDelivery(false, 'DispatchTargetUnavailable');
+				return;
+			}
 			// Handle terminal mode commands
 			if (effectiveInputMode === 'terminal') {
 				logger.info('[Remote] Terminal mode - using runCommand for clean output');
@@ -374,13 +389,15 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
-			// Check if session is busy. `force: true` (from `dispatch --force`)
-			// bypasses this guard - without that escape hatch, the renderer would
-			// silently drop forced dispatches and the server-side allow-list
-			// would be moot.
-			if (session.state === 'busy' && !force) {
-				logger.info('[Remote] Session is busy, cannot process command');
-				reportDelivery(false, 'session-busy');
+			// Busy guard, decided per TAB. A busy agent only means some tab of it is
+			// working; an idle tab beside it runs its own turn in parallel, the same
+			// as a desktop tab. Only a tab that is itself mid-turn is refused,
+			// because a second turn there interleaves two answers in one
+			// conversation. `force` (`dispatch --force` behind allowConcurrentSend,
+			// a Cadenza decision) lifts even that.
+			if (targetTab?.state === 'busy' && !force) {
+				logger.info('[Remote] Target tab is mid-turn, cannot process command');
+				reportDelivery(false, 'tab-busy');
 				return;
 			}
 
@@ -430,8 +447,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						reportDelivery(false, 'command-target-changed');
 						return;
 					}
-					if (liveSession.state === 'busy' && !force) {
-						reportDelivery(false, 'session-busy');
+					if (liveTab.state === 'busy' && !force) {
+						reportDelivery(false, 'tab-busy');
 						return;
 					}
 					// The command queue does not yet forward attachments at its spawn
@@ -498,11 +515,16 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			// Cross-agent @mentions, resolved the way the composer does it
 			// (useInputProcessing): a remote prompt is the same message a user would
 			// have typed, so a mention in it must consult the target agent too.
-			// The agent is idle here (the busy guard above), so the consult fires
-			// now; a busy agent's prompt goes through `dispatch --queue`, which
-			// stamps the intent on the queued item instead. A routing the caller
-			// picked (`dispatch --routing`) wins over the wording, as the strip's does.
+			// The target tab is idle here (the busy guard above), so the consult
+			// fires now; a prompt that should wait goes through `dispatch --queue`,
+			// which stamps the intent on the queued item instead. A routing the
+			// caller picked (`dispatch --routing`) wins over the wording, as the
+			// strip's does.
 			const mentionPlan = planCrossAgentMentions(command, sessionId, mentionRouting);
+			if (pianolaDispatchId && mentionPlan) {
+				reportDelivery(false, 'DispatchMentionRoutingUnavailable');
+				return;
+			}
 			if (mentionPlan?.suppressLocal) {
 				// Leading mention: addressed only at the consulted agent(s). This
 				// agent does not answer, so record the user's bubble and skip the spawn.
@@ -728,6 +750,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					// Spawn agent with the prompt
 					await window.maestro.process.spawn({
 						sessionId: targetSessionId,
+						transcriptBoundaryId: userLogEntry.id,
+						pianolaDispatchId,
 						toolType: session.toolType,
 						cwd: session.cwd,
 						command: commandToUse,

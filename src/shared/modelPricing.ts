@@ -262,6 +262,12 @@ export function computeClaudeUsageCost(content: string): ClaudeUsageBreakdown {
 export interface ClaudeUsageAccumulator {
 	/** Count one transcript's usage lines. Duplicates of earlier responses are skipped. */
 	add(content: string): void;
+	/**
+	 * Count one line of a transcript. Lets a caller stream a file line by line
+	 * instead of holding it as one string; feeding every line of a document
+	 * here is the same as passing the document to `add`.
+	 */
+	addLine(line: string): void;
 	/** Price what has been added so far. */
 	finish(): ClaudeUsageBreakdown;
 }
@@ -279,56 +285,58 @@ export function createClaudeUsageAccumulator(): ClaudeUsageAccumulator {
 	const byModel = new Map<string, TokenBucket>();
 	const seenResponses = new Set<string>();
 
-	const add = (content: string): void => {
-		for (const line of content.split('\n')) {
-			if (line.indexOf('"usage"') === -1) continue;
-			let entry: {
-				model?: unknown;
-				requestId?: unknown;
-				usage?: Record<string, unknown>;
-				message?: { id?: unknown; model?: unknown; usage?: Record<string, unknown> };
-			};
-			try {
-				entry = JSON.parse(line);
-			} catch {
-				continue;
-			}
-			// Real Claude Code files nest usage/model under `message`; tolerate a
-			// top-level `usage`/`model` too so any variant is counted.
-			const usage = entry?.message?.usage ?? entry?.usage;
-			if (!usage || typeof usage !== 'object') continue;
-
-			const input = toInt(usage.input_tokens);
-			const output = toInt(usage.output_tokens);
-			const cacheRead = toInt(usage.cache_read_input_tokens);
-			const cacheCreation = toInt(usage.cache_creation_input_tokens);
-			if (input === 0 && output === 0 && cacheRead === 0 && cacheCreation === 0) continue;
-
-			const messageId = entry.message?.id;
-			if (typeof messageId === 'string' && messageId) {
-				const requestId = typeof entry.requestId === 'string' ? entry.requestId : '';
-				const responseKey = `${messageId}:${requestId}`;
-				if (seenResponses.has(responseKey)) continue;
-				seenResponses.add(responseKey);
-			}
-
-			totals.inputTokens += input;
-			totals.outputTokens += output;
-			totals.cacheReadTokens += cacheRead;
-			totals.cacheCreationTokens += cacheCreation;
-
-			const rawModel = entry.message?.model ?? entry.model;
-			const model = typeof rawModel === 'string' ? rawModel : '';
-			let bucket = byModel.get(model);
-			if (!bucket) {
-				bucket = emptyBucket();
-				byModel.set(model, bucket);
-			}
-			bucket.inputTokens += input;
-			bucket.outputTokens += output;
-			bucket.cacheReadTokens += cacheRead;
-			bucket.cacheCreationTokens += cacheCreation;
+	const addLine = (line: string): void => {
+		if (line.indexOf('"usage"') === -1) return;
+		let entry: {
+			model?: unknown;
+			requestId?: unknown;
+			usage?: Record<string, unknown>;
+			message?: { id?: unknown; model?: unknown; usage?: Record<string, unknown> };
+		};
+		try {
+			entry = JSON.parse(line);
+		} catch {
+			return;
 		}
+		// Real Claude Code files nest usage/model under `message`; tolerate a
+		// top-level `usage`/`model` too so any variant is counted.
+		const usage = entry?.message?.usage ?? entry?.usage;
+		if (!usage || typeof usage !== 'object') return;
+
+		const input = toInt(usage.input_tokens);
+		const output = toInt(usage.output_tokens);
+		const cacheRead = toInt(usage.cache_read_input_tokens);
+		const cacheCreation = toInt(usage.cache_creation_input_tokens);
+		if (input === 0 && output === 0 && cacheRead === 0 && cacheCreation === 0) return;
+
+		const messageId = entry.message?.id;
+		if (typeof messageId === 'string' && messageId) {
+			const requestId = typeof entry.requestId === 'string' ? entry.requestId : '';
+			const responseKey = `${messageId}:${requestId}`;
+			if (seenResponses.has(responseKey)) return;
+			seenResponses.add(responseKey);
+		}
+
+		totals.inputTokens += input;
+		totals.outputTokens += output;
+		totals.cacheReadTokens += cacheRead;
+		totals.cacheCreationTokens += cacheCreation;
+
+		const rawModel = entry.message?.model ?? entry.model;
+		const model = typeof rawModel === 'string' ? rawModel : '';
+		let bucket = byModel.get(model);
+		if (!bucket) {
+			bucket = emptyBucket();
+			byModel.set(model, bucket);
+		}
+		bucket.inputTokens += input;
+		bucket.outputTokens += output;
+		bucket.cacheReadTokens += cacheRead;
+		bucket.cacheCreationTokens += cacheCreation;
+	};
+
+	const add = (content: string): void => {
+		for (const line of content.split('\n')) addLine(line);
 	};
 
 	const finish = (): ClaudeUsageBreakdown => {
@@ -357,5 +365,5 @@ export function createClaudeUsageAccumulator(): ClaudeUsageAccumulator {
 		};
 	};
 
-	return { add, finish };
+	return { add, addLine, finish };
 }

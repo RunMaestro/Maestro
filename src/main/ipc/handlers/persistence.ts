@@ -1,3 +1,6 @@
+import * as pianolaStore from '../../pianola/pianola-store-main';
+import { cancelPianolaQueueItem } from '../../pianola/pianola-new-tab-dispatch';
+import { getDispatchCallbackRegistry } from '../../dispatch-callbacks';
 /**
  * Persistence IPC Handlers
  *
@@ -22,7 +25,10 @@ import {
 } from '../../plugins/plugin-media-tools';
 import { noteSentryAgentInventory } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
-import { broadcastBridgeEvent } from '../../web-server/handlers/bridgeHandlers';
+import {
+	broadcastBridgeEvent,
+	isBridgeInvokeEvent,
+} from '../../web-server/handlers/bridgeHandlers';
 import { forgetAgentActors } from '../../web-server/auth/turn-attribution';
 import { deleteJourney } from '../../user-journey-manager';
 import { getThemeById } from '../../themes';
@@ -45,6 +51,7 @@ import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { clearGhCache } from '../../utils/cliDetection';
 import { mergeUsagePeaks, type UsagePeaks } from '../../../shared/usagePeaks';
 import { mergeAutoRunStats } from '../../../shared/autoRunStatsMerge';
+import { dropOrphanedTabs } from '../../../shared/tabStripMembership';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
 import { normalizeStoredClosedTabs } from '../../../shared/closedTabHistory';
 import {
@@ -52,8 +59,16 @@ import {
 	projectWebSession,
 	readDeferredContent,
 } from '../../stores/deferred-session-content';
+import { nativeCurrentTurns } from '../../pianola/current-turn';
 import type { SessionTranscriptPatch } from '../../../shared/sessionTranscript';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import type {
+	ConfirmQueueItem,
+	ReleaseQueueItem,
+	QueueItemReceipt,
+	QueueItemReceiptRequest,
+} from '../../stores/queue-item-receipt';
 import { mergeGroupPersistenceChanges } from '../../../shared/groupHierarchy';
 
 /**
@@ -193,6 +208,8 @@ function senderWebContentsIdOf(event: unknown): number | undefined {
  * Dependencies required for persistence handlers
  */
 export interface PersistenceHandlerDependencies {
+	getWindowForSession?: (sessionId: string) => BrowserWindow | null;
+	cancelQueueItem?: (agentId: string, tabId: string, itemId: string) => void;
 	settingsStore: Store<MaestroSettings>;
 	sessionsStore: Store<SessionsData>;
 	groupsStore: Store<GroupsData>;
@@ -218,6 +235,9 @@ export interface PersistenceHandlerDependencies {
  * `session.activated` outside the debounced `setActiveSessionId` flush.
  */
 export interface PersistenceHandlers {
+	/** Internal host readback; deliberately has no renderer IPC registration. */
+	confirmQueueItem: ConfirmQueueItem;
+	releaseQueueItem: ReleaseQueueItem;
 	/**
 	 * Record that a session was activated through a path OTHER than this module's
 	 * debounced flush - specifically the plugin focus verbs in index.ts, which
@@ -250,6 +270,163 @@ export function registerPersistenceHandlers(
 		<TArgs extends unknown[], TResult>(handler: (...args: TArgs) => Promise<TResult>) =>
 		(...args: TArgs): Promise<TResult> =>
 			sessionWriteQueue.enqueue('sessions', () => handler(...args));
+
+	const confirmQueueItem: ConfirmQueueItem = (input) => {
+		// Pin the complete request before waiting behind any pending save. No
+		// caller mutation can retarget the proof while flush/readback is in flight.
+		const expected = canonicalJson(input.item);
+		const request: QueueItemReceiptRequest = { ...input, item: JSON.parse(expected) };
+		return sessionWriteQueue.enqueue('sessions', async (): Promise<QueueItemReceipt> => {
+			if (
+				!request.agentId ||
+				!request.tabId ||
+				!request.itemId ||
+				!request.pendingAdmissionId ||
+				request.item.id !== request.itemId ||
+				request.item.tabId !== request.tabId ||
+				request.item.pendingAdmissionId !== request.pendingAdmissionId ||
+				(request.item.type !== 'message' && request.item.type !== 'command')
+			)
+				return { durable: false, reason: 'invalid-request' };
+
+			// This is the SAME queue as setMany/setAll. Keep its lock through the
+			// flush and authoritative readback; a snapshot from before flush is not
+			// evidence. Errors reject and can never be mistaken for durable=true.
+			await flushSessionWrites();
+			let disk: SessionsData;
+			try {
+				disk = JSON.parse(await fs.readFile(sessionsStore.path, 'utf-8'));
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+					return { durable: false, reason: 'store-unavailable' };
+				throw error;
+			}
+			// Both disk and the live cache must agree. A different main-process
+			// mutator during the asynchronous read must not yield stale evidence.
+			for (const sessions of [disk.sessions, sessionsStore.get('sessions', [])]) {
+				const session = sessions?.find((s) => s.id === request.agentId);
+				if (!session) return { durable: false, reason: 'session-missing' };
+				if (!session.aiTabs?.some((tab: { id: string }) => tab.id === request.tabId))
+					return { durable: false, reason: 'tab-missing' };
+				const items = session.executionQueue?.filter(
+					(item: { id: string }) => item.id === request.itemId
+				);
+				if (!items?.length) return { durable: false, reason: 'item-missing' };
+				if (items.length !== 1 || canonicalJson(items[0]) !== expected)
+					return { durable: false, reason: 'item-changed' };
+			}
+			return { durable: true, request };
+		});
+	};
+
+	/** Cancel pending admissions when their queue row or owning tab disappears. */
+	const noteQueueRemovals = (previous: StoredSession[], next: StoredSession[]) => {
+		for (const agent of previous) {
+			const current = next.find((s) => s.id === agent.id);
+			for (const item of agent.executionQueue ?? []) {
+				if (
+					item.pendingAdmissionId &&
+					(!current?.aiTabs?.some((tab: { id: string }) => tab.id === item.tabId) ||
+						!current?.executionQueue?.some((row: { id: string }) => row.id === item.id))
+				) {
+					if (deps.cancelQueueItem)
+						deps.cancelQueueItem(agent.id, item.tabId, item.pendingAdmissionId);
+					else
+						cancelPianolaQueueItem(
+							pianolaStore,
+							getDispatchCallbackRegistry(),
+							agent.id,
+							item.tabId,
+							item.pendingAdmissionId
+						);
+				}
+			}
+		}
+	};
+
+	const releaseQueueItem: ReleaseQueueItem = (input, commit) => {
+		const expected = canonicalJson(input.item);
+		const request = JSON.parse(canonicalJson(input)) as Parameters<ReleaseQueueItem>[0];
+		return sessionWriteQueue.enqueue('sessions', async () => {
+			/** Revalidate tab identity, queue order and exact held intent before release and commit. */
+			const assertRows = (sessions: StoredSession[], releasedGeneration?: string) => {
+				const session = sessions?.find((s) => s.id === request.agentId);
+				const tab = session?.aiTabs?.find((t: { id: string }) => t.id === request.tabId);
+				const rows = session?.executionQueue ?? [];
+				const item = rows.find((r: { id: string }) => r.id === request.itemId);
+				const held = releasedGeneration
+					? { ...request.item, admissionRelease: { generation: releasedGeneration } }
+					: request.item;
+				if (
+					!session ||
+					!tab ||
+					tab.createdAt !== request.tabIdentity.createdAt ||
+					tab.agentSessionId !== request.tabIdentity.agentSessionId ||
+					!item ||
+					request.item.id !== request.itemId ||
+					request.item.tabId !== request.tabId ||
+					request.item.pendingAdmissionId !== request.pendingAdmissionId ||
+					!request.pendingAdmissionId ||
+					item.paused ||
+					session.agentErrorPaused ||
+					rows.filter((r: { id: string }) => r.id === request.itemId).length !== 1 ||
+					rows
+						.slice(0, rows.indexOf(item))
+						.some(
+							(r: {
+								tabId?: string;
+								paused?: boolean;
+								pendingAdmissionId?: string;
+								awaitingConsult?: unknown;
+								waitingForConnection?: boolean;
+							}) =>
+								r.waitingForConnection ||
+								(r.pendingAdmissionId || r.awaitingConsult ? r.tabId === request.tabId : !r.paused)
+						) ||
+					canonicalJson({ ...item, paused: undefined }) !==
+						canonicalJson({ ...held, paused: undefined })
+				)
+					throw new Error('DispatchQueueChangedOrPaused');
+			};
+			if (canonicalJson(request.item) !== expected) throw new Error('DispatchIntentMismatch');
+			assertRows(sessionsStore.get('sessions', []));
+			await flushSessionWrites();
+			const disk = JSON.parse(await fs.readFile(sessionsStore.path, 'utf-8')) as SessionsData;
+			assertRows(disk.sessions);
+			const guard = () => assertRows(sessionsStore.get('sessions', []));
+			guard();
+			// No await between final read, journal intent and cache mutation.
+			const release = commit(guard);
+			guard();
+			const sessions = sessionsStore.get('sessions', []).map((session) =>
+				session.id !== request.agentId
+					? session
+					: {
+							...session,
+							executionQueue: session.executionQueue.map((item: { id: string }) =>
+								item.id !== request.itemId
+									? item
+									: {
+											...item,
+											admissionRelease: { generation: release.generation },
+										}
+							),
+						}
+			);
+			sessionsStore.set('sessions', sessions);
+			await flushSessionWrites();
+			const releasedDisk = JSON.parse(
+				await fs.readFile(sessionsStore.path, 'utf-8')
+			) as SessionsData;
+			assertRows(releasedDisk.sessions, release.generation);
+			const releasedGuard = () => {
+				assertRows(sessionsStore.get('sessions', []), release.generation);
+				release.guard();
+			};
+			releasedGuard();
+			return { generation: release.generation, guard: releasedGuard };
+		});
+	};
 
 	// Ids closed by a client, newest last. Read by every write path to refuse a
 	// stale peer flush that would resurrect a closed agent (see
@@ -512,6 +689,11 @@ export function registerPersistenceHandlers(
 	});
 
 	// Sessions persistence
+	// The orphan repair runs on the first load of this process only, before any
+	// renderer holds state. A later load (a reload, a second window, a browser
+	// bootstrap) races renderers that are mid-write, where dropping a record is
+	// never safe.
+	let orphanRepairDone = false;
 	const loadStoredSessions = async (): Promise<StoredSession[]> => {
 		const sessions = sessionsStore.get('sessions', []);
 		// Heal legacy sessions files: relocate any images still stored inline as
@@ -528,14 +710,24 @@ export function registerPersistenceHandlers(
 			// raw write) carry whole transcripts and the legacy key. Bring them to
 			// the stored form the renderer projects, so its next change merges.
 			let closedTabCount = 0;
+			// Tabs with no slot in the strip are closes that did not fully apply
+			// (#2008). Restore would put each one back as a chip, so finish the
+			// close here. Their transcripts stay in their provider sessions.
+			let orphanedTabCount = 0;
+			const repairOrphans = !orphanRepairDone;
+			orphanRepairDone = true;
 			const compacted = relocated.map((session) => {
-				const normalized = normalizeStoredClosedTabs(session);
-				if (normalized !== session) closedTabCount++;
+				const { session: repaired, dropped } = repairOrphans
+					? dropOrphanedTabs(session)
+					: { session, dropped: 0 };
+				orphanedTabCount += dropped;
+				const normalized = normalizeStoredClosedTabs(repaired);
+				if (normalized !== repaired) closedTabCount++;
 				const result = compactSessionToolOutputs(normalized);
 				toolOutputCount += result.compacted;
 				return result.session;
 			});
-			if (imageCount > 0 || toolOutputCount > 0 || closedTabCount > 0) {
+			if (imageCount > 0 || toolOutputCount > 0 || closedTabCount > 0 || orphanedTabCount > 0) {
 				sessionsStore.set('sessions', compacted);
 				if (imageCount > 0) {
 					logger.info(
@@ -552,6 +744,12 @@ export function registerPersistenceHandlers(
 				if (closedTabCount > 0) {
 					logger.info(
 						`Normalized the closed-tab history of ${closedTabCount} agent(s) in maestro-sessions.json`,
+						'Sessions'
+					);
+				}
+				if (orphanedTabCount > 0) {
+					logger.info(
+						`Removed ${orphanedTabCount} closed tab(s) left without a tab-strip slot in maestro-sessions.json`,
 						'Sessions'
 					);
 				}
@@ -605,10 +803,7 @@ export function registerPersistenceHandlers(
 	ipcMain.handle(
 		'sessions:publishTranscript',
 		(event, patch: SessionTranscriptPatch, requestId?: string) => {
-			if (
-				(event as { type?: string })?.type === 'bridge' ||
-				senderWebContentsIdOf(event) === undefined
-			) {
+			if (isBridgeInvokeEvent(event) || senderWebContentsIdOf(event) === undefined) {
 				throw new Error('Only the owning host renderer can publish transcript identities');
 			}
 			if (requestId) {
@@ -625,18 +820,29 @@ export function registerPersistenceHandlers(
 				// Request replies are private, including expired or mismatched replies.
 				return false;
 			}
+			const owner = deps.getWindowForSession?.(patch.sessionId);
+			let ownerCommitted = false;
+			if (
+				owner &&
+				isWebContentsAvailable(owner) &&
+				owner.webContents.id === senderWebContentsIdOf(event)
+			) {
+				const committed = nativeCurrentTurns.commit(patch);
+				ownerCommitted = committed !== undefined;
+				if (committed) broadcastBridgeEvent('sessions:transcriptCommitted', [committed]);
+			}
 			for (const win of BrowserWindow.getAllWindows()) {
 				if (isWebContentsAvailable(win) && win.webContents.id !== senderWebContentsIdOf(event)) {
 					win.webContents.send('sessions:transcriptSync', patch);
 				}
 			}
 			broadcastBridgeEvent('sessions:transcriptSync', [patch]);
-			return true;
+			return ownerCommitted;
 		}
 	);
 	ipcMain.handle('sessions:getBootstrap', async (event) => {
 		const sessions = (await loadStoredSessions()).map(projectWebSession);
-		if ((event as { type?: string })?.type !== 'bridge') return sessions;
+		if (!isBridgeInvokeEvent(event)) return sessions;
 		return Promise.all(
 			sessions.map(async (session) => {
 				const live = await readOwningTranscript(session.id, '', true).catch((error: unknown) => {
@@ -692,7 +898,7 @@ export function registerPersistenceHandlers(
 		'sessions:getDeferredContent',
 		async (event, sessionId: string, tabId: string | null, includeCommands: boolean) => {
 			const stored = sessionsStore.get('sessions', []).find((item) => item.id === sessionId);
-			if ((event as { type?: string })?.type === 'bridge') {
+			if (isBridgeInvokeEvent(event)) {
 				// A newly acknowledged tab can exist in the owner before its disk write.
 				const content = readDeferredContent(stored, sessionId, null, includeCommands);
 				const [tab, shell] = await Promise.all([
@@ -734,7 +940,7 @@ export function registerPersistenceHandlers(
 
 	ipcMain.handle('sessions:setActiveSessionId', async (event, id: string) => {
 		// Browser navigation is client-local, never the host's persisted focus.
-		if ((event as { type?: string })?.type === 'bridge') return;
+		if (isBridgeInvokeEvent(event)) return;
 		// Coalesce rapid navigation into one disk write (see flushActiveSessionId).
 		pendingActiveSessionId = id;
 		if (activeSessionIdTimer) clearTimeout(activeSessionIdTimer);
@@ -777,7 +983,7 @@ export function registerPersistenceHandlers(
 				baselines: StoredSession[] = []
 			) => {
 				const baselineMap = await observedBaselineMap(baselines);
-				const remote = (event as { type?: string })?.type === 'bridge';
+				const remote = isBridgeInvokeEvent(event);
 				// Relocate any freshly-pasted inline images (data URLs) in the dirty
 				// sessions to the image store before they hit disk, so the sessions
 				// JSON only ever grows by lightweight refs.
@@ -907,6 +1113,7 @@ export function registerPersistenceHandlers(
 
 				try {
 					await backupSessionsBeforeWipe(previousSessions, sessionsToPersist, sessionsStore.path);
+					noteQueueRemovals(sessionsStore.get('sessions', []), sessionsToPersist);
 					sessionsStore.set('sessions', sessionsToPersist);
 					// Preserve the renderer acknowledgement contract: true means this
 					// revision reached disk, not merely the in-memory cache.
@@ -986,7 +1193,7 @@ export function registerPersistenceHandlers(
 		'sessions:setAll',
 		queueWrite(async (event, input: StoredSession[], baselines: StoredSession[] = []) => {
 			const baselineMap = await observedBaselineMap(baselines);
-			const remote = (event as { type?: string })?.type === 'bridge';
+			const remote = isBridgeInvokeEvent(event);
 			// Relocate inline images (data URLs) out of the sessions before they hit
 			// disk. setAll is the bootstrap/first-flush path, so this also migrates a
 			// legacy in-memory sessions tree the first time it is persisted.
@@ -1089,6 +1296,7 @@ export function registerPersistenceHandlers(
 			}
 
 			try {
+				noteQueueRemovals(sessionsStore.get('sessions', []), sessionsToPersist);
 				sessionsStore.set('sessions', sessionsToPersist);
 				await flushSessionWrites();
 			} catch (err) {
@@ -1185,5 +1393,5 @@ export function registerPersistenceHandlers(
 		}
 	});
 
-	return { noteSessionActivated };
+	return { noteSessionActivated, confirmQueueItem, releaseQueueItem };
 }

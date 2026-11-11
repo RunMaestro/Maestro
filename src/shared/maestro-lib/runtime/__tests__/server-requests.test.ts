@@ -173,6 +173,257 @@ describe('update_session_config', () => {
 	);
 });
 
+describe('import_agent', () => {
+	let dir: string;
+	let workDir: string;
+	let configDir: string;
+	let runtime: MaestroRuntime;
+	let handle: RequestHandler;
+
+	beforeEach(async () => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-import-'));
+		workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-import-cwd-'));
+		configDir = path.join(workDir, '.claude-work');
+		fs.mkdirSync(configDir);
+		let id = 0;
+		const started = await createMaestroRuntime({
+			dataDir: dir,
+			mode: 'host',
+			// No `checkCwd` seam: the import must apply the runtime's real directory check.
+			deps: {
+				pid: 100,
+				now: () => 5_000,
+				bootTime: () => 1_000,
+				isPidAlive: (pid) => pid === 100,
+				hostname: () => 'testhost',
+				rules: { newId: () => `id-${++id}`, now: () => 2_000, random: () => 0 },
+				readTabDefaults: async () => DEFAULT_TAB_DEFAULTS,
+				watchDirectory: () => ({ close: () => undefined }),
+				probeBinary: async (binaryName) => ({ exists: true, path: `/fake/bin/${binaryName}` }),
+			},
+		});
+		if (!started.ok) throw new Error(`refused: ${started.refusal.message}`);
+		runtime = started.runtime;
+		handle = createRequestHandler(runtime);
+	});
+
+	afterEach(async () => {
+		await runtime.connection.close();
+		fs.rmSync(dir, { recursive: true, force: true });
+		fs.rmSync(workDir, { recursive: true, force: true });
+	});
+
+	const logs = [
+		{ id: 'l1', timestamp: 10, source: 'user', text: 'first' },
+		{ id: 'l2', timestamp: 11, source: 'ai', text: 'answer' },
+	];
+	const message = (overrides: Record<string, unknown> = {}) => ({
+		type: 'import_agent',
+		agent: {
+			name: 'Lifted',
+			toolType: 'claude-code',
+			cwd: workDir,
+			customModel: 'opus',
+			customEffort: 'high',
+			customArgs: '--verbose',
+			customEnvVars: { CLAUDE_CONFIG_DIR: configDir },
+		},
+		tabs: [
+			{ id: 't1', name: 'Main', starred: true, agentSessionId: 'sess-1', logs },
+			{ id: 't2', agentSessionId: 'sess-2', logs: [], customModel: 'sonnet', readOnlyMode: true },
+		],
+		activeTabId: 't2',
+		...overrides,
+	});
+
+	it('creates the agent with every tab, its transcript, and the same provider session ids', async () => {
+		const reply = await handle(message());
+		expect(reply).toMatchObject({ type: 'import_agent_result', success: true, queued: 0 });
+		const agentId = (reply as { sessionId: string }).sessionId;
+
+		const agent = await runtime.agents.get(agentId);
+		if (!agent.ok) throw new Error(agent.error.message);
+		expect(agent.value).toMatchObject({
+			name: 'Lifted',
+			toolType: 'claude-code',
+			cwd: workDir,
+			customModel: 'opus',
+			customEffort: 'high',
+			customArgs: '--verbose',
+			customEnvVars: { CLAUDE_CONFIG_DIR: configDir },
+			activeTabId: 't2',
+			unifiedTabOrder: [
+				{ type: 'ai', id: 't1' },
+				{ type: 'ai', id: 't2' },
+			],
+		});
+		expect(agent.value).not.toHaveProperty('sessionSshRemoteConfig');
+
+		const tabs = await runtime.tabs.list(agentId);
+		if (!tabs.ok) throw new Error(tabs.error.message);
+		expect(tabs.value).toEqual([
+			expect.objectContaining({
+				id: 't1',
+				name: 'Main',
+				starred: true,
+				agentSessionId: 'sess-1',
+				state: 'idle',
+			}),
+			expect.objectContaining({
+				id: 't2',
+				agentSessionId: 'sess-2',
+				customModel: 'sonnet',
+				readOnlyMode: true,
+				state: 'idle',
+			}),
+		]);
+		expect(await runtime.tabs.transcript(agentId, 't1')).toEqual({ ok: true, value: logs });
+	});
+
+	it('refuses a working directory that does not exist on the host, and creates nothing', async () => {
+		const missing = path.join(workDir, 'gone');
+		const reply = await handle(
+			message({ agent: { name: 'Lifted', toolType: 'claude-code', cwd: missing } })
+		);
+		expect(reply).toEqual({
+			type: 'import_agent_result',
+			success: false,
+			error: `Working directory does not exist: ${missing}`,
+		});
+		expect(await runtime.agents.list()).toEqual({ ok: true, value: [] });
+	});
+
+	it('refuses a session-dir selector naming a directory the host lacks, and creates nothing', async () => {
+		const missing = path.join(workDir, '.claude-gone');
+		const reply = await handle(
+			message({
+				agent: {
+					name: 'Lifted',
+					toolType: 'claude-code',
+					cwd: workDir,
+					customEnvVars: { CLAUDE_CONFIG_DIR: missing },
+				},
+			})
+		);
+		expect(reply).toMatchObject({ type: 'import_agent_result', success: false });
+		const error = (reply as { error: string }).error;
+		expect(error).toContain(
+			`The provider session directory set by CLAUDE_CONFIG_DIR does not exist: ${missing}`
+		);
+		expect(error).toContain('start a new session');
+		expect(await runtime.agents.list()).toEqual({ ok: true, value: [] });
+	});
+
+	it('imports an agent with no session-dir selector: the provider default dir is the SSH one', async () => {
+		const reply = await handle(
+			message({ agent: { name: 'Lifted', toolType: 'claude-code', cwd: workDir } })
+		);
+		expect(reply).toMatchObject({ type: 'import_agent_result', success: true });
+	});
+
+	it.each([
+		['no tabs', { tabs: [] }, 'An imported agent needs at least one tab.'],
+		['a tab without an id', { tabs: [{ logs: [] }] }, 'Every imported tab needs an id.'],
+		['a tab without a transcript', { tabs: [{ id: 't1' }] }, 'Imported tab t1 has no transcript.'],
+		[
+			'a queued message for a tab it does not bring',
+			{ queue: [{ tabId: 'tX', text: 'next' }] },
+			'A queued message is for tab tX, which is not imported.',
+		],
+		[
+			'an SSH remote',
+			{
+				agent: {
+					name: 'Lifted',
+					toolType: 'claude-code',
+					cwd: '/x',
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				},
+			},
+			'An imported agent runs on this host, so it cannot carry an SSH remote. Send it without one.',
+		],
+	])('refuses %s', async (_label, overrides, error) => {
+		expect(await handle(message(overrides))).toEqual({
+			type: 'import_agent_result',
+			success: false,
+			error,
+		});
+		expect(await runtime.agents.list()).toEqual({ ok: true, value: [] });
+	});
+
+	it('refuses a name another agent on the host already has', async () => {
+		expect(await handle(message())).toMatchObject({ success: true });
+		expect(await handle(message())).toEqual({
+			type: 'import_agent_result',
+			success: false,
+			error: 'An agent named "Lifted" already exists',
+		});
+	});
+});
+
+describe('import_agent queued messages', () => {
+	it('hands the queue to the client with the agent, and replies with what was queued', async () => {
+		let received: unknown;
+		const client = {
+			agents: {
+				import: async (input: unknown) => {
+					received = input;
+					return ok({ agentId: 'host-1', queued: 1, notices: ['one was not queued'] });
+				},
+			},
+		} as unknown as MaestroClient;
+		const reply = await createRequestHandler(client)({
+			type: 'import_agent',
+			agent: { name: 'A', toolType: 'codex', cwd: '/w' },
+			tabs: [{ id: 't1', logs: [] }],
+			queue: [
+				{ tabId: 't1', text: 'one', images: ['data:image/png;base64,AA'] },
+				{ tabId: 't1', text: 'two' },
+			],
+		});
+		expect(reply).toEqual({
+			type: 'import_agent_result',
+			success: true,
+			sessionId: 'host-1',
+			queued: 1,
+			notices: ['one was not queued'],
+		});
+		expect(received).toMatchObject({
+			agent: { name: 'A', provider: 'codex', cwd: '/w' },
+			tabs: [{ id: 't1', logs: [] }],
+			queue: [
+				{ tabId: 't1', text: 'one', images: ['data:image/png;base64,AA'] },
+				{ tabId: 't1', text: 'two' },
+			],
+		});
+	});
+
+	it('refuses a queued message that does not name its tab, before importing anything', async () => {
+		let called = false;
+		const client = {
+			agents: {
+				import: async () => {
+					called = true;
+					return ok({ agentId: 'x', queued: 0 });
+				},
+			},
+		} as unknown as MaestroClient;
+		expect(
+			await createRequestHandler(client)({
+				type: 'import_agent',
+				agent: { name: 'A', toolType: 'codex', cwd: '/w' },
+				tabs: [{ id: 't1', logs: [] }],
+				queue: [{ text: 'orphan' }],
+			})
+		).toEqual({
+			type: 'import_agent_result',
+			success: false,
+			error: 'Every queued message needs the tab it is for.',
+		});
+		expect(called).toBe(false);
+	});
+});
+
 /** A client that records what it is asked and answers from a script. Only what these messages reach exists. */
 function recordingClient(
 	options: {
@@ -216,6 +467,13 @@ function recordingClient(
 			launch: async (agentId: string, input: unknown) => {
 				note('autoRun.launch', agentId, input);
 				return options.launch?.() ?? ok(undefined);
+			},
+		},
+		history: {
+			list: async (agentId: string, listOptions?: unknown) => {
+				note('history.list', agentId, listOptions);
+				if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
+				return ok([{ id: 'h1', type: 'USER', timestamp: 1, summary: 's', projectPath: '/p' }]);
 			},
 		},
 	};
@@ -509,5 +767,194 @@ describe('dispatch messages', () => {
 				tabId: 'new-1',
 			});
 		});
+	});
+});
+
+describe('origin host on a send', () => {
+	it('passes a trimmed originHost to turns.send on every dispatch path', async () => {
+		const host = recordingClient({ activeTabId: 't-active' });
+		await host.handle({
+			type: 'enqueue_command',
+			sessionId: 'a1',
+			command: 'one',
+			inputMode: 'ai',
+			originHost: ' laptop.local ',
+		});
+		await host.handle({
+			type: 'send_command',
+			sessionId: 'a1',
+			command: 'two',
+			inputMode: 'ai',
+			originHost: 'laptop.local',
+		});
+		await host.handle({
+			type: 'new_ai_tab_with_prompt',
+			sessionId: 'a1',
+			prompt: 'three',
+			originHost: 'laptop.local',
+		});
+		expect(host.named('turns.send').map((call) => call.args[2])).toEqual([
+			{ text: 'one', originHost: 'laptop.local' },
+			{ text: 'two', originHost: 'laptop.local' },
+			{ text: 'three', originHost: 'laptop.local' },
+		]);
+	});
+
+	it('leaves out an originHost that is not a printable hostname', async () => {
+		const host = recordingClient({ activeTabId: 't-active' });
+		for (const originHost of [42, '', '   ', 'a\u0001b', 'x'.repeat(254)]) {
+			await host.handle({
+				type: 'enqueue_command',
+				sessionId: 'a1',
+				command: 'hi',
+				inputMode: 'ai',
+				originHost,
+			});
+		}
+		for (const call of host.named('turns.send')) {
+			expect(call.args[2]).toEqual({ text: 'hi' });
+		}
+	});
+});
+
+describe('get_history', () => {
+	it('answers the agent History, with a whole limit when one is given', async () => {
+		const host = recordingClient();
+		expect(await host.handle({ type: 'get_history', sessionId: 'a1', limit: 5.7 })).toEqual({
+			type: 'get_history_result',
+			success: true,
+			entries: [{ id: 'h1', type: 'USER', timestamp: 1, summary: 's', projectPath: '/p' }],
+		});
+		await host.handle({ type: 'get_history', sessionId: 'a1' });
+		await host.handle({ type: 'get_history', sessionId: 'a1', limit: -1 });
+		await host.handle({ type: 'get_history', sessionId: 'a1', limit: 'ten' });
+		await host.handle({ type: 'get_history', sessionId: 'a1', limit: Number.POSITIVE_INFINITY });
+		expect(host.named('history.list').map((call) => call.args)).toEqual([
+			['a1', { limit: 5 }],
+			['a1', {}],
+			['a1', {}],
+			['a1', {}],
+			['a1', {}],
+		]);
+	});
+
+	it('answers an unknown agent as a failure with the reason', async () => {
+		const host = recordingClient();
+		expect(await host.handle({ type: 'get_history', sessionId: 'nobody' })).toEqual({
+			type: 'get_history_result',
+			success: false,
+			error: 'Not found: No agent nobody.',
+		});
+	});
+});
+
+describe('live tab state and the host queue', () => {
+	const stored = {
+		id: 'a1',
+		name: 'Alpha',
+		toolType: 'claude-code',
+		state: 'idle' as const,
+		aiTabs: [
+			{ id: 't1', state: 'idle' as const },
+			{ id: 't2', state: 'busy' as const, thinkingStartTime: 1 },
+		],
+	};
+
+	/** A client with one stored agent and a queue that knows item `q1`. */
+	function hostClient() {
+		const setPausedCalls: unknown[][] = [];
+		const client = {
+			agents: { list: async () => ok([stored]) },
+			tabs: { list: async () => ok(stored.aiTabs) },
+			turns: {
+				queue: {
+					setPaused: async (agentId: string, itemId: string, paused: boolean) => {
+						setPausedCalls.push([agentId, itemId, paused]);
+						if (agentId !== 'a1') return fail('not-found', `No agent ${agentId}.`);
+						return ok({ found: itemId === 'q1', paused });
+					},
+				},
+			},
+		} as unknown as MaestroClient;
+		return { client, setPausedCalls };
+	}
+
+	const liveTabs = (agentId: string) =>
+		new Map<string, number>(agentId === 'a1' ? [['t1', 500]] : []);
+
+	it('sends sessions:getBootstrap with each tab busy only while it runs', async () => {
+		const handle = createRequestHandler(hostClient().client, { liveTabs });
+		const reply = await handle({ type: 'bridge.invoke', channel: 'sessions:getBootstrap' });
+		expect(reply).toEqual({
+			type: 'bridge.response',
+			ok: true,
+			result: [
+				{
+					...stored,
+					state: 'busy',
+					aiTabs: [
+						{ id: 't1', state: 'busy', thinkingStartTime: 500 },
+						{ id: 't2', state: 'idle' },
+					],
+				},
+			],
+		});
+	});
+
+	it('sends sessions:getBootstrap as stored without liveTabs', async () => {
+		const handle = createRequestHandler(hostClient().client);
+		const reply = await handle({ type: 'bridge.invoke', channel: 'sessions:getBootstrap' });
+		expect(reply).toMatchObject({ ok: true, result: [stored] });
+	});
+
+	it('projects get_sessions from the live overlay, with the turn start time', async () => {
+		const handle = createRequestHandler(hostClient().client, { liveTabs });
+		const reply = (await handle({ type: 'get_sessions' })) as {
+			sessions: Array<Record<string, unknown>>;
+		};
+		expect(reply.sessions[0]).toMatchObject({ id: 'a1', state: 'busy' });
+		expect(reply.sessions[0].aiTabs).toEqual([
+			{ id: 't1', agentSessionId: null, name: null, state: 'busy', thinkingStartTime: 500 },
+			{ id: 't2', agentSessionId: null, name: null, state: 'idle' },
+		]);
+	});
+
+	it('holds and releases a waiting message with set_queue_item_paused', async () => {
+		const { client, setPausedCalls } = hostClient();
+		const handle = createRequestHandler(client);
+		const base = { type: 'set_queue_item_paused', sessionId: 'a1', itemId: 'q1' };
+		expect(await handle({ ...base, paused: true })).toEqual({
+			type: 'set_queue_item_paused_result',
+			success: true,
+			found: true,
+			paused: true,
+		});
+		expect(await handle({ ...base, itemId: 'gone', paused: false })).toEqual({
+			type: 'set_queue_item_paused_result',
+			success: true,
+			found: false,
+			paused: false,
+		});
+		expect(setPausedCalls).toEqual([
+			['a1', 'q1', true],
+			['a1', 'gone', false],
+		]);
+		expect(await handle({ ...base, sessionId: 'nobody', paused: true })).toMatchObject({
+			success: false,
+		});
+	});
+
+	it('refuses set_queue_item_paused without a boolean paused, and changes nothing', async () => {
+		const { client, setPausedCalls } = hostClient();
+		const handle = createRequestHandler(client);
+		expect(
+			await handle({ type: 'set_queue_item_paused', sessionId: 'a1', itemId: 'q1', paused: 'yes' })
+		).toEqual({
+			type: 'set_queue_item_paused_result',
+			success: false,
+			error: 'Missing sessionId, itemId, or paused',
+			found: false,
+		});
+		expect(setPausedCalls).toEqual([]);
 	});
 });

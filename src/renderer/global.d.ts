@@ -1,3 +1,4 @@
+import type { PianolaQueueControl } from '../shared/pianola/pianola-dispatch';
 import type {
 	TranslationRequest,
 	TranslationReport,
@@ -66,7 +67,12 @@ type LocalFileScanNode = {
 };
 
 interface ProcessConfig {
+	/** Native submitted transcript boundary, checked against owner commits by the host. */
+	transcriptBoundaryId?: string;
 	sessionId: string;
+	pianolaDispatchId?: string;
+	pianolaQueueStepId?: string;
+	pianolaQueueItemId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;
@@ -275,6 +281,7 @@ import type {
 import type { WindowCommandRequest, WindowCommandResult } from '../shared/windowCommands';
 import type { WebUserPublic } from '../shared/webLogin';
 import type { ComputerHistoryApi } from '../main/preload/computerHistory';
+import type { FederationApi } from '../main/preload/federation';
 import type { MaestroRunApi } from '../main/preload/maestroRun';
 import type { JourneyApi } from '../main/preload/journey';
 import type { DataviewApi } from '../main/preload/dataview';
@@ -425,7 +432,9 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: import('../shared/autoRunRemote').AutoRunRemoteResult
 		) => void;
-		spawn: (config: ProcessConfig) => Promise<{ pid: number; success: boolean }>;
+		spawn: (
+			config: ProcessConfig
+		) => Promise<import('../main/preload/process/core').ProcessSpawnResponse>;
 		/** Desktop-only, synchronous before spawn IPC; absent on older/web bridges. */
 		onSpawnAttempt?: (callback: (attempt: ProcessSpawnAttempt) => void) => () => void;
 		spawnTerminalTab: (config: {
@@ -620,7 +629,8 @@ interface MaestroAPI {
 				images?: string[],
 				background?: boolean,
 				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
-				receiptChannel?: string
+				receiptChannel?: string,
+				pianolaDispatchId?: string
 			) => void
 		) => () => void;
 		/** Answer a `remote:executeCommand` receipt channel. `accepted: true`
@@ -974,7 +984,8 @@ interface MaestroAPI {
 				responseChannel: string,
 				background?: boolean,
 				hidden?: boolean,
-				mentionRouting?: import('../shared/crossAgentContext').MentionRouting
+				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
+				control?: import('../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (
@@ -1021,7 +1032,8 @@ interface MaestroAPI {
 				background?: boolean,
 				held?: boolean,
 				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
-				dispatchCallback?: boolean
+				dispatchCallback?: boolean,
+				control?: PianolaQueueControl
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (
@@ -1811,13 +1823,17 @@ interface MaestroAPI {
 			baseBranch: string,
 			title: string,
 			body: string,
-			ghPath?: string
+			ghPath?: string,
+			sshRemoteId?: string
 		) => Promise<{
 			success: boolean;
 			prUrl?: string;
 			error?: string;
 		}>;
-		getDefaultBranch: (cwd: string) => Promise<{
+		getDefaultBranch: (
+			cwd: string,
+			sshRemoteId?: string
+		) => Promise<{
 			success: boolean;
 			branch?: string;
 			error?: string;
@@ -2084,6 +2100,12 @@ interface MaestroAPI {
 	 */
 	computerHistory: ComputerHistoryApi;
 	/**
+	 * Federation peer mirror (FED-SSH-05): the peers this desktop mirrors, their agents, a tab's
+	 * transcript, and the change pushes. Read-only. Desktop-only: no `federation:*` channel is on
+	 * the web-desktop allowlist, so in the browser build every call is refused.
+	 */
+	federation: FederationApi;
+	/**
 	 * MaestroRun (macOS launcher install, the Full Disk Access walkthrough, and
 	 * the readiness that gates its system-prompt section).
 	 */
@@ -2187,7 +2209,7 @@ interface MaestroAPI {
 					accountEmail?: string;
 					accountUuid?: string;
 					organizationName?: string;
-					session: { percent: number; resetsAt?: string };
+					session?: { percent: number; resetsAt?: string };
 					weekAllModels: { percent: number; resetsAt?: string };
 					weekSonnetOnly: { percent: number; resetsAt?: string; label?: string };
 				}
@@ -2318,13 +2340,14 @@ interface MaestroAPI {
 			sshRemoteId?: string,
 			ownerAgentId?: string
 		) => Promise<string | null>;
-		// Delete a message pair from a session (not supported for SSH remote sessions)
+		// Delete a message pair from a session (local, or on the agent's SSH remote)
 		deleteMessagePair: (
 			agentId: string,
 			projectPath: string,
 			sessionId: string,
 			userMessageUuid: string,
-			fallbackContent?: string
+			fallbackContent?: string,
+			sshRemoteId?: string
 		) => Promise<{
 			success: boolean;
 			error?: string;
@@ -3513,18 +3536,7 @@ interface MaestroAPI {
 		onActivityChange: (handler: () => void) => () => void;
 	};
 	// Cross-Agent Dispatch API (@mentions)
-	crossAgent: {
-		/** Dispatch a cross-agent request; response streams back via onChunk. */
-		send: (
-			request: import('../shared/crossAgentTypes').CrossAgentSendRequest
-		) => Promise<{ requestId: string }>;
-		/** Stop every consult this source agent (or one of its tabs) still has in flight (Stop button). */
-		cancel: (sourceSessionId: string, sourceTabId?: string) => Promise<{ canceled: number }>;
-		/** Subscribe to streamed cross-agent response chunks. Returns a cleanup fn. */
-		onChunk: (
-			handler: (chunk: import('../shared/crossAgentTypes').CrossAgentResponseChunk) => void
-		) => () => void;
-	};
+	crossAgent: import('../main/preload/crossAgent').CrossAgentApi;
 	// Group Chat API (multi-agent coordination)
 	groupChat: {
 		// Shared return shape for group chat methods (mirrors GroupChat from shared/group-chat-types.ts)
@@ -3839,6 +3851,7 @@ interface MaestroAPI {
 		pollAuthStatus: (clientToken: string) => Promise<{
 			status: 'pending' | 'confirmed' | 'expired' | 'error';
 			authToken?: string;
+			email?: string;
 			message?: string;
 			error?: string;
 		}>;

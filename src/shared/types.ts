@@ -4,6 +4,7 @@
 // Re-export agent ID constants and types from the single source of truth
 export { AGENT_IDS, isValidAgentId } from './agentIds';
 export type { AgentId } from './agentIds';
+import type { LiftedToPointer } from './maestro-lib/agents/lift-pointer';
 import type { CodexTransport } from './codexTransport';
 import type { HarnessControlMode } from './maestro-lib/providers/native-control';
 import type { NativeSessionBinding } from './maestro-lib/agents/providerSwap';
@@ -350,6 +351,12 @@ export interface SessionInfo {
 	codexAutoResetOnExhaustion?: boolean;
 	/** Per-session SSH remote config - when enabled, CLI spawns via SSH. */
 	sessionSshRemoteConfig?: AgentSshRemoteConfig;
+	/**
+	 * Federation: set once this SSH agent was lifted onto its remote's host. The agent keeps every
+	 * tab and transcript, but its sends are refused with a pointer at `peer:agentId`. Read it
+	 * through `readLiftedTo()` / `liftedSendRefusal()` in `src/shared/maestro-lib/agents/lift-pointer.ts`.
+	 */
+	liftedTo?: LiftedToPointer;
 }
 
 /**
@@ -1177,6 +1184,15 @@ export interface SshRemoteConfig {
 	 * Used for display purposes to show where the config came from.
 	 */
 	sshConfigHost?: string;
+
+	/**
+	 * Opt this remote in to Federation (the `federation` Encore Feature): Maestro
+	 * may look for a `maestro-cli host` on it and forward to that host over SSH.
+	 * Off (absent) by default. Maestro never probes a remote without this flag,
+	 * because dialing every remote at once is an SSH startup storm and tunnelled
+	 * remotes fail under concurrent dials.
+	 */
+	federation?: boolean;
 }
 
 /**
@@ -1377,4 +1393,14 @@ export interface UpdateStatus {
 	info?: { version: string };
 	progress?: { percent: number; bytesPerSecond: number; total: number; transferred: number };
 	error?: string;
+}
+
+/** Persisted peer access, shared with the native roster resolver. */
+export interface PeerAccess {
+	read: boolean;
+	write: boolean;
+}
+export interface PeerAgent extends PeerAccess {
+	sessionId: string;
+	description?: string;
 }

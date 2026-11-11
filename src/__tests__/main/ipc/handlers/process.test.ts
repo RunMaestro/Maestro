@@ -1,3 +1,4 @@
+import type { ProcessManager } from '../../../../main/process-manager/ProcessManager';
 import { nodeSqliteBetterSqlite3Mock } from '../../../helpers/nodeSqlite';
 vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
 import { fakeAnchor } from '../../../helpers/mockAnchor';
@@ -7,6 +8,8 @@ import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { createInteractiveReplayController } from '../../../../main/agents/claude-interactive-replay';
 import type { ProcessConfig } from '../../../../main/process-manager/types';
+import { hostCallerRuns } from '../../../../main/agent-run/caller-identity';
+import { CALLER_RUN_PROOF_FILE_ENV_VAR } from '../../../../shared/agentDelegation';
 const writerGate = vi.hoisted(() => ({
 	enabled: false,
 	afterAcquire: undefined as ((processId: string) => void) | undefined,
@@ -433,12 +436,11 @@ describe('process IPC handlers', () => {
 			spawnTerminalTab: vi.fn(),
 			// Grok spawns pass the handler's launch fence (see ProcessManager.spawnChecked).
 			spawnChecked: vi.fn(
-				async (
-					config: ProcessConfig,
-					options?: { beforeSpawn?: () => string | undefined | Promise<string | undefined> }
-				) => {
+				async (config: ProcessConfig, options?: Parameters<ProcessManager['spawnChecked']>[1]) => {
 					const error = await options?.beforeSpawn?.();
-					return error ? { success: false, pid: 0, error } : mockProcessManager.spawn(config);
+					if (error) return { success: false, pid: 0, error };
+					options?.assertSpawnAllowed?.();
+					return mockProcessManager.spawn(config);
 				}
 			),
 		};
@@ -533,15 +535,20 @@ describe('process IPC handlers', () => {
 	});
 
 	describe('process:getPendingPermissions', () => {
-		it('returns only authoritative pending process IDs and a version', async () => {
+		it('returns authoritative pending process and request IDs with a version', async () => {
 			const spawn = registerSpawn({ sessionId: 'agent-ai-tab', tabId: 'tab' });
 			try {
 				const pending = createPending('process-snapshot', spawn.token);
 				const snapshot = await handlers.get('process:getPendingPermissions')!({});
-				expect(snapshot).toEqual({ version: expect.any(Number), processIds: ['agent-ai-tab'] });
+				expect(snapshot).toEqual({
+					version: expect.any(Number),
+					processIds: ['agent-ai-tab'],
+					requestIds: ['process-snapshot'],
+				});
 				resolvePending('process-snapshot', { behavior: 'allow' });
 				await pending;
 				expect((await handlers.get('process:getPendingPermissions')!({})).processIds).toEqual([]);
+				expect((await handlers.get('process:getPendingPermissions')!({})).requestIds).toEqual([]);
 			} finally {
 				spawn.cleanup();
 			}
@@ -589,6 +596,104 @@ describe('process IPC handlers', () => {
 	});
 
 	describe('process:spawn', () => {
+		it.each([
+			'foreign-window',
+			'web-bridge',
+			'wrong-marker',
+			'payload',
+			'model',
+			'conversation',
+			'valid',
+		] as const)(
+			'checks owning desktop and exact queue intent before host release (%s)',
+			async (mode) => {
+				const item = {
+					id: 'dispatch',
+					tabId: 'tab',
+					type: 'message',
+					text: 'Pinned prompt',
+					pendingAdmissionId: 'dispatch',
+					turnSettings: { model: 'pinned-model', effort: 'high' },
+				};
+				const agent = {
+					id: 'queue-agent',
+					toolType: 'claude-code',
+					cwd: '/project',
+					aiTabs: [{ id: 'tab', agentSessionId: 'conversation', permissionMode: 'standard' }],
+					executionQueue: [item],
+				};
+				mockSessionsStore.get.mockImplementation((key, fallback) =>
+					key === 'sessions' ? [agent] : fallback
+				);
+				deps.getWindowForSession = () => ({ webContents: { id: 7 } }) as never;
+				const prepare = vi.fn().mockRejectedValue(new Error('ReachedHostRelease'));
+				deps.getWebServer = () => ({ prepareQueueSpawnFromMain: prepare }) as never;
+				const config = {
+					sessionId: 'queue-agent-ai-tab',
+					toolType: 'claude-code',
+					cwd: '/project',
+					command: 'claude',
+					args: [],
+					pianolaDispatchId: mode === 'wrong-marker' ? 'foreign' : 'dispatch',
+					pianolaQueueItemId: 'dispatch',
+					agentSessionId: mode === 'conversation' ? 'other' : 'conversation',
+					prompt: mode === 'payload' ? 'Changed prompt' : item.text,
+					sessionCustomModel: mode === 'model' ? 'other-model' : 'pinned-model',
+					sessionCustomEffort: 'high',
+					readOnlyMode: false,
+					permissionMode: 'standard',
+				};
+				const event =
+					mode === 'web-bridge'
+						? { clientId: 'web' }
+						: { sender: { id: mode === 'foreign-window' ? 8 : 7, isDestroyed: () => false } };
+				await expect(handlers.get('process:spawn')!(event, config)).rejects.toThrow(
+					mode === 'valid' ? 'ReachedHostRelease' : /Dispatch/
+				);
+				expect(prepare).toHaveBeenCalledTimes(mode === 'valid' ? 1 : 0);
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			}
+		);
+
+		it('refuses every agent turn of a lifted agent with its peer:agentId pointer, but not a shell', async () => {
+			const lifted = {
+				id: 'lifted-agent',
+				name: 'Lifted',
+				toolType: 'claude-code',
+				cwd: '/project',
+				aiTabs: [{ id: 'tab' }],
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			};
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? [lifted] : fallback
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				path: '/usr/bin/claude',
+				requiresPty: false,
+			});
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+			const spawn = (sessionId: string, toolType: string) =>
+				handlers.get('process:spawn')!(
+					{},
+					{ sessionId, toolType, cwd: '/project', command: 'claude', args: [] }
+				);
+
+			await expect(spawn('lifted-agent-ai-tab', 'claude-code')).rejects.toThrow(
+				'Send to build-box:host-1 instead.'
+			);
+			await expect(spawn('lifted-agent-batch-1', 'claude-code')).rejects.toThrow(
+				'build-box:host-1'
+			);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+
+			// A shell tab is not a turn: it is never refused for the lift.
+			const shell = await spawn('lifted-agent-terminal-1', 'terminal').catch(
+				(error: Error) => error
+			);
+			expect(shell instanceof Error ? shell.message : '').not.toContain('build-box');
+		});
+
 		it('binds an announced first desktop provider id before a CLI resume can start', async () => {
 			writerGate.enabled = true;
 			const events = new EventEmitter();
@@ -1956,6 +2061,14 @@ describe('process IPC handlers', () => {
 						},
 					});
 				deps.interactiveReplayController = replay;
+				const callerProof = vi
+					.spyOn(hostCallerRuns, 'issue')
+					.mockImplementation((_binding, authority) => ({
+						runTokenFile: '/private/replay-source-proof',
+						signal: authority.signal,
+						assertActive: authority.assertActive,
+						dispose: vi.fn(),
+					}));
 				const releases: Array<() => void> = [];
 				let pending: Promise<void> | undefined;
 				let rotated: Promise<void> | undefined;
@@ -1974,6 +2087,9 @@ describe('process IPC handlers', () => {
 						}
 					);
 					expect(replay.hasInteractiveReplay(processId)).toBe(true);
+					expect(
+						mockProcessManager.spawn.mock.calls[0][0].customEnvVars?.[CALLER_RUN_PROOF_FILE_ENV_VAR]
+					).toBe('/private/replay-source-proof');
 					owner.aiTabs[0].agentSessionId = 'replay-provider';
 					events.emit('session-id', processId, 'replay-provider');
 					let acquired = false;
@@ -2007,6 +2123,9 @@ describe('process IPC handlers', () => {
 					}
 					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
 					expect(mockProcessManager.spawn.mock.calls[1][0].args).toContain('--print');
+					expect(mockProcessManager.spawn.mock.calls[1][0].customEnvVars).not.toHaveProperty(
+						CALLER_RUN_PROOF_FILE_ENV_VAR
+					);
 					expect(managed.has(processId)).toBe(true);
 					expect(acquired).toBe(false);
 					if (outcome === 'duplicate') {
@@ -2042,6 +2161,7 @@ describe('process IPC handlers', () => {
 					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
 				} finally {
 					replay.clearInteractiveReplay(processId);
+					callerProof.mockRestore();
 					managed.delete(processId);
 					events.emit('exit', processId, 0);
 					await pending;
@@ -3253,6 +3373,9 @@ describe('process IPC handlers', () => {
 			const nullDeps: ProcessHandlerDependencies = {
 				...deps,
 				getAgentDetector: () => null,
+				agentConfigsStore: mockAgentConfigsStore as any,
+				settingsStore: mockSettingsStore as any,
+				sessionsStore: mockSessionsStore as any,
 			};
 
 			// Re-register handlers with null agent detector
@@ -3301,6 +3424,59 @@ describe('process IPC handlers', () => {
 			);
 			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 			expect(result).toEqual({ pid: 5000, success: true });
+		});
+
+		// node-pty on Windows reports pid 0 until ConPTY connects. Returning that 0
+		// made the renderer respawn the tab on every render (pid 0 = "never spawned").
+		describe('when the PTY reports pid 0 at spawn (Windows ConPTY)', () => {
+			const spawnArgs = { sessionId: 'session-1-terminal-tab-1', cwd: 'C:\\project' };
+
+			it('waits for the real PID and records it on the managed process', async () => {
+				const pty = { pid: 0 };
+				const proc = { pid: 0, ptyProcess: pty };
+				mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 0, success: true });
+				mockProcessManager.get.mockReturnValue(proc);
+				setTimeout(() => {
+					pty.pid = 4321;
+				}, 30);
+
+				const handler = handlers.get('process:spawnTerminalTab');
+				const result = await handler!({} as any, spawnArgs);
+
+				expect(result).toEqual({ pid: 4321, success: true });
+				expect(proc.pid).toBe(4321);
+				expect(mockProcessManager.kill).not.toHaveBeenCalled();
+			});
+
+			it('fails the spawn when the PTY exits before its PID arrives', async () => {
+				const proc = { pid: 0, ptyProcess: { pid: 0 } };
+				mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 0, success: true });
+				mockProcessManager.get.mockReturnValueOnce(proc).mockReturnValue(undefined);
+
+				const handler = handlers.get('process:spawnTerminalTab');
+				const result = await handler!({} as any, spawnArgs);
+
+				expect(result).toEqual({ pid: 0, success: false });
+				expect(mockProcessManager.kill).not.toHaveBeenCalled();
+			});
+
+			it('fails the spawn and kills the PTY when no PID arrives in time', async () => {
+				vi.useFakeTimers();
+				try {
+					const proc = { pid: 0, ptyProcess: { pid: 0 } };
+					mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 0, success: true });
+					mockProcessManager.get.mockReturnValue(proc);
+
+					const handler = handlers.get('process:spawnTerminalTab');
+					const pending = handler!({} as any, spawnArgs);
+					await vi.advanceTimersByTimeAsync(7000);
+
+					expect(await pending).toEqual({ pid: 0, success: false });
+					expect(mockProcessManager.kill).toHaveBeenCalledWith('session-1-terminal-tab-1');
+				} finally {
+					vi.useRealTimers();
+				}
+			});
 		});
 
 		it('should merge agent-level and session-level customEnvVars into terminal env', async () => {
@@ -5518,11 +5694,13 @@ describe('process IPC handlers', () => {
 			mockProcessManager.spawnChecked.mockImplementation(
 				async (
 					config: ProcessConfig,
-					options: { beforeSpawn?: () => string | undefined | Promise<string | undefined> }
+					options: NonNullable<Parameters<ProcessManager['spawnChecked']>[1]>
 				) => {
 					duringAdmission();
 					const error = await options.beforeSpawn?.();
-					return error ? { success: false, pid: 0, error } : mockProcessManager.spawn(config);
+					if (error) return { success: false, pid: 0, error };
+					options?.assertSpawnAllowed?.();
+					return mockProcessManager.spawn(config);
 				}
 			);
 			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 777 });

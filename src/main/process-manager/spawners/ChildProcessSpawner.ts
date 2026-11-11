@@ -13,7 +13,10 @@ import { StdoutHandler } from '../handlers/StdoutHandler';
 import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
 import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder';
-import { buildPromptArgv } from '../../../shared/maestro-lib/launch/prompt-delivery';
+import {
+	buildPromptArgv,
+	promptExceedsArgvLimit,
+} from '../../../shared/maestro-lib/launch/prompt-delivery';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { readClaudeTurnBaseline } from '../../../shared/claudeCostTracker';
 import {
@@ -115,7 +118,6 @@ export class ChildProcessSpawner {
 			shellEnvVars,
 			noPromptSeparator,
 			sendPromptViaStdin,
-			sendPromptViaStdinRaw,
 		} = config;
 
 		const hasImages = images && images.length > 0;
@@ -169,6 +171,39 @@ export class ChildProcessSpawner {
 		const argsHaveInputStreamJson = args.some(
 			(arg, i) => arg === 'stream-json' && i > 0 && args[i - 1] === '--input-format'
 		);
+
+		// The launch plan (`resolvePromptDelivery`) already moves an over-limit
+		// prompt to stdin. This is the safety net for a caller that skips it: on
+		// Linux and macOS a prompt past the argv limit (a long group chat history,
+		// a big Cue payload) fails the spawn with E2BIG (MAESTRO-VR), so send it as
+		// raw stdin instead when the agent reads its prompt there. Local spawns
+		// only: an SSH spawn's prompt belongs to the remote command or script.
+		const promptTooLongForArgv =
+			!!prompt &&
+			!hasImages &&
+			!isWindows() &&
+			!sendPromptViaStdin &&
+			!argsHaveInputStreamJson &&
+			!config.sendPromptViaStdinRaw &&
+			!config.promptAlreadyInArgs &&
+			!config.sshStdinScript &&
+			!config.sshRemoteCommand &&
+			!config.sshRemoteId &&
+			capabilities.supportsPromptViaStdin &&
+			promptExceedsArgvLimit(prompt, false);
+		const sendPromptViaStdinRaw = !!config.sendPromptViaStdinRaw || promptTooLongForArgv;
+		if (promptTooLongForArgv) {
+			logger.info(
+				'[ProcessManager] Prompt too long for argv, sending via stdin',
+				'ProcessManager',
+				{
+					sessionId,
+					toolType,
+					promptLength: prompt?.length,
+				}
+			);
+		}
+
 		const promptViaStdin = sendPromptViaStdin || sendPromptViaStdinRaw || argsHaveInputStreamJson;
 
 		// Build final args based on batch mode and images
@@ -479,7 +514,7 @@ export class ChildProcessSpawner {
 					sessionId,
 					scriptLength: config.sshStdinScript.length,
 				});
-			} else if (config.sendPromptViaStdinRaw && effectivePrompt) {
+			} else if (sendPromptViaStdinRaw && effectivePrompt) {
 				stdinText = effectivePrompt;
 				logger.debug('[ProcessManager] Sending raw prompt via stdin', 'ProcessManager', {
 					sessionId,

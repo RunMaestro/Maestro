@@ -20,6 +20,7 @@ const mockMaestro = {
 		onData: vi.fn(() => vi.fn()),
 		onExit: vi.fn(() => vi.fn()),
 		onAgentError: vi.fn(() => vi.fn()),
+		onStderr: vi.fn(() => vi.fn()),
 		onThinkingChunk: vi.fn(() => vi.fn()),
 		onToolExecution: vi.fn(() => vi.fn()),
 		kill: vi.fn().mockResolvedValue(undefined),
@@ -40,6 +41,72 @@ describe('conversationManager (Onboarding Wizard)', () => {
 	});
 
 	describe('sendMessage', () => {
+		it('surfaces Codex stderr when the process exits non-zero with no stdout (#1983)', async () => {
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'codex',
+				available: true,
+				command: 'codex',
+				path: '/opt/homebrew/bin/codex',
+				args: [],
+				batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
+				jsonOutputArgs: ['--json'],
+			});
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'codex',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const stderrCallback = mockMaestro.process.onStderr.mock.calls[0][0];
+			// Another process's stderr must not leak into this turn.
+			stderrCallback('some-other-session', 'error: unrelated failure\n');
+			stderrCallback(
+				sessionId,
+				"error: unexpected argument '--skip-git-repo-check' found\n\nUsage: codex [OPTIONS] [PROMPT]\n"
+			);
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 2);
+
+			const result = await messagePromise;
+			expect(result.success).toBe(false);
+			expect(result.error).toBe("unexpected argument '--skip-git-repo-check' found");
+			// stderr stays out of the stdout buffer the response parser reads.
+			expect(result.rawOutput).toBe('');
+
+			await conversationManager.endConversation();
+		});
+
+		it('unsubscribes the stderr listener when the turn ends (#1983)', async () => {
+			const stderrCleanup = vi.fn();
+			mockMaestro.process.onStderr.mockReturnValueOnce(stderrCleanup);
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'claude-code',
+				available: true,
+				command: 'claude',
+				args: [],
+			});
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'claude-code',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			mockMaestro.process.onExit.mock.calls[0][0](sessionId, 0);
+			await messagePromise;
+			expect(stderrCleanup).toHaveBeenCalled();
+
+			await conversationManager.endConversation();
+		});
 		it('should use agent.path when available instead of agent.command for spawn', async () => {
 			// This test verifies the fix for issue #171
 			// The wizard was using agent.command ("claude") instead of agent.path ("/opt/homebrew/bin/claude")

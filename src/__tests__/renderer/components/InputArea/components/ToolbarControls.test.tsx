@@ -2,14 +2,35 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ToolbarControls } from '../../../../../renderer/components/InputArea/components/ToolbarControls';
 import { usePhoneLayout } from '../../../../../renderer/hooks/ui/useViewportBreakpoint';
-import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
+import { inputAreaTheme } from '../_fixtures';
 import { AGENT_CAPABILITIES } from '../../../../../shared/maestro-lib/providers/capabilities';
 import { restorePointer, setCoarsePointer } from '../../../../helpers/mockPointer';
+import {
+	GROUP_CHAT_COMPOSER_CAPABILITIES,
+	type ComposerCapabilities,
+} from '../../../../../renderer/components/ChatComposer';
 
-const mockUpdateSessionWith = vi.fn();
-vi.mock('../../../../../renderer/stores/sessionStore', () => ({
-	updateSessionWith: (...args: unknown[]) => mockUpdateSessionWith(...args),
-}));
+/** An AI-mode agent that supports every optional control. */
+const AI_CAPABILITIES: ComposerCapabilities = {
+	imageAttach: true,
+	upload: true,
+	voice: true,
+	saveToHistory: true,
+	permission: true,
+	thinking: true,
+	modelEffort: true,
+};
+
+/** Terminal mode: the toolbar offers none of the optional controls. */
+const TERMINAL_CAPABILITIES: ComposerCapabilities = {
+	imageAttach: false,
+	upload: false,
+	voice: false,
+	saveToHistory: false,
+	permission: false,
+	thinking: false,
+	modelEffort: false,
+};
 
 vi.mock('../../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
 	...(await importOriginal<
@@ -23,17 +44,18 @@ describe('ToolbarControls', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		restorePointer();
-		mockUpdateSessionWith.mockClear();
 		mockedUsePhoneLayout.mockReturnValue(false);
 	});
 
 	function renderToolbar(overrides: Partial<React.ComponentProps<typeof ToolbarControls>> = {}) {
 		const props: React.ComponentProps<typeof ToolbarControls> = {
-			session: createInputAreaSession(),
+			agentId: 'claude-code',
+			capabilities: AI_CAPABILITIES,
+			permissionMode: 'full',
+			onPermissionModeChange: vi.fn(),
+			onThinkingModeChange: vi.fn(),
 			theme: inputAreaTheme,
 			isTerminalMode: false,
-			canAttachImages: true,
-			hasReadOnlyCapability: true,
 			hasStandardCapability: true,
 			enterToSend: true,
 			setEnterToSend: vi.fn(),
@@ -45,7 +67,6 @@ describe('ToolbarControls', () => {
 			onToggleTabSaveToHistory: vi.fn(),
 			tabShowThinking: 'off',
 			onToggleTabShowThinking: vi.fn(),
-			supportsThinking: true,
 			availableModels: [],
 			availableEfforts: [],
 			modelMenuOpen: false,
@@ -66,11 +87,9 @@ describe('ToolbarControls', () => {
 
 	it('renders terminal cwd in terminal mode', () => {
 		renderToolbar({
-			session: createInputAreaSession({
-				inputMode: 'terminal',
-				shellCwd: '/Users/test/project/src',
-			}),
+			capabilities: TERMINAL_CAPABILITIES,
 			isTerminalMode: true,
+			terminalCwd: '~/project/src',
 		});
 
 		expect(screen.getByText('~/project/src')).toBeInTheDocument();
@@ -93,9 +112,9 @@ describe('ToolbarControls', () => {
 		const onToggleTabSaveToHistory = vi.fn();
 		const onToggleTabShowThinking = vi.fn();
 		const setEnterToSend = vi.fn();
-		const session = createInputAreaSession();
+		const onPermissionModeChange = vi.fn();
 		renderToolbar({
-			session,
+			onPermissionModeChange,
 			onToggleTabSaveToHistory,
 			onToggleTabShowThinking,
 			setEnterToSend,
@@ -111,18 +130,14 @@ describe('ToolbarControls', () => {
 		expect(onToggleTabShowThinking).toHaveBeenCalled();
 		expect(setEnterToSend).toHaveBeenCalledWith(false);
 
-		expect(mockUpdateSessionWith).toHaveBeenCalledWith(session.id, expect.any(Function));
-		const updater = mockUpdateSessionWith.mock.calls[0][1];
-		const updatedSession = updater(session);
-		const updatedTab = updatedSession.aiTabs.find((t: { id: string }) => t.id === 'tab-1');
-		expect(updatedTab.permissionMode).toBe('standard');
-		expect(updatedTab.readOnlyMode).toBe(false);
+		expect(onPermissionModeChange).toHaveBeenCalledWith('standard');
 	});
 
 	it('hides AI-only controls in terminal mode', () => {
 		renderToolbar({
-			session: createInputAreaSession({ inputMode: 'terminal' }),
+			capabilities: TERMINAL_CAPABILITIES,
 			isTerminalMode: true,
+			onOpenPromptComposer: undefined,
 		});
 
 		expect(screen.queryByTitle(/Open Prompt Composer/)).not.toBeInTheDocument();
@@ -132,24 +147,19 @@ describe('ToolbarControls', () => {
 
 	describe('Grok permission interactions', () => {
 		it.each(['desktop', 'phone'] as const)(
-			'offers Standard for Grok on %s and dispatches standard for only the selected tab',
+			'offers Standard for Grok on %s and emits the selected permission mode',
 			(layout) => {
 				// A local Grok tab reaches the ACP route through Standard.
 				expect(AGENT_CAPABILITIES.grok.supportsStandardPermissionMode).toBe(true);
 				mockedUsePhoneLayout.mockReturnValue(layout === 'phone');
-				const session = createInputAreaSession({ id: 'grok-selected', toolType: 'grok' });
-				const otherTab = session.aiTabs[0];
-				const selectedTab = {
-					...otherTab,
-					id: 'grok-tab',
-					permissionMode: 'full' as const,
-					readOnlyMode: false,
-				};
-				session.aiTabs = [otherTab, selectedTab];
-				session.activeTabId = selectedTab.id;
+				const onPermissionModeChange = vi.fn();
 				renderToolbar({
-					session,
-					hasReadOnlyCapability: AGENT_CAPABILITIES.grok.supportsReadOnlyMode,
+					agentId: 'grok',
+					onPermissionModeChange,
+					capabilities: {
+						...AI_CAPABILITIES,
+						permission: AGENT_CAPABILITIES.grok.supportsReadOnlyMode,
+					},
 					hasStandardCapability: AGENT_CAPABILITIES.grok.supportsStandardPermissionMode ?? false,
 				});
 				if (layout === 'phone') {
@@ -160,13 +170,7 @@ describe('ToolbarControls', () => {
 					// The desktop pill cycles full -> standard.
 					fireEvent.click(screen.getByRole('button', { name: 'Full Access' }));
 				}
-				expect(mockUpdateSessionWith).toHaveBeenCalledTimes(1);
-				const updated = mockUpdateSessionWith.mock.calls[0][1](session);
-				expect(updated.aiTabs).toEqual([
-					otherTab,
-					{ ...selectedTab, permissionMode: 'standard', readOnlyMode: false },
-				]);
-				expect(updated.aiTabs[0]).toBe(otherTab);
+				expect(onPermissionModeChange).toHaveBeenCalledExactlyOnceWith('standard');
 			}
 		);
 
@@ -179,22 +183,18 @@ describe('ToolbarControls', () => {
 			'still normalizes a stale Standard value for a Grok build without the capability on %s from %s',
 			(layout, mode) => {
 				mockedUsePhoneLayout.mockReturnValue(layout === 'phone');
-				const session = createInputAreaSession({ id: 'grok-selected', toolType: 'grok' });
-				const otherTab = session.aiTabs[0];
-				const selectedTab = {
-					...otherTab,
-					id: 'grok-tab',
-					permissionMode: mode,
-					readOnlyMode: false,
-				};
-				session.aiTabs = [otherTab, selectedTab];
-				session.activeTabId = selectedTab.id;
+				const onPermissionModeChange = vi.fn();
 				// The capability is forced off here: this pins the normalization for any agent
 				// that lacks it, not Grok's current declaration (offered above).
 				const { rerenderToolbar } = renderToolbar({
-					session,
-					hasReadOnlyCapability: AGENT_CAPABILITIES.grok.supportsReadOnlyMode,
+					agentId: 'grok',
+					onPermissionModeChange,
+					capabilities: {
+						...AI_CAPABILITIES,
+						permission: AGENT_CAPABILITIES.grok.supportsReadOnlyMode,
+					},
 					hasStandardCapability: false,
+					permissionMode: mode,
 				});
 				if (layout === 'phone') {
 					fireEvent.click(screen.getByRole('button', { name: 'More options' }));
@@ -203,8 +203,7 @@ describe('ToolbarControls', () => {
 				}
 				// A stale Standard value is normalized for display without a render-time write.
 				expect(screen.getByRole('button', { name: 'Full Access' })).toBeInTheDocument();
-				expect(mockUpdateSessionWith).not.toHaveBeenCalled();
-				let current = session;
+				expect(onPermissionModeChange).not.toHaveBeenCalled();
 				for (const [index, nextMode] of (['readonly', 'full'] as const).entries()) {
 					expect(screen.queryByRole('button', { name: /Standard|ACP/ })).not.toBeInTheDocument();
 					const label =
@@ -216,24 +215,8 @@ describe('ToolbarControls', () => {
 								? 'Full Access'
 								: 'Read-Only';
 					fireEvent.click(screen.getByRole('button', { name: label }));
-					expect(mockUpdateSessionWith).toHaveBeenCalledTimes(index + 1);
-					expect(mockUpdateSessionWith).toHaveBeenNthCalledWith(
-						index + 1,
-						session.id,
-						expect.any(Function)
-					);
-					const updater = mockUpdateSessionWith.mock.calls[index][1];
-					const updated = updater(current);
-					expect(updated).toEqual({
-						...current,
-						aiTabs: [
-							otherTab,
-							{ ...selectedTab, permissionMode: nextMode, readOnlyMode: nextMode === 'readonly' },
-						],
-					});
-					expect(updated.aiTabs[0]).toBe(otherTab);
-					current = updated;
-					rerenderToolbar({ session: current });
+					expect(onPermissionModeChange).toHaveBeenNthCalledWith(index + 1, nextMode);
+					rerenderToolbar({ permissionMode: nextMode });
 					if (layout === 'phone') {
 						expect(screen.getByTestId('composer-options-access')).toHaveTextContent(
 							nextMode === 'readonly' ? 'Read-Only' : 'Full Access'
@@ -247,22 +230,18 @@ describe('ToolbarControls', () => {
 					}
 				}
 				expect(screen.queryByRole('button', { name: /Standard|ACP/ })).not.toBeInTheDocument();
-				expect(selectedTab).toEqual({
-					...otherTab,
-					id: 'grok-tab',
-					permissionMode: mode,
-					readOnlyMode: false,
-				});
 			}
 		);
 
 		it.each(['desktop', 'phone'] as const)(
 			'hides unavailable Grok access controls on %s',
 			(layout) => {
+				const onPermissionModeChange = vi.fn();
 				mockedUsePhoneLayout.mockReturnValue(layout === 'phone');
 				renderToolbar({
-					session: createInputAreaSession({ toolType: 'grok' }),
-					hasReadOnlyCapability: false,
+					agentId: 'grok',
+					onPermissionModeChange,
+					capabilities: { ...AI_CAPABILITIES, permission: false },
 					hasStandardCapability: AGENT_CAPABILITIES.grok.supportsStandardPermissionMode ?? false,
 				});
 				if (layout === 'phone')
@@ -271,9 +250,53 @@ describe('ToolbarControls', () => {
 				expect(
 					screen.queryByRole('button', { name: /Full Access|Read-Only|Standard|ACP/ })
 				).not.toBeInTheDocument();
-				expect(mockUpdateSessionWith).not.toHaveBeenCalled();
+				expect(onPermissionModeChange).not.toHaveBeenCalled();
 			}
 		);
+	});
+
+	it('keeps desktop layout unchanged in terminal mode with cwd and Enter toggle', () => {
+		renderToolbar({
+			capabilities: TERMINAL_CAPABILITIES,
+			isTerminalMode: true,
+			terminalCwd: '~/project/src',
+			onOpenPromptComposer: undefined,
+			enterToSend: true,
+		});
+
+		expect(screen.getByText('~/project/src')).toBeInTheDocument();
+		expect(screen.getByTitle(/Switch to .*Enter to send/)).toBeInTheDocument();
+		expect(screen.getByText('Enter')).toBeInTheDocument();
+		expect(screen.queryByTestId('composer-options-button')).not.toBeInTheDocument();
+	});
+
+	it('hides each optional control its capability turns off', () => {
+		renderToolbar({
+			capabilities: {
+				...AI_CAPABILITIES,
+				imageAttach: false,
+				saveToHistory: false,
+				permission: false,
+				thinking: false,
+			},
+		});
+
+		expect(screen.queryByTitle('Attach Image')).not.toBeInTheDocument();
+		expect(screen.queryByTitle(/Save to History/)).not.toBeInTheDocument();
+		expect(screen.queryByTitle(/^Full Access/)).not.toBeInTheDocument();
+		expect(screen.queryByTitle(/Show Thinking/)).not.toBeInTheDocument();
+		// Still offered: the prompt composer and the Enter toggle have no flag.
+		expect(screen.getByTitle(/Open Prompt Composer/)).toBeInTheDocument();
+		expect(screen.getByTitle(/Switch to/)).toBeInTheDocument();
+	});
+
+	it('draws toolbarExtras in the toggle group, before the Enter toggle', () => {
+		renderToolbar({ toolbarExtras: <button>Extra</button> });
+
+		const extra = screen.getByRole('button', { name: 'Extra' });
+		const enterToggle = screen.getByTitle(/Switch to/);
+		expect(extra.parentElement).toBe(enterToggle.parentElement);
+		expect(extra.nextElementSibling).toBe(enterToggle);
 	});
 
 	describe('phone layout', () => {
@@ -329,8 +352,8 @@ describe('ToolbarControls', () => {
 		});
 
 		it('writes a permission mode picked in the sheet, not the next one in the cycle', () => {
-			const session = createInputAreaSession();
-			renderPhoneToolbar({ session });
+			const onPermissionModeChange = vi.fn();
+			renderPhoneToolbar({ onPermissionModeChange });
 
 			fireEvent.click(screen.getByTestId('composer-options-button'));
 			fireEvent.click(screen.getByTestId('composer-options-access'));
@@ -338,23 +361,103 @@ describe('ToolbarControls', () => {
 			// 'readonly' proves the sheet names a mode rather than stepping.
 			fireEvent.click(screen.getByRole('button', { name: /Read Only|Plan/ }));
 
-			const updater = mockUpdateSessionWith.mock.calls.at(-1)![1];
-			const updatedTab = updater(session).aiTabs.find((t: { id: string }) => t.id === 'tab-1');
-			expect(updatedTab.permissionMode).toBe('readonly');
-			expect(updatedTab.readOnlyMode).toBe(true);
+			expect(onPermissionModeChange).toHaveBeenLastCalledWith('readonly');
 		});
 
 		it('writes a thinking mode picked in the sheet', () => {
-			const session = createInputAreaSession();
-			renderPhoneToolbar({ session });
+			const onThinkingModeChange = vi.fn();
+			renderPhoneToolbar({ onThinkingModeChange });
 
 			fireEvent.click(screen.getByTestId('composer-options-button'));
 			fireEvent.click(screen.getByTestId('composer-options-thinking'));
 			fireEvent.click(screen.getByRole('button', { name: 'Sticky' }));
 
-			const updater = mockUpdateSessionWith.mock.calls.at(-1)![1];
-			const updatedTab = updater(session).aiTabs.find((t: { id: string }) => t.id === 'tab-1');
-			expect(updatedTab.showThinking).toBe('sticky');
+			expect(onThinkingModeChange).toHaveBeenLastCalledWith('sticky');
+		});
+
+		it('draws no "..." or sheet in terminal mode, keeping the cwd and Run command button', () => {
+			renderPhoneToolbar({
+				capabilities: TERMINAL_CAPABILITIES,
+				isTerminalMode: true,
+				terminalCwd: '~/project',
+			});
+
+			expect(screen.queryByTestId('composer-options-button')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-sheet')).not.toBeInTheDocument();
+			expect(screen.getByText('~/project')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Run command' })).toBeInTheDocument();
+		});
+
+		it('still shows the "..." and opens the sheet in a room with sheet content', () => {
+			renderPhoneToolbar({
+				capabilities: GROUP_CHAT_COMPOSER_CAPABILITIES,
+				sheetExtras: <div data-testid="room-readonly-row">Read-Only</div>,
+			});
+
+			expect(screen.getByTestId('composer-options-button')).toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			expect(screen.getByTestId('composer-options-sheet')).toBeInTheDocument();
+			expect(screen.getByTestId('room-readonly-row')).toBeInTheDocument();
+		});
+
+		it('leaves out the sheet sections the surface does not offer', () => {
+			renderPhoneToolbar({
+				capabilities: { ...TERMINAL_CAPABILITIES, saveToHistory: true },
+			});
+
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			expect(screen.getByTestId('composer-options-history')).toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-access')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-thinking')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-model')).not.toBeInTheDocument();
+		});
+
+		it('draws no "..." when the sheet would be empty', () => {
+			renderPhoneToolbar({ capabilities: TERMINAL_CAPABILITIES });
+
+			expect(screen.queryByTestId('composer-options-button')).not.toBeInTheDocument();
+		});
+
+		it('mounts the sheet for surface rows alone, drawn after the sections', () => {
+			renderPhoneToolbar({
+				capabilities: TERMINAL_CAPABILITIES,
+				sheetExtras: <div data-testid="surface-row">Surface</div>,
+			});
+
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			expect(screen.getByTestId('surface-row')).toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-history')).not.toBeInTheDocument();
+		});
+
+		it('takes the Send title, disabled state and tone from the surface', () => {
+			const processInput = vi.fn();
+			const { rerender } = renderPhoneToolbar({
+				processInput,
+				sendTitle: 'Queue message',
+				sendDisabled: true,
+			});
+			const send = screen.getByRole('button', { name: 'Queue message' });
+			expect(send).toBeDisabled();
+			expect(send).toHaveStyle({ backgroundColor: inputAreaTheme.colors.border });
+			fireEvent.click(send);
+			expect(processInput).not.toHaveBeenCalled();
+
+			rerender(
+				<ToolbarControls
+					theme={inputAreaTheme}
+					capabilities={AI_CAPABILITIES}
+					isTerminalMode={false}
+					enterToSend
+					setEnterToSend={vi.fn()}
+					setStagedImages={vi.fn()}
+					processInput={processInput}
+					sendTitle="Queue message"
+					sendTone="warning"
+				/>
+			);
+			expect(screen.getByRole('button', { name: 'Queue message' })).toHaveStyle({
+				backgroundColor: inputAreaTheme.colors.warning,
+			});
 		});
 
 		it('renders exactly one image file input', () => {
@@ -403,7 +506,7 @@ describe('ToolbarControls', () => {
 		it('hides the mic in terminal mode', () => {
 			setCoarsePointer(true);
 			renderToolbar({
-				session: createInputAreaSession({ inputMode: 'terminal' }),
+				capabilities: TERMINAL_CAPABILITIES,
 				isTerminalMode: true,
 				voiceSupported: true,
 				onToggleVoiceInput: vi.fn(),

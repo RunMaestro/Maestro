@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { isImeComposing } from '../../utils/ime';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
@@ -428,6 +429,7 @@ function ScopedAgentSessionsBrowser({
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		if (viewingSession) {
 			if (e.key === 'Enter') {
+				if (isImeComposing(e)) return;
 				e.preventDefault();
 				handleResume();
 			}
@@ -440,6 +442,7 @@ function ScopedAgentSessionsBrowser({
 			e.preventDefault();
 			setSelectedIndex((prev) => Math.max(prev - 1, 0));
 		} else if (e.key === 'Enter') {
+			if (isImeComposing(e)) return;
 			e.preventDefault();
 			const selected = filteredSessions[selectedIndex];
 			if (selected) handleViewSession(selected);
@@ -468,10 +471,10 @@ function ScopedAgentSessionsBrowser({
 						onRenameChange={setRenameValue}
 						onRenameKeyDown={(e) => {
 							e.stopPropagation();
-							if (e.key === 'Enter') {
+							if (e.key === 'Enter' && !isImeComposing(e)) {
 								e.preventDefault();
 								submitRename(viewingSession.sessionId);
-							} else if (e.key === 'Escape') {
+							} else if (e.key === 'Escape' && !isImeComposing(e)) {
 								e.preventDefault();
 								cancelRename();
 							}
@@ -543,7 +546,7 @@ function ScopedAgentSessionsBrowser({
 						theme={theme}
 						onSearchChange={handleSearchChange}
 						onSearchKeyDown={(e) => {
-							if (e.key === 'Escape') {
+							if (e.key === 'Escape' && !isImeComposing(e)) {
 								e.preventDefault();
 								e.stopPropagation();
 								setShowSearchPanel(false);

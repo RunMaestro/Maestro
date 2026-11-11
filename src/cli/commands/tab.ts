@@ -24,6 +24,12 @@
 // "tab compact", "tab merge" and "tab transfer" are the overlay menu's Context:
 // Compact, Merge Into and Send to Agent, sent as summarize_context,
 // merge_context and transfer_context and run by the menu's own handlers.
+//
+// Federation: "tab new", "tab rename", "tab star" and "tab unstar" take
+// `--agent peer:agent` to act on an agent a peer's host owns. They reach the
+// host over the peer's forward and run the shared `runPeerAgentAction()`, the
+// same function the desktop's mirrored tab strip calls, so nothing here writes
+// a local store. On a peer, <tab-id> resolves against the host's tabs.
 
 import {
 	sendSimpleCommand,
@@ -50,7 +56,7 @@ import {
 	type TabContextOpRequest,
 	type TabContextOpResult,
 } from '../../shared/tabContextOps';
-import { formatSuccess } from '../output/formatter';
+import { formatError, formatSuccess } from '../output/formatter';
 import { nextThinkingMode, type ThinkingMode } from '../../shared/types';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
@@ -62,7 +68,23 @@ import {
 	type MessagePinLastTarget,
 	type MessagePinSummary,
 } from '../../shared/messagePinCommands';
-import { resolveAgentId, readActiveAgentId } from '../services/storage';
+import { resolveAgentId, readActiveAgentId, readLiveSessions } from '../services/storage';
+import {
+	PeerResolveError,
+	hostCallError,
+	peerAgentRef,
+	peerErrorCode,
+	pickHostTab,
+	routeAgentTarget,
+	withPeerAgent,
+	type PeerTarget,
+} from '../services/peer-resolver';
+import {
+	runPeerAgentAction,
+	type PeerAgentAction,
+	type PeerAgentActionResult,
+} from '../../shared/maestro-lib/client/peer-actions';
+import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 
 interface TabNewOptions {
 	agent: string;
@@ -78,7 +100,85 @@ interface TabMutateOptions {
 	json?: boolean;
 }
 
+/** `--agent` as a peer target, or null for a local agent (and always null while Federation is off). */
+function peerTabTarget(agent: string | undefined): PeerTarget | null {
+	if (!agent) return null;
+	const route = routeAgentTarget(agent);
+	return route.kind === 'peer' ? route.target : null;
+}
+
+/**
+ * Run one tab action on a peer's agent and report it the way the local verb does, plus `peer`.
+ * `build` picks the action from the host's record; a throw there (an unknown tab) is reported
+ * with the agent's `peer:agent` address. Nothing is retried.
+ */
+async function peerTabAction(
+	target: PeerTarget,
+	json: boolean | undefined,
+	build: (agent: AgentRecord) => PeerAgentAction,
+	describe: (result: PeerAgentActionResult) => string
+): Promise<void> {
+	let done: { peer: string; agentId: string; result: PeerAgentActionResult };
+	try {
+		done = await withPeerAgent(target, async ({ agent, client, peer }) => {
+			let action: PeerAgentAction;
+			try {
+				action = build(agent);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				throw new PeerResolveError(
+					'host-failed',
+					`${message} (agent ${peerAgentRef(peer, agent.id)})`,
+					ExitCode.GeneralError,
+					peer
+				);
+			}
+			const ran = await runPeerAgentAction(client, agent, action);
+			if (!ran.ok) throw hostCallError(peer, ran.error);
+			return { peer, agentId: agent.id, result: ran.value };
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const peerError = error instanceof PeerResolveError ? error : undefined;
+		if (json) {
+			console.log(
+				JSON.stringify({
+					success: false,
+					error: message,
+					...(peerError ? { code: peerErrorCode(peerError.code), peer: peerError.peer } : {}),
+				})
+			);
+		} else {
+			console.error(formatError(message));
+		}
+		return exitWith(peerError?.exitCode ?? ExitCode.GeneralError);
+	}
+	const tabId = 'tabId' in done.result ? done.result.tabId : null;
+	if (json) {
+		console.log(JSON.stringify({ success: true, agentId: done.agentId, tabId, peer: done.peer }));
+	} else {
+		console.log(
+			formatSuccess(`${describe(done.result)} on ${peerAgentRef(done.peer, done.agentId)}`)
+		);
+	}
+}
+
 export async function tabNew(options: TabNewOptions): Promise<void> {
+	const peerTarget = peerTabTarget(options.agent);
+	if (peerTarget) {
+		if (options.prompt?.trim()) {
+			failCommand(
+				`--prompt is not available for a peer's agent. Open the tab, then send to it, or use: maestro-cli dispatch ${options.agent} <prompt>`,
+				options.json
+			);
+		}
+		return peerTabAction(
+			peerTarget,
+			options.json,
+			() => ({ kind: 'new-tab' }),
+			(result) => `Opened new tab ${'tabId' in result ? result.tabId : ''}`.trim()
+		);
+	}
 	const sessionId = resolveAgentOrFail(options.agent, options.json);
 	const prompt = options.prompt?.trim();
 	// Keyed by VERB, not by message. `tab new --prompt` sends the same
@@ -168,6 +268,19 @@ export async function tabRename(
 	if (!trimmed) {
 		failCommand('New name must not be empty', options.json);
 	}
+	const peerTarget = peerTabTarget(options.agent);
+	if (peerTarget) {
+		return peerTabAction(
+			peerTarget,
+			options.json,
+			(agent) => ({
+				kind: 'rename-tab',
+				tabId: pickHostTab(agent.aiTabs ?? [], tabId, agent.activeTabId).id,
+				name: trimmed,
+			}),
+			(result) => `Renamed tab ${'tabId' in result ? result.tabId : tabId} to "${trimmed}"`
+		);
+	}
 	await tabAction(tabId, options, (owner) => ({
 		type: 'rename_tab',
 		responseType: 'rename_tab_result',
@@ -181,6 +294,20 @@ export async function tabStar(
 	starred: boolean,
 	options: TabMutateOptions
 ): Promise<void> {
+	const peerTarget = peerTabTarget(options.agent);
+	if (peerTarget) {
+		return peerTabAction(
+			peerTarget,
+			options.json,
+			(agent) => ({
+				kind: 'star-tab',
+				tabId: pickHostTab(agent.aiTabs ?? [], tabId, agent.activeTabId).id,
+				starred,
+			}),
+			(result) =>
+				`${starred ? 'Starred' : 'Unstarred'} tab ${'tabId' in result ? result.tabId : tabId}`
+		);
+	}
 	await tabAction(tabId, options, (owner) => ({
 		type: 'star_tab',
 		responseType: 'star_tab_result',
@@ -498,6 +625,14 @@ interface ClosedTabOptions {
 	json?: boolean;
 }
 
+interface ClosedTabListOptions extends ClosedTabOptions {
+	/** Every agent's stack (`tab closed --all`). */
+	all?: boolean;
+}
+
+/** Agents asked at once by `tab closed --all`, over one connection. */
+const CLOSED_TAB_FLEET_CONCURRENCY = 8;
+
 interface TabReopenOptions extends ClosedTabOptions {
 	/** Position in the stack, as typed (0 is what Cmd+Shift+T reopens next). */
 	index?: string;
@@ -570,7 +705,11 @@ function describeClosedTab(entry: ClosedTabSummary): string {
  * Index 0 is the entry Cmd+Shift+T (and `tab reopen` with no target) restores
  * next. An empty stack is not an error here: "nothing to reopen" is an answer.
  */
-export async function tabClosed(options: ClosedTabOptions): Promise<void> {
+export async function tabClosed(options: ClosedTabListOptions): Promise<void> {
+	if (options.all) {
+		if (options.agent) failCommand('Pass --agent or --all, not both', options.json);
+		return tabClosedFleet(options.json);
+	}
 	const sessionId = resolveClosedTabAgent(options);
 	const result = await sendClosedTabCommand({ action: 'list', sessionId }, options.json);
 	const closedTabs = result.closedTabs ?? [];
@@ -585,6 +724,102 @@ export async function tabClosed(options: ClosedTabOptions): Promise<void> {
 	}
 	console.log(`Closed tabs for ${sessionId} (newest first):`);
 	for (const entry of closedTabs) console.log(describeClosedTab(entry));
+}
+
+/**
+ * `maestro-cli tab closed --all` - every agent's closed-tab stack. Each stack
+ * still comes from the window that owns the agent (one `list` per agent, a few
+ * in flight on one connection), so an entry closed a moment ago is already
+ * here. An agent the desktop could not answer for is reported, not fatal.
+ */
+async function tabClosedFleet(json?: boolean): Promise<void> {
+	const agents = readLiveSessions();
+	const results: Array<{
+		sessionId: string;
+		agentName: string;
+		closedTabs: ClosedTabSummary[];
+		error?: string;
+	}> = [];
+	try {
+		await withMaestroClient(async (client) => {
+			for (let i = 0; i < agents.length; i += CLOSED_TAB_FLEET_CONCURRENCY) {
+				const batch = agents.slice(i, i + CLOSED_TAB_FLEET_CONCURRENCY);
+				const replies = await Promise.all(
+					batch.map(async (agent) => {
+						try {
+							const reply = await client.sendCommand<ClosedTabResponse>(
+								{ type: 'closed_tab_command', action: 'list', sessionId: agent.id },
+								'closed_tab_command_result'
+							);
+							const error = reply.success
+								? null
+								: reply.error || errorFrameMessage(reply) || 'Closed-tab command failed';
+							return error ? { closedTabs: [], error } : { closedTabs: reply.closedTabs ?? [] };
+						} catch (error) {
+							// One agent's failure is its own entry, never the whole listing's.
+							// A connect() failure still reaches the outer catch.
+							return {
+								closedTabs: [],
+								error:
+									error instanceof CommandTimeoutError
+										? 'Maestro did not answer in time'
+										: error instanceof Error
+											? error.message
+											: String(error),
+							};
+						}
+					})
+				);
+				batch.forEach((agent, index) =>
+					results.push({ sessionId: agent.id, agentName: agent.name, ...replies[index] })
+				);
+			}
+		});
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json });
+		return failCommand(error instanceof Error ? error.message : String(error), json);
+	}
+
+	const failed = results.filter((r) => r.error);
+	if (results.length > 0 && failed.length === results.length) {
+		return failCommand(`No agent answered: ${failed[0].error}`, json);
+	}
+	const withTabs = results.filter((r) => !r.error && r.closedTabs.length > 0);
+	const total = withTabs.reduce((sum, r) => sum + r.closedTabs.length, 0);
+
+	if (json) {
+		console.log(
+			JSON.stringify(
+				{
+					success: true,
+					total,
+					agents: withTabs.map(({ sessionId, agentName, closedTabs }) => ({
+						sessionId,
+						agentName,
+						closedTabs,
+					})),
+					errors: failed.map(({ sessionId, agentName, error }) => ({
+						sessionId,
+						agentName,
+						error,
+					})),
+				},
+				null,
+				2
+			)
+		);
+		return;
+	}
+	if (total === 0) console.log('No closed tabs for any agent');
+	for (const r of withTabs) {
+		console.log(`${r.agentName} (${r.sessionId}), newest first:`);
+		for (const entry of r.closedTabs) console.log(describeClosedTab(entry));
+	}
+	if (total > 0) {
+		console.log(`${total} closed tab${total === 1 ? '' : 's'} across ${withTabs.length} agent(s)`);
+	}
+	for (const r of failed)
+		console.log(`(could not read ${r.agentName} (${r.sessionId}): ${r.error})`);
 }
 
 /**

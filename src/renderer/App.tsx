@@ -33,6 +33,10 @@ import { captureException } from './utils/sentry';
 
 // Group Chat Components
 import { GroupChatPanel } from './components/GroupChatPanel';
+import {
+	canModeratorReadImages,
+	flashModeratorCannotReadImages,
+} from './components/ChatComposer/capabilities';
 import { GroupChatRightPanel } from './components/GroupChatRightPanel';
 
 // Import custom hooks
@@ -259,6 +263,7 @@ import { useSettingsStore } from './stores/settingsStore';
 import { filterLiveAgents } from '../shared/agentVisibility';
 import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
+import { usePeerMirrorBridge } from './hooks/federation/usePeerMirrorBridge';
 
 /** Coordinates the desktop workspace, shared listeners, and app-level surfaces. */
 function MaestroConsoleInner() {
@@ -842,6 +847,23 @@ function MaestroConsoleInner() {
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatError = useGroupChatStore((s) => s.groupChatError);
 	const groupChatInitiatorWindowId = useGroupChatStore((s) => s.initiatorWindowId);
+
+	// The room's Prompt Composer stages into the SAME image list as the room
+	// composer, so it has to obey the same moderator gate. `canModeratorReadImages`
+	// is the one rule; the state lets a later capability load take effect.
+	const activeGroupChatModeratorAgentId = groupChats.find(
+		(c) => c.id === activeGroupChatId
+	)?.moderatorAgentId;
+	const {
+		capabilities: roomModeratorCapabilities,
+		loading: roomModeratorCapabilitiesLoading,
+		error: roomModeratorCapabilitiesError,
+	} = useAgentCapabilities(activeGroupChatModeratorAgentId);
+	const roomCanAttachImages = canModeratorReadImages(activeGroupChatModeratorAgentId, {
+		loading: roomModeratorCapabilitiesLoading,
+		error: roomModeratorCapabilitiesError,
+		capabilities: roomModeratorCapabilities,
+	});
 
 	// Multi-window: which window initiated the active group chat. The panel renders
 	// only there (gated below via isGroupChatVisibleInWindow). Optional context, so
@@ -1972,6 +1994,10 @@ function MaestroConsoleInner() {
 		setPromptComposerOpen(true);
 	}, [flushGroupChatDraft, setPromptComposerOpen]);
 
+	const handlePromptImageAttachBlocked = useCallback(() => {
+		flashModeratorCannotReadImages();
+	}, []);
+
 	const handleGroupChatDrop = useCallback(
 		(e: React.DragEvent) => {
 			flushGroupChatDraft();
@@ -2193,6 +2219,9 @@ function MaestroConsoleInner() {
 	// Keeps the native File/View menus showing the user's real accelerators, and
 	// replays menu clicks as keystrokes through the handler above.
 	useAppMenuBridge();
+
+	// Federation: follow the main-process peer mirror (memory only; nothing while the feature is off).
+	usePeerMirrorBridge();
 
 	// Persist sessions to electron-store using debounced persistence (reduces disk writes from 100+/sec to <1/sec during streaming)
 	// The hook handles: debouncing, flush-on-unmount, flush-on-visibility-change, flush-on-beforeunload
@@ -3439,6 +3468,7 @@ function MaestroConsoleInner() {
 									inputRef={groupChatInputRef}
 									handlePaste={handlePaste}
 									handleDrop={handleGroupChatDrop}
+									onUploadFiles={handleUploadFiles}
 									onOpenLightbox={handleSetLightboxImage}
 									queueState={activeGroupChatId ? groupChatQueues[activeGroupChatId] : undefined}
 									onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
@@ -3723,10 +3753,15 @@ function MaestroConsoleInner() {
 						}
 						setPromptComposerStagedImages={
 							activeGroupChatId
-								? setGroupChatStagedImages
+								? roomCanAttachImages
+									? setGroupChatStagedImages
+									: undefined
 								: canAttachImages
 									? setStagedImages
 									: undefined
+						}
+						onPromptImageAttachBlocked={
+							activeGroupChatId && !roomCanAttachImages ? handlePromptImageAttachBlocked : undefined
 						}
 						onPromptOpenLightbox={handleSetLightboxImage}
 						promptTabSaveToHistory={activeGroupChatId ? false : promptTabSaveToHistory}

@@ -8,13 +8,18 @@
  * a reply carries the keys that client reads (`success`, `error`, the `*_result` type).
  *
  * It takes any `MaestroClient`, never the runtime: the transport adds the request id, the pushes,
- * and the host's own control messages. A message it does not know returns `undefined`, which the
+ * and the host's own control messages, and hands in the one runtime read a reply needs, the live
+ * tab state (`liveTabs`) every agent record goes out with. A message it does not know returns `undefined`, which the
  * transport answers with the bridge's `echo`, the signal a client reads as "unsupported".
  */
 
 import type { AgentRecord } from '../store/records';
 import { parseProcessId } from '../client/bridge-frames';
+import type { ThinkingMode, UsageStats } from '../../types';
 import type {
+	AgentCreateInput,
+	AgentImportQueuedMessage,
+	AgentImportTab,
 	AgentPatch,
 	ClientResult,
 	MaestroClient,
@@ -22,7 +27,17 @@ import type {
 	TabPatch,
 	TurnSendReceipt,
 } from '../client/types';
-import { groupChatToWire, type Frame } from './server-frames';
+import { normalizeOriginHost } from '../client/types';
+import {
+	groupChatToWire,
+	queuedTurnsToWire,
+	withLiveTabState,
+	type Frame,
+	type LiveTabsLookup,
+} from './server-frames';
+
+/** An agent record as a reply carries it: with its live tab state, when the host knows it. */
+type LiveAgent = (agent: AgentRecord) => AgentRecord;
 
 type Request = Record<string, unknown>;
 
@@ -156,12 +171,13 @@ function detectionEntry(provider: ProviderInfo): Record<string, unknown> {
 
 async function invokeChannel(
 	client: MaestroClient,
+	live: LiveAgent,
 	channel: string,
 	args: unknown[]
 ): Promise<unknown> {
 	switch (channel) {
 		case 'sessions:getBootstrap':
-			return orThrow(await client.agents.list());
+			return orThrow(await client.agents.list()).map(live);
 		case 'groups:getAll':
 			return orThrow(await client.groups.list());
 		case 'sessions:getDeferredContent': {
@@ -304,17 +320,88 @@ function sendFailure(
 		: refusal(type, errorText(result), { sessionId: agentId });
 }
 
+/**
+ * The agent fields of a `create_session` or `import_agent` message, in `create_session`'s
+ * spelling (the record's keys), as an agent input. The SSH settings are the caller's: an import
+ * refuses them.
+ */
+function agentInputFromMessage(message: Request): Omit<AgentCreateInput, 'ssh'> {
+	return {
+		name: str(message.name) ?? '',
+		provider: str(message.toolType) ?? '',
+		cwd: str(message.cwd) ?? '',
+		...(str(message.groupId) ? { groupId: str(message.groupId) } : {}),
+		...(str(message.customModel) ? { model: str(message.customModel) } : {}),
+		...(str(message.customEffort) ? { effort: str(message.customEffort) } : {}),
+		...(num(message.customContextWindow) !== undefined
+			? { contextWindow: num(message.customContextWindow) }
+			: {}),
+		...(str(message.customPath) ? { customPath: str(message.customPath) } : {}),
+		...(str(message.customArgs) ? { customArgs: str(message.customArgs) } : {}),
+		...(obj(message.customEnvVars)
+			? { env: obj(message.customEnvVars) as Record<string, string> }
+			: {}),
+		...(str(message.autoRunFolderPath)
+			? { autoRunFolderPath: str(message.autoRunFolderPath) }
+			: {}),
+		...(str(message.nudgeMessage) ? { nudgeMessage: str(message.nudgeMessage) } : {}),
+		...(str(message.newSessionMessage)
+			? { newSessionMessage: str(message.newSessionMessage) }
+			: {}),
+	};
+}
+
+/** An `import_agent` tab, as the record spells it, back to the client's tab input. */
+function importTabFromWire(entry: unknown): AgentImportTab | undefined {
+	const tab = obj(entry);
+	const id = str(tab?.id);
+	if (!tab || !id) return undefined;
+	return {
+		id,
+		// Passed as sent: the import rule is what refuses a tab without a transcript.
+		logs: tab.logs as AgentImportTab['logs'],
+		...(typeof tab.name === 'string' || tab.name === null
+			? { name: tab.name as string | null }
+			: {}),
+		...(bool(tab.starred) !== undefined ? { starred: bool(tab.starred) } : {}),
+		...(str(tab.agentSessionId) ? { agentSessionId: str(tab.agentSessionId) } : {}),
+		...(num(tab.createdAt) !== undefined ? { createdAt: num(tab.createdAt) } : {}),
+		...(bool(tab.saveToHistory) !== undefined ? { saveToHistory: bool(tab.saveToHistory) } : {}),
+		...(str(tab.showThinking) ? { showThinking: str(tab.showThinking) as ThinkingMode } : {}),
+		...(bool(tab.readOnlyMode) !== undefined ? { readOnlyMode: bool(tab.readOnlyMode) } : {}),
+		...(str(tab.customModel) ? { model: str(tab.customModel) } : {}),
+		...(str(tab.customEffort) ? { effort: str(tab.customEffort) } : {}),
+		...(obj(tab.usageStats) ? { usageStats: obj(tab.usageStats) as unknown as UsageStats } : {}),
+	};
+}
+
+/** An `import_agent` queued message back to the client's input. */
+function importQueueItemFromWire(entry: unknown): AgentImportQueuedMessage | undefined {
+	const item = obj(entry);
+	const tabId = str(item?.tabId);
+	if (!item || !tabId) return undefined;
+	const images = imagesOf(item);
+	return {
+		tabId,
+		text: typeof item.text === 'string' ? item.text : '',
+		...(images ? { images } : {}),
+	};
+}
+
 // ---------------------------------------------------------------------------
 // The handler
 // ---------------------------------------------------------------------------
 
 /** `get_sessions`' projection: what `reconcile` reads (`SessionData`, no config fields). */
-async function projectSessions(client: MaestroClient): Promise<Frame[]> {
+async function projectSessions(client: MaestroClient, live: LiveAgent): Promise<Frame[]> {
 	const agents = await client.agents.list();
 	if (!agents.ok) return [];
 	return Promise.all(
-		agents.value.map(async (agent: AgentRecord) => {
-			const tabs = await client.tabs.list(agent.id);
+		agents.value.map(async (stored: AgentRecord) => {
+			const listed = await client.tabs.list(stored.id);
+			// The tab list and the agent state both come from the live overlay, so they agree.
+			const agent = live({ ...stored, aiTabs: listed.ok ? listed.value : [] });
+			const tabs = agent.aiTabs ?? [];
 			return {
 				id: agent.id,
 				name: agent.name,
@@ -325,12 +412,15 @@ async function projectSessions(client: MaestroClient): Promise<Frame[]> {
 				groupId: agent.groupId ?? null,
 				...(agent.bookmarked !== undefined ? { bookmarked: agent.bookmarked } : {}),
 				...(typeof agent.activeTabId === 'string' ? { activeTabId: agent.activeTabId } : {}),
-				aiTabs: (tabs.ok ? tabs.value : []).map((tab) => ({
+				aiTabs: tabs.map((tab) => ({
 					id: tab.id,
 					agentSessionId: tab.agentSessionId ?? null,
 					name: tab.name ?? null,
 					...(tab.starred !== undefined ? { starred: tab.starred } : {}),
 					...(tab.state ? { state: tab.state } : {}),
+					...(tab.thinkingStartTime !== undefined
+						? { thinkingStartTime: tab.thinkingStartTime }
+						: {}),
 					...(tab.hasUnread !== undefined ? { hasUnread: tab.hasUnread } : {}),
 					...(tab.usageStats !== undefined ? { usageStats: tab.usageStats } : {}),
 					...(tab.createdAt !== undefined ? { createdAt: tab.createdAt } : {}),
@@ -340,11 +430,29 @@ async function projectSessions(client: MaestroClient): Promise<Frame[]> {
 	);
 }
 
+/** The sender's hostname a send carries, for the History entry the turn writes. */
+function originHostOf(message: Request): { originHost?: string } {
+	const originHost = normalizeOriginHost(message.originHost);
+	return originHost ? { originHost } : {};
+}
+
 export type RequestHandler = (message: Request) => Promise<Frame | undefined>;
 
+export interface RequestHandlerOptions {
+	/** The runtime's live tab state, laid over every agent record a reply carries. */
+	liveTabs?: LiveTabsLookup;
+}
+
 /** Answer the desktop bridge's typed messages with `client`. */
-export function createRequestHandler(client: MaestroClient): RequestHandler {
+export function createRequestHandler(
+	client: MaestroClient,
+	options: RequestHandlerOptions = {}
+): RequestHandler {
 	const sessionId = (message: Request): string => str(message.sessionId) ?? '';
+	const { liveTabs } = options;
+	const live: LiveAgent = liveTabs
+		? (agent) => withLiveTabState(agent, liveTabs(agent.id))
+		: (agent) => agent;
 
 	return async (message) => {
 		switch (message.type) {
@@ -352,7 +460,7 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 				return { type: 'pong' };
 
 			case 'get_sessions':
-				return { type: 'sessions_list', sessions: await projectSessions(client) };
+				return { type: 'sessions_list', sessions: await projectSessions(client, live) };
 
 			case 'bridge.invoke': {
 				const channel = str(message.channel) ?? '';
@@ -361,7 +469,7 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 					return {
 						type: 'bridge.response',
 						ok: true,
-						result: await invokeChannel(client, channel, args),
+						result: await invokeChannel(client, live, channel, args),
 					};
 				} catch (error) {
 					return {
@@ -375,32 +483,43 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 			// -- agents -----------------------------------------------------
 			case 'create_session': {
 				const result = await client.agents.create({
-					name: str(message.name) ?? '',
-					provider: str(message.toolType) ?? '',
-					cwd: str(message.cwd) ?? '',
-					...(str(message.groupId) ? { groupId: str(message.groupId) } : {}),
-					...(str(message.customModel) ? { model: str(message.customModel) } : {}),
-					...(str(message.customEffort) ? { effort: str(message.customEffort) } : {}),
-					...(num(message.customContextWindow) !== undefined
-						? { contextWindow: num(message.customContextWindow) }
-						: {}),
-					...(str(message.customPath) ? { customPath: str(message.customPath) } : {}),
-					...(str(message.customArgs) ? { customArgs: str(message.customArgs) } : {}),
-					...(obj(message.customEnvVars)
-						? { env: obj(message.customEnvVars) as Record<string, string> }
-						: {}),
+					...agentInputFromMessage(message),
 					...(obj(message.sessionSshRemoteConfig)
 						? { ssh: obj(message.sessionSshRemoteConfig) as never }
 						: {}),
-					...(str(message.autoRunFolderPath)
-						? { autoRunFolderPath: str(message.autoRunFolderPath) }
-						: {}),
-					...(str(message.nudgeMessage) ? { nudgeMessage: str(message.nudgeMessage) } : {}),
-					...(str(message.newSessionMessage)
-						? { newSessionMessage: str(message.newSessionMessage) }
-						: {}),
 				});
 				return outcome('create_session_result', result, (value) => ({ sessionId: value.agentId }));
+			}
+			case 'import_agent': {
+				const type = 'import_agent_result';
+				// `sessionSshRemoteConfig` is passed through so the rule that refuses it can say why.
+				const agent = obj(message.agent) ?? {};
+				const tabs = Array.isArray(message.tabs) ? message.tabs.map(importTabFromWire) : [];
+				if (tabs.some((tab) => tab === undefined)) {
+					return refusal(type, 'Every imported tab needs an id.');
+				}
+				const queue = Array.isArray(message.queue)
+					? message.queue.map(importQueueItemFromWire)
+					: [];
+				if (queue.some((item) => item === undefined)) {
+					return refusal(type, 'Every queued message needs the tab it is for.');
+				}
+				const result = await client.agents.import({
+					agent: {
+						...agentInputFromMessage(agent),
+						...(obj(agent.sessionSshRemoteConfig)
+							? { ssh: obj(agent.sessionSshRemoteConfig) as never }
+							: {}),
+					},
+					tabs: tabs as AgentImportTab[],
+					...(str(message.activeTabId) ? { activeTabId: str(message.activeTabId) } : {}),
+					...(queue.length > 0 ? { queue: queue as AgentImportQueuedMessage[] } : {}),
+				});
+				return outcome(type, result, (value) => ({
+					sessionId: value.agentId,
+					queued: value.queued,
+					...(value.notices ? { notices: value.notices } : {}),
+				}));
 			}
 			case 'rename_session':
 				return outcome(
@@ -541,6 +660,7 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 				const result = await client.turns.send(agentId, target.tabId, {
 					text: typeof message.command === 'string' ? message.command : '',
 					...(images ? { images } : {}),
+					...originHostOf(message),
 				});
 				if (!result.ok) return sendFailure(type, agentId, target.tabId, result);
 				return {
@@ -564,6 +684,7 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 				const result = await client.turns.send(agentId, target.tabId, {
 					text: typeof message.command === 'string' ? message.command : '',
 					...(images ? { images } : {}),
+					...originHostOf(message),
 				});
 				if (!result.ok) return sendFailure(type, agentId, target.tabId, result);
 				return {
@@ -593,7 +714,10 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 					);
 				}
 				const { tabId } = created.value;
-				const result = await client.turns.send(agentId, tabId, { text: prompt });
+				const result = await client.turns.send(agentId, tabId, {
+					text: prompt,
+					...originHostOf(message),
+				});
 				// The tab exists by now, so a prompt that could not start is reported with it.
 				if (!result.ok) return refusal(type, errorText(result), { sessionId: agentId, tabId });
 				return {
@@ -604,23 +728,23 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 					...(result.value.status === 'queued' ? { queued: true } : {}),
 				};
 			}
+			// A headless host's own read: the desktop's bridge has no message for it.
+			case 'get_history': {
+				const limit =
+					typeof message.limit === 'number' && Number.isFinite(message.limit) && message.limit >= 0
+						? Math.floor(message.limit)
+						: undefined;
+				return outcome(
+					'get_history_result',
+					await client.history.list(sessionId(message), limit !== undefined ? { limit } : {}),
+					(entries) => ({ entries })
+				);
+			}
 			case 'list_queue': {
 				const agentId = sessionId(message);
 				const result = await client.turns.queue.list(agentId);
 				return outcome('list_queue_result', result, (items) => ({
-					queues: [
-						{
-							sessionId: agentId,
-							items: items.map((item) => ({
-								id: item.itemId,
-								timestamp: item.queuedAt,
-								tabId: item.tabId,
-								type: item.kind,
-								text: item.text,
-								paused: item.paused,
-							})),
-						},
-					],
+					queues: [{ sessionId: agentId, items: queuedTurnsToWire(items) }],
 				}));
 			}
 			case 'remove_queue_item':
@@ -629,6 +753,21 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 					await client.turns.queue.remove(sessionId(message), str(message.itemId) ?? ''),
 					(value) => ({ removed: value.removed })
 				);
+			case 'set_queue_item_paused': {
+				const type = 'set_queue_item_paused_result';
+				if (typeof message.paused !== 'boolean') {
+					return refusal(type, 'Missing sessionId, itemId, or paused', { found: false });
+				}
+				return outcome(
+					type,
+					await client.turns.queue.setPaused(
+						sessionId(message),
+						str(message.itemId) ?? '',
+						message.paused
+					),
+					(value) => ({ found: value.found, paused: value.paused })
+				);
+			}
 
 			// -- Auto Run ---------------------------------------------------
 			case 'configure_auto_run': {
