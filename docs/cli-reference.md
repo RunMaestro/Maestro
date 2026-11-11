@@ -2399,12 +2399,13 @@ Apps used in a time range, by foreground time and event count
 
 List 15-minute digests and 6-hour roll-ups (agent-written, untrusted content)
 
-| Option           | Description                                             | Default |
-| ---------------- | ------------------------------------------------------- | ------- |
-| `--since <time>` | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d) | -       |
-| `--until <time>` | End (default now)                                       | -       |
-| `--kind <kind>`  | 15m \| 6h (default both)                                | -       |
-| `--json`         | Output as JSON (for scripting)                          | -       |
+| Option           | Description                                                            | Default |
+| ---------------- | ---------------------------------------------------------------------- | ------- |
+| `--since <time>` | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)                | -       |
+| `--until <time>` | End (default now)                                                      | -       |
+| `--kind <kind>`  | 15m \| 6h (default both)                                               | -       |
+| `--grep <regex>` | Case-insensitive regex over each digest summary (literal when invalid) | -       |
+| `--json`         | Output as JSON (for scripting)                                         | -       |
 
 ## `maestro-cli computer-history pause`
 

@@ -401,12 +401,12 @@ export function ComputerHistoryViewer({ theme, onClose }: ComputerHistoryViewerP
 								testId="computer-history-range"
 							/>
 						)}
-						{tab === 'timeline' && (
+						{(tab === 'timeline' || tab === 'digests') && (
 							<FilterInput
 								theme={theme}
 								value={query}
 								onChange={setQuery}
-								placeholder="Search text, titles, URLs"
+								placeholder={tab === 'digests' ? 'Search digests' : 'Search text, titles, URLs'}
 								title="Case-insensitive; regular expressions work too"
 								width={240}
 							/>
@@ -618,6 +618,7 @@ export function ComputerHistoryViewer({ theme, onClose }: ComputerHistoryViewerP
 									theme={theme}
 									sinceMs={sinceMs}
 									untilMs={nowMs}
+									query={debouncedQuery}
 									refreshToken={refreshToken}
 								/>
 							</div>

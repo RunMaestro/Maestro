@@ -83,9 +83,13 @@ export function createComputerHistoryApi() {
 			ipcRenderer.invoke('computerHistory:activity', range),
 		/** Apps recorded in the last 30 days plus apps seen this session. */
 		knownApps: (): Promise<AppActivity[]> => ipcRenderer.invoke('computerHistory:knownApps'),
-		/** Newest digests (agent-written, untrusted) with their markdown bodies. */
+		/**
+		 * Newest digests (agent-written, untrusted) with their markdown bodies.
+		 * `grep` narrows to digests whose summary matches (case-insensitive regex,
+		 * literal when invalid) across the whole range.
+		 */
 		digests: (
-			request: ComputerHistoryRangeRequest & { kind?: DigestKind; limit?: number }
+			request: ComputerHistoryRangeRequest & { kind?: DigestKind; limit?: number; grep?: string }
 		): Promise<DigestWithBody[]> => ipcRenderer.invoke('computerHistory:digests', request),
 		/** Fires on every recorder state change (start, stop, pause, helper status). */
 		onStatusChanged: (handler: (status: ComputerHistoryStatus) => void): (() => void) => {

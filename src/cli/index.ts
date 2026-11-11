@@ -2898,6 +2898,10 @@ computerHistory
 	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)')
 	.option('--until <time>', 'End (default now)')
 	.option('--kind <kind>', '15m | 6h (default both)')
+	.option(
+		'--grep <regex>',
+		'Case-insensitive regex over each digest summary (literal when invalid)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => computerHistoryDigests(options));
 
