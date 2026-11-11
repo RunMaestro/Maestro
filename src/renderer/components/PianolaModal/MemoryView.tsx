@@ -15,6 +15,7 @@ import { usePagination } from '../../hooks/ui/usePagination';
 import { FilterInput } from '../ui/FilterInput';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { MemorySetup } from './MemorySetup';
+import { hostShellAvailable } from '../../services/hostShell';
 
 /** Coordinate configuration, learning progress, recall, and bank mutation workflows. */
 export function MemoryView({ theme }: { theme: Theme }) {
@@ -456,7 +457,7 @@ export function MemoryView({ theme }: { theme: Theme }) {
 												<p className="text-xs font-mono break-all">
 													{e.sourceId} / {e.messageId}
 												</p>
-												{source && (
+												{source && hostShellAvailable() && (
 													<button
 														className={button}
 														style={style}

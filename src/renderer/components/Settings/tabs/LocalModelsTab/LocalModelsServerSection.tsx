@@ -39,6 +39,7 @@ import { ProgressBar } from '../../../ui/ProgressBar';
 import { SettingsSectionHeading } from '../../SettingsSectionHeading';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
 import { CardRowTitle, CardWarning } from './CardParts';
+import { openFileForUser } from '../../../../services/hostShell';
 
 const STATE_LABELS: Readonly<Record<ModelServerState, string>> = Object.freeze({
 	stopped: 'Stopped',
@@ -199,7 +200,7 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 					)}
 					<CardButton
 						theme={theme}
-						onClick={() => void window.maestro.shell.openPath(status.logPath)}
+						onClick={() => void openFileForUser(status.logPath)}
 						testId="model-server-open-log"
 					>
 						<FileText className="w-3 h-3" />

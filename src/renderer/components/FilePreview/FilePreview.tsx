@@ -65,6 +65,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
 import { isWebUrl } from '../../../shared/urlRoutingHint';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { openFileForUser, openFileForUserLabel } from '../../services/hostShell';
 import { openFileUrl } from '../../utils/openFileUrl';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
@@ -2531,21 +2532,15 @@ export const FilePreview = React.memo(
 								<p className="text-sm mt-1" style={{ color: theme.colors.textDim }}>
 									This file cannot be displayed as text.
 								</p>
-								{/* "Open in default app" hands the file to the HOST machine's OS
-								    opener via the shell bridge. In the web-desktop build the host
-								    is not the browser user's device, so the button is disabled with
-								    an explaining tooltip instead of silently acting on the wrong
-								    machine. */}
+								{/* "Open in default app": on the desktop the host's OS opens it
+								    (an SSH file is copied down first); in a browser it is
+								    downloaded to this device. See services/hostShell.ts. */}
 								<button
-									disabled={isWebDesktop()}
-									title={isWebDesktop() ? 'Available in the desktop app' : undefined}
 									onClick={async () => {
-										if (isWebDesktop()) return;
-										// Local files open in place. Remote files don't exist on this
-										// machine, so download a binary-safe copy to a temp dir over SSH
-										// first, then hand the local path to the OS opener.
-										if (!sshRemoteId) {
-											void window.maestro.shell.openPath(file.path);
+										// Local files, and every file from a browser, go through the
+										// one host-shell rule.
+										if (!sshRemoteId || isWebDesktop()) {
+											void openFileForUser(file.path, { sshRemoteId });
 											return;
 										}
 										try {
@@ -2572,7 +2567,7 @@ export const FilePreview = React.memo(
 										color: theme.colors.accentForeground,
 									}}
 								>
-									{sshRemoteId ? 'Download & Open' : 'Open in Default App'}
+									{sshRemoteId && !isWebDesktop() ? 'Download & Open' : openFileForUserLabel()}
 								</button>
 							</div>
 						</div>

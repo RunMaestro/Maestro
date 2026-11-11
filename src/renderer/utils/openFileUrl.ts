@@ -24,6 +24,7 @@
 import { getBasename } from '../../shared/formatters';
 import { safeDecodeURIComponent } from '../../shared/stringUtils';
 import { shouldOpenExternally } from './fileExplorer';
+import { openFileForUser } from '../services/hostShell';
 
 /**
  * The filesystem path behind a `file://` href, or null when the href is not
@@ -61,6 +62,6 @@ export function openFileUrl(href: string, onFileClick?: (path: string) => void):
 		return true;
 	}
 
-	void window.maestro.shell.openPath(path);
+	void openFileForUser(path);
 	return true;
 }

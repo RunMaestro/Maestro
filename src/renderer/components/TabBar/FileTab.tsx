@@ -25,6 +25,12 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { ShortcutHint, shortcutSuffix } from '../ui/ShortcutHint';
 import { useTabStore } from '../../stores/tabStore';
 import { isGistPublishableFile } from '../FilePreview/filePreviewUtils';
+import {
+	canRevealOnHost,
+	hostShellAvailable,
+	openFileForUser,
+	openFileForUserLabel,
+} from '../../services/hostShell';
 
 /**
  * Props for the FileTab component.
@@ -203,7 +209,7 @@ export const FileTab = memo(function FileTab({
 	const handleOpenInDefaultApp = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
-			window.maestro?.shell?.openPath(tab.path);
+			void openFileForUser(tab.path);
 			setOverlayOpen(false);
 		},
 		[tab.path, setOverlayOpen]
@@ -552,20 +558,20 @@ export const FileTab = memo(function FileTab({
 							{showCopied === 'name' ? 'Copied!' : 'Copy File Name'}
 						</button>
 
-						{/* Open in Default App */}
-						{hasDiskPath && (
+						{/* Open in Default App (a browser downloads it; an SSH agent's file has no id here to download by) */}
+						{hasDiskPath && (hostShellAvailable() || !sshRemote) && (
 							<button
 								onClick={handleOpenInDefaultApp}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
 								<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-								Open in Default App
+								{openFileForUserLabel()}
 							</button>
 						)}
 
-						{/* Reveal in Finder / Explorer - local-only, hidden over SSH */}
-						{hasDiskPath && !sshRemote && (
+						{/* Reveal in Finder / Explorer - the host's: desktop and local only */}
+						{hasDiskPath && canRevealOnHost(sshRemote) && (
 							<button
 								onClick={handleRevealInFinder}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"

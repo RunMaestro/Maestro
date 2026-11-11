@@ -10,6 +10,12 @@ vi.mock('../../../../../renderer/utils/platformUtils', () => ({
 	getOpenInLabel: () => 'Open in Finder',
 }));
 
+const runtime = vi.hoisted(() => ({ web: false }));
+vi.mock('../../../../../renderer/utils/runtimeContext', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../../renderer/utils/runtimeContext')>()),
+	isWebDesktop: () => runtime.web,
+}));
+
 vi.mock('../../../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: (keys: string[]) => keys.join('+'),
 }));
@@ -385,6 +391,18 @@ describe('FileTreeContextMenu', () => {
 		);
 		expect(screen.queryByText('Reveal in Finder')).toBeNull();
 		expect(screen.queryByText('Open in Default App')).toBeNull();
+	});
+
+	it("offers a browser Download to This Client, never the host's opener or file manager", () => {
+		runtime.web = true;
+		try {
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+			expect(screen.getByText('Download to This Client')).toBeTruthy();
+			expect(screen.queryByText('Open in Default App')).toBeNull();
+			expect(screen.queryByText('Reveal in Finder')).toBeNull();
+		} finally {
+			runtime.web = false;
+		}
 	});
 
 	it('shows Download File only for remote files and calls onDownloadFile', () => {

@@ -298,7 +298,27 @@ describe('QuickActions command builders', () => {
 				onGoToPreviousUnread: vi.fn(),
 				shortcuts: {},
 			}).map((a) => a.id)
-		).toEqual(expect.arrayContaining(['nextUnreadTab', 'previousUnreadTab']));
+		).toEqual(
+			expect.arrayContaining(['nextUnreadTab', 'previousUnreadTab', 'openWorkingDirectory'])
+		);
+
+		// No host file manager to open (the web interface passes no openPath): no command.
+		expect(
+			buildNavigationCommands({
+				activeSession: session,
+				activeSessionId: 's1',
+				setQuickActionOpen: close,
+				setLeftSidebarOpen: vi.fn(),
+				setRightPanelOpen: vi.fn(),
+				addNewSession: vi.fn(),
+				deleteSession: vi.fn(),
+				getOpenInLabel: () => 'Open',
+				platform: 'darwin',
+				onGoToNextUnread: vi.fn(),
+				onGoToPreviousUnread: vi.fn(),
+				shortcuts: {},
+			}).map((a) => a.id)
+		).not.toContain('openWorkingDirectory');
 
 		expect(
 			buildNewTabCommands({

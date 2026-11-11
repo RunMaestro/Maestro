@@ -940,3 +940,25 @@ describe('request timeouts for Local Models', () => {
 		expect(requestTimeoutMs('localModels:list')).toBe(requestTimeoutMs('settings:getAll'));
 	});
 });
+
+describe('links from the browser', () => {
+	it('opens shell:openExternal in this browser and never asks the host', async () => {
+		const open = vi.spyOn(window, 'open').mockReturnValue(null);
+		const socket = InertWebSocket.instances.at(-1)!;
+		const before = socket.sent.length;
+		try {
+			await ipcRenderer.invoke('shell:openExternal', 'mailto:someone@example.com');
+			expect(open).toHaveBeenCalledWith(
+				'mailto:someone@example.com',
+				'_blank',
+				'noopener,noreferrer'
+			);
+			expect(socket.sent.slice(before).map((data) => JSON.parse(data).channel)).not.toContain(
+				'shell:openExternal'
+			);
+			expect(document.getElementById('maestro-submission-notice')).toBeNull();
+		} finally {
+			open.mockRestore();
+		}
+	});
+});

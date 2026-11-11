@@ -22,6 +22,9 @@ const METHODS: Record<string, string> = {
 		'deleteMessagePair getAllNamedSessions getCommands getGlobalStats getProjectStats getSessionOrigins getSessionTimestamps getSkills listSessions listSessionsPaginated readSessionMessages registerSessionOrigin searchSessions updateSessionContextUsage updateSessionName updateSessionStarred usage:refresh-all',
 	cli: 'getActivity',
 	codex: 'usage:refresh-all',
+	// Builds the sandboxed Concerto document for a Codex `visualize` reference;
+	// the browser loads it from the web server's Concerto route.
+	codexVisualization: 'load',
 	'concerto-html': 'release restore',
 	context:
 		'cancelGrooming cleanupGroomingSession createGroomingSession getStoredSession groomContext sendGroomingPrompt',
@@ -86,11 +89,11 @@ const METHODS: Record<string, string> = {
 	'ssh-remote':
 		'deleteConfig getConfigs getDefaultId getSshConfigHosts saveConfig setDefaultId test',
 	stats:
-		'clear-initialization-result clear-old-data end-autorun export get-aggregation get-autorun-sessions get-autorun-tasks get-database-size get-delegation-by-day get-delegation-totals get-earliest-timestamp get-initialization-result get-model-usage get-resilience get-session-lifecycle get-shortcut-usage-by-day get-shortcut-usage-total get-stats get-token-usage get-wizard-runs record-image-annotation record-query record-resilience record-session-closed record-session-created record-shortcut-usage record-task record-wizard-run start-autorun',
+		'clear-initialization-result clear-old-data end-autorun export get-aggregation get-autorun-sessions get-autorun-tasks get-database-size get-delegation-by-day get-delegation-totals get-earliest-timestamp get-initialization-result get-indexing-state get-model-usage get-resilience get-session-lifecycle get-shortcut-usage-by-day get-shortcut-usage-total get-stats get-token-usage get-wizard-runs record-image-annotation record-query record-resilience record-session-closed record-session-created record-shortcut-usage record-task record-wizard-run start-autorun',
 	symphony:
 		'cancel checkPRStatuses clearCache cloneRepo complete createDraftPR fetchDocumentContent getActive getCompleted getIssueCounts getIssues getRegistry getState getStats manualCredit registerActive start startContribution syncContribution updateStatus',
 	tabNaming: 'generateTabName',
-	tabs: 'aiTabClosed',
+	tabs: 'aiTabClosed aiTabRetryState',
 	tempfile: 'delete read write',
 	web: 'getAutoRunStates broadcastSessionState broadcastTabsChange broadcastUserInput requestNewTab requestCloseTab requestReopenTab startAutoRun controlAutoRun',
 	windows: 'getForSession getState list',
@@ -129,7 +132,7 @@ const EVENTS: Record<string, string> = {
 		'movement cadenza cadenzaFlash cadenzaHidden notifyToast notifyCenterFlash autoRunStateMirror',
 	sessions: 'lifecycleSync transcriptSync transcriptCommitted',
 	settings: 'externalChange',
-	stats: 'updated',
+	stats: 'indexingUpdate updated',
 	symphony: 'contributionStarted prCreated updated',
 	worktree: 'discovered removed',
 };

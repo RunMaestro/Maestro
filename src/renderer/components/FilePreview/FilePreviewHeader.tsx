@@ -27,6 +27,7 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { getRevealLabel } from '../../utils/platformUtils';
+import { canRevealOnHost, openFileForUser, openFileForUserLabel } from '../../services/hostShell';
 import { formatFileSize, formatDateTime, countLines } from './filePreviewUtils';
 import { formatNumber } from '../../../shared/formatters';
 import type { PreviewTier } from './filePreviewUtils';
@@ -357,23 +358,23 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 			onClick: onOpenInGraph,
 		});
 	}
-	// "Open in Default App" hands the file to the HOST machine's OS opener via
-	// the shell bridge. In the web-desktop build the host is not the browser
-	// user's device, so hide it there (as we already do over SSH, where file://
-	// can't reach the remote host).
-	if (toolbarVisibility.openInDefault && hasDiskPath && !sshRemoteId && !isWebDesktop()) {
+	// "Open in Default App" hands the file to the host's OS opener on the
+	// desktop, and downloads it to this device from a browser (whose user is not
+	// at the host). See services/hostShell.ts. Over SSH on the desktop it stays
+	// hidden: file:// cannot reach the remote host.
+	if (toolbarVisibility.openInDefault && hasDiskPath && (isWebDesktop() || !sshRemoteId)) {
 		actions.push({
 			kind: 'button',
 			key: 'openInDefault',
 			icon: ExternalLink,
-			label: 'Open in Default App',
+			label: openFileForUserLabel(),
 			onClick: () => {
-				window.maestro?.shell?.openPath(file.path);
+				void openFileForUser(file.path, { sshRemoteId });
 			},
 		});
 	}
-	// Reveal in Finder / Explorer / File Manager - local files only.
-	if (toolbarVisibility.revealInFolder && hasDiskPath && !sshRemoteId) {
+	// Reveal in Finder / Explorer / File Manager - the host's, so desktop and local only.
+	if (toolbarVisibility.revealInFolder && hasDiskPath && canRevealOnHost(sshRemoteId)) {
 		actions.push({
 			kind: 'button',
 			key: 'revealInFolder',

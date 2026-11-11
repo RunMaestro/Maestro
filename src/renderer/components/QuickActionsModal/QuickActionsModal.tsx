@@ -105,6 +105,7 @@ import { buildTabGroupCommands } from './commands/tabGroupCommands';
 import { buildTileCommands } from './commands/tileCommands';
 import { buildWindowCommands } from './commands/windowCommands';
 import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
+import { hostShellAvailable } from '../../services/hostShell';
 import {
 	buildGroupWindowMoveTargets,
 	buildWindowMoveTargets,
@@ -702,7 +703,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			openWizard,
 			getOpenInLabel,
 			platform: window.maestro?.platform || 'darwin',
-			openPath: window.maestro?.shell?.openPath,
+			// The host's file manager: no command for it on the web interface.
+			openPath: hostShellAvailable() ? window.maestro?.shell?.openPath : undefined,
 			onGoToNextUnread,
 			onGoToPreviousUnread,
 			onNavBack,

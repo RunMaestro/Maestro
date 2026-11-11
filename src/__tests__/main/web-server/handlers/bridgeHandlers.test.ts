@@ -518,6 +518,21 @@ describe('broadcastBridgeEvent', () => {
 		uninstallWebContentsBridgeHook();
 	});
 
+	it.each(['stats:indexingUpdate'])(
+		'fans out %s, so a browser shows a long scan in progress',
+		(channel) => {
+			const broadcastToAll = vi.fn();
+			installWebContentsBridgeHook({
+				broadcastToAll,
+			} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+			broadcastBridgeEvent(channel, [{ active: [] }]);
+			expect(broadcastToAll).toHaveBeenCalledWith(expect.objectContaining({ channel }));
+
+			uninstallWebContentsBridgeHook();
+		}
+	);
+
 	it('never fans out a dictation interruption, which belongs to the one window recording', () => {
 		const broadcastToAll = vi.fn();
 		installWebContentsBridgeHook({
@@ -973,6 +988,43 @@ describe('local model task readiness over the bridge', () => {
 		expect(handler).not.toHaveBeenCalled();
 		expect(send.mock.calls[0][1]).toMatchObject({ ok: false });
 	});
+});
+
+describe('browser surfaces that were refused before', () => {
+	// Each of these is reached by the shared renderer in a browser; a refusal
+	// broke the surface and, for a non-read, raised a "Submission rejected" banner.
+	it.each([
+		['codexVisualization:load', [{ sessionId: 's', path: '/tmp/v.html' }]],
+		['stats:get-indexing-state', []],
+		['tabs:aiTabRetryState', ['agent-1', 'tab-1', true]],
+	])('serves %s', async (channel, args) => {
+		const handler = vi.fn(async () => 'host answer');
+		invokeHandlers.set(channel, handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 'served', channel, args },
+			send
+		);
+		expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'bridge' }), ...args);
+		expect(send.mock.calls[0][1]).toMatchObject({ ok: true });
+	});
+
+	it.each(['shell:openExternal', 'shell:openPath', 'shell:showItemInFolder'])(
+		"keeps %s on the host: it acts on the host's desktop, not the browser's",
+		async (channel) => {
+			const handler = vi.fn();
+			invokeHandlers.set(channel, handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient(),
+				{ type: 'bridge.invoke', requestId: 'host', channel, args: ['/x'] },
+				send
+			);
+			expect(handler).not.toHaveBeenCalled();
+			expect(send.mock.calls[0][1]).toMatchObject({ ok: false });
+		}
+	);
 });
 
 describe('notification history over the bridge', () => {

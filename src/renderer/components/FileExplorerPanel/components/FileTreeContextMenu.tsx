@@ -27,6 +27,7 @@ import { isMediaFile } from '../../../../shared/mediaTypes';
 import { isTalkableDocumentPath } from '../../../../shared/fileKinds';
 import { collectPreviewableFiles } from '../utils/pathHelpers';
 import { isWebDesktop } from '../../../utils/runtimeContext';
+import { canRevealOnHost } from '../../../services/hostShell';
 import type { Theme } from '../../../types';
 import type { ContextMenuState } from '../types';
 import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
@@ -233,7 +234,8 @@ export function FileTreeContextMenu({
 								<span>Add {queueableCount} to Play Queue</span>
 							</button>
 						)}
-						{!sshRemoteId && (
+						{/* The host's opener: a browser gets Download to This Client instead */}
+						{canRevealOnHost(sshRemoteId) && (
 							<button
 								onClick={onOpenInDefaultAppMulti}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
@@ -434,8 +436,9 @@ export function FileTreeContextMenu({
 							</button>
 						)}
 
-						{/* Open in Default App option - for files only, not available over SSH */}
-						{isFile && !sshRemoteId && (
+						{/* Open in Default App - files only, the host's opener: desktop and local
+						    only (a browser has Download to This Client below) */}
+						{isFile && canRevealOnHost(sshRemoteId) && (
 							<button
 								onClick={onOpenInDefaultApp}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
@@ -483,8 +486,8 @@ export function FileTreeContextMenu({
 							<span>Copy File Name</span>
 						</button>
 
-						{/* Reveal in Finder / Explorer - local-only, hidden over SSH */}
-						{!sshRemoteId && (
+						{/* Reveal in Finder / Explorer - the host's: desktop and local only */}
+						{canRevealOnHost(sshRemoteId) && (
 							<button
 								onClick={onOpenInExplorer}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"

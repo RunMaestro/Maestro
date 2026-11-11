@@ -60,6 +60,7 @@ import { useFileContextMenu } from './hooks/useFileContextMenu';
 
 // Utils
 import { formatBytes } from './utils/pathHelpers';
+import { canRevealOnHost } from '../../services/hostShell';
 
 function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const {
@@ -599,8 +600,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						{!compact && <Search className="w-3 h-3" />}
 						{!iconOnly && 'Find'}
 					</button>
-					{/* Open in file manager - local sessions only */}
-					{!sshRemoteId && (
+					{/* Open in file manager - the host's: desktop and local agents only */}
+					{canRevealOnHost(sshRemoteId) && (
 						<button
 							onClick={() =>
 								window.maestro?.shell?.openPath(session.fullPath || session.projectRoot)

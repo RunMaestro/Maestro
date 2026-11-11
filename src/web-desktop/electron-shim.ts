@@ -107,6 +107,7 @@ const READ_ONLY_CHANNELS = new Set([
 	'ssh-remote:test',
 	'cue:validateYaml',
 	'cue:loadPipelineLayout',
+	'codexVisualization:load',
 	'dataview:status',
 ]);
 
@@ -1028,6 +1029,11 @@ export const ipcRenderer = {
 				recordLocalDiagnostic(args);
 			});
 		}
+		// A link opens in THIS browser. The host's `shell:openExternal` would open
+		// it on a computer the person is not at, so the bridge refuses it, and
+		// every system-browser link, mailto: link and Ctrl-click failed with a
+		// "Submission rejected" banner instead of opening.
+		if (channel === 'shell:openExternal') return shell.openExternal(String(args[0] ?? ''));
 		if (channel === 'dialog:selectFolder')
 			return selectHostFolder((name, ...values) => bridge.invoke(name, ...values));
 		if (channel === 'dialog:saveFile')
