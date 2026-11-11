@@ -623,7 +623,7 @@ async function waitForHost(
 /**
  * Make `remote` able to run a Federation host: install this machine's CLI when the remote has
  * none, upgrade it when the remote's is older, and (with `start`) start the host. The one path
- * behind `maestro-cli remote-host install` and the desktop's Make Federated, so both do exactly
+ * behind `maestro-cli remote-host install` and the desktop's Move to Host setup, so both do exactly
  * the same thing.
  *
  * A running host on an older version is only replaced with `restart`; without it the call refuses

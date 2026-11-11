@@ -260,7 +260,7 @@ When a session is running via SSH remote, you can easily identify it:
 
 - **REMOTE pill** - Appears in the Left Bar next to the session, indicating it's configured for remote execution
 - **Host name badge** - Displayed in the Main Panel header showing which SSH host the agent is running on (e.g., "PEDTOME")
-- **SSH badge** - An `SSH` badge under the agent's name. Hover it for how an SSH agent differs from a federated one, and what to do to federate it
+- **SSH badge** - An `SSH` badge under the agent's name. Hover it for how an SSH agent differs from a hosted one, and how to move it to its host
 - Connection state reflects SSH connectivity
 - Errors are detected and displayed with SSH-specific context
 

@@ -92,13 +92,12 @@ import {
 import { buildStarredSessionCommands } from './commands/starredSessionCommands';
 import { buildFederationCommands } from './commands/federationCommands';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
-import { canMakeFederated, isPeerFederated } from '../../utils/peerMirrorView';
+import { canMoveToHost, isPeerFederated } from '../../utils/peerMirrorView';
 import { copyPeerAgentRef, reconnectPeer } from '../../services/peerMirror';
 import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
 import {
 	useAgentFederationStatus,
 	useLiftedMirrorTarget,
-	useMoveToHostPeer,
 } from '../../hooks/federation/useAgentLift';
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
@@ -590,7 +589,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const mirrorOrder = usePeerMirrorStore((s) => s.order);
 	const mirrorPeers = usePeerMirrorStore((s) => s.peers);
 	const activeMirror = usePeerMirrorStore((s) => s.activeMirror);
-	const moveToHostPeer = useMoveToHostPeer(activeSession);
 	const federationStatus = useAgentFederationStatus(activeSession);
 	const liftedTarget = useLiftedMirrorTarget(activeSession?.liftedTo);
 	const federationActions = buildFederationCommands({
@@ -604,22 +602,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		copyPeerAgentRef,
 		// The active LOCAL agent's entries; hidden while the Main Window shows a mirrored one.
 		moveToHost:
-			activeSession && moveToHostPeer && !activeMirror
+			activeSession && !activeMirror && canMoveToHost(federationStatus)
 				? {
 						sessionId: activeSession.id,
 						agentName: activeSession.name,
-						peerName: moveToHostPeer.name,
-					}
-				: undefined,
-		makeFederated:
-			activeSession &&
-			!activeMirror &&
-			federationStatus.kind === 'ssh' &&
-			canMakeFederated(federationStatus)
-				? {
-						sessionId: activeSession.id,
-						agentName: activeSession.name,
-						remoteName: federationStatus.peer?.name ?? 'SSH remote',
+						peerName: federationStatus.peer.name,
+						hostReady: federationStatus.hostReady,
 					}
 				: undefined,
 		requestMoveToHost,

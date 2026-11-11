@@ -1,5 +1,5 @@
 /**
- * The desktop's Make Federated and Start Host: put this app's `maestro-cli` on an SSH remote (or
+ * The desktop's Move to Host setup and Start Host: put this app's `maestro-cli` on an SSH remote (or
  * upgrade an older one), start the host there, and have the peer mirror pick it up at once.
  *
  * The work is `setupRemoteHost()`, the same function `maestro-cli remote-host install --start`
@@ -71,7 +71,7 @@ export async function setupHostFromDesktop(
 		result = await service.exclusive(() =>
 			setup(remote, bundle, {
 				start: true,
-				// Make Federated keeps the host running across reboots too.
+				// Move to Host's setup keeps the host running across reboots too.
 				service: true,
 				restart: options.restart === true,
 				force: options.force === true,

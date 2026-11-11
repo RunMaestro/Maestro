@@ -2426,7 +2426,7 @@ maestro-cli lift docs --with-env --json
 maestro-cli send build-box:<new-agent-id> "Carry on"
 ```
 
-The desktop app runs the same lift. Right-click the agent in the Left Bar and choose **Move to Host**, or run **Move to Host** from the command palette. The action shows while the agent's remote is a connected Federation peer. When the remote runs no host yet, the same menu offers **Make Federated**, which first runs `remote-host install --start` and then shows the lift plan. Either way the plan `--dry-run` prints, with a choice to send secret env vars, shows before anything moves. Afterwards the agent's row shows `on <peer>`: click it to open the agent on its host.
+The desktop app runs the same lift. Right-click the agent in the Left Bar and choose **Move to Host**, or run **Move to Host** from the command palette. The action shows while the agent's remote is a connected Federation peer. When the remote runs no host yet, the same action first runs `remote-host install --start` and then shows the lift plan. Either way the plan `--dry-run` prints, with a choice to send secret env vars, shows before anything moves. Afterwards the agent's row shows `on <peer>`: click it to open the agent on its host.
 
 ### One Host Per Data Directory
 

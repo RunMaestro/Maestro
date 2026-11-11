@@ -1,5 +1,5 @@
 /**
- * Tests for the desktop's Make Federated and Start Host (`setupHostFromDesktop`): the refusals, the
+ * Tests for the desktop's Move to Host setup and Start Host (`setupHostFromDesktop`): the refusals, the
  * one SSH queue the setup runs in, and the reload of the peer afterwards.
  */
 

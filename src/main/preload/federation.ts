@@ -95,7 +95,7 @@ export function createFederationApi() {
 			ipcRenderer.invoke('federation:lift', agentId, options ?? {}),
 		/**
 		 * Install this app's maestro-cli on an SSH remote (or upgrade an older one), start the host
-		 * there, and reload the peer: Make Federated and Start Host. Takes minutes on a first install.
+		 * there, and reload the peer: Move to Host's setup step and Start Host. Takes minutes on a first install.
 		 */
 		setupHost: (
 			remoteId: string,

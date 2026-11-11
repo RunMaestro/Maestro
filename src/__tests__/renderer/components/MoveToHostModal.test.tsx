@@ -1,5 +1,5 @@
 /**
- * The Move to Host / Make Federated modal (FED-SSH-06). With a connected host it shows the
+ * The Move to Host modal (FED-SSH-06). With a connected host it shows the
  * `maestro-cli lift --dry-run` plan, rebuilds it when secret env vars are included, refuses to
  * move without a plan, and closes only once the lift landed. With no host yet it is Make
  * Federated: it sets the host up first (`remote-host install --start`) and offers the one retry
@@ -132,7 +132,7 @@ describe('MoveToHostModal', () => {
 		expect(onClose).not.toHaveBeenCalled();
 	});
 
-	describe('Make Federated (no host yet)', () => {
+	describe('Move to Host with no host yet (sets one up first)', () => {
 		const setupButton = () => screen.getByTestId('move-to-host-setup');
 
 		it('builds no plan, sets the host up, then moves to the plan once the peer connects', async () => {
@@ -142,7 +142,8 @@ describe('MoveToHostModal', () => {
 			});
 			vi.mocked(planMoveToHost).mockResolvedValue(planAnswer('Would lift "Docs"'));
 			const handle = renderModal(vi.fn(), NO_HOST);
-			expect(screen.getByText('Make Federated')).toBeTruthy();
+			expect(screen.queryByText('Make Federated')).toBeNull();
+			expect(screen.getAllByText('Move to Host').length).toBeGreaterThan(0);
 			expect(planMoveToHost).not.toHaveBeenCalled();
 
 			fireEvent.click(setupButton());

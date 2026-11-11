@@ -6,7 +6,7 @@ import { useAutoFederationAgent } from '../../stores/federationAutoStore';
 
 /**
  * A local Left Bar row's Federation badge: `SSH` for an SSH agent, with the hover card that says
- * how a federated agent differs and what to do next. Nothing for a local agent, and nothing for one
+ * how a hosted agent differs and what to do next. Nothing for a local agent, and nothing for one
  * that moved already (its `LiftedPointerChip` says where).
  */
 export const SessionFederationBadge = memo(function SessionFederationBadge({

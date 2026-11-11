@@ -172,7 +172,7 @@ const MirroredAgentRow = memo(function MirroredAgentRow({
 					{getAgentDisplayName(agent.toolType)}
 				</span>
 			</span>
-			<FederationBadge theme={theme} mode={{ kind: 'federated', peerName: peerId }} />
+			<FederationBadge theme={theme} mode={{ kind: 'hosted', peerName: peerId }} />
 		</button>
 	);
 });
