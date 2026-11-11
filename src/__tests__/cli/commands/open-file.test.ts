@@ -77,7 +77,8 @@ describe('open-file command', () => {
 		await openFile('/config/.bashrc', {});
 
 		expect(captured.sessionId).toBe('session-123');
-		expect(captured.filePath).toBe('/config/.bashrc');
+		// path.resolve gives this a drive letter on Windows (D:\config\.bashrc).
+		expect(captured.filePath).toBe(path.resolve('/config/.bashrc'));
 		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
