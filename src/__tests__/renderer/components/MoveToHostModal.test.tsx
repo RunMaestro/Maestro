@@ -178,6 +178,30 @@ describe('MoveToHostModal', () => {
 			);
 		});
 
+		it('keeps an accepted option when the next refusal asks for another', async () => {
+			vi.mocked(setupRemoteHostFromWindow)
+				.mockResolvedValueOnce({ ok: false, code: 'host-running', error: 'A host is running.' })
+				.mockResolvedValueOnce({
+					ok: false,
+					code: 'foreign-cli',
+					error: 'Not installed by Maestro.',
+				})
+				.mockResolvedValueOnce({ ok: true, result: { cli: 'upgraded' } });
+			renderModal(vi.fn(), NO_HOST);
+			fireEvent.click(setupButton());
+			await screen.findByText('A host is running.');
+			fireEvent.click(setupButton());
+			await screen.findByText('Not installed by Maestro.');
+			fireEvent.click(setupButton());
+			await waitFor(() =>
+				expect(setupRemoteHostFromWindow).toHaveBeenLastCalledWith(
+					'r1',
+					{ restart: true, force: true },
+					{ toastOnError: false }
+				)
+			);
+		});
+
 		it('cannot set up a remote that opted out of Federation', () => {
 			renderModal(vi.fn(), { kind: 'ssh', remoteId: 'r1', hostReady: false });
 			expect(screen.getByText('Federation is off for this remote')).toBeTruthy();

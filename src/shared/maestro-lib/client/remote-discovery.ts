@@ -369,8 +369,17 @@ export async function discoverRemoteHost(
 export type RemoteHostStartResult =
 	/** No usable `maestro-cli` on the remote. */
 	| { installed: false; fix: string }
-	/** A host was started (`alreadyRunning: false`) or was already serving (`true`). */
-	| { installed: true; started: true; alreadyRunning: boolean; pid: number; port: number }
+	/**
+	 * A host was started (`alreadyRunning: false`) or was already serving (`true`). The linger
+	 * warning rides along, so a first install on Linux still learns that logout may stop the host.
+	 */
+	| ({
+			installed: true;
+			started: true;
+			alreadyRunning: boolean;
+			pid: number;
+			port: number;
+	  } & RemoteLingerWarning)
 	/** The remote's desktop app is the host there, so no headless host can start. */
 	| { installed: true; started: false; reason: 'desktop-running'; pid: number };
 
@@ -397,11 +406,12 @@ export async function startRemoteHost(
 	}
 	if (data) {
 		const { started, alreadyRunning, reason, pid, port, error } = data;
+		const linger = readRemoteLingerWarning(run.body);
 		if (started === true && isPort(port) && typeof pid === 'number') {
-			return { installed: true, started: true, alreadyRunning: false, pid, port };
+			return { installed: true, started: true, alreadyRunning: false, pid, port, ...linger };
 		}
 		if (started === false && alreadyRunning === true && isPort(port) && typeof pid === 'number') {
-			return { installed: true, started: true, alreadyRunning: true, pid, port };
+			return { installed: true, started: true, alreadyRunning: true, pid, port, ...linger };
 		}
 		if (started === false && reason === 'desktop-running' && typeof pid === 'number') {
 			return { installed: true, started: false, reason: 'desktop-running', pid };

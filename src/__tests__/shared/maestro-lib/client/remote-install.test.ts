@@ -28,6 +28,7 @@ import {
 	RemoteDiscoveryError,
 	type RemoteHostDiscovery,
 } from '../../../../shared/maestro-lib/client/remote-discovery';
+import { isWindows } from '../../../../shared/platformDetection';
 import type { SshRemoteConfig } from '../../../../shared/types';
 
 const remote: SshRemoteConfig = {
@@ -40,7 +41,7 @@ const remote: SshRemoteConfig = {
 	enabled: true,
 };
 
-const onPosix = process.platform !== 'win32';
+const onPosix = !isWindows();
 
 let tmp: string;
 let bundle: LocalCliBundle;
@@ -131,6 +132,23 @@ describe('the local bundle', () => {
 		]);
 	});
 
+	it("ships Pianola's sandbox runner when it sits beside the CLI", async () => {
+		const runner = path.join(tmp, 'app', 'scripts', 'pianola-sandbox', 'sandbox_runner.py');
+		fs.mkdirSync(path.dirname(runner), { recursive: true });
+		fs.writeFileSync(runner, 'print("ok")\n');
+		try {
+			const found = resolveLocalCliBundle(bundle.cliFile, '1.0.0');
+			expect(found.companions).toEqual([
+				{ file: runner, name: 'scripts/pianola-sandbox/sandbox_runner.py' },
+			]);
+			expect(tarNames(await packLocalCliBundle(found))).toContain(
+				'scripts/pianola-sandbox/sandbox_runner.py'
+			);
+		} finally {
+			fs.rmSync(path.join(tmp, 'app', 'scripts'), { recursive: true, force: true });
+		}
+	});
+
 	it('installs the better-sqlite3 range the bundle was built against', () => {
 		const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')) as {
 			dependencies: Record<string, string>;
@@ -161,6 +179,15 @@ describe('buildRemoteInstallScript', () => {
 		expect(script.indexOf('cat > "$stage/bundle.tgz"')).toBeLessThan(
 			script.indexOf('fail unsupported-os')
 		);
+	});
+
+	it('stops a running host with whatever CLI started it before the swap', () => {
+		const script = buildRemoteInstallScript({ restart: true });
+		const stop = script.indexOf('host stop --wait 120');
+		expect(stop).toBeGreaterThan(-1);
+		expect(script).toContain('elif [ -n "$existing" ]; then stopper="$existing"');
+		expect(script).toContain('"$node" "$stage/maestro-cli.js" host stop --wait 120');
+		expect(stop).toBeLessThan(script.indexOf('mv "$stage" "$cli"'));
 	});
 
 	it('carries the force and restart choices', () => {
@@ -403,6 +430,18 @@ describe('setupRemoteHost', () => {
 	it('lets a discovery failure that is not about the CLI through', async () => {
 		const down = seams(new RemoteDiscoveryError('ssh-failed', 'Connection refused'));
 		await expect(setupRemoteHost(remote, bundle, down)).rejects.toThrow('Connection refused');
+	});
+
+	it('keeps the linger warning a first install only learns from the start', async () => {
+		const s = seams(notInstalled);
+		s.startHost.mockResolvedValue({
+			...started,
+			linger: false,
+			lingerFix: 'loginctl enable-linger pedram',
+		});
+		expect((await setupRemoteHost(remote, bundle, { ...s, start: true })).lingerFix).toBe(
+			'loginctl enable-linger pedram'
+		);
 	});
 
 	it('passes a linger warning through', async () => {

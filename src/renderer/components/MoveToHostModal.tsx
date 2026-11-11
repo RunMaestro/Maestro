@@ -82,6 +82,9 @@ export function MoveToHostModal({
 	const [settingUp, setSettingUp] = useState(false);
 	const [setupError, setSetupError] = useState<{ code: string; error: string } | null>(null);
 	const [setupNote, setSetupNote] = useState<string | null>(null);
+	// Options the person already accepted. A remote can need both (an older host from another
+	// install): each retry adds its option to these, so retries never alternate between refusals.
+	const [setupOptions, setSetupOptions] = useState<DesktopSetupHostOptions>({});
 
 	const sshStatus = status.kind === 'ssh' ? status : null;
 	const hostReady = sshStatus?.hostReady === true;
@@ -105,6 +108,7 @@ export function MoveToHostModal({
 	const handleSetUp = useCallback(
 		async (options: DesktopSetupHostOptions = {}) => {
 			if (!sshStatus) return;
+			setSetupOptions(options);
 			setSettingUp(true);
 			setSetupError(null);
 			setSetupNote(null);
@@ -174,7 +178,7 @@ export function MoveToHostModal({
 					) : (
 						<button
 							type="button"
-							onClick={() => void handleSetUp(retry?.options)}
+							onClick={() => void handleSetUp({ ...setupOptions, ...retry?.options })}
 							disabled={!canSetUp || settingUp}
 							className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-50"
 							style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}

@@ -34,9 +34,13 @@ export function newRemotePromptFileDestination(
  * Base PATH directories that are always added to the remote PATH.
  * These cover common binary locations that don't require dynamic detection.
  */
+/**
+ * The maestro-cli Federation installs (`remote-host install`). Prepended AFTER the version-manager
+ * setup, which prepends directories of its own, so it stays first and wins over an older copy.
+ */
+const MAESTRO_INSTALL_PATH_LINE = 'export PATH="$HOME/.maestro/bin:$PATH"';
+
 const BASE_SSH_PATH_DIRS = [
-	// The maestro-cli Federation installs (`remote-host install`), first so it wins over an older copy.
-	'$HOME/.maestro/bin',
 	'$HOME/.local/bin',
 	'$HOME/.opencode/bin',
 	'$HOME/.claude/local',
@@ -168,7 +172,7 @@ function buildNodeVersionManagerPathSnippet(): string {
 export function wrapRemoteCommandWithPath(remoteCommand: string): string {
 	const pathSetup = `export PATH="${BASE_SSH_PATH_DIRS.join(':')}:$PATH"`;
 	const versionManagerSetup = buildNodeVersionManagerPathSnippet();
-	const fullBashCommand = `${pathSetup}; ${versionManagerSetup}; ${remoteCommand}`;
+	const fullBashCommand = `${pathSetup}; ${versionManagerSetup}; ${MAESTRO_INSTALL_PATH_LINE}; ${remoteCommand}`;
 	return `/bin/bash --norc --noprofile -c ${shellEscape(fullBashCommand)}`;
 }
 
@@ -414,6 +418,7 @@ export async function buildSshCommandWithStdin(
 	scriptLines.push(`export PATH="${BASE_SSH_PATH_DIRS.join(':')}:$PATH"`);
 	// Dynamically detect Node version manager paths (nvm, fnm, volta, etc.)
 	scriptLines.push(...buildNodeVersionManagerPathLines());
+	scriptLines.push(MAESTRO_INSTALL_PATH_LINE);
 
 	// Change directory if specified
 	if (remoteOptions.cwd) {

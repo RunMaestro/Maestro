@@ -8,6 +8,7 @@
  *
  *   ~/.maestro/cli/maestro-cli.js     the bundle
  *   ~/.maestro/cli/prompts/core/      the prompts the host refuses to start without
+ *   ~/.maestro/cli/scripts/           companions the CLI loads from beside itself (Pianola's runner)
  *   ~/.maestro/cli/node_modules/      better-sqlite3, built for the remote's Node and platform
  *   ~/.maestro/node/                  Node.js from nodejs.org, only when the remote has no Node 22+
  *   ~/.maestro/bin/maestro-cli        the launcher (on the PATH every SSH spawn gets)
@@ -75,6 +76,28 @@ export interface LocalCliBundle {
 	promptsDir: string;
 	/** The bundle's version, compared with the remote's to skip a needless install. */
 	version: string;
+	/**
+	 * Companion files the CLI loads from beside itself, by their path in the bundle. Today the
+	 * Pianola sandbox runner (`scripts/pianola-sandbox/sandbox_runner.py`), which the app and the
+	 * CLI build ship next to `maestro-cli.js`.
+	 */
+	companions?: Array<{ file: string; name: string }>;
+}
+
+/** Where a companion file sits in the bundle, and where a source checkout keeps it instead. */
+const COMPANION_FILES = ['scripts/pianola-sandbox/sandbox_runner.py'] as const;
+
+/** Each companion found beside `cliFile` (the app, the CLI build) or in the checkout above it. */
+function findCompanions(cliFile: string): Array<{ file: string; name: string }> {
+	const cliDir = path.dirname(cliFile);
+	const found: Array<{ file: string; name: string }> = [];
+	for (const name of COMPANION_FILES) {
+		const file = [path.join(cliDir, name), path.resolve(cliDir, '..', '..', name)].find(
+			(candidate) => fs.existsSync(candidate)
+		);
+		if (file) found.push({ file, name });
+	}
+	return found;
 }
 
 /**
@@ -97,7 +120,8 @@ export function resolveLocalCliBundle(cliFile: string, version: string): LocalCl
 			`The bundled prompts were not found beside ${cliFile}. Reinstall Maestro on this machine.`
 		);
 	}
-	return { cliFile, promptsDir, version };
+	const companions = findCompanions(cliFile);
+	return { cliFile, promptsDir, version, ...(companions.length ? { companions } : {}) };
 }
 
 /** Every file under `dir`, as POSIX paths relative to it. Symlinks are skipped. */
@@ -114,7 +138,10 @@ function listFiles(dir: string): string[] {
 	return out.sort();
 }
 
-/** The bundle as the gzip tar the remote script unpacks: `maestro-cli.js` and `prompts/core/`. */
+/**
+ * The bundle as the gzip tar the remote script unpacks: `maestro-cli.js`, `prompts/core/`, and the
+ * companion files at their bundle paths.
+ */
 export function packLocalCliBundle(bundle: LocalCliBundle): Promise<Buffer> {
 	return new Promise<Buffer>((resolve, reject) => {
 		const archive = archiver('tar', { gzip: true });
@@ -125,6 +152,9 @@ export function packLocalCliBundle(bundle: LocalCliBundle): Promise<Buffer> {
 		archive.file(bundle.cliFile, { name: 'maestro-cli.js', mode: 0o755 });
 		for (const rel of listFiles(bundle.promptsDir)) {
 			archive.file(path.join(bundle.promptsDir, rel), { name: `prompts/core/${rel}` });
+		}
+		for (const companion of bundle.companions ?? []) {
+			archive.file(companion.file, { name: companion.name });
 		}
 		void archive.finalize();
 	});
@@ -246,7 +276,13 @@ export function buildRemoteInstallScript(options: RemoteInstallScriptOptions = {
 		'ver=$("$node" "$stage/maestro-cli.js" --version 2>/dev/null | head -n 1)',
 		'[ -n "$ver" ] || fail cli-broken',
 		// Swap in the new install, keeping the old one until the new one is in place.
-		'if [ "$RESTART" = 1 ] && [ -x "$bin/maestro-cli" ]; then "$bin/maestro-cli" host stop --wait 120 >/dev/null 2>&1 || fail host-stop; fi',
+		// The running host may come from another install (a forced replacement): stop it with the CLI
+		// that is on PATH now, else with Maestro's own launcher, else with the staged bundle.
+		'if [ "$RESTART" = 1 ]; then',
+		'  if [ -x "$bin/maestro-cli" ]; then stopper="$bin/maestro-cli"; elif [ -n "$existing" ]; then stopper="$existing"; else stopper=""; fi',
+		'  if [ -n "$stopper" ]; then "$stopper" host stop --wait 120 >/dev/null 2>&1 || fail host-stop;',
+		'  else "$node" "$stage/maestro-cli.js" host stop --wait 120 >/dev/null 2>&1 || fail host-stop; fi',
+		'fi',
 		'rm -rf "$root/cli.old"',
 		'if [ -d "$cli" ]; then mv "$cli" "$root/cli.old" || fail swap; fi',
 		'mv "$stage" "$cli" || { [ -d "$root/cli.old" ] && mv "$root/cli.old" "$cli"; fail swap; }',
@@ -575,17 +611,20 @@ export async function setupRemoteHost(
 		cliVersion = report.cliVersion;
 	}
 
-	const lingerFix =
-		found !== 'too-old' && found.installed && found.lingerFix ? found.lingerFix : undefined;
 	const result: RemoteHostSetupResult = {
 		cli,
 		...(cliVersion ? { cliVersion } : {}),
 		...(report ? { install: report } : {}),
-		...(lingerFix ? { lingerFix } : {}),
 	};
 	// Start when asked, and restart a host the upgrade stopped.
 	if (options.start || (running && report)) {
 		result.start = await startHost(remote, discoveryOptions);
 	}
+	// The warning comes from discovery when a CLI was there, else from the start that followed a
+	// first install (discovery of a remote with no CLI cannot report it).
+	const lingerFix =
+		(found !== 'too-old' && found.installed ? found.lingerFix : undefined) ??
+		(result.start?.installed && result.start.started ? result.start.lingerFix : undefined);
+	if (lingerFix) result.lingerFix = lingerFix;
 	return result;
 }
