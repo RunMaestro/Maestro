@@ -78,6 +78,10 @@ export interface BoardReviewHandoff {
 	attempt: number;
 	artifact: BoardRunArtifact;
 	checks: string;
+	/** Digest of the exact completed native work specification and persisted result. */
+	sourceDigest?: string;
+	reviewerAgentId?: string;
+	reviewerGroupId?: string | null;
 }
 
 /**
@@ -604,7 +608,7 @@ export interface BoardRoleRef {
 
 /** Capture-time fields for the global Board; missing fields represent an incomplete draft. */
 export interface BoardCaptureOptions {
-	/** Explicit reviewer, subject to the same current scope and registry checks. */
+	/** Independent reviewer; its own registered execution scope and access are checked separately. */
 	reviewerAgentId?: string;
 	kind?: BoardCardKind;
 	executionScope?: BoardExecutionScope;

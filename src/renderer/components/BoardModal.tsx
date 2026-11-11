@@ -3024,7 +3024,7 @@ function CardEditor({
 	);
 	const reviewerAgentSelect = (
 		<ThemedSelect
-			aria-label="Reviewer within task scope"
+			aria-label="Independent reviewer"
 			theme={theme}
 			disabled={saving}
 			value={reviewerAgentId ?? ''}
@@ -3440,7 +3440,7 @@ function CardEditor({
 					</div>
 					<div className="block space-y-1 flex-1 min-w-0 basis-[180px]">
 						<span className="text-xs" style={{ color: theme.colors.textDim }}>
-							Reviewer within task scope
+							Independent reviewer
 						</span>
 						{reviewerAgentSelect}
 					</div>

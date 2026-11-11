@@ -130,27 +130,30 @@ describe('global Board capture', () => {
 	});
 });
 
-it('validates explicit reviewer IDs and prevents assignment outside the current task scope', () => {
+it('keeps producer scope immutable while validating an independent reviewer separately', () => {
 	expect(validateCapture({ reviewerAgentId: 7 }, context)).toEqual({
 		ok: false,
 		errors: ['invalid-reviewer'],
 	});
+	for (const executionScope of [
+		{ kind: 'group' as const, groupId: 'g' },
+		{ kind: 'agent' as const, agentId: 'a' },
+	]) {
+		expect(validateCapture({ executionScope, reviewerAgentId: 'b' }, context).ok).toBe(true);
+	}
+	for (const reviewerAgentId of ['a', 'missing']) {
+		expect(
+			validateCapture({ executionScope: { kind: 'agent', agentId: 'a' }, reviewerAgentId }, context)
+		).toEqual({ ok: false, errors: ['invalid-reviewer'] });
+	}
 	expect(
 		validateCapture(
-			{ executionScope: { kind: 'group', groupId: 'g' }, reviewerAgentId: 'b' },
+			{
+				executionScope: { kind: 'agent', agentId: 'a' },
+				assigneeAgentId: 'b',
+				reviewerAgentId: 'b',
+			},
 			context
 		)
-	).toEqual({ ok: false, errors: ['pin-outside-scope'] });
-	expect(
-		validateCapture(
-			{ executionScope: { kind: 'agent', agentId: 'a' }, reviewerAgentId: 'b' },
-			context
-		)
-	).toEqual({ ok: false, errors: ['pin-outside-scope'] });
-	expect(
-		validateCapture(
-			{ executionScope: { kind: 'group', groupId: 'g' }, reviewerAgentId: 'a' },
-			context
-		).ok
-	).toBe(true);
+	).toMatchObject({ ok: false });
 });

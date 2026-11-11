@@ -138,9 +138,15 @@ export function validateCapture(raw: unknown, context: BoardCaptureContext): Boa
 	const pin = options.assigneeAgentId;
 	if (pin && profile?.baseAgentId && pin !== profile.baseAgentId) errors.push('pin-role-conflict');
 	const scope = options.executionScope;
-	for (const candidate of new Set(
-		[pin, profile?.baseAgentId, options.reviewerAgentId].filter((id): id is string => !!id)
-	)) {
+	// Reviewer assignment is a separate execution, never a grant to the producer scope.
+	if (
+		typeof options.reviewerAgentId === 'string' &&
+		(!context.agents.some((agent) => agent.id === options.reviewerAgentId) ||
+			options.reviewerAgentId ===
+				(pin ?? profile?.baseAgentId ?? (scope?.kind === 'agent' ? scope.agentId : undefined)))
+	)
+		errors.push('invalid-reviewer');
+	for (const candidate of new Set([pin, profile?.baseAgentId].filter((id): id is string => !!id))) {
 		if (scope?.kind === 'agent' && candidate !== scope.agentId) {
 			if (!errors.includes('pin-outside-scope')) errors.push('pin-outside-scope');
 		} else if (

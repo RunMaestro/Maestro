@@ -38,6 +38,7 @@ import {
 	queueBoardReviews,
 	recoverIncompleteBoardReview,
 } from './board-review';
+import { boardReviewSourceDigest } from './board-review-binding';
 import { evaluateClaimWorker, persistedCaptureInput } from '../../shared/board/domain';
 import { listBoardWorkers, BoardWorkspaceStorageError } from './board-workspace-storage';
 import {
@@ -695,6 +696,15 @@ export class BoardRuntime {
 		}
 		if (this.context().agentStates[spec.workerAgentId]?.live !== true) return 'worker-dormant';
 		const catalog = this.storage.captureCatalog();
+		if (
+			card.kind === 'review' &&
+			(!card.reviewHandoff?.sourceDigest ||
+				boardReviewSourceDigest(this.storage.db, card.reviewHandoff, spec.workerAgentId) !==
+					card.reviewHandoff.sourceDigest ||
+				(catalog.agents.find((agent) => agent.id === spec.workerAgentId)?.groupId ?? null) !==
+					card.reviewHandoff.reviewerGroupId)
+		)
+			return 'review-artifact-unresolved';
 		const workers = listBoardWorkers(this.storage.db).map((worker) => ({
 			...worker,
 			roleRefs: Array.isArray(worker.payload.roleRefs) ? worker.payload.roleRefs : [],

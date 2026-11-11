@@ -4,6 +4,7 @@ import {
 	type BoardRepositoryObservation,
 } from './board-repository-access';
 import { requireBoardEnabled } from './board-feature';
+import { boardReviewSourceDigest } from './board-review-binding';
 /** Central Board facade. Legacy project roots resolve only to explicitly registered or imported sources.
  * YAML is migration input only; no fallback reader or exporter exists here.
  */
@@ -497,6 +498,8 @@ export class BoardStorageFacade {
 							role: undefined,
 							assigneeProfileId: undefined,
 							assigneeAgentId: card.reviewerAgentId,
+							reviewerAgentId: undefined,
+							executionScope: { kind: 'agent' as const, agentId: card.reviewerAgentId },
 						};
 						const reason = workerReason(reviewOptions, card.reviewerAgentId);
 						if (reason) reasons.push(reason);
@@ -1192,6 +1195,38 @@ export class BoardStorageFacade {
 					'protected-field',
 					'Completed work specifications are immutable'
 				);
+			if (
+				original?.payload.status === 'review' &&
+				card.kind !== 'review' &&
+				card.reviewerAgentId &&
+				card.reviewerAgentId !== original.payload.reviewerAgentId
+			) {
+				const work = original.payload as unknown as BoardCard;
+				const runId = work.workflow?.workRunId;
+				const attempt = this.db
+					.prepare('SELECT attempt FROM runs WHERE run_id=? AND collection_key=? AND card_id=?')
+					.get(runId ?? '', ref.collectionKey, card.id) as { attempt: number } | undefined;
+				if (
+					!runId ||
+					!attempt ||
+					!work.repositoryId ||
+					!boardReviewSourceDigest(
+						this.db,
+						{
+							...ref,
+							cardId: card.id,
+							runId,
+							attempt: attempt.attempt,
+							repositoryId: work.repositoryId,
+						},
+						card.reviewerAgentId
+					)
+				)
+					throw new BoardWorkspaceStorageError(
+						'protected-field',
+						'Independent review requires a different reviewer and finished native work evidence'
+					);
+			}
 			if (original?.archived)
 				throw new BoardWorkspaceStorageError('protected-field', 'Cannot reuse an archived card ID');
 			if (card.status === 'running' && original?.payload.status !== 'running')
@@ -1409,7 +1444,7 @@ export class BoardStorageFacade {
 								'Settle the active attempt before changing its execution specification'
 							);
 						}
-						if (changed && !card.archived) {
+						if (changed && !card.archived && previous?.payload.status !== 'review') {
 							const context = this.captureContext(boards[i], human);
 							const effectiveStartMode =
 								card.payload.startModeOverride ??

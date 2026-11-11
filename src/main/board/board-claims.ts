@@ -3,6 +3,7 @@
  * SQLite checks and writes share one IMMEDIATE transaction. A prepared claim is
  * capacity reserved, not evidence that a process started or work succeeded. */
 import type Database from 'better-sqlite3';
+import { boardReviewSourceDigest } from './board-review-binding';
 import { hasLegacyDirectStart, hasUnresolvedMigrationBlockers } from './board-migration';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { generateUUID } from '../../shared/uuid';
@@ -313,6 +314,15 @@ export function claimBoardCard(
 				)
 					return waiting('review-artifact-unresolved');
 				if (selected.kind === 'review' && selected.reviewHandoff) {
+					if (
+						(host.catalog.agents.find((agent) => agent.id === command.workerAgentId)?.groupId ??
+							null) !== selected.reviewHandoff.reviewerGroupId ||
+						!selected.reviewHandoff.sourceDigest ||
+						selected.reviewHandoff.reviewerAgentId !== command.workerAgentId ||
+						boardReviewSourceDigest(db, selected.reviewHandoff, command.workerAgentId) !==
+							selected.reviewHandoff.sourceDigest
+					)
+						return waiting('review-artifact-unresolved');
 					const source = board.cards.find((card) => card.id === selected.reviewHandoff!.cardId);
 					if (
 						source?.workflow?.version === 1 &&

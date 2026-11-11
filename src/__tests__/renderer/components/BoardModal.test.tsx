@@ -1411,6 +1411,12 @@ describe('BoardModal profile gate removal (G2)', () => {
 	});
 
 	it('preserves the selected worker and reviewer while editing instructions', async () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({ id: 's1', projectRoot: PROJECT_ROOT }),
+				createMockSession({ id: 's2', name: 'Independent Agent', projectRoot: PROJECT_ROOT }),
+			],
+		});
 		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
 		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
 		fireEvent.click(await screen.findByRole('button', { name: /New card/i }));
@@ -1418,17 +1424,17 @@ describe('BoardModal profile gate removal (G2)', () => {
 			target: { value: 'Assignments survive editing' },
 		});
 		choose(screen.getByLabelText(/Pin to agent/i), 'Test Session');
-		choose(screen.getByLabelText(/Reviewer within task scope/i), 'Test Session');
+		choose(screen.getByLabelText(/Independent reviewer/i), 'Independent Agent');
 		fireEvent.change(screen.getByPlaceholderText('Instructions handed to the assignee agent.'), {
 			target: { value: 'Updated instructions' },
 		});
 		expect(screen.getByLabelText(/Pin to agent/i)).toHaveTextContent('Test Session');
-		expect(screen.getByLabelText(/Reviewer within task scope/i)).toHaveTextContent('Test Session');
+		expect(screen.getByLabelText(/Independent reviewer/i)).toHaveTextContent('Independent Agent');
 		fireEvent.click(screen.getByRole('button', { name: /Create card/i }));
 		await waitFor(() => expect(boardApi.captureCard).toHaveBeenCalledTimes(1));
 		expect(boardApi.captureCard.mock.calls[0][0].card).toMatchObject({
 			assigneeAgentId: 's1',
-			reviewerAgentId: 's1',
+			reviewerAgentId: 's2',
 			body: 'Updated instructions',
 		});
 	});

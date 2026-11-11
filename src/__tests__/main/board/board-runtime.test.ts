@@ -447,6 +447,7 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 		await pending;
 	});
 	it('binds a separate review to a real clean source commit and refuses dirty or forged handoffs', async () => {
+		agents.push({ id: 'reviewer', groupId: 'other' });
 		const git = (...args: string[]) =>
 			execFileSync('git', args, { cwd: roots[0], encoding: 'utf8' });
 		git('init', '--quiet');
@@ -482,7 +483,7 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 			reviewSource: { cardId: 'same', attempt: 1 },
 			card: {
 				id: 'review',
-				assigneeAgentId: 'worker',
+				assigneeAgentId: 'reviewer',
 				title: 'Review work',
 				body: '',
 				kind: 'review' as const,
@@ -492,7 +493,7 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 				updatedAt: 'now',
 				repositoryId: 'repo0',
 				workingDirectory: roots[0],
-				executionScope: { kind: 'group' as const, groupId: 'group' },
+				executionScope: { kind: 'agent' as const, agentId: 'reviewer' },
 			},
 		};
 		fs.writeFileSync(path.join(roots[0], 'work.txt'), 'dirty source');
@@ -2303,6 +2304,164 @@ describe('work, linked review and explicit final human decision', () => {
 			expect(storage.read(roots[0], 'board').cards).toHaveLength(1);
 		}
 	);
+
+	it.each(['documentation', 'work', 'test'] as const)(
+		'hands off completed producer-only %s without changing its original capture or work evidence',
+		async (kind) => {
+			setupWorkflow();
+			let board = storage.read(roots[0], 'board');
+			storage.capture({
+				projectRoot: roots[0],
+				boardId: 'board',
+				expectedRevision: board.storage!.expectedRevision!,
+				card: {
+					...board.cards[0],
+					executionScope: { kind: 'agent', agentId: 'worker' },
+					kind,
+					reviewerAgentId: undefined,
+				},
+			});
+			nativeService();
+			const work = await runWork();
+			board = storage.read(roots[0], 'board');
+			const original = board.cards[0];
+			const runs = db.prepare('SELECT * FROM runs').all();
+			storage.capture({
+				projectRoot: roots[0],
+				boardId: 'board',
+				expectedRevision: board.storage!.expectedRevision!,
+				card: { ...original, reviewerAgentId: 'reviewer' },
+			});
+			expect(card().capturePolicy).toEqual(original.capturePolicy);
+			expect(card().executionScope).toEqual(original.executionScope);
+			expect(card().body).toBe(original.body);
+			expect(db.prepare('SELECT * FROM runs').all()).toEqual(runs);
+			queueBoardReviews(storage);
+			queueBoardReviews(storage);
+			const review = storage.read(roots[0], 'board').cards[1];
+			expect(review.executionScope).toEqual({ kind: 'agent', agentId: 'reviewer' });
+			expect(review.capturePolicy?.grant).toBeUndefined();
+			expect(review.body).toContain(original.body);
+			expect(review.body).toContain('Work committed; fixture check passed');
+			expect(review.reviewHandoff).toMatchObject({
+				runId: work.runId,
+				reviewerAgentId: 'reviewer',
+				sourceDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+			});
+			await runReview();
+			expect(card().status).toBe('ready-for-human');
+			expect(card().workflow?.humanDecision).toBeUndefined();
+			expect(card().executionScope).toEqual(original.executionScope);
+			expect(reservations()).toHaveLength(0);
+		}
+	);
+
+	it('refuses the actual producer as reviewer even when the original group capture was unpinned', async () => {
+		setupWorkflow();
+		let board = storage.read(roots[0], 'board');
+		storage.capture({
+			projectRoot: roots[0],
+			boardId: 'board',
+			expectedRevision: board.storage!.expectedRevision!,
+			card: { ...board.cards[0], assigneeAgentId: undefined, reviewerAgentId: undefined },
+		});
+		nativeService();
+		await runWork();
+		board = storage.read(roots[0], 'board');
+		const before = persisted();
+		expect(() =>
+			storage.capture({
+				projectRoot: roots[0],
+				boardId: 'board',
+				expectedRevision: board.storage!.expectedRevision!,
+				card: { ...board.cards[0], reviewerAgentId: 'worker' },
+			})
+		).toThrow('different reviewer');
+		expect(persisted()).toBe(before);
+		expect(card().reviewerAgentId).toBeUndefined();
+	});
+	it.each(['output', 'specification', 'self'] as const)(
+		'refuses changed %s after handoff preparation without reserving a reviewer',
+		async (change) => {
+			setupWorkflow();
+			nativeService();
+			const token = await runWork();
+			const review = storage.read(roots[0], 'board').cards[1];
+			host.reviewArtifact = await prepareBoardReviewHandoff(storage, review.reviewHandoff!);
+			expect(host.reviewArtifact).toBeTruthy();
+			if (change === 'output')
+				db.prepare(
+					"UPDATE runs SET outcome_json=json_set(outcome_json,'$.result.output','changed') WHERE run_id=?"
+				).run(token.runId);
+			if (change === 'specification')
+				db.prepare(
+					"UPDATE runs SET specification_json=json_set(specification_json,'$.card.body','changed') WHERE run_id=?"
+				).run(token.runId);
+			if (change === 'self')
+				db.prepare(
+					"UPDATE runs SET specification_json=json_set(specification_json,'$.workerAgentId','reviewer') WHERE run_id=?"
+				).run(token.runId);
+			const before = persisted();
+			expect(claimFor(review.id, 'reviewer')).toMatchObject({
+				ok: false,
+				reason: 'review-artifact-unresolved',
+			});
+			expect(persisted()).toBe(before);
+			expect(await prepareBoardReviewHandoff(storage, review.reviewHandoff!)).toBeNull();
+			expect(card().status).toBe('review');
+		}
+	);
+
+	it('rechecks exact source output at the final native start after a successful review claim', async () => {
+		setupWorkflow();
+		nativeService();
+		const work = await runWork();
+		const review = storage.read(roots[0], 'board').cards[1];
+		host.reviewArtifact = await prepareBoardReviewHandoff(storage, review.reviewHandoff!);
+		const claim = claimFor(review.id, 'reviewer');
+		if (!claim.ok) throw Error(claim.reason);
+		db.prepare(
+			"UPDATE runs SET outcome_json=json_set(outcome_json,'$.result.output','replaced after claim') WHERE run_id=?"
+		).run(work.runId);
+		const calls = vi.mocked(service.spawn).mock.calls.length;
+		expect(await runtime.start(claim.runToken)).toMatchObject({
+			ok: false,
+			reason: 'review-artifact-unresolved',
+		});
+		expect(vi.mocked(service.spawn).mock.calls).toHaveLength(calls);
+		expect(card().status).toBe('review');
+		expect(card().workflow?.reviewResult).toBeUndefined();
+		expect(reservations()).toHaveLength(0);
+	});
+
+	it('preserves the native review result but refuses a human-ready transition after source output changes during review', async () => {
+		setupWorkflow();
+		nativeService();
+		const work = await runWork();
+		const review = storage.read(roots[0], 'board').cards[1];
+		host.reviewArtifact = await prepareBoardReviewHandoff(storage, review.reviewHandoff!);
+		vi.mocked(service.spawn).mockImplementation(async (_spec, callbacks) => {
+			if (!callbacks.beforeLaunch()) throw Error('launch rejected');
+			callbacks.onStarted(202);
+			return new Promise<CardSpawnResult>((resolve) => {
+				settle = resolve;
+			});
+		});
+		const claim = claimFor(review.id, 'reviewer');
+		if (!claim.ok) throw Error(claim.reason);
+		const pending = runtime.start(claim.runToken);
+		db.prepare(
+			"UPDATE runs SET outcome_json=json_set(outcome_json,'$.result.output','changed during review') WHERE run_id=?"
+		).run(work.runId);
+		settle({ ...good, artifact: review.reviewHandoff!.artifact });
+		expect(await pending).toMatchObject({ ok: false });
+		expect(runtime.read(claim.runToken)?.life.pendingResult?.output).toBe(good.output);
+		expect(card().status).toBe('review');
+		expect(card().workflow?.reviewResult).toBeUndefined();
+		expect(card().workflow?.humanDecision).toBeUndefined();
+		expect(runtime.read(claim.runToken)?.life.phase).toBe('uncertain');
+		expect(reservations()).toHaveLength(1);
+	});
 	it('accepts a finished review when intake is paused after native start', async () => {
 		setupWorkflow();
 		nativeService();
