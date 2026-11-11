@@ -350,7 +350,10 @@ describe('proxy-requests', () => {
 			vi.setSystemTime(new Date('2026-10-11T12:00:00Z'));
 			try {
 				getProxyRequestUsage(mockDb, 'day');
-				expect(mockStatement.all).toHaveBeenCalledWith(Date.now() - 24 * 60 * 60 * 1000);
+				// "Today" is the local calendar day (getTimeRangeStart), not a rolling 24 hours.
+				const midnight = new Date(Date.now());
+				midnight.setHours(0, 0, 0, 0);
+				expect(mockStatement.all).toHaveBeenCalledWith(midnight.getTime());
 			} finally {
 				vi.useRealTimers();
 			}
