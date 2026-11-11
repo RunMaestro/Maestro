@@ -87,6 +87,29 @@ describe('autoFederationAnnouncements', () => {
 	});
 });
 
+describe('autoFederationAnnouncements: a running host that needs you', () => {
+	it('announces a new required fix once', () => {
+		const ready = (fix?: string) =>
+			snap({
+				remotes: [
+					{
+						remoteId: 'r1',
+						name: 'box',
+						state: 'ready',
+						needsYou: Boolean(fix),
+						...(fix ? { fix } : {}),
+						at: 1,
+					},
+				],
+			});
+		expect(
+			autoFederationAnnouncements(snap({}), ready('Run sudo loginctl enable-linger u.'))
+		).toEqual([expect.objectContaining({ title: 'The host on box needs one step from you' })]);
+		expect(autoFederationAnnouncements(ready('Run it.'), ready('Run it.'))).toEqual([]);
+		expect(autoFederationAnnouncements(snap({}), ready())).toEqual([]);
+	});
+});
+
 describe('useFederationAutoStore', () => {
 	beforeEach(() => {
 		useFederationAutoStore.getState().reset();

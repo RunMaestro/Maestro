@@ -185,6 +185,17 @@ describe('AutoFederationCoordinator: moving SSH agents', () => {
 		expect(w.deps.lift).toHaveBeenCalledTimes(1);
 	});
 
+	it('still shows a blocked agent as blocked while its retry waits, after a pass with moves off', async () => {
+		const w = world({ liftAnswers: [plan(['TOKEN'])] });
+		await w.coordinator.runNow();
+		w.deps.isAutoMoveEnabled.mockReturnValue(false);
+		expect((await w.coordinator.runNow()).agents[0].state).toBe('manual');
+		w.deps.isAutoMoveEnabled.mockReturnValue(true);
+		const snapshot = await w.coordinator.runNow();
+		expect(snapshot.agents[0]).toMatchObject({ state: 'blocked' });
+		expect(snapshot.agents[0].reason).toContain('TOKEN');
+	});
+
 	it('retries a blocked agent at once when its record changes', async () => {
 		const w = world({ liftAnswers: [plan(['TOKEN']), plan(), moved] });
 		await w.coordinator.runNow();
@@ -267,6 +278,43 @@ describe('AutoFederationCoordinator: keeping hosts', () => {
 		expect(snapshot.agents[0].state).toBe('moved');
 	});
 
+	it('marks a required service fix as needing you, and keeps it across a reconnect', async () => {
+		const w = world({
+			setup: {
+				ok: true,
+				result: {
+					cli: 'current',
+					service: { kind: 'none', reason: 'unsupported-os', fix: 'Use Task Scheduler.' },
+				},
+			},
+		});
+		expect((await w.coordinator.runNow()).remotes[0]).toMatchObject({
+			state: 'ready',
+			needsYou: true,
+			fix: 'Use Task Scheduler.',
+		});
+		w.setPeers([peer('r1', 'reconnecting')]);
+		const away = await w.coordinator.runNow();
+		expect(away.remotes[0].service).toContain('No service');
+		w.setPeers([peer('r1', 'connected')]);
+		expect((await w.coordinator.runNow()).remotes[0]).toMatchObject({
+			needsYou: true,
+			fix: 'Use Task Scheduler.',
+		});
+		expect(w.deps.setupHost).toHaveBeenCalledTimes(1);
+	});
+
+	it('retries a failed setup at once when the remote connection settings change', async () => {
+		const w = world({
+			peers: [peer('r1', 'not-installed')],
+			setup: { ok: false, code: 'ssh-failed', error: 'Permission denied (publickey).' },
+		});
+		await w.coordinator.runNow();
+		w.deps.readRemotes.mockReturnValue([remote('r1', { privateKeyPath: '~/.ssh/fixed' })]);
+		await w.coordinator.runNow();
+		expect(w.deps.setupHost).toHaveBeenCalledTimes(2);
+	});
+
 	it('passes the lingering fix on as the one thing to do', async () => {
 		const w = world({
 			setup: {
@@ -307,6 +355,66 @@ describe('AutoFederationCoordinator: keeping hosts', () => {
 		const snapshot = await w.coordinator.runNow();
 		expect(w.deps.lift).not.toHaveBeenCalled();
 		expect(snapshot.agents).toEqual([]);
+	});
+});
+
+describe('AutoFederationCoordinator: review fixes', () => {
+	it('waits instead of moving when the host does not answer which providers it runs', async () => {
+		const w = world({ providers: null });
+		expect((await w.coordinator.runNow()).agents[0]).toMatchObject({ state: 'waiting' });
+		expect(w.deps.lift).not.toHaveBeenCalled();
+	});
+
+	it('reads the setting again before each move', async () => {
+		const w = world({ agents: [agent('a1', 'r1'), agent('a2', 'r1')] });
+		// Switched off while the first agent moves.
+		w.deps.lift.mockImplementation(async (_id: string, options: { dryRun: boolean }) => {
+			if (!options.dryRun) w.deps.isAutoMoveEnabled.mockReturnValue(false);
+			return options.dryRun ? plan() : moved;
+		});
+		const snapshot = await w.coordinator.runNow();
+		expect(snapshot.agents.map((a) => a.state)).toEqual(['moved', 'manual']);
+	});
+
+	it('keeps a failed service setup on a connected host eligible for a later retry', async () => {
+		const w = world({ setup: { ok: false, code: 'ssh-failed', error: 'Connection reset.' } });
+		expect((await w.coordinator.runNow()).remotes[0]).toMatchObject({ state: 'blocked' });
+		await w.coordinator.runNow();
+		expect(w.deps.setupHost).toHaveBeenCalledTimes(1);
+		w.advance(SETUP_RETRY_MS + 1);
+		await w.coordinator.runNow();
+		expect(w.deps.setupHost).toHaveBeenCalledTimes(2);
+	});
+
+	it('keeps the schedule going after Run Now', async () => {
+		const w = world({});
+		await w.coordinator.runNow();
+		expect(w.deps.setTimer).toHaveBeenCalledTimes(1);
+	});
+
+	it('Run Now during a pass waits for a pass that started after it asked', async () => {
+		const w = world({});
+		let release: () => void = () => undefined;
+		w.deps.setupHost.mockImplementationOnce(
+			() =>
+				new Promise<DesktopSetupHostAnswer>((resolve) => {
+					release = () => resolve(setupOk);
+				})
+		);
+		const first = w.coordinator.runNow();
+		await Promise.resolve();
+		let secondDone = false;
+		const second = w.coordinator.runNow().then((snapshot) => {
+			secondDone = true;
+			return snapshot;
+		});
+		await Promise.resolve();
+		expect(secondDone).toBe(false);
+		release();
+		await first;
+		const snapshot = await second;
+		expect(snapshot.running).toBe(false);
+		expect(snapshot.agents[0].state).toBe('moved');
 	});
 });
 

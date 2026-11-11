@@ -189,6 +189,60 @@ describe('buildRemoteServiceScript', () => {
 	);
 });
 
+describe('the launchd branch', () => {
+	// The script skips a Mac with Maestro.app, so this runs where /Applications has none (CI).
+	const canRun = onPosix && !fs.existsSync('/Applications/Maestro.app');
+
+	it.skipIf(!canRun)(
+		'writes an XML-safe plist and loads it, falling back to the user domain',
+		() => {
+			const home = fs.mkdtempSync(path.join(tmp, 'home & <co>-'));
+			const bin = fs.mkdtempSync(path.join(tmp, 'bin-'));
+			const log = path.join(home, 'calls.log');
+			fs.mkdirSync(path.join(home, '.maestro', 'bin'), { recursive: true });
+			fs.writeFileSync(
+				path.join(home, '.maestro', 'bin', 'maestro-cli'),
+				`#!/bin/sh\n${NOT_RUNNING}\n`,
+				{
+					mode: 0o755,
+				}
+			);
+			fs.writeFileSync(
+				path.join(bin, 'uname'),
+				'#!/bin/sh\n[ "$1" = -s ] && echo Darwin || echo arm64\n',
+				{
+					mode: 0o755,
+				}
+			);
+			fs.writeFileSync(
+				path.join(bin, 'launchctl'),
+				`#!/bin/sh\necho "launchctl $*" >> "${log}"\n[ "$1" = print ] && exit 1\nexit 0\n`,
+				{ mode: 0o755 }
+			);
+			const result = spawnSync(
+				'bash',
+				['--norc', '--noprofile', '-c', buildRemoteServiceScript()],
+				{
+					env: { HOME: home, PATH: `${bin}:/usr/bin:/bin` },
+					encoding: 'utf8',
+				}
+			);
+			expect(parseRemoteServiceReport(result.stdout)).toEqual({
+				kind: 'launchd',
+				state: 'started',
+				note: LAUNCHD_LOGIN_NOTE,
+			});
+			const plist = fs.readFileSync(
+				path.join(home, 'Library', 'LaunchAgents', 'sh.maestro.host.plist'),
+				'utf8'
+			);
+			expect(plist).toContain('&amp; &lt;co&gt;');
+			expect(plist).not.toContain('$xmlwrapper');
+			expect(fs.readFileSync(log, 'utf8')).toMatch(/launchctl bootstrap user\/\d+ /);
+		}
+	);
+});
+
 describe('parseRemoteServiceReport and describeRemoteService', () => {
 	it('answers null when the script never ran', () => {
 		expect(parseRemoteServiceReport('Welcome to the box')).toBeNull();

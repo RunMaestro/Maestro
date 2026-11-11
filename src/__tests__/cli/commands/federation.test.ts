@@ -214,6 +214,25 @@ describe('federation command', () => {
 			process.exitCode = undefined;
 		});
 
+		it('exits 1 for a running host that still needs a person', async () => {
+			mockDesktop({
+				success: true,
+				auto: {
+					...snapshot,
+					agents: [],
+					remotes: [
+						{ ...snapshot.remotes[0], needsYou: true, fix: 'Run sudo loginctl enable-linger u.' },
+					],
+				},
+			});
+
+			await federationAuto({});
+
+			expect(printed()).toContain('Run sudo loginctl enable-linger u.');
+			expect(process.exitCode).toBe(1);
+			process.exitCode = undefined;
+		});
+
 		it('runs a pass with a long timeout and prints the JSON', async () => {
 			const sent = mockDesktop({ success: true, auto: { ...snapshot, agents: [] } });
 

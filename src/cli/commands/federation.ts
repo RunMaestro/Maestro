@@ -170,7 +170,9 @@ export function formatAutoFederation(snapshot: AutoFederationSnapshot): string {
 			`  ${colorize('cyan', remote.name)}  ${mark(remote.state)}${remote.reason ? `  ${remote.reason}` : ''}`
 		);
 		if (remote.service) lines.push(`    Service: ${remote.service}`);
-		if (remote.fix) lines.push(`    To fix: ${remote.fix}`);
+		if (remote.fix) {
+			lines.push(`    ${remote.needsYou ? colorize('red', 'To fix:') : 'Note:'} ${remote.fix}`);
+		}
 	}
 	if (snapshot.agents.length > 0) lines.push('', 'SSH agents:');
 	for (const agent of snapshot.agents) {
@@ -188,7 +190,7 @@ export function formatAutoFederation(snapshot: AutoFederationSnapshot): string {
 /** Something needs a person: exit 1 so a script notices. */
 function needsAttention(snapshot: AutoFederationSnapshot): boolean {
 	return (
-		snapshot.remotes.some((remote) => remote.state === 'blocked') ||
+		snapshot.remotes.some((remote) => remote.state === 'blocked' || remote.needsYou === true) ||
 		snapshot.agents.some((agent) => agent.state === 'blocked')
 	);
 }

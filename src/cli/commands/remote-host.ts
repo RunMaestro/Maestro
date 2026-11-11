@@ -395,7 +395,7 @@ export function formatRemoteHostSetup(
 	}
 	if (result.service) lines.push(`Service: ${describeRemoteService(result.service)}`);
 	if (result.serviceError) {
-		lines.push(colorize('yellow', `Service: not registered (${result.serviceError})`));
+		lines.push(colorize('yellow', `Service: ${result.serviceError}`));
 	}
 	if (result.lingerFix) {
 		lines.push(colorize('yellow', formatLingerWarning(result.lingerFix, remote.name)));

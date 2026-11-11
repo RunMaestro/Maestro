@@ -39,6 +39,11 @@ export interface AutoFederationRemoteStatus {
 	reason?: string;
 	/** What a person has to do, when anything. */
 	fix?: string;
+	/**
+	 * `fix` is required, not advice: the host runs, but will not survive logout or reboot (or the
+	 * service could not be registered) until a person acts. `blocked` implies it too.
+	 */
+	needsYou?: boolean;
 	/** How the remote keeps its host running across reboots, in one sentence. */
 	service?: string;
 	/** Epoch ms of the last change. */

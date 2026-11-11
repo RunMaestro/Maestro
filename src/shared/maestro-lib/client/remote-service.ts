@@ -161,8 +161,9 @@ export function buildLaunchdPlist(wrapperPath: string): string {
 export function buildRemoteServiceScript(): string {
 	const wrapper = buildHostServiceWrapper();
 	const unit = buildSystemdUnit();
-	// The plist needs the absolute wrapper path; `__WRAPPER__` is replaced by the script.
-	const plist = buildLaunchdPlist('__WRAPPER__');
+	// The plist needs the absolute wrapper path. It is written through an UNQUOTED heredoc so the
+	// shell expands `$xmlwrapper` (the path, XML-escaped); the template holds no other `$`.
+	const plist = buildLaunchdPlist('$xmlwrapper');
 	return [
 		`M='${MARKER}'`,
 		`say() { printf '%s%s\\n' "$M" "$1"; }`,
@@ -172,7 +173,7 @@ export function buildRemoteServiceScript(): string {
 		'case "$(uname -s)" in Linux*) os=linux;; Darwin*) os=darwin;; *) os=other;; esac',
 		'[ "$os" = other ] && skip unsupported-os',
 		// The desktop app is the host on a Mac that has it: a headless host would lock it out.
-		'[ "$os" = darwin ] && [ -d /Applications/Maestro.app ] && skip desktop-app',
+		'[ "$os" = darwin ] && { [ -d /Applications/Maestro.app ] || [ -d "$HOME/Applications/Maestro.app" ]; } && skip desktop-app',
 		'mkdir -p "$bin" || skip write-failed',
 		`cat > "$wrapper.new" <<'MAESTRO_HOST_SERVICE' || skip write-failed`,
 		wrapper.trimEnd(),
@@ -205,11 +206,12 @@ export function buildRemoteServiceScript(): string {
 		// macOS
 		`plist="$HOME/Library/LaunchAgents/${REMOTE_SERVICE_LABEL}.plist"`,
 		'mkdir -p "$HOME/Library/LaunchAgents" || skip write-failed',
-		`cat > "$plist.new" <<'MAESTRO_PLIST' || skip write-failed`,
+		// launchd expands nothing, so the absolute path goes in, escaped for XML.
+		`xmlwrapper=$(printf '%s' "$wrapper" | sed -e 's/&/\\&amp;/g' -e 's/</\\&lt;/g' -e 's/>/\\&gt;/g')`,
+		'cat > "$plist.new" <<MAESTRO_PLIST || skip write-failed',
 		plist.trimEnd(),
 		'MAESTRO_PLIST',
-		// launchd expands nothing: put the absolute wrapper path in.
-		'sed "s#__WRAPPER__#$wrapper#" "$plist.new" > "$plist" && rm -f "$plist.new" || skip write-failed',
+		'mv -f "$plist.new" "$plist" || skip write-failed',
 		'say kind=launchd',
 		'uid=$(id -u); domain="gui/$uid"; launchctl print "$domain" >/dev/null 2>&1 || domain="user/$uid"',
 		`if launchctl print "$domain/${REMOTE_SERVICE_LABEL}" >/dev/null 2>&1; then`,

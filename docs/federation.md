@@ -116,7 +116,7 @@ The usual cases:
 
 ### What Make Federated installs
 
-Maestro installs into `~/.maestro` on the remote, as the SSH user. It never asks for sudo, runs only as the SSH user you connect as, and writes nothing outside that folder, npm's cache included.
+Maestro installs into `~/.maestro` on the remote, as the SSH user. It never asks for sudo and runs only as the SSH user you connect as. The install writes nothing outside that folder, npm's cache included. Registering the [service](#durability) adds one file in the service manager's folder (`~/.config/systemd/user/maestro-host.service`, or `~/Library/LaunchAgents/sh.maestro.host.plist`), and may turn lingering on for that user.
 
 | On the remote             | What Maestro uses                                                                                                                                    |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |

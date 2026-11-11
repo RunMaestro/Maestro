@@ -90,11 +90,23 @@ function agentFingerprint(agent: AgentRecord): string {
 		ssh: agent.sessionSshRemoteConfig ?? null,
 		env: (agent as { customEnvVars?: unknown }).customEnvVars ?? null,
 		path: (agent as { customPath?: unknown }).customPath ?? null,
+		// Lift eligibility reads the tabs (an agent with none cannot move).
+		tabs: (agent.aiTabs ?? []).map((tab) => [tab.id, tab.agentSessionId ?? null]),
 	});
 }
 
+/** Every connection field a person can change to fix a failed setup. */
 function remoteFingerprint(remote: SshRemoteConfig): string {
-	return canonicalJson({ host: remote.host, port: remote.port, user: remote.username ?? null });
+	return canonicalJson({
+		host: remote.host,
+		port: remote.port,
+		user: remote.username ?? null,
+		key: remote.privateKeyPath ?? null,
+		useSshConfig: remote.useSshConfig ?? null,
+		sshOptions: remote.sshOptions ?? null,
+		remoteEnv: remote.remoteEnv ?? null,
+		enabled: remote.enabled,
+	});
 }
 
 /** A lift refusal the next pass can clear by itself (nothing for a person to do). */
@@ -113,11 +125,16 @@ export class AutoFederationCoordinator {
 	private readonly serviceEnsured = new Set<string>();
 	/** When a remote's setup last failed, and against which remote record. */
 	private readonly setupFailures = new Map<string, { at: number; fingerprint: string }>();
-	/** When an agent was last blocked, and against which agent and remote record. */
-	private readonly agentBlocks = new Map<string, { at: number; fingerprint: string }>();
+	/** When an agent was last blocked, against which records, and why (to show it again). */
+	private readonly agentBlocks = new Map<
+		string,
+		{ at: number; fingerprint: string; reason: string; fix: string }
+	>();
 	private interval: unknown = null;
 	private debounce: unknown = null;
 	private running = false;
+	/** The pass running now, so a caller that asked for one can wait for it to finish. */
+	private active: Promise<void> | null = null;
 	/** A nudge came in while a pass ran: run once more after it. */
 	private again = false;
 	private lastPassAt: number | undefined;
@@ -174,6 +191,7 @@ export class AutoFederationCoordinator {
 		this.clearTimer(this.debounce);
 		this.debounce = null;
 		await this.pass();
+		this.scheduleNext();
 		return this.snapshot();
 	}
 
@@ -190,11 +208,14 @@ export class AutoFederationCoordinator {
 
 	private fire(): void {
 		this.debounce = null;
-		void this.pass().finally(() => {
-			if (this.stopped) return;
-			this.clearTimer(this.interval);
-			this.interval = this.setTimer(() => this.fire(), AUTO_FEDERATION_INTERVAL_MS);
-		});
+		void this.pass().finally(() => this.scheduleNext());
+	}
+
+	/** The next pass on its own, an interval after this one, whoever started this one. */
+	private scheduleNext(): void {
+		if (this.stopped) return;
+		this.clearTimer(this.interval);
+		this.interval = this.setTimer(() => this.fire(), AUTO_FEDERATION_INTERVAL_MS);
 	}
 
 	private publish(): void {
@@ -205,13 +226,20 @@ export class AutoFederationCoordinator {
 		remote: SshRemoteConfig,
 		patch: Omit<AutoFederationRemoteStatus, 'remoteId' | 'name' | 'at'>
 	): void {
+		// The service report outlives a passing connection state: a reconnect does not run setup
+		// again, so dropping it would hide a lingering fix until the next app run.
+		const previous = this.remotes.get(remote.id);
 		this.remotes.set(remote.id, {
 			remoteId: remote.id,
 			name: remote.name,
+			...(previous?.service && patch.service === undefined ? { service: previous.service } : {}),
 			...patch,
 			at: this.now(),
 		});
 	}
+
+	/** The service's required fix, kept from the last setup, for a host that is ready again. */
+	private readonly serviceFixes = new Map<string, string>();
 
 	private setAgent(
 		agent: AgentRecord,
@@ -228,12 +256,20 @@ export class AutoFederationCoordinator {
 	}
 
 	/** One pass over every remote. Never two at once. */
-	private async pass(): Promise<void> {
-		if (this.stopped) return;
-		if (this.running) {
+	private pass(): Promise<void> {
+		if (this.stopped) return Promise.resolve();
+		if (this.active) {
+			// The running pass loops once more, so the caller gets a pass that started after it asked.
 			this.again = true;
-			return;
+			return this.active;
 		}
+		this.active = this.runPasses().finally(() => {
+			this.active = null;
+		});
+		return this.active;
+	}
+
+	private async runPasses(): Promise<void> {
 		this.running = true;
 		this.publish();
 		try {
@@ -290,7 +326,8 @@ export class AutoFederationCoordinator {
 			const ready = await this.ensureHost(remote, agents.length > 0 && autoMove);
 			for (const agent of agents) {
 				if (this.stopped) return;
-				if (!autoMove) {
+				// Read again before each move: it may have been switched off while setup ran.
+				if (!autoMove || !this.deps.isAutoMoveEnabled()) {
 					this.setAgent(agent, remote.id, {
 						state: 'manual',
 						reason: 'Automatic moves are off.',
@@ -329,12 +366,15 @@ export class AutoFederationCoordinator {
 		const connection = peer?.connection;
 
 		if (connection === 'connected') {
-			// Once per app run: make sure the host comes back after a reboot.
+			// Once per app run: make sure the host comes back after a reboot. A failed attempt stays
+			// eligible, and is tried again after SETUP_RETRY_MS like any other failed setup.
 			if (!this.serviceEnsured.has(remote.id)) {
-				this.serviceEnsured.add(remote.id);
-				await this.runSetup(remote, true);
+				if (!this.setupBackingOff(remote) && (await this.runSetup(remote, true))) {
+					this.serviceEnsured.add(remote.id);
+				}
 			} else if (this.remotes.get(remote.id)?.state !== 'ready') {
-				this.setRemote(remote, { state: 'ready', service: this.remotes.get(remote.id)?.service });
+				const fix = this.serviceFixes.get(remote.id);
+				this.setRemote(remote, { state: 'ready', ...(fix ? { fix, needsYou: true } : {}) });
 			}
 			return this.isConnected(remote.id);
 		}
@@ -363,16 +403,19 @@ export class AutoFederationCoordinator {
 			}
 			return false;
 		}
-		const failed = this.setupFailures.get(remote.id);
-		if (
-			failed &&
-			failed.fingerprint === remoteFingerprint(remote) &&
-			this.now() - failed.at < SETUP_RETRY_MS
-		) {
-			return false;
-		}
+		if (this.setupBackingOff(remote)) return false;
 		await this.runSetup(remote, false);
 		return this.isConnected(remote.id);
+	}
+
+	/** A setup of this remote failed recently, against the same remote record. */
+	private setupBackingOff(remote: SshRemoteConfig): boolean {
+		const failed = this.setupFailures.get(remote.id);
+		return (
+			failed !== undefined &&
+			failed.fingerprint === remoteFingerprint(remote) &&
+			this.now() - failed.at < SETUP_RETRY_MS
+		);
 	}
 
 	private isConnected(remoteId: string): boolean {
@@ -381,7 +424,8 @@ export class AutoFederationCoordinator {
 			.some((peer) => peer.remoteId === remoteId && peer.connection === 'connected');
 	}
 
-	private async runSetup(remote: SshRemoteConfig, alreadyConnected: boolean): Promise<void> {
+	/** Set the host up. True when it succeeded (or an older host was found running, on purpose left). */
+	private async runSetup(remote: SshRemoteConfig, alreadyConnected: boolean): Promise<boolean> {
 		this.setRemote(remote, {
 			state: 'setting-up',
 			reason: alreadyConnected
@@ -407,7 +451,7 @@ export class AutoFederationCoordinator {
 					reason: 'The host runs an older version than this app.',
 					fix: 'Make Federated on one of its agents offers Upgrade and Restart Host, or run maestro-cli remote-host install <ssh-remote> --restart.',
 				});
-				return;
+				return true;
 			}
 			this.setupFailures.set(remote.id, { at: this.now(), fingerprint: remoteFingerprint(remote) });
 			this.setRemote(remote, {
@@ -415,7 +459,7 @@ export class AutoFederationCoordinator {
 				reason: answer.error,
 				fix: setupFix(answer.code),
 			});
-			return;
+			return false;
 		}
 		this.setupFailures.delete(remote.id);
 		const { service, serviceError } = answer.result;
@@ -424,11 +468,26 @@ export class AutoFederationCoordinator {
 			: serviceError
 				? `The service could not be registered: ${serviceError}`
 				: undefined;
+		// What the host still needs from a person to survive logout and reboots, if anything.
+		const serviceFix =
+			service && service.kind !== 'none' && service.lingerFix
+				? `Run \`${service.lingerFix}\` on the remote so the host survives logout and reboots.`
+				: service && service.kind !== 'none' && service.state === 'start-failed'
+					? 'The service did not start the host. Check it on the remote (`systemctl --user status maestro-host`, or `launchctl print gui/$(id -u)/sh.maestro.host`).'
+					: service?.kind === 'none'
+						? service.fix
+						: serviceError
+							? 'Run maestro-cli remote-host install <ssh-remote> --start to register the service again and see the error.'
+							: undefined;
+		if (serviceFix) this.serviceFixes.set(remote.id, serviceFix);
+		else this.serviceFixes.delete(remote.id);
 		const connected = this.isConnected(remote.id);
 		this.setRemote(remote, {
 			state: connected ? 'ready' : 'blocked',
 			...(connected
-				? {}
+				? serviceFix
+					? { fix: serviceFix, needsYou: true }
+					: {}
 				: {
 						reason:
 							answer.reconnectError ??
@@ -436,15 +495,8 @@ export class AutoFederationCoordinator {
 						fix: 'Right-click the peer in the Left Bar > Reconnect, or run maestro-cli remote-host status <ssh-remote>.',
 					}),
 			...(serviceText ? { service: serviceText } : {}),
-			// Lingering or a login item is the one thing the service may still need from a person.
-			...(connected && service && service.kind !== 'none' && service.lingerFix
-				? {
-						fix: `Run \`${service.lingerFix}\` on the remote so the host survives logout and reboots.`,
-					}
-				: connected && service?.kind === 'none'
-					? { fix: service.fix }
-					: {}),
 		});
+		return true;
 	}
 
 	/** Every sanity check, then the move. */
@@ -460,10 +512,16 @@ export class AutoFederationCoordinator {
 			blocked.fingerprint === fingerprint &&
 			this.now() - blocked.at < BLOCKED_RETRY_MS
 		) {
+			// Not retried yet, but still blocked: show it as such (a pass with moves off said manual).
+			this.setAgent(agent, remote.id, {
+				state: 'blocked',
+				reason: blocked.reason,
+				fix: blocked.fix,
+			});
 			return;
 		}
 		const block = (reason: string, fix: string): void => {
-			this.agentBlocks.set(agent.id, { at: this.now(), fingerprint });
+			this.agentBlocks.set(agent.id, { at: this.now(), fingerprint, reason, fix });
 			this.setAgent(agent, remote.id, { state: 'blocked', reason, fix });
 		};
 		const wait = (reason: string): void => {
@@ -486,16 +544,22 @@ export class AutoFederationCoordinator {
 		const customPath = (agent as { customPath?: unknown }).customPath;
 		if (typeof customPath !== 'string' || !customPath.trim()) {
 			const providers = await this.deps.hostProviders(remote.id);
-			if (providers) {
-				const provider = providers.find((candidate) => candidate.id === agent.toolType);
-				if (!provider || !provider.available) {
-					const name = getAgentDisplayName(agent.toolType);
-					block(
-						`${name} is not available to the host on "${remote.name}"${provider?.unavailableReason ? ` (${provider.unavailableReason})` : ''}.`,
-						`Install ${name} on "${remote.name}" and log in to it as the SSH user. If it is installed outside ~/.local/bin or a Node version manager, add its folder to the PATH line in ~/.maestro/bin/maestro-host-service, then use Start Host.`
-					);
-					return;
-				}
+			// Unanswered is not "available": neither the dry run nor the import checks the binary, so
+			// moving now could leave the agent on a host that cannot run it.
+			if (!providers) {
+				wait(
+					'The host did not say which providers it can run. Maestro asks again on the next pass.'
+				);
+				return;
+			}
+			const provider = providers.find((candidate) => candidate.id === agent.toolType);
+			if (!provider || !provider.available) {
+				const name = getAgentDisplayName(agent.toolType);
+				block(
+					`${name} is not available to the host on "${remote.name}"${provider?.unavailableReason ? ` (${provider.unavailableReason})` : ''}.`,
+					`Install ${name} on "${remote.name}" and log in to it as the SSH user. If it is installed outside ~/.local/bin or a Node version manager, add its folder to the PATH line in ~/.maestro/bin/maestro-host-service, then use Start Host.`
+				);
+				return;
 			}
 		}
 		// 4. The dry run: every refusal the real lift would make, and what would stay behind.
@@ -517,7 +581,15 @@ export class AutoFederationCoordinator {
 			);
 			return;
 		}
-		// 5. The move.
+		// 5. The move, unless automatic moves were switched off while the checks ran.
+		if (!this.deps.isAutoMoveEnabled()) {
+			this.setAgent(agent, remote.id, {
+				state: 'manual',
+				reason: 'Automatic moves are off.',
+				fix: 'Right-click the agent > Move to Host, or turn on "Move SSH agents to their host automatically" in Settings > SSH Hosts.',
+			});
+			return;
+		}
 		const moved = await this.deps.lift(agent.id, { dryRun: false });
 		if (!moved.ok) {
 			if (TRANSIENT_LIFT_CODES.has(moved.code)) wait(moved.error);

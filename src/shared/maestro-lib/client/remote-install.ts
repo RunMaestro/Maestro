@@ -587,7 +587,7 @@ export interface SetupRemoteHostOptions extends InstallRemoteCliOptions {
 	service?: boolean;
 	/** Timeout for the discovery and start calls. Default 60 s. */
 	discoveryTimeoutMs?: number;
-	/** How long to wait for a host the service started to answer. Default 30 s. */
+	/** How long to wait for a host the service started to answer. Default 60 s. */
 	serviceStartTimeoutMs?: number;
 	/** Test seams. */
 	discover?: typeof discoverRemoteHost;
@@ -712,7 +712,7 @@ export async function setupRemoteHost(
 					remote,
 					discover,
 					discoveryOptions,
-					options.serviceStartTimeoutMs ?? 30_000,
+					options.serviceStartTimeoutMs ?? 60_000,
 					options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
 				);
 				if (up) {
@@ -724,6 +724,12 @@ export async function setupRemoteHost(
 						pid: up.pid,
 						port: up.port,
 					};
+				} else {
+					// The service may still be starting it: a detached start now would race it for the
+					// data directory's lock. Say so, and leave the host to the service.
+					serviceRunsHost = true;
+					result.serviceError =
+						'The service started, but its host did not answer within the wait. It may still be starting: check it on the remote (`systemctl --user status maestro-host`, or `launchctl print gui/$(id -u)/sh.maestro.host`).';
 				}
 			}
 		} catch (error) {

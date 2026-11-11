@@ -56,6 +56,18 @@ export function autoFederationAnnouncements(
 				title: `Could not set up the host on ${remote.name}`,
 				message: [remote.reason, remote.fix].filter(Boolean).join(' '),
 			});
+		} else if (
+			remote.state !== 'blocked' &&
+			remote.needsYou &&
+			remote.fix &&
+			(!was?.needsYou || was.fix !== remote.fix)
+		) {
+			// The host runs, but needs a person to keep running (lingering, no service manager).
+			out.push({
+				color: 'yellow',
+				title: `The host on ${remote.name} needs one step from you`,
+				message: remote.fix,
+			});
 		}
 	}
 	return out;

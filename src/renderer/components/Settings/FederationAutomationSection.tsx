@@ -105,6 +105,8 @@ export function FederationAutomationSection({ theme }: { theme: Theme }) {
 
 	const agents = snapshot.agents.filter((agent) => agent.state !== 'manual' || !autoMove);
 	const busy = runningNow || snapshot.running;
+	// The browser build has no Federation API: automatic Federation runs in the desktop app.
+	const available = typeof window !== 'undefined' && Boolean(window.maestro?.federation?.autoRun);
 
 	return (
 		<div>
@@ -128,14 +130,17 @@ export function FederationAutomationSection({ theme }: { theme: Theme }) {
 					style={{ borderColor: theme.colors.border }}
 				>
 					<span className="text-xs opacity-70">
-						{snapshot.lastPassAt
-							? `Last checked ${formatRelativeTime(snapshot.lastPassAt)}`
-							: 'Not checked yet'}
+						{!available
+							? 'Runs in the desktop app'
+							: snapshot.lastPassAt
+								? `Last checked ${formatRelativeTime(snapshot.lastPassAt)}`
+								: 'Not checked yet'}
 					</span>
 					<button
 						type="button"
 						onClick={() => void runNow()}
-						disabled={busy}
+						disabled={busy || !available}
+						title={available ? undefined : 'Automatic Federation runs in the desktop app'}
 						className="flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs disabled:opacity-50"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 						data-testid="federation-auto-run-now"
@@ -149,8 +154,12 @@ export function FederationAutomationSection({ theme }: { theme: Theme }) {
 						key={remote.remoteId}
 						theme={theme}
 						name={remote.name}
-						state={REMOTE_STATE_LABEL[remote.state]}
-						blocked={remote.state === 'blocked'}
+						state={
+							remote.needsYou && remote.state !== 'blocked'
+								? 'Running, needs you'
+								: REMOTE_STATE_LABEL[remote.state]
+						}
+						blocked={remote.state === 'blocked' || remote.needsYou === true}
 						lines={[remote.reason, remote.service]}
 						fix={remote.fix}
 					/>

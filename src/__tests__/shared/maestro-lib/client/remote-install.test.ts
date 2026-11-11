@@ -587,7 +587,7 @@ describe('setupRemoteHost', () => {
 			expect(s.startHost).toHaveBeenCalledTimes(1);
 		});
 
-		it('falls back to host start when the service never brought the host up', async () => {
+		it('never starts a detached host beside a service that is still starting one', async () => {
 			const s = seams(notInstalled);
 			const result = await setupRemoteHost(remote, bundle, {
 				...s,
@@ -596,9 +596,10 @@ describe('setupRemoteHost', () => {
 				start: true,
 				service: true,
 			});
-			// Discovery keeps saying "not installed" (the fake), so the wait gives up and host start runs.
-			expect(s.startHost).toHaveBeenCalledTimes(1);
-			expect(result.start).toEqual(started);
+			// Discovery keeps saying "not installed" (the fake), so the wait gives up: no host start.
+			expect(s.startHost).not.toHaveBeenCalled();
+			expect(result.start).toBeUndefined();
+			expect(result.serviceError).toContain('may still be starting');
 		});
 
 		it('clears the linger warning once the service turned lingering on', async () => {
