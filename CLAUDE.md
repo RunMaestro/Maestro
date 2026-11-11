@@ -73,7 +73,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Format profiling spans (ms):** `formatDuration()` in `src/shared/performance-metrics.ts` (NOT formatters.ts; perf traces only)
 - **Format relative time:** `formatRelativeTime()` in `src/shared/formatters.ts`
 - **Format a calendar day:** `formatCalendarDay()` in `src/shared/formatters.ts`
-- **Local calendar day keys:** `toLocalYmd()`, `parseLocalYmd()`, `addLocalDays()` in `src/shared/localDay.ts`
+- **Local calendar day keys:** `toLocalYmd()`, `parseLocalYmd()`, `addLocalDays()`, `startOfLocalDay()` in `src/shared/localDay.ts`
 - **Format an hour of day:** `formatHourOfDay()` in `src/shared/formatters.ts`
 - **Format cost:** `formatCost()` in `src/shared/formatters.ts`
 - **Timestamp for a generated file name:** `fileTimestampSlug(dateOrTimestamp?)` in `src/shared/formatters.ts`

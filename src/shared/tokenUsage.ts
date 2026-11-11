@@ -17,6 +17,7 @@ import type { TokenCounts } from './modelPricing';
 import type { UsageAccounting, UsageBreakdown } from './types';
 import type { TokenSpeedBucket, TokenSpeedSummary } from './tokenSpeed';
 import type { StatsTimeRange } from './stats-types';
+import { startOfLocalDay } from './localDay';
 
 /**
  * Per-agent token coverage, mirroring the Cue accessor's classification so both
@@ -232,5 +233,7 @@ export function tokenUsageQueryForRange(
 	if (range === 'all') return { granularity: 'month' };
 	const days = RANGE_DAYS[range];
 	const granularity = days <= 30 ? 'day' : days <= 90 ? 'week' : 'month';
-	return { sinceMs: nowMs - days * 24 * 60 * 60 * 1000, granularity };
+	// "Today" starts at local midnight, the same window `getTimeRangeStart` uses.
+	const sinceMs = range === 'day' ? startOfLocalDay(nowMs) : nowMs - days * 24 * 60 * 60 * 1000;
+	return { sinceMs, granularity };
 }

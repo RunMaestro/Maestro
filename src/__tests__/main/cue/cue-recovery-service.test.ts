@@ -16,6 +16,7 @@ const mockCloseCueDb = vi.fn();
 const mockPruneCueEvents = vi.fn();
 const mockGetLastHeartbeat = vi.fn<() => number | null>();
 const mockFailOrphanedRunningEvents = vi.fn<(message: string) => number>(() => 0);
+const mockQuarantineCorruptCueDb = vi.fn<() => string | null>();
 
 vi.mock('../../../main/cue/cue-db', () => ({
 	initCueDb: (...args: unknown[]) => mockInitCueDb(...args),
@@ -23,6 +24,9 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	pruneCueEvents: (...args: unknown[]) => mockPruneCueEvents(...args),
 	failOrphanedRunningEvents: (message: string) => mockFailOrphanedRunningEvents(message),
 	getLastHeartbeat: () => mockGetLastHeartbeat(),
+	isCueDbCorruptionError: (err: unknown) =>
+		(err as { code?: string } | null)?.code === 'SQLITE_CORRUPT',
+	quarantineCorruptCueDb: () => mockQuarantineCorruptCueDb(),
 }));
 
 const mockCaptureException = vi.fn();
@@ -185,6 +189,100 @@ describe('cue-recovery-service', () => {
 				expect(result.error).toBeInstanceOf(Error);
 				expect(result.error.message).toBe('plain string failure');
 			}
+		});
+	});
+
+	describe('init with a corrupt database', () => {
+		function corruptError(): Error {
+			return Object.assign(new Error('database disk image is malformed'), {
+				code: 'SQLITE_CORRUPT',
+			});
+		}
+
+		function makeService(onLog = vi.fn()) {
+			return createCueRecoveryService({ onLog, getSessions: () => new Map(), onDispatch: vi.fn() });
+		}
+
+		beforeEach(() => {
+			mockInitCueDb.mockReset();
+			mockPruneCueEvents.mockReset();
+			mockQuarantineCorruptCueDb.mockReset();
+			mockQuarantineCorruptCueDb.mockReturnValue('/data/cue.corrupt-stamp.db');
+		});
+
+		it('moves the file aside and starts on a new one when init finds corruption', () => {
+			const dbError = corruptError();
+			mockInitCueDb.mockImplementationOnce(() => {
+				throw dbError;
+			});
+			const onLog = vi.fn();
+
+			const result = makeService(onLog).init();
+
+			expect(result.ok).toBe(true);
+			expect(mockQuarantineCorruptCueDb).toHaveBeenCalledOnce();
+			expect(mockInitCueDb).toHaveBeenCalledTimes(2);
+			expect(mockPruneCueEvents).toHaveBeenCalledOnce();
+			expect(onLog).toHaveBeenCalledWith('warn', expect.stringContaining('moved it aside'));
+			expect(mockCaptureException).toHaveBeenCalledWith(dbError, {
+				extra: { operation: 'cue.dbCorruptRecovered' },
+			});
+		});
+
+		it('recovers when corruption only shows on the first write (prune)', () => {
+			mockPruneCueEvents.mockImplementationOnce(() => {
+				throw corruptError();
+			});
+
+			const result = makeService().init();
+
+			expect(result.ok).toBe(true);
+			expect(mockQuarantineCorruptCueDb).toHaveBeenCalledOnce();
+			expect(mockInitCueDb).toHaveBeenCalledTimes(2);
+			expect(mockPruneCueEvents).toHaveBeenCalledTimes(2);
+		});
+
+		it('fails as before when the file cannot be moved aside', () => {
+			const dbError = corruptError();
+			mockInitCueDb.mockImplementation(() => {
+				throw dbError;
+			});
+			mockQuarantineCorruptCueDb.mockReturnValue(null);
+
+			const result = makeService().init();
+
+			expect(result.ok).toBe(false);
+			expect(mockInitCueDb).toHaveBeenCalledOnce();
+			expect(mockCaptureException).toHaveBeenCalledWith(dbError, {
+				extra: { operation: 'cue.dbInit' },
+			});
+		});
+
+		it('fails when the new database fails too, and tries only once', () => {
+			const retryError = new Error('disk I/O error');
+			mockInitCueDb
+				.mockImplementationOnce(() => {
+					throw corruptError();
+				})
+				.mockImplementationOnce(() => {
+					throw retryError;
+				});
+
+			const result = makeService().init();
+
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.error).toBe(retryError);
+			expect(mockQuarantineCorruptCueDb).toHaveBeenCalledOnce();
+			expect(mockInitCueDb).toHaveBeenCalledTimes(2);
+		});
+
+		it('never moves the file aside for an error that is not corruption', () => {
+			mockInitCueDb.mockImplementationOnce(() => {
+				throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+			});
+
+			expect(makeService().init().ok).toBe(false);
+			expect(mockQuarantineCorruptCueDb).not.toHaveBeenCalled();
 		});
 	});
 
