@@ -142,7 +142,15 @@ const GATEWAY_SUPPORT: Record<AgentId, AgentGatewaySupport> = {
 	'gemini-cli': unknownVariable('gemini-cli'),
 	'qwen3-coder': unknownVariable('qwen3-coder'),
 	hermes: unknownVariable('hermes'),
-	pi: unknownVariable('pi'),
+	// Not verified (G03.3, 2026-11-11): no `pi` binary was installed where the
+	// closed-port test runs. Its docs (pi-coding-agent `docs/models.md`) route a
+	// built-in provider through a proxy by `baseUrl` on the provider in
+	// `~/.pi/agent/models.json`. A file under HOME is not a per-launch setting,
+	// so a verified route there needs a per-launch config path first.
+	pi: notVerified(
+		'pi',
+		"It sets a provider's base URL in ~/.pi/agent/models.json: point a provider at the gateway there."
+	),
 	// Not verified (G03.3, 2026-11-11): no `omp` binary was installed where the
 	// closed-port test runs. Its docs set a provider's `baseUrl` in
 	// `~/.omp/agent/models.yml` (migrated from `models.json`), applied over the

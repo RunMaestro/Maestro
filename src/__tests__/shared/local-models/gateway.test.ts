@@ -56,6 +56,7 @@ describe('agentGatewaySupport', () => {
 
 	it.each([
 		['grok', 'Grok CLI'],
+		['pi', 'Pi'],
 		['omp', 'Oh My Pi'],
 	])('refuses %s as unverified, naming it', (toolType, displayName) => {
 		const support = agentGatewaySupport(toolType);
