@@ -71,6 +71,7 @@ import {
 	useWorktreeRunTarget,
 	autoPlaybookName,
 	validateAgentPromptHasTaskReference,
+	buildDesktopAutoRunPrompt,
 } from '../hooks';
 import { formatMetaKey } from '../utils/shortcutFormatter';
 import { joinPath } from '../../shared/formatters';
@@ -460,8 +461,13 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		}
 	}, [flushGoalConfig, hasUnsavedConfigChanges, showConfirmation, onClose]);
 
-	// Validate agent prompt has task references
-	const hasValidPrompt = validateAgentPromptHasTaskReference(prompt);
+	// Validate what the agent will actually receive: a prompt that never names
+	// {{DOCUMENT_PATH}} gets the default's task-selection and document blocks
+	// appended at dispatch, so it references tasks even when its own text does not.
+	const hasValidPrompt = useMemo(
+		() => validateAgentPromptHasTaskReference(buildDesktopAutoRunPrompt(prompt, taskSelectionMode)),
+		[prompt, taskSelectionMode]
+	);
 	const isPromptEmpty = !prompt || !prompt.trim();
 
 	// Goal mode is launch-ready as soon as a non-empty goal is entered. The

@@ -26,7 +26,7 @@ import type {
 } from '../../shared/marketplace-types';
 import { MarketplaceFetchError, MarketplaceImportError } from '../../shared/marketplace-types';
 import { isCompatible } from '../../shared/marketplace-compatibility';
-import { SshRemoteConfig } from '../../shared/types';
+import { isTaskSelectionMode, SshRemoteConfig, type TaskSelectionMode } from '../../shared/types';
 import { writeFileRemote, mkdirRemote } from '../utils/remote-fs';
 import { captureException } from '../utils/sentry';
 
@@ -479,6 +479,7 @@ export interface ImportPlaybookServiceResult {
 		loopEnabled: boolean;
 		maxLoops?: number | null;
 		prompt: string;
+		taskSelectionMode?: TaskSelectionMode;
 	};
 	importedDocs: string[];
 	importedAssets: string[];
@@ -684,6 +685,11 @@ export async function importMarketplacePlaybook(
 		loopEnabled: marketplacePlaybook.loopEnabled,
 		maxLoops: marketplacePlaybook.maxLoops,
 		prompt: rebaseAssetReferences(marketplacePlaybook.prompt ?? '', targetFolderName),
+		// The manifest is someone else's JSON: only a value Auto Run knows is kept. Absent means
+		// per task, so a playbook that never declared one imports exactly as it always has.
+		...(isTaskSelectionMode(marketplacePlaybook.taskSelectionMode) && {
+			taskSelectionMode: marketplacePlaybook.taskSelectionMode,
+		}),
 	};
 
 	const playbooksDir = path.join(app.getPath('userData'), 'playbooks');

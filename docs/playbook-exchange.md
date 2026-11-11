@@ -35,7 +35,7 @@ Clicking a playbook tile (or pressing `Enter`) opens the detail view where you c
 
 - **Read the README** - Full documentation for the playbook
 - **Preview documents** - Browse individual task documents before importing; use the dropdown or click document names in the sidebar
-- **View metadata** - Author (with link if available), tags, loop settings, last updated date, and document list
+- **View metadata** - Author (with link if available), tags, loop settings, fresh-context setting (per task or per document), last updated date, and document list
 - **Set import folder** - Customize the target folder name (relative to Auto Run folder or absolute path)
 - **Browse for folder** - Click the folder icon to select a custom location (local sessions only)
 
@@ -61,7 +61,7 @@ The import creates:
 - A subfolder in your Auto Run folder with the playbook name
 - All markdown task documents copied to that folder
 - An `assets/` subfolder with any supporting files (configs, scripts, templates) if the playbook includes them. References to `{{AUTORUN_FOLDER}}/assets/` in the documents and prompt are rewritten to point at this subfolder, so each playbook keeps its own assets
-- A saved playbook configuration with loop settings and document order
+- A saved playbook configuration with loop settings, document order, the prompt, and the **Fresh Context Per** setting (per task unless the manifest says `"taskSelectionMode": "document"`)
 
 After import, the playbook is immediately available in your **Load Playbook** dropdown in the Auto Run panel.
 
@@ -88,6 +88,19 @@ Want to share your playbooks with the community? You can contribute in two ways:
 2. **Directly on GitHub** - Submit a pull request to the [Maestro-Playbooks repository](https://github.com/RunMaestro/Maestro-Playbooks)
 
 Click the **?** help button in the Exchange header for more information about contributing.
+
+### Manifest Run Settings
+
+These manifest fields decide how an imported playbook runs:
+
+| Field               | Values                  | Default  | Effect                                                                                                                                                 |
+| ------------------- | ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `loopEnabled`       | `true` / `false`        | -        | Loop back to the first document after the last one.                                                                                                    |
+| `maxLoops`          | number or `null`        | `null`   | Most loops to run. `null` is unlimited.                                                                                                                |
+| `prompt`            | string or `null`        | -        | Prompt for each task session. `null` uses Maestro's default Auto Run prompt.                                                                           |
+| `taskSelectionMode` | `"task"` / `"document"` | `"task"` | One fresh agent session per unchecked task, or one per document that works every task in it. Use `"document"` for many small tasks that share context. |
+
+A custom `prompt` adds to the default prompt's task plumbing. It does not replace it. If the prompt never names `{{DOCUMENT_PATH}}`, Maestro appends the task-selection instructions (unless the prompt has its own `{{TASK_SELECTION_BLOCK}}`) and the block that names the task document and asks the agent to check tasks off. Name `{{DOCUMENT_PATH}}` yourself only when the prompt takes full control of how the agent finds and checks off its tasks.
 
 ## Keyboard Shortcuts
 

@@ -79,7 +79,7 @@ Each playbook entry must include:
 - `path` - **Local filesystem path** or GitHub path
 - `documents` - Array of document entries with `filename` and `resetOnCompletion`
 - `loopEnabled` - Whether to loop through documents
-- `prompt` - Custom prompt or `null` for Maestro default
+- `prompt` - Custom prompt or `null` for Maestro default. A custom prompt that never names `{{DOCUMENT_PATH}}` gets the default prompt's task-selection and task-document blocks appended, so the agent always knows which file to work and to check tasks off
 
 ### Optional Fields
 
@@ -87,6 +87,7 @@ Each playbook entry must include:
 - `authorLink` - URL to author's website
 - `tags` - Searchable keyword array
 - `maxLoops` - Maximum loop iterations (null for unlimited)
+- `taskSelectionMode` - `"task"` (default) for a fresh agent session per unchecked task, or `"document"` for one session per document that works all of its tasks. Any other value runs per task
 - `assets` - Asset files from `assets/` subfolder. Reference them in documents as `{{AUTORUN_FOLDER}}/assets/<file>`; the import points that path at the playbook's own folder
 
 ## Creating a Local Playbook
