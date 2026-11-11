@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import path from 'path';
 import fs from 'fs/promises';
 import type Store from 'electron-store';
@@ -16,15 +16,100 @@ import {
 	getAllSessionStorages,
 	clearStorageRegistry,
 } from '../../../main/agents';
-import type { ToolType } from '../../../shared/types';
+import type { SshRemoteConfig, ToolType } from '../../../shared/types';
+import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
+import { execFileNoThrow } from '../../../main/utils/execFile';
+import { sshRemoteManager } from '../../../main/ssh-remote-manager';
+
+// Allocate before imports so even constructor-time paths belong to this suite.
+// Never change HOME/CODEX_HOME or delete a shared, predictable fixture path.
+const { fixtureRoot, fixtureHome, userDataDir } = vi.hoisted(() => {
+	const fs = require('node:fs') as typeof import('node:fs');
+	const path = require('node:path') as typeof import('node:path');
+	const parent = path.join(process.cwd(), 'tmp');
+	fs.mkdirSync(parent, { recursive: true });
+	const fixtureRoot = fs.mkdtempSync(path.join(parent, 'maestro-session-storage-'));
+	const fixtureHome = path.join(fixtureRoot, 'home');
+	fs.mkdirSync(fixtureHome);
+	return { fixtureRoot, fixtureHome, userDataDir: path.join(fixtureRoot, 'user-data') };
+});
+
+isolateAgentEnv(['COPILOT_HOME', 'XDG_DATA_HOME', 'APPDATA']);
+
+beforeEach(() => {
+	vi.clearAllMocks();
+});
+
+afterEach(() => {
+	clearStorageRegistry();
+	vi.restoreAllMocks();
+	// Providers may catch read errors; unexpected transport commands must still fail.
+	expect(vi.mocked(execFileNoThrow).mock.settledResults).not.toContainEqual(
+		expect.objectContaining({ type: 'rejected' })
+	);
+});
+
+afterAll(async () => {
+	await fs.rm(fixtureRoot, { recursive: true, force: true });
+});
+
+vi.mock('../../../main/utils/logger', () => ({
+	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
+}));
+
+// Keep real remote-fs parsing/escaping, but never probe or launch an SSH binary.
+vi.mock('../../../main/ssh-remote-manager', () => ({
+	holdRemoteAccess: vi.fn().mockResolvedValue(null),
+	remoteAccessRefusal: vi.fn(),
+	sshRemoteManager: {
+		buildSshArgs: vi.fn((config: SshRemoteConfig) => [
+			'-p',
+			String(config.port),
+			`${config.username}@${config.host}`,
+		]),
+	},
+}));
+vi.mock('../../../main/utils/cliDetection', () => ({
+	resolveSshPath: vi.fn().mockResolvedValue('ssh-fixture'),
+}));
+vi.mock('../../../main/utils/execFile', () => ({
+	execFileNoThrow: vi.fn(async (command: string, args: string[]) => {
+		expect(command).toBe('ssh-fixture');
+		const remoteCommand = args.at(-1)!;
+		if (remoteCommand.startsWith('ls -1AF --color=never ')) {
+			return { stdout: '__SYMDIR__\n', stderr: '', exitCode: 0 };
+		}
+		if (remoteCommand.startsWith('cat ') || remoteCommand.startsWith('stat --printf=')) {
+			return { stdout: '', stderr: 'No such file or directory', exitCode: 1 };
+		}
+		throw new Error(`Unexpected fixture SSH command: ${remoteCommand}`);
+	}),
+}));
+
+// Constructors are exercised without opening electron-store's fallback user file.
+vi.mock('electron-store', () => ({
+	default: class {
+		store: Record<string, unknown>;
+		constructor(options: { defaults?: Record<string, unknown> } = {}) {
+			this.store = { ...options.defaults };
+		}
+		get(key: string, fallback?: unknown) {
+			return this.store[key] ?? fallback;
+		}
+		set(key: string, value: unknown) {
+			this.store[key] = value;
+		}
+	},
+}));
 
 vi.mock('os', async () => {
-	// Use dynamic require to get the real os module as a plain object,
-	// since vi.importActual/importOriginal return empty module namespaces
-	// for Node.js built-ins in Vitest's SSR mode.
-	// eslint-disable-next-line @typescript-eslint/no-require-imports
+	// Import the unmocked Node module while overriding only homedir.
 	const realOs = await import('node:os');
-	const homedirMock = vi.fn(() => '/tmp/maestro-session-storage-home');
+	const homedirMock = vi.fn(() => fixtureHome);
 	const overrides = { homedir: homedirMock, tmpdir: realOs.tmpdir };
 	return {
 		...realOs,
@@ -35,9 +120,7 @@ vi.mock('os', async () => {
 
 vi.mock('electron', () => ({
 	app: {
-		getPath: vi.fn(() =>
-			path.join('/tmp/maestro-session-storage-home', 'Library', 'Application Support', 'Maestro')
-		),
+		getPath: vi.fn(() => userDataDir),
 	},
 }));
 
@@ -196,6 +279,54 @@ describe('agent-session-storage', () => {
 			expect(sessionPath).toBe('/mock/path/session-123.jsonl');
 		});
 
+		it.each([
+			{ name: 'local', sshConfig: undefined },
+			{
+				name: 'SSH',
+				sshConfig: {
+					id: 'storage-contract-remote',
+					name: 'Storage contract remote',
+					host: 'storage.example.test',
+					port: 22,
+					username: 'fixture',
+					privateKeyPath: '~/.ssh/storage-contract-key',
+					enabled: true,
+				} satisfies SshRemoteConfig,
+			},
+		])(
+			'keeps account options compatible with legacy $name storage implementations',
+			async ({ sshConfig }) => {
+				// Keep this implementation's original signatures: optional account support
+				// must not require changes to providers that have no account-specific store.
+				const legacy: AgentSessionStorage = storage;
+				const projectPath = path.resolve('storage-contract-project');
+				const accountDir = path.resolve('.maestro', 'scratch', 'storage-contract-account');
+
+				expect(await legacy.listSessions(projectPath, sshConfig, accountDir)).toEqual([]);
+				expect(
+					await legacy.listSessionsPaginated(
+						projectPath,
+						{ cursor: 'session-previous', limit: 10, configDir: accountDir },
+						sshConfig
+					)
+				).toEqual({ sessions: [], hasMore: false, totalCount: 0, nextCursor: null });
+				expect(
+					await legacy.readSessionMessages(
+						projectPath,
+						'session-123',
+						{ offset: 1, limit: 10, configDir: accountDir },
+						sshConfig
+					)
+				).toEqual({ messages: [], total: 0, hasMore: false });
+				expect(
+					await legacy.searchSessions(projectPath, 'query', 'all', sshConfig, accountDir)
+				).toEqual([]);
+				expect(legacy.getSessionPath(projectPath, 'session-123', sshConfig, accountDir)).toBe(
+					'/mock/path/session-123.jsonl'
+				);
+			}
+		);
+
 		it('should implement deleteMessagePair', async () => {
 			const result = await storage.deleteMessagePair('/test/project', 'session-123', 'uuid-456');
 			expect(result.success).toBe(true);
@@ -232,8 +363,7 @@ describe('ClaudeSessionStorage', () => {
 	it('should have claude-code as agentId', async () => {
 		const { ClaudeSessionStorage } = await import('../../../main/storage/claude-session-storage');
 
-		// Create instance without store (it will create its own)
-		// Note: In a real test, we'd mock electron-store
+		// Create an instance using the in-memory electron-store double.
 		const storage = new ClaudeSessionStorage();
 		expect(storage.agentId).toBe('claude-code');
 	});
@@ -304,7 +434,7 @@ describe('OpenCodeSessionStorage', () => {
 
 describe('CodexSessionStorage', () => {
 	/** A second CODEX_HOME account, used by the account fan-out test. */
-	const codexWorkAccountDir = path.join('/tmp/maestro-session-storage-home', '.codex-work');
+	const codexWorkAccountDir = path.join(fixtureHome, '.codex-work');
 
 	afterEach(async () => {
 		await fs.rm(codexWorkAccountDir, { recursive: true, force: true });
@@ -357,7 +487,7 @@ describe('CodexSessionStorage', () => {
 		const { CodexSessionStorage } = await import('../../../main/storage/codex-session-storage');
 		const storage = new CodexSessionStorage();
 
-		// Non-existent project should return empty results (since ~/.codex/sessions/ likely doesn't exist in test)
+		// The owned default account has no sessions directory.
 		const sessions = await storage.listSessions('/test/nonexistent/project');
 		expect(sessions).toEqual([]);
 
@@ -412,15 +542,10 @@ describe('CodexSessionStorage', () => {
 });
 
 describe('CopilotSessionStorage', () => {
-	let originalCopilotHome: string | undefined;
-	const copilotSessionStateDir = path.join(
-		'/tmp/maestro-session-storage-home',
-		'.copilot',
-		'session-state'
-	);
+	const copilotSessionStateDir = path.join(fixtureHome, '.copilot', 'session-state');
 
 	/** A second COPILOT_HOME account, used by the account fan-out test. */
-	const copilotWorkAccountDir = path.join('/tmp/maestro-session-storage-home', '.copilot-work');
+	const copilotWorkAccountDir = path.join(fixtureHome, '.copilot-work');
 
 	async function writeCopilotSessionFixture(
 		sessionId: string,
@@ -436,9 +561,7 @@ describe('CopilotSessionStorage', () => {
 	}
 
 	beforeEach(async () => {
-		originalCopilotHome = process.env.COPILOT_HOME;
-		delete process.env.COPILOT_HOME;
-		await fs.rm(path.join('/tmp/maestro-session-storage-home', '.copilot'), {
+		await fs.rm(path.join(fixtureHome, '.copilot'), {
 			recursive: true,
 			force: true,
 		});
@@ -446,16 +569,11 @@ describe('CopilotSessionStorage', () => {
 	});
 
 	afterEach(async () => {
-		await fs.rm(path.join('/tmp/maestro-session-storage-home', '.copilot'), {
+		await fs.rm(path.join(fixtureHome, '.copilot'), {
 			recursive: true,
 			force: true,
 		});
 		await fs.rm(copilotWorkAccountDir, { recursive: true, force: true });
-		if (originalCopilotHome === undefined) {
-			delete process.env.COPILOT_HOME;
-		} else {
-			process.env.COPILOT_HOME = originalCopilotHome;
-		}
 	});
 
 	it('should be importable', async () => {
@@ -532,6 +650,7 @@ describe('CopilotSessionStorage', () => {
 			host: 'test-server.example.com',
 			port: 22,
 			username: 'testuser',
+			privateKeyPath: '~/.ssh/session-storage-fixture',
 			useSshConfig: false,
 			enabled: true,
 		});
@@ -707,6 +826,7 @@ describe('CodexSessionStorage SSH Remote Support', () => {
 		host: 'test-server.example.com',
 		port: 22,
 		username: 'testuser',
+		privateKeyPath: '~/.ssh/session-storage-fixture',
 		useSshConfig: false,
 		enabled: true,
 	};
@@ -719,6 +839,18 @@ describe('CodexSessionStorage SSH Remote Support', () => {
 			// With SSH config - should not throw and should return array
 			const sessions = await storage.listSessions('/test/path', mockSshConfig);
 			expect(Array.isArray(sessions)).toBe(true);
+			expect(sshRemoteManager.buildSshArgs).toHaveBeenCalledWith(mockSshConfig);
+			expect(execFileNoThrow).toHaveBeenCalledWith(
+				'ssh-fixture',
+				[
+					'-p',
+					'22',
+					'testuser@test-server.example.com',
+					expect.stringContaining('ls -1AF --color=never "$HOME/.codex/sessions" '),
+				],
+				undefined,
+				expect.objectContaining({ timeout: 30000 })
+			);
 		});
 
 		it('should use local file system when sshConfig is undefined', async () => {
@@ -728,6 +860,7 @@ describe('CodexSessionStorage SSH Remote Support', () => {
 			// Without SSH config - should use local operations
 			const sessions = await storage.listSessions('/test/nonexistent/project');
 			expect(sessions).toEqual([]);
+			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1049,74 +1182,9 @@ describe('OpenCodeSessionStorage SSH Remote Support', () => {
 		host: 'test-server.example.com',
 		port: 22,
 		username: 'testuser',
+		privateKeyPath: '~/.ssh/session-storage-fixture',
 		useSshConfig: false,
 		enabled: true,
-	};
-
-	// Mock project data for OpenCode
-	const mockProjectData = {
-		id: 'test-project-id',
-		worktree: '/home/testuser/project',
-		vcsDir: '/home/testuser/project/.git',
-		vcs: 'git',
-		time: {
-			created: 1700000000000,
-			updated: 1700001000000,
-		},
-	};
-
-	// Mock session data
-	const mockSessionData = {
-		id: 'ses_test123',
-		version: '1.0.0',
-		projectID: 'test-project-id',
-		directory: '/home/testuser/project',
-		title: 'Test Session',
-		time: {
-			created: 1700000000000,
-			updated: 1700001000000,
-		},
-		summary: {
-			additions: 10,
-			deletions: 5,
-			files: 3,
-		},
-	};
-
-	// Mock message data
-	const mockUserMessage = {
-		id: 'msg_user123',
-		sessionID: 'ses_test123',
-		role: 'user' as const,
-		time: { created: 1700000000000 },
-	};
-
-	const mockAssistantMessage = {
-		id: 'msg_assistant123',
-		sessionID: 'ses_test123',
-		role: 'assistant' as const,
-		time: { created: 1700000500000 },
-		tokens: {
-			input: 100,
-			output: 200,
-			cache: { read: 50, write: 25 },
-		},
-		cost: 0.005,
-	};
-
-	// Mock text parts
-	const mockUserPart = {
-		id: 'part_user123',
-		messageID: 'msg_user123',
-		type: 'text' as const,
-		text: 'Hello, can you help me?',
-	};
-
-	const mockAssistantPart = {
-		id: 'part_assistant123',
-		messageID: 'msg_assistant123',
-		type: 'text' as const,
-		text: 'Of course! I am happy to help.',
 	};
 
 	describe('getSessionPath with SSH config', () => {
@@ -1202,6 +1270,7 @@ describe('OpenCodeSessionStorage SSH Remote Support', () => {
 			// Since we don't have real OpenCode data, expect empty results
 			const sessions = await storage.listSessions('/test/nonexistent/project');
 			expect(sessions).toEqual([]);
+			expect(execFileNoThrow).not.toHaveBeenCalled();
 
 			const paginated = await storage.listSessionsPaginated('/test/nonexistent/project');
 			expect(paginated.sessions).toEqual([]);
@@ -1363,6 +1432,7 @@ describe('FactoryDroidSessionStorage SSH Remote Support', () => {
 		host: 'test-server.example.com',
 		port: 22,
 		username: 'testuser',
+		privateKeyPath: '~/.ssh/session-storage-fixture',
 		useSshConfig: false,
 		enabled: true,
 	};
@@ -1376,6 +1446,18 @@ describe('FactoryDroidSessionStorage SSH Remote Support', () => {
 			// With SSH config - should not throw and should return array
 			const sessions = await storage.listSessions('/test/path', mockSshConfig);
 			expect(Array.isArray(sessions)).toBe(true);
+			expect(sshRemoteManager.buildSshArgs).toHaveBeenCalledWith(mockSshConfig);
+			expect(execFileNoThrow).toHaveBeenCalledWith(
+				'ssh-fixture',
+				[
+					'-p',
+					'22',
+					'testuser@test-server.example.com',
+					expect.stringContaining('ls -1AF --color=never "$HOME/.factory/sessions/-test-path" '),
+				],
+				undefined,
+				expect.objectContaining({ timeout: 30000 })
+			);
 		});
 
 		it('should use local file system when sshConfig is undefined', async () => {
@@ -1386,6 +1468,7 @@ describe('FactoryDroidSessionStorage SSH Remote Support', () => {
 			// Without SSH config - should use local operations
 			const sessions = await storage.listSessions('/test/nonexistent/project');
 			expect(sessions).toEqual([]);
+			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1760,6 +1843,7 @@ describe('FactoryDroidSessionStorage SSH Remote Support', () => {
 			// Since we don't have real Factory Droid data, expect empty results
 			const sessions = await storage.listSessions('/test/nonexistent/project');
 			expect(sessions).toEqual([]);
+			expect(execFileNoThrow).not.toHaveBeenCalled();
 
 			const paginated = await storage.listSessionsPaginated('/test/nonexistent/project');
 			expect(paginated.sessions).toEqual([]);
@@ -1809,6 +1893,7 @@ describe('SSH Config Integration Flow Verification', () => {
 		host: 'dev-server.internal.example.com',
 		port: 22,
 		username: 'developer',
+		privateKeyPath: '~/.ssh/session-storage-fixture',
 		useSshConfig: true,
 		enabled: true,
 	};
@@ -1820,6 +1905,7 @@ describe('SSH Config Integration Flow Verification', () => {
 		host: '192.168.1.100',
 		port: 2222,
 		username: 'admin',
+		privateKeyPath: '~/.ssh/session-storage-fixture',
 		useSshConfig: false,
 		enabled: true,
 	};
@@ -2081,6 +2167,7 @@ describe('SSH Config Integration Flow Verification', () => {
 				host: 'full.example.com',
 				port: 22,
 				username: 'fulluser',
+				privateKeyPath: '~/.ssh/session-storage-fixture',
 				useSshConfig: true,
 				enabled: true,
 			};
@@ -2108,6 +2195,7 @@ describe('SSH Config Integration Flow Verification', () => {
 				host: 'min.example.com',
 				port: 22,
 				username: 'user',
+				privateKeyPath: '~/.ssh/session-storage-fixture',
 				useSshConfig: false,
 				enabled: true,
 			};

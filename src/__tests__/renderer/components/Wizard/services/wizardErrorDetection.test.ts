@@ -46,6 +46,41 @@ describe('detectWizardError', () => {
 		);
 	});
 
+	// Output alone cannot establish which credential the host actually selected.
+	// Even native login advice must not become a promise that login repairs it.
+	it.each([
+		['API key', 'Authentication failed: API key rejected'],
+		['gateway', 'Gateway request unauthorized'],
+		['inline override', 'Invalid credentials from inline override'],
+		['unknown credential', 'Not authenticated'],
+		['unverified login advice', 'Please run grok login'],
+	])('keeps Grok %s failures credential-neutral in both display fields', (_kind, output) => {
+		const error = detectWizardError(output, 'grok');
+		expect(error).toMatchObject({
+			type: 'auth_expired',
+			title: 'Authentication Required',
+			message: 'Grok authentication failed.',
+			canRetry: false,
+		});
+		expect(error!.recoveryHint).toContain('on the host running the agent');
+		expect(error!.recoveryHint).toContain(
+			'Correct API keys, gateway credentials or inline overrides at their source'
+		);
+		expect(error!.recoveryHint).toContain('Sign in only if this account uses provider login');
+		expect(error!.recoveryHint).toContain('then start the wizard over');
+		expect(error!.message).not.toMatch(/login|sign in/i);
+		expect(formatWizardError(error!)).not.toContain('grok login');
+	});
+
+	it.each([
+		['ECONNRESET', 'network_error', 'Check your internet connection, then try again.'],
+		['HTTP 429', 'rate_limited', 'Wait a moment, then try again.'],
+	])('preserves retry guidance for Grok %s failures', (output, type, recoveryHint) => {
+		const error = detectWizardError(output, 'grok');
+		expect(error).toMatchObject({ type, recoveryHint, canRetry: true });
+		expect(error!.message).not.toBe('Grok authentication failed.');
+	});
+
 	// Some providers only expose the flow as a slash command inside their TUI.
 	it('carries the TUI follow-up into the hint', () => {
 		expect(detectWizardError('unauthorized', 'factory-droid')?.recoveryHint).toContain('/login');

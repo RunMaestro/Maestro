@@ -1,7 +1,7 @@
 /**
  * Tests for PeerMirrorSection, the Left Bar's Federation peer groups: one group per mirrored peer
- * with its connection dot, its agents with a peer marker, selection that stays out of
- * `sessionStore`, collapse, and the two-item right-click menu.
+ * with its connection dot, its agents with a Federated badge, selection that stays out of
+ * `sessionStore`, collapse, the right-click menu, and that a remote probed without a host stays out.
  */
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
@@ -11,9 +11,13 @@ vi.mock('../../../../renderer/services/peerMirror', () => ({
 	copyPeerAgentRef: vi.fn(async () => undefined),
 	reconnectPeer: vi.fn(async () => undefined),
 }));
+vi.mock('../../../../renderer/services/agentLift', () => ({
+	startPeerHost: vi.fn(async () => true),
+}));
 
 import { PeerMirrorSection } from '../../../../renderer/components/SessionList/PeerMirrorSection';
 import { copyPeerAgentRef, reconnectPeer } from '../../../../renderer/services/peerMirror';
+import { startPeerHost } from '../../../../renderer/services/agentLift';
 import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
@@ -77,7 +81,7 @@ describe('PeerMirrorSection', () => {
 		expect(container).toBeEmptyDOMElement();
 	});
 
-	it('draws one group per peer, in stored order, with its agents and a peer marker', () => {
+	it('draws one group per peer, in stored order, with its agents and a Federated badge', () => {
 		usePeerMirrorStore
 			.getState()
 			.hydrate([peerWith('build', [agent('a1'), agent('a2')]), peerWith('gpu', [agent('b1')])]);
@@ -88,7 +92,40 @@ describe('PeerMirrorSection', () => {
 		const rows = build.getAllByTestId('peer-mirror-agent-row');
 		expect(rows.map((row) => row.getAttribute('title'))).toEqual(['build:a1', 'build:a2']);
 		expect(within(rows[0]).getByText('Agent a1')).toBeInTheDocument();
-		expect(within(rows[0]).getByText(/peer/i)).toBeInTheDocument();
+		expect(within(rows[0]).getByTestId('federation-badge-federated')).toHaveTextContent(
+			'Federated'
+		);
+	});
+
+	it('leaves out a remote that was probed and runs no host: it is a plain SSH remote', () => {
+		usePeerMirrorStore.getState().hydrate([
+			{
+				...createMirroredPeer({ peerId: 'plain', remoteId: 'r-plain', name: 'plain' }),
+				connection: 'not-installed',
+			},
+			{
+				...createMirroredPeer({ peerId: 'stopped', remoteId: 'r-stopped', name: 'stopped' }),
+				connection: 'host-down',
+			},
+			{
+				...createMirroredPeer({ peerId: 'probing', remoteId: 'r-probing', name: 'probing' }),
+				connection: 'connecting',
+			},
+		]);
+		renderSection();
+		expect(screen.queryByTestId('peer-mirror-section')).not.toBeInTheDocument();
+	});
+
+	it('offers Start Host for a peer whose host went down, and runs it on the remote', () => {
+		usePeerMirrorStore
+			.getState()
+			.hydrate([peerWith('build', [agent('a1')], 'host-down', 'No Maestro host is running')]);
+		renderSection();
+		fireEvent.contextMenu(within(groups()[0]).getAllByRole('button')[0]);
+		const menu = screen.getByTestId('peer-mirror-menu');
+		fireEvent.click(within(menu).getByText('Start Host on build'));
+		expect(startPeerHost).toHaveBeenCalledWith('r-build', 'build');
+		expect(screen.queryByTestId('peer-mirror-menu')).not.toBeInTheDocument();
 	});
 
 	it('shows the member count only when the Left Bar setting is on', () => {

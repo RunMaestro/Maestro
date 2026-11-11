@@ -17,7 +17,13 @@ import type { PianolaDispatchReceipt } from '../../pianola/pianola-dispatch';
 import type { AgentRecord, AITabRecord, GroupRecord } from '../store/records';
 import type { LogEntryRecord } from '../store/transcript';
 import type { TurnOutcome } from '../streaming/turn-outcome';
-import type { AgentError, SshRemoteConfig, ThinkingMode, UsageStats } from '../../types';
+import type {
+	AgentError,
+	HistoryEntry,
+	SshRemoteConfig,
+	ThinkingMode,
+	UsageStats,
+} from '../../types';
 import type { CodexTransport } from '../../codexTransport';
 import type { HarnessControlMode } from '../providers/native-control';
 import type { AutoRunLaunchInput, GoalRunLaunchInput } from '../autorun/launch';
@@ -92,6 +98,8 @@ export type ClientMethod =
 	| 'turns.interrupt'
 	| 'turns.queue.list'
 	| 'turns.queue.remove'
+	| 'turns.queue.setPaused'
+	| 'history.list'
 	| 'autoRun.launch'
 	| 'autoRun.launchGoal'
 	| 'autoRun.stop'
@@ -390,6 +398,20 @@ export interface TurnInput {
 	text: string;
 	/** P2 (CH-8): images as data URLs. */
 	images?: string[];
+	/**
+	 * The hostname of the machine the person sent this from. A host stamps the turn's History
+	 * entry with it, so the shared History names whose work it was (`normalizeOriginHost()`).
+	 * A host that does not know the field ignores it.
+	 */
+	originHost?: string;
+}
+
+/** A hostname a client sent, as a History label: trimmed, printable, at most 253 characters. */
+export function normalizeOriginHost(value: unknown): string | undefined {
+	if (typeof value !== 'string') return undefined;
+	const trimmed = value.trim();
+	if (!trimmed || trimmed.length > 253 || /[\u0000-\u001f\u007f]/.test(trimmed)) return undefined;
+	return trimmed;
 }
 
 export type TurnSendReceipt =
@@ -466,6 +488,15 @@ export interface TurnsApi {
 	readonly queue: {
 		list(agentId: string): Promise<ClientResult<QueuedTurn[]>>;
 		remove(agentId: string, itemId: string): Promise<ClientResult<{ removed: boolean }>>;
+		/**
+		 * Hold a waiting message (it keeps its place, nothing starts it) or release it: the queued
+		 * card's Hold / Resume. `found: false` when no waiting message has that id.
+		 */
+		setPaused(
+			agentId: string,
+			itemId: string,
+			paused: boolean
+		): Promise<ClientResult<{ found: boolean; paused: boolean }>>;
 	};
 	/** The tab's turn events, live: the `turn` events of `events.subscribe`, filtered to one tab. */
 	subscribe(agentId: string, tabId: string, listener: (event: TurnEvent) => void): Unsubscribe;
@@ -620,6 +651,20 @@ export interface SettingsChange {
 	keys: string[] | 'unknown';
 }
 
+export interface HistoryListOptions {
+	/** The newest this many entries. Default: the agent's whole History. */
+	limit?: number;
+}
+
+export interface HistoryApi {
+	/**
+	 * The agent's History, newest first: the entries this host recorded, and the entries every
+	 * other Maestro wrote to the shared History of the agent's working directory
+	 * (`.maestro/history/`), each carrying the `hostname` of the machine it came from.
+	 */
+	list(agentId: string, options?: HistoryListOptions): Promise<ClientResult<HistoryEntry[]>>;
+}
+
 export interface SettingsApi {
 	/** ST-1. The values of `keys` as the host holds them. A key the host does not hold is absent. */
 	get(keys: readonly string[]): Promise<ClientResult<Record<string, unknown>>>;
@@ -683,6 +728,13 @@ export type MaestroEvent =
 	| { type: 'settings.changed'; keys: string[] | 'unknown' }
 	| { type: 'turn'; agentId: string; tabId: string; event: TurnEvent }
 	/**
+	 * The agent's execution queue changed (a message waits, starts, is removed, held, or released).
+	 * Carries every waiting item, in order, so a listener replaces what it held. Only a host whose
+	 * runtime owns the queue says this: the desktop's bridge does not, so a client attached to a
+	 * desktop reads the queue with `turns.queue.list` instead.
+	 */
+	| { type: 'queue.changed'; agentId: string; items: QueuedTurn[] }
+	/**
 	 * A run's progress, from the host's `autorun_state` and the run's own
 	 * process stream (its output and usage). Fold them with `reduceAutoRun`.
 	 */
@@ -722,6 +774,7 @@ export interface MaestroClient {
 	readonly autoRun: AutoRunApi;
 	readonly groupChats: GroupChatsApi;
 	readonly consults: ConsultsApi;
+	readonly history: HistoryApi;
 	readonly settings: SettingsApi;
 	readonly providers: ProvidersApi;
 	readonly events: EventsApi;

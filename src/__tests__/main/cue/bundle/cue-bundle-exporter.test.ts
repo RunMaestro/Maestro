@@ -29,6 +29,11 @@ import type {
 	CueBundleAgentSettings,
 	CueBundleManifest,
 } from '../../../../shared/cue-bundle-types';
+import {
+	CUE_BUNDLE_GROK_RESOURCES_FORMAT,
+	CUE_BUNDLE_GROK_RESOURCES_VERSION,
+	CUE_BUNDLE_GROK_SCHEMA_SOURCE,
+} from '../../../../shared/cue-bundle-types';
 
 const SECRET_VALUE = 'sk-ant-super-secret-value-1234';
 const PARKED_VALUE = 'parked-value-should-never-appear';
@@ -767,6 +772,93 @@ describe('exportCueBundle - agent resolution', () => {
 		expect(result.manifest.warnings?.some((w) => w.includes('no longer exists'))).toBe(false);
 	});
 
+	describe.each(['agent', 'provider'] as const)('Grok secrets from %s settings', (source) => {
+		it.each([
+			{
+				label: 'inline JSON and URL userinfo, query and path credentials',
+				env: {
+					GROK_AUTH: '{"apiKey":"fixture-inline-credential"}',
+					GROK_MODELS_BASE_URL: 'https://user:fixture-userinfo-credential@gateway.invalid/v1',
+					GROK_CLI_CHAT_PROXY_BASE_URL: 'https://gateway.invalid/v1?key=fixture-query-credential',
+					GROK_XAI_API_BASE_URL: 'https://gateway.invalid/fixture-path-credential/v1',
+				},
+				canaries: [
+					'fixture-inline-credential',
+					'fixture-userinfo-credential',
+					'fixture-query-credential',
+					'fixture-path-credential',
+				],
+			},
+			{
+				label: 'malformed JSON and malformed gateway URLs',
+				env: {
+					GROK_AUTH: '{"apiKey":"fixture-broken-json-credential',
+					GROK_MODELS_BASE_URL: 'https://[fixture-broken-model-credential',
+					GROK_CLI_CHAT_PROXY_BASE_URL: 'not a URL?key=fixture-broken-chat-credential',
+					GROK_XAI_API_BASE_URL: '://gateway/fixture-broken-api-credential',
+				},
+				canaries: [
+					'fixture-broken-json-credential',
+					'fixture-broken-model-credential',
+					'fixture-broken-chat-credential',
+					'fixture-broken-api-credential',
+				],
+			},
+		])('exports only required secret names for $label', async ({ env, canaries }) => {
+			const { sessions } = JSON.parse(
+				fs.readFileSync(path.join(dataDir, 'maestro-sessions.json'), 'utf-8')
+			) as { sessions: Array<Record<string, unknown>> };
+			const grok = sessions.find((session) => session.id === 'agent-alpha')!;
+			grok.toolType = 'grok';
+			delete grok.customEnvVars;
+			const customEnvVars = { ...env, LOG_LEVEL: 'debug', REGION: 'eu' };
+			if (source === 'agent') grok.customEnvVars = customEnvVars;
+			else {
+				const configPath = path.join(dataDir, 'maestro-agent-configs.json');
+				const { configs } = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+				writeJson(configPath, { configs: { ...configs, grok: { customEnvVars } } });
+			}
+			setSessions(sessions);
+
+			const out = path.join(tmp, 'grok-secrets.zip');
+			await exportCueBundle({
+				dataDir,
+				pipeline: 'Review',
+				outputPath: out,
+				env: ENV,
+				claudeConfigDir: path.join(tmp, 'claude-config'),
+			});
+			const entries = readZip(out);
+			const settings = JSON.parse(
+				entries.get('agents/agent-alpha.json')!.toString('utf-8')
+			) as CueBundleAgentSettings;
+			const required = [
+				'GROK_AUTH',
+				'GROK_CLI_CHAT_PROXY_BASE_URL',
+				'GROK_MODELS_BASE_URL',
+				'GROK_XAI_API_BASE_URL',
+			];
+			expect(settings.toolType).toBe('grok');
+			expect(settings.env).toEqual({ values: { LOG_LEVEL: 'debug', REGION: 'eu' }, required });
+			expect(manifestOf(entries).requirements.secrets).toEqual([
+				...required,
+				'HOOK_SECRET',
+				'OPENAI_API_KEY',
+			]);
+			const writer = JSON.parse(
+				entries.get('agents/agent-writer.json')!.toString('utf-8')
+			) as CueBundleAgentSettings;
+			expect(writer.env).toEqual({ values: { REGION: 'eu' }, required: ['OPENAI_API_KEY'] });
+			for (const [name, bytes] of entries) {
+				const text = bytes.toString('utf-8');
+				for (const value of [...Object.values(env), ...canaries, SECRET_VALUE]) {
+					expect(text, name).not.toContain(value);
+					expect(text, name).not.toContain(JSON.stringify(value).slice(1, -1));
+				}
+			}
+		});
+	});
+
 	it('exports a credential-shaped value under an unflagged key by name only', async () => {
 		setSessions([
 			{
@@ -960,5 +1052,166 @@ describe('helpers', () => {
 		expect(scrubGitRemote('https://user:pass@gitlab.com/o/r')).toBe('https://gitlab.com/o/r');
 		expect(scrubGitRemote('git@github.com:o/r.git')).toBe('git@github.com:o/r.git');
 		expect(scrubGitRemote('ssh://git:pw@host/o/r')).toBe('ssh://git@host/o/r');
+	});
+});
+
+describe('exportCueBundle - Grok resources', () => {
+	const GROK_PAT = 'ghp_' + 'G'.repeat(36);
+	const ACCOUNT_AUTH = 'grok-account-auth-body-never-exported';
+	const ACCOUNT_CONFIG = 'grok-account-config-body-never-exported';
+	const PROJECT_AUTH = 'grok-project-auth-body-never-exported';
+	const OUTSIDE_BODY = 'outside-root-body-never-exported';
+	let grokData: string;
+	let grokRoot: string;
+
+	/** A Grok account home with credentials and MCP config; nothing in it may travel. */
+	function account(name: string): string {
+		const home = path.join(tmp, `grok-account-${name}`);
+		write(path.join(home, 'auth.json'), JSON.stringify({ token: `${ACCOUNT_AUTH}-${name}` }));
+		write(path.join(home, 'config.toml'), `[mcp_servers.x]\ntoken = "${ACCOUNT_CONFIG}-${name}"\n`);
+		write(path.join(home, 'skills/account-skill/SKILL.md'), `account skill ${ACCOUNT_AUTH}\n`);
+		return home;
+	}
+
+	function seedGrok(agents: Array<{ id: string; name: string; env?: Record<string, string> }>) {
+		grokData = path.join(tmp, 'grok-data');
+		grokRoot = path.join(tmp, 'grok-work', 'app');
+		const outside = path.join(tmp, 'outside-skill');
+		write(path.join(outside, 'SKILL.md'), OUTSIDE_BODY);
+		write(path.join(grokRoot, 'AGENTS.md'), `# Agents\nToken ${GROK_PAT}\n`);
+		write(path.join(grokRoot, 'CLAUDE.md'), '# App\n');
+		write(path.join(grokRoot, '.grok/skills/triage/SKILL.md'), '---\nname: triage\n---\n');
+		write(path.join(grokRoot, '.grok/skills/triage/run.sh'), '#!/bin/sh\necho hi\n');
+		write(path.join(grokRoot, '.grok/skills/loose.md'), 'not a folder\n');
+		fs.symlinkSync(outside, path.join(grokRoot, '.grok/skills/linked'));
+		write(path.join(grokRoot, '.agents/skills/lint/SKILL.md'), '---\nname: lint\n---\n');
+		write(path.join(grokRoot, '.grok/rules/style.md'), 'rule\n');
+		write(path.join(grokRoot, '.grok/agents/helper.md'), 'agent\n');
+		write(path.join(grokRoot, '.grok/auth.json'), JSON.stringify({ token: PROJECT_AUTH }));
+		write(path.join(grokRoot, '.grok/config.toml'), `token = "${PROJECT_AUTH}"\n`);
+		writeJson(path.join(grokRoot, '.mcp.json'), {
+			mcpServers: { github: { command: 'gh-mcp', env: { GITHUB_TOKEN: GROK_PAT } } },
+		});
+		writeCueYaml(grokRoot, {
+			subscriptions: agents.map((a) => ({
+				name: `tick-${a.id}`,
+				event: 'time.heartbeat',
+				agent_id: a.id,
+				interval_minutes: 5,
+				prompt: 'go',
+				pipeline_name: 'G',
+			})),
+		});
+		writeJson(path.join(grokData, 'maestro-sessions.json'), {
+			sessions: agents.map((a) => ({
+				id: a.id,
+				name: a.name,
+				toolType: 'grok',
+				cwd: grokRoot,
+				projectRoot: grokRoot,
+				customEnvVars: a.env ?? {},
+			})),
+		});
+	}
+
+	async function exportGrok(opts: { agentId?: string; pipeline?: string }) {
+		const out = path.join(tmp, 'out', 'grok.zip');
+		const result = await exportCueBundle({ dataDir: grokData, outputPath: out, env: ENV, ...opts });
+		return { result, entries: readZip(out), manifest: manifestOf(readZip(out)) };
+	}
+
+	function expectNoCredentialBody(entries: Map<string, Buffer>) {
+		for (const [name, bytes] of entries) {
+			const text = bytes.toString('utf-8');
+			for (const body of [GROK_PAT, ACCOUNT_AUTH, ACCOUNT_CONFIG, PROJECT_AUTH, OUTSIDE_BODY]) {
+				expect(text, name).not.toContain(body);
+			}
+		}
+	}
+
+	it('carries the selected resources, lists the rest, and refuses links out of the root', async () => {
+		seedGrok([{ id: 'agent-gee', name: 'Gee', env: { GROK_HOME: account('a') } }]);
+		const { entries, manifest } = await exportGrok({ agentId: 'agent-gee' });
+		const files = [...entries.keys()].filter((n) => n.startsWith('workspaces/'));
+		expect(files.filter((n) => !n.includes('/.maestro/')).sort()).toEqual([
+			'workspaces/app/.agents/skills/lint/SKILL.md',
+			'workspaces/app/.grok/skills/triage/SKILL.md',
+			'workspaces/app/.grok/skills/triage/run.sh',
+			'workspaces/app/.mcp.json',
+			'workspaces/app/AGENTS.md',
+			'workspaces/app/CLAUDE.md',
+		]);
+		expect(manifest.workspaces[0].grok).toEqual({
+			format: CUE_BUNDLE_GROK_RESOURCES_FORMAT,
+			version: CUE_BUNDLE_GROK_RESOURCES_VERSION,
+			schemaSource: CUE_BUNDLE_GROK_SCHEMA_SOURCE,
+			verification: 'unverified',
+			resources: [
+				{ kind: 'instruction', root: 'AGENTS.md', path: 'AGENTS.md', trust: 'enabled' },
+				{ kind: 'instruction', root: 'CLAUDE.md', path: 'CLAUDE.md', trust: 'enabled' },
+				{ kind: 'skill', root: '.grok/skills', path: '.grok/skills/triage', trust: 'enabled' },
+				{ kind: 'skill', root: '.agents/skills', path: '.agents/skills/lint', trust: 'enabled' },
+			],
+			mcpServers: [{ name: 'github', enabled: true, secrets: ['GITHUB_TOKEN'] }],
+			unsupported: [
+				expect.objectContaining({ path: '.grok/skills/linked', code: 'grok-resource-symlink' }),
+				expect.objectContaining({ path: '.grok/skills/loose.md', code: 'grok-skill-not-folder' }),
+				expect.objectContaining({ path: '.grok/rules', code: 'grok-rules-unsupported' }),
+				expect.objectContaining({ path: '.grok/agents', code: 'subagent-discovery-unpinned' }),
+			],
+		});
+		expect(manifest.workspaces[0].claude).toBeUndefined();
+		expect(entries.get('workspaces/app/AGENTS.md')!.toString('utf-8')).toContain('# Agents');
+		expectNoCredentialBody(entries);
+	});
+
+	it('declares MCP secret names only, on the Grok agent and the requirements', async () => {
+		seedGrok([{ id: 'agent-gee', name: 'Gee' }]);
+		const { entries, manifest } = await exportGrok({ agentId: 'agent-gee' });
+		const settings = JSON.parse(
+			entries.get('agents/agent-gee.json')!.toString('utf-8')
+		) as CueBundleAgentSettings;
+		expect(manifest.requirements.secrets).toContain('GITHUB_TOKEN');
+		expect(settings.env?.required).toEqual(['GITHUB_TOKEN']);
+		expect(JSON.parse(entries.get('workspaces/app/.mcp.json')!.toString('utf-8'))).toEqual({
+			mcpServers: { github: { command: 'gh-mcp', env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' } } },
+		});
+		expectNoCredentialBody(entries);
+	});
+
+	it('keeps each agent account out and describes servers disabled when one agent turns the scanner off', async () => {
+		seedGrok([
+			{ id: 'agent-gee', name: 'Gee', env: { GROK_HOME: account('a') } },
+			{
+				id: 'agent-gia',
+				name: 'Gia',
+				env: { GROK_HOME: account('b'), GROK_CLAUDE_MCPS_ENABLED: '0' },
+			},
+		]);
+		const { entries, manifest, result } = await exportGrok({ pipeline: 'G' });
+		expect(manifest.workspaces[0].grok?.mcpServers).toEqual([
+			{ name: 'github', enabled: false, secrets: ['GITHUB_TOKEN'] },
+		]);
+		expect(result.manifest.warnings).toContainEqual(
+			expect.stringContaining('its Grok agents disagree on GROK_CLAUDE_MCPS_ENABLED')
+		);
+		const gia = JSON.parse(entries.get('agents/agent-gia.json')!.toString('utf-8'));
+		expect(gia.env.values.GROK_CLAUDE_MCPS_ENABLED).toBe('0');
+		expect([...entries.keys()].some((n) => n.includes('account-skill'))).toBe(false);
+		expectNoCredentialBody(entries);
+	});
+
+	it('writes no Grok block and no .grok file for a workspace with no Grok agent', async () => {
+		seedGrok([{ id: 'agent-gee', name: 'Gee' }]);
+		const store = JSON.parse(
+			fs.readFileSync(path.join(grokData, 'maestro-sessions.json'), 'utf-8')
+		);
+		store.sessions[0].toolType = 'codex';
+		writeJson(path.join(grokData, 'maestro-sessions.json'), store);
+		const { entries, manifest } = await exportGrok({ agentId: 'agent-gee' });
+		expect(manifest.workspaces[0].grok).toBeUndefined();
+		expect([...entries.keys()].some((n) => n.includes('/.grok/') || n.includes('/.agents/'))).toBe(
+			false
+		);
 	});
 });

@@ -1,7 +1,8 @@
 /**
  * The one adapter from a Federation peer's library records (`AgentRecord`, `AITabRecord`,
- * `LogEntryRecord`) to the view types the transcript and tab strip render (`TranscriptViewSession`,
- * `AITab`, `LogEntry`).
+ * `LogEntryRecord`, `QueuedTurn`) to the view types the transcript, the queued cards, the tab strip,
+ * and the Thinking pill render (`TranscriptViewSession`, `QueuedItem`, `AITab`, `LogEntry`,
+ * `ThinkingItem`).
  *
  * What it builds is a VIEW object for props, never a `Session`: it is not in `sessionStore`, and
  * the narrowed `TranscriptViewSession` type proves no local-agent field slips in. Fields that would
@@ -9,7 +10,8 @@
  * action, pins, an agent error to retry) are not copied, so nothing in the view can act on them.
  */
 
-import type { LiveTurn } from '../../shared/maestro-lib/client/live-turn';
+import { liveTurnKey, type LiveTurn } from '../../shared/maestro-lib/client/live-turn';
+import type { QueuedTurn } from '../../shared/maestro-lib/client/types';
 import type {
 	MirroredPeer,
 	PeerMirrorConnection,
@@ -22,7 +24,15 @@ import {
 	type LogEntryRecord,
 	type LogEntrySource,
 } from '../../shared/maestro-lib/store/transcript';
-import type { AITab, LogEntry, SessionState, ToolType } from '../types';
+import type {
+	AITab,
+	LogEntry,
+	QueuedItem,
+	SessionState,
+	ThinkingItem,
+	ThinkingItemAgent,
+	ToolType,
+} from '../types';
 import type { TranscriptViewSession } from '../components/TerminalOutput/types';
 
 const KNOWN_SOURCES = new Set<string>(LOG_ENTRY_SOURCES);
@@ -72,7 +82,26 @@ export function mirrorTab(record: AITabRecord): AITab {
 		stagedImages: [],
 		createdAt: record.createdAt ?? 0,
 		state: record.state === 'busy' ? 'busy' : 'idle',
+		// The host's own start of the running turn, so the elapsed time survives a lid close.
+		...(record.state === 'busy' && record.thinkingStartTime !== undefined
+			? { thinkingStartTime: record.thinkingStartTime }
+			: {}),
 		...(record.hidden ? { hidden: true } : {}),
+	};
+}
+
+/**
+ * One message waiting in the host's queue as the queued cards draw it. A command is drawn as the
+ * text the host holds for it: the host takes plain messages only, so it has no command metadata.
+ */
+export function mirrorQueuedItem(item: QueuedTurn): QueuedItem {
+	return {
+		id: item.itemId,
+		timestamp: item.queuedAt,
+		tabId: item.tabId,
+		type: 'message',
+		text: item.text,
+		...(item.paused ? { paused: true } : {}),
 	};
 }
 
@@ -117,8 +146,10 @@ export function buildMirrorViewSession(input: {
 	agent: AgentRecord;
 	tabId: string;
 	entries: LogEntry[];
+	/** What waits in the agent's host queue (`MirroredPeer.queues`). */
+	queue?: readonly QueuedTurn[];
 }): TranscriptViewSession {
-	const { peerId, agent, tabId, entries } = input;
+	const { peerId, agent, tabId, entries, queue } = input;
 	const tabs = (agent.aiTabs ?? []).map(mirrorTab);
 	return {
 		id: mirrorKey(peerId, agent.id),
@@ -127,11 +158,48 @@ export function buildMirrorViewSession(input: {
 		inputMode: 'ai',
 		toolType: agent.toolType as ToolType,
 		cwd: agent.cwd ?? '',
-		executionQueue: [],
+		executionQueue: (queue ?? []).map(mirrorQueuedItem),
 		deferredContent: undefined,
 		// The host runs the agent; this desktop has no path or remote of its own for it.
 		sessionSshRemoteConfig: undefined,
 	};
+}
+
+/**
+ * The Thinking pill's entries for every connected peer: one per visible tab the host reports busy,
+ * the same rule `buildThinkingItems()` applies to a local agent. Each carries `mirror`, so a click
+ * opens the mirrored agent and Stop reaches its host. A peer that is not connected shows nothing:
+ * its last known state may be long over, and a Stop there could not reach it.
+ */
+export function buildMirrorThinkingItems(
+	peers: Readonly<Record<string, MirroredPeer>>,
+	order: readonly string[]
+): ThinkingItem[] {
+	const items: ThinkingItem[] = [];
+	for (const peerId of order) {
+		const peer = peers[peerId];
+		if (!peer || peer.connection !== 'connected') continue;
+		for (const agent of peer.agents) {
+			const busyTabs = (agent.aiTabs ?? []).filter((tab) => !tab.hidden && tab.state === 'busy');
+			if (busyTabs.length === 0) continue;
+			const session: ThinkingItemAgent = {
+				id: mirrorKey(peerId, agent.id),
+				name: `${agent.name} on ${peer.name}`,
+				state: 'busy',
+			};
+			for (const record of busyTabs) {
+				const tab = mirrorTab(record);
+				// The host sent no start time (the client learned of the turn from its stream): use
+				// the first event this desktop saw.
+				if (tab.thinkingStartTime === undefined) {
+					const startedAt = peer.liveTurns[liveTurnKey(agent.id, record.id)]?.startedAt;
+					if (startedAt !== undefined) tab.thinkingStartTime = startedAt;
+				}
+				items.push({ session, tab, mirror: { peerId, agentId: agent.id } });
+			}
+		}
+	}
+	return items;
 }
 
 /** The agent dot: the host's state, yellow while any of its tabs is busy. */
@@ -156,6 +224,23 @@ export function peerConnectionDotState(connection: PeerMirrorConnection): Sessio
 /** Whether a peer's agents are the last known state rather than live. */
 export function isPeerDisconnected(peer: Pick<MirroredPeer, 'connection'>): boolean {
 	return peer.connection !== 'connected' && peer.connection !== 'connecting';
+}
+
+/**
+ * Whether a peer has a Maestro host to show. Federation probes every SSH remote that has not opted
+ * out, so most probes find no host (`not-installed`, `host-down`): those remotes stay plain SSH
+ * remotes and out of the Left Bar. A peer that is connected, reconnecting, or was synced once
+ * (shown dimmed while it is away) counts.
+ */
+export function isPeerFederated(
+	peer: Pick<MirroredPeer, 'connection' | 'agents' | 'lastSyncAt'>
+): boolean {
+	return (
+		peer.connection === 'connected' ||
+		peer.connection === 'reconnecting' ||
+		peer.lastSyncAt !== undefined ||
+		peer.agents.length > 0
+	);
 }
 
 /** A tooltip line for a peer's connection. */
@@ -221,6 +306,41 @@ export function moveToHostPeer(
 	const ssh = agent.sessionSshRemoteConfig;
 	if (!ssh?.enabled || !ssh.remoteId) return undefined;
 	return peers.find((peer) => peer.remoteId === ssh.remoteId && peer.connection === 'connected');
+}
+
+/**
+ * How a local agent stands with Federation, for its Left Bar badge and its Make Federated / Move to
+ * Host actions:
+ * - `local`: not an SSH agent.
+ * - `moved`: lifted onto a host already; the row is a pointer.
+ * - `ssh`: an SSH agent this Maestro drives over SSH. `peer` is its remote's mirror entry (absent
+ *   when the remote opted out or is disabled, so it cannot federate); `hostReady` when that peer is
+ *   connected right now, so Move to Host can run without setting anything up.
+ */
+export type AgentFederationStatus =
+	| { kind: 'local' }
+	| { kind: 'moved' }
+	| { kind: 'ssh'; remoteId: string; peer?: MirroredPeer; hostReady: boolean };
+
+export function agentFederationStatus(
+	agent: LiftableAgent,
+	peers: readonly MirroredPeer[]
+): AgentFederationStatus {
+	if (readLiftedTo(agent.liftedTo)) return { kind: 'moved' };
+	const ssh = agent.sessionSshRemoteConfig;
+	if (!ssh?.enabled || !ssh.remoteId) return { kind: 'local' };
+	const peer = peers.find((candidate) => candidate.remoteId === ssh.remoteId);
+	return {
+		kind: 'ssh',
+		remoteId: ssh.remoteId,
+		...(peer ? { peer } : {}),
+		hostReady: peer?.connection === 'connected',
+	};
+}
+
+/** Whether Make Federated is offered: an SSH agent whose remote takes part but runs no host now. */
+export function canMakeFederated(status: AgentFederationStatus): boolean {
+	return status.kind === 'ssh' && status.peer !== undefined && !status.hostReady;
 }
 
 /** Where a lifted agent's pointer leads, and whether the mirror holds that agent right now. */

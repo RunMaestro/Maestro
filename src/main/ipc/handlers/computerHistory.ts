@@ -147,13 +147,16 @@ export function registerComputerHistoryHandlers(): void {
 		'computerHistory:digests',
 		withIpcErrorLogging(
 			opts('digests'),
-			async (request: ComputerHistoryRangeRequest & { kind?: DigestKind; limit?: number }) => {
+			async (
+				request: ComputerHistoryRangeRequest & { kind?: DigestKind; limit?: number; grep?: string }
+			) => {
 				const r = request ?? {};
 				return requireService().digestsWithBodies({
 					sinceMs: r.sinceMs,
 					untilMs: r.untilMs,
 					kind: r.kind === '15m' || r.kind === '6h' ? r.kind : undefined,
 					limit: r.limit,
+					grep: typeof r.grep === 'string' ? r.grep : undefined,
 				});
 			}
 		)

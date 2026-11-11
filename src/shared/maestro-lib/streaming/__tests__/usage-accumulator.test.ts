@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { UsageAccumulator } from '../usage-accumulator';
 import { CodexOutputParser } from '../../parsers/codex-output-parser';
-import type { UsageStats } from '../../../types';
+import type { UsageAccounting, UsageCost, UsageStats } from '../../../types';
 
-function usage(overrides: Partial<UsageStats> = {}): UsageStats {
+function usage(overrides: Partial<UsageStats> = {}, fact?: Partial<UsageAccounting>): UsageStats {
 	return {
 		inputTokens: 0,
 		outputTokens: 0,
@@ -11,9 +11,195 @@ function usage(overrides: Partial<UsageStats> = {}): UsageStats {
 		cacheCreationInputTokens: 0,
 		totalCostUsd: 0,
 		contextWindow: 200_000,
+		...(fact && {
+			accounting: {
+				source: 'runtime-stream' as const,
+				route: 'acp',
+				scopeId: 'fixture-account-host',
+				providerSessionId: 'native-session',
+				processGeneration: 'process-1',
+				turnId: 'turn-1',
+				scope: 'response' as const,
+				reporting: 'snapshot' as const,
+				cacheReadCounting: 'beside-input' as const,
+				cacheCreationCounting: 'beside-input' as const,
+				completeness: 'complete' as const,
+				childInclusion: 'unknown' as const,
+				childCompleteness: 'unknown' as const,
+				cost: { status: 'unknown' as const },
+				...fact,
+			},
+		}),
 		...overrides,
 	};
 }
+
+describe('Grok scoped usage reconciliation', () => {
+	it.each(['snapshot', 'delta'] as const)(
+		'counts only new %s spend after a covering turn snapshot',
+		(reporting) => {
+			const acc = new UsageAccumulator({ attachesAbsoluteUsage: false });
+			acc.accumulate(usage({ inputTokens: 10 }, { responseId: 'call' }));
+			acc.accumulate(usage({ inputTokens: 20 }, { scope: 'turn' }));
+			const update = usage(
+				{ inputTokens: reporting === 'snapshot' ? 15 : 5 },
+				{ responseId: 'call', reporting }
+			);
+			expect(acc.accumulate(update)?.inputTokens).toBe(25);
+			const ended = usage({ inputTokens: 18 }, { responseId: 'call', final: true });
+			expect(acc.accumulate(ended)?.inputTokens).toBe(28);
+			acc.accumulate(usage({ inputTokens: 30 }, { scope: 'turn' }));
+			expect(acc.accumulate(usage({ inputTokens: 999 }, ended.accounting))?.inputTokens).toBe(30);
+		}
+	);
+
+	it('accepts equal deltas as distinct observations and snapshots as replacements', () => {
+		const acc = new UsageAccumulator({ attachesAbsoluteUsage: false });
+		const delta = usage({ inputTokens: 3 }, { responseId: 'call', reporting: 'delta' });
+		acc.accumulate(delta);
+		expect(acc.accumulate(delta)?.inputTokens).toBe(6);
+		expect(acc.accumulate(usage({ inputTokens: 8 }, { responseId: 'call' }))?.inputTokens).toBe(8);
+	});
+
+	it('deduplicates raw cost-omitting snapshots and retains stronger partial cost bounds', () => {
+		const acc = new UsageAccumulator({ attachesAbsoluteUsage: false });
+		acc.accumulate(
+			usage({ inputTokens: 10 }, { cost: { status: 'exact', costUsdTicks: '9007199254740993' } })
+		);
+		const omitted = usage({ inputTokens: 12 }, {});
+		const total = acc.accumulate(omitted);
+		const reports = acc.scopedReports;
+		expect(acc.accumulate(omitted)).toEqual(total);
+		expect(acc.scopedReports).toEqual(reports);
+		expect(total?.accounting?.cost).toMatchObject({
+			status: 'partial',
+			costUsdTicks: '9007199254740993',
+		});
+		for (const cost of [
+			{ status: 'partial', costUsdTicks: '9007199254740992' },
+			{ status: 'exact', costUsdTicks: '9007199254740992' },
+		] satisfies UsageCost[]) {
+			const weaker = usage({ inputTokens: 13 }, { cost });
+			expect(acc.accumulate(weaker)?.accounting?.cost).toMatchObject({
+				status: 'partial',
+				costUsdTicks: '9007199254740993',
+			});
+		}
+	});
+
+	it('does not advance an accepted process watermark on regressed or still-stale reports', () => {
+		const baseline = usage({ inputTokens: 100 }, { scope: 'process-session' });
+		const acc = new UsageAccumulator({
+			attachesAbsoluteUsage: false,
+			processSessionBaseline: baseline,
+		});
+		for (const [inputTokens, expected] of [
+			[110, 10],
+			[105, 10],
+			[108, 10],
+			[112, 12],
+		]) {
+			const total = acc.accumulate(usage({ inputTokens }, { scope: 'process-session' }));
+			expect(total).toMatchObject({
+				inputTokens: expected,
+				accounting: { final: false, cost: { status: 'unknown' } },
+			});
+		}
+	});
+
+	it.each([
+		'route',
+		'scopeId',
+		'providerSessionId',
+		'processGeneration',
+		'turnId',
+		'requestId',
+	] as const)(
+		'rejects conflicting %s while binding omitted event identity to this capture',
+		(field) => {
+			const identity = {
+				route: 'acp',
+				scopeId: 'fixture-account-host',
+				providerSessionId: 'native-session',
+				processGeneration: 'process-1',
+				turnId: 'turn-1',
+				requestId: 'prompt-request',
+			};
+			const acc = new UsageAccumulator({ attachesAbsoluteUsage: false, identity });
+			const anonymous = usage(
+				{ inputTokens: 7 },
+				{
+					route: undefined,
+					scopeId: undefined,
+					providerSessionId: undefined,
+					processGeneration: undefined,
+					turnId: undefined,
+					requestId: 'internal-call',
+				}
+			);
+			const total = acc.accumulate(anonymous);
+			expect(total?.accounting).toMatchObject({ turnId: 'turn-1', requestId: 'prompt-request' });
+			expect(
+				acc.accumulate(usage({ inputTokens: 999 }, { scope: 'turn', [field]: 'foreign' }))
+			).toEqual(total);
+		}
+	);
+
+	it.each([
+		{ scopeId: undefined },
+		{ route: '' },
+		{ completeness: 'partial' },
+		{ reporting: 'delta' },
+		{ scope: 'native-session' },
+		{ processGeneration: 'foreign' },
+	] satisfies Partial<UsageAccounting>[])(
+		'refuses an unproven or mismatched baseline %j',
+		(accounting) => {
+			expect(
+				() =>
+					new UsageAccumulator({
+						attachesAbsoluteUsage: false,
+						identity: { processGeneration: 'process-1' },
+						processSessionBaseline: usage({}, { scope: 'process-session', ...accounting }),
+					})
+			).toThrow('Process usage baseline requires complete, matching scoped identity');
+		}
+	);
+
+	it('retains running/completed child and lifetime facts without adding them to parent spend', () => {
+		const acc = new UsageAccumulator({ attachesAbsoluteUsage: false });
+		const parent = acc.accumulate(usage({ inputTokens: 20 }, { childInclusion: 'completed' }));
+		for (const status of ['running', 'completed'] as const) {
+			const child = usage(
+				{ inputTokens: 8 },
+				{
+					scope: 'child',
+					providerSessionId: 'child-session',
+					final: status === 'completed',
+					children: [
+						{
+							providerSessionId: 'child-session',
+							status,
+							includedInParent: status === 'completed',
+							completeness: 'partial',
+							cost: { status: 'unknown' },
+						},
+					],
+				}
+			);
+			expect(acc.accumulate(child)).toEqual(parent);
+		}
+		expect(acc.accumulate(usage({ inputTokens: 5000 }, { scope: 'native-session' }))).toEqual(
+			parent
+		);
+		expect(acc.scopedReports.map((report) => report.accounting?.scope)).toEqual([
+			'response',
+			'child',
+			'native-session',
+		]);
+		expect(acc.scopedReports[1].accounting?.children?.[0].status).toBe('completed');
+	});
+});
 
 describe('UsageAccumulator', () => {
 	it('returns the first event verbatim - nothing to delta against yet', () => {

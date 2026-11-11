@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
 import { MaestroNotRunningError } from '../../../cli/services/maestro-not-running';
+import type * as PeerResolverModule from '../../../cli/services/peer-resolver';
 
 vi.mock('../../../cli/services/maestro-client', () => ({
 	withMaestroClient: vi.fn(),
@@ -17,6 +18,17 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 }));
+
+// The peer path is stood in for at the resolver's seams, as in peer-targets.test.ts: no SSH is
+// dialed, and the rest of the module (error codes, `hostCallError`) is the real one.
+vi.mock('../../../cli/services/peer-resolver', async (importOriginal) => {
+	const actual = await importOriginal<typeof PeerResolverModule>();
+	return {
+		...actual,
+		routeAgentTarget: vi.fn(() => ({ kind: 'local' })),
+		withPeerAgent: vi.fn(),
+	};
+});
 
 import {
 	queueHold,
@@ -29,6 +41,14 @@ import {
 import { QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS } from '../../../shared/chatSteering';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { resolveAgentId } from '../../../cli/services/storage';
+import {
+	PeerResolveError,
+	routeAgentTarget,
+	withPeerAgent,
+	type ResolvedPeerAgent,
+} from '../../../cli/services/peer-resolver';
+import { ExitCode } from '../../../cli/exit-codes';
+import type { ClientResult, QueuedTurn } from '../../../shared/maestro-lib/client/types';
 
 describe('queue command', () => {
 	let consoleSpy: MockInstance;
@@ -38,6 +58,7 @@ describe('queue command', () => {
 		vi.clearAllMocks();
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+		vi.mocked(routeAgentTarget).mockReturnValue({ kind: 'local' });
 	});
 
 	describe('queue list', () => {
@@ -409,6 +430,185 @@ describe('queue command', () => {
 			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 			expect(output.code).toBe('INVALID_OPTIONS');
 			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('peer:agent (Federation)', () => {
+		const PEER = 'buildbox';
+		const AGENT_ID = 'a1111111-0000-4000-8000-000000000001';
+		const ok = <T>(value: T): ClientResult<T> => ({ ok: true, value });
+
+		/** A host connection whose client the test drives, routed as a peer target. */
+		function fakePeer() {
+			const client = {
+				turns: {
+					queue: {
+						list: vi.fn(async () => ok<QueuedTurn[]>([])),
+						remove: vi.fn(async () => ok({ removed: true })),
+						setPaused: vi.fn(async (_a: string, _i: string, paused: boolean) =>
+							ok({ found: true, paused })
+						),
+					},
+				},
+			};
+			const resolved = {
+				peer: PEER,
+				agent: { id: AGENT_ID, name: 'docs', state: 'busy', aiTabs: [] },
+				client,
+			} as unknown as ResolvedPeerAgent;
+			vi.mocked(routeAgentTarget).mockReturnValue({
+				kind: 'peer',
+				target: { peer: PEER, agent: 'docs' },
+			});
+			vi.mocked(withPeerAgent).mockImplementation(async (_target, action) => action(resolved));
+			return { client };
+		}
+
+		it('queue list reads the host queue, keyed by the peer:agent ref, with the peer', async () => {
+			const { client } = fakePeer();
+			client.turns.queue.list.mockResolvedValue(
+				ok<QueuedTurn[]>([
+					{
+						itemId: 'q1',
+						tabId: 't1',
+						queuedAt: 5,
+						kind: 'message',
+						text: 'next',
+						paused: true,
+					},
+				])
+			);
+
+			await queueList({ agent: `${PEER}:docs` });
+
+			expect(client.turns.queue.list).toHaveBeenCalledWith(AGENT_ID);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toEqual({
+				success: true,
+				peer: PEER,
+				totalItems: 1,
+				queues: [
+					{
+						sessionId: `${PEER}:${AGENT_ID}`,
+						name: 'docs',
+						state: 'busy',
+						items: [
+							{ id: 'q1', timestamp: 5, tabId: 't1', type: 'message', text: 'next', paused: true },
+						],
+					},
+				],
+			});
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('queue list reports a stopped host with its PEER_ code and exit code', async () => {
+			vi.mocked(routeAgentTarget).mockReturnValue({
+				kind: 'peer',
+				target: { peer: PEER, agent: 'docs' },
+			});
+			vi.mocked(withPeerAgent).mockRejectedValue(
+				new PeerResolveError('host-down', 'No host on buildbox', ExitCode.NotRunning, PEER)
+			);
+
+			await queueList({ agent: `${PEER}:docs` });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toMatchObject({ success: false, code: 'PEER_HOST_DOWN', peer: PEER });
+			expect(processExitSpy).toHaveBeenCalledWith(ExitCode.NotRunning);
+		});
+
+		it('queue list names the peer when the host refuses the read', async () => {
+			const { client } = fakePeer();
+			client.turns.queue.list.mockResolvedValue({
+				ok: false,
+				error: { code: 'not-found', message: 'No agent.' },
+			} as never);
+
+			await queueList({ agent: `${PEER}:docs` });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toMatchObject({ success: false, code: 'PEER_HOST_FAILED', peer: PEER });
+			expect(processExitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+		});
+
+		it('queue remove takes the item out of the host queue', async () => {
+			const { client } = fakePeer();
+
+			await queueRemove('q1', { agent: `${PEER}:docs` });
+
+			expect(client.turns.queue.remove).toHaveBeenCalledWith(AGENT_ID, 'q1');
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toEqual({
+				success: true,
+				agentId: `${PEER}:${AGENT_ID}`,
+				itemId: 'q1',
+				removed: true,
+				peer: PEER,
+			});
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('queue remove fails with ITEM_NOT_FOUND when the host no longer holds the item', async () => {
+			const { client } = fakePeer();
+			client.turns.queue.remove.mockResolvedValue(ok({ removed: false }));
+
+			await queueRemove('q1', { agent: `${PEER}:docs` });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toMatchObject({ success: false, code: 'ITEM_NOT_FOUND' });
+			expect(output.error).toContain(`${PEER}:${AGENT_ID}`);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('queue hold and resume set the paused flag on the host', async () => {
+			const { client } = fakePeer();
+
+			await queueHold('q1', { agent: `${PEER}:docs` });
+			await queueResume('q1', { agent: `${PEER}:docs` });
+
+			expect(client.turns.queue.setPaused).toHaveBeenNthCalledWith(1, AGENT_ID, 'q1', true);
+			expect(client.turns.queue.setPaused).toHaveBeenNthCalledWith(2, AGENT_ID, 'q1', false);
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: true,
+				itemId: 'q1',
+				paused: true,
+				peer: PEER,
+			});
+			expect(JSON.parse(consoleSpy.mock.calls[1][0])).toMatchObject({
+				success: true,
+				paused: false,
+			});
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('queue hold fails with ITEM_NOT_FOUND when the host does not find the item', async () => {
+			const { client } = fakePeer();
+			client.turns.queue.setPaused.mockResolvedValue(ok({ found: false, paused: true }));
+
+			await queueHold('q1', { agent: `${PEER}:docs` });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toMatchObject({ success: false, code: 'ITEM_NOT_FOUND' });
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('refuses queue merge and steer before anything reaches the peer', async () => {
+			fakePeer();
+
+			await queueMerge('q1', { agent: `${PEER}:docs` });
+			await queueSteer('q1', { agent: `${PEER}:docs` });
+
+			for (const call of consoleSpy.mock.calls) {
+				expect(JSON.parse(call[0])).toMatchObject({
+					success: false,
+					code: 'PEER_UNSUPPORTED_VERB',
+				});
+			}
+			expect(consoleSpy).toHaveBeenCalledTimes(2);
+			expect(withPeerAgent).not.toHaveBeenCalled();
+			expect(withMaestroClient).not.toHaveBeenCalled();
+			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 	});
 });

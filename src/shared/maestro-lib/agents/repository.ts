@@ -156,6 +156,9 @@ export type RepositoryLoadFailure =
 
 export type RepositoryLoadResult = { ok: true } | { ok: false; failure: RepositoryLoadFailure };
 
+/** A turn still owns the tab it originally observed. Checked inside the mutation queue. */
+export type TabWriteGuard = () => boolean;
+
 export interface AgentRepository {
 	/** Read the sessions and groups documents. Call once before anything else. */
 	load(): Promise<RepositoryLoadResult>;
@@ -167,6 +170,13 @@ export interface AgentRepository {
 	listTabs(agentId: string): AITabRecord[] | undefined;
 	/** One tab with its transcript, hidden consult tabs included. */
 	getTab(agentId: string, tabId: string): AITabRecord | undefined;
+	/** Survives edits and provider swaps, but never removal, same-ID recreation or reload. */
+	captureTabIncarnation(agentId: string, tabId: string): TabWriteGuard;
+	/**
+	 * Hold the mutation queue across an external write, including its internal awaits.
+	 * The callback must not call queued repository mutations, which would deadlock.
+	 */
+	withTabWriteGuard<T>(guard: TabWriteGuard, write: () => Promise<T>): Promise<ClientResult<T>>;
 	/** After this, every command answers `host-lost` with `reason`. Reads still work. */
 	fence(reason: string): void;
 	/** Resolves once every command accepted so far has finished, written or failed. Shutdown awaits it before releasing the lock. */
@@ -201,14 +211,20 @@ export interface AgentRepository {
 	appendTranscript(
 		agentId: string,
 		tabId: string,
-		entries: readonly LogEntryRecord[]
+		entries: readonly LogEntryRecord[],
+		guard?: TabWriteGuard
 	): Promise<ClientResult<void>>;
 	/**
 	 * Start a turn on a tab in one write: the person's message joins the transcript, the tab
 	 * records which provider owns the turn, and a merged context the prompt carried is cleared.
 	 * One write, so a crash cannot leave a message sent but its merge still pending.
 	 */
-	beginTurn(agentId: string, tabId: string, begin: TurnBegin): Promise<ClientResult<void>>;
+	beginTurn(
+		agentId: string,
+		tabId: string,
+		begin: TurnBegin,
+		guard?: TabWriteGuard
+	): Promise<ClientResult<void>>;
 	/**
 	 * Record what `provider` said about the tab's conversation (its session id, its usage), on
 	 * the slot that provider owns. A turn that outlives a provider swap writes its resume token
@@ -218,7 +234,8 @@ export interface AgentRepository {
 		agentId: string,
 		tabId: string,
 		provider: string,
-		update: TabSessionUpdate
+		update: TabSessionUpdate,
+		guard?: TabWriteGuard
 	): Promise<ClientResult<void>>;
 	/**
 	 * Find or create the hidden consult tab an agent keeps for a (source agent, source tab) pairing
@@ -269,6 +286,13 @@ class FencedError extends Error {
 	}
 }
 
+class TabOwnerChangedError extends Error {
+	constructor() {
+		super('The original tab or turn owner changed before the record could be written.');
+		this.name = 'TabOwnerChangedError';
+	}
+}
+
 /** A tab the person can see: it exists and is not a hidden consult tab. */
 function visibleTab(agent: AgentRecord, tabId: string): AITabRecord | undefined {
 	return visibleAiTabsOf(agent).find((tab) => tab.id === tabId);
@@ -315,6 +339,7 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 	let groupsDoc: GroupsDocument = DEFAULT_GROUPS;
 	let fencedReason: string | undefined;
 	let chain: Promise<unknown> = Promise.resolve();
+	const tabIncarnations = new Map<string, Map<string, symbol>>();
 
 	const readTabDefaults =
 		options.readTabDefaults ??
@@ -327,6 +352,14 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 	const groups = (): GroupRecord[] => groupsOf(groupsDoc);
 	const findAgent = (agentId: string): AgentRecord | undefined =>
 		agents().find((agent) => agent.id === agentId);
+	const captureTabIncarnation = (agentId: string, tabId: string): TabWriteGuard => {
+		if (!findAgent(agentId)?.aiTabs?.some((tab) => tab.id === tabId)) return () => false;
+		let tabs = tabIncarnations.get(agentId);
+		if (!tabs) tabIncarnations.set(agentId, (tabs = new Map()));
+		let token = tabs.get(tabId);
+		if (!token) tabs.set(tabId, (token = Symbol()));
+		return () => tabIncarnations.get(agentId)?.get(tabId) === token;
+	};
 
 	// -----------------------------------------------------------------------
 	// Failures
@@ -352,6 +385,7 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 	/** A thrown error mapped to the failure a caller can act on. */
 	function failFromThrown(method: ClientMethod, error: unknown): { ok: false; error: ClientError } {
 		if (error instanceof FencedError) return failure(method, 'host-lost', error.reason);
+		if (error instanceof TabOwnerChangedError) return failure(method, 'rejected', error.message);
 		if (error instanceof StoreWriteError) return failure(method, 'failed', error.message);
 		const message = error instanceof Error ? error.message : String(error);
 		logger.error(`${method} failed: ${message}`, LOG_CONTEXT);
@@ -363,40 +397,52 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 	// -----------------------------------------------------------------------
 
 	/** Throws when this process may no longer write. */
-	function guardWrite(): void {
+	function guardWrite(tabGuard?: TabWriteGuard): void {
 		if (fencedReason !== undefined) throw new FencedError(fencedReason);
 		const verdict = options.fence?.();
 		if (verdict && !verdict.ok) {
 			fencedReason = verdict.reason;
 			throw new FencedError(verdict.reason);
 		}
+		if (tabGuard && !tabGuard()) throw new TabOwnerChangedError();
 	}
 
 	async function run<T>(
 		method: ClientMethod,
-		planner: () => Promise<Planned<T>> | Planned<T>
+		planner: () => Promise<Planned<T>> | Planned<T>,
+		guard?: TabWriteGuard
 	): Promise<ClientResult<T>> {
 		const next = chain.then(async (): Promise<ClientResult<T>> => {
 			try {
 				if (fencedReason !== undefined) throw new FencedError(fencedReason);
+				if (guard) guardWrite(guard);
 				const planned = await planner();
 				if (!planned.ok) return planned;
 				const { plan } = planned;
 
-				if (plan.sessions || plan.groups || plan.before) guardWrite();
+				if (guard || plan.sessions || plan.groups || plan.before) guardWrite(guard);
 				await plan.before?.();
 
 				// Each file's in-memory copy is replaced as soon as ITS write lands, so a
 				// failure on the second file leaves memory describing what is on disk.
 				if (plan.sessions) {
-					guardWrite();
+					guardWrite(guard);
 					await writeStoreDocument(paths.sessionsFile, plan.sessions, {
 						registry: SESSIONS_REGISTRY,
 					});
 					sessionsDoc = plan.sessions;
+					// Invalidate only after persistence succeeds. IDs may be reused immediately.
+					for (const event of plan.events) {
+						if (event.type === 'agent.removed') tabIncarnations.delete(event.agentId);
+						else if (event.type === 'agent.added') tabIncarnations.delete(event.agent.id);
+						else if (event.type === 'tab.removed')
+							tabIncarnations.get(event.agentId)?.delete(event.tabId);
+						else if (event.type === 'tab.added')
+							tabIncarnations.get(event.agentId)?.delete(event.tab.id);
+					}
 				}
 				if (plan.groups) {
-					guardWrite();
+					guardWrite(guard);
 					await writeStoreDocument(paths.groupsFile, plan.groups, { registry: GROUPS_REGISTRY });
 					groupsDoc = plan.groups;
 				}
@@ -497,7 +543,7 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		};
 	}
 
-	async function load(): Promise<RepositoryLoadResult> {
+	async function loadDocuments(): Promise<RepositoryLoadResult> {
 		const sessions = await loadDocument<SessionsDocument>(
 			paths.sessionsFile,
 			'sessions',
@@ -512,8 +558,14 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		if (!loadedGroups.ok) return loadedGroups;
 		sessionsDoc = sessions.doc;
 		groupsDoc = loadedGroups.doc;
+		tabIncarnations.clear();
 		return { ok: true };
 	}
+	const load = (): Promise<RepositoryLoadResult> => {
+		const next = chain.then(loadDocuments);
+		chain = next.catch(() => undefined);
+		return next;
+	};
 
 	// -----------------------------------------------------------------------
 	// Agents
@@ -999,47 +1051,68 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 	function rewriteTab(
 		agentId: string,
 		tabId: string,
-		rewrite: (tab: AITabRecord, agent: AgentRecord) => AITabRecord
+		rewrite: (tab: AITabRecord, agent: AgentRecord) => AITabRecord,
+		guard?: TabWriteGuard
 	): Promise<ClientResult<void>> {
 		const method: ClientMethod = 'tabs.update';
-		return run(method, () => {
-			const agent = findAgent(agentId);
-			if (!agent) return noAgent(method, agentId);
-			const tab = agent.aiTabs?.find((candidate) => candidate.id === tabId);
-			if (!tab) return noTab(method, tabId);
-			const changed = rewrite(tab, agent);
-			if (changed === tab) return { ok: true, plan: { value: undefined, events: [] } };
-			const next: AgentRecord = {
-				...agent,
-				aiTabs: (agent.aiTabs ?? []).map((entry) => (entry.id === tabId ? changed : entry)),
-			};
-			const events: MaestroEvent[] = visibleTab(agent, tabId)
-				? [{ type: 'tab.updated', agentId, tab: projectTab(changed) }]
-				: [];
-			events.push({ type: 'agent.updated', agent: project(next) });
-			return {
-				ok: true,
-				plan: { value: undefined, sessions: withAgents(new Map([[agentId, next]])), events },
-			};
-		});
+		return run(
+			method,
+			() => {
+				const agent = findAgent(agentId);
+				if (!agent) return noAgent(method, agentId);
+				const tab = agent.aiTabs?.find((candidate) => candidate.id === tabId);
+				if (!tab) return noTab(method, tabId);
+				const changed = rewrite(tab, agent);
+				if (changed === tab) return { ok: true, plan: { value: undefined, events: [] } };
+				const next: AgentRecord = {
+					...agent,
+					aiTabs: (agent.aiTabs ?? []).map((entry) => (entry.id === tabId ? changed : entry)),
+				};
+				const events: MaestroEvent[] = visibleTab(agent, tabId)
+					? [{ type: 'tab.updated', agentId, tab: projectTab(changed) }]
+					: [];
+				events.push({ type: 'agent.updated', agent: project(next) });
+				return {
+					ok: true,
+					plan: { value: undefined, sessions: withAgents(new Map([[agentId, next]])), events },
+				};
+			},
+			guard
+		);
 	}
 
-	const appendTranscript = (agentId: string, tabId: string, entries: readonly LogEntryRecord[]) =>
-		rewriteTab(agentId, tabId, (tab) =>
-			entries.length === 0
-				? tab
-				: { ...tab, logs: [...(Array.isArray(tab.logs) ? tab.logs : []), ...entries] }
+	const appendTranscript = (
+		agentId: string,
+		tabId: string,
+		entries: readonly LogEntryRecord[],
+		guard?: TabWriteGuard
+	) =>
+		rewriteTab(
+			agentId,
+			tabId,
+			(tab) =>
+				entries.length === 0
+					? tab
+					: { ...tab, logs: [...(Array.isArray(tab.logs) ? tab.logs : []), ...entries] },
+			guard
 		);
 
-	const beginTurn = (agentId: string, tabId: string, begin: TurnBegin) =>
-		rewriteTab(agentId, tabId, (tab) => beginTurnRecord(tab, begin));
+	const beginTurn = (agentId: string, tabId: string, begin: TurnBegin, guard?: TabWriteGuard) =>
+		rewriteTab(agentId, tabId, (tab) => beginTurnRecord(tab, begin), guard);
 
 	const recordSession = (
 		agentId: string,
 		tabId: string,
 		provider: string,
-		update: TabSessionUpdate
-	) => rewriteTab(agentId, tabId, (tab, agent) => recordTabSession(tab, agent, provider, update));
+		update: TabSessionUpdate,
+		guard?: TabWriteGuard
+	) =>
+		rewriteTab(
+			agentId,
+			tabId,
+			(tab, agent) => recordTabSession(tab, agent, provider, update),
+			guard
+		);
 
 	function openConsultTab(
 		agentId: string,
@@ -1126,6 +1199,16 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 			const agent = findAgent(agentId);
 			return agent?.aiTabs?.find((tab) => tab.id === tabId);
 		},
+		captureTabIncarnation,
+		withTabWriteGuard: (guard, write) =>
+			run(
+				'tabs.update',
+				async () => ({
+					ok: true,
+					plan: { value: await write(), events: [] },
+				}),
+				guard
+			),
 		fence: (reason) => {
 			fencedReason ??= reason;
 		},

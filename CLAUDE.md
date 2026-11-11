@@ -134,6 +134,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which store holds a provider session's origin record:** `sessionOriginStoreFor()` in `src/shared/sessionOriginStore.ts`
 - **Recording or reading the User Journey:** `sanitizeJourneyUrl()`, `formatJourneyLine()`, `parseJourneyJsonl()` in `src/shared/userJourney.ts`; `appendJourneyEntry()` in `src/main/user-journey-manager.ts`; `recordJourney()` in `src/renderer/services/userJourney.ts`
 - **What happened around an agent, in time order (the timeline):** `readTimeline()` in `src/shared/maestro-lib/store/read-timeline.ts`; `selectTimelineEvents()`, `formatTimelineLine()`, `timelineFollowUps()` in `src/shared/timeline.ts`; `findHistoryEntries()` in `src/shared/maestro-lib/store/read-history.ts`
+- **A project's shared History (`.maestro/history/history-<label>.jsonl`):** `appendSharedHistoryEntry()`, `readSharedHistoryEntries()`, `hostSharedHistoryLabel()` in `src/shared/maestro-lib/store/shared-history.ts`; `filterHistoryEntries()`, `mergeEntriesById()` in `src/shared/history.ts`
 - **A `--since` / `--until` time the user typed (`30m`, `2h`, `1w`, ISO, epoch):** `parseTimeInput()`, `parseDurationInput()` in `src/shared/timeInput.ts`
 - **Serializing async work on one entity:** `createKeyedWriteQueue()` in `src/shared/keyedWriteQueue.ts` (main imports it via `src/main/utils/atomic-json-store.ts`)
 - **Capping stored tool output:** `compactToolOutput()`, `compactSessionToolOutputs()` in `src/shared/toolOutput.ts`
@@ -161,6 +162,10 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Starting, streaming, stopping and resuming an agent turn:** `startTurn()` in `src/shared/maestro-lib/run/start-turn.ts`, `runTurn()` / `runToCompletion()` in `src/shared/maestro-lib/run/run-to-completion.ts`, `planSessionTurn()` in `src/shared/maestro-lib/run/session.ts`
 - **Stopping a process (interrupt, terminate, kill the tree):** `stopProcess(target, options)` in `src/shared/maestro-lib/control/termination.ts` (never a bare `kill('SIGTERM')` + `setTimeout`)
 - **Whether a Claude turn runs the maestro-p TUI or `claude --print`:** `resolveClaudeSpawnModeCore()`, `applyClaudeSpawnDecision()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
+- **Which Grok route a turn runs on (ACP or native headless):** `selectGrokRoute()`, `beginGrokAcpNegotiation()`, `completeGrokAcpNegotiation()`, `grokAcpProcessSpec()`, `grokAcpRouteOptions()`, `isGrokRouteDecisionCurrent()` in `src/shared/maestro-lib/grok/route.ts`
+- **The host seams of the Grok ACP route (digest, effect authority):** `sha256Hex()`, `grokInstallationId()`, `GrokEffectAuthority`, `grokEffectGranted()` in `src/shared/maestro-lib/grok/host-seams.ts`
+- **Running a provider probe (bounded, cancellable, Grok refused):** `runProviderProbe()`, `ProviderProbeRefusedError` in `src/main/agents/grok-probe.ts`
+- **Logging a spawn or SSH failure without leaking its message:** `redactedErrorFields(error)` in `src/shared/processErrors.ts`
 - **Timing out a supervised agent process:** `createIdleWatchdog()` in `src/main/utils/idle-watchdog.ts`, events in `src/main/utils/agent-liveness.ts` (the budget is silence, not wall clock)
 - **A one-shot answer from a cheap model (no tab, no tools):** `window.maestro.context.groomContext()` with `cheapTurn` / `readOnly` / `disableTools` / `timeoutMs`, over `groomContext()` in `src/main/utils/context-groomer.ts`
 - **Whether a working directory can be spawned into:** `unusableCwdReason(cwd)`, `unusableDirectoryReason(dir, label)` in `src/main/process-manager/utils/spawnCwd.ts`
@@ -180,6 +185,9 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Connecting to a Federation peer's host (CLI and desktop):** `connectPeerClient()`, `federationPeersOf()`, `peerIdFor()`, `peerForwardError()`, `watchPeerConnection()`, `PeerConnectError` in `src/shared/maestro-lib/client/peer-connection.ts`
 - **Driving a Federation peer's agent (CLI and desktop):** `runPeerAgentAction()`, `parsePeerAgentAction()` in `src/shared/maestro-lib/client/peer-actions.ts`; `PeerMirrorService.act()` in `src/main/federation/`
 - **Mirroring a Federation peer in memory (desktop):** `applyPeerEvent()`, `mirrorKey()`, `replacePeerAgents()` in `src/shared/maestro-lib/client/peer-mirror.ts`; `foldLiveTurn()`, `coalesceTurnEvents()` in `src/shared/maestro-lib/client/live-turn.ts`; `getPeerMirrorService()` in `src/main/federation/index.ts`
+- **Installing maestro-cli on an SSH remote (Federation):** `setupRemoteHost()`, `installRemoteCli()`, `resolveLocalCliBundle()` in `src/shared/maestro-lib/client/remote-install.ts`; `setupHostFromDesktop()` in `src/main/federation/setup-host.ts`
+- **Whether an SSH remote takes part in Federation:** `isFederationRemote()`, `federationFieldFor()` in `src/shared/federationRemote.ts`
+- **How a local agent stands with Federation (badge, Make Federated):** `agentFederationStatus()`, `canMakeFederated()`, `isPeerFederated()` in `src/renderer/utils/peerMirrorView.ts`; `<FederationBadge>` in `src/renderer/components/SessionList/FederationBadge.tsx`
 - **Showing a Federation peer's mirrored agent (renderer):** `usePeerMirrorStore`, `isMirrorShown()` in `src/renderer/stores/peerMirrorStore.ts`; `buildMirrorViewSession()` in `src/renderer/utils/peerMirrorView.ts`; `gateKeyForMirror()` in `src/renderer/hooks/keyboard/mirrorKeyboardGate.ts`
 - **A loopback port for an SSH local forward:** `availableLocalPort()`, `waitForLocalPort()` in `src/shared/maestro-lib/client/local-port.ts`
 - **Building or delivering the Maestro system prompt:** `assembleMaestroSystemPrompt()` in `src/shared/maestroSystemPrompt.ts`; `applySystemPromptDelivery()` in `src/main/utils/system-prompt-delivery.ts`; `buildMaestroSystemPromptForSession()` in `src/main/utils/maestro-system-prompt.ts`
@@ -195,7 +203,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Assembling the prompt, arguments and launch request of a chat turn:** `assembleTurn()` in `src/shared/maestro-lib/turns/assemble.ts`
 - **Running a chat turn with no desktop (send, queue, stop, per-tab events):** `createRuntimeTurns()` in `src/shared/maestro-lib/runtime/turns.ts`
 - **Recording a finished turn (transcript, History, usage):** `createTurnRecorder()`, `buildTurnTranscript()` in `src/shared/maestro-lib/turns/record-turn.ts`
-- **Serving a runtime to other processes (`maestro-cli host`):** `startRuntimeServer()` in `src/shared/maestro-lib/runtime/server.ts`
+- **Serving a runtime to other processes (`maestro-cli host`):** `startRuntimeServer()` in `src/shared/maestro-lib/runtime/server.ts`, `withLiveTabState()` in `src/shared/maestro-lib/runtime/server-frames.ts`
 
 #### Providers, accounts, and auth
 
@@ -249,6 +257,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Recording wizard usage:** `beginWizardRun()`, `recordWizardDocuments()` in `src/renderer/services/wizardStats.ts`
 - **Leaving inline wizard mode:** `flattenWizardIntoTab(tab, { summary? })` in `src/renderer/utils/tabHelpers/index.ts`
 - **What the Thinking pill lists:** `buildThinkingItems()` in `src/renderer/utils/thinkingItems.ts` (read through `useThinkingItems()`); `useBackgroundAutoRuns()` in `src/renderer/hooks/batch/useBackgroundAutoRuns.ts`
+- **Where a History panel reads from (local agent or Federation mirror):** `localHistorySource()`, `mirrorHistorySource()` in `src/renderer/components/History/historySource.ts`, via `HistoryPanel`'s `source` prop
 - **Whether this renderer owns an app-wide side effect:** `useIsLifecycleOwner()` in `src/renderer/contexts/WindowContext.tsx`
 
 #### Tabs
@@ -257,6 +266,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Any CLI verb that can move the Maestro view:** `resolveBackgroundFlag()` (CLI) / `readBackgroundField()` (handler) in `src/shared/focusPlacement.ts` (never `message.background !== false`)
 - **Which tab a tab-scoped action targets:** `resolveActiveTabRef(session)`, `resolveTabRefRenameValue()`, `resolveTabRefTitle()` in `src/renderer/utils/panelLayout.ts`
 - **Whether an AI tab is drawn in the tab strip:** `isAiTabHidden(tab)`, `visibleAiTabs(tabs)`, `hasUnreadVisibleTab(tabs)` in `src/renderer/utils/unifiedTabOrderUtils.ts` (never `aiTabs.length` or `aiTabs.some((t) => t.hasUnread)`)
+- **Counting or listing an agent's tabs by visibility:** `tabStripSlotKeys()`, `tabStripVisibility()`, `countTabStrip()`, `countOpenTabs()`, `dropOrphanedTabs()`, `collectGroupMemberTabKeys()` in `src/shared/tabStripMembership.ts`
 - **What an unnamed tab is called:** `getTabDisplayName(tab)`, `isSessionIdLabel()` in `src/renderer/utils/tabHelpers`, over `formatSessionId(agentSessionId)`
 - **Where a closed tab's name still exists:** `HistoryEntry.sessionName` only; pass it as the third argument of `handleResumeSession`
 - **Reading a past conversation back into a tab:** `loadResumableSession()` in `src/renderer/services/resumableSession.ts`

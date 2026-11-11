@@ -71,8 +71,10 @@ describe('Session List Quick Resume tab visibility', () => {
 				viewingSession: null,
 				messages: [],
 				starredSessions: new Set(),
+				// The browser closes only on the resume's own success, so the result is returned.
 				onResumeSession: (...args) => {
 					resumed = management.handleResumeSession(...args);
+					return resumed;
 				},
 				onClose,
 			});

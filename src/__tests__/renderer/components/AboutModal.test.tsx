@@ -8,8 +8,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { AboutModal } from '../../../renderer/components/AboutModal';
+import { formatTokensCompact } from '../../../renderer/utils/formatters';
 import type { Theme, AutoRunStats } from '../../../renderer/types';
-import type { GlobalAgentStats } from '../../../shared/types';
+import type { GlobalAgentStats, ProviderStats } from '../../../shared/types';
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -1074,6 +1075,254 @@ describe('AboutModal', () => {
 			});
 
 			expect(screen.getByText('$12,345,678.90')).toBeInTheDocument();
+		});
+	});
+
+	describe('Grok-containing global stats', () => {
+		// The payload shape the stats handler cases produce: Grok sessions from
+		// two account pools under qualified keys, an exact tick sum of 25000000000
+		// ($2.50) whose coverage is partial (the ledger cannot be bound to the
+		// transcript), beside providers whose cost follows the legacy rule.
+		const provider = (overrides: Partial<ProviderStats>): ProviderStats => ({
+			sessions: 0,
+			messages: 0,
+			inputTokens: 0,
+			outputTokens: 0,
+			costUsd: 0,
+			hasCostData: false,
+			...overrides,
+		});
+		const grokMixedByProvider: Record<string, ProviderStats> = {
+			'claude-code': provider({
+				sessions: 40,
+				messages: 400,
+				inputTokens: 600_000,
+				outputTokens: 200_000,
+				costUsd: 12.25,
+				hasCostData: true,
+			}),
+			codex: provider({ sessions: 10, messages: 90, inputTokens: 150_000, outputTokens: 50_000 }),
+			grok: provider({
+				sessions: 2,
+				messages: 6,
+				inputTokens: 250_000,
+				outputTokens: 50_000,
+				costUsd: 2.5,
+				hasCostData: true,
+				costCoverage: 'partial',
+				costUsdTicks: '25000000000',
+			}),
+		};
+		const totalsOf = (byProvider: Record<string, ProviderStats>) => {
+			const rows = Object.values(byProvider);
+			const sum = (pick: (p: ProviderStats) => number) => rows.reduce((n, p) => n + pick(p), 0);
+			return {
+				totalSessions: sum((p) => p.sessions),
+				totalMessages: sum((p) => p.messages),
+				totalInputTokens: sum((p) => p.inputTokens),
+				totalOutputTokens: sum((p) => p.outputTokens),
+				totalCostUsd: sum((p) => (p.hasCostData ? p.costUsd : 0)),
+				hasCostData: rows.some((p) => p.hasCostData),
+			};
+		};
+		const grokMixedStats = (overrides: Partial<GlobalAgentStats> = {}): GlobalAgentStats => ({
+			...createGlobalStats(),
+			...totalsOf(grokMixedByProvider),
+			totalCacheReadTokens: 0,
+			totalCacheCreationTokens: 0,
+			costCoverage: 'partial',
+			byProvider: grokMixedByProvider,
+			isComplete: true,
+			...overrides,
+		});
+		const renderAbout = (handsOnTimeMs = 0) =>
+			render(
+				<AboutModal
+					theme={theme}
+					handsOnTimeMs={handsOnTimeMs}
+					autoRunStats={createAutoRunStats()}
+					onClose={onClose}
+				/>
+			);
+		const publish = async (stats: GlobalAgentStats) => {
+			await act(async () => {
+				statsCallback?.(stats as never);
+			});
+		};
+		const statValue = (label: string) =>
+			screen.getByText(label).parentElement?.querySelector('.font-mono')?.textContent;
+
+		it('shows the mixed-provider totals that sum the per-provider rows', async () => {
+			const stats = grokMixedStats();
+			expect(stats.totalSessions).toBe(52);
+			expect(stats.totalMessages).toBe(496);
+			expect(stats.totalInputTokens).toBe(1_000_000);
+			expect(stats.totalOutputTokens).toBe(300_000);
+			renderAbout();
+			await publish(stats);
+
+			expect(statValue('Sessions')).toBe(formatTokensCompact(52));
+			expect(statValue('Messages')).toBe(formatTokensCompact(496));
+			expect(statValue('Input Tokens')).toBe(formatTokensCompact(1_000_000));
+			expect(statValue('Output Tokens')).toBe(formatTokensCompact(300_000));
+		});
+
+		it('labels a Grok-containing cost as a partial floor, not a complete total', async () => {
+			renderAbout();
+			await publish(grokMixedStats());
+
+			const cost = screen.getByTestId('about-total-cost');
+			expect(cost.getAttribute('data-cost-coverage')).toBe('partial');
+			expect(cost.textContent).toBe('$14.75 (partial)');
+			expect(cost.getAttribute('title')).toMatch(/At least this amount/);
+		});
+
+		it('reads Unknown when Grok sessions were counted but none reported a cost', async () => {
+			const byProvider = {
+				grok: provider({
+					sessions: 3,
+					messages: 9,
+					inputTokens: 1200,
+					outputTokens: 300,
+					costCoverage: 'unknown',
+				}),
+			};
+			renderAbout();
+			await publish(
+				grokMixedStats({ ...totalsOf(byProvider), costCoverage: 'unknown', byProvider })
+			);
+
+			const cost = screen.getByTestId('about-total-cost');
+			expect(cost.getAttribute('data-cost-coverage')).toBe('unknown');
+			expect(cost.textContent).toBe('Unknown');
+			expect(screen.getByText('Total Cost')).toBeInTheDocument();
+			expect(screen.queryByText(/\$0\.00/)).toBeNull();
+			expect(statValue('Sessions')).toBe('3');
+		});
+
+		it('keeps an explicit Grok zero beside an unknown one as a partial zero', async () => {
+			const byProvider = {
+				grok: provider({
+					sessions: 2,
+					messages: 4,
+					inputTokens: 500,
+					outputTokens: 100,
+					costUsd: 0,
+					hasCostData: true,
+					costCoverage: 'partial',
+					costUsdTicks: '0',
+				}),
+			};
+			renderAbout();
+			await publish(
+				grokMixedStats({ ...totalsOf(byProvider), costCoverage: 'partial', byProvider })
+			);
+
+			expect(screen.getByTestId('about-total-cost').textContent).toBe('$0.00 (partial)');
+		});
+
+		it('shows a complete zero only when every counted session reported zero', async () => {
+			const byProvider = {
+				grok: provider({
+					sessions: 1,
+					messages: 2,
+					inputTokens: 100,
+					outputTokens: 10,
+					costUsd: 0,
+					hasCostData: true,
+					costCoverage: 'complete',
+					costUsdTicks: '0',
+				}),
+			};
+			renderAbout();
+			await publish(
+				grokMixedStats({ ...totalsOf(byProvider), costCoverage: 'complete', byProvider })
+			);
+
+			const cost = screen.getByTestId('about-total-cost');
+			expect(cost.getAttribute('data-cost-coverage')).toBe('complete');
+			expect(cost.textContent).toBe('$0.00');
+		});
+
+		it('shows Unknown beside hands-on time instead of hiding the cost', async () => {
+			const byProvider = { grok: provider({ sessions: 1, messages: 2, costCoverage: 'unknown' }) };
+			renderAbout(90_000);
+			await publish(
+				grokMixedStats({ ...totalsOf(byProvider), costCoverage: 'unknown', byProvider })
+			);
+
+			expect(screen.getByText(/Hands-on Time:/)).toBeInTheDocument();
+			expect(screen.getByTestId('about-total-cost').textContent).toBe('Unknown');
+		});
+
+		it('streams an incomplete Grok scan with a spinner, then settles on the final totals', async () => {
+			const partialScan = grokMixedStats({
+				isComplete: false,
+				totalSessions: 40,
+				totalMessages: 400,
+				totalInputTokens: 600_000,
+				totalOutputTokens: 200_000,
+				totalCostUsd: 12.25,
+				costCoverage: undefined,
+				byProvider: { 'claude-code': grokMixedByProvider['claude-code'] },
+			});
+			vi.mocked(window.maestro.agentSessions.getGlobalStats).mockResolvedValue(
+				partialScan as never
+			);
+			renderAbout();
+			expect(screen.getByText('Loading stats...')).toBeInTheDocument();
+
+			await publish(partialScan);
+			expect(screen.queryByText('Loading stats...')).toBeNull();
+			expect(screen.getAllByTestId('loader-icon')).toHaveLength(1);
+			expect(statValue('Sessions')).toBe('40');
+			expect(screen.getByTestId('about-total-cost')).toHaveClass('animate-pulse');
+
+			await publish(grokMixedStats());
+			expect(screen.queryByTestId('loader-icon')).toBeNull();
+			expect(statValue('Sessions')).toBe('52');
+			const cost = screen.getByTestId('about-total-cost');
+			expect(cost).not.toHaveClass('animate-pulse');
+			expect(cost.textContent).toBe('$14.75 (partial)');
+		});
+
+		it('renders an existing-provider payload with no coverage exactly as before', async () => {
+			renderAbout();
+			await publish(
+				createGlobalStats({
+					totalSessions: 42,
+					totalMessages: 123,
+					totalCostUsd: 25.5,
+					byProvider: {
+						'claude-code': provider({
+							sessions: 42,
+							messages: 123,
+							costUsd: 25.5,
+							hasCostData: true,
+						}),
+					},
+				}) as GlobalAgentStats
+			);
+
+			const cost = screen.getByTestId('about-total-cost');
+			expect(cost.getAttribute('data-cost-coverage')).toBe('complete');
+			expect(cost.textContent).toBe('$25.50');
+			expect(cost.getAttribute('title')).toBeNull();
+			expect(screen.queryByText(/partial/)).toBeNull();
+			expect(screen.queryByText('Unknown')).toBeNull();
+		});
+
+		it('hides the cost row for a legacy payload with no cost data and no coverage', async () => {
+			renderAbout();
+			await publish(
+				createGlobalStats({
+					totalCostUsd: 0,
+					hasCostData: false,
+				}) as unknown as GlobalAgentStats
+			);
+
+			expect(screen.queryByTestId('about-total-cost')).toBeNull();
+			expect(screen.queryByText('Total Cost')).toBeNull();
 		});
 	});
 });

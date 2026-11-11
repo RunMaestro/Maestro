@@ -28,6 +28,7 @@ import type {
 	ClientResult,
 	ConnectionState,
 	ConsultsApi,
+	HistoryApi,
 	GroupChatsApi,
 	HostInfo,
 	MaestroClient,
@@ -70,6 +71,8 @@ export interface RuntimeClientDeps {
 	groupChats: GroupChatsApi;
 	/** Ask another agent. `cancelForSource` is how Stop on the asker reaches the consults it started. */
 	consults: { api: ConsultsApi; cancelForSource(agentId: string): number };
+	/** An agent's History, with the shared History of its project. */
+	history: HistoryApi;
 }
 
 const ok = <T>(value: T): ClientResult<T> => ({ ok: true, value });
@@ -239,6 +242,10 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 				list: (agentId) => guarded('turns.queue.list', () => deps.turns.queue.list(agentId)),
 				remove: (agentId, itemId) =>
 					guarded('turns.queue.remove', () => deps.turns.queue.remove(agentId, itemId)),
+				setPaused: (agentId, itemId, paused) =>
+					guarded('turns.queue.setPaused', () =>
+						deps.turns.queue.setPaused(agentId, itemId, paused)
+					),
 			},
 			subscribe: (agentId, tabId, listener): Unsubscribe =>
 				deps.turns.subscribe(agentId, tabId, listener),
@@ -278,6 +285,11 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 		// A fenced runtime does not start a consult: its answer could not be recorded.
 		consults: {
 			ask: (input) => Promise.resolve(gate('consults.ask', true) ?? deps.consults.api.ask(input)),
+		},
+
+		history: {
+			list: (agentId, options) =>
+				guarded('history.list', () => deps.history.list(agentId, options)),
 		},
 
 		settings: {

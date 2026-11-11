@@ -6,7 +6,8 @@
  * and conversation state management.
  */
 
-import type { ToolType, LogEntry } from '../../../types';
+import type { ToolType, LogEntry, ProcessConfig } from '../../../types';
+import { getAgentDisplayName } from '../../../../shared/agentMetadata';
 import type { WizardMessage } from '../WizardContext';
 import {
 	generateSystemPrompt,
@@ -24,7 +25,7 @@ import {
 	type WizardError,
 } from './wizardErrorDetection';
 import { wizardDebugLogger } from './phaseGenerator';
-import { extractGrokTextFromJsonl, GROK_WIZARD_DISCOVERY_ARGS } from '../../../utils/grokWizard';
+import { readGrokWizardOutput, GROK_WIZARD_DISCOVERY_ARGS } from '../../../utils/grokWizard';
 import {
 	getClaudeTokenSourceFields,
 	type ClaudeTokenSourceFields,
@@ -34,7 +35,10 @@ import type { HarnessControlMode } from '../../../../shared/maestro-lib/provider
 /**
  * Configuration for starting a conversation
  */
-export interface ConversationConfig {
+export interface ConversationConfig extends Pick<
+	ProcessConfig,
+	'sessionCustomPath' | 'sessionCustomArgs' | 'sessionCustomEnvVars' | 'sessionCustomEffort'
+> {
 	/** The agent type to use for the conversation */
 	agentType: ToolType;
 	/** The working directory for the agent */
@@ -104,7 +108,10 @@ export interface ConversationCallbacks {
 /**
  * State of an active conversation session
  */
-interface ConversationSession {
+interface ConversationSession extends Pick<
+	ConversationConfig,
+	'sessionCustomPath' | 'sessionCustomArgs' | 'sessionCustomEnvVars' | 'sessionCustomEffort'
+> {
 	/** Unique session ID for this wizard conversation */
 	sessionId: string;
 	/** The agent type */
@@ -117,18 +124,30 @@ interface ConversationSession {
 	model?: string;
 	/** Whether the agent process is active */
 	isActive: boolean;
+	/** Includes asynchronous configuration lookup before a process exists. */
+	isSending?: boolean;
 	/** System prompt used for this session */
 	systemPrompt: string;
 	/** Accumulated output buffer for parsing */
 	outputBuffer: string;
+	/**
+	 * Accumulated stderr for the current turn. A CLI that rejects its argv
+	 * (or fails before it emits any JSON) explains why only here, so the
+	 * failure message and the debug log must read it (#1983).
+	 */
+	stderrBuffer: string;
 	/** Resolve function for pending message */
 	pendingResolve?: (result: SendMessageResult) => void;
 	/** Callbacks for the conversation */
 	callbacks?: ConversationCallbacks;
 	/** Cleanup function for data listener */
 	dataListenerCleanup?: () => void;
+	/** Cleanup function for normalized provider errors */
+	errorListenerCleanup?: () => void;
 	/** Cleanup function for exit listener */
 	exitListenerCleanup?: () => void;
+	/** Cleanup function for stderr listener */
+	stderrListenerCleanup?: () => void;
 	/** Cleanup function for thinking chunk listener */
 	thinkingListenerCleanup?: () => void;
 	/** Cleanup function for tool execution listener */
@@ -169,6 +188,7 @@ function generateWizardSessionId(): string {
 class ConversationManager {
 	/** Current active session (only one wizard conversation at a time) */
 	private session: ConversationSession | null = null;
+	private conversationGeneration = 0;
 
 	/**
 	 * Start a new conversation session
@@ -177,9 +197,12 @@ class ConversationManager {
 	 * @returns Session ID for the conversation
 	 */
 	async startConversation(config: ConversationConfig): Promise<string> {
-		// End any existing session first
-		if (this.session) {
-			await this.endConversation();
+		// Closing invalidates older starts synchronously, before awaiting process shutdown.
+		const closing = this.endConversation();
+		const generation = this.conversationGeneration;
+		await closing;
+		if (generation !== this.conversationGeneration) {
+			throw new Error('Wizard conversation setup was superseded.');
 		}
 
 		const sessionId = generateWizardSessionId();
@@ -195,9 +218,15 @@ class ConversationManager {
 			directoryPath: config.directoryPath,
 			projectName: config.projectName,
 			model: config.model,
+			sessionCustomPath: config.sessionCustomPath,
+			sessionCustomArgs: config.sessionCustomArgs,
+			sessionCustomEnvVars:
+				config.sessionCustomEnvVars === undefined ? undefined : { ...config.sessionCustomEnvVars },
+			sessionCustomEffort: config.sessionCustomEffort,
 			isActive: true,
 			systemPrompt,
 			outputBuffer: '',
+			stderrBuffer: '',
 			sshRemoteConfig: config.sshRemoteConfig,
 			claudeTokenSource: config.claudeTokenSource,
 			harnessControlMode: config.harnessControlMode,
@@ -237,40 +266,51 @@ class ConversationManager {
 		conversationHistory: WizardMessage[],
 		callbacks?: ConversationCallbacks
 	): Promise<SendMessageResult> {
-		if (!this.session) {
+		const session = this.session;
+		if (!session?.isActive) {
 			return {
 				success: false,
 				error: 'No active conversation session. Call startConversation first.',
 			};
 		}
 
+		if (session.isSending) {
+			return { success: false, error: 'A wizard response is already pending.' };
+		}
+
+		session.isSending = true;
+
 		// Update callbacks
-		this.session.callbacks = callbacks;
-		this.session.outputBuffer = '';
+		session.callbacks = callbacks;
+		session.outputBuffer = '';
+		session.stderrBuffer = '';
 
 		// Log message send
 		wizardDebugLogger.log('info', 'Sending message to agent', {
-			sessionId: this.session.sessionId,
+			sessionId: session.sessionId,
 			messageLength: userMessage.length,
 			historyLength: conversationHistory.length,
 		});
 
-		// Notify sending
-		callbacks?.onSending?.();
-
 		try {
+			callbacks?.onSending?.();
 			// Get the agent configuration
-			const agent = await window.maestro.agents.get(this.session.agentType);
+			const agent = await window.maestro.agents.get(session.agentType);
+			if (this.session !== session || !session.isActive) {
+				return { success: false, error: 'Wizard conversation was cancelled.' };
+			}
+			if (session.sshRemoteConfig?.enabled && !session.sshRemoteConfig.remoteId) {
+				return { success: false, error: 'Select an SSH remote before starting discovery.' };
+			}
 
 			// For SSH remote sessions, skip the availability check since we're executing remotely
 			// The agent detector checks for binaries locally, but we need to execute on the remote host
-			const isRemoteSession =
-				this.session.sshRemoteConfig?.enabled && this.session.sshRemoteConfig?.remoteId;
+			const isRemoteSession = session.sshRemoteConfig?.enabled && session.sshRemoteConfig?.remoteId;
 
 			if (!agent) {
-				const error = `Agent ${this.session.agentType} configuration not found`;
+				const error = `Agent ${session.agentType} configuration not found`;
 				wizardDebugLogger.log('error', 'Agent config not found', {
-					agentType: this.session.agentType,
+					agentType: session.agentType,
 				});
 				return {
 					success: false,
@@ -279,10 +319,14 @@ class ConversationManager {
 			}
 
 			// Only check availability for local sessions
-			if (!isRemoteSession && !agent.available) {
-				const error = `Agent ${this.session.agentType} is not available locally`;
+			if (
+				!isRemoteSession &&
+				!agent.available &&
+				!(session.agentType === 'grok' && session.sessionCustomPath?.trim())
+			) {
+				const error = `${getAgentDisplayName(session.agentType)} is not available locally. Install it or configure its executable path, then refresh detection.`;
 				wizardDebugLogger.log('error', 'Agent not available locally', {
-					agentType: this.session.agentType,
+					agentType: session.agentType,
 					agent: {
 						available: agent.available,
 						path: agent.path,
@@ -302,8 +346,8 @@ class ConversationManager {
 					'info',
 					'Executing agent on SSH remote (skipping local availability check)',
 					{
-						agentType: this.session.agentType,
-						remoteId: this.session.sshRemoteConfig?.remoteId,
+						agentType: session.agentType,
+						remoteId: session.sshRemoteConfig?.remoteId,
 						agentCommand: agent.command,
 						agentPath: agent.path,
 						agentCustomPath: (agent as any).customPath,
@@ -317,10 +361,11 @@ class ConversationManager {
 			// Spawn the agent process and wait for completion
 			// spawnAgentForMessage returns when the agent exits with parsed response
 			const result = await this.spawnAgentForMessage(agent, fullPrompt);
+			if (this.session !== session || !session.isActive) return result;
 
 			if (!result.success) {
 				wizardDebugLogger.log('error', 'Message send failed', {
-					sessionId: this.session.sessionId,
+					sessionId: session.sessionId,
 					error: result.error,
 					hasDetectedError: !!result.detectedError,
 					detectedErrorType: result.detectedError?.type,
@@ -332,7 +377,7 @@ class ConversationManager {
 
 			// Log success
 			wizardDebugLogger.log('info', 'Message response received', {
-				sessionId: this.session.sessionId,
+				sessionId: session.sessionId,
 				parseSuccess: result.response?.parseSuccess,
 				confidence: result.response?.structured?.confidence,
 				ready: result.response?.structured?.ready,
@@ -345,14 +390,16 @@ class ConversationManager {
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
 			wizardDebugLogger.log('error', 'Message send exception', {
-				sessionId: this.session?.sessionId,
+				sessionId: session?.sessionId,
 				error: errorMessage,
 			});
-			callbacks?.onError?.(errorMessage);
+			if (this.session === session && session.isActive) callbacks?.onError?.(errorMessage);
 			return {
 				success: false,
 				error: errorMessage,
 			};
+		} finally {
+			session.isSending = false;
 		}
 	}
 
@@ -393,16 +440,28 @@ class ConversationManager {
 	 * Spawn the agent process for a single message exchange
 	 */
 	private async spawnAgentForMessage(agent: any, prompt: string): Promise<SendMessageResult> {
-		if (!this.session) {
+		const session = this.session;
+		if (!session?.isActive) {
 			return { success: false, error: 'No active session' };
 		}
 
-		return new Promise<SendMessageResult>((resolve) => {
+		return new Promise<SendMessageResult>((resolveResult) => {
+			let settled = false;
+			let providerError: string | undefined;
+			let spawnAccepted = false;
+			let pendingExit: SendMessageResult | undefined;
+			const resolve = (result: SendMessageResult) => {
+				if (settled) return;
+				settled = true;
+				this.cleanupListeners(session);
+				session.pendingResolve = undefined;
+				resolveResult(result);
+			};
 			wizardDebugLogger.log('spawn', 'Setting up agent spawn', {
-				sessionId: this.session!.sessionId,
+				sessionId: session.sessionId,
 				agentId: agent.id,
 				agentCommand: agent.command,
-				directoryPath: this.session!.directoryPath,
+				directoryPath: session.directoryPath,
 				promptLength: prompt.length,
 			});
 
@@ -413,56 +472,105 @@ class ConversationManager {
 			let lastActivityTime = Date.now();
 
 			const resetTimeout = () => {
-				if (this.session?.responseTimeoutId) {
-					clearTimeout(this.session.responseTimeoutId);
+				if (session?.responseTimeoutId) {
+					clearTimeout(session.responseTimeoutId);
 				}
 				lastActivityTime = Date.now();
 				const newTimeoutId = setTimeout(() => {
 					const timeSinceLastActivity = Date.now() - lastActivityTime;
 					wizardDebugLogger.log('timeout', 'Response inactivity timeout after 20 minutes', {
-						sessionId: this.session?.sessionId,
+						sessionId: session?.sessionId,
 						timeSinceLastActivityMs: timeSinceLastActivity,
-						outputBufferLength: this.session?.outputBuffer?.length || 0,
-						outputPreview: this.session?.outputBuffer?.slice(-500),
+						outputBufferLength: session?.outputBuffer?.length || 0,
+						outputPreview: session?.outputBuffer?.slice(-500),
 					});
-					this.cleanupListeners();
+					session.isActive = false;
+					void window.maestro.process.kill(session.sessionId).catch((error: Error) => {
+						wizardDebugLogger.log('error', 'Failed to stop timed-out wizard process', {
+							sessionId: session.sessionId,
+							error: error.message,
+						});
+					});
 					resolve({
 						success: false,
 						error: 'Response timeout - agent did not complete in time',
-						rawOutput: this.session?.outputBuffer,
+						rawOutput: session?.outputBuffer,
 					});
 				}, INACTIVITY_TIMEOUT_MS);
 
-				if (this.session) {
-					this.session.responseTimeoutId = newTimeoutId;
+				if (this.session === session) {
+					session.responseTimeoutId = newTimeoutId;
 				}
 			};
 
 			// Start the initial timeout and store the reset function for listeners
 			resetTimeout();
-			if (this.session) {
-				this.session.resetResponseTimeout = resetTimeout;
+			if (this.session === session) {
+				session.resetResponseTimeout = resetTimeout;
+			}
+
+			if (session.agentType === 'grok') {
+				session.errorListenerCleanup = window.maestro.process.onAgentError((id, error) => {
+					if (
+						!settled &&
+						session.isActive &&
+						this.session === session &&
+						id === session.sessionId
+					) {
+						providerError ??= error.message || 'Grok wizard turn failed.';
+					}
+				});
 			}
 
 			// Set up data listener
-			this.session!.dataListenerCleanup = window.maestro.process.onData(
+			session.dataListenerCleanup = window.maestro.process.onData(
 				(sessionId: string, data: string) => {
-					if (sessionId === this.session?.sessionId) {
-						this.session.outputBuffer += data;
-						this.session.resetResponseTimeout?.();
-						this.session.callbacks?.onChunk?.(data);
+					if (
+						!settled &&
+						!pendingExit &&
+						session.isActive &&
+						this.session === session &&
+						sessionId === session.sessionId
+					) {
+						session.outputBuffer += data;
+						session.resetResponseTimeout?.();
+						session.callbacks?.onChunk?.(data);
+					}
+				}
+			);
+
+			// Set up stderr listener. Not fed to the response parser; it is the
+			// only place a CLI that fails on startup says why.
+			session.stderrListenerCleanup = window.maestro.process.onStderr(
+				(sessionId: string, data: string) => {
+					if (
+						!settled &&
+						!pendingExit &&
+						session.isActive &&
+						this.session === session &&
+						sessionId === session.sessionId
+					) {
+						session.stderrBuffer += data;
+						session.resetResponseTimeout?.();
 					}
 				}
 			);
 
 			// Set up thinking chunk listener - uses the dedicated event from process-manager
 			// This receives parsed thinking content (isPartial text) that's already extracted
-			if (this.session!.callbacks?.onThinkingChunk) {
-				this.session!.thinkingListenerCleanup = window.maestro.process.onThinkingChunk?.(
+			if (session.callbacks?.onThinkingChunk) {
+				session.thinkingListenerCleanup = window.maestro.process.onThinkingChunk?.(
 					(sessionId: string, content: string) => {
-						if (sessionId === this.session?.sessionId && content) {
-							this.session.resetResponseTimeout?.();
-							this.session.callbacks?.onThinkingChunk?.(content);
+						if (
+							!settled &&
+							!pendingExit &&
+							session.isActive &&
+							this.session === session &&
+							sessionId === session.sessionId &&
+							content
+						) {
+							session.resetResponseTimeout?.();
+							session.callbacks?.onThinkingChunk?.(content);
 						}
 					}
 				);
@@ -471,33 +579,77 @@ class ConversationManager {
 			// Set up tool execution listener - shows tool use (Read, Write, etc.) when showThinking is enabled
 			// This is important because in batch mode, we don't get streaming assistant messages,
 			// but we DO get tool execution events which show what the agent is doing
-			if (this.session!.callbacks?.onToolExecution) {
-				this.session!.toolExecutionListenerCleanup = window.maestro.process.onToolExecution?.(
+			if (session.callbacks?.onToolExecution) {
+				session.toolExecutionListenerCleanup = window.maestro.process.onToolExecution?.(
 					(
 						sessionId: string,
 						toolEvent: { toolName: string; state?: unknown; timestamp: number }
 					) => {
-						if (sessionId === this.session?.sessionId) {
-							this.session.resetResponseTimeout?.();
-							this.session.callbacks?.onToolExecution?.(toolEvent);
+						if (
+							!settled &&
+							!pendingExit &&
+							session.isActive &&
+							this.session === session &&
+							sessionId === session.sessionId
+						) {
+							session.resetResponseTimeout?.();
+							session.callbacks?.onToolExecution?.(toolEvent);
 						}
 					}
 				);
 			}
 
 			// Set up exit listener
-			this.session!.exitListenerCleanup = window.maestro.process.onExit(
-				(sessionId: string, code: number) => {
+			session.exitListenerCleanup = window.maestro.process.onExit(
+				(sessionId: string, code: number, signal?: number) => {
 					wizardDebugLogger.log('exit', 'Exit event received', {
 						receivedId: sessionId,
-						expectedId: this.session?.sessionId,
+						expectedId: session?.sessionId,
 						code,
 					});
-					if (sessionId === this.session?.sessionId) {
+					if (
+						!settled &&
+						!pendingExit &&
+						session.isActive &&
+						this.session === session &&
+						sessionId === session.sessionId
+					) {
 						wizardDebugLogger.log('exit', 'Session ID matched, processing exit', { sessionId });
 
+						if (session.agentType === 'grok') {
+							const response = this.parseAgentOutput();
+							const error =
+								providerError ||
+								(signal != null ? 'Grok wizard conversation was cancelled.' : undefined) ||
+								(code !== 0 ? `Agent exited with code ${code}` : undefined) ||
+								(!response.parseSuccess ? response.parseError : undefined);
+							if (error) {
+								const detectedError = detectWizardError(
+									`${error}\n${session.outputBuffer}`,
+									session.agentType
+								);
+								resolve({
+									success: false,
+									error,
+									detectedError: detectedError ?? undefined,
+									rawOutput: session.outputBuffer,
+								});
+							} else {
+								const result: SendMessageResult = {
+									success: true,
+									response,
+									rawOutput: session.outputBuffer,
+								};
+								// A fast exit may precede the IPC receipt. Keep cancellation and
+								// inactivity tracking until the launch is explicitly accepted.
+								if (!spawnAccepted) pendingExit = result;
+								else resolve(result);
+							}
+							return;
+						}
+
 						// Agent finished - cleanupListeners() clears the inactivity timeout
-						this.cleanupListeners();
+						this.cleanupListeners(session);
 
 						if (code === 0) {
 							const parsedResponse = this.parseAgentOutput();
@@ -509,19 +661,22 @@ class ConversationManager {
 							});
 							wizardDebugLogger.log('exit', `Agent exited successfully (code 0)`, {
 								sessionId,
-								outputBufferLength: this.session?.outputBuffer?.length || 0,
+								outputBufferLength: session?.outputBuffer?.length || 0,
 								parseSuccess: parsedResponse.parseSuccess,
 							});
 							resolve({
 								success: true,
 								response: parsedResponse,
-								rawOutput: this.session?.outputBuffer,
+								rawOutput: session?.outputBuffer,
 							});
 						} else {
 							// Check for provider errors in the output
-							const rawOutput = this.session?.outputBuffer || '';
-							const detectedError = this.session
-								? detectWizardError(rawOutput, this.session.agentType)
+							const rawOutput = session?.outputBuffer || '';
+							const stderrOutput = session?.stderrBuffer || '';
+							// stdout first, so a JSON error event still wins over a stderr line.
+							const errorText = stderrOutput ? `${rawOutput}\n${stderrOutput}` : rawOutput;
+							const detectedError = session
+								? detectWizardError(errorText, session.agentType)
 								: null;
 
 							if (detectedError) {
@@ -538,6 +693,8 @@ class ConversationManager {
 									errorMessage: detectedError.message,
 									rawOutputLength: rawOutput.length,
 									rawOutputPreview: rawOutput.slice(-500),
+									stderrLength: stderrOutput.length,
+									stderrPreview: stderrOutput.slice(-1000),
 								});
 								resolve({
 									success: false,
@@ -570,13 +727,15 @@ class ConversationManager {
 									});
 								} else {
 									// No specific error detected, create generic message
-									const errorMessage = createGenericErrorMessage(rawOutput, code);
+									const errorMessage = createGenericErrorMessage(errorText, code);
 									wizardDebugLogger.log('exit', `Agent exited with error (code ${code})`, {
 										sessionId,
 										exitCode: code,
 										errorMessage,
 										rawOutputLength: rawOutput.length,
 										rawOutputPreview: rawOutput.slice(-500),
+										stderrLength: stderrOutput.length,
+										stderrPreview: stderrOutput.slice(-1000),
 									});
 									resolve({
 										success: false,
@@ -589,14 +748,14 @@ class ConversationManager {
 					} else {
 						wizardDebugLogger.log('exit', 'Session ID mismatch, ignoring exit event', {
 							receivedId: sessionId,
-							expectedId: this.session?.sessionId,
+							expectedId: session?.sessionId,
 						});
 					}
 				}
 			);
 
 			// Store resolve for potential early termination
-			this.session!.pendingResolve = resolve;
+			session.pendingResolve = resolve;
 
 			// Build args based on agent type
 			// Each agent has different CLI structure for batch mode
@@ -608,61 +767,88 @@ class ConversationManager {
 
 			// Log spawn details to main process
 			wizardDebugLogger.log('spawn', 'Preparing to spawn agent process', {
-				sessionId: this.session!.sessionId,
-				toolType: this.session!.agentType,
+				sessionId: session.sessionId,
+				toolType: session.agentType,
 				command: commandToUse,
 				agentPath: agent.path,
 				agentCommand: agent.command,
 				argsCount: argsForSpawn.length,
-				cwd: this.session!.directoryPath,
-				hasRemoteSsh: !!this.session!.sshRemoteConfig?.enabled,
-				remoteId: this.session!.sshRemoteConfig?.remoteId || null,
+				cwd: session.directoryPath,
+				hasRemoteSsh: !!session.sshRemoteConfig?.enabled,
+				remoteId: session.sshRemoteConfig?.remoteId || null,
 			});
 
 			wizardDebugLogger.log('spawn', 'Calling process.spawn', {
-				sessionId: this.session!.sessionId,
+				sessionId: session.sessionId,
 				command: commandToUse,
 				agentPath: agent.path,
 				agentCommand: agent.command,
 				args: argsForSpawn,
-				cwd: this.session!.directoryPath,
-				hasRemoteSsh: !!this.session!.sshRemoteConfig?.enabled,
-				remoteId: this.session!.sshRemoteConfig?.remoteId || null,
+				// These are NOT the final argv. The main process adds the batch-mode
+				// subcommand (Codex `exec`, OpenCode `run`) and `-C <dir>` before it
+				// spawns, so running this list by hand is not the same command (#1983).
+				argsNote: 'pre-build args; main adds batchModePrefix and workingDirArgs',
+				cwd: session.directoryPath,
+				hasRemoteSsh: !!session.sshRemoteConfig?.enabled,
+				remoteId: session.sshRemoteConfig?.remoteId || null,
 			});
 
 			window.maestro.process
 				.spawn({
-					sessionId: this.session!.sessionId,
-					toolType: this.session!.agentType,
-					cwd: this.session!.directoryPath,
+					sessionId: session.sessionId,
+					toolType: session.agentType,
+					cwd: session.directoryPath,
 					command: commandToUse,
 					args: argsForSpawn,
 					prompt: prompt,
 					// Planning model for this run. Undefined leaves the agent's own
 					// configured model in charge (see applyAgentConfigOverrides).
-					sessionCustomModel: this.session!.model,
-					// When true, the main process will send the prompt via stdin instead of
-					// passing it as a command-line argument. This avoids Windows command
-					// line length limits for large prompts.
+					sessionCustomModel: session.model,
+					sessionCustomPath: session.sessionCustomPath,
+					sessionCustomArgs: session.sessionCustomArgs,
+					sessionCustomEnvVars: session.sessionCustomEnvVars,
+					sessionCustomEffort: session.sessionCustomEffort,
+					...(session.agentType === 'grok'
+						? { permissionMode: 'readonly', readOnlyMode: true }
+						: {}),
 					// Pass SSH configuration for remote execution
-					sessionSshRemoteConfig: this.session!.sshRemoteConfig,
+					sessionSshRemoteConfig: session.sshRemoteConfig,
 					// The wizard's process id names no agent, so the TUI pick travels inline.
-					harnessControlMode: this.session!.harnessControlMode,
-					...getClaudeTokenSourceFields(this.session!.claudeTokenSource),
+					harnessControlMode: session.harnessControlMode,
+					...getClaudeTokenSourceFields(session.claudeTokenSource),
 				})
-				.then(() => {
+				.then((spawnResult) => {
+					if (!session.isActive) {
+						// A spawn receipt may arrive after cancellation or the inactivity limit.
+						return window.maestro.process.kill(session.sessionId);
+					}
+					if (settled || this.session !== session) return;
+					if (session.agentType === 'grok' && spawnResult?.success !== true) {
+						resolve({ success: false, error: providerError || 'Grok wizard launch was refused.' });
+						return;
+					}
+					spawnAccepted = true;
+					if (pendingExit) {
+						resolve(
+							providerError
+								? { success: false, error: providerError, rawOutput: session.outputBuffer }
+								: pendingExit
+						);
+						return;
+					}
 					wizardDebugLogger.log('spawn', 'Agent process spawned successfully', {
-						sessionId: this.session?.sessionId,
+						sessionId: session?.sessionId,
 					});
 					// Notify that we're receiving
-					this.session?.callbacks?.onReceiving?.();
+					session?.callbacks?.onReceiving?.();
 				})
 				.catch((error: Error) => {
+					if (settled) return;
 					wizardDebugLogger.log('error', 'Failed to spawn agent process', {
-						sessionId: this.session?.sessionId,
+						sessionId: session?.sessionId,
 						error: error.message,
 					});
-					this.cleanupListeners();
+					this.cleanupListeners(session);
 					resolve({
 						success: false,
 						error: `Failed to spawn agent: ${error.message}`,
@@ -779,6 +965,24 @@ class ConversationManager {
 		}
 
 		const output = this.session.outputBuffer;
+		if (this.session.agentType === 'grok') {
+			const { text, error } = readGrokWizardOutput(output);
+			const parsed = parseStructuredOutput(text);
+			if (
+				error ||
+				!parsed.parseSuccess ||
+				!parsed.structured?.message.trim() ||
+				!Number.isFinite(parsed.structured.confidence)
+			) {
+				return {
+					structured: null,
+					rawText: text,
+					parseSuccess: false,
+					parseError: error || 'Grok did not return a valid structured discovery response.',
+				};
+			}
+			return parsed;
+		}
 		wizardDebugLogger.log('data', 'Raw output buffer details', {
 			bufferLength: output.length,
 			bufferPreview: output.slice(-500),
@@ -868,12 +1072,6 @@ class ConversationManager {
 				}
 			}
 
-			// For Grok: join text deltas only (skip thought); end has no body
-			if (agentType === 'grok') {
-				const grokText = extractGrokTextFromJsonl(lines);
-				if (grokText) return grokText;
-			}
-
 			// For Copilot: look for the final assistant message
 			if (agentType === 'copilot-cli') {
 				for (const line of lines) {
@@ -910,29 +1108,35 @@ class ConversationManager {
 	/**
 	 * Clean up event listeners and any pending timeouts
 	 */
-	private cleanupListeners(): void {
-		if (this.session?.dataListenerCleanup) {
-			this.session.dataListenerCleanup();
-			this.session.dataListenerCleanup = undefined;
+	private cleanupListeners(session = this.session): void {
+		session?.errorListenerCleanup?.();
+		if (session) session.errorListenerCleanup = undefined;
+		if (session?.dataListenerCleanup) {
+			session.dataListenerCleanup();
+			session.dataListenerCleanup = undefined;
 		}
-		if (this.session?.exitListenerCleanup) {
-			this.session.exitListenerCleanup();
-			this.session.exitListenerCleanup = undefined;
+		if (session?.exitListenerCleanup) {
+			session.exitListenerCleanup();
+			session.exitListenerCleanup = undefined;
 		}
-		if (this.session?.thinkingListenerCleanup) {
-			this.session.thinkingListenerCleanup();
-			this.session.thinkingListenerCleanup = undefined;
+		if (session?.stderrListenerCleanup) {
+			session.stderrListenerCleanup();
+			session.stderrListenerCleanup = undefined;
 		}
-		if (this.session?.toolExecutionListenerCleanup) {
-			this.session.toolExecutionListenerCleanup();
-			this.session.toolExecutionListenerCleanup = undefined;
+		if (session?.thinkingListenerCleanup) {
+			session.thinkingListenerCleanup();
+			session.thinkingListenerCleanup = undefined;
 		}
-		if (this.session?.responseTimeoutId) {
-			clearTimeout(this.session.responseTimeoutId);
-			this.session.responseTimeoutId = undefined;
+		if (session?.toolExecutionListenerCleanup) {
+			session.toolExecutionListenerCleanup();
+			session.toolExecutionListenerCleanup = undefined;
 		}
-		if (this.session) {
-			this.session.resetResponseTimeout = undefined;
+		if (session?.responseTimeoutId) {
+			clearTimeout(session.responseTimeoutId);
+			session.responseTimeoutId = undefined;
+		}
+		if (session) {
+			session.resetResponseTimeout = undefined;
 		}
 	}
 
@@ -940,18 +1144,20 @@ class ConversationManager {
 	 * End the current conversation session
 	 */
 	async endConversation(): Promise<void> {
-		if (!this.session) return;
+		this.conversationGeneration += 1;
+		const session = this.session;
+		if (!session) return;
+		session.isActive = false;
+		this.session = null;
+		this.cleanupListeners(session);
+		session.pendingResolve?.({ success: false, error: 'Wizard conversation was cancelled.' });
 
-		this.cleanupListeners();
-
-		// Kill any running process
+		// Stop only the process owned by the conversation being closed.
 		try {
-			await window.maestro.process.kill(this.session.sessionId);
+			await window.maestro.process.kill(session.sessionId);
 		} catch {
 			// Process may already be dead
 		}
-
-		this.session = null;
 	}
 
 	/**

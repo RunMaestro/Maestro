@@ -474,7 +474,7 @@ describe('SessionContextMenu', () => {
 		});
 	});
 
-	describe('Federation (Move to Host)', () => {
+	describe('Federation (Make Federated, Move to Host)', () => {
 		const sshSession = (overrides: Partial<Session> = {}) =>
 			makeSession({
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
@@ -495,9 +495,19 @@ describe('SessionContextMenu', () => {
 			resetStores(usePeerMirrorStore);
 		});
 
-		it('offers nothing while Federation is off', () => {
+		it('offers nothing before the mirror knows the remote (opted out, or not loaded yet)', () => {
 			renderMenu({ session: sshSession() });
 			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
+			expect(screen.queryByText(/Make Federated/)).not.toBeInTheDocument();
+		});
+
+		it('offers Make Federated for an SSH agent whose remote runs no host', () => {
+			mirror('not-installed');
+			const props = renderMenu({ session: sshSession() });
+			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
+			fireEvent.click(screen.getByText('Make Federated (Build Box)...'));
+			expect(requestMoveToHost).toHaveBeenCalledWith('session-1');
+			expect(props.onDismiss).toHaveBeenCalled();
 		});
 
 		it('offers Move to Host for an SSH agent whose remote is a connected peer', () => {
@@ -512,6 +522,8 @@ describe('SessionContextMenu', () => {
 			mirror('lost');
 			renderMenu({ session: sshSession() });
 			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
+			// A host that went away is set up again through Make Federated.
+			expect(screen.getByText('Make Federated (Build Box)...')).toBeInTheDocument();
 		});
 
 		it('offers Open on Host instead once the agent moved', () => {
@@ -519,6 +531,7 @@ describe('SessionContextMenu', () => {
 			const session = sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } });
 			renderMenu({ session });
 			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
+			expect(screen.queryByText(/Make Federated/)).not.toBeInTheDocument();
 			fireEvent.click(screen.getByText('Open on Host (box:h1)'));
 			expect(openLiftedAgent).toHaveBeenCalledWith(session);
 		});

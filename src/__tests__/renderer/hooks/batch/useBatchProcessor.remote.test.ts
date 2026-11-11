@@ -201,3 +201,99 @@ describe('host-owned remote Auto Run', () => {
 		hook.unmount();
 	});
 });
+
+describe('host-owned remote Auto Run - Grok agents', () => {
+	const grokLimit = {
+		type: 'rate_limited' as const,
+		message: 'Grok rate limit reached',
+		recoverable: true,
+		agentId: 'grok',
+		timestamp: 2,
+	};
+	const grokConfig: BatchRunConfig = {
+		...config,
+		taskSelectionMode: 'task',
+		model: 'grok-run-model',
+		effort: 'high',
+		worktreeTarget: {
+			mode: 'existing-open',
+			sessionId: 'grok-worktree',
+			createPROnCompletion: false,
+		},
+	};
+
+	it.each(['task', 'document'] as const)(
+		'hands a %s-mode Grok run to the host with its model, effort and worktree target intact',
+		async (taskSelectionMode) => {
+			const runConfig = { ...grokConfig, taskSelectionMode };
+			const hook = renderHook(() => useBatchProcessor(deps()));
+			await act(async () => {
+				await hook.result.current.startBatchRun('grok-agent', runConfig, '/host/grok/docs');
+			});
+			expect(start).toHaveBeenCalledTimes(1);
+			const [agent, sent, folder] = start.mock.calls[0];
+			expect(agent).toBe('grok-agent');
+			expect(folder).toBe('/host/grok/docs');
+			expect(sent).toEqual(runConfig);
+			expect(sent.worktreeTarget).toEqual(grokConfig.worktreeTarget);
+			expect(local.document).not.toHaveBeenCalled();
+			hook.unmount();
+		}
+	);
+
+	it('routes a Grok rate-limit pause and an explicit stop to the owner without touching the mirror', async () => {
+		applyAutoRunMirrorFrame('grok-agent', {
+			isRunning: true,
+			totalTasks: 2,
+			completedTasks: 0,
+			currentTaskIndex: 0,
+		});
+		const before = useBatchStore.getState().batchRunStates['grok-agent'];
+		const hook = renderHook(() => useBatchProcessor(deps()));
+		await act(async () => {
+			hook.result.current.pauseBatchOnError('grok-agent', grokLimit, 0, 'First task');
+			hook.result.current.stopBatchRun('grok-agent');
+		});
+		expect(control.mock.calls).toEqual([
+			[
+				'grok-agent',
+				{ action: 'pause', error: grokLimit, documentIndex: 0, taskDescription: 'First task' },
+			],
+			['grok-agent', { action: 'stop' }],
+		]);
+		expect(useBatchStore.getState().batchRunStates['grok-agent']).toBe(before);
+		act(() => applyAutoRunMirrorFrame('grok-agent', null));
+		hook.unmount();
+	});
+
+	it('owner pauses a Grok run on its rate limit, then an explicit stop aborts the pause', async () => {
+		local.web = false;
+		useBatchStore.setState({
+			batchRunStates: {
+				'grok-agent': { ...DEFAULT_BATCH_STATE, isRunning: true, processingState: 'RUNNING' },
+			},
+		});
+		const hook = renderHook(() => useBatchProcessor(deps()));
+		await act(async () =>
+			ownerControl!(
+				'grok-agent',
+				{ action: 'pause', error: grokLimit, documentIndex: 1, taskDescription: 'Second task' },
+				'grok-pause'
+			)
+		);
+		let state = useBatchStore.getState().batchRunStates['grok-agent'];
+		expect(state.errorPaused).toBe(true);
+		expect(state.error).toEqual(grokLimit);
+		expect(state.errorDocumentIndex).toBe(1);
+		expect(reply).toHaveBeenCalledWith('grok-pause', { success: true });
+
+		await act(async () => ownerControl!('grok-agent', { action: 'stop' }, 'grok-stop'));
+		state = useBatchStore.getState().batchRunStates['grok-agent'];
+		expect(state.isStopping).toBe(true);
+		expect(state.errorPaused).toBe(false);
+		expect(state.error).toBeUndefined();
+		expect(reply).toHaveBeenCalledWith('grok-stop', { success: true });
+		expect(local.document).not.toHaveBeenCalled();
+		hook.unmount();
+	});
+});

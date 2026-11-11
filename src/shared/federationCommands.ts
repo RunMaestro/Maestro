@@ -12,6 +12,13 @@
 
 import type { MirrorPeerSummary } from './maestro-lib/client/peer-mirror';
 
+/**
+ * The answer while the main-process peer mirror is not running: before boot started it, or after
+ * quit stopped it. Federation itself is always on.
+ */
+export const FEDERATION_NOT_RUNNING_MESSAGE =
+	'Federation is not running yet. Wait for Maestro to finish starting, then try again.';
+
 export const FEDERATION_COMMAND = 'federation_command';
 export const FEDERATION_COMMAND_RESULT = 'federation_command_result';
 

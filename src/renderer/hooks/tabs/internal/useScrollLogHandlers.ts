@@ -1,9 +1,11 @@
 import { useCallback } from 'react';
 import { selectActiveSession, useSessionStore } from '../../../stores/sessionStore';
 import { useTabStore } from '../../../stores/tabStore';
+import { notifyToast } from '../../../stores/notificationStore';
 import type { Session } from '../../../types';
 import { getActiveTab } from '../../../utils/tabHelpers';
 import { logger } from '../../../utils/logger';
+import { resolveTurnProvider } from '../../../../shared/maestro-lib/agents/providerSwap';
 import { deleteShellCommandLog } from './deleteShellCommandLog';
 import type { ScrollLogHandlersReturn } from './types';
 
@@ -43,6 +45,28 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 		}
 
 		if (log.source !== 'user') return null;
+
+		if (
+			isAIMode &&
+			currentActiveTab &&
+			(currentSession.toolType === 'grok' ||
+				resolveTurnProvider(currentActiveTab, currentSession) === 'grok' ||
+				currentActiveTab.providerSessions?.grok)
+		) {
+			// A rendered log ID is not a native prompt index. Neither the Claude
+			// API nor the unscoped generic deletion API can mutate Grok safely.
+			// Logs retain no per-row provider ownership after a switch. Refuse
+			// mixed history too, even after a newer turn on another provider.
+			notifyToast({
+				color: 'yellow',
+				title: 'Grok history deletion unavailable',
+				message:
+					'Maestro cannot safely delete or edit Grok native history. This conversation is unchanged. Manage the session in Grok CLI using the same account and host, then refresh History.',
+				sessionId: currentSession.id,
+				tabId: currentActiveTab.id,
+			});
+			return null;
+		}
 
 		let endIndex = logs.length;
 		for (let i = logIndex + 1; i < logs.length; i++) {

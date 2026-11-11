@@ -6,6 +6,7 @@
  * The SSH forward and the host client are stood in for; nothing here dials.
  */
 
+import * as os from 'os';
 import { describe, expect, it, vi } from 'vitest';
 import {
 	MIRROR_TURN_COALESCE_MS,
@@ -23,6 +24,7 @@ import type {
 	ConnectionState,
 	MaestroClient,
 	MaestroEvent,
+	QueuedTurn,
 } from '../../../shared/maestro-lib/client/types';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../../shared/types';
@@ -64,6 +66,11 @@ interface FakeHost {
 	reconnect: ReturnType<typeof vi.fn>;
 	list: ReturnType<typeof vi.fn>;
 	transcript: ReturnType<typeof vi.fn>;
+	/** `turns.queue.list`: answers what `setQueue` holds for the agent. */
+	queueList: ReturnType<typeof vi.fn>;
+	setQueue(agentId: string, items: QueuedTurn[]): void;
+	/** `history.list`: one USER entry per call, its id counting the reads. */
+	historyList: ReturnType<typeof vi.fn>;
 	close: ReturnType<typeof vi.fn>;
 	/** Resolve the forward's `ready()`; until then a connect waits. */
 	open(): void;
@@ -110,12 +117,26 @@ function fakeHost(remoteId: string, options: { manualReady?: boolean } = {}): Fa
 		ok: true,
 		value: [{ id: 'e1', timestamp: 1, source: 'user', text: 'hi' }],
 	}));
+	const queues = new Map<string, QueuedTurn[]>();
+	const queueList = vi.fn(async (agentId: string) => ({
+		ok: true,
+		value: queues.get(agentId) ?? [],
+	}));
+	let historyReads = 0;
+	const historyList = vi.fn(async () => ({
+		ok: true,
+		value: [
+			{ id: `h${++historyReads}`, type: 'USER', timestamp: 1, summary: 's', projectPath: '/p' },
+		],
+	}));
 	const close = vi.fn(async () => undefined);
 	const client = {
 		connection: { connect, reconnect, close, state: () => state },
 		agents: { list },
 		groups: { list: vi.fn(async () => ({ ok: true, value: [] })) },
 		tabs: { transcript },
+		turns: { queue: { list: queueList } },
+		history: { list: historyList },
 		events: {
 			subscribe: (listener: (event: MaestroEvent) => void) => {
 				eventListeners.add(listener);
@@ -135,13 +156,20 @@ function fakeHost(remoteId: string, options: { manualReady?: boolean } = {}): Fa
 		reconnect,
 		list,
 		transcript,
+		queueList,
+		setQueue: (agentId, items) => queues.set(agentId, items),
+		historyList,
 		close,
 		open: () => resolveReady(ENDPOINT),
 		fail: (error) => rejectReady(error),
 	};
 }
 
-function harness(remotes: SshRemoteConfig[], hosts: Record<string, FakeHost>) {
+function harness(
+	remotes: SshRemoteConfig[],
+	hosts: Record<string, FakeHost>,
+	extra: Partial<PeerMirrorServiceDeps> = {}
+) {
 	const pushes: MirrorPush[] = [];
 	const timers: Array<() => void> = [];
 	let remotesNow = remotes;
@@ -171,6 +199,7 @@ function harness(remotes: SshRemoteConfig[], hosts: Record<string, FakeHost>) {
 			return timers.length;
 		},
 		clearTimer: () => undefined,
+		...extra,
 	};
 	const service = new PeerMirrorService(deps);
 	return {
@@ -188,15 +217,22 @@ function harness(remotes: SshRemoteConfig[], hosts: Record<string, FakeHost>) {
 }
 
 describe('PeerMirrorService', () => {
-	it('mirrors only opted-in remotes and connects them strictly one after another', async () => {
+	it('probes every remote except one that opted out, strictly one after another', async () => {
 		const a = fakeHost('a', { manualReady: true });
 		const b = fakeHost('b', { manualReady: true });
 		const off = fakeHost('off');
-		const h = harness([remoteOf('a'), remoteOf('off', { federation: false }), remoteOf('b')], {
-			a,
-			b,
-			off,
-		});
+		const h = harness(
+			[
+				remoteOf('a'),
+				remoteOf('off', { federation: false }),
+				remoteOf('b', { federation: undefined }),
+			],
+			{
+				a,
+				b,
+				off,
+			}
+		);
 		h.service.start();
 		await settle();
 		// a is dialing; b has not been touched yet.
@@ -396,12 +432,212 @@ describe('PeerMirrorService', () => {
 		expect(h.deps.acquireForward).toHaveBeenCalledTimes(1);
 	});
 
+	describe('host queues', () => {
+		const waiting = (itemId: string, text = itemId): QueuedTurn => ({
+			itemId,
+			tabId: 't1',
+			queuedAt: 1,
+			kind: 'message',
+			text,
+			paused: false,
+		});
+
+		it('reads every agent queue once after the first attach', async () => {
+			const a = fakeHost('a');
+			a.setQueue('a-a1', [waiting('q1')]);
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			// The snapshot inside connect() does not read too: the attach reads once.
+			expect(a.queueList).toHaveBeenCalledTimes(1);
+			expect(a.queueList).toHaveBeenCalledWith('a-a1');
+			expect(h.service.snapshot().peers[0].queues).toEqual({ 'a-a1': [waiting('q1')] });
+			expect(h.types('a')).toContain('agent.queue');
+		});
+
+		it('reads the queues again on a wake reload', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			expect(h.service.snapshot().peers[0].queues).toEqual({});
+			a.setAgents([agent('a-a1'), agent('a-a2')]);
+			a.setQueue('a-a2', [waiting('q2')]);
+			h.service.reloadAfterWake();
+			await settle();
+			expect(a.queueList).toHaveBeenCalledWith('a-a2');
+			expect(h.service.snapshot().peers[0].queues).toEqual({ 'a-a2': [waiting('q2')] });
+		});
+
+		it('reads the queues again on a resync snapshot while attached', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			a.setQueue('a-a1', [waiting('q1')]);
+			a.emit({ type: 'snapshot', agents: [agent('a-a1')], groups: [] });
+			await settle();
+			expect(a.queueList).toHaveBeenCalledTimes(2);
+			expect(h.service.snapshot().peers[0].queues).toEqual({ 'a-a1': [waiting('q1')] });
+		});
+
+		it('takes a queue.changed at once and drops an older read that lands after it', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			let answer!: (value: { ok: true; value: QueuedTurn[] }) => void;
+			a.queueList.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+			// A resync starts a read; the host's event lands while it is out.
+			a.emit({ type: 'snapshot', agents: [agent('a-a1')], groups: [] });
+			a.emit({ type: 'queue.changed', agentId: 'a-a1', items: [waiting('new')] });
+			expect(h.service.snapshot().peers[0].queues).toEqual({ 'a-a1': [waiting('new')] });
+			answer({ ok: true, value: [waiting('old')] });
+			await settle();
+			expect(h.service.snapshot().peers[0].queues).toEqual({ 'a-a1': [waiting('new')] });
+		});
+
+		it('keeps what it held when a read fails', async () => {
+			const a = fakeHost('a');
+			a.setQueue('a-a1', [waiting('q1')]);
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			a.queueList.mockResolvedValueOnce({
+				ok: false,
+				error: { code: 'host-lost', message: 'dropped', method: 'turns.queue.list' },
+			} as never);
+			a.emit({ type: 'snapshot', agents: [agent('a-a1')], groups: [] });
+			await settle();
+			expect(h.service.snapshot().peers[0].queues).toEqual({ 'a-a1': [waiting('q1')] });
+		});
+	});
+
+	describe('history', () => {
+		const ended = (host: FakeHost, agentId = 'a-a1', tabId = 't1') =>
+			host.emit({
+				type: 'turn',
+				agentId,
+				tabId,
+				event: { kind: 'outcome', at: 5, outcome: 'completed' as never, exitCode: 0 },
+			});
+
+		it('reads an agent History once and serves the next read from the cache', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			const first = await h.service.history('a', 'a-a1');
+			expect(first.map((e) => e.id)).toEqual(['h1']);
+			expect(a.historyList).toHaveBeenCalledWith('a-a1');
+			expect((await h.service.history('a', 'a-a1')).map((e) => e.id)).toEqual(['h1']);
+			expect(a.historyList).toHaveBeenCalledTimes(1);
+		});
+
+		it('keeps a cache per agent and drops only the agent whose turn ended', async () => {
+			const a = fakeHost('a');
+			a.setAgents([agent('a-a1'), agent('a-a2')]);
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			await h.service.history('a', 'a-a1');
+			await h.service.history('a', 'a-a2');
+			expect(a.historyList).toHaveBeenCalledTimes(2);
+			ended(a, 'a-a1');
+			await h.service.history('a', 'a-a1');
+			await h.service.history('a', 'a-a2');
+			expect(a.historyList).toHaveBeenCalledTimes(3);
+			expect(a.historyList).toHaveBeenLastCalledWith('a-a1');
+		});
+
+		it('drops an agent cache when the agent is removed', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			await h.service.history('a', 'a-a1');
+			a.emit({ type: 'agent.removed', agentId: 'a-a1' });
+			await h.service.history('a', 'a-a1');
+			expect(a.historyList).toHaveBeenCalledTimes(2);
+		});
+
+		it('drops the whole peer cache on a wake reload (peer.stale) and a resync snapshot', async () => {
+			const a = fakeHost('a');
+			a.setAgents([agent('a-a1'), agent('a-a2')]);
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			await h.service.history('a', 'a-a1');
+			await h.service.history('a', 'a-a2');
+			h.service.reloadAfterWake();
+			await settle();
+			await h.service.history('a', 'a-a1');
+			await h.service.history('a', 'a-a2');
+			expect(a.historyList).toHaveBeenCalledTimes(4);
+			a.emit({ type: 'snapshot', agents: [agent('a-a1'), agent('a-a2')], groups: [] });
+			await settle();
+			await h.service.history('a', 'a-a1');
+			expect(a.historyList).toHaveBeenCalledTimes(5);
+		});
+
+		it('does not keep a failed read: the next read asks the host again', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			a.historyList.mockResolvedValueOnce({
+				ok: false,
+				error: { code: 'failed', message: 'no disk', method: 'history.list' },
+			} as never);
+			await expect(h.service.history('a', 'a-a1')).rejects.toThrow('Peer "a": no disk');
+			await settle();
+			expect((await h.service.history('a', 'a-a1')).map((e) => e.id)).toEqual(['h1']);
+			expect(a.historyList).toHaveBeenCalledTimes(2);
+		});
+
+		it('forgets the cache when a remote is dropped and when the service stops', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			await h.service.history('a', 'a-a1');
+			h.setRemotes([remoteOf('a', { federation: false })]);
+			await settle();
+			await expect(h.service.history('a', 'a-a1')).rejects.toThrow(/Not a mirrored peer/);
+			h.setRemotes([remoteOf('a')]);
+			await settle();
+			await h.service.history('a', 'a-a1');
+			expect(a.historyList).toHaveBeenCalledTimes(2);
+			await h.service.stop();
+			await expect(h.service.history('a', 'a-a1')).rejects.toThrow(/Not a mirrored peer/);
+		});
+
+		it('refuses a peer that is not attached, naming it', async () => {
+			const a = fakeHost('a', { manualReady: true });
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			a.fail(new SshForwardError('not-installed', 'Install maestro-cli.'));
+			await settle();
+			await expect(h.service.history('a', 'a-a1')).rejects.toThrow(/Peer "a" is not connected/);
+			expect(a.historyList).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('act', () => {
 		/** Give the fake client the input calls `runPeerAgentAction()` makes. */
 		function withInput(host: FakeHost) {
 			const turns = {
 				send: vi.fn(async () => ({ ok: true, value: { status: 'started' } })),
 				interrupt: vi.fn(async () => ({ ok: true, value: { stopped: true } })),
+				queue: {
+					list: host.queueList,
+					remove: vi.fn(async () => ({ ok: true, value: { removed: true } })),
+					setPaused: vi.fn(async (_agentId: string, _itemId: string, paused: boolean) => ({
+						ok: true,
+						value: { found: true, paused },
+					})),
+				},
 			};
 			const tabs = host.client.tabs as unknown as Record<string, unknown>;
 			tabs.create = vi.fn(async () => ({ ok: true, value: { tabId: 't-new' } }));
@@ -421,7 +657,11 @@ describe('PeerMirrorService', () => {
 			expect(
 				await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hello' })
 			).toEqual({ ok: true, result: { kind: 'send', receipt: { status: 'started' } } });
-			expect(turns.send).toHaveBeenCalledWith('a-a1', 't1', { text: 'hello' });
+			// The send names this machine, so the host's History entry says whose work it was.
+			expect(turns.send).toHaveBeenCalledWith('a-a1', 't1', {
+				text: 'hello',
+				originHost: os.hostname(),
+			});
 
 			expect(await h.service.act('a', 'a-a1', { kind: 'new-tab' })).toEqual({
 				ok: true,
@@ -435,6 +675,40 @@ describe('PeerMirrorService', () => {
 			expect(turns.interrupt).toHaveBeenCalledWith('a-a1', 't1');
 			// Input never dials: still the one forward from the connect.
 			expect(h.deps.acquireForward).toHaveBeenCalledTimes(1);
+		});
+
+		it('removes, holds, and resumes a waiting message on the host', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			const { turns } = withInput(a);
+			h.service.start();
+			await settle();
+			expect(await h.service.act('a', 'a-a1', { kind: 'remove-queued', itemId: 'q1' })).toEqual({
+				ok: true,
+				result: { kind: 'remove-queued', itemId: 'q1', removed: true },
+			});
+			expect(turns.queue.remove).toHaveBeenCalledWith('a-a1', 'q1');
+			expect(
+				await h.service.act('a', 'a-a1', { kind: 'pause-queued', itemId: 'q2', paused: true })
+			).toEqual({
+				ok: true,
+				result: { kind: 'pause-queued', itemId: 'q2', found: true, paused: true },
+			});
+			expect(turns.queue.setPaused).toHaveBeenCalledWith('a-a1', 'q2', true);
+		});
+
+		it('stamps a send with the injected originHost when one is given', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.deps.originHost = 'laptop.local';
+			const { turns } = withInput(a);
+			h.service.start();
+			await settle();
+			await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
+			expect(turns.send).toHaveBeenCalledWith('a-a1', 't1', {
+				text: 'hi',
+				originHost: 'laptop.local',
+			});
 		});
 
 		it('refuses at once while the peer is not connected, and never queues the send', async () => {
@@ -471,6 +745,69 @@ describe('PeerMirrorService', () => {
 			const lost = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'x' });
 			expect(lost).toMatchObject({ ok: false, unknown: true });
 			expect(lost.ok ? '' : lost.error).toContain('The connection to peer "a" dropped');
+		});
+	});
+
+	describe('opportunistic probing', () => {
+		it('probes a remote with no host again on the slow re-probe, and leaves a connected one alone', async () => {
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			try {
+				const a = fakeHost('a', { manualReady: true });
+				const b = fakeHost('b');
+				const h = harness([remoteOf('a'), remoteOf('b')], { a, b }, { reprobeIntervalMs: 1000 });
+				h.service.start();
+				await settle();
+				a.fail(new SshForwardError('not-installed', 'Install maestro-cli.'));
+				await settle();
+				expect(h.service.peers().map((p) => p.connection)).toEqual(['not-installed', 'connected']);
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(2);
+
+				vi.advanceTimersByTime(1000);
+				await settle();
+				// Only the remote with no host was dialed again.
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(3);
+				expect(vi.mocked(h.deps.acquireForward).mock.calls[2][0].id).toBe('a');
+
+				await h.service.stop();
+				vi.advanceTimersByTime(5000);
+				await settle();
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(3);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('runs an exclusive task after the dials queued before it, never beside one', async () => {
+			const a = fakeHost('a', { manualReady: true });
+			const h = harness([remoteOf('a')], { a }, { reprobeIntervalMs: 0 });
+			h.service.start();
+			const order: string[] = [];
+			const task = h.service.exclusive(async () => {
+				order.push(`task while ${h.service.peers()[0].connection}`);
+				return 42;
+			});
+			await settle();
+			expect(order).toEqual([]);
+			a.open();
+			expect(await task).toBe(42);
+			expect(order).toEqual(['task while connected']);
+			// A failing task does not wedge the queue.
+			await expect(
+				h.service.exclusive(async () => Promise.reject(new Error('boom')))
+			).rejects.toThrow('boom');
+			expect(await h.service.exclusive(async () => 'next')).toBe('next');
+		});
+
+		it('reconnects by SSH remote id, and names a remote it does not mirror', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a }, { reprobeIntervalMs: 0 });
+			h.service.start();
+			await settle();
+			expect(await h.service.reconnectRemote('a')).toMatchObject({ ok: true });
+			expect(await h.service.reconnectRemote('nope')).toEqual({
+				ok: false,
+				error: 'SSH remote nope is not a Federation peer.',
+			});
 		});
 	});
 

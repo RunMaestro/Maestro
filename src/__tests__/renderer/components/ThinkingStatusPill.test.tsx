@@ -22,6 +22,15 @@ import { createMockAITab as createBaseMockAITab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import {
+	selectActiveMirrorKey,
+	usePeerMirrorStore,
+} from '../../../renderer/stores/peerMirrorStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+} from '../../../shared/maestro-lib/client/peer-mirror';
+import { resetStores } from '../../helpers';
 
 import { mockTheme } from '../../helpers/mockTheme';
 // Mock theme for tests
@@ -493,6 +502,86 @@ describe('ThinkingStatusPill', () => {
 			const stop = screen.getByTitle('Stop this turn (Ctrl+C)');
 			expect(stop).toBeInTheDocument();
 			expect(stop).not.toHaveAttribute('title', expect.stringContaining('Claude'));
+		});
+	});
+
+	// A Federation peer's busy tab rides the pill with `mirror` set and the mirror key as its id.
+	describe('mirrored items', () => {
+		const maestro = window.maestro as unknown as Record<string, unknown>;
+		const act$ = vi.fn();
+
+		function mirrorItem(): ThinkingItem {
+			return {
+				session: { id: 'box:a1', name: 'Builder on Box', state: 'busy' },
+				tab: createMockAITab({ id: 'ht1', name: 'Host Tab', state: 'busy' }),
+				mirror: { peerId: 'box', agentId: 'a1' },
+			};
+		}
+
+		beforeEach(() => {
+			resetStores(usePeerMirrorStore);
+			const { peer } = replacePeerAgents(
+				createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+				[{ id: 'a1', name: 'Builder', toolType: 'claude-code', aiTabs: [{ id: 'ht1' }] }],
+				[],
+				1
+			);
+			usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+			act$.mockReset();
+			act$.mockResolvedValue({ ok: true, result: { kind: 'interrupt' } });
+			maestro.federation = { act: act$ };
+		});
+
+		afterEach(() => {
+			delete maestro.federation;
+		});
+
+		it('opens the mirrored agent on a click instead of calling onSessionClick', () => {
+			const onSessionClick = vi.fn();
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[mirrorItem()]}
+					theme={mockTheme}
+					onSessionClick={onSessionClick}
+				/>
+			);
+			fireEvent.click(screen.getByText('Host Tab'));
+			expect(onSessionClick).not.toHaveBeenCalled();
+			expect(selectActiveMirrorKey(usePeerMirrorStore.getState())).toBe('box:a1');
+			expect(usePeerMirrorStore.getState().activeTabIds).toEqual({ box: { a1: 'ht1' } });
+		});
+
+		it('still calls onSessionClick for a local item', () => {
+			const onSessionClick = vi.fn();
+			const local = createThinkingItemWithTab({ id: 'local-1' }, { id: 'tab-1', name: 'Local' });
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[local]}
+					theme={mockTheme}
+					onSessionClick={onSessionClick}
+				/>
+			);
+			fireEvent.click(screen.getByText('Local'));
+			expect(onSessionClick).toHaveBeenCalledWith('local-1', 'tab-1');
+		});
+
+		it('stops a mirrored primary item on its host, never through onInterrupt', () => {
+			const onInterrupt = vi.fn();
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[mirrorItem()]}
+					theme={mockTheme}
+					onInterrupt={onInterrupt}
+				/>
+			);
+			fireEvent.click(screen.getByText('Stop'));
+			expect(onInterrupt).not.toHaveBeenCalled();
+			expect(act$).toHaveBeenCalledWith('box', 'a1', { kind: 'interrupt', tabId: 'ht1' });
+		});
+
+		it('draws Stop for a mirrored primary item even without onInterrupt', () => {
+			render(<ThinkingStatusPill thinkingItems={[mirrorItem()]} theme={mockTheme} />);
+			expect(screen.getByText('Stop')).toBeInTheDocument();
 		});
 	});
 

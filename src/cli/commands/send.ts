@@ -1,6 +1,7 @@
 // Send command - send a message to an agent and get a JSON response
 // Requires a Maestro agent ID. Optionally resumes an existing agent session.
 
+import * as os from 'os';
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
 import { captureCliRun, settlementFromAgentResult } from '../services/agent-run-capture';
 import { resolveAgentId, getSessionById, addHistoryEntry } from '../services/storage';
@@ -709,11 +710,13 @@ async function sendToPeer(
 				onFirst: () => void client.turns.interrupt(agent.id, tabId),
 			});
 			try {
-				const sent = await runPeerAgentAction(client, agent, {
-					kind: 'send',
-					tabId,
-					text: message,
-				});
+				const sent = await runPeerAgentAction(
+					client,
+					agent,
+					{ kind: 'send', tabId, text: message },
+					// The host stamps the turn's History entry with this machine.
+					{ originHost: os.hostname() }
+				);
 				if (!sent.ok) {
 					if (sent.error.unknown || sent.error.code === 'host-lost') {
 						throw new PeerSendFailure(

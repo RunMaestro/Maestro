@@ -104,7 +104,7 @@ App rules match the app id or its exact name. App ids are the macOS bundle id (`
 Open the viewer with <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>H</kbd> (<kbd>Ctrl</kbd>+<kbd>Win</kbd>+<kbd>H</kbd> elsewhere), **Computer History** in the command palette or the hamburger menu, or `maestro-cli open computer-history`. It is available while Computer History is on, in the desktop app only.
 
 - **Timeline:** an activity strip across the range (1 hour to 30 days), stacked by app. Click a bar to see only that slice; click it again to widen back out. The app list on the left shows foreground time per app; click apps to filter to them. Below, every visit (a run of time in one app and window) lists what you typed, what you selected, window changes, and the screen text it captured (collapsed). Search matches text, window titles, URLs, and field labels, and accepts regular expressions.
-- **Digests:** the 15-minute digests and 6-hour roll-ups an agent wrote, newest first, when digests are on.
+- **Digests:** the 15-minute digests and 6-hour roll-ups an agent wrote, newest first, when digests are on. The search box searches every digest in the selected range, not only the ones on screen, and matches the summary text (never the header line that names the writer).
 - **Capture:** which apps and domains are recorded (see above).
 
 The header shows whether the recorder is running and pauses or resumes it.
@@ -155,6 +155,7 @@ Two limits to know before you turn them on:
 ```bash
 maestro-cli computer-history digests --since 1d
 maestro-cli computer-history digests --since 1w --kind 6h --json
+maestro-cli computer-history digests --since 30d --grep "gmail forwarding"
 ```
 
 ## CLI

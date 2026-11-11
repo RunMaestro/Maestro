@@ -2,6 +2,7 @@ import {
 	analyzeMemoryLinks,
 	resolveMemoryRepositoryRoot,
 } from '../../shared/maestro-lib/translation/memory';
+import { getAgentCapabilities } from '../../shared/maestro-lib/providers/capabilities';
 /**
  * Tests for memory-manager.ts - project memory CRUD operations.
  *
@@ -16,6 +17,7 @@ import * as os from 'os';
 
 import {
 	memoryLayoutFor,
+	type MemoryLayout,
 	listMemoryEntries,
 	readMemoryEntry,
 	writeMemoryEntry,
@@ -76,6 +78,157 @@ describe('memory-manager', () => {
 		expect(() => memoryLayoutFor('opencode', { projectPath: '/p', accountDir: tempHome })).toThrow(
 			/not supported/
 		);
+	});
+
+	it.each(['account-a', 'account-b'])(
+		'does not certify native Grok memory from rules in %s',
+		async (account) => {
+			const project = path.join(tempHome, 'project');
+			const home = path.join(tempHome, account);
+			fs.mkdirSync(project, { recursive: true });
+			fs.mkdirSync(home, { recursive: true });
+			const rules = path.join(project, 'AGENTS.md');
+			fs.writeFileSync(rules, 'Ordinary project instructions, not a memory binding.');
+			expect(getAgentCapabilities('grok').supportsProjectMemory).toBe(false);
+			const refusal = /Grok native project memory is not supported.*Project rules do not establish/;
+			// The layout itself refuses, so no memory operation can be reached for native Grok.
+			expect(() => memoryLayoutFor('grok', { projectPath: project, accountDir: home })).toThrow(
+				refusal
+			);
+			expect(fs.readdirSync(home)).toEqual([]);
+			expect(fs.readdirSync(project)).toEqual(['AGENTS.md']);
+			expect(fs.readFileSync(rules, 'utf8')).toBe(
+				'Ordinary project instructions, not a memory binding.'
+			);
+		}
+	);
+
+	describe('bound Grok project knowledge', () => {
+		let project: string;
+		let bound: string;
+		let other: string;
+		let layout: MemoryLayout;
+		beforeEach(() => {
+			project = path.join(tempHome, 'project');
+			bound = path.join(project, '.maestro', 'provider-knowledge', 'account-a', 'memory');
+			layout = {
+				...memoryLayoutFor('claude-code', { projectPath: project, accountDir: bound }),
+				directoryPath: bound,
+				boundKnowledge: true,
+			};
+			other = path.join(tempHome, 'account-b', 'global.md');
+			fs.mkdirSync(path.dirname(other), { recursive: true });
+			fs.writeFileSync(other, 'Other account knowledge [[lonely]]');
+		});
+
+		afterEach(() => {
+			expect(fs.readFileSync(other, 'utf8')).toBe('Other account knowledge [[lonely]]');
+			expect(fs.readdirSync(path.dirname(other))).toEqual(['global.md']);
+			expect(fs.existsSync(path.join(tempHome, '.grok'))).toBe(false);
+			expect(fs.existsSync(path.join(tempHome, '.claude'))).toBe(false);
+		});
+
+		it('creates a missing bound directory and preserves exclusive create and index protection', async () => {
+			expect(await listMemoryEntries(layout)).toMatchObject({
+				directoryPath: bound,
+				exists: false,
+				entries: [],
+				stats: { fileCount: 0, totalBytes: 0 },
+			});
+			expect(fs.existsSync(bound)).toBe(false);
+			await createMemoryEntry(layout, 'note.md', 'first');
+			await expect(createMemoryEntry(layout, 'note.md', 'overwrite')).rejects.toThrow(
+				/already exists/
+			);
+			expect(await readMemoryEntry(layout, 'note.md')).toBe('first');
+			await writeMemoryEntry(layout, 'note.md', 'changed');
+			expect(await readMemoryEntry(layout, 'note.md')).toBe('changed');
+			await writeMemoryEntry(layout, 'MEMORY.md', '[[note]]');
+			await expect(deleteMemoryEntry(layout, 'MEMORY.md')).rejects.toThrow(/cannot be deleted/);
+			await deleteMemoryEntry(layout, 'note.md');
+			expect((await listMemoryEntries(layout)).entries.map((entry) => entry.name)).toEqual([
+				'MEMORY.md',
+			]);
+		});
+
+		it.each(['../global.md', '..\\global.md', 'nested/global.md', '', 'note.txt'])(
+			'rejects unsafe bound filename %j before creating directories',
+			async (filename) => {
+				for (const operation of [
+					() => readMemoryEntry(layout, filename),
+					() => writeMemoryEntry(layout, filename, 'changed'),
+					() => createMemoryEntry(layout, filename, 'changed'),
+					() => deleteMemoryEntry(layout, filename),
+				])
+					await expect(operation()).rejects.toThrow(/Unsafe memory filename|must end with/);
+				expect(fs.existsSync(bound)).toBe(false);
+			}
+		);
+
+		it('excludes another account symlink from list, search, orphan analysis and direct operations', async () => {
+			await writeMemoryEntry(layout, 'MEMORY.md', '[[escape]]');
+			await writeMemoryEntry(layout, 'lonely.md', 'Selected project knowledge');
+			const link = path.join(bound, 'escape.md');
+			fs.symlinkSync(other, link, 'file');
+			const list = await listMemoryEntries(layout);
+			expect(list.entries.map((entry) => entry.name)).toEqual(['MEMORY.md', 'lonely.md']);
+			expect(list.stats.totalBytes).toBe(Buffer.byteLength('[[escape]]Selected project knowledge'));
+			expect(await searchMemoryEntries(layout, 'Other account')).toEqual([]);
+			expect(await searchMemoryEntries(layout, 'Selected project')).toEqual([
+				{ name: 'lonely.md', matchedName: false, snippet: 'Selected project knowledge' },
+			]);
+			expect(await findOrphanMemories(layout)).toEqual({
+				orphans: ['lonely.md'],
+				brokenLinks: [{ source: 'MEMORY.md', target: 'escape' }],
+			});
+			for (const operation of [
+				() => readMemoryEntry(layout, 'escape.md'),
+				() => createMemoryEntry(layout, 'escape.md', 'changed'),
+				() => deleteMemoryEntry(layout, 'escape.md'),
+			])
+				await expect(operation()).rejects.toThrow(/escapes its selected root/);
+			await expect(writeMemoryEntry(layout, 'escape.md', 'changed')).rejects.toThrow(
+				/symbolic link/
+			);
+			expect(fs.readlinkSync(link)).toBe(other);
+		});
+
+		it('cannot create an outside target through a dangling entry link', async () => {
+			fs.mkdirSync(bound, { recursive: true });
+			const absent = path.join(path.dirname(other), 'absent.md');
+			const link = path.join(bound, 'dangling.md');
+			fs.symlinkSync(absent, link, 'file');
+			expect((await listMemoryEntries(layout)).entries).toEqual([]);
+			await expect(readMemoryEntry(layout, 'dangling.md')).rejects.toMatchObject({
+				code: 'ENOENT',
+			});
+			await expect(writeMemoryEntry(layout, 'dangling.md', 'changed')).rejects.toThrow(
+				/symbolic link/
+			);
+			await expect(createMemoryEntry(layout, 'dangling.md', 'changed')).rejects.toThrow(
+				/already exists/
+			);
+			expect(fs.readlinkSync(link)).toBe(absent);
+			await deleteMemoryEntry(layout, 'dangling.md');
+			expect(fs.readdirSync(bound)).toEqual([]);
+			expect(fs.existsSync(absent)).toBe(false);
+		});
+
+		it('reads an internal alias but refuses to write through it or replace it', async () => {
+			await createMemoryEntry(layout, 'note.md', 'original');
+			const link = path.join(bound, 'alias.md');
+			fs.symlinkSync('note.md', link, 'file');
+			expect(await readMemoryEntry(layout, 'alias.md')).toBe('original');
+			await expect(writeMemoryEntry(layout, 'alias.md', 'changed')).rejects.toThrow(
+				/symbolic link/
+			);
+			await expect(createMemoryEntry(layout, 'alias.md', 'changed')).rejects.toThrow(
+				/already exists/
+			);
+			expect(fs.readlinkSync(link)).toBe('note.md');
+			await deleteMemoryEntry(layout, 'alias.md');
+			expect(await readMemoryEntry(layout, 'note.md')).toBe('original');
+		});
 	});
 
 	it('returns exists:false with empty entries when the directory is missing', async () => {

@@ -111,6 +111,82 @@ const INERT_HANDLE: StopHandle = { stage: () => undefined, dispose: () => {} };
 // stacking a second set of timers beside it.
 const ladders = new WeakMap<object, Ladder>();
 
+interface TrackedProcessTree {
+	tree: ProcessTreeSnapshot;
+	/** Keep sweeping late observations after a stop; undefined cancels that policy. */
+	sweep(context: { sessionId?: string; label?: string } | undefined): void;
+	finish(): Promise<void>;
+}
+
+const trackedTrees = new WeakMap<ChildProcess, TrackedProcessTree>();
+
+/**
+ * Retain verified POSIX descendants from spawn until the pipes close. Opt-in:
+ * ordinary turns do not pay for continuous process-table reads. This is an
+ * observation record, not containment: an unobserved fork-and-exit or a Windows
+ * orphan still requires host-owned containment before claiming a strict bound.
+ * The returned cleanup waits for the last read/sweep before releasing ownership.
+ */
+export function trackProcessTree(child: ChildProcess): (() => Promise<void>) | undefined {
+	const existing = trackedTrees.get(child);
+	if (existing) return existing.finish;
+	const pid = child.pid;
+	if (!pid || isWindows() || child.exitCode !== null || child.signalCode !== null) return;
+	const tree = snapshotProcessTree(pid);
+	if (!tree.owned) return;
+
+	let closing = false;
+	let pending: Promise<void> | undefined;
+	let sweepContext: { sessionId?: string; label?: string } | undefined;
+	const tracked: TrackedProcessTree = {
+		tree,
+		sweep(context) {
+			sweepContext = context;
+			if (context) killSurvivors(tracked.tree.descendants, context);
+		},
+		async finish() {
+			closing = true;
+			clearInterval(timer);
+			// A read begun before exit can discover a tool the first sweep missed.
+			// Join it instead of abandoning either the observation or its processes.
+			await pending;
+			trackedTrees.delete(child);
+		},
+	};
+	trackedTrees.set(child, tracked);
+	const timer = setInterval(() => {
+		if (closing || pending) return;
+		const current = tracked.tree;
+		pending = refreshProcessTree(pid, current)
+			.then(
+				(next) => {
+					// A synchronous stop snapshot may have added tools during this read.
+					const recorded = new Set(
+						tracked.tree.descendants.map((entry) => `${entry.pid} ${entry.startedAt}`)
+					);
+					tracked.tree = {
+						...tracked.tree,
+						descendants: [
+							...tracked.tree.descendants,
+							...next.descendants.filter(
+								(entry) => !recorded.has(`${entry.pid} ${entry.startedAt}`)
+							),
+						],
+					};
+					if (sweepContext) tracked.sweep(sweepContext);
+				},
+				() => {
+					logger.debug('[Termination] Process tree refresh unavailable', LOG_CONTEXT, { pid });
+				}
+			)
+			.finally(() => {
+				pending = undefined;
+			});
+	}, TREE_REFRESH_MS);
+	timer.unref?.();
+	return tracked.finish;
+}
+
 /**
  * Stop a process: interrupt, then terminate, then kill its tree.
  *
@@ -151,6 +227,8 @@ export function stopProcess(target: StopTarget, options: StopOptions): StopHandl
 function createLadder(target: StopTarget, key: object): Ladder {
 	const pid = target.pid ?? target.child?.pid ?? target.pty?.pid;
 	const hasPid = typeof pid === 'number' && pid > 0;
+	const tracked =
+		target.child && pid === target.child.pid ? trackedTrees.get(target.child) : undefined;
 
 	let stage: StopStage | undefined;
 	let done = false;
@@ -187,7 +265,9 @@ function createLadder(target: StopTarget, key: object): Ladder {
 	};
 
 	const sweep = (): void => {
-		if (!leaveDescendants && tree && tree.descendants.length > 0) {
+		if (tracked) {
+			tracked.sweep(leaveDescendants ? undefined : context);
+		} else if (!leaveDescendants && tree && tree.descendants.length > 0) {
 			killSurvivors(tree.descendants, context);
 		}
 		tree = undefined;
@@ -219,7 +299,7 @@ function createLadder(target: StopTarget, key: object): Ladder {
 	};
 
 	const keepTreeFresh = (): void => {
-		if (refreshTimer || !tree?.owned) return;
+		if (tracked || refreshTimer || !tree?.owned) return;
 		refreshTimer = setInterval(refreshTree, TREE_REFRESH_MS);
 		refreshTimer.unref?.();
 	};
@@ -270,7 +350,7 @@ function createLadder(target: StopTarget, key: object): Ladder {
 			}
 			return;
 		}
-		execFile('taskkill', args, (error) => {
+		execFile('taskkill', args, { timeout: TASKKILL_TIMEOUT_MS }, (error) => {
 			if (!error) return;
 			// A process that exited before taskkill ran makes it fail benignly.
 			// Only a pipe child can prove it is still running (its exit state is
@@ -334,7 +414,15 @@ function createLadder(target: StopTarget, key: object): Ladder {
 			attempt('SIGKILL on the PTY', () => killPty(ptyProcess, 'SIGKILL'));
 		}
 		if (!leaveDescendants && tree?.owned && hasPid) {
-			killProcessTreeNow(pid, context);
+			const current = tracked?.tree ?? tree;
+			if (tracked && current.root) {
+				// Validate identities again at the final stage, including the root.
+				killSurvivors([current.root, ...current.descendants], context);
+				// A process-table read can fail. Its own handle still owns the child.
+				if (child) attempt('SIGKILL', () => child.kill('SIGKILL'));
+			} else {
+				killProcessTreeNow(pid, context);
+			}
 		} else if (child) {
 			attempt('SIGKILL', () => child.kill('SIGKILL'));
 		}
@@ -387,6 +475,12 @@ function createLadder(target: StopTarget, key: object): Ladder {
 		context = { sessionId: options.sessionId, label: options.label };
 		leaveDescendants = options.includeDescendants === false;
 		options.onStopRequested?.();
+		if (tracked && pid) {
+			// Preserve tools started since the last async observation before any
+			// signal can sever their parent links. Never re-adopt a reused root.
+			tree = tracked.tree = snapshotProcessTree(pid, tracked.tree);
+			if (leaveDescendants) tracked.sweep(undefined);
+		}
 
 		if (!isRunning()) {
 			onExit();

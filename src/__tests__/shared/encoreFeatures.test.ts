@@ -30,8 +30,8 @@ describe('ENCORE_FEATURE_DEFAULTS', () => {
 		expect(ENCORE_FEATURE_DEFAULTS.dataview).toBe(false);
 	});
 
-	it('ships Federation off', () => {
-		expect(ENCORE_FEATURE_DEFAULTS.federation).toBe(false);
+	it('has no Federation flag: Federation is built in and opportunistic', () => {
+		expect(ENCORE_FEATURE_DEFAULTS).not.toHaveProperty('federation');
 	});
 });
 

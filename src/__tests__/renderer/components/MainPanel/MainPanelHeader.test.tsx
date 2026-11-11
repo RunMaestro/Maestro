@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { MainPanelHeader } from '../../../../renderer/components/MainPanel/MainPanelHeader';
 import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
+import { hasCapability } from '../../../../shared/maestro-lib/providers/capabilities';
 import type { Session, Theme, AITab } from '../../../../renderer/types';
 
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -549,6 +550,123 @@ describe('MainPanelHeader', () => {
 		render(<MainPanelHeader {...defaultProps} setAgentSessionsOpen={setOpen} />);
 		fireEvent.click(screen.getByTitle(/Agent Sessions/));
 		expect(setOpen).toHaveBeenCalledWith(true);
+	});
+
+	describe('Grok account attribution and capability gates', () => {
+		it('updates the selected account even when the model context window is unknown', async () => {
+			const first = makeSession({
+				toolType: 'grok',
+				customEnvVars: { GROK_HOME: '/profiles/.grok-work' },
+			});
+			const second = makeSession({
+				...first,
+				customEnvVars: { GROK_HOME: '/profiles/.grok-personal' },
+			});
+			const { rerender } = render(
+				<MainPanelHeader {...defaultProps} activeSession={first} activeTabContextWindow={0} />
+			);
+
+			expect(await screen.findByLabelText('Provider profile: work')).toHaveAttribute(
+				'title',
+				'/profiles/.grok-work'
+			);
+			expect(
+				screen.queryByRole('button', { name: 'Toggle context timeline' })
+			).not.toBeInTheDocument();
+			rerender(
+				<MainPanelHeader {...defaultProps} activeSession={second} activeTabContextWindow={0} />
+			);
+			expect(await screen.findByLabelText('Provider profile: personal')).toHaveAttribute(
+				'title',
+				'/profiles/.grok-personal'
+			);
+			expect(screen.queryByLabelText('Provider profile: work')).not.toBeInTheDocument();
+			expect(first.customEnvVars).toEqual({ GROK_HOME: '/profiles/.grok-work' });
+		});
+
+		it.each([
+			['GROK_AUTH_PATH', '/credentials/independent.json'],
+			['GROK_AUTH', 'synthetic-inline-credential'],
+		])('withholds ambiguous account attribution for %s', async (key, value) => {
+			const { container } = render(
+				<MainPanelHeader
+					{...defaultProps}
+					activeSession={makeSession({
+						toolType: 'grok',
+						customEnvVars: { GROK_HOME: '/profiles/.grok-work', [key]: value },
+					})}
+					activeTabContextWindow={0}
+				/>
+			);
+			await act(async () => {});
+			expect(screen.queryByLabelText(/^Provider profile:/)).not.toBeInTheDocument();
+			expect(container.innerHTML).not.toContain(value);
+		});
+
+		it('keeps account attribution out of file previews and shell mode', async () => {
+			const session = makeSession({
+				toolType: 'grok',
+				customEnvVars: { GROK_HOME: '/profiles/.grok-work' },
+			});
+			const { rerender } = render(
+				<MainPanelHeader {...defaultProps} activeSession={session} activeTabContextWindow={0} />
+			);
+			expect(await screen.findByLabelText('Provider profile: work')).toBeInTheDocument();
+			rerender(
+				<MainPanelHeader
+					{...defaultProps}
+					activeSession={session}
+					activeTabContextWindow={0}
+					activeFileTabId="file-1"
+				/>
+			);
+			expect(screen.queryByLabelText(/^Provider profile:/)).not.toBeInTheDocument();
+			rerender(
+				<MainPanelHeader
+					{...defaultProps}
+					activeSession={{ ...session, inputMode: 'terminal' }}
+					activeTabContextWindow={0}
+				/>
+			);
+			expect(screen.queryByLabelText(/^Provider profile:/)).not.toBeInTheDocument();
+		});
+
+		it('opens native sessions through existing handlers without offering unsupported memory', async () => {
+			render(
+				<MainPanelHeader
+					{...defaultProps}
+					activeSession={makeSession({ toolType: 'grok' })}
+					hasCapability={(capability) => hasCapability('grok', capability)}
+				/>
+			);
+			const sessions = screen.getByRole('button', { name: 'Agent Sessions' });
+			fireEvent.click(sessions);
+			expect(defaultProps.setActiveAgentSessionId).toHaveBeenCalledExactlyOnceWith(null);
+			expect(defaultProps.setAgentSessionsOpen).toHaveBeenCalledExactlyOnceWith(true);
+			expect(screen.queryByRole('button', { name: 'Memory Viewer' })).not.toBeInTheDocument();
+			expect(defaultProps.setMemoryViewerOpen).not.toHaveBeenCalled();
+			await act(async () => {});
+		});
+
+		it('does not expose disabled operations merely because the provider is Grok', async () => {
+			render(
+				<MainPanelHeader
+					{...defaultProps}
+					activeSession={makeSession({ toolType: 'grok' })}
+					hasCapability={() => false}
+				/>
+			);
+			expect(screen.queryByRole('button', { name: 'Agent Sessions' })).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Memory Viewer' })).not.toBeInTheDocument();
+			expect(
+				screen.queryByRole('button', { name: 'Toggle context timeline' })
+			).not.toBeInTheDocument();
+			expect(screen.queryByText('$1.23')).not.toBeInTheDocument();
+			expect(defaultProps.setAgentSessionsOpen).not.toHaveBeenCalled();
+			expect(defaultProps.setActiveAgentSessionId).not.toHaveBeenCalled();
+			expect(defaultProps.setMemoryViewerOpen).not.toHaveBeenCalled();
+			await act(async () => {});
+		});
 	});
 
 	it('renders right panel toggle when panel is closed', () => {

@@ -15,6 +15,8 @@ export interface SymphonyContributionData {
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
+	customModel?: string;
+	customEffort?: string;
 }
 
 export interface SymphonyModalProps {

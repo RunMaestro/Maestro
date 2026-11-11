@@ -87,7 +87,7 @@ Each playbook entry must include:
 - `authorLink` - URL to author's website
 - `tags` - Searchable keyword array
 - `maxLoops` - Maximum loop iterations (null for unlimited)
-- `assets` - Asset files from `assets/` subfolder
+- `assets` - Asset files from `assets/` subfolder. Reference them in documents as `{{AUTORUN_FOLDER}}/assets/<file>`; the import points that path at the playbook's own folder
 
 ## Creating a Local Playbook
 

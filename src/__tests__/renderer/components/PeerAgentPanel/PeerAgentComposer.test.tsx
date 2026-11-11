@@ -2,8 +2,8 @@
  * Tests for PeerAgentComposer, the composer of a mirrored Federation agent (FED-SSH-06).
  *
  * The real `services/peerMirror` runs against a stand-in `window.maestro.federation`, so each case
- * checks the action that reaches the main-process service: a send, a Stop, nothing at all for a
- * slash command or an image. A refused send (the peer is down) is one call, a red toast, and the
+ * checks the action that reaches the main-process service: a send, a Stop (from the shared Thinking
+ * pill, fed by the mirror store), nothing at all for a slash command or an image. A refused send (the peer is down) is one call, a red toast, and the
  * draft kept: never queued, never retried. Nothing here may touch `sessionStore`.
  */
 
@@ -22,6 +22,11 @@ import { mirrorDraftKey, usePeerMirrorStore } from '../../../../renderer/stores/
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { MIRROR_COMPOSER_UNAVAILABLE } from '../../../../renderer/utils/peerMirrorView';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+	setPeerConnection,
+} from '../../../../shared/maestro-lib/client/peer-mirror';
 import type { AITabRecord } from '../../../../shared/maestro-lib/store/records';
 import { resetStores } from '../../../helpers';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -45,6 +50,20 @@ function renderComposer(tab: AITabRecord = { id: 't1', name: 'First' }) {
 const textbox = () => screen.getByLabelText('Message Builder on Build Box') as HTMLTextAreaElement;
 const draft = () => usePeerMirrorStore.getState().drafts[mirrorDraftKey('build', 'a1', 't1')];
 const flush = () => act(async () => undefined);
+
+/** The host's copy of the agent in the mirror store, connected, so the Thinking pill reads it. */
+function hydrateHost(tab: AITabRecord) {
+	const peer = setPeerConnection(
+		replacePeerAgents(
+			createMirroredPeer({ peerId: 'build', remoteId: 'r-build', name: 'Build Box' }),
+			[{ id: 'a1', name: 'Builder', toolType: 'claude-code', aiTabs: [tab] }],
+			[],
+			1
+		).peer,
+		'connected'
+	).peer;
+	usePeerMirrorStore.getState().hydrate([peer]);
+}
 
 describe('PeerAgentComposer', () => {
 	beforeEach(() => {
@@ -246,19 +265,28 @@ describe('PeerAgentComposer', () => {
 		expect(act$).not.toHaveBeenCalled();
 	});
 
-	it('shows Stop while the tab works, stops that tab on the host, and queues a send there', async () => {
+	it('shows the Thinking pill while the tab works, stops that tab on the host, and queues a send there', async () => {
 		act$.mockResolvedValue({
 			ok: true,
 			result: { kind: 'interrupt', targetTabIds: ['t1'], stoppedTabIds: ['t1'] },
 		});
-		renderComposer({ id: 't1', state: 'busy' });
-		expect(screen.getByText('Working on Build Box')).toBeInTheDocument();
-		fireEvent.click(screen.getByTitle('Stop this turn on Build Box'));
+		const busyTab: AITabRecord = { id: 't1', state: 'busy', thinkingStartTime: Date.now() };
+		hydrateHost(busyTab);
+		renderComposer(busyTab);
+		expect(screen.getByText('Builder on Build Box')).toBeInTheDocument();
+		fireEvent.click(screen.getByTitle('Stop this turn (Ctrl+C)'));
 		await flush();
 		expect(act$).toHaveBeenCalledWith('build', 'a1', { kind: 'interrupt', tabId: 't1' });
 		expect(
 			screen.getByTitle('Queue on Build Box: the agent is busy, so the host runs it next')
 		).toBeInTheDocument();
+	});
+
+	it('draws no Thinking pill and no Stop while nothing runs', () => {
+		hydrateHost({ id: 't1', name: 'First' });
+		renderComposer();
+		expect(screen.queryByText('Builder on Build Box')).not.toBeInTheDocument();
+		expect(screen.queryByTitle('Stop this turn (Ctrl+C)')).not.toBeInTheDocument();
 	});
 
 	it('disables Send while the draft is empty', () => {

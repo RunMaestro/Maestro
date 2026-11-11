@@ -24,6 +24,29 @@ import type { AgentError } from '../../types';
 export type TurnOutcome = 'completed' | 'completed-with-warning' | 'interrupted' | 'crashed';
 
 /**
+ * Protocol/lifecycle settlement before mapping to the legacy display outcome.
+ * Adapters must positively recognize success; an absent/unknown stop reason or
+ * text followed by a closed stream is incomplete. A failure after dispatch has
+ * uncertain effects and must never by itself authorize replay of the prompt.
+ */
+export type TurnTerminal = {
+	reason?: string;
+	/** Retain the provider's original reason, even when a lifecycle fact overrides it. */
+	providerStopReason?: string;
+	dispatchState?: 'not-dispatched' | 'dispatched' | 'unknown';
+} & (
+	| { status: 'success' }
+	| { status: 'refused'; origin: 'provider' | 'admission' | 'effect' }
+	| { status: 'cancelled'; origin: 'user' | 'provider' | 'host' | 'unknown' }
+	| { status: 'timeout'; kind: 'idle' | 'deadline' }
+	| { status: 'incomplete'; kind: 'limit' | 'missing-terminal' | 'unknown-stop-reason' }
+	| {
+			status: 'failed';
+			kind: 'protocol' | 'process' | 'transport' | 'prompt-delivery' | 'provider';
+	  }
+);
+
+/**
  * The facts a completed (non-superseded) turn produced, assembled by the
  * streaming layer from whatever transport is in play. See the contract
  * doc's "The facts the library reports" for the provenance of each field.
@@ -57,6 +80,8 @@ export interface TurnFacts {
 	 * merely having produced text - see the contract's `resultMessageSeen`
 	 * note on why these two are not the same boolean). */
 	resultMessageSeen: boolean;
+	/** Explicit non-success cannot be upgraded by text, exit 0 or a result envelope. */
+	terminal?: TurnTerminal;
 }
 
 /** The subset of `AgentOutputParser` the resolver needs. */
@@ -82,6 +107,8 @@ export interface ResolveTurnOutcomeOptions {
 
 export interface TurnOutcomeResult {
 	outcome: TurnOutcome;
+	/** Preserved structured settlement; absent for legacy callers without one. */
+	terminal?: TurnTerminal;
 	/**
 	 * Populated whenever `outcome === 'crashed'` and there is a concrete,
 	 * already-classified error to surface: `facts.explicitError` as given,
@@ -99,7 +126,12 @@ export interface TurnOutcomeResult {
  * Resolve a turn's outcome from its facts. Pure - no I/O, no emission, no
  * mutation of its arguments.
  *
- * Precedence (see `Plans/maestro-lib-turn-contract.md`, section 1):
+ * Explicit structured non-success wins over the legacy heuristics below;
+ * stopping after timeout/refusal must not erase its cause. Structured success
+ * is still subject to interruption, errors, signals and prompt-delivery failure.
+ * A nonzero exit overrides it; a resident protocol reply needs no process exit.
+ * Callers without structured facts retain these exact compatibility rules
+ * (see `Plans/maestro-lib-turn-contract.md`, section 1):
  *  1. `interrupted` wins outright, before any error is considered.
  *  2. An already-resolved `explicitError` -> crashed.
  *  3. The provider's own `detectErrorFromExit` -> crashed. `facts.exitCode`
@@ -138,6 +170,60 @@ export interface TurnOutcomeResult {
  *     the same unreviewed behavior change rule 4 already flags.
  */
 export function resolveTurnOutcome(
+	facts: TurnFacts,
+	provider: TurnOutcomeProvider,
+	context: { providerId: string; sessionId: string },
+	options: ResolveTurnOutcomeOptions = {}
+): TurnOutcomeResult {
+	const terminal = facts.terminal;
+	if (!terminal) return resolveLegacyTurnOutcome(facts, provider, context, options);
+
+	// Keep explicit timeout/refusal/incomplete facts even if stopping the owned
+	// process also set `interrupted`. Neither a signal nor prose can erase them.
+	if (terminal.status !== 'success') {
+		return {
+			outcome: terminal.status === 'cancelled' ? 'interrupted' : 'crashed',
+			terminal,
+			...(terminal.status !== 'cancelled' && facts.explicitError
+				? { error: facts.explicitError }
+				: {}),
+		};
+	}
+
+	// A positively recognized protocol success is a done signal, including ACP
+	// prompt replies on resident transports. Existing lifecycle/error rules win.
+	const result = resolveLegacyTurnOutcome(
+		{ ...facts, resultMessageSeen: true },
+		provider,
+		context,
+		options
+	);
+	if (result.outcome === 'interrupted') {
+		// The legacy interrupted bit identifies no actor; do not invent a user stop.
+		return { ...result, terminal: { ...terminal, status: 'cancelled', origin: 'unknown' } };
+	}
+	if (result.outcome === 'crashed' || (facts.exitCode !== null && facts.exitCode !== 0)) {
+		return {
+			...result,
+			outcome: 'crashed',
+			terminal: {
+				...terminal,
+				status: 'failed',
+				kind: facts.signal
+					? 'process'
+					: facts.stdinError
+						? 'prompt-delivery'
+						: result.error
+							? 'provider'
+							: 'process',
+			},
+		};
+	}
+	return { outcome: 'completed', terminal };
+}
+
+/** Unchanged compatibility rules for providers that do not emit structured facts. */
+function resolveLegacyTurnOutcome(
 	facts: TurnFacts,
 	provider: TurnOutcomeProvider,
 	context: { providerId: string; sessionId: string },

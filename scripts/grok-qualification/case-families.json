@@ -1,0 +1,171 @@
+{
+	"schema": "grok-qualification-case-families/v1",
+	"live": {
+		"authorizationReference": null,
+		"allowedEndpoints": [],
+		"allowedSshTargets": [],
+		"budgetUsd": 0,
+		"maxCalls": 0,
+		"maxTurns": 0,
+		"maxWallClockSeconds": 0
+	},
+	"testEnvironment": {
+		"authorization": {
+			"configurationReference": null,
+			"expiresAt": null,
+			"allowedRoots": [],
+			"isolationReceipt": null,
+			"discoveryAuthorizationReference": null,
+			"allowedDiscoveryOperations": []
+		},
+		"cases": [
+			{
+				"id": "E01",
+				"requirementIds": ["P03", "P13", "P15", "P36"],
+				"ownerTasks": [
+					"grok-provider-profiles",
+					"grok-session-storage",
+					"grok-harness-admission-tests",
+					"grok-harness-discovery-workflows"
+				],
+				"expectedInvariant": "Two synthetic accounts and hosts with colliding native IDs; no credential, config or history leakage.",
+				"blockerIds": ["host-isolation-unqualified", "live-authorization-absent"]
+			},
+			{
+				"id": "E02",
+				"requirementIds": ["P01", "P04", "P09"],
+				"ownerTasks": [
+					"grok-binary-detection",
+					"grok-transport",
+					"grok-harness-offline-verify",
+					"grok-harness-discovery-workflows"
+				],
+				"expectedInvariant": "Unknown version/capability or discovery permission refuses before dispatch; native/ACP framing stays distinct.",
+				"blockerIds": [
+					"binary-unpinned",
+					"version-range-unqualified",
+					"discovery-authorization-absent"
+				]
+			},
+			{
+				"id": "E03",
+				"requirementIds": ["P06", "P07", "P08"],
+				"ownerTasks": [
+					"grok-prompt-delivery",
+					"grok-harness-positive-workflows",
+					"grok-harness-session-workflows"
+				],
+				"expectedInvariant": "Large Unicode, empty and multiline prompts plus fresh/resumed images preserve content and owned artifact cleanup.",
+				"blockerIds": ["binary-unpinned", "live-authorization-absent"]
+			},
+			{
+				"id": "E04",
+				"requirementIds": ["P10", "P12", "P14"],
+				"ownerTasks": [
+					"grok-transport-contract",
+					"grok-harness-positive-workflows",
+					"grok-harness-session-workflows"
+				],
+				"expectedInvariant": "Fresh, resume, restart, cancellation and invalid resume produce one honest terminal outcome and no orphan.",
+				"blockerIds": ["binary-unpinned", "live-limits-unset"]
+			},
+			{
+				"id": "E05",
+				"requirementIds": ["P13", "P14", "P15", "P16"],
+				"ownerTasks": [
+					"grok-session-storage",
+					"grok-harness-positive-workflows",
+					"grok-harness-session-workflows"
+				],
+				"expectedInvariant": "Native reload, fork, export and child attribution preserve exact account/host/session and bounded reads.",
+				"blockerIds": ["host-isolation-unqualified", "binary-unpinned"]
+			},
+			{
+				"id": "E06",
+				"requirementIds": ["P11", "P40"],
+				"ownerTasks": [
+					"grok-event-adapter",
+					"grok-harness-admission-tests",
+					"grok-harness-positive-workflows",
+					"grok-harness-accounting-workflows"
+				],
+				"expectedInvariant": "Unknown/partial/exact costs, cache buckets and child usage settle once; no uncertain reservation refund.",
+				"blockerIds": ["spend-guarantee-absent", "live-limits-unset"]
+			},
+			{
+				"id": "E07",
+				"requirementIds": ["P04", "P05", "P33"],
+				"ownerTasks": [
+					"grok-binary-detection",
+					"grok-model-effort",
+					"grok-harness-positive-workflows",
+					"grok-harness-discovery-workflows"
+				],
+				"expectedInvariant": "Advertised model families/efforts and explicit gateways select acknowledged values; hidden/rejected choices never downgrade.",
+				"blockerIds": ["model-catalog-unqualified", "discovery-authorization-absent"]
+			},
+			{
+				"id": "E08",
+				"requirementIds": ["P18", "P19", "P25", "P26", "P27", "P28"],
+				"ownerTasks": [
+					"grok-harness-positive-workflows",
+					"grok-harness-negative-policy",
+					"grok-harness-resource-workflows"
+				],
+				"expectedInvariant": "Only admitted synthetic skills/rules/MCP/plugins/hooks/children execute with lineage and bounded cleanup.",
+				"blockerIds": [
+					"host-isolation-unqualified",
+					"background-egress-unqualified",
+					"managed-authority-unqualified"
+				]
+			},
+			{
+				"id": "E09",
+				"requirementIds": ["P17", "P20", "P29", "P30", "P31", "P32", "P37", "P38"],
+				"ownerTasks": [
+					"grok-integration-suites",
+					"grok-harness-positive-workflows",
+					"grok-harness-session-workflows",
+					"grok-harness-utility-workflows",
+					"grok-harness-workflow-consumers"
+				],
+				"expectedInvariant": "Real desktop/library/CLI/workflow/web/Lite consumers preserve selection, session, queue, approval and cancellation.",
+				"blockerIds": ["live-authorization-absent", "managed-authority-unqualified"]
+			},
+			{
+				"id": "E10",
+				"requirementIds": ["P33", "P34", "P35", "P36"],
+				"ownerTasks": [
+					"grok-privacy-egress",
+					"grok-harness-negative-policy",
+					"grok-harness-utility-workflows"
+				],
+				"expectedInvariant": "Denied writes/symlinks/shell/network/MCP/meta-tools/hooks/children, stale approval and revocation have zero effects.",
+				"blockerIds": [
+					"managed-authority-unqualified",
+					"platform-native-unqualified",
+					"background-egress-unqualified"
+				]
+			},
+			{
+				"id": "E11",
+				"requirementIds": ["P21", "P22", "P23", "P24"],
+				"ownerTasks": ["grok-harness-cross-provider"],
+				"expectedInvariant": "Grok-Claude-Grok and Grok-Codex-Grok native continuation uses synthetic history, explicit directions and recoverable transactional writes.",
+				"blockerIds": ["cross-provider-authorization-absent", "spend-guarantee-absent"]
+			},
+			{
+				"id": "E12",
+				"requirementIds": ["P15", "P39", "P43"],
+				"ownerTasks": [
+					"grok-launch-plan",
+					"grok-harness-positive-workflows",
+					"grok-harness-negative-policy",
+					"grok-harness-discovery-workflows"
+				],
+				"expectedInvariant": "Each native OS/arch and SSH execution host handles paths, signals, images and remote roots without local fallback.",
+				"blockerIds": ["platform-native-unqualified", "ssh-target-unapproved"]
+			}
+		]
+	}
+}

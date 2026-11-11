@@ -60,7 +60,7 @@ The import creates:
 
 - A subfolder in your Auto Run folder with the playbook name
 - All markdown task documents copied to that folder
-- An `assets/` subfolder with any supporting files (configs, scripts, templates) if the playbook includes them
+- An `assets/` subfolder with any supporting files (configs, scripts, templates) if the playbook includes them. References to `{{AUTORUN_FOLDER}}/assets/` in the documents and prompt are rewritten to point at this subfolder, so each playbook keeps its own assets
 - A saved playbook configuration with loop settings and document order
 
 After import, the playbook is immediately available in your **Load Playbook** dropdown in the Auto Run panel.

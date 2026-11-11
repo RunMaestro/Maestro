@@ -260,6 +260,9 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getGroupChatState: vi.fn().mockResolvedValue(null),
 		stopGroupChat: vi.fn().mockResolvedValue(true),
 		archiveGroupChat: vi.fn().mockResolvedValue(true),
+		addGroupChatParticipant: vi
+			.fn()
+			.mockResolvedValue({ success: true, participantName: 'Isabelle', alreadyMember: false }),
 		sendGroupChatMessage: vi.fn().mockResolvedValue(true),
 		steerGroupChat: vi.fn().mockResolvedValue({
 			outcome: 'delivered',
@@ -2702,6 +2705,43 @@ describe('WebSocketMessageHandler', () => {
 				expect(lastResponse()).toMatchObject({ archived: false, requestId: 'req-6' });
 			});
 			expect(callbacks.archiveGroupChat).toHaveBeenLastCalledWith('chat-1', false);
+		});
+
+		it('adds a participant by agent ID and answers with the result', async () => {
+			handler.handleMessage(client, {
+				type: 'add_group_chat_participant',
+				chatId: 'chat-1',
+				agentId: '8dac9050-cc32-4bfa-a0e3-33bd62d8a503',
+				requestId: 'req-7',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({
+					type: 'add_group_chat_participant_result',
+					success: true,
+					participantName: 'Isabelle',
+					alreadyMember: false,
+					chatId: 'chat-1',
+					requestId: 'req-7',
+				});
+			});
+			expect(callbacks.addGroupChatParticipant).toHaveBeenCalledWith(
+				'chat-1',
+				'8dac9050-cc32-4bfa-a0e3-33bd62d8a503'
+			);
+		});
+
+		it('refuses an add with no agentId, tagged with the requestId', () => {
+			handler.handleMessage(client, {
+				type: 'add_group_chat_participant',
+				chatId: 'chat-1',
+				requestId: 'req-8',
+			});
+
+			expect(lastResponse()).toMatchObject({
+				type: 'error',
+				message: 'Missing agentId',
+				requestId: 'req-8',
+			});
 		});
 	});
 
@@ -5344,6 +5384,20 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.capturedAt).toBeGreaterThanOrEqual(before);
 			expect(response.capturedAt).toBeLessThanOrEqual(Date.now());
 		});
+
+		it('spreads a listing so file, browser and terminal tabs reach the CLI', () => {
+			(callbacks.listDesktopSessions as any).mockReturnValue({
+				sessions: [],
+				tabs: [{ tabId: 'f1', tabType: 'file' }],
+			});
+			handler.setCallbacks(callbacks);
+
+			handler.handleMessage(client, { type: 'list_desktop_sessions', requestId: 'req-1' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.sessions).toEqual([]);
+			expect(response.tabs).toEqual([{ tabId: 'f1', tabType: 'file' }]);
+		});
 	});
 
 	describe('Get Session History (CLI → Desktop)', () => {
@@ -6563,6 +6617,259 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				issueNumber: 42,
 				comment: 'same here',
 			});
+		});
+	});
+});
+
+// Grok through the real web routes. The handler holds no process manager (no local
+// fallback); identity comes from the stored agent, the tab and the socket admission, never the message.
+describe('Grok through the web message routes', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	let callbacks: MessageHandlerCallbacks;
+	const alice = { id: 'u-alice', username: 'alice', displayName: 'Alice' };
+	const replies = (socketClient: WebClient = client) =>
+		vi
+			.mocked(socketClient.socket.send)
+			.mock.calls.map((call) => JSON.parse(call[0] as string) as Record<string, unknown>);
+	const grokDetail = (extra: Record<string, unknown> = {}) => ({
+		id: 'grok-agent',
+		toolType: 'grok',
+		state: 'idle',
+		inputMode: 'ai',
+		agentSessionId: 'grok-native-tab-a',
+		activeTabId: 'tab-a',
+		...extra,
+	});
+
+	beforeEach(() => {
+		handler = new WebSocketMessageHandler();
+		client = createMockClient('grok-socket');
+		callbacks = createMockCallbacks();
+		callbacks.getSessionDetail = vi.fn().mockReturnValue(grokDetail());
+		callbacks.getSessions = vi
+			.fn()
+			.mockReturnValue([
+				{ id: 'grok-agent', name: 'Grok', toolType: 'grok', state: 'idle', inputMode: 'ai' },
+			]);
+		handler.setCallbacks(callbacks);
+	});
+
+	it('creates a Grok agent under the stable id with model, effort, profile env, SSH and background intact', async () => {
+		const sessionSshRemoteConfig = {
+			enabled: true,
+			remoteId: 'remote-1',
+			workingDirOverride: '/srv/app',
+		};
+		handler.handleMessage(client, {
+			type: 'create_session',
+			name: 'Grok',
+			toolType: 'grok',
+			cwd: '/home/user/project',
+			customModel: 'grok-code-fast-1',
+			customEffort: 'high',
+			customEnvVars: { GROK_HOME: '/home/user/.grok-work' },
+			sessionSshRemoteConfig,
+			background: true,
+			requestId: 'req-create',
+		});
+		await vi.waitFor(() => expect(replies()).toHaveLength(1));
+		expect(callbacks.createSession).toHaveBeenCalledTimes(1);
+		expect(callbacks.createSession).toHaveBeenCalledWith(
+			'Grok',
+			'grok',
+			'/home/user/project',
+			undefined,
+			{
+				customModel: 'grok-code-fast-1',
+				customEffort: 'high',
+				customEnvVars: { GROK_HOME: '/home/user/.grok-work' },
+				sessionSshRemoteConfig,
+			},
+			true
+		);
+		expect(replies()[0]).toMatchObject({
+			type: 'create_session_result',
+			success: true,
+			sessionId: 'new-session-1',
+			requestId: 'req-create',
+		});
+	});
+
+	it.each(['grok-cli', 'Grok', 'xai', 'grok-build'])(
+		'refuses the alias spelling %s before the desktop is asked, never substituting a provider',
+		(toolType) => {
+			handler.handleMessage(client, {
+				type: 'create_session',
+				name: 'Grok',
+				toolType,
+				cwd: '/home/user/project',
+			});
+			expect(callbacks.createSession).not.toHaveBeenCalled();
+			const [reply] = replies();
+			expect(reply.type).toBe('error');
+			expect(reply.message).toContain('Invalid toolType');
+			expect(reply.message).toContain('grok');
+		}
+	);
+
+	it('has no local fallback: with no desktop session creator the request is refused, not run here', () => {
+		callbacks.createSession = undefined as never;
+		handler.setCallbacks(callbacks);
+		handler.handleMessage(client, {
+			type: 'create_session',
+			name: 'Grok',
+			toolType: 'grok',
+			cwd: '/home/user/project',
+		});
+		expect(replies()).toEqual([
+			expect.objectContaining({ type: 'error', message: 'Session creation not configured' }),
+		]);
+	});
+
+	it('forwards a Grok config patch verbatim, agent-level and tab-level, with no provider field injected', async () => {
+		const agentPatch = { customModel: 'grok-4', customEffort: null, nudgeMessage: 'be brief' };
+		handler.handleMessage(client, {
+			type: 'update_session_config',
+			sessionId: 'grok-agent',
+			configPatch: agentPatch,
+			requestId: 'req-config',
+		});
+		const tabPatch = { tabId: 'tab-a', customModel: 'grok-code-fast-1', customEffort: 'low' };
+		handler.handleMessage(client, {
+			type: 'update_session_config',
+			sessionId: 'grok-agent',
+			configPatch: tabPatch,
+		});
+		await vi.waitFor(() => expect(replies()).toHaveLength(2));
+		expect(vi.mocked(callbacks.updateSessionConfig!).mock.calls).toEqual([
+			['grok-agent', agentPatch],
+			['grok-agent', tabPatch],
+		]);
+		expect(replies()[0]).toMatchObject({
+			type: 'update_session_config_result',
+			success: true,
+			sessionId: 'grok-agent',
+			requestId: 'req-config',
+		});
+	});
+
+	it('sends to a Grok tab with its images, ignoring identity fields in the message', async () => {
+		const images = ['data:image/png;base64,Z3Jvaw=='];
+		handler.handleMessage({ ...client, user: alice }, {
+			type: 'send_command',
+			sessionId: 'grok-agent',
+			tabId: 'tab-a',
+			command: 'continue the refactor',
+			inputMode: 'ai',
+			images,
+			// None of these is read: identity comes from the socket and the stored agent.
+			toolType: 'claude-code',
+			agentSessionId: 'forged-native-id',
+			customModel: 'forged-model',
+			user: { id: 'u-mallory', username: 'mallory', displayName: 'Mallory' },
+			requestId: 'req-send',
+		} as WebClientMessage);
+		await vi.waitFor(() => expect(replies()).toHaveLength(1));
+
+		const call = vi.mocked(callbacks.executeCommand).mock.calls[0];
+		expect(call).toEqual([
+			'grok-agent',
+			'continue the refactor',
+			'ai',
+			'tab-a',
+			false,
+			images,
+			false,
+			undefined,
+		]);
+		expect(JSON.stringify(call)).not.toContain('forged');
+		expect(JSON.stringify(call)).not.toContain('claude-code');
+		// Resume is by tab id alone: the native id from end stays with the desktop.
+		expect(JSON.stringify(call)).not.toContain('grok-native-tab-a');
+		expect(replies()[0]).toEqual(
+			expect.objectContaining({
+				type: 'command_result',
+				success: true,
+				sessionId: 'grok-agent',
+				tabId: 'tab-a',
+				requestId: 'req-send',
+			})
+		);
+	});
+
+	it('reports a busy Grok tab refusal when a reconnecting socket repeats a send', async () => {
+		const message: WebClientMessage = {
+			type: 'send_command',
+			sessionId: 'grok-agent',
+			tabId: 'tab-a',
+			command: 'go',
+			inputMode: 'ai',
+			requestId: 'req-once',
+		};
+		handler.handleMessage(client, message);
+		await vi.waitFor(() => expect(replies()).toHaveLength(1));
+		// Main forwards to the renderer, which knows which tab owns the running turn.
+		vi.mocked(callbacks.getSessionDetail!).mockReturnValue(grokDetail({ state: 'busy' }));
+		vi.mocked(callbacks.executeCommand!).mockResolvedValueOnce(false);
+		const reconnected = createMockClient('grok-socket-reconnected');
+		handler.handleMessage(reconnected, message);
+
+		await vi.waitFor(() => expect(replies(reconnected)).toHaveLength(1));
+		expect(callbacks.executeCommand).toHaveBeenCalledTimes(2);
+		expect(replies(reconnected)).toEqual([
+			expect.objectContaining({
+				type: 'command_result',
+				success: false,
+				code: 'DISPATCH_REFUSED',
+				error: expect.stringContaining('mid-turn'),
+				sessionId: 'grok-agent',
+			}),
+		]);
+	});
+
+	it('queues to a Grok tab with its images, and reports a refused enqueue', async () => {
+		const images = ['data:image/png;base64,cXVldWU='];
+		handler.handleMessage({ ...client, user: alice }, {
+			type: 'enqueue_command',
+			sessionId: 'grok-agent',
+			tabId: 'tab-b',
+			command: 'after this one',
+			inputMode: 'ai',
+			images,
+			background: true,
+			toolType: 'codex',
+		} as WebClientMessage);
+		await vi.waitFor(() => expect(replies()).toHaveLength(1));
+		const call = vi.mocked(callbacks.enqueueCommand!).mock.calls[0];
+		expect(call).toEqual([
+			'grok-agent',
+			'after this one',
+			'ai',
+			'tab-b',
+			images,
+			true,
+			false,
+			undefined,
+		]);
+		expect(JSON.stringify(call)).not.toContain('codex');
+
+		vi.mocked(callbacks.enqueueCommand!).mockResolvedValueOnce({
+			success: false,
+			error: 'refused',
+		} as never);
+		handler.handleMessage(client, {
+			type: 'enqueue_command',
+			sessionId: 'grok-agent',
+			tabId: 'tab-b',
+			command: 'refused one',
+			inputMode: 'ai',
+		});
+		await vi.waitFor(() => expect(replies()).toHaveLength(2));
+		expect(replies()[1]).toMatchObject({
+			type: 'enqueue_command_result',
+			success: false,
+			error: 'refused',
 		});
 	});
 });

@@ -14,7 +14,7 @@ import { peerAgentRef } from '../agents/lift-pointer';
 import type { AgentRecord, GroupRecord } from '../store/records';
 import { foldLiveTurn, liveTurnKey, type LiveTurn, type LiveTurnContext } from './live-turn';
 import type { PeerConnectErrorCode } from './peer-connection';
-import type { MaestroEvent, TurnEvent } from './types';
+import type { MaestroEvent, QueuedTurn, TurnEvent } from './types';
 
 /** How the desktop's connection to a peer stands. The failure codes are `PeerConnectErrorCode`. */
 export type PeerMirrorConnection =
@@ -39,6 +39,11 @@ export interface MirroredPeer {
 	groups: GroupRecord[];
 	/** By `liveTurnKey(agentId, tabId)`. */
 	liveTurns: Record<string, LiveTurn>;
+	/**
+	 * The messages waiting in the host's execution queue, by agent id, in order. An agent with
+	 * nothing waiting has no entry. Kept through a disconnect, like the agents.
+	 */
+	queues: Record<string, QueuedTurn[]>;
 	/** Tabs whose transcript must be read again on next open, by `liveTurnKey(agentId, tabId)`. */
 	staleTabs: Record<string, true>;
 	/** When the agent list was last replaced whole, epoch ms. */
@@ -67,6 +72,8 @@ export type MirrorEvent =
 	| { type: 'agent.removed'; agentId: string }
 	/** A turn event as received. Fold it with `foldLiveTurn()`. */
 	| { type: 'turn'; agentId: string; tabId: string; event: TurnEvent }
+	/** What waits in the agent's host queue now, in order. Replaces what was held. */
+	| { type: 'agent.queue'; agentId: string; items: QueuedTurn[] }
 	/** Read this tab's transcript again on next open (now, when it is open). */
 	| { type: 'tab.stale'; agentId: string; tabId: string }
 	/** Every tab is stale: the connection could not resume, or the desktop woke up. */
@@ -107,6 +114,7 @@ export function createMirroredPeer(input: {
 		agents: [],
 		groups: [],
 		liveTurns: {},
+		queues: {},
 		staleTabs: {},
 	};
 }
@@ -192,6 +200,35 @@ function pruneByTabs<T>(record: Record<string, T>, keys: Set<string>): Record<st
 	return out;
 }
 
+/** Keep only the queues of agents the peer still has. */
+function pruneQueues(
+	queues: Record<string, QueuedTurn[]>,
+	agents: readonly AgentRecord[]
+): Record<string, QueuedTurn[]> {
+	const ids = new Set(agents.map((agent) => agent.id));
+	const out: Record<string, QueuedTurn[]> = {};
+	for (const [agentId, items] of Object.entries(queues)) if (ids.has(agentId)) out[agentId] = items;
+	return out;
+}
+
+/**
+ * Replace what waits in one agent's host queue (a `queue.changed`, or a read of the queue after a
+ * reconnect or a wake). An agent the peer does not have is ignored; an empty list drops the entry.
+ */
+export function setAgentQueue(
+	peer: MirroredPeer,
+	agentId: string,
+	items: QueuedTurn[]
+): MirrorStep {
+	if (!peer.agents.some((agent) => agent.id === agentId)) return { peer, push: [] };
+	const had = peer.queues[agentId];
+	if (!had?.length && !items.length) return { peer, push: [] };
+	const queues = { ...peer.queues };
+	if (items.length) queues[agentId] = items;
+	else delete queues[agentId];
+	return { peer: { ...peer, queues }, push: [{ type: 'agent.queue', agentId, items }] };
+}
+
 /** Mark every tab stale (a connection that did not resume, a wake). */
 export function markAllTabsStale(peer: MirroredPeer): MirrorStep {
 	const staleTabs: Record<string, true> = {};
@@ -221,6 +258,7 @@ export function replacePeerAgents(
 		agents,
 		groups,
 		liveTurns: pruneByTabs(peer.liveTurns, keys),
+		queues: pruneQueues(peer.queues, agents),
 		staleTabs: pruneByTabs(peer.staleTabs, keys),
 		lastSyncAt: now,
 	};
@@ -273,10 +311,13 @@ function removeAgent(peer: MirroredPeer, agentId: string): MirrorStep {
 		}
 		return out;
 	};
+	const queues = { ...peer.queues };
+	delete queues[agentId];
 	const next: MirroredPeer = {
 		...peer,
 		agents: peer.agents.filter((agent) => agent.id !== agentId),
 		liveTurns: keep(peer.liveTurns),
+		queues,
 		staleTabs: keep(peer.staleTabs),
 	};
 	return {
@@ -314,7 +355,7 @@ function applyTurn(
 /**
  * Apply one event from the peer's client. Tab, settings, Auto Run, and group chat events change
  * nothing: every tab change is followed by an `agent.updated`, and Auto Run and group chat
- * mirroring are out of scope.
+ * mirroring are out of scope. A `queue.changed` replaces the agent's queue.
  */
 export function applyPeerEvent(
 	peer: MirroredPeer,
@@ -344,6 +385,8 @@ export function applyPeerEvent(
 			return { peer: { ...peer, groups: event.groups }, push: [] };
 		case 'turn':
 			return applyTurn(peer, event.agentId, event.tabId, event.event, ctx);
+		case 'queue.changed':
+			return setAgentQueue(peer, event.agentId, event.items);
 		default:
 			return { peer, push: [] };
 	}

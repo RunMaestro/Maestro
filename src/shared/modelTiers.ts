@@ -63,11 +63,13 @@ export function asTierLevel(value: unknown): ModelTier | undefined {
  * install supports; it cannot be allowed to silently change what `high` means
  * for a playbook someone else wrote.
  *
- * The one runtime input is a REFUSAL. A static table goes stale the day a
+ * A runtime input is a REFUSAL. A static table goes stale the day a
  * provider retires a rung, and the provider then fails the turn outright rather
  * than clamping. A value the provider has refused in this process resolves to
  * `undefined` from then on (see `effortRejection.ts`): never a different value,
  * only "inherit the agent's own", and always reported.
+ * Grok additionally requires the selected model's advertised wire values:
+ * its vocabulary is not a promise that a model accepts every rung.
  */
 const EFFORT_LADDERS: Partial<Record<ToolType, Record<EffortLevel, string>>> = {
 	// Ladder: low, medium, high, xhigh, max
@@ -84,6 +86,11 @@ const EFFORT_LADDERS: Partial<Record<ToolType, Record<EffortLevel, string>>> = {
 	// Ladder: low, medium, high, xhigh. Even-length, so "middle" is a judgment
 	// call: medium takes the lower of the two central rungs, matching the name.
 	'copilot-cli': { low: 'low', medium: 'medium', high: 'xhigh' },
+	// Non-none vocabulary: minimal, low, medium, high, xhigh, max. Keep the
+	// lower middle rung, as above. These are candidates, not a universal menu:
+	// even minimal is absent from some native menus. Never clamp to a different
+	// rung or automatically request none; resolveEffortLevel requires evidence.
+	grok: { low: 'minimal', medium: 'medium', high: 'max' },
 };
 
 /**
@@ -101,6 +108,7 @@ const EFFORT_LADDERS: Partial<Record<ToolType, Record<EffortLevel, string>>> = {
  *
  * Absent on purpose: `codex` and `copilot-cli` discover their catalogues at
  * runtime (`models_cache.json`, models.dev) and their IDs churn per release;
+ * `grok` has no stable three-tier catalog; its configured model stays in charge.
  * `opencode` runs whatever the user configured, which may be a local Ollama
  * model with no knowable tier. Guessing for those would produce a table that
  * silently rots into naming models the user cannot run. They resolve to the
@@ -129,9 +137,22 @@ export function resolveTierModel(toolType: ToolType, tier: ModelTier): string | 
  * The provider's effort string for a level, or `undefined` when the provider
  * has no effort knob (OpenCode) or is not mapped. Same contract as
  * {@link resolveTierModel}: `undefined` is inherit-and-say-so.
+ *
+ * For Grok, `supportedEfforts` must contain the advertised wire values for the
+ * currently selected model/account/host/version, not stale or fallback options
+ * or menu aliases. Missing evidence or a missing exact rung means inherit; a
+ * larger menu must not change the meaning of an existing playbook hint. The
+ * transport must still acknowledge the effective model/effort before dispatch.
  */
-export function resolveEffortLevel(toolType: ToolType, level: EffortLevel): string | undefined {
-	return rejectedEffortForLevel(toolType, level) ? undefined : EFFORT_LADDERS[toolType]?.[level];
+export function resolveEffortLevel(
+	toolType: ToolType,
+	level: EffortLevel,
+	supportedEfforts?: readonly string[]
+): string | undefined {
+	const value = EFFORT_LADDERS[toolType]?.[level];
+	if (value === undefined || rejectedEffortForLevel(toolType, level)) return undefined;
+	if (toolType === 'grok' && !supportedEfforts?.includes(value)) return undefined;
+	return value;
 }
 
 /**
@@ -190,14 +211,21 @@ export function supportsEffortSelection(toolType: ToolType): boolean {
  * turn. If a future caller ever DOES adopt that id, this pin has to be revisited
  * first, or the tab silently continues on the cheap model. A RESUMED synopsis is
  * not a leaf on every provider: see {@link cheapResumeTurnSettings}.
+ *
+ * Grok's floor still requires the selected model's advertised wire values (see
+ * resolveEffortLevel). Missing evidence or a missing floor leaves effort unset
+ * for the caller to inherit; another advertised rung is never substituted.
  */
-export function cheapTurnSettings(toolType: ToolType): {
+export function cheapTurnSettings(
+	toolType: ToolType,
+	supportedEfforts?: readonly string[]
+): {
 	model: string | undefined;
 	effort: string | undefined;
 } {
 	return {
 		model: resolveTierModel(toolType, 'low'),
-		effort: resolveEffortLevel(toolType, 'low'),
+		effort: resolveEffortLevel(toolType, 'low', supportedEfforts),
 	};
 }
 
@@ -231,15 +259,18 @@ const RESUME_SHARES_THREAD: ReadonlySet<ToolType> = new Set<ToolType>(['codex'])
  * `current` is what the summarized turn ran at. It is also what the turn
  * inherits on a provider with no tier mapping (codex, opencode), where there
  * is nothing to downgrade TO.
+ * Grok keeps that model; any supplied effort evidence must belong to it and
+ * its current account/host/version, never another session's menu.
  */
 export function cheapResumeTurnSettings(
 	toolType: ToolType,
-	current: { model?: string; effort?: string } = {}
+	current: { model?: string; effort?: string } = {},
+	supportedEfforts?: readonly string[]
 ): {
 	model: string | undefined;
 	effort: string | undefined;
 } {
-	const cheap = cheapTurnSettings(toolType);
+	const cheap = cheapTurnSettings(toolType, supportedEfforts);
 	if (RESUME_SHARES_THREAD.has(toolType)) {
 		return { model: current.model, effort: cheap.effort ?? current.effort };
 	}

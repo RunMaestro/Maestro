@@ -277,6 +277,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				return new Promise((resolve) => {
 					let agentSessionId: string | undefined;
 					let responseText = '';
+					let taskAgentError: string | undefined;
 					let taskUsageStats: UsageStats | undefined;
 					let lastUsageEvent: UsageStats | undefined; // Last (non-accumulated) event for context estimation
 					const queryStartTime = Date.now(); // Track start time for stats
@@ -304,8 +305,22 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					// without notice. Arming tells the error listener to step aside for a
 					// refusal of it, and the exit handler below runs the task once more at
 					// the agent's own effort instead of parking the whole Auto Run.
-					if (options?.effortOverride) {
+					// Grok has no hint provenance or validated distinct fallback here.
+					// Leave its normal error path active, even for a familiar ladder value.
+					if (session.toolType !== 'grok' && options?.effortOverride) {
 						armEffortFallback(targetSessionId);
+					}
+
+					if (session.toolType === 'grok') {
+						// Keep the first provider failure in the task result as well as the
+						// global error listener, including refusals emitted only on stderr.
+						cleanupFns.push(
+							window.maestro.process.onAgentError((sid, error) => {
+								if (sid === targetSessionId && error?.message) {
+									taskAgentError ??= error.message;
+								}
+							})
+						);
 					}
 
 					const resolveOnce = (result: AgentSpawnResult) => {
@@ -398,7 +413,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										);
 									});
 
-								const didExitCleanly = code === 0;
+								const didExitCleanly = code === 0 && !taskAgentError;
 								const exitErrorKind = didExitCleanly
 									? undefined
 									: code == null
@@ -406,9 +421,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										: ('process-exit' as const);
 								const exitError = didExitCleanly
 									? undefined
-									: code == null
-										? 'Agent task exited without a status code'
-										: `Agent task exited with code ${code}`;
+									: (taskAgentError ??
+										(code == null
+											? 'Agent task exited without a status code'
+											: `Agent task exited with code ${code}`));
 
 								// Estimate context usage from the last single-turn event (not accumulated totals)
 								const taskContextUsage = lastUsageEvent
@@ -834,7 +850,9 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					// the provider refuses it, the exit handler below runs the synopsis
 					// once more; by then the refusal is noted and `cheapTurnSettings`
 					// no longer hands the value out, so the retry inherits the tab's.
-					if (cheapEffort !== undefined) {
+					// Grok's inherited session/provider effort is not a validated
+					// different fallback, even when the first value was automatic.
+					if (toolType !== 'grok' && cheapEffort !== undefined) {
 						armEffortFallback(targetSessionId);
 					}
 

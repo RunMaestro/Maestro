@@ -17,8 +17,10 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useContextTimelineStore } from '../../../renderer/stores/contextTimelineStore';
 import { WindowProvider } from '../../../renderer/contexts/WindowContext';
 import type { WindowState } from '../../../shared/window-types';
-import { createMockAITab, createMockSession } from '../../helpers';
+import type { AgentDiscoveryResult } from '../../../shared/types';
+import { createMockAITab, createMockFileTab, createMockSession } from '../../helpers';
 import { getBusyTabs } from '../../../renderer/utils/tabHelpers';
+import { createGroupFromTabRefs } from '../../../renderer/utils/panelLayout';
 import {
 	clearCapabilitiesCache,
 	setCapabilitiesCache,
@@ -233,6 +235,7 @@ vi.mock('../../../renderer/components/ErrorBoundary', () => ({
 }));
 
 vi.mock('../../../renderer/components/InlineWizard', () => ({
+	DocumentGenerationView: () => null,
 	WizardConversationView: (props: {
 		conversationHistory: Array<{ id: string; role: string; content: string }>;
 		isLoading?: boolean;
@@ -4104,6 +4107,148 @@ describe('MainPanel', () => {
 				const models = JSON.parse(inputArea.getAttribute('data-available-models') || '[]');
 				expect(models).toEqual(claudeModels);
 			});
+		});
+	});
+
+	describe('Grok selected-context discovery', () => {
+		beforeEach(() => {
+			vi.useFakeTimers({ shouldAdvanceTime: false });
+			vi.mocked(window.maestro.agents.getModels).mockReset().mockResolvedValue([]);
+			vi.mocked(window.maestro.agents.getConfigOptions).mockReset().mockResolvedValue([]);
+			vi.mocked(window.maestro.agents.getConfig).mockReset().mockResolvedValue({});
+		});
+		afterEach(() => {
+			vi.mocked(window.maestro.agents.getModels).mockReset().mockResolvedValue([]);
+			vi.mocked(window.maestro.agents.getConfigOptions).mockReset().mockResolvedValue([]);
+			vi.mocked(window.maestro.agents.getConfig).mockReset().mockResolvedValue({});
+		});
+
+		it('debounces account changes and never reprobes the prior account on a rapid provider round trip', async () => {
+			const accountA = createSession({
+				toolType: 'grok',
+				customEnvVars: { GROK_HOME: '/accounts/a' },
+				customModel: 'agent-model',
+				customEffort: 'low',
+				aiTabs: [createMockAITab({ customModel: 'tab-model', customEffort: 'high' })],
+			});
+			const accountB = { ...accountA, customEnvVars: { GROK_HOME: '/accounts/b' } };
+			let resolveModels!: (result: AgentDiscoveryResult) => void;
+			const pendingModels = new Promise<AgentDiscoveryResult>((resolve) => {
+				resolveModels = resolve;
+			});
+			vi.mocked(window.maestro.agents.getModels).mockImplementation(((request: unknown) => {
+				if (typeof request === 'string') return Promise.resolve(['sonnet']);
+				return request &&
+					(request as { context: { customEnvVars?: { GROK_HOME?: string } } }).context.customEnvVars
+						?.GROK_HOME === '/accounts/b'
+					? pendingModels
+					: Promise.resolve({ status: 'discovered', options: ['account-a-model'] });
+			}) as typeof window.maestro.agents.getModels);
+			vi.mocked(window.maestro.agents.getConfigOptions).mockImplementation(((request: unknown) =>
+				Promise.resolve(
+					typeof request === 'string' ? ['high'] : { status: 'discovered', options: ['high'] }
+				)) as typeof window.maestro.agents.getConfigOptions);
+			const { rerender } = renderMainPanel({ activeSession: accountA });
+			await act(async () => {});
+			expect(screen.getByTestId('input-area')).toHaveAttribute(
+				'data-available-models',
+				'["account-a-model"]'
+			);
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+				providerId: 'grok',
+				context: expect.objectContaining({
+					customEnvVars: accountA.customEnvVars,
+					model: 'tab-model',
+					effort: 'high',
+				}),
+			});
+			await act(async () => {
+				rerender({ activeSession: accountB });
+			});
+			expect(screen.getByTestId('input-area')).toHaveAttribute('data-available-models', '[]');
+			expect(
+				screen.getByRole('button', { name: /Checking available options/ })
+			).toBeInTheDocument();
+			await act(() => vi.advanceTimersByTimeAsync(299));
+			expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(1);
+			await act(() => vi.advanceTimersByTimeAsync(1));
+			expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(2);
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+				providerId: 'grok',
+				context: expect.objectContaining({ customEnvVars: accountB.customEnvVars }),
+			});
+			await act(async () => {
+				rerender({ activeSession: createSession() });
+			});
+			expect(screen.getByTestId('input-area')).toHaveAttribute(
+				'data-available-models',
+				'["sonnet"]'
+			);
+			await act(async () => {
+				rerender({ activeSession: accountA });
+			});
+			expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(3);
+			expect(screen.getByTestId('input-area')).toHaveAttribute('data-available-models', '[]');
+			await act(async () => {
+				resolveModels({ status: 'discovered', options: ['late-account-b-model'] });
+			});
+			expect(screen.getByTestId('input-area')).toHaveAttribute('data-available-models', '[]');
+			await act(() => vi.advanceTimersByTimeAsync(300));
+			expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(4);
+			expect(screen.getByTestId('input-area')).toHaveAttribute(
+				'data-available-models',
+				'["account-a-model"]'
+			);
+		});
+
+		it.each([
+			'missing cwd',
+			'missing tab',
+			'file pane',
+			'AI pane',
+			'stale tab id',
+			'mobile',
+			'generating',
+		])('respects %s composer ownership and visibility', async (scenario) => {
+			const session = createSession({ toolType: 'grok' });
+			if (scenario === 'missing cwd') session.cwd = ' ';
+			if (scenario === 'missing tab') session.aiTabs = [];
+			if (scenario === 'stale tab id') session.activeTabId = 'removed-tab';
+			if (scenario === 'generating')
+				session.aiTabs = [createMockAITab({ wizardState: { isGeneratingDocs: true } as never })];
+			if (scenario.endsWith('pane')) {
+				session.aiTabs.push(createMockAITab({ id: 'tab-2', customModel: 'tile-model' }));
+				session.filePreviewTabs = [createMockFileTab({ id: 'file-1' })];
+				const group = createGroupFromTabRefs(
+					[
+						scenario === 'AI pane' ? { type: 'ai', id: 'tab-2' } : { type: 'file', id: 'file-1' },
+						{ type: 'ai', id: 'tab-1' },
+					],
+					'Tiles'
+				);
+				session.activeGroupId = group.id;
+				session.tabGroups = [group];
+				session.unifiedTabOrder = [{ type: 'group', id: group.id }];
+				if (scenario === 'AI pane') session.activeTabId = 'tab-2';
+			}
+			vi.mocked(window.maestro.agents.getModels).mockResolvedValue({
+				status: 'unavailable',
+				options: [],
+			} as never);
+			vi.mocked(window.maestro.agents.getConfigOptions).mockResolvedValue({
+				status: 'unavailable',
+				options: [],
+			} as never);
+			renderMainPanel({ activeSession: session, isMobileLandscape: scenario === 'mobile' });
+			await act(async () => {});
+			const hasContext = !['missing cwd', 'missing tab', 'file pane'].includes(scenario);
+			expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(hasContext ? 1 : 0);
+			expect(window.maestro.agents.getConfigOptions).toHaveBeenCalledTimes(hasContext ? 2 : 0);
+			const control = screen.queryByRole('button', { name: /Edit model and effort/ });
+			if (['missing tab', 'file pane', 'mobile', 'generating'].includes(scenario))
+				expect(control).not.toBeInTheDocument();
+			else expect(control).toHaveTextContent('discovery is unavailable');
+			if (scenario === 'AI pane') expect(control).toHaveTextContent('Model: tile-model');
 		});
 	});
 

@@ -12,7 +12,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'child_process';
 
-import { stopProcess } from '../../../../shared/maestro-lib/control/termination';
+import { stopProcess, trackProcessTree } from '../../../../shared/maestro-lib/control/termination';
 
 const GRACE_MS = 200;
 const posixOnly = describe.skipIf(process.platform === 'win32');
@@ -154,6 +154,36 @@ posixOnly('stopProcess against real processes', () => {
 		// With the tool gone nothing holds the pipe, so the turn can settle.
 		await agent.close;
 	});
+
+	it.each(['terminate', 'interrupt'] as const)(
+		'stops a recorded tool after its parent exits with inherited pipes still open (%s)',
+		async (from) => {
+			const agent = startAgent(`process.stdin.once('data', () => process.exit(0)); ${START_TOOL}`);
+			const toolPid = Number(await agent.ready);
+			strayPids.push(toolPid);
+			// Record an owned tool before releasing the parent; no polling race.
+			const finishTracking = trackProcessTree(agent.child);
+			let closed = false;
+			void agent.close.then(() => (closed = true));
+			try {
+				expect(finishTracking).toBeTypeOf('function');
+				agent.child.stdin!.write('exit');
+				expect(await agent.exit).toEqual({ code: 0, signal: null });
+				expect(isAlive(toolPid)).toBe(true);
+				expect(closed).toBe(false);
+
+				// The parent cannot receive another signal, but its recorded tool can.
+				const handle = stopProcess({ child: agent.child }, { from, graceMs: GRACE_MS });
+				expect(handle.stage()).toBeUndefined();
+				expect(await waitUntilGone(toolPid, 2000)).toBe(true);
+				strayPids.splice(strayPids.indexOf(toolPid), 1);
+				await agent.close;
+			} finally {
+				stopProcess({ child: agent.child }, { from: 'terminate', graceMs: 0, immediate: true });
+				await finishTracking?.();
+			}
+		}
+	);
 
 	it('stops the tool along with an agent that had to be killed', async () => {
 		const agent = startAgent(

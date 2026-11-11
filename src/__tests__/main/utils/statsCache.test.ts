@@ -27,7 +27,16 @@ import {
 	accumulateUpgradeBaseline,
 	finishDerivationUpgrade,
 	type DerivationUpgradeBaseline,
+	GLOBAL_STATS_CACHE_VERSION,
+	loadGlobalStatsCache,
+	saveGlobalStatsCache,
+	qualifiedGlobalStatsSessionKey,
+	summarizeCachedSessionCost,
+	mergeStatsCostCoverage,
+	type CachedSessionStats,
+	type GlobalStatsCache,
 } from '../../../main/utils/statsCache';
+import { atomicWriteFile } from '../../../main/utils/atomic-json-store';
 
 // Mock electron app module
 vi.mock('electron', () => ({
@@ -47,6 +56,11 @@ vi.mock('fs/promises', () => ({
 		stat: vi.fn(),
 		realpath: vi.fn(),
 	},
+}));
+
+// The global cache is saved through the atomic temp-file + rename writer.
+vi.mock('../../../main/utils/atomic-json-store', () => ({
+	atomicWriteFile: vi.fn(),
 }));
 
 describe('SessionStatsCache', () => {
@@ -767,5 +781,136 @@ describe('resumable derivation upgrades', () => {
 		const entries: Record<string, Entry> = { gone: { costUsd: 12, tokens: 40, archived: true } };
 		finishDerivationUpgrade(entries, 5, 6, {}, ['costUsd', 'tokens']);
 		expect(entries.gone).toEqual({ costUsd: 12, tokens: 40, archived: true, derivedVersion: 6 });
+	});
+});
+
+// The global cache contract Grok history is stored under. Isolated
+// fixtures only: identities are synthetic and fs is the suite's mock.
+describe('Grok global stats cache contract', () => {
+	const USD = 10_000_000_000; // costUsdTicks per dollar
+	const grokEntry = (overrides: Partial<CachedSessionStats> = {}): CachedSessionStats => ({
+		messages: 2,
+		inputTokens: 10,
+		outputTokens: 1,
+		cacheReadTokens: 0,
+		cacheCreationTokens: 0,
+		cachedInputTokens: 0,
+		sizeBytes: 100,
+		cost: { status: 'unknown' },
+		usageSource: 'runtime-stream',
+		fileMtimeMs: 1,
+		archived: false,
+		...overrides,
+	});
+
+	it('keys the same native ID in two accounts or roots apart, and one identity stably', () => {
+		const a = { accountScope: '/home/.grok/sessions', projectPath: '/work', nativeSessionId: 'S1' };
+		const b = { ...a, accountScope: '/home/.grok-work/sessions' };
+		const c = { ...a, projectPath: '/other' };
+		const keys = new Set([a, b, c].map(qualifiedGlobalStatsSessionKey));
+		expect(keys.size).toBe(3);
+		expect(qualifiedGlobalStatsSessionKey({ ...a })).toBe(qualifiedGlobalStatsSessionKey(a));
+		// A separator inside one part cannot make two identities share a key.
+		expect(
+			qualifiedGlobalStatsSessionKey({
+				accountScope: 'x/y',
+				projectPath: 'z',
+				nativeSessionId: 'S',
+			})
+		).not.toBe(
+			qualifiedGlobalStatsSessionKey({
+				accountScope: 'x',
+				projectPath: 'y/z',
+				nativeSessionId: 'S',
+			})
+		);
+	});
+
+	it('sums exact ticks exactly, archived sessions included, as complete coverage', () => {
+		const summary = summarizeCachedSessionCost({
+			live: grokEntry({ cost: { status: 'exact', costUsdTicks: '9007199254740993' } }),
+			gone: grokEntry({ cost: { status: 'exact', costUsdTicks: String(USD) }, archived: true }),
+		});
+		expect(summary).toMatchObject({ coverage: 'complete', costUsdTicks: '9007209254740993' });
+	});
+
+	it('distinguishes an unknown cost from an explicit zero and from a partial floor', () => {
+		const unknown = summarizeCachedSessionCost({ a: grokEntry(), b: grokEntry() });
+		expect(unknown).toMatchObject({ coverage: 'unknown', costUsd: 0 });
+		expect(unknown?.costUsdTicks).toBeUndefined();
+
+		const zero = summarizeCachedSessionCost({
+			a: grokEntry({ cost: { status: 'exact', costUsdTicks: '0' } }),
+		});
+		expect(zero).toMatchObject({ coverage: 'complete', costUsd: 0, costUsdTicks: '0' });
+
+		const floor = summarizeCachedSessionCost({
+			a: grokEntry({ cost: { status: 'partial', costUsdTicks: String(2 * USD) } }),
+			b: grokEntry(),
+		});
+		expect(floor).toMatchObject({ coverage: 'partial', costUsdTicks: String(2 * USD) });
+		expect(floor?.costUsd).toBeCloseTo(2, 10);
+	});
+
+	it('leaves legacy entries without their own cost to the legacy rule', () => {
+		const { cost: _cost, ...legacy } = grokEntry({ costUsd: 5 });
+		expect(summarizeCachedSessionCost({ claude: legacy })).toBeNull();
+		expect(
+			summarizeCachedSessionCost({
+				claude: legacy,
+				grok: grokEntry({ cost: { status: 'exact', costUsdTicks: String(USD) } }),
+			})
+		).toMatchObject({ coverage: 'complete', costUsdTicks: String(USD) });
+	});
+
+	it('merges provider coverage so a missing cost never reads complete', () => {
+		expect(mergeStatsCostCoverage([undefined, undefined])).toBeUndefined();
+		expect(mergeStatsCostCoverage(['complete', undefined, 'complete'])).toBe('complete');
+		expect(mergeStatsCostCoverage(['unknown', 'unknown'])).toBe('unknown');
+		expect(mergeStatsCostCoverage(['complete', 'unknown'])).toBe('partial');
+		expect(mergeStatsCostCoverage(['partial', 'complete'])).toBe('partial');
+	});
+
+	it('round-trips Grok entries (identity, exact tick strings, archive flag) through save and reload', async () => {
+		const identity = {
+			accountScope: '/home/.grok-work/sessions',
+			projectPath: '/work',
+			nativeSessionId: 'S1',
+		};
+		const cache: GlobalStatsCache = {
+			version: GLOBAL_STATS_CACHE_VERSION,
+			lastUpdated: 1,
+			providers: {
+				grok: {
+					sessions: {
+						[qualifiedGlobalStatsSessionKey(identity)]: grokEntry({
+							identity,
+							cost: { status: 'partial', costUsdTicks: '9007199254740993' },
+							usageCompleteness: 'partial',
+							archived: true,
+						}),
+					},
+				},
+			},
+		};
+		vi.mocked(fs.mkdir).mockResolvedValueOnce(undefined);
+		vi.mocked(atomicWriteFile).mockResolvedValueOnce(undefined);
+		await saveGlobalStatsCache(cache);
+		const written = vi.mocked(atomicWriteFile).mock.calls.at(-1)!;
+		expect(written[0]).toBe(path.join('/mock/user/data', 'stats-cache', 'global-stats.json'));
+
+		vi.mocked(fs.readFile).mockResolvedValueOnce(written[1] as string);
+		const reloaded = await loadGlobalStatsCache();
+		expect(reloaded).toEqual(cache);
+		expect(summarizeCachedSessionCost(reloaded!.providers.grok.sessions)?.costUsdTicks).toBe(
+			'9007199254740993'
+		);
+	});
+
+	it('starts cold instead of reading a cache from a newer writer', async () => {
+		vi.mocked(fs.readFile).mockResolvedValueOnce(
+			JSON.stringify({ version: GLOBAL_STATS_CACHE_VERSION + 1, lastUpdated: 0, providers: {} })
+		);
+		expect(await loadGlobalStatsCache()).toBeNull();
 	});
 });

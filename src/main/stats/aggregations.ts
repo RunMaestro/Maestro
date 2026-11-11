@@ -422,8 +422,11 @@ function queryBySessionTokens(
 	startTime: number
 ): Record<string, SessionTokenTotals> {
 	const perfStart = perfMetrics.start();
-	// COALESCE inside the SUMs so a mix of NULL and real rows totals the real
-	// ones instead of returning NULL for the whole group. `priced_queries`
+	// COALESCE inside the token SUMs so a mix of NULL and real rows totals the
+	// real ones instead of returning NULL for the whole group. Cost is the
+	// exception: SQL SUM already skips NULLs, and when NO row in the group
+	// carried a figure (a Grok turn whose charge is unknown) the total stays
+	// NULL, so the dashboard shows "unknown" instead of summing it as $0. `priced_queries`
 	// counts rows that reported ANY usage, which is how the dashboard can say
 	// "cost covers 40 of 900 queries" rather than implying the total is
 	// complete - every row written before migration v8 reports nothing.
@@ -435,7 +438,7 @@ function queryBySessionTokens(
              SUM(COALESCE(output_tokens, 0)) as output_tokens,
              SUM(COALESCE(cache_read_tokens, 0)) as cache_read_tokens,
              SUM(COALESCE(cache_creation_tokens, 0)) as cache_creation_tokens,
-             SUM(COALESCE(cost_usd, 0)) as cost_usd,
+             SUM(cost_usd) as cost_usd,
              SUM(
                CASE WHEN input_tokens IS NOT NULL
                       OR output_tokens IS NOT NULL
@@ -455,7 +458,7 @@ function queryBySessionTokens(
 		output_tokens: number;
 		cache_read_tokens: number;
 		cache_creation_tokens: number;
-		cost_usd: number;
+		cost_usd: number | null;
 		priced_queries: number;
 	}>;
 

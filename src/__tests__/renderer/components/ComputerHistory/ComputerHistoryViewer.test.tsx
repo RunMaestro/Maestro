@@ -119,6 +119,37 @@ describe('ComputerHistoryViewer', () => {
 		expect(onClose).toHaveBeenCalled();
 	});
 
+	it('the Digests tab renders the summary as prose and searches through main', async () => {
+		api.digests.mockImplementation(
+			async () =>
+				[
+					{
+						kind: '15m',
+						file: 'digests/2026-11-11/0245Z.md',
+						startMs: Date.now() - 900_000,
+						endMs: Date.now(),
+						body: '# 15-minute digest a - b\n\nSegment: `s.jsonl` (9 events). Written by local model `Qwen`.\n\n- Set up Gmail forwarding',
+					},
+				] as never[]
+		);
+		renderViewer();
+		fireEvent.click(await screen.findByText('Digests'));
+		const digests = await screen.findByTestId('computer-history-digests');
+		// The bullet renders inside `.prose`, where the scoped prose styles apply.
+		expect(digests.querySelector('.prose li')?.textContent).toContain('Set up Gmail forwarding');
+		// The file header is not repeated as body text; provenance is a caption.
+		expect(within(digests).queryByText(/15-minute digest a - b/)).toBeNull();
+		expect(within(digests).getByText(/Written by local model Qwen/)).toBeTruthy();
+
+		fireEvent.change(screen.getByPlaceholderText('Search digests'), {
+			target: { value: 'gmail' },
+		});
+		await waitFor(() =>
+			expect(api.digests).toHaveBeenLastCalledWith(expect.objectContaining({ grep: 'gmail' }))
+		);
+		expect(await screen.findByTestId('computer-history-digests-match-count')).toBeTruthy();
+	});
+
 	it('gives the body the theme text color so opacity-dimmed descriptions stay readable', async () => {
 		renderViewer();
 		const body = await screen.findByTestId('computer-history-body');

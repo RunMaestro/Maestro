@@ -1,6 +1,6 @@
 /**
- * Tests for usePeerMirrorBridge: the window side of the Federation peer mirror. Covers the zero
- * footprint while the Encore Feature is off, subscribe-before-snapshot with replay, the reset
+ * Tests for usePeerMirrorBridge: the window side of the Federation peer mirror. Covers doing
+ * nothing where there is no federation API (the browser build), subscribe-before-snapshot with replay, the reset
  * push, the group chat exclusivity, and that nothing it receives reaches `sessionStore`.
  */
 
@@ -79,8 +79,6 @@ function fakeApi() {
 }
 
 const maestro = window.maestro as unknown as Record<string, unknown>;
-const setFederation = (on: boolean) =>
-	useSettingsStore.setState((s) => ({ encoreFeatures: { ...s.encoreFeatures, federation: on } }));
 const flush = () => act(async () => undefined);
 
 describe('usePeerMirrorBridge', () => {
@@ -96,8 +94,8 @@ describe('usePeerMirrorBridge', () => {
 		delete maestro.federation;
 	});
 
-	it('does nothing at all while the Federation Encore Feature is off', () => {
-		setFederation(false);
+	it('does nothing at all where there is no federation API (the browser build)', () => {
+		delete maestro.federation;
 		renderHook(() => usePeerMirrorBridge());
 		expect(fake.api.onEvent).not.toHaveBeenCalled();
 		expect(fake.api.onReset).not.toHaveBeenCalled();
@@ -106,7 +104,6 @@ describe('usePeerMirrorBridge', () => {
 	});
 
 	it('subscribes before it loads the snapshot, then replays the pushes that came in between', async () => {
-		setFederation(true);
 		renderHook(() => usePeerMirrorBridge());
 		expect(fake.api.onEvent.mock.invocationCallOrder[0]).toBeLessThan(
 			fake.api.snapshot.mock.invocationCallOrder[0]
@@ -127,7 +124,6 @@ describe('usePeerMirrorBridge', () => {
 	});
 
 	it('still builds the mirror from pushes when the snapshot read fails', async () => {
-		setFederation(true);
 		renderHook(() => usePeerMirrorBridge());
 		fake.rejectSnapshot(new Error('main went away'));
 		await flush();
@@ -135,7 +131,6 @@ describe('usePeerMirrorBridge', () => {
 	});
 
 	it('empties the store on the reset push', async () => {
-		setFederation(true);
 		renderHook(() => usePeerMirrorBridge());
 		fake.resolveSnapshot([peerWith('build', [agent('a1')])]);
 		await flush();
@@ -143,19 +138,7 @@ describe('usePeerMirrorBridge', () => {
 		expect(usePeerMirrorStore.getState()).toMatchObject({ enabled: false, order: [], peers: {} });
 	});
 
-	it('turning the feature off unsubscribes and empties the store', async () => {
-		setFederation(true);
-		renderHook(() => usePeerMirrorBridge());
-		fake.resolveSnapshot([peerWith('build', [agent('a1')])]);
-		await flush();
-		expect(fake.listenerCount()).toBe(2);
-		act(() => setFederation(false));
-		expect(fake.listenerCount()).toBe(0);
-		expect(usePeerMirrorStore.getState()).toMatchObject({ enabled: false, order: [] });
-	});
-
 	it('unmounting unsubscribes and ignores a snapshot that lands afterwards', async () => {
-		setFederation(true);
 		const { unmount } = renderHook(() => usePeerMirrorBridge());
 		unmount();
 		expect(fake.listenerCount()).toBe(0);
@@ -165,7 +148,6 @@ describe('usePeerMirrorBridge', () => {
 	});
 
 	it('leaves the mirror when a group chat opens', async () => {
-		setFederation(true);
 		renderHook(() => usePeerMirrorBridge());
 		fake.resolveSnapshot([peerWith('build', [agent('a1')])]);
 		await flush();
@@ -179,7 +161,6 @@ describe('usePeerMirrorBridge', () => {
 		const local = createMockSession({ id: 'local-1' });
 		useSessionStore.setState({ sessions: [local], activeSessionId: 'local-1' });
 		const before = useSessionStore.getState();
-		setFederation(true);
 		renderHook(() => usePeerMirrorBridge());
 		fake.resolveSnapshot([peerWith('build', [agent('a1')])]);
 		await flush();

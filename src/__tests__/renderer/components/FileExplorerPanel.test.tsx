@@ -349,6 +349,24 @@ const mockFileTree = [
 	},
 ];
 
+// `utils` has a sibling below it, so the line joining `src`'s children passes
+// through every row of the `utils` subtree. (In `mockFileTree` `utils` is the
+// last child, so its subtree draws no column-0 line.)
+const nestedGuideTree = [
+	{
+		name: 'src',
+		type: 'folder' as const,
+		children: [
+			{
+				name: 'utils',
+				type: 'folder' as const,
+				children: [{ name: 'helpers.ts', type: 'file' as const }],
+			},
+			{ name: 'index.ts', type: 'file' as const },
+		],
+	},
+];
+
 describe('FileExplorerPanel', () => {
 	let defaultProps: React.ComponentProps<typeof FileExplorerPanel>;
 
@@ -1801,8 +1819,13 @@ describe('FileExplorerPanel', () => {
 		});
 
 		it('renders one indent guide per depth level, spaced by INDENT_STEP', () => {
-			const session = createMockSession({ fileExplorerExpanded: ['src', 'src/utils'] });
-			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			const session = createMockSession({
+				fileTree: nestedGuideTree,
+				fileExplorerExpanded: ['src', 'src/utils'],
+			});
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={nestedGuideTree} />
+			);
 
 			// helpers.ts at depth 2 should have 2 guides at left = 12 and 12 + 20 = 32
 			const row = getRowByText(container, 'helpers.ts');
@@ -2024,14 +2047,31 @@ describe('FileExplorerPanel', () => {
 		});
 
 		it('renders multiple indent guides for deeply nested items', () => {
-			const session = createMockSession({ fileExplorerExpanded: ['src', 'src/utils'] });
-			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			const session = createMockSession({
+				fileTree: nestedGuideTree,
+				fileExplorerExpanded: ['src', 'src/utils'],
+			});
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={nestedGuideTree} />
+			);
 			// helpers.ts is at depth 2, should have 2 indent guides
 			const deepItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
 				el.textContent?.includes('helpers.ts')
 			);
 			const indentGuides = deepItem?.querySelectorAll('.w-px');
 			expect(indentGuides?.length).toBe(2);
+		});
+
+		it('draws no ancestor guide through the subtree of a last child', () => {
+			const session = createMockSession({ fileExplorerExpanded: ['src', 'src/utils'] });
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			// `utils` is the last child of `src`, so helpers.ts draws only its own elbow.
+			const deepItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('helpers.ts')
+			);
+			const indentGuides = deepItem?.querySelectorAll<HTMLElement>('.w-px');
+			expect(indentGuides?.length).toBe(1);
+			expect(indentGuides?.[0]).toHaveStyle({ left: '32px' });
 		});
 
 		it('uses fixed row height of 28px', () => {

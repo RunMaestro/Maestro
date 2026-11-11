@@ -15,17 +15,26 @@
  * don't increase monotonically is assumed to already report per-turn and is
  * passed through unmodified from then on.
  *
- * Scoping is deliberately left to the caller and NOT resolved by this
- * module: one instance per PROCESS reproduces today's desktop behavior
+ * Legacy normalize() scoping is deliberately left to the caller: one
+ * instance per PROCESS reproduces today's desktop behavior
  * exactly (`managedProcess.lastUsageTotals`'s lifetime is the process's).
  * Re-scoping an instance to span a resume boundary (one process per turn,
  * one accumulator per session) is Open Question 5 in
  * `Plans/maestro-lib-turn-contract.md` and needs checking against every
  * provider's first-usage-event shape before it's safe - this class does not
- * make that decision.
+ * make that decision. The opt-in accumulate() path instead owns ONE turn
+ * capture, with explicit process baselines and scoped accounting metadata.
  */
 
-import type { UsageStats } from '../../types';
+import { canonicalJson } from '../../canonicalJson';
+import {
+	addUsageStats,
+	mergeUsageCost,
+	replaceUsageStats,
+	subtractUsageStats,
+	usageCostUsd,
+} from './usage-totals';
+import type { UsageAccounting, UsageStats } from '../../types';
 
 interface UsageTotals {
 	inputTokens: number;
@@ -50,15 +59,216 @@ export interface UsageAccumulatorOptions {
 	 * capability value here; this class does not read either source itself.
 	 */
 	attachesAbsoluteUsage: boolean;
+	/** Scoped accumulation owns ONE capture/turn; missing IDs never identify another turn. */
+	identity?: Pick<
+		UsageAccounting,
+		'route' | 'scopeId' | 'providerSessionId' | 'processGeneration' | 'turnId' | 'requestId'
+	>;
+	/**
+	 * Explicit normalized snapshot taken before dispatch, under exclusive turn ownership.
+	 * Requires route, opaque account/host scopeId, native session and process generation.
+	 * Supply a proven zero for a new process, never synthesize it from the first report.
+	 */
+	processSessionBaseline?: UsageStats;
 }
 
 export class UsageAccumulator {
 	private _lastTotals: UsageTotals | undefined;
 	private _isCumulative: boolean | undefined;
 	private readonly attachesAbsoluteUsage: boolean;
+	private readonly scoped = new Map<string, UsageStats>();
+	private readonly snapshots = new Map<string, string>();
+	private readonly coveredResponses = new Map<string, UsageStats>();
+	private readonly contributions = new Map<string, UsageStats>();
+	private readonly identity: NonNullable<UsageAccumulatorOptions['identity']>;
+	private readonly processBaseline: UsageStats | undefined;
+	private processSnapshot: UsageStats | undefined;
+	private snapshot: UsageStats | undefined;
+	private total: UsageStats | undefined;
+	private finalTurn = false;
+
+	/** Scope snapshots for reconciliation, including non-additive session/child detail. */
+	get scopedReports(): readonly UsageStats[] {
+		return structuredClone([...this.scoped.values()]);
+	}
+
+	/**
+	 * Explicit accounting path. Returns the captured turn spend, not a delta.
+	 * A capture owns one turn when IDs are absent. Equal delta payloads are valid
+	 * separate observations; the producer must suppress replay before this port.
+	 */
+	accumulate(usage: UsageStats): UsageStats | undefined {
+		const fact = usage.accounting;
+		if (!fact) throw new Error('Scoped usage requires accounting metadata');
+		const additive = fact.scope === 'turn' || fact.scope === 'response';
+		const key = canonicalJson([
+			fact.scope,
+			additive
+				? null
+				: [
+						fact.route ?? null,
+						fact.scopeId ?? null,
+						fact.providerSessionId ?? null,
+						fact.processGeneration ?? null,
+					],
+			fact.scope === 'response' || fact.scope === 'child'
+				? (fact.responseId ?? fact.requestId ?? null)
+				: null,
+		]);
+		const previous = this.scoped.get(key);
+		if (additive && (this.finalTurn || !this.bindIdentity(fact)))
+			return structuredClone(this.total);
+		// Finished responses remain in the map as tombstones even after coverage.
+		const snapshot = fact.reporting === 'snapshot' ? canonicalJson(usage) : undefined;
+		if (
+			previous?.accounting?.final ||
+			(snapshot !== undefined && this.snapshots.get(key) === snapshot)
+		)
+			return structuredClone(this.total);
+		if (snapshot !== undefined) this.snapshots.set(key, snapshot);
+		else this.snapshots.delete(key);
+		const next =
+			fact.reporting === 'snapshot'
+				? replaceUsageStats(previous, usage, fact.scope === 'response')
+				: addUsageStats(previous, usage);
+		next.accounting = { ...next.accounting!, reporting: fact.reporting, final: fact.final };
+		if (
+			fact.scope === 'response' &&
+			fact.reporting === 'snapshot' &&
+			previous &&
+			this.coveredResponses.has(key) &&
+			!subtractUsageStats(next, previous)
+		)
+			return structuredClone(this.total);
+		this.scoped.set(key, next);
+		if (fact.scope === 'process-session') {
+			const baseline = this.processBaseline;
+			// Missing scope is fine for capture-bound turn events, never for a process baseline.
+			if (
+				this.finalTurn ||
+				!baseline ||
+				fact.reporting !== 'snapshot' ||
+				!(['route', 'scopeId', 'providerSessionId', 'processGeneration'] as const).every(
+					(field) => fact[field] === baseline.accounting![field]
+				) ||
+				!this.bindIdentity(fact)
+			)
+				return structuredClone(this.total);
+			const attributed = subtractUsageStats(usage, baseline);
+			if (!attributed || (this.processSnapshot && !subtractUsageStats(usage, this.processSnapshot)))
+				return structuredClone(this.total);
+			this.processSnapshot = structuredClone(usage);
+			attributed.accounting = {
+				...attributed.accounting!,
+				...this.identity,
+				scope: 'turn',
+				reporting: 'snapshot',
+				final: false,
+			};
+			this.coverWithSnapshot(attributed);
+		} else if (fact.scope === 'turn') {
+			if (fact.reporting === 'snapshot') this.coverWithSnapshot(usage);
+			else this.snapshot = addUsageStats(this.snapshot, usage);
+			this.finalTurn = fact.final === true;
+		} else if (fact.scope === 'response') {
+			const covered = this.coveredResponses.get(key);
+			const contribution =
+				fact.reporting === 'delta'
+					? addUsageStats(this.contributions.get(key), usage)
+					: covered
+						? subtractUsageStats(next, covered)
+						: next;
+			if (contribution)
+				this.contributions.set(
+					key,
+					replaceUsageStats(this.contributions.get(key), contribution, true)
+				);
+		} else {
+			// Native lifetime and standalone child observations never prove turn ownership.
+			return structuredClone(this.total);
+		}
+		let total = structuredClone(this.snapshot);
+		for (const report of this.contributions.values()) {
+			total = addUsageStats(total, report);
+		}
+		if (total?.accounting) {
+			Object.assign(total.accounting, this.identity);
+			total.accounting.scope = 'turn';
+			total.accounting.reporting = 'snapshot';
+			total.accounting.final = this.finalTurn;
+			delete total.accounting.responseId;
+			if (this.identity.requestId === undefined) delete total.accounting.requestId;
+			if (!this.finalTurn) {
+				total.accounting.completeness = 'partial';
+				if (total.accounting.cost.status === 'estimated') {
+					total.accounting.estimatedCost = { ...total.accounting.cost, completeness: 'partial' };
+				}
+				total.accounting.cost = mergeUsageCost(total.accounting.cost, { status: 'unknown' });
+				total.totalCostUsd = usageCostUsd(total.accounting.cost) ?? 0;
+			}
+		}
+		this.total = total;
+		return structuredClone(total);
+	}
+
+	private coverWithSnapshot(usage: UsageStats): void {
+		// The producer must deliver causally ordered aggregates covering prior responses.
+		this.snapshot = replaceUsageStats(this.total, usage, !usage.accounting?.final);
+		for (const [key, response] of this.scoped) {
+			if (response.accounting?.scope === 'response') this.coveredResponses.set(key, response);
+		}
+		this.contributions.clear();
+	}
+
+	private bindIdentity(fact: UsageAccounting): boolean {
+		const fields = [
+			'route',
+			'scopeId',
+			'providerSessionId',
+			'processGeneration',
+			'turnId',
+		] as const;
+		if (
+			fields.some(
+				(key) =>
+					fact[key] !== undefined &&
+					this.identity[key] !== undefined &&
+					fact[key] !== this.identity[key]
+			)
+		)
+			return false;
+		// Response request IDs may identify an internal call, not the prompt request.
+		if (
+			fact.scope === 'turn' &&
+			fact.requestId !== undefined &&
+			this.identity.requestId !== undefined &&
+			fact.requestId !== this.identity.requestId
+		)
+			return false;
+		for (const key of fields) if (fact[key] !== undefined) this.identity[key] = fact[key];
+		if (fact.scope === 'turn' && fact.requestId !== undefined)
+			this.identity.requestId = fact.requestId;
+		return true;
+	}
 
 	constructor(options: UsageAccumulatorOptions) {
 		this.attachesAbsoluteUsage = options.attachesAbsoluteUsage;
+		this.identity = { ...options.identity };
+		this.processBaseline = structuredClone(options.processSessionBaseline);
+		if (this.processBaseline) {
+			const fact = this.processBaseline.accounting;
+			if (
+				!fact ||
+				fact.scope !== 'process-session' ||
+				fact.reporting !== 'snapshot' ||
+				fact.completeness !== 'complete' ||
+				!(['route', 'scopeId', 'providerSessionId', 'processGeneration'] as const).every(
+					(key) => typeof fact[key] === 'string' && fact[key]!.length > 0
+				) ||
+				!this.bindIdentity({ ...fact, turnId: undefined, requestId: undefined })
+			)
+				throw new Error('Process usage baseline requires complete, matching scoped identity');
+		}
 	}
 
 	/**

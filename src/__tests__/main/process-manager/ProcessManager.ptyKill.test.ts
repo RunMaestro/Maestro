@@ -172,6 +172,8 @@ describe('ProcessManager PTY kill on Windows (MAESTRO-XZ)', () => {
 		expect(mockExecFile).toHaveBeenCalledWith(
 			'taskkill',
 			['/pid', '4242', '/t', '/f'],
+			// taskkill is bounded so a hung tree walk cannot hold the stop ladder.
+			{ timeout: expect.any(Number) },
 			expect.any(Function)
 		);
 		expect(fakePty.kill).not.toHaveBeenCalled();
