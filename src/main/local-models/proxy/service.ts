@@ -85,7 +85,7 @@ import { isTcpPort, pickFreePort } from '../../utils/tcp-port';
 import { localModelsDataDir } from '../paths';
 import { resolveSourceCallTarget, type SourceCallTarget } from '../run-on';
 import { reportLocalTaskUnavailable } from '../task-notices';
-import { compressRequestBody, type LocalRecoveryCapability } from './compress';
+import { compressRequestBody, type LaunchCapability } from './compress';
 import {
 	getCompressionCache,
 	isContentHash,
@@ -137,7 +137,7 @@ const recoveryLaunches = new Map<
 	{
 		agentId: string;
 		route: string;
-		recovery: Readonly<LocalRecoveryCapability>;
+		recovery: Readonly<LaunchCapability>;
 	}
 >();
 
@@ -444,6 +444,14 @@ async function start(port: number): Promise<void> {
 					: undefined;
 				if (!launch || launch.agentId !== target.agentId || launch.route !== target.route)
 					return undefined;
+				if (launch.recovery.kind === 'mcp-retrieve-tool') {
+					// The launch was given the tool, AND the switch is still on: a
+					// switch turned off mid-launch refuses the next call, so its
+					// requests must not get blocks only the tool could bring back.
+					return agentRecord(launch.agentId)?.tokenProxyRetrieval === true
+						? { ...launch.recovery }
+						: undefined;
+				}
 				if (launch.recovery.dataDir !== localModelsDataDir()) {
 					recoveryLaunches.delete(target.launchBinding!);
 					return undefined;
@@ -627,17 +635,37 @@ export async function tokenProxyLaunchGatewayUrl(
 	return port === null ? gatewayUrl : tokenProxyAgentGatewayUrl(gatewayUrl, port, agentId);
 }
 
+/** Bounded syntax of one capability; the host proves what it means. */
+function isRegistrableCapability(recovery: LaunchCapability | undefined): boolean {
+	if (recovery?.kind === 'mcp-retrieve-tool') return true;
+	return (
+		recovery?.kind === 'local-posix-cli' &&
+		isContentHash(recovery.environmentId) &&
+		recovery.environmentId.length === 64 &&
+		[recovery.runtimePath, recovery.cliPath, recovery.dataDir].every(
+			(value) => typeof value === 'string' && value.length <= 2048
+		) &&
+		recovery.dataDir === localModelsDataDir()
+	);
+}
+
 /**
- * Main-process-only registration after a caller proves the real launch's tool,
- * CLI and archive visibility. This transport does not prove that evidence.
- * No launch caller supplies it yet (03.4b3); never expose it over IPC/HTTP.
- * Starts nothing, persists nothing. The launch owner must release on exit,
- * failed spawn or any change to the proven execution environment.
+ * Main-process-only registration of what one launch was given. Never expose it
+ * over IPC/HTTP. Starts nothing, persists nothing; the proxy must already be
+ * running (`ensureTokenProxyForGateway()`), or there is nothing to bind to.
+ * The launch owner must release on exit, failed spawn or any change to the
+ * proven execution environment.
+ *
+ * - `mcp-retrieve-tool`: the spawn injected the MCP bridge that offers
+ *   `retrieve_compressed_original` to this launch (`handle-spawn.ts`). Its
+ *   early-mode requests are decided with the `full` profile.
+ * - `local-posix-cli`: a caller proved the launch's shell, CLI and archive
+ *   visibility. No launch caller supplies it (03.4b3, superseded by the tool).
  */
 export function registerTokenProxyRecoveryLaunch(
 	agentId: string,
 	gatewayUrl: string,
-	recovery: LocalRecoveryCapability
+	recovery: LaunchCapability
 ): Promise<{ gatewayUrl: string; release: () => void } | null> {
 	const generation = recoveryLaunchGeneration;
 	return lifecycle.enqueue(LIFECYCLE_KEY, async () => {
@@ -650,13 +678,7 @@ export function registerTokenProxyRecoveryLaunch(
 			!agentId ||
 			agentId.length > 256 ||
 			/[\x00-\x1f\x7f]/.test(agentId) ||
-			recovery?.kind !== 'local-posix-cli' ||
-			!isContentHash(recovery.environmentId) ||
-			recovery.environmentId.length !== 64 ||
-			![recovery.runtimePath, recovery.cliPath, recovery.dataDir].every(
-				(value) => typeof value === 'string' && value.length <= 2048
-			) ||
-			recovery.dataDir !== localModelsDataDir() ||
+			!isRegistrableCapability(recovery) ||
 			!gatewayPointsAtTokenProxy(gatewayUrl, port)
 		)
 			return null;
@@ -690,13 +712,17 @@ export function registerTokenProxyRecoveryLaunch(
 		recoveryLaunches.set(binding, {
 			agentId,
 			route: target.route,
-			recovery: Object.freeze({
-				kind: recovery.kind,
-				environmentId: recovery.environmentId,
-				runtimePath: recovery.runtimePath,
-				cliPath: recovery.cliPath,
-				dataDir: recovery.dataDir,
-			}),
+			recovery: Object.freeze(
+				recovery.kind === 'mcp-retrieve-tool'
+					? { kind: recovery.kind }
+					: {
+							kind: recovery.kind,
+							environmentId: recovery.environmentId,
+							runtimePath: recovery.runtimePath,
+							cliPath: recovery.cliPath,
+							dataDir: recovery.dataDir,
+						}
+			),
 		});
 		return {
 			gatewayUrl: url,

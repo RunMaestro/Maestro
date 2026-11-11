@@ -114,7 +114,9 @@ import { runOnHarnessMode } from '../../../../shared/local-models/run-on';
 import { logRunOnLaunch, prepareLaunchRunOn } from '../../../local-models/run-on';
 import { resolvePromptDelivery } from '../../../../shared/maestro-lib/launch/prompt-delivery';
 import {
+	agentHasTokenProxyRetrieval,
 	ensureTokenProxyForGateway,
+	registerTokenProxyRecoveryLaunch,
 	tokenProxyLaunchGatewayUrl,
 } from '../../../local-models/proxy/service';
 import { cleanupSessionRelay, preparePermissionRelayArgs } from '../../../permission-relay';
@@ -264,7 +266,12 @@ export async function handleProcessSpawn(
 				controller.signal,
 				admissionGuard
 			);
-			if (!result.success) cleanupSessionRelay(config.sessionId);
+			if (!result.success) {
+				cleanupSessionRelay(config.sessionId);
+				// A refusal after a run proof or a token proxy launch binding was
+				// issued must not leave it live. Idempotent after a native failure.
+				proofCleanup.release?.();
+			}
 			if (!result.success || config.toolType === 'terminal') onExit(config.sessionId);
 			return result;
 		} catch (error) {
@@ -591,6 +598,28 @@ async function handleProcessSpawnImpl(
 	const gatewayAgentId = launchAgentId;
 	const gatewayAgent = providerAgent;
 
+	// Only verified local provider configs can reach the localhost MCP bridge.
+	// SSH is skipped, and so is the electron-as-node interactive path (claude
+	// maestro-p): there argv[0] is a script path, so prepending global flags
+	// ahead of it would make Node reject the launch. API-mode/codex spawn the
+	// agent binary directly, where leading flags are valid.
+	const mcpCap = MCP_CONFIG_BY_AGENT[config.toolType];
+	const mcpBridgeReachable =
+		mcpCap?.verified === true &&
+		!config.sessionSshRemoteConfig?.enabled &&
+		!(claudeResolvedMode === 'interactive' && resolvedMaestroPBinPath);
+	// The token proxy launch binding that says this launch was given the
+	// `retrieve_compressed_original` tool, so its `compress-early` requests may
+	// be decided with the lossy `full` profile. Registered only for a launch
+	// whose bridge carries the tool, and released with the run proofs (exit,
+	// refusal, failed spawn), so a binding never outlives the tool it proves.
+	let tokenProxyLaunch: { gatewayUrl: string; release: () => void } | undefined;
+	const releaseTokenProxyLaunch = (): void => {
+		const launch = tokenProxyLaunch;
+		tokenProxyLaunch = undefined;
+		launch?.release();
+	};
+
 	let effectiveCustomEnvVars: Record<string, string> | undefined;
 	// What the agent's Run on target did to this launch, when it has one.
 	let appliedRunOn: LaunchPlanRunOn | undefined;
@@ -622,10 +651,34 @@ async function handleProcessSpawnImpl(
 		// this agent's id in its path, which is how the proxy knows whose request
 		// it carries and which mode (passthrough or compress) the agent chose.
 		// Any other gateway comes back unchanged.
-		const launchGatewayUrl = await tokenProxyLaunchGatewayUrl(
+		let launchGatewayUrl = await tokenProxyLaunchGatewayUrl(
 			gatewayAgentId,
 			gatewayAgent?.gatewayUrl
 		);
+		// An agent with retrieval in effect gets the retrieve tool on the MCP
+		// bridge (below), and this launch is bound to the proxy so it knows the
+		// model can ask for an original. The binding needs a running proxy, and
+		// it must be in the base URL the plan hands the process. The bridge's run
+		// proof names `baseSessionId`, so the gateway agent must be that agent
+		// (an Auto Run task or a synopsis spawns under another id and gets no
+		// bridge). A Run on target takes the gateway's place: nothing to bind.
+		if (
+			launchGatewayUrl &&
+			mcpBridgeReachable &&
+			gatewayAgentId === baseSessionId &&
+			preparedRunOn.kind !== 'ready' &&
+			(await agentHasTokenProxyRetrieval(gatewayAgentId)) &&
+			(await ensureTokenProxyForGateway(launchGatewayUrl)).ok
+		) {
+			const bound = await registerTokenProxyRecoveryLaunch(gatewayAgentId, launchGatewayUrl, {
+				kind: 'mcp-retrieve-tool',
+			});
+			if (bound) {
+				tokenProxyLaunch = bound;
+				proofCleanup.release = releaseTokenProxyLaunch;
+				launchGatewayUrl = bound.gatewayUrl;
+			}
+		}
 		const planResult = buildAgentLaunchPlan({
 			surface: 'desktop',
 			agent: agent ?? undefined,
@@ -655,6 +708,11 @@ async function handleProcessSpawnImpl(
 			});
 			reportSpawnRefusal(deps, config.sessionId, planResult.error);
 			return { success: false, pid: 0 };
+		}
+		// The binding proves something only when the process is given it. A user
+		// base-URL variable that wins over the gateway leaves the proxy unbound.
+		if (tokenProxyLaunch && planResult.plan.gateway?.url !== tokenProxyLaunch.gatewayUrl) {
+			releaseTokenProxyLaunch();
 		}
 		effectiveCustomEnvVars = planResult.plan.envVars;
 		// This handler places the prompt itself, so it spawns from the plan's
@@ -798,6 +856,7 @@ async function handleProcessSpawnImpl(
 		pluginRunToken = undefined;
 		pluginRunProofFile = undefined;
 		if (exitListener.current) processManager.off('exit', exitListener.current);
+		releaseTokenProxyLaunch();
 		if (token) pluginToolRunIdentity.revoke(token);
 		callerProof?.dispose();
 		if (file) {
@@ -852,24 +911,17 @@ async function handleProcessSpawnImpl(
 			logger.warn('Caller run identity unavailable', LOG_CONTEXT);
 		}
 	}
-	// MCP plugin tools remain gated separately. Only verified local provider
-	// configs can reach the localhost bridge; SSH and maestro-p are skipped.
-	const mcpCap = MCP_CONFIG_BY_AGENT[config.toolType];
-	if (
-		mcpCap?.verified &&
-		isPluginsFeatureEnabled() &&
-		!config.sessionSshRemoteConfig?.enabled &&
-		// Skip the electron-as-node interactive path (claude maestro-p): there
-		// argv[0] is a script path, so prepending global flags ahead of it would
-		// make Node reject the launch. API-mode/codex spawn the agent binary
-		// directly, where leading flags are valid.
-		!(claudeResolvedMode === 'interactive' && resolvedMaestroPBinPath)
-	) {
-		const mcpTools = getActivePluginManager()?.getContributions().tools ?? [];
+	// The MCP bridge carries plugin tools (Plugins on, at least one tool) and
+	// the core retrieve tool (a launch bound above). With retrieval alone,
+	// `tools/list` answers that one tool. Neither: no bridge arguments at all.
+	if (mcpCap && mcpBridgeReachable) {
+		const mcpTools = isPluginsFeatureEnabled()
+			? (getActivePluginManager()?.getContributions().tools ?? [])
+			: [];
 		const storedAgent = (deps.sessionsStore.get('sessions', []) as Array<{ id?: string }>).some(
 			(session) => session?.id === baseSessionId
 		);
-		if (mcpTools.length > 0 && storedAgent) {
+		if ((mcpTools.length > 0 || tokenProxyLaunch) && storedAgent) {
 			pluginRunToken = pluginToolRunIdentity.issue(
 				baseSessionId,
 				undefined,
@@ -932,11 +984,13 @@ async function handleProcessSpawnImpl(
 				...mcpInjection.env,
 			};
 			logger.debug(
-				`[Plugins] MCP tool bridge enabled for ${config.toolType} (${mcpTools.length} tools)`,
+				`[Plugins] MCP tool bridge enabled for ${config.toolType} (${mcpTools.length} plugin tools${tokenProxyLaunch ? ', retrieve tool' : ''})`,
 				LOG_CONTEXT
 			);
 		}
 	}
+	// A binding whose bridge was not injected proves a tool the model lacks.
+	if (tokenProxyLaunch && !pluginRunToken) releaseTokenProxyLaunch();
 
 	// ========================================================================
 	// Standard permission mode (Claude Code, API/print path): route tool
@@ -1425,7 +1479,8 @@ async function handleProcessSpawnImpl(
 		if (sessionId !== config.sessionId) return;
 		cleanupRunProofs();
 	};
-	if (pluginRunToken || callerRunProof) processManager.on('exit', exitListener.current);
+	if (pluginRunToken || callerRunProof || tokenProxyLaunch)
+		processManager.on('exit', exitListener.current);
 	// ========================================================================
 	// Prompt delivery: argv vs stdin, decided HERE by the host, never by the
 	// caller, and from the FINAL prompt (system prompt and preambles folded in).

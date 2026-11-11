@@ -1092,6 +1092,44 @@ describe('host-issued recovery launch bindings', () => {
 		expect(options.recoveryFor?.(targetFor(launch!.gatewayUrl))).toBeUndefined();
 	});
 
+	it('binds a launch that was given the retrieve tool, while its switch stays on', async () => {
+		const { port, options } = await startWithCapturedOptions();
+		const plain = `http://127.0.0.1:${port}/anthropic`;
+		agents = [
+			{ id: 'a', gatewayUrl: plain, tokenProxyMode: 'compress-early', tokenProxyRetrieval: true },
+		];
+		const launch = await registerTokenProxyRecoveryLaunch('a', plain, {
+			kind: 'mcp-retrieve-tool',
+		});
+		expect(launch).not.toBeNull();
+		const target = targetFor(launch!.gatewayUrl);
+		expect(options.recoveryFor?.(target)).toEqual({ kind: 'mcp-retrieve-tool' });
+		// Extra fields a caller passes are not kept.
+		const padded = await registerTokenProxyRecoveryLaunch('a', plain, {
+			kind: 'mcp-retrieve-tool',
+			dataDir: '/elsewhere',
+		} as never);
+		expect(options.recoveryFor?.(targetFor(padded!.gatewayUrl))).toEqual({
+			kind: 'mcp-retrieve-tool',
+		});
+		// Another agent, an unbound URL and the agent's settings prove nothing.
+		expect(options.recoveryFor?.({ ...target, agentId: 'b' })).toBeUndefined();
+		expect(
+			options.recoveryFor?.(targetFor((await tokenProxyLaunchGatewayUrl('a', plain))!))
+		).toBeUndefined();
+		// The switch turned off mid-launch: the next call is refused, so the
+		// next request must not get a block only the tool could bring back.
+		agents = [{ ...agents[0], tokenProxyRetrieval: false }];
+		expect(options.recoveryFor?.(target)).toBeUndefined();
+		agents = [{ ...agents[0], tokenProxyRetrieval: true }];
+		expect(options.recoveryFor?.(target)).toEqual({ kind: 'mcp-retrieve-tool' });
+		agents = [];
+		expect(options.recoveryFor?.(target)).toBeUndefined();
+		agents = [{ id: 'a', gatewayUrl: plain, tokenProxyRetrieval: true }];
+		launch!.release();
+		expect(options.recoveryFor?.(target)).toBeUndefined();
+	});
+
 	it('does not revive a queued registration after configuration replacement', async () => {
 		const { port } = await startWithCapturedOptions();
 		const pending = registerTokenProxyRecoveryLaunch(

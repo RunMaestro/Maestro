@@ -3395,7 +3395,7 @@ sequenceDiagram
 	D->>B: header line + exact original lines
 	B->>A: tool result
 	A->>P: next request carries the retrieve result
-	P->>P: isOriginalRecovery() veto: result left as sent
+	P->>P: isRetrieveToolResult() veto: result left as sent
 	P->>M: request, retrieve result uncompressed
 ```
 
@@ -3447,7 +3447,8 @@ The nine decisions, with their reasons:
 8. **No loop.** A result of this tool is never compressed. The recovery veto in
    `proxy/compress.ts` (`isOriginalRecovery()`, which recognized the shell recovery command)
    extends to a tool result linked to a tool call whose name is the retrieve tool under any client
-   prefix (Claude Code names it `mcp__<server>__retrieve_compressed_original`). Reason: a
+   prefix (the bridge's server is `maestro`, so Claude Code names it
+   `mcp__maestro__retrieve_compressed_original`). Reason: a
    retrieved original compressed again would give the model the same shortened text it asked to
    see past, and it would ask again.
 9. **The shell-command recovery hint stays unemitted.** Tasks 03.4b3b and 03.4b3c of the
@@ -3455,6 +3456,35 @@ The nine decisions, with their reasons:
    actual provider launch runs shell commands, which was never complete
    (`docs/research/token-optimization-progress.md`, 03.4b3b), and a tool the model calls by name
    needs no such proof.
+
+**How a launch gets the tool (`handle-spawn.ts`).** The desktop spawn decides before it builds the
+launch plan, because the binding has to be in the base URL the plan hands the process:
+
+1. The bridge is reachable: the provider's MCP strategy is verified, the agent is local (no SSH),
+   and Claude does not run through `maestro-p` (see R02.5).
+2. The gateway agent is the agent the bridge's run proof names (`baseSessionId`). An Auto Run
+   task (`{id}-batch-{ts}`) or a History synopsis (`{id}-synopsis-{ts}`) spawns under another id,
+   gets no bridge, and stays on `complete`.
+3. No Run on target takes the gateway's place, and `agentHasTokenProxyRetrieval()` is true (the
+   switch on, the proxy compressing for this local agent).
+4. `ensureTokenProxyForGateway()` has the proxy up, then `registerTokenProxyRecoveryLaunch()`
+   with `{ kind: 'mcp-retrieve-tool' }` returns the bound URL, which goes into the plan. The
+   proxy refusing to bind (256 live launches) leaves the plain URL and no tool.
+5. If the plan does not hand the process that URL (a user base-URL variable wins), or the bridge
+   is not injected, the binding is released at once. Otherwise the bridge is injected (with
+   plugins on or off), and the binding is released with the run proofs: on exit, on a refusal
+   after it was issued, and on a failed spawn.
+
+The proxy's `recoveryFor` returns the retrieve capability only while the stored switch is still on,
+because the bridge refuses the next call once it is off: a switch turned off mid-launch drops that
+launch back to `complete` on the next request. The tool itself is offered by the bridge from the
+stored setting at `tools/list` time; the binding is what lets compression be lossy.
+
+**Spawns that stay on `complete`.** Cue (`buildSpawnSpec()` in `cue-spawn-builder.ts`), Group Chat
+participants and cross-agent consults (`applyAgentGatewayToSpawn()`), and `maestro-cli send` inject
+no MCP bridge, so their requests carry no binding and early mode keeps every line for them. That is
+on purpose: binding a launch the model cannot retrieve from would send it blocks it cannot read
+back. Giving them the tool means injecting the bridge on those paths first, which is separate work.
 
 **Rejected: a tool spliced into the request by the proxy and answered inside the stream.** The
 proxy would add the tool definition to each request, watch the response for a call to it, answer
