@@ -45,6 +45,15 @@ describe('agentGatewaySupport', () => {
 		expect(support.reason).toContain('ignores base-URL variables');
 	});
 
+	it('refuses Factory Droid as unverified and names where its base URL lives', () => {
+		const support = agentGatewaySupport('factory-droid');
+
+		expect(support.supported).toBe(false);
+		if (support.supported) throw new Error('expected unsupported');
+		expect(support.reason).toContain('has not verified');
+		expect(support.reason).toContain('~/.factory/settings.json');
+	});
+
 	it('answers for every agent id, with a reason wherever it refuses', () => {
 		for (const id of AGENT_IDS) {
 			const support = agentGatewaySupport(id);

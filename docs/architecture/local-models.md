@@ -2803,8 +2803,8 @@ The rules, and why each is a rule:
    `gateway.args` on the launch plan). OpenCode reads no base-URL variable: the gateway is added to
    its inline config document, `OPENCODE_CONFIG_CONTENT` (see
    [OpenCode: the gateway in its inline config](#opencode-the-gateway-in-its-inline-config)).
-   Copilot CLI ignores base-URL variables. Factory Droid sets a base URL per model provider in its
-   own config file, so no single variable routes it. A guessed name fails silently: the CLI ignores it and the agent runs direct while the UI
+   Copilot CLI ignores base-URL variables. Factory Droid is not verified (see
+   [Factory Droid: not verified](#factory-droid-not-verified)), so it stays refused. A guessed name fails silently: the CLI ignores it and the agent runs direct while the UI
    says it is proxied. **The Codex mapping shipped as exactly that failure**, with the variable
    alone: Codex CLI 0.162.1 on a ChatGPT login does not read `OPENAI_BASE_URL`. See
    [Real run](#real-run-2026-10-11-darwin-arm64), finding 2, for the measurement and the fix.
@@ -2900,6 +2900,27 @@ and nothing of the user's config read or written:
 Not verified: an OpenCode login other than an API key (a Claude or ChatGPT subscription through an
 OpenCode auth plugin), and an OpenCode older than `--standalone`, which fails the launch on the
 unknown option (as it does for Run on).
+
+### Factory Droid: not verified
+
+Checked 2026-11-11 (G03.2): no `droid` binary was installed on the machine that runs the
+closed-port test (`which droid` empty, no `~/.factory`, nothing on Spotlight), so no command was
+run and nothing was measured. The mapping stays refused, with a reason that says it is unverified.
+
+What a later check should test, in this order, each against `http://127.0.0.1:1` with a temporary
+`HOME` (Droid reads `~/.factory/`, so the user's settings are never touched):
+
+1. `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`. Third-party gateway guides (Orq.ai) report that these
+   override Droid's config for a BYOK model; Factory's enterprise gateway page lists them too. A
+   variable would make Droid an `envVar` mapping like Claude Code.
+2. `customModels[].baseUrl` in `settings.json` (legacy `config.json`: `custom_models[].base_url`),
+   which is Factory's documented route. Two traps: the `openai` provider is reported to ignore
+   `baseUrl` (an OpenAI-compatible gateway needs `generic-chat-completion-api`), and a file under
+   `HOME` is not a per-launch setting, so a verified route here needs a per-launch config path (see
+   `src/shared/plugins/mcp-agent-config.ts`) before it can be mapped.
+
+Whatever is verified covers BYOK custom models only: the documented `baseUrl` belongs to a custom
+model entry, and nothing documented points Factory's own subscription models at another URL.
 
 ## Token conservation proxy
 

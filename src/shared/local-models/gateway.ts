@@ -77,9 +77,6 @@ export type AgentGatewaySupport =
 			reason: string;
 	  };
 
-const OWN_CONFIG_REASON =
-	'sets a base URL per model provider in its own config file. Point it at the gateway there.';
-
 /**
  * Keyed by `AgentId`, so a new provider fails to compile until it is given a
  * variable or a reason. Only variables the provider's CLI is known to read are
@@ -127,7 +124,17 @@ const GATEWAY_SUPPORT: Record<AgentId, AgentGatewaySupport> = {
 		urlIncludesApiVersion: true,
 		configDocument: { merge: withOpenCodeGateway, namesBaseUrl: openCodeConfigNamesBaseUrl },
 	},
-	'factory-droid': { supported: false, reason: `Factory Droid ${OWN_CONFIG_REASON}` },
+	// Not verified (G03.2, 2026-11-11): no `droid` binary was installed where the
+	// closed-port test runs, so nothing was measured. Factory documents a
+	// `baseUrl` per BYOK custom model in `~/.factory/settings.json` (legacy
+	// `config.json`: `base_url`), and third-party gateway guides report that
+	// `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` override it. Neither is mapped
+	// until a closed port proves the CLI reads it.
+	'factory-droid': {
+		supported: false,
+		reason:
+			'Maestro has not verified a gateway route for Factory Droid. It sets a base URL per custom model in ~/.factory/settings.json: point a custom model at the gateway there.',
+	},
 	antigravity: unknownVariable('antigravity'),
 	'gemini-cli': unknownVariable('gemini-cli'),
 	'qwen3-coder': unknownVariable('qwen3-coder'),
