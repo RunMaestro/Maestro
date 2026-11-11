@@ -66,7 +66,7 @@ describe('resolveAgentCwdArg', () => {
 	it('keeps a POSIX path as typed on Windows (SSH remote / WSL directory)', () => {
 		setPlatform('win32');
 		expect(resolveAgentCwdArg('/home/me/repo')).toBe('/home/me/repo');
-		expect(resolveAgentCwdArg(' /home//me/./repo ')).toBe('/home/me/repo');
+		expect(resolveAgentCwdArg(' /work/link/../repo ')).toBe('/work/link/../repo');
 	});
 
 	it('still resolves a relative path against the cwd on Windows', () => {

@@ -52,13 +52,15 @@ export function resolveCliPath(input: string): string {
  * `resolveCliPath()`, except on Windows a POSIX absolute path such as
  * `/home/me/repo` is kept as typed: it names a directory on an SSH remote
  * (Linux, WSL), and `path.resolve` would turn it into `C:\home\me\repo`.
- * `--ssh-cwd` is already passed through verbatim for the same reason. A UNC
- * path (`//server/share`) still resolves with the Windows rules.
+ * `--ssh-cwd` is already passed through verbatim for the same reason. It is
+ * not normalized either: on the remote, `link/..` follows the symlink, so
+ * collapsing `..` locally could name a different directory. A UNC path
+ * (`//server/share`) still resolves with the Windows rules.
  */
 export function resolveAgentCwdArg(input: string): string {
 	const trimmed = input.trim();
 	if (isWindows() && trimmed.startsWith('/') && !trimmed.startsWith('//')) {
-		return path.posix.normalize(trimmed);
+		return trimmed;
 	}
 	return resolveCliPath(trimmed);
 }

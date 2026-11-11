@@ -465,7 +465,9 @@ describe('update-agent command', () => {
 			return action({ sendCommand } as never);
 		});
 
-		await updateAgent('agent-1', { group: 'grp', cwd: '/tmp/foo', json: true });
+		// Relative, so the expectation holds on both CI legs: a POSIX absolute
+		// path is kept as typed on Windows (#1940) and resolved elsewhere.
+		await updateAgent('agent-1', { group: 'grp', cwd: 'foo', json: true });
 
 		const output = consoleSpy.mock.calls[0][0];
 		const parsed = JSON.parse(output);
@@ -473,7 +475,7 @@ describe('update-agent command', () => {
 			success: true,
 			agentId: 'full-session-id',
 			group: 'full-group-id',
-			cwd: path.resolve('/tmp/foo'),
+			cwd: path.resolve('foo'),
 		});
 	});
 
