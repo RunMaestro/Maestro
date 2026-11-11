@@ -1144,7 +1144,7 @@ export class WebSocketMessageHandler {
 				break;
 
 			case 'plugins_list_tools':
-				handlePluginsListTools(this.ctx, client, message);
+				void handlePluginsListTools(this.ctx, client, message);
 				break;
 
 			case 'plugins_send_agent':

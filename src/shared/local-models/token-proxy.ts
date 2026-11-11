@@ -407,6 +407,31 @@ export function parseTokenProxyRetrievalEdit(value: unknown): TokenProxyRetrieva
 	return { ok: false, error: `${TOKEN_PROXY_RETRIEVAL_FIELD} must be true, false or null.` };
 }
 
+/**
+ * Whether retrieval has effect for one agent now: the switch is on and the
+ * proxy compresses its requests (its gateway reaches the proxy and the stored
+ * mode is `compress` or `compress-early`). A stored `true` under passthrough
+ * is kept but does nothing, so it gives the model no tool.
+ */
+export function isTokenProxyRetrievalInEffect(input: {
+	retrieval?: unknown;
+	gatewayUrl?: string | null;
+	storedMode?: unknown;
+	/** The proxy's port, or null when none has been chosen yet. */
+	port: number | null;
+}): boolean {
+	return (
+		input.retrieval === true &&
+		isCompressingTokenProxyMode(
+			resolveTokenProxyMode({
+				gatewayUrl: input.gatewayUrl,
+				storedMode: input.storedMode,
+				port: input.port,
+			})
+		)
+	);
+}
+
 /** Narrow a value from the CLI, the bridge or a stored record. Never a cast. */
 export function asTokenProxyMode(value: unknown): TokenProxyMode | undefined {
 	return TOKEN_PROXY_MODES.includes(value as TokenProxyMode)

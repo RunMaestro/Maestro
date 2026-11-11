@@ -61,6 +61,7 @@ import { formatRunOnSpec, type RunOnSourceTarget } from '../../../shared/local-m
 import {
 	asStoredTokenProxyMode,
 	gatewayPointsAtTokenProxy,
+	isTokenProxyRetrievalInEffect,
 	resolveTokenProxyTarget,
 	TOKEN_PROXY_HOST,
 	TOKEN_PROXY_NAME,
@@ -244,6 +245,27 @@ function agentRecord(agentId: string): Record<string, unknown> | undefined {
 function modeFor(agentId: string | null): TokenProxyRequestMode {
 	if (agentId === null) return 'passthrough';
 	return asStoredTokenProxyMode(agentRecord(agentId)?.tokenProxyMode);
+}
+
+/**
+ * Whether one stored agent's model may be given the retrieve tool now: it is
+ * local, retrieval is on, and the proxy compresses its requests. Read from the
+ * stored record each time, so turning the switch off removes the tool from the
+ * next `tools/list` and refuses the next call.
+ */
+export async function agentHasTokenProxyRetrieval(agentId: string): Promise<boolean> {
+	const record = agentRecord(agentId);
+	if (!record) return false;
+	// An agent on an SSH remote cannot reach this machine's loopback proxy.
+	if ((record.sessionSshRemoteConfig as { enabled?: boolean } | undefined)?.enabled === true) {
+		return false;
+	}
+	return isTokenProxyRetrievalInEffect({
+		retrieval: record.tokenProxyRetrieval,
+		gatewayUrl: typeof record.gatewayUrl === 'string' ? record.gatewayUrl : null,
+		storedMode: record.tokenProxyMode,
+		port: await readPort(),
+	});
 }
 
 /** Why a source cannot be sent a request, as a background requests refusal. */

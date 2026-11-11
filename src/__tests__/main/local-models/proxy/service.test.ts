@@ -62,6 +62,7 @@ vi.mock('../../../../main/local-models/proxy/compression-cache', () => ({
 }));
 
 import {
+	agentHasTokenProxyRetrieval,
 	applyAgentGatewayToSpawn,
 	configureTokenProxy,
 	ensureTokenProxyForGateway,
@@ -85,7 +86,10 @@ import {
 import { configureAgentRunOn, resetAgentRunOnForTests } from '../../../../main/local-models/run-on';
 import type { LocalModelEndpoint } from '../../../../shared/local-models/endpoints';
 import { MODEL_SERVER_ENDPOINT_ID } from '../../../../shared/local-models/model-server';
-import { resolveTokenProxyTarget } from '../../../../shared/local-models/token-proxy';
+import {
+	resolveTokenProxyTarget,
+	tokenProxyGatewayUrl,
+} from '../../../../shared/local-models/token-proxy';
 import type { LocalRecoveryCapability } from '../../../../main/local-models/proxy/compress';
 
 let agents: Array<Record<string, unknown>> = [];
@@ -617,6 +621,53 @@ describe("an agent's mode", () => {
 		options.onRequest?.(entry);
 
 		expect(requestStats.recordTokenProxyRequest).toHaveBeenCalledWith(entry);
+	});
+});
+
+describe('agentHasTokenProxyRetrieval', () => {
+	it('is true only for a local agent with retrieval on that the proxy compresses for', async () => {
+		configure();
+		const port = await ensureTokenProxyPort();
+		const gatewayUrl = tokenProxyGatewayUrl(port, 'anthropic');
+		agents = [
+			{ id: 'early', gatewayUrl, tokenProxyMode: 'compress-early', tokenProxyRetrieval: true },
+			{ id: 'late', gatewayUrl, tokenProxyMode: 'compress', tokenProxyRetrieval: true },
+			// Kept on a passthrough agent, but it shortens nothing, so no tool.
+			{ id: 'pass', gatewayUrl, tokenProxyRetrieval: true },
+			{ id: 'off', gatewayUrl, tokenProxyMode: 'compress-early' },
+			{
+				id: 'other-gateway',
+				gatewayUrl: 'http://127.0.0.1:1/x',
+				tokenProxyMode: 'compress',
+				tokenProxyRetrieval: true,
+			},
+			{
+				id: 'ssh',
+				gatewayUrl,
+				tokenProxyMode: 'compress',
+				tokenProxyRetrieval: true,
+				sessionSshRemoteConfig: { enabled: true },
+			},
+		];
+
+		expect(await agentHasTokenProxyRetrieval('early')).toBe(true);
+		expect(await agentHasTokenProxyRetrieval('late')).toBe(true);
+		for (const id of ['pass', 'off', 'other-gateway', 'ssh', 'gone']) {
+			expect(await agentHasTokenProxyRetrieval(id)).toBe(false);
+		}
+	});
+
+	it('is false while no proxy port has been chosen', async () => {
+		configure();
+		agents = [
+			{
+				id: 'a',
+				gatewayUrl: 'http://127.0.0.1:4000/anthropic',
+				tokenProxyMode: 'compress',
+				tokenProxyRetrieval: true,
+			},
+		];
+		expect(await agentHasTokenProxyRetrieval('a')).toBe(false);
 	});
 });
 

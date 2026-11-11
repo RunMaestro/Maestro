@@ -182,8 +182,10 @@ vi.mock('../../../../main/local-models/proxy/service', () => ({
 		original: 'long',
 		compressed: 'short',
 	})),
+	agentHasTokenProxyRetrieval: vi.fn(async () => false),
 }));
 import {
+	agentHasTokenProxyRetrieval,
 	getTokenProxyReport,
 	readTokenProxyBlock,
 } from '../../../../main/local-models/proxy/service';
@@ -6722,8 +6724,9 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		vi.mocked(getHeadlessAgentRunner).mockReturnValue(null);
 	});
 
-	it('lists declared tools with an MCP-safe name + the real toolId', () => {
+	it('lists declared tools with an MCP-safe name + the real toolId', async () => {
 		handler.handleMessage(client, { type: 'plugins_list_tools' });
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
 		const res = lastResult();
 		expect(res.type).toBe('plugins_list_tools_result');
 		expect(res.tools).toEqual([
@@ -6736,10 +6739,12 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		]);
 	});
 
-	it('lists no tools when the plugins flag is off', () => {
+	it('lists no tools when the plugins flag is off', async () => {
 		vi.mocked(isPluginsFeatureEnabled).mockReturnValue(false);
 		handler.handleMessage(client, { type: 'plugins_list_tools' });
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
 		expect(lastResult().tools).toEqual([]);
+		expect(lastResult()).not.toHaveProperty('instructions');
 	});
 
 	it('rejects an unknown toolId and never invokes', async () => {
@@ -9005,6 +9010,149 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				code: 'SECRETS_FOUND',
 				secretFindings,
 			});
+		});
+	});
+	describe('the core retrieve tool', () => {
+		const hash = 'c'.repeat(64);
+		const coreEntry = expect.objectContaining({
+			name: 'retrieve_compressed_original',
+			toolId: 'maestro:retrieve_compressed_original',
+		});
+		let runToken: string;
+
+		beforeEach(() => {
+			runToken = pluginToolRunIdentity.issue('agent-a');
+			vi.mocked(agentHasTokenProxyRetrieval).mockReset();
+			vi.mocked(agentHasTokenProxyRetrieval).mockImplementation(async (id) => id === 'agent-a');
+		});
+		afterEach(() => pluginToolRunIdentity.revoke(runToken));
+
+		async function list(message: Record<string, unknown>): Promise<Record<string, unknown>> {
+			handler.handleMessage(client, { type: 'plugins_list_tools', ...message });
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			return lastResult();
+		}
+
+		async function call(message: Record<string, unknown>): Promise<Record<string, unknown>> {
+			handler.handleMessage(client, {
+				type: 'plugins_call_tool',
+				toolId: 'maestro:retrieve_compressed_original',
+				...message,
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			return lastResult();
+		}
+
+		it('is listed first, with the instructions, for the agent the proof names', async () => {
+			const res = await list({ runToken });
+			expect(res.tools).toEqual([coreEntry, expect.objectContaining({ toolId: 'acme/dostuff' })]);
+			expect(String(res.instructions)).toContain('retrieve_compressed_original');
+			expect(agentHasTokenProxyRetrieval).toHaveBeenCalledWith('agent-a');
+		});
+
+		it('is the only tool listed when the plugins flag is off', async () => {
+			vi.mocked(isPluginsFeatureEnabled).mockReturnValue(false);
+			const res = await list({ runToken });
+			expect(res.tools).toEqual([coreEntry]);
+		});
+
+		it('is not listed for an agent without retrieval, nor without a valid proof', async () => {
+			vi.mocked(agentHasTokenProxyRetrieval).mockResolvedValue(false);
+			const off = await list({ runToken });
+			expect(off.tools).toEqual([expect.objectContaining({ toolId: 'acme/dostuff' })]);
+			expect(off).not.toHaveProperty('instructions');
+
+			vi.mocked(agentHasTokenProxyRetrieval).mockImplementation(async (id) => id === 'agent-a');
+			for (const proof of [{}, { runToken: 'f'.repeat(64) }, { runToken: 'nope' }]) {
+				vi.mocked(client.socket.send).mockClear();
+				const res = await list(proof);
+				expect(res.tools).toEqual([expect.objectContaining({ toolId: 'acme/dostuff' })]);
+			}
+		});
+
+		it('answers a verified ranged call with the header line and the exact text', async () => {
+			vi.mocked(isPluginsFeatureEnabled).mockReturnValue(false);
+			vi.mocked(readTokenProxyBlock).mockResolvedValueOnce({
+				hash,
+				original: 'two\nthree\n',
+				originalRange: {
+					hash,
+					source: 'original',
+					requested: { startLine: 2, endLine: 3 },
+					returned: { startLine: 2, endLine: 3 },
+					complete: true,
+					hasMore: false,
+				},
+				compressed: 'short',
+				originalTokens: 10,
+				compressedTokens: 2,
+				compressors: ['json'],
+				createdAt: 1,
+			});
+			const res = await call({ runToken, args: { hash, start_line: 2, end_line: 3 } });
+			expect(res).toMatchObject({
+				ok: true,
+				result: `[original sha256=${hash} lines 2-3; this is the end of the original]\ntwo\nthree\n`,
+			});
+			expect(readTokenProxyBlock).toHaveBeenLastCalledWith(hash, { startLine: 2, endLine: 3 });
+			expect(invokeTool).not.toHaveBeenCalled();
+		});
+
+		it('answers an unknown hash, a missing original and an invalid range with a tool error', async () => {
+			vi.mocked(readTokenProxyBlock).mockResolvedValueOnce(null);
+			expect(await call({ runToken, args: { hash } })).toMatchObject({
+				ok: false,
+				toolError: expect.stringContaining('No compressed block'),
+			});
+
+			vi.mocked(client.socket.send).mockClear();
+			vi.mocked(readTokenProxyBlock).mockResolvedValueOnce({
+				hash,
+				original: null,
+				originalRange: null,
+				compressed: 'short',
+				originalTokens: 10,
+				compressedTokens: 2,
+				compressors: [],
+				createdAt: 1,
+			});
+			expect(await call({ runToken, args: { hash } })).toMatchObject({
+				ok: false,
+				toolError: expect.stringContaining('no longer stored'),
+			});
+
+			vi.mocked(client.socket.send).mockClear();
+			expect(await call({ runToken, args: { hash, start_line: 3, end_line: 1 } })).toMatchObject({
+				ok: false,
+				toolError: expect.stringContaining('start_line'),
+			});
+		});
+
+		it('refuses a call with no valid proof or from an agent without retrieval', async () => {
+			vi.mocked(readTokenProxyBlock).mockClear();
+			expect(await call({ args: { hash } })).toMatchObject({
+				ok: false,
+				error: 'Unknown tool: maestro:retrieve_compressed_original',
+			});
+			vi.mocked(client.socket.send).mockClear();
+			expect(await call({ runToken: 'f'.repeat(64), args: { hash } })).toMatchObject({
+				ok: false,
+				error: 'PLUGIN_DENIED',
+			});
+			vi.mocked(client.socket.send).mockClear();
+			vi.mocked(agentHasTokenProxyRetrieval).mockResolvedValue(false);
+			expect(await call({ runToken, args: { hash } })).toMatchObject({
+				ok: false,
+				error: 'PLUGIN_DENIED',
+			});
+			expect(readTokenProxyBlock).not.toHaveBeenCalled();
+		});
+
+		it('leaves plugin tools listed and called as before', async () => {
+			invokeTool.mockResolvedValue({ done: true });
+			const res = await call({ toolId: 'acme/dostuff', args: { value: 1 } });
+			expect(res).toMatchObject({ ok: true, result: { done: true } });
+			expect(agentHasTokenProxyRetrieval).not.toHaveBeenCalled();
 		});
 	});
 });
