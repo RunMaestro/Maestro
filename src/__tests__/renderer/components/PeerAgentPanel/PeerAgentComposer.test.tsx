@@ -139,6 +139,82 @@ describe('PeerAgentComposer', () => {
 		});
 	});
 
+	it('leaves Enter to the input method during a composition, under either Enter-to-send setting', async () => {
+		for (const enterToSend of [true, false]) {
+			const { unmount } = renderComposer({ id: 't1', enterToSend });
+			fireEvent.change(textbox(), { target: { value: 'composing' } });
+			for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+				expect(fireEvent.keyDown(textbox(), { key: 'Enter', ...ime })).toBe(true);
+				expect(fireEvent.keyDown(textbox(), { key: 'Enter', metaKey: true, ...ime })).toBe(true);
+				expect(fireEvent.keyDown(textbox(), { key: 'Enter', ctrlKey: true, ...ime })).toBe(true);
+				expect(fireEvent.keyDown(textbox(), { key: 'Enter', shiftKey: true, ...ime })).toBe(true);
+			}
+			await flush();
+			expect(act$).not.toHaveBeenCalled();
+			expect(draft()).toBe('composing');
+			unmount();
+		}
+	});
+
+	it('keeps a composing Cmd/Ctrl+Enter at the composer without preventing default', async () => {
+		const onWindowKeyDown = vi.fn();
+		window.addEventListener('keydown', onWindowKeyDown);
+		try {
+			for (const enterToSend of [true, false]) {
+				const { unmount } = renderComposer({ id: 't1', enterToSend });
+				fireEvent.change(textbox(), { target: { value: 'composing' } });
+				for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+					for (const modifier of [{ metaKey: true }, { ctrlKey: true }]) {
+						onWindowKeyDown.mockClear();
+						const label = JSON.stringify({ enterToSend, ime, modifier });
+						const handled = fireEvent.keyDown(textbox(), {
+							key: 'Enter',
+							...modifier,
+							...ime,
+						});
+						expect(handled, label).toBe(true);
+						expect(onWindowKeyDown, label).not.toHaveBeenCalled();
+					}
+				}
+				await flush();
+				expect(act$).not.toHaveBeenCalled();
+				expect(draft()).toBe('composing');
+				unmount();
+			}
+		} finally {
+			window.removeEventListener('keydown', onWindowKeyDown);
+		}
+	});
+
+	it('keeps normal, shift and modified Enter behavior under both Enter-to-send settings', async () => {
+		const cases = [
+			{ enterToSend: true, keys: { key: 'Enter' }, sends: true, prevented: true },
+			{ enterToSend: true, keys: { key: 'Enter', shiftKey: true }, sends: false, prevented: false },
+			{ enterToSend: true, keys: { key: 'Enter', metaKey: true }, sends: true, prevented: true },
+			{ enterToSend: true, keys: { key: 'Enter', ctrlKey: true }, sends: true, prevented: true },
+			{ enterToSend: false, keys: { key: 'Enter' }, sends: false, prevented: false },
+			{
+				enterToSend: false,
+				keys: { key: 'Enter', shiftKey: true },
+				sends: false,
+				prevented: false,
+			},
+			{ enterToSend: false, keys: { key: 'Enter', metaKey: true }, sends: true, prevented: true },
+			{ enterToSend: false, keys: { key: 'Enter', ctrlKey: true }, sends: true, prevented: true },
+		];
+		for (const testCase of cases) {
+			act$.mockClear();
+			const { unmount } = renderComposer({ id: 't1', enterToSend: testCase.enterToSend });
+			fireEvent.change(textbox(), { target: { value: 'hello' } });
+			const handled = fireEvent.keyDown(textbox(), testCase.keys);
+			await flush();
+			const label = JSON.stringify(testCase);
+			expect(act$, label).toHaveBeenCalledTimes(testCase.sends ? 1 : 0);
+			expect(handled, label).toBe(!testCase.prevented);
+			unmount();
+		}
+	});
+
 	it('refuses a slash command before anything reaches the host', async () => {
 		renderComposer();
 		fireEvent.change(textbox(), { target: { value: '/compact now' } });
