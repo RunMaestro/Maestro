@@ -6798,7 +6798,7 @@ describe('Grok through the web message routes', () => {
 		);
 	});
 
-	it('does not land a second turn when a reconnecting socket repeats a send while the Grok turn runs', async () => {
+	it('reports a busy Grok tab refusal when a reconnecting socket repeats a send', async () => {
 		const message: WebClientMessage = {
 			type: 'send_command',
 			sessionId: 'grok-agent',
@@ -6809,16 +6809,20 @@ describe('Grok through the web message routes', () => {
 		};
 		handler.handleMessage(client, message);
 		await vi.waitFor(() => expect(replies()).toHaveLength(1));
-		// The first turn is running: the desktop now reports the agent busy.
+		// Main forwards to the renderer, which knows which tab owns the running turn.
 		vi.mocked(callbacks.getSessionDetail!).mockReturnValue(grokDetail({ state: 'busy' }));
+		vi.mocked(callbacks.executeCommand!).mockResolvedValueOnce(false);
 		const reconnected = createMockClient('grok-socket-reconnected');
 		handler.handleMessage(reconnected, message);
 
-		expect(callbacks.executeCommand).toHaveBeenCalledTimes(1);
+		await vi.waitFor(() => expect(replies(reconnected)).toHaveLength(1));
+		expect(callbacks.executeCommand).toHaveBeenCalledTimes(2);
 		expect(replies(reconnected)).toEqual([
 			expect.objectContaining({
-				type: 'error',
-				message: expect.stringContaining('busy'),
+				type: 'command_result',
+				success: false,
+				code: 'DISPATCH_REFUSED',
+				error: expect.stringContaining('mid-turn'),
 				sessionId: 'grok-agent',
 			}),
 		]);

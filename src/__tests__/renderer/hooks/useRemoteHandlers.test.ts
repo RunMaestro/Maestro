@@ -2258,15 +2258,21 @@ describe('useRemoteHandlers', () => {
 			expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'session-not-found']]);
 		});
 
-		it('reports a mid-turn target tab as a rejection', async () => {
-			await dispatchWithReceipt(createBusyTabSession(), {
-				sessionId: 'session-1',
-				command: 'test',
-				inputMode: 'ai',
-			});
+		it.each(['claude-code', 'grok'] as const)(
+			'reports a mid-turn %s target tab as a rejection',
+			async (toolType) => {
+				await dispatchWithReceipt(
+					{ ...createBusyTabSession(), toolType },
+					{
+						sessionId: 'session-1',
+						command: 'test',
+						inputMode: 'ai',
+					}
+				);
 
-			expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'tab-busy']]);
-		});
+				expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'tab-busy']]);
+			}
+		);
 
 		it('lets force write into a mid-turn tab (allowConcurrentSend / Cadenza)', async () => {
 			await dispatchWithReceipt(createBusyTabSession(), {

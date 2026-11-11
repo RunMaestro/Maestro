@@ -41,6 +41,7 @@ describe('Grok onboarding generation lifecycle', () => {
 			spawn: vi.fn(),
 			kill: vi.fn(),
 			onData: vi.fn(),
+			onStderr: vi.fn(),
 			onExit: vi.fn(),
 			onAgentError: vi.fn(),
 		},
@@ -64,6 +65,7 @@ describe('Grok onboarding generation lifecycle', () => {
 		ipc.process.kill.mockReset().mockResolvedValue(undefined);
 		for (const listener of [
 			ipc.process.onData,
+			ipc.process.onStderr,
 			ipc.process.onExit,
 			ipc.process.onAgentError,
 			ipc.autorun.onFileChanged,

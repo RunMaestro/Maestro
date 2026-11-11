@@ -751,7 +751,7 @@ describe('PianolaSupervisor with Grok targets', () => {
 		s.stopAll();
 	});
 
-	it('auto-watches a new top-level Grok agent on its active AI tab, not its sub-agent, and retires it on close', async () => {
+	it('leaves new Grok agents unwatched and retires a retained auto-created watcher on close', async () => {
 		const s = grokSupervisor();
 		const grokAgent = {
 			id: 'grok-agent-7',
@@ -763,7 +763,13 @@ describe('PianolaSupervisor with Grok targets', () => {
 			parentSessionId: 'grok-agent-7',
 			aiTabs: [{ id: 'sub-tab' }],
 		};
-		await s.autoWatchNewSessions([grokAgent, grokChild], [grokAgent, grokChild], true);
+		await s.autoWatchNewSessions([grokAgent, grokChild], [grokAgent, grokChild]);
+		expect(readSupervisorTargets()).toEqual([]);
+		expect(spawnArgs).toHaveLength(0);
+
+		// RC no longer enrolls new agents implicitly; retained legacy watches still retire.
+		setTargets([grokWatch({ tabId: 'grok-tab-2', autoCreated: true })]);
+		s.reconcile();
 		expect(readSupervisorTargets()).toEqual([
 			expect.objectContaining({
 				kind: 'watch',
@@ -776,7 +782,7 @@ describe('PianolaSupervisor with Grok targets', () => {
 		expect(spawnArgs[0]).toEqual(expect.arrayContaining(['grok-tab-2', '--agent', 'grok-agent-7']));
 		expect(spawnArgs.flat()).not.toContain('grok-sub');
 
-		await s.autoWatchNewSessions([], [], false, ['grok-agent-7']);
+		await s.autoWatchNewSessions([], [], ['grok-agent-7']);
 		expect(readSupervisorTargets()).toEqual([]);
 		s.stopAll();
 	});

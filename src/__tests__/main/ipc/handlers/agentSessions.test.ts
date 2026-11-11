@@ -14,7 +14,6 @@ import {
 	type AgentSessionsHandlerDependencies,
 } from '../../../../main/ipc/handlers/agentSessions';
 import * as agentSessionStorage from '../../../../main/agents';
-import { getSshRemoteById } from '../../../../main/stores';
 import {
 	GLOBAL_STATS_CACHE_MIN_UPGRADABLE_VERSION,
 	GLOBAL_STATS_CACHE_VERSION,

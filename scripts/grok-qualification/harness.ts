@@ -9777,6 +9777,9 @@ function createUtilityBridge(
 			// Every bridged turn is bounded by the leg's own deadline; a consumer's kill has nothing to stop.
 			kill: async () => true,
 			onData: subscribe(listeners.data),
+			// sendSessionTurn reports classified provider failures through onAgentError.
+			// This bridge does not expose raw stderr to the wizard.
+			onStderr: () => () => undefined,
 			onExit: subscribe(listeners.exit),
 			onAgentError: subscribe(listeners.error),
 			onThinkingChunk: () => () => undefined,
