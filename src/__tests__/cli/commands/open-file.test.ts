@@ -75,10 +75,11 @@ describe('open-file command', () => {
 			return action(mockClient as never);
 		});
 
-		await openFile('/config/.bashrc', {});
+		const filePath = path.resolve('/config/.bashrc');
+		await openFile(filePath, {});
 
 		expect(captured.sessionId).toBe('session-123');
-		expect(captured.filePath).toBe('/config/.bashrc');
+		expect(captured.filePath).toBe(filePath);
 		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
