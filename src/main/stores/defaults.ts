@@ -120,6 +120,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	defaultSshRemoteId: null,
 	sshRemoteIgnorePatterns: ['.git', '.*cache*'],
 	sshRemoteHonorGitignore: false,
+	federationAutoMove: true,
 	installationId: null,
 	wakatimeEnabled: false,
 	wakatimeApiKey: '',

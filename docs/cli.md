@@ -186,19 +186,21 @@ On failure, `success` is `false` and an `error` field is included:
 }
 ```
 
-| Flag                 | Description                                                         |
-| -------------------- | ------------------------------------------------------------------- |
-| `-s, --session <id>` | Resume an existing session instead of creating a new one            |
-| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)              |
-| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app       |
-| `--no-history`       | Do not write a History entry for this turn                          |
-| `--no-synopsis`      | Skip the synopsis turn; the History entry carries the response text |
+| Flag                 | Description                                                                                                                       |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `-s, --session <id>` | Resume a provider session (the `sessionId` a previous `send` returned, or one from `list sessions`) instead of creating a new one |
+| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)                                                                            |
+| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app                                                                     |
+| `--no-history`       | Do not write a History entry for this turn                                                                                        |
+| `--no-synopsis`      | Skip the synopsis turn; the History entry carries the response text                                                               |
+
+`send` runs headless, beside the desktop: it never writes into a desktop tab. `--session` takes a **provider** session id, not a Maestro tab id. A tab id is refused with `SESSION_IS_TAB_ID`, and the provider session of a tab that is mid-turn is refused with `TAB_BUSY` (resuming it would put a second writer on one conversation). Both errors name the command that does what you meant: to deliver a message into a live tab, waiting behind a busy turn, use `maestro-cli dispatch <agent-id> "<message>" --tab <tab-id> --queue`.
 
 Every `send` writes an entry to the agent's History, the same file the desktop History panel reads, whether or not the desktop app is running (an open app picks it up live). Who started the send decides the kind of entry. A send Maestro Cue started (a `command` action that runs `maestro-cli send`, or an agent Cue woke that runs it) is a `CUE` entry, and the turn it runs is marked `MAESTRO_QUERY_SOURCE=cue`. A send run from another agent's shell is an `AGENT` entry whose summary opens with `Sent by <agent>:`. Both carry a pass/fail indicator. A send from your own shell or a script is a `USER` entry. A successful turn is summarized by a short synopsis turn resumed on the same provider session at the cheapest model and effort, unless that would shrink the context window, in which case the agent's own model is kept. If the synopsis reports nothing to record, fails, or prints a provider error, the first line of the response is used instead. After a `--read-only` send the synopsis turn is read-only too. Failed and interrupted turns are recorded without a synopsis turn. A History write that fails prints a warning on stderr and never fails the send; the JSON on stdout is unchanged either way. Use `--no-synopsis` to skip the extra turn, or `--no-history` to record nothing.
 
 For desktop-handoff workflows (route the message through a desktop tab, return an addressable tab id, etc.) use [`maestro-cli dispatch`](#dispatching-to-a-desktop-tab) instead.
 
-Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `<AGENT>_NOT_FOUND` (e.g. `CLAUDE_CODE_NOT_FOUND`, `CODEX_NOT_FOUND`), `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`.
+Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `<AGENT>_NOT_FOUND` (e.g. `CLAUDE_CODE_NOT_FOUND`, `CODEX_NOT_FOUND`), `SESSION_IS_TAB_ID`, `TAB_BUSY`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`.
 
 Supported agent types: any installed provider - `claude-code`, `codex`, `opencode`, `factory-droid`, `copilot-cli`, `hermes`, `pi`, `qwen3-coder`, `omp`.
 
@@ -313,6 +315,28 @@ The response echoes the armed callback:
 > `{{DISPATCH_OUTPUT}}` is another agent's output landing in your agent's prompt - the same trust model as Cue's `{{CUE_SOURCE_OUTPUT}}` and cross-agent consults. The default wrapper fences it and labels it as untrusted data. Keep that fencing if you supply your own `--callback-prompt`.
 
 Additional error cases: a callback agent that cannot be resolved (`AGENT_NOT_FOUND`), a callback that targets the dispatch tab itself, a tab that already has an armed callback (`CALLBACK_ALREADY_ARMED`), and callback flags passed without `--notify-on-complete` (all `INVALID_OPTIONS`).
+
+### Dispatching from Inside an Auto Run
+
+An Auto Run task (either mode) runs with `MAESTRO_CALLER_AUTORUN_ID` set, and `dispatch` reads it. There is no flag to pass:
+
+- A dispatch that names no destination (no `--tab`, `--new-tab`, `--queue`, `--force`, or `--notify-on-complete`) goes to a **new hidden tab**, as if `--new-tab` were passed.
+- A dispatch with `--new-tab` or `--tab` is **tracked by the run**: the run waits for it before its next task or iteration, and feeds the result into that turn's prompt. See [Delegating to Other Agents](autorun-playbooks.md#delegating-to-other-agents).
+- `--callback-timeout <seconds>` bounds that wait (default 3600, hard cap 86400). `--callback-tab` and `--callback-prompt` still require `--notify-on-complete`, which takes over: an explicit callback wakes its tab instead of reporting to the run.
+
+The reply says whether the run tracks the dispatch:
+
+```json
+{
+	"success": true,
+	"agentId": "worker-...",
+	"tabId": "tab-xyz",
+	"callbackId": "cb_01j...",
+	"autoRunTracked": true
+}
+```
+
+`"autoRunTracked": false` means the work was handed over but the run will not wait for it: it had no tab to correlate (`--queue` to the active tab), the tab already carried a callback, or the run had already ended. A note on stderr says the same. `auto-run-status -a <agent>` lists the delegations a run is waiting on.
 
 ### Listing Sessions
 
@@ -2315,20 +2339,21 @@ Install, check, and start the `maestro-cli host` on an SSH remote, for [Federati
 
 The new install is staged next to the old one and swapped in only once SQLite loads and the CLI runs, so a failed install leaves the old one working. A second run with the same version does nothing; an older install is upgraded; a newer one is left alone. `~/.maestro/bin` comes first on the PATH every SSH spawn gets, so the installed CLI wins over an older copy.
 
-| Flag                  | Description                                                                                                                                                                               | Default |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--start`             | Start the host once the CLI is in place. A desktop app that runs on the remote tells it, too                                                                                              | -       |
-| `--force`             | Install even when the remote has a `maestro-cli` Maestro did not install (Maestro.app, the server bundle). Maestro's copy then takes precedence; the other one is not touched             | -       |
-| `--restart`           | Replace a running host on an older version: stop it with `host stop --wait` (work in flight finishes first), upgrade, start it again. Without it, the install refuses with `host-running` | -       |
-| `--timeout <seconds>` | Give up on the install after this many seconds                                                                                                                                            | `600`   |
-| `--json`              | Output as JSON (for scripting), with the `cli` action (`installed`, `upgraded`, `current`, `newer`), the platform, the Node.js version and where it came from, and the start result       | -       |
+| Flag                  | Description                                                                                                                                                                                                                                          | Default |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--start`             | Start the host once the CLI is in place. A desktop app that runs on the remote tells it, too                                                                                                                                                         | -       |
+| `--force`             | Install even when the remote has a `maestro-cli` Maestro did not install (Maestro.app, the server bundle). Maestro's copy then takes precedence; the other one is not touched                                                                        | -       |
+| `--restart`           | Replace a running host on an older version: stop it with `host stop --wait` (work in flight finishes first), upgrade, start it again. Without it, the install refuses with `host-running`                                                            | -       |
+| `--no-service`        | Do not register the host with the remote's service manager. By default the install writes a systemd user unit (Linux) or a launchd agent (macOS without Maestro.app), turns lingering on where the SSH user may, and lets the service start the host | -       |
+| `--timeout <seconds>` | Give up on the install after this many seconds                                                                                                                                                                                                       | `600`   |
+| `--json`              | Output as JSON (for scripting), with the `cli` action (`installed`, `upgraded`, `current`, `newer`), the platform, the Node.js version and where it came from, and the start result                                                                  | -       |
 
 ```bash
 maestro-cli remote-host install build-box --start
 maestro-cli remote-host install build-box --restart   # upgrade a running host
 ```
 
-A refusal names its cause and the fix, with a `code` in `--json`: `unsupported-os`, `unsupported-arch`, `foreign-cli`, `host-running`, `node-download` (the remote cannot reach nodejs.org and has no Node.js 22+), `sqlite-install`, and so on. It never asks for sudo and runs only as the SSH user, and nothing outside `~/.maestro` is written: npm's cache goes to `~/.maestro/npm-cache` too. The launcher finds Node.js each time it runs (Maestro's own copy, then the one used at install time, then `node` on PATH), and an install whose launcher no longer runs is replaced by `remote-host install --force` (the desktop offers **Reinstall maestro-cli**). The new launcher is written before the swap, and the old install comes back if either step fails.
+A refusal names its cause and the fix, with a `code` in `--json`: `unsupported-os`, `unsupported-arch`, `foreign-cli`, `host-running`, `node-download` (the remote cannot reach nodejs.org and has no Node.js 22+), `sqlite-install`, and so on. It never asks for sudo and runs only as the SSH user, and the install writes nothing outside `~/.maestro` (npm's cache goes to `~/.maestro/npm-cache` too). Registering the service adds `~/.config/systemd/user/maestro-host.service` or `~/Library/LaunchAgents/sh.maestro.host.plist`, unless `--no-service`. The launcher finds Node.js each time it runs (Maestro's own copy, then the one used at install time, then `node` on PATH), and an install whose launcher no longer runs is replaced by `remote-host install --force` (the desktop offers **Reinstall maestro-cli**). The new launcher is written before the swap, and the old install comes back if either step fails.
 
 `remote-host status` makes one SSH call and reports whether Maestro is installed on the remote (with the fix when it is not), whether a host is running there (its pid, its port on the remote's loopback and its version), and the version skew against this CLI: `none`, `remote-older`, `remote-newer` or `unknown`. It exits `0` with a running host and `3` when no host runs or Maestro is not installed. `remote-host start` runs `maestro-cli host start` on the remote, as the SSH user, when no host is running there, then reports status the same way. It does nothing when a host already runs. The SSH calls run one after the other, never at the same time. Neither verb prints the host's token or CLI secret, with or without `--json`. A timeout exits `5`, and a remote CLI too old to know `host endpoint` exits `4`.
 
@@ -2440,9 +2465,21 @@ The host is the CLI bundle, run with Node.js. For a machine you reach over SSH, 
 
 To keep the host running across reboots, have your service manager run `maestro-cli host start --foreground` (with `--data-dir` if the directory is not the default) and stop it with SIGTERM, which drains as described above. [Run the Host as a Service](#run-the-host-as-a-service) has the unit files.
 
+### Automatic Federation from the CLI
+
+The desktop app keeps Federation hosts running and, with **Move SSH agents to their host automatically** on, installs hosts and moves SSH agents onto them by itself ([how it decides](/federation#automatic-moves-and-their-sanity-checks)). Two verbs show and drive it:
+
+```bash
+maestro-cli federation auto            # every remote and SSH agent, its state, and what needs you
+maestro-cli federation auto run        # run a pass now (Run Now in Settings > SSH Hosts)
+maestro-cli settings set federationAutoMove false   # turn automatic moves off
+```
+
+Both print each remote's state (`ready`, `setting-up`, `waiting`, `blocked`) with its service, and each SSH agent's state (`moved`, `pending`, `waiting`, `blocked`, `manual`) with its reason. Anything `blocked` carries a `To fix:` line. Both exit `1` when something needs a person: a `blocked` remote or agent, or a running host whose service still needs one step (lingering off, or a service that failed to register). A remote that can never have a service (Windows, Linux without a user session, a Mac with Maestro.app) shows its workaround as a note and does not make them exit `1`. `--json` prints the same snapshot. They need the desktop app: a headless host mirrors no peers.
+
 ## Run the Host as a Service
 
-`maestro-cli host start` detaches, but nothing starts it again after a reboot or a crash. A service manager does both. Maestro does not install these files: copy the one for your platform and change the paths.
+`maestro-cli host start` detaches, but nothing starts it again after a reboot or a crash. A service manager does both. For a host you set up from a laptop, `remote-host install` (and the desktop's automatic Federation) installs the service for you; see [Federation durability](/federation#durability). The files below are for a host you set up by hand: copy the one for your platform and change the paths.
 
 **Run the service as the user your SSH agents run as.** The host and the SSH agents then share one home directory, so the host reads the same provider logins and session files. A host that runs as another user cannot resume the provider sessions of an agent lifted onto it. This is not the `maestro` system user that the [server bundle](/maestro-cue-server) creates for a dedicated Cue engine: that user is for an engine that owns its whole machine, and an SSH agent you start does not run as it.
 
@@ -2611,7 +2648,15 @@ maestro-cli cue schedule --daily-at 09:00,17:30 --agent Neema --prompt "Sweep th
 
 # Every 30 minutes
 maestro-cli cue schedule --every 30m --agent "ODIN Market" --prompt "Poll the market feed."
+
+# Into an existing conversation: an agent scheduling its own follow-up from its tab
+maestro-cli cue schedule --at "2026-11-11 15:00" --here --prompt "Find more candidates."
+
+# Into a named tab of an agent
+maestro-cli cue schedule --in 1d --agent Pedsidian --tab 810dda7e --prompt "Check the draft again."
 ```
+
+By default a scheduled prompt runs as its own detached Cue turn, and its output lands in History and `cue activity`, not in any tab. `--tab` (or `--here`, for the tab the command runs from) delivers it into that tab instead, the same as `dispatch --tab --queue`: it waits behind a busy turn, the reply marks the tab unread, and the view never moves. If the tab was closed by the time the task fires, the prompt goes to a new tab of the agent and a toast says so. The tab keeps its own model, so `--tier`, `--model`, and `--effort` are refused with it.
 
 Inspect and edit what is scheduled:
 
@@ -2647,6 +2692,8 @@ maestro-cli cue schedule --cancel standup
 | `--cancel <name>`          | Delete a task                                                            |
 | `-a, --agent <id-or-name>` | Target agent (required when creating; scopes the other modes)            |
 | `-p, --prompt <text>`      | Prompt to send when the task fires                                       |
+| `--tab <tab-id>`           | Deliver the prompt into this AI tab of `--agent` (id or unique prefix)   |
+| `--here`                   | Deliver into the AI tab this command runs from; `--agent` defaults to it |
 | `--notify` / `--sticky`    | Also raise a toast; `--sticky` keeps it up until dismissed               |
 | `-m, --message <text>`     | Toast body (defaults to the label, then the prompt)                      |
 | `-n, --name <name>`        | Custom subscription name (auto-generated when omitted)                   |

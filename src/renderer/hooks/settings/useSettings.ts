@@ -421,6 +421,8 @@ export interface UseSettingsReturn {
 	setSshRemoteIgnorePatterns: (value: string[]) => void;
 	sshRemoteHonorGitignore: boolean;
 	setSshRemoteHonorGitignore: (value: boolean) => void;
+	federationAutoMove: boolean;
+	setFederationAutoMove: (value: boolean) => void;
 
 	// Browser settings
 	useSystemBrowser: boolean;
@@ -634,13 +636,26 @@ export interface UseSettingsReturn {
 // a fresh selector and recompute every render).
 const selectAllSettings = (s: SettingsStore): SettingsStore => s;
 
-export function useSettings(): UseSettingsReturn {
+/**
+ * Every setting and setter, with NONE of useSettings' lifecycle effects (load on
+ * mount, reload on resume or external change, typography vars, hotkey toasts).
+ *
+ * Use this from a component that may mount many times at once - each Settings
+ * section is its own component so the tab and the search results can both
+ * render it, and calling useSettings there would re-read the settings file once
+ * per section on every mount.
+ */
+export function useSettingsValues(): SettingsStore {
 	// PERF: Subscribe with shallow equality on the top-level state so a `set()` call that
 	// only flips one field doesn't re-render every consumer of useSettings. Critically,
 	// when an action calls `set({ x: value })` where `x === value` already, the resulting
 	// state object has a new reference but identical fields - shallow equality stops the
 	// re-render cascade through MaestroConsoleInner → GitStatusProvider → workspace tree.
-	const store = useStoreWithEqualityFn(useSettingsStore, selectAllSettings, shallow);
+	return useStoreWithEqualityFn(useSettingsStore, selectAllSettings, shallow);
+}
+
+export function useSettings(): UseSettingsReturn {
+	const store = useSettingsValues();
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 
 	// Load settings on mount

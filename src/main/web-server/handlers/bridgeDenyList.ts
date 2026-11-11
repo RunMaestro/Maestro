@@ -98,7 +98,7 @@ const EVENTS: Record<string, string> = {
 	agentSessions: 'globalStatsUpdate',
 	agents: 'snapshot-updated',
 	app: 'systemResume',
-	autorun: 'fileChanged statusChanged',
+	autorun: 'delegation fileChanged statusChanged',
 	claude: 'globalStatsUpdate projectStatsUpdate',
 	cli: 'activityChange',
 	'cross-agent': 'chunk',

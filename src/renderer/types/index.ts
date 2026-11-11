@@ -731,6 +731,11 @@ export interface BatchRunState {
 	goalIteration?: number; // 1-based iteration number the goal loop is on
 	goalExitReason?: import('../../shared/goalDriven/types').GoalExitReason; // Why the goal run stopped
 
+	// Work this run handed to other agents that is still running. Set only while
+	// the run waits for it before its next turn (both modes); empty otherwise.
+	// See src/shared/autoRunDelegation.ts.
+	pendingDelegations?: import('../../shared/autoRunDelegation').AutoRunPendingDelegation[];
+
 	// Live playbook status parsed from .maestro/STATUS.json (feature, phase,
 	// tests, summary). Populated by the STATUS.json watcher while the run is
 	// active; cleared when the file is deleted or the run completes.

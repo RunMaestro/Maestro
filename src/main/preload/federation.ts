@@ -15,6 +15,7 @@ import type { PeerAgentAction } from '../../shared/maestro-lib/client/peer-actio
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { DesktopLiftAnswer, DesktopLiftOptions } from '../federation/lift';
 import type { DesktopSetupHostAnswer, DesktopSetupHostOptions } from '../federation/setup-host';
+import type { AutoFederationSnapshot } from '../../shared/federationAuto';
 import type { PeerHistoryPageQuery } from '../federation/peer-history';
 import type { PaginatedResult } from '../../shared/history';
 import type { HistoryEntry, HistoryEntryType } from '../../shared/types';
@@ -101,6 +102,19 @@ export function createFederationApi() {
 			options?: DesktopSetupHostOptions
 		): Promise<DesktopSetupHostAnswer> =>
 			ipcRenderer.invoke('federation:setupHost', remoteId, options ?? {}),
+		/** What automatic Federation did, waits on, or could not do, per remote and per agent. */
+		autoStatus: (): Promise<AutoFederationSnapshot> => ipcRenderer.invoke('federation:autoStatus'),
+		/** Run an automatic Federation pass now and answer what it left behind. */
+		autoRun: (): Promise<AutoFederationSnapshot> => ipcRenderer.invoke('federation:autoRun'),
+		/** Fires with a new snapshot whenever automatic Federation changes something. */
+		onAuto: (handler: (snapshot: AutoFederationSnapshot) => void): (() => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, snapshot: AutoFederationSnapshot) =>
+				handler(snapshot);
+			ipcRenderer.on('federation:auto', wrapped);
+			return () => {
+				ipcRenderer.removeListener('federation:auto', wrapped);
+			};
+		},
 		/** Fires on every change to a mirrored peer. */
 		onEvent: (handler: (payload: MirrorPush) => void): (() => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, payload: MirrorPush) => handler(payload);

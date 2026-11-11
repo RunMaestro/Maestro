@@ -24,6 +24,10 @@ import { cheapResumeTurnSettings, cheapTurnSettings } from '../../../shared/mode
 import { isFailedSynopsisResponse } from '../../../shared/synopsis';
 import { stripAnsiCodes } from '../../../shared/stringUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
+import {
+	isAgentAwaitingConsult,
+	useCrossAgentInFlightStore,
+} from '../../stores/crossAgentInFlightStore';
 import { logger } from '../../utils/logger';
 import { armEffortFallback, settleEffortFallback } from '../../services/effortRejection';
 
@@ -69,6 +73,12 @@ export interface SpawnAgentOptions {
 	modelOverride?: string;
 	/** Overrides session.customEffort for this spawn only */
 	effortOverride?: string;
+	/**
+	 * The Auto Run this spawn is a task of. Stamped into the agent's env so a
+	 * `maestro-cli dispatch` it runs reports back to the run (see
+	 * `src/shared/autoRunDelegation.ts`).
+	 */
+	autoRunId?: string;
 }
 
 /**
@@ -650,6 +660,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 									return;
 								}
 
+								// A task waiting on its own `maestro-cli ask` is silent but not
+								// stalled: the consult is the work. Count it as activity.
+								if (
+									isAgentAwaitingConsult(useCrossAgentInFlightStore.getState().requests, sessionId)
+								) {
+									lastOutputAt = now;
+								}
+
 								// Silence-based inactivity watchdog.
 								if (inactivityTimeoutMs > 0 && now - lastOutputAt > inactivityTimeoutMs) {
 									window.maestro.process.kill(targetSessionId).catch(() => {});
@@ -714,6 +732,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// this path without a human in the loop; everything else here is a
 							// slash command or another user action, so it stays 'user'.
 							querySource: isBatchProcess ? 'auto' : 'user',
+							...(isBatchProcess && options?.autoRunId ? { autoRunId: options.autoRunId } : {}),
 							// The agent's TUI setting resolves server-side from the
 							// `{sessionId}-batch-` process id. What main cannot know is the
 							// idle budget: maestro-p's own 300s default would kill a silent

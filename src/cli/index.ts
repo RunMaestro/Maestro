@@ -93,7 +93,12 @@ import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './com
 import { hostEndpoint, hostStart, hostStatus, hostStop } from './commands/host';
 import { remoteHostInstall, remoteHostStart, remoteHostStatus } from './commands/remote-host';
 import { lift } from './commands/lift';
-import { federationPeers, federationReconnect } from './commands/federation';
+import {
+	federationAuto,
+	federationAutoRun,
+	federationPeers,
+	federationReconnect,
+} from './commands/federation';
 import { createAgent, CREATE_AGENT_TYPES } from './commands/create-agent';
 import { duplicateAgent } from './commands/duplicate-agent';
 import { liveStatus, liveOn, liveOff, liveTunnel } from './commands/live';
@@ -579,7 +584,10 @@ clean
 program
 	.command('send <agent-id> <message>')
 	.description('Send a message to an agent and get a JSON response')
-	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
+	.option(
+		'-s, --session <id>',
+		'Resume a PROVIDER session id (the sessionId a previous send returned, or one from `list sessions`), not a Maestro tab id. Runs headless beside the desktop; to deliver into a live tab use `dispatch --tab <tab-id> --queue`'
+	)
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
 	.option('--require-plugin-tools', 'Fail if a desktop-backed run with plugin tools is unavailable')
@@ -608,7 +616,7 @@ program
 		'For dispatch and --queue: reconcile the same dispatch after an unknown acknowledgment; never generate another send for it'
 	)
 	.description(
-		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
+		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID. Inside an Auto Run task, a dispatch that names no tab goes to a new hidden tab, and the run waits for it and hands its result to the next turn (autoRunTracked in the reply).'
 	)
 	.option(
 		'--new-tab',
@@ -661,7 +669,7 @@ program
 	)
 	.option(
 		'--callback-timeout <seconds>',
-		'Give up and fire a timeout callback after this long (default 3600, max 86400)'
+		'Give up and fire a timeout callback after this long (default 3600, max 86400). Inside an Auto Run task it also bounds how long the run waits for this dispatch'
 	)
 	.action(dispatch);
 
@@ -1533,6 +1541,14 @@ cue
 		'With a worktree flag: ref a new branch is cut from, and the pull request target'
 	)
 	.option('--create-pr', 'With a worktree flag: open a pull request when the run finishes')
+	.option(
+		'--tab <tab-id>',
+		'Deliver the prompt into this existing AI tab of --agent (waits behind a busy turn, marks the tab unread, never moves the view; a closed tab falls back to a new tab + toast)'
+	)
+	.option(
+		'--here',
+		'Like --tab, for the AI tab this command runs from (an agent scheduling its own follow-up); --agent defaults to that agent'
+	)
 	.option('--notify', 'Show a toast notification when the task fires')
 	.option('--sticky', 'Make the notify toast sticky (requires --notify)')
 	.option('-m, --message <text>', 'Body for the notify toast (defaults to label/prompt)')
@@ -1929,6 +1945,10 @@ remoteHost
 	.option('--start', 'Start the host on the remote once the CLI is in place')
 	.option('--force', 'Install even over a maestro-cli that Maestro did not install there')
 	.option('--restart', 'Replace a running host on an older version: stop it, upgrade, start it')
+	.option(
+		'--no-service',
+		'Do not register the host with the remote service manager (systemd user unit, launchd agent)'
+	)
 	.option('--timeout <seconds>', 'Give up on the install after this many seconds (default 600)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((ref: string, options) => remoteHostInstall(ref, options, cliVersion));
@@ -1961,6 +1981,22 @@ federation
 	.description('List the peers the desktop mirrors, with connection state and agent count')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => federationPeers(options));
+
+const federationAutoCommand = federation
+	.command('auto')
+	.description(
+		'Show what automatic Federation did, waits on, or needs from you, per SSH remote and SSH agent (exit 1 when something needs you)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationAuto(options));
+
+federationAutoCommand
+	.command('run')
+	.description(
+		'Run an automatic Federation pass now: start stopped hosts, install where SSH agents need one, and move agents that pass every check'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationAutoRun(options));
 
 federation
 	.command('reconnect <peer>')

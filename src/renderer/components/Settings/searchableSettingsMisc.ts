@@ -106,6 +106,27 @@ export const SSH_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'ssh-federation-automation',
+		tab: 'ssh',
+		tabLabel: 'SSH Hosts',
+		label: 'Federation automation',
+		description:
+			'Move SSH agents to their host automatically, keep Maestro hosts running across reboots, and see what needs you',
+		keywords: [
+			'federation',
+			'federation automation',
+			'move ssh agents to their host automatically',
+			'move to host',
+			'make federated',
+			'host',
+			'service',
+			'systemd',
+			'launchd',
+			'run now',
+			'needs you',
+		],
+	},
+	{
 		id: 'ssh-ignore-patterns',
 		tab: 'ssh',
 		tabLabel: 'SSH Hosts',

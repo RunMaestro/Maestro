@@ -8,6 +8,7 @@ import { isBlankEnvKey, isBlankEnvValue } from '../../agentEnvironment';
 import {
 	CALLER_AGENT_ID_ENV_VAR,
 	CALLER_TAB_ID_ENV_VAR,
+	CALLER_AUTORUN_ID_ENV_VAR,
 	CALLER_RUN_PROOF_FILE_ENV_VAR,
 } from '../../agentDelegation';
 import { PROVIDER_ENV_VAR_SUGGESTIONS } from '../../envVarCatalog';
@@ -112,6 +113,7 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 	// and attributing it to whichever agent launched Maestro would be a lie.
 	delete env[CALLER_AGENT_ID_ENV_VAR];
 	delete env[CALLER_TAB_ID_ENV_VAR];
+	delete env[CALLER_AUTORUN_ID_ENV_VAR];
 	delete env[CALLER_RUN_PROOF_FILE_ENV_VAR];
 
 	// Vim arrow-key ergonomics: when users launch `vi`/`vim` with distro defaults
@@ -175,6 +177,7 @@ const STRIPPED_ENV_VARS = [
 	// is merged after this list is stripped, so only a stale inherited copy dies.
 	CALLER_AGENT_ID_ENV_VAR,
 	CALLER_TAB_ID_ENV_VAR,
+	CALLER_AUTORUN_ID_ENV_VAR,
 	CALLER_RUN_PROOF_FILE_ENV_VAR,
 	// Maestro's own NODE_ENV should not leak to agents
 	'NODE_ENV',
@@ -673,6 +676,7 @@ const SERVER_ENV_ALLOWED_PREFIXES: readonly string[] = ['LC_', 'XDG_', 'SSH_', '
 const SERVER_ENV_DENIED_NAMES: readonly string[] = [
 	CALLER_AGENT_ID_ENV_VAR,
 	CALLER_TAB_ID_ENV_VAR,
+	CALLER_AUTORUN_ID_ENV_VAR,
 	CALLER_RUN_PROOF_FILE_ENV_VAR,
 	QUERY_SOURCE_ENV_VAR,
 ];

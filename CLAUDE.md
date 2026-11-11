@@ -108,6 +108,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Loading a LOCAL file tree:** `walkLocalFileTree()` in `src/main/utils/file-tree-walk.ts`, wrapped by `loadFileTree()` in `src/renderer/utils/fileExplorer.ts`
 - **Telling the Files panel a file appeared or vanished:** `requestFileTreeRefresh(sessionId)` in `src/renderer/utils/fileTreeRefresh.ts` (renderer) and `nudgeFileTreeForPaths(paths)` in `src/cli/services/file-tree-refresh.ts` (CLI)
 - **Whether an absolute path exists, from render code:** `checkPathExists()` in `src/renderer/utils/fileLinks/pathExistence.ts`, `usePathExistence(sshRemoteId?)` in `src/renderer/hooks/utils/usePathExistence.ts` (async-filled cache; `remarkFileLinks` links a spaced absolute path only once it exists)
+- **Finding the file a markdown embed points at:** `resolveEmbedCandidates()`, `findFirstExistingPath()`, `parseEmbedAltSize()` in `src/renderer/utils/fileLinks/embedResolution.ts`
 - **Delete the file the user is previewing:** `requestFileDeletion()` in `src/renderer/services/fileDeletion.ts`
 
 #### Main process: stores, persistence, platform
@@ -186,6 +187,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Driving a Federation peer's agent (CLI and desktop):** `runPeerAgentAction()`, `parsePeerAgentAction()` in `src/shared/maestro-lib/client/peer-actions.ts`; `PeerMirrorService.act()` in `src/main/federation/`
 - **Mirroring a Federation peer in memory (desktop):** `applyPeerEvent()`, `mirrorKey()`, `replacePeerAgents()` in `src/shared/maestro-lib/client/peer-mirror.ts`; `foldLiveTurn()`, `coalesceTurnEvents()` in `src/shared/maestro-lib/client/live-turn.ts`; `getPeerMirrorService()` in `src/main/federation/index.ts`
 - **Installing maestro-cli on an SSH remote (Federation):** `setupRemoteHost()`, `installRemoteCli()`, `resolveLocalCliBundle()` in `src/shared/maestro-lib/client/remote-install.ts`; `setupHostFromDesktop()` in `src/main/federation/setup-host.ts`
+- **Keeping a Federation host running across reboots (service):** `installRemoteService()`, `buildRemoteServiceScript()`, `describeRemoteService()` in `src/shared/maestro-lib/client/remote-service.ts`
+- **Automatic Federation (keep hosts, install, move SSH agents):** `AutoFederationCoordinator` in `src/main/federation/auto-federation.ts`; `useFederationAutoStore` in `src/renderer/stores/federationAutoStore.ts`; types in `src/shared/federationAuto.ts`
 - **Whether an SSH remote takes part in Federation:** `isFederationRemote()`, `federationFieldFor()` in `src/shared/federationRemote.ts`
 - **How a local agent stands with Federation (badge, Make Federated):** `agentFederationStatus()`, `canMakeFederated()`, `isPeerFederated()` in `src/renderer/utils/peerMirrorView.ts`; `<FederationBadge>` in `src/renderer/components/SessionList/FederationBadge.tsx`
 - **Showing a Federation peer's mirrored agent (renderer):** `usePeerMirrorStore`, `isMirrorShown()` in `src/renderer/stores/peerMirrorStore.ts`; `buildMirrorViewSession()` in `src/renderer/utils/peerMirrorView.ts`; `gateKeyForMirror()` in `src/renderer/hooks/keyboard/mirrorKeyboardGate.ts`
@@ -358,6 +361,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Un-parking an Auto Run stopped on an error:** `registerBatchResumer()`, `getBatchResumer()` in `src/renderer/services/batchResumer.ts`; `resolveAutoResumePolicy()` in `src/shared/autorunAutoResume.ts`; `scheduleAutoResume()`, `cancelPendingAutoResume()` in `src/renderer/stores/autoRunResumeStore.ts`
 - **Auto Run markers (HITL / halt / model hint):** `scanMaestroMarkers()`, `findPendingHitlGate()`, `detectHaltMarker()`, `hasMaestroMarker()` in `src/shared/autorunMarkers.ts`, rendered by `<MarkerPill>`
 - **Auto Run steering notes (mid-run course correction):** `formatSteeringNotesBlock()` in `src/shared/autorunSteering.ts`; `submitSteeringNote()`, `recordSteeringResponse()`, `runRemoteSteeringCommand()` in `src/renderer/services/autoRunSteering.ts`; wire shape in `src/shared/autoRunSteeringCommands.ts`
+- **Auto Run delegation (a task hands work to another agent):** `formatDelegationResultsBlock()`, `applyAutoRunDelegationEvent()` in `src/shared/autoRunDelegation.ts`; `awaitDelegationsBeforeTurn()`, `settleDelegationsAtRunEnd()` in `src/renderer/services/autoRunDelegations.ts`
 - **Fence-aware markdown scanning:** `forEachMarkdownLine()`, `UNCHECKED_TASK_REGEX`, `CHECKED_TASK_COUNT_REGEX`, `CHECKED_TASK_REGEX` in `src/shared/markdownTaskScan.ts`
 - **Auto Run document names (absolute path to folder-relative):** `resolveAutoRunDocumentName()`, `resolveAutoRunDocumentNames()` in `src/shared/autoRunDocumentPaths.ts`
 - **Ordering the Auto Run run list from the picker:** `applySelectionOrder()`, `selectFolderFiles()` in `src/renderer/utils/documentSelectionOrder.ts`
@@ -438,6 +442,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Usage Dashboard metric tile:** `<MetricCard>` in `src/renderer/components/UsageDashboard/MetricCard.tsx`
 - **Color for the Nth chart series:** `getSeriesColor(index, theme, colorBlindMode?)` in `src/renderer/components/UsageDashboard/chartUtils.ts`
 - **A label that must not truncate:** `useOptionalLabelFits(rowRef)` in `src/renderer/hooks/ui/useOptionalLabelFits.ts`
+- **A Settings section the search can show inline:** `GENERAL_SECTIONS`, `DISPLAY_SECTIONS`, `ENCORE_SECTIONS` in each tab's `sections.tsx`, `findSettingsSection(settingId)` in `src/renderer/components/Settings/settingsSections.ts`
 - **Adding a control to the Left Bar header:** three zones (identity, indicators, menu); a status control goes in the CENTER band and the wordmark never truncates (`showWordmark` in `SessionList.tsx`)
 - **Color math and contrast:** `readableTextOn()`, `isReadableOn()`, `contrastRatio()`, `blendColors()`, `transparentize()`, `adjustBrightness()`, `hexToRgb()` in `src/shared/colorContrast.ts`
 - **Diagram labels on fills the AUTHOR chose:** `repairDiagramLabelContrast(svg)` in `src/renderer/utils/diagramLabelContrast.ts`, over `cssColorToHex()` in `src/shared/colorContrast.ts`
@@ -504,6 +509,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Data a surface fetches that must survive it unmounting:** `useCachedResource()`, `revalidateCachedResource()`, `readCachedResource()` in `src/renderer/hooks/utils/useCachedResource.ts`; `useDashboardResource()`, `useTokenUsage()` in `src/renderer/components/UsageDashboard/`
 - **Steering a turn that is ALREADY RUNNING:** `getSteerEligibility()` in `src/renderer/utils/executionQueue.ts`, `steerQueuedItem()`, `requestSteerSend()` in `src/renderer/services/chatSteering.ts`, wire protocol in `src/shared/chatSteering.ts`, `steerCodexAppServerTurn()` in `src/main/codex-app-server/steering.ts`
 - **Honoring the user's settings in a secondary window:** `useWindowSettingsSync()`, `usePublishTypographyVars()`, `useReloadSettingsOnExternalChange()` in `src/renderer/hooks/settings/useWindowSettingsSync.ts`
+- **Reading settings without the lifecycle effects:** `useSettingsValues()` in `src/renderer/hooks/settings/useSettings.ts`
 
 #### Phone and touch (web-desktop)
 

@@ -54,7 +54,7 @@ function validateGlobPattern(pattern: string, prefix: string, errors: string[]):
 /**
  * Validate a `command` field, required when `action === 'command'`. Accepts:
  *   { mode: 'shell', shell: <non-empty string> }
- *   { mode: 'cli', cli: { command: 'send', target: <non-empty string>, message?: string, new_tab?: boolean } }
+ *   { mode: 'cli', cli: { command: 'send', target: <non-empty string>, message?: string, new_tab?: boolean, tab?: <non-empty string> } }
  */
 function validateCommandField(value: unknown, prefix: string, errors: string[]): void {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -91,6 +91,17 @@ function validateCommandField(value: unknown, prefix: string, errors: string[]):
 		}
 		if (cliRecord.new_tab !== undefined && typeof cliRecord.new_tab !== 'boolean') {
 			errors.push(`${prefix}: "command.cli.new_tab" must be a boolean when provided`);
+		}
+		if (
+			cliRecord.tab !== undefined &&
+			(typeof cliRecord.tab !== 'string' || cliRecord.tab.trim().length === 0)
+		) {
+			errors.push(`${prefix}: "command.cli.tab" must be a non-empty string when provided`);
+		}
+		if (cliRecord.tab !== undefined && cliRecord.new_tab === true) {
+			errors.push(
+				`${prefix}: "command.cli.tab" and "command.cli.new_tab" cannot both be set - pick an existing tab or a new one`
+			);
 		}
 	} else {
 		errors.push(`${prefix}: "command.mode" must be "shell" or "cli"`);

@@ -26,6 +26,7 @@ export {
 	initDispatchCallbacks,
 	getDispatchCallbackRegistry,
 	disposeDispatchCallbacks,
+	buildAutoRunDelegationEvent,
 } from './dispatch-callback-service';
 export type { DispatchCallbackServiceDeps } from './dispatch-callback-service';
 export type {

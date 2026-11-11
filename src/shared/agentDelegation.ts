@@ -31,6 +31,15 @@ export const CALLER_AGENT_ID_ENV_VAR = 'MAESTRO_CALLER_AGENT_ID';
 /** The AI tab within that agent whose turn spawned the process, when known. */
 export const CALLER_TAB_ID_ENV_VAR = 'MAESTRO_CALLER_TAB_ID';
 
+/**
+ * The Auto Run a spawned agent process is a task (or goal iteration) of. Set
+ * only on Auto Run spawns, so `maestro-cli dispatch` can hand the dispatched
+ * work's completion back to the run instead of losing it: the run waits for it
+ * before its next turn and feeds the result into that turn's prompt (see
+ * `src/shared/autoRunDelegation.ts`).
+ */
+export const CALLER_AUTORUN_ID_ENV_VAR = 'MAESTRO_CALLER_AUTORUN_ID';
+
 /** Private host-issued proof delivery, separate from display attribution. */
 export const CALLER_RUN_PROOF_FILE_ENV_VAR = 'MAESTRO_CALLER_RUN_PROOF_FILE';
 export const CALLER_RUN_PROOF_HEADER = 'x-maestro-caller-run-proof';
@@ -94,8 +103,20 @@ export function withoutCallerIdentityEnv(
 	const rest = { ...env };
 	delete rest[CALLER_AGENT_ID_ENV_VAR];
 	delete rest[CALLER_TAB_ID_ENV_VAR];
+	delete rest[CALLER_AUTORUN_ID_ENV_VAR];
 	delete rest[CALLER_RUN_PROOF_FILE_ENV_VAR];
 	return Object.keys(rest).length > 0 ? rest : undefined;
+}
+
+/** The env entry that tells an Auto Run task's shell which run it belongs to. */
+export function buildAutoRunCallerEnv(autoRunId: string | undefined): Record<string, string> {
+	const id = autoRunId?.trim();
+	return id ? { [CALLER_AUTORUN_ID_ENV_VAR]: id } : {};
+}
+
+/** The Auto Run a CLI invocation runs under, or undefined outside one. */
+export function readCallerAutoRunId(env: Record<string, string | undefined>): string | undefined {
+	return env[CALLER_AUTORUN_ID_ENV_VAR]?.trim() || undefined;
 }
 
 /**

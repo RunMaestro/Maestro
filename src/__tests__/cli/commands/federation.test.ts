@@ -12,8 +12,11 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 }));
 
 import {
+	FEDERATION_AUTO_RUN_TIMEOUT_MS,
 	FEDERATION_HEADLESS_MESSAGE,
 	FEDERATION_RECONNECT_TIMEOUT_MS,
+	federationAuto,
+	federationAutoRun,
 	federationPeers,
 	federationReconnect,
 	formatFederationPeers,
@@ -103,12 +106,12 @@ describe('federation command', () => {
 			expect(lastJson()).toEqual({ success: true, peers: [BUILDBOX] });
 		});
 
-		it('says how to opt a remote in when nothing is mirrored', async () => {
+		it('says how to install a host when nothing is mirrored', async () => {
 			mockDesktop({ success: true, peers: [] });
 
 			await federationPeers({});
 
-			expect(printed()).toContain('--federation on');
+			expect(printed()).toContain('maestro-cli remote-host install <ssh-remote> --start');
 		});
 
 		it('exits 1 with the desktop refusal (Federation off)', async () => {
@@ -166,6 +169,81 @@ describe('federation command', () => {
 		it('adds the sync time when the peer has one', () => {
 			expect(formatFederationPeers([{ ...BUILDBOX, lastSyncAt: Date.now() }])).toContain('synced');
 			expect(formatFederationPeers([BUILDBOX])).not.toContain('synced');
+		});
+	});
+
+	describe('federation auto', () => {
+		const snapshot = {
+			autoMove: true,
+			running: false,
+			lastPassAt: Date.now(),
+			remotes: [
+				{
+					remoteId: 'r1',
+					name: 'build-box',
+					state: 'ready' as const,
+					service: 'systemd user service: runs the host.',
+					at: 1,
+				},
+			],
+			agents: [
+				{
+					agentId: 'a1',
+					agentName: 'Docs',
+					remoteId: 'r1',
+					state: 'blocked' as const,
+					reason: 'Claude Code is not available.',
+					fix: 'Install Claude Code.',
+					at: 1,
+				},
+			],
+		};
+
+		it('prints each remote and agent with its fix, and exits 1 when something needs you', async () => {
+			const sent = mockDesktop({ success: true, auto: snapshot });
+
+			await federationAuto({});
+
+			expect(sent[0].payload).toMatchObject({ type: 'federation_command', action: 'auto-status' });
+			const text = printed();
+			expect(text).toContain('build-box');
+			expect(text).toContain('Service: systemd user service: runs the host.');
+			expect(text).toContain('Docs');
+			expect(text).toContain('To fix: Install Claude Code.');
+			expect(process.exitCode).toBe(1);
+			process.exitCode = undefined;
+		});
+
+		it('exits 1 for a running host that still needs a person', async () => {
+			mockDesktop({
+				success: true,
+				auto: {
+					...snapshot,
+					agents: [],
+					remotes: [
+						{ ...snapshot.remotes[0], needsYou: true, fix: 'Run sudo loginctl enable-linger u.' },
+					],
+				},
+			});
+
+			await federationAuto({});
+
+			expect(printed()).toContain('Run sudo loginctl enable-linger u.');
+			expect(process.exitCode).toBe(1);
+			process.exitCode = undefined;
+		});
+
+		it('runs a pass with a long timeout and prints the JSON', async () => {
+			const sent = mockDesktop({ success: true, auto: { ...snapshot, agents: [] } });
+
+			await federationAutoRun({ json: true });
+
+			expect(sent[0]).toMatchObject({
+				payload: { action: 'auto-run' },
+				timeoutMs: FEDERATION_AUTO_RUN_TIMEOUT_MS,
+			});
+			expect(lastJson()).toMatchObject({ autoMove: true, agents: [] });
+			expect(process.exitCode).toBeUndefined();
 		});
 	});
 });

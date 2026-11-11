@@ -410,20 +410,20 @@ Remove playbooks for deleted sessions
 
 Send a message to an agent and get a JSON response
 
-| Option                             | Description                                                                                                                                             | Default |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `-s, --session <id>`               | Resume an existing agent session (for multi-turn conversations)                                                                                         | -       |
-| `-r, --read-only`                  | Run in read-only/plan mode (agent cannot modify files)                                                                                                  | -       |
-| `-t, --tab`                        | Open/focus the session tab in Maestro desktop                                                                                                           | -       |
-| `--require-plugin-tools`           | Fail if a desktop-backed run with plugin tools is unavailable                                                                                           | -       |
-| `--require-tool-receipt <tool-id>` | Require a host-observed delivery receipt from this plugin tool ID                                                                                       | -       |
-| `--no-system-prompt`               | Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app. | -       |
-| `--no-history`                     | Do not write a History entry for this turn (written by default, desktop app running or not)                                                             | -       |
-| `--no-synopsis`                    | Skip the synopsis turn; the History entry carries the response instead                                                                                  | -       |
+| Option                             | Description                                                                                                                                                                                                                  | Default |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-s, --session <id>`               | Resume a PROVIDER session id (the sessionId a previous send returned, or one from `list sessions`), not a Maestro tab id. Runs headless beside the desktop; to deliver into a live tab use `dispatch --tab <tab-id> --queue` | -       |
+| `-r, --read-only`                  | Run in read-only/plan mode (agent cannot modify files)                                                                                                                                                                       | -       |
+| `-t, --tab`                        | Open/focus the session tab in Maestro desktop                                                                                                                                                                                | -       |
+| `--require-plugin-tools`           | Fail if a desktop-backed run with plugin tools is unavailable                                                                                                                                                                | -       |
+| `--require-tool-receipt <tool-id>` | Require a host-observed delivery receipt from this plugin tool ID                                                                                                                                                            | -       |
+| `--no-system-prompt`               | Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app.                                                                      | -       |
+| `--no-history`                     | Do not write a History entry for this turn (written by default, desktop app running or not)                                                                                                                                  | -       |
+| `--no-synopsis`                    | Skip the synopsis turn; the History entry carries the response instead                                                                                                                                                       | -       |
 
 ## `maestro-cli dispatch <agent-id> <message>`
 
-Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID
+Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID. Inside an Auto Run task, a dispatch that names no tab goes to a new hidden tab, and the run waits for it and hands its result to the next turn (autoRunTracked in the reply).
 
 | Option                            | Description                                                                                                                                                                                                                                                                                                                                                                                    | Default |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
@@ -441,7 +441,7 @@ Dispatch a prompt to an agent in the Maestro desktop app and return its tab/sess
 | `--notify-on-complete <agent-id>` | Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.                                                                                                                                                    | -       |
 | `--callback-tab <id>`             | Specific tab of the --notify-on-complete agent to wake (default: the calling tab when an agent notifies itself, else a new tab)                                                                                                                                                                                                                                                                | -       |
 | `--callback-prompt <text>`        | Override the callback prompt body. \{\{DISPATCH_STATUS\}\}, \{\{DISPATCH_TAB_ID\}\}, \{\{DISPATCH_TARGET_ID\}\}, \{\{DISPATCH_OUTPUT\}\}, \{\{DISPATCH_DURATION\}\}, \{\{DISPATCH_TASKS_COMPLETED\}\}, \{\{DISPATCH_TASKS_TOTAL\}\}, \{\{DISPATCH_PROMPT\}\} and \{\{DISPATCH_CALLBACK_ID\}\} are substituted.                                                                                 | -       |
-| `--callback-timeout <seconds>`    | Give up and fire a timeout callback after this long (default 3600, max 86400)                                                                                                                                                                                                                                                                                                                  | -       |
+| `--callback-timeout <seconds>`    | Give up and fire a timeout callback after this long (default 3600, max 86400). Inside an Auto Run task it also bounds how long the run waits for this dispatch                                                                                                                                                                                                                                 | -       |
 
 ## `maestro-cli ask <agent-id> <question>`
 
@@ -1193,47 +1193,49 @@ Show recent Cue runs, newest first
 
 Create a scheduled task (or --list / --cancel / --reschedule / --pause)
 
-| Option                          | Description                                                                                                                         | Default |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--in <duration>`               | One-shot: fire after a relative delay (e.g. 30s, 20m, 2h, 1d)                                                                       | -       |
-| `--at <timestamp>`              | One-shot: fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local)                                                                  | -       |
-| `--daily-at <times>`            | Repeating: comma-separated HH:MM times (e.g. 09:00,17:30)                                                                           | -       |
-| `--days <days>`                 | Limit --daily-at to these days (e.g. mon,tue,wed,thu,fri)                                                                           | -       |
-| `--every <duration>`            | Repeating: fire on an interval (e.g. 30m, 2h, 1d)                                                                                   | -       |
-| `--list`                        | List scheduled tasks across agents                                                                                                  | -       |
-| `--kind <kind>`                 | Filter --list by kind: once, daily, interval, all (default: all)                                                                    | -       |
-| `--cancel <name>`               | Cancel a scheduled task by name                                                                                                     | -       |
-| `--reschedule <name>`           | Change when an existing task fires (pass the timing flag too)                                                                       | -       |
-| `--pause <name>`                | Disable a task without deleting it                                                                                                  | -       |
-| `--resume <name>`               | Re-enable a paused task                                                                                                             | -       |
-| `-a, --agent <id-or-name>`      | Target agent (required when creating; scopes other modes)                                                                           | -       |
-| `-p, --prompt <text>`           | Prompt to send when the task fires. With --auto-run: extra instructions for the run                                                 | -       |
-| `--auto-run <documents...>`     | Launch an Auto Run of these .md documents (inside the agent's Auto Run folder) instead of sending a prompt. Kept on a failed launch | -       |
-| `--reset-on-completion`         | With --auto-run: uncheck every task when the run finishes                                                                           | -       |
-| `--loop`                        | With --auto-run: re-run the documents once every task is checked off                                                                | -       |
-| `--max-loops <n>`               | With --auto-run: loop ceiling (implies --loop)                                                                                      | -       |
-| `--per-document`                | With --auto-run: one agent turn per document instead of one per task                                                                | -       |
-| `--ignore-model-hints`          | With --auto-run: ignore the documents' MAESTRO:MODEL hints                                                                          | -       |
-| `--no-auto-resume`              | With --auto-run: stay paused after an agent error                                                                                   | -       |
-| `--auto-resume-after <minutes>` | With --auto-run: minutes between auto-resume attempts                                                                               | -       |
-| `--max-auto-resumes <n>`        | With --auto-run: auto-resume attempt ceiling                                                                                        | -       |
-| `--worktree-branch <name>`      | With --auto-run: create a worktree on this branch when the run fires, and run there                                                 | -       |
-| `--worktree-agent <id-or-name>` | With --auto-run: run in this already-open worktree agent                                                                            | -       |
-| `--worktree-path <path>`        | With --auto-run: run in the worktree already on disk at this path                                                                   | -       |
-| `--base-branch <ref>`           | With a worktree flag: ref a new branch is cut from, and the pull request target                                                     | -       |
-| `--create-pr`                   | With a worktree flag: open a pull request when the run finishes                                                                     | -       |
-| `--notify`                      | Show a toast notification when the task fires                                                                                       | -       |
-| `--sticky`                      | Make the notify toast sticky (requires --notify)                                                                                    | -       |
-| `-m, --message <text>`          | Body for the notify toast (defaults to label/prompt)                                                                                | -       |
-| `-n, --name <name>`             | Custom subscription name (auto-generated when omitted)                                                                              | -       |
-| `-l, --label <text>`            | Human-readable label (defaults to truncated prompt)                                                                                 | -       |
-| `--pipeline <name>`             | Pipeline name (default: Tasks)                                                                                                      | -       |
-| `--grace-minutes <n>`           | Override the default 360-minute grace window                                                                                        | -       |
-| `--tier <level>`                | Model tier for the prompt run: low, medium, high (mapped per provider)                                                              | -       |
-| `--model <id>`                  | Exact model id for the prompt run (instead of --tier). With --auto-run: model for this run only                                     | -       |
-| `--effort <level>`              | Effort for the prompt run: low, medium, high (mapped per provider). With --auto-run: reasoning effort for this run only             | -       |
-| `--keep-on-failure`             | Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)                               | -       |
-| `--json`                        | Output as JSON (for scripting)                                                                                                      | -       |
+| Option                          | Description                                                                                                                                                                  | Default |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--in <duration>`               | One-shot: fire after a relative delay (e.g. 30s, 20m, 2h, 1d)                                                                                                                | -       |
+| `--at <timestamp>`              | One-shot: fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local)                                                                                                           | -       |
+| `--daily-at <times>`            | Repeating: comma-separated HH:MM times (e.g. 09:00,17:30)                                                                                                                    | -       |
+| `--days <days>`                 | Limit --daily-at to these days (e.g. mon,tue,wed,thu,fri)                                                                                                                    | -       |
+| `--every <duration>`            | Repeating: fire on an interval (e.g. 30m, 2h, 1d)                                                                                                                            | -       |
+| `--list`                        | List scheduled tasks across agents                                                                                                                                           | -       |
+| `--kind <kind>`                 | Filter --list by kind: once, daily, interval, all (default: all)                                                                                                             | -       |
+| `--cancel <name>`               | Cancel a scheduled task by name                                                                                                                                              | -       |
+| `--reschedule <name>`           | Change when an existing task fires (pass the timing flag too)                                                                                                                | -       |
+| `--pause <name>`                | Disable a task without deleting it                                                                                                                                           | -       |
+| `--resume <name>`               | Re-enable a paused task                                                                                                                                                      | -       |
+| `-a, --agent <id-or-name>`      | Target agent (required when creating; scopes other modes)                                                                                                                    | -       |
+| `-p, --prompt <text>`           | Prompt to send when the task fires. With --auto-run: extra instructions for the run                                                                                          | -       |
+| `--tab <tab-id>`                | Deliver the prompt into this existing AI tab of --agent (waits behind a busy turn, marks the tab unread, never moves the view; a closed tab falls back to a new tab + toast) | -       |
+| `--here`                        | Like --tab, for the AI tab this command runs from (an agent scheduling its own follow-up); --agent defaults to that agent                                                    | -       |
+| `--auto-run <documents...>`     | Launch an Auto Run of these .md documents (inside the agent's Auto Run folder) instead of sending a prompt. Kept on a failed launch                                          | -       |
+| `--reset-on-completion`         | With --auto-run: uncheck every task when the run finishes                                                                                                                    | -       |
+| `--loop`                        | With --auto-run: re-run the documents once every task is checked off                                                                                                         | -       |
+| `--max-loops <n>`               | With --auto-run: loop ceiling (implies --loop)                                                                                                                               | -       |
+| `--per-document`                | With --auto-run: one agent turn per document instead of one per task                                                                                                         | -       |
+| `--ignore-model-hints`          | With --auto-run: ignore the documents' MAESTRO:MODEL hints                                                                                                                   | -       |
+| `--no-auto-resume`              | With --auto-run: stay paused after an agent error                                                                                                                            | -       |
+| `--auto-resume-after <minutes>` | With --auto-run: minutes between auto-resume attempts                                                                                                                        | -       |
+| `--max-auto-resumes <n>`        | With --auto-run: auto-resume attempt ceiling                                                                                                                                 | -       |
+| `--worktree-branch <name>`      | With --auto-run: create a worktree on this branch when the run fires, and run there                                                                                          | -       |
+| `--worktree-agent <id-or-name>` | With --auto-run: run in this already-open worktree agent                                                                                                                     | -       |
+| `--worktree-path <path>`        | With --auto-run: run in the worktree already on disk at this path                                                                                                            | -       |
+| `--base-branch <ref>`           | With a worktree flag: ref a new branch is cut from, and the pull request target                                                                                              | -       |
+| `--create-pr`                   | With a worktree flag: open a pull request when the run finishes                                                                                                              | -       |
+| `--notify`                      | Show a toast notification when the task fires                                                                                                                                | -       |
+| `--sticky`                      | Make the notify toast sticky (requires --notify)                                                                                                                             | -       |
+| `-m, --message <text>`          | Body for the notify toast (defaults to label/prompt)                                                                                                                         | -       |
+| `-n, --name <name>`             | Custom subscription name (auto-generated when omitted)                                                                                                                       | -       |
+| `-l, --label <text>`            | Human-readable label (defaults to truncated prompt)                                                                                                                          | -       |
+| `--pipeline <name>`             | Pipeline name (default: Tasks)                                                                                                                                               | -       |
+| `--grace-minutes <n>`           | Override the default 360-minute grace window                                                                                                                                 | -       |
+| `--tier <level>`                | Model tier for the prompt run: low, medium, high (mapped per provider)                                                                                                       | -       |
+| `--model <id>`                  | Exact model id for the prompt run (instead of --tier). With --auto-run: model for this run only                                                                              | -       |
+| `--effort <level>`              | Effort for the prompt run: low, medium, high (mapped per provider). With --auto-run: reasoning effort for this run only                                                      | -       |
+| `--keep-on-failure`             | Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)                                                                        | -       |
+| `--json`                        | Output as JSON (for scripting)                                                                                                                                               | -       |
 
 ## `maestro-cli cue pipeline`
 
@@ -1515,13 +1517,14 @@ Report whether Maestro is installed on the remote, whether its host runs, and th
 
 Copy this maestro-cli to the remote (with Node.js and SQLite for the remote's platform), or upgrade an older one
 
-| Option                | Description                                                         | Default |
-| --------------------- | ------------------------------------------------------------------- | ------- |
-| `--start`             | Start the host on the remote once the CLI is in place               | -       |
-| `--force`             | Install even over a maestro-cli that Maestro did not install there  | -       |
-| `--restart`           | Replace a running host on an older version: stop it, upgrade, start | -       |
-| `--timeout <seconds>` | Give up on the install after this many seconds (default 600)        | -       |
-| `--json`              | Output as JSON (for scripting)                                      | -       |
+| Option                | Description                                                                                 | Default |
+| --------------------- | ------------------------------------------------------------------------------------------- | ------- |
+| `--start`             | Start the host on the remote once the CLI is in place                                       | -       |
+| `--force`             | Install even over a maestro-cli that Maestro did not install there                          | -       |
+| `--restart`           | Replace a running host on an older version: stop it, upgrade, start                         | -       |
+| `--no-service`        | Do not register the host with the remote service manager (systemd user unit, launchd agent) | -       |
+| `--timeout <seconds>` | Give up on the install after this many seconds (default 600)                                | -       |
+| `--json`              | Output as JSON (for scripting)                                                              | -       |
 
 ## `maestro-cli remote-host start <ssh-remote>`
 
@@ -1549,6 +1552,22 @@ List and reconnect the Federation peers the desktop app mirrors in its Left Bar
 ## `maestro-cli federation peers`
 
 List the peers the desktop mirrors, with connection state and agent count
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli federation auto`
+
+Show what automatic Federation did, waits on, or needs from you, per SSH remote and SSH agent (exit 1 when something needs you)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli federation auto run`
+
+Run an automatic Federation pass now: start stopped hosts, install where SSH agents need one, and move agents that pass every check
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

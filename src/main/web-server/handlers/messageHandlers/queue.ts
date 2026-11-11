@@ -9,7 +9,11 @@
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
 import { getDispatchCallbackRegistry } from '../../../dispatch-callbacks';
-import { armDispatchCallback } from './dispatchCallbacks';
+import {
+	armDispatchCallback,
+	readAutoRunCallbackRequest,
+	wantsDispatchCallback,
+} from './dispatchCallbacks';
 import { noteDispatchDelegation } from './agentDelegation';
 import { LOG_CONTEXT } from './shared';
 import { parseMentionRoutingField } from '../../../../shared/crossAgentContext';
@@ -200,7 +204,9 @@ export function handleEnqueueCommand(
 	// predecessor turn for minutes; the entry stays `pending` until OUR
 	// process spawns, so the predecessor's exit cannot fire it.
 	let enqueueCallbackId: string | undefined;
-	if (typeof message.notifyOnComplete === 'string' && message.notifyOnComplete) {
+	// An Auto Run task's dispatch is tracked the same way, but only with a tab
+	// to correlate on: without one it is handed over untracked, never refused.
+	if (wantsDispatchCallback(message) && (requestedTabId || !readAutoRunCallbackRequest(message))) {
 		if (!requestedTabId) {
 			sendErrorResult('--notify-on-complete requires an explicit target tab');
 			return;

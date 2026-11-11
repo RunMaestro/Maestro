@@ -29,6 +29,7 @@ import { OpenSpecCommandsPanel } from '../OpenSpecCommandsPanel';
 import { BmadCommandsPanel } from '../BmadCommandsPanel';
 import { NotificationsPanel } from '../NotificationsPanel';
 import { SshRemotesSection } from './SshRemotesSection';
+import { FederationAutomationSection } from './FederationAutomationSection';
 import { SshRemoteIgnoreSection } from './SshRemoteIgnoreSection';
 import { GeneralTab } from './tabs/GeneralTab';
 import { DisplayTab } from './tabs/DisplayTab';
@@ -539,9 +540,13 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						theme={theme}
 						query={search.query}
 						results={search.results}
-						onNavigate={handleSearchNavigate}
+						isOpen={isOpen}
 						selectedIndex={search.selectedIndex}
 						setSelectedIndex={search.setSelectedIndex}
+						expandedId={search.expandedId}
+						rowRefs={search.rowRefs}
+						onActivate={search.activate}
+						onNavigate={search.navigate}
 					/>
 				)}
 
@@ -597,7 +602,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					>
 						{activeTab === 'general' && <GeneralTab theme={theme} isOpen={isOpen} />}
 
-						{activeTab === 'display' && <DisplayTab theme={theme} />}
+						{activeTab === 'display' && <DisplayTab theme={theme} isOpen={isOpen} />}
 
 						{activeTab === 'shortcuts' && (
 							<ShortcutsTab
@@ -705,6 +710,9 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 							<div className="space-y-5">
 								<div data-setting-id="ssh-remotes">
 									<SshRemotesSection theme={theme} />
+								</div>
+								<div data-setting-id="ssh-federation-automation">
+									<FederationAutomationSection theme={theme} />
 								</div>
 								<div data-setting-id="ssh-ignore-patterns">
 									<SshRemoteIgnoreSection

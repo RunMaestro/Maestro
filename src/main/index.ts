@@ -187,6 +187,7 @@ import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
 import { getHistoryManager } from './history-manager';
 import { initDispatchCallbacks } from './dispatch-callbacks';
+import { AUTORUN_DELEGATION_CHANNEL } from '../shared/autoRunDelegation';
 import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
 import {
@@ -1364,6 +1365,9 @@ app
 		// execution queue (or in a new tab when it has none), not as a fresh
 		// headless process.
 		initDispatchCallbacks({
+			// Every window and the web-desktop bridge hear it; only the client whose
+			// run loop owns `autoRunId` acts on it (broadcast + filter, see safeSend).
+			notifyAutoRun: (event) => safeSend(AUTORUN_DELEGATION_CHANNEL, event),
 			onDelivered: async ({ entry, status }) => {
 				if (!entry.admissionId || !['completed', 'failed'].includes(status)) return;
 				const { confirmDispatchCallback } = await import('./pianola/pianola-store-main');
@@ -1592,6 +1596,23 @@ app
 			onLog: cueRunLog,
 			getConductorProfile: () => (store.get('conductorProfile', '') as string) || undefined,
 			onNotify: (params) => executeCueNotify({ ...params, mainWindow }),
+			// The tab this message was scheduled into is gone, so it went to a
+			// new tab. Say where, so the move is not silent.
+			onCliTabFallback: ({ subscriptionName, agentId, newTabId }) => {
+				emitCueNotifyToast(mainWindow, {
+					agentId,
+					title: subscriptionName,
+					color: newTabId ? 'yellow' : 'red',
+					message: newTabId
+						? 'The tab this task was scheduled into was closed, so it ran in a new tab.'
+						: 'The tab this task was scheduled into was closed, and a new tab could not be opened.',
+					clickAction: {
+						kind: 'jump-session',
+						sessionId: agentId,
+						...(newTabId ? { tabId: newTabId } : {}),
+					},
+				});
+			},
 			onAutoRun: (params) => {
 				const autoRunLog = (level: string, message: string) => {
 					if (level === 'error') logger.error(message, 'Cue');
