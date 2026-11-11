@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
+import * as fs from 'fs';
 
 // Store parameters passed to mock statement methods
 const runCalls: unknown[][] = [];
@@ -141,6 +142,8 @@ import {
 	clearGitHubSeenForSubscription,
 	safeRecordCueEvent,
 	safeUpdateCueEventStatus,
+	isCueDbCorruptionError,
+	quarantineCorruptCueDb,
 } from '../../../main/cue/cue-db';
 
 beforeEach(() => {
@@ -222,6 +225,89 @@ describe('cue-db lifecycle', () => {
 		initCueDb(undefined, path.join(os.tmpdir(), 'test-cue.db'));
 		closeCueDb();
 		expect(mockDb.close).toHaveBeenCalled();
+	});
+});
+
+describe('cue-db corruption handling', () => {
+	function sqliteError(code: string): Error {
+		return Object.assign(new Error(code), { code });
+	}
+
+	it('classifies SQLITE_CORRUPT, its extended codes and SQLITE_NOTADB as corruption', () => {
+		expect(isCueDbCorruptionError(sqliteError('SQLITE_CORRUPT'))).toBe(true);
+		expect(isCueDbCorruptionError(sqliteError('SQLITE_CORRUPT_INDEX'))).toBe(true);
+		expect(isCueDbCorruptionError(sqliteError('SQLITE_NOTADB'))).toBe(true);
+	});
+
+	it('does not classify lock, I/O or plain errors as corruption', () => {
+		expect(isCueDbCorruptionError(sqliteError('SQLITE_BUSY'))).toBe(false);
+		expect(isCueDbCorruptionError(sqliteError('SQLITE_IOERR'))).toBe(false);
+		expect(isCueDbCorruptionError(new Error('database disk image is malformed'))).toBe(false);
+		expect(isCueDbCorruptionError(null)).toBe(false);
+		expect(isCueDbCorruptionError('SQLITE_CORRUPT')).toBe(false);
+	});
+
+	it('closes the handle and stays not ready when preparing the schema throws', () => {
+		const dbPath = path.join(os.tmpdir(), 'test-cue.db');
+		mockDb.prepare.mockImplementationOnce(() => {
+			throw sqliteError('SQLITE_CORRUPT');
+		});
+
+		expect(() => initCueDb(undefined, dbPath)).toThrow('SQLITE_CORRUPT');
+		expect(isCueDbReady()).toBe(false);
+		expect(mockDb.close).toHaveBeenCalledOnce();
+
+		// A retry opens again instead of returning early on the dead handle.
+		initCueDb(undefined, dbPath);
+		expect(isCueDbReady()).toBe(true);
+	});
+
+	describe('quarantineCorruptCueDb', () => {
+		let dir: string;
+
+		beforeEach(() => {
+			dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-db-quarantine-'));
+		});
+
+		afterEach(() => {
+			fs.rmSync(dir, { recursive: true, force: true });
+		});
+
+		it('closes the database and moves the file and its WAL/SHM aside', () => {
+			const dbPath = path.join(dir, 'cue.db');
+			fs.writeFileSync(dbPath, 'main');
+			fs.writeFileSync(`${dbPath}-wal`, 'wal');
+			fs.writeFileSync(`${dbPath}-shm`, 'shm');
+			initCueDb(undefined, dbPath);
+
+			const moved = quarantineCorruptCueDb(dbPath);
+
+			expect(moved).not.toBeNull();
+			expect(path.basename(moved!)).toMatch(/^cue\.corrupt-.+\.db$/);
+			expect(isCueDbReady()).toBe(false);
+			expect(mockDb.close).toHaveBeenCalled();
+			expect(fs.existsSync(dbPath)).toBe(false);
+			expect(fs.existsSync(`${dbPath}-wal`)).toBe(false);
+			expect(fs.existsSync(`${dbPath}-shm`)).toBe(false);
+			expect(fs.readFileSync(moved!, 'utf-8')).toBe('main');
+			expect(fs.readFileSync(`${moved}-wal`, 'utf-8')).toBe('wal');
+			expect(fs.readFileSync(`${moved}-shm`, 'utf-8')).toBe('shm');
+		});
+
+		it('moves the main file when there is no WAL or SHM', () => {
+			const dbPath = path.join(dir, 'cue.db');
+			fs.writeFileSync(dbPath, 'main');
+
+			const moved = quarantineCorruptCueDb(dbPath);
+
+			expect(moved).not.toBeNull();
+			expect(fs.existsSync(dbPath)).toBe(false);
+			expect(fs.existsSync(moved!)).toBe(true);
+		});
+
+		it('returns null when the main file cannot be moved', () => {
+			expect(quarantineCorruptCueDb(path.join(dir, 'missing.db'))).toBeNull();
+		});
 	});
 });
 
