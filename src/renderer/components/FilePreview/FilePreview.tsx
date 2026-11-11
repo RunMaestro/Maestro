@@ -82,6 +82,7 @@ import {
 	scanLineStats,
 	canScaleFontForView,
 	resolvePreviewScroller,
+	deriveProjectRoot,
 } from './filePreviewUtils';
 import { BionifyTextBlock } from '../../utils/bionifyReadingMode';
 import { MarkdownImage } from './MarkdownImage';
@@ -962,21 +963,9 @@ export const FilePreview = React.memo(
 				img: ({ src, alt, ...props }: any) => {
 					// Check if this image came from file tree (set by remarkFileLinks)
 					const isFromTree = props['data-maestro-from-tree'] === 'true';
-					let projectRootForImage: string | undefined;
-
-					if (isFromTree && cwd && file) {
-						// Resolve project root so relative image links from tree render correctly.
-						const cwdIndex = file.path.indexOf(`/${cwd}/`);
-						if (cwdIndex !== -1) {
-							projectRootForImage = file.path.substring(0, cwdIndex);
-						} else {
-							const firstCwdSegment = cwd.split('/')[0];
-							const segmentIndex = file.path.indexOf(`/${firstCwdSegment}/`);
-							if (segmentIndex !== -1) {
-								projectRootForImage = file.path.substring(0, segmentIndex);
-							}
-						}
-					}
+					// Tree-resolved embeds are root-relative; ordinary relative
+					// images fall back to the root for Obsidian vault-root links.
+					const projectRoot = file ? deriveProjectRoot(file.path, cwd) : undefined;
 
 					return (
 						<MarkdownImage
@@ -986,7 +975,7 @@ export const FilePreview = React.memo(
 							theme={theme}
 							showRemoteImages={showRemoteImages}
 							isFromFileTree={isFromTree}
-							projectRoot={projectRootForImage}
+							projectRoot={projectRoot}
 							sshRemoteId={sshRemoteId}
 						/>
 					);

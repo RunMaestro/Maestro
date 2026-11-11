@@ -8,6 +8,9 @@ import {
 	countMarkdownTasks,
 	extractHeadings,
 	resolveImagePath,
+	resolveImagePathCandidates,
+	deriveProjectRoot,
+	parseImageAltSize,
 	isCodeFile,
 	LARGE_FILE_TOKEN_SKIP_THRESHOLD,
 	LARGE_FILE_PREVIEW_LIMIT,
@@ -334,6 +337,67 @@ describe('filePreviewUtils', () => {
 
 		it('resolves deeply nested ../ paths', () => {
 			expect(resolveImagePath('../../img.png', '/a/b/c/readme.md')).toBe('/a/img.png');
+		});
+	});
+
+	describe('resolveImagePathCandidates', () => {
+		it('offers the vault-root reading after the note-relative one', () => {
+			expect(
+				resolveImagePathCandidates('Body/_attachments/a b.jpg', '/vault/Body/note.md', '/vault')
+			).toEqual(['/vault/Body/Body/_attachments/a b.jpg', '/vault/Body/_attachments/a b.jpg']);
+		});
+
+		it('returns only the note-relative path without a project root', () => {
+			expect(resolveImagePathCandidates('img/a.png', '/vault/Body/note.md')).toEqual([
+				'/vault/Body/img/a.png',
+			]);
+		});
+
+		it('adds no fallback for explicitly based sources', () => {
+			for (const src of ['./a.png', '../a.png', '/abs/a.png', 'https://x.io/a.png']) {
+				expect(resolveImagePathCandidates(src, '/vault/Body/note.md', '/vault')).toHaveLength(1);
+			}
+		});
+
+		it('dedupes when the note sits at the root', () => {
+			expect(resolveImagePathCandidates('img/a.png', '/vault/note.md', '/vault')).toEqual([
+				'/vault/img/a.png',
+			]);
+		});
+	});
+
+	describe('deriveProjectRoot', () => {
+		it('strips the cwd and file name from the end of the path', () => {
+			expect(deriveProjectRoot('/vault/Body/note.md', 'Body')).toBe('/vault');
+			expect(deriveProjectRoot('/x/Body/vault/Body/note.md', 'Body')).toBe('/x/Body/vault');
+		});
+
+		it('handles a nested cwd', () => {
+			expect(deriveProjectRoot('/vault/a/b/note.md', 'a/b')).toBe('/vault');
+		});
+
+		it('is undefined for an empty cwd', () => {
+			expect(deriveProjectRoot('/vault/note.md', '')).toBeUndefined();
+			expect(deriveProjectRoot('/vault/note.md', undefined)).toBeUndefined();
+		});
+	});
+
+	describe('parseImageAltSize', () => {
+		it('splits an Obsidian width off the caption', () => {
+			expect(parseImageAltSize('How to dead hang (2:30)|220')).toEqual({
+				alt: 'How to dead hang (2:30)',
+				width: 220,
+				height: undefined,
+			});
+		});
+
+		it('reads width x height', () => {
+			expect(parseImageAltSize('pic|200x100')).toEqual({ alt: 'pic', width: 200, height: 100 });
+		});
+
+		it('leaves a plain caption alone', () => {
+			expect(parseImageAltSize('a | b')).toEqual({ alt: 'a | b' });
+			expect(parseImageAltSize(undefined)).toEqual({ alt: '' });
 		});
 	});
 

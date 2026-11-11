@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Image } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
-import { imageCache, resolveImagePath } from './filePreviewUtils';
+import { imageCache, parseImageAltSize, resolveImagePathCandidates } from './filePreviewUtils';
 import { safeDecodeURIComponent } from '../../../shared/stringUtils';
 
 /**
@@ -33,29 +33,32 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
 	const isRemoteUrl = src?.startsWith('http://') || src?.startsWith('https://');
+	const { alt: caption, width: sizedWidth, height: sizedHeight } = parseImageAltSize(alt);
 
-	// Resolve the image's source to a clean, absolute path (no ssh: namespacing).
-	// This is what actually gets read from disk / fetched over SSH, so it must
-	// NOT carry the cache-key prefix - otherwise the literal `ssh:<id>:` string
-	// leaks into the remote `base64 < <path>` command and the shell can't find it.
-	const resolvedPath = useMemo(() => {
-		if (!src) return null;
-		if (src.startsWith('data:')) return src; // data URLs are self-contained
-		if (isRemoteUrl) return src;
+	// Resolve the image's source to clean, absolute paths (no ssh: namespacing),
+	// most likely first. These are what actually get read from disk / fetched
+	// over SSH, so they must NOT carry the cache-key prefix - otherwise the
+	// literal `ssh:<id>:` string leaks into the remote `base64 < <path>` command.
+	const candidatePaths = useMemo(() => {
+		if (!src) return [];
+		if (src.startsWith('data:')) return [src]; // data URLs are self-contained
+		if (isRemoteUrl) return [src];
 
 		// mdast-util-to-hast percent-encodes every destination, so a path with a
 		// space arrives as `%20` and must be decoded before it reaches disk.
 		const decodedSrc = safeDecodeURIComponent(src);
 
 		if (isFromFileTree && projectRoot) {
-			return `${projectRoot}/${decodedSrc}`;
+			return [`${projectRoot}/${decodedSrc}`];
 		}
-		return resolveImagePath(decodedSrc, markdownFilePath);
+		return resolveImagePathCandidates(decodedSrc, markdownFilePath, projectRoot);
 	}, [src, markdownFilePath, isFromFileTree, projectRoot, isRemoteUrl]);
+	const resolvedPath = candidatePaths[0] ?? null;
 
 	// Cache key namespaces the resolved path by sshRemoteId so the same path on
 	// different remotes (or local vs remote) doesn't collide in the shared cache.
-	// Used ONLY as a map key - never passed to readFile.
+	// Used ONLY as a map key - never passed to readFile. Keyed on the first
+	// candidate, so a hit through a fallback path is found again on re-render.
 	const cacheKey = useMemo(() => {
 		if (!resolvedPath) return null;
 		if (resolvedPath.startsWith('data:')) return resolvedPath;
@@ -102,24 +105,37 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 		}
 
 		// For local files, load via IPC (supports SSH remote). Pass the clean
-		// resolved path - the cache key's ssh: prefix must never reach the shell.
+		// resolved paths - the cache key's ssh: prefix must never reach the shell.
+		// readFile returns null for a missing file, so walk the candidates until
+		// one exists.
+		let cancelled = false;
+		const missingLabel = safeDecodeURIComponent(src);
 		setLoading(true);
-		window.maestro.fs
-			.readFile(resolvedPath ?? cacheKey, sshRemoteId)
-			.then((result) => {
+		(async () => {
+			let sawContent = false;
+			for (const path of candidatePaths) {
+				const result = await window.maestro.fs.readFile(path, sshRemoteId);
 				if (result && result.startsWith('data:')) {
+					if (cancelled) return;
 					setDataUrl(result);
 					imageCache.set(cacheKey, { dataUrl: result, loadedAt: Date.now() });
-				} else {
-					setError('Invalid image data');
+					setLoading(false);
+					return;
 				}
-				setLoading(false);
-			})
-			.catch((err) => {
-				setError(`Failed to load image: ${err.message || 'Unknown error'}`);
-				setLoading(false);
-			});
-	}, [src, cacheKey, resolvedPath, showRemoteImages, isRemoteUrl, sshRemoteId]);
+				if (result) sawContent = true;
+			}
+			if (cancelled) return;
+			setError(sawContent ? 'Invalid image data' : `Image not found: ${missingLabel}`);
+			setLoading(false);
+		})().catch((err) => {
+			if (cancelled) return;
+			setError(`Failed to load image: ${err.message || 'Unknown error'}`);
+			setLoading(false);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [src, cacheKey, candidatePaths, showRemoteImages, isRemoteUrl, sshRemoteId]);
 
 	// Handle image load to get dimensions and update cache
 	const handleImageLoad = useCallback(
@@ -199,11 +215,13 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 	return (
 		<img
 			src={dataUrl}
-			alt={alt || ''}
+			alt={caption}
 			className="max-w-full rounded my-2 block"
 			style={{
 				border: `1px solid ${theme.colors.border}`,
-				...(dimensions.width && dimensions.height
+				...(sizedWidth ? { width: `${sizedWidth}px` } : {}),
+				...(sizedHeight ? { height: `${sizedHeight}px` } : {}),
+				...(dimensions.width && dimensions.height && !sizedHeight
 					? { aspectRatio: `${dimensions.width} / ${dimensions.height}` }
 					: {}),
 			}}

@@ -495,3 +495,57 @@ export const resolveImagePath = (src: string, markdownFilePath: string): string 
 	if (!markdownDir) return normalizePosixPath(src);
 	return normalizePosixPath(`${markdownDir}/${src}`);
 };
+
+/**
+ * Every on-disk path a local image reference may point at, most likely first.
+ *
+ * Standard markdown resolves a relative image against the note's folder.
+ * Obsidian also writes links as a path from the vault root
+ * (`Body/_attachments/x.jpg` inside `Body/note.md`), which the note-relative
+ * reading turns into `Body/Body/_attachments/x.jpg`. When the preview knows
+ * the project root, that root-relative reading is offered as a fallback.
+ * A `./` or `../` prefix is explicitly note-relative and gets no fallback.
+ */
+export const resolveImagePathCandidates = (
+	src: string,
+	markdownFilePath: string,
+	projectRoot?: string
+): string[] => {
+	const primary = resolveImagePath(src, markdownFilePath);
+	const explicitBase = /^(?:\/|\.\.?\/|data:|https?:\/\/)/.test(src);
+	if (!projectRoot || explicitBase) return [primary];
+	const fromRoot = normalizePosixPath(`${projectRoot}/${src}`);
+	return fromRoot === primary ? [primary] : [primary, fromRoot];
+};
+
+/**
+ * The project root a previewed file sits under, from its absolute path and
+ * `cwd` (its folder relative to that root, as `useFilePreviewHandlers` derives
+ * it). Undefined when `cwd` is empty: the file then sits at the root itself,
+ * or outside the project, and its own folder is the only base there is.
+ */
+export const deriveProjectRoot = (filePath: string, cwd?: string): string | undefined => {
+	if (!cwd || !filePath) return undefined;
+	const tail = `/${cwd}/${filePath.slice(filePath.lastIndexOf('/') + 1)}`;
+	if (filePath.endsWith(tail)) return filePath.slice(0, -tail.length);
+	const cwdIndex = filePath.indexOf(`/${cwd}/`);
+	if (cwdIndex !== -1) return filePath.substring(0, cwdIndex);
+	const segmentIndex = filePath.indexOf(`/${cwd.split('/')[0]}/`);
+	return segmentIndex !== -1 ? filePath.substring(0, segmentIndex) : undefined;
+};
+
+/**
+ * Obsidian sizes a markdown image through its alt text: `![caption|220](x.png)`
+ * or `![caption|220x140](x.png)`. Splits the size off so the caption reads clean.
+ */
+export const parseImageAltSize = (
+	alt: string | undefined
+): { alt: string; width?: number; height?: number } => {
+	const match = alt?.match(/^(.*?)\s*\|\s*(\d+)(?:x(\d+))?\s*$/);
+	if (!match) return { alt: alt ?? '' };
+	return {
+		alt: match[1],
+		width: parseInt(match[2], 10),
+		height: match[3] ? parseInt(match[3], 10) : undefined,
+	};
+};
