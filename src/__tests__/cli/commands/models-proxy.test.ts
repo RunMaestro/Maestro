@@ -14,7 +14,11 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 	withMaestroClient: vi.fn(),
 }));
 
-import { modelsProxyBlock, modelsProxyStatus } from '../../../cli/commands/models-proxy';
+import {
+	modelsProxyBlock,
+	modelsProxyCache,
+	modelsProxyStatus,
+} from '../../../cli/commands/models-proxy';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { ExitCode } from '../../../cli/exit-codes';
 import type {
@@ -534,5 +538,50 @@ describe('models proxy block command', () => {
 		await expect(modelsProxyBlock('nope', {})).rejects.toThrow('__exit__');
 
 		expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('SHA-256 hash'));
+	});
+});
+
+describe('models proxy cache command', () => {
+	const USAGE = { entries: 3, bytes: 2048, oldestUseAt: Date.now() - 2 * 24 * 60 * 60 * 1000 };
+
+	it('reads what the cache holds without pruning', async () => {
+		const captured = mockSend({ success: true, usage: USAGE });
+
+		await modelsProxyCache(false, {});
+
+		expect(captured.payload).toEqual({ type: 'local_models_proxy_cache', prune: false });
+		expect(captured.responseType).toBe('local_models_proxy_cache_result');
+		expect(logSpy.mock.calls[0][0]).toMatch(
+			/^Proxy cache: 3 entries, 2(\.0)? KB; least recently used/
+		);
+		expect(exitSpy).not.toHaveBeenCalled();
+	});
+
+	it('prunes with an idle limit and reports what it removed', async () => {
+		const pruned = { removedEntries: 2, removedBytes: 4096, removedOrphans: 1, usage: USAGE };
+		const captured = mockSend({ success: true, usage: USAGE, pruned });
+
+		await modelsProxyCache(true, { olderThan: '7d', json: true });
+
+		expect(captured.payload).toEqual({
+			type: 'local_models_proxy_cache',
+			prune: true,
+			olderThanMs: 7 * 24 * 60 * 60 * 1000,
+		});
+		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+			success: true,
+			usage: USAGE,
+			pruned,
+		});
+	});
+
+	it('refuses a duration it cannot read, and --older-than without prune, before the app', async () => {
+		mockSend({ success: true, usage: USAGE });
+
+		await expect(modelsProxyCache(true, { olderThan: 'soon' })).rejects.toThrow('__exit__');
+		await expect(modelsProxyCache(false, { olderThan: '7d' })).rejects.toThrow('__exit__');
+
+		expect(withMaestroClient).not.toHaveBeenCalled();
+		expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
 	});
 });

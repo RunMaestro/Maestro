@@ -23,9 +23,21 @@
  * A `kept` verdict stores no text: the block went out as the agent sent it, so
  * there is nothing to compare.
  *
- * Nothing prunes the directory. An entry that vanished would be decided again,
- * and for a block the model wrote that could mean different bytes mid
- * conversation.
+ * **Pruning is by last use, never by age of creation.** An entry that vanished
+ * while its conversation is still running would be decided again, and for a
+ * block the model wrote (or after an app update changed a compressor) that can
+ * mean different bytes mid conversation: the provider's cached prefix breaks
+ * and the model sees another version of an earlier result. That risk lasts only
+ * while the conversation is live. A provider keeps a cached prefix for an hour
+ * at most, so an entry nobody has used for {@link DEFAULT_PRUNE_IDLE_MS} guards
+ * nothing, and keeping it forever would keep raw tool output (secrets included)
+ * on disk forever. So every use stamps the record's modification time (at most
+ * once per {@link TOUCH_INTERVAL_MS}), and {@link CompressionCache.prune}
+ * removes entries idle past the limit, then the least recently used ones while
+ * the directory is over {@link DEFAULT_PRUNE_MAX_BYTES}. An entry used within
+ * {@link MIN_PRUNE_IDLE_MS} is never removed, whatever the size. A conversation
+ * resumed after its entries were pruned has its old blocks decided again; its
+ * provider cache expired long before, so that costs nothing but the decision.
  *
  * Compressor upgrades apply only to unseen hashes. The record version names
  * the storage layout, not an algorithm revision; keep version-1 records and
@@ -45,6 +57,8 @@ import * as path from 'path';
 import {
 	TOKEN_PROXY_ORIGINAL_RANGE_MAX_BYTES,
 	validateTokenProxyOriginalLineRange,
+	type TokenProxyCachePruneResult,
+	type TokenProxyCacheUsage,
 	type TokenProxyOriginalLineRange,
 	type TokenProxyOriginalRangeRead,
 } from '../../../shared/local-models/token-proxy';
@@ -66,6 +80,34 @@ export const COMPRESSION_RECORD_VERSION = 1;
 
 /** Verdicts held in memory, so a request does not read the disk per block. */
 const DEFAULT_MEMORY_ENTRIES = 1024;
+
+/** An entry unused for this long is removed by a prune. */
+export const DEFAULT_PRUNE_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Past this size, a prune removes the least recently used entries. */
+export const DEFAULT_PRUNE_MAX_BYTES = 512 * 1024 * 1024;
+
+/**
+ * An entry used more recently than this is never removed, by any prune. Far
+ * longer than a provider keeps a cached prefix, so a live conversation's
+ * entries survive even a prune asked for by hand.
+ */
+export const MIN_PRUNE_IDLE_MS = 24 * 60 * 60 * 1000;
+
+/** How often a use rewrites an entry's last-use stamp. */
+export const TOUCH_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+export type CompressionCacheUsage = TokenProxyCacheUsage;
+export type CompressionCachePruneResult = TokenProxyCachePruneResult;
+
+export interface CompressionCachePruneOptions {
+	/** Remove entries unused for longer than this. Never below {@link MIN_PRUNE_IDLE_MS}. */
+	maxIdleMs?: number;
+	/** Then remove the least recently used until the directory is at most this. */
+	maxBytes?: number;
+	/** The clock, for tests. */
+	now?: number;
+}
 
 /** Bound recovery work even when a requested line is absent or unusually long. */
 const ORIGINAL_RANGE_MAX_SCAN_BYTES = 64 * 1024 * 1024;
@@ -115,6 +157,10 @@ export interface CompressionCache {
 		hash: string,
 		range: TokenProxyOriginalLineRange
 	): Promise<TokenProxyOriginalRangeRead | null>;
+	/** Count what the directory holds. */
+	usage(): Promise<CompressionCacheUsage>;
+	/** Remove idle entries, then least recently used ones past the size cap. */
+	prune(options?: CompressionCachePruneOptions): Promise<CompressionCachePruneResult>;
 }
 
 export interface CompressionCacheOptions {
@@ -199,6 +245,118 @@ export function createCompressionCache(options: CompressionCacheOptions = {}): C
 			if (oldest !== undefined) memory.delete(oldest);
 		}
 	};
+
+	// The last use of each hash in this process, and when its record's mtime was
+	// last stamped, so a busy block does not rewrite the file on every request.
+	const usedAt = new Map<string, number>();
+	const stampedAt = new Map<string, number>();
+	const touch = (hash: string): void => {
+		const now = Date.now();
+		usedAt.set(hash, now);
+		const last = stampedAt.get(hash);
+		if (last !== undefined && now - last < TOUCH_INTERVAL_MS) return;
+		stampedAt.set(hash, now);
+		const when = new Date(now);
+		// A failed stamp only makes the entry look older to a prune, which still
+		// spares anything used within MIN_PRUNE_IDLE_MS of the last good stamp.
+		fs.utimes(entryPath(hash, '.json'), when, when).catch((error: unknown) => {
+			if (!isMissing(error)) {
+				logger.warn('Could not stamp a token proxy cache entry as used', LOG_CONTEXT, {
+					hash,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		});
+	};
+
+	interface DiskEntry {
+		hash: string;
+		usedAt: number;
+		bytes: number;
+		files: string[];
+	}
+
+	/** Every entry under the directory, with orphan texts listed separately. */
+	async function scan(): Promise<{
+		entries: DiskEntry[];
+		orphans: { file: string; bytes: number; mtimeMs: number }[];
+		bytes: number;
+	}> {
+		const root = dir();
+		let shards: string[];
+		try {
+			shards = await fs.readdir(root);
+		} catch (error) {
+			if (isMissing(error)) return { entries: [], orphans: [], bytes: 0 };
+			throw error;
+		}
+		const byHash = new Map<string, DiskEntry>();
+		const texts: { hash: string; file: string; bytes: number; mtimeMs: number }[] = [];
+		let bytes = 0;
+		for (const shard of shards) {
+			if (!/^[0-9a-f]{2}$/.test(shard)) continue;
+			let names: string[];
+			try {
+				names = await fs.readdir(path.join(root, shard));
+			} catch (error) {
+				if (isMissing(error) || (error as NodeJS.ErrnoException).code === 'ENOTDIR') continue;
+				throw error;
+			}
+			for (const name of names) {
+				const match = /^([0-9a-f]{64})(\.json|\.original\.txt|\.compressed\.txt)$/.exec(name);
+				if (!match || match[1].slice(0, 2) !== shard) continue;
+				const file = path.join(root, shard, name);
+				let stat: Awaited<ReturnType<typeof fs.stat>>;
+				try {
+					stat = await fs.stat(file);
+				} catch (error) {
+					if (isMissing(error)) continue;
+					throw error;
+				}
+				if (!stat.isFile()) continue;
+				bytes += stat.size;
+				const [, hash, suffix] = match;
+				if (suffix === '.json') {
+					const entry = byHash.get(hash) ?? { hash, usedAt: 0, bytes: 0, files: [] };
+					entry.usedAt = stat.mtimeMs;
+					entry.bytes += stat.size;
+					// The record first: it is the commit, so removing it first leaves
+					// no verdict whose text is gone.
+					entry.files.unshift(file);
+					byHash.set(hash, entry);
+				} else {
+					texts.push({ hash, file, bytes: stat.size, mtimeMs: stat.mtimeMs });
+				}
+			}
+		}
+		const orphans: { file: string; bytes: number; mtimeMs: number }[] = [];
+		for (const text of texts) {
+			const entry = byHash.get(text.hash);
+			if (entry) {
+				entry.bytes += text.bytes;
+				entry.files.push(text.file);
+			} else {
+				orphans.push(text);
+			}
+		}
+		return { entries: [...byHash.values()], orphans, bytes };
+	}
+
+	const usageOf = (entries: DiskEntry[], bytes: number): CompressionCacheUsage => ({
+		entries: entries.length,
+		bytes,
+		oldestUseAt: entries.length === 0 ? null : Math.min(...entries.map((entry) => entry.usedAt)),
+	});
+
+	async function removeFiles(files: string[]): Promise<void> {
+		for (const file of files) {
+			try {
+				await fs.unlink(file);
+			} catch (error) {
+				if (!isMissing(error)) throw error;
+			}
+		}
+	}
 
 	const unreadable = (hash: string, why: string): null => {
 		logger.warn(`Ignoring a token proxy cache entry: ${why}`, LOG_CONTEXT, { hash });
@@ -340,10 +498,14 @@ export function createCompressionCache(options: CompressionCacheOptions = {}): C
 			const held = memory.get(hash);
 			if (held) {
 				remember(held);
+				touch(hash);
 				return held;
 			}
 			const verdict = await readFromDisk(hash);
-			if (verdict) remember(verdict);
+			if (verdict) {
+				remember(verdict);
+				touch(hash);
+			}
 			return verdict;
 		},
 
@@ -372,9 +534,79 @@ export function createCompressionCache(options: CompressionCacheOptions = {}): C
 			}
 			await atomicWriteJson(entryPath(hash, '.json'), record);
 			remember(verdict);
+			// The write itself stamped the record; the next use need not.
+			usedAt.set(hash, Date.now());
+			stampedAt.set(hash, Date.now());
 		},
 
 		readOriginal,
+
+		async usage(): Promise<CompressionCacheUsage> {
+			const { entries, bytes } = await scan();
+			return usageOf(entries, bytes);
+		},
+
+		async prune(pruneOptions: CompressionCachePruneOptions = {}) {
+			const now = pruneOptions.now ?? Date.now();
+			const maxIdleMs = Math.max(
+				MIN_PRUNE_IDLE_MS,
+				pruneOptions.maxIdleMs ?? DEFAULT_PRUNE_IDLE_MS
+			);
+			const maxBytes = Math.max(0, pruneOptions.maxBytes ?? DEFAULT_PRUNE_MAX_BYTES);
+			const { entries, orphans, bytes } = await scan();
+			let remainingBytes = bytes;
+			let removedEntries = 0;
+			let removedBytes = 0;
+			let removedOrphans = 0;
+
+			const remove = async (entry: DiskEntry): Promise<void> => {
+				await removeFiles(entry.files);
+				memory.delete(entry.hash);
+				usedAt.delete(entry.hash);
+				stampedAt.delete(entry.hash);
+				removedEntries++;
+				removedBytes += entry.bytes;
+				remainingBytes -= entry.bytes;
+			};
+
+			// Oldest use first, so the size pass removes the least recently used.
+			entries.sort((a, b) => a.usedAt - b.usedAt);
+			const kept: DiskEntry[] = [];
+			for (const entry of entries) {
+				const idle = now - entry.usedAt;
+				// This process's own record of a use is newer than the file's stamp
+				// between stamps, and when a stamp failed.
+				const recentlyUsed =
+					idle < MIN_PRUNE_IDLE_MS || now - (usedAt.get(entry.hash) ?? 0) < MIN_PRUNE_IDLE_MS;
+				if (!recentlyUsed && (idle > maxIdleMs || remainingBytes > maxBytes)) {
+					await remove(entry);
+				} else {
+					kept.push(entry);
+				}
+			}
+			// A text with no record older than a day is a crash leftover; a younger
+			// one may be a write in progress, whose record is written last.
+			for (const orphan of orphans) {
+				if (now - orphan.mtimeMs < MIN_PRUNE_IDLE_MS) continue;
+				await removeFiles([orphan.file]);
+				removedOrphans++;
+				removedBytes += orphan.bytes;
+				remainingBytes -= orphan.bytes;
+			}
+			if (removedEntries > 0 || removedOrphans > 0) {
+				logger.info('Pruned the token proxy cache', LOG_CONTEXT, {
+					removedEntries,
+					removedOrphans,
+					removedBytes,
+				});
+			}
+			return {
+				removedEntries,
+				removedBytes,
+				removedOrphans,
+				usage: usageOf(kept, remainingBytes),
+			};
+		},
 	};
 }
 

@@ -165,7 +165,7 @@ import {
 import { modelsRun } from './commands/models-run';
 import { modelsRuntimesInstall, modelsRuntimesList } from './commands/models-runtimes';
 import { modelsIndex } from './commands/models-index';
-import { modelsProxyBlock, modelsProxyStatus } from './commands/models-proxy';
+import { modelsProxyBlock, modelsProxyCache, modelsProxyStatus } from './commands/models-proxy';
 import {
 	modelsTiersList,
 	modelsTiersOptions,
@@ -4571,6 +4571,23 @@ modelProxy
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsProxyBlock);
+
+const modelProxyCache = modelProxy
+	.command('cache')
+	.description(
+		'What the compression cache holds: entries, size, and the least recent use. The proxy prunes it daily while it listens (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options: { json?: boolean }) => modelsProxyCache(false, options));
+
+modelProxyCache
+	.command('prune')
+	.description(
+		'Prune the compression cache now: entries unused for 30 days (or --older-than), then the least recently used past 512 MB. Entries used in the last day are never removed (requires the desktop app)'
+	)
+	.option('--older-than <duration>', 'Idle limit, such as 7d or 2w (never below 1d)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options: { olderThan?: string; json?: boolean }) => modelsProxyCache(true, options));
 
 const modelServer = models
 	.command('server')

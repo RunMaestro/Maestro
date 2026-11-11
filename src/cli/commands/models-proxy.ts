@@ -25,10 +25,14 @@ import { ExitCode, exitWith } from '../exit-codes';
 import { formatTokenProxyBlockHeader, formatTokenProxyReport } from '../output/formatter';
 import {
 	validateTokenProxyOriginalLineRange,
+	type TokenProxyCachePruneResult,
+	type TokenProxyCacheUsage,
 	type TokenProxyOriginalLineRange,
 	type TokenProxyBlockDetail,
 	type TokenProxyReport,
 } from '../../shared/local-models/token-proxy';
+import { formatRelativeTime, formatSize } from '../../shared/formatters';
+import { parseDurationInput } from '../../shared/timeInput';
 import { failCommand, failFromError } from '../services/session-command';
 
 /** A stats read and a few small files in the app. */
@@ -63,6 +67,83 @@ export async function modelsProxyStatus(options: StatusOptions): Promise<void> {
 	if (options.json) console.log(JSON.stringify({ success: ok, ...report }));
 	else console.log(formatTokenProxyReport(report));
 	if (!ok) exitWith(ExitCode.GeneralError);
+}
+
+interface CacheOptions {
+	olderThan?: string;
+	json?: boolean;
+}
+
+/**
+ * `maestro-cli models proxy cache` (what the compression cache holds) and
+ * `models proxy cache prune [--older-than 7d]` (prune it now). The proxy also
+ * prunes on its own once a day while it listens: entries unused for 30 days,
+ * then the least recently used past 512 MB. Nothing used in the last day is
+ * ever removed, so a live conversation keeps its exact bytes.
+ */
+export async function modelsProxyCache(prune: boolean, options: CacheOptions): Promise<void> {
+	let olderThanMs: number | undefined;
+	if (options.olderThan !== undefined) {
+		if (!prune) {
+			failCommand('--older-than applies to `prune` only.', options.json, ExitCode.InvalidUsage);
+		}
+		const parsed = parseDurationInput(options.olderThan);
+		if (parsed === null) {
+			failCommand(
+				'--older-than expects a duration such as 7d, 12h or 2w.',
+				options.json,
+				ExitCode.InvalidUsage
+			);
+		}
+		olderThanMs = parsed;
+	}
+
+	let reply: {
+		success: boolean;
+		usage?: TokenProxyCacheUsage;
+		pruned?: TokenProxyCachePruneResult;
+		error?: string;
+	};
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand(
+				{
+					type: 'local_models_proxy_cache',
+					prune,
+					...(olderThanMs !== undefined && { olderThanMs }),
+				},
+				'local_models_proxy_cache_result',
+				// A prune walks the whole directory.
+				PROXY_TIMEOUT_MS * 6
+			)
+		);
+	} catch (error) {
+		failFromError(error, options.json);
+	}
+	if (!reply.success || !reply.usage) {
+		failCommand(reply.error || 'Could not read the proxy cache', options.json);
+	}
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				usage: reply.usage,
+				...(reply.pruned && { pruned: reply.pruned }),
+			})
+		);
+		return;
+	}
+	const { usage, pruned } = reply;
+	if (pruned) {
+		console.log(
+			`Removed ${pruned.removedEntries} entries and ${pruned.removedOrphans} leftover files (${formatSize(pruned.removedBytes)}).`
+		);
+	}
+	const oldest =
+		usage.oldestUseAt === null
+			? ''
+			: `; least recently used ${formatRelativeTime(usage.oldestUseAt)}`;
+	console.log(`Proxy cache: ${usage.entries} entries, ${formatSize(usage.bytes)}${oldest}.`);
 }
 
 interface BlockOptions {

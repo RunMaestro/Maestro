@@ -5267,6 +5267,32 @@ maestro-cli models proxy block <hash> --original --lines 10:30
 maestro-cli models proxy block <hash> --original --lines 10:30 --json
 ```
 
+## `maestro-cli models proxy cache`
+
+What the compression cache holds: entries, size, and the least recent use. The proxy prunes it daily while it listens (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli models proxy cache --json
+```
+
+## `maestro-cli models proxy cache prune`
+
+Prune the compression cache now: entries unused for 30 days (or --older-than), then the least recently used past 512 MB. Entries used in the last day are never removed (requires the desktop app)
+
+| Option                    | Description                                   | Default |
+| ------------------------- | --------------------------------------------- | ------- |
+| `--older-than <duration>` | Idle limit, such as 7d or 2w (never below 1d) | -       |
+| `--json`                  | Output as JSON (for scripting)                | -       |
+
+```bash
+maestro-cli models proxy cache prune
+maestro-cli models proxy cache prune --older-than 7d --json
+```
+
 ## `maestro-cli models server`
 
 The Maestro model server: llama.cpp's llama-server, serving downloaded models to agent harnesses over HTTP

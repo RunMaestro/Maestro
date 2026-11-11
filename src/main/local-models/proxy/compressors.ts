@@ -57,6 +57,27 @@ export interface HeuristicCompression {
 	applied: HeuristicCompressorId[];
 }
 
+/**
+ * Which reductions a caller accepts.
+ *
+ * - `full`: every reduction above, including the ones that leave content out
+ *   (JSON array sampling, long-line cuts, Git message and search sampling).
+ * - `complete`: only reductions that keep every line of content the agent could
+ *   act on: minifying, lossless tables, terminal escapes, folding repeats into a
+ *   count, grouping Git status, and removing padding or progress frames. This
+ *   is what `compress-early` uses, because there the model never reads the
+ *   original and has no way to ask for what was left out.
+ */
+export type HeuristicProfile = 'full' | 'complete';
+
+export interface HeuristicOptions {
+	/** Defaults to `full`. */
+	profile?: HeuristicProfile;
+}
+
+/** Command-output reducers that sample records, and so are `full` only. */
+const SAMPLING_COMMAND_REDUCERS: ReadonlySet<string> = new Set(['git-log', 'search']);
+
 /** An array longer than this is sampled. */
 export const JSON_ARRAY_MAX_ITEMS = 20;
 /** Items kept from the start of a sampled array. */
@@ -149,10 +170,14 @@ function lineNote(cut: number): string {
  * No command label, execution, filesystem access or context baseline is used.
  * Unknown/custom layouts return null for the existing heuristics to handle.
  */
-export function compressCommandOutput(text: string): {
+export function compressCommandOutput(
+	text: string,
+	options: HeuristicOptions = {}
+): {
 	text: string;
 	compressor: 'git-status' | 'git-log' | 'search' | 'test-output' | 'build-output' | 'lint-output';
 } | null {
+	const complete = options.profile === 'complete';
 	if (text.length > IMPORTANT_LINE_SCAN_MAX_CHARS) return null;
 	// Refuse NUL-delimited records, terminal control data and CR overwrites.
 	// Tabs in search snippets remain exact; no terminal normalization is needed.
@@ -174,6 +199,7 @@ export function compressCommandOutput(text: string): {
 		['lint-output', compressLintOutput],
 	] as const;
 	for (const [compressor, reduce] of reducers) {
+		if (complete && SAMPLING_COMMAND_REDUCERS.has(compressor)) continue;
 		const reduced = reduce(lines);
 		if (reduced === null) continue;
 		const replacement = reduced + (text.endsWith('\n') ? '\n' : '');
@@ -484,23 +510,28 @@ function validationOutput(lines: string[], compacted: string[], note: string): s
 }
 
 /** Content-only dispatch; structured candidates never undergo whole-text line cuts. */
-export function compressWithHeuristics(text: string): HeuristicCompression {
+export function compressWithHeuristics(
+	text: string,
+	options: HeuristicOptions = {}
+): HeuristicCompression {
 	const table = compressJsonTable(text);
 	if (table) return { text: table.text, applied: [table.compressor] };
-	const json = compressJson(text);
+	const json = compressJson(text, options);
 	if (json) return json;
-	const command = compressCommandOutput(text);
-	return command ? { text: command.text, applied: [command.compressor] } : compressPlainText(text);
+	const command = compressCommandOutput(text, options);
+	return command
+		? { text: command.text, applied: [command.compressor] }
+		: compressPlainText(text, options);
 }
 
-/** The two line compressors, in order. */
-function compressPlainText(text: string): HeuristicCompression {
+/** The two line compressors, in order. The `complete` profile never cuts a line. */
+function compressPlainText(text: string, options: HeuristicOptions = {}): HeuristicCompression {
 	const applied: HeuristicCompressorId[] = [];
 	const folded = compressLogs(text);
 	// A raw carriage return surviving log normalization signals a veto.
 	if (folded === text && text.includes('\r')) return { text, applied: [] };
 	if (folded !== text) applied.push('logs');
-	const cut = truncateLongLines(folded);
+	const cut = options.profile === 'complete' ? folded : truncateLongLines(folded);
 	if (cut !== folded) applied.push('long-lines');
 	// Every omission note is included in this comparison. The request layer
 	// separately requires its recovery marker and minimum reduction to fit.
@@ -581,7 +612,10 @@ export function compressJsonTable(text: string): {
  * values. `null` when the text is not one JSON object or array, so the caller
  * treats it as lines instead.
  */
-export function compressJson(text: string): HeuristicCompression | null {
+export function compressJson(
+	text: string,
+	options: HeuristicOptions = {}
+): HeuristicCompression | null {
 	const source = text.trim();
 	if (source[0] !== '{' && source[0] !== '[') return null;
 	try {
@@ -595,7 +629,7 @@ export function compressJson(text: string): HeuristicCompression | null {
 	if (!root) return null;
 
 	const nested = new Set<HeuristicCompressorId>();
-	const compressed = renderJson(source, root, nested);
+	const compressed = renderJson(source, root, nested, options);
 	if (compressed === text) return { text, applied: [] };
 	const applied: HeuristicCompressorId[] = ['json'];
 	if (nested.has('logs')) applied.push('logs');
@@ -603,31 +637,36 @@ export function compressJson(text: string): HeuristicCompression | null {
 	return { text: compressed, applied };
 }
 
-function renderJson(source: string, span: JsonSpan, nested: Set<HeuristicCompressorId>): string {
+function renderJson(
+	source: string,
+	span: JsonSpan,
+	nested: Set<HeuristicCompressorId>,
+	options: HeuristicOptions
+): string {
 	switch (span.kind) {
 		case 'scalar':
 			return source.slice(span.start, span.end);
 		case 'string':
-			return renderJsonString(source, span, nested);
+			return renderJsonString(source, span, nested, options);
 		case 'object':
 			return `{${span.members
 				.map(
 					(member) =>
-						`${source.slice(member.keyStart, member.keyEnd)}:${renderJson(source, member.value, nested)}`
+						`${source.slice(member.keyStart, member.keyEnd)}:${renderJson(source, member.value, nested, options)}`
 				)
 				.join(',')}}`;
 		case 'array': {
-			const items = sampledItems(span.items);
+			const items = options.profile === 'complete' ? span.items : sampledItems(span.items);
 			if (items === span.items) {
-				return `[${items.map((item) => renderJson(source, item, nested)).join(',')}]`;
+				return `[${items.map((item) => renderJson(source, item, nested, options)).join(',')}]`;
 			}
 			const head = items.slice(0, JSON_ARRAY_HEAD_ITEMS);
 			const tail = items.slice(JSON_ARRAY_HEAD_ITEMS);
 			const omitted = span.items.length - items.length;
 			return `[${[
-				...head.map((item) => renderJson(source, item, nested)),
+				...head.map((item) => renderJson(source, item, nested, options)),
 				JSON.stringify(arrayNote(omitted, span.items.length)),
-				...tail.map((item) => renderJson(source, item, nested)),
+				...tail.map((item) => renderJson(source, item, nested, options)),
 			].join(',')}]`;
 		}
 	}
@@ -653,13 +692,14 @@ function sampledItems(items: JsonSpan[]): JsonSpan[] {
 function renderJsonString(
 	source: string,
 	span: JsonSpan,
-	nested: Set<HeuristicCompressorId>
+	nested: Set<HeuristicCompressorId>,
+	options: HeuristicOptions
 ): string {
 	const literal = source.slice(span.start, span.end);
 	if (literal.length - 2 <= LONG_LINE_MAX_CHARS) return literal;
 	const decoded = stringValue(source, span);
 	if (decoded === undefined) return literal;
-	const compressed = compressPlainText(decoded);
+	const compressed = compressPlainText(decoded, options);
 	if (compressed.applied.length === 0) return literal;
 	for (const id of compressed.applied) nested.add(id);
 	return JSON.stringify(compressed.text);

@@ -131,6 +131,7 @@ import {
 	handleLocalModelsSemanticIndexStatus,
 	handleLocalModelsProxyStatus,
 	handleLocalModelsProxyBlock,
+	handleLocalModelsProxyCache,
 	handleLocalModelsServerEnsure,
 	handleLocalModelsServerKey,
 	handleLocalModelsServerSet,
@@ -1028,6 +1029,10 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_proxy_block':
 				void handleLocalModelsProxyBlock(this.ctx, client, message);
+				break;
+
+			case 'local_models_proxy_cache':
+				void handleLocalModelsProxyCache(this.ctx, client, message);
 				break;
 
 			case 'local_models_server_status':

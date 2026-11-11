@@ -8,7 +8,7 @@
  * local_models_endpoint_test, local_models_run_task, local_models_task_readiness, local_models_git_draft,
  * local_models_semantic_index_status, local_models_search,
  * local_models_tab_cleanup, local_models_transcribe, local_models_proxy_status,
- * local_models_proxy_block, local_models_runtimes_list,
+ * local_models_proxy_block, local_models_proxy_cache, local_models_runtimes_list,
  * local_models_runtime_install, local_models_server_status,
  * local_models_server_start, local_models_server_stop, local_models_server_set,
  * local_models_server_key, local_models_server_ensure,
@@ -62,7 +62,12 @@ import { resolveTaskReadinessRequest } from '../../../local-models/task-readines
 import { semanticIndexProgress } from '../../../local-models/semantic-indexer';
 import { searchPastWorkRequest } from '../../../local-models/work-search';
 import { suggestTabCleanup } from '../../../local-models/tab-cleanup';
-import { getTokenProxyReport, readTokenProxyBlock } from '../../../local-models/proxy/service';
+import {
+	getTokenProxyCacheUsage,
+	getTokenProxyReport,
+	pruneTokenProxyCache,
+	readTokenProxyBlock,
+} from '../../../local-models/proxy/service';
 import { validateTokenProxyOriginalLineRange } from '../../../../shared/local-models/token-proxy';
 import {
 	getModelServerKey,
@@ -427,6 +432,27 @@ export function handleLocalModelsProxyBlock(
 			message.range === undefined ? undefined : validateTokenProxyOriginalLineRange(message.range)
 		),
 	}));
+}
+
+/**
+ * Handle local_models_proxy_cache - what the token proxy's compression cache
+ * holds, and with `prune` set, prune it first (`maestro-cli models proxy cache`
+ * and `models proxy cache prune`). The prune is the one the proxy runs daily
+ * while it listens; `olderThanMs` lowers its idle limit, never below the floor
+ * that protects a live conversation's entries.
+ */
+export function handleLocalModelsProxyCache(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_proxy_cache_result', async () => {
+		if (message.prune === true) {
+			const pruned = await pruneTokenProxyCache({ olderThanMs: message.olderThanMs });
+			return { usage: pruned.usage, pruned };
+		}
+		return { usage: await getTokenProxyCacheUsage() };
+	});
 }
 
 /**

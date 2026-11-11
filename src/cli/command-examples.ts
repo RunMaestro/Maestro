@@ -542,6 +542,11 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 		'maestro-cli models proxy block <hash> --original --lines 10:30',
 		'maestro-cli models proxy block <hash> --original --lines 10:30 --json',
 	],
+	'models proxy cache': ['maestro-cli models proxy cache --json'],
+	'models proxy cache prune': [
+		'maestro-cli models proxy cache prune',
+		'maestro-cli models proxy cache prune --older-than 7d --json',
+	],
 	'models server status': ['maestro-cli models server status --json'],
 	'models server start': ['maestro-cli models server start'],
 	'models server stop': ['maestro-cli models server stop'],

@@ -555,3 +555,113 @@ function recordFor(hash: string): Record<string, unknown> {
 		compressors: ['logs'],
 	};
 }
+
+describe('createCompressionCache: usage and pruning', () => {
+	const DAY = 24 * 60 * 60 * 1000;
+
+	/** Write one compressed entry and stamp its record as last used `ageMs` ago. */
+	async function entryUsed(
+		dir: string,
+		original: string,
+		ageMs: number,
+		now: number
+	): Promise<string> {
+		const hash = contentHash(original);
+		await cacheIn(dir).write(compressedVerdict({ hash }), original);
+		const when = new Date(now - ageMs);
+		await fs.utimes(entryFile(dir, hash, '.json'), when, when);
+		return hash;
+	}
+
+	it('counts entries and bytes, and an empty or missing directory is empty', async () => {
+		expect(await cacheIn(path.join(tempRoot.dir, 'absent')).usage()).toEqual({
+			entries: 0,
+			bytes: 0,
+			oldestUseAt: null,
+		});
+		const now = Date.now();
+		await entryUsed(tempRoot.dir, 'a'.repeat(5000), 3 * DAY, now);
+		await entryUsed(tempRoot.dir, 'b'.repeat(5000), DAY / 2, now);
+		const usage = await cacheIn(tempRoot.dir).usage();
+		expect(usage.entries).toBe(2);
+		expect(usage.bytes).toBeGreaterThan(10_000);
+		expect(usage.oldestUseAt).toBeLessThanOrEqual(now - 3 * DAY + 1000);
+	});
+
+	it('removes entries idle past the limit, record first, and keeps the rest readable', async () => {
+		const now = Date.now();
+		const stale = await entryUsed(tempRoot.dir, 'stale\n'.repeat(500), 40 * DAY, now);
+		const live = await entryUsed(tempRoot.dir, 'live\n'.repeat(500), 2 * DAY, now);
+		const result = await cacheIn(tempRoot.dir).prune({ now });
+
+		expect(result).toMatchObject({ removedEntries: 1, removedOrphans: 0 });
+		for (const suffix of ['.json', '.original.txt', '.compressed.txt']) {
+			await expect(fs.access(entryFile(tempRoot.dir, stale, suffix))).rejects.toThrow();
+		}
+		expect(await cacheIn(tempRoot.dir).read(live)).toMatchObject({ outcome: 'compressed' });
+		expect(result.usage.entries).toBe(1);
+	});
+
+	it('then removes the least recently used past the size cap, never one used within a day', async () => {
+		const now = Date.now();
+		const oldest = await entryUsed(tempRoot.dir, 'oldest\n'.repeat(500), 5 * DAY, now);
+		const older = await entryUsed(tempRoot.dir, 'older\n'.repeat(500), 3 * DAY, now);
+		const fresh = await entryUsed(tempRoot.dir, 'fresh\n'.repeat(500), DAY / 4, now);
+		const result = await cacheIn(tempRoot.dir).prune({ now, maxBytes: 0 });
+
+		expect(result.removedEntries).toBe(2);
+		expect(await cacheIn(tempRoot.dir).read(oldest)).toBeNull();
+		expect(await cacheIn(tempRoot.dir).read(older)).toBeNull();
+		expect(await cacheIn(tempRoot.dir).read(fresh)).toMatchObject({ outcome: 'compressed' });
+	});
+
+	it('never lowers the idle limit below a day, even when asked', async () => {
+		const now = Date.now();
+		const recent = await entryUsed(tempRoot.dir, 'recent\n'.repeat(500), DAY / 2, now);
+		const result = await cacheIn(tempRoot.dir).prune({ now, maxIdleMs: 0 });
+		expect(result.removedEntries).toBe(0);
+		expect(await cacheIn(tempRoot.dir).read(recent)).toMatchObject({ outcome: 'compressed' });
+	});
+
+	it('spares an entry this process used since its last stamp', async () => {
+		const now = Date.now();
+		const cache = cacheIn(tempRoot.dir);
+		const original = 'used\n'.repeat(500);
+		const hash = contentHash(original);
+		await cache.write(compressedVerdict({ hash }), original);
+		// The file says 40 days; this process wrote it moments ago.
+		const when = new Date(now - 40 * DAY);
+		await fs.utimes(entryFile(tempRoot.dir, hash, '.json'), when, when);
+		expect((await cache.prune({ now })).removedEntries).toBe(0);
+	});
+
+	it('stamps a use on the record, so a read entry is not idle', async () => {
+		const now = Date.now();
+		const hash = await entryUsed(tempRoot.dir, 'read\n'.repeat(500), 40 * DAY, now);
+		await cacheIn(tempRoot.dir).read(hash);
+		await vi.waitFor(async () => {
+			const { mtimeMs } = await fs.stat(entryFile(tempRoot.dir, hash, '.json'));
+			expect(mtimeMs).toBeGreaterThan(now - DAY);
+		});
+		expect((await cacheIn(tempRoot.dir).prune({ now })).removedEntries).toBe(0);
+	});
+
+	it('removes a text with no record only once it is a day old', async () => {
+		const now = Date.now();
+		const orphanHash = contentHash('orphan');
+		const youngHash = contentHash('young orphan');
+		for (const hash of [orphanHash, youngHash]) {
+			await fs.mkdir(path.dirname(entryFile(tempRoot.dir, hash, '.original.txt')), {
+				recursive: true,
+			});
+			await fs.writeFile(entryFile(tempRoot.dir, hash, '.original.txt'), 'left by a crash');
+		}
+		const old = new Date(now - 2 * DAY);
+		await fs.utimes(entryFile(tempRoot.dir, orphanHash, '.original.txt'), old, old);
+
+		const result = await cacheIn(tempRoot.dir).prune({ now });
+		expect(result.removedOrphans).toBe(1);
+		await expect(fs.access(entryFile(tempRoot.dir, orphanHash, '.original.txt'))).rejects.toThrow();
+		await fs.access(entryFile(tempRoot.dir, youngHash, '.original.txt'));
+	});
+});

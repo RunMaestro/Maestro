@@ -3042,12 +3042,13 @@ and per agent) and the 25 newest compressions (`getRecentProxyCompressions`).
 
 ### The report and the diff
 
-| Surface                                 | Reads                                                               |
-| --------------------------------------- | ------------------------------------------------------------------- |
-| Settings > Models > Gateway             | `window.maestro.localModels.proxy.report()` (`useTokenProxyReport`) |
-| `maestro-cli models proxy status`       | `local_models_proxy_status`                                         |
-| A row of "Recent compressions"          | `window.maestro.localModels.proxy.block(hash)`                      |
-| `maestro-cli models proxy block <hash>` | `local_models_proxy_block`                                          |
+| Surface                                  | Reads                                                               |
+| ---------------------------------------- | ------------------------------------------------------------------- |
+| Settings > Models > Gateway              | `window.maestro.localModels.proxy.report()` (`useTokenProxyReport`) |
+| `maestro-cli models proxy status`        | `local_models_proxy_status`                                         |
+| A row of "Recent compressions"           | `window.maestro.localModels.proxy.block(hash)`                      |
+| `maestro-cli models proxy block <hash>`  | `local_models_proxy_block`                                          |
+| `maestro-cli models proxy cache [prune]` | `local_models_proxy_cache`                                          |
 
 Both pairs end in the same two service functions. `getTokenProxyReport()` returns the listener
 status, the agents on it with their mode, the usage and the recent compressions; it never chooses
@@ -3253,8 +3254,27 @@ Rules:
    makes a second request that carries the same new block wait and read the first one's verdict.
 4. **A record that cannot be read is absent.** Bad JSON, another record version, another hash, or
    a missing replacement file is logged and decided again.
-5. **Nothing prunes the directory.** An entry that vanished mid conversation would be decided
-   again, which for a model-written block can mean different bytes.
+5. **Pruning is by last use.** An entry that vanished mid conversation would be decided again,
+   which for a model-written block (or after an update changed a compressor) can mean different
+   bytes: the provider's cached prefix breaks and the model sees another version of an earlier
+   result. That risk lasts only while the conversation is live, and a provider keeps a cached
+   prefix for an hour at most. So every use stamps the record's mtime (at most every 6 hours, with
+   the process's own record of the use in between), and `cache.prune()` removes entries unused for
+   30 days (`DEFAULT_PRUNE_IDLE_MS`), then the least recently used while the directory is over
+   512 MB (`DEFAULT_PRUNE_MAX_BYTES`). Nothing used within a day (`MIN_PRUNE_IDLE_MS`) is removed,
+   by any prune. The record is deleted before its texts, so a crash leaves orphan texts, never a
+   record whose text is gone; an orphan older than a day is removed too. The service prunes a
+   minute after the listener starts and daily while it listens; `maestro-cli models proxy cache`
+   reads the size and `models proxy cache prune [--older-than 7d]` prunes now
+   (`local_models_proxy_cache`). Before this rule the directory was never pruned, which kept raw
+   tool output, secrets included, on disk forever.
+6. **Each profile has its own key.** `compress` decides with the `full` heuristic profile and keys a
+   verdict by the plain SHA-256 of the text. `compress-early` decides with the `complete` profile
+   (no array sampling, no long-line cuts, no Git message or search record sampling, no model tier)
+   and keys it by `verdictKey(text, 'complete')`, the SHA-256 of a profile prefix plus the text. The
+   marker carries that key, so `models proxy block` finds either. Without separate keys the shared
+   cache would hand a sampled `compress` verdict to an early request, where the model never read
+   the original and has no way to ask for what was left out.
 
 `createCompressionCache()` keeps the newest 1024 verdicts in memory, so a request does not read the
 disk for each block. `readOriginal(hash)` is the read for an audit view; `isContentHash()` is its
@@ -3448,7 +3468,11 @@ Gateway table, `--proxy-mode compress-early`). The server passes `{ early: true 
 `compressRequestBody`, which lifts exactly the two rules that cause the double write: a tool result
 the model has not answered yet, and the block carrying the `cache_control` breakpoint, are both
 shortened (the breakpoint itself is left where the client put it). Everything else holds: only tool
-results, only over the threshold, the same bytes for the same content. `proxy_requests.mode` records
+results, only over the threshold, the same bytes for the same content. Since 2026-11-11 early mode
+also keeps every line of content: it uses the `complete` heuristic profile under its own cache key
+(cache rule 6), because a model that never read the original cannot recover what a sample or a cut
+left out. The measurement below predates that change; on its log (folded repeats) the output is the
+same. `proxy_requests.mode` records
 an early request as `compress`, since that column says whether the body was shortened; the agent's
 mode is read from its record.
 

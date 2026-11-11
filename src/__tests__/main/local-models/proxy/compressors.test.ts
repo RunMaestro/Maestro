@@ -980,3 +980,44 @@ describe('compressWithHeuristics', () => {
 		}
 	});
 });
+
+describe('the complete profile', () => {
+	const complete = { profile: 'complete' } as const;
+
+	it('minifies JSON but never samples an array', () => {
+		const text = JSON.stringify(
+			Array.from({ length: 60 }, (_, index) => ({ id: index, nested: { note: 'n'.repeat(40) } })),
+			null,
+			2
+		);
+		const full = compressWithHeuristics(text);
+		expect(full.text).toContain('items omitted');
+		const result = compressWithHeuristics(text, complete);
+		expect(result.applied).toEqual(['json']);
+		expect(result.text).toBe(JSON.stringify(JSON.parse(text)));
+	});
+
+	it('folds repeats but never cuts a long line', () => {
+		const long = 'z'.repeat(LONG_LINE_MAX_CHARS + 500);
+		const text = `${'same line\n'.repeat(50)}${long}`;
+		const result = compressWithHeuristics(text, complete);
+		expect(result.applied).toEqual(['logs']);
+		expect(result.text).toContain(long);
+		expect(compressWithHeuristics(text).applied).toEqual(['logs', 'long-lines']);
+	});
+
+	it('never samples Git messages or search records', () => {
+		const search = Array.from(
+			{ length: 100 },
+			(_, index) => `src/a.ts:${index + 1}:hit ${index}`
+		).join('\n');
+		expect(compressCommandOutput(search)?.compressor).toBe('search');
+		expect(compressCommandOutput(search, complete)).toBeNull();
+		expect(compressWithHeuristics(search, complete)).toEqual({ text: search, applied: [] });
+	});
+
+	it('keeps the reducers that leave nothing out', () => {
+		const status = Array.from({ length: 80 }, (_, index) => ` M src/file${index}.ts`).join('\n');
+		expect(compressCommandOutput(status, complete)?.compressor).toBe('git-status');
+	});
+});

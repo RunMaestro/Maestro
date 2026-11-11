@@ -1013,13 +1013,14 @@ Choosing any mode but Off sets the agent's gateway URL to the proxy for you. Cho
 **Which compress mode to pick.** The note under the control says the same thing in one sentence.
 
 - **Compress** changes nothing about what the model works from: it reads every tool result in full, and the result is shortened only once it is history. The cost is that the result is written to your provider's prompt cache twice, in full and then shortened. Measured on Claude Code, that made a short session (4 to 6 requests) cost between 2% and 36% more than Passthrough, depending on the output, and it pays back only in a longer one. Pick it for long sessions where you want the model to see everything once.
-- **Compress early** shortens a result before the model sees it, so nothing is ever cached in full and it is the cheapest mode. In a measured four-turn session it cost 14% less than Passthrough, where Compress cost 36% more. The model works from the shortened output (repeated log lines folded, long lists and lines cut), which is the trade. It can run a narrower command when it needs a part that was cut. Pick it when the tool output is mostly build logs, test runs, and listings.
+- **Compress early** shortens a result before the model sees it, so nothing is ever cached in full and it is the cheapest mode. In a measured four-turn session it cost 14% less than Passthrough, where Compress cost 36% more. Because the model never reads the original, Compress early only uses reductions that leave nothing out: it minifies JSON, uses lossless tables, strips terminal escapes, folds repeated lines into one copy and a count, and groups Git status. It never samples a list, cuts a line, or asks a local model to summarize, so a result that only those would shorten goes out whole. Pick it when the tool output is mostly build logs, test runs, and JSON.
 
 What both compress modes do, and do not do:
 
 - **They shorten only tool results**, and only ones over about 1,000 tokens. Your messages, the system prompt, tool definitions, and the agent's own text are never changed.
 - **Explicit failures and recognized original-recovery commands stay whole.** These checks run before cached replacements are used. Unknown tool status is not treated as success.
-- **The same text always shortens to the same bytes.** Each result is keyed by a SHA-256 hash of its content and the first result is kept, so your provider's prompt cache keeps working.
+- **The same text always shortens to the same bytes while you use it.** Each result is keyed by a SHA-256 hash of its content and the first result is kept, so your provider's prompt cache keeps working. Compress early keeps its own results, apart from Compress.
+- **The originals do not stay forever.** The proxy prunes its cache once a day while it runs: entries unused for 30 days, then the least recently used while the cache is over 512 MB. Nothing used in the last day is removed. A conversation you resume after its entries were pruned has those results shortened again, which costs nothing, because your provider's prompt cache expired long before.
 - **Every change is marked and kept.** A shortened block ends with `[maestro-compressed sha256=... original_tokens=...]`, and the original stays on this machine.
 - **If shortening fails, the request is sent as it arrived.** You do not lose a turn to it.
 - **A local model is optional.** Rules handle JSON, repeated logs, protected diagnostic lines, and recognized Git, search, successful test/build, and warning-only lint output. Eligible scalar JSON rows use a labelled table that preserves key/value lexemes and distinguishes missing keys from null. Other JSON can still use lossy array sampling. Assign the **Token proxy** task a model on **Models -> System Two** to also summarize results that are still very large.
@@ -1034,6 +1035,8 @@ maestro-cli show agent <agent-id> --json                    # tokenProxyMode
 maestro-cli models proxy status                             # the listener, agents, totals, recent compressions
 maestro-cli models proxy block <hash>                       # a diff of one shortened block
 maestro-cli models proxy block <hash> --original --lines 10:30
+maestro-cli models proxy cache                              # entries, size, least recent use
+maestro-cli models proxy cache prune --older-than 7d        # prune now (never below 1 day)
 ```
 
 `--lines` selects inclusive, 1-based original lines, with a maximum of 1,000 lines and 256 KiB returned text. It requires `--original`. Standard output contains the exact selected text; standard error reports which lines were returned and whether the selection is complete. With `--json`, that metadata is in `block.originalRange`. A request past EOF can return fewer lines; a scan or byte limit fails explicitly. Token totals and the compressed side still describe the whole block. Executable recovery hints await launch-environment proof; compressed markers currently identify the archive by hash.

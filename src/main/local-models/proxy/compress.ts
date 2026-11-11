@@ -41,10 +41,16 @@
  * same message are not read. What changes is what the model sees, which is why
  * it is a mode the user picks and not the default.
  *
+ * Because the model never reads the original in early mode, early mode keeps
+ * every line of content: it uses the `complete` heuristic profile (no array
+ * sampling, no line cuts, no record sampling) and never the local model, under
+ * its own cache key ({@link verdictKey}).
+ *
  * ## The order of work for one block
  *
  *   1. Leave explicit failures and recognized original-recovery output whole.
- *      Otherwise hash the original (SHA-256). A verdict already in the cache is used as
+ *      Otherwise hash the original (SHA-256; in early mode, with the profile
+ *      prefix of {@link verdictKey}). A verdict already in the cache is used as
  *      it is: the same bytes as every earlier turn.
  *   2. Otherwise run the heuristics (`compressors.ts`).
  *   3. When the result is still at or above the model threshold, ask the
@@ -78,7 +84,7 @@ import {
 	type CompressionVerdict,
 	type CompressorId,
 } from './compression-cache';
-import { compressWithHeuristics } from './compressors';
+import { compressWithHeuristics, type HeuristicProfile } from './compressors';
 import {
 	isNullSpan,
 	memberOf,
@@ -834,6 +840,27 @@ interface BlockContext {
 	cache: CompressionCache;
 	summarize: ToolResultSummarizer;
 	recovery: { scope: string; command: string } | null;
+	/** `complete` in early mode: see {@link verdictKey}. */
+	profile: HeuristicProfile;
+}
+
+/**
+ * The prefix that gives a `complete` verdict its own cache key.
+ *
+ * Early mode shortens a tool result before the model has read it, and the model
+ * has no way to ask for what was left out. So early mode accepts only
+ * reductions that leave no content out (the `complete` profile) and never asks
+ * the local model. The cache is shared by every agent and keyed by content, so
+ * a verdict decided for `compress` (which may sample) must never be handed to
+ * an early-mode request, and a `complete` verdict must not displace the fuller
+ * one. Each profile therefore has its own key. A `full` key is the plain
+ * SHA-256 of the text, as before, so every stored verdict keeps its meaning.
+ */
+const COMPLETE_PROFILE_KEY_PREFIX = 'maestro-token-proxy-profile:complete:v1\n';
+
+/** The cache key of a tool result under a profile. The marker and the cache both use it. */
+export function verdictKey(text: string, profile: HeuristicProfile): string {
+	return contentHash(profile === 'complete' ? `${COMPLETE_PROFILE_KEY_PREFIX}${text}` : text);
 }
 
 const RECOVERY_HINT_PREFIX = '[maestro-recovery ';
@@ -886,12 +913,13 @@ async function decideBlock(
 	originalTokens: number,
 	context: BlockContext
 ): Promise<CompressionVerdict> {
-	const heuristic = compressWithHeuristics(text);
+	const heuristic = compressWithHeuristics(text, { profile: context.profile });
 	let shortened = heuristic.text;
 	const compressors: CompressorId[] = [...heuristic.applied];
 	let modelFailure: string | undefined;
 
-	if (estimateTokenCount(shortened) >= context.modelMinTokens) {
+	// A model summary leaves content out, so the `complete` profile never asks.
+	if (context.profile === 'full' && estimateTokenCount(shortened) >= context.modelMinTokens) {
 		const summary = await context.summarize(shortened);
 		if (summary.status === 'failed') {
 			modelFailure = summary.code;
@@ -952,7 +980,7 @@ function storeFailed(error: unknown, operation: 'read' | 'write', hash: string):
 async function resolveBlock(text: string, context: BlockContext): Promise<BlockResolution> {
 	const originalTokens = estimateTokenCount(text);
 	if (originalTokens < context.minTokens) return { status: 'below-threshold' };
-	const hash = contentHash(text);
+	const hash = verdictKey(text, context.profile);
 	return blockQueue.enqueue(hash, async (): Promise<BlockResolution> => {
 		let cached: CompressionVerdict | null;
 		try {
@@ -1001,6 +1029,7 @@ export async function compressRequestBody(
 		modelMinTokens: options.modelMinTokens ?? DEFAULT_MODEL_MIN_TOKENS,
 		cache: options.cache ?? getCompressionCache(),
 		recovery: localRecoveryRoute(options.recovery),
+		profile: options.early === true ? 'complete' : 'full',
 		summarize:
 			options.summarize ??
 			((text) => summarizeToolResult(text, { onUnavailable: options.onModelUnavailable })),

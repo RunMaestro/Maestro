@@ -507,6 +507,25 @@ export interface TokenProxyBlockDetail {
 	createdAt: number;
 }
 
+/** What the compression cache directory holds (`maestro-cli models proxy cache`). */
+export interface TokenProxyCacheUsage {
+	/** Verdict records. */
+	entries: number;
+	/** Bytes of every file under the directory, records and texts. */
+	bytes: number;
+	/** Last use of the least recently used entry, epoch ms; `null` when empty. */
+	oldestUseAt: number | null;
+}
+
+/** What one prune of the compression cache removed, and what remains. */
+export interface TokenProxyCachePruneResult {
+	removedEntries: number;
+	removedBytes: number;
+	/** Text files with no record (left by a crash between writes) that were removed. */
+	removedOrphans: number;
+	usage: TokenProxyCacheUsage;
+}
+
 export type TokenProxyErrorCode =
 	/** The request named no route the proxy knows. */
 	| 'unknown-route'

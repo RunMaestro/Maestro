@@ -85,7 +85,13 @@ import { localModelsDataDir } from '../paths';
 import { resolveSourceCallTarget, type SourceCallTarget } from '../run-on';
 import { reportLocalTaskUnavailable } from '../task-notices';
 import { compressRequestBody, type LocalRecoveryCapability } from './compress';
-import { getCompressionCache, isContentHash } from './compression-cache';
+import {
+	getCompressionCache,
+	isContentHash,
+	MIN_PRUNE_IDLE_MS,
+	type CompressionCachePruneResult,
+	type CompressionCacheUsage,
+} from './compression-cache';
 import { readTokenProxyUsage, recordTokenProxyRequest } from './request-stats';
 import {
 	createTokenProxyServer,
@@ -443,6 +449,65 @@ async function start(port: number): Promise<void> {
 	server = next;
 	lastError = null;
 	logger.info(`${TOKEN_PROXY_NAME} listening on ${TOKEN_PROXY_HOST}:${port}`, LOG_CONTEXT);
+	schedulePrune();
+}
+
+/** The first prune waits for startup to settle; later ones run once a day. */
+const PRUNE_FIRST_DELAY_MS = 60 * 1000;
+const PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+let pruneTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Prune the compression cache while the proxy listens (it only grows then):
+ * soon after a start, then daily. A failed prune is logged and retried at the
+ * next interval; it never touches a request.
+ */
+function schedulePrune(): void {
+	if (pruneTimer) return;
+	const run = (delay: number): void => {
+		pruneTimer = setTimeout(() => {
+			void getCompressionCache()
+				.prune()
+				.catch((error: unknown) => {
+					logger.warn(`${TOKEN_PROXY_NAME} cache prune failed: ${String(error)}`, LOG_CONTEXT);
+				})
+				.finally(() => {
+					if (pruneTimer) run(PRUNE_INTERVAL_MS);
+				});
+		}, delay);
+		pruneTimer.unref?.();
+	};
+	run(PRUNE_FIRST_DELAY_MS);
+}
+
+function cancelPrune(): void {
+	if (pruneTimer) clearTimeout(pruneTimer);
+	pruneTimer = null;
+}
+
+/** What the compression cache holds, for `maestro-cli models proxy cache`. */
+export function getTokenProxyCacheUsage(): Promise<CompressionCacheUsage> {
+	return getCompressionCache().usage();
+}
+
+/**
+ * Prune the compression cache now, for `maestro-cli models proxy cache prune`.
+ * `olderThanMs` lowers the idle limit; it is never below the floor that keeps a
+ * live conversation's entries ({@link MIN_PRUNE_IDLE_MS}).
+ */
+export function pruneTokenProxyCache(options: {
+	olderThanMs?: unknown;
+}): Promise<CompressionCachePruneResult> {
+	const { olderThanMs } = options;
+	if (
+		olderThanMs !== undefined &&
+		(typeof olderThanMs !== 'number' || !Number.isFinite(olderThanMs) || olderThanMs < 0)
+	) {
+		throw new Error('The idle limit is a non-negative number of milliseconds.');
+	}
+	return getCompressionCache().prune(
+		olderThanMs === undefined ? {} : { maxIdleMs: Math.max(MIN_PRUNE_IDLE_MS, olderThanMs) }
+	);
 }
 
 /**
@@ -451,6 +516,7 @@ async function start(port: number): Promise<void> {
  * turn it already started).
  */
 async function stop(force: boolean): Promise<void> {
+	cancelPrune();
 	recoveryLaunchGeneration++;
 	recoveryLaunches.clear();
 	const closing = server;

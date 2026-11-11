@@ -47,6 +47,7 @@ import {
 	MODEL_MAX_INPUT_TOKENS,
 	parseCompressionMarker,
 	summarizeToolResult,
+	verdictKey,
 	type CompressRequestOptions,
 	type LocalRecoveryCapability,
 	type ModelSummary,
@@ -96,6 +97,11 @@ const SOURCE_FILE = Array.from(
 
 function compressedLog(original = LOG, folded = LOG_FOLDED): string {
 	return `${folded}\n${formatCompressionMarker(contentHash(original), Math.ceil(original.length / 4))}`;
+}
+
+/** The same fold as early mode sends it: under the `complete` profile's key. */
+function earlyCompressedLog(original = LOG, folded = LOG_FOLDED): string {
+	return `${folded}\n${formatCompressionMarker(verdictKey(original, 'complete'), Math.ceil(original.length / 4))}`;
 }
 
 function newCache(): CompressionCache {
@@ -1174,9 +1180,53 @@ describe('compressRequestBody: early mode', () => {
 
 		// Without `early` this request goes out untouched (see "never touches the
 		// most recent user message"). With it, nothing is ever cached in full.
-		expect(result.body).toBe(anthropicBody('small', compressedLog()));
+		expect(result.body).toBe(anthropicBody('small', earlyCompressedLog()));
 		expect(result.stats.candidates).toBe(2);
-		expect(result.blocks.map((block) => block.hash)).toEqual([contentHash(LOG)]);
+		expect(result.blocks.map((block) => block.hash)).toEqual([verdictKey(LOG, 'complete')]);
+	});
+
+	it('never leaves content out: no sampling, no line cuts, no model', async () => {
+		const array = JSON.stringify(
+			Array.from({ length: 60 }, (_, index) => ({ id: index, nested: { note: 'x'.repeat(40) } }))
+		);
+		const longLines = Array.from({ length: 12 }, (_, index) => `${index} ${'y'.repeat(1500)}`).join(
+			'\n'
+		);
+		const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'ok', text: 'tiny' }));
+		for (const text of [array, longLines]) {
+			const full = await compressRequestBody(
+				'anthropic-messages',
+				anthropicBody(text),
+				options({ summarize })
+			);
+			expect(full.stats.compressed).toBe(1);
+			summarize.mockClear();
+
+			const body = anthropicBody('small', text);
+			const result = await compressRequestBody(
+				'anthropic-messages',
+				body,
+				early({ summarize, modelMinTokens: 1 })
+			);
+			// Early mode would have to omit items or characters to shorten these,
+			// and the model never reads the original: they go out whole.
+			expect(result.body).toBe(body);
+			expect(result.stats).toMatchObject({ compressed: 0, kept: 1 });
+			expect(summarize).not.toHaveBeenCalled();
+		}
+	});
+
+	it('keeps early and full verdicts apart in the shared cache', async () => {
+		const cache = newCache();
+		await compressRequestBody('anthropic-messages', anthropicBody(LOG), options({ cache }));
+		const result = await compressRequestBody(
+			'anthropic-messages',
+			anthropicBody('small', LOG),
+			early({ cache })
+		);
+		expect(result.blocks).toEqual([expect.objectContaining({ cached: false })]);
+		expect((await cache.read(contentHash(LOG)))?.outcome).toBe('compressed');
+		expect((await cache.read(verdictKey(LOG, 'complete')))?.outcome).toBe('compressed');
 	});
 
 	it('sends the same bytes on the next request, when the result is no longer fresh', async () => {
@@ -1229,7 +1279,7 @@ describe('compressRequestBody: early mode', () => {
 		expect(block.cache_control).toEqual({ type: 'ephemeral' });
 		expect((block.content as Array<Record<string, unknown>>)[0]).toEqual({
 			type: 'text',
-			text: compressedLog(),
+			text: earlyCompressedLog(),
 			cache_control: { type: 'ephemeral' },
 		});
 	});
@@ -1265,7 +1315,7 @@ describe('compressRequestBody: early mode', () => {
 		);
 		const chatOut = JSON.parse(chat.body) as { messages: Array<{ content: unknown }> };
 		expect(chatOut.messages[0].content).toBe(LOG);
-		expect(chatOut.messages[2].content).toBe(compressedLog());
+		expect(chatOut.messages[2].content).toBe(earlyCompressedLog());
 
 		const responses = await compressRequestBody(
 			'openai-responses',
@@ -1284,7 +1334,7 @@ describe('compressRequestBody: early mode', () => {
 			input: Array<{ output?: string }>;
 		};
 		expect(responsesOut.instructions).toBe(LOG);
-		expect(responsesOut.input[2].output).toBe(compressedLog());
+		expect(responsesOut.input[2].output).toBe(earlyCompressedLog());
 	});
 
 	it('leaves a small fresh result alone', async () => {
@@ -1919,18 +1969,31 @@ describe('compressRequestBody: deterministic filter integration', () => {
 				expect(Object.values(first.stats.compressors).reduce((sum, count) => sum + count, 0)).toBe(
 					1
 				);
-				for (const [currentCache, early] of [
-					[cache, false],
-					[newCache(), true],
-				] as const) {
-					const again = await compressRequestBody(
-						kind,
-						body,
-						options({ cache: currentCache, summarize, early })
+				const again = await compressRequestBody(kind, body, options({ cache, summarize }));
+				expect(again.body).toBe(first.body);
+				expect(again.stats).toMatchObject({ compressed: 1, cacheHits: 1 });
+				expect(again.stats.compressors[compressor]).toBe(1);
+
+				// Early mode decides under its own key with the `complete` profile:
+				// the same reduction when it leaves nothing out, none when it samples.
+				const earlyResult = await compressRequestBody(
+					kind,
+					body,
+					options({ cache: newCache(), summarize, early: true })
+				);
+				if (compressor === 'git-log' || compressor === 'search') {
+					expect(earlyResult.body).toBe(body);
+					expect(earlyResult.stats.compressed).toBe(0);
+				} else {
+					const fullMarker = formatCompressionMarker(contentHash(text), Math.ceil(text.length / 4));
+					const earlyMarker = formatCompressionMarker(
+						verdictKey(text, 'complete'),
+						Math.ceil(text.length / 4)
 					);
-					expect(again.body).toBe(first.body);
-					expect(again.stats).toMatchObject({ compressed: 1, cacheHits: 1 });
-					expect(again.stats.compressors[compressor]).toBe(1);
+					expect(earlyResult.body).toBe(
+						`${before}${JSON.stringify(replacement.replace(fullMarker, earlyMarker))}${after}`
+					);
+					expect(earlyResult.stats.compressors[compressor]).toBe(1);
 				}
 			}
 			expect(write).toHaveBeenCalledTimes(1);
@@ -2134,6 +2197,8 @@ describe('compressRequestBody: a cache that cannot be used', () => {
 			read: on === 'read' ? async () => Promise.reject(error) : real.read,
 			write: on === 'write' ? async () => Promise.reject(error) : real.write,
 			readOriginal: real.readOriginal,
+			usage: real.usage,
+			prune: real.prune,
 		};
 	}
 
