@@ -966,15 +966,30 @@ A gateway is an HTTP proxy that an agent's requests go through on the way to its
 
 The gateway table is on **Models -> Gateway**. A gateway is set per agent and is off until you type a URL. When the agent next starts, Maestro points the provider's CLI at that URL:
 
-| Provider    | How it is pointed at the gateway                                           |
-| ----------- | -------------------------------------------------------------------------- |
-| Claude Code | `ANTHROPIC_BASE_URL`                                                       |
-| Codex       | `OPENAI_BASE_URL`, and the argument `-c openai_base_url="<url>"`           |
-| Copilot CLI | Nothing. Copilot CLI ignores base-URL variables, so the field is disabled. |
-| OpenCode    | Nothing. It sets a base URL per model provider in its own config file.     |
-| Others      | Nothing known to Maestro. The field is disabled and says so.               |
+| Provider    | How it is pointed at the gateway                                                                                                       |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | `ANTHROPIC_BASE_URL`                                                                                                                   |
+| Codex       | `OPENAI_BASE_URL`, and the argument `-c openai_base_url="<url>"`                                                                       |
+| OpenCode    | `OPENCODE_CONFIG_CONTENT`: the `anthropic` and `openai` providers get the gateway as `baseURL`, and `opencode run` gets `--standalone` |
+| Others      | Nothing. The field is disabled and says why (see the next table).                                                                      |
 
 Codex gets both because Codex CLI does not read `OPENAI_BASE_URL` on a ChatGPT login (tested with 0.162.1); the argument is what it honors.
+
+OpenCode reads no base-URL variable. Maestro adds the gateway to the inline config document it already gives each OpenCode launch, merged over your own config files, and limits the run to the `anthropic` and `openai` providers. An OpenCode agent whose model is from any other provider (`openrouter/...`, `google/...`) fails by name instead of running direct. For OpenCode a gateway URL you type is the API root with `/v1` (`http://127.0.0.1:8787/v1`), because OpenCode appends only `/messages` or `/responses`; the Maestro proxy adds the `/v1` itself. Tested with OpenCode 2.2.7.
+
+Maestro maps a provider only after a test proves its CLI reads the setting: the setting is pointed at a closed port, and the turn must fail to connect. A setting that is only documented is not enough, because a CLI that ignores it runs direct while the app says it goes through the gateway. These providers have no gateway:
+
+| Provider                | Why not                                                                                                                                                                                                                                                                                                                                 |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Copilot CLI             | It reads a base URL (`COPILOT_PROVIDER_BASE_URL`) only for a provider you bring your own key for, and that takes the turn off your Copilot subscription. To carry a subscription a proxy would have to do the Copilot token exchange, which Maestro does not. With your own key, set the variable in the agent's environment variables. |
+| Factory Droid           | Not tested yet. It sets a base URL per custom model in `~/.factory/settings.json`: point a custom model at the gateway there.                                                                                                                                                                                                           |
+| Qwen3 Coder             | Not tested yet. With an OpenAI-compatible key it is documented to read `OPENAI_BASE_URL`: set it in the agent's environment variables.                                                                                                                                                                                                  |
+| Hermes                  | Not tested yet. It sets a custom endpoint in `~/.hermes/config.yaml` (`model.base_url`).                                                                                                                                                                                                                                                |
+| Pi, Oh My Pi            | Not tested yet. Each sets a provider's base URL in its own models file (`~/.pi/agent/models.json`, `~/.omp/agent/models.yml`).                                                                                                                                                                                                          |
+| Grok CLI                | Not tested yet. If it reads a base-URL variable, set it in the agent's environment variables.                                                                                                                                                                                                                                           |
+| Antigravity, Gemini CLI | No base-URL variable is known.                                                                                                                                                                                                                                                                                                          |
+
+Maestro does not check a setting you make yourself in an agent's environment variables or a provider's config file.
 
 A gateway sends an agent's requests to its cloud provider by another route. To send them to a model on another server instead, use [Run on](#run-on). The two do not combine: while an agent's Run on target is a source, its gateway is not applied.
 
@@ -1021,7 +1036,7 @@ Choosing any mode but Off sets the agent's gateway URL to the proxy for you. Cho
 - **Compress does not change.** It already lets the model read every result in full once; the switch only gives that model a way to look again.
 - **The tool reaches only originals this machine still holds.** Originals unused for 30 days are pruned (see below). Asking for a pruned or unknown hash is a tool error that says so, and the model works from the shortened text.
 - **A retrieved original is never shortened again.**
-- **Which launches get it.** Claude Code (in both its `claude --print` and its interactive mode) and Codex agents on this machine, in the turns you send from the app. Maestro gives the tool through the same per-launch MCP server it uses for plugin tools, so it works with Plugins off and edits no global config. An agent on an SSH remote, an Auto Run task, a Cue run, a Group Chat, a consult, and `maestro-cli send` do not get it, and those turns keep the lossless reductions.
+- **Which launches get it.** Claude Code (in both its `claude --print` and its interactive mode) and Codex agents on this machine, in the turns you send from the app. Maestro gives the tool through the same per-launch MCP server it uses for plugin tools, so it works with Plugins off and edits no global config. An OpenCode agent does not get it yet, because Maestro has not verified that server for OpenCode. Nor do an agent on an SSH remote, an Auto Run task, a Cue run, a Group Chat, a consult, or `maestro-cli send`. Those turns keep the lossless reductions.
 - **Applies from the agent's next turn.** Setting the proxy mode to Off, a gateway URL of your own, or another provider turns it off with the proxy. In Passthrough the switch is hidden and has no effect.
 
 What both compress modes do, and do not do:
@@ -1036,7 +1051,7 @@ What both compress modes do, and do not do:
 
 Under the table, **Maestro token proxy** shows what it did in the last 30 days, in all and per agent: requests, tokens saved, and the average time a request was held to be shortened. Tokens saved is an estimate at 4 characters per token. On output full of paths, digits and stack traces the real saving can be about twice the figure shown. Below the table, **Provider counted** sums what your provider itself reported for each request, in every mode including Passthrough: uncached input, cache reads, cache writes, and output. Those are exact. Compare a Passthrough week with a Compress week to see what compression really saved. **Recent compressions** lists the blocks it last shortened. Select one to see a diff of what the agent sent against what was sent in its place.
 
-The proxy cannot be used by an agent on an SSH remote (the remote host cannot reach this machine's `127.0.0.1`) or by a provider with no base-URL variable. The control is disabled for those and says why. A turn started with `maestro-cli send` goes through the proxy unchanged and is counted without an agent name, because only the app tells the proxy which agent a request belongs to.
+The proxy reaches the providers in the first table above: Claude Code, Codex, and OpenCode (for an `anthropic/...` or `openai/...` model; any other model is refused when you pick a mode). It cannot be used by an agent on an SSH remote (the remote host cannot reach this machine's `127.0.0.1`) or by a provider in the second table. The control is disabled for those and says why. A turn started with `maestro-cli send` goes through the proxy unchanged and is counted without an agent name, because only the app tells the proxy which agent a request belongs to.
 
 ```bash
 maestro-cli update-agent <agent-id> --proxy-mode compress   # off | passthrough | compress | compress-early
