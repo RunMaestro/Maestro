@@ -149,7 +149,16 @@ const GATEWAY_SUPPORT: Record<AgentId, AgentGatewaySupport> = {
 		'qwen3-coder',
 		"With an OpenAI-compatible key it is documented to read OPENAI_BASE_URL: set it in this agent's environment variables."
 	),
-	hermes: unknownVariable('hermes'),
+	// Not verified (G03.3, 2026-11-11): no `hermes` binary was installed where
+	// the closed-port test runs. Hermes Agent lists `OPENAI_BASE_URL` for a
+	// custom endpoint and stores `model.provider: custom` + `model.base_url` in
+	// `~/.hermes/config.yaml`, which persists past the variable. Some of its
+	// tools (vision, web summaries) are reported to call OpenRouter directly
+	// whatever the base URL, so a verified route may still not carry every request.
+	hermes: notVerified(
+		'hermes',
+		'It sets a custom endpoint in ~/.hermes/config.yaml (model.base_url): point that endpoint at the gateway there.'
+	),
 	// Not verified (G03.3, 2026-11-11): no `pi` binary was installed where the
 	// closed-port test runs. Its docs (pi-coding-agent `docs/models.md`) route a
 	// built-in provider through a proxy by `baseUrl` on the provider in
@@ -192,7 +201,7 @@ function notVerified(agentId: AgentId, hint: string): AgentGatewaySupport {
 function unknownVariable(agentId: AgentId): AgentGatewaySupport {
 	return {
 		supported: false,
-		reason: `Maestro does not know a base-URL variable for ${getAgentDisplayName(agentId)}. If it has one, set it in this agent's environment variables.`,
+		reason: `Maestro does not know a base-URL variable for ${getAgentDisplayName(agentId)}. ${IF_IT_READS_A_VARIABLE}`,
 	};
 }
 

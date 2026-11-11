@@ -56,6 +56,7 @@ describe('agentGatewaySupport', () => {
 
 	it.each([
 		['grok', 'Grok CLI'],
+		['hermes', 'Hermes'],
 		['qwen3-coder', 'Qwen3 Coder'],
 		['pi', 'Pi'],
 		['omp', 'Oh My Pi'],
