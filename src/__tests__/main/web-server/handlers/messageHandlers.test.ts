@@ -260,6 +260,9 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getGroupChatState: vi.fn().mockResolvedValue(null),
 		stopGroupChat: vi.fn().mockResolvedValue(true),
 		archiveGroupChat: vi.fn().mockResolvedValue(true),
+		addGroupChatParticipant: vi
+			.fn()
+			.mockResolvedValue({ success: true, participantName: 'Isabelle', alreadyMember: false }),
 		sendGroupChatMessage: vi.fn().mockResolvedValue(true),
 		steerGroupChat: vi.fn().mockResolvedValue({
 			outcome: 'delivered',
@@ -2702,6 +2705,43 @@ describe('WebSocketMessageHandler', () => {
 				expect(lastResponse()).toMatchObject({ archived: false, requestId: 'req-6' });
 			});
 			expect(callbacks.archiveGroupChat).toHaveBeenLastCalledWith('chat-1', false);
+		});
+
+		it('adds a participant by agent ID and answers with the result', async () => {
+			handler.handleMessage(client, {
+				type: 'add_group_chat_participant',
+				chatId: 'chat-1',
+				agentId: '8dac9050-cc32-4bfa-a0e3-33bd62d8a503',
+				requestId: 'req-7',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({
+					type: 'add_group_chat_participant_result',
+					success: true,
+					participantName: 'Isabelle',
+					alreadyMember: false,
+					chatId: 'chat-1',
+					requestId: 'req-7',
+				});
+			});
+			expect(callbacks.addGroupChatParticipant).toHaveBeenCalledWith(
+				'chat-1',
+				'8dac9050-cc32-4bfa-a0e3-33bd62d8a503'
+			);
+		});
+
+		it('refuses an add with no agentId, tagged with the requestId', () => {
+			handler.handleMessage(client, {
+				type: 'add_group_chat_participant',
+				chatId: 'chat-1',
+				requestId: 'req-8',
+			});
+
+			expect(lastResponse()).toMatchObject({
+				type: 'error',
+				message: 'Missing agentId',
+				requestId: 'req-8',
+			});
 		});
 	});
 

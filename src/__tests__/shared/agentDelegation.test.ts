@@ -3,11 +3,14 @@ import {
 	CALLER_AGENT_ID_ENV_VAR,
 	CALLER_TAB_ID_ENV_VAR,
 	CALLER_RUN_PROOF_FILE_ENV_VAR,
+	TERMINAL_AGENT_ID_ENV_VAR,
 	buildCallerIdentityEnv,
+	buildTerminalOwnerEnv,
 	callerMessageFields,
 	isSelfDispatch,
 	readCallerIdentity,
 	readCallerMessageFields,
+	readShellOwnerAgentId,
 	withoutCallerIdentityEnv,
 } from '../../shared/agentDelegation';
 
@@ -38,6 +41,27 @@ describe('caller identity env', () => {
 
 	it('never reuses MAESTRO_AGENT_ID, which tells a pianola watch it is Pianola', () => {
 		expect(CALLER_AGENT_ID_ENV_VAR).not.toBe('MAESTRO_AGENT_ID');
+	});
+});
+
+describe('shell owner', () => {
+	it('names a terminal tab owner without stamping a caller identity', () => {
+		const env = buildTerminalOwnerEnv('agent-1');
+		expect(env).toEqual({ [TERMINAL_AGENT_ID_ENV_VAR]: 'agent-1' });
+		// A terminal must never make dispatch/ask record a delegation.
+		expect(readCallerIdentity(env)).toBeUndefined();
+	});
+
+	it("reads an agent turn's identity first, then the terminal owner", () => {
+		expect(readShellOwnerAgentId(buildTerminalOwnerEnv('term'))).toBe('term');
+		expect(
+			readShellOwnerAgentId({ ...buildTerminalOwnerEnv('term'), ...buildCallerIdentityEnv('turn') })
+		).toBe('turn');
+	});
+
+	it('treats a blank or missing owner as none', () => {
+		expect(readShellOwnerAgentId({})).toBeUndefined();
+		expect(readShellOwnerAgentId({ [TERMINAL_AGENT_ID_ENV_VAR]: '  ' })).toBeUndefined();
 	});
 });
 

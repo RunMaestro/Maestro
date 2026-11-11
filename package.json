@@ -290,7 +290,7 @@
 			],
 			"artifactName": "${name}-${version}-${arch}.${ext}",
 			"category": "Development",
-			"icon": "build/icon.png",
+			"icon": "build/icons",
 			"syncDesktopName": true,
 			"extraResources": [
 				{

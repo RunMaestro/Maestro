@@ -62,6 +62,7 @@ import {
 	groupChatStatus,
 	groupChatStop,
 	groupChatArchive,
+	groupChatAdd,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -1046,6 +1047,14 @@ groupChat
 	.action(groupChatStop);
 
 groupChat
+	.command('add <chat> <agent>')
+	.description(
+		'Add an agent (ID, ID prefix, or name) to a group chat without an @mention; linked by ID'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatAdd);
+
+groupChat
 	.command('archive <chat>')
 	.description(
 		'Archive a group chat (stops its moderator and participants); --restore brings it back'
@@ -1065,7 +1074,10 @@ program
 	.description(
 		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)'
 	)
-	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
+	.option(
+		'-a, --agent <id>',
+		"Target agent (defaults to the agent owning this shell or terminal tab, else the file path's owning agent)"
+	)
 	.option(
 		'--background',
 		'Open the preview tab without changing anything currently rendered, on any agent'
@@ -1086,7 +1098,10 @@ program
 program
 	.command('open-graph [paths...]')
 	.description('Open the Document Graph over specific markdown files or a directory')
-	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by path's owning agent)")
+	.option(
+		'-a, --agent <id>',
+		"Target agent (defaults to the agent owning this shell or terminal tab, else the path's owning agent)"
+	)
 	.option('--focus <path>', 'Center the graph on this document (default: the most-linked one)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openGraph);

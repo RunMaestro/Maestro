@@ -18,6 +18,7 @@ vi.mock('../../../cli/services/storage', () => {
 		readSessions,
 		// The live list is the stored list here: no fixture holds a dormant agent.
 		readLiveSessions: (...args: unknown[]) => readSessions(...(args as [])),
+		getSessionById: vi.fn(() => undefined),
 		getSessionHistoryMtimeMs: vi.fn(() => 0),
 	};
 });
@@ -27,8 +28,13 @@ import {
 	findOwningSessions,
 	pickMostRecentlyActive,
 	resolveOwningAgent,
+	resolveTargetAgent,
 } from '../../../cli/utils/owning-agent';
-import { getSessionHistoryMtimeMs, readSessions } from '../../../cli/services/storage';
+import {
+	getSessionById,
+	getSessionHistoryMtimeMs,
+	readSessions,
+} from '../../../cli/services/storage';
 import type { SessionInfo } from '../../../shared/types';
 
 /** Minimal agent shape: this module only reads `id` and `cwd`. */
@@ -134,5 +140,54 @@ describe('resolveOwningAgent', () => {
 	it('reads the sessions file itself when no list is passed', () => {
 		vi.mocked(readSessions).mockReturnValue([agent('from-disk', '/repo')]);
 		expect(resolveOwningAgent('/repo/a.ts')?.agent.id).toBe('from-disk');
+	});
+});
+
+describe('resolveTargetAgent', () => {
+	const sessions = [agent('repo-agent', '/repo'), agent('term-agent', '/elsewhere')];
+
+	it('honors --agent over everything else', () => {
+		vi.mocked(getSessionById).mockReturnValue(agent('flagged', '/x'));
+		const env = { MAESTRO_TERMINAL_AGENT_ID: 'term-agent' };
+		const resolved = resolveTargetAgent('/repo/a.ts', 'flagged', env, sessions);
+		expect('agent' in resolved && resolved.agent.id).toBe('flagged');
+	});
+
+	it('reports an unknown --agent', () => {
+		vi.mocked(getSessionById).mockReturnValue(undefined);
+		expect(resolveTargetAgent('/repo/a.ts', 'nope', {}, sessions)).toEqual({
+			error: 'Agent not found: nope',
+		});
+	});
+
+	it("defaults to the terminal tab's agent, even for a path outside every workspace", () => {
+		const env = { MAESTRO_TERMINAL_AGENT_ID: 'term-agent' };
+		const resolved = resolveTargetAgent('/home/me/.bashrc', undefined, env, sessions);
+		expect(resolved).toEqual({ agent: sessions[1], others: [] });
+	});
+
+	it("prefers the shell's terminal owner over the path's owner", () => {
+		const env = { MAESTRO_TERMINAL_AGENT_ID: 'term-agent' };
+		const resolved = resolveTargetAgent('/repo/a.ts', undefined, env, sessions);
+		expect('agent' in resolved && resolved.agent.id).toBe('term-agent');
+	});
+
+	it("uses an agent turn's own identity as the shell owner", () => {
+		const env = { MAESTRO_CALLER_AGENT_ID: 'term-agent' };
+		const resolved = resolveTargetAgent('/repo/a.ts', undefined, env, sessions);
+		expect('agent' in resolved && resolved.agent.id).toBe('term-agent');
+	});
+
+	it('ignores a shell owner that no longer exists and falls back to the path', () => {
+		const env = { MAESTRO_TERMINAL_AGENT_ID: 'deleted-agent' };
+		const resolved = resolveTargetAgent('/repo/a.ts', undefined, env, sessions);
+		expect('agent' in resolved && resolved.agent.id).toBe('repo-agent');
+	});
+
+	it('errors when neither the shell nor the path names an agent', () => {
+		expect(resolveTargetAgent('/home/me/.bashrc', undefined, {}, sessions)).toEqual({
+			error:
+				"/home/me/.bashrc is not inside any agent's working directory. Pick an agent with --agent <id>.",
+		});
 	});
 });

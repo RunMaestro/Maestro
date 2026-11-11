@@ -226,8 +226,13 @@ export const FilePreview = React.memo(
 		// (before paint) when the reused scroll container switches files. An
 		// effect-only reset flashes one frame of the previous file's hidden state.
 		const showStatsBarPathRef = useRef<string | undefined>(file?.path);
+		// scrollTop at which the user clicked the collapsed header to bring the
+		// details back. While set, the scroll handler keeps them shown until the
+		// user actually scrolls away from that spot. null = not pinned.
+		const detailsRevealedAtRef = useRef<number | null>(null);
 		if (file?.path !== showStatsBarPathRef.current) {
 			showStatsBarPathRef.current = file?.path;
+			detailsRevealedAtRef.current = null;
 			const atTop = initialScrollTop === undefined || initialScrollTop <= 10;
 			if (showStatsBar !== atTop) {
 				setShowStatsBar(atTop);
@@ -1067,6 +1072,14 @@ export const FilePreview = React.memo(
 			requestFileDeletion({ path: file.path, sshRemoteId });
 		}, [file?.path, sshRemoteId]);
 
+		// Click on the collapsed header: show the path + stats again, pinned to
+		// the current scroll position. The next real scroll collapses them.
+		const handleRevealDetails = useCallback(() => {
+			const scrollEl = contentRef.current ? resolvePreviewScroller(contentRef.current) : null;
+			detailsRevealedAtRef.current = scrollEl?.scrollTop ?? 0;
+			setShowStatsBar(true);
+		}, []);
+
 		// Fetch file stats when file changes
 		useEffect(() => {
 			if (file?.path) {
@@ -1417,6 +1430,9 @@ export const FilePreview = React.memo(
 			// Stats subbar (~28px) + directory path row (~20px) + cushion.
 			const STATS_CHROME_PX = 64;
 			const AT_TOP_PX = 10;
+			// How far the user must scroll from a click-reveal before the
+			// details collapse again. Absorbs trailing momentum events.
+			const REVEAL_SCROLL_SLOP_PX = 8;
 
 			// Captured, because a table view scrolls its own element inside the
 			// column and scroll events do not bubble. Only the preview's real
@@ -1427,8 +1443,14 @@ export const FilePreview = React.memo(
 				if (!scrollEl || event.target !== scrollEl) return;
 				const { scrollTop, scrollHeight, clientHeight } = scrollEl;
 				const overflow = scrollHeight - clientHeight;
+				const revealedAt = detailsRevealedAtRef.current;
+				if (revealedAt !== null && Math.abs(scrollTop - revealedAt) >= REVEAL_SCROLL_SLOP_PX) {
+					detailsRevealedAtRef.current = null;
+				}
+				const pinnedByClick = detailsRevealedAtRef.current !== null;
 				setShowStatsBar((prev) => {
 					if (scrollTop <= AT_TOP_PX) return true;
+					if (pinnedByClick) return prev;
 					// Require scrollTop past chrome+at-top so after the header
 					// collapses we remain below the show threshold even if the
 					// browser preserves content position by reducing scrollTop.
@@ -2041,6 +2063,7 @@ export const FilePreview = React.memo(
 					setWordWrap={setFileEditWordWrap}
 					toolbarVisibility={filePreviewToolbarVisibility}
 					onDelete={handleDeleteFile}
+					onRevealDetails={handleRevealDetails}
 				/>
 
 				{/* File changed on disk banner */}

@@ -19,7 +19,7 @@ import * as path from 'path';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
 import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
-import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
+import type { ProcessConfig as ProcessSpawnConfig, SpawnResult } from '../../process-manager/types';
 import { logger } from '../../utils/logger';
 import { getChildProcesses } from '../../process-manager/utils/childProcessInfo';
 import { addBreadcrumb } from '../../utils/sentry';
@@ -75,6 +75,61 @@ function harnessControlOwner(event: { sender?: { id: number }; clientId?: unknow
 } {
 	if (typeof event.clientId === 'string') return { bridgeClientId: event.clientId };
 	return { webContentsId: event.sender?.id };
+}
+
+/**
+ * How long a terminal spawn waits for its real PID. node-pty on Windows reports
+ * pid 0 until ConPTY has connected, which happens asynchronously and gives up
+ * after node-pty's own 5 s timeout; a little longer than that covers it.
+ */
+const TERMINAL_PID_WAIT_MS = 6000;
+const TERMINAL_PID_POLL_MS = 25;
+
+/**
+ * Resolve a terminal spawn to its real PID before it reaches the renderer.
+ *
+ * On Windows, node-pty's `IPty.pid` is 0 until the ConPTY connection completes
+ * ("Not available until `ready` event emitted", node-pty windowsTerminal), but
+ * PtySpawner reads it synchronously. The renderer treats `pid === 0` as "this
+ * tab never spawned" (terminalSpawn.ts: "`pid !== 0` is the durable guard"), so
+ * a successful Windows spawn reported as pid 0 is spawned again on the next
+ * render, which kills the previous PTY, which reports pid 0 again: a respawn
+ * loop at render rate that ends with the app crashing.
+ *
+ * Waits for the PTY this call created (not a successor that may have taken the
+ * session id meanwhile), records the PID on the managed process so kill paths
+ * that use it (`taskkill /pid`) see the real one, and turns a PTY that never
+ * produced a PID, or exited first, into a failed spawn, which the renderer
+ * handles without retrying.
+ */
+async function settleTerminalPid(
+	processManager: ProcessManager,
+	sessionId: string,
+	result: SpawnResult
+): Promise<SpawnResult> {
+	if (!result.success || result.pid > 0) return result;
+	const proc = processManager.get(sessionId);
+	const pty = proc?.ptyProcess;
+	if (!proc || !pty) return { success: false, pid: 0 };
+	const deadline = Date.now() + TERMINAL_PID_WAIT_MS;
+	while (Date.now() < deadline) {
+		if (processManager.get(sessionId) !== proc) {
+			// Exited (or was replaced) before its PID arrived.
+			return { success: false, pid: 0 };
+		}
+		if (pty.pid > 0) {
+			proc.pid = pty.pid;
+			// Spread keeps `attached` when the spawn reused a live terminal.
+			return { ...result, pid: pty.pid };
+		}
+		await new Promise((resolve) => setTimeout(resolve, TERMINAL_PID_POLL_MS));
+	}
+	logger.warn('Terminal PTY reported no PID; treating the spawn as failed', LOG_CONTEXT, {
+		sessionId,
+		waitedMs: TERMINAL_PID_WAIT_MS,
+	});
+	if (processManager.get(sessionId) === proc) processManager.kill(sessionId);
+	return { success: false, pid: 0 };
 }
 
 // AgentConfigsData imported from stores/types
@@ -738,17 +793,21 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						remoteParts.push('exec "$SHELL" -l');
 						sshArgs.push(remoteParts.join(' && '));
 
-						return processManager.spawn({
-							sessionId: config.sessionId,
-							reuseTerminal: true,
-							toolType: 'terminal',
-							cwd: os.homedir(),
-							command: await resolveSshPath(),
-							args: sshArgs,
-							shellEnvVars: mergedEnvVars,
-							cols: config.cols || 80,
-							rows: config.rows || 24,
-						});
+						return settleTerminalPid(
+							processManager,
+							config.sessionId,
+							processManager.spawn({
+								sessionId: config.sessionId,
+								reuseTerminal: true,
+								toolType: 'terminal',
+								cwd: os.homedir(),
+								command: await resolveSshPath(),
+								args: sshArgs,
+								shellEnvVars: mergedEnvVars,
+								cols: config.cols || 80,
+								rows: config.rows || 24,
+							})
+						);
 					}
 					// SSH is enabled but the remote config was not found (deleted or disabled).
 					// Fail explicitly rather than silently falling through to a local terminal,
@@ -760,15 +819,19 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					return { success: false, pid: 0 };
 				}
 
-				return processManager.spawnTerminalTab({
-					sessionId: config.sessionId,
-					cwd: config.cwd,
-					shell: shellToUse,
-					shellArgs: config.shellArgs || settingsStore.get('shellArgs', ''),
-					shellEnvVars: mergedEnvVars,
-					cols: config.cols || 80,
-					rows: config.rows || 24,
-				});
+				return settleTerminalPid(
+					processManager,
+					config.sessionId,
+					processManager.spawnTerminalTab({
+						sessionId: config.sessionId,
+						cwd: config.cwd,
+						shell: shellToUse,
+						shellArgs: config.shellArgs || settingsStore.get('shellArgs', ''),
+						shellEnvVars: mergedEnvVars,
+						cols: config.cols || 80,
+						rows: config.rows || 24,
+					})
+				);
 			}
 		)
 	);

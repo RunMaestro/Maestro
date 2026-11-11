@@ -58,7 +58,7 @@ An outage collapses into a single live card in the transcript, not a wall of rep
 Two buttons:
 
 - **Try now** - skip the timer and resend immediately. Useful when you know the provider recovered, or you just switched accounts.
-- **Stop** - give up on this outage. The card freezes into a summary and the turn is yours to handle.
+- **Stop** - give up on this outage. The card freezes into a summary, the failed prompt leaves the queue so it is not sent again, and the turn is yours to handle. Anything queued behind it stays held until you clear the error.
 
 When a retry gets through, the card turns green and freezes as soon as the agent starts thinking or calling tools, not when the turn ends: _Connection recovered. Service overloaded cleared after 3 retries over 4m._ A quota outage reads _Quota restored._ instead. Every outage keeps its own card, so a transcript honestly records what the day was like.
 

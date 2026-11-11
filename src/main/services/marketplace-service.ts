@@ -74,6 +74,24 @@ function resolveTildePath(pathStr: string): string {
  * Rejects path separators and traversal sequences so the folder cannot
  * escape `autoRunFolderPath`. Throws `MarketplaceImportError` on bad input.
  */
+/**
+ * Points a playbook's asset references at the folder it was imported into.
+ *
+ * Exchange playbooks reference bundled files as `{{AUTORUN_FOLDER}}/assets/...`
+ * (the documented convention), but the import writes them to
+ * `<autoRunFolderPath>/<targetFolderName>/assets/`, and `{{AUTORUN_FOLDER}}`
+ * expands to the Auto Run root, so the reference never resolved. Rewriting the
+ * reference at import keeps `{{AUTORUN_FOLDER}}` meaning the root everywhere
+ * else and keeps each playbook's assets in its own folder.
+ */
+export function rebaseAssetReferences(text: string, targetFolderName: string): string {
+	if (!targetFolderName.trim()) return text;
+	return text.replace(
+		/\{\{AUTORUN_FOLDER\}\}\/assets(?![\w.-])/gi,
+		() => `{{AUTORUN_FOLDER}}/${targetFolderName}/assets`
+	);
+}
+
 export function assertSafeTargetFolderName(targetFolderName: string): void {
 	if (!targetFolderName || targetFolderName.trim() === '') {
 		throw new MarketplaceImportError('targetFolderName is required');
@@ -552,7 +570,10 @@ export async function importMarketplacePlaybook(
 	const importedDocs: string[] = [];
 	for (const doc of marketplacePlaybook.documents) {
 		try {
-			const content = await fetchDocument(marketplacePlaybook.path, doc.filename);
+			const content = rebaseAssetReferences(
+				await fetchDocument(marketplacePlaybook.path, doc.filename),
+				targetFolderName
+			);
 			const docPath = isRemote
 				? `${targetPath}/${doc.filename}.md`
 				: path.join(targetPath, `${doc.filename}.md`);
@@ -662,7 +683,7 @@ export async function importMarketplacePlaybook(
 			})),
 		loopEnabled: marketplacePlaybook.loopEnabled,
 		maxLoops: marketplacePlaybook.maxLoops,
-		prompt: marketplacePlaybook.prompt ?? '',
+		prompt: rebaseAssetReferences(marketplacePlaybook.prompt ?? '', targetFolderName),
 	};
 
 	const playbooksDir = path.join(app.getPath('userData'), 'playbooks');

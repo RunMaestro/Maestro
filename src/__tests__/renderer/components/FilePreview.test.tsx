@@ -2007,6 +2007,38 @@ print("world")
 
 			expect(screen.getByText('Lines:')).toBeInTheDocument();
 		});
+
+		it('shows the details again on a header click, then hides them on the next scroll', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.md', content: 'Some content\n'.repeat(20), path: '/test/test.md' }}
+				/>
+			);
+
+			const container = document.querySelector('.overflow-y-auto') as HTMLElement;
+			Object.defineProperty(container, 'scrollHeight', { configurable: true, value: 800 });
+			Object.defineProperty(container, 'clientHeight', { configurable: true, value: 500 });
+			Object.defineProperty(container, 'scrollTop', {
+				configurable: true,
+				writable: true,
+				value: 100,
+			});
+			fireEvent.scroll(container);
+			expect(screen.queryByText('Lines:')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByTestId('file-preview-header-row'));
+			expect(screen.getByText('Lines:')).toBeInTheDocument();
+			expect(screen.getByText('/test')).toBeInTheDocument();
+
+			// A scroll event that did not move (trailing momentum) keeps them.
+			fireEvent.scroll(container);
+			expect(screen.getByText('Lines:')).toBeInTheDocument();
+
+			container.scrollTop = 160;
+			fireEvent.scroll(container);
+			expect(screen.queryByText('Lines:')).not.toBeInTheDocument();
+		});
 	});
 
 	describe('CSV file rendering', () => {

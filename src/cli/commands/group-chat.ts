@@ -250,6 +250,58 @@ export async function groupChatSteer(
 	}
 }
 
+/**
+ * Add an agent to a group chat by GUID, GUID prefix or name, with no @mention.
+ * The agent is resolved here (`resolveAgentId`) and sent as its full GUID, so
+ * the chat links the participant by ID and a later rename does not break it.
+ */
+export async function groupChatAdd(
+	chatRef: string,
+	agentRef: string,
+	options: JsonOption
+): Promise<void> {
+	let agentId: string;
+	try {
+		agentId = resolveAgentId(agentRef);
+	} catch (error) {
+		fail(error instanceof Error ? error.message : String(error), options.json);
+	}
+
+	try {
+		const { chatId, reply } = await withMaestroClient(async (client) => {
+			const id = resolveChatRef(chatRef, await listChats(client));
+			const res = await client.sendCommand<
+				BridgeReply & { participantName?: string; alreadyMember?: boolean }
+			>(
+				{ type: 'add_group_chat_participant', chatId: id, agentId },
+				'add_group_chat_participant_result'
+			);
+			return { chatId: id, reply: res };
+		});
+		const error =
+			bridgeError(reply) ??
+			(reply.success ? undefined : reply.error || 'Failed to add participant');
+		if (error) {
+			if (options.json) console.log(JSON.stringify({ success: false, error, chatId, agentId }));
+			else console.error(`Error: ${error}`);
+			process.exit(1);
+		}
+		const participantName = reply.participantName;
+		const alreadyMember = reply.alreadyMember === true;
+		if (options.json) {
+			console.log(
+				JSON.stringify({ success: true, chatId, agentId, participantName, alreadyMember })
+			);
+		} else if (alreadyMember) {
+			console.log(`${participantName} (${agentId}) is already in group chat ${chatId}`);
+		} else {
+			console.log(`Added ${participantName} (${agentId}) to group chat ${chatId}`);
+		}
+	} catch (error) {
+		fail(error instanceof Error ? error.message : String(error), options.json);
+	}
+}
+
 export async function groupChatStatus(chatRef: string, options: StatusOptions): Promise<void> {
 	const tail = options.tail === undefined ? 5 : Number(options.tail);
 	if (!Number.isInteger(tail) || tail < 0) fail('--tail must be a whole number', options.json);
