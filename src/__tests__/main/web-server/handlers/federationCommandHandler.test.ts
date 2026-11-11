@@ -43,8 +43,19 @@ const service = {
 	),
 };
 const running = vi.hoisted(() => ({ on: true }));
+const auto = vi.hoisted(() => ({
+	snapshot: vi.fn(() => ({ autoMove: true, running: false, remotes: [], agents: [] })),
+	runNow: vi.fn(async () => ({
+		autoMove: true,
+		running: false,
+		lastPassAt: 5,
+		remotes: [],
+		agents: [],
+	})),
+}));
 vi.mock('../../../../main/federation', () => ({
 	getPeerMirrorService: () => (running.on ? service : null),
+	getAutoFederation: () => (running.on ? auto : null),
 }));
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
@@ -135,6 +146,18 @@ describe('federation_command handler', () => {
 			success: false,
 			error: 'Unknown federation action: lift',
 		});
+	});
+
+	it('answers the automatic Federation snapshot, and runs a pass for auto-run', async () => {
+		expect(await send(client(true), { action: 'auto-status' })).toMatchObject({
+			success: true,
+			auto: { autoMove: true, agents: [] },
+		});
+		expect(await send(client(true), { action: 'auto-run' })).toMatchObject({
+			success: true,
+			auto: { lastPassAt: 5 },
+		});
+		expect(auto.runNow).toHaveBeenCalledTimes(1);
 	});
 
 	it('answers the not-running message while no service runs', async () => {

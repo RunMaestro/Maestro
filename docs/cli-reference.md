@@ -1515,13 +1515,14 @@ Report whether Maestro is installed on the remote, whether its host runs, and th
 
 Copy this maestro-cli to the remote (with Node.js and SQLite for the remote's platform), or upgrade an older one
 
-| Option                | Description                                                         | Default |
-| --------------------- | ------------------------------------------------------------------- | ------- |
-| `--start`             | Start the host on the remote once the CLI is in place               | -       |
-| `--force`             | Install even over a maestro-cli that Maestro did not install there  | -       |
-| `--restart`           | Replace a running host on an older version: stop it, upgrade, start | -       |
-| `--timeout <seconds>` | Give up on the install after this many seconds (default 600)        | -       |
-| `--json`              | Output as JSON (for scripting)                                      | -       |
+| Option                | Description                                                                                 | Default |
+| --------------------- | ------------------------------------------------------------------------------------------- | ------- |
+| `--start`             | Start the host on the remote once the CLI is in place                                       | -       |
+| `--force`             | Install even over a maestro-cli that Maestro did not install there                          | -       |
+| `--restart`           | Replace a running host on an older version: stop it, upgrade, start                         | -       |
+| `--no-service`        | Do not register the host with the remote service manager (systemd user unit, launchd agent) | -       |
+| `--timeout <seconds>` | Give up on the install after this many seconds (default 600)                                | -       |
+| `--json`              | Output as JSON (for scripting)                                                              | -       |
 
 ## `maestro-cli remote-host start <ssh-remote>`
 
@@ -1549,6 +1550,22 @@ List and reconnect the Federation peers the desktop app mirrors in its Left Bar
 ## `maestro-cli federation peers`
 
 List the peers the desktop mirrors, with connection state and agent count
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli federation auto`
+
+Show what automatic Federation did, waits on, or needs from you, per SSH remote and SSH agent (exit 1 when something needs you)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli federation auto run`
+
+Run an automatic Federation pass now: start stopped hosts, install where SSH agents need one, and move agents that pass every check
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

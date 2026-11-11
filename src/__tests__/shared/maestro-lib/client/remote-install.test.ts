@@ -519,4 +519,111 @@ describe('setupRemoteHost', () => {
 			'loginctl enable-linger pedram'
 		);
 	});
+
+	describe('with the service', () => {
+		const onePass = { sleep: async () => undefined, serviceStartTimeoutMs: 0 };
+
+		it('lets the service start the host and never races it with host start', async () => {
+			const s = seams(notInstalled);
+			s.discover.mockResolvedValueOnce(notInstalled).mockResolvedValueOnce(running('1.0.0'));
+			const installService = vi
+				.fn()
+				.mockResolvedValue({ kind: 'systemd', state: 'started', linger: true });
+			const result = await setupRemoteHost(remote, bundle, {
+				...s,
+				...onePass,
+				installService,
+				start: true,
+				service: true,
+			});
+			expect(installService).toHaveBeenCalledTimes(1);
+			expect(s.startHost).not.toHaveBeenCalled();
+			expect(result.service).toEqual({ kind: 'systemd', state: 'started', linger: true });
+			expect(result.start).toEqual({
+				installed: true,
+				started: true,
+				alreadyRunning: false,
+				pid: 9,
+				port: 41234,
+			});
+		});
+
+		it('falls back to host start when there is no service, or it deferred to a running host', async () => {
+			const none = seams(notInstalled);
+			await setupRemoteHost(remote, bundle, {
+				...none,
+				...onePass,
+				installService: vi
+					.fn()
+					.mockResolvedValue({ kind: 'none', reason: 'unsupported-os', fix: 'x' }),
+				start: true,
+				service: true,
+			});
+			expect(none.startHost).toHaveBeenCalledTimes(1);
+
+			const deferred = seams(running('1.0.0'));
+			const result = await setupRemoteHost(remote, bundle, {
+				...deferred,
+				...onePass,
+				installService: vi.fn().mockResolvedValue({ kind: 'systemd', state: 'deferred' }),
+				start: true,
+				service: true,
+			});
+			expect(deferred.startHost).toHaveBeenCalledTimes(1);
+			expect(result.service).toEqual({ kind: 'systemd', state: 'deferred' });
+		});
+
+		it('keeps the rest of the setup when the service ssh call fails', async () => {
+			const s = seams(notInstalled);
+			const result = await setupRemoteHost(remote, bundle, {
+				...s,
+				...onePass,
+				installService: vi.fn().mockRejectedValue(new Error('Connection refused')),
+				start: true,
+				service: true,
+			});
+			expect(result.serviceError).toBe('Connection refused');
+			expect(result.cli).toBe('installed');
+			expect(s.startHost).toHaveBeenCalledTimes(1);
+		});
+
+		it('falls back to host start when the service never brought the host up', async () => {
+			const s = seams(notInstalled);
+			const result = await setupRemoteHost(remote, bundle, {
+				...s,
+				...onePass,
+				installService: vi.fn().mockResolvedValue({ kind: 'systemd', state: 'started' }),
+				start: true,
+				service: true,
+			});
+			// Discovery keeps saying "not installed" (the fake), so the wait gives up and host start runs.
+			expect(s.startHost).toHaveBeenCalledTimes(1);
+			expect(result.start).toEqual(started);
+		});
+
+		it('clears the linger warning once the service turned lingering on', async () => {
+			const s = seams({
+				...stopped('1.0.0'),
+				lingerFix: 'loginctl enable-linger pedram',
+				linger: false,
+			} as RemoteHostDiscovery);
+			s.discover
+				.mockResolvedValueOnce({
+					...stopped('1.0.0'),
+					linger: false,
+					lingerFix: 'loginctl enable-linger pedram',
+				} as RemoteHostDiscovery)
+				.mockResolvedValue(running('1.0.0'));
+			const result = await setupRemoteHost(remote, bundle, {
+				...s,
+				...onePass,
+				installService: vi
+					.fn()
+					.mockResolvedValue({ kind: 'systemd', state: 'started', linger: true }),
+				start: true,
+				service: true,
+			});
+			expect(result.lingerFix).toBeUndefined();
+		});
+	});
 });

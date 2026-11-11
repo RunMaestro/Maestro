@@ -58,13 +58,16 @@ A remote with Federation on and a running host is called a **peer**. Its peer na
 
 ## Setup
 
-There is nothing to turn on. To federate an SSH agent:
+There is nothing to set up. With **Move SSH agents to their host automatically** on (the default, in **Settings > SSH Hosts > Federation automation**), Maestro does the whole job on its own, one remote and one agent at a time:
 
-1. **Right-click the agent** in the Left Bar and choose **Make Federated**, or run **Make Federated** from the command palette. The item shows for an SSH agent whose remote runs no host yet.
-2. **Set Up Host.** Maestro copies its own `maestro-cli` to the remote and starts the host there. See [What Make Federated installs](#what-make-federated-installs). A first install takes up to a few minutes.
-3. **Move to Host.** Once the host answers, the same window shows the plan: what moves and which env vars stay. Confirm to move the agent. See [Make an SSH agent federated](#make-an-ssh-agent-federated).
+1. It checks each SSH remote for a Maestro host.
+2. Where a remote has an SSH agent but no host, it installs its own `maestro-cli` there. See [What Make Federated installs](#what-make-federated-installs).
+3. It registers the host with the remote's service manager and starts it. See [Durability](#durability).
+4. It moves each SSH agent onto the host once every [sanity check](#automatic-moves-and-their-sanity-checks) passes.
 
-From the CLI, the same steps are:
+When it cannot do a step on its own, it tells you what to do. See [When Maestro needs you](#when-maestro-needs-you).
+
+To do the same steps by hand (or with automatic moves off), right-click the agent in the Left Bar and choose **Make Federated**. The item shows for an SSH agent whose remote runs no host yet. **Set Up Host** installs and starts the host. Once the host answers, the same window shows the plan: what moves and which env vars stay. Confirm to move the agent. From the CLI:
 
 ```bash
 maestro-cli remote-host install build-box --start
@@ -72,6 +75,44 @@ maestro-cli lift docs
 ```
 
 The provider CLIs your agents use (Claude Code, Codex, and so on) must already be installed on the remote and logged in as the SSH user. An SSH agent that already worked there has them.
+
+### Automatic moves and their sanity checks
+
+Maestro moves an SSH agent onto its host only when all of these hold:
+
+| Check                                                                                                            | When it fails                                                                                                       |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| The agent can be lifted at all (an SSH agent, not moved yet, its remote enabled with Federation on)              | It stays an SSH agent. It is not tried again until its record changes                                               |
+| No turn is running                                                                                               | It waits, and moves on a later pass once it is idle                                                                 |
+| The host can run the agent's provider (skipped when the agent names its own binary path)                         | Blocked: install the provider on the remote and log in to it as the SSH user                                        |
+| No secret env var stays behind on this machine                                                                   | Blocked: move it with **Move to Host** and check **Send secret env vars too**, or set those variables on the remote |
+| Every refusal the lift itself would make (for example a provider session folder that does not exist on the host) | Blocked, with the lift's own reason                                                                                 |
+
+A blocked agent is tried again when its record or its remote changes, or after an hour. Maestro also runs a pass every five minutes, when a remote connects or drops, and when you edit an agent. **Run Now** in Settings > SSH Hosts, or `maestro-cli federation auto run`, runs one at once.
+
+Maestro never replaces a running host on its own to upgrade it, because that would interrupt its work. A host on an older version keeps running and gets agents, and the status names the upgrade command.
+
+Turn **Move SSH agents to their host automatically** off and the moves stop: **Move to Host** stays a right-click. Maestro still keeps the hosts you already have running. To keep one remote out of all of this, turn its **Federation** switch off.
+
+### When Maestro needs you
+
+Whatever Maestro cannot do itself ends with the reason and the one thing you have to do, in four places:
+
+- **A toast**, when an agent moves and when something new needs you.
+- **The agent's badge.** The `SSH` badge turns red. Hover it for the reason and the fix.
+- **Settings > SSH Hosts > Federation automation**, which lists every remote and agent with its state, and **Run Now**.
+- **`maestro-cli federation auto`**, the same list. It exits `1` when something needs you, so a script can check it.
+
+The usual cases:
+
+| Message                                       | What to do                                                                                                                                                                                  |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lingering is off for the SSH user             | Run `sudo loginctl enable-linger <user>` on the remote once, so the host survives logout and starts at boot                                                                                 |
+| A provider is not available to the host       | Install it on the remote and log in as the SSH user. If it lives outside `~/.local/bin` or a Node version manager, add its folder to the PATH line in `~/.maestro/bin/maestro-host-service` |
+| Secret env vars would stay on this machine    | **Move to Host** with **Send secret env vars too**, or set them on the remote                                                                                                               |
+| Could not download Node.js, or install SQLite | Let the remote reach nodejs.org and the npm registry, or install Node.js 22+ there                                                                                                          |
+| A `maestro-cli` that Maestro did not install  | **Make Federated** offers **Install Maestro's Own Copy**                                                                                                                                    |
+| No service manager (Windows, a container)     | Start the host from your own init or Task Scheduler with `~/.maestro/bin/maestro-host-service`, or use **Start Host** after a reboot                                                        |
 
 ### What Make Federated installs
 
@@ -202,8 +243,19 @@ A lift refuses, and moves nothing, while a tab is running a turn, when no host r
 A host is only useful while it keeps running.
 
 - **macOS sleep.** While the host has work in flight (a turn, an Auto Run, a group chat round, a consult, or a Cue run), it holds `caffeinate -i` so the Mac does not sleep mid-turn, and releases it when idle. `host start --no-prevent-sleep` turns this off. `host status --json` reports `preventingSleep`.
-- **Linux logout.** systemd-logind can stop a user's processes when the SSH session that started them ends. When lingering is off for the user, `host start`, `host status`, and `remote-host status` print a warning with the fix, `loginctl enable-linger <user>`. Maestro never runs the fix for you.
-- **Reboots and crashes.** `host start` detaches, but nothing starts it again after a reboot. **Start Host** on the peer, or `maestro-cli remote-host start`, starts it again by hand. [Run the Host as a Service](./cli#run-the-host-as-a-service) has a systemd user unit (`~/.config/systemd/user/maestro-host.service`) and a launchd agent (`~/Library/LaunchAgents`). Maestro does not install them.
+- **Reboots and crashes.** Maestro registers the host with the remote's service manager when it sets the host up (Make Federated, Start Host, automatic setup, or `remote-host install`), and once per app run for a host it is already connected to:
+
+  | Remote                                   | Service                                                                                                     |
+  | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+  | Linux with a systemd user session        | `~/.config/systemd/user/maestro-host.service`, enabled and started. It restarts on a crash                  |
+  | macOS without Maestro.app                | `~/Library/LaunchAgents/sh.maestro.host.plist`. It starts at login, so a headless Mac needs automatic login |
+  | macOS with Maestro.app                   | None: the app is the host while it runs. Keep it open (add it to Login Items)                               |
+  | Windows, or Linux without a user session | None. Run `~/.maestro/bin/maestro-host-service` from your own init or Task Scheduler                        |
+
+  Both service files run `~/.maestro/bin/maestro-host-service`, which sets up the same PATH an SSH agent gets, so the host finds the same provider CLIs. A host that already runs another way is left running; the service takes over at the next boot. `remote-host install --no-service` skips the service.
+
+- **Linux logout.** systemd stops a user's services when their last session ends unless lingering is on. Maestro turns lingering on itself where the system lets a user do that. Where it needs sudo, Maestro tells you to run `sudo loginctl enable-linger <user>` on the remote once. `host start`, `host status`, and `remote-host status` warn while it is off.
+- **A stopped host.** When a remote's `maestro-cli` is installed but its host is not running, Maestro starts it on its own (through the service when there is one). **Start Host** on the peer, or `maestro-cli remote-host start`, does it at once.
 
 <Warning>
 Run the host as the same user your SSH agents run as. The host then reads the same provider logins and session files. A host that runs as another user cannot resume the sessions of a lifted agent.

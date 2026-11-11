@@ -71,6 +71,8 @@ export async function setupHostFromDesktop(
 		result = await service.exclusive(() =>
 			setup(remote, bundle, {
 				start: true,
+				// Make Federated keeps the host running across reboots too.
+				service: true,
 				restart: options.restart === true,
 				force: options.force === true,
 			})

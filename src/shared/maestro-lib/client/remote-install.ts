@@ -40,6 +40,7 @@ import type { SshRemoteConfig } from '../../types';
 import { resolveSshPath } from '../launch/ssh-path';
 import { findBundledPromptsDir } from '../prompts/load';
 import { SQLITE_PACKAGE } from '../store/native-sqlite';
+import { installRemoteService, type RemoteServiceReport } from './remote-service';
 import {
 	RemoteDiscoveryError,
 	buildRemoteScriptArgs,
@@ -570,17 +571,53 @@ export interface RemoteHostSetupResult {
 	start?: RemoteHostStartResult;
 	/** The `loginctl enable-linger <user>` line to run on a Linux remote, when lingering is off. */
 	lingerFix?: string;
+	/** Set when `service` was asked for: how the remote keeps the host running across reboots. */
+	service?: RemoteServiceReport;
+	/** Set when `service` was asked for and its ssh call failed. The rest of the setup stands. */
+	serviceError?: string;
 }
 
 export interface SetupRemoteHostOptions extends InstallRemoteCliOptions {
 	/** Start the host once the CLI is in place. */
 	start?: boolean;
+	/**
+	 * Register the host with the remote's service manager (systemd user unit, launchd agent), so it
+	 * comes back after a reboot. A host the service started is not started again by `host start`.
+	 */
+	service?: boolean;
 	/** Timeout for the discovery and start calls. Default 60 s. */
 	discoveryTimeoutMs?: number;
+	/** How long to wait for a host the service started to answer. Default 30 s. */
+	serviceStartTimeoutMs?: number;
 	/** Test seams. */
 	discover?: typeof discoverRemoteHost;
 	startHost?: typeof startRemoteHost;
 	install?: typeof installRemoteCli;
+	installService?: typeof installRemoteService;
+	sleep?: (ms: number) => Promise<void>;
+}
+
+/** Poll discovery until a host answers, or give up. Returns the endpoint's pid and port. */
+async function waitForHost(
+	remote: SshRemoteConfig,
+	discover: typeof discoverRemoteHost,
+	discoveryOptions: { timeoutMs?: number; sshPath?: string },
+	timeoutMs: number,
+	sleep: (ms: number) => Promise<void>
+): Promise<{ pid: number; port: number } | null> {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		try {
+			const found = await discover(remote, discoveryOptions);
+			if (found.installed && found.running) {
+				return { pid: found.endpoint.pid, port: found.endpoint.port };
+			}
+		} catch {
+			// A host that is still starting can answer with nothing yet: ask again.
+		}
+		if (Date.now() >= deadline) return null;
+		await sleep(2000);
+	}
 }
 
 /**
@@ -662,8 +699,39 @@ export async function setupRemoteHost(
 		...(cliVersion ? { cliVersion } : {}),
 		...(report ? { install: report } : {}),
 	};
-	// Start when asked, and restart a host the upgrade stopped.
-	if (options.start || (running && report)) {
+	// The service first: a host it starts must not race a detached `host start` for the lock.
+	let serviceRunsHost = false;
+	if (options.service) {
+		try {
+			const service = await (options.installService ?? installRemoteService)(remote, {
+				...discoveryOptions,
+			});
+			result.service = service;
+			if (service.kind !== 'none' && (service.state === 'started' || service.state === 'active')) {
+				const up = await waitForHost(
+					remote,
+					discover,
+					discoveryOptions,
+					options.serviceStartTimeoutMs ?? 30_000,
+					options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+				);
+				if (up) {
+					serviceRunsHost = true;
+					result.start = {
+						installed: true,
+						started: true,
+						alreadyRunning: service.state === 'active',
+						pid: up.pid,
+						port: up.port,
+					};
+				}
+			}
+		} catch (error) {
+			result.serviceError = error instanceof Error ? error.message : String(error);
+		}
+	}
+	// Start when asked, and restart a host the upgrade stopped, unless the service runs it now.
+	if (!serviceRunsHost && (options.start || (running && report))) {
 		result.start = await startHost(remote, discoveryOptions);
 	}
 	// The warning comes from discovery when a CLI was there, else from the start that followed a
@@ -671,6 +739,9 @@ export async function setupRemoteHost(
 	const lingerFix =
 		(found !== 'too-old' && found.installed ? found.lingerFix : undefined) ??
 		(result.start?.installed && result.start.started ? result.start.lingerFix : undefined);
-	if (lingerFix) result.lingerFix = lingerFix;
+	// Lingering on now (the service step turns it on when the user may) clears the warning.
+	if (lingerFix && !(result.service?.kind === 'systemd' && result.service.linger === true)) {
+		result.lingerFix = lingerFix;
+	}
 	return result;
 }

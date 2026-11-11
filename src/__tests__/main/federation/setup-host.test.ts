@@ -78,6 +78,7 @@ describe('setupHostFromDesktop', () => {
 		expect(answer).toEqual({ ok: true, result: ok, peer: { peerId: 'build' } });
 		expect(setup).toHaveBeenCalledWith(remote, bundle, {
 			start: true,
+			service: true,
 			restart: false,
 			force: false,
 		});
@@ -87,7 +88,12 @@ describe('setupHostFromDesktop', () => {
 	it('passes restart and force through', async () => {
 		const { deps, setup } = depsWith();
 		await setupHostFromDesktop('r1', { restart: true, force: true }, deps);
-		expect(setup).toHaveBeenCalledWith(remote, bundle, { start: true, restart: true, force: true });
+		expect(setup).toHaveBeenCalledWith(remote, bundle, {
+			start: true,
+			service: true,
+			restart: true,
+			force: true,
+		});
 	});
 
 	it('refuses before the mirror runs, an unknown or disabled remote, and one that opted out', async () => {

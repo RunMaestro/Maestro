@@ -140,6 +140,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		readAgentConfigs: () => deps.agentConfigsStore.get('configs', {}),
 		getMainWindow: deps.getMainWindow,
 		getProcessManager: deps.getProcessManager,
+		readAutoMove: () => deps.settingsStore.get('federationAutoMove', true) !== false,
+		watchSessions: (onChange) => deps.sessionsStore.onDidChange('sessions', () => onChange()),
+		safeSend: deps.safeSend,
 	});
 
 	// MaestroRun - install, grant walkthrough, and the readiness that gates its

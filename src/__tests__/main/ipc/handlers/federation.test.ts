@@ -113,12 +113,15 @@ describe('federation IPC handlers', () => {
 			readAgentConfigs: () => ({}),
 			getMainWindow: () => mainWindow as never,
 			getProcessManager: () => null,
+			readAutoMove: () => true,
 		});
 	});
 
-	it('registers the eleven federation channels', () => {
+	it('registers the thirteen federation channels', () => {
 		expect([...handlers.keys()].sort()).toEqual([
 			'federation:act',
+			'federation:autoRun',
+			'federation:autoStatus',
 			'federation:historyGraph',
 			'federation:historyOffset',
 			'federation:historyPage',
@@ -130,6 +133,16 @@ describe('federation IPC handlers', () => {
 			'federation:status',
 			'federation:transcript',
 		]);
+	});
+
+	it('answers the automatic Federation snapshot, and runs a pass on request', async () => {
+		const status = (await call('federation:autoStatus')) as {
+			autoMove: boolean;
+			remotes: unknown[];
+		};
+		expect(status).toMatchObject({ autoMove: true, running: false });
+		const ran = (await call('federation:autoRun')) as { lastPassAt?: number };
+		expect(typeof ran.lastPassAt).toBe('number');
 	});
 
 	describe('while the peer mirror is not running', () => {

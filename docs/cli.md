@@ -2315,13 +2315,14 @@ Install, check, and start the `maestro-cli host` on an SSH remote, for [Federati
 
 The new install is staged next to the old one and swapped in only once SQLite loads and the CLI runs, so a failed install leaves the old one working. A second run with the same version does nothing; an older install is upgraded; a newer one is left alone. `~/.maestro/bin` comes first on the PATH every SSH spawn gets, so the installed CLI wins over an older copy.
 
-| Flag                  | Description                                                                                                                                                                               | Default |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--start`             | Start the host once the CLI is in place. A desktop app that runs on the remote tells it, too                                                                                              | -       |
-| `--force`             | Install even when the remote has a `maestro-cli` Maestro did not install (Maestro.app, the server bundle). Maestro's copy then takes precedence; the other one is not touched             | -       |
-| `--restart`           | Replace a running host on an older version: stop it with `host stop --wait` (work in flight finishes first), upgrade, start it again. Without it, the install refuses with `host-running` | -       |
-| `--timeout <seconds>` | Give up on the install after this many seconds                                                                                                                                            | `600`   |
-| `--json`              | Output as JSON (for scripting), with the `cli` action (`installed`, `upgraded`, `current`, `newer`), the platform, the Node.js version and where it came from, and the start result       | -       |
+| Flag                  | Description                                                                                                                                                                                                                                          | Default |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--start`             | Start the host once the CLI is in place. A desktop app that runs on the remote tells it, too                                                                                                                                                         | -       |
+| `--force`             | Install even when the remote has a `maestro-cli` Maestro did not install (Maestro.app, the server bundle). Maestro's copy then takes precedence; the other one is not touched                                                                        | -       |
+| `--restart`           | Replace a running host on an older version: stop it with `host stop --wait` (work in flight finishes first), upgrade, start it again. Without it, the install refuses with `host-running`                                                            | -       |
+| `--no-service`        | Do not register the host with the remote's service manager. By default the install writes a systemd user unit (Linux) or a launchd agent (macOS without Maestro.app), turns lingering on where the SSH user may, and lets the service start the host | -       |
+| `--timeout <seconds>` | Give up on the install after this many seconds                                                                                                                                                                                                       | `600`   |
+| `--json`              | Output as JSON (for scripting), with the `cli` action (`installed`, `upgraded`, `current`, `newer`), the platform, the Node.js version and where it came from, and the start result                                                                  | -       |
 
 ```bash
 maestro-cli remote-host install build-box --start
@@ -2440,9 +2441,21 @@ The host is the CLI bundle, run with Node.js. For a machine you reach over SSH, 
 
 To keep the host running across reboots, have your service manager run `maestro-cli host start --foreground` (with `--data-dir` if the directory is not the default) and stop it with SIGTERM, which drains as described above. [Run the Host as a Service](#run-the-host-as-a-service) has the unit files.
 
+### Automatic Federation from the CLI
+
+The desktop app keeps Federation hosts running and, with **Move SSH agents to their host automatically** on, installs hosts and moves SSH agents onto them by itself ([how it decides](/federation#automatic-moves-and-their-sanity-checks)). Two verbs show and drive it:
+
+```bash
+maestro-cli federation auto            # every remote and SSH agent, its state, and what needs you
+maestro-cli federation auto run        # run a pass now (Run Now in Settings > SSH Hosts)
+maestro-cli settings set federationAutoMove false   # turn automatic moves off
+```
+
+Both print each remote's state (`ready`, `setting-up`, `waiting`, `blocked`) with its service, and each SSH agent's state (`moved`, `pending`, `waiting`, `blocked`, `manual`) with its reason. Anything `blocked` carries a `To fix:` line. Both exit `1` when something is blocked, so a script can check for work that needs a person. `--json` prints the same snapshot. They need the desktop app: a headless host mirrors no peers.
+
 ## Run the Host as a Service
 
-`maestro-cli host start` detaches, but nothing starts it again after a reboot or a crash. A service manager does both. Maestro does not install these files: copy the one for your platform and change the paths.
+`maestro-cli host start` detaches, but nothing starts it again after a reboot or a crash. A service manager does both. For a host you set up from a laptop, `remote-host install` (and the desktop's automatic Federation) installs the service for you; see [Federation durability](/federation#durability). The files below are for a host you set up by hand: copy the one for your platform and change the paths.
 
 **Run the service as the user your SSH agents run as.** The host and the SSH agents then share one home directory, so the host reads the same provider logins and session files. A host that runs as another user cannot resume the provider sessions of an agent lifted onto it. This is not the `maestro` system user that the [server bundle](/maestro-cue-server) creates for a dedicated Cue engine: that user is for an engine that owns its whole machine, and an SSH agent you start does not run as it.
 

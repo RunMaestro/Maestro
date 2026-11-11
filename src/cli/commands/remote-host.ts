@@ -34,6 +34,7 @@ import {
 	type RemoteHostSetupResult,
 } from '../../shared/maestro-lib/client/remote-install';
 import { peerIdFor } from '../../shared/maestro-lib/client/peer-connection';
+import { describeRemoteService } from '../../shared/maestro-lib/client/remote-service';
 import type { SshRemoteConfig } from '../../shared/types';
 import { ExitCode } from '../exit-codes';
 import { colorize, formatError, formatSuccess } from '../output/formatter';
@@ -338,6 +339,8 @@ export interface RemoteHostInstallOptions extends RemoteHostOptions {
 	force?: boolean;
 	/** Replace a running host on an older version: stop it, upgrade, start it again. */
 	restart?: boolean;
+	/** `--no-service` sets this false: skip the systemd unit or launchd agent. */
+	service?: boolean;
 }
 
 function installTimeoutMs(options: RemoteHostOptions): number {
@@ -390,6 +393,10 @@ export function formatRemoteHostSetup(
 				`Host: ${result.start.alreadyRunning ? 'already running' : 'started'} (pid ${result.start.pid}, port ${result.start.port})`
 			);
 	}
+	if (result.service) lines.push(`Service: ${describeRemoteService(result.service)}`);
+	if (result.serviceError) {
+		lines.push(colorize('yellow', `Service: not registered (${result.serviceError})`));
+	}
 	if (result.lingerFix) {
 		lines.push(colorize('yellow', formatLingerWarning(result.lingerFix, remote.name)));
 	}
@@ -425,6 +432,7 @@ export async function remoteHostInstall(
 			start: options.start === true,
 			force: options.force === true,
 			restart: options.restart === true,
+			service: options.service !== false,
 		});
 		// A desktop app on the remote is the host there too (`desktop-running`).
 		const serving = result.start !== undefined && result.start.installed;
