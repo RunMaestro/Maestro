@@ -26,7 +26,10 @@ vi.mock('chokidar', () => ({
 	})),
 }));
 
-import { createCueFileWatcher } from '../../../main/cue/cue-file-watcher';
+import {
+	createCueFileWatcher,
+	CUE_POLLING_FALLBACK_INTERVAL_MS,
+} from '../../../main/cue/cue-file-watcher';
 import type { CueEvent } from '../../../main/cue/cue-types';
 import * as chokidar from 'chokidar';
 
@@ -318,6 +321,110 @@ describe('cue-file-watcher', () => {
 			vi.advanceTimersByTime(5000);
 
 			expect(onEvent).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('OS file-watch limit fallback', () => {
+		const limitError = (code: string) => Object.assign(new Error(`${code}: watch`), { code });
+		// The latest registered handler for an event, i.e. the live watcher's.
+		const latestHandler = (event: string) =>
+			[...mockOn.mock.calls].reverse().find((call) => call[0] === event)?.[1];
+
+		it.each(['EMFILE', 'ENOSPC'])(
+			'restarts in polling mode when the OS refuses a native watch (%s)',
+			(code) => {
+				const onLog = vi.fn();
+				const onEvent = vi.fn();
+				createCueFileWatcher({
+					watchGlob: '.maestro/slack-monitor/events/*.json',
+					projectRoot: '/config/agent',
+					debounceMs: 100,
+					onEvent,
+					triggerName: 'inbox-reply',
+					onLog,
+				});
+
+				latestHandler('error')(limitError(code));
+
+				expect(mockClose).toHaveBeenCalledTimes(1);
+				expect(chokidar.watch).toHaveBeenCalledTimes(2);
+				expect(chokidar.watch).toHaveBeenLastCalledWith('.maestro/slack-monitor/events/*.json', {
+					cwd: '/config/agent',
+					ignoreInitial: true,
+					persistent: true,
+					usePolling: true,
+					interval: CUE_POLLING_FALLBACK_INTERVAL_MS,
+					binaryInterval: CUE_POLLING_FALLBACK_INTERVAL_MS,
+				});
+				expect(onLog).toHaveBeenCalledWith('warn', expect.stringContaining(`${code}`));
+				expect(onLog).toHaveBeenCalledWith(
+					'warn',
+					expect.stringContaining('fs.inotify.max_user_instances')
+				);
+
+				// The polling watcher delivers events like the native one.
+				latestHandler('add')('.maestro/slack-monitor/events/evt_1.json');
+				vi.advanceTimersByTime(100);
+				expect(onEvent).toHaveBeenCalledTimes(1);
+				expect((onEvent.mock.calls[0][0] as CueEvent).payload.path).toBe(
+					'/config/agent/.maestro/slack-monitor/events/evt_1.json'
+				);
+			}
+		);
+
+		it('falls back only once; a later error while polling is logged, not retried', () => {
+			const onLog = vi.fn();
+			createCueFileWatcher({
+				watchGlob: '*.json',
+				projectRoot: '/test',
+				debounceMs: 100,
+				onEvent: vi.fn(),
+				triggerName: 'once',
+				onLog,
+			});
+
+			latestHandler('error')(limitError('EMFILE'));
+			latestHandler('error')(limitError('EMFILE'));
+
+			expect(chokidar.watch).toHaveBeenCalledTimes(2);
+			expect(onLog).toHaveBeenLastCalledWith(
+				'error',
+				expect.stringContaining('File watcher error for "once"')
+			);
+		});
+
+		it('does not restart on other watcher errors', () => {
+			const onLog = vi.fn();
+			createCueFileWatcher({
+				watchGlob: '*.json',
+				projectRoot: '/test',
+				debounceMs: 100,
+				onEvent: vi.fn(),
+				triggerName: 'other',
+				onLog,
+			});
+
+			latestHandler('error')(limitError('EACCES'));
+
+			expect(chokidar.watch).toHaveBeenCalledTimes(1);
+			expect(onLog).toHaveBeenCalledWith('error', expect.stringContaining('EACCES'));
+		});
+
+		it('does not restart after cleanup, and cleanup closes the polling watcher', () => {
+			const cleanup = createCueFileWatcher({
+				watchGlob: '*.json',
+				projectRoot: '/test',
+				debounceMs: 100,
+				onEvent: vi.fn(),
+				triggerName: 'closed',
+				onLog: vi.fn(),
+			});
+			const nativeError = latestHandler('error');
+
+			cleanup();
+			nativeError(limitError('EMFILE'));
+
+			expect(chokidar.watch).toHaveBeenCalledTimes(1);
 		});
 	});
 });

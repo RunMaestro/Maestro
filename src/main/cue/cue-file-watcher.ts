@@ -28,19 +28,51 @@ export interface CueFileWatcherConfig {
 }
 
 /**
+ * Error codes that mean the OS refused to hand out another native file watch:
+ * `EMFILE` when the user's inotify INSTANCE limit (`fs.inotify.max_user_instances`,
+ * often 128, shared by every process of that uid, across containers too) is
+ * spent, `ENOSPC` when the WATCH limit (`max_user_watches`) is. A native
+ * watcher in that state reports the error once and then never fires, so a
+ * `file.changed` subscription looked healthy while dropping every event.
+ */
+const WATCH_LIMIT_ERROR_CODES = new Set(['EMFILE', 'ENOSPC']);
+
+/** Poll interval once the native watch is refused. Cue globs are narrow. */
+export const CUE_POLLING_FALLBACK_INTERVAL_MS = 1000;
+
+function errorCode(error: unknown): string | undefined {
+	const code = (error as { code?: unknown } | null)?.code;
+	return typeof code === 'string' ? code : undefined;
+}
+
+/**
  * Creates a chokidar file watcher for a Cue file.changed subscription.
  * Returns a cleanup function to stop watching.
+ *
+ * When the OS refuses a native watch (see `WATCH_LIMIT_ERROR_CODES`), the
+ * watcher restarts itself in polling mode and logs a warning naming the limit,
+ * so the subscription keeps firing instead of going silent.
  */
 export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 	const { watchGlob, projectRoot, debounceMs, onEvent, triggerName } = config;
 	const isActive = config.isActive ?? (() => true);
 	const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-	const watcher = chokidar.watch(watchGlob, {
-		cwd: projectRoot,
-		ignoreInitial: true,
-		persistent: true,
-	});
+	let polling = false;
+	let closed = false;
+	const startWatcher = (): chokidar.FSWatcher =>
+		chokidar.watch(watchGlob, {
+			cwd: projectRoot,
+			ignoreInitial: true,
+			persistent: true,
+			...(polling
+				? {
+						usePolling: true,
+						interval: CUE_POLLING_FALLBACK_INTERVAL_MS,
+						binaryInterval: CUE_POLLING_FALLBACK_INTERVAL_MS,
+					}
+				: {}),
+		});
 
 	// Pre-compute the normalized project root (with trailing separator) so the
 	// per-event guard below can do a cheap prefix check. `path.resolve` does not
@@ -95,24 +127,46 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 		);
 	};
 
-	watcher.on('change', handleEvent('change'));
-	watcher.on('add', handleEvent('add'));
-	watcher.on('unlink', handleEvent('unlink'));
-
-	watcher.on('error', (error) => {
-		const message = `[CUE] File watcher error for "${triggerName}": ${error}`;
+	const log = (level: string, message: string) => {
 		if (config.onLog) {
-			config.onLog('error', message);
-		} else {
+			config.onLog(level, message);
+		} else if (level === 'error') {
 			console.error(message);
+		} else {
+			console.warn(message);
 		}
-	});
+	};
+
+	const attach = (target: chokidar.FSWatcher) => {
+		target.on('change', handleEvent('change'));
+		target.on('add', handleEvent('add'));
+		target.on('unlink', handleEvent('unlink'));
+		target.on('error', (error) => {
+			const code = errorCode(error);
+			if (!polling && !closed && code && WATCH_LIMIT_ERROR_CODES.has(code)) {
+				polling = true;
+				log(
+					'warn',
+					`[CUE] "${triggerName}" could not get a native file watch (${code}: the OS file-watch limit is used up); polling "${watchGlob}" every ${CUE_POLLING_FALLBACK_INTERVAL_MS / 1000}s instead. On Linux, raise fs.inotify.max_user_instances (EMFILE) or fs.inotify.max_user_watches (ENOSPC) on the host.`
+				);
+				void target.close();
+				watcher = startWatcher();
+				attach(watcher);
+				return;
+			}
+			log('error', `[CUE] File watcher error for "${triggerName}": ${error}`);
+		});
+	};
+
+	let watcher = startWatcher();
+	attach(watcher);
 
 	return () => {
+		closed = true;
 		for (const timer of debounceTimers.values()) {
 			clearTimeout(timer);
 		}
 		debounceTimers.clear();
-		watcher.close();
+		void watcher.close();
 	};
 }
