@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 // Pull in Window.maestro. Test files sit outside tsconfig.json include, so the
@@ -25,6 +26,7 @@ import { runCrossAgentAsk } from '../../../renderer/services/crossAgentAsk';
 import { steerQueuedItem } from '../../../renderer/services/chatSteering';
 import {
 	clearDesktopAiTabSelections,
+	consumeDesktopAiTabSelection,
 	noteDesktopAiTabSelection,
 } from '../../../renderer/utils/desktopTabSelectionSync';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -58,6 +60,12 @@ vi.mock('../../../renderer/utils/sentry', () => ({
 	captureException: vi.fn(),
 	captureMessage: vi.fn(),
 }));
+
+// Observe actual hook-owned refs without exporting caches or changing their implementations.
+vi.mock('react', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('react')>();
+	return { ...actual, useRef: vi.fn(actual.useRef) };
+});
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -4950,6 +4958,184 @@ describe('useRemoteIntegration', () => {
 
 		afterEach(() => {
 			vi.useRealTimers();
+		});
+
+		it('releases removed session IDs from the live comparison caches after a tick', () => {
+			const session = createMockSession({ id: 'retired-session' });
+			const deps = createDeps({ sessions: [session], isLiveMode: true });
+			const { unmount } = renderHook(() => useRemoteIntegration(deps));
+			vi.advanceTimersByTime(500);
+			expect(mockWeb.broadcastSessionState).toHaveBeenCalledWith(
+				session.id,
+				session.state,
+				expect.objectContaining({ name: session.name })
+			);
+			const caches = vi
+				.mocked(useRef)
+				.mock.results.map(({ value }) => value?.current)
+				.filter(
+					(value): value is Map<string, unknown> => value instanceof Map && value.has(session.id)
+				);
+			expect(caches.length).toBeGreaterThanOrEqual(2);
+			act(() => useSessionStore.setState({ sessions: [] }));
+			vi.advanceTimersByTime(500);
+			for (const cache of caches) expect([...cache.keys()]).toEqual([]);
+			unmount();
+		});
+
+		it('discards an unconsumed selection when its session disappears before the next tick', () => {
+			const session = createMockSession({ id: 'retired-selection' });
+			const deps = createDeps({ sessions: [session], isLiveMode: true });
+			const { unmount } = renderHook(() => useRemoteIntegration(deps));
+			vi.advanceTimersByTime(500);
+			noteDesktopAiTabSelection(session.id, session.activeTabId!);
+			act(() => useSessionStore.setState({ sessions: [] }));
+			vi.advanceTimersByTime(500);
+			expect(consumeDesktopAiTabSelection(session.id, session.activeTabId!)).toBe(false);
+			unmount();
+		});
+
+		it('does not retain desktop selections while Live mode is inactive', () => {
+			const session = createMockSession({ id: 'offline-selection' });
+			const { unmount } = renderHook(() =>
+				useRemoteIntegration(createDeps({ sessions: [session], isLiveMode: false }))
+			);
+			noteDesktopAiTabSelection(session.id, session.activeTabId!);
+			expect(consumeDesktopAiTabSelection(session.id, session.activeTabId!)).toBe(false);
+			unmount();
+		});
+
+		it('releases comparison and pending selection state when Live mode stops', () => {
+			const session = createMockSession({ id: 'stopped-session' });
+			const deps = createDeps({ sessions: [session], isLiveMode: true });
+			const { rerender, unmount } = renderHook(
+				({ live }) => useRemoteIntegration({ ...deps, isLiveMode: live }),
+				{ initialProps: { live: true } }
+			);
+			vi.advanceTimersByTime(500);
+			const caches = vi
+				.mocked(useRef)
+				.mock.results.map(({ value }) => value?.current)
+				.filter(
+					(value): value is Map<string, unknown> => value instanceof Map && value.has(session.id)
+				);
+			expect(caches.length).toBeGreaterThanOrEqual(2);
+			noteDesktopAiTabSelection(session.id, session.activeTabId!);
+			rerender({ live: false });
+			for (const cache of caches) expect(cache.size).toBe(0);
+			expect(consumeDesktopAiTabSelection(session.id, session.activeTabId!)).toBe(false);
+			unmount();
+		});
+
+		it('bounds bookkeeping to current inventory through fixed ticks and session churn', () => {
+			const tab = createMockTab({
+				inputValue: 'Synthetic input',
+				logs: [{ id: 'response', timestamp: 10, source: 'ai', text: 'Synthetic response' }],
+			});
+			const session = createMockSession({
+				id: 'inventory-one',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			const deps = createDeps({ sessions: [session], isLiveMode: true });
+			const { unmount } = renderHook(() => useRemoteIntegration(deps));
+			vi.advanceTimersByTime(500);
+			const caches = vi
+				.mocked(useRef)
+				.mock.results.map(({ value }) => value?.current)
+				.filter(
+					(value): value is Map<string, unknown> => value instanceof Map && value.has(session.id)
+				);
+			expect(caches.length).toBeGreaterThanOrEqual(2);
+			vi.advanceTimersByTime(2000);
+			expect(mockWeb.broadcastTabsChange).toHaveBeenCalledTimes(1);
+			expect(mockWeb.broadcastSessionState).toHaveBeenCalledTimes(1);
+			expect(mockWeb.broadcastTabsChange).toHaveBeenLastCalledWith(
+				session.id,
+				expect.arrayContaining([
+					expect.objectContaining({ id: tab.id, inputValue: 'Synthetic input' }),
+				]),
+				tab.id,
+				false
+			);
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toEqual(tab.logs);
+			for (const id of ['inventory-two', 'inventory-three', session.id]) {
+				act(() => useSessionStore.setState({ sessions: [{ ...session, id }] }));
+				vi.advanceTimersByTime(500);
+				for (const cache of caches) expect([...cache.keys()]).toEqual([id]);
+			}
+			expect(mockWeb.broadcastTabsChange).toHaveBeenCalledTimes(4);
+			expect(mockWeb.broadcastSessionState).toHaveBeenCalledTimes(4);
+			unmount();
+			for (const cache of caches) expect(cache.size).toBe(0);
+		});
+
+		it('restarts with an initial broadcast without replaying off-mode intent or multiplying owners', () => {
+			const originalSubscribe = mockProcess.onRemoteCommand.getMockImplementation()!;
+			const released = vi.fn();
+			mockProcess.onRemoteCommand.mockImplementation((...args) => {
+				const stop = originalSubscribe(...args);
+				return () => {
+					released();
+					stop();
+				};
+			});
+			try {
+				const session = createMockSession({ id: 'lifecycle-session' });
+				const deps = createDeps({ sessions: [session], isLiveMode: true });
+				const before = vi.getTimerCount();
+				const { rerender, unmount } = renderHook(
+					({ live }) => useRemoteIntegration({ ...deps, isLiveMode: live }),
+					{ initialProps: { live: true } }
+				);
+				expect(vi.getTimerCount()).toBe(before + 1);
+				vi.advanceTimersByTime(500);
+				rerender({ live: false });
+				expect(vi.getTimerCount()).toBe(before);
+				noteDesktopAiTabSelection(session.id, session.activeTabId!);
+				rerender({ live: true });
+				expect(vi.getTimerCount()).toBe(before + 1);
+				vi.advanceTimersByTime(500);
+				expect(mockWeb.broadcastTabsChange).toHaveBeenCalledTimes(2);
+				expect(mockWeb.broadcastTabsChange).toHaveBeenLastCalledWith(
+					session.id,
+					expect.any(Array),
+					session.activeTabId,
+					false
+				);
+				noteDesktopAiTabSelection(session.id, session.activeTabId!);
+				expect(mockProcess.onRemoteCommand).toHaveBeenCalledTimes(1);
+				unmount();
+				expect(released).toHaveBeenCalledTimes(1);
+				expect(vi.getTimerCount()).toBe(before);
+				expect(consumeDesktopAiTabSelection(session.id, session.activeTabId!)).toBe(false);
+				noteDesktopAiTabSelection(session.id, session.activeTabId!);
+				expect(consumeDesktopAiTabSelection(session.id, session.activeTabId!)).toBe(false);
+				const again = renderHook(() => useRemoteIntegration(deps));
+				vi.advanceTimersByTime(500);
+				expect(mockWeb.broadcastTabsChange).toHaveBeenCalledTimes(3);
+				expect(mockProcess.onRemoteCommand).toHaveBeenCalledTimes(2);
+				again.unmount();
+				expect(released).toHaveBeenCalledTimes(2);
+				expect(vi.getTimerCount()).toBe(before);
+			} finally {
+				mockProcess.onRemoteCommand.mockImplementation(originalSubscribe);
+			}
+		});
+
+		it('broadcasts an empty surviving tab inventory without treating a closed tab as navigation', () => {
+			const session = createMockSession({ id: 'closed-tab-session' });
+			const { unmount } = renderHook(() =>
+				useRemoteIntegration(createDeps({ sessions: [session], isLiveMode: true }))
+			);
+			vi.advanceTimersByTime(500);
+			noteDesktopAiTabSelection(session.id, session.activeTabId!);
+			act(() =>
+				useSessionStore.setState({ sessions: [{ ...session, aiTabs: [], activeTabId: '' }] })
+			);
+			vi.advanceTimersByTime(500);
+			expect(mockWeb.broadcastTabsChange).toHaveBeenLastCalledWith(session.id, [], '', false);
+			unmount();
 		});
 
 		it('broadcasts tab changes to web clients when in live mode', () => {

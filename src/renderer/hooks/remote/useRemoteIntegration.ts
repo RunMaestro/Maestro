@@ -79,7 +79,8 @@ import {
 } from '../../components/Concerto/concertoDesignerBridge';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import {
-	clearDesktopAiTabSelections,
+	startDesktopAiTabSelectionSync,
+	pruneDesktopAiTabSelections,
 	consumeDesktopAiTabSelection,
 	noteDesktopAiTabSelection,
 } from '../../utils/desktopTabSelectionSync';
@@ -2707,12 +2708,21 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	useEffect(() => {
 		// Skip entirely if not in live mode - no web clients to broadcast to
 		if (!isLiveMode) return;
-		clearDesktopAiTabSelections();
+		const stopSelectionSync = startDesktopAiTabSelectionSync();
+		const previousTabs = prevTabsRef.current;
+		const previousStates = prevSessionStatesRef.current;
 
 		// Use an interval to periodically check for changes instead of running on every render
 		// This dramatically reduces CPU usage during normal typing
 		const intervalId = setInterval(() => {
 			const sessions = sessionsRef.current;
+			const sessionIds = new Set(sessions.map((session) => session.id));
+			for (const cache of [previousTabs, previousStates]) {
+				for (const sessionId of cache.keys()) {
+					if (!sessionIds.has(sessionId)) cache.delete(sessionId);
+				}
+			}
+			pruneDesktopAiTabSelections(sessionIds);
 
 			sessions.forEach((session) => {
 				// Broadcast session state changes (busy/idle) to web clients
@@ -2781,7 +2791,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			});
 		}, 500); // Check every 500ms - fast enough for good UX, slow enough to not impact typing
 
-		return () => clearInterval(intervalId);
+		return () => {
+			clearInterval(intervalId);
+			previousTabs.clear();
+			previousStates.clear();
+			stopSelectionSync();
+		};
 	}, [isLiveMode, sessionsRef]);
 
 	// Handle remote trigger Cue subscription requests (from web/CLI clients)

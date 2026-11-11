@@ -18,6 +18,7 @@ import { OPEN_STAGED_IMAGES_ORGANIZER_EVENT } from '../../../renderer/services/s
 import { FORCED_PARALLEL_SEND_EVENT } from '../../../renderer/hooks/input/useInputKeyDown';
 import {
 	clearDesktopAiTabSelections,
+	startDesktopAiTabSelectionSync,
 	consumeDesktopAiTabSelection,
 } from '../../../renderer/utils/desktopTabSelectionSync';
 
@@ -129,9 +130,12 @@ describe('useMainKeyboardHandler', () => {
 	const originalAddEventListener = window.addEventListener;
 	const originalRemoveEventListener = window.removeEventListener;
 
+	let stopSelectionSync: () => void;
+
 	beforeEach(() => {
 		addedListeners = [];
 		clearDesktopAiTabSelections();
+		stopSelectionSync = startDesktopAiTabSelectionSync();
 		// Hoisted module mocks survive across tests in this file, so a "did NOT
 		// fire" assertion would otherwise read calls left by an earlier case.
 		mockTileNewTabInSession.mockClear();
@@ -161,6 +165,7 @@ describe('useMainKeyboardHandler', () => {
 	});
 
 	afterEach(() => {
+		stopSelectionSync();
 		window.addEventListener = originalAddEventListener;
 		window.removeEventListener = originalRemoveEventListener;
 		(window as any).maestro = originalMaestro;
