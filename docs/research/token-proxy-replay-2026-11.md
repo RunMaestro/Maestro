@@ -161,3 +161,80 @@ Raw bounds the next section reads. Extensions were classified during the replay;
 | Read results of 1000 tokens or more that neither profile shortens, markdown or text | 258     | 1,459,630 | 7.6%                | 5,942,621  |
 | Read results of 1000 tokens or more that neither profile shortens, other files      | 328     | 1,209,173 | 6.3%                | 6,515,308  |
 | Results of 8000 tokens or more                                                      | 116     | 1,231,628 | 6.4%                | 5,499,245  |
+
+## What this says
+
+Written by hand from the figures above (M01.3). The replay test rewrites this file, so a new run
+removes this section; copy it forward when the report is regenerated.
+
+Token percentages are of all tool-result tokens (19,282,775); cost percentages are of all cost
+units (113,199,073). Each bound is the most a candidate could act on, not what it would save.
+
+### The bounds
+
+| ID  | Candidate                                                               | Results | Tokens    | Share of tokens | Cost units | Share of cost |
+| --- | ----------------------------------------------------------------------- | ------- | --------- | --------------- | ---------- | ------------- |
+| a   | Lossy early compression with a retrieval tool (`full` minus `complete`) | 113     | 116,544   | 0.60%           | ~634,764   | ~0.56%        |
+| b   | A fresh result identical to an earlier one becomes a reference          | 1,430   | 35,948    | 0.19%           | 277,620    | 0.25%         |
+| c   | A Read whose every line is in an earlier Read becomes a reference       | 5       | 4,713     | 0.02%           | 23,806     | 0.02%         |
+| d   | Structure-aware reduction of source code in Read results                | 328     | 1,209,173 | 6.27%           | 6,515,308  | 5.76%         |
+| e   | An extractive model for prose (Web plus markdown and text Reads)        | 1,008   | 2,081,094 | 10.79%          | 7,697,318  | 6.80%         |
+
+How each row was read:
+
+- **a.** Tokens are the `full` savings minus the `complete` savings (126,251 - 9,707), and results
+  are the blocks `full` shortened minus those `complete` shortened (127 - 14). The replay does not
+  price the `full` compressors applied to a fresh result, so the cost figure is an estimate: each
+  bucket's gap times that bucket's mean cost units per token (Bash 71,094 x 6.37, mcp 33,635 x 3.94,
+  Read 10,444 x 4.51, Grep 1,371 x 1.59).
+- **b.** Section 4, all buckets. The figure is gross: a one-line reference also costs tokens, and
+  the repeats are small (Bash averages 11 tokens, Edit/Write 34). At about 20 tokens a reference,
+  the net is close to zero or negative. It also counts against the whole transcript, not one
+  request, so it is an upper bound twice.
+- **c.** Section 4, the "contained" row. Identical re-reads are 0, because Claude Code already
+  replaces an unchanged re-read with a stub of its own.
+- **d.** Section 6, Read results of 1000 tokens or more that neither profile shortens, files that
+  are not markdown or text. This row also holds data files (JSON, YAML and similar), so the source
+  code share is smaller. A reduction keeps signatures and drops bodies, so it saves a fraction of
+  this row, and only where the model does not need the bodies it asked for.
+- **e.** The whole Web bucket (472 results, 434,530 tokens) plus every Read of a markdown or text
+  file (536 results, 1,646,564 tokens). Restricted to results the proxy would consider (1000 tokens
+  or more: Web 176,159 plus markdown and text 1,502,068) the bound is 1,678,227 tokens, 8.70%.
+  Prose a person wrote (playbooks, notes, docs) is most of it, and the model often reads it
+  because it needs every line.
+
+### Ranking
+
+By cost units, the largest bound first:
+
+1. **e**, 6.80% of cost. The largest pool, and disjoint from **d**.
+2. **d**, 5.76% of cost. Almost as large, but part of it is not source code.
+3. **a**, about 0.56% of cost. Small, but it is the only row whose saving is measured with the
+   product's own compressors rather than bounded by volume.
+4. **b**, 0.25% of cost gross, near zero net.
+5. **c**, 0.02% of cost.
+
+### What the numbers do not support
+
+- **b and c.** Neither is worth building. Together they act on 0.21% of tokens. The repeats in
+  **b** average 25 tokens, far under the 1000-token floor the proxy already applies, and **c** happened 5 times in a
+  week across 3,053 sessions.
+- **a on its own.** A retrieval tool that only unlocks early compression buys about 0.6% of tokens.
+  It is worth building only as the recovery path that **d** or **e** needs anyway, since both are
+  lossy on a fresh result the model asked for.
+- **d and e as savings.** The figures bound the volume, not the saving. A reducer that keeps half
+  of its input would save about 3% (**d**) or 3.4% (**e**) of cost, before the cost of being wrong.
+  The next measurement is to run a candidate reducer offline in this replay and count what it
+  removes, before building it into the proxy.
+
+### What the numbers say outside the list
+
+- **Bash is the pool.** Bash is 75.2% of tokens and 81.6% of cost, and the `full` profile keeps
+  3,871 of its 3,965 eligible results whole: 8,649,751 tokens, 44.9% of all tool-result tokens,
+  pass through unchanged. No candidate above touches it. What those outputs are (build and test
+  logs, diffs, listings) is the next question to count, by bucket of output shape and never by
+  command.
+- **`compress` mode loses on Read and Grep.** The `full` profile costs more than passthrough there
+  (-0.1% and -0.2%), because the shortened block is written to the cache a second time and a
+  shortened Read is rarely read often enough afterward to repay it. Across all buckets it saves
+  0.1% of cost (135,456 units); `compress-early` saves 0.05% (54,633 units).
