@@ -91,10 +91,10 @@ beforeEach(() => {
 });
 
 describe('liftAgentFromDesktop', () => {
-	it('refuses while the Federation Encore Feature is off', async () => {
+	it('refuses while the peer mirror is not running yet', async () => {
 		const { deps } = depsWith({ service: () => null });
 		const answer = await liftAgentFromDesktop('agent-1', {}, deps);
-		expect(answer).toMatchObject({ ok: false, code: 'PEER_ENCORE_OFF' });
+		expect(answer).toMatchObject({ ok: false, code: 'FEDERATION_NOT_RUNNING' });
 	});
 
 	it('answers the dry-run plan as maestro-cli lift --dry-run prints it, and moves nothing', async () => {

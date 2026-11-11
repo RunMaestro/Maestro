@@ -41,7 +41,12 @@ import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
-import { useLiftedMirrorTarget, useMoveToHostPeer } from '../../hooks/federation/useAgentLift';
+import {
+	useAgentFederationStatus,
+	useLiftedMirrorTarget,
+	useMoveToHostPeer,
+} from '../../hooks/federation/useAgentLift';
+import { canMakeFederated } from '../../utils/peerMirrorView';
 import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
 
 interface SessionContextMenuProps {
@@ -234,6 +239,8 @@ export function SessionContextMenu({
 	// Federation (FED-SSH-06): offered only while the feature is on and the agent's remote is a
 	// connected peer; a lifted agent offers the jump to where it moved instead.
 	const moveToHostPeer = useMoveToHostPeer(session);
+	const federationStatus = useAgentFederationStatus(session);
+	const offerMakeFederated = canMakeFederated(federationStatus);
 	const liftedTarget = useLiftedMirrorTarget(session.liftedTo);
 
 	// Inline window-rename state. While a row is being renamed, the Move to Window
@@ -418,6 +425,23 @@ export function SessionContextMenu({
 				>
 					<ServerCog className="w-3.5 h-3.5" />
 					Move to Host ({moveToHostPeer.name})...
+				</button>
+			)}
+
+			{offerMakeFederated && federationStatus.kind === 'ssh' && (
+				<button
+					type="button"
+					onClick={() => {
+						requestMoveToHost(session.id);
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+					title="Install a Maestro host on this agent's SSH remote, then move the agent onto it so it keeps working while this machine sleeps"
+					data-testid="session-menu-make-federated"
+				>
+					<ServerCog className="w-3.5 h-3.5" />
+					Make Federated{federationStatus.peer ? ` (${federationStatus.peer.name})` : ''}...
 				</button>
 			)}
 

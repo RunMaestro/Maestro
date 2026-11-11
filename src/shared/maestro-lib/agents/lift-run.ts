@@ -6,7 +6,7 @@
  * pointer). This module runs them in order against what the caller injects, so the CLI and the
  * desktop make the same checks, print the same plan, and roll back the same way:
  *
- * 1. Record refusals (`liftRefusal()`), the remote's Federation opt-in, a running turn the record
+ * 1. Record refusals (`liftRefusal()`), the remote's Federation opt-out, a running turn the record
  *    cannot show (`busyReason`), and the caller's own refusal (`localRefusal`). None costs a dial.
  * 2. The plan (`planAgentLift()`), handed to `onPlan` once the host is reached. A dry run stops.
  * 3. `import_agent` on the host, then the local pointer. The two writes cannot be one
@@ -20,6 +20,7 @@
 
 import type { SshRemoteConfig } from '../../types';
 import { federationOffMessage, peerIdFor } from '../client/peer-connection';
+import { isFederationRemote } from '../../federationRemote';
 import type { ClientError, MaestroClient } from '../client/types';
 import type { AgentRecord } from '../store/records';
 import { liftRefusal, liftSshRemoteId, planAgentLift } from './lift-plan';
@@ -189,7 +190,7 @@ export async function runLift(
 	if (refusal) throw new LiftRunError(liftErrorCode(refusal.code), refusal.message);
 	const remote = remotes.find((candidate) => candidate.id === liftSshRemoteId(agent));
 	if (!remote) throw new LiftRunError(liftErrorCode('remote-missing'), 'SSH remote not found');
-	if (!remote.federation) {
+	if (!isFederationRemote(remote)) {
 		throw new LiftRunError('PEER_FEDERATION_OFF', federationOffMessage(remote));
 	}
 

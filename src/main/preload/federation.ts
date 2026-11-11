@@ -14,6 +14,7 @@ import type { MirrorPeerSummary, MirrorPush } from '../../shared/maestro-lib/cli
 import type { PeerAgentAction } from '../../shared/maestro-lib/client/peer-actions';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { DesktopLiftAnswer, DesktopLiftOptions } from '../federation/lift';
+import type { DesktopSetupHostAnswer, DesktopSetupHostOptions } from '../federation/setup-host';
 import type { PeerHistoryPageQuery } from '../federation/peer-history';
 import type { PaginatedResult } from '../../shared/history';
 import type { HistoryEntry, HistoryEntryType } from '../../shared/types';
@@ -28,7 +29,7 @@ import type {
 /** Creates the Federation API object for contextBridge exposure. */
 export function createFederationApi() {
 	return {
-		/** `enabled` is false while the Federation Encore Feature is off. */
+		/** `enabled` is false before boot starts the peer mirror. */
 		status: (): Promise<{ enabled: boolean }> => ipcRenderer.invoke('federation:status'),
 		/** Every mirrored peer, in stored order, with its connection and agent count. */
 		peers: (): Promise<MirrorPeerSummary[]> => ipcRenderer.invoke('federation:peers'),
@@ -91,6 +92,15 @@ export function createFederationApi() {
 		 */
 		lift: (agentId: string, options?: DesktopLiftOptions): Promise<DesktopLiftAnswer> =>
 			ipcRenderer.invoke('federation:lift', agentId, options ?? {}),
+		/**
+		 * Install this app's maestro-cli on an SSH remote (or upgrade an older one), start the host
+		 * there, and reload the peer: Make Federated and Start Host. Takes minutes on a first install.
+		 */
+		setupHost: (
+			remoteId: string,
+			options?: DesktopSetupHostOptions
+		): Promise<DesktopSetupHostAnswer> =>
+			ipcRenderer.invoke('federation:setupHost', remoteId, options ?? {}),
 		/** Fires on every change to a mirrored peer. */
 		onEvent: (handler: (payload: MirrorPush) => void): (() => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, payload: MirrorPush) => handler(payload);

@@ -1032,11 +1032,10 @@ export interface SshRemoteConfig {
 	sshConfigHost?: string;
 
 	/**
-	 * Opt this remote in to Federation (the `federation` Encore Feature): Maestro
-	 * may look for a `maestro-cli host` on it and forward to that host over SSH.
-	 * Off (absent) by default. Maestro never probes a remote without this flag,
-	 * because dialing every remote at once is an SSH startup storm and tunnelled
-	 * remotes fail under concurrent dials.
+	 * Federation for this remote. Federation is opportunistic: absent (or true)
+	 * means Maestro looks for a `maestro-cli host` on the remote, one remote at a
+	 * time, and mirrors its agents when one runs. `false` opts the remote out:
+	 * Maestro never probes it for a host. See `isFederationRemote()`.
 	 */
 	federation?: boolean;
 }

@@ -79,4 +79,17 @@ describe('buildFederationCommands', () => {
 		open?.action();
 		expect(deps.openLiftedAgent).toHaveBeenCalled();
 	});
+
+	it('offers Make Federated for the active SSH agent whose remote runs no host', () => {
+		const { deps, commands } = build({
+			peers: [],
+			makeFederated: { sessionId: 's1', agentName: 'Docs', remoteName: 'Build Box' },
+		});
+		const entry = commands.find((c) => c.id === 'federation-make-federated');
+		expect(entry?.label).toBe('Make Federated: Docs (Build Box)');
+		entry?.action();
+		expect(deps.requestMoveToHost).toHaveBeenCalledWith('s1');
+		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
+		expect(build().commands.some((c) => c.id === 'federation-make-federated')).toBe(false);
+	});
 });

@@ -16,7 +16,10 @@ import { liveTurnKey } from '../../../shared/maestro-lib/client/live-turn';
 import type { QueuedTurn } from '../../../shared/maestro-lib/client/types';
 import type { LogEntryRecord } from '../../../shared/maestro-lib/store/transcript';
 import {
+	agentFederationStatus,
 	buildMirrorThinkingItems,
+	canMakeFederated,
+	isPeerFederated,
 	buildMirrorViewSession,
 	isPeerDisconnected,
 	liftedMirrorTarget,
@@ -333,5 +336,53 @@ describe('Move to Host (FED-SSH-06)', () => {
 		});
 		expect(liftedMirrorTarget({}, peers)).toBeUndefined();
 		expect(liftedMirrorTarget({ liftedTo: { peer: 1 } }, peers)).toBeUndefined();
+	});
+});
+
+describe('Federation status of a local agent', () => {
+	const peer = (connection: MirroredPeer['connection'], synced = false): MirroredPeer => {
+		const base = createMirroredPeer({ peerId: 'build', remoteId: 'r1', name: 'build' });
+		const withAgents = synced ? replacePeerAgents(base, [], [], 1).peer : base;
+		return { ...withAgents, connection };
+	};
+	const ssh = { sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } };
+
+	it('shows a peer in the Left Bar only once it has a host', () => {
+		expect(isPeerFederated(peer('connected'))).toBe(true);
+		expect(isPeerFederated(peer('reconnecting'))).toBe(true);
+		// Probed, no host: a plain SSH remote.
+		expect(isPeerFederated(peer('connecting'))).toBe(false);
+		expect(isPeerFederated(peer('not-installed'))).toBe(false);
+		expect(isPeerFederated(peer('host-down'))).toBe(false);
+		// Seen once, now away: shown dimmed.
+		expect(isPeerFederated(peer('host-down', true))).toBe(true);
+		expect(isPeerFederated(peer('lost', true))).toBe(true);
+	});
+
+	it('tells a local agent, an SSH agent, and one that moved apart', () => {
+		expect(agentFederationStatus({}, [peer('connected')])).toEqual({ kind: 'local' });
+		expect(
+			agentFederationStatus({ sessionSshRemoteConfig: { enabled: false, remoteId: 'r1' } }, [
+				peer('connected'),
+			])
+		).toEqual({ kind: 'local' });
+		expect(
+			agentFederationStatus({ liftedTo: { peer: 'build', agentId: 'a1', at: 1 } }, [])
+		).toEqual({ kind: 'moved' });
+		expect(agentFederationStatus(ssh, [peer('connected')])).toMatchObject({
+			kind: 'ssh',
+			remoteId: 'r1',
+			hostReady: true,
+		});
+	});
+
+	it('offers Make Federated only for an SSH agent whose remote takes part and runs no host', () => {
+		expect(canMakeFederated(agentFederationStatus(ssh, [peer('not-installed')]))).toBe(true);
+		expect(canMakeFederated(agentFederationStatus(ssh, [peer('host-down')]))).toBe(true);
+		// The host is up: Move to Host instead.
+		expect(canMakeFederated(agentFederationStatus(ssh, [peer('connected')]))).toBe(false);
+		// The remote opted out (no mirror entry): it stays an SSH agent.
+		expect(canMakeFederated(agentFederationStatus(ssh, []))).toBe(false);
+		expect(canMakeFederated({ kind: 'local' })).toBe(false);
 	});
 });

@@ -4,12 +4,13 @@
 // A peer is an SSH remote with `federation` on and a running `maestro-cli host`. This module owns
 // the parts both callers need byte for byte: which remotes are peers and the id each is shown by,
 // opening the SSH forward and attaching a client to it, the errors that name the peer and the fix,
-// and the watch that tells a caller the connection dropped. The CLI adds its own Encore and
-// opt-in checks and maps the error codes to exit codes (`src/cli/services/peer-resolver.ts`).
+// and the watch that tells a caller the connection dropped. The CLI adds its own opt-out
+// check and maps the error codes to exit codes (`src/cli/services/peer-resolver.ts`).
 //
 // Nothing here reads a store, dials a remote that was not handed in, or retries.
 
 import type { SshRemoteConfig } from '../../types';
+import { isFederationRemote } from '../../federationRemote';
 import { RemoteDiscoveryError } from './remote-discovery';
 import { SshForwardError, type ForwardedHostEndpoint, type SshForwardLease } from './ssh-forward';
 import type { MaestroClient } from './types';
@@ -54,20 +55,21 @@ export interface FederationPeer {
 }
 
 /**
- * Every SSH remote that is opted in to Federation and not disabled, in stored order, with its
- * peer id. Pure: nothing here dials a remote (decision D8).
+ * Every enabled SSH remote that has not opted out of Federation, in stored order, with its peer
+ * id. Pure: nothing here dials a remote. The caller dials them one at a time (tunnelled remotes
+ * fail under concurrent dials).
  */
 export function federationPeersOf(remotes: readonly SshRemoteConfig[]): FederationPeer[] {
 	return remotes
-		.filter((remote) => remote.federation === true && remote.enabled !== false)
+		.filter((remote) => isFederationRemote(remote) && remote.enabled !== false)
 		.map((remote) => ({ peer: peerIdFor(remote, remotes), remote }));
 }
 
-/** Why a remote that is not opted in is never dialed (decision D8), with the fix. */
+/** Why a remote that opted out of Federation is never dialed, with the fix. */
 export function federationOffMessage(remote: Pick<SshRemoteConfig, 'id' | 'name'>): string {
 	return (
-		`SSH remote "${remote.name}" is not opted in to Federation, so Maestro does not dial it. ` +
-		`Turn it on with: maestro-cli update-ssh-remote ${remote.id} --federation on`
+		`SSH remote "${remote.name}" has Federation turned off, so Maestro does not dial it. ` +
+		`Turn it back on with: maestro-cli update-ssh-remote ${remote.id} --federation on`
 	);
 }
 

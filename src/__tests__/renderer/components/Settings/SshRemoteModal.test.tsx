@@ -1,8 +1,8 @@
 /**
  * @file SshRemoteModal.test.tsx
- * @description The per-remote Federation opt-in: the toggle exists only while
- * the `federation` Encore Feature is on, it saves `federation: true`, and an
- * edit made while the feature is off keeps the remote's existing opt-in.
+ * @description The per-remote Federation switch. Federation is opportunistic:
+ * the switch is always shown, starts on, and only an opt-out (`federation:
+ * false`) is ever saved.
  */
 
 import '@testing-library/jest-dom';
@@ -10,7 +10,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { SshRemoteModal } from '../../../../renderer/components/Settings/SshRemoteModal';
 import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
-import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../../helpers/mockTheme';
 import type { SshRemoteConfig } from '../../../../shared/types';
 
@@ -23,12 +22,6 @@ const existing: SshRemoteConfig = {
 	privateKeyPath: '',
 	enabled: true,
 };
-
-function setFederationFeature(on: boolean): void {
-	useSettingsStore.setState((s) => ({
-		encoreFeatures: { ...s.encoreFeatures, federation: on },
-	}));
-}
 
 function renderModal(initialConfig?: SshRemoteConfig) {
 	const onSave = vi.fn(async (config: Partial<SshRemoteConfig>) => ({
@@ -64,44 +57,39 @@ beforeEach(() => {
 
 afterEach(() => {
 	cleanup();
-	setFederationFeature(false);
 });
 
 describe('SshRemoteModal federation toggle', () => {
-	it('is absent while the Encore Feature is off', () => {
-		setFederationFeature(false);
-		renderModal(existing);
-		expect(screen.queryByTestId('ssh-remote-federation-toggle')).not.toBeInTheDocument();
-		expect(screen.queryByRole('switch', { name: 'Federation' })).not.toBeInTheDocument();
+	it('is on for a remote with no federation field, and saves nothing for it', async () => {
+		const { onSave } = renderModal(existing);
+		const toggle = screen.getByRole('switch', { name: 'Federation' });
+		expect(toggle).toHaveAttribute('aria-checked', 'true');
+		expect((await save(onSave)).federation).toBeUndefined();
 	});
 
-	it('shows when the feature is on and saves the opt-in', async () => {
-		setFederationFeature(true);
+	it('saves the opt-out when switched off', async () => {
 		const { onSave } = renderModal(existing);
+		const toggle = screen.getByRole('switch', { name: 'Federation' });
+		fireEvent.click(toggle);
+		expect(toggle).toHaveAttribute('aria-checked', 'false');
+		expect(await save(onSave)).toMatchObject({ id: 'r1', federation: false });
+	});
+
+	it('reflects an existing opt-out and clears it when switched back on', async () => {
+		const { onSave } = renderModal({ ...existing, federation: false });
 		const toggle = screen.getByRole('switch', { name: 'Federation' });
 		expect(toggle).toHaveAttribute('aria-checked', 'false');
 
 		fireEvent.click(toggle);
-		expect(toggle).toHaveAttribute('aria-checked', 'true');
-
-		expect(await save(onSave)).toMatchObject({ id: 'r1', federation: true });
+		expect((await save(onSave)).federation).toBeUndefined();
 	});
 
-	it('reflects an existing opt-in and saves it off as absent', async () => {
-		setFederationFeature(true);
-		const { onSave } = renderModal({ ...existing, federation: true });
-		const toggle = screen.getByRole('switch', { name: 'Federation' });
-		expect(toggle).toHaveAttribute('aria-checked', 'true');
-
-		fireEvent.click(toggle);
-		const saved = await save(onSave);
-		expect(saved.federation).toBeUndefined();
-	});
-
-	it('keeps an existing opt-in when the remote is edited with the feature off', async () => {
-		setFederationFeature(false);
-		const { onSave } = renderModal({ ...existing, federation: true });
-		expect(await save(onSave)).toMatchObject({ federation: true });
+	it('starts on for a new remote', () => {
+		renderModal();
+		expect(screen.getByRole('switch', { name: 'Federation' })).toHaveAttribute(
+			'aria-checked',
+			'true'
+		);
 	});
 
 	it('still toggles Enable this remote through the shared switch', async () => {

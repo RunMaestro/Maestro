@@ -73,6 +73,24 @@ function connectionLabel(connection: PeerMirrorConnection): string {
 	return colorize('red', connection);
 }
 
+/**
+ * Ask the desktop app, when one runs here, to reload `peer` now: after `remote-host install
+ * --start` the mirror then shows the new host at once instead of on its next probe. Best effort:
+ * with no desktop (or a headless host) it does nothing, and a failure is the desktop's own state.
+ */
+export async function nudgeDesktopReconnect(peer: string): Promise<boolean> {
+	try {
+		const reply = await sendFederationCommand(
+			'reconnect',
+			{ peer },
+			FEDERATION_RECONNECT_TIMEOUT_MS
+		);
+		return reply.success === true;
+	} catch {
+		return false;
+	}
+}
+
 /** One line per peer, then its error (with the fix) indented under it. */
 export function formatFederationPeers(peers: readonly MirrorPeerSummary[]): string {
 	if (peers.length === 0) {

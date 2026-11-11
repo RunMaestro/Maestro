@@ -58,10 +58,6 @@ vi.mock('../../../cli/services/peer-resolver', () => {
 	};
 });
 
-vi.mock('../../../cli/utils/encore-gate', () => ({
-	requireEncore: vi.fn(),
-}));
-
 import { listAgents } from '../../../cli/commands/list-agents';
 import {
 	PeerResolveError,
@@ -69,7 +65,6 @@ import {
 	listFederationPeers,
 	listHostAgents,
 } from '../../../cli/services/peer-resolver';
-import { requireEncore } from '../../../cli/utils/encore-gate';
 import {
 	readSessions,
 	readGroups,
@@ -579,7 +574,6 @@ describe('list-agents command', () => {
 
 			await listAgents({ peer: 'build-box', json: true });
 
-			expect(requireEncore).toHaveBeenCalledWith('federation', true);
 			expect(connectPeer).toHaveBeenCalledWith('build-box');
 			expect(conn.release).toHaveBeenCalledTimes(1);
 			expect(readSessions).not.toHaveBeenCalled();
@@ -716,21 +710,11 @@ describe('list-agents command', () => {
 			expect(connectPeer).not.toHaveBeenCalled();
 		});
 
-		it('refuses the peer flags while Federation is off', async () => {
-			vi.mocked(requireEncore).mockImplementationOnce(() => {
-				throw new Error('process.exit(1)');
-			});
-
-			await expect(listAgents({ peer: 'build-box' })).rejects.toThrow('process.exit(1)');
-			expect(connectPeer).not.toHaveBeenCalled();
-		});
-
-		it('leaves a plain listing local: no Encore read and no peer field', () => {
+		it('leaves a plain listing local: no peer read and no peer field', () => {
 			vi.mocked(readSessions).mockReturnValue([mockSession({ id: 'a1' })]);
 
 			listAgents({ json: true });
 
-			expect(requireEncore).not.toHaveBeenCalled();
 			expect(listFederationPeers).not.toHaveBeenCalled();
 			expect(JSON.parse(consoleSpy.mock.calls[0][0])[0]).not.toHaveProperty('peer');
 		});

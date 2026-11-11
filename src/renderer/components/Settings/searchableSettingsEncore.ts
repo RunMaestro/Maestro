@@ -592,24 +592,6 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		keywords: ['trusted vaults', 'trust', 'untrust', 'vault roots', 'dataviewjs', 'allow scripts'],
 	},
 	{
-		id: 'encore-federation',
-		tab: 'encore',
-		tabLabel: 'Plugins',
-		label: 'Federation',
-		description:
-			'Reach a maestro-cli host on an SSH remote and drive the agents it runs, so work continues after this machine sleeps',
-		keywords: [
-			'federation',
-			'remote host',
-			'host',
-			'ssh',
-			'peer',
-			'headless',
-			'server',
-			'remote agents',
-		],
-	},
-	{
 		id: 'encore-plugins',
 		tab: 'encore',
 		tabLabel: 'Plugins',

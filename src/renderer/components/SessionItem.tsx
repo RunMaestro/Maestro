@@ -19,6 +19,7 @@ import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { WindowBadge } from './SessionList/WindowBadge';
 import { LiftedPointerChip } from './SessionList/LiftedPointerChip';
+import { SessionFederationBadge } from './SessionList/SessionFederationBadge';
 import { AutoRunErrorBadge } from './SessionList/AutoRunErrorBadge';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -532,10 +533,8 @@ export const SessionItem = memo(function SessionItem({
 							</div>
 						)}
 						<Activity className="row-provider-icon w-3 h-3" />{' '}
-						<span className="row-provider">
-							{getAgentDisplayName(session.toolType)}
-							{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
-						</span>
+						<span className="row-provider">{getAgentDisplayName(session.toolType)}</span>
+						<SessionFederationBadge theme={theme} session={session} />
 						<LiftedPointerChip theme={theme} liftedTo={session.liftedTo} />
 					</div>
 				)}

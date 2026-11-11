@@ -14,7 +14,6 @@
 // The host is the only source of truth. Its agents are never written to the local agent store, and
 // nothing here queues or replays: a peer that is down is an error that names the fix.
 
-import { encoreDisabledMessage } from '../../shared/encoreFeatureDefaults';
 import { BridgeConnection } from '../../shared/maestro-lib/client/bridge-connection';
 import type { ClientError, MaestroClient } from '../../shared/maestro-lib/client/types';
 import { createWsMaestroClient } from '../../shared/maestro-lib/client/ws-client';
@@ -38,8 +37,8 @@ import {
 import { peerAgentRef } from '../../shared/maestro-lib/agents/lift-pointer';
 import type { AITabRecord, AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../shared/types';
+import { isFederationRemote } from '../../shared/federationRemote';
 import { ExitCode } from '../exit-codes';
-import { isEncoreEnabled } from '../utils/encore-gate';
 import { readSshRemotes, resolveAgentId, resolveSshRemoteId } from './storage';
 import { ACTIVE_TAB_KEYWORD, matchTabId } from './session-command';
 
@@ -51,13 +50,11 @@ export interface PeerTarget {
 }
 
 export type PeerErrorCode =
-	/** The Federation Encore Feature is off. */
-	| 'encore-off'
 	/** No SSH remote by that name or id. */
 	| 'unknown-peer'
 	/** More than one SSH remote matches the id prefix. */
 	| 'ambiguous-peer'
-	/** The SSH remote is not opted in to Federation, so Maestro never dials it (decision D8). */
+	/** The SSH remote opted out of Federation, so Maestro never dials it. */
 	| 'federation-off'
 	/** The remote has no usable `maestro-cli`. */
 	| 'not-installed'
@@ -120,7 +117,6 @@ export type AgentTargetRoute = { kind: 'local' } | { kind: 'peer'; target: PeerT
 export interface PeerResolverDeps {
 	readRemotes(): SshRemoteConfig[];
 	resolveRemoteId(ref: string): string;
-	isFederationEnabled(): boolean;
 	/** Does `target` name a LOCAL agent? Default: `resolveAgentId()` succeeds. */
 	isLocalAgent(target: string): boolean;
 	acquireForward(remote: SshRemoteConfig): SshForwardLease;
@@ -133,7 +129,6 @@ export interface PeerResolverDeps {
 const defaultDeps: PeerResolverDeps = {
 	readRemotes: () => readSshRemotes(),
 	resolveRemoteId: (ref) => resolveSshRemoteId(ref),
-	isFederationEnabled: () => isEncoreEnabled('federation'),
 	isLocalAgent: (target) => {
 		try {
 			resolveAgentId(target);
@@ -162,9 +157,8 @@ export function parsePeerTarget(target: string): PeerTarget | null {
 }
 
 /**
- * Local or peer. A target with no colon is local without reading anything. With the Federation
- * feature off every target is local (zero footprint). A colon target that names a local agent
- * (a name like "Maestro: rc") stays local too.
+ * Local or peer. A target with no colon is local without reading anything. A colon target that
+ * names a local agent (a name like "Maestro: rc") stays local too.
  */
 export function routeAgentTarget(
 	target: string,
@@ -173,7 +167,6 @@ export function routeAgentTarget(
 	const parsed = parsePeerTarget(target);
 	if (!parsed) return { kind: 'local' };
 	const deps = withDefaults(overrides);
-	if (!deps.isFederationEnabled()) return { kind: 'local' };
 	if (deps.isLocalAgent(target)) return { kind: 'local' };
 	return { kind: 'peer', target: parsed };
 }
@@ -182,7 +175,7 @@ export function routeAgentTarget(
 export { peerIdFor, type FederationPeer };
 
 /**
- * Every SSH remote that is opted in to Federation and not disabled, in stored order, with its
+ * Every enabled SSH remote that has not opted out of Federation, in stored order, with its
  * peer id. Reads the store only: nothing here dials a remote.
  */
 export function listFederationPeers(
@@ -223,9 +216,9 @@ export function findPeerRemote(
 	return remote;
 }
 
-/** Refuse a remote that is not opted in: Maestro never dials one (decision D8). */
+/** Refuse a remote that opted out of Federation: Maestro never dials one. */
 export function requireFederationRemote(remote: SshRemoteConfig): void {
-	if (remote.federation) return;
+	if (isFederationRemote(remote)) return;
 	throw new PeerResolveError(
 		'federation-off',
 		federationOffMessage(remote),
@@ -246,7 +239,7 @@ function fromConnectError(error: PeerConnectError): PeerResolveError {
 
 /**
  * Open a connection to the host behind `peerRef` (a remote name, id, or id prefix): check the
- * Encore Feature and the remote's opt-in, open the forward through the shared SSH forward manager,
+ * remote's Federation opt-out, open the forward through the shared SSH forward manager,
  * and attach a client to it. The caller must `release()` the result.
  */
 export async function connectPeer(
@@ -254,14 +247,6 @@ export async function connectPeer(
 	overrides: Partial<PeerResolverDeps> = {}
 ): Promise<PeerConnection> {
 	const deps = withDefaults(overrides);
-	if (!deps.isFederationEnabled()) {
-		throw new PeerResolveError(
-			'encore-off',
-			encoreDisabledMessage('federation'),
-			ExitCode.GeneralError,
-			peerRef
-		);
-	}
 	const remote = findPeerRemote(peerRef, deps);
 	requireFederationRemote(remote);
 	const peer = peerIdFor(remote, deps.readRemotes());

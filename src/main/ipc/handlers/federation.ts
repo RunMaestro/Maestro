@@ -1,23 +1,31 @@
 /**
  * Federation peer mirror IPC (`federation:*`): the desktop's mirror of its Federation peers
  * (FED-SSH-05), `federation:act`, the input that drives a mirrored agent, and `federation:lift`,
- * the desktop's "Move to Host" (FED-SSH-06), and `federation:history*`, the History panel of a
+ * the desktop's "Move to Host" (FED-SSH-06), `federation:setupHost`, its Make Federated and Start
+ * Host (install the CLI on the remote and start the host), and `federation:history*`, the History panel of a
  * mirrored agent (paged, filtered, and graphed here by `src/main/federation/peer-history.ts`).
  *
  * Thin pass-throughs to the one `PeerMirrorService` (`src/main/federation/`); the CLI bridge
- * reaches the same instance. While the Federation Encore Feature is off there is no service:
- * `status` answers `{ enabled: false }`, the reads answer empty, and the calls that need a peer
- * refuse with the feature's own "turned off" message. Pushes go out on `federation:event` and
+ * reaches the same instance. Before boot starts the service (and after quit stops it) there is
+ * none: `status` answers `{ enabled: false }`, the reads answer empty, and the calls that need a
+ * peer refuse with `FEDERATION_NOT_RUNNING_MESSAGE`. Pushes go out on `federation:event` and
  * `federation:reset` (see `src/main/federation/index.ts`).
  *
  * DESKTOP-ONLY: no `federation:` channel is on the web-desktop allowlist (`bridgeDenyList.ts`).
  */
 
-import { ipcMain } from 'electron';
-import { encoreDisabledMessage } from '../../../shared/encoreFeatureDefaults';
+import { app, ipcMain } from 'electron';
+import { FEDERATION_NOT_RUNNING_MESSAGE } from '../../../shared/federationCommands';
 import type { MirrorPeerSummary } from '../../../shared/maestro-lib/client/peer-mirror';
 import type { LogEntryRecord } from '../../../shared/maestro-lib/store/transcript';
 import { getPeerMirrorService, type PeerMirrorService } from '../../federation';
+import {
+	buildDesktopSetupHostDeps,
+	setupHostFromDesktop,
+	type DesktopSetupHostAnswer,
+	type DesktopSetupHostOptions,
+} from '../../federation/setup-host';
+import { resolveBundledCliPathSync } from '../../maestro-cli-manager';
 import { parsePeerAgentAction } from '../../../shared/maestro-lib/client/peer-actions';
 import type {
 	PeerActionAnswer,
@@ -54,7 +62,7 @@ function opts(operation: string) {
 
 function requireService(): PeerMirrorService {
 	const service = getPeerMirrorService();
-	if (!service) throw new Error(encoreDisabledMessage('federation'));
+	if (!service) throw new Error(FEDERATION_NOT_RUNNING_MESSAGE);
 	return service;
 }
 
@@ -220,7 +228,7 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 			opts('reconnect'),
 			async (peerId: unknown): Promise<PeerReconnectResult> => {
 				const service = getPeerMirrorService();
-				if (!service) return { ok: false, error: encoreDisabledMessage('federation') };
+				if (!service) return { ok: false, error: FEDERATION_NOT_RUNNING_MESSAGE };
 				return service.reconnect(requireId(peerId, 'peer id'));
 			}
 		)
@@ -231,7 +239,7 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 			opts('act'),
 			async (peerId: unknown, agentId: unknown, action: unknown): Promise<PeerActionAnswer> => {
 				const service = getPeerMirrorService();
-				if (!service) return { ok: false, error: encoreDisabledMessage('federation') };
+				if (!service) return { ok: false, error: FEDERATION_NOT_RUNNING_MESSAGE };
 				return service.act(
 					requireId(peerId, 'peer id'),
 					requireId(agentId, 'agent id'),
@@ -248,4 +256,29 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				liftAgentFromDesktop(requireId(agentId, 'agent id'), readLiftOptions(options), liftDeps)
 		)
 	);
+	// Make Federated / Start Host: the same `setupRemoteHost()` as `maestro-cli remote-host install --start`.
+	const setupDeps = buildDesktopSetupHostDeps({
+		readSshRemotes: deps.readSshRemotes,
+		service: getPeerMirrorService,
+		resolveCliFile: resolveBundledCliPathSync,
+		appVersion: () => app.getVersion(),
+	});
+	ipcMain.handle(
+		'federation:setupHost',
+		withIpcErrorLogging(
+			opts('setupHost'),
+			async (remoteId: unknown, options?: unknown): Promise<DesktopSetupHostAnswer> =>
+				setupHostFromDesktop(
+					requireId(remoteId, 'SSH remote id'),
+					readSetupOptions(options),
+					setupDeps
+				)
+		)
+	);
+}
+
+function readSetupOptions(options: unknown): DesktopSetupHostOptions {
+	if (!options || typeof options !== 'object') return {};
+	const { restart, force } = options as Record<string, unknown>;
+	return { restart: restart === true, force: force === true };
 }

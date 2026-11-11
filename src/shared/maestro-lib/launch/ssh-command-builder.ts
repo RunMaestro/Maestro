@@ -20,6 +20,8 @@ import { parseDataUrl, buildImagePromptPrefix } from './image-refs';
  * These cover common binary locations that don't require dynamic detection.
  */
 const BASE_SSH_PATH_DIRS = [
+	// The maestro-cli Federation installs (`remote-host install`), first so it wins over an older copy.
+	'$HOME/.maestro/bin',
 	'$HOME/.local/bin',
 	'$HOME/.opencode/bin',
 	'$HOME/.claude/local',

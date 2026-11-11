@@ -1417,6 +1417,8 @@ describe('ssh-command-builder', () => {
 			const wrapped = wrapRemoteCommandWithPath('maestro-cli --version');
 			expect(wrapped.startsWith("/bin/bash --norc --noprofile -c '")).toBe(true);
 			expect(wrapped).toContain('$HOME/.local/bin');
+			// The maestro-cli `remote-host install` puts there comes first, ahead of an older copy.
+			expect(wrapped).toContain('export PATH="$HOME/.maestro/bin:$HOME/.local/bin:');
 			expect(wrapped).toContain('_nvm_dir');
 			expect(wrapped.endsWith("; maestro-cli --version'")).toBe(true);
 		});
