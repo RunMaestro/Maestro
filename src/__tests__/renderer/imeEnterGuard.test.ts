@@ -25,10 +25,6 @@ const RENDERER_ROOT = resolve(__dirname, '../../renderer');
  * isImeComposing(). Each entry documents why IME composition cannot occur there.
  */
 export const ALLOWLIST: Record<string, string> = {
-	// Numeric-only input: restricted to port digits where IME composition cannot occur
-	'components/SessionList/LiveOverlayPanel.tsx':
-		'Numeric-only port input (inputMode="numeric" pattern="[0-9]*")',
-
 	// Terminal raw PTY byte translation: converts physical Enter to carriage return
 	'hooks/keyboard/useMainKeyboardHandler.ts':
 		'Terminal raw keystroke translation to PTY carriage return byte (\\r)',

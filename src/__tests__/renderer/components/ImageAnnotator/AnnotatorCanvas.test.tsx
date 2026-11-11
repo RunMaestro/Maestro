@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { AnnotatorCanvas } from '../../../../renderer/components/ImageAnnotator/AnnotatorCanvas';
-import type { AnnotatorState } from '../../../../renderer/components/ImageAnnotator/useAnnotatorState';
+import type { UseAnnotatorStateReturn } from '../../../../renderer/components/ImageAnnotator/useAnnotatorState';
 
 describe('AnnotatorCanvas', () => {
 	it('leaves Cmd+Enter to the input method while editing text during IME composition', () => {
@@ -19,7 +19,7 @@ describe('AnnotatorCanvas', () => {
 			},
 		};
 
-		const mockState: Partial<AnnotatorState> = {
+		const mockState: Partial<UseAnnotatorStateReturn> = {
 			strokes: [],
 			currentPoints: [],
 			shapes: [],
@@ -56,7 +56,7 @@ describe('AnnotatorCanvas', () => {
 		const { container } = render(
 			<AnnotatorCanvas
 				imageDataUrl="data:image/png;base64,fake"
-				state={mockState as AnnotatorState}
+				state={mockState as UseAnnotatorStateReturn}
 			/>
 		);
 
