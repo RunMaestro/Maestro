@@ -48,4 +48,44 @@ describe('FederationBadge', () => {
 		fireEvent.mouseEnter(badge.parentElement as HTMLElement);
 		expect(screen.getByTestId('federation-badge-card')).toHaveTextContent('SSH agent on build');
 	});
+
+	it('turns red with the reason and the fix when automatic Federation is blocked', () => {
+		render(
+			<FederationBadge
+				theme={mockTheme}
+				mode={{
+					kind: 'ssh',
+					remoteName: 'build',
+					hostReady: true,
+					canFederate: true,
+					auto: {
+						state: 'blocked',
+						reason: 'Claude Code is not available.',
+						fix: 'Install Claude Code.',
+					},
+				}}
+			/>
+		);
+		const badge = screen.getByTestId('federation-badge-ssh');
+		fireEvent.mouseEnter(badge.parentElement as HTMLElement);
+		expect(screen.getByTestId('federation-badge-card')).toHaveTextContent(
+			'Claude Code is not available.'
+		);
+		expect(screen.getByTestId('federation-badge-fix')).toHaveTextContent(
+			'To fix: Install Claude Code.'
+		);
+	});
+
+	it('says an agent moves on its own while automatic Federation waits on it', () => {
+		const copy = federationBadgeCopy({
+			kind: 'ssh',
+			hostReady: true,
+			canFederate: true,
+			auto: { state: 'waiting', reason: 'A turn is running.' },
+		});
+		expect(copy.lines.at(-1)).toBe(
+			"Maestro moves it onto the remote's host automatically. A turn is running."
+		);
+		expect(copy.blocked).toBeUndefined();
+	});
 });

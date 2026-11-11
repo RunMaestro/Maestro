@@ -93,7 +93,12 @@ import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './com
 import { hostEndpoint, hostStart, hostStatus, hostStop } from './commands/host';
 import { remoteHostInstall, remoteHostStart, remoteHostStatus } from './commands/remote-host';
 import { lift } from './commands/lift';
-import { federationPeers, federationReconnect } from './commands/federation';
+import {
+	federationAuto,
+	federationAutoRun,
+	federationPeers,
+	federationReconnect,
+} from './commands/federation';
 import { createAgent, CREATE_AGENT_TYPES } from './commands/create-agent';
 import { duplicateAgent } from './commands/duplicate-agent';
 import { liveStatus, liveOn, liveOff, liveTunnel } from './commands/live';
@@ -1940,6 +1945,10 @@ remoteHost
 	.option('--start', 'Start the host on the remote once the CLI is in place')
 	.option('--force', 'Install even over a maestro-cli that Maestro did not install there')
 	.option('--restart', 'Replace a running host on an older version: stop it, upgrade, start it')
+	.option(
+		'--no-service',
+		'Do not register the host with the remote service manager (systemd user unit, launchd agent)'
+	)
 	.option('--timeout <seconds>', 'Give up on the install after this many seconds (default 600)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((ref: string, options) => remoteHostInstall(ref, options, cliVersion));
@@ -1972,6 +1981,22 @@ federation
 	.description('List the peers the desktop mirrors, with connection state and agent count')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => federationPeers(options));
+
+const federationAutoCommand = federation
+	.command('auto')
+	.description(
+		'Show what automatic Federation did, waits on, or needs from you, per SSH remote and SSH agent (exit 1 when something needs you)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationAuto(options));
+
+federationAutoCommand
+	.command('run')
+	.description(
+		'Run an automatic Federation pass now: start stopped hosts, install where SSH agents need one, and move agents that pass every check'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationAutoRun(options));
 
 federation
 	.command('reconnect <peer>')

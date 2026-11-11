@@ -15,6 +15,7 @@ import type { SshRemoteConfig } from '../../shared/types';
 import { captureException } from '../utils/sentry';
 import type { SafeSendFn } from '../utils/safe-send';
 import { PeerMirrorService, type PeerMirrorServiceDeps } from './peer-mirror-service';
+import type { AutoFederationCoordinator } from './auto-federation';
 
 export { PeerMirrorService } from './peer-mirror-service';
 
@@ -24,6 +25,26 @@ export const FEDERATION_EVENT_CHANNEL = 'federation:event';
 export const FEDERATION_RESET_CHANNEL = 'federation:reset';
 
 let service: PeerMirrorService | null = null;
+let autoFederation: AutoFederationCoordinator | null = null;
+const pushListeners = new Set<(payload: MirrorPush) => void>();
+
+/** Follow every change the mirror pushes to the windows (the auto-federation coordinator does). */
+export function onMirrorPush(listener: (payload: MirrorPush) => void): () => void {
+	pushListeners.add(listener);
+	return () => pushListeners.delete(listener);
+}
+
+/** The automatic Federation coordinator, once the IPC handlers built it. */
+export function getAutoFederation(): AutoFederationCoordinator | null {
+	return autoFederation;
+}
+
+export function setAutoFederation(next: AutoFederationCoordinator | null): void {
+	autoFederation = next;
+}
+
+/** Pushes the automatic Federation snapshot to every window. */
+export const FEDERATION_AUTO_CHANNEL = 'federation:auto';
 
 /** The running service, or null before boot started it and after quit stopped it. */
 export function getPeerMirrorService(): PeerMirrorService | null {
@@ -48,7 +69,10 @@ export function buildPeerMirrorServiceDeps(deps: FederationRuntimeDeps): PeerMir
 		watchRemotes: deps.watchRemotes,
 		acquireForward: (remote) => getSshForwardManager().acquire(remote),
 		createClient: (endpoint) => createWsMaestroClient({ endpoint }),
-		push: (payload: MirrorPush) => deps.safeSend(FEDERATION_EVENT_CHANNEL, payload),
+		push: (payload: MirrorPush) => {
+			deps.safeSend(FEDERATION_EVENT_CHANNEL, payload);
+			for (const listener of pushListeners) listener(payload);
+		},
 		reset: () => deps.safeSend(FEDERATION_RESET_CHANNEL),
 		onError: (error, operation) => void captureException(error, { operation }),
 		...deps.overrides,

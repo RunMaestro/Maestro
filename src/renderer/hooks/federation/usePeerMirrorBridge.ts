@@ -15,6 +15,7 @@ import { useEffect } from 'react';
 import type { MirrorPush } from '../../../shared/maestro-lib/client/peer-mirror';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
+import { useFederationAutoStore } from '../../stores/federationAutoStore';
 import { logger } from '../../utils/logger';
 
 export function usePeerMirrorBridge(): void {
@@ -36,6 +37,18 @@ export function usePeerMirrorBridge(): void {
 		const offReset = api.onReset(() => {
 			if (!disposed) usePeerMirrorStore.getState().reset();
 		});
+		// Automatic Federation: the first snapshot is loaded quietly, later ones announce changes.
+		const offAuto = api.onAuto?.((snapshot) => {
+			if (!disposed) useFederationAutoStore.getState().applySnapshot(snapshot);
+		});
+		api
+			.autoStatus?.()
+			.then((snapshot) => {
+				if (!disposed) useFederationAutoStore.getState().applySnapshot(snapshot, false);
+			})
+			.catch(() => {
+				// The pushes alone keep the store current.
+			});
 		const offGroupChat = useGroupChatStore.subscribe((state, previous) => {
 			if (state.activeGroupChatId && state.activeGroupChatId !== previous.activeGroupChatId) {
 				usePeerMirrorStore.getState().clearMirrorSelection();
@@ -68,7 +81,9 @@ export function usePeerMirrorBridge(): void {
 			disposed = true;
 			offEvent();
 			offReset();
+			offAuto?.();
 			offGroupChat();
+			useFederationAutoStore.getState().reset();
 			usePeerMirrorStore.getState().reset();
 		};
 	}, []);

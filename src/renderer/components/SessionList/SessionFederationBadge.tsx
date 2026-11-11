@@ -2,6 +2,7 @@ import { memo } from 'react';
 import type { Session, Theme } from '../../types';
 import { useAgentFederationStatus } from '../../hooks/federation/useAgentLift';
 import { FederationBadge } from './FederationBadge';
+import { useAutoFederationAgent } from '../../stores/federationAutoStore';
 
 /**
  * A local Left Bar row's Federation badge: `SSH` for an SSH agent, with the hover card that says
@@ -13,9 +14,10 @@ export const SessionFederationBadge = memo(function SessionFederationBadge({
 	session,
 }: {
 	theme: Theme;
-	session: Pick<Session, 'liftedTo' | 'sessionSshRemoteConfig'>;
+	session: Pick<Session, 'id' | 'liftedTo' | 'sessionSshRemoteConfig'>;
 }) {
 	const status = useAgentFederationStatus(session);
+	const auto = useAutoFederationAgent(session.id);
 	if (status.kind !== 'ssh') return null;
 	return (
 		<FederationBadge
@@ -25,6 +27,9 @@ export const SessionFederationBadge = memo(function SessionFederationBadge({
 				...(status.peer ? { remoteName: status.peer.name } : {}),
 				hostReady: status.hostReady,
 				canFederate: status.peer !== undefined,
+				...(auto && auto.state !== 'moved' && auto.state !== 'manual'
+					? { auto: { state: auto.state, reason: auto.reason, fix: auto.fix } }
+					: {}),
 			}}
 		/>
 	);

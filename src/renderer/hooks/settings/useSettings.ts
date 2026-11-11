@@ -421,6 +421,8 @@ export interface UseSettingsReturn {
 	setSshRemoteIgnorePatterns: (value: string[]) => void;
 	sshRemoteHonorGitignore: boolean;
 	setSshRemoteHonorGitignore: (value: boolean) => void;
+	federationAutoMove: boolean;
+	setFederationAutoMove: (value: boolean) => void;
 
 	// Browser settings
 	useSystemBrowser: boolean;

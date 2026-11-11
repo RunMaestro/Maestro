@@ -16,9 +16,23 @@ import { memo } from 'react';
 import type { Theme } from '../../types';
 import { HoverTooltip } from '../ui/HoverTooltip';
 import { MiniBadge } from '../ui/MiniBadge';
+import type { AutoFederationAgentState } from '../../../shared/federationAuto';
+
+/** What automatic Federation says about an SSH agent (`AutoFederationAgentStatus`). */
+export interface FederationBadgeAuto {
+	state: AutoFederationAgentState;
+	reason?: string;
+	fix?: string;
+}
 
 export type FederationBadgeMode =
-	| { kind: 'ssh'; remoteName?: string; hostReady: boolean; canFederate: boolean }
+	| {
+			kind: 'ssh';
+			remoteName?: string;
+			hostReady: boolean;
+			canFederate: boolean;
+			auto?: FederationBadgeAuto;
+	  }
 	| { kind: 'federated'; peerName: string };
 
 /** The hover card's lines, exported so tests and docs read the same words. */
@@ -26,6 +40,8 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 	label: string;
 	title: string;
 	lines: string[];
+	/** Automatic Federation could not move the agent: the reason and what to do. */
+	blocked?: { reason?: string; fix?: string };
 } {
 	if (mode.kind === 'federated') {
 		return {
@@ -38,11 +54,18 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 		};
 	}
 	const where = mode.remoteName ? ` on ${mode.remoteName}` : '';
-	const next = !mode.canFederate
+	const auto = mode.auto;
+	const manualNext = !mode.canFederate
 		? 'Federation does not reach this remote right now: it is disabled, Federation is off for it, or Maestro has not checked it yet.'
 		: mode.hostReady
 			? 'This remote runs a Maestro host: right-click > Move to Host to federate this agent.'
 			: 'Right-click > Make Federated to install a Maestro host on the remote and move this agent onto it.';
+	const next =
+		auto?.state === 'pending' || auto?.state === 'waiting'
+			? `Maestro moves it onto the remote's host automatically. ${auto.reason ?? ''}`.trim()
+			: auto?.state === 'blocked'
+				? 'Maestro could not move it onto the host automatically:'
+				: manualNext;
 	return {
 		label: 'SSH',
 		title: `SSH agent${where}`,
@@ -51,6 +74,7 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 			"A federated agent runs on the remote's own Maestro host instead and keeps working with this machine off.",
 			next,
 		],
+		...(auto?.state === 'blocked' ? { blocked: { reason: auto.reason, fix: auto.fix } } : {}),
 	};
 }
 
@@ -62,7 +86,12 @@ export const FederationBadge = memo(function FederationBadge({
 	mode: FederationBadgeMode;
 }) {
 	const copy = federationBadgeCopy(mode);
-	const color = mode.kind === 'federated' ? theme.colors.accent : theme.colors.warning;
+	const color =
+		mode.kind === 'federated'
+			? theme.colors.accent
+			: copy.blocked
+				? theme.colors.error
+				: theme.colors.warning;
 	return (
 		<HoverTooltip
 			theme={theme}
@@ -75,6 +104,16 @@ export const FederationBadge = memo(function FederationBadge({
 							{line}
 						</span>
 					))}
+					{copy.blocked?.reason && (
+						<span className="block mt-1" style={{ color: theme.colors.error }}>
+							{copy.blocked.reason}
+						</span>
+					)}
+					{copy.blocked?.fix && (
+						<span className="block mt-1 font-semibold" data-testid="federation-badge-fix">
+							To fix: {copy.blocked.fix}
+						</span>
+					)}
 				</span>
 			}
 		>
