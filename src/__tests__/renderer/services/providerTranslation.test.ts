@@ -557,3 +557,186 @@ describe('deferred provider translation client', () => {
 		}
 	);
 });
+
+// Grok carry-over through the renderer client, the path Edit Agent and the
+// remote settings edit share. Deterministic tests, not native qualification.
+describe('Grok provider translation client', () => {
+	const grokPlan: TranslationPlan = {
+		...plan,
+		id: '22222222-2222-4222-8222-222222222222',
+		status: 'ready',
+		verification: 'unverified',
+		destination: {
+			provider: 'grok',
+			version: '1.0.70',
+			accountRoot: '/synthetic/grok',
+			nativeSessionRoot: '/synthetic/grok/sessions',
+			projectRoot: '/synthetic/project',
+		},
+		limitations: [
+			{
+				code: 'grok-native-replay-absent',
+				severity: 'warning',
+				message: 'Grok replay may be empty.',
+			},
+		],
+	};
+	const grokRequest: TranslationRequest = {
+		agentId: 'agent',
+		destination: 'grok',
+		action: 'apply',
+	};
+	const stored = () => useSessionStore.getState().sessions[0];
+	function hostStores(migration: object) {
+		vi.mocked(window.maestro.sessions.getAll).mockResolvedValue([
+			{
+				...stored(),
+				toolType: 'grok',
+				customEnvVars: { GROK_HOME: grokPlan.destination.accountRoot },
+				providerMigration: migration,
+			},
+		] as any);
+	}
+
+	it('plans Grok without switching the agent or recording a migration', async () => {
+		translateProvider.mockResolvedValueOnce({ success: true, plan: grokPlan });
+		const report = await requestProviderTranslation({ ...grokRequest, action: 'plan' });
+		expect(report.plan?.verification).toBe('unverified');
+		expect(stored()).toMatchObject({ toolType: 'claude-code' });
+		expect(stored().providerMigration).toBeUndefined();
+		expect(stored().aiTabs[0].agentSessionId).toBe('source-final');
+	});
+
+	it.each([
+		{ name: 'an unaccepted plan', state: 'refused' as const, accept: false },
+		{ name: 'a blocked plan', state: 'refused' as const, accept: true },
+		{ name: 'a stale reviewed plan', state: undefined, accept: true },
+	])('leaves the Claude agent intact after $name', async ({ state, accept }) => {
+		translateProvider.mockResolvedValueOnce({
+			success: false,
+			plan: grokPlan,
+			...(state && { result: { success: false, state, plan: grokPlan, mappings: [] } }),
+			error: 'Synthetic refusal',
+		});
+		const report = await requestProviderTranslation({
+			...grokRequest,
+			acceptLimitations: accept,
+			planId: 'reviewed',
+		});
+		expect(report).toMatchObject({ success: false, error: 'Synthetic refusal' });
+		expect(window.maestro.sessions.getAll).not.toHaveBeenCalled();
+		expect(stored()).toMatchObject({ toolType: 'claude-code' });
+		expect(stored().providerMigration).toBeUndefined();
+		expect(stored().aiTabs[0]).toMatchObject({
+			agentSessionId: 'source-final',
+			inputValue: 'draft stays',
+		});
+	});
+
+	it('applies a committed Grok report with the host account and keeps it unverified', async () => {
+		const migration = {
+			operationId: grokPlan.id,
+			destination: 'grok',
+			state: 'committed',
+			verification: 'unverified',
+			// Only the host records accepted codes, so this proves its record is the one kept.
+			acceptedLimitationCodes: ['host-recorded'],
+		};
+		hostStores(migration);
+		translateProvider.mockResolvedValueOnce({
+			success: true,
+			plan: grokPlan,
+			result: {
+				success: true,
+				state: 'committed',
+				plan: grokPlan,
+				mappings: [
+					{
+						tabId: 'tab',
+						sourceSessionId: 'source-final',
+						destinationSessionId: 'grok-native',
+						artifacts: [],
+						lineage: {},
+					},
+				],
+			},
+		});
+		await requestProviderTranslation({ ...grokRequest, acceptLimitations: true });
+		const migrated = stored();
+		expect(migrated.toolType).toBe('grok');
+		// The renderer never infers the account: it takes the host's binding as stored.
+		expect(migrated.customEnvVars).toEqual({ GROK_HOME: '/synthetic/grok' });
+		expect(migrated.providerMigration).toEqual(migration);
+		// The Claude session is parked, so switching back restores it rather than a copy.
+		expect(migrated.aiTabs[0]).toMatchObject({
+			agentSessionId: 'grok-native',
+			inputValue: 'draft stays',
+			providerSessions: { 'claude-code': { agentSessionId: 'source-final' } },
+		});
+	});
+
+	it.each(['accepted', 'new-block'] as const)(
+		'restores a saved Grok deferral after reload (%s)',
+		async (variant) => {
+			const warning = grokPlan.limitations[0];
+			const session = stored();
+			session.providerMigration = {
+				operationId: grokPlan.id,
+				destination: 'grok',
+				state: 'deferred',
+				verification: 'unverified',
+				acceptLimitations: true,
+				acceptedLimitationCodes: [canonicalJson(warning)],
+			};
+			translateProvider.mockResolvedValueOnce({
+				success: true,
+				plan: {
+					...grokPlan,
+					...(variant === 'new-block' && {
+						status: 'blocked' as const,
+						limitations: [
+							warning,
+							{
+								code: 'destination-account-missing',
+								severity: 'block' as const,
+								message: 'The selected Grok CLI account folder does not exist yet.',
+							},
+						],
+					}),
+				},
+			});
+			if (variant === 'accepted')
+				translateProvider.mockResolvedValueOnce({
+					success: false,
+					error: 'Synthetic staging refusal',
+				});
+			resumeDeferredProviderTranslations([session]);
+			const completion = requestProviderTranslation(grokRequest, { waitForDeferred: true });
+			await vi.runAllTimersAsync();
+			const report = await completion;
+			expect(translateProvider).toHaveBeenNthCalledWith(1, {
+				...grokRequest,
+				acceptLimitations: true,
+				selectedUserResources: undefined,
+				action: 'plan',
+				planId: undefined,
+			});
+			if (variant === 'accepted') {
+				expect(report.error).toBe('Synthetic staging refusal');
+				expect(translateProvider).toHaveBeenLastCalledWith({
+					...grokRequest,
+					acceptLimitations: true,
+					selectedUserResources: undefined,
+					planId: grokPlan.id,
+				});
+			} else {
+				expect(report.error).toContain('new migration limitations');
+				expect(translateProvider).toHaveBeenCalledTimes(1);
+			}
+			expect(stored()).toMatchObject({
+				toolType: 'claude-code',
+				providerMigration: { destination: 'grok', state: 'failed', verification: 'unverified' },
+			});
+		}
+	);
+});

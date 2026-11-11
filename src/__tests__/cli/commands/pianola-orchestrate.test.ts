@@ -13,10 +13,14 @@ import * as os from 'os';
 import * as path from 'path';
 import type { AgentRun } from '../../../shared/agent-run';
 import type {
-	OrchestratorState,
 	OrchestratorDeps,
+	OrchestratorState,
 } from '../../../shared/pianola/pianola-orchestrator';
-import type { PianolaPlan, PianolaPlanProgress } from '../../../shared/pianola/pianola-tasks';
+import type {
+	PianolaPlan,
+	PianolaPlanProgress,
+	PianolaTask,
+} from '../../../shared/pianola/pianola-tasks';
 
 const {
 	connectMock,
@@ -77,6 +81,8 @@ vi.mock('../../../cli/services/agent-run-store', () => ({
 }));
 
 import {
+	choosePianolaToolType,
+	PIANOLA_COLD_START_TOOL_TYPE,
 	pianolaOrchestrate,
 	pianolaPlanSet,
 	pianolaPlanRevise,
@@ -85,6 +91,7 @@ import {
 	sandboxLaunchOptions,
 	resolveExistingPianolaAgentType,
 	resolvePianolaSandboxRunner,
+	type DesktopSessionEntry,
 } from '../../../cli/commands/pianola-orchestrate';
 import { readSettingValue } from '../../../cli/services/storage';
 import {
@@ -1509,5 +1516,449 @@ describe('sandbox launcher wall-clock ceiling', () => {
 			log.mockRestore();
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+/**
+ * Grok tasks through the orchestrate CLI shell. The engine is
+ * mocked, so the deps the CLI hands it are captured and driven directly.
+ * A task bound to an existing Grok agent is dispatched to that agent with no
+ * per-call override, so the account, model and remote target configured on
+ * the agent are the ones that run; a fresh Grok session is created with the
+ * Grok tool type and nothing invented (PianolaTask carries no account, model
+ * or SSH field, recorded in the evidence); a refusal (unavailable, quota,
+ * dispatch refusal) is returned as is with no second create and no other
+ * provider; and the AgentRun lineage, the failure toast and cancellation keep
+ * the Grok binding.
+ */
+describe('pianolaOrchestrate with Grok tasks', () => {
+	let errorSpy: MockInstance;
+	let logSpy: MockInstance;
+
+	const grokTask = (overrides: Partial<PianolaTask> = {}): PianolaTask => ({
+		id: 'g1',
+		title: 'Grok refactor',
+		prompt: 'refactor the parser',
+		dependsOn: [],
+		status: 'pending',
+		...overrides,
+	});
+	const grokPlan = (tasks: PianolaTask[]): PianolaPlan => ({
+		id: 'grok-plan',
+		title: 'Grok work',
+		createdAt: 100,
+		tasks,
+	});
+	const session = (
+		sessionId: string,
+		toolType: string,
+		state: 'idle' | 'busy' = 'idle'
+	): DesktopSessionEntry => ({
+		tabId: `${sessionId}-tab`,
+		sessionId,
+		agentId: `${sessionId}-owner`,
+		toolType,
+		state,
+	});
+	const desktop = (
+		sessions: DesktopSessionEntry[],
+		create: () => Promise<unknown> = async () => ({ success: true, sessionId: 'grok-new' })
+	) => {
+		sendCommandMock.mockImplementation(async (command: { type: string }) => {
+			if (command.type === 'list_desktop_sessions') return { sessions };
+			if (command.type === 'create_session') return create();
+			return {};
+		});
+	};
+	const capturedGrokRun = (): AgentRun => ({
+		id: 'captured-grok-run',
+		sessionId: 'grok-agent-1-ai-grok-tab-1',
+		tabId: 'grok-tab-1',
+		provider: 'grok',
+		createdAt: 1,
+		updatedAt: 1,
+		status: 'running',
+		artifacts: [],
+		touchedFiles: [],
+		checks: [],
+		reviews: [],
+	});
+	const useCapturedGrokRun = (run: AgentRun) => {
+		readAgentRunsMock.mockReturnValue([run]);
+		getAgentRunMock.mockImplementation((id: string) => (id === run.id ? run : undefined));
+	};
+	const sentOfType = (type: string) =>
+		sendCommandMock.mock.calls.filter(([command]) => (command as { type: string }).type === type);
+	const captureDeps = async (p: PianolaPlan): Promise<OrchestratorDeps> => {
+		vi.mocked(getPianolaPlan).mockReturnValue(p);
+		let captured: OrchestratorDeps | undefined;
+		runIterationMock.mockImplementation(
+			async (state: OrchestratorState, deps: OrchestratorDeps) => {
+				captured = deps;
+				return doneResult(state);
+			}
+		);
+		await pianolaOrchestrate(p.id, { once: true });
+		if (!captured) throw new Error('deps were not handed to the engine');
+		return captured;
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+		connectMock.mockResolvedValue(undefined);
+		disconnectMock.mockReturnValue(undefined);
+		vi.mocked(readSettingValue).mockReturnValue({ pianola: true });
+		getAgentRunMock.mockReturnValue(undefined);
+		findActiveRunBySessionMock.mockReturnValue(undefined);
+		upsertAgentRunMock.mockImplementation((run) => run);
+		appendAgentRunEventMock.mockImplementation((event) => event);
+		readAgentRunsMock.mockReturnValue([]);
+		desktop([]);
+	});
+
+	it('keeps a task bound to an existing Grok agent on that agent and dispatches with no override', async () => {
+		const task = grokTask({ agentId: 'grok-agent-1', agentType: 'grok', cwd: '/repo/remote' });
+		const deps = await captureDeps(grokPlan([task]));
+		vi.mocked(runDispatch).mockResolvedValue({ success: true, sessionId: 'grok-tab-9' } as never);
+
+		await expect(deps.ensureAgent(task)).resolves.toEqual({
+			agentId: 'grok-agent-1',
+			agentType: 'grok',
+		});
+		await expect(deps.dispatch(task, 'grok-agent-1')).resolves.toEqual({
+			success: true,
+			tabId: 'grok-tab-9',
+			error: undefined,
+			deliveryUncertain: false,
+		});
+		// Placement is the only option (a new background tab, as for every
+		// Pianola task): no account, model, effort or remote is forced over what
+		// the Grok agent itself is configured with.
+		expect(runDispatch).toHaveBeenCalledTimes(1);
+		expect(runDispatch).toHaveBeenCalledWith('grok-agent-1', 'refactor the parser', {
+			newTab: true,
+			background: true,
+		});
+		expect(sentOfType('create_session')).toHaveLength(0);
+		// Upstream lists sessions only to find the bound agent's tab; the agent
+		// itself is kept, never re-chosen.
+	});
+
+	it('backfills a legacy agent-bound task as Grok from the live session and creates nothing', async () => {
+		const task = grokTask({ agentId: 'grok-agent-1' });
+		desktop([session('claude-1', 'claude-code'), session('grok-agent-1', 'grok')]);
+		const deps = await captureDeps(grokPlan([task]));
+
+		await expect(deps.ensureAgent(task)).resolves.toEqual({
+			agentId: 'grok-agent-1',
+			agentType: 'grok',
+		});
+		expect(sentOfType('create_session')).toHaveLength(0);
+	});
+
+	it('keeps the bound agent with no type, never another provider, when the session list is unavailable', async () => {
+		const task = grokTask({ agentId: 'grok-agent-1' });
+		const deps = await captureDeps(grokPlan([task]));
+		sendCommandMock.mockRejectedValue(new Error('ws timeout'));
+
+		await expect(deps.ensureAgent(task)).resolves.toEqual({ agentId: 'grok-agent-1' });
+		expect(sentOfType('create_session')).toHaveLength(0);
+	});
+
+	it('creates a fresh Grok session for a task that names Grok, with nothing but name, type and cwd', async () => {
+		const task = grokTask({ agentType: 'grok', cwd: '/work/grok-repo' });
+		desktop([session('claude-1', 'claude-code')]);
+		const deps = await captureDeps(grokPlan([task]));
+
+		await expect(deps.ensureAgent(task)).resolves.toEqual({
+			agentId: 'grok-new',
+			agentType: 'grok',
+		});
+		const creates = sentOfType('create_session');
+		expect(creates).toHaveLength(1);
+		expect(creates[0]).toEqual([
+			{ type: 'create_session', name: 'Grok refactor', toolType: 'grok', cwd: '/work/grok-repo' },
+			'create_session_result',
+		]);
+		// A named provider is never re-chosen from the pool: the only session list
+		// comes after the create, to find the new session's tab.
+		const types = sendCommandMock.mock.calls.map(([command]) => (command as { type: string }).type);
+		expect(types.indexOf('list_desktop_sessions')).toBeGreaterThan(types.indexOf('create_session'));
+	});
+
+	it('creates a Grok session from an all-Grok pool even when every Grok session is busy', async () => {
+		const task = grokTask();
+		desktop([session('grok-a', 'grok', 'busy'), session('grok-b', 'grok', 'busy')]);
+		const deps = await captureDeps(grokPlan([task]));
+
+		await expect(deps.ensureAgent(task)).resolves.toEqual({
+			agentId: 'grok-new',
+			agentType: 'grok',
+		});
+		expect(sentOfType('create_session')[0][0]).toMatchObject({ toolType: 'grok' });
+		expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('creating a fresh grok session'));
+		expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('defaulting to'));
+	});
+
+	it('returns an unavailable or quota refusal from create_session as is, with no second create', async () => {
+		const refusals = [
+			'Grok CLI is not installed on this machine',
+			'grok account is rate limited until 14:00',
+		];
+		for (const error of refusals) {
+			const task = grokTask({ agentType: 'grok' });
+			desktop([session('claude-1', 'claude-code')], async () => ({ success: false, error }));
+			const deps = await captureDeps(grokPlan([task]));
+			sendCommandMock.mockClear();
+
+			await expect(deps.ensureAgent(task)).resolves.toEqual({ error });
+			const creates = sentOfType('create_session');
+			expect(creates).toHaveLength(1);
+			expect(creates[0][0]).toMatchObject({ toolType: 'grok' });
+		}
+	});
+
+	it('names the missing session id and propagates a lost create answer without retrying another provider', async () => {
+		const task = grokTask({ agentType: 'grok' });
+		desktop([], async () => ({ success: true }));
+		const deps = await captureDeps(grokPlan([task]));
+		await expect(deps.ensureAgent(task)).resolves.toEqual({
+			error: 'create_session did not return a sessionId',
+		});
+
+		desktop([], async () => {
+			throw new Error('create_session timed out');
+		});
+		sendCommandMock.mockClear();
+		await expect(deps.ensureAgent(task)).rejects.toThrow('create_session timed out');
+		expect(sentOfType('create_session')).toHaveLength(1);
+	});
+
+	it('reports a refused Grok dispatch as failed with its reason and falls back to nothing', async () => {
+		const task = grokTask({ agentId: 'grok-agent-1', agentType: 'grok' });
+		const deps = await captureDeps(grokPlan([task]));
+		vi.mocked(runDispatch).mockResolvedValue({
+			success: false,
+			code: 'DISPATCH_REFUSED',
+			error: 'dispatch refused: policy-denied',
+		} as never);
+
+		await expect(deps.dispatch(task, 'grok-agent-1')).resolves.toEqual({
+			success: false,
+			tabId: undefined,
+			error: 'dispatch refused: policy-denied',
+			deliveryUncertain: false,
+		});
+		expect(runDispatch).toHaveBeenCalledTimes(1);
+		expect(sentOfType('create_session')).toHaveLength(0);
+	});
+
+	it('records a dispatched Grok task, then its failure, on one AgentRun with the Grok provider', async () => {
+		const running = grokTask({
+			status: 'running',
+			agentId: 'grok-agent-1',
+			agentType: 'grok',
+			tabId: 'grok-tab-1',
+			cwd: '/repo',
+		});
+		const failed: PianolaTask = {
+			...running,
+			status: 'failed',
+			error: 'agent entered error state',
+			runId: 'captured-grok-run',
+		};
+		useCapturedGrokRun(capturedGrokRun());
+		const p = grokPlan([grokTask()]);
+		vi.mocked(getPianolaPlan).mockReturnValue(p);
+		let calls = 0;
+		runIterationMock.mockImplementation(async () => {
+			calls += 1;
+			const first = calls === 1;
+			return {
+				state: { plan: grokPlan([first ? running : failed]), prevStates: {} },
+				progress: { ...DONE_PROGRESS, total: 1, complete: !first },
+				completedTaskIds: [],
+				failedTaskIds: first ? [] : ['g1'],
+				dispatchedTaskIds: first ? ['g1'] : [],
+				done: !first,
+			};
+		});
+
+		await pianolaOrchestrate('grok-plan', { interval: '1' });
+
+		const runId = 'captured-grok-run';
+		expect(upsertAgentRunMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				id: runId,
+				provider: 'grok',
+				status: 'running',
+				agentId: 'grok-agent-1',
+				sessionId: 'grok-agent-1-ai-grok-tab-1',
+				tabId: 'grok-tab-1',
+				cwd: '/repo',
+				source: 'pianola:grok-plan',
+				metadata: { pianola: { planId: 'grok-plan', taskId: 'g1', taskStatus: 'running' } },
+			})
+		);
+		expect(upsertAgentRunMock).toHaveBeenCalledWith(
+			expect.objectContaining({ id: runId, provider: 'grok', status: 'failed' })
+		);
+		expect(appendAgentRunEventMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				runId,
+				type: 'pianola.failed',
+				status: 'failed',
+				data: { planId: 'grok-plan', taskId: 'g1' },
+			})
+		);
+	});
+
+	it('binds a Grok task to the run the desktop captured for its session', async () => {
+		const running = grokTask({
+			status: 'running',
+			agentId: 'grok-agent-1',
+			agentType: 'grok',
+			tabId: 'grok-tab-1',
+		});
+		useCapturedGrokRun(capturedGrokRun());
+		vi.mocked(getPianolaPlan).mockReturnValue(grokPlan([grokTask()]));
+		runIterationMock.mockResolvedValue({
+			state: { plan: grokPlan([running]), prevStates: {} },
+			progress: { ...DONE_PROGRESS, total: 1, running: 1, complete: false },
+			completedTaskIds: [],
+			failedTaskIds: [],
+			dispatchedTaskIds: ['g1'],
+			done: false,
+		});
+
+		await pianolaOrchestrate('grok-plan', { once: true });
+
+		expect(upsertAgentRunMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				id: 'captured-grok-run',
+				provider: 'grok',
+				agentId: 'grok-agent-1',
+			})
+		);
+		expect(upsertAgentRunMock).not.toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'pianola:grok-plan:g1' })
+		);
+	});
+
+	it('raises the failure toast on the Grok agent and tab that failed', async () => {
+		const failed = grokTask({
+			status: 'failed',
+			agentId: 'grok-agent-1',
+			agentType: 'grok',
+			tabId: 'grok-tab-1',
+		});
+		const deps = await captureDeps(grokPlan([failed]));
+		await deps.notify?.({ kind: 'task_failed', task: failed });
+
+		expect(sendCommandMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'notify_toast',
+				message: 'Task failed: Grok refactor',
+				color: 'red',
+				sessionId: 'grok-agent-1',
+				tabId: 'grok-tab-1',
+				clickAction: { kind: 'jump-session', sessionId: 'grok-agent-1', tabId: 'grok-tab-1' },
+			}),
+			'notify_toast_result'
+		);
+	});
+
+	it('stops a Grok plan on SIGINT after the current tick and disconnects', async () => {
+		const onSpy = vi.spyOn(process, 'on');
+		const offSpy = vi.spyOn(process, 'off');
+		vi.mocked(getPianolaPlan).mockReturnValue(grokPlan([grokTask()]));
+		let calls = 0;
+		runIterationMock.mockImplementation(async (state: OrchestratorState) => {
+			calls += 1;
+			if (calls > 1) return doneResult(state);
+			const sigint = onSpy.mock.calls.find(([event]) => event === 'SIGINT')?.[1] as () => void;
+			sigint();
+			return { ...doneResult(state), done: false, progress: { ...DONE_PROGRESS, complete: false } };
+		});
+
+		await pianolaOrchestrate('grok-plan', { interval: '1' });
+
+		expect(runIterationMock).toHaveBeenCalledTimes(1);
+		expect(disconnectMock).toHaveBeenCalledTimes(1);
+		const handler = onSpy.mock.calls.find(([event]) => event === 'SIGINT')?.[1];
+		expect(offSpy).toHaveBeenCalledWith('SIGINT', handler);
+	});
+
+	it('stops a Grok plan when Pianola is switched off between ticks', async () => {
+		let consent = true;
+		vi.mocked(readSettingValue).mockImplementation(() => ({ pianola: consent }));
+		vi.mocked(getPianolaPlan).mockReturnValue(grokPlan([grokTask()]));
+		runIterationMock.mockImplementation(async (state: OrchestratorState) => {
+			consent = false;
+			return { ...doneResult(state), done: false, progress: { ...DONE_PROGRESS, complete: false } };
+		});
+
+		await pianolaOrchestrate('grok-plan', { interval: '1' });
+
+		expect(runIterationMock).toHaveBeenCalledTimes(1);
+		expect(errorSpy).toHaveBeenCalledWith('[orchestrator] Pianola disabled in Settings; stopping.');
+		expect(disconnectMock).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('choosePianolaToolType with Grok in the pool', () => {
+	const t = (overrides: Partial<PianolaTask> = {}): PianolaTask => ({
+		id: 'x',
+		title: 'X',
+		prompt: 'p',
+		dependsOn: [],
+		status: 'pending',
+		...overrides,
+	});
+	const s = (sessionId: string, toolType: string, state: 'idle' | 'busy' = 'idle') => ({
+		tabId: `${sessionId}-tab`,
+		sessionId,
+		agentId: sessionId,
+		toolType,
+		state,
+	});
+
+	it('chooses Grok from an idle all-Grok pool with no note', () => {
+		expect(choosePianolaToolType(t(), [s('g1', 'grok')], [])).toEqual({ toolType: 'grok' });
+	});
+
+	it('counts running and fixing Grok tasks as load and picks the less-loaded sibling', () => {
+		const pool = [s('g1', 'grok'), s('c1', 'claude-code')];
+		const claudeRunning = [
+			t({ id: 'c', status: 'running', agentType: 'claude-code' }),
+			t({ id: 'd', status: 'done', agentType: 'claude-code' }),
+		];
+		// Grok idle, Claude carrying one: Grok is the less-loaded type.
+		expect(choosePianolaToolType(t(), pool, claudeRunning)).toEqual({ toolType: 'grok' });
+		// A Grok task in fixing holds a Grok agent: one each, the tie breaks by
+		// tool type id, deterministic.
+		const grokFixing = [...claudeRunning, t({ id: 'b', status: 'fixing', agentType: 'grok' })];
+		expect(choosePianolaToolType(t(), pool, grokFixing)).toEqual({ toolType: 'claude-code' });
+		const grokRunning = [...claudeRunning, t({ id: 'a', status: 'running', agentType: 'grok' })];
+		expect(choosePianolaToolType(t(), pool, grokRunning)).toEqual({ toolType: 'claude-code' });
+		const grokFinished = [...claudeRunning, t({ id: 'e', status: 'done', agentType: 'grok' })];
+		expect(choosePianolaToolType(t(), pool, grokFinished)).toEqual({ toolType: 'grok' });
+	});
+
+	it('keeps Grok when its only sibling type is fully busy and Grok has a free session', () => {
+		const pool = [s('g1', 'grok', 'busy'), s('g2', 'grok'), s('c1', 'claude-code', 'busy')];
+		expect(choosePianolaToolType(t(), pool, [])).toEqual({ toolType: 'grok' });
+	});
+
+	it('defaults to the cold-start provider only on an empty pool', () => {
+		const choice = choosePianolaToolType(t({ id: 'cold' }), [], []);
+		expect(choice.toolType).toBe(PIANOLA_COLD_START_TOOL_TYPE);
+		expect(choice.note).toContain('no candidate agents');
+		expect(choice.note).toContain(`defaulting to ${PIANOLA_COLD_START_TOOL_TYPE}`);
 	});
 });

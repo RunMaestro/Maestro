@@ -5,6 +5,15 @@ import {
 	HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
 } from '../../../shared/plugins/headless-agent-timeouts';
 import * as fs from 'fs';
+import * as path from 'path';
+import {
+	classifyGrokMcpServer,
+	grokNativeTrustProblem,
+	MCP_CONFIG_BY_AGENT,
+	MCP_SERVER_NAME,
+	readGrokNativeTrust,
+	type GrokMcpServerObservation,
+} from '../../../shared/plugins/mcp-agent-config';
 import * as pathProber from '../../../main/agents/path-prober';
 import * as runIdentity from '../../../main/plugins/plugin-tool-run-identity';
 import { autoTurnReport } from '../../../shared/autoTurn';
@@ -1524,3 +1533,346 @@ it.each(['user', 'auto', 'relay'] as const)(
 		}
 	}
 );
+
+// A Grok required run is proven only by what the host observed of
+// its bridge (toolEvidence 'observed'). The provider's word, an advertisement
+// alone or a denied call can never make it succeed, and every proof it minted
+// is revoked and its owned file removed whatever the outcome.
+describe('Grok required plugin-tool runs', () => {
+	const TOOL = 'sh.maestro.relay/send';
+	const grokAgent = { ...agent, toolType: 'grok' } as SessionInfo;
+	type Bridge = (identity: runIdentity.PluginToolRunIdentity, token: string) => void;
+
+	/** Lift the production entry to a verified one for the duration of `fn`. */
+	async function withVerifiedGrok<T>(fn: () => Promise<T>): Promise<T> {
+		const original = MCP_CONFIG_BY_AGENT.grok;
+		MCP_CONFIG_BY_AGENT.grok = { ...original, verified: true, qualifiedVersions: ['0.1.200'] };
+		try {
+			return await fn();
+		} finally {
+			MCP_CONFIG_BY_AGENT.grok = original;
+		}
+	}
+
+	function grokRunner(
+		bridge: Bridge,
+		over: Partial<PluginHeadlessRunnerDeps> = {},
+		providerResult: { success: boolean; response?: string; error?: string } = {
+			success: true,
+			response: 'Delivered: {"messageIds":["777"]}',
+		}
+	) {
+		const identity = new runIdentity.PluginToolRunIdentity();
+		const seen = { proofFiles: [] as string[], tokens: [] as string[] };
+		const spawn = vi.fn(
+			async (
+				_type: SessionInfo['toolType'],
+				_cwd: string,
+				_prompt: string,
+				_session?: string,
+				options?: SpawnAgentOptions
+			) => {
+				const file = options!.pluginRunProofFile!;
+				const token = fs.readFileSync(file, 'utf8');
+				seen.proofFiles.push(file);
+				seen.tokens.push(token);
+				bridge(identity, token);
+				return providerResult;
+			}
+		);
+		const issueRunToken = vi.fn((id: string, ttl: number, toolId?: string) =>
+			identity.issue(id, ttl, toolId)
+		);
+		const deps: PluginHeadlessRunnerDeps = {
+			getAgent: () => grokAgent,
+			detectAgent: async () => ({ available: true, path: '/usr/local/bin/grok' }),
+			hasPluginTools: () => true,
+			spawn,
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken,
+			getRunReceipts: (token) => identity.getReceipts(token),
+			hasRunReceiptOverflow: (token) => identity.hasReceiptOverflowed(token),
+			getRunEvidence: (token) => identity.getEvidence(token),
+			revokeRunToken: (token) => identity.revoke(token),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+			...over,
+		};
+		return { run: createPluginHeadlessAgentRunner(deps), identity, spawn, issueRunToken, seen };
+	}
+
+	const sendWithReceipt = (run: ReturnType<typeof grokRunner>['run'], signal?: AbortSignal) =>
+		run('agent-a', 'send it', undefined, signal, 'user', undefined, TOOL);
+	const sendRequiringTools = (run: ReturnType<typeof grokRunner>['run']) =>
+		run('agent-a', 'use tools', undefined, undefined, 'user', undefined, undefined, true);
+
+	/** Every proof the run minted is revoked and its owned directory is gone. */
+	function expectNoLeftovers(h: ReturnType<typeof grokRunner>) {
+		for (const file of h.seen.proofFiles) {
+			expect(fs.existsSync(file)).toBe(false);
+			expect(fs.existsSync(path.dirname(file))).toBe(false);
+		}
+		for (const token of h.seen.tokens) {
+			expect(h.identity.resolve(token)).toEqual({ callerAgentId: null });
+		}
+	}
+
+	it('refuses a required run before spawn with the production (unverified) entry, whatever the provider would say', async () => {
+		const h = grokRunner(() => {});
+		for (const result of [await sendWithReceipt(h.run), await sendRequiringTools(h.run)]) {
+			expect(result).toMatchObject({ success: false, response: null });
+		}
+		expect(h.spawn).not.toHaveBeenCalled();
+		expect(h.issueRunToken).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['no host evidence reader', { getRunEvidence: undefined }],
+		['no plugin tool endpoint', { hasPluginTools: () => false }],
+		['no receipt reader', { getRunReceipts: undefined }],
+		[
+			'a remote target',
+			{
+				getAgent: () =>
+					({
+						...grokAgent,
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote' },
+					}) as SessionInfo,
+			},
+		],
+	])('refuses before spawn and mints nothing with %s', async (_label, over) => {
+		await withVerifiedGrok(async () => {
+			const h = grokRunner(() => {}, over as Partial<PluginHeadlessRunnerDeps>);
+			expect(await sendWithReceipt(h.run)).toEqual({
+				success: false,
+				response: null,
+				sessionId: null,
+				executionStarted: false,
+				error: 'Authenticated plugin tool receipt unavailable',
+			});
+			expect(h.spawn).not.toHaveBeenCalled();
+			expect(h.issueRunToken).not.toHaveBeenCalled();
+		});
+	});
+
+	it('fails a run whose bridge never listed tools, though the provider reports success', async () => {
+		await withVerifiedGrok(async () => {
+			const h = grokRunner(() => {});
+			const result = await sendRequiringTools(h.run);
+			expect(result).toMatchObject({
+				success: false,
+				response: null,
+				error: 'The provider never listed Maestro plugin tools from its MCP bridge during this run',
+			});
+			expectNoLeftovers(h);
+		});
+	});
+
+	it('fails a listed but denied required tool as receipt-missing, with no receipts', async () => {
+		await withVerifiedGrok(async () => {
+			const h = grokRunner((identity, token) => {
+				identity.recordAdvertisement(token, [TOOL]);
+				identity.recordReceipt(token, TOOL, { error: 'denied by policy', messageIds: ['777'] });
+			});
+			expect(await sendWithReceipt(h.run)).toMatchObject({
+				success: false,
+				response: null,
+				toolReceipts: [],
+				error: 'Required plugin tool returned no delivery receipt',
+			});
+			expectNoLeftovers(h);
+		});
+	});
+
+	it('fails an executed tool the bridge never listed to this run', async () => {
+		await withVerifiedGrok(async () => {
+			const h = grokRunner((identity, token) => {
+				identity.recordAdvertisement(token, ['other/tool']);
+				identity.recordReceipt(token, TOOL, { messageIds: ['777'] });
+			});
+			const result = await sendWithReceipt(h.run);
+			expect(result).toMatchObject({ success: false, response: null });
+			expect(result.error).toBe(
+				`The provider never listed the required plugin tool "${TOOL}" during this run`
+			);
+			expectNoLeftovers(h);
+		});
+	});
+
+	it('keeps the provider error beside the evidence failure, and never echoes the proof', async () => {
+		await withVerifiedGrok(async () => {
+			const h = grokRunner(() => {}, {}, { success: false, error: 'stream closed' });
+			const result = await sendWithReceipt(h.run);
+			expect(result.error).toBe(
+				'The provider never listed Maestro plugin tools from its MCP bridge during this run; provider error: stream closed'
+			);
+			expect(JSON.stringify(result)).not.toContain(h.seen.tokens[0]);
+			expectNoLeftovers(h);
+		});
+	});
+
+	it('succeeds only on a host listing plus a host receipt, then revokes and removes the proof', async () => {
+		await withVerifiedGrok(async () => {
+			const h = grokRunner((identity, token) => {
+				identity.recordAdvertisement(token, [TOOL]);
+				identity.recordReceipt(token, TOOL, { messageIds: ['777'] });
+			});
+			const result = await sendWithReceipt(h.run);
+			expect(result).toMatchObject({
+				success: true,
+				response: 'Delivered: {"messageIds":["777"]}',
+				toolReceipts: [
+					expect.objectContaining({ agentId: 'agent-a', toolId: TOOL, messageIds: ['777'] }),
+				],
+			});
+			expect(JSON.stringify(result)).not.toContain(h.seen.tokens[0]);
+			expectNoLeftovers(h);
+		});
+	});
+
+	it('a cancelled run fails even with full evidence and leaves no proof behind', async () => {
+		await withVerifiedGrok(async () => {
+			const controller = new AbortController();
+			const h = grokRunner((identity, token) => {
+				identity.recordAdvertisement(token, [TOOL]);
+				identity.recordReceipt(token, TOOL, { messageIds: ['777'] });
+				controller.abort();
+			});
+			expect(await sendWithReceipt(h.run, controller.signal)).toMatchObject({
+				success: false,
+				response: null,
+			});
+			expect(h.spawn).toHaveBeenCalledOnce();
+			expectNoLeftovers(h);
+		});
+	});
+
+	it('removes the proof and revokes it when the provider spawn throws', async () => {
+		await withVerifiedGrok(async () => {
+			const h = grokRunner(() => {
+				throw new Error('spawn failed');
+			});
+			await expect(sendWithReceipt(h.run)).rejects.toThrow('spawn failed');
+			expect(h.seen.proofFiles).toHaveLength(1);
+			expectNoLeftovers(h);
+		});
+	});
+
+	// A synthetic native bridge applies its fixture effect (listing
+	// and executing the tool) only when its classified state is usable and the
+	// spawn environment's trust is stated. The provider always claims delivery.
+	describe('synthetic native MCP states', () => {
+		const ready: GrokMcpServerObservation = {
+			name: MCP_SERVER_NAME,
+			enabled: true,
+			auth: 'none',
+			handshake: 'ok',
+			advertised: true,
+		};
+		function nativeBridge(observation: GrokMcpServerObservation, env: Record<string, string> = {}) {
+			const effects: string[] = [];
+			const bridge: Bridge = (identity, token) => {
+				const outcome = classifyGrokMcpServer(observation);
+				expect(outcome.interactiveLogin).toBe(false);
+				if (!outcome.usable || grokNativeTrustProblem(readGrokNativeTrust(env))) return;
+				effects.push(TOOL);
+				identity.recordAdvertisement(token, [TOOL]);
+				identity.recordReceipt(token, TOOL, { messageIds: ['777'] });
+			};
+			return { bridge, effects };
+		}
+
+		it.each([
+			['a user-disabled bridge', { enabled: false }, {}],
+			['OAuth required', { auth: 'oauth' }, {}],
+			['OAuth pending', { auth: 'oauth', authState: 'pending' }, {}],
+			['OAuth denied', { auth: 'oauth', authState: 'denied' }, {}],
+			['OAuth expired', { auth: 'oauth', authState: 'expired' }, {}],
+			['an undrivable auth channel', { auth: 'device-code' }, {}],
+			['a handshake timeout', { handshake: 'timeout' }, {}],
+			['an ungated folder trust', {}, { GROK_FOLDER_TRUST: '0' }],
+			['an invalid scanner setting', {}, { GROK_CLAUDE_HOOKS_ENABLED: 'later' }],
+		] as const)(
+			'fails with %s: no fixture effect, no receipt, one spawn and no fallback',
+			async (_label, over, env) => {
+				await withVerifiedGrok(async () => {
+					const native = nativeBridge({ ...ready, ...over }, env);
+					const h = grokRunner(native.bridge);
+					const result = await sendWithReceipt(h.run);
+					expect(result).toMatchObject({ success: false, response: null });
+					expect(result.toolReceipts ?? []).toEqual([]);
+					expect(native.effects).toEqual([]);
+					// One Grok spawn: no retry, no other provider, no unrestricted relaunch.
+					expect(h.spawn).toHaveBeenCalledOnce();
+					expect(h.spawn.mock.calls[0][0]).toBe('grok');
+					expect(h.issueRunToken).toHaveBeenCalledOnce();
+					expectNoLeftovers(h);
+				});
+			}
+		);
+
+		it('keeps the handshake failure beside the evidence failure when the provider reports it', async () => {
+			await withVerifiedGrok(async () => {
+				const native = nativeBridge({ ...ready, handshake: 'timeout' });
+				const h = grokRunner(
+					native.bridge,
+					{},
+					{
+						success: false,
+						error: 'MCP server maestro handshake timed out',
+					}
+				);
+				const result = await sendRequiringTools(h.run);
+				expect(result.error).toBe(
+					'The provider never listed Maestro plugin tools from its MCP bridge during this run; provider error: MCP server maestro handshake timed out'
+				);
+				expect(h.spawn).toHaveBeenCalledOnce();
+				expectNoLeftovers(h);
+			});
+		});
+
+		it('cannot pass on an advertisement whose receipt is absent, however the provider words it', async () => {
+			await withVerifiedGrok(async () => {
+				const h = grokRunner(
+					(identity, token) => identity.recordAdvertisement(token, [TOOL]),
+					{},
+					{
+						success: true,
+						response: 'Executed sh.maestro.relay/send: {"messageIds":["777"]}',
+					}
+				);
+				expect(await sendWithReceipt(h.run)).toMatchObject({
+					success: false,
+					response: null,
+					toolReceipts: [],
+				});
+				expectNoLeftovers(h);
+			});
+		});
+
+		it('succeeds on a ready bridge with stated trust, and a stop mid-run still cleans up', async () => {
+			await withVerifiedGrok(async () => {
+				const native = nativeBridge(ready, {
+					GROK_FOLDER_TRUST: '1',
+					GROK_CODEX_MCPS_ENABLED: '0',
+				});
+				const h = grokRunner(native.bridge);
+				expect(await sendWithReceipt(h.run)).toMatchObject({ success: true });
+				expect(native.effects).toEqual([TOOL]);
+				expectNoLeftovers(h);
+
+				const controller = new AbortController();
+				const stopped = grokRunner((identity, token) => {
+					native.bridge(identity, token);
+					controller.abort();
+				});
+				expect(await sendWithReceipt(stopped.run, controller.signal)).toMatchObject({
+					success: false,
+					response: null,
+				});
+				expect(stopped.spawn).toHaveBeenCalledOnce();
+				expectNoLeftovers(stopped);
+			});
+		});
+	});
+});

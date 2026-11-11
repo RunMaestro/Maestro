@@ -16,12 +16,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import * as fs from 'fs';
+import fs from 'fs';
 import * as path from 'path';
 import { DatabaseSync } from 'node:sqlite';
 import { canLoadNodeSqlite } from '../../helpers/nodeSqlite';
 
 const { homeRef } = vi.hoisted(() => ({ homeRef: { current: '' } }));
+
+// Keep real fixture I/O while allowing spies on the adapter's default fs import.
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	const mocked = { ...actual };
+	return { ...mocked, default: mocked };
+});
 
 vi.mock('os', async () => {
 	const actual = await vi.importActual<typeof import('os')>('os');
@@ -199,7 +206,7 @@ describe.skipIf(!canLoadNodeSqlite())('OpenCodeSessionStorage (SQLite, macOS lay
 	let dataDir: string;
 	const savedXdg = process.env.XDG_DATA_HOME;
 
-	/** The module resolves its paths at import time, so import after setup. */
+	/** Fresh adapter import; storage paths must resolve only when local operations run. */
 	async function loadStorage(): Promise<Storage> {
 		vi.resetModules();
 		const mod = await import('../../../main/storage/opencode-session-storage');
@@ -207,6 +214,7 @@ describe.skipIf(!canLoadNodeSqlite())('OpenCodeSessionStorage (SQLite, macOS lay
 	}
 
 	beforeEach(() => {
+		vi.clearAllMocks();
 		root = fs.mkdtempSync(path.join(fs.realpathSync(require('os').tmpdir()), 'maestro-opencode-'));
 		homeRef.current = path.join(root, 'Users', 'jane');
 		dataDir = path.join(homeRef.current, '.local', 'share', 'opencode');
@@ -214,9 +222,118 @@ describe.skipIf(!canLoadNodeSqlite())('OpenCodeSessionStorage (SQLite, macOS lay
 	});
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		if (savedXdg === undefined) delete process.env.XDG_DATA_HOME;
 		else process.env.XDG_DATA_HOME = savedXdg;
 		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	describe('deferred storage discovery', () => {
+		it('does not probe XDG or home storage candidates during import and construction', async () => {
+			process.env.XDG_DATA_HOME = path.join(root, 'xdg');
+			const xdgDataDir = path.join(process.env.XDG_DATA_HOME, 'opencode');
+			const exists = vi.spyOn(fs, 'existsSync');
+
+			const storage = await loadStorage();
+
+			expect(storage.agentId).toBe('opencode');
+			// Ignore loader/source metadata probes; neither candidate resolver may run.
+			for (const candidate of [xdgDataDir, dataDir]) {
+				expect(exists).not.toHaveBeenCalledWith(candidate);
+				expect(exists).not.toHaveBeenCalledWith(path.join(candidate, 'opencode.db'));
+			}
+		});
+
+		it.each(['SQLite', 'JSON'] as const)(
+			'resolves and reads the %s fixture selected after import and construction',
+			async (format) => {
+				writeJsonSession(dataDir, {
+					projectId: 'proj1',
+					worktree: PROJECT,
+					sessionId: 'ses_decoy',
+					updated: 1,
+					turns: [{ id: 'decoy', role: 'user', text: 'unselected home', at: 1 }],
+				});
+				const storage = await loadStorage();
+
+				// An eager path cache would retain the home candidate and miss this selection.
+				process.env.XDG_DATA_HOME = path.join(root, 'selected-xdg');
+				const selectedDataDir = path.join(process.env.XDG_DATA_HOME, 'opencode');
+				const dbPath = path.join(selectedDataDir, 'opencode.db');
+				const turns = twoResumedTurns('selected', 1_000);
+				if (format === 'SQLite') {
+					const db = createDb(dbPath);
+					addProject(db, 'proj1', PROJECT);
+					addSession(db, {
+						id: 'ses_selected',
+						projectId: 'proj1',
+						directory: PROJECT,
+						created: 1_000,
+						updated: 66_000,
+					});
+					addTurns(db, 'ses_selected', turns);
+					db.close();
+				} else {
+					writeJsonSession(selectedDataDir, {
+						projectId: 'proj1',
+						worktree: PROJECT,
+						sessionId: 'ses_selected',
+						updated: 66_000,
+						turns,
+					});
+				}
+				const exists = vi.spyOn(fs, 'existsSync');
+
+				expect((await storage.listSessions(PROJECT)).map((s) => s.sessionId)).toEqual([
+					'ses_selected',
+				]);
+				const { messages } = await storage.readSessionMessages(PROJECT, 'ses_selected');
+				expect(messages.map((m) => [m.role, m.content])).toEqual([
+					['user', 'add a test'],
+					['assistant', 'Added a test.'],
+					['user', 'now run it'],
+					['assistant', 'All tests pass.'],
+				]);
+				expect(storage.getSessionPath(PROJECT, 'ses_selected')).toBe(
+					format === 'SQLite'
+						? dbPath
+						: path.join(selectedDataDir, 'storage', 'message', 'ses_selected')
+				);
+				expect(exists).toHaveBeenCalledWith(dbPath);
+				expect(exists).toHaveBeenCalledWith(selectedDataDir);
+			}
+		);
+
+		it('returns the remote session path without probing an existing local session', async () => {
+			const db = createDb(path.join(dataDir, 'opencode.db'));
+			addProject(db, 'proj1', PROJECT);
+			addSession(db, {
+				id: 'ses_remote',
+				projectId: 'proj1',
+				directory: PROJECT,
+				created: 1,
+				updated: 2,
+			});
+			db.close();
+			const storage = await loadStorage();
+			const exists = vi.spyOn(fs, 'existsSync');
+
+			expect(
+				storage.getSessionPath(PROJECT, 'ses_remote', {
+					id: 'test-remote',
+					name: 'Test Remote',
+					host: 'remote.example.test',
+					port: 22,
+					username: 'testuser',
+					privateKeyPath: '',
+					enabled: true,
+					useSshConfig: true,
+				})
+			).toBe(
+				path.posix.join('~', '.local', 'share', 'opencode', 'storage', 'message', 'ses_remote')
+			);
+			expect(exists).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('locating opencode.db', () => {

@@ -117,6 +117,8 @@ export interface MaestroSettings {
 	sshRemoteIgnorePatterns: string[];
 	// Whether to honor .gitignore files on remote hosts
 	sshRemoteHonorGitignore: boolean;
+	// Federation: move SSH agents onto their remote's host automatically
+	federationAutoMove: boolean;
 	// Unique installation identifier (generated once on first run)
 	installationId: string | null;
 	// WakaTime integration

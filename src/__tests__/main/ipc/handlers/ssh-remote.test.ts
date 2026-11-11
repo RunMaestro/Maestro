@@ -197,14 +197,14 @@ describe('SSH Remote IPC Handlers', () => {
 			});
 		});
 
-		it('persists the federation opt-in, and stores nothing when it is off', async () => {
+		it('persists only the Federation opt-out: on (or absent) stores nothing', async () => {
 			const on = (await invokeHandler('ssh-remote:saveConfig', {
 				name: 'Host Box',
 				host: 'box',
 				port: 22,
 				federation: true,
 			})) as { success: boolean; config?: SshRemoteConfig };
-			expect(on.config?.federation).toBe(true);
+			expect(on.config?.federation).toBeUndefined();
 
 			const off = (await invokeHandler('ssh-remote:saveConfig', {
 				name: 'Plain Box',
@@ -212,7 +212,7 @@ describe('SSH Remote IPC Handlers', () => {
 				port: 22,
 				federation: false,
 			})) as { success: boolean; config?: SshRemoteConfig };
-			expect(off.config?.federation).toBeUndefined();
+			expect(off.config?.federation).toBe(false);
 		});
 
 		it('strips a reserved ssh option before it reaches disk', async () => {

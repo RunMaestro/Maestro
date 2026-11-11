@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const tabBarProps = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
 const terminalProps = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
+const historyPanelProps = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
 
 vi.mock('../../../../renderer/components/TabBar', () => ({
 	TabBar: (props: Record<string, unknown>) => {
@@ -26,6 +27,13 @@ vi.mock('../../../../renderer/components/TerminalOutput', () => ({
 		return <div data-testid="terminal-output-stub" />;
 	},
 }));
+// The History panel has its own suite; here it records what the mirror's column hands it.
+vi.mock('../../../../renderer/components/HistoryPanel', () => ({
+	HistoryPanel: (props: Record<string, unknown>) => {
+		historyPanelProps.current = props;
+		return <div data-testid="history-panel-stub" />;
+	},
+}));
 vi.mock('../../../../renderer/services/peerMirror', () => ({
 	readMirrorTranscript: vi.fn(async () => undefined),
 	reconnectPeer: vi.fn(async () => undefined),
@@ -35,6 +43,9 @@ vi.mock('../../../../renderer/services/peerMirror', () => ({
 	starMirrorTab: vi.fn(async () => undefined),
 	sendToMirroredTab: vi.fn(async () => true),
 	interruptMirroredAgent: vi.fn(async () => undefined),
+	removeMirrorQueuedItem: vi.fn(async () => undefined),
+	setMirrorQueuedItemPaused: vi.fn(async () => undefined),
+	openMirroredAgentByKey: vi.fn(() => false),
 }));
 
 import { PeerAgentPanel } from '../../../../renderer/components/PeerAgentPanel';
@@ -44,11 +55,15 @@ import {
 	openMirrorTab,
 	readMirrorTranscript,
 	reconnectPeer,
+	removeMirrorQueuedItem,
 	renameMirrorTab,
+	setMirrorQueuedItemPaused,
 	starMirrorTab,
 } from '../../../../renderer/services/peerMirror';
 import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { useUIStore } from '../../../../renderer/stores/uiStore';
+import type { HistorySource } from '../../../../renderer/components/History/historySource';
 import {
 	createMirroredPeer,
 	replacePeerAgents,
@@ -112,15 +127,18 @@ function landRead(tabId: string, entries: LogEntryRecord[] = ENTRIES) {
 
 describe('PeerAgentPanel', () => {
 	beforeEach(() => {
-		resetStores(usePeerMirrorStore, useSessionStore);
+		resetStores(usePeerMirrorStore, useSessionStore, useUIStore);
 		tabBarProps.current = null;
 		terminalProps.current = null;
+		historyPanelProps.current = null;
 		vi.mocked(readMirrorTranscript).mockClear();
 		vi.mocked(reconnectPeer).mockClear();
 		vi.mocked(copyPeerAgentRef).mockClear();
 		vi.mocked(openMirrorTab).mockClear();
 		vi.mocked(renameMirrorTab).mockClear();
 		vi.mocked(starMirrorTab).mockClear();
+		vi.mocked(removeMirrorQueuedItem).mockClear();
+		vi.mocked(setMirrorQueuedItemPaused).mockClear();
 	});
 
 	it('renders nothing with no mirror selected', () => {
@@ -155,6 +173,46 @@ describe('PeerAgentPanel', () => {
 		// No second read once the tab is loaded and not stale.
 		expect(readMirrorTranscript).toHaveBeenCalledTimes(1);
 		expect(useSessionStore.getState().sessions).toEqual([]);
+	});
+
+	it('draws the host queue as queued cards whose remove and Hold / Resume act on the host', () => {
+		const waiting = (itemId: string, paused: boolean) => ({
+			itemId,
+			tabId: 't1',
+			queuedAt: 5,
+			kind: 'message' as const,
+			text: `waiting ${itemId}`,
+			paused,
+		});
+		show({ ...peerWith([agent()]), queues: { a1: [waiting('q1', false), waiting('q2', true)] } });
+		renderPanel();
+		landRead('t1');
+		const view = terminalProps.current?.session as {
+			executionQueue: Array<{ id: string; paused?: boolean }>;
+		};
+		expect(view.executionQueue.map((item) => item.id)).toEqual(['q1', 'q2']);
+		(terminalProps.current?.onRemoveQueuedItem as (id: string) => void)('q1');
+		expect(removeMirrorQueuedItem).toHaveBeenCalledWith('build', 'a1', 'q1');
+		const togglePause = terminalProps.current?.onTogglePauseQueuedItem as (id: string) => void;
+		togglePause('q1');
+		expect(setMirrorQueuedItemPaused).toHaveBeenLastCalledWith('build', 'a1', 'q1', true);
+		togglePause('q2');
+		expect(setMirrorQueuedItemPaused).toHaveBeenLastCalledWith('build', 'a1', 'q2', false);
+		// A message that no longer waits is not acted on.
+		togglePause('gone');
+		expect(setMirrorQueuedItemPaused).toHaveBeenCalledTimes(2);
+		expect(useSessionStore.getState().sessions).toEqual([]);
+	});
+
+	it('keeps the queue actions wired while the peer is disconnected, so a refusal is visible', () => {
+		// The queued cards always draw Remove. Without a handler its confirm would close and do
+		// nothing; with one, the action fails with the "not connected" toast.
+		show(peerWith([agent()], 'lost', 'socket closed'));
+		renderPanel();
+		landRead('t1');
+		expect(terminalProps.current).not.toBeNull();
+		expect(terminalProps.current?.onRemoveQueuedItem).toBeTypeOf('function');
+		expect(terminalProps.current?.onTogglePauseQueuedItem).toBeTypeOf('function');
 	});
 
 	it('shows a select-only TabBar and switches tabs in peerMirrorStore only', () => {
@@ -277,5 +335,78 @@ describe('PeerAgentPanel', () => {
 				.applyPush({ peerId: 'build', event: { type: 'agent.removed', agentId: 'a1' } })
 		);
 		expect(container).toBeEmptyDOMElement();
+	});
+
+	describe('History column', () => {
+		it('sits beside the transcript while the Right Bar toggle is on, and goes with it', () => {
+			useUIStore.getState().setRightPanelOpen(true);
+			show();
+			renderPanel();
+			expect(screen.getByTestId('peer-history-column')).toBeInTheDocument();
+			expect(
+				screen.getByText("On Build Box, with the project's shared History")
+			).toBeInTheDocument();
+
+			act(() => useUIStore.getState().setRightPanelOpen(false));
+			expect(screen.queryByTestId('peer-history-column')).not.toBeInTheDocument();
+			expect(screen.getByTestId('peer-agent-panel')).toBeInTheDocument();
+		});
+
+		it('is not drawn while the toggle is off', () => {
+			useUIStore.getState().setRightPanelOpen(false);
+			show();
+			renderPanel();
+			expect(screen.queryByTestId('peer-history-column')).not.toBeInTheDocument();
+			expect(historyPanelProps.current).toBeNull();
+		});
+
+		it('collapses from its own control', () => {
+			useUIStore.getState().setRightPanelOpen(true);
+			show();
+			renderPanel();
+			fireEvent.click(screen.getByLabelText('Collapse History'));
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+			expect(screen.queryByTestId('peer-history-column')).not.toBeInTheDocument();
+		});
+
+		it('hands the History panel a view keyed by the mirror and a read-only host source', async () => {
+			useUIStore.getState().setRightPanelOpen(true);
+			show(peerWith([agent({ cwd: '/srv/app', projectRoot: '/srv' })]));
+			renderPanel();
+
+			expect(historyPanelProps.current?.session).toEqual({
+				id: 'build:a1',
+				cwd: '/srv/app',
+				projectRoot: '/srv',
+				toolType: 'claude-code',
+			});
+			const source = historyPanelProps.current?.source as HistorySource;
+			expect(source.remove).toBeUndefined();
+			expect(source.update).toBeUndefined();
+
+			const historyPage = vi.fn(async () => ({ entries: [], hasMore: false, total: 0 }));
+			const win = window as unknown as { maestro: Record<string, unknown> };
+			const original = win.maestro.federation;
+			win.maestro.federation = { historyPage };
+			try {
+				await source.getPage({
+					lookbackHours: null,
+					types: ['USER'],
+					hostKey: null,
+					groupCue: false,
+					pagination: { offset: 0, limit: 20 },
+				});
+				expect(historyPage).toHaveBeenCalledWith('build', 'a1', {
+					lookbackHours: null,
+					types: ['USER'],
+					hostKey: null,
+					pagination: { offset: 0, limit: 20 },
+				});
+			} finally {
+				win.maestro.federation = original;
+			}
+			// Nothing about the History column reaches the local agent store.
+			expect(useSessionStore.getState().sessions).toEqual([]);
+		});
 	});
 });

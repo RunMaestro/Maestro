@@ -12,6 +12,14 @@ import {
 	primeCapabilitiesCache,
 } from '../../../renderer/hooks/agent/useAgentCapabilities';
 import { useCapabilitiesPriming } from '../../../renderer/hooks/agent/useCapabilitiesPriming';
+import { agentSupportsContextTransfer } from '../../../renderer/utils/sessionHelpers';
+import {
+	AGENT_CAPABILITIES,
+	GROK_CAPABILITY_EVIDENCE,
+	getAgentCapabilities,
+} from '../../../shared/maestro-lib/providers/capabilities';
+import { AGENT_IDS } from '../../../shared/agentIds';
+import type { AgentCapabilities } from '../../../shared/types';
 
 const baseCapabilities = {
 	supportsResume: true,
@@ -302,5 +310,74 @@ describe('useCapabilitiesPriming', () => {
 		await waitFor(() => {
 			expect(window.maestro.agents.getAllCapabilities).toHaveBeenCalled();
 		});
+	});
+});
+
+// The renderer consumers read the finalized registry exactly as the main
+// process serves it (`agents:getCapabilities` returns getAgentCapabilities(id)). No
+// flag is forced: the bridge mocks answer with the production table.
+describe('Grok capability-dependent UI', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		clearCapabilitiesCache();
+		vi.mocked(window.maestro.agents.getCapabilities).mockImplementation(async (id: string) =>
+			getAgentCapabilities(id)
+		);
+		vi.mocked(window.maestro.agents.getAllCapabilities).mockImplementation(async () =>
+			Object.fromEntries(AGENT_IDS.map((id) => [id, getAgentCapabilities(id)]))
+		);
+	});
+
+	it('hides the controls whose evidence is withheld and shows the retained ones', async () => {
+		const { result } = renderHook(() => useAgentCapabilities('grok'));
+		await waitFor(() => expect(result.current.loading).toBe(false));
+		expect(result.current.capabilities).toEqual({
+			...DEFAULT_CAPABILITIES,
+			...AGENT_CAPABILITIES.grok,
+		});
+		// Withheld in the evidence table, so the attach and merge/transfer controls stay hidden.
+		for (const flag of Object.keys(GROK_CAPABILITY_EVIDENCE.withheld)) {
+			expect(result.current.hasCapability(flag as keyof AgentCapabilities), flag).toBe(false);
+		}
+		for (const flag of [
+			'supportsSlashCommands',
+			'supportsGroupChatModeration',
+			'supportsAppendSystemPrompt',
+			'supportsAdditionalDirectories',
+			'supportsProjectMemory',
+		] as const) {
+			expect(result.current.hasCapability(flag), flag).toBe(false);
+		}
+		for (const flag of Object.keys(GROK_CAPABILITY_EVIDENCE.retained)) {
+			expect(result.current.hasCapability(flag as keyof AgentCapabilities), flag).toBe(true);
+		}
+		expect(result.current.hasCapability('supportsModelSelection')).toBe(true);
+	});
+
+	it('shows the memory viewer only for an explicit translated knowledge directory', async () => {
+		const { result } = renderHook(() =>
+			useAgentCapabilities('grok', '/project/.maestro/provider-knowledge/managed')
+		);
+		await waitFor(() => expect(result.current.loading).toBe(false));
+		expect(result.current.hasCapability('supportsProjectMemory')).toBe(true);
+		// The native flag itself is not promoted by a translated directory.
+		expect(result.current.capabilities.supportsProjectMemory).toBe(false);
+		expect(hasCapabilityCached('grok', 'supportsProjectMemory')).toBe(false);
+	});
+
+	it('answers background consumers from the primed production snapshot', async () => {
+		await expect(primeCapabilitiesCache()).resolves.toBe(AGENT_IDS.length);
+		expect(getCachedCapabilities('grok')).toEqual({
+			...DEFAULT_CAPABILITIES,
+			...AGENT_CAPABILITIES.grok,
+		});
+		expect(hasCapabilityCached('grok', 'supportsImageInput')).toBe(false);
+		expect(hasCapabilityCached('grok', 'supportsContextMerge')).toBe(false);
+		expect(hasCapabilityCached('grok', 'supportsWizard')).toBe(true);
+		// A comparator that carries the evidence still advertises it, so the gate is per provider.
+		expect(hasCapabilityCached('claude-code', 'supportsContextMerge')).toBe(true);
+		// Send to Agent lists a target only when it can receive merged context.
+		await expect(agentSupportsContextTransfer('grok')).resolves.toBe(false);
+		await expect(agentSupportsContextTransfer('claude-code')).resolves.toBe(true);
 	});
 });

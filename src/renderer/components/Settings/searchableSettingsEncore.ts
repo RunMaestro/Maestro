@@ -155,7 +155,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Encore Features',
 		label: 'Coworking',
 		description:
-			'Beta - let agents read terminal scrollback on demand. Installs a per-agent MCP server (Claude Code, Codex, OpenCode, Factory Droid) and adds a `term:N` pill to terminal tabs.',
+			'Beta - let agents read terminal scrollback on demand. Installs a per-agent MCP server (Claude Code, Codex, OpenCode, Factory Droid, Grok) and adds a `term:N` pill to terminal tabs.',
 		keywords: [
 			'coworking',
 			'mcp',
@@ -173,6 +173,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 			'codex',
 			'opencode',
 			'factory droid',
+			'grok',
 			'beta',
 			'install',
 			'server',
@@ -239,6 +240,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 			'claude',
 			'codex',
 			'opencode',
+			'grok',
 		],
 	},
 	{
@@ -1276,24 +1278,6 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		label: 'Trusted Vaults',
 		description: 'Vault folders whose DataviewJS scripts run without asking',
 		keywords: ['trusted vaults', 'trust', 'untrust', 'vault roots', 'dataviewjs', 'allow scripts'],
-	},
-	{
-		id: 'encore-federation',
-		tab: 'encore',
-		tabLabel: 'Plugins',
-		label: 'Federation',
-		description:
-			'Reach a maestro-cli host on an SSH remote and drive the agents it runs, so work continues after this machine sleeps',
-		keywords: [
-			'federation',
-			'remote host',
-			'host',
-			'ssh',
-			'peer',
-			'headless',
-			'server',
-			'remote agents',
-		],
 	},
 	{
 		id: 'encore-plugins',

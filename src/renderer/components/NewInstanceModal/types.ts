@@ -1,5 +1,12 @@
 import type React from 'react';
-import type { AdditionalDirectory, AgentConfig, Session, ToolType, Theme } from '../../types';
+import type {
+	AdditionalDirectory,
+	AgentConfig,
+	AITab,
+	Session,
+	ToolType,
+	Theme,
+} from '../../types';
 import { PICKABLE_AGENT_IDS } from '../../../shared/agentMetadata';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
@@ -125,7 +132,9 @@ export interface NewInstanceModalProps {
 		peerGrants?: PeerGrants,
 		/** Group defaults the create form has no control for; stamped onto the new agent. */
 		seedExtras?: GroupDefaultsCreateExtras,
-		harnessControlMode?: HarnessControlMode
+		harnessControlMode?: HarnessControlMode,
+		/** Permission mode for the fresh initial tab; omitted for ordinary new agents. */
+		permissionMode?: AITab['permissionMode']
 	) => void;
 	theme: Theme;
 	existingSessions: Session[];

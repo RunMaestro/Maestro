@@ -116,7 +116,6 @@ function depsWith(
 			if (!hits.length) throw new Error(`SSH remote not found: ${ref}`);
 			return hits[0].id;
 		},
-		isFederationEnabled: () => true,
 		isLocalAgent: () => false,
 		acquireForward: vi.fn(() => lease),
 		createClient: vi.fn(() => client),
@@ -166,37 +165,22 @@ describe('parsePeerTarget', () => {
 
 describe('routeAgentTarget', () => {
 	it('keeps a target without a colon local and reads nothing', () => {
-		const isFederationEnabled = vi.fn(() => true);
 		const isLocalAgent = vi.fn(() => false);
-		expect(routeAgentTarget('a1111111', { isFederationEnabled, isLocalAgent })).toEqual({
-			kind: 'local',
-		});
-		expect(isFederationEnabled).not.toHaveBeenCalled();
+		expect(routeAgentTarget('a1111111', { isLocalAgent })).toEqual({ kind: 'local' });
 		expect(isLocalAgent).not.toHaveBeenCalled();
 	});
 
-	it('keeps every target local while the Encore Feature is off', () => {
-		expect(
-			routeAgentTarget('buildbox:docs', {
-				isFederationEnabled: () => false,
-				isLocalAgent: () => false,
-			})
-		).toEqual({ kind: 'local' });
-	});
-
 	it('keeps a colon target that names a local agent local', () => {
-		expect(
-			routeAgentTarget('Maestro: rc', { isFederationEnabled: () => true, isLocalAgent: () => true })
-		).toEqual({ kind: 'local' });
+		expect(routeAgentTarget('Maestro: rc', { isLocalAgent: () => true })).toEqual({
+			kind: 'local',
+		});
 	});
 
 	it('routes a colon target that is not a local agent to the peer', () => {
-		expect(
-			routeAgentTarget('buildbox:docs', {
-				isFederationEnabled: () => true,
-				isLocalAgent: () => false,
-			})
-		).toEqual({ kind: 'peer', target: { peer: 'buildbox', agent: 'docs' } });
+		expect(routeAgentTarget('buildbox:docs', { isLocalAgent: () => false })).toEqual({
+			kind: 'peer',
+			target: { peer: 'buildbox', agent: 'docs' },
+		});
 	});
 });
 
@@ -217,7 +201,7 @@ describe('peer ids', () => {
 });
 
 describe('listFederationPeers', () => {
-	it('lists opted-in, enabled remotes in stored order with their peer ids, and dials nothing', () => {
+	it('lists every enabled remote that has not opted out, in stored order, and dials nothing', () => {
 		const shared = remoteOf({ id: 'r2-123456', name: 'BUILDBOX' });
 		const remotes = [
 			remoteOf(),
@@ -228,6 +212,7 @@ describe('listFederationPeers', () => {
 		];
 		expect(listFederationPeers({ readRemotes: () => remotes })).toEqual([
 			{ peer: 'r1-abcdef', remote: remotes[0] },
+			{ peer: 'plain', remote: remotes[3] },
 			{ peer: 'r2-123456', remote: shared },
 		]);
 	});
@@ -284,18 +269,11 @@ describe('resolvePeerAgent', () => {
 		expect(deps.acquireForward).not.toHaveBeenCalled();
 	});
 
-	it('refuses a remote that is not opted in to Federation and names the fix', async () => {
-		const deps = depsWith({ remotes: [remoteOf({ federation: undefined })] });
+	it('refuses a remote that opted out of Federation and names the fix', async () => {
+		const deps = depsWith({ remotes: [remoteOf({ federation: false })] });
 		const error = await rejection(resolvePeerAgent('buildbox:docs', deps));
 		expect(error.code).toBe('federation-off');
 		expect(error.message).toContain('maestro-cli update-ssh-remote r1-abcdef --federation on');
-		expect(deps.acquireForward).not.toHaveBeenCalled();
-	});
-
-	it('refuses while the Encore Feature is off', async () => {
-		const deps = depsWith({ isFederationEnabled: () => false });
-		const error = await rejection(connectPeer('buildbox', deps));
-		expect(error.code).toBe('encore-off');
 		expect(deps.acquireForward).not.toHaveBeenCalled();
 	});
 

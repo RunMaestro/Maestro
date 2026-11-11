@@ -39,7 +39,7 @@ export interface AgentSessionsBrowserProps {
 	provider?: ToolType;
 	onResumeSession: (
 		...args: Parameters<UseAgentSessionManagementReturn['handleResumeSession']>
-	) => void;
+	) => boolean | void | Promise<boolean | void>;
 	onNewSession: () => void;
 	onUpdateTab?: (
 		agentSessionId: string,

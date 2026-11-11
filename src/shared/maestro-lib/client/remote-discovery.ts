@@ -114,11 +114,11 @@ const NOT_FOUND = 'none';
 const NO_NODE = 'no-node';
 
 const INSTALL_FIX =
-	'Install Maestro on the remote: Maestro.app on a Mac, or the server bundle on Linux ' +
-	'(docs/maestro-cue-server.md), so `maestro-cli` is on its PATH.';
+	'Install it from this machine: right-click an agent on this remote and choose Make Federated, ' +
+	'or run `maestro-cli remote-host install <ssh-remote> --start`.';
 const NO_NODE_FIX =
 	`The remote has ${MAC_APP_CLI_PATH} but no \`node\` on its PATH to run it. ` +
-	'Install Node.js on the remote, or put `maestro-cli` on its PATH.';
+	"Install Maestro's own copy from this machine with `maestro-cli remote-host install <ssh-remote> --start`, which brings its own Node.js.";
 
 /**
  * A POSIX shell script that finds the remote's `maestro-cli` (PATH first, then the Maestro.app
@@ -319,7 +319,7 @@ function unsupportedVerb(run: RemoteCliRun, verb: string): RemoteDiscoveryError 
  * rejects with a `RemoteDiscoveryError` whose message names the fix and holds no secret.
  *
  * The caller decides whether the remote may be probed at all: Federation only dials a remote whose
- * own `federation` flag is on (decision D8).
+ * own `federation` flag is not off (`isFederationRemote()`), one remote at a time.
  */
 export async function discoverRemoteHost(
 	remote: SshRemoteConfig,
@@ -369,8 +369,17 @@ export async function discoverRemoteHost(
 export type RemoteHostStartResult =
 	/** No usable `maestro-cli` on the remote. */
 	| { installed: false; fix: string }
-	/** A host was started (`alreadyRunning: false`) or was already serving (`true`). */
-	| { installed: true; started: true; alreadyRunning: boolean; pid: number; port: number }
+	/**
+	 * A host was started (`alreadyRunning: false`) or was already serving (`true`). The linger
+	 * warning rides along, so a first install on Linux still learns that logout may stop the host.
+	 */
+	| ({
+			installed: true;
+			started: true;
+			alreadyRunning: boolean;
+			pid: number;
+			port: number;
+	  } & RemoteLingerWarning)
 	/** The remote's desktop app is the host there, so no headless host can start. */
 	| { installed: true; started: false; reason: 'desktop-running'; pid: number };
 
@@ -397,11 +406,12 @@ export async function startRemoteHost(
 	}
 	if (data) {
 		const { started, alreadyRunning, reason, pid, port, error } = data;
+		const linger = readRemoteLingerWarning(run.body);
 		if (started === true && isPort(port) && typeof pid === 'number') {
-			return { installed: true, started: true, alreadyRunning: false, pid, port };
+			return { installed: true, started: true, alreadyRunning: false, pid, port, ...linger };
 		}
 		if (started === false && alreadyRunning === true && isPort(port) && typeof pid === 'number') {
-			return { installed: true, started: true, alreadyRunning: true, pid, port };
+			return { installed: true, started: true, alreadyRunning: true, pid, port, ...linger };
 		}
 		if (started === false && reason === 'desktop-running' && typeof pid === 'number') {
 			return { installed: true, started: false, reason: 'desktop-running', pid };

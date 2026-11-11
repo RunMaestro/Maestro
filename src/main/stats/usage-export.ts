@@ -28,8 +28,10 @@ import type {
 	TokenUsageAggregate,
 	TokenUsageGroup,
 	TokenUsageTimeBucket,
+	TokenUsageTotals,
 } from '../../shared/tokenUsage';
 import type { TokenSpeedGroup, TokenSpeedPoint, TokenSpeedStats } from '../../shared/tokenSpeed';
+import { usageCostUsd } from '../../shared/maestro-lib/streaming/usage-totals';
 
 /** Bump when a field is renamed or removed, so scripts can tell exports apart. */
 export const USAGE_EXPORT_VERSION = 1;
@@ -253,6 +255,7 @@ const CUE_EVENT_COLUMNS: readonly (keyof CueEventRecord)[] = [
 	'errorMessage',
 	'exitCode',
 	'payload',
+	'streamUsageJson',
 ];
 
 const TOKEN_TOTAL_COLUMNS = [
@@ -263,6 +266,7 @@ const TOKEN_TOTAL_COLUMNS = [
 	'costUsd',
 	'costEstimated',
 	'sessionCount',
+	'accounting',
 ] as const;
 
 const TOKEN_GROUP_COLUMNS: readonly (keyof TokenUsageGroup)[] = [
@@ -333,6 +337,22 @@ export function rowsToCsv<T extends object>(
 	return [header, ...lines].join('\n');
 }
 
+/** Keep canonical cost evidence beside its numeric projection, including exact ticks. */
+function tokenUsageRowsToCsv<T extends TokenUsageTotals>(
+	rows: readonly T[],
+	columns: readonly (keyof Omit<T, 'costUsd' | 'costEstimated'> | 'costUsd' | 'costEstimated')[]
+): string {
+	return rowsToCsv(
+		rows.map(({ costUsd, costEstimated, ...row }) => ({
+			...row,
+			// An unavailable cost is an empty cell; measured zero remains numeric zero.
+			costUsd: row.accounting ? usageCostUsd(row.accounting.cost) : costUsd,
+			costEstimated: row.accounting ? row.accounting.cost.status === 'estimated' : costEstimated,
+		})),
+		columns
+	);
+}
+
 export interface UsageExportFile {
 	name: string;
 	content: string;
@@ -374,19 +394,25 @@ export function usageExportToCsvFiles(bundle: UsageExportBundle): UsageExportFil
 	if (bundle.tokenUsage) {
 		const tokens = bundle.tokenUsage;
 		files.push(
-			{ name: 'token-usage-by-agent.csv', content: rowsToCsv(tokens.byAgent, TOKEN_GROUP_COLUMNS) },
-			{ name: 'token-usage-by-model.csv', content: rowsToCsv(tokens.byModel, TOKEN_GROUP_COLUMNS) },
+			{
+				name: 'token-usage-by-agent.csv',
+				content: tokenUsageRowsToCsv(tokens.byAgent, TOKEN_GROUP_COLUMNS),
+			},
+			{
+				name: 'token-usage-by-model.csv',
+				content: tokenUsageRowsToCsv(tokens.byModel, TOKEN_GROUP_COLUMNS),
+			},
 			{
 				name: 'token-usage-by-project.csv',
-				content: rowsToCsv(tokens.byProject, TOKEN_GROUP_COLUMNS),
+				content: tokenUsageRowsToCsv(tokens.byProject, TOKEN_GROUP_COLUMNS),
 			},
 			{
 				name: 'token-usage-by-account.csv',
-				content: rowsToCsv(tokens.byAccount, TOKEN_GROUP_COLUMNS),
+				content: tokenUsageRowsToCsv(tokens.byAccount, TOKEN_GROUP_COLUMNS),
 			},
 			{
 				name: 'token-usage-timeline.csv',
-				content: rowsToCsv(tokens.timeline, TOKEN_TIMELINE_COLUMNS),
+				content: tokenUsageRowsToCsv(tokens.timeline, TOKEN_TIMELINE_COLUMNS),
 			},
 			{
 				name: 'token-speed-by-agent.csv',

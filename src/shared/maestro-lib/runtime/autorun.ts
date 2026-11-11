@@ -81,7 +81,7 @@ import { createPromptLoaderFor } from '../prompts/load';
 import { readHistory } from '../store/read-history';
 import { readSettingsStore } from '../store/read-stores';
 import { toTurnAgent } from '../turns/records';
-import { createHistoryWriter } from '../turns/history';
+import { createHistoryWriter, type HistoryWriter } from '../turns/history';
 import {
 	createStatsRecorder,
 	readStatsCollectionEnabled,
@@ -117,6 +117,8 @@ export interface RuntimeAutoRunOptions {
 	onRunEnded?(agentId: string): void;
 	/** Test seam: the stats writer. Default: the library recorder over the host's SQLite loader. */
 	statsRecorder?: StatsRecorder;
+	/** The runtime's one History writer (it shares each entry with the project). Default: a plain one. */
+	historyWriter?: HistoryWriter;
 }
 
 export interface RuntimeAutoRun {
@@ -211,7 +213,8 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 	const now = options.deps?.now ?? (() => Date.now());
 
 	const documents = createLocalDocuments();
-	const historyWriter = createHistoryWriter({ paths, fence: options.fence });
+	const historyWriter =
+		options.historyWriter ?? createHistoryWriter({ paths, fence: options.fence });
 	const statsRecorder =
 		options.statsRecorder ??
 		createStatsRecorder({

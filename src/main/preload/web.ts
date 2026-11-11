@@ -41,6 +41,8 @@ export interface AutoRunState {
 	goalProgress?: number;
 	goalRationale?: string;
 	goalIteration?: number;
+	// Delegated work the run is waiting on (both modes)
+	pendingDelegations?: import('../../shared/autoRunDelegation').AutoRunPendingDelegation[];
 }
 
 /**

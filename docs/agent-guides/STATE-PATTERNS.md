@@ -672,6 +672,44 @@ Each AI tab within a session:
 
 **Model/effort resolution chain** (used at user-facing spawn time in `useInputProcessing` and `agentStore.processQueuedItem`): `tab.customModel ?? session.customModel ?? agentConfig.model`. The MainPanel model/effort pill writes to the active tab via `tabStore.setTabModel`/`setTabEffort` - only the Edit Agent modal mutates `session.customModel`/`customEffort`. Programmatic spawns (Auto Run batch, synopsis, Cue, group chat, fork/merge) intentionally read the session value only.
 
+### Model and Effort Discovery State
+
+Persisted selections and discovery menus have different lifetimes. Reuse
+`useAgentModelEffortOptions` and `resolveModelEffort` for live tab displays;
+empty strings inherit the next default in that resolver. Grok discovery uses an
+optional memoized `AgentDiscoveryRequest['context']`, separate from the saved
+model/effort. MainPanel and ModelEffortModal supply the selected agent's actual
+cwd, custom executable, raw optional environment, both SSH identifiers and
+tab/draft overrides. ModelEffortModal binds draft picks to the agent/tab target.
+The host resolves provider/global settings and account ownership.
+
+The queued-message editor instead uses captured `item.turnSettings` when
+present. A captured undefined value means provider default; it must not pick up
+a later live tab/session override. Only older items without captured settings
+fall back to `codifyTurnSettings`. Auto Run keeps run overrides separate and
+uses the selected open worktree's context; new/closed/unresolved worktree targets
+withhold Grok discovery until their identity is known.
+
+Memoize context across unchanged renders and replace it when the selected
+owner, cwd, executable, environment, host or model/effort changes. Preserve
+absent environment overrides, explicit empty replacements and blank unsets.
+The shared hooks debounce Grok requests by 300 ms but immediately hide stale
+menus (and, in the options hook, defaults), then ignore late responses for the
+old context. A settled `loaded` flag or a nonempty fallback list is not catalog
+validation. Consume the shared `discovered`, `configured-fallback` and
+`unavailable` statuses; preserve manual Grok selections instead of clearing or
+rewriting them because a lookup failed or omitted them. Other providers retain
+their existing discovery/control paths.
+
+Current limits: local Group Chat and Director Notes lack a selected discovery
+workspace and retain manual entry; no home cwd is inferred. The Group Chat
+editor preserves explicit empty environments, but the canonical launch resolver
+still collapses them to undefined, so end-to-end account exclusion is not yet
+qualified. Native Grok catalog/effort metadata, remote (SSH) discovery and
+consumer behavioral checks remain unqualified. See the
+[shared hook contract](SHARED-UTILS.md#model--effort-options-renderer). The typed
+request/status wiring alone does not prove these outcomes.
+
 ## Auto-Resume On Limit
 
 When an agent pauses on a provider limit (a rate / token / credit limit - `isLimitError(err)` in `src/shared/types.ts`, true for `rate_limited` and `token_exhaustion`), Maestro can auto-resume it once the window reopens. The coordinator is a renderer singleton, `useAutoResumeCoordinator` (`src/renderer/hooks/agent/useAutoResumeCoordinator.ts`), mounted once in `App.tsx` beside the other agent listeners.

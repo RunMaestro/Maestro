@@ -1,28 +1,10 @@
 import type { ReactNode } from 'react';
-import { useSettings } from '../../../../hooks';
 import type { EncoreFeatureFlags } from '../../../../types';
 import { ExtensionsView } from '../../Extensions/ExtensionsView';
-import { CoworkingSetup } from '../../CoworkingSetup';
 import { ACappellaSettingsBody } from '../../ACappella';
-import {
-	ComputerHistorySection,
-	MaestroRunSection,
-	PianolaSection,
-	CueSettingsSection,
-	DataviewSection,
-	DirectorNotesSection,
-	QuickChatSection,
-	SymphonyRegistrySection,
-	ThroughputGaugeSection,
-	UsageStatsSection,
-} from './components';
-import {
-	useCueSettingsState,
-	useDirectorNotesAgentState,
-	useSymphonyRegistryState,
-	useWakatimeSettingsState,
-} from './hooks';
-import type { EncoreTabProps, StatsTimeRange } from './types';
+import { useSettingsStore } from '../../../../stores/settingsStore';
+import { ENCORE_SECTIONS } from './sections';
+import type { EncoreTabProps } from './types';
 
 export type { EncoreTabProps } from './types';
 
@@ -30,96 +12,20 @@ export type { EncoreTabProps } from './types';
  * The Plugins tab. The Extensions marketplace IS the tab - every built-in
  * feature and community plugin is a managed tile. Per-feature configuration
  * lives INSIDE each tile's detail pane (a Settings sub-tab), not in a separate
- * list. This component owns the config-section state hooks and hands the
- * marketplace a `settingsBodies` map keyed by Encore flag; ExtensionDetails
- * renders the matching body in its Settings sub-tab.
+ * list. This component hands the marketplace a `settingsBodies` map keyed by
+ * Encore flag; ExtensionDetails renders the matching body in its Settings
+ * sub-tab. Each body owns its own state (see sections.tsx).
  */
 export function EncoreTab({ theme, isOpen, tileRequest }: EncoreTabProps) {
-	const settings = useSettings();
-
-	const wakatimeState = useWakatimeSettingsState({
-		isOpen,
-		wakatimeEnabled: settings.wakatimeEnabled,
-		wakatimeApiKey: settings.wakatimeApiKey,
-		setWakatimeApiKey: settings.setWakatimeApiKey,
-	});
-	const symphonyRegistryState = useSymphonyRegistryState({
-		symphonyRegistryUrls: settings.symphonyRegistryUrls,
-		setSymphonyRegistryUrls: settings.setSymphonyRegistryUrls,
-	});
-	const cueState = useCueSettingsState({
-		isOpen,
-		maestroCueEnabled: settings.encoreFeatures.maestroCue,
-	});
-	const directorNotesAgentState = useDirectorNotesAgentState({
-		isOpen,
-		directorNotesEnabled: settings.encoreFeatures.directorNotes,
-		directorNotesSettings: settings.directorNotesSettings,
-		setDirectorNotesSettings: settings.setDirectorNotesSettings,
-	});
-
-	// Config bodies for the detail pane's Settings sub-tab, keyed by Encore
-	// flag. Features absent from this map have no inline config -
-	// the detail pane falls back to their own affordance (Open Pianola).
-	const settingsBodies: Partial<Record<keyof EncoreFeatureFlags, ReactNode>> = {
-		pianola: <PianolaSection theme={theme} />,
-		usageStats: (
-			<UsageStatsSection
-				theme={theme}
-				defaultStatsTimeRange={settings.defaultStatsTimeRange as StatsTimeRange}
-				setDefaultStatsTimeRange={settings.setDefaultStatsTimeRange}
-				wakatimeEnabled={settings.wakatimeEnabled}
-				setWakatimeEnabled={settings.setWakatimeEnabled}
-				wakatimeApiKey={settings.wakatimeApiKey}
-				wakatimeDetailedTracking={settings.wakatimeDetailedTracking}
-				setWakatimeDetailedTracking={settings.setWakatimeDetailedTracking}
-				wakatimeState={wakatimeState}
-			/>
-		),
-		symphony: (
-			<SymphonyRegistrySection
-				theme={theme}
-				symphonyRegistryUrls={settings.symphonyRegistryUrls}
-				registryState={symphonyRegistryState}
-			/>
-		),
-		maestroCue: <CueSettingsSection theme={theme} cueState={cueState} />,
-		directorNotes: (
-			<DirectorNotesSection
-				theme={theme}
-				directorNotesSettings={settings.directorNotesSettings}
-				setDirectorNotesSettings={settings.setDirectorNotesSettings}
-				directorNotesAgentState={directorNotesAgentState}
-			/>
-		),
-		coworking: (
-			<div data-setting-id="encore-coworking">
-				<CoworkingSetup theme={theme} />
-			</div>
-		),
-		// Rendered whether or not the flag is on: the Models page's reclaim-disk
-		// offer exists precisely for the moment after A Cappella is switched off.
-		aCappella: (
-			<ACappellaSettingsBody theme={theme} enabled={settings.encoreFeatures.aCappella === true} />
-		),
-		computerHistory: <ComputerHistorySection theme={theme} />,
-		maestroRun: <MaestroRunSection theme={theme} />,
-		quickChat: (
-			<QuickChatSection
-				theme={theme}
-				quickChatSettings={settings.quickChatSettings}
-				setQuickChatSettings={settings.setQuickChatSettings}
-			/>
-		),
-		throughputGauge: (
-			<ThroughputGaugeSection
-				theme={theme}
-				throughputGaugeSettings={settings.throughputGaugeSettings}
-				setThroughputGaugeSettings={settings.setThroughputGaugeSettings}
-			/>
-		),
-		dataview: <DataviewSection theme={theme} />,
-	};
+	const settingsBodies: Partial<Record<keyof EncoreFeatureFlags, ReactNode>> = {};
+	for (const { flag, Component } of ENCORE_SECTIONS) {
+		settingsBodies[flag] = <Component theme={theme} isOpen={isOpen} />;
+	}
+	// Rendered whether or not the flag is on: the Models page's reclaim-disk
+	// offer exists precisely for the moment after A Cappella is switched off, so
+	// it is not an ENCORE_SECTIONS entry (those count only while their flag is on).
+	const aCappellaEnabled = useSettingsStore((s) => s.encoreFeatures.aCappella === true);
+	settingsBodies.aCappella = <ACappellaSettingsBody theme={theme} enabled={aCappellaEnabled} />;
 
 	return (
 		<div className="space-y-5">

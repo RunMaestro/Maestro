@@ -387,6 +387,8 @@ describe('ModelEffortPills', () => {
 			const input = screen.getByLabelText('Use a model ID that is not listed');
 			fireEvent.change(input, { target: { value: UNLISTED } });
 			fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+			// Safari reports the confirming Enter after compositionend, with keyCode 229.
+			fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
 
 			expect(onModelChange).not.toHaveBeenCalled();
 			expect(setModelMenuOpen).not.toHaveBeenCalled();

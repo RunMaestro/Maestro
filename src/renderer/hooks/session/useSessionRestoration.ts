@@ -38,6 +38,7 @@ import {
 	resolveActiveTabRef,
 } from '../../utils/panelLayout';
 import { migrateLegacySnoozedTabs } from '../../utils/snoozeHelpers';
+import { unloadedFileTreeState } from '../../utils/fileExplorer';
 import { isMediaStreamUrl } from '../../../shared/mediaTypes';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
@@ -604,6 +605,11 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// An untagged entry falls through every per-kind switch, and the wake
 			// path would clear the snooze without restoring the tab.
 			session = migrateLegacySnoozedTabs(session);
+
+			// No tree is restored, so no scan state may be either. Older builds
+			// persisted `fileTreeLoadedCap`, which made the auto-loader skip the
+			// empty tree and left the Files panel blank until a manual refresh.
+			session = { ...session, ...unloadedFileTreeState() };
 
 			// Migration: ensure projectRoot is set (for sessions created before this field was added)
 			if (!session.projectRoot) {

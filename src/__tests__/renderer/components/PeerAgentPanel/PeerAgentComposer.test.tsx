@@ -2,8 +2,8 @@
  * Tests for PeerAgentComposer, the composer of a mirrored Federation agent (FED-SSH-06).
  *
  * The real `services/peerMirror` runs against a stand-in `window.maestro.federation`, so each case
- * checks the action that reaches the main-process service: a send, a Stop, nothing at all for a
- * slash command or an image. A refused send (the peer is down) is one call, a red toast, and the
+ * checks the action that reaches the main-process service: a send, a Stop (from the shared Thinking
+ * pill, fed by the mirror store), nothing at all for a slash command or an image. A refused send (the peer is down) is one call, a red toast, and the
  * draft kept: never queued, never retried. Nothing here may touch `sessionStore`.
  */
 
@@ -22,6 +22,11 @@ import { mirrorDraftKey, usePeerMirrorStore } from '../../../../renderer/stores/
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { MIRROR_COMPOSER_UNAVAILABLE } from '../../../../renderer/utils/peerMirrorView';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+	setPeerConnection,
+} from '../../../../shared/maestro-lib/client/peer-mirror';
 import type { AITabRecord } from '../../../../shared/maestro-lib/store/records';
 import { resetStores } from '../../../helpers';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -45,6 +50,20 @@ function renderComposer(tab: AITabRecord = { id: 't1', name: 'First' }) {
 const textbox = () => screen.getByLabelText('Message Builder on Build Box') as HTMLTextAreaElement;
 const draft = () => usePeerMirrorStore.getState().drafts[mirrorDraftKey('build', 'a1', 't1')];
 const flush = () => act(async () => undefined);
+
+/** The host's copy of the agent in the mirror store, connected, so the Thinking pill reads it. */
+function hydrateHost(tab: AITabRecord) {
+	const peer = setPeerConnection(
+		replacePeerAgents(
+			createMirroredPeer({ peerId: 'build', remoteId: 'r-build', name: 'Build Box' }),
+			[{ id: 'a1', name: 'Builder', toolType: 'claude-code', aiTabs: [tab] }],
+			[],
+			1
+		).peer,
+		'connected'
+	).peer;
+	usePeerMirrorStore.getState().hydrate([peer]);
+}
 
 describe('PeerAgentComposer', () => {
 	beforeEach(() => {
@@ -120,6 +139,82 @@ describe('PeerAgentComposer', () => {
 		});
 	});
 
+	it('leaves Enter to the input method during a composition, under either Enter-to-send setting', async () => {
+		for (const enterToSend of [true, false]) {
+			const { unmount } = renderComposer({ id: 't1', enterToSend });
+			fireEvent.change(textbox(), { target: { value: 'composing' } });
+			for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+				expect(fireEvent.keyDown(textbox(), { key: 'Enter', ...ime })).toBe(true);
+				expect(fireEvent.keyDown(textbox(), { key: 'Enter', metaKey: true, ...ime })).toBe(true);
+				expect(fireEvent.keyDown(textbox(), { key: 'Enter', ctrlKey: true, ...ime })).toBe(true);
+				expect(fireEvent.keyDown(textbox(), { key: 'Enter', shiftKey: true, ...ime })).toBe(true);
+			}
+			await flush();
+			expect(act$).not.toHaveBeenCalled();
+			expect(draft()).toBe('composing');
+			unmount();
+		}
+	});
+
+	it('keeps a composing Cmd/Ctrl+Enter at the composer without preventing default', async () => {
+		const onWindowKeyDown = vi.fn();
+		window.addEventListener('keydown', onWindowKeyDown);
+		try {
+			for (const enterToSend of [true, false]) {
+				const { unmount } = renderComposer({ id: 't1', enterToSend });
+				fireEvent.change(textbox(), { target: { value: 'composing' } });
+				for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+					for (const modifier of [{ metaKey: true }, { ctrlKey: true }]) {
+						onWindowKeyDown.mockClear();
+						const label = JSON.stringify({ enterToSend, ime, modifier });
+						const handled = fireEvent.keyDown(textbox(), {
+							key: 'Enter',
+							...modifier,
+							...ime,
+						});
+						expect(handled, label).toBe(true);
+						expect(onWindowKeyDown, label).not.toHaveBeenCalled();
+					}
+				}
+				await flush();
+				expect(act$).not.toHaveBeenCalled();
+				expect(draft()).toBe('composing');
+				unmount();
+			}
+		} finally {
+			window.removeEventListener('keydown', onWindowKeyDown);
+		}
+	});
+
+	it('keeps normal, shift and modified Enter behavior under both Enter-to-send settings', async () => {
+		const cases = [
+			{ enterToSend: true, keys: { key: 'Enter' }, sends: true, prevented: true },
+			{ enterToSend: true, keys: { key: 'Enter', shiftKey: true }, sends: false, prevented: false },
+			{ enterToSend: true, keys: { key: 'Enter', metaKey: true }, sends: true, prevented: true },
+			{ enterToSend: true, keys: { key: 'Enter', ctrlKey: true }, sends: true, prevented: true },
+			{ enterToSend: false, keys: { key: 'Enter' }, sends: false, prevented: false },
+			{
+				enterToSend: false,
+				keys: { key: 'Enter', shiftKey: true },
+				sends: false,
+				prevented: false,
+			},
+			{ enterToSend: false, keys: { key: 'Enter', metaKey: true }, sends: true, prevented: true },
+			{ enterToSend: false, keys: { key: 'Enter', ctrlKey: true }, sends: true, prevented: true },
+		];
+		for (const testCase of cases) {
+			act$.mockClear();
+			const { unmount } = renderComposer({ id: 't1', enterToSend: testCase.enterToSend });
+			fireEvent.change(textbox(), { target: { value: 'hello' } });
+			const handled = fireEvent.keyDown(textbox(), testCase.keys);
+			await flush();
+			const label = JSON.stringify(testCase);
+			expect(act$, label).toHaveBeenCalledTimes(testCase.sends ? 1 : 0);
+			expect(handled, label).toBe(!testCase.prevented);
+			unmount();
+		}
+	});
+
 	it('refuses a slash command before anything reaches the host', async () => {
 		renderComposer();
 		fireEvent.change(textbox(), { target: { value: '/compact now' } });
@@ -170,19 +265,28 @@ describe('PeerAgentComposer', () => {
 		expect(act$).not.toHaveBeenCalled();
 	});
 
-	it('shows Stop while the tab works, stops that tab on the host, and queues a send there', async () => {
+	it('shows the Thinking pill while the tab works, stops that tab on the host, and queues a send there', async () => {
 		act$.mockResolvedValue({
 			ok: true,
 			result: { kind: 'interrupt', targetTabIds: ['t1'], stoppedTabIds: ['t1'] },
 		});
-		renderComposer({ id: 't1', state: 'busy' });
-		expect(screen.getByText('Working on Build Box')).toBeInTheDocument();
-		fireEvent.click(screen.getByTitle('Stop this turn on Build Box'));
+		const busyTab: AITabRecord = { id: 't1', state: 'busy', thinkingStartTime: Date.now() };
+		hydrateHost(busyTab);
+		renderComposer(busyTab);
+		expect(screen.getByText('Builder on Build Box')).toBeInTheDocument();
+		fireEvent.click(screen.getByTitle('Stop this turn (Ctrl+C)'));
 		await flush();
 		expect(act$).toHaveBeenCalledWith('build', 'a1', { kind: 'interrupt', tabId: 't1' });
 		expect(
 			screen.getByTitle('Queue on Build Box: the agent is busy, so the host runs it next')
 		).toBeInTheDocument();
+	});
+
+	it('draws no Thinking pill and no Stop while nothing runs', () => {
+		hydrateHost({ id: 't1', name: 'First' });
+		renderComposer();
+		expect(screen.queryByText('Builder on Build Box')).not.toBeInTheDocument();
+		expect(screen.queryByTitle('Stop this turn (Ctrl+C)')).not.toBeInTheDocument();
 	});
 
 	it('disables Send while the draft is empty', () => {

@@ -46,6 +46,51 @@ export function serializedJsonByteLength(value: unknown): number | null {
 }
 
 /**
+ * Quote number tokens for a named property at any depth before JSON.parse can
+ * round them. This is lexical preservation, not numeric validation: negative,
+ * fractional and exponent forms stay verbatim strings for callers to validate.
+ * Other fields and quoted content remain untouched, including escaped keys.
+ * The caller must still JSON.parse the result to validate the whole document;
+ * only complete, valid JSON number tokens are quoted. Invalid key escapes may
+ * throw here, so keep this call inside the parser's existing error boundary.
+ */
+export function preserveJsonNumberTokens(line: string, propertyName: string): string {
+	const quotedKey = JSON.stringify(propertyName);
+	const number = /-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/y;
+	const pieces: string[] = [];
+	let copiedThrough = 0;
+	for (let index = 0; index < line.length; index++) {
+		if (line[index] !== '"') continue;
+		const start = index++;
+		// Consume whole strings, including escaped quotes, before looking for keys.
+		while (index < line.length && line[index] !== '"') {
+			if (line[index] === '\\') index++;
+			index++;
+		}
+		if (index >= line.length) break;
+		let cursor = index + 1;
+		while (cursor < line.length && /[\t\r\n ]/.test(line[cursor])) cursor++;
+		if (line[cursor] !== ':') continue;
+		const key = line.slice(start, index + 1);
+		if (key !== quotedKey && (!key.includes('\\') || JSON.parse(key) !== propertyName)) continue;
+		cursor++;
+		while (cursor < line.length && /[\t\r\n ]/.test(line[cursor])) cursor++;
+		number.lastIndex = cursor;
+		const match = number.exec(line);
+		if (!match) continue;
+		const end = number.lastIndex;
+		// Never turn invalid syntax such as 01, 1., or 1e+ into a valid string.
+		if (end < line.length && !/[\t\r\n ,}\]]/.test(line[end])) continue;
+		pieces.push(line.slice(copiedThrough, cursor), '"', match[0], '"');
+		copiedThrough = end;
+		index = end - 1;
+	}
+	if (!pieces.length) return line;
+	pieces.push(line.slice(copiedThrough));
+	return pieces.join('');
+}
+
+/**
  * Largest serialized payload we still round-trip through `JSON.parse` as a
  * final integrity check before writing it over a good file.
  *

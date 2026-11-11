@@ -607,6 +607,85 @@ describe('cue-scheduled-tasks', () => {
 			expect(await cancelScheduledTask(projectRoot, 'ghost')).toMatchObject({ removed: false });
 		});
 	});
+
+	describe('tasks delivered into an existing tab (tabId)', () => {
+		const tabInput = {
+			agentId: 'agent-alpha',
+			kind: 'once' as const,
+			fireAt: '2030-01-01T15:00:00.000Z',
+			prompt: 'find more candidates',
+			name: 'follow-up',
+			tabId: 'tab-123',
+		};
+
+		it('writes one cli dispatch into the tab, holding the prompt once', () => {
+			createScheduledTask(agent, tabInput);
+
+			const [sub] = readSubs(projectRoot);
+			expect(sub).toMatchObject({
+				name: 'follow-up',
+				event: 'time.once',
+				action: 'command',
+				command: {
+					mode: 'cli',
+					cli: {
+						command: 'send',
+						target: 'agent-alpha',
+						tab: 'tab-123',
+						message: 'find more candidates',
+					},
+				},
+			});
+			expect(sub.prompt).toBeUndefined();
+		});
+
+		it('lists the task with its tab and the dispatched message as the prompt', () => {
+			createScheduledTask(agent, tabInput);
+
+			const { tasks, warnings } = collectScheduledTasks([agent]);
+			expect(warnings).toEqual([]);
+			expect(tasks[0]).toMatchObject({
+				action: 'command',
+				tabId: 'tab-123',
+				prompt: 'find more candidates',
+			});
+		});
+
+		it('edits the dispatched message, not a second prompt copy', async () => {
+			createScheduledTask(agent, tabInput);
+
+			const result = await updateScheduledTask(projectRoot, 'follow-up', { prompt: 'try again' });
+
+			expect(result.updated).toBe(true);
+			const [sub] = readSubs(projectRoot);
+			expect((sub.command as { cli: { message: string } }).cli.message).toBe('try again');
+			expect(sub.prompt).toBeUndefined();
+		});
+
+		it('keeps the notify half a plain notify when both are asked for', () => {
+			const subs = buildScheduledTaskSubscriptions(agent, {
+				...tabInput,
+				notify: { message: 'fired' },
+			});
+			expect(subs.map((sub) => sub.action)).toEqual(['command', 'notify']);
+		});
+
+		it('refuses a model choice, since the tab runs on its own model', () => {
+			expect(() => buildScheduledTaskSubscriptions(agent, { ...tabInput, tier: 'low' })).toThrow(
+				/tab's model/
+			);
+		});
+
+		it('refuses a tab with nothing to deliver', () => {
+			expect(() =>
+				buildScheduledTaskSubscriptions(agent, {
+					...tabInput,
+					prompt: undefined,
+					notify: { message: 'ping' },
+				})
+			).toThrow(/needs a prompt to deliver/);
+		});
+	});
 });
 
 describe('mergeSubscriptionsIntoCueYaml', () => {

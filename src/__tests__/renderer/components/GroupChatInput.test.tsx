@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useVoiceSessionStore } from '../../../renderer/stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../../renderer/stores/voiceUiStore';
@@ -1422,7 +1422,7 @@ describe('GroupChatInput', () => {
 			);
 			const input = container.querySelector('#group-chat-image-input') as HTMLInputElement;
 			const huge = new File(['x'], 'huge.png', { type: 'image/png' });
-			Object.defineProperty(huge, 'size', { value: 11 * 1024 * 1024 });
+			Object.defineProperty(huge, 'size', { value: 51 * 1024 * 1024 });
 
 			fireEvent.change(input, {
 				target: { files: [new File(['x'], 'doc.svg', { type: 'image/svg+xml' }), huge] },
@@ -1431,8 +1431,26 @@ describe('GroupChatInput', () => {
 			expect(showFlashNotification).toHaveBeenCalledWith(
 				'Unsupported image type (PNG, JPEG, GIF or WebP)'
 			);
-			expect(showFlashNotification).toHaveBeenCalledWith('Image too large (max 10MB)');
+			expect(showFlashNotification).toHaveBeenCalledWith('Image too large (max 50MB)');
 			expect(setStagedImages).not.toHaveBeenCalled();
+		});
+
+		it('accepts a 25 MB screenshot', async () => {
+			const showFlashNotification = vi.fn();
+			const setStagedImages = vi.fn();
+			const { container } = render(
+				<GroupChatInput
+					{...createDefaultProps({ showFlashNotification, stagedImages: [], setStagedImages })}
+				/>
+			);
+			const input = container.querySelector('#group-chat-image-input') as HTMLInputElement;
+			const shot = new File(['x'], 'shot.png', { type: 'image/png' });
+			Object.defineProperty(shot, 'size', { value: 25 * 1024 * 1024 });
+
+			fireEvent.change(input, { target: { files: [shot] } });
+
+			await waitFor(() => expect(setStagedImages).toHaveBeenCalled());
+			expect(showFlashNotification).not.toHaveBeenCalled();
 		});
 	});
 

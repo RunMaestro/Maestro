@@ -15,6 +15,8 @@ import {
 	collectTranslationResources,
 } from '../../../shared/maestro-lib/translation/resources';
 import { resolveClaudeMemoryPath } from '../../../shared/maestro-lib/translation/memory';
+import { planResourceProjections } from '../../../shared/maestro-lib/translation/resource-projections';
+import { canonicalJson } from '../../../shared/canonicalJson';
 
 describe('project resource translation', () => {
 	it.each([
@@ -346,5 +348,178 @@ describe('project resource translation', () => {
 		expect(projectResourceDefinition(artifact, 'claude-code').limitations[0].code).toBe(
 			'missing-subagent-instructions'
 		);
+	});
+	// #2018: a dated skill in ~/.agents/skills made every provider switch fail.
+	it('keeps YAML frontmatter dates as text so the plan can be fingerprinted', () => {
+		const artifact = translationArtifact(
+			'skill',
+			'/home/.agents/skills/dated/SKILL.md',
+			'skills/dated/SKILL.md',
+			Buffer.from(
+				'---\nname: dated\ndescription: d\nlast_updated: 2025-11-03\nscore: .nan\n---\nbody\n'
+			)
+		);
+		const { metadata } = projectResourceDefinition(artifact, 'codex');
+		expect(metadata.last_updated).toBe('2025-11-03');
+		expect(metadata.score).toBeNull();
+		expect(() => canonicalJson(metadata)).not.toThrow();
+	});
+	it('writes TOML datetimes as text so the plan can be fingerprinted', () => {
+		const artifact = translationArtifact(
+			'subagent',
+			'/source/reviewer.toml',
+			'agents/reviewer.toml',
+			Buffer.from('name = "reviewer"\ndeveloper_instructions = "Review."\ncreated = 2025-11-03\n')
+		);
+		const { metadata } = projectResourceDefinition(artifact, 'claude-code');
+		expect(metadata.created).toBe('2025-11-03');
+		expect(() => canonicalJson(metadata)).not.toThrow();
+	});
+});
+
+// Sanitized Grok project fixtures: temp folders, synthetic text only.
+describe('Grok project resource translation', () => {
+	const grokVersion = '1.0.70';
+	it('collects Grok skills, reports unpinned rules and agents, and keeps account files out', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-grok-resources-'));
+		try {
+			const projectRoot = path.join(root, 'project');
+			const accountRoot = path.join(root, 'grok-home');
+			await fs.mkdir(path.join(projectRoot, '.grok/skills/lint'), { recursive: true });
+			await fs.mkdir(path.join(projectRoot, '.grok/rules/nested'), { recursive: true });
+			await fs.mkdir(path.join(projectRoot, '.grok/agents'), { recursive: true });
+			await fs.mkdir(path.join(accountRoot, 'agents'), { recursive: true });
+			await fs.writeFile(path.join(projectRoot, 'AGENTS.md'), 'Project rules');
+			await fs.writeFile(
+				path.join(projectRoot, '.grok/skills/lint/SKILL.md'),
+				'---\nname: lint\ndescription: Lint it\n---\nRun the linter.'
+			);
+			await fs.writeFile(path.join(projectRoot, '.grok/rules/a.md'), 'SYNTHETIC-RULE-A');
+			await fs.writeFile(path.join(projectRoot, '.grok/rules/nested/b.md'), 'SYNTHETIC-RULE-B');
+			await fs.writeFile(path.join(projectRoot, '.grok/agents/helper.md'), 'SYNTHETIC-AGENT');
+			await fs.writeFile(path.join(accountRoot, 'auth.json'), 'SYNTHETIC-CREDENTIAL');
+			await fs.writeFile(path.join(accountRoot, 'config.toml'), 'SYNTHETIC-CONFIG');
+			await fs.writeFile(path.join(accountRoot, 'agents/mine.md'), 'SYNTHETIC-USER-AGENT');
+			const resources = await collectTranslationResources(
+				{ provider: 'grok', version: grokVersion, accountRoot, projectRoot },
+				{
+					projectKnowledge: true,
+					selectedUserResources: [
+						path.join(accountRoot, 'auth.json'),
+						path.join(accountRoot, 'config.toml'),
+						path.join(accountRoot, 'agents/mine.md'),
+					],
+				}
+			);
+			expect(resources.artifacts.map((a) => a.relativePath).sort()).toEqual([
+				'.grok/skills/lint/SKILL.md',
+				'AGENTS.md',
+			]);
+			const byCode = (code: string) => resources.limitations.filter((l) => l.code === code);
+			expect(byCode('unsafe-resource-scope')).toHaveLength(2);
+			expect(byCode('unsafe-resource-scope').every((l) => l.severity === 'block')).toBe(true);
+			expect(byCode('grok-rules-unsupported')).toEqual([
+				expect.objectContaining({
+					severity: 'warning',
+					message: expect.stringContaining('2 rule'),
+				}),
+			]);
+			expect(
+				byCode('subagent-discovery-unpinned')
+					.map((l) => l.severity)
+					.sort()
+			).toEqual(['block', 'warning']);
+			const serialized = JSON.stringify(resources);
+			for (const secret of [
+				'SYNTHETIC-CREDENTIAL',
+				'SYNTHETIC-CONFIG',
+				'SYNTHETIC-RULE-A',
+				'SYNTHETIC-RULE-B',
+				'SYNTHETIC-AGENT',
+				'SYNTHETIC-USER-AGENT',
+			]) {
+				expect(serialized).not.toContain(secret);
+				expect(serialized).not.toContain(Buffer.from(secret).toString('base64'));
+			}
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it('plans Grok destination resources without aliases, enforcement claims or subagents', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-grok-projection-'));
+		try {
+			const projectRoot = path.join(root, 'project');
+			await fs.mkdir(projectRoot);
+			const destination = {
+				provider: 'grok' as const,
+				version: grokVersion,
+				accountRoot: path.join(root, 'grok-home'),
+				projectRoot,
+			};
+			const artifact = (
+				kind: Parameters<typeof translationArtifact>[0],
+				relativePath: string,
+				text: string,
+				scope: Parameters<typeof translationArtifact>[4] = 'project'
+			) =>
+				translationArtifact(
+					kind,
+					`/source/${relativePath}`,
+					relativePath,
+					Buffer.from(text),
+					scope
+				);
+			const resources = [
+				artifact('instruction', 'CLAUDE.md', 'Shared rules'),
+				artifact(
+					'skill',
+					'.claude/skills/lint/SKILL.md',
+					'---\nname: lint\ndescription: L\n---\nLint.'
+				),
+				artifact('skill', '.claude/skills/lint/run.sh', 'echo lint'),
+				artifact(
+					'skill',
+					'.claude/skills/guarded/SKILL.md',
+					'---\nname: guarded\nallowed-tools: Bash\n---\nRestricted.'
+				),
+				artifact('skill', '.claude/skills/guarded/asset.txt', 'SYNTHETIC-GUARDED-ASSET'),
+				artifact('subagent', '.claude/agents/reviewer.md', '---\nname: reviewer\n---\nReview.'),
+				artifact(
+					'subagent',
+					'selected-user/agents/mine.md',
+					'---\nname: mine\n---\nMine.',
+					'selected-user'
+				),
+			];
+			const { projections, limitations } = await planResourceProjections(resources, destination);
+			expect(
+				projections.map((p) => path.relative(projectRoot, p.path).replace(/\\/g, '/')).sort()
+			).toEqual(['.agents/skills/lint/SKILL.md', '.agents/skills/lint/run.sh', 'CLAUDE.md']);
+			expect(projections.every((p) => !p.symlinkTarget)).toBe(true);
+			expect(JSON.stringify(projections)).not.toContain(
+				Buffer.from('SYNTHETIC-GUARDED-ASSET').toString('base64')
+			);
+			expect(
+				limitations
+					.filter((l) => l.code === 'subagent-discovery-unpinned')
+					.map((l) => l.severity)
+					.sort()
+			).toEqual(['block', 'warning']);
+			expect(limitations).toContainEqual(
+				expect.objectContaining({ code: 'grok-resource-discovery-unverified', severity: 'warning' })
+			);
+			// Planning writes nothing.
+			expect(await fs.readdir(projectRoot)).toEqual([]);
+
+			// An `.agents` link out of the project is refused before any write is planned.
+			const outside = path.join(root, 'outside');
+			await fs.mkdir(outside);
+			await fs.symlink(outside, path.join(projectRoot, '.agents'), 'dir');
+			await expect(planResourceProjections(resources, destination)).rejects.toThrow('symlink');
+			expect(await fs.readdir(outside)).toEqual([]);
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
 	});
 });

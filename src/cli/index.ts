@@ -62,6 +62,7 @@ import {
 	groupChatStatus,
 	groupChatStop,
 	groupChatArchive,
+	groupChatAdd,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -91,9 +92,14 @@ import {
 } from './commands/cue-engine';
 import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './commands/bundle';
 import { hostEndpoint, hostStart, hostStatus, hostStop } from './commands/host';
-import { remoteHostStart, remoteHostStatus } from './commands/remote-host';
+import { remoteHostInstall, remoteHostStart, remoteHostStatus } from './commands/remote-host';
 import { lift } from './commands/lift';
-import { federationPeers, federationReconnect } from './commands/federation';
+import {
+	federationAuto,
+	federationAutoRun,
+	federationPeers,
+	federationReconnect,
+} from './commands/federation';
 import { createAgent } from './commands/create-agent';
 import { duplicateAgent } from './commands/duplicate-agent';
 import { liveStatus, liveOn, liveOff, liveTunnel } from './commands/live';
@@ -528,18 +534,10 @@ list
 	.command('agents')
 	.description('List all agents')
 	.option('-g, --group <id>', 'Filter by group ID')
-	// Federation's peer flags: left out of --help while the feature is off, refused if passed.
-	.addOption(
-		new Option(
-			'--peer <name>',
-			"List the agents on one Federation peer (an SSH remote's name)"
-		).hideHelp(!encoreFlags.federation)
-	)
-	.addOption(
-		new Option(
-			'--all-peers',
-			'List local agents, then the agents on every SSH remote opted in to Federation'
-		).hideHelp(!encoreFlags.federation)
+	.option('--peer <name>', "List the agents on one Federation peer (an SSH remote's name)")
+	.option(
+		'--all-peers',
+		'List local agents, then the agents on every SSH remote that runs a Federation host'
 	)
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.action(listAgents);
@@ -710,7 +708,10 @@ clean
 program
 	.command('send <agent-id> <message>')
 	.description('Send a message to an agent and get a JSON response')
-	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
+	.option(
+		'-s, --session <id>',
+		'Resume a PROVIDER session id (the sessionId a previous send returned, or one from `list sessions`), not a Maestro tab id. Runs headless beside the desktop; to deliver into a live tab use `dispatch --tab <tab-id> --queue`'
+	)
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
 	.option(
@@ -744,7 +745,7 @@ program
 		'For dispatch and --queue: reconcile the same dispatch after an unknown acknowledgment; never generate another send for it'
 	)
 	.description(
-		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
+		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID. Inside an Auto Run task, a dispatch that names no tab goes to a new hidden tab, and the run waits for it and hands its result to the next turn (autoRunTracked in the reply).'
 	)
 	.option(
 		'--new-tab',
@@ -797,7 +798,7 @@ program
 	)
 	.option(
 		'--callback-timeout <seconds>',
-		'Give up and fire a timeout callback after this long (default 3600, max 86400)'
+		'Give up and fire a timeout callback after this long (default 3600, max 86400). Inside an Auto Run task it also bounds how long the run waits for this dispatch'
 	)
 	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(dispatch);
@@ -1050,6 +1051,17 @@ const session = program
 session
 	.command('list')
 	.description('List open desktop AI tabs and their tab/session IDs')
+	.option('--include-hidden', 'Also list hidden tabs (consults) the tab bar does not show')
+	.option('--hidden', 'List only hidden tabs (consults and other tabs the tab bar does not show)')
+	.option(
+		'--all',
+		'List every tab, visible, hidden, and orphaned (no tab-strip slot), with a visibility field'
+	)
+	.option(
+		'--type <kind>',
+		'Which tabs: ai (default), file, browser, terminal, or all. Non-AI tabs are listed under "tabs" in JSON',
+		'ai'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(sessionList);
 
@@ -1170,6 +1182,14 @@ groupChat
 	.action(groupChatStop);
 
 groupChat
+	.command('add <chat> <agent>')
+	.description(
+		'Add an agent (ID, ID prefix, or name) to a group chat without an @mention; linked by ID'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatAdd);
+
+groupChat
 	.command('archive <chat>')
 	.description(
 		'Archive a group chat (stops its moderator and participants); --restore brings it back'
@@ -1189,7 +1209,10 @@ program
 	.description(
 		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)'
 	)
-	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
+	.option(
+		'-a, --agent <id>',
+		"Target agent (defaults to the agent owning this shell or terminal tab, else the file path's owning agent)"
+	)
 	.option(
 		'--background',
 		'Open the preview tab without changing anything currently rendered, on any agent'
@@ -1210,7 +1233,10 @@ program
 program
 	.command('open-graph [paths...]')
 	.description('Open the Document Graph over specific markdown files or a directory')
-	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by path's owning agent)")
+	.option(
+		'-a, --agent <id>',
+		"Target agent (defaults to the agent owning this shell or terminal tab, else the path's owning agent)"
+	)
 	.option('--focus <path>', 'Center the graph on this document (default: the most-linked one)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openGraph);
@@ -1696,6 +1722,14 @@ cue
 		'With a worktree flag: ref a new branch is cut from, and the pull request target'
 	)
 	.option('--create-pr', 'With a worktree flag: open a pull request when the run finishes')
+	.option(
+		'--tab <tab-id>',
+		'Deliver the prompt into this existing AI tab of --agent (waits behind a busy turn, marks the tab unread, never moves the view; a closed tab falls back to a new tab + toast)'
+	)
+	.option(
+		'--here',
+		'Like --tab, for the AI tab this command runs from (an agent scheduling its own follow-up); --agent defaults to that agent'
+	)
 	.option('--notify', 'Show a toast notification when the task fires')
 	.option('--sticky', 'Make the notify toast sticky (requires --notify)')
 	.option('-m, --message <text>', 'Body for the notify toast (defaults to label/prompt)')
@@ -2052,12 +2086,10 @@ host
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => hostStatus(options));
 
-// Federation pairing P1 (#1716): a laptop reads this over SSH. It is hidden from `--help` while
-// Federation is off here, but not refused: the opt-in lives on the laptop that dials in, and
-// a headless host's own settings rarely carry Encore flags. It prints nothing `cat` of the
+// Federation pairing P1 (#1716): a laptop reads this over SSH. It prints nothing `cat` of the
 // owner-only discovery file would not.
 host
-	.command('endpoint', { hidden: !encoreFlags.federation })
+	.command('endpoint')
 	.description(
 		"Print this data directory's host endpoint (port, token, CLI secret) for Federation over SSH"
 	)
@@ -2081,10 +2113,10 @@ host
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => hostStop(options));
 
-// Remote host commands - the `maestro-cli host` on a Federation-enabled SSH remote (#1716)
-const remoteHost = encoreCommand(program, 'remote-host', 'federation', encoreFlags).description(
-	'Check and start the maestro-cli host on an SSH remote that is opted in to Federation'
-);
+// Remote host commands - the `maestro-cli host` on an SSH remote (Federation, #1716)
+const remoteHost = program
+	.command('remote-host')
+	.description('Install, check, and start the maestro-cli host on an SSH remote (Federation)');
 
 remoteHost
 	.command('status <ssh-remote>')
@@ -2096,6 +2128,22 @@ remoteHost
 	.action((ref: string, options) => remoteHostStatus(ref, options, cliVersion));
 
 remoteHost
+	.command('install <ssh-remote>')
+	.description(
+		"Copy this maestro-cli to the remote (with Node.js and SQLite for the remote's platform), or upgrade an older one"
+	)
+	.option('--start', 'Start the host on the remote once the CLI is in place')
+	.option('--force', 'Install even over a maestro-cli that Maestro did not install there')
+	.option('--restart', 'Replace a running host on an older version: stop it, upgrade, start it')
+	.option(
+		'--no-service',
+		'Do not register the host with the remote service manager (systemd user unit, launchd agent)'
+	)
+	.option('--timeout <seconds>', 'Give up on the install after this many seconds (default 600)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((ref: string, options) => remoteHostInstall(ref, options, cliVersion));
+
+remoteHost
 	.command('start <ssh-remote>')
 	.description('Start the host on the remote (as the SSH user) when none runs, then report status')
 	.option('--timeout <seconds>', 'Give up on each SSH call after this many seconds (default 60)')
@@ -2103,7 +2151,8 @@ remoteHost
 	.action((ref: string, options) => remoteHostStart(ref, options, cliVersion));
 
 // Lift - move an SSH remote agent onto the maestro-cli host on its remote (Federation, #1716)
-encoreCommand(program, 'lift <agent>', 'federation', encoreFlags)
+program
+	.command('lift <agent>')
 	.description(
 		'Move an SSH remote agent, with its tabs, transcripts, provider sessions and queue, onto the host on its remote'
 	)
@@ -2113,15 +2162,31 @@ encoreCommand(program, 'lift <agent>', 'federation', encoreFlags)
 	.action((agent: string, options) => lift(agent, options));
 
 // Federation peer mirror - the peers the desktop mirrors in its Left Bar (FED-SSH-05)
-const federation = encoreCommand(program, 'federation', 'federation', encoreFlags).description(
-	'List and reconnect the Federation peers the desktop app mirrors in its Left Bar'
-);
+const federation = program
+	.command('federation')
+	.description('List and reconnect the Federation peers the desktop app mirrors in its Left Bar');
 
 federation
 	.command('peers')
 	.description('List the peers the desktop mirrors, with connection state and agent count')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => federationPeers(options));
+
+const federationAutoCommand = federation
+	.command('auto')
+	.description(
+		'Show what automatic Federation did, waits on, or needs from you, per SSH remote and SSH agent (exit 1 when something needs you)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationAuto(options));
+
+federationAutoCommand
+	.command('run')
+	.description(
+		'Run an automatic Federation pass now: start stopped hosts, install where SSH agents need one, and move agents that pass every check'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationAutoRun(options));
 
 federation
 	.command('reconnect <peer>')
@@ -2930,6 +2995,7 @@ tab
 	.command('closed')
 	.description('List the closed tabs an agent can reopen, newest first (index 0 = Cmd+Shift+T)')
 	.option('-a, --agent <id>', 'Whose closed tabs (default: the agent selected in the desktop)')
+	.option('--all', "Every agent's closed tabs, grouped by agent (agents with none are left out)")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => tabClosed(options));
 
@@ -3006,12 +3072,11 @@ tabTargetOptions(tab.command('transfer [tab-id]'))
 	.option('--focus', 'Jump to the new tab (default)')
 	.action((tabId, options) => tabTransfer(tabId, options));
 
-// The per-remote Federation opt-in belongs to the Federation Encore Feature: left
-// out of --help while it is off, and passing it then is refused.
-const FEDERATION_OPTION_KEYS = ['federation'] as const;
+// Federation is opportunistic: every remote takes part unless it opts out with `--federation off`.
 const federationOption = (): Option =>
-	new Option('--federation <on|off>', 'Opt this remote in to Federation (on/off)').hideHelp(
-		!encoreFlags.federation
+	new Option(
+		'--federation <on|off>',
+		'Look for a Maestro host on this remote (on, the default) or never (off)'
 	);
 
 // Create SSH remote command - add a new SSH remote configuration
@@ -3042,9 +3107,6 @@ program
 	.addOption(federationOption())
 	.option('--set-default', 'Set as the global default SSH remote')
 	.option('--json', 'Output as JSON (for scripting)')
-	.hook('preAction', (_command, action) =>
-		requireEncoreForOptions('federation', action.opts(), FEDERATION_OPTION_KEYS)
-	)
 	.action(createSshRemote);
 
 // Update SSH remote command - edit an existing SSH remote configuration
@@ -3099,9 +3161,6 @@ program
 	.addOption(federationOption())
 	.option('--set-default', 'Set as the global default SSH remote')
 	.option('--json', 'Output as JSON (for scripting)')
-	.hook('preAction', (_command, action) =>
-		requireEncoreForOptions('federation', action.opts(), FEDERATION_OPTION_KEYS)
-	)
 	.action(updateSshRemote);
 
 // Remove SSH remote command - delete an SSH remote configuration
@@ -3390,6 +3449,10 @@ computerHistory
 	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)')
 	.option('--until <time>', 'End (default now)')
 	.option('--kind <kind>', '15m | 6h (default both)')
+	.option(
+		'--grep <regex>',
+		'Case-insensitive regex over each digest summary (literal when invalid)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => computerHistoryDigests(options));
 
@@ -3555,9 +3618,12 @@ pianola
 pianola
 	.command('learn')
 	.description(
-		'Crawl installed CLI transcripts into a labeled decision corpus (Claude Code + Codex)'
+		'Crawl installed CLI transcripts into a labeled decision corpus (Claude Code, Codex, Grok CLI)'
 	)
-	.option('--agent <list>', 'Comma list of agents to crawl: claude-code,codex (default both)')
+	.option(
+		'--agent <list>',
+		'Comma list of agents to crawl: claude-code, codex, grok (default claude-code,codex)'
+	)
 	.option('--limit <n>', 'Max sessions per agent, newest first (default 300)')
 	.option('--since <date>', 'Only crawl transcripts modified on/after this date (e.g. 2026-06-01)')
 	.option(

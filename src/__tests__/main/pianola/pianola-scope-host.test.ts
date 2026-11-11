@@ -113,6 +113,7 @@ const lastOutput = () => JSON.parse(String(logs.mock.calls.at(-1)![0]));
 beforeEach(async () => {
 	const root = os.tmpdir();
 	fs.mkdirSync(root, { recursive: true });
+	// Host proof storage requires a canonical path (macOS /var aliases /private/var).
 	directory = fs.realpathSync(fs.mkdtempSync(path.join(root, 'scope-host-')));
 	vi.stubEnv('MAESTRO_USER_DATA', directory);
 	vi.stubEnv('MAESTRO_CLI_HOST', '');

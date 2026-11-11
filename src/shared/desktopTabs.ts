@@ -21,6 +21,7 @@ import {
 import type { TranslationReport } from './maestro-lib/translation/types';
 import { isValidAgentId } from './agentIds';
 import type { RunOnTarget } from './local-models/run-on';
+import type { StripTabType, TabStripVisibility } from './tabStripMembership';
 
 /** Safe inspection fields. Never expose environment values or parked native slots. */
 export interface TabProviderInspection {
@@ -74,6 +75,25 @@ export interface DesktopTabEntry extends TabProviderInspection {
 	active: boolean;
 	/** Unread marker in the tab bar. */
 	hasUnread: boolean;
+	/**
+	 * True when the tab bar draws no chip for this tab (`isAiTabHidden`): a
+	 * consult tab, or any tab marked hidden. `session list` drops these unless
+	 * `--include-hidden` is passed; tab verbs still resolve them by ID.
+	 */
+	hidden: boolean;
+	/**
+	 * True when the agent's `unifiedTabOrder` holds an `ai` ref for this tab.
+	 * Raw data, not a visibility verdict: a tab tiled into a group has no ref of
+	 * its own but is still on screen inside the group chip.
+	 */
+	inTabOrder: boolean;
+	/**
+	 * Where the tab stands relative to the strip (`tabStripVisibility`):
+	 * `visible` draws a chip (standalone or inside a tiled group), `hidden` is
+	 * held out on purpose, `orphaned` has no slot at all (a close that did not
+	 * apply, #2008). Optional: absent means an older desktop.
+	 */
+	visibility?: TabStripVisibility;
 	/** Synopsize this tab's completions into History after each completion. */
 	saveToHistory: boolean;
 	/** Read-only / plan mode: the agent may not modify files. */
@@ -138,4 +158,25 @@ export interface DesktopSessionsSnapshot {
 	capturedAt: number;
 	owners: DesktopAgentEntry[];
 	sessions: DesktopTabEntry[];
+	/** File, browser, and terminal tabs (`session list --type`). Absent from a desktop that predates it. */
+	tabs?: DesktopStripTabEntry[];
+}
+
+/**
+ * One open file, browser, or terminal tab, for `session list --type`. Kept apart
+ * from `DesktopTabEntry` (which `sessions` carries): those entries are AI
+ * conversations, and pollers that read `sessions` must never meet a terminal.
+ */
+export interface DesktopStripTabEntry {
+	tabId: string;
+	tabType: Exclude<StripTabType, 'ai'>;
+	agentId: string;
+	agentName: string;
+	/** Display name: the file name, the page title, or the terminal's name. */
+	name: string | null;
+	/** What the tab shows: the file path, the page URL, or the shell's directory. */
+	target: string | null;
+	/** True for the tab its agent has selected in that kind. */
+	active: boolean;
+	visibility: TabStripVisibility;
 }

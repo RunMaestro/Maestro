@@ -8,8 +8,13 @@ import type {
 	PeerAccess,
 	PeerAgent,
 	ToolType,
+	AITab,
 } from '../../types';
-import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
+import type {
+	SshRemoteConfig,
+	AgentSshRemoteConfig,
+	AgentDiscoveryRequest,
+} from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { isAdaptiveModeDefaultOn, resilienceEnabled } from '../../../shared/agentConstants';
@@ -74,6 +79,8 @@ import { getEffortConfigKey, readEffortFromConfig } from '../../utils/agentEffor
 import { gitService } from '../../services/git';
 import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
 import { buildDuplicateAgentInput } from '../../../shared/newAgentRecord';
+import { useAgentModelEffortOptions } from '../../hooks/agent/useAgentModelEffortOptions';
+import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 
 /**
  * NewInstanceModal - the New Agent form.
@@ -100,6 +107,7 @@ export function NewInstanceModal({
 	presetWorkingDir,
 }: NewInstanceModalProps) {
 	const [agents, setAgents] = useState<AgentConfig[]>([]);
+	const [detectedSshRemoteId, setDetectedSshRemoteId] = useState<string | null>();
 	const [selectedAgent, setSelectedAgent] = useState('');
 	const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
 	const [showAllProviders, setShowAllProviders] = useState(false);
@@ -114,6 +122,7 @@ export function NewInstanceModal({
 	const [nudgeMessage, setNudgeMessage] = useState('');
 	const [newSessionMessage, setNewSessionMessage] = useState('');
 	const [loading, setLoading] = useState(true);
+	const [readyDraftSource, setReadyDraftSource] = useState<string | null>();
 	const [refreshingAgent, setRefreshingAgent] = useState<string | null>(null);
 	const [debugInfo, setDebugInfo] = useState<AgentDebugInfo | null>(null);
 	const [homeDir, setHomeDir] = useState<string>('');
@@ -196,6 +205,10 @@ export function NewInstanceModal({
 	// The SSH remote a group seed just switched on. The re-detection that follows
 	// is the seed's own doing, and is the one pass that keeps the form.
 	const seedSshRemoteIdRef = useRef<string | null>(null);
+	// Each detection pass takes a number; a pass a later one replaced drops its results.
+	const agentLoadSequence = useRef(0);
+	// The initial seeding pass is in flight, so SSH re-detection waits for it.
+	const initialSeedPending = useRef(false);
 
 	// The one piece of form state the tabs own. No `rememberKey`: create always
 	// starts on General.
@@ -299,11 +312,39 @@ export function NewInstanceModal({
 			 * the values the seed just put in the form.
 			 */
 			keepForm?: boolean;
+			/**
+			 * A host change: refresh which providers it can run and leave every
+			 * draft value alone.
+			 */
+			redetect?: boolean;
 		} = {}
 	) => {
-		setLoading(true);
-		setSshConnectionError(null);
+		const redetect = options.redetect === true;
 		const sparse = options.seedKind === 'defaults';
+		// The draft this pass seeds, matched by Create before it will submit.
+		const draftSourceId = (source as unknown as { id?: string } | undefined)?.id ?? null;
+		// A copy's raw env: absence inherits the provider set, a map (an empty one
+		// included, which clears an inherited account such as GROK_HOME) overrides.
+		const rawSourceEnvVars = source?.customEnvVars;
+		// A copy detects on its source's host. A legacy session may carry only an
+		// observed SSH id; an enabled config with no resolved remote stays remote.
+		const legacySshRemoteId = (source as unknown as { sshRemoteId?: string } | undefined)
+			?.sshRemoteId;
+		const sourceSshConfig: AgentSshRemoteConfig | undefined = sparse
+			? undefined
+			: (source?.sessionSshRemoteConfig ??
+				(legacySshRemoteId ? { enabled: true, remoteId: legacySshRemoteId } : undefined));
+		const selectedSshRemoteId =
+			sshRemoteId ??
+			(sourceSshConfig?.enabled ? (sourceSshConfig.remoteId ?? undefined) : undefined);
+		const sequence = ++agentLoadSequence.current;
+		if (!redetect) {
+			initialSeedPending.current = true;
+			setReadyDraftSource(undefined);
+		}
+		setLoading(true);
+		setRefreshingAgent(null);
+		setSshConnectionError(null);
 		// The provider the seed's provider settings belong to. A seed with none
 		// (a group default that names no provider) fills the fields the form does
 		// not keep per provider, and its env vars, resilience flags and SSH remote
@@ -322,10 +363,11 @@ export function NewInstanceModal({
 		}
 		const seedProvider = source?.toolType;
 		try {
-			const detectedAgents = await window.maestro.agents.detect(sshRemoteId);
+			const detectedAgents = await window.maestro.agents.detect(selectedSshRemoteId);
+			if (sequence !== agentLoadSequence.current) return;
 
 			// Check if all agents have connection errors (indicates SSH connection failure)
-			if (sshRemoteId) {
+			if (selectedSshRemoteId) {
 				const connectionErrors = detectedAgents
 					.filter((a: AgentConfig) => !a.hidden)
 
@@ -347,12 +389,15 @@ export function NewInstanceModal({
 			}
 
 			setAgents(detectedAgents);
+			setDetectedSshRemoteId(selectedSshRemoteId ?? null);
+			// A host change refreshes availability, not the user's draft selections.
+			if (redetect) return;
 
 			// Per-agent config (path, args, env vars) starts empty - each agent gets its own config
 			// No provider-level loading - config is set per-agent during creation
 			// Only reset if NOT duplicating (source session will provide values)
 			// Also preserve SSH configs when re-detecting (sshRemoteId is provided during re-detection)
-			if (!source && !sshRemoteId) {
+			if (!source && !selectedSshRemoteId) {
 				setCustomAgentPaths({});
 				setCustomAgentArgs({});
 				setCustomAgentEnvVars({});
@@ -373,27 +418,31 @@ export function NewInstanceModal({
 
 			for (const agent of detectedAgents) {
 				const config = await window.maestro.agents.getConfig(agent.id);
-				configs[agent.id] = config;
+				if (sequence !== agentLoadSequence.current) return;
+				configs[agent.id] = { ...config };
 
 				// Extract per-agent settings from the loaded config
 				// Local detection validates and recovers rotating binary paths. SSH paths
 				// belong to the remote host and must not be validated against the local filesystem.
-				const customPath = sshRemoteId ? config.customPath : agent.customPath;
+				const customPath = selectedSshRemoteId ? config.customPath : agent.customPath;
 				if (customPath) {
 					paths[agent.id] = customPath;
 				}
 				if (config.customArgs) {
 					args[agent.id] = config.customArgs;
 				}
-				if (config.customEnvVars && Object.keys(config.customEnvVars).length > 0) {
-					envVars[agent.id] = config.customEnvVars;
+				if (config.customEnvVars) {
+					envVars[agent.id] = { ...config.customEnvVars };
 				}
 			}
 
 			// If duplicating, merge source session config values into loaded configs
 			if (source && seedProvider) {
 				const sourceConfig: Record<string, any> = { ...configs[seedProvider] };
-				if (source.customModel) {
+				if (!sparse) {
+					// A copy preserves inheritance, not a snapshot of today's provider defaults.
+					sourceConfig.model = source.customModel ?? '';
+				} else if (source.customModel) {
 					sourceConfig.model = source.customModel;
 				}
 				if (source.customContextWindow) {
@@ -402,11 +451,16 @@ export function NewInstanceModal({
 				if (source.customProviderPath) {
 					sourceConfig.providerPath = source.customProviderPath;
 				}
-				if (source.customEffort) {
-					// Agents use either `effort` (Claude Code) or `reasoningEffort` (Codex,
-					// Copilot-CLI, Factory Droid). Pick whichever key the source agent
-					// actually defines so the value round-trips through the modal.
-					const sourceAgent = detectedAgents.find((a: AgentConfig) => a.id === seedProvider);
+				// Agents use either `effort` (Claude Code) or `reasoningEffort` (Codex,
+				// Copilot-CLI, Factory Droid). Pick whichever key the source agent
+				// actually defines so the value round-trips through the modal. A copy
+				// carries an unset effort as unset rather than today's provider default.
+				const sourceAgent = detectedAgents.find((a: AgentConfig) => a.id === seedProvider);
+				if (!sparse) {
+					delete sourceConfig.effort;
+					delete sourceConfig.reasoningEffort;
+					sourceConfig[getEffortConfigKey(sourceAgent)] = source.customEffort ?? '';
+				} else if (source.customEffort) {
 					sourceConfig[getEffortConfigKey(sourceAgent)] = source.customEffort;
 				}
 				configs[seedProvider] = sourceConfig;
@@ -423,7 +477,7 @@ export function NewInstanceModal({
 			// (hidden agents like 'terminal' should never be auto-selected)
 			if (seedProvider) {
 				setSelectedAgent(seedProvider);
-			} else if (!sshRemoteId) {
+			} else if (!selectedSshRemoteId) {
 				// Only auto-select on initial load, not on SSH remote re-detection
 				const firstAvailable = detectedAgents.find((a: AgentConfig) => a.available && !a.hidden);
 				if (firstAvailable) {
@@ -529,10 +583,12 @@ export function NewInstanceModal({
 						}));
 					}
 					if (!sparse) {
-						setCustomAgentEnvVars((prev) => ({
-							...prev,
-							[seedProvider]: source.customEnvVars || {},
-						}));
+						setCustomAgentEnvVars((prev) => {
+							const next = { ...prev };
+							if (rawSourceEnvVars === undefined) delete next[seedProvider];
+							else next[seedProvider] = { ...rawSourceEnvVars };
+							return next;
+						});
 					}
 					// Mirror the source agent's EXPLICIT Adaptive Mode choice so a duplicate
 					// inherits it. When the source never configured a token source, leave the
@@ -590,27 +646,32 @@ export function NewInstanceModal({
 						[seedProvider]: source.gatewayUrl ?? '',
 					}));
 
-					// Pre-fill SSH remote configuration if source session has it
-					if (
-						!sparse &&
-						source.sessionSshRemoteConfig?.enabled &&
-						source.sessionSshRemoteConfig?.remoteId
-					) {
-						setAgentSshRemoteConfigs((prev) => ({
-							...prev,
-							[seedProvider]: {
-								enabled: true,
-								remoteId: source.sessionSshRemoteConfig!.remoteId!,
-								workingDirOverride: source.sessionSshRemoteConfig!.workingDirOverride,
-							},
-						}));
+					// A copy's SSH comes from the source's resolved config: an enabled
+					// config whose remote is unresolved stays remote (Create waits for a
+					// remote) rather than silently running the copy locally. Explicit
+					// disablement wins. The override is the copy's own directory, as in
+					// buildDuplicateAgentInput().
+					if (!sparse) {
+						setAgentSshRemoteConfigs({
+							[seedProvider]: sourceSshConfig?.enabled
+								? {
+										enabled: true,
+										remoteId: sourceSshConfig.remoteId ?? null,
+										workingDirOverride: source.cwd || undefined,
+									}
+								: { enabled: false, remoteId: null },
+						});
 					}
 				}
 			}
+			setReadyDraftSource(draftSourceId);
 		} catch (error) {
 			logger.error('Failed to load agents:', undefined, error);
 		} finally {
-			setLoading(false);
+			if (sequence === agentLoadSequence.current) {
+				initialSeedPending.current = false;
+				setLoading(false);
+			}
 		}
 	};
 
@@ -708,25 +769,96 @@ export function NewInstanceModal({
 		}
 	}, [workingDir, isInitializingRepo, expandTilde, effectiveSshRemoteId]);
 
-	const handleRefreshAgent = React.useCallback(async (agentId: string) => {
-		setRefreshingAgent(agentId);
-		setDebugInfo(null);
-		try {
-			const result = await window.maestro.agents.refresh(agentId);
-			setAgents(result.agents);
-			if (result.debugInfo && !result.debugInfo.available) {
-				setDebugInfo(result.debugInfo);
+	const handleRefreshAgent = React.useCallback(
+		async (agentId: string) => {
+			const sequence = ++agentLoadSequence.current;
+			setRefreshingAgent(agentId);
+			setDebugInfo(null);
+			try {
+				const result = await window.maestro.agents.refresh(agentId, effectiveSshRemoteId);
+				if (sequence !== agentLoadSequence.current) return;
+				setAgents(result.agents);
+				setDetectedSshRemoteId(effectiveSshRemoteId ?? null);
+				if (result.debugInfo && !result.debugInfo.available) {
+					setDebugInfo(result.debugInfo);
+				}
+			} catch (error) {
+				logger.error('Failed to refresh agent:', undefined, error);
+			} finally {
+				if (sequence === agentLoadSequence.current) setRefreshingAgent(null);
 			}
-		} catch (error) {
-			logger.error('Failed to refresh agent:', undefined, error);
-		} finally {
-			setRefreshingAgent(null);
-		}
-	}, []);
+		},
+		[effectiveSshRemoteId]
+	);
+
+	const [grokRefresh, setGrokRefresh] = useState(0);
+	const grokRequest = useMemo<AgentDiscoveryRequest | undefined>(() => {
+		void grokRefresh; // A completed explicit refresh invalidates the shared hook's context.
+		if (
+			!isOpen ||
+			loading ||
+			readyDraftSource !== (sourceSession?.id ?? null) ||
+			expandedAgent !== 'grok' ||
+			selectedAgent !== 'grok'
+		)
+			return;
+		const ssh = agentSshRemoteConfigs.grok;
+		const cwd = ssh?.enabled ? workingDir.trim() : expandTilde(workingDir.trim());
+		return {
+			providerId: 'grok',
+			context: {
+				kind: 'draft',
+				cwd,
+				customPath: customAgentPaths.grok?.trim() || undefined,
+				// Match onCreate: absence inherits, an empty map replaces provider env.
+				customEnvVars: customAgentEnvVars.grok,
+				model: agentConfigs.grok?.model?.trim() || undefined,
+				effort: readEffortFromConfig(agentConfigs.grok),
+				sshRemoteId: ssh?.enabled ? ssh.remoteId || undefined : undefined,
+				sessionSshRemoteConfig: ssh?.enabled
+					? { ...ssh, workingDirOverride: cwd || undefined }
+					: { enabled: false, remoteId: null },
+			},
+		};
+	}, [
+		isOpen,
+		loading,
+		readyDraftSource,
+		sourceSession?.id,
+		expandedAgent,
+		selectedAgent,
+		workingDir,
+		expandTilde,
+		customAgentPaths.grok,
+		customAgentEnvVars.grok,
+		agentConfigs.grok,
+		agentSshRemoteConfigs.grok,
+		grokRefresh,
+	]);
+	const currentGrokRequest = useRef(grokRequest);
+	currentGrokRequest.current = grokRequest;
+	useEffect(() => {
+		currentGrokRequest.current = grokRequest;
+		return () => {
+			currentGrokRequest.current = undefined;
+		};
+	}, [grokRequest]);
+	const grokOptions = useAgentModelEffortOptions(grokRequest?.providerId, grokRequest?.context);
 
 	// Load available models for an agent that supports model selection
 	const loadModelsForAgent = React.useCallback(
 		async (agentId: string, forceRefresh = false) => {
+			if (agentId === 'grok') {
+				if (!forceRefresh || !grokRequest) return;
+				try {
+					await window.maestro.agents.getModels({ ...grokRequest, forceRefresh: true });
+				} catch {
+					// The shared hook exposes unavailable status and retains manual values.
+				} finally {
+					if (currentGrokRequest.current === grokRequest) setGrokRefresh((value) => value + 1);
+				}
+				return;
+			}
 			// Check if agent supports model selection
 			const agent = agents.find((a) => a.id === agentId);
 			if (!agent?.capabilities?.supportsModelSelection) return;
@@ -744,12 +876,13 @@ export function NewInstanceModal({
 				setLoadingModels((prev) => ({ ...prev, [agentId]: false }));
 			}
 		},
-		[agents, availableModels]
+		[agents, availableModels, grokRequest]
 	);
 
 	// Load dynamic config options for an agent (e.g., effort levels, reasoning levels)
 	const loadDynamicOptionsForAgent = React.useCallback(
 		async (agentId: string) => {
+			if (agentId === 'grok') return; // The shared hook owns scoped effort discovery.
 			const agent = agents.find((a) => a.id === agentId);
 			if (!agent?.configOptions) return;
 
@@ -853,7 +986,59 @@ export function NewInstanceModal({
 		]
 	);
 
+	// Agent is considered available if:
+	// 1. It was auto-detected (agent.available), OR
+	// 2. User specified a custom path for it
+	const isAgentUsable = useMemo(() => {
+		const agent = agents.find((a) => a.id === selectedAgent);
+		return !!agent?.available || !!customAgentPaths[selectedAgent]?.trim();
+	}, [agents, selectedAgent, customAgentPaths]);
+	const directoryWarningNeedsAck = !!validation.warning && !directoryWarningAcknowledged;
+
+	// Check if form is valid for submission
+	const isFormValid = useMemo(() => {
+		const agent = agents.find((a) => a.id === selectedAgent);
+		// Remote path validation is informational only - don't block creation
+		// Users may want to set up agent for a remote before the path exists.
+		// Detection must have finished for this draft and this host: a create
+		// against a stale provider list or a half-seeded copy is refused.
+		return (
+			isOpen &&
+			!loading &&
+			!refreshingAgent &&
+			!sshConnectionError &&
+			readyDraftSource === (sourceSession?.id ?? null) &&
+			detectedSshRemoteId === (effectiveSshRemoteId ?? null) &&
+			selectedAgent &&
+			SUPPORTED_AGENTS.includes(selectedAgent) &&
+			agent &&
+			!agent.hidden &&
+			isAgentUsable &&
+			workingDir.trim() &&
+			instanceName.trim() &&
+			validation.valid &&
+			!directoryWarningNeedsAck
+		);
+	}, [
+		isOpen,
+		loading,
+		refreshingAgent,
+		sshConnectionError,
+		readyDraftSource,
+		sourceSession?.id,
+		detectedSshRemoteId,
+		effectiveSshRemoteId,
+		agents,
+		selectedAgent,
+		isAgentUsable,
+		workingDir,
+		instanceName,
+		validation.valid,
+		directoryWarningNeedsAck,
+	]);
+
 	const handleCreate = React.useCallback(() => {
+		if (!isFormValid) return;
 		const name = instanceName.trim();
 		if (!name) return; // Name is required
 
@@ -899,10 +1084,7 @@ export function NewInstanceModal({
 		// Get per-agent config values
 		const agentCustomPath = customAgentPaths[selectedAgent]?.trim() || undefined;
 		const agentCustomArgs = customAgentArgs[selectedAgent]?.trim() || undefined;
-		const agentCustomEnvVars =
-			customAgentEnvVars[selectedAgent] && Object.keys(customAgentEnvVars[selectedAgent]).length > 0
-				? customAgentEnvVars[selectedAgent]
-				: undefined;
+		const agentCustomEnvVars = customAgentEnvVars[selectedAgent];
 		// Get model from agent config - this will become per-session
 		const agentCustomModel = agentConfigs[selectedAgent]?.model?.trim() || undefined;
 		// Get contextWindow and providerPath from agent config
@@ -963,7 +1145,24 @@ export function NewInstanceModal({
 		const agentMaestroPMode = agentEnableMaestroP
 			? (maestroPModeByAgent[selectedAgent] ?? 'dynamic')
 			: undefined;
+		// Copy the source tab's effective choice, including legacy read-only state.
+		// The creation consumer refuses unsupported modes for the selected provider.
+		const permissionMode = sourceSession
+			? resolveTabPermissionMode(
+					sourceSession.aiTabs?.find((tab) => tab.id === sourceSession.activeTabId)
+				)
+			: undefined;
 
+		// Trailing optional arguments: only the ones that are set, so an ordinary
+		// create keeps its argument list.
+		const nativeControl: HarnessControlMode | undefined =
+			harnessControlModeByAgent[selectedAgent] === 'native' ? 'native' : undefined;
+		const trailingArgs: [HarnessControlMode?, AITab['permissionMode']?] =
+			permissionMode !== undefined
+				? [nativeControl, permissionMode]
+				: nativeControl
+					? [nativeControl]
+					: [];
 		onCreate(
 			selectedAgent,
 			effectiveWorkingDir,
@@ -999,7 +1198,7 @@ export function NewInstanceModal({
 			// The group defaults the form has no control for. Absent for a form that
 			// was not seeded from a group, and for a seed that holds none.
 			seedExtras && Object.keys(seedExtras.extras).length > 0 ? seedExtras.extras : undefined,
-			...(harnessControlModeByAgent[selectedAgent] === 'native' ? (['native'] as const) : [])
+			...trailingArgs
 		);
 		onClose();
 
@@ -1016,7 +1215,11 @@ export function NewInstanceModal({
 		// Reset per-agent config for selected agent
 		setCustomAgentPaths((prev) => ({ ...prev, [selectedAgent]: '' }));
 		setCustomAgentArgs((prev) => ({ ...prev, [selectedAgent]: '' }));
-		setCustomAgentEnvVars((prev) => ({ ...prev, [selectedAgent]: {} }));
+		setCustomAgentEnvVars((prev) => {
+			const next = { ...prev };
+			delete next[selectedAgent];
+			return next;
+		});
 		// Clear the explicit override (rather than forcing false) so the agent's
 		// default (on for Claude Code) applies again on the next open.
 		setEnableMaestroPByAgent((prev) => {
@@ -1055,6 +1258,7 @@ export function NewInstanceModal({
 		setRunOn({ type: 'provider' });
 		setRunOnError(undefined);
 	}, [
+		isFormValid,
 		instanceName,
 		selectedAgent,
 		workingDir,
@@ -1089,36 +1293,7 @@ export function NewInstanceModal({
 		effectiveRunOn,
 		seedExtras,
 		setActiveTab,
-	]);
-
-	// Agent is considered available if:
-	// 1. It was auto-detected (agent.available), OR
-	// 2. User specified a custom path for it
-	const isAgentUsable = useMemo(() => {
-		const agent = agents.find((a) => a.id === selectedAgent);
-		return !!agent?.available || !!customAgentPaths[selectedAgent]?.trim();
-	}, [agents, selectedAgent, customAgentPaths]);
-	const directoryWarningNeedsAck = !!validation.warning && !directoryWarningAcknowledged;
-
-	// Check if form is valid for submission
-	const isFormValid = useMemo(() => {
-		// Remote path validation is informational only - don't block creation
-		// Users may want to set up agent for a remote before the path exists
-		return (
-			selectedAgent &&
-			isAgentUsable &&
-			workingDir.trim() &&
-			instanceName.trim() &&
-			validation.valid &&
-			!directoryWarningNeedsAck
-		);
-	}, [
-		selectedAgent,
-		isAgentUsable,
-		workingDir,
-		instanceName,
-		validation.valid,
-		directoryWarningNeedsAck,
+		sourceSession,
 	]);
 
 	// The message under each field. An empty required field only says so once a
@@ -1268,15 +1443,10 @@ export function NewInstanceModal({
 		},
 		onEnvVarRemove: (agentId: string, key: string) => {
 			setCustomAgentEnvVars((prev) => {
+				// An emptied map stays: it is an explicit override of the provider env.
 				const currentVars = { ...prev[agentId] };
 				delete currentVars[key];
-				const next = { ...prev };
-				if (Object.keys(currentVars).length > 0) {
-					next[agentId] = currentVars;
-				} else {
-					delete next[agentId];
-				}
-				return next;
+				return { ...prev, [agentId]: currentVars };
 			});
 		},
 		onEnvVarAdd: (agentId: string) => {
@@ -1339,7 +1509,12 @@ export function NewInstanceModal({
 				handleWorkingDirChange(presetWorkingDir);
 				setInstanceName(getBasename(presetWorkingDir));
 			}
+		} else {
+			setReadyDraftSource(undefined);
 		}
+		return () => {
+			agentLoadSequence.current++;
+		};
 	}, [
 		isOpen,
 		sourceSession?.id,
@@ -1410,6 +1585,10 @@ export function NewInstanceModal({
 			return;
 		}
 
+		// Initial seeding may reset a previous draft's SSH choice; let that load finish
+		// before re-detecting, otherwise it cancels its own getConfig responses.
+		if (initialSeedPending.current) return;
+
 		// Only re-detect if the SSH remote ID actually changed
 		if (lastSshRemoteIdRef.current === currentSshRemoteId) {
 			return;
@@ -1425,8 +1604,8 @@ export function NewInstanceModal({
 		seedSshRemoteIdRef.current = null;
 
 		// Re-run agent detection with the new SSH remote ID
-		loadAgents(undefined, currentSshRemoteId ?? undefined, { keepForm });
-	}, [isOpen, currentSshRemoteId]);
+		loadAgents(undefined, currentSshRemoteId ?? undefined, { keepForm, redetect: true });
+	}, [isOpen, currentSshRemoteId, loading]);
 
 	if (!isOpen) return null;
 
@@ -1659,108 +1838,122 @@ export function NewInstanceModal({
 						picker={
 							// Each provider's settings (path, args, model, ...) expand in its
 							// card. The selected provider's environment follows the picker.
-							<AgentPickerGrid
-								theme={theme}
-								hideEnvVars
-								autoModelFor={autoModelFor}
-								loading={loading}
-								sshConnectionError={sshConnectionError}
-								visibleAgents={visibleAgents}
-								availableProviderCount={providerCounts.available}
-								totalProviderCount={providerCounts.total}
-								providerLocationLabel={providerLocation}
-								harnessControlModeByAgent={harnessControlModeByAgent}
-								onHarnessControlModeChange={(id, value) =>
-									setHarnessControlModeByAgent((prev) => ({ ...prev, [id]: value }))
-								}
-								showAllProviders={showAllProviders}
-								onShowAllProvidersChange={setShowAllProviders}
-								selectedAgent={selectedAgent}
-								expandedAgent={expandedAgent}
-								refreshingAgent={refreshingAgent}
-								debugInfo={debugInfo}
-								customAgentPaths={customAgentPaths}
-								customAgentArgs={customAgentArgs}
-								customAgentEnvVars={customAgentEnvVars}
-								enableMaestroPByAgent={enableMaestroPByAgent}
-								maestroPModeByAgent={maestroPModeByAgent}
-								maestroPPathByAgent={maestroPPathByAgent}
-								detectedMaestroPPath={detectedMaestroPPath}
-								agentConfigs={agentConfigs}
-								availableModels={availableModels}
-								loadingModels={loadingModels}
-								onAgentSelect={(agentId) => {
-									setSelectedAgent(agentId);
-									// A refusal was about the previous provider's gateway.
-									setGatewayUrlError(undefined);
-								}}
-								onAgentExpand={(agentId) => setExpandedAgent(agentId)}
-								onRefreshAgent={handleRefreshAgent}
-								onDismissDebug={() => setDebugInfo(null)}
-								onCustomPathChange={(agentId, value) => {
-									setCustomAgentPaths((prev) => ({ ...prev, [agentId]: value }));
-								}}
-								onCustomArgsChange={(agentId, value) => {
-									setCustomAgentArgs((prev) => ({ ...prev, [agentId]: value }));
-								}}
-								onEnableMaestroPChange={(agentId, value) => {
-									setEnableMaestroPByAgent((prev) => ({ ...prev, [agentId]: value }));
-								}}
-								onMaestroPModeChange={(agentId, value) => {
-									setMaestroPModeByAgent((prev) => ({ ...prev, [agentId]: value }));
-								}}
-								onMaestroPPathChange={(agentId, value) => {
-									setMaestroPPathByAgent((prev) => ({ ...prev, [agentId]: value }));
-								}}
-								onEnvVarKeyChange={envVarHandlers.onEnvVarKeyChange}
-								onEnvVarValueChange={envVarHandlers.onEnvVarValueChange}
-								onEnvVarRemove={envVarHandlers.onEnvVarRemove}
-								onEnvVarAdd={envVarHandlers.onEnvVarAdd}
-								onEnvVarsReplace={envVarHandlers.onEnvVarsReplace}
-								onConfigChange={(agentId, key, value) => {
-									setAgentConfigs((prev) => ({
-										...prev,
-										[agentId]: {
-											...prev[agentId],
-											[key]: value,
+							<>
+								<AgentPickerGrid
+									theme={theme}
+									hideEnvVars
+									autoModelFor={autoModelFor}
+									loading={loading}
+									sshConnectionError={sshConnectionError}
+									visibleAgents={visibleAgents}
+									availableProviderCount={providerCounts.available}
+									totalProviderCount={providerCounts.total}
+									providerLocationLabel={providerLocation}
+									harnessControlModeByAgent={harnessControlModeByAgent}
+									onHarnessControlModeChange={(id, value) =>
+										setHarnessControlModeByAgent((prev) => ({ ...prev, [id]: value }))
+									}
+									showAllProviders={showAllProviders}
+									onShowAllProvidersChange={setShowAllProviders}
+									selectedAgent={selectedAgent}
+									expandedAgent={expandedAgent}
+									refreshingAgent={refreshingAgent}
+									debugInfo={debugInfo}
+									customAgentPaths={customAgentPaths}
+									customAgentArgs={customAgentArgs}
+									customAgentEnvVars={customAgentEnvVars}
+									enableMaestroPByAgent={enableMaestroPByAgent}
+									maestroPModeByAgent={maestroPModeByAgent}
+									maestroPPathByAgent={maestroPPathByAgent}
+									detectedMaestroPPath={detectedMaestroPPath}
+									agentConfigs={agentConfigs}
+									availableModels={{ ...availableModels, grok: grokOptions.models }}
+									loadingModels={{ ...loadingModels, grok: !!grokRequest && !grokOptions.loaded }}
+									onAgentSelect={(agentId) => {
+										setSelectedAgent(agentId);
+										// A refusal was about the previous provider's gateway.
+										setGatewayUrlError(undefined);
+									}}
+									onAgentExpand={(agentId) => setExpandedAgent(agentId)}
+									onRefreshAgent={handleRefreshAgent}
+									onDismissDebug={() => setDebugInfo(null)}
+									onCustomPathChange={(agentId, value) => {
+										setCustomAgentPaths((prev) => ({ ...prev, [agentId]: value }));
+									}}
+									onCustomArgsChange={(agentId, value) => {
+										setCustomAgentArgs((prev) => ({ ...prev, [agentId]: value }));
+									}}
+									onEnableMaestroPChange={(agentId, value) => {
+										setEnableMaestroPByAgent((prev) => ({ ...prev, [agentId]: value }));
+									}}
+									onMaestroPModeChange={(agentId, value) => {
+										setMaestroPModeByAgent((prev) => ({ ...prev, [agentId]: value }));
+									}}
+									onMaestroPPathChange={(agentId, value) => {
+										setMaestroPPathByAgent((prev) => ({ ...prev, [agentId]: value }));
+									}}
+									onEnvVarKeyChange={envVarHandlers.onEnvVarKeyChange}
+									onEnvVarValueChange={envVarHandlers.onEnvVarValueChange}
+									onEnvVarRemove={envVarHandlers.onEnvVarRemove}
+									onEnvVarAdd={envVarHandlers.onEnvVarAdd}
+									onEnvVarsReplace={envVarHandlers.onEnvVarsReplace}
+									onConfigChange={(agentId, key, value) => {
+										setAgentConfigs((prev) => ({
+											...prev,
+											[agentId]: {
+												...prev[agentId],
+												[key]: value,
+											},
+										}));
+									}}
+									onConfigBlur={() => {
+										// Draft edits belong to onCreate, never the provider's shared defaults.
+									}}
+									onRefreshModels={(agentId) => loadModelsForAgent(agentId, true)}
+									onTransferPendingSshConfig={(agentId) => {
+										setAgentSshRemoteConfigs((prev) => {
+											const pendingConfig = prev['_pending_'];
+											if (pendingConfig && !prev[agentId]) {
+												return {
+													...prev,
+													[agentId]: pendingConfig,
+												};
+											}
+											return prev;
+										});
+									}}
+									onLoadModelsForAgent={(agentId) => loadModelsForAgent(agentId)}
+									dynamicOptions={{
+										...dynamicOptions,
+										grok: {
+											[getEffortConfigKey(agents.find((a) => a.id === 'grok'))]:
+												grokOptions.efforts,
 										},
-									}));
-								}}
-								onConfigBlur={(agentId, key, value) => {
-									const updatedConfig = {
-										...(agentConfigs[agentId] || {}),
-										[key]: value,
-									};
-									void window.maestro.agents.setConfig(agentId, updatedConfig).catch((error) => {
-										logger.error(`Failed to persist config for ${agentId}:`, undefined, error);
-									});
-								}}
-								onRefreshModels={(agentId) => loadModelsForAgent(agentId, true)}
-								onTransferPendingSshConfig={(agentId) => {
-									setAgentSshRemoteConfigs((prev) => {
-										const pendingConfig = prev['_pending_'];
-										if (pendingConfig && !prev[agentId]) {
-											return {
-												...prev,
-												[agentId]: pendingConfig,
-											};
-										}
-										return prev;
-									});
-								}}
-								onLoadModelsForAgent={(agentId) => loadModelsForAgent(agentId)}
-								dynamicOptions={dynamicOptions}
-								loadingDynamicOptions={loadingDynamicOptions}
-								onLoadDynamicOptionsForAgent={loadDynamicOptionsForAgent}
-								codexAutoResetByAgent={codexAutoResetByAgent}
-								onCodexAutoResetChange={(agentId, value) =>
-									setCodexAutoResetByAgent((prev) => ({ ...prev, [agentId]: value }))
-								}
-								codexTransportByAgent={codexTransportByAgent}
-								onCodexTransportChange={(agentId, value) =>
-									setCodexTransportByAgent((prev) => ({ ...prev, [agentId]: value }))
-								}
-							/>
+									}}
+									loadingDynamicOptions={{
+										...loadingDynamicOptions,
+										grok: !!grokRequest && !grokOptions.loaded,
+									}}
+									onLoadDynamicOptionsForAgent={loadDynamicOptionsForAgent}
+									codexAutoResetByAgent={codexAutoResetByAgent}
+									onCodexAutoResetChange={(agentId, value) =>
+										setCodexAutoResetByAgent((prev) => ({ ...prev, [agentId]: value }))
+									}
+									codexTransportByAgent={codexTransportByAgent}
+									onCodexTransportChange={(agentId, value) =>
+										setCodexTransportByAgent((prev) => ({ ...prev, [agentId]: value }))
+									}
+								/>
+								{expandedAgent === 'grok' && (
+									<p className="text-xs" style={{ color: theme.colors.textDim }}>
+										{grokOptions.modelStatus !== 'discovered' &&
+											'Model discovery unavailable for this configuration; enter a model manually. '}
+										{grokOptions.effortStatus !== 'discovered' &&
+											'Effort discovery unavailable; enter an effort manually. '}
+										Configured values are preserved.
+									</p>
+								)}
+							</>
 						}
 						environment={
 							selectedAgent ? (

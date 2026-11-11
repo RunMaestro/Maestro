@@ -38,8 +38,9 @@ export interface FlattenedNode {
 	isLastChild: boolean;
 	/**
 	 * Bitmask over guide columns `0 .. depth - 2`: bit `i` is set when the
-	 * ancestor at depth `i` still has a following sibling, so its guide line
-	 * passes straight through this row. Column `depth - 1` is this row's own
+	 * ancestor at depth `i + 1` still has a following sibling, so the guide line
+	 * joining it to that sibling (drawn in column `i`) passes straight through
+	 * this row. Column `depth - 1` is this row's own
 	 * elbow column and is drawn from {@link isLastChild}, so it is never set
 	 * here.
 	 */

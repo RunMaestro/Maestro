@@ -6,6 +6,7 @@ import {
 	insertCheckboxAtCursor,
 	insertTextAtSelection,
 } from '../utils/editorCommands';
+import { isImeComposing } from '../../../../../utils/ime';
 
 interface UseDocumentEditorKeyboardArgs {
 	content: string;
@@ -68,7 +69,7 @@ export function useDocumentEditorKeyboard({
 				return;
 			}
 
-			if (event.key === 'Enter' && !event.shiftKey) {
+			if (event.key === 'Enter' && !event.shiftKey && !isImeComposing(event)) {
 				const result = continueMarkdownList(content, event.currentTarget.selectionStart);
 				if (!result) return;
 

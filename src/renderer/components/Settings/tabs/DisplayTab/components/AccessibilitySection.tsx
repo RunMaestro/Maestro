@@ -7,6 +7,7 @@ import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 import type { BionifyAlgorithmState } from '../types';
 import { SectionCard } from './SectionCard';
 import { ToggleSettingRow } from './ToggleSettingRow';
+import { isImeComposing } from '../../../../../utils/ime';
 
 interface AccessibilitySectionProps {
 	theme: Theme;
@@ -30,7 +31,7 @@ export function AccessibilitySection({
 	bionifyAlgorithmState,
 }: AccessibilitySectionProps) {
 	const handleAlgorithmKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-		if (event.key === 'Enter') {
+		if (event.key === 'Enter' && !isImeComposing(event)) {
 			event.currentTarget.blur();
 		}
 	};

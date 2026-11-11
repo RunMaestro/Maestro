@@ -16,6 +16,8 @@
  */
 
 import * as fs from 'fs/promises';
+import { realpathSync, statSync } from 'fs';
+import * as os from 'os';
 
 import { createSleepTracker } from '../../sleepTracking';
 import { createAgentRepository } from '../agents/repository';
@@ -24,6 +26,7 @@ import type { RuleContext, TabDefaults } from '../agents/rules';
 import { createEventBus } from '../client/event-bus';
 import type { HostInfo, MaestroClient } from '../client/types';
 import { logger } from '../host';
+import { grokInstallationId } from '../grok/host-seams';
 import { createGroupChatTurnMetrics } from '../groupchat/turn-metrics';
 import type { BinaryDetectionResult } from '../launch/path-prober';
 import { assertUserDataDirExists, type UserDataDirOptions } from '../paths/userDataDir';
@@ -40,6 +43,8 @@ import {
 import { createBackgroundTurns, type BackgroundTurnDeps } from './background-turns';
 import { createRuntimeConsults } from './consults';
 import { createRuntimeGroupChats } from './group-chats';
+import { createRuntimeHistory, type SharedHistoryIdentity } from './history';
+import { createHistoryWriter } from '../turns/history';
 import { createProcessRegistry } from './processes';
 import { createRuntimeAutoRun, type RuntimeAutoRun } from './autorun';
 import { createProviderLister } from './providers';
@@ -83,6 +88,12 @@ export interface MaestroRuntimeOptions {
 	quarantineCorruptStores?: boolean;
 	/** What the runtime needs to run turns: the SQLite loader, the CLI script, the bundled prompts. */
 	turns?: RuntimeTurnOptions;
+	/**
+	 * Take part in the shared History of each agent's project (`.maestro/history/`) as this
+	 * identity: a host's own entries are copied there, and the other writers' are read back with
+	 * the agent's. Absent (the TUI): the agent's own History only.
+	 */
+	sharedHistory?: SharedHistoryIdentity;
 	deps?: Partial<RuntimeDeps>;
 }
 
@@ -107,6 +118,12 @@ export interface MaestroRuntime extends MaestroClient {
 	readonly runs: Pick<RuntimeAutoRun, 'activeRuns' | 'latestState'>;
 	/** Chat turns running now. With the rest, the work `host stop` refuses to cut off. */
 	turnsInFlight(): number;
+	/**
+	 * The agent's tabs with a process running now, and when each started (epoch ms). A host lays
+	 * this over every agent record it sends (`withLiveTabState`), because the stored tab state is
+	 * never busy: a client that attaches mid-turn still sees the tab working.
+	 */
+	liveTabs(agentId: string): ReadonlyMap<string, number>;
 	/** Group chats whose moderator or a participant is working (GD24). */
 	roundsInFlight(): number;
 	/** Consults waiting on another agent's answer (GD24). */
@@ -299,15 +316,34 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 	// The run releases what it held back (queued chat messages) when it ends, and the turn service
 	// asks whether a run holds an agent: each needs the other, so the run reaches `turns`, declared
 	// below, only when a run ends.
+	// One History writer for every kind of turn, so each entry is copied to the project's shared
+	// History the same way, whether a chat turn, an Auto Run task, or a consult wrote it.
+	const history = createRuntimeHistory({
+		paths,
+		repository,
+		...(options.sharedHistory ? { shared: options.sharedHistory } : {}),
+	});
+	const historyWriter = createHistoryWriter({
+		paths,
+		fence,
+		onAppended: (agentId, entry) => history.share(agentId, entry),
+	});
+
 	const autoRun = createRuntimeAutoRun({
 		paths,
 		repository,
 		bus,
 		registry,
 		fence,
+		historyWriter,
 		options: options.turns,
 		deps: { probeBinary: deps.probeBinary, ...deps.turns },
 		onRunEnded: (agentId) => turns.drain(agentId),
+	});
+	// The host identity a Grok native session is bound to, computed as the desktop computes it.
+	const grokInstallation = grokInstallationId({
+		hostname: os.hostname(),
+		productionDataDir: paths.productionDataDir,
 	});
 	const turns = createRuntimeTurns({
 		paths,
@@ -315,9 +351,39 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		bus,
 		registry,
 		fence,
+		historyWriter,
 		rules: deps.rules,
 		autoRunHolds: (agentId) => autoRun.holds(agentId),
-		options: options.turns,
+		options: {
+			...options.turns,
+			grokLaunchScope: options.turns?.grokLaunchScope ?? {
+				local: {
+					homedir: () => os.homedir(),
+					realpath: (directory) => fs.realpath(directory),
+					stat: (directory) => fs.stat(directory),
+					realpathSync: (directory) => {
+						const resolved = realpathSync(directory);
+						return statSync(resolved).isDirectory() ? resolved : '';
+					},
+					isExpectedError: (error) =>
+						['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'EBUSY', 'EISDIR'].includes(
+							(error as NodeJS.ErrnoException | null)?.code ?? ''
+						),
+					installationId: () => grokInstallation,
+				},
+				// The headless host has no qualified SSH directory observer. Unknown
+				// scope must refuse resume; an SSH config alias is not a host identity.
+				remote: {
+					observe: async () => ({
+						success: false,
+						errorCode: 'unavailable',
+						error: 'This host cannot observe Grok SSH launch ownership.',
+					}),
+					qualify: async () => undefined,
+					isExpectedError: () => false,
+				},
+			},
+		},
 		deps: { probeBinary: deps.probeBinary, ...deps.turns },
 	});
 
@@ -350,6 +416,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		repository,
 		registry,
 		fence,
+		historyWriter,
 		background,
 		rules: deps.rules,
 		// Where the prompts and the CLI script are, as the chat turns are told.
@@ -414,6 +481,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		autoRun: autoRun.api,
 		groupChats: groupChats.api,
 		consults: { api: consults.api, cancelForSource: consults.cancelForSource },
+		history: history.api,
 	});
 
 	return {
@@ -425,6 +493,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 			runs: { activeRuns: autoRun.activeRuns, latestState: autoRun.latestState },
 			// The registry holds every process the runtime owns; the background ones are counted apart.
 			turnsInFlight: () => registry.size() - background.registeredCount(),
+			liveTabs: (agentId) => registry.runningTabs(agentId),
 			roundsInFlight: groupChats.roundsInFlight,
 			consultsInFlight: consults.inFlight,
 		},

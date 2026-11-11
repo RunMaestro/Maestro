@@ -17,7 +17,7 @@ import {
 	getTurnUsageLedgerSize,
 	resetTurnUsageLedgerForTests,
 } from '../../shared/turnUsageLedger';
-import type { UsageStats } from '../../shared/types';
+import type { UsageCost, UsageStats } from '../../shared/types';
 
 function usage(overrides: Partial<UsageStats> = {}): UsageStats {
 	return {
@@ -171,6 +171,59 @@ describe('turnUsageLedger', () => {
 				cacheCreationTokens: 44,
 				costUsd: 0.55,
 			});
+		});
+
+		// A Grok turn whose accounting says the charge is not
+		// known reaches the row as NULL. `totalCostUsd` is then only a display 0,
+		// and writing it would count the turn as free on the dashboard.
+		const grokTurn = (cost: UsageCost, totalCostUsd: number): UsageStats =>
+			usage({
+				inputTokens: 10,
+				outputTokens: 5,
+				totalCostUsd,
+				accounting: {
+					source: 'runtime-stream',
+					providerId: 'grok',
+					route: 'native-headless',
+					scope: 'turn',
+					reporting: 'delta',
+					cacheReadCounting: 'beside-input',
+					cacheCreationCounting: 'beside-input',
+					completeness: cost.status === 'exact' ? 'complete' : 'partial',
+					cost,
+					childInclusion: 'excluded',
+					childCompleteness: 'complete',
+				},
+			});
+		const tokens = { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheCreationTokens: 0 };
+
+		it('keeps the figure of a priced Grok turn', () => {
+			expect(usageStatsToTurnFields(grokTurn({ status: 'exact', costUsd: 0.25 }, 0.25))).toEqual({
+				...tokens,
+				costUsd: 0.25,
+			});
+		});
+
+		it('keeps an exact zero a zero (the provider said the turn was free)', () => {
+			expect(usageStatsToTurnFields(grokTurn({ status: 'exact', costUsd: 0 }, 0))).toEqual({
+				...tokens,
+				costUsd: 0,
+			});
+		});
+
+		it('omits costUsd for an unknown Grok charge, so the row stores NULL and not $0', () => {
+			const fields = usageStatsToTurnFields(grokTurn({ status: 'unknown' }, 0));
+			expect(fields).toEqual(tokens);
+			expect('costUsd' in fields).toBe(false);
+		});
+
+		it('omits costUsd for a partial charge that carries no figure, and keeps a partial figure', () => {
+			const none = usageStatsToTurnFields(grokTurn({ status: 'partial' }, 0));
+			expect(none).toEqual(tokens);
+			expect('costUsd' in none).toBe(false);
+			expect(
+				usageStatsToTurnFields(grokTurn({ status: 'partial', costUsd: 0.001 }, 0.001))
+			).toEqual({ ...tokens, costUsd: 0.001 });
 		});
 	});
 });

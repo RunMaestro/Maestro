@@ -49,7 +49,7 @@ import {
 	formatTokensCompact,
 } from '../../../shared/formatters';
 import { aggregateRangeUsage } from '../../../shared/usageStats';
-import { visibleAiTabs } from '../../utils/tabHelpers';
+import { countTabStrip } from '../../../shared/tabStripMembership';
 import { resolveModelPricing, TOKENS_PER_MILLION } from '../../../shared/modelPricing';
 import { countActiveAgents } from '../../../shared/statsActiveAgents';
 import { Sparkline } from './Sparkline';
@@ -822,14 +822,22 @@ export const SummaryCards = memo(function SummaryCards({
 		return aggregateRangeUsage(data.bySessionTokens, (id) => modelBySession.get(id));
 	}, [data.bySessionTokens, sessions]);
 
-	// Count open tabs across all sessions (AI + file preview)
-	const openTabCount = useMemo(() => {
-		if (!sessions) return 0;
-		return sessions.reduce((total, s) => {
-			const aiCount = visibleAiTabs(s.aiTabs).length;
-			const fileCount = s.filePreviewTabs?.length ?? 0;
-			return total + aiCount + fileCount;
-		}, 0);
+	// Open tabs: every chip the tab strips draw (AI, file, browser, terminal).
+	// Hidden AI tabs (consults) draw no chip. The same rules answer
+	// `maestro-cli session list --type all`, so the two numbers agree (#2008).
+	const openTabs = useMemo(() => {
+		const byType = { ai: 0, file: 0, browser: 0, terminal: 0 };
+		for (const s of sessions ?? []) {
+			const counts = countTabStrip(s);
+			byType.ai += counts.ai.visible;
+			byType.file += counts.file.visible;
+			byType.browser += counts.browser.visible;
+			byType.terminal += counts.terminal.visible;
+		}
+		return {
+			byType,
+			total: byType.ai + byType.file + byType.browser + byType.terminal,
+		};
 	}, [sessions]);
 
 	// Per-state agent counts for the mini status breakdown shown under the Agents card.
@@ -858,6 +866,18 @@ export const SummaryCards = memo(function SummaryCards({
 			data.bySessionByDay
 		);
 	}, [sessions, data.bySessionByDay]);
+
+	const openTabBreakdown = sessions ? (
+		<div
+			className="mt-1.5 text-2xs"
+			style={{ color: theme.colors.textDim }}
+			data-testid="open-tab-breakdown"
+		>
+			{formatNumber(openTabs.byType.ai)} AI · {formatNumber(openTabs.byType.file)} file ·{' '}
+			{formatNumber(openTabs.byType.browser)} browser · {formatNumber(openTabs.byType.terminal)}{' '}
+			terminal
+		</div>
+	) : undefined;
 
 	const statusBreakdown = statusCounts ? (
 		<div
@@ -956,7 +976,8 @@ export const SummaryCards = memo(function SummaryCards({
 		{
 			icon: <PanelTop className="w-4 h-4" />,
 			label: 'Open Tabs',
-			value: formatNumber(openTabCount),
+			value: formatNumber(openTabs.total),
+			extra: openTabBreakdown,
 		},
 		{
 			icon: <MessageSquare className="w-4 h-4" />,

@@ -34,6 +34,7 @@ import type { SymphonyContributionData } from './SymphonyModal';
 import type { MindMapLayoutType } from './DocumentGraph/mindMapLayouts';
 import { HostFolderPicker } from './HostFolderPicker';
 import { AgentBundleModals } from './Bundles/AgentBundleModals';
+import type { UnifiedHistoryTabProps } from './DirectorNotes/UnifiedHistoryTab';
 import { MoveToHostModalHost } from './MoveToHostModal';
 
 import type {
@@ -115,11 +116,7 @@ export interface AppStandaloneModalsProps {
 	encoreFeatures: EncoreFeatureFlags;
 
 	// --- Director's Notes ---
-	onDirectorNotesResumeSession: (
-		sourceSessionId: string,
-		agentSessionId: string,
-		sessionName?: string
-	) => void;
+	onDirectorNotesResumeSession: NonNullable<UnifiedHistoryTabProps['onResumeSession']>;
 	onFileClick: (node: FileNode, path: string) => void;
 
 	// --- Cue ---

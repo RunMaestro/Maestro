@@ -90,3 +90,6 @@ src/main/lite/discovery-pairing-prototype/
 .tmp-*
 __pycache__/
 .pytest_cache/
+
+# Local SlopTimize command output cache
+.sloptimize/

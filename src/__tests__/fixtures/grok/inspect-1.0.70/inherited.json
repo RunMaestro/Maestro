@@ -1,0 +1,280 @@
+{
+	"grokVersion": "1.0.70",
+	"channel": "unknown",
+	"updateChannel": null,
+	"cwd": "/fixture/project",
+	"projectRoot": null,
+	"projectTrusted": false,
+	"projectInstructions": [],
+	"permissions": {
+		"sources": ["/fixture/home/.claude/settings.local.json (settings)"],
+		"loaded": 3,
+		"skipped": [],
+		"mcpServerAllowlist": [],
+		"mcpLockdownSources": [],
+		"mcpManagedServersOnly": "off",
+		"marketplaceAllowlist": [],
+		"marketplaceLockdownSources": [],
+		"managedMarketplaces": [],
+		"managedSettingsPath": "/Library/Application Support/ClaudeCode/managed-settings.json",
+		"managedSettingsExists": false,
+		"managedSettingsActive": false,
+		"claudeBypassLockAdvisory": false
+	},
+	"loginPolicy": {
+		"disableApiKeyAuth": null,
+		"forceLoginTeamUuid": null,
+		"apiKeyAuthDisabled": false
+	},
+	"hooks": [],
+	"skills": [
+		{
+			"name": "built-in-browser",
+			"description": "",
+			"source": {
+				"type": "user",
+				"path": "/fixture/home/.claude/skills/.trash/1792776862799-35079-eHRQPH/built-in-browser/SKILL.md"
+			},
+			"userInvocable": true,
+			"vendor": "claude",
+			"compatibilityStatus": "enabled"
+		},
+		{
+			"name": "computer-use",
+			"description": "",
+			"source": {
+				"type": "user",
+				"path": "/fixture/home/.claude/skills/.trash/1792776862801-35079-8T3yyS/computer-use/SKILL.md"
+			},
+			"userInvocable": true,
+			"vendor": "claude",
+			"compatibilityStatus": "enabled"
+		},
+		{
+			"name": "import-memory",
+			"description": "",
+			"source": {
+				"type": "user",
+				"path": "/fixture/home/.claude/skills/.trash/1792776862804-35079-VPiFB1/import-memory/SKILL.md"
+			},
+			"userInvocable": true,
+			"vendor": "claude",
+			"compatibilityStatus": "enabled"
+		},
+		{
+			"name": "deep-research",
+			"description": "",
+			"source": {
+				"type": "user",
+				"path": "/fixture/home/.claude/skills/.trash/1792776862837-35079-fDGGik/deep-research/SKILL.md"
+			},
+			"userInvocable": true,
+			"vendor": "claude",
+			"compatibilityStatus": "enabled"
+		},
+		{
+			"name": "chrome-browser",
+			"description": "",
+			"source": {
+				"type": "user",
+				"path": "/fixture/home/.claude/skills/.trash/1792776863017-35079-cgQ86Z/chrome-browser/SKILL.md"
+			},
+			"userInvocable": true,
+			"vendor": "claude",
+			"compatibilityStatus": "enabled"
+		},
+		{
+			"name": "docs",
+			"description": "",
+			"source": {
+				"type": "user",
+				"path": "/fixture/home/.claude/skills/synced/1bb80499-64f6-46fc-a136-0f5ddde138e8_d3755c0c-6b1e-47e6-b94a-5c23144b0579/docs/SKILL.md"
+			},
+			"userInvocable": true,
+			"vendor": "claude",
+			"compatibilityStatus": "enabled",
+			"collidesWith": "docs",
+			"invocableAs": "user:docs"
+		},
+		{
+			"name": "google-workspace",
+			"description": "",
+			"source": {
+				"type": "user",
+				"path": "/fixture/home/.claude/skills/synced/1bb80499-64f6-46fc-a136-0f5ddde138e8_d3755c0c-6b1e-47e6-b94a-5c23144b0579/google-workspace/SKILL.md"
+			},
+			"userInvocable": true,
+			"vendor": "claude",
+			"compatibilityStatus": "enabled"
+		},
+		{
+			"name": "morning",
+			"description": "",
+			"source": {
+				"type": "user",
+				"path": "/fixture/home/.claude/skills/synced/1bb80499-64f6-46fc-a136-0f5ddde138e8_d3755c0c-6b1e-47e6-b94a-5c23144b0579/morning/SKILL.md"
+			},
+			"userInvocable": true,
+			"vendor": "claude",
+			"compatibilityStatus": "enabled"
+		},
+		{
+			"name": "brand-guidelines",
+			"description": "",
+			"source": {
+				"type": "user",
+				"path": "/fixture/home/.claude/skills/synced/cd0c5699-540b-4872-8691-723dbd262c97_9442fbae-c3f7-4d4d-ab1f-d055d1ce4bf7/brand-guidelines/SKILL.md"
+			},
+			"userInvocable": true,
+			"vendor": "claude",
+			"compatibilityStatus": "enabled"
+		},
+		{
+			"name": "internal-comms",
+			"description": "",
+			"source": {
+				"type": "user",
+				"path": "/fixture/home/.claude/skills/synced/cd0c5699-540b-4872-8691-723dbd262c97_9442fbae-c3f7-4d4d-ab1f-d055d1ce4bf7/internal-comms/SKILL.md"
+			},
+			"userInvocable": true,
+			"vendor": "claude",
+			"compatibilityStatus": "enabled"
+		},
+		{
+			"name": "theme-factory",
+			"description": "",
+			"source": {
+				"type": "user",
+				"path": "/fixture/home/.claude/skills/synced/cd0c5699-540b-4872-8691-723dbd262c97_9442fbae-c3f7-4d4d-ab1f-d055d1ce4bf7/theme-factory/SKILL.md"
+			},
+			"userInvocable": true,
+			"vendor": "claude",
+			"compatibilityStatus": "enabled"
+		},
+		{
+			"name": "web-artifacts-builder",
+			"description": "",
+			"source": {
+				"type": "user",
+				"path": "/fixture/home/.claude/skills/synced/cd0c5699-540b-4872-8691-723dbd262c97_9442fbae-c3f7-4d4d-ab1f-d055d1ce4bf7/web-artifacts-builder/SKILL.md"
+			},
+			"userInvocable": true,
+			"vendor": "claude",
+			"compatibilityStatus": "enabled"
+		}
+	],
+	"agents": [
+		{
+			"name": "general-purpose",
+			"description": "General purpose agent for multi-step tasks.",
+			"source": {
+				"type": "builtin"
+			}
+		},
+		{
+			"name": "explore",
+			"description": "Fast, read-only agent specialized for codebase exploration.",
+			"source": {
+				"type": "builtin"
+			}
+		},
+		{
+			"name": "plan",
+			"description": "Software architect for planning implementation strategies.",
+			"source": {
+				"type": "builtin"
+			}
+		}
+	],
+	"plugins": [],
+	"marketplaces": [],
+	"mcpServers": [],
+	"lspServers": [],
+	"configSources": {
+		"layers": []
+	},
+	"experiments": [],
+	"externalCompat": {
+		"remoteSettingsLoaded": false,
+		"cells": [
+			{
+				"vendor": "cursor",
+				"surface": "skills",
+				"enabled": true,
+				"source": "default"
+			},
+			{
+				"vendor": "cursor",
+				"surface": "rules",
+				"enabled": true,
+				"source": "default"
+			},
+			{
+				"vendor": "cursor",
+				"surface": "agents",
+				"enabled": true,
+				"source": "default"
+			},
+			{
+				"vendor": "cursor",
+				"surface": "mcps",
+				"enabled": true,
+				"source": "default"
+			},
+			{
+				"vendor": "cursor",
+				"surface": "hooks",
+				"enabled": true,
+				"source": "default"
+			},
+			{
+				"vendor": "cursor",
+				"surface": "sessions",
+				"enabled": true,
+				"source": "default"
+			},
+			{
+				"vendor": "claude",
+				"surface": "skills",
+				"enabled": true,
+				"source": "default"
+			},
+			{
+				"vendor": "claude",
+				"surface": "rules",
+				"enabled": true,
+				"source": "default"
+			},
+			{
+				"vendor": "claude",
+				"surface": "agents",
+				"enabled": true,
+				"source": "default"
+			},
+			{
+				"vendor": "claude",
+				"surface": "mcps",
+				"enabled": true,
+				"source": "default"
+			},
+			{
+				"vendor": "claude",
+				"surface": "hooks",
+				"enabled": true,
+				"source": "default"
+			},
+			{
+				"vendor": "claude",
+				"surface": "sessions",
+				"enabled": true,
+				"source": "default"
+			},
+			{
+				"vendor": "codex",
+				"surface": "sessions",
+				"enabled": true,
+				"source": "default"
+			}
+		]
+	}
+}

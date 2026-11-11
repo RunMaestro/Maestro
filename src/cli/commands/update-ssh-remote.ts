@@ -16,7 +16,7 @@ import {
 } from '../../shared/sshOptions';
 import { setKeysParked, type ParkedRecordPair } from '../../shared/parkedRecords';
 import { failCommand, failFromError } from '../services/session-command';
-import { isEncoreEnabled } from '../utils/encore-gate';
+import { federationFieldFor, isFederationRemote } from '../../shared/federationRemote';
 
 interface UpdateSshRemoteOptions {
 	name?: string;
@@ -34,7 +34,7 @@ interface UpdateSshRemoteOptions {
 	enableSshOption?: string[];
 	sshConfig?: string;
 	enabled?: string;
-	/** `on` / `off`; a Federation option, refused in `index.ts` while that Encore Feature is off */
+	/** `on` / `off`: Federation for this remote; `off` is the only value stored */
 	federation?: string;
 	setDefault?: boolean;
 	json?: boolean;
@@ -146,7 +146,8 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 	if (options.federation !== undefined) {
 		try {
 			// Stored only when on, so switching it off leaves no trace on the record.
-			updated.federation = parseCliBool(options.federation, '--federation') || undefined;
+			// Federation is opportunistic: only an opt-out is stored.
+			updated.federation = federationFieldFor(parseCliBool(options.federation, '--federation'));
 		} catch (error) {
 			failFromError(error, options.json);
 		}
@@ -217,7 +218,7 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 				// override is usually to change one of those, so echoing only the
 				// overrides would not answer "did my ConnectTimeout take effect?"
 				resolvedSshOptions: resolveSshOptions(updated.sshOptions),
-				...(isEncoreEnabled('federation') ? { federation: updated.federation === true } : {}),
+				federation: isFederationRemote(updated),
 			})
 		);
 		return;
@@ -240,8 +241,8 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 	for (const key of Object.keys(updated.remoteEnvDisabled ?? {})) {
 		console.log(`  env   ${key} (off)`);
 	}
-	if (updated.federation && isEncoreEnabled('federation')) {
-		console.log(`  Federation: on`);
+	if (!isFederationRemote(updated)) {
+		console.log(`  Federation: off`);
 	}
 	if (options.setDefault) {
 		console.log(`  Set as default`);

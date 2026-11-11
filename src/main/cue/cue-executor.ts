@@ -255,52 +255,55 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 
 	// 4. Build spawn spec (agent args, SSH wrapping, etc.)
 	const buildResult = await buildSpawnSpec(launchConfig, finalPrompt);
-	// Stopped while the spec was being built (SSH resolution, spawn-mode probe).
-	if (isLaunchCancelled(config.signal)) {
-		return stoppedBeforeLaunchResult({
-			runId,
-			sessionId: session.id,
-			sessionName: session.name,
-			subscriptionName: subscription.name,
-			pipelineName: subscription.pipeline_name,
-			event,
-			startedAt,
-		});
-	}
-	if (!buildResult.ok) {
-		onLog('error', buildResult.message);
-		return failedResult(buildResult.message);
-	}
-
-	const { spec } = buildResult;
-
-	// Log SSH remote usage
-	if (spec.sshRemoteUsed) {
-		onLog('cue', `[CUE] Using SSH remote: ${spec.sshRemoteUsed.name || spec.sshRemoteUsed.host}`);
-	}
-
-	// 5. Execute the process
-	onLog(
-		'cue',
-		`[CUE] Executing run ${runId}: "${subscription.name}" → ${spec.command} (${event.type})`
-	);
-
-	const sshActuallyUsed = !!spec.sshRemoteUsed;
-
-	// Cue spawns agents directly, so the ProcessManager's WakaTime listener
-	// never sees this run. Beat off the output stream instead. The run gets its
-	// own debounce bucket rather than sharing the desktop chat's, so a Cue run
-	// and a chat session in the same project both register.
-	const wakaHeartbeat = buildCueWakaTimeHeartbeat(
-		`cue:${session.id}:${runId}`,
-		session.projectRoot || session.cwd,
-		sshActuallyUsed
-	);
-
+	// A successful build hands its proofs to this executor before any cancellation
+	// return or setup callback can run. Prompt artifacts stay with the process sink.
+	let sshActuallyUsed = false;
 	// Capture the existing raw stream only when the optional recorder listens.
 	let rawStdout = '';
 	let processResult;
 	try {
+		// Stopped while the spec was being built (SSH resolution, spawn-mode probe).
+		if (isLaunchCancelled(config.signal)) {
+			return stoppedBeforeLaunchResult({
+				runId,
+				sessionId: session.id,
+				sessionName: session.name,
+				subscriptionName: subscription.name,
+				pipelineName: subscription.pipeline_name,
+				event,
+				startedAt,
+			});
+		}
+		if (!buildResult.ok) {
+			onLog('error', buildResult.message);
+			return failedResult(buildResult.message);
+		}
+
+		const { spec } = buildResult;
+
+		// Log SSH remote usage
+		if (spec.sshRemoteUsed) {
+			onLog('cue', `[CUE] Using SSH remote: ${spec.sshRemoteUsed.name || spec.sshRemoteUsed.host}`);
+		}
+
+		// 5. Execute the process
+		onLog(
+			'cue',
+			`[CUE] Executing run ${runId}: "${subscription.name}" → ${spec.command} (${event.type})`
+		);
+
+		sshActuallyUsed = !!spec.sshRemoteUsed;
+
+		// Cue spawns agents directly, so the ProcessManager's WakaTime listener
+		// never sees this run. Beat off the output stream instead. The run gets its
+		// own debounce bucket rather than sharing the desktop chat's, so a Cue run
+		// and a chat session in the same project both register.
+		const wakaHeartbeat = buildCueWakaTimeHeartbeat(
+			`cue:${session.id}:${runId}`,
+			session.projectRoot || session.cwd,
+			sshActuallyUsed
+		);
+
 		processResult = await runProcess(runId, spec, {
 			toolType: config.toolType,
 			timeoutMs,
@@ -319,14 +322,15 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 				: {}),
 		});
 	} finally {
-		if (spec.pluginRunToken) pluginToolRunIdentity.revoke(spec.pluginRunToken);
-		if (spec.pluginRunProofFile) {
-			try {
-				removePluginRunProofFile(spec.pluginRunProofFile);
-			} catch (error) {
-				logger.warn('Could not remove plugin run proof file', '[PluginRunIdentity]', {
-					error: String(error),
-				});
+		if (buildResult.ok) {
+			const { spec } = buildResult;
+			if (spec.pluginRunToken) pluginToolRunIdentity.revoke(spec.pluginRunToken);
+			if (spec.pluginRunProofFile) {
+				try {
+					removePluginRunProofFile(spec.pluginRunProofFile);
+				} catch {
+					logger.warn('Could not remove plugin run proof file', '[PluginRunIdentity]');
+				}
 			}
 		}
 	}

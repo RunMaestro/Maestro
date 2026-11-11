@@ -235,6 +235,14 @@ export interface CueCommandCliCall {
 	message?: string;
 	/** Send into a fresh AI tab. Absent preserves the CLI's default tab behavior. */
 	new_tab?: boolean;
+	/**
+	 * AI tab id (or template variable) within `target` to deliver into. The
+	 * message waits behind a busy turn in that tab (`dispatch --tab --queue`),
+	 * never moves the user's view, and the reply marks the tab unread. A tab
+	 * that is gone when the run fires falls back to a new tab plus a toast, so
+	 * the prompt is never dropped. Omitted: the agent's active tab.
+	 */
+	tab?: string;
 }
 
 /**

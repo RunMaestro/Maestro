@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'node:path';
 
 // Mock electron ipcRenderer
 const mockInvoke = vi.fn();
@@ -18,12 +19,18 @@ vi.mock('electron', () => ({
 }));
 
 import { createProcessCoreApi, type ProcessConfig } from '../../../../main/preload/process/core';
+import type { NativeSessionLaunch } from '../../../../main/process-manager/types';
+
+vi.mock('../../../../shared/uuid', () => ({ generateUUID: vi.fn(() => 'colliding-uuid') }));
 
 describe('Process Core Preload API', () => {
 	let api: ReturnType<typeof createProcessCoreApi>;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockInvoke.mockReset();
+		mockOn.mockReset();
+		mockRemoveListener.mockReset();
 		api = createProcessCoreApi();
 	});
 
@@ -72,7 +79,10 @@ describe('Process Core Preload API', () => {
 
 			const result = await api.spawn(config);
 
-			expect(mockInvoke).toHaveBeenCalledWith('process:spawn', config);
+			expect(mockInvoke).toHaveBeenCalledWith('process:spawn', {
+				...config,
+				nativeSessionRequestId: expect.stringMatching(/^colliding-uuid-\d+$/),
+			});
 			expect(result.pid).toBe(1234);
 			expect(result.success).toBe(true);
 		});
@@ -94,6 +104,260 @@ describe('Process Core Preload API', () => {
 			const result = await api.spawn(config);
 
 			expect(result.sshRemote).toEqual({ id: 'remote-1', name: 'My Server', host: 'example.com' });
+		});
+	});
+
+	describe('native spawn attempts', () => {
+		const config: ProcessConfig = {
+			sessionId: 'agent-ai-tab-a',
+			tabId: 'tab-a',
+			toolType: 'grok',
+			cwd: path.resolve('fixture', 'project'),
+			command: 'grok',
+			args: ['--resume', 'native-requested'],
+			agentSessionId: 'native-requested',
+		};
+
+		it('announces a frozen snapshot before IPC and isolates caller mutations', async () => {
+			const caller = { ...structuredClone(config), nativeSessionRequestId: 'caller-token' };
+			const observer = vi.fn((attempt) => {
+				expect(mockInvoke).not.toHaveBeenCalled();
+				expect(Object.isFrozen(attempt)).toBe(true);
+				caller.tabId = 'changed-tab';
+				caller.agentSessionId = 'changed-native';
+				caller.cwd = path.resolve('changed');
+				caller.args.push('--changed');
+			});
+			api.onSpawnAttempt(observer);
+			const result = { pid: 1234, success: true };
+			mockInvoke.mockResolvedValue(result);
+			const pending = api.spawn(caller);
+			const attempt = observer.mock.calls[0][0];
+			expect(attempt).toEqual({
+				sessionId: config.sessionId,
+				tabId: config.tabId,
+				toolType: 'grok',
+				requestedNativeSessionId: 'native-requested',
+				nativeSessionRequestId: expect.stringMatching(/^colliding-uuid-\d+$/),
+			});
+			expect(mockInvoke.mock.calls).toEqual([
+				[
+					'process:spawn',
+					{
+						...config,
+						nativeSessionRequestId: attempt.nativeSessionRequestId,
+					},
+				],
+			]);
+			await expect(pending).resolves.toBe(result);
+		});
+
+		it('gives AI successors and other API instances unique tokens despite UUID collisions', async () => {
+			const observer = vi.fn();
+			const other = createProcessCoreApi();
+			api.onSpawnAttempt(observer);
+			other.onSpawnAttempt(observer);
+			for (const [bridge, toolType] of [
+				[api, 'grok'],
+				[api, 'codex'],
+				[other, 'grok'],
+			] as const) {
+				await bridge.spawn({ ...config, toolType });
+			}
+			const attempts = observer.mock.calls.map(([attempt]) => attempt);
+			expect(attempts.map((attempt) => attempt.toolType)).toEqual(['grok', 'codex', 'grok']);
+			expect(new Set(attempts.map((attempt) => attempt.nativeSessionRequestId)).size).toBe(3);
+			expect(mockInvoke.mock.calls.map(([, payload]) => payload.nativeSessionRequestId)).toEqual(
+				attempts.map((attempt) => attempt.nativeSessionRequestId)
+			);
+		});
+
+		it('does not invent a tab or native ID for an untargeted fresh attempt', async () => {
+			const observer = vi.fn();
+			api.onSpawnAttempt(observer);
+			await api.spawn({ ...config, tabId: undefined, agentSessionId: undefined });
+			expect(observer.mock.calls).toEqual([
+				[
+					{
+						sessionId: config.sessionId,
+						toolType: 'grok',
+						nativeSessionRequestId: expect.stringMatching(/^colliding-uuid-\d+$/),
+					},
+				],
+			]);
+		});
+
+		it('keeps all subscribers and IPC in order for reentrant spawns without waiting for replies', async () => {
+			const order: string[] = [];
+			const pending: Array<ReturnType<typeof api.spawn>> = [];
+			mockInvoke.mockImplementation((_channel, payload) => {
+				order.push(`ipc:${payload.toolType}`);
+				return Promise.resolve({ pid: 1234, success: true });
+			});
+			api.onSpawnAttempt((attempt) => {
+				order.push(`first:${attempt.toolType}`);
+				if (attempt.toolType === 'grok') pending.push(api.spawn({ ...config, toolType: 'codex' }));
+			});
+			api.onSpawnAttempt((attempt) => order.push(`second:${attempt.toolType}`));
+			pending.push(api.spawn(config));
+			expect(order).toEqual([
+				'first:grok',
+				'second:grok',
+				'ipc:grok',
+				'first:codex',
+				'second:codex',
+				'ipc:codex',
+			]);
+			await Promise.all(pending);
+		});
+
+		it('notifies remaining subscribers after callback failure and still delivers a queued successor', async () => {
+			const error = new Error('observer failed');
+			const observer = vi.fn();
+			const pending: Array<ReturnType<typeof api.spawn>> = [];
+			api.onSpawnAttempt((attempt) => {
+				if (attempt.toolType === 'grok') {
+					pending.push(api.spawn({ ...config, toolType: 'codex' }));
+					throw error;
+				}
+			});
+			api.onSpawnAttempt(observer);
+			await expect(api.spawn(config)).rejects.toBe(error);
+			await Promise.all(pending);
+			expect(observer.mock.calls.map(([attempt]) => attempt.toolType)).toEqual(['grok', 'codex']);
+			expect(mockInvoke.mock.calls).toEqual([
+				[
+					'process:spawn',
+					{
+						...config,
+						toolType: 'codex',
+						nativeSessionRequestId: observer.mock.calls[1][0].nativeSessionRequestId,
+					},
+				],
+			]);
+		});
+
+		it('unsubscribes immediately during delivery and never replays across subscriptions or API lifetimes', async () => {
+			const removed = vi.fn();
+			const removeFirst = api.onSpawnAttempt(() => removeSecond());
+			const removeSecond = api.onSpawnAttempt(removed);
+			await api.spawn(config);
+			expect(removed).not.toHaveBeenCalled();
+			removeFirst();
+			removeSecond();
+			const late = vi.fn();
+			const removeLate = api.onSpawnAttempt(late);
+			createProcessCoreApi().onSpawnAttempt(removed);
+			expect(late).not.toHaveBeenCalled();
+			await api.spawn(config);
+			expect(late).toHaveBeenCalledTimes(1);
+			expect(removed).not.toHaveBeenCalled();
+			removeLate();
+			await api.spawn(config);
+			expect(late).toHaveBeenCalledTimes(1);
+			expect(mockOn).not.toHaveBeenCalled();
+		});
+
+		it('announces uncloneable requests but refuses IPC', async () => {
+			const observer = vi.fn();
+			api.onSpawnAttempt(observer);
+			await expect(
+				api.spawn({ ...config, unsupported: () => {} } as ProcessConfig)
+			).rejects.toThrow();
+			expect(observer).toHaveBeenCalledTimes(1);
+			expect(observer.mock.calls[0][0].requestedNativeSessionId).toBe('native-requested');
+			expect(mockInvoke).not.toHaveBeenCalled();
+		});
+
+		it.each(['throw', 'reject', 'false'] as const)(
+			'retains the latest announcement after invoke %s',
+			async (failure) => {
+				const observer = vi.fn();
+				api.onSpawnAttempt(observer);
+				await api.spawn(config);
+				const error = new Error('spawn failed');
+				mockInvoke.mockImplementationOnce(() => {
+					if (failure === 'throw') throw error;
+					return failure === 'reject' ? Promise.reject(error) : { pid: 0, success: false };
+				});
+				const failed = api.spawn(config);
+				if (failure === 'false') await expect(failed).resolves.toEqual({ pid: 0, success: false });
+				else await expect(failed).rejects.toBe(error);
+				expect(observer).toHaveBeenCalledTimes(2);
+				expect(observer.mock.calls[1][0].nativeSessionRequestId).not.toBe(
+					observer.mock.calls[0][0].nativeSessionRequestId
+				);
+				await api.spawn(config);
+				expect(observer).toHaveBeenCalledTimes(3);
+			}
+		);
+
+		it('leaves terminal spawns and cancellation outside AI attempt notifications', async () => {
+			const observer = vi.fn();
+			api.onSpawnAttempt(observer);
+			const terminal = { ...config, toolType: 'terminal' };
+			await api.spawn(terminal);
+			expect(mockInvoke.mock.calls).toEqual([['process:spawn', terminal]]);
+			expect(mockInvoke.mock.calls[0][1]).toBe(terminal);
+			expect(observer).not.toHaveBeenCalled();
+			await api.spawn(config);
+			await api.interrupt(config.sessionId);
+			await api.kill(config.sessionId);
+			expect(observer).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('onSessionId', () => {
+		it.each(['local', 'ssh', 'unknown'] as const)(
+			'forwards exact %s launch provenance and distinct observed ID',
+			(kind) => {
+				const receipt: NativeSessionLaunch = {
+					scope:
+						kind === 'unknown'
+							? { version: 1, state: 'unknown', reason: 'unobserved' }
+							: {
+									version: 1,
+									state: 'bound',
+									provider: 'grok',
+									accountRef: 'account-α',
+									cwd: kind === 'local' ? path.resolve('fixture', 'project') : '/srv/project',
+									host: { kind, identity: `${kind}-endpoint-a` },
+								},
+					processGeneration: 17,
+					tabId: 'tab-a',
+					requestedNativeSessionId: 'requested-native',
+					nativeSessionRequestId: 'request-a',
+				};
+				const callback = vi.fn();
+				const original = structuredClone(receipt);
+				const unsubscribe = api.onSessionId(callback);
+				expect(mockOn).toHaveBeenCalledWith('process:session-id', expect.any(Function));
+				const handler = mockOn.mock.calls[0][1];
+				handler({}, 'agent-ai-tab-a', 'different-observed-native', receipt);
+				handler({}, 'agent-ai-tab-b', 'same-native-id');
+				expect(callback.mock.calls).toEqual([
+					['agent-ai-tab-a', 'different-observed-native', original],
+					['agent-ai-tab-b', 'same-native-id'],
+				]);
+				expect(receipt).toEqual(original);
+				expect(callback.mock.calls[0][2]).toBe(receipt);
+				expect(mockInvoke).not.toHaveBeenCalled();
+				unsubscribe();
+				expect(mockRemoveListener.mock.calls).toEqual([['process:session-id', handler]]);
+			}
+		);
+
+		it('keeps receipt-free events exactly two arguments, including absent native IDs', () => {
+			const callback = vi.fn();
+			api.onSessionId(callback);
+			const handler = mockOn.mock.calls[0][1];
+			handler({}, 'agent-ai-tab-a', 'legacy-native');
+			handler({}, 'agent-ai-tab-a', '', undefined);
+			expect(callback.mock.calls).toEqual([
+				['agent-ai-tab-a', 'legacy-native'],
+				['agent-ai-tab-a', ''],
+			]);
+			expect(mockInvoke).not.toHaveBeenCalled();
 		});
 	});
 

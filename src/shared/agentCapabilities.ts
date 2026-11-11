@@ -49,6 +49,14 @@ export interface AgentCapabilitiesSnapshot {
 	 * callers - populated lazily as detection grows richer.
 	 */
 	contextWindow?: number;
+	/**
+	 * Per-account, per-model context windows, keyed by the normalized account
+	 * key (`resolveAgentAccountKey()`). Used by providers whose window depends
+	 * on the selected account and model rather than the provider alone (Grok),
+	 * so `contextWindow` above stays unset for them. Read only through
+	 * `getContextWindowForAgent()` with the agent's own model and account.
+	 */
+	accountModelContextWindows?: Record<string, AccountModelContextWindows>;
 	/** Last error string (auth message, spawn failure detail, etc.). */
 	lastError?: string;
 	/** Unix ms timestamp of the most recent probe attempt. */
@@ -59,6 +67,14 @@ export interface AgentCapabilitiesSnapshot {
 	 * consumers don't have to split the key string.
 	 */
 	remoteId?: string;
+}
+
+/** Context windows one provider account reports for its models. */
+export interface AccountModelContextWindows {
+	/** Context window in tokens by model id, as the provider's own catalog reports it. */
+	windows: Record<string, number>;
+	/** Model an owned observation reported as current when the agent names none. */
+	defaultModel?: string;
 }
 
 /** Snapshot map keyed by `agentId` (local) or `agentId:remoteUuid` (SSH). */

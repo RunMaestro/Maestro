@@ -5,7 +5,13 @@
  * - tabNaming:generateTabName
  */
 
-import { describe, it, expect, beforeEach, vi, Mock } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, Mock } from 'vitest';
+import * as path from 'node:path';
+import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/definitions';
+import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/capabilities';
+import type { ProcessConfig } from '../../../../main/process-manager/types';
+import { captureException } from '../../../../main/utils/sentry';
+import { getPrompt } from '../../../../main/prompt-manager';
 import { ipcMain } from 'electron';
 import {
 	generateTabName,
@@ -65,16 +71,27 @@ vi.mock('../../../../main/prompt-manager', () => ({
 }));
 
 // Mock the agent args utilities
-vi.mock('../../../../shared/maestro-lib/launch/agent-args', () => ({
-	buildAgentArgs: vi.fn((agent, options) => options.baseArgs || []),
-	applyAgentConfigOverrides: vi.fn((agent, args, overrides) => ({
-		args,
-		effectiveCustomEnvVars: undefined,
-		customArgsSource: 'none' as const,
-		customEnvSource: 'none' as const,
-		modelSource: 'default' as const,
-	})),
-}));
+vi.mock('../../../../shared/maestro-lib/launch/agent-args', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../shared/maestro-lib/launch/agent-args')>();
+	return {
+		...actual,
+		buildAgentArgs: vi.fn((agent, options) =>
+			agent?.promptFile ? actual.buildAgentArgs(agent, options) : options.baseArgs || []
+		),
+		applyAgentConfigOverrides: vi.fn((agent, args, overrides) =>
+			agent?.promptFile
+				? actual.applyAgentConfigOverrides(agent, args, overrides)
+				: {
+						args,
+						effectiveCustomEnvVars: undefined,
+						customArgsSource: 'none' as const,
+						customEnvSource: 'none' as const,
+						modelSource: 'default' as const,
+					}
+		),
+	};
+});
 
 // Mock SSH utilities
 vi.mock('../../../../main/utils/ssh-remote-resolver', () => ({
@@ -84,8 +101,12 @@ vi.mock('../../../../main/utils/ssh-remote-resolver', () => ({
 	})),
 }));
 
-vi.mock('../../../../main/utils/ssh-command-builder', () => ({
+vi.mock('../../../../main/utils/ssh-command-builder', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/utils/ssh-command-builder')>()),
 	buildSshCommand: vi.fn(),
+}));
+vi.mock('../../../../shared/maestro-lib/launch/ssh-path', () => ({
+	resolveSshPath: vi.fn(async () => 'synthetic-ssh'),
 }));
 
 // Mock the remote maestro-p probe so the SSH token-mode resolution mirrors the
@@ -2219,6 +2240,724 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(await resultPromise).toBeNull();
 			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
 		});
+
+		// A refusal of the effort on a turn that RAN on Grok is never
+		// retried. Neither proof a retry needs exists here (automatic-hint
+		// provenance, a distinct fallback validated for the selected model,
+		// account, host and version), so the first failure stands with one spawn.
+		// The agent double has no prompt file, so the cheap effort of the
+		// REQUESTED provider is what reaches the Grok utility agent: the only way
+		// the retry branch could fire, and so the case the Grok guard must hold.
+		describe('Grok effort refusal keeps the first failure', () => {
+			const GROK_REFUSAL = {
+				type: 'unknown',
+				agentId: 'grok',
+				recoverable: true,
+				timestamp: 0,
+				message:
+					"--effort/--reasoning-effort: unknown effort level 'low'; use one of: medium, high",
+			};
+			const NAMING_SESSION = 'tab-naming-mock-uuid-1234';
+			const grokAgent = { ...mockClaudeAgent, id: 'grok', name: 'Grok', command: 'grok' };
+
+			function useGrokUtility(model: string | null = 'grok-utility') {
+				mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) =>
+					key === 'utilityAgentId'
+						? 'grok'
+						: key === 'utilityModelId'
+							? model
+							: (defaultValue ?? {})
+				);
+				mockAgentDetector.getAgent.mockImplementation(async (id: string) =>
+					id === 'grok' ? grokAgent : null
+				);
+			}
+
+			function grokWarnings(): unknown[][] {
+				return (logger.warn as Mock).mock.calls.filter(
+					([message]) => message === 'Tab naming effort rejected by Grok; keeping the failure'
+				);
+			}
+
+			it('a Grok utility agent refusing the requested provider cheap effort keeps the failure with one spawn', async () => {
+				const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+				useGrokUtility();
+				const callbacks = captureListeners();
+
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Fix the Slack formatting',
+					agentType: 'claude-code',
+					cwd: '/test/project',
+				});
+				await vi.waitFor(() => {
+					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				});
+				// The effort was the requested provider's ladder value, not a Grok hint.
+				expect((applyAgentConfigOverrides as Mock).mock.calls[0][2]).toMatchObject({
+					sessionCustomEffort: 'low',
+				});
+				const spawned = mockProcessManager.spawn.mock.calls[0][0] as ProcessConfig;
+				expect(spawned.toolType).toBe('grok');
+
+				callbacks['agent-error']?.(NAMING_SESSION, GROK_REFUSAL);
+				callbacks.exit?.(NAMING_SESSION, 1);
+
+				expect(await resultPromise).toBeNull();
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				expect(applyAgentConfigOverrides).toHaveBeenCalledTimes(1);
+				expect(mockAgentDetector.getAgent).toHaveBeenCalledExactlyOnceWith('grok');
+				// One log line, the session id alone: no prompt, no value, no offered menu.
+				expect(grokWarnings()).toEqual([
+					[
+						'Tab naming effort rejected by Grok; keeping the failure',
+						'[TabNaming]',
+						{ sessionId: NAMING_SESSION },
+					],
+				]);
+				expect(
+					(logger.warn as Mock).mock.calls.some(([message]) =>
+						String(message).includes('retrying at the agent default')
+					)
+				).toBe(false);
+			});
+
+			it('keeps an uppercase refusal with no selectable menu, read from the output alone', async () => {
+				useGrokUtility();
+				const callbacks = captureListeners();
+
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Fix the Slack formatting',
+					agentType: 'claude-code',
+					cwd: '/test/project',
+				});
+				await vi.waitFor(() => {
+					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				});
+				// No agent error: the refusal is only in what the turn printed.
+				callbacks.data?.(
+					NAMING_SESSION,
+					"--effort/--reasoning-effort: unknown effort level 'LOW'; this model has no selectable effort levels"
+				);
+				callbacks.exit?.(NAMING_SESSION, 1);
+
+				expect(await resultPromise).toBeNull();
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				expect(grokWarnings()).toHaveLength(1);
+			});
+
+			it('a distinct value on the refusal menu is a diagnostic, not a fallback to retry on', async () => {
+				const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+				useGrokUtility();
+				// The agent's own configured (inherited) Grok effort: what a retry would fall back to.
+				mockAgentConfigsStore.get.mockReturnValue({ grok: { effort: 'low' } });
+				const callbacks = captureListeners();
+
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Fix the Slack formatting',
+					agentType: 'claude-code',
+					cwd: '/test/project',
+				});
+				await vi.waitFor(() => {
+					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				});
+				callbacks['agent-error']?.(NAMING_SESSION, {
+					...GROK_REFUSAL,
+					message:
+						"--effort/--reasoning-effort: unknown effort level 'low'; use one of: minimal, max",
+				});
+				callbacks.exit?.(NAMING_SESSION, 1);
+
+				expect(await resultPromise).toBeNull();
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				expect(applyAgentConfigOverrides).toHaveBeenCalledTimes(1);
+				expect((applyAgentConfigOverrides as Mock).mock.calls[0][2].agentConfigValues).toEqual({
+					effort: 'low',
+				});
+			});
+
+			it('a Grok session agent (no utility agent) keeps its refusal with one spawn', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue(grokAgent);
+				const callbacks = captureListeners();
+
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Fix the Slack formatting',
+					agentType: 'grok',
+					cwd: '/test/project',
+				});
+				await vi.waitFor(() => {
+					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				});
+				callbacks['agent-error']?.(NAMING_SESSION, {
+					...GROK_REFUSAL,
+					message: "--effort/--reasoning-effort: unknown effort level 'HIGH'; use one of: low",
+				});
+				callbacks.exit?.(NAMING_SESSION, 1);
+
+				expect(await resultPromise).toBeNull();
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				expect(mockAgentDetector.getAgent).toHaveBeenCalledExactlyOnceWith('grok');
+			});
+
+			it('the Grok rule keys on the agent that ran: a Grok session named by a Codex utility agent still retries once', async () => {
+				const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+				mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) =>
+					key === 'utilityAgentId'
+						? 'codex'
+						: key === 'utilityModelId'
+							? null
+							: (defaultValue ?? {})
+				);
+				mockAgentDetector.getAgent.mockResolvedValue({ ...mockClaudeAgent, id: 'codex' });
+				const callbacks = captureListeners();
+
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Fix the Slack formatting',
+					agentType: 'claude-code',
+					cwd: '/test/project',
+				});
+				await vi.waitFor(() => {
+					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				});
+				// The same Grok wording, on a turn Codex ran: an ordinary provider's single retry.
+				callbacks['agent-error']?.(NAMING_SESSION, GROK_REFUSAL);
+				callbacks.exit?.(NAMING_SESSION, 1);
+				await vi.waitFor(() => {
+					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+				});
+				expect((applyAgentConfigOverrides as Mock).mock.calls[1][2].sessionCustomEffort).toBe(
+					undefined
+				);
+				expect((mockProcessManager.spawn.mock.calls[1][0] as ProcessConfig).toolType).toBe('codex');
+
+				// At most one retry: a second refusal ends it.
+				callbacks['agent-error']?.(NAMING_SESSION, GROK_REFUSAL);
+				callbacks.exit?.(NAMING_SESSION, 1);
+				expect(await resultPromise).toBeNull();
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+				expect(grokWarnings()).toEqual([]);
+			});
+
+			it('a Grok refusal followed by a clean exit is not retried and reads the answer it gave', async () => {
+				useGrokUtility();
+				const callbacks = captureListeners();
+
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Fix the Slack formatting',
+					agentType: 'claude-code',
+					cwd: '/test/project',
+				});
+				await vi.waitFor(() => {
+					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				});
+				callbacks['agent-error']?.(NAMING_SESSION, GROK_REFUSAL);
+				callbacks.exit?.(NAMING_SESSION, 0);
+
+				// Nothing to extract from an empty answer: null, and still one process.
+				expect(await resultPromise).toBeNull();
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				expect(grokWarnings()).toHaveLength(1);
+			});
+
+			it('an ordinary Grok failure is not reported as an effort refusal', async () => {
+				useGrokUtility();
+				const callbacks = captureListeners();
+
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Fix the Slack formatting',
+					agentType: 'claude-code',
+					cwd: '/test/project',
+				});
+				await vi.waitFor(() => {
+					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				});
+				callbacks['agent-error']?.(NAMING_SESSION, { ...GROK_REFUSAL, message: 'Not logged in' });
+				callbacks.exit?.(NAMING_SESSION, 1);
+
+				expect(await resultPromise).toBeNull();
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				expect(grokWarnings()).toEqual([]);
+			});
+		});
+	});
+
+	describe('Grok owned prompt-file naming', () => {
+		const grok = {
+			...getAgentDefinition('grok')!,
+			path: path.resolve('synthetic-bin/grok'),
+			capabilities: getAgentCapabilities('grok'),
+		};
+		const remote = {
+			id: 'grok-remote',
+			name: 'Synthetic Grok',
+			host: 'grok.invalid',
+			port: 22,
+			enabled: true,
+			username: 'test',
+			privateKeyPath: '',
+		};
+		const cwd = path.resolve('synthetic-project');
+		const privateMessage = 'private naming text 雪 $(do-not-run)';
+		let controller: AbortController;
+		let pending: Promise<string | null> | undefined;
+		let releasePreparation: (() => void) | undefined;
+		let deps: Parameters<typeof generateTabName>[0];
+
+		beforeEach(async () => {
+			controller = new AbortController();
+			pending = undefined;
+			releasePreparation = undefined;
+			mockAgentDetector.getAgent.mockResolvedValue(grok);
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 4242 });
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			vi.mocked(getSshRemoteConfig).mockReturnValue({ config: { ...remote }, source: 'session' });
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+			const actual = await vi.importActual<
+				typeof import('../../../../main/utils/ssh-command-builder')
+			>('../../../../main/utils/ssh-command-builder');
+			vi.mocked(buildSshCommand).mockImplementation(actual.buildSshCommand);
+			deps = {
+				getProcessManager: () => mockProcessManager as unknown as ProcessManager,
+				getAgentDetector: () => mockAgentDetector as unknown as AgentDetector,
+				agentConfigsStore: mockAgentConfigsStore as unknown as typeof deps.agentConfigsStore,
+				settingsStore: mockSettingsStore as unknown as typeof deps.settingsStore,
+			};
+		});
+		afterEach(async () => {
+			controller.abort();
+			releasePreparation?.();
+			await pending;
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+			vi.mocked(buildSshCommand).mockReset();
+		});
+
+		it.each(
+			[false, true].flatMap((ssh) =>
+				[false, true].flatMap((windows) =>
+					['empty', 'unicode', 'large'].map((content) => ({ ssh, windows, content }))
+				)
+			)
+		)(
+			'hands one private file to the reader: $ssh SSH, $windows Windows, $content',
+			async ({ ssh, windows, content }) => {
+				const { isWindows } = await import('../../../../shared/platformDetection');
+				vi.mocked(isWindows).mockReturnValue(windows);
+				const executable = ssh ? '/opt/雪 tools/grok' : path.resolve('synthetic-bin/雪 grok');
+				deps.getAgentDetector = () =>
+					({
+						...mockAgentDetector,
+						getCustomPaths: () => ({ grok: executable }),
+					}) as unknown as AgentDetector;
+				mockAgentConfigsStore.get.mockReturnValue({
+					grok: { model: 'grok-default', customEnvVars: { GROK_HOME: '/utility-account' } },
+				});
+				mockSettingsStore.get.mockImplementation((key, fallback) =>
+					key === 'utilityAgentId' ? 'grok' : key === 'utilityModelId' ? 'grok-utility' : fallback
+				);
+
+				const userMessage =
+					content === 'empty'
+						? ''
+						: content === 'large'
+							? `${privateMessage}\n`.repeat(2000)
+							: `  ${privateMessage}\n"quoted" \t `;
+				pending = generateTabName(
+					deps,
+					{
+						userMessage,
+						agentType: 'claude-code',
+						sessionCustomEnvVars: { GROK_HOME: '/wrong-session-account' },
+						cwd,
+						sessionSshRemoteConfig: ssh
+							? { enabled: true, remoteId: remote.id, workingDirOverride: '/srv/雪 project' }
+							: undefined,
+					},
+					controller.signal
+				);
+				await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalledOnce());
+				const spawn = mockProcessManager.spawn.mock.calls[0][0] as ProcessConfig;
+				const artifact = spawn.promptArtifact!;
+				expect(JSON.parse(artifact.content)).toEqual({
+					type: 'acp',
+					content: [
+						{
+							type: 'text',
+							text: [
+								getPrompt('tab-naming'),
+								'---',
+								"User's message:",
+								`<message>\n${userMessage}\n</message>`,
+								'Reply with the tab name for the message above and nothing else. Do not answer, research, or act on the message.',
+							].join('\n\n'),
+						},
+					],
+				});
+				expect(artifact).toMatchObject({
+					owner: ssh ? 'remote' : 'local',
+					mode: 0o600,
+					flag: 'wx',
+					cleanup: 'turn',
+					encoding: 'utf8',
+				});
+				expect((ssh ? path.posix : path).isAbsolute(artifact.path)).toBe(true);
+				expect(artifact.path.endsWith('.json')).toBe(true);
+				expect(spawn).toMatchObject({
+					toolType: 'grok',
+					sendPromptViaStdin: false,
+					sendPromptViaStdinRaw: false,
+					promptAlreadyInArgs: false,
+				});
+				expect(spawn.prompt).toBeUndefined();
+				expect(spawn.promptArgs).toBeUndefined();
+				const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+				const args = ssh ? vi.mocked(buildSshCommand).mock.calls[0][1].args! : spawn.args;
+				expect(args).toEqual(
+					expect.arrayContaining(['-m', 'grok-utility', '--cwd', ssh ? '/srv/雪 project' : cwd])
+				);
+				expect(args).not.toContain('haiku');
+				expect(args).not.toContain('--reasoning-effort');
+				expect(spawn.customEnvVars).toMatchObject({ GROK_HOME: '/utility-account' });
+				expect(args.filter((arg) => arg === '--prompt-file')).toHaveLength(1);
+				expect(args[args.indexOf('--prompt-file') + 1]).toBe(artifact.path);
+				for (const flag of ['-p', '--single', '--prompt-json', '--', '--always-approve', '--tools'])
+					expect(args).not.toContain(flag);
+				expect(args).toEqual(
+					expect.arrayContaining(['--permission-mode', 'plan', '--deny', 'Bash(*)'])
+				);
+				expect(JSON.stringify(spawn.args)).not.toContain(privateMessage);
+				if (ssh) {
+					expect(spawn).toMatchObject({
+						command: 'synthetic-ssh',
+						cwd: process.cwd(),
+						sshRemoteId: remote.id,
+						sshRemoteHost: remote.host,
+					});
+					expect(vi.mocked(buildSshCommand).mock.calls[0][1]).toMatchObject({
+						command: executable,
+						cwd: '/srv/雪 project',
+					});
+					expect(artifact.sshRemoteId).toBe(remote.id);
+					expect(spawn.sshStdinScript).toContain(Buffer.from(artifact.content).toString('base64'));
+					expect(spawn.sshRemoteCommand).toContain('[private prompt file]');
+					expect(spawn.sshRemoteCommand).not.toContain(artifact.path);
+				} else {
+					expect(spawn).toMatchObject({ command: executable, cwd });
+					expect(spawn.sshStdinScript).toBeUndefined();
+				}
+				mockProcessManager.on.mock.calls.find(([event]) => event === 'data')![1](
+					spawn.sessionId,
+					'Safe Title'
+				);
+				mockProcessManager.on.mock.calls.find(([event]) => event === 'exit')![1](
+					spawn.sessionId,
+					0
+				);
+				await expect(pending).resolves.toBe('Safe Title');
+				expect(mockProcessManager.kill).toHaveBeenCalledWith(spawn.sessionId);
+				for (const event of ['data', 'raw-stdout', 'exit', 'agent-error'])
+					expect(mockProcessManager.off).toHaveBeenCalledWith(event, expect.any(Function));
+				expect(
+					JSON.stringify(Object.values(logger).map((log) => vi.mocked(log).mock.calls))
+				).not.toContain(privateMessage);
+			}
+		);
+
+		it.each(
+			['detector-local', 'detector-ssh', 'ssh-preparation'].flatMap((stage) =>
+				['session', 'empty', 'blank', 'provider', 'global', 'utility'].map((account) => ({
+					stage,
+					account,
+				}))
+			)
+		)(
+			'captures naming identity before $stage with $account account precedence',
+			async ({ stage, account }) => {
+				const ssh = stage !== 'detector-local';
+				const utility = account === 'utility';
+				const executable = ssh ? '/opt/selected tools/grok' : path.resolve('selected-bin/grok');
+				const customPaths = { grok: executable };
+				const provider = {
+					model: 'selected-model',
+					customEnvVars: account === 'global' ? {} : { GROK_HOME: '/selected-provider' },
+				};
+				const configs = { grok: provider };
+				const settings = {
+					utilityAgentId: utility ? 'grok' : null,
+					utilityModelId: utility ? 'selected-utility-model' : null,
+					shellEnvVars: { GROK_HOME: '/selected-global', SNAPSHOT_GLOBAL: 'selected' },
+				};
+				mockAgentConfigsStore.get.mockReturnValue(configs);
+				mockSettingsStore.get.mockImplementation((key: keyof typeof settings, fallback) =>
+					key in settings ? settings[key] : fallback
+				);
+				deps.getAgentDetector = () =>
+					({ ...mockAgentDetector, getCustomPaths: () => customPaths }) as unknown as AgentDetector;
+				const selectedRemote = { ...remote, remoteEnv: { SNAPSHOT_REMOTE: 'selected' } };
+				const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+				vi.mocked(getSshRemoteConfig).mockReturnValue({
+					config: selectedRemote,
+					source: 'session',
+				});
+				const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+				if (stage === 'ssh-preparation') {
+					const actual = await vi.importActual<
+						typeof import('../../../../main/utils/ssh-command-builder')
+					>('../../../../main/utils/ssh-command-builder');
+					vi.mocked(buildSshCommand).mockImplementationOnce(async (...args) => {
+						await new Promise<void>((resolve) => {
+							releasePreparation = resolve;
+						});
+						return actual.buildSshCommand(...args);
+					});
+				} else {
+					mockAgentDetector.getAgent.mockImplementationOnce(
+						() =>
+							new Promise((resolve) => {
+								releasePreparation = () => resolve(grok);
+							})
+					);
+				}
+				const request: Parameters<typeof generateTabName>[1] = {
+					userMessage: privateMessage,
+					agentType: utility ? 'claude-code' : 'grok',
+					cwd,
+					sessionCustomEnvVars:
+						account === 'empty'
+							? {}
+							: account === 'blank'
+								? { GROK_HOME: '  ' }
+								: account === 'session' || utility
+									? { GROK_HOME: '/selected-session' }
+									: undefined,
+					sessionSshRemoteConfig: ssh
+						? { enabled: true, remoteId: remote.id, workingDirOverride: '/srv/selected project' }
+						: undefined,
+				};
+				pending = generateTabName(deps, request, controller.signal);
+				await vi.waitFor(() => expect(releasePreparation).toBeDefined());
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+
+				// Edit the existing owner and then replace it with another same-provider session.
+				if (request.sessionCustomEnvVars)
+					request.sessionCustomEnvVars.GROK_HOME = '/edited-session';
+				if (request.sessionSshRemoteConfig) {
+					request.sessionSshRemoteConfig.remoteId = 'edited-host';
+					request.sessionSshRemoteConfig.workingDirOverride = '/srv/edited';
+				}
+				Object.assign(request, {
+					userMessage: 'replacement message',
+					cwd: path.resolve('replacement-project'),
+					agentType: utility ? 'codex' : 'grok',
+					sessionCustomEnvVars: { GROK_HOME: '/replacement-account' },
+					sessionSshRemoteConfig: { enabled: false, remoteId: null },
+				});
+				provider.model = 'edited-model';
+				provider.customEnvVars.GROK_HOME = '/edited-provider';
+				configs.grok = {
+					model: 'replacement-model',
+					customEnvVars: { GROK_HOME: '/replacement-provider' },
+				};
+				settings.utilityAgentId = 'codex';
+				settings.utilityModelId = 'replacement-utility-model';
+				settings.shellEnvVars.GROK_HOME = '/edited-global';
+				settings.shellEnvVars.SNAPSHOT_GLOBAL = 'edited';
+				customPaths.grok = '/replacement/grok';
+				selectedRemote.id = 'replacement-host';
+				selectedRemote.host = 'replacement.invalid';
+				selectedRemote.remoteEnv.SNAPSHOT_REMOTE = 'edited';
+				releasePreparation!();
+				await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalledOnce());
+
+				const spawn = mockProcessManager.spawn.mock.calls[0][0] as ProcessConfig;
+				const wrapped = vi.mocked(buildSshCommand).mock.calls[0];
+				const args = ssh ? wrapped[1].args! : spawn.args;
+				expect(mockAgentDetector.getAgent).toHaveBeenCalledExactlyOnceWith('grok');
+				expect(spawn.toolType).toBe('grok');
+				expect(args).toEqual(
+					expect.arrayContaining([
+						'-m',
+						utility ? 'selected-utility-model' : 'selected-model',
+						'--cwd',
+						ssh ? '/srv/selected project' : cwd,
+					])
+				);
+				const selectedAccount =
+					account === 'session'
+						? '/selected-session'
+						: account === 'empty' || account === 'global'
+							? undefined
+							: account === 'blank'
+								? '  '
+								: '/selected-provider';
+				expect(spawn.customEnvVars?.GROK_HOME).toBe(selectedAccount);
+				expect(spawn.shellEnvVars).toEqual({
+					GROK_HOME: '/selected-global',
+					SNAPSHOT_GLOBAL: 'selected',
+				});
+				expect(spawn.promptArtifact?.content).toContain(privateMessage);
+				expect(spawn.promptArtifact?.content).not.toContain('replacement message');
+				expect(spawn.prompt).toBeUndefined();
+				if (ssh) {
+					expect(getSshRemoteConfig).toHaveBeenCalledOnce();
+					expect(buildSshCommand).toHaveBeenCalledOnce();
+					expect(wrapped[0]).toMatchObject({
+						id: remote.id,
+						host: remote.host,
+						remoteEnv: { SNAPSHOT_REMOTE: 'selected' },
+					});
+					expect(spawn.sshStdinScript).toContain("export SNAPSHOT_REMOTE='selected'");
+					expect(wrapped[1]).toMatchObject({
+						command: executable,
+						cwd: '/srv/selected project',
+						env: { GROK_HOME: selectedAccount ?? '/selected-global', SNAPSHOT_GLOBAL: 'selected' },
+					});
+					expect(spawn).toMatchObject({
+						sshRemoteId: remote.id,
+						sshRemoteHost: remote.host,
+						promptArtifact: { owner: 'remote', sshRemoteId: remote.id },
+					});
+					expect(spawn.args.join(' ')).toContain(remote.host);
+					expect(spawn.args.join(' ')).not.toContain('replacement.invalid');
+				} else {
+					expect(buildSshCommand).not.toHaveBeenCalled();
+					expect(spawn).toMatchObject({
+						command: executable,
+						cwd,
+						promptArtifact: { owner: 'local' },
+					});
+				}
+				controller.abort();
+				await expect(pending).resolves.toBeNull();
+				const diagnostics = JSON.stringify([
+					...Object.values(logger).map((log) => vi.mocked(log).mock.calls),
+					vi.mocked(captureException).mock.calls.map(([error]) => String(error)),
+					spawn.args,
+					spawn.sshRemoteCommand,
+				]);
+				const prompt = JSON.parse(spawn.promptArtifact!.content).content[0].text as string;
+				for (const privateBytes of [
+					privateMessage,
+					JSON.stringify(prompt).slice(1, -1),
+					encodeURIComponent(prompt),
+					Buffer.from(spawn.promptArtifact!.content).toString('base64'),
+				])
+					expect(diagnostics).not.toContain(privateBytes);
+			}
+		);
+
+		it.each(['cancel', 'missing-script', 'reject'])(
+			'starts no reader when remote preparation ends in %s',
+			async (outcome) => {
+				const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+				let prepared!: (value: Awaited<ReturnType<typeof buildSshCommand>>) => void;
+				let reject!: (error: Error) => void;
+				vi.mocked(buildSshCommand).mockImplementationOnce(
+					() =>
+						new Promise((resolve, fail) => {
+							prepared = resolve;
+							reject = fail;
+							releasePreparation = () => resolve({ command: 'synthetic-ssh', args: [] });
+						})
+				);
+				pending = generateTabName(
+					deps,
+					{
+						userMessage: privateMessage,
+						agentType: 'grok',
+						cwd,
+						sessionSshRemoteConfig: { enabled: true, remoteId: remote.id },
+					},
+					controller.signal
+				);
+				await vi.waitFor(() => expect(buildSshCommand).toHaveBeenCalledOnce());
+				const encodedPrompt = Buffer.from(
+					vi.mocked(buildSshCommand).mock.calls[0][1].promptArtifact!.content
+				).toString('base64');
+				if (outcome === 'cancel') controller.abort();
+				if (outcome === 'reject') reject(new Error(`${privateMessage} ${encodedPrompt}`));
+				else
+					prepared({
+						command: 'synthetic-ssh',
+						args: [],
+						...(outcome === 'cancel' ? { stdinScript: 'owned-script' } : {}),
+					});
+				await expect(pending).resolves.toBeNull();
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				expect(mockProcessManager.on).not.toHaveBeenCalled();
+				expect(
+					JSON.stringify([vi.mocked(logger.error).mock.calls, vi.mocked(logger.warn).mock.calls])
+				).not.toContain(privateMessage);
+				expect(
+					JSON.stringify(Object.values(logger).map((log) => vi.mocked(log).mock.calls))
+				).not.toContain(encodedPrompt);
+				for (const [error] of vi.mocked(captureException).mock.calls) {
+					expect(String(error)).not.toContain(privateMessage);
+					expect(String(error)).not.toContain(encodedPrompt);
+				}
+			}
+		);
+
+		it.each([
+			'-p competing',
+			'--single=competing',
+			'--prompt-json={}',
+			'--prompt-file=/unowned.json',
+			'-- competing',
+		])('refuses competing prompt sources before spawning: %s', async (customArgs) => {
+			mockAgentConfigsStore.get.mockReturnValue({ grok: { customArgs } });
+			pending = generateTabName(
+				deps,
+				{ userMessage: privateMessage, agentType: 'grok', cwd },
+				controller.signal
+			);
+			await expect(pending).resolves.toBeNull();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
+		it.each(['throw', 'refused', 'exit', 'stop'])(
+			'releases reader ownership without prompt diagnostics on %s',
+			async (outcome) => {
+				if (outcome === 'throw')
+					mockProcessManager.spawn.mockImplementationOnce(() => {
+						throw new Error(privateMessage);
+					});
+				if (outcome === 'refused')
+					mockProcessManager.spawn.mockReturnValueOnce({
+						success: false,
+						pid: -1,
+						error: privateMessage,
+					});
+				pending = generateTabName(
+					deps,
+					{ userMessage: privateMessage, agentType: 'grok', cwd },
+					controller.signal
+				);
+				await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalledOnce());
+				const spawn = mockProcessManager.spawn.mock.calls[0][0] as ProcessConfig;
+				if (outcome === 'stop') controller.abort();
+				if (outcome === 'exit') {
+					mockProcessManager.on.mock.calls.find(([event]) => event === 'data')![1](
+						spawn.sessionId,
+						privateMessage
+					);
+					mockProcessManager.on.mock.calls.find(([event]) => event === 'exit')![1](
+						spawn.sessionId,
+						1
+					);
+				}
+				await expect(pending).resolves.toBeNull();
+				expect(mockProcessManager.kill).toHaveBeenCalledWith(spawn.sessionId);
+				expect(mockProcessManager.off).toHaveBeenCalledTimes(4);
+				expect(
+					JSON.stringify(
+						[logger.info, logger.warn, logger.error, logger.debug].map(
+							(fn) => vi.mocked(fn).mock.calls
+						)
+					)
+				).not.toContain(privateMessage);
+				for (const [error] of vi.mocked(captureException).mock.calls)
+					expect(String(error)).not.toContain(privateMessage);
+			}
+		);
 	});
 
 	describe('spawn failures (MAESTRO-X4)', () => {

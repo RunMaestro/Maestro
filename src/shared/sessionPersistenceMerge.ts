@@ -44,6 +44,16 @@ const rows: Record<string, true> = {
 	members: true,
 	unifiedTabOrder: true,
 };
+/**
+ * Tab collections, where a removal the client observed always wins. Closing,
+ * snoozing or moving a tab removes its record and its `unifiedTabOrder` ref in
+ * one change. The ref is an unchanging `{ type, id }`, so its removal always
+ * applied; the record often differed from the client's baseline (a newer turn,
+ * a stored normalization), and "edit wins" kept it. The result was a tab with
+ * no slot in the strip, which the restore repair put back as a chip on the next
+ * launch: closed tabs came back (#2008).
+ */
+const tabRows = new Set(['aiTabs', 'filePreviewTabs', 'browserTabs', 'terminalTabs']);
 
 // These fields describe one native slot. A provider switch must never merge a
 // pin from one client with another client's native ID or parked selections.
@@ -72,7 +82,8 @@ function mergeRows(
 	preserveClient: boolean,
 	preserveLive: boolean,
 	aiTabs = false,
-	queueRows = false
+	queueRows = false,
+	removalWins = false
 ): RecordData[] {
 	// Queue item IDs identify the operation independently of its editable type.
 	// Otherwise changing the type can duplicate a held row during a merge.
@@ -112,13 +123,15 @@ function mergeRows(
 			next.delete(id);
 		} else if (
 			!base ||
-			(queueRows
-				? (current.dispatchRecoveryGeneration ?? 0) > (base.dispatchRecoveryGeneration ?? 0)
-				: !same(current, base))
+			(!removalWins &&
+				(queueRows
+					? (current.dispatchRecoveryGeneration ?? 0) > (base.dispatchRecoveryGeneration ?? 0)
+					: !same(current, base)))
 		) {
 			// Queue removals win metadata edits, but a definite dispatch failure
 			// restores a newer attempt of the same ID. An older removal cannot
-			// discard that recovery. Other collections retain edit-wins behavior.
+			// discard that recovery. Tab collections let the removal win (see
+			// `tabRows`); other collections retain edit-wins behavior.
 			result.push(current);
 		}
 	}
@@ -225,7 +238,8 @@ function mergeRecord(
 				preserveClient,
 				preserveLive,
 				field === 'aiTabs',
-				field === 'executionQueue'
+				field === 'executionQueue',
+				tabRows.has(field)
 			);
 		} else if (field === 'tab' && change && current && before) {
 			result[field] = mergeRecord(

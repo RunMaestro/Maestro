@@ -1,7 +1,7 @@
 /**
- * Tests for the Federation peer mirror's place in the main process: the Encore lifecycle hooks
- * that create and stop the one `PeerMirrorService`, the zero footprint while the feature is off,
- * the push channels, and the rule that the mirror never reaches a persisted store.
+ * Tests for the Federation peer mirror's place in the main process: the runtime that creates and
+ * stops the one `PeerMirrorService` (Federation is always on and opportunistic), the push
+ * channels, and the rule that the mirror never reaches a persisted store.
  *
  * The SSH forward and the host client are stood in for through the `overrides` seam; nothing
  * here dials.
@@ -17,7 +17,7 @@ vi.mock('../../../main/utils/sentry', () => ({
 
 import {
 	buildPeerMirrorServiceDeps,
-	createFederationSupervisorHooks,
+	createFederationRuntime,
 	FEDERATION_EVENT_CHANNEL,
 	FEDERATION_RESET_CHANNEL,
 	getPeerMirrorService,
@@ -84,6 +84,8 @@ function fakeTransport() {
 			agents: { list: vi.fn(async () => ({ ok: true, value: [] })) },
 			groups: { list: vi.fn(async () => ({ ok: true, value: [] })) },
 			tabs: { transcript: vi.fn(async () => ({ ok: true, value: [] })) },
+			// The service reads every agent's host queue once it attaches.
+			turns: { queue: { list: vi.fn(async () => ({ ok: true, value: [] })) } },
 			events: {
 				subscribe: (listener: (event: unknown) => void) => {
 					listeners.add(listener);
@@ -114,10 +116,10 @@ afterEach(() => {
 	setPeerMirrorServiceForTests(null);
 });
 
-describe('Federation lifecycle hooks', () => {
-	it('has no footprint until the Encore lifecycle reconciles: no service, no store read, no ssh', () => {
+describe('Federation runtime', () => {
+	it('does nothing until start(): no service, no store read, no ssh', () => {
 		const { deps, transport } = runtime([remoteOf('a')]);
-		createFederationSupervisorHooks(deps);
+		createFederationRuntime(deps);
 		expect(getPeerMirrorService()).toBeNull();
 		expect(deps.readRemotes).not.toHaveBeenCalled();
 		expect(deps.watchRemotes).not.toHaveBeenCalled();
@@ -125,37 +127,45 @@ describe('Federation lifecycle hooks', () => {
 		expect(transport.acquireForward).not.toHaveBeenCalled();
 	});
 
-	it('stopAll with nothing running does nothing at all', () => {
+	it('stop() with nothing running does nothing at all', () => {
 		const { deps, transport } = runtime([remoteOf('a')]);
-		createFederationSupervisorHooks(deps).stopAll();
+		createFederationRuntime(deps).stop();
 		expect(getPeerMirrorService()).toBeNull();
 		expect(deps.safeSend).not.toHaveBeenCalled();
 		expect(transport.acquireForward).not.toHaveBeenCalled();
 	});
 
-	it('reconcile creates and starts one service that mirrors only opted-in remotes', async () => {
-		const { deps, transport } = runtime([remoteOf('a'), remoteOf('off', { federation: false })]);
-		const hooks = createFederationSupervisorHooks(deps);
-		hooks.reconcile();
+	it('start() builds one service that probes every remote except one that opted out', async () => {
+		const { deps, transport } = runtime([
+			remoteOf('a'),
+			remoteOf('plain', { federation: undefined }),
+			remoteOf('off', { federation: false }),
+		]);
+		const federation = createFederationRuntime(deps);
+		federation.start();
 		const service = getPeerMirrorService();
 		expect(service).not.toBeNull();
 		expect(deps.watchRemotes).toHaveBeenCalledTimes(1);
 		await settle();
-		expect(transport.acquireForward).toHaveBeenCalledTimes(1);
+		await settle();
+		expect(transport.acquireForward).toHaveBeenCalledTimes(2);
 		expect(transport.acquireForward).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }));
-		expect(service?.peers()).toEqual([
-			expect.objectContaining({ peerId: 'a', connection: 'connected', agentCount: 1 }),
-		]);
+		expect(transport.acquireForward).toHaveBeenCalledWith(expect.objectContaining({ id: 'plain' }));
+		expect(transport.acquireForward).not.toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'off' })
+		);
 
-		// A second reconcile settles the same instance; it never builds a second one.
-		hooks.reconcile();
+		// A second start settles the same instance; it never builds a second one.
+		federation.start();
 		expect(getPeerMirrorService()).toBe(service);
 		expect(deps.watchRemotes).toHaveBeenCalledTimes(1);
+		federation.stop();
 	});
 
 	it('pushes every change on federation:event', async () => {
 		const { deps } = runtime([remoteOf('a')]);
-		createFederationSupervisorHooks(deps).reconcile();
+		const federation = createFederationRuntime(deps);
+		federation.start();
 		await settle();
 		const channels = deps.safeSend.mock.calls.map((call) => call[0]);
 		expect(channels.length).toBeGreaterThan(0);
@@ -164,15 +174,16 @@ describe('Federation lifecycle hooks', () => {
 			FEDERATION_EVENT_CHANNEL,
 			expect.objectContaining({ peerId: 'a' })
 		);
+		federation.stop();
 	});
 
-	it('stopAll forgets the service, drops the store listener, closes the peer, and resets the windows', async () => {
+	it('stop() forgets the service, drops the store listener, closes the peer, and resets the windows', async () => {
 		const { deps, transport, unwatch } = runtime([remoteOf('a')]);
-		const hooks = createFederationSupervisorHooks(deps);
-		hooks.reconcile();
+		const federation = createFederationRuntime(deps);
+		federation.start();
 		await settle();
 		const stopped = getPeerMirrorService();
-		hooks.stopAll();
+		federation.stop();
 		expect(getPeerMirrorService()).toBeNull();
 		await settle();
 		expect(unwatch).toHaveBeenCalledTimes(1);
@@ -181,10 +192,11 @@ describe('Federation lifecycle hooks', () => {
 		expect(deps.safeSend).toHaveBeenLastCalledWith(FEDERATION_RESET_CHANNEL);
 		expect(stopped?.peers()).toEqual([]);
 
-		// Turned on again: a fresh instance, not the stopped one.
-		hooks.reconcile();
+		// Started again: a fresh instance, not the stopped one.
+		federation.start();
 		expect(getPeerMirrorService()).not.toBe(stopped);
 		expect(getPeerMirrorService()).not.toBeNull();
+		federation.stop();
 	});
 });
 

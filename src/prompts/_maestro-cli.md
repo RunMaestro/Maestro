@@ -157,7 +157,7 @@ Targeting: with no `--tab`, `send-terminal` hits the agent's **active** terminal
 - `tab read-only <tab-id> true|false` - read-only / plan mode, the access switch. The agent in that tab cannot modify files.
 - `tab model <tab-id> <model>` and `tab effort <tab-id> <level>` - per-tab overrides. Agent-wide defaults still live on `update-agent --model` / `--effort`; reach for the tab form when only this conversation should differ.
 - `tab enter-to-send <tab-id> true|false` - the send key for that tab.
-- `tab save-to-history <tab-id> true|false`, `tab star`/`unstar`, `tab read`/`unread`, `tab rename`, `tab move`, `tab close`.
+- `tab save-to-history <tab-id> true|false`, `tab star`/`unstar`, `tab read`/`unread`, `tab rename`, `tab move`, `tab close`, `tab reopen -a <agent-id>` (restore the last closed tab).
 
 Two conventions that are easy to get wrong:
 

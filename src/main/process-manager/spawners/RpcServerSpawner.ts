@@ -27,6 +27,7 @@ import { answerRpcExtensionRequest } from '../../harness-control/rpc-interaction
 import { steeringTextMatches, type SteeringResultFrame } from '../../../shared/chatSteering';
 import type { HarnessControlCapabilities } from '../../../shared/harness-control/types';
 import type { NativeRpcProtocol } from '../../../shared/maestro-lib/providers/native-control';
+import { parseBase64DataUrl } from '../../../shared/dataUrl';
 
 const LOG_CONTEXT = 'NativeRpc';
 
@@ -254,8 +255,10 @@ class RpcTurn {
 
 	private promptImages(): Array<{ type: 'image'; data: string; mimeType: string }> {
 		return (this.config.images ?? []).flatMap((image) => {
-			const match = /^data:([^;]+);base64,(.+)$/.exec(image);
-			return match ? [{ type: 'image' as const, data: match[2], mimeType: match[1] }] : [];
+			const parsed = parseBase64DataUrl(image);
+			return parsed
+				? [{ type: 'image' as const, data: parsed.base64, mimeType: parsed.mediaType }]
+				: [];
 		});
 	}
 

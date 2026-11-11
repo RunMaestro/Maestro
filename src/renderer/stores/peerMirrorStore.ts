@@ -24,6 +24,7 @@ import {
 	createMirroredPeer,
 	mirrorKey,
 	replacePeerAgents,
+	setAgentQueue,
 	type MirrorContext,
 	type MirroredPeer,
 	type MirrorPush,
@@ -62,7 +63,7 @@ export interface MirrorTranscriptSlot {
 }
 
 export interface PeerMirrorData {
-	/** The Federation Encore Feature is on and this window follows the mirror. */
+	/** This window loaded the mirror snapshot and follows its pushes. */
 	enabled: boolean;
 	/** Peer ids in stored order. */
 	order: string[];
@@ -76,6 +77,11 @@ export interface PeerMirrorData {
 	collapsedPeerIds: Record<string, true>;
 	/** Unsent composer text per mirrored tab, by `mirrorDraftKey()`. Memory only. */
 	drafts: Record<string, string>;
+	/**
+	 * Bumped per mirrored agent (by `mirrorKey()`) whenever its History on the host may have moved:
+	 * a turn of the agent ended, or the peer reloaded. A History panel reads again on a change.
+	 */
+	historyVersions: Record<string, number>;
 }
 
 export interface PeerMirrorActions {
@@ -116,6 +122,7 @@ const EMPTY: PeerMirrorData = {
 	activeTabIds: {},
 	collapsedPeerIds: {},
 	drafts: {},
+	historyVersions: {},
 };
 
 /** The key of one mirrored tab's composer draft. */
@@ -133,6 +140,49 @@ function withoutPeerDrafts(drafts: Record<string, string>, peerId: string): Reco
 		else next[key] = text;
 	}
 	return changed ? next : drafts;
+}
+
+/** Bump the History version of one agent, or of every agent the peer has. */
+function bumpHistory(
+	state: PeerMirrorData,
+	peerId: string,
+	agentIds: readonly string[]
+): PeerMirrorData {
+	if (!agentIds.length) return state;
+	const historyVersions = { ...state.historyVersions };
+	for (const agentId of agentIds) {
+		const key = mirrorKey(peerId, agentId);
+		historyVersions[key] = (historyVersions[key] ?? 0) + 1;
+	}
+	return { ...state, historyVersions };
+}
+
+/** Every agent of every peer in a snapshot gets a new History version. */
+function bumpAll(
+	versions: Record<string, number>,
+	peers: readonly MirroredPeer[]
+): Record<string, number> {
+	const next: Record<string, number> = {};
+	for (const peer of peers) {
+		for (const agent of peer.agents) {
+			const key = mirrorKey(peer.peerId, agent.id);
+			next[key] = (versions[key] ?? 0) + 1;
+		}
+	}
+	return next;
+}
+
+/** Drop the History versions of one peer's agents (the peer was removed). */
+function withoutPeerVersions(
+	versions: Record<string, number>,
+	peerId: string
+): Record<string, number> {
+	const prefix = `${peerId}:`;
+	const next: Record<string, number> = {};
+	for (const [key, version] of Object.entries(versions)) {
+		if (!key.startsWith(prefix)) next[key] = version;
+	}
+	return next;
 }
 
 const foldContext: MirrorContext = { newId: generateId, now: () => Date.now() };
@@ -236,7 +286,12 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 				event.groups,
 				event.lastSyncAt ?? foldContext.now()
 			);
-			return settlePeer(state, peerId, next);
+			const settled = settlePeer(state, peerId, next);
+			return bumpHistory(
+				settled,
+				peerId,
+				next.agents.map((agent) => agent.id)
+			);
 		}
 		case 'agent.updated':
 			return settlePeer(
@@ -260,6 +315,8 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 			);
 			let settled = settlePeer(state, peerId, next);
 			if (!next.liveTurns[key]) {
+				// The turn ended: the host wrote its History entry.
+				settled = bumpHistory(settled, peerId, [event.agentId]);
 				// The turn ended (or events were missed). Keep what it showed on screen until the
 				// re-read lands, so the answer does not blink out and back in.
 				settled = updateSlot(settled, peerId, key, (slot) => ({
@@ -269,6 +326,8 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 			}
 			return settled;
 		}
+		case 'agent.queue':
+			return settlePeer(state, peerId, setAgentQueue(peer, event.agentId, event.items).peer);
 		case 'tab.stale': {
 			if (!existing) return state;
 			const key = liveTurnKey(event.agentId, event.tabId);
@@ -280,7 +339,11 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 			const slots = state.transcripts[peerId] ?? {};
 			const next: Record<string, MirrorTranscriptSlot> = {};
 			for (const [key, slot] of Object.entries(slots)) next[key] = markStale(slot);
-			return { ...state, transcripts: { ...state.transcripts, [peerId]: next } };
+			return bumpHistory(
+				{ ...state, transcripts: { ...state.transcripts, [peerId]: next } },
+				peerId,
+				existing.agents.map((agent) => agent.id)
+			);
 		}
 		case 'peer.removed': {
 			if (!existing) return state;
@@ -292,6 +355,7 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 				activeTabIds: withoutKey(state.activeTabIds, peerId),
 				collapsedPeerIds: withoutKey(state.collapsedPeerIds, peerId),
 				drafts: withoutPeerDrafts(state.drafts, peerId),
+				historyVersions: withoutPeerVersions(state.historyVersions, peerId),
 				activeMirror: state.activeMirror?.peerId === peerId ? null : state.activeMirror,
 			};
 		}
@@ -325,6 +389,8 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 				activeTabIds: {},
 				collapsedPeerIds,
 				drafts: state.drafts,
+				// A fresh snapshot may be ahead of any History a panel read before it.
+				historyVersions: bumpAll(state.historyVersions, peers),
 			};
 		}),
 

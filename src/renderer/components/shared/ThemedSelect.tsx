@@ -159,6 +159,7 @@ export function ThemedSelect({
 					setActiveIndex(list.length - 1);
 					break;
 				case 'Enter':
+					if (isImeComposing(e)) break;
 					e.preventDefault();
 					if (activeIndex >= 0 && activeIndex < list.length) {
 						handleSelect(list[activeIndex].value);

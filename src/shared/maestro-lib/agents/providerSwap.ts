@@ -15,8 +15,8 @@
  * Live tab fields belong to resolveTabProvider(tab, agent); live agent
  * overrides belong to toolType. Neither parked map holds its live provider.
  *
- *   - `AITab.providerSessions` parks a tab's `agentSessionId`, `usageStats`,
- *     `customModel`, and `customEffort`.
+ *   - `AITab.providerSessions` parks a tab's `agentSessionId`, native binding,
+ *     `usageStats`, `customModel`, and `customEffort`.
  *   - `Session.providerOverrides` parks the agent-level overrides named in
  *     {@link PROVIDER_OVERRIDE_KEYS}.
  *
@@ -34,11 +34,74 @@ import { getAgentDisplayName, getAgentPickerMeta } from '../../agentMetadata';
 import { isValidAgentId } from '../../agentIds';
 import type { RunOnTarget } from '../../local-models/run-on';
 import { OFF_TOKEN_PROXY_FIELDS } from '../../local-models/token-proxy';
+import { canonicalJson } from '../../canonicalJson';
 import type { ToolType, UsageStats } from '../../types';
 import { mapAgentAiTabs, switchTabProvider } from '../translation/session';
 import type { AiTabContainers } from '../translation/session';
 
 export { switchTabProvider } from '../translation/session';
+
+/**
+ * Durable native-session provenance, shared by live/parked tabs and History.
+ * A missing field on a legacy record means unknown, never the current settings.
+ * Only an observed launch/history owner may supply a bound value; matching a
+ * native ID alone proves no ownership. It records provenance, not a permission.
+ * Replace the entire value: parked and closed-tab snapshots may share it.
+ */
+export type NativeSessionBinding =
+	| {
+			readonly version: 1;
+			readonly state: 'unknown';
+			readonly reason: 'legacy' | 'unobserved';
+	  }
+	| {
+			readonly version: 1;
+			readonly state: 'bound';
+			readonly provider: ToolType;
+			readonly nativeSessionId: string;
+			/**
+			 * nativeAccountRef's opaque reference of the canonical provider
+			 * home on the executing host. No credentials or billing identity.
+			 * An unresolved remote home (including unexpanded ~) is not bound.
+			 */
+			readonly accountRef: string;
+			readonly host: {
+				readonly kind: 'local' | 'ssh';
+				/**
+				 * Stable observed machine/endpoint reference, never just an SSH
+				 * config ID/alias or the word "local". Excludes runtime/process
+				 * epochs so reloads do not invent a different owner.
+				 */
+				readonly identity: string;
+			};
+			/** Canonical cwd on that host, never expanded using another host's home. */
+			readonly cwd: string;
+	  };
+
+/** Compare observed ownership, including account/endpoint, rather than a native ID alone. */
+export function matchesNativeSessionBinding(
+	left: NativeSessionBinding | undefined,
+	right: NativeSessionBinding | undefined
+): boolean {
+	for (const binding of [left, right]) {
+		if (
+			binding?.state !== 'bound' ||
+			binding.version !== 1 ||
+			!['local', 'ssh'].includes(binding.host?.kind) ||
+			![
+				binding.provider,
+				binding.nativeSessionId,
+				binding.accountRef,
+				binding.host?.identity,
+				binding.cwd,
+			].every(
+				(value) => typeof value === 'string' && value.trim().length > 0 && !value.includes('\0')
+			)
+		)
+			return false;
+	}
+	return canonicalJson(left) === canonicalJson(right);
+}
 
 /**
  * A tab's parked state for one provider it is not currently using.
@@ -54,6 +117,8 @@ export { switchTabProvider } from '../translation/session';
  */
 export interface ProviderTabSession {
 	agentSessionId: string | null;
+	/** Absent is unknown legacy ownership; null agentSessionId has no resumable binding. */
+	nativeSessionBinding?: NativeSessionBinding;
 	usageStats?: UsageStats;
 	customModel?: string;
 	customEffort?: string;
@@ -270,17 +335,37 @@ export function updateProviderSlot<T extends ProviderSwitchTab>(
 	owningProvider: ToolType,
 	update: Partial<ProviderTabSession>
 ): T {
-	if (owningProvider === resolveTabProvider(tab, agent)) {
+	const live = owningProvider === resolveTabProvider(tab, agent);
+	const existing = live ? tab : tab.providerSessions?.[owningProvider];
+	const nativeId =
+		update.agentSessionId !== undefined ? update.agentSessionId : existing?.agentSessionId;
+	const binding = update.nativeSessionBinding;
+	if (
+		binding?.state === 'bound' &&
+		(binding.provider !== owningProvider || binding.nativeSessionId !== nativeId || !nativeId)
+	) {
+		throw new Error('Native session binding does not match the provider slot.');
+	}
+	// An unscoped ID replacement cannot inherit the previous session's owner.
+	// Leave legacy records absent rather than manufacturing observed provenance.
+	const scopedUpdate = { ...update };
+	// Partial updates omit undefined IDs; null is the explicit session reset.
+	if (scopedUpdate.agentSessionId === undefined) delete scopedUpdate.agentSessionId;
+	if (existing?.nativeSessionBinding && !binding && nativeId !== existing.agentSessionId) {
+		scopedUpdate.nativeSessionBinding = nativeId
+			? { version: 1, state: 'unknown', reason: 'unobserved' }
+			: undefined;
+	}
+	if (live) {
 		return {
 			...tab,
-			...update,
+			...scopedUpdate,
 			...(update.agentSessionId && tab.turnProvider === owningProvider
 				? { turnSessionId: update.agentSessionId }
 				: {}),
 		};
 	}
 
-	const existing = tab.providerSessions?.[owningProvider];
 	return {
 		...tab,
 		...(update.agentSessionId && tab.turnProvider === owningProvider
@@ -295,7 +380,7 @@ export function updateProviderSlot<T extends ProviderSwitchTab>(
 			[owningProvider]: {
 				agentSessionId: existing?.agentSessionId ?? null,
 				...existing,
-				...update,
+				...scopedUpdate,
 			},
 		},
 	};

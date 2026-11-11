@@ -1,6 +1,8 @@
 import { gitService } from '../services/git';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionStore } from '../stores/sessionStore';
+import type { AITab } from '../types';
+import { getSessionSshRemoteId } from './sessionHelpers';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { resolvePeerRosterForPrompt } from '../../shared/peerAgents';
 import type { ConsultBudgetStatus, ConsultChain } from '../../shared/consultBudget';
@@ -141,7 +143,9 @@ export async function prepareMaestroSystemPrompt(opts: {
 		isGitRepo?: boolean;
 		groupId?: string;
 		sshRemoteId?: string;
-		sessionSshRemoteConfig?: { enabled: boolean } | null;
+		sessionSshRemoteConfig?: { enabled: boolean; remoteId?: string | null } | null;
+		aiTabs?: Pick<AITab, 'id' | 'agentSessionId'>[];
+		orphanedThinkingTabs?: Pick<AITab, 'id' | 'agentSessionId'>[];
 	};
 	activeTabId?: string;
 	/**
@@ -151,13 +155,39 @@ export async function prepareMaestroSystemPrompt(opts: {
 	 */
 	consultChain?: ConsultChain;
 }): Promise<string | undefined> {
+	// Configuration chooses the next AI launch. Observed sshRemoteId/remoteCwd
+	// may belong to a previous connection or the terminal's current directory.
+	const isSsh = opts.session.sessionSshRemoteConfig?.enabled === true;
+	const sshRemoteId = isSsh
+		? getSessionSshRemoteId({
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: opts.session.sessionSshRemoteConfig?.remoteId ?? null,
+				},
+			})
+		: undefined;
+	const selectedTab = opts.activeTabId
+		? (opts.session.aiTabs?.find((tab) => tab.id === opts.activeTabId) ??
+			opts.session.orphanedThinkingTabs?.find((tab) => tab.id === opts.activeTabId))
+		: undefined;
+	const templateSession = {
+		...opts.session,
+		// An explicit new/missing tab must not inherit another tab's native identity.
+		// Headless callers retain their legacy session-level identity.
+		agentSessionId: opts.activeTabId
+			? (selectedTab?.agentSessionId ?? undefined)
+			: opts.session.agentSessionId,
+	};
 	const result = await window.maestro.prompts.get(PROMPT_IDS.MAESTRO_SYSTEM_PROMPT);
 	if (!result.success || !result.content) return undefined;
 
 	let gitBranch: string | undefined;
-	if (opts.session.isGitRepo) {
+	// An unresolved SSH selection must never query the local repository.
+	if (opts.session.isGitRepo && (!isSsh || sshRemoteId)) {
 		try {
-			const status = await gitService.getStatus(opts.session.cwd);
+			const status = sshRemoteId
+				? await gitService.getStatus(templateSession.cwd, sshRemoteId)
+				: await gitService.getStatus(templateSession.cwd);
 			gitBranch = status.branch;
 		} catch {
 			// Ignore git errors
@@ -166,7 +196,6 @@ export async function prepareMaestroSystemPrompt(opts: {
 
 	// History file path for task recall - skip for SSH (path is local-only)
 	let historyFilePath: string | undefined;
-	const isSsh = !!(opts.session.sshRemoteId || opts.session.sessionSshRemoteConfig?.enabled);
 	if (!isSsh) {
 		try {
 			historyFilePath = (await window.maestro.history.getFilePath(opts.session.id)) || undefined;
@@ -224,7 +253,8 @@ export async function prepareMaestroSystemPrompt(opts: {
 	return assembleMaestroSystemPrompt({
 		template: result.content,
 		context: {
-			session: opts.session as any,
+			// Keep the shared assembler's path/name aliases unchanged.
+			session: templateSession as any,
 			gitBranch,
 			groupId: opts.session.groupId,
 			activeTabId: opts.activeTabId,

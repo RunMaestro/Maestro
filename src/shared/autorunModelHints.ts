@@ -291,12 +291,13 @@ function settingsKey(
 	hint: ModelHint | null,
 	baselineModel?: string,
 	baselineEffort?: string,
-	routing?: TierRouting
+	routing?: TierRouting,
+	supportedEfforts?: readonly string[]
 ): string {
 	const tier = hint?.tier && hint.tier !== INHERIT_KEYWORD ? hint.tier : undefined;
 	let effort = baselineEffort;
 	if (hint?.effort && hint.effort !== INHERIT_KEYWORD) {
-		effort = resolveEffortLevel(toolType, hint.effort) ?? baselineEffort;
+		effort = resolveEffortLevel(toolType, hint.effort, supportedEfforts) ?? baselineEffort;
 	}
 	return `${tierLaunchKey(toolType, tier, baselineModel, routing)}\u0000${effort ?? ''}`;
 }
@@ -326,13 +327,18 @@ function settingsKey(
  * @param baselineEffort - the agent's configured effort
  * @param routing - the agent's tier targets and the harness defaults; the same
  *   value the dispatch hands `resolveTurnSettings`, or the boundary moves
+ * @param supportedEfforts - the same selected-model Grok wire-value evidence
+ * used for dispatch; omit unavailable/stale menus and configured fallbacks.
+ * Inspection and replay must use the same evidence as resolveTurnSettings so
+ * their segment boundaries agree. Menu order never defines hint positions.
  */
 export function countTasksUnderActiveHint(
 	content: string,
 	toolType: ToolType,
 	baselineModel?: string,
 	baselineEffort?: string,
-	routing?: TierRouting
+	routing?: TierRouting,
+	supportedEfforts?: readonly string[]
 ): { count: number; total: number } {
 	let documentHint: ModelHint | null = null;
 	let firstKey: string | null = null;
@@ -346,7 +352,14 @@ export function countTasksUnderActiveHint(
 			total++;
 			const taskHint = markerMatch ? parseModelMarker(markerMatch[1] || '', index, 'task') : null;
 			const merged = mergeHints(documentHint, taskHint);
-			const key = settingsKey(toolType, merged, baselineModel, baselineEffort, routing);
+			const key = settingsKey(
+				toolType,
+				merged,
+				baselineModel,
+				baselineEffort,
+				routing,
+				supportedEfforts
+			);
 			if (firstKey === null) {
 				firstKey = key;
 				count = 1;

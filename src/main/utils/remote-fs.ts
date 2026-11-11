@@ -10,6 +10,8 @@
  */
 
 import { spawn } from 'child_process';
+import { isUtf8 } from 'node:buffer';
+import { posix } from 'node:path';
 import * as path from 'path';
 import { SshRemoteConfig } from '../../shared/types';
 import { execFileNoThrow, ExecResult } from './execFile';
@@ -62,6 +64,12 @@ export interface RemoteFsResult<T> {
 	error?: string;
 	/** An exclusive create refused an existing path, including a dangling link. */
 	code?: 'EEXIST';
+	/** A bounded read rejected content exceeding its byte budget or invalid UTF-8. */
+	errorCode?: 'too-large' | 'invalid-encoding' | 'identity-unavailable' | 'identity-mismatch';
+	/** Descriptor ownership, independent of whether its content was readable. */
+	observedIdentity?: RemotePathIdentity;
+	/** The pinned descriptor changed size or timestamps while its bytes were read. */
+	contentChanged?: boolean;
 }
 
 /**
@@ -597,15 +605,242 @@ export async function bulkStatFileInSubdirsRemote(
 	return { success: true, data: entries };
 }
 
+/** Physical identity observed on the executing remote; never an endpoint identity. */
+export interface RemotePathIdentity {
+	canonicalPath: string;
+	device: string;
+	inode: string;
+	kind: 'file' | 'directory';
+}
+
+/** Private launch receipt: path metadata only, never credentials or native content. */
+export interface RemoteGrokLaunchIdentity {
+	launchCwd: RemotePathIdentity;
+	processCwd: RemotePathIdentity;
+	cwd: RemotePathIdentity;
+	account: RemotePathIdentity;
+	inherited: { HOME: string | null; GROK_HOME: string | null };
+	effective: { HOME: string | null; GROK_HOME: string | null };
+}
+
+// Python's descriptor APIs work on macOS and Linux without relying on /proc or
+// platform-specific stat flags. Hosts without Python 3 cannot supply this proof.
+// Isolated/no-site/no-bytecode mode avoids user modules and import cache writes.
+const REMOTE_IDENTITY_SCRIPT = `import os, sys, stat, json, base64, signal, errno
+signal.alarm(25)
+class Changed(Exception): pass
+def identity(p):
+ c = os.path.realpath(p)
+ s = os.stat(p)
+ t = os.stat(c)
+ if (s.st_dev, s.st_ino) != (t.st_dev, t.st_ino) or os.path.realpath(p) != c: raise Changed()
+ kind = 'directory' if stat.S_ISDIR(s.st_mode) else 'file' if stat.S_ISREG(s.st_mode) else None
+ if kind is None: raise ValueError('Not a regular file or directory')
+ return dict(canonicalPath=c, device=str(s.st_dev), inode=str(s.st_ino), kind=kind)
+def check(p, expected):
+ if identity(p) != expected: raise Changed()
+def grok_launch(options):
+ # Match the pinned headless startup: shell cd, literal exports, native
+ # apply_cwd, then headless canonicalize(--cwd) without another chdir.
+ inherited = {key: os.environ.get(key) for key in ('HOME', 'GROK_HOME')}
+ launch = identity('.')
+ effective = dict(inherited, **options['env'])
+ native_cwd = options.get('nativeCwd')
+ process_path = os.path.join(launch['canonicalPath'], native_cwd) if native_cwd is not None else launch['canonicalPath']
+ if native_cwd is not None: os.chdir(native_cwd)
+ process_cwd = identity('.')
+ cwd = identity(native_cwd if native_cwd is not None else '.')
+ root = effective['GROK_HOME']
+ home_identity = None
+ if not root:
+  home = effective['HOME']
+  if not home:
+   import pwd
+   try: home = pwd.getpwuid(os.getuid()).pw_dir
+   except KeyError: raise ValueError('Remote home unavailable')
+  # Native xai-dirs canonicalizes HOME, then appends .grok; empty passwd
+  # home is a relative fallback. Never expand a literal tilde in env/args.
+  home_identity = identity(home) if home else None
+  root = os.path.join(home_identity['canonicalPath'] if home_identity else '.', '.grok')
+ account = identity(root)
+ if any(item['kind'] != 'directory' for item in (launch, process_cwd, cwd, account)):
+  raise ValueError('Remote launch path is not a directory')
+ check('.', process_cwd)
+ check(process_path, process_cwd)
+ check(native_cwd if native_cwd is not None else '.', cwd)
+ check(root, account)
+ if home_identity: check(home, home_identity)
+ print(json.dumps(dict(launchCwd=launch, processCwd=process_cwd, cwd=cwd,
+  account=account, inherited=inherited, effective=effective), ensure_ascii=True))
+try:
+ p = sys.argv[1]
+ if len(sys.argv) == 3 and p == '--grok-launch':
+  grok_launch(json.loads(sys.argv[2]))
+ elif len(sys.argv) == 2:
+  print(json.dumps(identity(p), ensure_ascii=True))
+ else:
+  limit = int(sys.argv[2])
+  expected = json.loads(sys.argv[3])
+  paths = [(sys.argv[i], json.loads(sys.argv[i+1])) for i in range(4, len(sys.argv), 2)]
+  check(p, expected)
+  if not hasattr(os, 'O_NOFOLLOW'): raise ValueError('Descriptor identity unavailable')
+  fd = os.open(expected['canonicalPath'], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+  try:
+   s = os.fstat(fd)
+   if not stat.S_ISREG(s.st_mode) or str(s.st_dev) != expected['device'] or str(s.st_ino) != expected['inode']: raise Changed()
+   check(p, expected)
+   for path, observed in paths: check(path, observed)
+   chunks, remaining = [], limit + 1
+   if s.st_size <= limit:
+    while remaining:
+     chunk = os.read(fd, min(65536, remaining))
+     if not chunk: break
+     chunks.append(chunk)
+     remaining -= len(chunk)
+   check(p, expected)
+   for path, observed in paths: check(path, observed)
+   observed = dict(canonicalPath=os.path.realpath(p), device=str(s.st_dev), inode=str(s.st_ino), kind='file')
+   after = os.fstat(fd)
+   changed = (s.st_size, s.st_mtime_ns, s.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+   print(json.dumps(dict(identity=observed, contentChanged=changed), ensure_ascii=True), flush=True)
+   if s.st_size > limit or after.st_size > limit or remaining == 0: sys.exit(72)
+   sys.stdout.buffer.write(base64.b64encode(b''.join(chunks) + b'\\n0'))
+  finally: os.close(fd)
+except Changed:
+ sys.stderr.write('Remote source identity changed')
+ sys.exit(71)
+except OSError as exc:
+ sys.stderr.write('Remote path identity unavailable: ' + str(exc))
+ sys.exit(70 if exc.errno in (errno.ENOENT, errno.ENOTDIR, errno.EACCES, errno.EPERM, errno.ELOOP, errno.ENOSYS, errno.ENOTSUP) else 73)
+except ValueError as exc:
+ sys.stderr.write('Remote path identity unavailable: ' + str(exc))
+ sys.exit(70)
+`;
+
+function isRemotePathIdentity(value: unknown): value is RemotePathIdentity {
+	if (!value || typeof value !== 'object' || Object.keys(value).length !== 4) return false;
+	const v = value as RemotePathIdentity;
+	return (
+		typeof v.canonicalPath === 'string' &&
+		v.canonicalPath.length <= 16384 &&
+		v.canonicalPath.startsWith('/') &&
+		!/[\x00-\x1f\x7f]/.test(v.canonicalPath) &&
+		posix.normalize(v.canonicalPath) === v.canonicalPath &&
+		typeof v.device === 'string' &&
+		/^(0|[1-9][0-9]{0,19})$/.test(v.device) &&
+		typeof v.inode === 'string' &&
+		/^[1-9][0-9]{0,19}$/.test(v.inode) &&
+		(v.kind === 'file' || v.kind === 'directory')
+	);
+}
+
+/** Observe physical targets with the same admission, timeout and retry bounds as other reads. */
+export function observePathRemote(
+	filePath: string,
+	sshRemote: SshRemoteConfig,
+	deps?: RemoteFsDeps
+): Promise<RemoteFsResult<RemotePathIdentity>>;
+export function observePathRemote(
+	filePath: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps | undefined,
+	grokLaunch: { env: NodeJS.ProcessEnv; nativeCwd?: string }
+): Promise<RemoteFsResult<RemoteGrokLaunchIdentity>>;
+export async function observePathRemote(
+	filePath: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps,
+	grokLaunch?: { env: NodeJS.ProcessEnv; nativeCwd?: string }
+): Promise<RemoteFsResult<RemotePathIdentity | RemoteGrokLaunchIdentity>> {
+	if (
+		typeof filePath !== 'string' ||
+		!filePath ||
+		filePath.length > 16384 ||
+		/[\x00-\x1f\x7f]/.test(filePath)
+	) {
+		return { success: false, errorCode: 'identity-unavailable', error: 'Invalid remote path' };
+	}
+	let command = `python3 -I -S -B -c ${shellEscape(REMOTE_IDENTITY_SCRIPT)} ${shellEscapeRemotePath(filePath)}`;
+	if (grokLaunch) {
+		// Only these two keys affect native account selection. Do not transmit or
+		// echo the rest of the launch environment (which can contain credentials).
+		const env = Object.fromEntries(
+			['HOME', 'GROK_HOME']
+				.filter((key) => grokLaunch.env[key] !== undefined)
+				.map((key) => [key, grokLaunch.env[key]])
+		);
+		if (
+			[...Object.values(env), grokLaunch.nativeCwd].some(
+				(value) =>
+					value !== undefined &&
+					(typeof value !== 'string' || value.length > 16384 || /[\x00-\x1f\x7f]/.test(value))
+			)
+		) {
+			return { success: false, errorCode: 'identity-unavailable', error: 'Invalid launch path' };
+		}
+		const options = JSON.stringify({ env, nativeCwd: grokLaunch.nativeCwd });
+		// Match the spawn wrapper's bash and cd BEFORE literal exports. No local
+		// home expansion, shell evaluation of env values, or provider execution.
+		const script = `cd ${shellEscapeRemotePath(filePath)} || exit 70; exec python3 -I -S -B -c ${shellEscape(REMOTE_IDENTITY_SCRIPT)} --grok-launch ${shellEscape(options)}`;
+		command = `/bin/bash --norc --noprofile -c ${shellEscape(script)}`;
+	}
+	const result = await execRemoteCommand(sshRemote, command, deps);
+	if (result.exitCode === 0 && result.stdout.length <= 100000) {
+		try {
+			const observed: unknown = JSON.parse(result.stdout);
+			if (!grokLaunch && isRemotePathIdentity(observed)) return { success: true, data: observed };
+			if (grokLaunch && observed && typeof observed === 'object') {
+				const launch = observed as RemoteGrokLaunchIdentity;
+				if (
+					Object.keys(launch).length === 6 &&
+					[launch.launchCwd, launch.processCwd, launch.cwd, launch.account].every(
+						(value) => isRemotePathIdentity(value) && value.kind === 'directory'
+					) &&
+					[launch.inherited, launch.effective].every(
+						(env) =>
+							env &&
+							typeof env === 'object' &&
+							Object.keys(env).length === 2 &&
+							(['HOME', 'GROK_HOME'] as const).every((key) => {
+								const value = env[key];
+								return (
+									value === null ||
+									(typeof value === 'string' &&
+										value.length <= 16384 &&
+										!/[\x00-\x1f\x7f]/.test(value))
+								);
+							})
+					)
+				)
+					return { success: true, data: launch };
+			}
+		} catch {
+			/* An unsupported/malformed observer cannot establish ownership. */
+		}
+	}
+	return {
+		success: false,
+		errorCode:
+			result.exitCode === 71
+				? 'identity-mismatch'
+				: result.exitCode === 0 || result.exitCode === 70 || result.exitCode === 127
+					? 'identity-unavailable'
+					: undefined,
+		error: result.stderr || 'Remote path identity unavailable',
+	};
+}
+
 /**
  * Read file contents from a remote host via SSH.
  *
- * Executes `cat` on the remote to read the file contents.
- * For binary files or very large files, consider using different approaches.
+ * Executes `cat` on the remote, or a bounded `head` when maxBytes is supplied.
+ * A bounded read transports original bytes as base64 and rejects overflow or
+ * invalid UTF-8 rather than returning a truncated or lossy success.
  *
  * @param filePath Path to the file on the remote host
  * @param sshRemote SSH remote configuration
  * @param deps Optional dependencies for testing
+ * @param options Optional positive byte budget, below 100 MiB
  * @returns File contents as a string
  *
  * @example
@@ -615,15 +850,162 @@ export async function bulkStatFileInSubdirsRemote(
 export async function readFileRemote(
 	filePath: string,
 	sshRemote: SshRemoteConfig,
-	deps: RemoteFsDeps = defaultDeps
+	deps: RemoteFsDeps = defaultDeps,
+	options?: {
+		maxBytes?: number;
+		expectedIdentity?: RemotePathIdentity;
+		expectedPaths?: Array<{ path: string; identity: RemotePathIdentity }>;
+	}
 ): Promise<RemoteFsResult<string>> {
+	const maxBytes = options?.maxBytes;
+	// Raw byte budgets are below execFileNoThrow's 100 MiB cap. Base64 expansion
+	// can hit that transport cap sooner; max-buffer failures also reject the read.
+	if (
+		maxBytes !== undefined &&
+		(!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes >= 100 * 1024 * 1024)
+	) {
+		throw new RangeError('Remote read maxBytes must be a positive integer below 100 MiB');
+	}
+	const expected = options?.expectedIdentity;
+	const expectedPaths = options?.expectedPaths ?? [];
+	if (options?.expectedIdentity !== undefined || options?.expectedPaths !== undefined) {
+		if (
+			maxBytes === undefined ||
+			!isRemotePathIdentity(expected) ||
+			expected.kind !== 'file' ||
+			!Array.isArray(expectedPaths) ||
+			expectedPaths.length > 16 ||
+			typeof filePath !== 'string' ||
+			!filePath ||
+			filePath.length > 16384 ||
+			/[\x00-\x1f\x7f]/.test(filePath) ||
+			expectedPaths.some(
+				(entry) =>
+					!entry ||
+					!isRemotePathIdentity(entry.identity) ||
+					typeof entry.path !== 'string' ||
+					!entry.path ||
+					entry.path.length > 16384 ||
+					/[\x00-\x1f\x7f]/.test(entry.path)
+			)
+		) {
+			return {
+				success: false,
+				errorCode: 'identity-unavailable',
+				error: 'Invalid remote read identity',
+			};
+		}
+	}
 	const escapedPath = shellEscapeRemotePath(filePath);
-	// Use cat with explicit error handling
-	const remoteCommand = `cat ${escapedPath}`;
+	// The remote byte ceiling also holds when a file grows after the caller's stat.
+	// Redirection keeps leading dashes out of head's option parsing. The regular
+	// file check avoids waiting on a provider path replaced with a pipe/device.
+	// Base64 preserves bytes across the text-only exec transport. Encode head's
+	// exit status after a newline too: a plain pipeline would hide read failures
+	// behind a successful base64 exit. The trailer adds at most four bytes.
+	const remoteCommand = expected
+		? `python3 -I -S -B -c ${shellEscape(REMOTE_IDENTITY_SCRIPT)} ${escapedPath} ${maxBytes} ${shellEscape(JSON.stringify(expected))}` +
+			expectedPaths
+				.map(
+					(entry) =>
+						` ${shellEscapeRemotePath(entry.path)} ${shellEscape(JSON.stringify(entry.identity))}`
+				)
+				.join('')
+		: maxBytes === undefined
+			? `cat ${escapedPath}`
+			: `if test -f ${escapedPath}; then { head -c ${maxBytes + 1} < ${escapedPath}; ` +
+				`printf '\\n%s' "$?"; } | base64; ` +
+				`else echo 'File not found or not a regular file' >&2; exit 1; fi`;
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+	let exitCode = result.exitCode;
+	let observedIdentity: RemotePathIdentity | undefined;
+	let contentChanged: boolean | undefined;
+	if (expected) {
+		const separator = result.stdout.indexOf('\n');
+		if ((exitCode === 0 || exitCode === 72) && separator > 0 && separator <= 100000) {
+			try {
+				const header = JSON.parse(result.stdout.slice(0, separator));
+				const observed: unknown = header?.identity;
+				if (
+					isRemotePathIdentity(observed) &&
+					typeof header.contentChanged === 'boolean' &&
+					observed.canonicalPath === expected.canonicalPath &&
+					observed.device === expected.device &&
+					observed.inode === expected.inode &&
+					observed.kind === 'file'
+				) {
+					observedIdentity = observed;
+					contentChanged = header.contentChanged;
+					result.stdout = result.stdout.slice(separator + 1);
+				}
+			} catch {
+				/* A malformed descriptor observation must not authorize the content. */
+			}
+		}
+		if (!observedIdentity)
+			return {
+				success: false,
+				errorCode:
+					exitCode === 71
+						? 'identity-mismatch'
+						: exitCode === 0 || exitCode === 70 || exitCode === 72 || exitCode === 127
+							? 'identity-unavailable'
+							: undefined,
+				error: result.stderr || 'Remote descriptor identity unavailable',
+			};
+	}
 
-	if (result.exitCode !== 0) {
+	if (maxBytes !== undefined) {
+		const tooLarge: RemoteFsResult<string> = {
+			success: false,
+			error: `File exceeds the ${maxBytes} byte read limit: ${filePath}`,
+			errorCode: 'too-large',
+			...(observedIdentity && { observedIdentity, contentChanged }),
+		};
+		if (result.exitCode === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || (expected && exitCode === 72))
+			return tooLarge;
+		if (result.exitCode === 0) {
+			// GNU base64 wraps lines; BSD base64 does not. Bound decoded allocation
+			// before Buffer.from, including the sentinel and exit-status trailer.
+			const encoded = result.stdout.replace(/[\r\n]/g, '');
+			if (encoded.length > 4 * Math.ceil((maxBytes + 1 + 4) / 3)) return tooLarge;
+			if (encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
+				return { success: false, error: `Invalid base64 file response: ${filePath}` };
+			}
+			const framed = Buffer.from(encoded, 'base64');
+			const separator = framed.lastIndexOf(0x0a);
+			if (separator < 0 || framed.length - separator > 4) {
+				return { success: false, error: `Missing remote file read status: ${filePath}` };
+			}
+			const status = framed.subarray(separator + 1).toString('utf8');
+			if (!/^(0|[1-9][0-9]{0,2})$/.test(status) || Number(status) > 255) {
+				return { success: false, error: `Missing remote file read status: ${filePath}` };
+			}
+			if (status !== '0') {
+				// Reuse the existing missing/permission/read error mapping below.
+				exitCode = Number(status);
+			} else {
+				const bytes = framed.subarray(0, separator);
+				if (bytes.length > maxBytes) return tooLarge;
+				if (!isUtf8(bytes)) {
+					return {
+						success: false,
+						error: `File is not valid UTF-8: ${filePath}`,
+						errorCode: 'invalid-encoding',
+						...(observedIdentity && { observedIdentity, contentChanged }),
+					};
+				}
+				return {
+					success: true,
+					data: bytes.toString('utf8'),
+					...(observedIdentity && { observedIdentity, contentChanged }),
+				};
+			}
+		}
+	}
+
+	if (exitCode !== 0) {
 		const error = result.stderr || `Failed to read file: ${filePath}`;
 		return {
 			success: false,

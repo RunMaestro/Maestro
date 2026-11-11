@@ -111,8 +111,13 @@ export function ParticipantCard({
 		}
 	};
 
-	// Context usage percentage (default to 0 if not set)
-	const contextUsage = participant.contextUsage ?? 0;
+	// Only measured percentages are available; absent or sentinel values must not imply zero.
+	const contextUsage =
+		typeof participant.contextUsage === 'number' &&
+		Number.isFinite(participant.contextUsage) &&
+		participant.contextUsage >= 0
+			? participant.contextUsage
+			: undefined;
 
 	// Always show reset button (useful for disconnected sessions, not just high context)
 	const showResetButton = onContextReset && groupChatId && !isResetting;
@@ -230,10 +235,17 @@ export function ParticipantCard({
 
 			{/* Context gauge + optional cost */}
 			<div className="mt-2 flex flex-wrap items-center gap-2">
-				<div className="min-w-[2.5rem] flex-1" title={`Context usage: ${contextUsage}%`}>
+				<div
+					className="min-w-[2.5rem] flex-1"
+					title={
+						contextUsage !== undefined
+							? `Context usage: ${contextUsage}%`
+							: 'Context usage unavailable'
+					}
+				>
 					<div className="mb-1">
 						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
-							{contextUsage}%
+							{contextUsage !== undefined ? `${contextUsage}%` : 'Unavailable'}
 						</span>
 					</div>
 					<div
@@ -245,13 +257,15 @@ export function ParticipantCard({
 						aria-valuemax={100}
 						style={{ backgroundColor: theme.colors.border }}
 					>
-						<div
-							className="h-full rounded-full transition-all"
-							style={{
-								width: `${contextUsage}%`,
-								backgroundColor: contextUsage > 80 ? theme.colors.warning : theme.colors.accent,
-							}}
-						/>
+						{contextUsage !== undefined && (
+							<div
+								className="h-full rounded-full transition-all"
+								style={{
+									width: `${contextUsage}%`,
+									backgroundColor: contextUsage > 80 ? theme.colors.warning : theme.colors.accent,
+								}}
+							/>
+						)}
 					</div>
 				</div>
 				{/* Cost pill (optional) */}

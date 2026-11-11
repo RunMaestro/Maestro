@@ -293,6 +293,35 @@ describe('restoreSession - Migration logic', () => {
 		expect(restored!.fileTreeAutoRefreshInterval).toBe(180);
 	});
 
+	it('drops persisted file-tree scan state so the Files panel reloads', async () => {
+		// Regression: older builds persisted fileTreeLoadedCap beside the stripped
+		// (empty) tree. The auto-loader read the cap as "already loaded" and the
+		// Files panel showed "No files found" until a manual refresh.
+		const session = createMockSession({
+			fileTree: [],
+			fileTreeLoadedCap: 250_000,
+			fileTreeTruncated: true,
+			fileTreeStats: { fileCount: 10, folderCount: 2, totalSize: 100 },
+			fileTreeLoading: true,
+			fileTreeError: 'stale',
+			fileTreeRetryAt: Date.now() + 20_000,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.fileTree).toEqual([]);
+		expect(restored!.fileTreeLoadedCap).toBeUndefined();
+		expect(restored!.fileTreeTruncated).toBeUndefined();
+		expect(restored!.fileTreeStats).toBeUndefined();
+		expect(restored!.fileTreeLoading).toBe(false);
+		expect(restored!.fileTreeError).toBeUndefined();
+		expect(restored!.fileTreeRetryAt).toBeUndefined();
+	});
+
 	it('backfills createdAt from the earliest tab/log/workLog timestamp when missing', async () => {
 		const oldestTab = 1_700_000_000_000;
 		const oldestLog = 1_690_000_000_000; // older than the tab

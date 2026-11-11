@@ -322,10 +322,11 @@ const SYSTEM_PROMPT_TEMP_SUFFIX = /(maestro-sysprompt-[A-Za-z0-9_-]+-\d+-)[0-9a-
 
 /** `value` with what differs between any two spawns taken out, at any depth. */
 function withoutSpawnNoise(value: unknown): unknown {
+	// Each spawn also owns a fresh caller-proof directory, regardless of export state.
 	if (typeof value === 'string')
 		return value
 			.replace(SYSTEM_PROMPT_TEMP_SUFFIX, '$1<random>$2')
-			.replace(/(plugin-tool-run-proofs\/run-)[A-Za-z0-9_-]+(\/proof)/g, '$1<random>$2');
+			.replace(/([/\\]plugin-tool-run-proofs[/\\]run-)[A-Za-z0-9]{6}([/\\]proof)/g, '$1<random>$2');
 	if (Array.isArray(value)) return value.map(withoutSpawnNoise);
 	if (
 		value !== null &&

@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 /**
  * Covers the two things the wrapper decides that its callers cannot see:
@@ -36,6 +38,7 @@ import type { SshRemoteSettingsStore } from '../../../main/utils/ssh-remote-reso
 import { createSshTranslationFs } from '../../../main/provider-translation-fs';
 import { resolveSshTranslationFs } from '../../../shared/maestro-lib/host';
 import { localTranslationFs } from '../../../shared/maestro-lib/translation/local-fs';
+import type { PromptDelivery } from '../../../shared/maestro-lib/launch/prompt-delivery';
 
 const remote = {
 	id: 'jennifer-box',
@@ -46,6 +49,18 @@ const remote = {
 };
 
 const sshStore = { getSshRemotes: () => [remote] } as unknown as SshRemoteSettingsStore;
+
+// Synthetic private artifact; no file or remote process is created by this wrapper suite.
+const remoteArtifact: Extract<PromptDelivery, { via: 'file' }>['artifact'] = {
+	owner: 'remote',
+	sshRemoteId: remote.id,
+	path: path.posix.join('/tmp', 'maestro-prompt-11111111-2222-4333-8444-555555555555.json'),
+	content: JSON.stringify({ type: 'acp', content: [{ type: 'text', text: 'private 雪' }] }),
+	encoding: 'utf8',
+	mode: 0o600,
+	flag: 'wx',
+	cleanup: 'turn',
+};
 
 /** Read the `env` the wrapper handed to whichever builder it chose. */
 function envPassedToBuilder(builder: ReturnType<typeof vi.fn>): Record<string, string> {
@@ -276,6 +291,117 @@ describe('wrapSpawnWithSsh', () => {
 
 			expect(mockBuildSshCommandWithStdin).toHaveBeenCalledTimes(1);
 			expect(result.sshStdinScript).toBe('#!/bin/bash');
+		});
+	});
+
+	describe('private prompt artifact handoff', () => {
+		it.each([
+			['short fresh', 'short', false],
+			['long fresh', 'x'.repeat(4001), false],
+			['empty fresh', '', false],
+			['short resumed', 'short', true],
+			['long resumed', 'x'.repeat(4001), true],
+			['empty resumed', '', true],
+		] as const)(
+			'suppresses competing prompt sources for %s turns',
+			async (_name, prompt, resumed) => {
+				const artifact = {
+					...remoteArtifact,
+					content: JSON.stringify({ type: 'acp', content: [{ type: 'text', text: prompt }] }),
+				};
+				const args = [
+					'--output-format',
+					'streaming-json',
+					...(resumed ? ['--resume', 'native-session'] : []),
+					'--prompt-file',
+					artifact.path,
+				];
+				const promptArgs = vi.fn(() => ['-p', 'must-not-append']);
+				const result = await wrapSpawnWithSsh(
+					{
+						...baseConfig,
+						command: '/local/bin/grok',
+						agentBinaryName: '/remote tools/grok',
+						args,
+						prompt,
+						promptArgs,
+						promptArtifact: artifact,
+						customEnvVars: { GROK_HOME: '/remote/account', BLANK: '', KEPT: 'value' },
+						querySource: 'cue',
+					},
+					{ enabled: true, remoteId: remote.id },
+					sshStore
+				);
+				expect(mockBuildSshCommand).not.toHaveBeenCalled();
+				expect(mockBuildSshCommandWithStdin).toHaveBeenCalledTimes(1);
+				expect(mockBuildSshCommandWithStdin).toHaveBeenCalledWith(remote, {
+					command: '/remote tools/grok',
+					args,
+					cwd: baseConfig.cwd,
+					env: { GROK_HOME: '/remote/account', KEPT: 'value', MAESTRO_QUERY_SOURCE: 'cue' },
+					promptArtifact: artifact,
+				});
+				expect(promptArgs).not.toHaveBeenCalled();
+				expect(result).toMatchObject({
+					command: 'ssh',
+					cwd: os.homedir(),
+					sshRemoteUsed: remote,
+					sshStdinScript: '#!/bin/bash',
+					promptArtifactPath: artifact.path,
+				});
+				expect(result.prompt).toBeUndefined();
+				expect(result.promptArtifact).toBeUndefined();
+				expect(result.customEnvVars).toBeUndefined();
+			}
+		);
+
+		it('retains the local owner and suppresses the original prompt with SSH off', async () => {
+			const artifact = {
+				...remoteArtifact,
+				owner: 'local' as const,
+				sshRemoteId: undefined,
+				path: path.join(os.tmpdir(), 'maestro-local-owned.json'),
+			};
+			const config = {
+				...baseConfig,
+				args: ['--prompt-file', artifact.path],
+				prompt: 'must-not-append',
+				promptArtifact: artifact,
+				customEnvVars: { KEPT: 'value' },
+			};
+			const result = await wrapSpawnWithSsh(config, { enabled: false, remoteId: null }, sshStore);
+			expect(result).toEqual({
+				command: config.command,
+				args: config.args,
+				cwd: config.cwd,
+				customEnvVars: config.customEnvVars,
+				promptArtifact: artifact,
+				prompt: undefined,
+				sshRemoteUsed: null,
+			});
+			expect(mockGetSshRemoteConfig).not.toHaveBeenCalled();
+			expect(mockBuildSshCommand).not.toHaveBeenCalled();
+			expect(mockBuildSshCommandWithStdin).not.toHaveBeenCalled();
+		});
+
+		it('propagates remote preparation refusal without trying argv or raw stdin', async () => {
+			const failure = new Error('Prompt file preparation is unavailable.');
+			mockBuildSshCommandWithStdin.mockRejectedValueOnce(failure);
+			await expect(
+				wrapSpawnWithSsh(
+					{
+						...baseConfig,
+						prompt: 'x'.repeat(4001),
+						promptArtifact: remoteArtifact,
+						args: ['--prompt-file', remoteArtifact.path],
+					},
+					{ enabled: true, remoteId: remote.id },
+					sshStore
+				)
+			).rejects.toBe(failure);
+			expect(mockBuildSshCommandWithStdin).toHaveBeenCalledTimes(1);
+			expect(mockBuildSshCommandWithStdin.mock.calls[0][1].stdinInput).toBeUndefined();
+			expect(mockBuildSshCommand).not.toHaveBeenCalled();
 		});
 	});
 

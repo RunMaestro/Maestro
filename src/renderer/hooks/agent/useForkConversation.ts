@@ -4,8 +4,11 @@ import {
 	createTabAtPosition,
 	getTabDisplayName,
 	getActiveTab,
+	permissionModeFields,
 	settleTabThinkingState,
 } from '../../utils/tabHelpers';
+import { filterYoloArgs } from '../../utils/agentArgs';
+import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { notifyToast } from '../../stores/notificationStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { captureException } from '../../utils/sentry';
@@ -15,6 +18,7 @@ import {
 	resolveTabNativeProvider,
 } from '../../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
+import { resolveTurnProvider } from '../../../shared/maestro-lib/agents/providerSwap';
 
 /**
  * Fork conversation at a log id into a new AI tab.
@@ -36,6 +40,26 @@ export function useForkConversation() {
 		//    and consecutive-entry collapsing in the UI cannot shift the fork point.
 		const rawLogIndex = sourceTab.logs.findIndex((l) => l.id === logId);
 		if (rawLogIndex === -1) return;
+
+		if (
+			resolveTabNativeProvider(sourceTab, session) === 'grok' ||
+			resolveTurnProvider(sourceTab, session) === 'grok'
+		) {
+			// The path below is a prompt-based context fork. Rendered log indices
+			// cannot identify Grok's native targetPromptIndex or preserve its tool
+			// ancestry. Do not substitute it for an unavailable native mutation.
+			const busy = sourceTab.state === 'busy' || sourceTab.awaitingSessionId;
+			notifyToast({
+				type: 'warning',
+				title: busy ? 'Grok conversation is busy' : 'Grok native fork unavailable',
+				message: busy
+					? 'Wait for the current turn to finish or stop it before forking. Native Grok forks are not yet supported in Maestro.'
+					: 'Maestro cannot yet fork Grok native history at this message. Use Grok CLI to create a native fork, then open that session in Maestro. Copying text into a new prompt would create a separate context conversation.',
+				sessionId: session.id,
+				tabId: sourceTab.id,
+			});
+			return;
+		}
 
 		// AI responses may span multiple raw stdout entries when chunks arrive
 		// more than 500ms apart (see useBatchedSessionUpdates). The UI's
@@ -129,6 +153,11 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 		const launchSession = projectTabProvider(session, tabResult.tab).agent;
 		const newTabId = tabResult.tab.id;
 		const sourceTabId = sourceTab.id;
+		// The fork carries the source tab's permission mode, resolved by the one rule
+		// the toolbar pill and the composer use, stamped on the new tab so its pill and
+		// this first turn agree. Never left implicit: a spawn with no mode plans
+		// `standard`, which is not what the source tab shows.
+		const forkPermissionMode = resolveTabPermissionMode(sourceTab);
 
 		// 5. Commit new tab onto the live session (avoid stale snapshot spread).
 		//    Mark the tab as busy since we're about to spawn.
@@ -145,6 +174,7 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 					const busyTab = {
 						...tabResult.tab,
 						...codifyTurnSettings(tabResult.tab, session),
+						...permissionModeFields(forkPermissionMode),
 						state: 'busy' as const,
 						thinkingStartTime: Date.now(),
 						awaitingSessionId: true,
@@ -201,6 +231,7 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 				const agent = await window.maestro.agents.get(launchSession.toolType);
 				if (!agent) throw new Error(`${launchSession.toolType} agent not found`);
 
+				const isReadOnly = forkPermissionMode === 'readonly';
 				const baseArgs = agent.args ?? [];
 				const commandToUse = agent.path || agent.command;
 				if (!commandToUse) {
@@ -220,9 +251,11 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 					toolType: launchSession.toolType,
 					cwd: session.cwd,
 					command: commandToUse,
-					args: [...baseArgs],
+					args: isReadOnly ? filterYoloArgs(baseArgs, agent) : [...baseArgs],
 					prompt: effectivePrompt,
 					appendSystemPrompt,
+					readOnlyMode: isReadOnly,
+					permissionMode: forkPermissionMode,
 					sessionCustomPath: launchSession.customPath,
 					sessionCustomArgs: launchSession.customArgs,
 					sessionAdditionalDirectories: session.additionalDirectories,

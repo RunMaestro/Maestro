@@ -36,6 +36,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { QueuedItem, Session } from '../../types';
+import { unloadedFileTreeState } from '../../utils/fileExplorer';
 import { isLimitError } from '../../../shared/types';
 import {
 	isEphemeralBrowserTab,
@@ -312,23 +313,12 @@ export const prepareSessionForPersistence = (session: Session): Session => {
 		sshRemote: undefined,
 		sshRemoteId: undefined,
 		remoteCwd: undefined,
-		// Don't persist file tree - it's ephemeral cache data, not state.
-		// Trees re-scan automatically on session activation via useFileTreeManagement.
-		// For users with large working directories (100K+ files), persisting the tree
-		// caused sessions.json to balloon to 300MB+.
-		fileTree: [],
-		fileTreeStats: undefined,
-		fileTreeTruncated: undefined,
-		fileTreeLoading: undefined,
-		fileTreeLoadingProgress: undefined,
-		fileTreeLastScanTime: undefined,
-		// Error and retry-backoff are transient UI state. Persisting them
-		// would restore a stale error on next launch (from a previous
-		// failed load, potentially from an outdated code path) and the
-		// `hasLoadedOnce` gate in useFileTreeManagement would block the
-		// auto-loader from making a fresh attempt.
-		fileTreeError: undefined,
-		fileTreeRetryAt: undefined,
+		// Don't persist the file tree or anything describing its scan. The tree is
+		// ephemeral cache data (100K+ file trees ballooned sessions.json to 300MB+)
+		// and re-scans on activation. A scan marker such as `fileTreeLoadedCap`
+		// persisted beside the stripped tree made the auto-loader treat the empty
+		// tree as already loaded, so the Files panel stayed empty after a restart.
+		...unloadedFileTreeState(),
 		// Don't persist file preview history - stores full file content that can be
 		// re-read from disk on demand. Another major contributor to session file bloat.
 		filePreviewHistory: undefined,

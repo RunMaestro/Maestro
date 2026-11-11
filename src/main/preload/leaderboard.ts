@@ -84,6 +84,8 @@ export interface LeaderboardSubmitResponse {
 export interface AuthStatusResponse {
 	status: 'pending' | 'confirmed' | 'expired' | 'error';
 	authToken?: string;
+	/** Subscriber email the server resolved the clientToken to. */
+	email?: string;
 	message?: string;
 	error?: string;
 }

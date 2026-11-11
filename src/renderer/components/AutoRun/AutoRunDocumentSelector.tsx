@@ -559,7 +559,7 @@ export const AutoRunDocumentSelector = forwardRef<
 												setHighlightedIndex(
 													(i) => (i - 1 + visibleFiles.length) % visibleFiles.length
 												);
-											} else if (e.key === 'Enter') {
+											} else if (e.key === 'Enter' && !isImeComposing(e)) {
 												const target = visibleFiles[highlightedIndex];
 												if (target) {
 													e.preventDefault();
@@ -805,7 +805,12 @@ export const AutoRunDocumentSelector = forwardRef<
 									value={newDocName}
 									onChange={(e) => setNewDocName(e.target.value)}
 									onKeyDown={(e) => {
-										if (e.key === 'Enter' && newDocName.trim() && !isDuplicate) {
+										if (
+											e.key === 'Enter' &&
+											newDocName.trim() &&
+											!isDuplicate &&
+											!isImeComposing(e)
+										) {
 											e.preventDefault();
 											handleCreateDocument();
 										}

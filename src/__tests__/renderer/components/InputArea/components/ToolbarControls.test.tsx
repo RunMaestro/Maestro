@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ToolbarControls } from '../../../../../renderer/components/InputArea/components/ToolbarControls';
 import { usePhoneLayout } from '../../../../../renderer/hooks/ui/useViewportBreakpoint';
 import { inputAreaTheme } from '../_fixtures';
+import { AGENT_CAPABILITIES } from '../../../../../shared/maestro-lib/providers/capabilities';
 import { restorePointer, setCoarsePointer } from '../../../../helpers/mockPointer';
 import {
 	resetDictationStore,
@@ -21,7 +22,10 @@ vi.mock('../../../../../renderer/utils/runtimeContext', async (importOriginal) =
 	...(await importOriginal<typeof import('../../../../../renderer/utils/runtimeContext')>()),
 	isWebDesktop: vi.fn(() => false),
 }));
-import type { ComposerCapabilities } from '../../../../../renderer/components/ChatComposer';
+import {
+	GROUP_CHAT_COMPOSER_CAPABILITIES,
+	type ComposerCapabilities,
+} from '../../../../../renderer/components/ChatComposer';
 
 /** An AI-mode agent that supports every optional control. */
 const AI_CAPABILITIES: ComposerCapabilities = {
@@ -65,38 +69,42 @@ describe('ToolbarControls', () => {
 		useSettingsStore.setState({ localModelEndpoints: [] });
 	});
 
-	function renderToolbar(overrides = {}) {
-		return render(
-			<ToolbarControls
-				theme={inputAreaTheme}
-				capabilities={AI_CAPABILITIES}
-				isTerminalMode={false}
-				agentId="claude-code"
-				hasStandardCapability
-				permissionMode="full"
-				onPermissionModeChange={vi.fn()}
-				onThinkingModeChange={vi.fn()}
-				enterToSend
-				setEnterToSend={vi.fn()}
-				setStagedImages={vi.fn()}
-				onOpenPromptComposer={vi.fn()}
-				shortcuts={{ openPromptComposer: { keys: ['Meta', 'p'], description: '' } as any }}
-				showFlashNotification={vi.fn()}
-				tabSaveToHistory={false}
-				onToggleTabSaveToHistory={vi.fn()}
-				tabShowThinking="off"
-				onToggleTabShowThinking={vi.fn()}
-				availableModels={[]}
-				availableEfforts={[]}
-				modelMenuOpen={false}
-				setModelMenuOpen={vi.fn()}
-				modelMenuRef={{ current: null }}
-				effortMenuOpen={false}
-				setEffortMenuOpen={vi.fn()}
-				effortMenuRef={{ current: null }}
-				{...overrides}
-			/>
-		);
+	function renderToolbar(overrides: Partial<React.ComponentProps<typeof ToolbarControls>> = {}) {
+		const props: React.ComponentProps<typeof ToolbarControls> = {
+			agentId: 'claude-code',
+			capabilities: AI_CAPABILITIES,
+			permissionMode: 'full',
+			onPermissionModeChange: vi.fn(),
+			onThinkingModeChange: vi.fn(),
+			theme: inputAreaTheme,
+			isTerminalMode: false,
+			hasStandardCapability: true,
+			enterToSend: true,
+			setEnterToSend: vi.fn(),
+			setStagedImages: vi.fn(),
+			onOpenPromptComposer: vi.fn(),
+			shortcuts: { openPromptComposer: { keys: ['Meta', 'p'], description: '' } },
+			showFlashNotification: vi.fn(),
+			tabSaveToHistory: false,
+			onToggleTabSaveToHistory: vi.fn(),
+			tabShowThinking: 'off',
+			onToggleTabShowThinking: vi.fn(),
+			availableModels: [],
+			availableEfforts: [],
+			modelMenuOpen: false,
+			setModelMenuOpen: vi.fn(),
+			modelMenuRef: { current: null },
+			effortMenuOpen: false,
+			setEffortMenuOpen: vi.fn(),
+			effortMenuRef: { current: null },
+			...overrides,
+		};
+		const view = render(<ToolbarControls {...props} />);
+		return {
+			...view,
+			rerenderToolbar: (next: Partial<typeof props>) =>
+				view.rerender(<ToolbarControls {...props} {...next} />),
+		};
 	}
 
 	it.each([false, true])(
@@ -268,6 +276,131 @@ describe('ToolbarControls', () => {
 		expect(screen.queryByTitle(/Save to History/)).not.toBeInTheDocument();
 	});
 
+	describe('Grok permission interactions', () => {
+		it.each(['desktop', 'phone'] as const)(
+			'offers Standard for Grok on %s and emits the selected permission mode',
+			(layout) => {
+				// A local Grok tab reaches the ACP route through Standard.
+				expect(AGENT_CAPABILITIES.grok.supportsStandardPermissionMode).toBe(true);
+				mockedUsePhoneLayout.mockReturnValue(layout === 'phone');
+				const onPermissionModeChange = vi.fn();
+				renderToolbar({
+					agentId: 'grok',
+					onPermissionModeChange,
+					capabilities: {
+						...AI_CAPABILITIES,
+						permission: AGENT_CAPABILITIES.grok.supportsReadOnlyMode,
+					},
+					hasStandardCapability: AGENT_CAPABILITIES.grok.supportsStandardPermissionMode ?? false,
+				});
+				if (layout === 'phone') {
+					fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+					fireEvent.click(screen.getByTestId('composer-options-access'));
+					fireEvent.click(screen.getByRole('button', { name: 'Standard' }));
+				} else {
+					// The desktop pill cycles full -> standard.
+					fireEvent.click(screen.getByRole('button', { name: 'Full Access' }));
+				}
+				expect(onPermissionModeChange).toHaveBeenCalledExactlyOnceWith('standard');
+			}
+		);
+
+		it.each([
+			['desktop', 'full'],
+			['desktop', 'standard'],
+			['phone', 'full'],
+			['phone', 'standard'],
+		] as const)(
+			'still normalizes a stale Standard value for a Grok build without the capability on %s from %s',
+			(layout, mode) => {
+				mockedUsePhoneLayout.mockReturnValue(layout === 'phone');
+				const onPermissionModeChange = vi.fn();
+				// The capability is forced off here: this pins the normalization for any agent
+				// that lacks it, not Grok's current declaration (offered above).
+				const { rerenderToolbar } = renderToolbar({
+					agentId: 'grok',
+					onPermissionModeChange,
+					capabilities: {
+						...AI_CAPABILITIES,
+						permission: AGENT_CAPABILITIES.grok.supportsReadOnlyMode,
+					},
+					hasStandardCapability: false,
+					permissionMode: mode,
+				});
+				if (layout === 'phone') {
+					fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+					expect(screen.getByTestId('composer-options-access')).toHaveTextContent('Full Access');
+					fireEvent.click(screen.getByTestId('composer-options-access'));
+				}
+				// A stale Standard value is normalized for display without a render-time write.
+				expect(screen.getByRole('button', { name: 'Full Access' })).toBeInTheDocument();
+				expect(onPermissionModeChange).not.toHaveBeenCalled();
+				for (const [index, nextMode] of (['readonly', 'full'] as const).entries()) {
+					expect(screen.queryByRole('button', { name: /Standard|ACP/ })).not.toBeInTheDocument();
+					const label =
+						layout === 'phone'
+							? nextMode === 'readonly'
+								? 'Read-Only'
+								: 'Full Access'
+							: nextMode === 'readonly'
+								? 'Full Access'
+								: 'Read-Only';
+					fireEvent.click(screen.getByRole('button', { name: label }));
+					expect(onPermissionModeChange).toHaveBeenNthCalledWith(index + 1, nextMode);
+					rerenderToolbar({ permissionMode: nextMode });
+					if (layout === 'phone') {
+						expect(screen.getByTestId('composer-options-access')).toHaveTextContent(
+							nextMode === 'readonly' ? 'Read-Only' : 'Full Access'
+						);
+					} else {
+						expect(
+							screen.getByRole('button', {
+								name: nextMode === 'readonly' ? 'Read-Only' : 'Full Access',
+							})
+						).toBeInTheDocument();
+					}
+				}
+				expect(screen.queryByRole('button', { name: /Standard|ACP/ })).not.toBeInTheDocument();
+			}
+		);
+
+		it.each(['desktop', 'phone'] as const)(
+			'hides unavailable Grok access controls on %s',
+			(layout) => {
+				const onPermissionModeChange = vi.fn();
+				mockedUsePhoneLayout.mockReturnValue(layout === 'phone');
+				renderToolbar({
+					agentId: 'grok',
+					onPermissionModeChange,
+					capabilities: { ...AI_CAPABILITIES, permission: false },
+					hasStandardCapability: AGENT_CAPABILITIES.grok.supportsStandardPermissionMode ?? false,
+				});
+				if (layout === 'phone')
+					fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+				expect(screen.queryByTestId('composer-options-access')).not.toBeInTheDocument();
+				expect(
+					screen.queryByRole('button', { name: /Full Access|Read-Only|Standard|ACP/ })
+				).not.toBeInTheDocument();
+				expect(onPermissionModeChange).not.toHaveBeenCalled();
+			}
+		);
+	});
+
+	it('keeps desktop layout unchanged in terminal mode with cwd and Enter toggle', () => {
+		renderToolbar({
+			capabilities: TERMINAL_CAPABILITIES,
+			isTerminalMode: true,
+			terminalCwd: '~/project/src',
+			onOpenPromptComposer: undefined,
+			enterToSend: true,
+		});
+
+		expect(screen.getByText('~/project/src')).toBeInTheDocument();
+		expect(screen.getByTitle(/Switch to .*Enter to send/)).toBeInTheDocument();
+		expect(screen.getByText('Enter')).toBeInTheDocument();
+		expect(screen.queryByTestId('composer-options-button')).not.toBeInTheDocument();
+	});
+
 	it('hides each optional control its capability turns off', () => {
 		renderToolbar({
 			capabilities: {
@@ -390,17 +523,29 @@ describe('ToolbarControls', () => {
 			expect(onThinkingModeChange).toHaveBeenLastCalledWith('sticky');
 		});
 
-		it('draws the ... in terminal mode with no sheet behind it, as before', () => {
-			// Terminal mode offers no sheet section, so nothing mounts behind the
-			// button (AI mode is covered by "opens the options sheet" above).
+		it('draws no "..." or sheet in terminal mode, keeping the cwd and Run command button', () => {
 			renderPhoneToolbar({
 				capabilities: TERMINAL_CAPABILITIES,
 				isTerminalMode: true,
 				terminalCwd: '~/project',
 			});
 
-			fireEvent.click(screen.getByTestId('composer-options-button'));
+			expect(screen.queryByTestId('composer-options-button')).not.toBeInTheDocument();
 			expect(screen.queryByTestId('composer-options-sheet')).not.toBeInTheDocument();
+			expect(screen.getByText('~/project')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Run command' })).toBeInTheDocument();
+		});
+
+		it('still shows the "..." and opens the sheet in a room with sheet content', () => {
+			renderPhoneToolbar({
+				capabilities: GROUP_CHAT_COMPOSER_CAPABILITIES,
+				sheetExtras: <div data-testid="room-readonly-row">Read-Only</div>,
+			});
+
+			expect(screen.getByTestId('composer-options-button')).toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			expect(screen.getByTestId('composer-options-sheet')).toBeInTheDocument();
+			expect(screen.getByTestId('room-readonly-row')).toBeInTheDocument();
 		});
 
 		it('leaves out the sheet sections the surface does not offer', () => {

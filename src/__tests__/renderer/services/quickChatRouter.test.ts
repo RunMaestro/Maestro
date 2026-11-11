@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createMockAITab, createMockSession } from '../../helpers';
+import { createMockAITab, createMockSession, resetStores } from '../../helpers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import {
@@ -19,6 +19,8 @@ import {
 	type RouteContext,
 } from '../../../renderer/services/quickChatRouter';
 import type { AITab, LogEntry, Session } from '../../../renderer/types';
+import type { NativeSessionBinding } from '../../../shared/maestro-lib/agents/providerSwap';
+import { SessionResumeRefusedError } from '../../../renderer/services/resumableSession';
 
 vi.mock('../../../renderer/utils/sentry', () => ({ captureException: vi.fn() }));
 import { captureException } from '../../../renderer/utils/sentry';
@@ -49,6 +51,16 @@ const amazonTab = () =>
 const buildTab = () =>
 	tab('build', { name: 'CI Build', logs: [said('why does the windows build fail')] });
 
+const nativeBinding = {
+	version: 1,
+	state: 'bound',
+	provider: 'grok',
+	nativeSessionId: 's-tax',
+	accountRef: 'fixture-account-a',
+	host: { kind: 'local', identity: 'fixture-host-a' },
+	cwd: '/test/project',
+} as const satisfies NativeSessionBinding;
+
 const noChat: RouteContext = { currentTabId: null, ownedTabIds: new Set() };
 
 /** One USER history entry of a past conversation. */
@@ -69,6 +81,7 @@ function history(entries: unknown[]) {
 }
 
 beforeEach(() => {
+	resetStores(useSessionStore, useSettingsStore);
 	resetQuickChatRouterForTests();
 	vi.mocked(captureException).mockClear();
 	getAllPaginated.mockReset();
@@ -275,6 +288,57 @@ describe('routeQuickChatMessage', () => {
 		expect(captureException).toHaveBeenCalled();
 	});
 
+	it.each([
+		{ ownerAgentId: 'other', nativeSessionBinding: nativeBinding },
+		{ ownerAgentId: 'agent', nativeSessionBinding: { ...nativeBinding, accountRef: 'account-b' } },
+		{
+			ownerAgentId: 'agent',
+			nativeSessionBinding: { ...nativeBinding, host: { kind: 'ssh', identity: 'host-b' } },
+		},
+		{ ownerAgentId: 'agent', nativeSessionBinding: undefined },
+	])('keeps a closed ID collision separate from live scoped history: %j', async (scope) => {
+		history([
+			entry('s-tax', 'parser grammar compiler', {
+				sessionId: 'agent',
+				nativeSessionBinding: nativeBinding,
+			}),
+			entry('s-tax', 'home office deduction', {
+				sessionId: scope.ownerAgentId,
+				nativeSessionBinding: scope.nativeSessionBinding,
+			}),
+		]);
+		const session = agentWith(
+			[tab('live', { hidden: true, agentSessionId: 's-tax', nativeSessionBinding: nativeBinding })],
+			{ toolType: 'grok' }
+		);
+		const target = await routeQuickChatMessage(session, 'home office deduction', noChat);
+		expect(target).toEqual({ kind: 'closed', agentSessionId: 's-tax', name: null, ...scope });
+		if (target.kind === 'closed' && target.nativeSessionBinding) {
+			expect(target.nativeSessionBinding).not.toBe(scope.nativeSessionBinding);
+		}
+		expect(groomContext).not.toHaveBeenCalled();
+	});
+
+	it.each<Partial<Session>>([
+		{ toolType: 'codex' },
+		{ customEnvVars: { GROK_HOME: '/fixture/account-b' } },
+		{ sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-b' } },
+	])('invalidates cached candidates after selection changes: %j', async (patch) => {
+		const session = agentWith([], { toolType: 'grok' });
+		history([
+			entry('s-tax', 'home office deduction', {
+				sessionId: 'agent',
+				nativeSessionBinding: nativeBinding,
+			}),
+		]);
+		await routeQuickChatMessage(session, 'home office deduction', noChat);
+		history([]);
+		expect(
+			await routeQuickChatMessage({ ...session, ...patch }, 'home office deduction', noChat)
+		).toEqual({ kind: 'new' });
+		expect(getAllPaginated).toHaveBeenCalledTimes(2);
+	});
+
 	describe('a close call', () => {
 		const inAmazonChat: RouteContext = { currentTabId: 'amazon', ownedTabIds: new Set() };
 
@@ -457,6 +521,257 @@ describe('reopenClosedConversation', () => {
 		expect(reopened).toMatchObject({ tabProvider: 'codex', agentSessionId: 'native' });
 		expect(reopened?.providerSessions?.codex).toBeUndefined();
 	});
+	describe('verified Grok reopen', () => {
+		const conversation = {
+			agentSessionId: 's-tax',
+			name: 'Tax Questions',
+			ownerAgentId: 'agent',
+			nativeSessionBinding: nativeBinding,
+		};
+		const receipt = {
+			...transcript,
+			source: { provider: 'grok' as const, status: 'available' as const },
+			nativeSessionBinding: nativeBinding,
+		};
+
+		beforeEach(() => {
+			agentWith([buildTab()], { toolType: 'grok' });
+			vi.mocked(window.maestro.agentSessions.read).mockResolvedValue(receipt);
+		});
+
+		it('forwards the recorded owner and immutable binding and persists verified ownership', async () => {
+			const collision = tab('collision', {
+				agentSessionId: 's-tax',
+				nativeSessionBinding: { ...nativeBinding, accountRef: 'account-b' },
+				logs: [said('retained history')],
+			});
+			useSessionStore.getState().updateSession('agent', { aiTabs: [buildTab(), collision] });
+			const onCreated = vi.fn();
+			const id = await reopenClosedConversation('agent', conversation, () => true, onCreated);
+			expect(window.maestro.agentSessions.read).toHaveBeenCalledWith(
+				'grok',
+				'/test/project',
+				's-tax',
+				expect.objectContaining({ ownerAgentId: 'agent', nativeSessionBinding: nativeBinding }),
+				undefined
+			);
+			const options = vi.mocked(window.maestro.agentSessions.read).mock.calls[0][3];
+			expect(options?.nativeSessionBinding).not.toBe(nativeBinding);
+			expect(useSessionStore.getState().sessions[0].aiTabs.find((t) => t.id === id)).toMatchObject({
+				agentSessionId: 's-tax',
+				nativeSessionBinding: nativeBinding,
+				logs: [
+					expect.objectContaining({ text: 'what can I deduct?' }),
+					expect.objectContaining({ text: 'The home office.' }),
+				],
+			});
+			expect(useSessionStore.getState().sessions[0].aiTabs.find((t) => t.id === 'collision')).toBe(
+				collision
+			);
+			expect(id).not.toBe('collision');
+			expect(onCreated).toHaveBeenCalledExactlyOnceWith(id);
+			expect(useSessionStore.getState().sessions[0].activeTabId).toBe('build');
+		});
+
+		it.each([
+			{ ...receipt, source: undefined },
+			{ ...receipt, source: { provider: 'grok' as const, status: 'partial' as const } },
+			{ ...receipt, nativeSessionBinding: { ...nativeBinding, accountRef: 'account-b' } },
+			{
+				...receipt,
+				nativeSessionBinding: {
+					...nativeBinding,
+					host: { kind: 'ssh' as const, identity: 'host-b' },
+				},
+			},
+			{ ...receipt, messages: [], total: 0 },
+		])(
+			'refuses unverified or empty receipts without replacing retained tabs: %j',
+			async (result) => {
+				vi.mocked(window.maestro.agentSessions.read).mockResolvedValue(result);
+				const before = useSessionStore.getState().sessions[0];
+				const created = vi.fn();
+				await expect(
+					reopenClosedConversation('agent', conversation, () => true, created)
+				).rejects.toBeInstanceOf(SessionResumeRefusedError);
+				expect(useSessionStore.getState().sessions[0]).toBe(before);
+				expect(created).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each([
+			{ ...conversation, ownerAgentId: undefined },
+			{ ...conversation, ownerAgentId: 'other' },
+			{ ...conversation, nativeSessionBinding: undefined },
+		])('refuses missing or foreign ownership before reading: %j', async (selected) => {
+			const before = useSessionStore.getState().sessions[0];
+			await expect(reopenClosedConversation('agent', selected)).rejects.toBeInstanceOf(
+				SessionResumeRefusedError
+			);
+			expect(window.maestro.agentSessions.read).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0]).toBe(before);
+		});
+
+		it.each<Partial<Session>>([
+			{ toolType: 'codex' },
+			{ customEnvVars: { GROK_HOME: '/fixture/account-b' } },
+			{ sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-b' } },
+		])('rejects selection changes while the native read is pending: %j', async (patch) => {
+			let resolve!: (value: typeof receipt) => void;
+			const pending = new Promise<typeof receipt>((done) => {
+				resolve = done;
+			});
+			vi.mocked(window.maestro.agentSessions.read).mockReturnValue(pending);
+			const reopening = reopenClosedConversation('agent', conversation);
+			useSessionStore.getState().updateSession('agent', patch);
+			const changed = useSessionStore.getState().sessions[0];
+			resolve(receipt);
+			await expect(reopening).rejects.toBeInstanceOf(SessionResumeRefusedError);
+			expect(useSessionStore.getState().sessions[0]).toBe(changed);
+		});
+
+		it.each<NativeSessionBinding | undefined>([
+			undefined,
+			{ version: 1, state: 'unknown', reason: 'legacy' },
+		])(
+			'routes unknown history to an honest refusal, preserving its live ID collision: %j',
+			async (binding) => {
+				const retained = tab('retained', {
+					hidden: true,
+					agentSessionId: 's-tax',
+					nativeSessionBinding: nativeBinding,
+					logs: [said('retained history')],
+				});
+				const session = agentWith([buildTab(), retained], { toolType: 'grok' });
+				history([
+					entry('s-tax', 'home office deduction', {
+						sessionId: 'agent',
+						nativeSessionBinding: binding,
+					}),
+				]);
+				const target = await routeQuickChatMessage(session, 'home office deduction', noChat);
+				expect(target).toMatchObject({ kind: 'closed', agentSessionId: 's-tax' });
+				if (target.kind !== 'closed') throw new Error('Expected retained history candidate');
+				const created = vi.fn();
+				await expect(
+					reopenClosedConversation('agent', target, () => true, created)
+				).rejects.toBeInstanceOf(SessionResumeRefusedError);
+				expect(useSessionStore.getState().sessions[0]).toBe(session);
+				expect(window.maestro.agentSessions.read).not.toHaveBeenCalled();
+				expect(created).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each<Partial<Session>>([
+			{ toolType: 'codex' },
+			{ customEnvVars: { GROK_HOME: '/fixture/account-b' } },
+			{ sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-b' } },
+		])('checks selection on fresh updater entry: %j', async (patch) => {
+			const { setSessions, sessions } = useSessionStore.getState();
+			const changed = { ...sessions[0], ...patch };
+			const commit = vi.fn<typeof setSessions>((updater) => {
+				// A selection write can land after the read resolves but before its commit.
+				useSessionStore.setState({ sessions: [changed] });
+				setSessions(updater);
+			});
+			useSessionStore.setState({ setSessions: commit });
+			const created = vi.fn();
+			await expect(
+				reopenClosedConversation('agent', conversation, () => true, created)
+			).rejects.toBeInstanceOf(SessionResumeRefusedError);
+			expect(commit).toHaveBeenCalledTimes(1);
+			expect(useSessionStore.getState().sessions[0]).toBe(changed);
+			expect(created).not.toHaveBeenCalled();
+		});
+
+		it('checks cancellation at commit without creating or claiming a tab', async () => {
+			const current = vi.fn().mockReturnValue(false);
+			const created = vi.fn();
+			const before = useSessionStore.getState().sessions[0];
+			expect(await reopenClosedConversation('agent', conversation, current, created)).toBeNull();
+			expect(current).toHaveBeenCalled();
+			expect(created).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0]).toBe(before);
+		});
+
+		it.each(['concurrent', 'rebound', 'deleted', 'orphan', 'removed'])(
+			'fences %s native tab changes at commit',
+			async (change) => {
+				const retained = tab('retained', {
+					agentSessionId: 's-tax',
+					nativeSessionBinding: nativeBinding,
+					logs: [said('retained history')],
+				});
+				if (change === 'rebound' || change === 'deleted')
+					useSessionStore.getState().updateSession('agent', { aiTabs: [retained] });
+				let resolve!: (value: typeof receipt) => void;
+				const pending = new Promise<typeof receipt>((done) => {
+					resolve = done;
+				});
+				vi.mocked(window.maestro.agentSessions.read).mockReturnValue(pending);
+				const created = vi.fn();
+				const reopening = reopenClosedConversation('agent', conversation, () => true, created);
+				if (change === 'removed') useSessionStore.getState().removeSession('agent');
+				else if (change === 'deleted')
+					useSessionStore.getState().updateSession('agent', { aiTabs: [buildTab()] });
+				else
+					useSessionStore.getState().updateSession(
+						'agent',
+						change === 'orphan'
+							? { orphanedThinkingTabs: [retained] }
+							: {
+									aiTabs: [
+										{
+											...retained,
+											nativeSessionBinding:
+												change === 'rebound'
+													? { ...nativeBinding, accountRef: 'account-b' }
+													: nativeBinding,
+										},
+									],
+								}
+					);
+				const after = useSessionStore.getState().sessions;
+				resolve(receipt);
+				if (change === 'concurrent') expect(await reopening).toBe('retained');
+				else await expect(reopening).rejects.toBeInstanceOf(SessionResumeRefusedError);
+				expect(useSessionStore.getState().sessions).toEqual(after);
+				expect(created).not.toHaveBeenCalled();
+			}
+		);
+	});
+
+	it.each(['claude-code', 'codex'] as const)(
+		'refuses a pending %s reopen after the agent switches to Grok',
+		async (toolType) => {
+			agentWith([buildTab()], { toolType });
+			let resolve!: (value: typeof transcript) => void;
+			vi.mocked(window.maestro.agentSessions.read).mockReturnValue(
+				new Promise((done) => {
+					resolve = done;
+				})
+			);
+			const created = vi.fn();
+			const reopening = reopenClosedConversation(
+				'agent',
+				{
+					agentSessionId: 's-tax',
+					name: 'Tax Questions',
+				},
+				() => true,
+				created
+			);
+			useSessionStore.getState().updateSession('agent', { toolType: 'grok' });
+			const changed = useSessionStore.getState().sessions[0];
+			resolve(transcript);
+			await expect(reopening).rejects.toBeInstanceOf(SessionResumeRefusedError);
+			expect(useSessionStore.getState().sessions[0]).toBe(changed);
+			expect(window.maestro.agentSessions.read).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(window.maestro.agentSessions.read).mock.calls[0][0]).toBe(toolType);
+			expect(created).not.toHaveBeenCalled();
+		}
+	);
+
 	it('does not attempt a foreign native resume for an unresolved migration History entry', async () => {
 		agentWith([buildTab()], {
 			providerTranslationHistoryMappings: [

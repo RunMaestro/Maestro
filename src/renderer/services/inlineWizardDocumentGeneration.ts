@@ -17,7 +17,7 @@ import type {
 import type { ExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
-import { extractGrokTextFromJsonl, getGrokTextDelta } from '../utils/grokWizard';
+import { readGrokWizardOutput, GROK_WIZARD_GENERATION_ARGS } from '../utils/grokWizard';
 
 let cachedWizardDocumentGenerationPrompt: string | null = null;
 let cachedWizardInlineIterateGenerationPrompt: string | null = null;
@@ -78,6 +78,7 @@ const GENERATION_TIMEOUT = 1200000;
  * @returns Extracted text to display, or empty string if no text found
  */
 export function extractDisplayTextFromChunk(chunk: string, agentType: ToolType): string {
+	if (agentType === 'grok') return readGrokWizardOutput(chunk, false).text;
 	// Split into lines in case multiple JSON objects are in one chunk
 	const lines = chunk.split('\n').filter((line) => line.trim());
 	const textParts: string[] = [];
@@ -121,12 +122,6 @@ export function extractDisplayTextFromChunk(chunk: string, agentType: ToolType):
 				if (msg.type === 'message' && msg.text) {
 					textParts.push(msg.text);
 				}
-			}
-
-			// Grok streaming-json: text deltas only (skip thought/reasoning)
-			else if (agentType === 'grok') {
-				const data = getGrokTextDelta(msg);
-				if (data) textParts.push(data);
 			}
 		} catch {
 			// Ignore non-JSON lines or parse errors
@@ -194,6 +189,9 @@ export interface DocumentGenerationConfig {
 	sessionCustomEnvVars?: Record<string, string>;
 	/** Custom model ID (overrides agent-level) */
 	sessionCustomModel?: string;
+	sessionCustomEffort?: string;
+	/** Cancels this generation only; the caller owns the controller. */
+	signal?: AbortSignal;
 	/** The agent's Claude token source, so a TUI agent's wizard runs through maestro-p */
 	sessionClaudeTokenSource?: ClaudeTokenSourceFields;
 }
@@ -596,18 +594,25 @@ export function generateDocumentPrompt(
  * When UPDATE: true is present, the document will overwrite an existing file.
  * Otherwise, it creates a new file.
  */
-export function parseGeneratedDocuments(output: string): ParsedDocument[] {
+export function parseGeneratedDocuments(output: string, requireComplete = false): ParsedDocument[] {
 	const documents: ParsedDocument[] = [];
 
 	// Split by document markers and process each block
-	const blocks = output.split(/---BEGIN DOCUMENT---/);
+	const split = output.split(/---BEGIN DOCUMENT---/);
+	const blocks = requireComplete ? split.slice(1) : split;
 
 	for (const block of blocks) {
+		if (requireComplete && !block.includes('---END DOCUMENT---')) {
+			throw new Error('Grok returned an incomplete document block. Please regenerate the plan.');
+		}
 		if (!block.trim()) continue;
 
 		// Extract filename
 		const filenameMatch = block.match(/FILENAME:\s*(.+?)(?:\n|$)/);
-		if (!filenameMatch) continue;
+		if (!filenameMatch) {
+			if (requireComplete) throw new Error('Grok returned a document without a filename.');
+			continue;
+		}
 
 		const filename = filenameMatch[1].trim();
 
@@ -616,13 +621,23 @@ export function parseGeneratedDocuments(output: string): ParsedDocument[] {
 		const isUpdate = updateMatch ? updateMatch[1].toLowerCase() === 'true' : false;
 
 		// Extract content - everything after "CONTENT:" line
-		const contentMatch = block.match(/CONTENT:\s*\n([\s\S]*?)(?=---END DOCUMENT---|$)/);
-		if (!contentMatch) continue;
+		const contentMatch = block.match(
+			requireComplete
+				? /CONTENT:\s*\n([\s\S]*?)(?=---END DOCUMENT---)/
+				: /CONTENT:\s*\n([\s\S]*?)(?=---END DOCUMENT---|$)/
+		);
+		if (!contentMatch) {
+			if (requireComplete) throw new Error('Grok returned a document without content.');
+			continue;
+		}
 
 		let content = contentMatch[1].trim();
 
 		// Remove any trailing ---END DOCUMENT--- marker from content
 		content = content.replace(/---END DOCUMENT---\s*$/, '').trim();
+		if (requireComplete && (!filename || !content)) {
+			throw new Error('Grok returned an empty document.');
+		}
 
 		// Extract phase number from filename (Phase-01-..., Phase-02-..., etc.)
 		const phaseMatch = filename.match(/Phase-(\d+)/i);
@@ -756,12 +771,6 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 			}
 		}
 
-		// For Grok: join text deltas (end event has no body)
-		if (agentType === 'grok') {
-			const grokText = extractGrokTextFromJsonl(lines);
-			if (grokText) return grokText;
-		}
-
 		// For Claude Code: look for result message
 		for (const line of lines) {
 			if (!line.trim()) continue;
@@ -783,7 +792,8 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 /**
  * Build CLI args for the agent based on its type and capabilities.
  * For document generation, the agent can write files directly to the Auto Run folder.
- * The prompt strictly enforces the write restriction to prevent writing elsewhere.
+ * The prompt requests writes to the Auto Run folder; managed launch authority
+ * remains responsible for enforcing policy.
  */
 function buildArgsForAgent(agent: { id: string; args?: string[] }): string[] {
 	const agentId = agent.id;
@@ -817,6 +827,8 @@ function buildArgsForAgent(agent: { id: string; args?: string[] }): string[] {
 			// when a prompt is present.
 			return [...(agent.args || [])];
 		}
+		case 'grok':
+			return [...(agent.args || []), ...GROK_WIZARD_GENERATION_ARGS];
 
 		default: {
 			return [...(agent.args || [])];
@@ -895,6 +907,9 @@ export async function generateInlineDocuments(
 	config: DocumentGenerationConfig
 ): Promise<DocumentGenerationResult> {
 	const { agentType, directoryPath, autoRunFolderPath, projectName, callbacks } = config;
+	const isGrok = agentType === 'grok';
+	if (config.signal?.aborted)
+		return { success: false, error: 'Document generation was cancelled.' };
 
 	callbacks?.onStart?.();
 	callbacks?.onProgress?.('Preparing to generate your Playbook...');
@@ -935,10 +950,10 @@ export async function generateInlineDocuments(
 		const agent = await window.maestro.agents.get(agentType);
 		// For SSH remote sessions, skip local availability checks since agent may be remote
 		const isRemoteSession = config.sessionSshRemoteConfig?.enabled;
-		if (!agent && !isRemoteSession) {
+		if (!agent && !isRemoteSession && !(isGrok && config.sessionCustomPath)) {
 			throw new Error(`Agent ${agentType} is not available`);
 		}
-		if (agent && !agent.available && !isRemoteSession) {
+		if (agent && !agent.available && !isRemoteSession && !(isGrok && config.sessionCustomPath)) {
 			throw new Error(`Agent ${agentType} is not available`);
 		}
 
@@ -960,7 +975,11 @@ export async function generateInlineDocuments(
 
 		// Spawn agent and collect output
 		const sessionId = `inline-wizard-gen-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-		const argsForSpawn = agent ? buildArgsForAgent(agent) : [];
+		const argsForSpawn = agent
+			? buildArgsForAgent(agent)
+			: isGrok
+				? [...GROK_WIZARD_GENERATION_ARGS]
+				: [];
 
 		// Detect new playbook docs as they hit disk and dedupe across two
 		// sources: the chokidar-backed file watcher (fast when it fires) and a
@@ -970,7 +989,11 @@ export async function generateInlineDocuments(
 		const documentEmitter = createPlaybookDocumentEmitter({
 			subfolderPath,
 			sshRemoteId,
-			onEmit: (doc) => callbacks?.onDocumentComplete?.(doc),
+			// Grok's in-progress files are previews, not completed documents. Re-read
+			// them after a successful turn rather than freezing the first partial write.
+			onEmit: (doc) => {
+				if (!isGrok && !config.signal?.aborted) callbacks?.onDocumentComplete?.(doc);
+			},
 		});
 
 		const result = await new Promise<{ success: boolean; rawOutput: string; error?: string }>(
@@ -978,6 +1001,10 @@ export async function generateInlineDocuments(
 				let outputBuffer = '';
 				let dataListenerCleanup: (() => void) | undefined;
 				let exitListenerCleanup: (() => void) | undefined;
+				let errorListenerCleanup: (() => void) | undefined;
+				let providerError: string | undefined;
+				let settled = false;
+				let stopRequested = false;
 				let fileWatcherCleanup: (() => void) | undefined;
 				let pollIntervalId: ReturnType<typeof setInterval> | undefined;
 
@@ -988,6 +1015,7 @@ export async function generateInlineDocuments(
 					clearTimeout(timeoutId);
 
 					timeoutId = setTimeout(() => {
+						stopRequested = true;
 						logger.error('[InlineWizardDocGen] TIMEOUT fired! Session:', undefined, sessionId);
 						cleanupAll();
 						window.maestro.process
@@ -1009,6 +1037,7 @@ export async function generateInlineDocuments(
 
 				// Set up timeout (20 minutes for complex generation)
 				let timeoutId = setTimeout(() => {
+					stopRequested = true;
 					logger.error('[InlineWizardDocGen] TIMEOUT fired! Session:', undefined, sessionId);
 					cleanupAll();
 					window.maestro.process
@@ -1024,6 +1053,10 @@ export async function generateInlineDocuments(
 				}, GENERATION_TIMEOUT);
 
 				function cleanupAll() {
+					settled = true;
+					config.signal?.removeEventListener('abort', onAbort);
+					errorListenerCleanup?.();
+					errorListenerCleanup = undefined;
 					if (dataListenerCleanup) {
 						dataListenerCleanup();
 						dataListenerCleanup = undefined;
@@ -1048,12 +1081,42 @@ export async function generateInlineDocuments(
 						);
 				}
 
+				function onAbort() {
+					stopRequested = true;
+					clearTimeout(timeoutId);
+					cleanupAll();
+					void window.maestro.process
+						.kill(sessionId)
+						.catch((error) =>
+							logger.warn('Failed to stop document generation', '[InlineWizardDocGen]', error)
+						);
+					resolve({
+						success: false,
+						rawOutput: outputBuffer,
+						error: 'Document generation was cancelled.',
+					});
+				}
+				config.signal?.addEventListener('abort', onAbort, { once: true });
+				if (config.signal?.aborted) {
+					onAbort();
+					return;
+				}
+				if (isGrok) {
+					errorListenerCleanup = window.maestro.process.onAgentError((id, error) => {
+						if (id === sessionId)
+							providerError ??= error.message || 'Grok document generation failed.';
+					});
+				}
+
 				// Set up file watcher for real-time document streaming.
 				// The agent writes files directly; chokidar events route through the
 				// shared emitter so the renderer sees each doc exactly once.
 				window.maestro.autorun
 					.watchFolder(subfolderPath, sshRemoteId)
 					.then((watchResult) => {
+						if (settled) {
+							return window.maestro.autorun.unwatchFolder(subfolderPath).then(() => undefined);
+						}
 						if (watchResult.success) {
 							logger.info(
 								'[InlineWizardDocGen] Started watching folder:',
@@ -1105,7 +1168,7 @@ export async function generateInlineDocuments(
 				// Set up data listener
 				dataListenerCleanup = window.maestro.process.onData(
 					(receivedSessionId: string, data: string) => {
-						if (receivedSessionId === sessionId) {
+						if (receivedSessionId === sessionId && !settled) {
 							outputBuffer += data;
 							resetTimeout();
 							callbacks?.onChunk?.(data);
@@ -1115,14 +1178,16 @@ export async function generateInlineDocuments(
 
 				// Set up exit listener
 				exitListenerCleanup = window.maestro.process.onExit(
-					(receivedSessionId: string, code: number) => {
-						if (receivedSessionId === sessionId) {
+					(receivedSessionId: string, code: number, signal?: number) => {
+						if (receivedSessionId === sessionId && !settled) {
 							clearTimeout(timeoutId);
 							cleanupAll();
 
 							logger.info('[InlineWizardDocGen] Agent exited with code:', undefined, code);
 
-							if (code === 0) {
+							const grokOutput = isGrok ? readGrokWizardOutput(outputBuffer) : undefined;
+							const error = providerError || grokOutput?.error;
+							if (code === 0 && !error && signal == null && !config.signal?.aborted) {
 								resolve({
 									success: true,
 									rawOutput: outputBuffer,
@@ -1131,7 +1196,11 @@ export async function generateInlineDocuments(
 								resolve({
 									success: false,
 									rawOutput: outputBuffer,
-									error: `Agent exited with code ${code}`,
+									error:
+										error ||
+										(signal != null || config.signal?.aborted
+											? 'Document generation was cancelled.'
+											: `Agent exited with code ${code}`),
 								});
 							}
 						}
@@ -1159,6 +1228,7 @@ export async function generateInlineDocuments(
 						command: commandToUse,
 						args: argsForSpawn,
 						prompt,
+						...(isGrok ? { permissionMode: 'full' as const } : {}),
 						// Pass SSH config for remote execution
 						sessionSshRemoteConfig: config.sessionSshRemoteConfig,
 						// Pass session-level overrides
@@ -1166,9 +1236,24 @@ export async function generateInlineDocuments(
 						sessionCustomArgs: config.sessionCustomArgs,
 						sessionCustomEnvVars: config.sessionCustomEnvVars,
 						sessionCustomModel: config.sessionCustomModel,
+						sessionCustomEffort: config.sessionCustomEffort,
 						...getClaudeTokenSourceFields(config.sessionClaudeTokenSource),
 					})
-					.then(() => {
+					.then((spawnResult) => {
+						if (stopRequested || config.signal?.aborted) {
+							onAbort();
+							return;
+						}
+						if (isGrok && !spawnResult.success) {
+							cleanupAll();
+							clearTimeout(timeoutId);
+							resolve({
+								success: false,
+								rawOutput: outputBuffer,
+								error: providerError || 'Grok generation launch was refused.',
+							});
+							return;
+						}
 						logger.debug('Document generation agent spawned successfully', '[InlineWizardDocGen]', {
 							sessionId,
 						});
@@ -1195,6 +1280,45 @@ export async function generateInlineDocuments(
 		}
 
 		const rawOutput = result.rawOutput;
+		config.signal?.throwIfAborted();
+		let grokDocuments: ParsedDocument[] | undefined;
+		let grokDiskDocuments: ParsedDocument[] = [];
+		if (isGrok) {
+			const text = readGrokWizardOutput(rawOutput).text;
+			const outputDocuments = parseGeneratedDocuments(text, true);
+			grokDiskDocuments = await readDocumentsFromDisk(subfolderPath, sshRemoteId, true);
+			if (new Set(outputDocuments.map((doc) => doc.filename)).size !== outputDocuments.length) {
+				throw new Error('Grok returned duplicate document names.');
+			}
+			const documentsByName = new Map(grokDiskDocuments.map((doc) => [doc.filename, doc]));
+			for (const doc of outputDocuments) {
+				const diskDoc = documentsByName.get(doc.filename);
+				if (diskDoc && diskDoc.content.trim() !== doc.content.trim()) {
+					throw new Error('Grok returned conflicting disk and response documents.');
+				}
+				documentsByName.set(doc.filename, doc);
+			}
+			grokDocuments = [...documentsByName.values()].sort((a, b) => a.phase - b.phase);
+			// Mixed output uses the common save path so response-only documents
+			// cannot disappear when the agent also wrote files directly.
+			if (outputDocuments.length) grokDiskDocuments = [];
+			const names = new Set<string>();
+			if (!grokDocuments.length) throw new Error('Grok did not produce complete task documents.');
+			for (const doc of grokDocuments) {
+				if (
+					sanitizeFilename(doc.filename) !== doc.filename ||
+					!doc.filename.endsWith('.md') ||
+					names.has(doc.filename) ||
+					countTasks(doc.content) === 0
+				) {
+					throw new Error(
+						'Grok returned invalid, duplicate or task-free documents. Please regenerate the plan.'
+					);
+				}
+				names.add(doc.filename);
+			}
+		}
+		config.signal?.throwIfAborted();
 
 		// Final sweep: catch any files written between the last poll tick and
 		// agent exit so the watcher/poll race doesn't leave a doc behind.
@@ -1206,7 +1330,14 @@ export async function generateInlineDocuments(
 
 		// If documents were streamed in via watcher or poll, use those
 		// (they were already created directly by the agent on disk).
-		const emittedDocuments = documentEmitter.getEmittedDocuments();
+		const emittedDocuments = isGrok
+			? grokDiskDocuments.map((doc) => ({
+					filename: doc.filename,
+					content: doc.content,
+					taskCount: countTasks(doc.content),
+					savedPath: `${subfolderPath}/${doc.filename}`,
+				}))
+			: documentEmitter.getEmittedDocuments();
 		if (emittedDocuments.length > 0) {
 			logger.info(
 				'[InlineWizardDocGen] Using documents from emitter:',
@@ -1223,6 +1354,7 @@ export async function generateInlineDocuments(
 
 			// Create a playbook for the generated documents (if sessionId provided)
 			let playbookInfo: { id: string; name: string } | undefined;
+			config.signal?.throwIfAborted();
 			if (config.sessionId && sortedDocs.length > 0) {
 				callbacks?.onProgress?.('Creating playbook configuration...');
 				try {
@@ -1242,6 +1374,8 @@ export async function generateInlineDocuments(
 				}
 			}
 
+			config.signal?.throwIfAborted();
+			if (isGrok) for (const doc of sortedDocs) callbacks?.onDocumentComplete?.(doc);
 			callbacks?.onProgress?.(`Generated ${sortedDocs.length} Auto Run document(s)`);
 			callbacks?.onComplete?.(sortedDocs);
 
@@ -1263,7 +1397,7 @@ export async function generateInlineDocuments(
 		const extractedResult = extractResultFromStreamJson(rawOutput, agentType);
 		const textToParse = extractedResult || rawOutput;
 
-		let documents = parseGeneratedDocuments(textToParse);
+		let documents = grokDocuments ?? parseGeneratedDocuments(textToParse);
 
 		// If no documents parsed with markers, try splitting intelligently
 		if (documents.length === 0 && textToParse.trim()) {
@@ -1293,10 +1427,13 @@ export async function generateInlineDocuments(
 		const savedDocuments: InlineGeneratedDocument[] = [];
 		for (const doc of documents) {
 			try {
+				config.signal?.throwIfAborted();
 				const savedDoc = await saveDocument(subfolderPath, doc, sshRemoteId);
+				config.signal?.throwIfAborted();
 				savedDocuments.push(savedDoc);
-				callbacks?.onDocumentComplete?.(savedDoc);
+				if (!isGrok) callbacks?.onDocumentComplete?.(savedDoc);
 			} catch (error) {
+				if (isGrok || config.signal?.aborted) throw error;
 				logger.error('[InlineWizardDocGen] Failed to save document:', undefined, [
 					doc.filename,
 					error,
@@ -1311,6 +1448,7 @@ export async function generateInlineDocuments(
 
 		// Create a playbook for the generated documents (if sessionId provided)
 		let playbookInfo: { id: string; name: string } | undefined;
+		config.signal?.throwIfAborted();
 		if (config.sessionId && savedDocuments.length > 0) {
 			callbacks?.onProgress?.('Creating playbook configuration...');
 			try {
@@ -1331,6 +1469,8 @@ export async function generateInlineDocuments(
 			}
 		}
 
+		config.signal?.throwIfAborted();
+		if (isGrok) for (const doc of savedDocuments) callbacks?.onDocumentComplete?.(doc);
 		callbacks?.onProgress?.(`Generated ${savedDocuments.length} Auto Run document(s)`);
 		callbacks?.onComplete?.(savedDocuments);
 
@@ -1428,13 +1568,17 @@ async function createPlaybookForDocuments(
  */
 async function readDocumentsFromDisk(
 	autoRunFolderPath: string,
-	sshRemoteId?: string
+	sshRemoteId?: string,
+	requireComplete = false
 ): Promise<ParsedDocument[]> {
 	const documents: ParsedDocument[] = [];
 
 	try {
 		// List files in the Auto Run folder
 		const listResult = await window.maestro.autorun.listDocs(autoRunFolderPath, sshRemoteId);
+		if (requireComplete && (!listResult.success || !Array.isArray(listResult.files))) {
+			throw new Error('The generated Grok documents could not be listed completely.');
+		}
 		if (!listResult.success || !listResult.files) {
 			return [];
 		}
@@ -1460,6 +1604,8 @@ async function readDocumentsFromDisk(
 					phase,
 					isUpdate: false,
 				});
+			} else if (requireComplete) {
+				throw new Error('A generated Grok document could not be read completely.');
 			}
 		}
 
@@ -1468,6 +1614,7 @@ async function readDocumentsFromDisk(
 
 		return documents;
 	} catch (error) {
+		if (requireComplete) throw error;
 		logger.error('[InlineWizardDocGen] Error reading documents from disk:', undefined, error);
 		return [];
 	}

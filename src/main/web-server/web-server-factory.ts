@@ -21,6 +21,7 @@ import type {
 	CueInjectionScreenWriteResult,
 } from '../../shared/cue/injection-screen';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
+import type { AddGroupChatParticipantCallback } from './types';
 import { registerSessionCallbacks } from './callbacks/sessionCallbacks';
 import { registerThemeCallbacks } from './callbacks/themeCallbacks';
 import { registerNotificationCallbacks } from './callbacks/notificationCallbacks';
@@ -124,6 +125,9 @@ export interface WebServerFactoryDependencies {
 	 *  `feedback submit --support-package`). Absent = the CLI reports the
 	 *  feature as unconfigured instead of shipping a hollow zip. */
 	getDebugPackageDeps?: () => DebugPackageDependencies;
+	/** Direct group chat participant add by agent GUID (`maestro-cli group-chat add`).
+	 *  Answered in main by the router, which owns participants. */
+	addGroupChatParticipant?: AddGroupChatParticipantCallback;
 }
 
 /**
@@ -240,6 +244,9 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		if (deps.getDebugPackageDeps) {
 			server.setGetDebugPackageDepsCallback(deps.getDebugPackageDeps);
+		}
+		if (deps.addGroupChatParticipant) {
+			server.setAddGroupChatParticipantCallback(deps.addGroupChatParticipant);
 		}
 
 		return server;

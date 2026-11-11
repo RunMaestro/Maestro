@@ -42,6 +42,7 @@ import {
 	CUE_BUNDLE_MANIFEST_PATH,
 	CUE_BUNDLE_README_PATH,
 	type CueBundleAgentChange,
+	CUE_BUNDLE_GROK_RESOURCE_ROOTS,
 	type CueBundleAgentSettings,
 	type CueBundleKind,
 	type CueBundleLocalAgent,
@@ -994,6 +995,43 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 			);
 		}
 	}
+	/**
+	 * Workspace key -> secret names its Grok MCP servers read, from the
+	 * manifest's validated Grok block (Grok's own MCP configuration is
+	 * account-global and never travels). Handed to the workspace's Grok agents
+	 * and reported as needed by that workspace's MCP servers.
+	 */
+	const grokMcpSecretsByWorkspace = new Map<string, string[]>();
+	/** Grok resources listed but not imported: a kind this engine does not know, or a disabled one. */
+	const grokHeldBack: Array<{ workspace: string; path: string }> = [];
+	for (const ws of manifest.workspaces) {
+		if (!ws.grok) continue;
+		const names = [
+			...new Set((ws.grok.mcpServers ?? []).flatMap((server) => server.secrets)),
+		].sort();
+		grokMcpSecretsByWorkspace.set(ws.key, names);
+		if (roots.has(ws.key)) for (const name of names) mcpSecrets.push([name, `mcp:${ws.key}`]);
+		for (const server of ws.grok.mcpServers ?? []) {
+			if (server.enabled) continue;
+			warnings.push(
+				`Workspace "${ws.key}": Grok MCP server "${server.name}" was disabled on the exporting machine; here its Grok agents' imported environment decides whether Grok loads it.`
+			);
+		}
+		for (const resource of ws.grok.resources) {
+			const known = Object.prototype.hasOwnProperty.call(
+				CUE_BUNDLE_GROK_RESOURCE_ROOTS,
+				resource.kind
+			);
+			if (known && resource.trust === 'enabled') continue;
+			grokHeldBack.push({ workspace: ws.key, path: resource.path });
+			// An unknown kind is already reported by the validator.
+			if (known) {
+				warnings.push(
+					`Workspace "${ws.key}": Grok ${resource.kind} ${resource.path} was disabled on the exporting machine and was not imported; Grok loads everything under ${resource.root}, so it could not stay disabled here.`
+				);
+			}
+		}
+	}
 
 	for (const agent of manifest.agents) {
 		const settings = JSON.parse(
@@ -1106,15 +1144,18 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 			customEnvVars,
 			// Names only. The CLI and Cue resolve them at launch from systemd
 			// credentials, /run/secrets or the environment, for this agent alone.
-			// A Claude agent also needs what its workspace's `.mcp.json` expands;
-			// no other provider reads that file. A name an exact copy gives a value
-			// is in the agent's own env instead.
+			// A Claude agent also needs what its workspace's `.mcp.json` expands,
+			// and a Grok agent the secret names its workspace's Grok MCP servers
+			// read; no other provider reads either. A name an exact copy gives a
+			// value is in the agent's own env instead.
 			requiredSecrets: requiredSecretNames(
 				[
 					...asStringList(settings.env?.required),
 					...(settings.toolType === 'claude-code'
 						? (mcpSecretsByWorkspace.get(settings.workspace) ?? [])
-						: []),
+						: settings.toolType === 'grok'
+							? (grokMcpSecretsByWorkspace.get(settings.workspace) ?? [])
+							: []),
 				].filter((name) => !localEnv || !(name in localEnv))
 			),
 		} satisfies Record<(typeof CUE_BUNDLE_AGENT_FIELDS)[number], unknown>;
@@ -1220,6 +1261,15 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 			continue;
 		}
 		const ws = /^workspaces\/([^/]+)\/(.+)$/.exec(source);
+		if (
+			ws &&
+			grokHeldBack.some(
+				(held) =>
+					held.workspace === ws[1] && (ws[2] === held.path || ws[2].startsWith(`${held.path}/`))
+			)
+		) {
+			continue;
+		}
 		if (ws && roots.has(ws[1]) && ws[2] === MCP_CONFIG_FILE) {
 			const target = containedTarget(roots.get(ws[1])!, ws[2], source);
 			planMcpConfig(source, target, bytes, ws[1]);

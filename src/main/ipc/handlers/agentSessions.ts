@@ -23,7 +23,14 @@ import { logger } from '../../utils/logger';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { createSafeSend } from '../../utils/safe-send';
 import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
-import { getSshRemoteById as getSshRemoteByIdFromStore } from '../../stores';
+import {
+	getLiveSessions,
+	getSshRemoteById,
+	getProductionDataPath,
+	getSettingsStore,
+	getAgentConfigsStore,
+} from '../../stores';
+import { isInitialized } from '../../stores/instances';
 import type { AgentSessionOriginsData, ClaudeSessionOriginsData } from '../../stores/types';
 import { setClaudeSessionOrigin } from '../../storage/claude-session-origins';
 import { normalizeMessagePins } from '../../../shared/messagePins';
@@ -39,10 +46,15 @@ import {
 	finishDerivationUpgrade,
 	isDerivationStale,
 	type DerivationUpgrade,
+	qualifiedGlobalStatsSessionKey,
+	summarizeCachedSessionCost,
+	mergeStatsCostCoverage,
+	type CachedSessionIdentity,
 } from '../../utils/statsCache';
 import { createCacheCheckpointer } from '../../utils/cache-checkpointer';
 import { runTranscriptParse } from '../../transcript-parse/transcript-parse-pool';
 import { withStatsIndexing } from '../../stats/stats-indexing';
+import { usageCostUsd } from '../../../shared/maestro-lib/streaming/usage-totals';
 import type {
 	AgentSessionInfo,
 	PaginatedSessionsResult,
@@ -52,7 +64,12 @@ import type {
 	SessionListOptions,
 	SessionReadOptions,
 } from '../../agents';
-import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../shared/types';
+import type {
+	GlobalAgentStats,
+	ProviderStats,
+	SshRemoteConfig,
+	AgentSshRemoteConfig,
+} from '../../../shared/types';
 import { captureException } from '../../utils/sentry';
 import { isExpectedSessionReadError } from '../../utils/session-read-errors';
 import {
@@ -69,7 +86,13 @@ import {
 	LOCAL_SESSION_READ_CONCURRENCY,
 	LOCAL_SESSION_PARSE_CONCURRENCY,
 } from '../../utils/concurrency';
-import { resolveAgentAccountDir } from '../../agents/provider-account-dirs';
+import { resolveAgentAccountDir, getProviderAccountDirs } from '../../agents/provider-account-dirs';
+import { resolveSshLaunchTarget } from '../../utils/ssh-remote-resolver';
+import { nativeAccountRef } from '../../../shared/agentAccountDir';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import { grokInstallationId } from '../../../shared/maestro-lib/grok/host-seams';
+import type { NativeSessionBinding } from '../../../shared/maestro-lib/agents/providerSwap';
+import { resolveAgentEnvironment } from '../../../shared/agentEnvironment';
 
 // Re-export for backwards compatibility
 export type { GlobalAgentStats, ProviderStats };
@@ -101,14 +124,212 @@ export interface AgentSessionsHandlerDependencies {
 	claudeSessionOriginsStore?: Store<ClaudeSessionOriginsData>;
 }
 
-/**
- * Resolve an enabled SSH remote by ID via the shared settings store.
- * Wrapper around the canonical getter; preserves the `enabled` filter that
- * this handler used historically so disabled remotes never silently route SSH.
+/** Resolve the selected owner before any native read or transcript restoration. */
+function resolveHistoryScope(
+	agentId: string,
+	sshRemoteId?: string,
+	ownerAgentId?: string,
+	configDir?: string
+): {
+	sshConfig?: SshRemoteConfig;
+	configDir?: string;
+	ownerProjectPath?: string;
+	remoteAccountEnv?: Record<string, string>;
+	selectionKey: string;
+} {
+	for (const [name, value] of [
+		['ownerAgentId', ownerAgentId],
+		['sshRemoteId', sshRemoteId],
+	] as const) {
+		if (
+			value !== undefined &&
+			(typeof value !== 'string' || !value.trim() || value.includes('\0'))
+		) {
+			throw new Error(`Invalid history ${name}.`);
+		}
+	}
+	if (configDir !== undefined && (typeof configDir !== 'string' || configDir.includes('\0'))) {
+		throw new Error('Invalid history account directory.');
+	}
+
+	let sessionSshConfig: AgentSshRemoteConfig | undefined =
+		sshRemoteId === undefined ? undefined : { enabled: true, remoteId: sshRemoteId };
+	let owner;
+	if (ownerAgentId !== undefined) {
+		owner = getLiveSessions().find((session) => session.id === ownerAgentId);
+		if (!owner || owner.toolType !== agentId) {
+			throw new Error(
+				'History owner is unavailable or uses a different provider. Refresh the agent selection.'
+			);
+		}
+		if (configDir !== undefined) {
+			throw new Error('An owned history read cannot override its account directory.');
+		}
+		// Prefer the current configured target; retain legacy observed SSH routing
+		// only when no configuration exists. Never expand its home on this host.
+		sessionSshConfig =
+			owner.sessionSshRemoteConfig ??
+			(owner.sshRemoteId ? { enabled: true, remoteId: owner.sshRemoteId } : undefined);
+		if (
+			sessionSshConfig !== undefined &&
+			(typeof sessionSshConfig !== 'object' ||
+				sessionSshConfig === null ||
+				Array.isArray(sessionSshConfig) ||
+				typeof sessionSshConfig.enabled !== 'boolean')
+		) {
+			throw new Error('History owner has invalid SSH configuration.');
+		}
+		const ownerRemoteId = sessionSshConfig?.enabled ? sessionSshConfig.remoteId : undefined;
+		if (sshRemoteId !== undefined && sshRemoteId !== ownerRemoteId) {
+			throw new Error('History SSH target does not match its owner. Refresh the agent selection.');
+		}
+	}
+	const target = resolveSshLaunchTarget(
+		{
+			getSshRemotes: () => {
+				const id = sessionSshConfig?.remoteId;
+				const remote = typeof id === 'string' && id.trim() ? getSshRemoteById(id) : undefined;
+				return remote ? [remote] : [];
+			},
+		},
+		sessionSshConfig
+	);
+	if (target.kind === 'unresolved') {
+		throw new Error(
+			`History SSH target unavailable (${target.reason}). Select an enabled SSH remote.`
+		);
+	}
+	if (owner) {
+		configDir = resolveAgentAccountDir(owner.id, {
+			sessions: [{ ...owner, sessionSshRemoteConfig: sessionSshConfig }],
+		});
+		// Grok's remote default remains undefined (the adapter uses ~/.grok).
+		// A missing local account resolution must never revive the host default.
+		if (agentId === 'grok' && target.kind === 'local' && configDir === undefined) {
+			throw new Error('History owner account could not be resolved.');
+		}
+	}
+	const sshConfig = target.kind === 'remote' ? structuredClone(target.remote) : undefined;
+	const ownerProjectPath = owner
+		? sshConfig
+			? owner.remoteCwd || sessionSshConfig?.workingDirOverride || owner.projectRoot
+			: owner.projectRoot
+		: undefined;
+	// Capture only account-affecting remote launch configuration, without ever
+	// reading the desktop's process.env or expanding a remote home locally.
+	const remoteAccountEnv =
+		agentId === 'grok' && sshConfig && owner
+			? Object.fromEntries(
+					resolveAgentEnvironment({
+						global: {
+							...sshConfig.remoteEnv,
+							...(isInitialized() ? getSettingsStore().get('shellEnvVars', {}) : {}),
+						},
+						agent: isInitialized()
+							? getAgentConfigsStore().get('configs', {}).grok?.customEnvVars
+							: undefined,
+						session: owner.customEnvVars,
+					})
+						.filter(({ key }) => key === 'HOME' || key === 'GROK_HOME')
+						.map(({ key, value }) => [key, value])
+				)
+			: undefined;
+	return {
+		sshConfig,
+		configDir,
+		ownerProjectPath,
+		remoteAccountEnv,
+		// Capture values, not references to mutable store objects. This fence is
+		// private to this read; it may contain env values and must never be logged.
+		selectionKey: canonicalJson({
+			owner: owner && {
+				id: owner.id,
+				provider: owner.toolType,
+				cwd: owner.cwd,
+				projectRoot: owner.projectRoot,
+				remoteCwd: owner.remoteCwd,
+				ssh: sessionSshConfig,
+				customPath: owner.customPath,
+				customArgs: owner.customArgs,
+				customEnvVars: owner.customEnvVars,
+			},
+			sshConfig,
+			configDir,
+			remoteAccountEnv,
+		}),
+	};
+}
+
+/** Capture a read's physical scope. This is not yet a native-source receipt:
+ * the adapter must confirm which transcript it actually opened, then we recheck.
+ * SSH needs an observed endpoint identity; a config is not one, and no host here
+ * attests a remote installation, so a remote read stays unbound (unavailable).
  */
-function getSshRemoteById(sshRemoteId: string): SshRemoteConfig | undefined {
-	const remote = getSshRemoteByIdFromStore(sshRemoteId);
-	return remote?.enabled ? remote : undefined;
+async function observeGrokHistoryScope(
+	scope: ReturnType<typeof resolveHistoryScope>,
+	projectPath: string,
+	sessionId: string
+): Promise<{
+	binding: NativeSessionBinding;
+	configDir?: string;
+	unavailableReason?: string;
+}> {
+	if (scope.sshConfig) {
+		const unavailable = (reason: string) => ({
+			binding: { version: 1, state: 'unknown', reason: 'unobserved' } as const,
+			unavailableReason: reason,
+		});
+		// The selected-account resolver does not fold every launch env layer into
+		// its default, so never attest an ambiguous default/tilde root.
+		if (
+			(scope.configDir === undefined && scope.remoteAccountEnv?.GROK_HOME !== undefined) ||
+			((scope.configDir === undefined || scope.configDir.startsWith('~')) &&
+				scope.remoteAccountEnv?.HOME !== undefined)
+		) {
+			return unavailable('history-remote-account-environment-unresolved');
+		}
+		// An SSH alias/hostname or this desktop's identity cannot stand in for
+		// the remote endpoint's own installation identity.
+		return unavailable('history-remote-endpoint-unqualified');
+	}
+	if (
+		!scope.configDir ||
+		!scope.ownerProjectPath ||
+		![projectPath, scope.ownerProjectPath, scope.configDir].every(
+			(value) => typeof value === 'string' && !value.includes('\0') && path.isAbsolute(value)
+		)
+	) {
+		throw new Error('History requires an absolute owner project and selected account.');
+	}
+	try {
+		const [cwd, ownerCwd, configDir] = await Promise.all([
+			fs.realpath(projectPath),
+			fs.realpath(scope.ownerProjectPath),
+			fs.realpath(scope.configDir),
+		]);
+		if (cwd !== ownerCwd) throw new Error('History project does not match its owner.');
+		return {
+			configDir,
+			binding: {
+				version: 1,
+				state: 'bound',
+				provider: 'grok',
+				nativeSessionId: sessionId,
+				accountRef: nativeAccountRef('grok', configDir),
+				cwd,
+				host: {
+					kind: 'local',
+					identity: grokInstallationId({
+						hostname: os.hostname(),
+						productionDataDir: getProductionDataPath(),
+					}),
+				},
+			},
+		};
+	} catch (error) {
+		if (!isExpectedSessionReadError(error)) throw error;
+		return { binding: { version: 1, state: 'unknown', reason: 'unobserved' } };
+	}
 }
 
 /**
@@ -239,6 +460,140 @@ async function discoverCodexSessionFiles(): Promise<SessionFileInfo[]> {
 	return statSessionFiles(listings.flat());
 }
 
+/** One native Grok session directory, fingerprinted without opening any file. */
+interface GrokSessionDirInfo {
+	/** Account dir handed to the registered storage reader. */
+	accountDir: string;
+	/** Raw cwd folder name, and the cwd the storage decodes it to. */
+	cwd: string;
+	key: string;
+	identity: CachedSessionIdentity;
+	/** Newest mtime of the files the storage reads: summary, transcript, usage ledger. */
+	mtimeMs: number;
+}
+
+/** Files of a Grok session directory whose change invalidates its cached stats. */
+const GROK_SESSION_STAT_FILES = ['chat_history.jsonl', 'usage.json', 'summary.json'] as const;
+
+/**
+ * Discover local Grok session directories in every account pool
+ * (`getProviderAccountDirs`, already deduped by the real sessions directory).
+ * The account scope is that real directory, so the same pool keeps the same
+ * keys whichever alias selected it, and two pools never share a key. Only
+ * stats are taken here; contents are read by the registered storage.
+ */
+async function discoverGrokSessionDirs(): Promise<GrokSessionDirInfo[]> {
+	const accountDirs = await getProviderAccountDirs('grok');
+	const candidates: Array<Omit<GrokSessionDirInfo, 'mtimeMs'> & { dir: string }> = [];
+	for (const accountDir of accountDirs) {
+		const sessionsDir = path.join(accountDir, 'sessions');
+		const accountScope = await fs.realpath(sessionsDir).catch(() => path.resolve(sessionsDir));
+		const folders = await readdirOrEmpty(sessionsDir);
+		const listings = await mapWithConcurrency(
+			folders,
+			LOCAL_SESSION_READ_CONCURRENCY,
+			async (folder) => {
+				let cwd: string;
+				try {
+					cwd = decodeURIComponent(folder);
+				} catch {
+					return [];
+				}
+				const folderDir = path.join(sessionsDir, folder);
+				return (await readdirOrEmpty(folderDir)).map((nativeSessionId) => {
+					const identity = { accountScope, projectPath: cwd, nativeSessionId };
+					return {
+						accountDir,
+						cwd,
+						identity,
+						key: qualifiedGlobalStatsSessionKey(identity),
+						dir: path.join(folderDir, nativeSessionId),
+					};
+				});
+			}
+		);
+		candidates.push(...listings.flat());
+	}
+	const stats = await mapWithConcurrency(
+		candidates,
+		LOCAL_SESSION_READ_CONCURRENCY,
+		async ({ dir, ...candidate }) => {
+			let mtimeMs = -1;
+			for (const name of GROK_SESSION_STAT_FILES) {
+				try {
+					const fileStat = await fs.stat(path.join(dir, name));
+					if (name === 'chat_history.jsonl' && fileStat.size === 0) return null;
+					mtimeMs = Math.max(mtimeMs, fileStat.mtimeMs);
+				} catch {
+					// No transcript: not a session the storage lists. Others are optional.
+					if (name === 'chat_history.jsonl') return null;
+				}
+			}
+			return { ...candidate, mtimeMs };
+		}
+	);
+	return stats.filter((info): info is GrokSessionDirInfo => info !== null);
+}
+
+/**
+ * Project one session from the registered Grok storage into the global cache
+ * entry. Tokens and cost are the storage's own reading of `usage.json` (no
+ * second parser, no pricing): the stored `cost` governs and an absent ledger
+ * stays unknown, never free.
+ */
+function grokCachedSessionStats(
+	session: AgentSessionInfo,
+	info: GrokSessionDirInfo
+): CachedSessionStats {
+	const cost = session.accounting?.cost ?? { status: 'unknown' as const };
+	const costUsd = usageCostUsd(cost);
+	return {
+		messages: session.messageCount,
+		inputTokens: session.inputTokens,
+		outputTokens: session.outputTokens,
+		cacheReadTokens: session.cacheReadTokens,
+		cacheCreationTokens: session.cacheCreationTokens,
+		cachedInputTokens: 0,
+		sizeBytes: session.sizeBytes,
+		cost,
+		...(costUsd !== undefined ? { costUsd } : {}),
+		usageSource: session.accounting?.source ?? 'none',
+		...(session.accounting?.completeness
+			? { usageCompleteness: session.accounting.completeness }
+			: {}),
+		identity: info.identity,
+		fileMtimeMs: info.mtimeMs,
+		archived: false,
+	};
+}
+
+/** The native parent a Grok fork or subagent session names in its summary, if any. */
+function grokParentSessionId(session: AgentSessionInfo): string | undefined {
+	const parent = session.nativeMetadata?.summary?.parent_session_id;
+	return typeof parent === 'string' && parent.length > 0 && parent !== session.sessionId
+		? parent
+		: undefined;
+}
+
+/**
+ * A fork copies its parent's ledger and a parent folds its finished children
+ * into its own, so a session whose parent is counted in the same pool would
+ * attribute that usage twice. It keeps its session and messages but none of the
+ * shared tokens or amount, and its cost reads partial: the total stays a floor
+ * (its own post-fork delta is not separable), never an overcount.
+ */
+function withoutParentAttributedUsage(stats: CachedSessionStats): CachedSessionStats {
+	const { costUsd: _costUsd, ...rest } = stats;
+	return {
+		...rest,
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadTokens: 0,
+		cacheCreationTokens: 0,
+		cost: { status: 'partial', reason: 'usage attributed to its native parent session' },
+	};
+}
+
 /**
  * Calculate aggregated stats from cached sessions for a provider
  */
@@ -274,8 +629,11 @@ function aggregateProviderStats(
 		totalCacheCreationTokens += stats.cacheCreationTokens;
 		totalCachedInputTokens += stats.cachedInputTokens;
 		totalSizeBytes += stats.sizeBytes;
-		// Prefer the per-model cost stored at parse time; fall back to flat-rate
-		// pricing for cache entries written before per-model cost was tracked.
+		// An entry carrying its own `cost` is never priced from its tokens; its
+		// amount is summarized by `summarizeCachedSessionCost`. Otherwise prefer
+		// the per-model cost stored at parse time, then flat-rate pricing for
+		// cache entries written before per-model cost was tracked.
+		if (stats.cost) continue;
 		totalCostUsd +=
 			stats.costUsd ??
 			calculateModelCost({
@@ -318,7 +676,8 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			async (
 				agentId: string,
 				projectPath: string,
-				sshRemoteId?: string
+				sshRemoteId?: string,
+				ownerAgentId?: string
 			): Promise<AgentSessionInfo[]> => {
 				const storage = getSessionStorage(agentId);
 				if (!storage) {
@@ -326,10 +685,12 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					return [];
 				}
 
-				// Get SSH config if provided
-				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-
-				const sessions = await storage.listSessions(projectPath, sshConfig);
+				const { sshConfig, configDir } = resolveHistoryScope(agentId, sshRemoteId, ownerAgentId);
+				const sessions = await storage.listSessions(
+					projectPath,
+					sshConfig,
+					...(ownerAgentId === undefined ? [] : [configDir])
+				);
 				logger.info(
 					`Listed ${sessions.length} sessions for agent ${agentId} at ${projectPath}${sshRemoteId ? ' (remote via SSH)' : ''}`,
 					LOG_CONTEXT
@@ -357,17 +718,18 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					return { sessions: [], hasMore: false, totalCount: 0, nextCursor: null };
 				}
 
-				// Get SSH config if provided
-				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				const { sshConfig, configDir } = resolveHistoryScope(
+					agentId,
+					sshRemoteId,
+					options?.ownerAgentId
+				);
 
 				// List the pool of the account this agent actually runs under: its
 				// provider only resumes sessions from that config dir.
 				const listOptions: SessionListOptions = {
 					cursor: options?.cursor,
 					limit: options?.limit,
-					configDir: options?.ownerAgentId
-						? resolveAgentAccountDir(options.ownerAgentId)
-						: undefined,
+					configDir,
 				};
 				const result = await storage.listSessionsPaginated(projectPath, listOptions, sshConfig);
 				logger.info(
@@ -389,37 +751,141 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				agentId: string,
 				projectPath: string,
 				sessionId: string,
-				options?: SessionReadOptions,
+				options?: SessionReadOptions & { ownerAgentId?: string },
 				sshRemoteId?: string
 			): Promise<SessionMessagesResult> => {
+				const retained = options?.nativeSessionBinding;
+				if (
+					retained !== undefined &&
+					(retained?.version !== 1 ||
+						retained.state !== 'bound' ||
+						retained.provider !== agentId ||
+						retained.nativeSessionId !== sessionId ||
+						!options?.ownerAgentId ||
+						agentId !== 'grok')
+				) {
+					throw new Error('History ownership is unknown, mismatched or unsupported.');
+				}
+				const retainedKey = retained === undefined ? undefined : canonicalJson(retained);
 				const storage = getSessionStorage(agentId);
 				if (!storage) {
 					logger.warn(`No session storage available for agent: ${agentId}`, LOG_CONTEXT);
 					return { messages: [], total: 0, hasMore: false };
 				}
 
-				// Get SSH config if provided
-				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				const scope = resolveHistoryScope(
+					agentId,
+					sshRemoteId,
+					options?.ownerAgentId,
+					options?.configDir
+				);
+				const { sshConfig } = scope;
+				let configDir = scope.configDir;
+				let readProjectPath = projectPath;
+				let observed: Awaited<ReturnType<typeof observeGrokHistoryScope>> | undefined;
+				const assertCurrentSelection = () => {
+					if (
+						resolveHistoryScope(agentId, sshRemoteId, options?.ownerAgentId, options?.configDir)
+							.selectionKey !== scope.selectionKey
+					) {
+						throw new Error(
+							'History owner settings changed during the read. Refresh the selection.'
+						);
+					}
+				};
+				if (agentId === 'grok' && options?.ownerAgentId !== undefined) {
+					observed = await observeGrokHistoryScope(scope, projectPath, sessionId);
+					assertCurrentSelection();
+					if (observed.binding.state !== 'bound') {
+						return {
+							messages: [],
+							total: 0,
+							hasMore: false,
+							nativeSessionBinding: observed.binding,
+							source: {
+								provider: 'grok',
+								status: 'unavailable',
+								reason: observed.unavailableReason ?? 'history-scope-unobserved',
+							},
+						};
+					}
+					if (retainedKey !== undefined && retainedKey !== canonicalJson(observed.binding)) {
+						throw new Error('History ownership does not match the selected account, host or cwd.');
+					}
+					configDir = observed.configDir;
+					readProjectPath = observed.binding.cwd;
+				}
 
 				// Rehydrate an aged-out starred session: on the initial load of a LOCAL
 				// session, if the provider transcript is gone but we hold a mirror, copy
 				// it back to the provider's path so the read below (and a later native
 				// --resume) finds it. No-op/cheap when the provider file still exists.
-				if (!sshConfig && !options?.offset) {
+				// Mirrors have no account/host identity and cannot restore Grok's
+				// multi-file native state. Scoped reads must never rewrite another pool.
+				if (
+					agentId !== 'grok' &&
+					!sshConfig &&
+					options?.ownerAgentId === undefined &&
+					configDir === undefined &&
+					!options?.offset
+				) {
 					await restoreStarredTranscript({ agentId, projectPath, sessionId });
 				}
 
 				const result = await storage.readSessionMessages(
-					projectPath,
+					readProjectPath,
 					sessionId,
-					options ? { offset: options.offset, limit: options.limit } : undefined,
+					options?.ownerAgentId === undefined
+						? // Forward only the read window and the validated account selection;
+							// a renderer never supplies native ingestion options of its own.
+							options && {
+								offset: options.offset,
+								limit: options.limit,
+								includeNativeRecords: options.includeNativeRecords,
+								configDir: options.configDir,
+							}
+						: {
+								offset: options.offset,
+								limit: options.limit,
+								includeNativeRecords: options.includeNativeRecords,
+								configDir,
+								...(observed ? { nativeSessionBinding: structuredClone(observed.binding) } : {}),
+							},
 					sshConfig
 				);
+				if (observed) {
+					assertCurrentSelection();
+					const rechecked = await observeGrokHistoryScope(scope, projectPath, sessionId);
+					assertCurrentSelection();
+					if (canonicalJson(rechecked) !== canonicalJson(observed)) {
+						throw new Error('History account, host or cwd changed during the read.');
+					}
+					if (result.nativeSessionBinding?.state === 'bound') {
+						if (canonicalJson(result.nativeSessionBinding) !== canonicalJson(observed.binding)) {
+							throw new Error('The native transcript does not match the observed history scope.');
+						}
+					} else {
+						// A requested scope is not evidence of the source the adapter read.
+						return {
+							...result,
+							nativeSessionBinding: { version: 1, state: 'unknown', reason: 'unobserved' },
+						};
+					}
+				}
 				logger.info(
 					`Read ${result.messages.length} messages for session ${sessionId} (agent: ${agentId})${sshRemoteId ? ' (remote via SSH)' : ''}`,
 					LOG_CONTEXT
 				);
-				return result;
+				return agentId === 'grok'
+					? {
+							...result,
+							nativeSessionBinding: observed?.binding ?? {
+								version: 1,
+								state: 'unknown',
+								reason: 'legacy',
+							},
+						}
+					: result;
 			}
 		)
 	);
@@ -435,7 +901,8 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				projectPath: string,
 				query: string,
 				searchMode: SessionSearchMode,
-				sshRemoteId?: string
+				sshRemoteId?: string,
+				ownerAgentId?: string
 			): Promise<SessionSearchResult[]> => {
 				const storage = getSessionStorage(agentId);
 				if (!storage) {
@@ -443,10 +910,14 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					return [];
 				}
 
-				// Get SSH config if provided
-				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-
-				const results = await storage.searchSessions(projectPath, query, searchMode, sshConfig);
+				const { sshConfig, configDir } = resolveHistoryScope(agentId, sshRemoteId, ownerAgentId);
+				const results = await storage.searchSessions(
+					projectPath,
+					query,
+					searchMode,
+					sshConfig,
+					...(ownerAgentId === undefined ? [] : [configDir])
+				);
 				logger.info(
 					`Found ${results.length} matching sessions for query "${query}" (agent: ${agentId})${sshRemoteId ? ' (remote via SSH)' : ''}`,
 					LOG_CONTEXT
@@ -462,14 +933,23 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 		'agentSessions:getPath',
 		withIpcErrorLogging(
 			handlerOpts('getPath'),
-			async (agentId: string, projectPath: string, sessionId: string): Promise<string | null> => {
+			async (
+				agentId: string,
+				projectPath: string,
+				sessionId: string,
+				sshRemoteId?: string,
+				ownerAgentId?: string
+			): Promise<string | null> => {
 				const storage = getSessionStorage(agentId);
 				if (!storage) {
 					logger.warn(`No session storage available for agent: ${agentId}`, LOG_CONTEXT);
 					return null;
 				}
 
-				return storage.getSessionPath(projectPath, sessionId);
+				const { sshConfig, configDir } = resolveHistoryScope(agentId, sshRemoteId, ownerAgentId);
+				return sshRemoteId === undefined && ownerAgentId === undefined
+					? storage.getSessionPath(projectPath, sessionId)
+					: storage.getSessionPath(projectPath, sessionId, sshConfig, configDir);
 			}
 		)
 	);
@@ -488,6 +968,16 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				fallbackContent?: string,
 				sshRemoteId?: string
 			): Promise<{ success: boolean; error?: string; linesRemoved?: number }> => {
+				if (agentId === 'grok') {
+					// This legacy mutation request has no account/host ownership or
+					// native generation receipt. Never infer either from a native ID,
+					// cwd or fallback text, or substitute a partial JSONL rewrite.
+					return {
+						success: false,
+						error:
+							'Grok history deletion and editing are not supported in Maestro: this request has no account/host ownership, and native mutations have no verified transport. History is unchanged.',
+					};
+				}
 				const storage = getSessionStorage(agentId);
 				if (!storage) {
 					logger.warn(`No session storage available for agent: ${agentId}`, LOG_CONTEXT);
@@ -602,6 +1092,9 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					);
 					const genericOrigins = originsStore.get('origins', {});
 					for (const [agentId, projectEntries] of Object.entries(genericOrigins)) {
+						// Legacy labels have no account/host ownership. They cannot
+						// identify a Grok conversation, even if a local file exists.
+						if (agentId === 'grok') continue;
 						if (!projectEntries || typeof projectEntries !== 'object') continue;
 						for (const [projectPath, sessions] of Object.entries(
 							projectEntries as Record<
@@ -661,10 +1154,18 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					const storages = getAllSessionStorages();
 					const historyEntries = (await historyManager.getAllEntriesPaginated()).entries;
 					for (const entry of historyEntries) {
+						if (
+							entry.nativeSessionBinding?.state === 'bound' &&
+							entry.nativeSessionBinding.provider === 'grok'
+						)
+							continue;
 						if (!entry.sessionName || !entry.agentSessionId || !entry.projectPath) continue;
 						const projectKey = `${entry.projectPath}:${entry.agentSessionId}`;
 						if (seenIdsAfterOrigins.has(projectKey) || seenAcrossAgents.has(projectKey)) continue;
 						for (const storage of storages) {
+							// This fallback guesses ownership from default-account paths;
+							// it must not relabel Grok across accounts or SSH hosts.
+							if (storage.agentId === 'grok') continue;
 							const sessionPath = storage.getSessionPath(entry.projectPath, entry.agentSessionId);
 							if (!sessionPath) continue;
 							try {
@@ -698,6 +1199,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 						allNamedSessions.map((s) => `${s.projectPath}:${s.agentSessionId}`)
 					);
 					for (const entry of await listMirroredStarredSessions()) {
+						if (entry.agentId === 'grok') continue;
 						const key = `${entry.projectPath}:${entry.sessionId}`;
 						if (seenFinal.has(key)) continue;
 						seenFinal.add(key);
@@ -749,6 +1251,17 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				const allOrigins = originsStore.get('origins', {});
 				const agentOrigins = allOrigins[agentId] || {};
 				const result = agentOrigins[projectPath] || {};
+				if (agentId === 'grok') {
+					// Names in this legacy index cannot be assigned to a selected
+					// account/host. Leave stored data and unrelated metadata intact.
+					return Object.fromEntries(
+						Object.entries(result).map(([id, info]) => {
+							const metadata = { ...info };
+							delete metadata.sessionName;
+							return [id, metadata];
+						})
+					);
+				}
 				logger.info(
 					`getOrigins(${agentId}, ${projectPath}): found ${Object.keys(result).length} entries`,
 					LOG_CONTEXT
@@ -768,6 +1281,15 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				sessionId: string,
 				sessionName: string | null
 			): Promise<void> => {
+				if (agentId === 'grok') {
+					// This API changes a Maestro label, not a provider title. Its
+					// provider/project/native-ID key lacks Grok account/host scope.
+					// Native rename also needs the provider's title lock/index updates;
+					// never replace that transaction with a summary.json write.
+					throw new Error(
+						'Grok history rename is unsupported in Maestro: this request has no account/host ownership, and native title changes have no verified transport. Rename the Maestro tab for a local label, or change the native title in Grok CLI and refresh history.'
+					);
+				}
 				if (!originsStore) {
 					logger.warn('Origins store not available', LOG_CONTEXT);
 					return;
@@ -1011,6 +1533,48 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				result.totalSizeBytes += codexAgg.sizeBytes;
 			}
 
+			// Aggregate Grok stats: tokens as the registered storage read each
+			// ledger; the amount only from each session's own cost observation,
+			// so an unknown cost stays unknown and a partial one keeps a floor.
+			const grokSessions = cache.providers['grok']?.sessions || {};
+			const grokAgg = aggregateProviderStats(grokSessions, false);
+			if (grokAgg.sessions > 0) {
+				const grokCost = summarizeCachedSessionCost(grokSessions);
+				const costCoverage = grokCost?.coverage ?? 'unknown';
+				result.byProvider['grok'] = {
+					sessions: grokAgg.sessions,
+					messages: grokAgg.messages,
+					inputTokens: grokAgg.inputTokens,
+					outputTokens: grokAgg.outputTokens,
+					costUsd: grokCost?.costUsd ?? 0,
+					hasCostData: costCoverage !== 'unknown',
+					costCoverage,
+					...(grokCost?.costUsdTicks !== undefined ? { costUsdTicks: grokCost.costUsdTicks } : {}),
+				};
+				result.totalSessions += grokAgg.sessions;
+				result.totalMessages += grokAgg.messages;
+				result.totalInputTokens += grokAgg.inputTokens;
+				result.totalOutputTokens += grokAgg.outputTokens;
+				result.totalCacheReadTokens += grokAgg.cacheReadTokens;
+				result.totalCacheCreationTokens += grokAgg.cacheCreationTokens;
+				result.totalCostUsd += grokCost?.costUsd ?? 0;
+				result.totalSizeBytes += grokAgg.sizeBytes;
+				if (costCoverage !== 'unknown') result.hasCostData = true;
+			}
+
+			// Once any provider reports coverage, the total's coverage counts every
+			// provider: a legacy one with cost data as covered, one without as
+			// unknown, so a total missing a provider's cost is never complete.
+			// Payloads with no reporting provider keep the legacy shape.
+			const providers = Object.values(result.byProvider);
+			if (providers.some((provider) => provider.costCoverage !== undefined)) {
+				result.costCoverage = mergeStatsCostCoverage(
+					providers.map(
+						(provider) => provider.costCoverage ?? (provider.hasCostData ? 'complete' : 'unknown')
+					)
+				);
+			}
+
 			return result;
 		};
 
@@ -1037,13 +1601,34 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 		if (!cache.providers['codex']) {
 			cache.providers['codex'] = { sessions: {} };
 		}
+		if (!cache.providers['grok']) {
+			cache.providers['grok'] = { sessions: {} };
+		}
+		const grokCache = cache.providers['grok'].sessions;
 
 		// Discover all session files
 		logger.info('Discovering session files for global stats', LOG_CONTEXT);
-		const [claudeFiles, codexFiles] = await Promise.all([
+		const [claudeFiles, codexFiles, discoveredGrokDirs] = await Promise.all([
 			discoverClaudeSessionFiles(),
 			discoverCodexSessionFiles(),
+			// A failed account discovery must not archive every Grok session as
+			// deleted: keep the cached entries as they are for this run.
+			discoverGrokSessionDirs().catch((error: unknown) => {
+				void captureException(error, { operation: 'agentSessions:discoverGrokSessionDirs' });
+				logger.warn('Grok session discovery failed; cached Grok stats kept', LOG_CONTEXT, {
+					error,
+				});
+				return null;
+			}),
 		]);
+		const grokDirs = discoveredGrokDirs ?? [];
+		if (discoveredGrokDirs) {
+			const currentGrokKeys = new Set(discoveredGrokDirs.map((info) => info.key));
+			for (const [key, session] of Object.entries(grokCache)) {
+				// Same archive rule as Claude and Codex below.
+				session.archived = !currentGrokKeys.has(key);
+			}
+		}
 
 		// Build sets of current session keys for archive detection
 		const currentClaudeKeys = new Set(claudeFiles.map((f) => f.sessionKey));
@@ -1096,11 +1681,16 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			return !cached || cached.fileMtimeMs < f.mtimeMs;
 		});
 
-		const totalToProcess = claudeToProcess.length + codexToProcess.length;
-		const cachedCount = claudeFiles.length + codexFiles.length - totalToProcess;
+		const grokToProcess = grokDirs.filter((info) => {
+			const cached = grokCache[info.key];
+			return !cached || cached.fileMtimeMs < info.mtimeMs;
+		});
+
+		const totalToProcess = claudeToProcess.length + codexToProcess.length + grokToProcess.length;
+		const cachedCount = claudeFiles.length + codexFiles.length + grokDirs.length - totalToProcess;
 
 		logger.info(
-			`Global stats: ${totalToProcess} to process (${claudeToProcess.length} Claude, ${codexToProcess.length} Codex), ${cachedCount} cached`,
+			`Global stats: ${totalToProcess} to process (${claudeToProcess.length} Claude, ${codexToProcess.length} Codex, ${grokToProcess.length} Grok), ${cachedCount} cached`,
 			LOG_CONTEXT
 		);
 
@@ -1148,6 +1738,58 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			}
 		);
 		await checkpoint.settle();
+
+		// Grok sessions are read by the registered storage, one cwd folder of
+		// one account per call (it reads that folder's sessions with its own
+		// bounded concurrency), one folder at a time. Its results for
+		// descendant folders are left to their own folder.
+		const grokStorage = grokToProcess.length > 0 ? getSessionStorage('grok') : null;
+		const grokParents = new Map<string, string>();
+		if (grokStorage) {
+			const groups = new Map<string, GrokSessionDirInfo[]>();
+			for (const info of grokToProcess) {
+				const groupKey = `${info.accountDir}\0${info.cwd}`;
+				groups.set(groupKey, [...(groups.get(groupKey) ?? []), info]);
+			}
+			await mapWithConcurrency([...groups.values()], 1, async (infos) => {
+				const { accountDir, cwd } = infos[0];
+				const wanted = new Map(infos.map((info) => [info.identity.nativeSessionId, info]));
+				try {
+					const sessions = await grokStorage.listSessions(cwd, undefined, accountDir);
+					for (const session of sessions) {
+						const info = session.projectPath === cwd ? wanted.get(session.sessionId) : undefined;
+						if (!info) continue;
+						grokCache[info.key] = grokCachedSessionStats(session, info);
+						const parent = grokParentSessionId(session);
+						if (parent) grokParents.set(info.key, parent);
+						processedCount++;
+						if (processedCount % 10 === 0) sendUpdate(cache, false);
+					}
+				} catch (error) {
+					void captureException(error, { operation: 'agentSessions:grokGlobalStats' });
+					logger.warn('Failed to read Grok sessions for global stats', LOG_CONTEXT, { error });
+				}
+			});
+		} else if (grokToProcess.length > 0) {
+			logger.warn('Grok session storage is not registered; Grok stats not refreshed', LOG_CONTEXT);
+		}
+		// Decided when the child is read, against every cached session of its
+		// pool (archived parents included, as lifetime totals include them).
+		if (grokParents.size > 0) {
+			const present = new Set(
+				Object.values(grokCache).flatMap((entry) =>
+					entry.identity
+						? [`${entry.identity.accountScope}\0${entry.identity.nativeSessionId}`]
+						: []
+				)
+			);
+			for (const [key, parent] of grokParents) {
+				const entry = grokCache[key];
+				if (entry?.identity && present.has(`${entry.identity.accountScope}\0${parent}`)) {
+					grokCache[key] = withoutParentAttributedUsage(entry);
+				}
+			}
+		}
 
 		if (upgrade) {
 			// Live entries that failed to parse keep their old stamp, so the next

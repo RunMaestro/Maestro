@@ -8,8 +8,8 @@
 // becomes a pointer: every tab and transcript stays here, and a send to it is refused with the
 // `peer:agentId` to use instead.
 //
-// Refusals come first and cost nothing: already lifted, not an SSH agent, its remote not opted in
-// to Federation, a turn running, or a local `maestro-cli host` owning this machine's store. Then
+// Refusals come first and cost nothing: already lifted, not an SSH agent, its remote opted out
+// of Federation, a turn running, or a local `maestro-cli host` owning this machine's store. Then
 // the host is reached (a host that is not running is refused with the fix), the plan is printed
 // (`--json` gives the same plan), and `--dry-run` stops there.
 //

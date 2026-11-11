@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { ImagePlus, PenLine, X } from 'lucide-react';
 import type { Theme, QueuedItem, QueuedItemEditPatch, QueuedTurnSettings } from '../types';
 import { Modal, ModalFooter } from './ui/Modal';
+import { FormInput } from './ui/FormInput';
+import type { AgentDiscoveryRequest } from '../../shared/types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { addStagedImageIfUnique } from './InputArea/utils/stagedImages';
@@ -21,6 +23,7 @@ import { captureQueuedTurnSettings, projectTabProvider } from '../utils/provider
 import { useAutoModelChoice } from '../hooks/agent/useAutoModelChoice';
 import { withAutoModelOption } from '../../shared/autoTurn';
 import { getSessionSshRemoteId } from '../utils/sessionHelpers';
+import { isImeComposing } from '../utils/ime';
 
 interface QueuedItemEditModalProps {
 	item: QueuedItem;
@@ -61,13 +64,23 @@ export function QueuedItemEditModal({
 	// Model/effort for THIS message. Seeded from the item's own capture; an item
 	// from before the capture existed falls back to what the agent would run it
 	// under right now, which is what it would actually have spawned with.
-	const [turnSettings, setTurnSettings] = useState<QueuedTurnSettings>(() => {
+	const initialTurnSettings = useMemo<QueuedTurnSettings>(() => {
 		if (item.turnSettings) return item.turnSettings;
 		if (!session) return {};
 		const tab = session.aiTabs?.find((t) => t.id === item.tabId);
 		// The selection, not a resolution of it: an agent on Auto keeps the word.
 		return captureQueuedTurnSettings(tab, session);
-	});
+	}, [item.turnSettings, item.tabId, session]);
+	const [turnSettings, setTurnSettings] = useState(initialTurnSettings);
+	const [draftOwner, setDraftOwner] = useState({ sessionId: session?.id, itemId: item.id });
+	if (draftOwner.sessionId !== session?.id || draftOwner.itemId !== item.id) {
+		// Reset before React commits this render: neither discovery nor Save may
+		// pair the previous queued message's draft with a different owner.
+		setDraftOwner({ sessionId: session?.id, itemId: item.id });
+		setText(item.text ?? '');
+		setImages(item.images ?? []);
+		setTurnSettings(initialTurnSettings);
+	}
 
 	// Options come from the agent's own provider, never a hardcoded list: Claude
 	// Code's thinking levels and Codex's reasoning efforts are different sets.
@@ -76,11 +89,43 @@ export function QueuedItemEditModal({
 		() => (session ? projectTabProvider(session, tab, turnSettings.provider) : undefined),
 		[session, tab, turnSettings.provider]
 	);
-	const providerOptions = useAgentModelEffortOptions(
-		provider?.agent.toolType,
-		getSessionSshRemoteId(session)
+	const nativeAgent = provider?.agent;
+	const discoveryContext = useMemo<AgentDiscoveryRequest['context'] | undefined>(
+		() =>
+			nativeAgent?.cwd?.trim()
+				? {
+						kind: 'draft',
+						cwd: nativeAgent.cwd,
+						customPath: nativeAgent.customPath,
+						customEnvVars: nativeAgent.customEnvVars,
+						// A captured undefined value means provider default, even if
+						// the agent or tab has acquired an override since queuing.
+						model: turnSettings.model,
+						effort: turnSettings.effort,
+						sessionSshRemoteConfig: nativeAgent.sessionSshRemoteConfig,
+						sshRemoteId: nativeAgent.sshRemoteId,
+					}
+				: undefined,
+		[
+			nativeAgent?.id,
+			nativeAgent?.toolType,
+			nativeAgent?.cwd,
+			nativeAgent?.customPath,
+			nativeAgent?.customEnvVars,
+			nativeAgent?.sessionSshRemoteConfig,
+			nativeAgent?.sshRemoteId,
+			item.id,
+			item.tabId,
+			turnSettings.model,
+			turnSettings.effort,
+		]
 	);
-	const autoModel = useAutoModelChoice(provider?.agent);
+	const providerOptions = useAgentModelEffortOptions(
+		nativeAgent?.toolType,
+		getSessionSshRemoteId(session),
+		discoveryContext
+	);
+	const autoModel = useAutoModelChoice(nativeAgent);
 	const modelOptions = useMemo(
 		() => withAutoModelOption(providerOptions.models, autoModel),
 		[providerOptions.models, autoModel]
@@ -182,7 +227,7 @@ export function QueuedItemEditModal({
 	// carousel on the first image; once inside, LightboxModal owns the in-carousel
 	// keys (Cmd+E annotate, Cmd+C copy, Delete/Backspace remove, arrows navigate).
 	const handleKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !isImeComposing(e)) {
 			e.preventDefault();
 			e.stopPropagation();
 			handleSave();
@@ -309,7 +354,7 @@ export function QueuedItemEditModal({
 						</button>
 						<div className="flex items-center gap-2 ml-auto">
 							<ModelEffortPills
-								isVisible
+								isVisible={nativeAgent?.toolType !== 'grok'}
 								theme={theme}
 								currentModel={turnSettings.model ?? providerOptions.defaultModel}
 								currentEffort={turnSettings.effort ?? providerOptions.defaultEffort}
@@ -328,6 +373,59 @@ export function QueuedItemEditModal({
 							/>
 						</div>
 					</div>
+					{nativeAgent?.toolType === 'grok' && (
+						<div className="grid grid-cols-2 gap-3 mt-3">
+							{(['model', 'effort'] as const).map((key) => {
+								const options = key === 'model' ? providerOptions.models : providerOptions.efforts;
+								const status =
+									key === 'model' ? providerOptions.modelStatus : providerOptions.effortStatus;
+								return (
+									<FormInput
+										key={key}
+										theme={theme}
+										label={key === 'model' ? 'Model for this message' : 'Effort for this message'}
+										value={turnSettings[key] ?? ''}
+										onChange={(value) =>
+											setTurnSettings((prev) => ({ ...prev, [key]: value || undefined }))
+										}
+										placeholder="Use provider default"
+										helperText={
+											status === 'discovered'
+												? undefined
+												: status === 'configured-fallback'
+													? 'Options unavailable; configured value retained. Enter a supported value.'
+													: 'Options unavailable. Enter a supported value or leave blank for default.'
+										}
+										addon={
+											status === 'discovered' && options.length > 0 ? (
+												<select
+													aria-label={`Suggested ${key} values for this message`}
+													value=""
+													onChange={(e) => {
+														const value = e.target.value;
+														setTurnSettings((prev) => ({ ...prev, [key]: value || undefined }));
+													}}
+													style={{
+														backgroundColor: theme.colors.bgMain,
+														color: theme.colors.textMain,
+													}}
+												>
+													<option value="" disabled>
+														Suggestions
+													</option>
+													{options.map((value) => (
+														<option key={value} value={value}>
+															{value || '(default)'}
+														</option>
+													))}
+												</select>
+											) : undefined
+										}
+									/>
+								);
+							})}
+						</div>
+					)}
 					<input
 						ref={fileInputRef}
 						type="file"

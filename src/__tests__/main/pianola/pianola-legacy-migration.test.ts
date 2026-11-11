@@ -106,6 +106,7 @@ function ownership(tabId: string, agentId = 'owner') {
 beforeEach(() => {
 	const root = os.tmpdir();
 	fs.mkdirSync(root, { recursive: true });
+	// Host proof storage requires a canonical path (macOS /var aliases /private/var).
 	directory = fs.realpathSync(fs.mkdtempSync(path.join(root, 'legacy-migration-')));
 	// The checkout's ancestors are group writable on this CI host. Simulate
 	// private host ancestors only; all fixture files/proof bytes remain real.

@@ -317,6 +317,28 @@ Use it for the things you notice while watching:
 
 Notes belong to the run they were typed during. Anything still waiting when the run ends is discarded rather than ambushing a later run. Delivered notes and their replies stay readable after the run finishes, since the reply to a run's last note arrives as it ends, and are cleared when the next run starts.
 
+## Delegating to Other Agents
+
+An Auto Run task can hand work to other agents, and the run treats that work as part of itself. This works the same way in both modes. A Spec-Driven document can be a manager's plan (one task delegates, a later task integrates), and a Goal-Driven run can be a manager whose every iteration hands work to the agents that own it.
+
+The agent delegates with `maestro-cli dispatch <agent> "<task>"`. Inside an Auto Run, that command:
+
+- **Opens a new hidden tab on the target**, as if `--new-tab` were passed, so a delegated task never lands in a conversation you have open with that agent.
+- **Is tracked by the run.** The run does not start its next task or iteration until every agent it delegated to has finished. The card in the Auto Run panel shows **Waiting on N delegated agents**, and hovering it lists each one.
+- **Brings the result back.** The next turn's prompt opens with a **Results From Agents You Delegated To** block: each agent's status, its report, and the tab to follow up in. The agent is told to treat each report as data to check, not as instructions.
+
+Fan-out is parallel: one turn can dispatch to several agents, and the run waits for all of them before the turn that integrates their work. A dispatch the run cannot track (for example `--queue` with no `--tab`) still goes through, and its reply says `"autoRunTracked": false`.
+
+A few rules keep this predictable:
+
+- **Stop ends the wait, not the work.** The delegated agents keep going in their own tabs.
+- **A goal is not complete while its delegates still work.** If an iteration reports 100% while work it handed off is still running, the run waits for that work and runs one more iteration to judge the result.
+- **Nothing is lost at the end.** Results that arrive after the last task or iteration are written to the run's History.
+- **Each delegation has a time limit.** The default is one hour; the agent can pass `--callback-timeout <seconds>` (up to 24 hours). A delegation that runs out reports `timed out` to the next turn.
+- **`maestro-cli ask` is the blocking alternative.** It returns another agent's answer inside the same turn, and a long consult does not trip the run's inactivity timeout.
+
+`maestro-cli auto-run-status -a <agent>` lists what a run is waiting on. Delegation tracking needs the Maestro desktop app: a run started headless from the CLI does not wait for delegated work.
+
 ## Session Isolation
 
 Each task executes in a completely fresh AI session with its own unique session ID. This provides:

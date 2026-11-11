@@ -55,6 +55,7 @@ import type { SteeringCommandResult } from '../../../shared/autoRunSteeringComma
 import { recordAgentDelegation } from '../../services/agentDelegation';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
 import { persistTabStarred } from '../../utils/starredSessions';
+import { resolveTurnProvider } from '../../../shared/maestro-lib/agents/providerSwap';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { messagesToLogEntries } from '../../components/AgentSessionsBrowser/utils/messagesToLogEntries';
 import type { SessionMessage } from '../agent/useSessionViewer';
@@ -84,7 +85,8 @@ import {
 } from '../../components/Concerto/concertoDesignerBridge';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import {
-	clearDesktopAiTabSelections,
+	startDesktopAiTabSelectionSync,
+	pruneDesktopAiTabSelections,
 	consumeDesktopAiTabSelection,
 	noteDesktopAiTabSelection,
 } from '../../utils/desktopTabSelectionSync';
@@ -92,6 +94,7 @@ import { loadAllSettings } from '../../stores/settingsStore';
 import { useRemoteGroupChat } from './useRemoteGroupChat';
 import type { ConsultChain } from '../../../shared/consultBudget';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { getGrokSlashCommandRefusal } from '../../slashCommands';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -814,7 +817,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// A missing agent is the one unrecoverable case: there is nothing to
 					// create the tab on. Check before creating so we never leave an
 					// orphan tab behind a failed ack.
-					const targetSession = sessionsRef.current.find((s) => s.id === sessionId);
+					const targetSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 					if (!targetSession) {
 						logger.warn(
 							'[useRemoteIntegration] onRemoteNewAITabWithPrompt: session not found, dropping prompt'
@@ -826,6 +829,44 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						ack({ success: false, error: 'A terminal agent cannot receive a new AI tab prompt' });
 						return;
 					}
+					const commandName = prompt.trim().split(/\s/, 1)[0];
+					const isMaestroCommand =
+						commandName.startsWith('/') &&
+						[
+							...(deps.customAICommandsRef?.current ?? []),
+							...(deps.speckitCommandsRef?.current ?? []),
+							...(deps.openspecCommandsRef?.current ?? []),
+							...(deps.bmadCommandsRef?.current ?? []),
+						].some((candidate) => candidate.command === commandName);
+					if (
+						targetSession.toolType === 'grok' &&
+						commandName.startsWith('/') &&
+						!isMaestroCommand
+					) {
+						// Persisted/advertised native commands are not Maestro macros. A
+						// fresh tab has no native catalog: do not borrow the active tab's
+						// identity, create an orphan tab or acknowledge an ordinary-chat send.
+						void getGrokSlashCommandRefusal(targetSession, undefined, prompt).then(
+							(error) => ack({ success: false, error }),
+							(error: unknown) => {
+								ack({
+									success: false,
+									error: 'Grok command dispatch failed. No command was sent.',
+								});
+								captureException(error, { extra: { context: 'remoteNewTabCommandRefusal' } });
+							}
+						);
+						return;
+					}
+					const isSlashCommand =
+						isMaestroCommand ||
+						(commandName.startsWith('/') &&
+							targetSession.toolType !== 'grok' &&
+							// A fresh tab runs on the agent's default provider, so only that
+							// provider's discovered commands count.
+							(getAgentCommands(targetSession) ?? []).some(
+								(candidate) => candidate.command === commandName && candidate.prompt?.trim()
+							));
 					// A BUSY agent is deliberately NOT a refusal here (#1602), and no
 					// longer a reason to queue either: busy is an agent-level state, but
 					// the turn runs in the fresh tab, which owns no process.
@@ -917,20 +958,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// ran in between, but the supervised refusal below is about live
 					// state. A busy agent does not hold back an unsupervised prompt: the
 					// fresh tab runs its own turn beside the one already working.
-					const isBusy = sessionsRef.current.find((s) => s.id === sessionId)?.state === 'busy';
-					const commandName = prompt.trim().split(/\s/, 1)[0];
-					const isSlashCommand =
-						commandName.startsWith('/') &&
-						[
-							...(deps.customAICommandsRef?.current ?? []),
-							...(deps.speckitCommandsRef?.current ?? []),
-							...(deps.openspecCommandsRef?.current ?? []),
-							...(deps.bmadCommandsRef?.current ?? []),
-							...(getAgentCommands(
-								targetSession,
-								targetSession.aiTabs.find((tab) => tab.id === createdTabId)
-							) ?? []),
-						].some((candidate) => candidate.command === commandName && candidate.prompt?.trim());
+					const liveSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+					if (
+						!liveSession?.aiTabs.some((tab) => tab.id === createdTabId) ||
+						liveSession.toolType !== targetSession.toolType
+					) {
+						ack({
+							success: false,
+							tabId: createdTabId,
+							error: 'The new tab target changed before the prompt could be delivered',
+						});
+						return;
+					}
+					const isBusy = liveSession.state === 'busy';
 					if (control && (isBusy || isSlashCommand)) {
 						ack({ success: false, error: 'Supervised new-tab queue admission is unavailable' });
 						return;
@@ -1093,7 +1133,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					const tab = session.aiTabs.find((t) => t.id === tabId);
 					if (!tab) return { success: false, error: `Tab not found: ${tabId}` };
 
-					if (tab.agentSessionId) {
+					const isGrokTab =
+						session.toolType === 'grok' || resolveTurnProvider(tab, session) === 'grok';
+					// Keep Grok's label in the persisted Maestro tab, including turns
+					// retained after a provider switch. These metadata/History APIs
+					// cannot scope a native ID to its account and host or rename its title.
+					if (tab.agentSessionId && !isGrokTab) {
 						const agentId = resolveTabProvider(tab, session);
 						if (agentId === 'claude-code') {
 							await window.maestro.claude.updateSessionName(
@@ -2738,12 +2783,21 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	useEffect(() => {
 		// Skip entirely if not in live mode - no web clients to broadcast to
 		if (!isLiveMode) return;
-		clearDesktopAiTabSelections();
+		const stopSelectionSync = startDesktopAiTabSelectionSync();
+		const previousTabs = prevTabsRef.current;
+		const previousStates = prevSessionStatesRef.current;
 
 		// Use an interval to periodically check for changes instead of running on every render
 		// This dramatically reduces CPU usage during normal typing
 		const intervalId = setInterval(() => {
 			const sessions = sessionsRef.current;
+			const sessionIds = new Set(sessions.map((session) => session.id));
+			for (const cache of [previousTabs, previousStates]) {
+				for (const sessionId of cache.keys()) {
+					if (!sessionIds.has(sessionId)) cache.delete(sessionId);
+				}
+			}
+			pruneDesktopAiTabSelections(sessionIds);
 
 			sessions.forEach((session) => {
 				// Broadcast session state changes (busy/idle) to web clients
@@ -2816,7 +2870,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			});
 		}, 500); // Check every 500ms - fast enough for good UX, slow enough to not impact typing
 
-		return () => clearInterval(intervalId);
+		return () => {
+			clearInterval(intervalId);
+			previousTabs.clear();
+			previousStates.clear();
+			stopSelectionSync();
+		};
 	}, [isLiveMode, sessionsRef]);
 
 	// Handle remote trigger Cue subscription requests (from web/CLI clients)

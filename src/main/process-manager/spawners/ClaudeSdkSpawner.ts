@@ -22,6 +22,7 @@ import type { SteeringResultFrame } from '../../../shared/chatSteering';
 import { parseQuestionRequest } from '../../permission-relay/question-request';
 import { encodeQuestionAnswer } from '../../../shared/questionAnswer';
 import { isClaudeReadOnlyTool } from '../../../shared/maestro-lib/providers/claude-permissions';
+import { parseBase64DataUrl } from '../../../shared/dataUrl';
 
 const LOG_CONTEXT = 'ClaudeSdk';
 
@@ -287,14 +288,18 @@ class ClaudeTurn {
 			initial.message.content = [
 				{ type: 'text', text: this.config.prompt ?? '' },
 				...this.config.images.map((image) => {
-					const match = /^data:([^;]+);base64,(.+)$/.exec(image);
-					if (!match) throw new Error('Invalid image payload');
+					const parsed = parseBase64DataUrl(image);
+					if (!parsed) throw new Error('Invalid image payload');
 					return {
 						type: 'image' as const,
 						source: {
 							type: 'base64' as const,
-							media_type: match[1] as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
-							data: match[2],
+							media_type: parsed.mediaType as
+								| 'image/jpeg'
+								| 'image/png'
+								| 'image/gif'
+								| 'image/webp',
+							data: parsed.base64,
 						},
 					};
 				}),

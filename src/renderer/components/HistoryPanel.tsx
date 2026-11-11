@@ -1,5 +1,7 @@
-import type { ToolType } from '../types';
-import { resolveHistorySession } from '../../shared/maestro-lib/translation/session';
+import {
+	resolveHistorySession,
+	type TranslatableSession,
+} from '../../shared/maestro-lib/translation/session';
 import React, {
 	useState,
 	useEffect,
@@ -13,6 +15,10 @@ import { HelpCircle, Search } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Session, Theme, HistoryEntry, HistoryEntryType } from '../types';
 import type { FileNode } from '../types/fileTree';
+import type {
+	ResumeSessionOptions,
+	UseAgentSessionManagementReturn,
+} from '../hooks/agent/useAgentSessionManagement';
 import { HistoryDetailModal } from './HistoryDetailModal';
 import { HistoryHelpModal } from './HistoryHelpModal';
 import { useThrottledCallback, useListNavigation } from '../hooks';
@@ -40,9 +46,10 @@ import type { PrecomputedGraphBucket } from './History/ActivityGraph';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
-import { buildSharedHistoryContext } from '../utils/sessionHelpers';
+import { localHistorySource, type HistorySource } from './History/historySource';
 import { trackShortcutUsage } from '../utils/shortcutTracking';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
+import { useSessionStore } from '../stores/sessionStore';
 import { logger } from '../utils/logger';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../constants/rightPanel';
 import { visibleHistoryEntryTypes } from '../../shared/history';
@@ -52,17 +59,29 @@ import { useSemanticSearch, useSemanticSearchReady } from '../hooks/localModels'
 import type { EmbeddingSourceType } from '../../shared/local-models/embedding-index';
 import type { WorkSearchHit } from '../../shared/local-models/work-search';
 
+/** The fields of the agent a History panel shows. A mirrored agent passes a view, never a `Session`. */
+export type HistoryPanelAgent = Pick<
+	Session,
+	'id' | 'cwd' | 'projectRoot' | 'toolType' | 'sessionSshRemoteConfig'
+>;
+
 interface HistoryPanelProps {
-	session: Session;
+	session: HistoryPanelAgent;
+	/**
+	 * Where the entries come from. Default: the desktop's own History of `session`
+	 * (`localHistorySource`). A Federation peer's mirrored agent passes its host
+	 * (`mirrorHistorySource`), which is read-only.
+	 */
+	source?: HistorySource;
 	theme: Theme;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
-	onResumeSession?: (agentSessionId: string, provider?: ToolType) => void;
+	onResumeSession?: UseAgentSessionManagementReturn['handleResumeSession'];
 	onOpenSessionAsTab?: (
 		agentSessionId: string,
 		projectPath?: string,
 		sessionName?: string,
-		provider?: ToolType
-	) => void;
+		opts?: ResumeSessionOptions
+	) => Promise<boolean>;
 	onOpenAboutModal?: () => void; // For opening About/achievements panel from history entries
 	// File linking props for history detail modal
 	fileTree?: FileNode[];
@@ -114,6 +133,7 @@ export const HistoryPanel = React.memo(
 	forwardRef<HistoryPanelHandle, HistoryPanelProps>(function HistoryPanel(
 		{
 			session,
+			source,
 			theme,
 			onJumpToAgentSession,
 			onResumeSession,
@@ -154,8 +174,12 @@ export const HistoryPanel = React.memo(
 		const detailProvider = useMemo(() => {
 			if (detailModalEntry?.provider) return detailModalEntry.provider;
 			if (!detailModalEntry?.agentSessionId) return undefined;
+			// A Federation peer's mirrored agent carries no local tabs to resolve against.
+			const local = session as HistoryPanelAgent & Partial<TranslatableSession>;
+			if (!local.aiTabs) return undefined;
 			try {
-				return resolveHistorySession(session, detailModalEntry.agentSessionId).provider;
+				return resolveHistorySession(local as TranslatableSession, detailModalEntry.agentSessionId)
+					.provider;
 			} catch {
 				return undefined;
 			}
@@ -255,11 +279,22 @@ export const HistoryPanel = React.memo(
 		// SSH bits or cwd change. Keeps `loadPage` identity stable across
 		// unrelated session field updates so the pagination hook doesn't
 		// reset on every render.
-		const sharedContextSnapshot = useMemo(
-			() => buildSharedHistoryContext(session),
+		// The source is rebuilt only when what it reads changes, so `loadPage`
+		// keeps its identity across unrelated session field updates.
+		const historySource = useMemo(
+			() =>
+				source ??
+				localHistorySource({
+					id: session.id,
+					cwd: session.cwd,
+					projectRoot: session.projectRoot,
+					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+				}),
 			[
+				source,
 				session.id,
 				session.cwd,
+				session.projectRoot,
 				session.sessionSshRemoteConfig?.enabled,
 				session.sessionSshRemoteConfig?.remoteId,
 				session.sessionSshRemoteConfig?.syncHistory,
@@ -272,12 +307,14 @@ export const HistoryPanel = React.memo(
 		// machine running the agent locally never sees foreign-host entries
 		// even when the JSONL files are sitting right there on disk.
 		const projectPathForHistory = session.projectRoot || session.cwd || undefined;
+		// Bumped when the source says "read again" (a peer's host: a turn ended, the peer
+		// reconnected). Being part of `loadPage`'s identity is what makes the pagination hook
+		// reload from the top AND drop a read still in flight, whose answer is older. A
+		// `jumpToTop()` call would be skipped while that read runs.
+		const [sourceResetToken, setSourceResetToken] = useState(0);
 		const loadPage = useCallback(
 			async (offset: number, limit: number): Promise<PaginatedPage<HistoryEntry>> => {
-				const result = await window.maestro.history.getAllPaginated({
-					sessionId: session.id,
-					projectPath: projectPathForHistory,
-					sharedContext: sharedContextSnapshot,
+				return historySource.getPage({
 					lookbackHours: graphLookbackHours,
 					// Type filter runs server-side so the window holds the newest
 					// N entries of the selected types. Toggling a filter changes
@@ -311,16 +348,10 @@ export const HistoryPanel = React.memo(
 					groupCue: groupCueEntries && !isSearching,
 					pagination: { offset, limit },
 				});
-				return {
-					entries: result.entries as HistoryEntry[],
-					hasMore: result.hasMore,
-					total: result.total,
-				};
 			},
 			[
-				session.id,
-				projectPathForHistory,
-				sharedContextSnapshot,
+				historySource,
+				sourceResetToken,
 				graphLookbackHours,
 				activeFilters,
 				selectedHost,
@@ -362,12 +393,9 @@ export const HistoryPanel = React.memo(
 		// per (sessionId, bucketCount, lookback, source mtime+size).
 		const refreshGraphData = useCallback(async () => {
 			try {
-				const data = await window.maestro.history.getGraphData(
-					session.id,
+				const data = await historySource.getGraphData(
 					bucketCountForLookback(graphLookbackHours),
-					graphLookbackHours,
-					buildSharedHistoryContext(session),
-					projectPathForHistory
+					graphLookbackHours
 				);
 				setGraphBuckets(data.buckets);
 				setGraphRange({ start: data.earliestTimestamp, end: data.latestTimestamp });
@@ -378,7 +406,7 @@ export const HistoryPanel = React.memo(
 				setGraphRange(undefined);
 				setGraphHostCounts(undefined);
 			}
-		}, [session.id, session, graphLookbackHours, projectPathForHistory]);
+		}, [historySource, graphLookbackHours]);
 
 		useEffect(() => {
 			refreshGraphData();
@@ -388,25 +416,29 @@ export const HistoryPanel = React.memo(
 		// inserted when the loaded window is at the top - when jumped, they're
 		// silently dropped (the next pagination call will pick them up).
 		useEffect(() => {
-			const cleanup = window.maestro.directorNotes.onHistoryEntryAdded((entry, sourceSessionId) => {
-				if (sourceSessionId !== session.id) return;
+			return historySource.subscribe({
+				onEntry: (entry) => {
+					const inserted = prependLiveEntry(entry);
 
-				const inserted = prependLiveEntry(entry);
-
-				// Coalesce graph refreshes - a burst of streamed entries
-				// shouldn't trigger a refetch per entry. Only refresh when
-				// the entry actually landed in view.
-				if (inserted && !graphRefreshScheduled.current) {
-					graphRefreshScheduled.current = true;
-					requestAnimationFrame(() => {
-						graphRefreshScheduled.current = false;
-						refreshGraphData();
-					});
-				}
+					// Coalesce graph refreshes - a burst of streamed entries
+					// shouldn't trigger a refetch per entry. Only refresh when
+					// the entry actually landed in view.
+					if (inserted && !graphRefreshScheduled.current) {
+						graphRefreshScheduled.current = true;
+						requestAnimationFrame(() => {
+							graphRefreshScheduled.current = false;
+							refreshGraphData();
+						});
+					}
+				},
+				// A source that cannot stream single entries (a peer's host) says
+				// "read again": back to the newest page, and a fresh graph.
+				onReset: () => {
+					setSourceResetToken((token) => token + 1);
+					refreshGraphData();
+				},
 			});
-
-			return cleanup;
-		}, [session.id, refreshGraphData, prependLiveEntry]);
+		}, [historySource, refreshGraphData, prependLiveEntry]);
 
 		// Load persisted graph lookback preference for this session
 		useEffect(() => {
@@ -690,25 +722,76 @@ export const HistoryPanel = React.memo(
 			[allFilteredEntries]
 		);
 
+		// Capture the selected record itself. A native ID can occur in several
+		// accounts or hosts, and shared History can belong to another agent.
+		const handleOpenHistoryEntry = useCallback(
+			async (entry: HistoryEntry): Promise<boolean> => {
+				if (!entry.agentSessionId) {
+					notifyCenterFlash({ message: 'No session recorded for this entry', color: 'yellow' });
+					return false;
+				}
+				if (!entry.sessionId?.trim()) {
+					notifyCenterFlash({
+						message: 'Cannot reopen history: its owning agent is unknown',
+						color: 'yellow',
+					});
+					return false;
+				}
+				const targetSessionId = entry.sessionId;
+				const activeSessionId = useSessionStore.getState().activeSessionId;
+				const opts: ResumeSessionOptions = {
+					targetSessionId,
+					nativeSessionBinding: entry.nativeSessionBinding,
+					// The provider that recorded the entry owns its native session.
+					...(entry.provider ? { provider: entry.provider } : {}),
+				};
+				let resumed = false;
+				if (onOpenSessionAsTab) {
+					resumed = await onOpenSessionAsTab(
+						entry.agentSessionId,
+						entry.projectPath,
+						entry.sessionName,
+						opts
+					);
+				} else if (onResumeSession) {
+					// The full callback puts path/scope after display metadata.
+					resumed = await onResumeSession(
+						entry.agentSessionId,
+						undefined,
+						entry.sessionName,
+						undefined,
+						undefined,
+						entry.projectPath,
+						opts
+					);
+				}
+				// Cross-agent History opens in its recorded owner. A refused open
+				// or navigation elsewhere during the read must keep the user's view.
+				const state = useSessionStore.getState();
+				if (
+					resumed &&
+					targetSessionId !== activeSessionId &&
+					state.activeSessionId === activeSessionId &&
+					state.sessions.some((owner) => owner.id === targetSessionId)
+				) {
+					state.setActiveSessionId(targetSessionId);
+				}
+				return resumed;
+			},
+			[onOpenSessionAsTab, onResumeSession]
+		);
+
 		// Cmd/Ctrl+Enter jumps to the agent session the entry came from and
 		// lands on its tab - the same action as clicking the entry's session
 		// pill, so the two surfaces can never drift.
 		const handleJumpByIndex = useCallback(
 			(index: number) => {
 				const entry = allFilteredEntries[index];
-				if (!entry?.agentSessionId) {
-					notifyCenterFlash({ message: 'No session recorded for this entry', color: 'yellow' });
-					return;
-				}
+				if (!entry) return;
 				trackShortcutUsage('historyJumpToSession');
-				onOpenSessionAsTab?.(
-					entry.agentSessionId,
-					entry.projectPath,
-					entry.sessionName,
-					entry.provider
-				);
+				void handleOpenHistoryEntry(entry);
 			},
-			[allFilteredEntries, onOpenSessionAsTab]
+			[allFilteredEntries, handleOpenHistoryEntry]
 		);
 
 		// Use list navigation hook for ArrowUp/ArrowDown/Enter handling
@@ -720,7 +803,7 @@ export const HistoryPanel = React.memo(
 		} = useListNavigation({
 			listLength: allFilteredEntries.length,
 			onSelect: handleSelectByIndex,
-			onSelectAlternate: onOpenSessionAsTab ? handleJumpByIndex : undefined,
+			onSelectAlternate: onOpenSessionAsTab || onResumeSession ? handleJumpByIndex : undefined,
 			initialIndex: -1,
 		});
 
@@ -766,8 +849,7 @@ export const HistoryPanel = React.memo(
 				}
 
 				try {
-					const targetOffset = await window.maestro.history.getOffsetForTimestamp(
-						session.id,
+					const targetOffset = await historySource.getOffsetForTimestamp(
 						bucketEnd - 1,
 						graphLookbackHours,
 						[...activeFilters]
@@ -782,7 +864,7 @@ export const HistoryPanel = React.memo(
 			},
 			[
 				allFilteredEntries,
-				session.id,
+				historySource,
 				graphLookbackHours,
 				activeFilters,
 				jumpToOffset,
@@ -941,8 +1023,9 @@ export const HistoryPanel = React.memo(
 		// Pass sessionId for efficient lookup in per-session storage
 		const handleDeleteEntry = useCallback(
 			async (entryId: string) => {
+				if (!historySource.remove) return;
 				try {
-					const success = await window.maestro.history.delete(entryId, session.id);
+					const success = await historySource.remove(entryId);
 					if (success) {
 						mutateEntries((prev) => prev.filter((entry) => entry.id !== entryId));
 						setDeletedSemanticIds((prev) => new Set(prev).add(entryId));
@@ -952,7 +1035,7 @@ export const HistoryPanel = React.memo(
 					logger.error('Failed to delete history entry:', undefined, error);
 				}
 			},
-			[session.id, setSelectedIndex, mutateEntries]
+			[historySource, setSelectedIndex, mutateEntries]
 		);
 
 		return (
@@ -1210,7 +1293,11 @@ export const HistoryPanel = React.memo(
 											isSelected={virtualItem.index === selectedIndex}
 											theme={theme}
 											onOpenDetailModal={openDetailModal}
-											onOpenSessionAsTab={onOpenSessionAsTab}
+											onOpenSessionAsTab={
+												onOpenSessionAsTab || onResumeSession
+													? () => handleOpenHistoryEntry(entry)
+													: undefined
+											}
 											onOpenAboutModal={onOpenAboutModal}
 											cueGroupExpansion={cueGroupExpansion}
 											isCueGroupExpanded={expandedCueGroupIds.has(entry.id)}
@@ -1266,33 +1353,39 @@ export const HistoryPanel = React.memo(
 					<HistoryDetailModal
 						theme={theme}
 						entry={detailModalEntry}
-						agentId={detailProvider}
+						// Only Grok records a bound provider. Every other entry belongs to the
+						// provider that recorded it (its tab's provider), else this panel's agent,
+						// whose provider decides the input-token formula (Codex already counts
+						// cached input; Claude does not).
+						agentId={
+							detailModalEntry.nativeSessionBinding?.state === 'bound'
+								? detailModalEntry.nativeSessionBinding.provider
+								: (detailProvider ?? session.toolType)
+						}
 						onClose={closeDetailModal}
 						onJumpToAgentSession={onJumpToAgentSession}
-						// Prefer the open-as-tab path: it carries the entry's projectPath and
-						// sessionName, so a resume from the modal names the tab exactly like a
-						// resume from the row behind it.
+						// Bind the actual selected entry, including its recorded owner.
 						onResumeSession={
 							onOpenSessionAsTab || onResumeSession
-								? (id, path, name) => {
-										if (onOpenSessionAsTab)
-											onOpenSessionAsTab(id, path, name, detailModalEntry.provider);
-										else onResumeSession?.(id, detailModalEntry.provider);
+								? () => handleOpenHistoryEntry(detailModalEntry)
+								: undefined
+						}
+						// A read-only source (a peer's host) draws no delete or validate control.
+						onDelete={historySource.remove ? handleDeleteEntry : undefined}
+						onUpdate={
+							historySource.update
+								? async (entryId, updates) => {
+										const success = (await historySource.update?.(entryId, updates)) === true;
+										if (success) {
+											mutateEntries((prev) =>
+												prev.map((e) => (e.id === entryId ? { ...e, ...updates } : e))
+											);
+											setDetailModalEntry((prev) => (prev ? { ...prev, ...updates } : null));
+										}
+										return success;
 									}
 								: undefined
 						}
-						onDelete={handleDeleteEntry}
-						onUpdate={async (entryId, updates) => {
-							// Pass sessionId for efficient lookup in per-session storage
-							const success = await window.maestro.history.update(entryId, updates, session.id);
-							if (success) {
-								mutateEntries((prev) =>
-									prev.map((e) => (e.id === entryId ? { ...e, ...updates } : e))
-								);
-								setDetailModalEntry((prev) => (prev ? { ...prev, ...updates } : null));
-							}
-							return success;
-						}}
 						// Navigation props - use allFilteredEntries (respects filters)
 						filteredEntries={allFilteredEntries}
 						currentIndex={selectedIndex}

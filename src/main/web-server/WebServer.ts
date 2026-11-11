@@ -202,6 +202,7 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	ArchiveGroupChatCallback,
+	AddGroupChatParticipantCallback,
 	SendGroupChatMessageCallback,
 	SteerGroupChatCallback,
 	SteerGroupChatRequest,
@@ -1049,6 +1050,10 @@ export class WebServer {
 		this.callbackRegistry.setArchiveGroupChatCallback(callback);
 	}
 
+	setAddGroupChatParticipantCallback(callback: AddGroupChatParticipantCallback): void {
+		this.callbackRegistry.setAddGroupChatParticipantCallback(callback);
+	}
+
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {
 		this.callbackRegistry.setSendGroupChatMessageCallback(callback);
 	}
@@ -1679,6 +1684,8 @@ export class WebServer {
 			stopGroupChat: async (chatId: string) => this.callbackRegistry.stopGroupChat(chatId),
 			archiveGroupChat: async (chatId: string, archived: boolean) =>
 				this.callbackRegistry.archiveGroupChat(chatId, archived),
+			addGroupChatParticipant: async (chatId: string, agentId: string) =>
+				this.callbackRegistry.addGroupChatParticipant(chatId, agentId),
 			sendGroupChatMessage: async (chatId: string, message: string) =>
 				this.callbackRegistry.sendGroupChatMessage(chatId, message),
 			steerGroupChat: async (chatId: string, request: SteerGroupChatRequest) =>

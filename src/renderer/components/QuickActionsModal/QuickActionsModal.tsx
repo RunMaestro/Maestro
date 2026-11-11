@@ -96,9 +96,14 @@ import {
 import { buildStarredSessionCommands } from './commands/starredSessionCommands';
 import { buildFederationCommands } from './commands/federationCommands';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
+import { canMakeFederated, isPeerFederated } from '../../utils/peerMirrorView';
 import { copyPeerAgentRef, reconnectPeer } from '../../services/peerMirror';
 import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
-import { useLiftedMirrorTarget, useMoveToHostPeer } from '../../hooks/federation/useAgentLift';
+import {
+	useAgentFederationStatus,
+	useLiftedMirrorTarget,
+	useMoveToHostPeer,
+} from '../../hooks/federation/useAgentLift';
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
 import { buildTabGroupCommands } from './commands/tabGroupCommands';
@@ -595,9 +600,13 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const mirrorPeers = usePeerMirrorStore((s) => s.peers);
 	const activeMirror = usePeerMirrorStore((s) => s.activeMirror);
 	const moveToHostPeer = useMoveToHostPeer(activeSession);
+	const federationStatus = useAgentFederationStatus(activeSession);
 	const liftedTarget = useLiftedMirrorTarget(activeSession?.liftedTo);
 	const federationActions = buildFederationCommands({
-		peers: mirrorOrder.flatMap((peerId) => (mirrorPeers[peerId] ? [mirrorPeers[peerId]] : [])),
+		// Only remotes that run a host: every other SSH remote was probed and is plain SSH.
+		peers: mirrorOrder.flatMap((peerId) =>
+			mirrorPeers[peerId] && isPeerFederated(mirrorPeers[peerId]) ? [mirrorPeers[peerId]] : []
+		),
 		activeMirror,
 		selectMirroredAgent: usePeerMirrorStore.getState().selectMirroredAgent,
 		reconnectPeer,
@@ -609,6 +618,17 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						sessionId: activeSession.id,
 						agentName: activeSession.name,
 						peerName: moveToHostPeer.name,
+					}
+				: undefined,
+		makeFederated:
+			activeSession &&
+			!activeMirror &&
+			federationStatus.kind === 'ssh' &&
+			canMakeFederated(federationStatus)
+				? {
+						sessionId: activeSession.id,
+						agentName: activeSession.name,
+						remoteName: federationStatus.peer?.name ?? 'SSH remote',
 					}
 				: undefined,
 		requestMoveToHost,
@@ -867,6 +887,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		}),
 		...buildFeatureCommands({
 			activeSession,
+			activeGroupChatId,
 			activeTabType,
 			canSummarizeActiveTab,
 			markdownEditMode,
@@ -923,6 +944,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildActiveTabContextCommands({
 			activeSession,
 			activeSessionId,
+			activeGroupChatId,
 			activeTabType,
 			voiceEnabled: voiceActions.enabled,
 			ghCliAvailable,
@@ -1198,7 +1220,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		// Handle rename mode separately
 		if (renamingSession) {
-			if (e.key === 'Enter') {
+			if (e.key === 'Enter' && !isImeComposing(e)) {
 				e.preventDefault();
 				handleRenameSession();
 			} else if (e.key === 'Escape' && !isImeComposing(e)) {
@@ -1212,7 +1234,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		// the command list. Handled here so neither the list nav nor the modal's
 		// Escape-to-close fires while the input is focused.
 		if (renamingWindow) {
-			if (e.key === 'Enter') {
+			if (e.key === 'Enter' && !isImeComposing(e)) {
 				e.preventDefault();
 				commitRenameCurrentWindow();
 			} else if (e.key === 'Escape' && !isImeComposing(e)) {

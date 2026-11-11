@@ -29,6 +29,7 @@ import type {
 import { ExitCode, exitWith } from '../exit-codes';
 import { failCommand, failFromError } from '../services/session-command';
 import { exitIfMaestroNotRunning } from '../services/session-command';
+import { parseBase64DataUrl } from '../../shared/dataUrl';
 
 interface MovementAddOptions {
 	type?: string;
@@ -404,11 +405,11 @@ export async function movementInspect(id: string, options: MovementInspectOption
 	if (!result.success || !result.inspection) {
 		failCommand(result.error || `Could not inspect HTML Movement '${id}'`, options.json);
 	}
-	const match = /^data:image\/png;base64,(.+)$/s.exec(result.inspection.imageDataUrl);
-	if (!match) {
+	const parsed = parseBase64DataUrl(result.inspection.imageDataUrl);
+	if (!parsed || parsed.mediaType !== 'image/png') {
 		failCommand('Maestro returned an invalid designer screenshot', options.json);
 	}
-	const screenshot = Buffer.from(match[1], 'base64');
+	const screenshot = Buffer.from(parsed.base64, 'base64');
 	const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 	if (
 		screenshot.length < pngSignature.length ||

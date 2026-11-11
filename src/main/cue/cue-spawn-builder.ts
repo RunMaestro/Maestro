@@ -3,8 +3,8 @@
  * from a CueExecutionConfig.
  *
  * Single responsibility: given session/agent/prompt/SSH config, produce a
- * SpawnSpec (command, args, cwd, env, stdin data). No side effects beyond
- * the async SSH resolution.
+ * SpawnSpec (command, args, cwd, env, stdin data). Owns plugin run proofs
+ * during preparation; a successful spec transfers them to the executor.
  */
 
 import type { CueExecutionConfig } from './cue-executor';
@@ -42,6 +42,8 @@ import {
 } from '../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
+import { redactedErrorFields } from '../../shared/processErrors';
 import os from 'os';
 import path from 'path';
 import {
@@ -60,6 +62,9 @@ import {
 } from '../plugins/plugin-tool-run-identity';
 import { resolveMaestroCliScriptPath } from './cue-cli-executor';
 import { applySystemPromptDelivery } from '../utils/system-prompt-delivery';
+import { resolveSshLaunchTarget } from '../../shared/maestro-lib/launch/ssh-remote-resolver';
+import { newRemotePromptFileDestination } from '../../shared/maestro-lib/launch/ssh-command-builder';
+import type { TurnProcessSpec } from '../../shared/maestro-lib/run/start-turn';
 
 // ─── Types ──────���────────────────────────────────────────────────────────────
 
@@ -75,8 +80,10 @@ export interface SpawnSpec {
 	sshRemoteCommand?: string;
 	/** For SSH small-prompt mode: raw prompt to send via stdin */
 	stdinPrompt?: string;
+	/** Private file source. Only a local artifact may reach the local turn sink. */
+	promptArtifact?: TurnProcessSpec['promptArtifact'];
 	/** Whether SSH remote execution was actually used */
-	sshRemoteUsed?: { name?: string; host: string };
+	sshRemoteUsed?: { id?: string; name?: string; host: string };
 	/** Main-process proof to revoke after this Cue run. Never logged. */
 	pluginRunToken?: string;
 	pluginRunProofFile?: string;
@@ -212,9 +219,13 @@ export async function buildSpawnSpec(
 	// 4. The launch plan decides where the run happens, what it execs, its
 	// environment and how the prompt reaches it, as the `cue` surface: the
 	// inherited environment, then the provider defaults, then the agent's own
-	// vars, with the prompt on the command line (on stdin for a cmd.exe launch,
-	// above). An SSH remote that cannot be resolved fails the run here: it never
-	// falls back to running the agent on this machine.
+	// vars. Explicit file delivery takes priority over legacy argv; otherwise the
+	// prompt rides the command line (on stdin for a cmd.exe launch, above). An
+	// SSH remote that cannot be resolved fails the run here: it never falls back
+	// to running the agent on this machine.
+	const fileTarget = agentDef.promptFile
+		? resolveSshLaunchTarget(sshStore, sshRemoteConfig)
+		: undefined;
 	const sessionEnvVars = sanitizeLayer(customEnvVars);
 	const agentEnvVars = sanitizeLayer(
 		(agentConfigValues as Record<string, unknown> | undefined)?.customEnvVars as
@@ -246,9 +257,21 @@ export async function buildSpawnSpec(
 		agent: { ...agentDef, capabilities: agentConfig.capabilities },
 		command: customPath || agentDef.command,
 		cmdShellLaunch,
+		// With no selected path, keep the planner's remote binary-name fallback.
+		remoteCommand: customPath,
 		args: finalArgs,
 		cwd: projectRoot,
+		// Preserve grants for planner refusal when the provider has no native builder.
+		additionalDirectories: session?.additionalDirectories,
 		prompt: promptToSend,
+		...(agentDef.promptFile && fileTarget?.kind === 'remote'
+			? {
+					promptFileDestination: newRemotePromptFileDestination(
+						fileTarget.remote.id,
+						agentDef.promptFile.format
+					),
+				}
+			: {}),
 		agentCustomEnvVars: agentEnvVars,
 		sessionCustomEnvVars: sessionEnvVars,
 		// The agent's Local Models gateway. A gateway that cannot be used (a
@@ -280,6 +303,7 @@ export async function buildSpawnSpec(
 		const proxy = await ensureTokenProxyForGateway(plan.gateway.url);
 		if (!proxy.ok) return { ok: false, message: proxy.error };
 	}
+	const promptArtifact = plan.prompt.via === 'file' ? { ...plan.prompt.artifact } : undefined;
 	// Names only: the run still starts, and the agent reports its own auth error.
 	const undeliveredSecrets = describeUndeliveredSecrets(session?.name ?? toolType, plan.secrets);
 	if (undeliveredSecrets) config.onLog('warn', `[CUE] ${undeliveredSecrets}`);
@@ -301,7 +325,8 @@ export async function buildSpawnSpec(
 	// so a headless Cue spawn falls a remote TUI selection back to API instead of
 	// exiting 127 when maestro-p isn't installed on the remote (no UI/readiness
 	// probe runs first).
-	const remoteTarget = plan.target.kind === 'remote' ? plan.target.remote : undefined;
+	const remoteTarget =
+		plan.target.kind === 'remote' ? structuredClone(plan.target.remote) : undefined;
 	const remoteMaestroPAvailable = remoteTarget
 		? await ensureRemoteMaestroPProbed(remoteTarget)
 		: undefined;
@@ -359,7 +384,8 @@ export async function buildSpawnSpec(
 			command: plan.command,
 			args: remoteInteractive ? [...remoteInteractive.prependArgs, ...plan.args] : plan.args,
 			cwd: plan.cwd,
-			prompt: promptToSend,
+			prompt: promptArtifact ? undefined : promptToSend,
+			...(promptArtifact ? { promptArtifact } : {}),
 			customEnvVars: remoteInteractive
 				? { ...(plan.envVars ?? {}), ...remoteInteractive.env }
 				: plan.envVars,
@@ -372,7 +398,17 @@ export async function buildSpawnSpec(
 			launchViaStdinScript: true,
 		};
 
-		const sshResult = await wrapSpawnWithSsh(sshWrapConfig, sshRemoteConfig, sshStore);
+		let sshResult;
+		try {
+			sshResult = await wrapSpawnWithSsh(
+				sshWrapConfig,
+				sshRemoteConfig,
+				promptArtifact ? { getSshRemotes: () => [remoteTarget] } : sshStore
+			);
+		} catch (error) {
+			if (promptArtifact) return { ok: false, message: 'Remote prompt preparation unavailable.' };
+			throw error;
+		}
 		if (!sshResult.sshRemoteUsed) {
 			// The plan resolved this remote a moment ago; losing it now is still a
 			// failure, not a reason to run locally.
@@ -432,51 +468,65 @@ export async function buildSpawnSpec(
 		isPluginsFeatureEnabled() &&
 		(getActivePluginManager()?.getContributions().tools.length ?? 0) > 0
 	) {
-		pluginRunToken = pluginToolRunIdentity.issue(
-			session.id,
-			config.timeoutMs + 60_000,
-			undefined,
-			true
-		);
+		// Retain ownership until all injection preparation succeeds. Failed or
+		// unused injections must release both the identity and its private file.
+		let pluginProofReady = false;
 		try {
+			pluginRunToken = pluginToolRunIdentity.issue(session.id, config.timeoutMs + 60_000);
 			pluginRunProofFile = createPluginRunProofFile(pluginRunToken, config.timeoutMs + 60_000);
-		} catch (error) {
-			pluginToolRunIdentity.revoke(pluginRunToken);
-			throw error;
-		}
-		const injection = buildMcpInjection(
-			mcpCap,
-			{
-				command: process.execPath,
-				args: [resolveMaestroCliScriptPath(), 'mcp', 'serve'],
-				env: {
-					ELECTRON_RUN_AS_NODE: '1',
-					MAESTRO_PLUGIN_RUN_TOKEN_FILE: pluginRunProofFile,
-					...(process.env.MAESTRO_USER_DATA
-						? { MAESTRO_USER_DATA: process.env.MAESTRO_USER_DATA }
-						: {}),
-					...(process.env.XDG_CONFIG_HOME ? { XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME } : {}),
+			const injection = buildMcpInjection(
+				mcpCap,
+				{
+					command: process.execPath,
+					args: [resolveMaestroCliScriptPath(), 'mcp', 'serve'],
+					env: {
+						ELECTRON_RUN_AS_NODE: '1',
+						MAESTRO_PLUGIN_RUN_TOKEN_FILE: pluginRunProofFile,
+						...(process.env.MAESTRO_USER_DATA
+							? { MAESTRO_USER_DATA: process.env.MAESTRO_USER_DATA }
+							: {}),
+						...(process.env.XDG_CONFIG_HOME
+							? { XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME }
+							: {}),
+					},
 				},
-			},
-			{ tmpDir: os.tmpdir(), join: path.join }
-		);
-		if (injection.files.length === 0) {
-			spawnArgs = mergeMcpInjectionArgs(mcpCap, spawnArgs, injection.globalArgs);
-			spawnEnv = {
-				...spawnEnv,
-				...injection.env,
-			};
-		} else {
-			pluginToolRunIdentity.revoke(pluginRunToken);
-			try {
-				removePluginRunProofFile(pluginRunProofFile);
-			} catch (error) {
-				logger.warn('Could not remove plugin run proof file', '[PluginRunIdentity]', {
-					error: String(error),
-				});
+				{ tmpDir: os.tmpdir(), join: path.join }
+			);
+			if (injection.files.length === 0) {
+				spawnArgs = mergeMcpInjectionArgs(mcpCap, spawnArgs, injection.globalArgs);
+				spawnEnv = {
+					...spawnEnv,
+					...injection.env,
+				};
+				pluginProofReady = true;
 			}
-			pluginRunToken = undefined;
-			pluginRunProofFile = undefined;
+		} catch (error) {
+			// Injection errors can contain prompt-bearing argv or private paths, so
+			// only the error's class and code leave this process, never its message.
+			const { errorName, errorCode } = redactedErrorFields(error);
+			logger.warn(
+				`Plugin tool preparation failed (${errorName}${errorCode ? ` ${errorCode}` : ''})`,
+				'[PluginRunIdentity]'
+			);
+			void captureException(new Error(`Cue plugin tool preparation failed: ${errorName}`), {
+				operation: 'cue:pluginToolPreparation',
+				errorName,
+				errorCode,
+			});
+			return { ok: false, message: 'Plugin tool preparation unavailable.' };
+		} finally {
+			if (!pluginProofReady) {
+				if (pluginRunToken) pluginToolRunIdentity.revoke(pluginRunToken);
+				if (pluginRunProofFile) {
+					try {
+						removePluginRunProofFile(pluginRunProofFile);
+					} catch {
+						logger.warn('Could not remove plugin run proof file', '[PluginRunIdentity]');
+					}
+				}
+				pluginRunToken = undefined;
+				pluginRunProofFile = undefined;
+			}
 		}
 	}
 
@@ -519,6 +569,7 @@ export async function buildSpawnSpec(
 			sshStdinScript,
 			sshRemoteCommand,
 			stdinPrompt,
+			...(promptArtifact ? { promptArtifact } : {}),
 			sshRemoteUsed,
 			pluginRunToken,
 			pluginRunProofFile,

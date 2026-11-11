@@ -30,12 +30,28 @@ import {
 	replayAfterAuth,
 	stopRetriesForAgent,
 	useRetryStore,
+	noteFailedTurnExited,
+	cancelContextCompaction,
+	cancelRecoveryForTab,
+	isAwaitingContextCompaction,
+	registerAgentErrorSurfacer,
 } from '../../../renderer/stores/retryStore';
+import {
+	registerContextCompactionSpawner,
+	type HiddenTurnSpawner,
+} from '../../../renderer/services/contextCompaction';
+import { getContextCompactionBlocker } from '../../../shared/contextCompaction';
+import { logger } from '../../../renderer/utils/logger';
 import { useSessionStore, updateSessionWith } from '../../../renderer/stores/sessionStore';
 import { settleTabThinkingState } from '../../../renderer/utils/tabHelpers';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
-import { availabilityDelayMs, RESET_TIME_BUFFER_MS } from '../../../shared/retryClassification';
+import {
+	availabilityDelayMs,
+	AVAILABILITY_MAX_DELAY_MS,
+	RESET_TIME_BUFFER_MS,
+	TOKEN_EXHAUSTION_POLL_STEPS_MS,
+} from '../../../shared/retryClassification';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 import type { AgentError } from '../../../renderer/types';
@@ -1651,7 +1667,7 @@ describe('queue durability across an outage', () => {
 		expect(hasPendingRetry('q5', 't1')).toBe(false); // recovered: queue drains
 	});
 
-	it('keeps the queue held after the user stops the retry', () => {
+	it('drops the held prompt but keeps the queue held after the user stops the retry', () => {
 		setupSession('q6', 't1', {
 			executionQueue: [queuedItem('item-2', 't1', '2')],
 			aiTabs: [createMockAITab({ id: 't1', agentError: quota() })],
@@ -1661,15 +1677,14 @@ describe('queue durability across an outage', () => {
 
 		cancelRetry('q6', 't1');
 
-		// Stopping hands the failure to the user; their prompt keeps its slot and
-		// the session enters the blocking error state, which every dispatch path
-		// already refuses to run in. Without that, removing the entry would
-		// release the hold and drain the whole queue into the wall they just
-		// stopped retrying against.
+		// Stop means "do not send that again": the parked copy of the failed
+		// prompt leaves the queue. The session enters the blocking error state,
+		// which every dispatch path already refuses to run in, so the work behind
+		// it does not drain into the wall the user just stopped retrying against.
 		const session = useSessionStore.getState().sessions[0];
 		expect(session.state).toBe('error');
 		expect(session.agentErrorTabId).toBe('t1');
-		expect(sessionQueue()).toEqual(['item-1', 'item-2']);
+		expect(sessionQueue()).toEqual(['item-2']);
 	});
 });
 
@@ -2009,5 +2024,484 @@ describe('noteDirectDispatch', () => {
 		noteDirectDispatch('s-unwired', { ...directItem, tabId: 't-unwired' });
 
 		expect(scheduleRetryForError('s-unwired', 't-unwired', weekly())).toBe(false);
+	});
+});
+
+/**
+ * Grok's context-limit recovery is a required-feature blocker:
+ * there is no qualified native compaction operation, so the store
+ * must decline by name and hand the original refusal back. A scripted Grok
+ * operation that would report success is wired in every case, so a decline that
+ * silently spawned it, or read its result as a compaction, would show up as a
+ * call, a pill, an entry or a resend. Each case uses its own keys: dispatch
+ * snapshots are module-level and outlive a test.
+ */
+describe('Grok context-limit recovery is a visible blocker', () => {
+	const GROK_NATIVE_ID = 'grok-native-session-9';
+	const GROK_ACCOUNT_ENV = { GROK_HOME: '/accounts/grok-work' };
+	const GROK_SSH = { enabled: true, remoteId: 'grok-host-1' };
+	/**
+	 * Host dispatch facts saying the prompt never reached the provider, so the
+	 * classifier itself would not fail closed for Grok: a decline must come from
+	 * the blocker. The renderer AgentError does not declare the field the shared
+	 * classifier reads, hence the cast.
+	 */
+	function notDispatched(error: AgentError): AgentError {
+		return {
+			...error,
+			terminal: { status: 'failed', kind: 'provider', dispatchState: 'not-dispatched' },
+		} as AgentError;
+	}
+	const ORIGINAL_PROMPT = 'summarize the failing suites, then fix the first one';
+
+	let operation: ReturnType<typeof vi.fn<HiddenTurnSpawner>>;
+	let surfaced: ReturnType<typeof vi.fn<(processSessionId: string, error: AgentError) => void>>;
+	let warn: { mock: { calls: unknown[][] }; mockRestore: () => void };
+
+	function grokContextLimit(): AgentError {
+		return notDispatched(
+			err({
+				type: 'token_exhaustion',
+				message: 'Prompt is too long. Try a shorter message or start a new session.',
+				agentId: 'grok',
+			})
+		);
+	}
+
+	/** A Grok agent mid-conversation on a selected account, model and host. */
+	function setupGrok(id: string, tabId: string) {
+		const session = createMockSession({
+			id,
+			toolType: 'grok',
+			customModel: 'grok-4',
+			customEnvVars: { ...GROK_ACCOUNT_ENV },
+			sessionSshRemoteConfig: { ...GROK_SSH },
+			aiTabs: [createMockAITab({ id: tabId, agentSessionId: GROK_NATIVE_ID })],
+			activeTabId: tabId,
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+	}
+
+	/** The user's Grok turn goes out and is refused on the context limit. */
+	function failGrokOnContextLimit(id: string, tabId: string, options?: { batch?: boolean }) {
+		noteDispatch(
+			id,
+			{ id: `turn-${id}`, timestamp: 1, tabId, type: 'message', text: ORIGINAL_PROMPT },
+			deps
+		);
+		return scheduleRetryForError(id, tabId, grokContextLimit(), options);
+	}
+
+	function grokTab(id: string, tabId: string) {
+		return useSessionStore
+			.getState()
+			.sessions.find((s) => s.id === id)!
+			.aiTabs.find((t) => t.id === tabId)!;
+	}
+
+	function blockerWarns() {
+		return warn.mock.calls.filter(([message]) =>
+			String(message).includes('compaction is a required-feature blocker')
+		);
+	}
+
+	/** Nothing in the store claims a compaction or a retry for this key. */
+	function expectNothingTakenOver(id: string, tabId: string) {
+		expect(getRetryEntry(id, tabId)).toBeUndefined();
+		expect(hasPendingRetry(id, tabId)).toBe(false);
+		expect(isAwaitingContextCompaction(id, tabId)).toBe(false);
+		expect(grokTab(id, tabId).logs.some((log) => log.contextCompaction)).toBe(false);
+		expect(operation).not.toHaveBeenCalled();
+		expect(processQueuedItem).not.toHaveBeenCalled();
+	}
+
+	beforeEach(() => {
+		operation = vi.fn<HiddenTurnSpawner>().mockResolvedValue({ success: true });
+		registerContextCompactionSpawner(operation);
+		surfaced = vi.fn<(processSessionId: string, error: AgentError) => void>();
+		registerAgentErrorSurfacer(surfaced);
+		warn = vi.spyOn(logger, 'warn');
+	});
+
+	afterEach(() => {
+		registerContextCompactionSpawner(null);
+		registerAgentErrorSurfacer(null);
+		warn.mockRestore();
+	});
+
+	it('declines by name and hands the original refusal back to the caller', async () => {
+		setupGrok('g1', 't1');
+
+		// false is the hand-back: the caller surfaces the original error unchanged.
+		expect(failGrokOnContextLimit('g1', 't1')).toBe(false);
+
+		const blocker = getContextCompactionBlocker('grok')!;
+		expect(blockerWarns()).toHaveLength(1);
+		expect(blockerWarns()[0][2]).toEqual({
+			key: expect.stringContaining('g1'),
+			feature: blocker.feature,
+			parityRows: blocker.parityRows,
+		});
+
+		// The failed turn exits and time passes: still nothing starts.
+		noteFailedTurnExited('g1', 't1');
+		await vi.advanceTimersByTimeAsync(60_000);
+
+		expectNothingTakenOver('g1', 't1');
+		// The store raises nothing of its own over the caller's surfacing.
+		expect(surfaced).not.toHaveBeenCalled();
+		expect(useRetryStore.getState().outages).toEqual({});
+	});
+
+	it('keeps the native session, account, host and model exactly as they were', async () => {
+		setupGrok('g2', 't1');
+		failGrokOnContextLimit('g2', 't1');
+		noteFailedTurnExited('g2', 't1');
+		await vi.advanceTimersByTimeAsync(0);
+
+		const session = useSessionStore.getState().sessions[0];
+		expect(grokTab('g2', 't1').agentSessionId).toBe(GROK_NATIVE_ID);
+		expect(session.customEnvVars).toEqual(GROK_ACCOUNT_ENV);
+		expect(session.sessionSshRemoteConfig).toEqual(GROK_SSH);
+		expect(session.customModel).toBe('grok-4');
+		expect(session.toolType).toBe('grok');
+		// The original prompt is not parked, rewritten or resent behind the user.
+		expect(session.executionQueue.some((item) => item.text === ORIGINAL_PROMPT)).toBe(false);
+		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
+	it('stays bounded: repeated and late refusals never start a retry or a compaction', async () => {
+		setupGrok('g3', 't1');
+
+		for (let i = 0; i < 5; i++) {
+			expect(failGrokOnContextLimit('g3', 't1')).toBe(false);
+			noteFailedTurnExited('g3', 't1');
+		}
+		// A late refusal for a turn that already ended, after a long wait.
+		await vi.advanceTimersByTimeAsync(10 * 60_000);
+		expect(scheduleRetryForError('g3', 't1', grokContextLimit())).toBe(false);
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(blockerWarns()).toHaveLength(6);
+		expectNothingTakenOver('g3', 't1');
+		expect(Object.keys(useRetryStore.getState().retries)).toEqual([]);
+	});
+
+	it('leaves Stop and cancellation with nothing to undo', async () => {
+		setupGrok('g4', 't1');
+		failGrokOnContextLimit('g4', 't1');
+
+		cancelContextCompaction('g4');
+		cancelRecoveryForTab('g4', 't1');
+		stopRetriesForAgent('g4');
+		noteFailedTurnExited('g4', 't1');
+		await vi.advanceTimersByTimeAsync(30_000);
+
+		expectNothingTakenOver('g4', 't1');
+		expect(surfaced).not.toHaveBeenCalled();
+	});
+
+	it("declines the user's own /compact on Grok the same way, never sending it as a prompt", async () => {
+		setupGrok('g5', 't1');
+		noteDispatch(
+			'g5',
+			{ id: 'turn-g5', timestamp: 1, tabId: 't1', type: 'message', text: '/compact' },
+			deps
+		);
+
+		expect(scheduleRetryForError('g5', 't1', grokContextLimit())).toBe(false);
+		noteFailedTurnExited('g5', 't1');
+		await vi.advanceTimersByTimeAsync(0);
+
+		expectNothingTakenOver('g5', 't1');
+	});
+
+	it('leaves an Auto Run task to the batch, unchanged', () => {
+		setupGrok('g6', 't1');
+		expect(failGrokOnContextLimit('g6', 't1', { batch: true })).toBe(false);
+		// The batch owns the turn: the recovery is never consulted, so not even the
+		// blocker decline runs for an Auto Run task.
+		expect(blockerWarns()).toHaveLength(0);
+		expectNothingTakenOver('g6', 't1');
+	});
+
+	it('scopes the blocker to compaction: a Grok availability refusal still retries', () => {
+		setupGrok('g7', 't1');
+		noteDispatch(
+			'g7',
+			{ id: 'turn-g7', timestamp: 1, tabId: 't1', type: 'message', text: ORIGINAL_PROMPT },
+			deps
+		);
+
+		expect(
+			scheduleRetryForError(
+				'g7',
+				't1',
+				notDispatched(err({ message: 'API Error: 529 Overloaded', agentId: 'grok' }))
+			)
+		).toBe(true);
+		expect(getRetryEntry('g7', 't1')?.strategy).toBe('availability');
+		expect(blockerWarns()).toHaveLength(0);
+		expect(operation).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * Grok transient and quota refusals through the resilience engine.
+ * A Grok refusal is replayed only on host facts that the prompt never reached
+ * the provider (the shared classifier fails closed otherwise), the replay is
+ * the exact snapshotted turn on the same tab, account, host and native
+ * session, the schedule is the bounded shared one, and a reset time is used
+ * only when the refusal itself reported one: Grok has no usage snapshot, so
+ * an unknown reset is polled on the fixed cadence and never read as capacity.
+ * Each case uses its own keys: dispatch snapshots are module-level.
+ */
+describe('Grok retry and reset', () => {
+	const NATIVE_ID = 'grok-native-11a';
+	const ACCOUNT_ENV = { GROK_HOME: '/accounts/grok-11a' };
+	const SSH = { enabled: true, remoteId: 'grok-host-11a' };
+	const PROMPT = 'rerun the flaky suite and report the first failure';
+	const NOT_DISPATCHED = { status: 'failed', kind: 'provider', dispatchState: 'not-dispatched' };
+
+	/** The renderer AgentError does not declare the field the shared classifier reads. */
+	function grokError(
+		partial: Partial<AgentError> & { message: string },
+		terminal: object | null = NOT_DISPATCHED
+	): AgentError {
+		return {
+			...err({ agentId: 'grok', ...partial }),
+			...(terminal ? { terminal } : {}),
+		} as AgentError;
+	}
+
+	function setupGrokTurn(id: string, overrides: Record<string, unknown> = {}) {
+		const session = createMockSession({
+			id,
+			toolType: 'grok',
+			customModel: 'grok-4',
+			customEnvVars: { ...ACCOUNT_ENV },
+			sessionSshRemoteConfig: { ...SSH },
+			aiTabs: [createMockAITab({ id: 't1', agentSessionId: NATIVE_ID })],
+			activeTabId: 't1',
+			...overrides,
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+		noteDispatch(
+			id,
+			{ id: `turn-${id}`, timestamp: 1, tabId: 't1', type: 'message', text: PROMPT },
+			deps
+		);
+	}
+
+	function expectUntouched(id: string) {
+		const session = useSessionStore.getState().sessions.find((s) => s.id === id)!;
+		expect(session.toolType).toBe('grok');
+		expect(session.customModel).toBe('grok-4');
+		expect(session.customEnvVars).toEqual(ACCOUNT_ENV);
+		expect(session.sessionSshRemoteConfig).toEqual(SSH);
+		expect(session.aiTabs[0].agentSessionId).toBe(NATIVE_ID);
+	}
+
+	it('replays a not-dispatched Grok rate limit once, as the original turn, on a bounded backoff', async () => {
+		setupGrokTurn('gr1');
+		const throttle = grokError({ message: 'Rate limit exceeded. Please try again later.' });
+
+		expect(scheduleRetryForError('gr1', 't1', throttle)).toBe(true);
+		expect(getRetryEntry('gr1', 't1')).toMatchObject({ strategy: 'availability', attempt: 0 });
+		expect(getRetryEntry('gr1', 't1')?.nextRetryAt).toBe(NOW + availabilityDelayMs(0));
+
+		await vi.advanceTimersByTimeAsync(availabilityDelayMs(0) - 1);
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1);
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(processQueuedItem).toHaveBeenCalledWith(
+			'gr1',
+			expect.objectContaining({ id: 'turn-gr1', tabId: 't1', type: 'message', text: PROMPT }),
+			withCancelCheck(deps)
+		);
+		expectUntouched('gr1');
+
+		// Each refused resend continues one outage; the delay doubles and stops at the cap.
+		const outageId = getRetryEntry('gr1', 't1')!.outageId;
+		for (let attempt = 1; attempt <= 8; attempt++) {
+			scheduleRetryForError('gr1', 't1', throttle);
+			const entry = getRetryEntry('gr1', 't1')!;
+			expect(entry.attempt).toBe(attempt);
+			expect(entry.outageId).toBe(outageId);
+			expect(entry.nextRetryAt - Date.now()).toBe(availabilityDelayMs(attempt));
+			expect(entry.nextRetryAt - Date.now()).toBeLessThanOrEqual(AVAILABILITY_MAX_DELAY_MS);
+		}
+		expect(availabilityDelayMs(8)).toBe(AVAILABILITY_MAX_DELAY_MS);
+		// Rescheduling sends nothing by itself.
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		cancelRetry('gr1', 't1');
+	});
+
+	it.each([
+		['no host dispatch facts', null],
+		[
+			'a prompt that may have run',
+			{ status: 'failed', kind: 'provider', dispatchState: 'unknown' },
+		],
+		['a dispatched prompt', { status: 'failed', kind: 'provider', dispatchState: 'dispatched' }],
+		[
+			'a cancelled turn',
+			{ status: 'cancelled', kind: 'provider', dispatchState: 'not-dispatched' },
+		],
+	])('never replays a Grok rate limit with %s', async (_label, terminal) => {
+		const id = `gr2-${_label.replace(/\W+/g, '-')}`;
+		setupGrokTurn(id);
+		expect(
+			scheduleRetryForError(id, 't1', grokError({ message: 'Rate limit exceeded' }, terminal))
+		).toBe(false);
+		await vi.advanceTimersByTimeAsync(60 * 60_000);
+		expect(getRetryEntry(id, 't1')).toBeUndefined();
+		expect(useRetryStore.getState().outages).toEqual({});
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		expectUntouched(id);
+	});
+
+	it.each([
+		['an expired login', { type: 'auth_expired', message: 'Grok credentials have expired.' }],
+		['a refused permission', { type: 'permission_denied', message: 'Rate limit exceeded' }],
+		[
+			'an HTTP 401 error body',
+			{
+				message: 'Rate limit exceeded',
+				parsedJson: { type: 'error', message: 'Rate limit exceeded', status: 401 },
+			},
+		],
+		[
+			'a JSON-RPC server refusal',
+			{
+				message: 'Rate limit exceeded',
+				parsedJson: {
+					jsonrpc: '2.0',
+					id: 3,
+					error: { code: -32000, message: 'Rate limit exceeded' },
+				},
+			},
+		],
+		[
+			'an auth phrase in the provider text',
+			{ message: 'Not authenticated. Run grok login (rate limit)' },
+		],
+		[
+			'an unavailable provider',
+			{ type: 'agent_crashed', message: 'Grok ACP could not start: spawn grok ENOENT' },
+		],
+		['a non-recoverable refusal', { recoverable: false, message: 'Rate limit exceeded' }],
+	])('treats %s as permanent: no schedule, no outage, no resend', async (_label, partial) => {
+		const id = `gr3-${_label.replace(/\W+/g, '-')}`;
+		setupGrokTurn(id);
+		expect(
+			scheduleRetryForError(
+				id,
+				't1',
+				grokError(partial as Partial<AgentError> & { message: string })
+			)
+		).toBe(false);
+		await vi.advanceTimersByTimeAsync(60 * 60_000);
+		expect(hasPendingRetry(id, 't1')).toBe(false);
+		expect(useRetryStore.getState().outages).toEqual({});
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		expectUntouched(id);
+	});
+
+	it('honors the per-agent resilience toggles for Grok', () => {
+		setupGrokTurn('gr4a', { retryOnAvailabilityErrors: false });
+		expect(scheduleRetryForError('gr4a', 't1', grokError({ message: 'Rate limit exceeded' }))).toBe(
+			false
+		);
+		setupGrokTurn('gr4b', { retryOnTokenExhaustion: false });
+		expect(scheduleRetryForError('gr4b', 't1', grokError({ message: 'Usage limit reached' }))).toBe(
+			false
+		);
+		// The other strategy on the same agent is still governed by its own toggle.
+		expect(scheduleRetryForError('gr4b', 't1', grokError({ message: 'Rate limit exceeded' }))).toBe(
+			true
+		);
+		cancelRetry('gr4b', 't1');
+		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
+	it('polls an unknown Grok quota reset on the fixed cadence and never reads it as capacity', () => {
+		setupGrokTurn('gr5');
+		const quotaOut = grokError({ message: 'Usage limit reached' });
+		const steps = [...TOKEN_EXHAUSTION_POLL_STEPS_MS, TOKEN_EXHAUSTION_POLL_STEPS_MS.at(-1)!];
+		steps.forEach((step, attempt) => {
+			expect(scheduleRetryForError('gr5', 't1', quotaOut)).toBe(true);
+			const entry = getRetryEntry('gr5', 't1')!;
+			expect(entry).toMatchObject({ strategy: 'token-exhaustion', attempt });
+			// Neither an immediate resend (zero) nor an unbounded wait (unlimited).
+			expect(entry.nextRetryAt - Date.now()).toBe(step);
+		});
+		const outage = getOutage(getRetryEntry('gr5', 't1')!.outageId)!;
+		expect(outage.quota).toBeUndefined();
+		expect(outage.status).toBe('active');
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		cancelRetry('gr5', 't1');
+	});
+
+	it('meets a reset the Grok refusal reported exactly, plus the buffer', () => {
+		setupGrokTurn('gr6');
+		const reported = grokError({ message: 'Usage limit reached. Retry after 20 seconds.' });
+		// The first probe (15s) lands before the reported reset (20s + buffer).
+		scheduleRetryForError('gr6', 't1', reported);
+		expect(getRetryEntry('gr6', 't1')!.nextRetryAt).toBe(NOW + TOKEN_EXHAUSTION_POLL_STEPS_MS[0]);
+		// The second (60s) would overshoot it, so the reported reset is the wake time.
+		scheduleRetryForError('gr6', 't1', reported);
+		expect(getRetryEntry('gr6', 't1')!.nextRetryAt).toBe(NOW + 20_000 + RESET_TIME_BUFFER_MS);
+		cancelRetry('gr6', 't1');
+	});
+
+	it('ends on Stop with nothing resent, and a later dispatch supersedes a pending retry', async () => {
+		setupGrokTurn('gr7');
+		scheduleRetryForError('gr7', 't1', grokError({ message: 'Rate limit exceeded' }));
+		const outageId = getRetryEntry('gr7', 't1')!.outageId;
+		cancelRetry('gr7', 't1');
+		await vi.advanceTimersByTimeAsync(60 * 60_000);
+		expect(getRetryEntry('gr7', 't1')).toBeUndefined();
+		expect(getOutage(outageId)?.status).toBe('stopped');
+		expect(processQueuedItem).not.toHaveBeenCalled();
+
+		setupGrokTurn('gr8');
+		scheduleRetryForError('gr8', 't1', grokError({ message: 'Rate limit exceeded' }));
+		const superseded = getRetryEntry('gr8', 't1')!.outageId;
+		noteDispatch(
+			'gr8',
+			{ id: 'next-gr8', timestamp: 2, tabId: 't1', type: 'message', text: 'new' },
+			deps
+		);
+		await vi.advanceTimersByTimeAsync(60 * 60_000);
+		expect(getOutage(superseded)?.status).toBe('stopped');
+		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
+	it('sends no second resend when a late Grok error arrives for a resend that may have run', async () => {
+		setupGrokTurn('gr9');
+		scheduleRetryForError('gr9', 't1', grokError({ message: 'Rate limit exceeded' }));
+		retryNow('gr9', 't1');
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(getRetryEntry('gr9', 't1')?.status).toBe('in-flight');
+		const outageId = getRetryEntry('gr9', 't1')!.outageId;
+
+		// The late refusal cannot prove the resend never reached Grok.
+		const late = grokError(
+			{ message: 'Rate limit exceeded' },
+			{ status: 'failed', kind: 'provider', dispatchState: 'unknown' }
+		);
+		expect(scheduleRetryForError('gr9', 't1', late)).toBe(false);
+		failInFlightRetry('gr9', 't1', late.message);
+		// A duplicate delivery of the same late error changes nothing further.
+		expect(scheduleRetryForError('gr9', 't1', late)).toBe(false);
+		failInFlightRetry('gr9', 't1', late.message);
+		retryNow('gr9', 't1');
+		await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
+
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(getRetryEntry('gr9', 't1')).toBeUndefined();
+		expect(getOutage(outageId)?.status).toBe('failed');
+		expectUntouched('gr9');
 	});
 });

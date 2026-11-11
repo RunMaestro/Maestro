@@ -31,9 +31,9 @@
  * client exit at once, leaving nothing to supervise. `ClearAllForwardings=no`
  * undoes Maestro's default, which would otherwise drop the `-L` itself.
  *
- * Nothing here runs until a caller acquires a lease, so a switched-off
- * Federation leaves no process behind (decision D8). The caller checks the
- * Encore Feature and the remote's own `federation` flag before acquiring.
+ * Nothing here runs until a caller acquires a lease, so a remote that opted
+ * out of Federation never gets a process. The caller checks the remote's own
+ * `federation` flag (`isFederationRemote()`) before acquiring.
  */
 
 import { spawn as nodeSpawn, type ChildProcess } from 'child_process';

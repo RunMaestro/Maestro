@@ -239,6 +239,76 @@ export function sortEntriesByTimestamp(entries: HistoryEntry[]): HistoryEntry[] 
 	return [...entries].sort((a, b) => b.timestamp - a.timestamp);
 }
 
+/**
+ * Append `incoming` to `base`, skipping ids already present, and sort newest-first: how History
+ * from another source (another host's shared file, Cue runs) joins an agent's own entries.
+ */
+export function mergeEntriesById(base: HistoryEntry[], incoming: HistoryEntry[]): HistoryEntry[] {
+	if (incoming.length === 0) return base;
+	const seenIds = new Set(base.map((entry) => entry.id));
+	const merged = [...base];
+	for (const entry of incoming) {
+		if (seenIds.has(entry.id)) continue;
+		seenIds.add(entry.id);
+		merged.push(entry);
+	}
+	return sortEntriesByTimestamp(merged);
+}
+
+/** The host key of an entry with no `hostname` (one written on this machine). */
+export const LOCAL_HOST_AGG_KEY = '__local__';
+
+/** The oldest timestamp a lookback of `lookbackHours` keeps, or 0 for no lookback. */
+export function historyLookbackCutoff(
+	lookbackHours: number | null | undefined,
+	now: number = Date.now()
+): number {
+	return lookbackHours !== null && lookbackHours !== undefined && lookbackHours > 0
+		? now - lookbackHours * 60 * 60 * 1000
+		: 0;
+}
+
+/** What a History list is narrowed to before it is paged. */
+export interface HistoryListFilter {
+	/** Keep entries at or after this time. 0 or absent: no lookback. */
+	cutoffTime?: number;
+	/** Keep these types only. Absent: every type; empty: none. */
+	types?: readonly HistoryEntryType[] | null;
+	/** Keep one host: an entry's `hostname`, or `LOCAL_HOST_AGG_KEY` for entries without one. */
+	hostKey?: string | null;
+}
+
+/**
+ * The entries a History list shows, before paging. Run before `paginateEntries()` so a page holds
+ * the newest N entries OF THE FILTER, never the newest N entries with the filter applied after.
+ */
+export function filterHistoryEntries<
+	T extends Pick<HistoryEntry, 'timestamp' | 'type' | 'hostname'>,
+>(entries: T[], filter: HistoryListFilter): T[] {
+	const cutoff = filter.cutoffTime ?? 0;
+	const types = filter.types ? new Set(filter.types) : null;
+	const hostKey = filter.hostKey;
+	if (cutoff <= 0 && !types && !hostKey) return entries;
+	return entries.filter(
+		(entry) =>
+			(cutoff <= 0 || entry.timestamp >= cutoff) &&
+			(!types || types.has(entry.type)) &&
+			(!hostKey || (entry.hostname ?? LOCAL_HOST_AGG_KEY) === hostKey)
+	);
+}
+
+/**
+ * Where an entry at or before `timestamp` sits in a newest-first list: the offset a History list
+ * jumps to for a bar of its activity graph. The last offset when every entry is newer; 0 when
+ * there are none.
+ */
+export function historyOffsetForTimestamp(entries: HistoryEntry[], timestamp: number): number {
+	if (entries.length === 0) return 0;
+	const sorted = sortEntriesByTimestamp(entries);
+	const index = sorted.findIndex((entry) => entry.timestamp <= timestamp);
+	return index >= 0 ? index : sorted.length - 1;
+}
+
 // ─── JSONL storage format ───────────────────────────────────────────────────
 
 /** Extension for the current (append-only) per-session history format. */

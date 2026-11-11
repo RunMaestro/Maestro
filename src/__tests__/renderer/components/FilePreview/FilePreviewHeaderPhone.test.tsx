@@ -237,4 +237,47 @@ describe('FilePreviewHeader on a desktop', () => {
 		expect(screen.getByTestId('reveal-in-folder-button')).toBeInTheDocument();
 		expect(screen.getByTestId('delete-file-button')).toBeInTheDocument();
 	});
+
+	describe('click to reveal details after scrolling hid them', () => {
+		const collapsed = { showStatsBar: false, showPath: false };
+
+		it('asks to reveal when the header row is clicked', () => {
+			const onRevealDetails = vi.fn();
+			renderHeader({ ...collapsed, onRevealDetails });
+
+			fireEvent.click(screen.getByText('MEET-07-30.md'));
+
+			expect(onRevealDetails).toHaveBeenCalledTimes(1);
+		});
+
+		it('leaves a toolbar button click to the button', () => {
+			const onRevealDetails = vi.fn();
+			const onDelete = vi.fn();
+			renderHeader({ ...collapsed, onRevealDetails, onDelete });
+
+			fireEvent.click(screen.getByTestId('delete-file-button'));
+
+			expect(onDelete).toHaveBeenCalledTimes(1);
+			expect(onRevealDetails).not.toHaveBeenCalled();
+		});
+
+		it('does nothing while the details are already shown', () => {
+			const onRevealDetails = vi.fn();
+			renderHeader({ onRevealDetails });
+
+			fireEvent.click(screen.getByTestId('file-preview-header-row'));
+
+			expect(onRevealDetails).not.toHaveBeenCalled();
+		});
+
+		it('does nothing on a phone, where the details live in the sheet', () => {
+			mockedUsePhoneLayout.mockReturnValue(true);
+			const onRevealDetails = vi.fn();
+			renderHeader({ ...collapsed, onRevealDetails });
+
+			fireEvent.click(screen.getByTestId('file-preview-header-row'));
+
+			expect(onRevealDetails).not.toHaveBeenCalled();
+		});
+	});
 });

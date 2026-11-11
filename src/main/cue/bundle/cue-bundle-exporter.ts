@@ -22,6 +22,10 @@
  *
  * A workspace a Claude Code agent works in also carries its Claude assets
  * (skills, `.mcp.json`, memory), scrubbed by `cue-bundle-claude-assets.ts`.
+ * A workspace a Grok agent works in carries its selected Grok project resources
+ * (`collectGrokResources`): the phase 06 roots only, MCP servers by name and
+ * secret names, and every resource left behind with its reason. Nothing under
+ * the Grok account home is ever read.
  */
 
 import * as fs from 'fs';
@@ -46,10 +50,18 @@ import {
 	CUE_BUNDLE_MIN_ENGINE_VERSION,
 	CUE_BUNDLE_README_PATH,
 	CUE_BUNDLE_VERSION,
+	CUE_BUNDLE_GROK_RESOURCE_ROOTS,
+	CUE_BUNDLE_GROK_RESOURCES_FORMAT,
+	CUE_BUNDLE_GROK_RESOURCES_VERSION,
+	CUE_BUNDLE_GROK_SCHEMA_SOURCE,
 	type CueBundleAgent,
 	type CueBundleAgentSettings,
 	type CueBundleClaudeAssetSelection,
 	type CueBundleFileEntry,
+	type CueBundleGrokMcpServer,
+	type CueBundleGrokResource,
+	type CueBundleGrokResources,
+	type CueBundleGrokUnsupportedResource,
 	type CueBundleKind,
 	type CueBundleLocalAgent,
 	type CueBundleLocalData,
@@ -62,7 +74,19 @@ import { resolveCueConfigPath } from '../config/cue-config-repository';
 import { resolveConfigOwner } from '../cue-session-state';
 import { readSessionsStoreFile } from '../../stores/sessions-store-file';
 import { readAgentConfigsStoreFile } from '../../stores/agent-configs-store-file';
-import { collectClaudeAssets, resolveClaudeAssetSelection } from './cue-bundle-claude-assets';
+import {
+	MCP_CONFIG_FILE,
+	collectClaudeAssets,
+	mcpConfigReferences,
+	resolveClaudeAssetSelection,
+	scrubMcpConfig,
+} from './cue-bundle-claude-assets';
+import { redactCredentialTokens } from '../../../shared/agent-run/redact';
+import {
+	grokCompatScannerEnvName,
+	readGrokNativeTrust,
+} from '../../../shared/plugins/mcp-agent-config';
+import { grokSubagentUnpinned } from '../../../shared/maestro-lib/translation/resources';
 import {
 	CUE_BUNDLE_CONFIG_ISSUE_CODES,
 	validateCueBundleArchive,
@@ -662,7 +686,8 @@ function buildAgentSettings(
 	// the requirement the original bundle stated. A Claude agent also declares
 	// the secrets its workspace's `.mcp.json` references (`mcpSecrets`): on a
 	// server its launch carries only its own secrets, and Claude Code expands
-	// the references from that environment.
+	// the references from that environment. A Grok agent declares the secret
+	// names its workspace's Grok MCP servers read, for the same reason.
 	for (const name of [...(session.requiredSecrets ?? []), ...mcpSecrets]) {
 		if (!required.includes(name) && !(name in values)) required.push(name);
 	}
@@ -706,6 +731,241 @@ function buildLocalAgent(session: SessionInfo, root: string): CueBundleLocalAgen
 		local.autoRunFolderPath = path.resolve(session.autoRunFolderPath);
 	}
 	return local;
+}
+
+// Grok project resources. The roots are the translation resource collection's
+// (`collectTranslationResources`), as pinned in CUE_BUNDLE_GROK_RESOURCE_ROOTS.
+
+/** A Grok resource file over this size, or past this count, is left out with a warning (the Claude skill limits). */
+const MAX_GROK_RESOURCE_FILE_BYTES = 1024 * 1024;
+const MAX_GROK_RESOURCE_FILES = 500;
+/** The compat scanner that loads a project `.mcp.json` into Grok (pinned compat.rs). */
+const GROK_PROJECT_MCP_SCANNER = grokCompatScannerEnvName('claude', 'mcps');
+
+interface GrokResourceCollection {
+	files: Array<{ archivePath: string; content: Buffer; executable?: boolean }>;
+	/** Secret names the workspace's Grok MCP servers read. */
+	secrets: string[];
+	warnings: string[];
+	/** The manifest block; undefined when the workspace has no Grok resource at all. */
+	resources?: CueBundleGrokResources;
+}
+
+function lstatIfPresent(p: string): fs.Stats | undefined {
+	try {
+		return fs.lstatSync(p);
+	} catch {
+		return undefined;
+	}
+}
+
+function sortedDirEntries(dir: string): fs.Dirent[] {
+	return fs
+		.readdirSync(dir, { withFileTypes: true })
+		.filter((entry) => entry.name !== '.DS_Store')
+		.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/**
+ * Collect one workspace's Grok project resources for the Grok agents working
+ * in it. Only regular files under real (not linked) folders of the workspace
+ * travel, text redacted exactly as the Claude assets are; a link is listed as
+ * unsupported, never followed. The project `.mcp.json` (loaded by Grok's
+ * Claude compat scanner) travels scrubbed, and its servers are described by
+ * name, the secret names they read, and whether the agents' environment leaves
+ * that scanner on. Grok's own MCP servers live in its account-global
+ * `config.toml`, which is never read, and neither is anything else under the
+ * Grok home. `verification` stays `unverified` until Phase 11 qualifies
+ * discovery by a real binary.
+ */
+function collectGrokResources(
+	root: string,
+	key: string,
+	agentEnvs: Array<Record<string, string>>,
+	includeMcp: boolean
+): GrokResourceCollection {
+	const files: GrokResourceCollection['files'] = [];
+	const warnings: string[] = [];
+	const resources: CueBundleGrokResource[] = [];
+	const unsupported: CueBundleGrokUnsupportedResource[] = [];
+	const mcpServers: CueBundleGrokMcpServer[] = [];
+	const secrets = new Set<string>();
+	const addFile = (rel: string) => {
+		const abs = path.join(root, rel);
+		let content = fs.readFileSync(abs);
+		if (!content.subarray(0, 8000).includes(0)) {
+			const { text, redacted } = redactCredentialTokens(content.toString('utf-8'));
+			if (redacted > 0) {
+				warnings.push(
+					`Redacted ${redacted} secret-looking token${redacted === 1 ? '' : 's'} in ${key}/${rel}.`
+				);
+			}
+			content = Buffer.from(text, 'utf-8');
+		}
+		const executable = (fs.statSync(abs).mode & 0o111) !== 0;
+		files.push({
+			archivePath: `workspaces/${key}/${rel}`,
+			content,
+			...(executable ? { executable } : {}),
+		});
+	};
+	const linked = (rel: string) =>
+		unsupported.push({
+			path: rel,
+			code: 'grok-resource-symlink',
+			reason: 'it is a symbolic link; only regular files and folders inside the workspace travel',
+		});
+	/** Whether every segment of `rel` is a real directory, recording the first link met. */
+	const realDirectory = (rel: string): boolean => {
+		const parts = rel.split('/');
+		for (let i = 1; i <= parts.length; i++) {
+			const sub = parts.slice(0, i).join('/');
+			const stat = lstatIfPresent(path.join(root, sub));
+			if (stat?.isSymbolicLink()) {
+				if (!unsupported.some((u) => u.path === sub)) linked(sub);
+				return false;
+			}
+			if (!stat?.isDirectory()) return false;
+		}
+		return true;
+	};
+
+	for (const rel of CUE_BUNDLE_GROK_RESOURCE_ROOTS.instruction) {
+		const stat = lstatIfPresent(path.join(root, rel));
+		if (stat?.isSymbolicLink()) linked(rel);
+		else if (stat?.isFile()) {
+			addFile(rel);
+			resources.push({ kind: 'instruction', root: rel, path: rel, trust: 'enabled' });
+		}
+	}
+
+	let fileCount = 0;
+	let truncated = false;
+	for (const skillRoot of CUE_BUNDLE_GROK_RESOURCE_ROOTS.skill) {
+		if (!realDirectory(skillRoot)) continue;
+		for (const entry of sortedDirEntries(path.join(root, skillRoot))) {
+			const rel = `${skillRoot}/${entry.name}`;
+			if (entry.isSymbolicLink()) {
+				linked(rel);
+				continue;
+			}
+			if (!entry.isDirectory()) {
+				unsupported.push({
+					path: rel,
+					code: 'grok-skill-not-folder',
+					reason: `a Grok skill is one folder directly under ${skillRoot}`,
+				});
+				continue;
+			}
+			const skillFiles: string[] = [];
+			let links = 0;
+			const walk = (dirRel: string) => {
+				for (const child of sortedDirEntries(path.join(root, dirRel))) {
+					const childRel = `${dirRel}/${child.name}`;
+					if (child.isSymbolicLink()) links++;
+					else if (child.isDirectory()) walk(childRel);
+					else if (!child.isFile()) continue;
+					else if (fs.statSync(path.join(root, childRel)).size > MAX_GROK_RESOURCE_FILE_BYTES) {
+						warnings.push(`Workspace "${key}": skipped ${childRel}, which is over 1 MB.`);
+					} else if (fileCount >= MAX_GROK_RESOURCE_FILES) truncated = true;
+					else {
+						skillFiles.push(childRel);
+						fileCount++;
+					}
+				}
+			};
+			walk(rel);
+			if (links > 0) {
+				warnings.push(
+					`Workspace "${key}": skipped ${links} symbolic link${links === 1 ? '' : 's'} in ${rel}.`
+				);
+			}
+			if (skillFiles.length === 0) continue;
+			for (const file of skillFiles) addFile(file);
+			resources.push({ kind: 'skill', root: skillRoot, path: rel, trust: 'enabled' });
+		}
+	}
+	if (truncated) {
+		warnings.push(
+			`Workspace "${key}": its Grok skills have more than ${MAX_GROK_RESOURCE_FILES} files; only the first ${MAX_GROK_RESOURCE_FILES} were exported.`
+		);
+	}
+
+	// Seen, never carried: their loader contract is not pinned (phase 06 limitations).
+	const hasMarkdown = (rel: string) =>
+		realDirectory(rel) &&
+		(fs.readdirSync(path.join(root, rel), { recursive: true }) as string[]).some((name) =>
+			name.toLowerCase().endsWith('.md')
+		);
+	if (hasMarkdown('.grok/rules')) {
+		unsupported.push({
+			path: '.grok/rules',
+			code: 'grok-rules-unsupported',
+			reason:
+				"Grok's rule loader semantics are not pinned, so rules are not carried. The files stay in the project.",
+		});
+	}
+	if (hasMarkdown('.grok/agents')) {
+		const limitation = grokSubagentUnpinned('warning', '.grok/agents');
+		unsupported.push({
+			path: '.grok/agents',
+			code: limitation.code,
+			reason: limitation.message.slice('.grok/agents: '.length),
+		});
+	}
+
+	const mcpStat = includeMcp ? lstatIfPresent(path.join(root, MCP_CONFIG_FILE)) : undefined;
+	if (mcpStat?.isSymbolicLink()) linked(MCP_CONFIG_FILE);
+	else if (mcpStat?.isFile()) {
+		try {
+			const scrubbed = scrubMcpConfig(fs.readFileSync(path.join(root, MCP_CONFIG_FILE), 'utf-8'));
+			files.push({
+				archivePath: `workspaces/${key}/${MCP_CONFIG_FILE}`,
+				content: Buffer.from(scrubbed.content, 'utf-8'),
+			});
+			warnings.push(...scrubbed.warnings);
+			const cells = agentEnvs.map(
+				(env) => readGrokNativeTrust(env).scanners[GROK_PROJECT_MCP_SCANNER]
+			);
+			const enabled = !cells.includes('disabled');
+			if (!enabled && cells.some((cell) => cell !== 'disabled')) {
+				warnings.push(
+					`Workspace "${key}": its Grok agents disagree on ${GROK_PROJECT_MCP_SCANNER}; its MCP servers are described as disabled.`
+				);
+			}
+			const servers = (JSON.parse(scrubbed.content) as { mcpServers?: Record<string, unknown> })
+				.mcpServers;
+			for (const name of scrubbed.servers) {
+				const serverSecrets = mcpConfigReferences(JSON.stringify(servers?.[name] ?? {})).filter(
+					(ref) => scrubbed.secrets.includes(ref)
+				);
+				for (const ref of serverSecrets) secrets.add(ref);
+				mcpServers.push({ name, enabled, secrets: serverSecrets });
+			}
+		} catch (error) {
+			warnings.push(
+				`Workspace "${key}": ${MCP_CONFIG_FILE} was left out (${error instanceof Error ? error.message : String(error)}).`
+			);
+		}
+	}
+
+	if (resources.length === 0 && mcpServers.length === 0 && unsupported.length === 0) {
+		return { files, secrets: [], warnings };
+	}
+	return {
+		files,
+		secrets: [...secrets].sort(),
+		warnings,
+		resources: {
+			format: CUE_BUNDLE_GROK_RESOURCES_FORMAT,
+			version: CUE_BUNDLE_GROK_RESOURCES_VERSION,
+			schemaSource: CUE_BUNDLE_GROK_SCHEMA_SOURCE,
+			verification: 'unverified',
+			resources,
+			...(mcpServers.length > 0 ? { mcpServers } : {}),
+			...(unsupported.length > 0 ? { unsupported } : {}),
+		},
+	};
 }
 
 /** Every `.md` under a folder, as folder-relative POSIX paths, sorted. */
@@ -1021,6 +1281,8 @@ export async function exportCueBundle(
 	const secrets = new Set<string>();
 	/** Workspace key -> secrets its exported `.mcp.json` references. */
 	const mcpSecretsByKey = new Map<string, string[]>();
+	/** Workspace key -> secrets its Grok MCP servers read; its Grok agents declare them. */
+	const grokMcpSecretsByKey = new Map<string, string[]>();
 	// Ordered by key, the bundle's only name for a project root. Ordering by the
 	// root's absolute path would make the manifest depend on where the projects
 	// happen to be checked out, so a bundle re-exported after an import into
@@ -1093,6 +1355,27 @@ export async function exportCueBundle(
 			for (const warning of claude.warnings) builder.warnings.add(warning);
 			if (claude.assets) entry.claude = claude.assets;
 		}
+		const grokAgents = includedAgents.filter(
+			(a) => a.toolType === 'grok' && agentRoot(a) === ws.root
+		);
+		if (grokAgents.length > 0) {
+			const grok = collectGrokResources(
+				ws.root,
+				ws.key,
+				grokAgents.map((a) =>
+					effectiveAgentCustomEnvVars(a.customEnvVars, readProviderEnv(agentConfigsDir, a.toolType))
+				),
+				claudeSelection.mcp
+			);
+			for (const file of grok.files) {
+				builder.add(file.archivePath, file.content);
+				if (file.executable) builder.executables.add(file.archivePath);
+			}
+			for (const name of grok.secrets) secrets.add(name);
+			grokMcpSecretsByKey.set(ws.key, grok.secrets);
+			for (const warning of grok.warnings) builder.warnings.add(warning);
+			if (grok.resources) entry.grok = grok.resources;
+		}
 		manifestWorkspaces.push(entry);
 	}
 
@@ -1156,7 +1439,11 @@ export async function exportCueBundle(
 			root,
 			autoRun,
 			builder,
-			session.toolType === 'claude-code' ? (mcpSecretsByKey.get(wsKey) ?? []) : [],
+			session.toolType === 'claude-code'
+				? (mcpSecretsByKey.get(wsKey) ?? [])
+				: session.toolType === 'grok'
+					? (grokMcpSecretsByKey.get(wsKey) ?? [])
+					: [],
 			exact
 		);
 		for (const key of settings.env?.required ?? []) secrets.add(key);

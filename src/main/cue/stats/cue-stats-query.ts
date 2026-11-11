@@ -8,10 +8,9 @@
  *
  * Token attribution: each event is credited with the token totals of the
  * provider session it produced (`cue_events.provider_session_id`), resolved via
- * `getSessionTokenSummaries`. Each Cue run spawns a fresh agent process, so one
- * event maps to exactly one provider session - no double-counting. Events with
- * no recorded provider session id (command/shell runs, or rows written before
- * provider-id capture landed) contribute zeros.
+ * `getSessionTokenSummaries`. Grok uses only each event's stream usage: a native
+ * session can be resumed, so its lifetime ledger cannot stand in for a turn.
+ * Missing native scope or stream accounting remains partial/unknown.
  *
  * Also the read side of the Cue/History split: `getCueHistoryEntries()` serves
  * Cue runs to the History panel straight from this table, so a chatty fleet no
@@ -33,10 +32,12 @@ import { computePercentiles } from '../../../shared/percentiles';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { buildCueRunSummary, parseSubscriptionName } from '../../../shared/cue/cue-summary';
 import { isCueRunSkipped, type CueEventType } from '../../../shared/cue/contracts';
-import type { CueHistoryGroup, HistoryEntry } from '../../../shared/types';
+import type { CueHistoryGroup, HistoryEntry, UsageStats } from '../../../shared/types';
+import { usageCostUsd } from '../../../shared/maestro-lib/streaming/usage-totals';
 import {
 	getAgentTypesForSessions,
 	getSessionTokenSummaries,
+	sessionTokenLookupKey,
 	type SessionTokenSummary,
 } from './cue-token-accessor';
 import type {
@@ -78,6 +79,7 @@ interface MutableTotals {
 	totalCacheCreationTokens: number;
 	costSum: number;
 	costObserved: boolean;
+	costUnknown: boolean;
 }
 
 function emptyMutableTotals(): MutableTotals {
@@ -92,6 +94,7 @@ function emptyMutableTotals(): MutableTotals {
 		totalCacheCreationTokens: 0,
 		costSum: 0,
 		costObserved: false,
+		costUnknown: false,
 	};
 }
 
@@ -105,7 +108,7 @@ function freezeTotals(t: MutableTotals): CueStatsTotals {
 		totalOutputTokens: t.totalOutputTokens,
 		totalCacheReadTokens: t.totalCacheReadTokens,
 		totalCacheCreationTokens: t.totalCacheCreationTokens,
-		totalCostUsd: t.costObserved ? t.costSum : null,
+		totalCostUsd: t.costObserved && !t.costUnknown ? t.costSum : null,
 	};
 }
 
@@ -124,67 +127,94 @@ function classifyStatus(status: string): { isSuccess: boolean; isFailure: boolea
 }
 
 /**
- * Build a token summary straight from the event's own `stream_usage_json`
- * (parsed live from stdout by `cue-process-lifecycle.ts` as the run
- * executed - see `CueRunResult.usage`). This is the fallback path for
- * exactly the case `cue-token-accessor.ts` cannot resolve at all: an
- * SSH-remote run, whose on-disk session file lives on the remote host. Marked
- * `partial` (not `full`) since it lacks the on-disk lookup's precise
- * message-window timestamps and per-agent cost coverage guarantees, and its
- * `agentType` is unknown here (this bypasses the `session_lifecycle` join
- * `getSessionTokenSummaries` uses) - harmless, since this result is used only
- * for its numeric fields and never inserted into the map `buildCoverageWarnings`
- * iterates.
+ * Project the event's own delta-normalized stream usage. This is the only Grok
+ * event source and the legacy fallback for remote/missing native histories.
+ * Preserve accounting detail, while the numeric cost admits only exact facts
+ * (or legacy figures from an identified non-Grok provider).
  */
-function streamUsageFallback(event: CueEventRecord): SessionTokenSummary | null {
-	if (!event.streamUsageJson) return null;
-	let usage: {
-		inputTokens?: number;
-		outputTokens?: number;
-		cacheReadInputTokens?: number;
-		cacheCreationInputTokens?: number;
-		totalCostUsd?: number;
-	} | null = null;
-	try {
-		usage = JSON.parse(event.streamUsageJson);
-	} catch {
-		return null;
-	}
-	if (!usage) return null;
+function streamUsageFallback(
+	event: CueEventRecord,
+	usage: Partial<UsageStats>,
+	agentType = 'unknown'
+): SessionTokenSummary | null {
+	if (!event.streamUsageJson || Array.isArray(usage)) return null;
+	const accounting = usage.accounting;
+	// Persisted native lifetime/child snapshots are never event deltas. The
+	// producer normally supplies normalized turn or fresh-process totals.
+	if (accounting?.scope === 'native-session' || accounting?.scope === 'child') return null;
+	const counts = [
+		usage.inputTokens,
+		usage.outputTokens,
+		usage.cacheReadInputTokens,
+		usage.cacheCreationInputTokens,
+	];
+	if (counts.some((n) => n !== undefined && (!Number.isSafeInteger(n) || n < 0))) return null;
+	// Legacy Cue conversion used `costUsd || 0` and discarded accounting.
+	// No legacy zero proves measured free usage. Grok and unidentified legacy
+	// figures cannot prove a complete cost at all.
+	//
+	// `parsedUsageToStats` stamps a default accounting (cost `partial` when the
+	// provider reported one) on EVERY provider's usage, not just Grok's. So a
+	// non-Grok `partial` cost is the same reported figure the legacy row carried
+	// and is admitted on the same terms; dropping it would blank the spend of
+	// every Claude Code, OpenCode or Factory run that falls back to stream usage.
+	const costStatus = accounting?.cost?.status;
+	const legacyCost =
+		agentType === 'grok' || agentType === 'unknown' || usage.totalCostUsd === 0
+			? undefined
+			: usage.totalCostUsd;
+	const cost =
+		costStatus === 'exact'
+			? usageCostUsd(accounting!.cost!)
+			: costStatus === undefined || costStatus === 'partial'
+				? legacyCost
+				: undefined;
 	return {
 		sessionId: event.providerSessionId ?? event.id,
-		agentType: 'unknown',
-		inputTokens: usage.inputTokens || 0,
-		outputTokens: usage.outputTokens || 0,
-		cacheReadTokens: usage.cacheReadInputTokens || 0,
-		cacheCreationTokens: usage.cacheCreationInputTokens || 0,
-		costUsd: typeof usage.totalCostUsd === 'number' ? usage.totalCostUsd : null,
+		agentType,
+		inputTokens: usage.inputTokens ?? 0,
+		outputTokens: usage.outputTokens ?? 0,
+		cacheReadTokens: usage.cacheReadInputTokens ?? 0,
+		cacheCreationTokens: usage.cacheCreationInputTokens ?? 0,
+		costUsd: typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? cost : null,
+		...(accounting ? { accounting } : {}),
 		windowStartMs: event.createdAt,
 		windowEndMs: event.completedAt ?? event.createdAt,
 		coverage: 'partial',
 	};
 }
 
-/**
- * Token totals for an event, looked up by the run's provider session id (the
- * key the on-disk session files use). Events with no recorded provider session
- * id - command/shell runs, or rows written before provider-id capture landed -
- * contribute no tokens.
- *
- * Falls back to the run's own stream-parsed usage when the on-disk lookup has
- * nothing (most commonly an SSH-remote run - see {@link streamUsageFallback}).
- * A non-zero on-disk summary always wins: it is the more complete source
- * (precise windows, cost coverage guarantees) for every run it can resolve.
- */
+/** Use event usage for Grok, never a native lifetime snapshot or another owner. */
 function tokensForEvent(
 	event: CueEventRecord,
-	tokensByProvider: Map<string, SessionTokenSummary>
-): SessionTokenSummary | null {
-	const onDisk = event.providerSessionId
-		? (tokensByProvider.get(event.providerSessionId) ?? null)
-		: null;
+	tokensByProvider: Map<string, SessionTokenSummary>,
+	agentType: string | null,
+	usage: Partial<UsageStats>,
+	allowNative: boolean
+): SessionTokenSummary {
+	const provider = agentType ?? 'unknown';
+	const candidate =
+		allowNative && provider !== 'grok' && event.providerSessionId
+			? (tokensByProvider.get(sessionTokenLookupKey(event.sessionId, event.providerSessionId)) ??
+				null)
+			: null;
+	const onDisk = candidate?.agentType === provider ? candidate : null;
 	if (onDisk && (onDisk.inputTokens > 0 || onDisk.outputTokens > 0)) return onDisk;
-	return streamUsageFallback(event) ?? onDisk;
+	return (
+		streamUsageFallback(event, usage, provider) ??
+		onDisk ?? {
+			sessionId: event.providerSessionId ?? event.id,
+			agentType: provider,
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+			costUsd: null,
+			windowStartMs: event.createdAt,
+			windowEndMs: event.completedAt ?? event.createdAt,
+			coverage: 'partial',
+		}
+	);
 }
 
 function computeDuration(event: CueEventRecord): number | null {
@@ -206,7 +236,11 @@ function applyEvent(target: MutableTotals, contrib: EventContribution): void {
 		if (contrib.tokens.costUsd != null) {
 			target.costSum += contrib.tokens.costUsd;
 			target.costObserved = true;
+		} else {
+			target.costUnknown = true;
 		}
+	} else {
+		target.costUnknown = true;
 	}
 }
 
@@ -350,7 +384,7 @@ function ensureGroup(
 
 function buildTimeSeries(
 	events: CueEventRecord[],
-	tokensByProvider: Map<string, SessionTokenSummary>,
+	tokensByEvent: Map<string, SessionTokenSummary>,
 	bucketSizeMs: number
 ): CueTimeBucket[] {
 	const buckets = new Map<number, CueTimeBucket>();
@@ -372,7 +406,7 @@ function buildTimeSeries(
 		const { isSuccess, isFailure } = classifyStatus(event.status);
 		if (isSuccess) bucket.successCount += 1;
 		if (isFailure) bucket.failureCount += 1;
-		const tokens = tokensForEvent(event, tokensByProvider);
+		const tokens = tokensByEvent.get(event.id);
 		if (tokens) {
 			bucket.inputTokens += tokens.inputTokens;
 			bucket.outputTokens += tokens.outputTokens;
@@ -383,8 +417,8 @@ function buildTimeSeries(
 
 function buildChains(
 	events: CueEventRecord[],
-	tokensByProvider: Map<string, SessionTokenSummary>,
-	agentTypeBySession: Map<string, string | null>
+	tokensByEvent: Map<string, SessionTokenSummary>,
+	agentTypeByEvent: Map<string, string | null>
 ): CueChain[] {
 	const byRoot = new Map<string, CueEventRecord[]>();
 	for (const event of events) {
@@ -423,8 +457,8 @@ function buildChains(
 		}
 
 		for (const event of sorted) {
-			const tokens = tokensForEvent(event, tokensByProvider);
-			const agentType = agentTypeBySession.get(event.sessionId) ?? null;
+			const tokens = tokensByEvent.get(event.id) ?? null;
+			const agentType = agentTypeByEvent.get(event.id) ?? null;
 			const { isSuccess, isFailure } = classifyStatus(event.status);
 			const durationMs = computeDuration(event);
 
@@ -550,22 +584,44 @@ export async function getCueStatsAggregation(
 	const events =
 		excluded.size === 0 ? allEvents : allEvents.filter((event) => !excluded.has(event.type));
 
-	// Token attribution joins on the provider session id each run produced
-	// (the key the on-disk session files use); agent-type labelling joins on
-	// the Maestro agent id (what `session_lifecycle` stores, available even for
-	// runs that never recorded a provider session id).
+	const uniqueSessionIds = Array.from(new Set(events.map((e) => e.sessionId)));
+	const agentTypeByLifecycle = getAgentTypesForSessions(uniqueSessionIds);
+	const agentTypeByEvent = new Map<string, string | null>();
+	const streamUsageByEvent = new Map<string, Partial<UsageStats>>();
+	const nativeFallbackEvents = new Set<string>();
+	for (const event of events) {
+		const usage = parseEventPayload(event.streamUsageJson) as Partial<UsageStats>;
+		streamUsageByEvent.set(event.id, usage);
+		// Retain observed identity even if the usage itself is malformed. A bad
+		// count or missing native ID must not re-enable a different provider's pool.
+		const observed = usage.accounting?.providerId;
+		const provider = typeof observed === 'string' && observed.trim() ? observed.trim() : null;
+		const agentType = provider ?? agentTypeByLifecycle.get(event.sessionId) ?? null;
+		agentTypeByEvent.set(event.id, agentType);
+		// New receipts are event-scoped. They carry no historical account/host
+		// witness for a native read, even when usage is absent. Preserve only the
+		// old identified non-Grok lookup path; never infer scope from settings.
+		if (!provider && agentType && agentType !== 'grok') nativeFallbackEvents.add(event.id);
+	}
 	const tokenLookups = events
-		.filter((e) => e.providerSessionId)
+		.filter((e) => e.providerSessionId && nativeFallbackEvents.has(e.id))
 		.map((e) => ({ maestroSessionId: e.sessionId, providerSessionId: e.providerSessionId! }));
 	const tokensByProvider = await getSessionTokenSummaries(tokenLookups, {
 		sinceMs: windowStartMs,
 	});
 
-	const uniqueSessionIds = Array.from(new Set(events.map((e) => e.sessionId)));
-	const agentTypeByLifecycle = getAgentTypesForSessions(uniqueSessionIds);
-	const agentTypeBySession = new Map<string, string | null>();
-	for (const sid of uniqueSessionIds) {
-		agentTypeBySession.set(sid, agentTypeByLifecycle.get(sid) ?? null);
+	const tokensByEvent = new Map<string, SessionTokenSummary>();
+	for (const event of events) {
+		tokensByEvent.set(
+			event.id,
+			tokensForEvent(
+				event,
+				tokensByProvider,
+				agentTypeByEvent.get(event.id) ?? null,
+				streamUsageByEvent.get(event.id)!,
+				nativeFallbackEvents.has(event.id)
+			)
+		);
 	}
 
 	const totals = emptyMutableTotals();
@@ -582,7 +638,7 @@ export async function getCueStatsAggregation(
 		const { isSuccess, isFailure } = classifyStatus(event.status);
 		const durationMs = computeDuration(event);
 		if (durationMs != null) runDurations.push(durationMs);
-		const tokens = tokensForEvent(event, tokensByProvider);
+		const tokens = tokensByEvent.get(event.id) ?? null;
 		const contrib: EventContribution = { durationMs, tokens, isSuccess, isFailure };
 
 		applyEvent(totals, contrib);
@@ -596,7 +652,7 @@ export async function getCueStatsAggregation(
 			contrib
 		);
 
-		const agentType = agentTypeBySession.get(event.sessionId) ?? null;
+		const agentType = agentTypeByEvent.get(event.id) ?? null;
 		const agentGroup = agentGroupKey(agentType);
 		applyEvent(ensureGroup(byAgent, agentGroup.key, agentGroup.label, !agentType).totals, contrib);
 
@@ -609,10 +665,10 @@ export async function getCueStatsAggregation(
 		applyEvent(ensureGroup(byTriggerType, trigger.key, trigger.label, false).totals, contrib);
 	}
 
-	const chains = buildChains(events, tokensByProvider, agentTypeBySession);
-	const timeSeries = buildTimeSeries(events, tokensByProvider, bucketSizeMs);
+	const chains = buildChains(events, tokensByEvent, agentTypeByEvent);
+	const timeSeries = buildTimeSeries(events, tokensByEvent, bucketSizeMs);
 	const byHourOfDay = buildHourOfDay(events);
-	const coverageWarnings = buildCoverageWarnings(tokensByProvider);
+	const coverageWarnings = buildCoverageWarnings(tokensByEvent);
 
 	return {
 		timeRange,

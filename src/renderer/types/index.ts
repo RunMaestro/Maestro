@@ -299,9 +299,12 @@ export interface LogEntry {
 		};
 		/**
 		 * For tool entries produced inside a subagent: the `toolCallId` of the
-		 * parent tool call that spawned it (claude-code's Task tool). The
-		 * transcript nests these badges under the matching parent entry; entries
-		 * whose parent is not in the log render flat. Only claude-code sets it.
+		 * entry to nest under, either the parent tool call that spawned it
+		 * (claude-code's Task tool) or, for a Grok child reported by session
+		 * lineage, the `Subagent` entry keyed by the child session
+		 * (`subagentToolCallId`), never a provider tool-call id. The transcript
+		 * nests these badges under the matching parent entry; entries whose parent
+		 * is not in the log render flat.
 		 */
 		parentToolUseId?: string;
 		hiddenProgress?: {
@@ -576,6 +579,9 @@ export interface QueuedItem {
 	command?: string; // Slash command (e.g., '/commit')
 	commandArgs?: string; // Arguments passed after the command (e.g., 'Blah blah' from '/speckit.plan Blah blah')
 	commandDescription?: string; // Command description for display
+	// Opaque renderer receipt. Its evidence lives only in queuedPrompt's WeakMap;
+	// restored/cloned items must be requeued, never rebound to current settings.
+	commandScope?: { readonly provider: ToolType };
 	// Display metadata
 	// Last-known tab label, snapshotted when the item was queued. This is a
 	// FALLBACK only: the queue UI resolves the live tab name first (see
@@ -782,6 +788,11 @@ export interface BatchRunState {
 	goalIteration?: number; // 1-based iteration number the goal loop is on
 	goalExitReason?: import('../../shared/goalDriven/types').GoalExitReason; // Why the goal run stopped
 
+	// Work this run handed to other agents that is still running. Set only while
+	// the run waits for it before its next turn (both modes); empty otherwise.
+	// See src/shared/autoRunDelegation.ts.
+	pendingDelegations?: import('../../shared/autoRunDelegation').AutoRunPendingDelegation[];
+
 	// Live playbook status parsed from .maestro/STATUS.json (feature, phase,
 	// tests, summary). Populated by the STATUS.json watcher while the run is
 	// active; cleared when the file is deleted or the run completes.
@@ -871,6 +882,8 @@ export interface AITab {
 	origin?: 'user' | 'auto' | 'relay';
 	id: string; // Unique tab ID (generated UUID)
 	agentSessionId: string | null; // Agent session UUID (null for new tabs)
+	/** Native ownership captured by the host; absent on legacy tabs means unknown. */
+	nativeSessionBinding?: ProviderTabSession['nativeSessionBinding'];
 	name: string | null; // User-defined name (null = show UUID octet)
 	starred: boolean; // Whether session is starred (for pill display)
 	logs: LogEntry[]; // Conversation history
@@ -986,8 +999,8 @@ export interface AITab {
 	pendingMentionHandoff?: MentionHandoff;
 	/**
 	 * Parked per-provider state for every provider this tab is NOT currently
-	 * using. The live provider's values stay in `agentSessionId` / `usageStats` /
-	 * `customModel` / `customEffort` / `runOn`, so this map never holds
+	 * using. The live provider's values stay in `agentSessionId` / `nativeSessionBinding` /
+	 * `usageStats` / `customModel` / `customEffort` / `runOn`, so this map never holds
 	 * an entry for `resolveTabProvider(tab, session)`. Changing the provider swaps the
 	 * live values with this map's entry rather than clearing them.
 	 */
@@ -1053,9 +1066,32 @@ export interface AITab {
 
 // A single "thinking item" - one busy tab within a session.
 // Used by ThinkingStatusPill to show all active work across all agents.
-export interface ThinkingItem {
-	session: Session;
+/**
+ * The agent fields the Thinking pill reads. A local agent passes its `Session`; a Federation peer's
+ * mirrored agent passes a view built by `buildMirrorThinkingItems()`, which is never a `Session`.
+ */
+export type ThinkingItemAgent = Pick<
+	Session,
+	| 'id'
+	| 'name'
+	| 'state'
+	| 'agentSessionId'
+	| 'thinkingStartTime'
+	| 'currentCycleTokens'
+	// The pill names and stops a tab's turn on the tab's own provider (projectTabProvider).
+	| 'toolType'
+	| 'providerOverrides'
+> &
+	Partial<Pick<Session, 'customModel' | 'customEffort'>>;
+
+export interface ThinkingItem<S extends ThinkingItemAgent = ThinkingItemAgent> {
+	session: S;
 	tab: AITab | null; // null for legacy sessions without tab-level tracking
+	/**
+	 * Set for a peer's mirrored agent: `session.id` is then its mirror key (`peerId:agentId`), a
+	 * click opens the mirror, and Stop reaches the host.
+	 */
+	mirror?: { peerId: string; agentId: string };
 }
 
 // An Auto Run in progress on an agent other than the one being viewed. Auto Run
@@ -1448,7 +1484,15 @@ export interface Session {
 	providerTranslationHistoryMappings?: HistoryTranslationMapping[];
 	providerTranslationKnowledgeDirectory?: string;
 	providerTranslationTabInventory?: Array<
-		Pick<AITab, 'id' | 'agentSessionId' | 'providerSessions' | 'pendingTranslation' | 'tabProvider'>
+		Pick<
+			AITab,
+			| 'id'
+			| 'agentSessionId'
+			| 'nativeSessionBinding'
+			| 'providerSessions'
+			| 'pendingTranslation'
+			| 'tabProvider'
+		>
 	>;
 	id: string;
 	/** Browser-only marker. Main restores omitted content on every partial save. */
@@ -2080,10 +2124,6 @@ export interface EncoreFeatureFlags {
 	// Run preview. Off by default. Optional so older fixtures and persisted
 	// settings remain valid.
 	dataview?: boolean;
-	// Federation - reach a `maestro-cli host` on an SSH remote and drive its
-	// agents from this machine. Off by default. Optional so older fixtures and
-	// persisted settings remain valid.
-	federation?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

@@ -3,6 +3,7 @@ import { canonicalJson } from '../../canonicalJson';
 import { translationHash } from './identity';
 import { translationVersionLimitation } from './support';
 import { activeContextRecords } from './context-window';
+import { encodeGrokCwdDirname } from './native-records';
 import type {
 	TranslationAdapter,
 	TranslationIdentity,
@@ -12,7 +13,97 @@ import type {
 	TranslationLimitation,
 	TranslationDirection,
 	TranslationArtifact,
+	PortableRecord,
 } from './types';
+
+/** Records a native stage writes: user and assistant rows, never sidechains. */
+function isProjectedRecord(record: PortableRecord): boolean {
+	return (
+		(record.role === 'user' || record.role === 'assistant') &&
+		!(record.native as { isSidechain?: boolean } | undefined)?.isSidechain
+	);
+}
+
+/**
+ * What a Grok destination cannot carry. Grok's
+ * `ContentPart` has only text and image, its tool result has no error flag, its
+ * rows have no timestamps, and the stage writes only the transcript and summary.
+ */
+function grokDestinationLimitations(
+	destination: TranslationIdentity,
+	conversations: PortableConversation[]
+): TranslationLimitation[] {
+	const limitations: TranslationLimitation[] = [];
+	for (const conversation of conversations) {
+		const tabId = conversation.tabId;
+		const records = conversation.records.filter(isProjectedRecord);
+		const blocks = records.flatMap((record) => record.blocks.map((block) => ({ record, block })));
+		for (const { record, block } of blocks)
+			if (
+				block.kind === 'attachment' &&
+				record.role === 'user' &&
+				!/^image\/[A-Za-z0-9.+-]+$/.test(block.mediaType)
+			)
+				limitations.push({
+					code: 'unsupported-attachment-type',
+					severity: 'block',
+					tabId,
+					artifactId: block.artifactId,
+					message: `Grok messages carry only text and images; the ${block.mediaType} attachment cannot be written.`,
+				});
+		if (blocks.some(({ block }) => block.kind === 'tool-call' && block.custom))
+			limitations.push({
+				code: 'custom-tool-flattened',
+				severity: 'warning',
+				tabId,
+				message:
+					'Custom tool calls are written as ordinary Grok tool calls with their raw input as arguments.',
+			});
+		if (blocks.some(({ block }) => block.kind === 'tool-result' && block.isError))
+			limitations.push({
+				code: 'tool-error-flag-lost',
+				severity: 'warning',
+				tabId,
+				message:
+					'Grok tool results have no error flag. Failed tool results keep their text, but are not marked as errors.',
+			});
+		if (records.some((record) => record.timestamp))
+			limitations.push({
+				code: 'source-timestamps-dropped',
+				severity: 'warning',
+				tabId,
+				message:
+					'Grok history rows have no timestamps; the original message times are not carried.',
+			});
+	}
+	if (encodeGrokCwdDirname(destination.projectRoot) === null)
+		limitations.push({
+			code: 'grok-long-cwd-unsupported',
+			severity: 'block',
+			message:
+				'Grok stores this project under a hashed folder name that Maestro does not reproduce.',
+		});
+	limitations.push(
+		{
+			code: 'grok-native-replay-absent',
+			severity: 'warning',
+			message:
+				"Grok's own screen replay of the carried turns may be empty: only the model history and summary are written, not its UI update stream.",
+		},
+		{
+			code: 'grok-search-index-unaffected',
+			severity: 'warning',
+			message: "Grok's session search may not find the carried session until Grok reindexes it.",
+		},
+		{
+			code: 'grok-remote-session-sync-unverified',
+			severity: 'warning',
+			message:
+				'A Grok account configured for remote session storage may upload the carried session after resume; this is unverified.',
+		}
+	);
+	return limitations;
+}
 
 export class TranslationRegistry {
 	private readonly adapters = new Map<string, TranslationAdapter>();
@@ -109,7 +200,7 @@ export function planTranslation(options: {
 				...conversations.flatMap((c) => c.limitations),
 			];
 	if (!noop) {
-		if (destination.provider === 'codex')
+		if (destination.provider === 'codex' || destination.provider === 'grok')
 			for (const conversation of conversations) {
 				if (
 					conversation.records.some(
@@ -123,9 +214,23 @@ export function planTranslation(options: {
 						severity: 'warning',
 						tabId: conversation.tabId,
 						message:
-							'Assistant image output is preserved in the archive but is not projected into Codex assistant Responses messages.',
+							destination.provider === 'codex'
+								? 'Assistant image output is preserved in the archive but is not projected into Codex assistant Responses messages.'
+								: 'Assistant image output is preserved in the archive but is not projected: Grok assistant messages have no image field.',
 					});
 			}
+		if (destination.provider === 'grok')
+			limitations.push(...grokDestinationLimitations(destination, conversations));
+		if (destination.provider === 'claude-code')
+			for (const conversation of conversations)
+				if (conversation.records.some((record) => isProjectedRecord(record) && !record.timestamp))
+					limitations.push({
+						code: 'synthetic-timestamps',
+						severity: 'warning',
+						tabId: conversation.tabId,
+						message:
+							'Some source messages have no recorded time; the destination shows the migration time for them, not when they were written.',
+					});
 		for (const identity of [source, destination]) {
 			const adapter = registry.get(identity.provider);
 			if (!adapter)

@@ -28,6 +28,7 @@
 import { useEffect, useRef } from 'react';
 import type { AgentError, BatchRunState, Session, QueuedItem } from '../../types';
 import { isLimitError } from '../../../shared/types';
+import { classifyRetryableError } from '../../../shared/retryClassification';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useSessionStore, updateSessionWith } from '../../stores/sessionStore';
@@ -131,6 +132,27 @@ function pausedLimitError(
 	session: Session,
 	batch: BatchRunState | undefined
 ): AgentError | undefined {
+	if (
+		session.toolType === 'grok' ||
+		session.agentError?.agentId === 'grok' ||
+		batch?.error?.agentId === 'grok'
+	) {
+		// Resuming a batch also clears the chat pause. Every affected error must
+		// carry the canonical safe-replay verdict, including restored pauses with
+		// no host dispatch facts. A quota label alone does not authorize replay.
+		if (
+			(session.agentErrorPaused && !session.agentError) ||
+			(batch?.errorPaused && (!batch.isRunning || batch.isStopping || !batch.error)) ||
+			[session.agentError, batch?.errorPaused ? batch.error : undefined].some(
+				(error) => error && classifyRetryableError({ ...error, agentId: 'grok' }) === null
+			)
+		) {
+			return undefined;
+		}
+		// resume() prioritizes a paused batch. Never use an eligible chat error
+		// to unblock a batch paused on a different, non-limit failure.
+		if (batch?.errorPaused) return limitPausedAutoRunError(batch);
+	}
 	if (isLimitPausedSession(session)) return session.agentError;
 	return limitPausedAutoRunError(batch);
 }
@@ -266,6 +288,20 @@ function findCapturedPrompt(
 	for (let i = tab.logs.length - 1; i >= 0; i--) {
 		const log = tab.logs[i];
 		const prompt = log.recoveryAction?.lastUserPrompt;
+		// A newer safe pause cannot authorize an older captured Grok turn. Error
+		// logs retain their own failure; require its evidence and pause identity.
+		if (
+			(session.toolType === 'grok' ||
+				session.agentError?.agentId === 'grok' ||
+				log.agentError?.agentId === 'grok') &&
+			(!session.agentError ||
+				!log.agentError ||
+				tab.agentError?.timestamp !== session.agentError.timestamp ||
+				log.agentError.timestamp !== session.agentError.timestamp ||
+				classifyRetryableError({ ...log.agentError, agentId: 'grok' }) === null)
+		) {
+			continue;
+		}
 		if (prompt) return { tabId: tab.id, text: prompt, logId: log.id };
 	}
 	return null;
@@ -574,8 +610,21 @@ export async function runAutoResumeTick(
 					current.sshRemoteId !== session.sshRemoteId
 				)
 					return;
+				if (
+					(resolveErrorProvider(
+						current.aiTabs.find((t) => t.id === current.agentErrorTabId),
+						current,
+						currentError
+					) === 'grok' ||
+						currentError.agentId === 'grok') &&
+					!isEligibleToProbe(current, now, currentError)
+				) {
+					return;
+				}
+				// Revalidate the live errors after the await and use that same snapshot
+				// for captured prompts; the original pause may have been replaced.
 				resume(current, resumeAutoRunAfterError);
-				fireResumedToast(session, error);
+				fireResumedToast(current, currentError);
 			} catch (err) {
 				logger.warn('Auto-resume probe/resume failed', LOG_CONTEXT, {
 					sessionId: session.id,

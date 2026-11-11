@@ -305,11 +305,13 @@ function TiledFilePane({
 	fileTabId,
 	session,
 	theme,
+	isFocused,
 	actions,
 }: {
 	fileTabId: string;
 	session: Session;
 	theme: Theme;
+	isFocused: boolean;
 	actions: PaneFileActions | null;
 }) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
@@ -410,6 +412,9 @@ function TiledFilePane({
 					// Transient deep-link scroll target, cleared once consumed.
 					pendingScrollToLine={fileTab.pendingScrollToLine}
 					onPendingScrollToLineConsumed={() => store.clearFileTabPendingScrollToLine(fileTabId)}
+					// Only the focused tile draws the floating font-zoom and ToC buttons, so
+					// background tiles read as plain documents.
+					showFloatingControls={isFocused}
 				/>
 			</React.Suspense>
 		</div>
@@ -561,7 +566,15 @@ function PaneContent({
 	}
 
 	if (tab.type === 'file') {
-		return <TiledFilePane fileTabId={tab.id} session={session} theme={theme} actions={file} />;
+		return (
+			<TiledFilePane
+				fileTabId={tab.id}
+				session={session}
+				theme={theme}
+				isFocused={isFocused}
+				actions={file}
+			/>
+		);
 	}
 
 	// Terminal and browser tabs are kept-alive overlays mounted at the panel level

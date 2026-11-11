@@ -13,6 +13,10 @@ import {
 	failFromError,
 } from '../services/session-command';
 import { resolveCliPath } from '../utils/parse';
+import {
+	describePendingDelegations,
+	type AutoRunPendingDelegation,
+} from '../../shared/autoRunDelegation';
 
 interface AutoRunControlOptions {
 	json?: boolean;
@@ -93,6 +97,8 @@ interface AutoRunStatusState {
 	completedTasksAcrossAllDocs?: number;
 	errorPaused?: boolean;
 	errorMessage?: string;
+	/** Work the run handed to other agents and is waiting on before its next turn. */
+	pendingDelegations?: AutoRunPendingDelegation[];
 }
 
 /**
@@ -134,6 +140,13 @@ export async function autoRunStatus(
 	const phase = state.isStopping ? 'stopping' : state.errorPaused ? 'paused on error' : 'running';
 	console.log(`Auto Run ${phase} on ${sessionId}: ${doc}${done}/${total} tasks done`);
 	if (state.errorPaused && state.errorMessage) console.log(`  Error: ${state.errorMessage}`);
+	const pending = state.pendingDelegations ?? [];
+	if (pending.length > 0) {
+		console.log(`  ${describePendingDelegations(pending)}`);
+		for (const d of pending) {
+			console.log(`    - ${d.targetName} (tab ${d.targetTabId}): ${d.subject}`);
+		}
+	}
 }
 
 /**

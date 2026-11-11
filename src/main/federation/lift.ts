@@ -18,7 +18,7 @@
  */
 
 import type { BrowserWindow } from 'electron';
-import { encoreDisabledMessage } from '../../shared/encoreFeatureDefaults';
+import { FEDERATION_NOT_RUNNING_MESSAGE } from '../../shared/federationCommands';
 import {
 	LiftRunError,
 	formatLiftPlan,
@@ -53,7 +53,7 @@ export interface DesktopLiftDeps {
 	readAgentConfigs(): Record<string, Record<string, unknown> | undefined>;
 	/** A turn is running on any of the agent's tabs right now. */
 	isAgentRunning(agent: AgentRecord): boolean;
-	/** The running mirror, or null while the Federation Encore Feature is off. */
+	/** The running mirror, or null before boot started it. */
 	service(): PeerMirrorService | null;
 	setPointer(agentId: string, pointer: LiftedToPointer, movedQueueItemIds: string[]): Promise<void>;
 	now?(): number;
@@ -67,7 +67,7 @@ export async function liftAgentFromDesktop(
 ): Promise<DesktopLiftAnswer> {
 	const service = deps.service();
 	if (!service) {
-		return { ok: false, code: 'PEER_ENCORE_OFF', error: encoreDisabledMessage('federation') };
+		return { ok: false, code: 'FEDERATION_NOT_RUNNING', error: FEDERATION_NOT_RUNNING_MESSAGE };
 	}
 	const runDeps: LiftRunDeps = {
 		readAgents: deps.readAgents,

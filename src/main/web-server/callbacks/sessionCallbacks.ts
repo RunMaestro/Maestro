@@ -13,7 +13,12 @@ import { isImageRef, resolveToDataUrlSync } from '../../storage/session-image-st
 import { findStoredAiTab } from '../../stores/deferred-session-content';
 import { filterLiveAgents } from '../../../shared/agentVisibility';
 import { getAutoRunStateTracker } from '../../autorun/autorun-state-tracker';
-import type { DesktopTabEntry, DesktopSessionsSnapshot } from '../../../shared/desktopTabs';
+import type {
+	DesktopTabEntry,
+	DesktopSessionsSnapshot,
+	DesktopStripTabEntry,
+} from '../../../shared/desktopTabs';
+import { tabStripSlotKeys, tabStripVisibility } from '../../../shared/tabStripMembership';
 
 export function registerSessionCallbacks(
 	server: WebServer,
@@ -146,9 +151,11 @@ export function registerSessionCallbacks(
 			isPianola: s.isPianola === true,
 			remote: !!s.sshRemoteId || !!s.sshRemote || s.sessionSshRemoteConfig?.enabled === true,
 		}));
+		const stripTabs: DesktopStripTabEntry[] = [];
 		for (const s of sessions) {
 			if (s.aiTabs != null && !Array.isArray(s.aiTabs)) complete = false;
 			const aiTabs = (s.aiTabs as Array<Record<string, any>> | undefined) ?? [];
+			const slots = tabStripSlotKeys(s);
 			const cliBusy = cliBusySessionIds.has(s.id);
 			// Auto Run owns its agent between process turns too. Never resume
 			// its parked/stopping work through a conversational scope reply.
@@ -180,6 +187,11 @@ export function registerSessionCallbacks(
 				});
 				parentId = typeof parent.parentSessionId === 'string' ? parent.parentSessionId : null;
 			}
+			const orderedAiTabIds = new Set(
+				((s.unifiedTabOrder as Array<{ type?: string; id?: string }> | undefined) ?? [])
+					.filter((ref) => ref?.type === 'ai')
+					.map((ref) => ref.id)
+			);
 			for (const tab of aiTabs) {
 				if (!tab || typeof tab.id !== 'string') {
 					complete = false;
@@ -215,6 +227,11 @@ export function registerSessionCallbacks(
 					starred: tab.starred === true,
 					active: isActiveTab,
 					hasUnread: tab.hasUnread === true,
+					// Same rule as the renderer's `isAiTabHidden`: the tab bar draws no
+					// chip for a hidden (consult) tab.
+					hidden: tab.hidden === true,
+					inTabOrder: orderedAiTabIds.has(tab.id),
+					visibility: tabStripVisibility('ai', tab, slots),
 					saveToHistory: tab.saveToHistory === true,
 					readOnly: tab.readOnlyMode === true,
 					thinking: asThinkingMode(tab.showThinking) ?? 'off',
@@ -296,6 +313,34 @@ export function registerSessionCallbacks(
 					},
 				});
 			}
+			// File, browser and terminal tabs, for `session list --type`. Same store,
+			// same slot rules, so a count here matches the Usage Dashboard's.
+			const stripKinds = [
+				['file', s.filePreviewTabs, s.activeFileTabId, 'path'],
+				['browser', s.browserTabs, s.activeBrowserTabId, 'url'],
+				['terminal', s.terminalTabs, s.activeTerminalTabId, 'cwd'],
+			] as const;
+			for (const [tabType, tabs, activeId, targetField] of stripKinds) {
+				for (const tab of Array.isArray(tabs) ? (tabs as Array<Record<string, any>>) : []) {
+					if (!tab || typeof tab.id !== 'string') continue;
+					const name =
+						tabType === 'browser'
+							? (tab.customTitle ?? tab.title ?? null)
+							: typeof tab.name === 'string'
+								? tab.name
+								: null;
+					stripTabs.push({
+						tabId: tab.id,
+						tabType,
+						agentId: s.id,
+						agentName: s.name,
+						name: typeof name === 'string' && name ? name : null,
+						target: typeof tab[targetField] === 'string' ? tab[targetField] : null,
+						active: tab.id === activeId,
+						visibility: tabStripVisibility(tabType, tab, slots),
+					});
+				}
+			}
 		}
 		return {
 			supervisionVersion: 1,
@@ -303,6 +348,7 @@ export function registerSessionCallbacks(
 			capturedAt,
 			owners,
 			sessions: entries,
+			tabs: stripTabs,
 		} satisfies DesktopSessionsSnapshot;
 	});
 
@@ -424,14 +470,24 @@ export function registerSessionCallbacks(
 		const selectedTab =
 			session.aiTabs?.find((t: any) => t.id === targetTabId) ??
 			(!tabId ? session.aiTabs?.[0] : undefined);
+		// The provider session id belongs to the tab whose logs are returned. The
+		// agent-level field is whichever tab last reported one (Grok and Codex
+		// write it on every capture; Claude never does), so reporting it beside
+		// another tab's logs names the wrong conversation. A tab whose end-only
+		// id has not arrived yet answers null, never a sibling's id.
+		let agentSessionId: string | null | undefined = session.agentSessionId;
 		if (session.aiTabs && session.aiTabs.length > 0) {
 			const targetTab = session.aiTabs.find((t: any) => t.id === targetTabId);
 			// If a specific tabId was requested but not found, return empty logs
 			// (avoids showing stale history from another tab during new tab creation race)
 			if (!targetTab && tabId) {
 				aiLogs = [];
+				agentSessionId = null;
 			} else {
-				const rawLogs = (targetTab || session.aiTabs[0])?.logs || [];
+				const resolvedTab = targetTab || session.aiTabs[0];
+				agentSessionId =
+					typeof resolvedTab?.agentSessionId === 'string' ? resolvedTab.agentSessionId : null;
+				const rawLogs = resolvedTab?.logs || [];
 				// Include thinking and tool logs for UX parity with desktop.
 				// Web/mobile clients run in a plain browser and can't load the
 				// maestro-image protocol, so resolve any relocated image refs back
@@ -461,7 +517,7 @@ export function registerSessionCallbacks(
 			aiLogs,
 			shellLogs: session.shellLogs || [],
 			usageStats: session.usageStats,
-			agentSessionId: selectedTab?.agentSessionId ?? undefined,
+			agentSessionId: agentSessionId ?? undefined,
 			isGitRepo: session.isGitRepo,
 			activeTabId: targetTabId,
 		};

@@ -1429,6 +1429,45 @@ print("world")
 			expect(screen.queryByTitle('Table of Contents')).not.toBeInTheDocument();
 		});
 
+		it('hides the floating ToC and font zoom when showFloatingControls is false (unfocused tile)', () => {
+			const markdownWithHeadings = '# Heading 1\n## Heading 2\nContent here';
+			const file = { name: 'doc.md', content: markdownWithHeadings, path: '/test/doc.md' };
+			const { rerender } = render(
+				<FilePreview {...defaultProps} file={file} markdownEditMode={false} />
+			);
+
+			expect(screen.getByTitle('Table of Contents')).toBeInTheDocument();
+			expect(screen.getByTestId('file-preview-font-scale')).toBeInTheDocument();
+			// Open the ToC so blurring the tile has an open overlay to close.
+			fireEvent.click(screen.getByTitle('Table of Contents'));
+			expect(screen.getByText('Contents')).toBeInTheDocument();
+
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					file={file}
+					markdownEditMode={false}
+					showFloatingControls={false}
+				/>
+			);
+			expect(screen.queryByTitle('Table of Contents')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('file-preview-font-scale')).not.toBeInTheDocument();
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+
+			// Refocusing the tile brings the buttons back, with the ToC closed.
+			rerender(
+				<FilePreview
+					{...defaultProps}
+					file={file}
+					markdownEditMode={false}
+					showFloatingControls={true}
+				/>
+			);
+			expect(screen.getByTitle('Table of Contents')).toBeInTheDocument();
+			expect(screen.getByTestId('file-preview-font-scale')).toBeInTheDocument();
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+		});
+
 		it('opens TOC overlay when button is clicked', () => {
 			const markdownWithHeadings = '# Heading 1\n## Heading 2\n### Heading 3';
 			render(
@@ -2096,6 +2135,38 @@ print("world")
 			);
 
 			expect(screen.getByText('Lines:')).toBeInTheDocument();
+		});
+
+		it('shows the details again on a header click, then hides them on the next scroll', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.md', content: 'Some content\n'.repeat(20), path: '/test/test.md' }}
+				/>
+			);
+
+			const container = document.querySelector('.overflow-y-auto') as HTMLElement;
+			Object.defineProperty(container, 'scrollHeight', { configurable: true, value: 800 });
+			Object.defineProperty(container, 'clientHeight', { configurable: true, value: 500 });
+			Object.defineProperty(container, 'scrollTop', {
+				configurable: true,
+				writable: true,
+				value: 100,
+			});
+			fireEvent.scroll(container);
+			expect(screen.queryByText('Lines:')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByTestId('file-preview-header-row'));
+			expect(screen.getByText('Lines:')).toBeInTheDocument();
+			expect(screen.getByText('/test')).toBeInTheDocument();
+
+			// A scroll event that did not move (trailing momentum) keeps them.
+			fireEvent.scroll(container);
+			expect(screen.getByText('Lines:')).toBeInTheDocument();
+
+			container.scrollTop = 160;
+			fireEvent.scroll(container);
+			expect(screen.queryByText('Lines:')).not.toBeInTheDocument();
 		});
 	});
 

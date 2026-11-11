@@ -191,6 +191,21 @@ describe('startRemoteHost', () => {
 		throw new Error('start did not reject');
 	}
 
+	it("keeps the remote's linger warning on a started host", async () => {
+		const exec = execReturning(
+			`${markers()}{"started": true, "pid": 900, "port": 41001, "linger": false, "lingerFix": "loginctl enable-linger pedram"}`
+		);
+		expect(await start(exec)).toEqual({
+			installed: true,
+			started: true,
+			alreadyRunning: false,
+			pid: 900,
+			port: 41001,
+			linger: false,
+			lingerFix: 'loginctl enable-linger pedram',
+		});
+	});
+
 	it('runs `host start --json` over ONE ssh invocation', async () => {
 		const exec = execReturning(`${markers()}{"started": true, "pid": 900, "port": 41001}`);
 		await start(exec);

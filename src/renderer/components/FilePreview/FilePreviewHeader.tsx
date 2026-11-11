@@ -101,6 +101,9 @@ interface FilePreviewHeaderProps {
 	/** Open the delete confirmation for this file. Omitted when the preview is
 	 *  not backed by a deletable on-disk file. */
 	onDelete?: () => void;
+	/** Bring back the path + stats rows after scrolling hid them. Fired by a
+	 *  click on the header row (outside its buttons) while they are hidden. */
+	onRevealDetails?: () => void;
 }
 
 export const FilePreviewHeader = React.memo(function FilePreviewHeader({
@@ -154,6 +157,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	setWordWrap,
 	toolbarVisibility,
 	onDelete,
+	onRevealDetails,
 }: FilePreviewHeaderProps) {
 	const [showBackPopup, setShowBackPopup] = useState(false);
 	const [showForwardPopup, setShowForwardPopup] = useState(false);
@@ -412,13 +416,26 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	const hasSheetContent = actions.length > 0 || !!directoryPath || stats.length > 0;
 	// Desktop only: on a phone these move into the sheet, which is the whole point.
 	const showStatsGroup = stats.length > 0 && showStatsBar && !phone;
+	// Scrolling hid the details; a click on the header row brings them back.
+	// Desktop only: on a phone the details live in the actions sheet.
+	const canRevealDetails = !showStatsBar && !phone && !!onRevealDetails;
+	const handleHeaderClick = (e: React.MouseEvent<HTMLDivElement>) => {
+		if (!canRevealDetails) return;
+		// A toolbar button (or anything interactive) keeps its own meaning.
+		if ((e.target as Element).closest('button, a, input, select, textarea, [role="button"]'))
+			return;
+		onRevealDetails?.();
+	};
 
 	return (
 		<div className="shrink-0" style={{ backgroundColor: theme.colors.bgSidebar }}>
 			{/* Main header row */}
 			<div
-				className={`border-b ${phone ? 'px-3 py-2' : 'px-6 py-3'}`}
+				className={`border-b ${phone ? 'px-3 py-2' : 'px-6 py-3'}${canRevealDetails ? ' cursor-pointer' : ''}`}
 				style={{ borderColor: theme.colors.border }}
+				onClick={canRevealDetails ? handleHeaderClick : undefined}
+				title={canRevealDetails ? 'Show file details' : undefined}
+				data-testid="file-preview-header-row"
 			>
 				<div className="flex items-center justify-between">
 					<div className="flex items-center gap-3 min-w-0">

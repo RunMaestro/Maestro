@@ -13,8 +13,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { ChevronDown, AlertTriangle, Settings } from 'lucide-react';
 import { AGENT_AUTOSELECT_ORDER, isBetaAgent } from '../../shared/agentMetadata';
-import { requiresIdleParticipants } from '../../shared/group-chat-types';
+import {
+	GROUP_CHAT_MODERATION_UNSUPPORTED,
+	groupChatModeratorRefusal,
+	requiresIdleParticipants,
+} from '../../shared/group-chat-types';
 import type { Theme, AgentConfig, ModeratorConfig, GroupChat } from '../types';
+import type { AgentDiscoveryRequest } from '../../shared/types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter, FormInput, ToggleSwitch } from './ui';
 import { ModalTabStrip, useModalTabs } from './ui/ModalTabStrip';
@@ -92,12 +97,26 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	const discardCustomizationRef = useRef<(() => void) | null>(null);
 
 	const nameInputRef = useRef<HTMLInputElement>(null);
+	// Absence inherits provider settings; an explicitly emptied Grok record must
+	// remain an override in discovery and in the saved moderator configuration.
+	const [customEnvVars, setCustomEnvVars] = useState<Record<string, string>>();
+	const envVars = customEnvVars ?? {};
+	// Where the moderator will execute, for model and effort discovery. Only an
+	// explicit remote working-directory override describes that.
+	const [discoveryCwd, setDiscoveryCwd] = useState<string>();
+	const discoveryContext = useMemo<
+		Exclude<AgentDiscoveryRequest['context'], { kind: 'agent' }> | undefined
+	>(
+		() => (discoveryCwd?.trim() ? { kind: 'draft', cwd: discoveryCwd, customEnvVars } : undefined),
+		[discoveryCwd, customEnvVars]
+	);
 
 	// Use centralized agent configuration hook
 	const ac = useAgentConfiguration({
 		enabled: isOpen,
 		loadSshRemotes: true,
 		autoSelect: false, // We handle auto-select with AGENT_TILES priority
+		discoveryContext,
 	});
 
 	// Only the customization dialog owns tabs; the chat form stays flat.
@@ -115,6 +134,24 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		setConfigExpanded(isOpen && customizationVisited);
 	}, [isOpen, customizationVisited, setConfigExpanded]);
 
+	// Detection reports each provider's capabilities. A provider that declares it
+	// cannot moderate is listed but never selectable; one with no capability
+	// record is left to storage's refusal, which uses the same text.
+	const canModerate = useCallback(
+		(agentId: string) =>
+			!groupChatModeratorRefusal(
+				agentId,
+				ac.detectedAgents.find((a: AgentConfig) => a.id === agentId)?.capabilities
+					?.supportsGroupChatModeration !== false
+			),
+		[ac.detectedAgents]
+	);
+
+	// Absence inherits the provider's variables. A Grok record the user emptied
+	// on purpose stays an override, so it is saved as `{}` rather than dropped.
+	const savedEnvVars =
+		ac.selectedAgent === 'grok' || Object.keys(envVars).length > 0 ? customEnvVars : undefined;
+
 	// Initialize state from groupChat when modal opens (edit mode)
 	useEffect(() => {
 		if (mode !== 'edit' || !isOpen || !groupChat) {
@@ -125,10 +162,19 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		setName(groupChat.name);
 		setRequireIdle(requiresIdleParticipants(groupChat));
 		setCustomModel(groupChat.moderatorConfig?.customModel);
-		ac.setSelectedAgent(groupChat.moderatorAgentId);
-		ac.setCustomPath(groupChat.moderatorConfig?.customPath || '');
+		ac.handleAgentChange(groupChat.moderatorAgentId);
+		if (groupChat.moderatorConfig?.customPath !== undefined) {
+			ac.setCustomPath(groupChat.moderatorConfig.customPath);
+		}
 		ac.setCustomArgs(groupChat.moderatorConfig?.customArgs || '');
-		ac.setCustomEnvVars(groupChat.moderatorConfig?.customEnvVars || {});
+		setCustomEnvVars(groupChat.moderatorConfig?.customEnvVars);
+		// A local moderator has no selected workspace. Only an explicit remote
+		// working-directory override describes where this moderator will execute.
+		setDiscoveryCwd(
+			groupChat.moderatorConfig?.sshRemoteConfig?.enabled
+				? groupChat.moderatorConfig.sshRemoteConfig.workingDirOverride || undefined
+				: undefined
+		);
 		ac.setCustomEnvVarsDisabled(groupChat.moderatorConfig?.customEnvVarsDisabled || {});
 		ac.setSshRemoteConfig(groupChat.moderatorConfig?.sshRemoteConfig as any);
 		// Claude token source (Claude Code moderator only)
@@ -166,11 +212,17 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		}
 
 		// If current selection is still valid, keep it
-		if (ac.selectedAgent && ac.detectedAgents.some((a) => a.id === ac.selectedAgent)) return;
+		if (
+			ac.selectedAgent &&
+			canModerate(ac.selectedAgent) &&
+			ac.detectedAgents.some((a) => a.id === ac.selectedAgent)
+		)
+			return;
 
 		const isSupportedAndDetected = (agentId: string) =>
 			AGENT_TILES.some((tile) => tile.id === agentId && tile.supported) &&
-			ac.detectedAgents.some((a: AgentConfig) => a.id === agentId);
+			ac.detectedAgents.some((a: AgentConfig) => a.id === agentId) &&
+			canModerate(agentId);
 
 		const preferred =
 			AGENT_AUTOSELECT_ORDER.find(isSupportedAndDetected) ??
@@ -179,9 +231,9 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		if (preferred) {
 			ac.setSelectedAgent(preferred);
 		} else {
-			ac.setSelectedAgent(ac.detectedAgents[0].id);
+			ac.setSelectedAgent(ac.detectedAgents.find((a) => canModerate(a.id))?.id ?? null);
 		}
-	}, [mode, ac.isDetecting, ac.detectedAgents, ac.selectedAgent, ac.setSelectedAgent]);
+	}, [mode, ac.isDetecting, ac.detectedAgents, ac.selectedAgent, ac.setSelectedAgent, canModerate]);
 
 	// Reset local state when modal closes
 	useEffect(() => {
@@ -195,6 +247,8 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 			setSaveError(undefined);
 			setProviderConfigDraft({});
 			setCustomModel(undefined);
+			setCustomEnvVars(undefined);
+			setDiscoveryCwd(undefined);
 			discardCustomizationRef.current = null;
 		}
 	}, [isOpen]);
@@ -211,7 +265,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		const hasConfig =
 			ac.customPath ||
 			ac.customArgs ||
-			Object.keys(ac.customEnvVars).length > 0 ||
+			savedEnvVars !== undefined ||
 			Object.keys(ac.customEnvVarsDisabled).length > 0 ||
 			customModelValue ||
 			ac.sshRemoteConfig ||
@@ -221,7 +275,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		return {
 			customPath: ac.customPath || undefined,
 			customArgs: ac.customArgs || undefined,
-			customEnvVars: Object.keys(ac.customEnvVars).length > 0 ? ac.customEnvVars : undefined,
+			customEnvVars: savedEnvVars,
 			customEnvVarsDisabled:
 				Object.keys(ac.customEnvVarsDisabled).length > 0 ? ac.customEnvVarsDisabled : undefined,
 			customModel: customModelValue || undefined,
@@ -233,7 +287,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	}, [
 		ac.customPath,
 		ac.customArgs,
-		ac.customEnvVars,
+		savedEnvVars,
 		ac.customEnvVarsDisabled,
 		customModel,
 		ac.sshRemoteConfig,
@@ -244,7 +298,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	]);
 
 	const handleSubmit = useCallback(async () => {
-		if (!name.trim() || !ac.selectedAgent || saving) return;
+		if (!name.trim() || !ac.selectedAgent || !canModerate(ac.selectedAgent) || saving) return;
 		setSaving(true);
 		setSaveError(undefined);
 		try {
@@ -276,6 +330,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	}, [
 		name,
 		ac.selectedAgent,
+		canModerate,
 		ac.saveAgentConfig,
 		ac.agentConfigRef,
 		providerConfigDraft,
@@ -302,7 +357,10 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		const originalEnvVars = groupChat.moderatorConfig?.customEnvVars || {};
 		const originalDisabledEnvVars = groupChat.moderatorConfig?.customEnvVarsDisabled || {};
 		const envVarsChanged =
-			JSON.stringify(ac.customEnvVars) !== JSON.stringify(originalEnvVars) ||
+			JSON.stringify(envVars) !== JSON.stringify(originalEnvVars) ||
+			(ac.selectedAgent === 'grok' &&
+				(savedEnvVars !== undefined) !==
+					(groupChat.moderatorConfig?.customEnvVars !== undefined)) ||
 			JSON.stringify(ac.customEnvVarsDisabled) !== JSON.stringify(originalDisabledEnvVars);
 
 		const originalSshConfig = groupChat.moderatorConfig?.sshRemoteConfig;
@@ -341,7 +399,8 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		customModel,
 		ac.customPath,
 		ac.customArgs,
-		ac.customEnvVars,
+		envVars,
+		savedEnvVars,
 		ac.customEnvVarsDisabled,
 		ac.sshRemoteConfig,
 		ac.enableMaestroP,
@@ -351,7 +410,10 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	]);
 
 	const canSubmit =
-		name.trim().length > 0 && ac.selectedAgent !== null && (mode === 'create' || hasChanges());
+		name.trim().length > 0 &&
+		ac.selectedAgent !== null &&
+		canModerate(ac.selectedAgent) &&
+		(mode === 'create' || hasChanges());
 
 	const nameError = submitAttempted && !name.trim() ? 'Enter a name for the group chat' : undefined;
 	const tabs = useMemo(() => buildAgentSettingsTabs(MODERATOR_TAB_IDS), []);
@@ -363,7 +425,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 			ac.setSelectedAgent(ac.selectedAgent);
 			ac.setCustomPath(ac.customPath);
 			ac.setCustomArgs(ac.customArgs);
-			ac.setCustomEnvVars(ac.customEnvVars);
+			setCustomEnvVars(customEnvVars);
 			ac.setCustomEnvVarsDisabled(ac.customEnvVarsDisabled);
 			ac.setSshRemoteConfig(ac.sshRemoteConfig);
 			ac.setEnableMaestroP(ac.enableMaestroP);
@@ -423,16 +485,21 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		if (!tile.supported) return false;
 		return ac.detectedAgents.some((a: AgentConfig) => a.id === tile.id);
 	});
+	// Listed so the user sees why, but not selectable as moderator.
+	const nonModeratorTiles = availableTiles.filter((tile) => !canModerate(tile.id));
 
 	// Get selected agent info
 	const selectedAgentConfig = ac.detectedAgents.find((a) => a.id === ac.selectedAgent);
 	const selectedTile = AGENT_TILES.find((t) => t.id === ac.selectedAgent);
 
 	// One editor under Provider; the config panel hides its inline copy.
+	// The live record is local so an absent one (inherit) stays distinct from an
+	// explicitly emptied one; edits always produce a record.
 	const envVarProps = agentEnvVarHandlers({
-		customEnvVars: ac.customEnvVars,
+		customEnvVars: envVars,
 		customEnvVarsDisabled: ac.customEnvVarsDisabled,
-		setCustomEnvVars: ac.setCustomEnvVars,
+		setCustomEnvVars: (action) =>
+			setCustomEnvVars((prev) => (typeof action === 'function' ? action(prev ?? {}) : action)),
 		setCustomEnvVarsDisabled: ac.setCustomEnvVarsDisabled,
 	});
 
@@ -578,7 +645,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 										Detecting agents...
 									</span>
 								</div>
-							) : availableTiles.length === 0 ? (
+							) : availableTiles.length === nonModeratorTiles.length ? (
 								<div className="text-sm py-2" style={{ color: theme.colors.textDim }}>
 									No agents available. Please install Claude Code, OpenCode, Codex, or Factory
 									Droid.
@@ -589,6 +656,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 										<select
 											value={ac.selectedAgent || ''}
 											onChange={(e) => {
+												setCustomEnvVars(undefined);
 												ac.handleAgentChange(e.target.value);
 												setCustomModel(undefined);
 												setProviderConfigDraft({});
@@ -603,10 +671,17 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 										>
 											{availableTiles.map((tile) => {
 												const isBeta = isBetaAgent(tile.id);
+												const moderates = canModerate(tile.id);
 												return (
-													<option key={tile.id} value={tile.id}>
+													<option
+														key={tile.id}
+														value={tile.id}
+														disabled={!moderates}
+														title={moderates ? undefined : GROUP_CHAT_MODERATION_UNSUPPORTED}
+													>
 														{tile.name}
 														{isBeta ? ' (Beta)' : ''}
+														{moderates ? '' : ' - cannot moderate'}
 													</option>
 												);
 											})}
@@ -628,6 +703,18 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 										</button>
 									)}
 								</div>
+							)}
+
+							{!ac.isDetecting && nonModeratorTiles.length > 0 && (
+								<p
+									className="mt-2 text-xs"
+									style={{ color: theme.colors.textDim }}
+									data-testid="moderator-unavailable-reason"
+								>
+									{nonModeratorTiles.map((tile) => tile.name).join(', ')}{' '}
+									{nonModeratorTiles.length === 1 ? 'is' : 'are'} not available as moderator:{' '}
+									{GROUP_CHAT_MODERATION_UNSUPPORTED}
+								</p>
 							)}
 
 							{/* Warning about changing moderator (edit mode only) */}
@@ -719,11 +806,14 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 											<AgentProviderSelect
 												theme={theme}
 												value={ac.selectedAgent ?? ''}
-												options={availableTiles.map((tile) => ({
-													value: tile.id,
-													label: tile.name,
-												}))}
+												options={availableTiles
+													.filter((tile) => canModerate(tile.id))
+													.map((tile) => ({
+														value: tile.id,
+														label: tile.name,
+													}))}
 												onChange={(agentId) => {
+													setCustomEnvVars(undefined);
 													ac.handleAgentChange(agentId);
 													setCustomModel(undefined);
 													setProviderConfigDraft({});
@@ -735,6 +825,25 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 											>
 												{selectedTile.name} Settings
 											</div>
+											{ac.selectedAgent === 'grok' && (
+												<p
+													className="text-xs"
+													style={{ color: theme.colors.textDim }}
+													role="status"
+												>
+													{!discoveryCwd
+														? 'Model and effort discovery is unavailable until the moderator workspace is known. Enter values manually or keep the configured values.'
+														: ac.modelDiscoveryStatus === 'discovered' &&
+															  Object.values(ac.dynamicOptionStatuses).includes('discovered')
+															? 'Model and effort options apply to this moderator configuration. Manual values are preserved.'
+															: ac.modelDiscoveryStatus === 'configured-fallback' ||
+																  Object.values(ac.dynamicOptionStatuses).includes(
+																		'configured-fallback'
+																  )
+																? 'Discovery is unavailable. Showing configured model or effort values; manual values are preserved.'
+																: 'Model or effort discovery is unavailable. Configured and manual values are preserved.'}
+												</p>
+											)}
 											<AgentConfigPanel
 												theme={theme}
 												agent={selectedAgentConfig}

@@ -103,6 +103,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **An image file the user named on the CLI:** `readCliImageFile(input, maxBytes)` in `src/cli/utils/imageFiles.ts`
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
+- **Parsing a base64 data URL (an image payload):** `parseBase64DataUrl()`, `mediaSubtype()` in `src/shared/dataUrl.ts` (never a `base64,(.+)$` capture)
 - **Guarding a serialized JSON payload before it overwrites a file:** `assertSerializedJsonIsSafe(serialized, target)` in `src/shared/jsonUtils.ts`
 - **Writing a JSON file atomically from synchronous code:** `atomicWriteJsonSync(filePath, value, opts?)` in `src/shared/atomicJsonSync.ts` (the async twin is `atomicWriteJson()` in `src/main/utils/atomic-json-store.ts`)
 - **UTF-8 size of a JSON payload (a message size cap):** `serializedJsonByteLength(value)` in `src/shared/jsonUtils.ts`
@@ -119,6 +120,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Loading a LOCAL file tree:** `walkLocalFileTree()` in `src/main/utils/file-tree-walk.ts`, wrapped by `loadFileTree()` in `src/renderer/utils/fileExplorer.ts`
 - **Telling the Files panel a file appeared or vanished:** `requestFileTreeRefresh(sessionId)` in `src/renderer/utils/fileTreeRefresh.ts` (renderer) and `nudgeFileTreeForPaths(paths)` in `src/cli/services/file-tree-refresh.ts` (CLI)
 - **Whether an absolute path exists, from render code:** `checkPathExists()` in `src/renderer/utils/fileLinks/pathExistence.ts`, `usePathExistence(sshRemoteId?)` in `src/renderer/hooks/utils/usePathExistence.ts` (async-filled cache; `remarkFileLinks` links a spaced absolute path only once it exists)
+- **Finding the file a markdown embed points at:** `resolveEmbedCandidates()`, `findFirstExistingPath()`, `parseEmbedAltSize()` in `src/renderer/utils/fileLinks/embedResolution.ts`
 - **Delete the file the user is previewing:** `requestFileDeletion()` in `src/renderer/services/fileDeletion.ts`
 
 #### Main process: stores, persistence, platform
@@ -146,6 +148,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which store holds a provider session's origin record:** `sessionOriginStoreFor()` in `src/shared/sessionOriginStore.ts`
 - **Recording or reading the User Journey:** `sanitizeJourneyUrl()`, `formatJourneyLine()`, `parseJourneyJsonl()` in `src/shared/userJourney.ts`; `appendJourneyEntry()` in `src/main/user-journey-manager.ts`; `recordJourney()` in `src/renderer/services/userJourney.ts`
 - **What happened around an agent, in time order (the timeline):** `readTimeline()` in `src/shared/maestro-lib/store/read-timeline.ts`; `selectTimelineEvents()`, `formatTimelineLine()`, `timelineFollowUps()` in `src/shared/timeline.ts`; `findHistoryEntries()` in `src/shared/maestro-lib/store/read-history.ts`
+- **A project's shared History (`.maestro/history/history-<label>.jsonl`):** `appendSharedHistoryEntry()`, `readSharedHistoryEntries()`, `hostSharedHistoryLabel()` in `src/shared/maestro-lib/store/shared-history.ts`; `filterHistoryEntries()`, `mergeEntriesById()` in `src/shared/history.ts`
 - **A `--since` / `--until` time the user typed (`30m`, `2h`, `1w`, ISO, epoch):** `parseTimeInput()`, `parseDurationInput()` in `src/shared/timeInput.ts`
 - **Serializing async work on one entity:** `createKeyedWriteQueue()` in `src/shared/keyedWriteQueue.ts` (main imports it via `src/main/utils/atomic-json-store.ts`)
 - **Serializing a read-modify-write across PROCESSES:** `withDirectoryLock(lockDir, fn, opts?)`, `sleepSync(ms)` in `src/shared/directoryLock.ts` (for a file the app AND `maestro-cli` write; `createKeyedWriteQueue()` covers one process only)
@@ -190,6 +193,10 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Starting, streaming, stopping and resuming an agent turn:** `startTurn()` in `src/shared/maestro-lib/run/start-turn.ts`, `runTurn()` / `runToCompletion()` in `src/shared/maestro-lib/run/run-to-completion.ts`, `planSessionTurn()` in `src/shared/maestro-lib/run/session.ts`
 - **Stopping a process (interrupt, terminate, kill the tree):** `stopProcess(target, options)` in `src/shared/maestro-lib/control/termination.ts` (never a bare `kill('SIGTERM')` + `setTimeout`)
 - **Whether a Claude turn runs the maestro-p TUI or `claude --print`:** `resolveClaudeSpawnModeCore()`, `applyClaudeSpawnDecision()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
+- **Which Grok route a turn runs on (ACP or native headless):** `selectGrokRoute()`, `beginGrokAcpNegotiation()`, `completeGrokAcpNegotiation()`, `grokAcpProcessSpec()`, `grokAcpRouteOptions()`, `isGrokRouteDecisionCurrent()` in `src/shared/maestro-lib/grok/route.ts`
+- **The host seams of the Grok ACP route (digest, effect authority):** `sha256Hex()`, `grokInstallationId()`, `GrokEffectAuthority`, `grokEffectGranted()` in `src/shared/maestro-lib/grok/host-seams.ts`
+- **Running a provider probe (bounded, cancellable, Grok refused):** `runProviderProbe()`, `ProviderProbeRefusedError` in `src/main/agents/grok-probe.ts`
+- **Logging a spawn or SSH failure without leaking its message:** `redactedErrorFields(error)` in `src/shared/processErrors.ts`
 - **Timing out a supervised agent process:** `createIdleWatchdog()` in `src/main/utils/idle-watchdog.ts`, events in `src/main/utils/agent-liveness.ts` (the budget is silence, not wall clock)
 - **A one-shot answer from a cheap model (no tab, no tools):** `window.maestro.context.groomContext()` with `cheapTurn` / `readOnly` / `disableTools` / `timeoutMs`, over `groomContext()` in `src/main/utils/context-groomer.ts`
 - **Whether a working directory can be spawned into:** `unusableCwdReason(cwd)`, `unusableDirectoryReason(dir, label)` in `src/main/process-manager/utils/spawnCwd.ts`
@@ -209,6 +216,11 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Connecting to a Federation peer's host (CLI and desktop):** `connectPeerClient()`, `federationPeersOf()`, `peerIdFor()`, `peerForwardError()`, `watchPeerConnection()`, `PeerConnectError` in `src/shared/maestro-lib/client/peer-connection.ts`
 - **Driving a Federation peer's agent (CLI and desktop):** `runPeerAgentAction()`, `parsePeerAgentAction()` in `src/shared/maestro-lib/client/peer-actions.ts`; `PeerMirrorService.act()` in `src/main/federation/`
 - **Mirroring a Federation peer in memory (desktop):** `applyPeerEvent()`, `mirrorKey()`, `replacePeerAgents()` in `src/shared/maestro-lib/client/peer-mirror.ts`; `foldLiveTurn()`, `coalesceTurnEvents()` in `src/shared/maestro-lib/client/live-turn.ts`; `getPeerMirrorService()` in `src/main/federation/index.ts`
+- **Installing maestro-cli on an SSH remote (Federation):** `setupRemoteHost()`, `installRemoteCli()`, `resolveLocalCliBundle()` in `src/shared/maestro-lib/client/remote-install.ts`; `setupHostFromDesktop()` in `src/main/federation/setup-host.ts`
+- **Keeping a Federation host running across reboots (service):** `installRemoteService()`, `buildRemoteServiceScript()`, `describeRemoteService()` in `src/shared/maestro-lib/client/remote-service.ts`
+- **Automatic Federation (keep hosts, install, move SSH agents):** `AutoFederationCoordinator` in `src/main/federation/auto-federation.ts`; `useFederationAutoStore` in `src/renderer/stores/federationAutoStore.ts`; types in `src/shared/federationAuto.ts`
+- **Whether an SSH remote takes part in Federation:** `isFederationRemote()`, `federationFieldFor()` in `src/shared/federationRemote.ts`
+- **How a local agent stands with Federation (badge, Make Federated):** `agentFederationStatus()`, `canMakeFederated()`, `isPeerFederated()` in `src/renderer/utils/peerMirrorView.ts`; `<FederationBadge>` in `src/renderer/components/SessionList/FederationBadge.tsx`
 - **Showing a Federation peer's mirrored agent (renderer):** `usePeerMirrorStore`, `isMirrorShown()` in `src/renderer/stores/peerMirrorStore.ts`; `buildMirrorViewSession()` in `src/renderer/utils/peerMirrorView.ts`; `gateKeyForMirror()` in `src/renderer/hooks/keyboard/mirrorKeyboardGate.ts`
 - **A loopback port for an SSH local forward:** `availableLocalPort()`, `waitForLocalPort()` in `src/shared/maestro-lib/client/local-port.ts`
 - **Building or delivering the Maestro system prompt:** `assembleMaestroSystemPrompt()` in `src/shared/maestroSystemPrompt.ts`; `applySystemPromptDelivery()` in `src/main/utils/system-prompt-delivery.ts`; `buildMaestroSystemPromptForSession()` in `src/main/utils/maestro-system-prompt.ts`
@@ -224,7 +236,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Assembling the prompt, arguments and launch request of a chat turn:** `assembleTurn()` in `src/shared/maestro-lib/turns/assemble.ts`
 - **Running a chat turn with no desktop (send, queue, stop, per-tab events):** `createRuntimeTurns()` in `src/shared/maestro-lib/runtime/turns.ts`
 - **Recording a finished turn (transcript, History, usage):** `createTurnRecorder()`, `buildTurnTranscript()` in `src/shared/maestro-lib/turns/record-turn.ts`
-- **Serving a runtime to other processes (`maestro-cli host`):** `startRuntimeServer()` in `src/shared/maestro-lib/runtime/server.ts`
+- **Serving a runtime to other processes (`maestro-cli host`):** `startRuntimeServer()` in `src/shared/maestro-lib/runtime/server.ts`, `withLiveTabState()` in `src/shared/maestro-lib/runtime/server-frames.ts`
 
 #### Providers, accounts, and auth
 
@@ -292,6 +304,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Recording wizard usage:** `beginWizardRun()`, `recordWizardDocuments()` in `src/renderer/services/wizardStats.ts`
 - **Leaving inline wizard mode:** `flattenWizardIntoTab(tab, { summary? })` in `src/renderer/utils/tabHelpers/index.ts`
 - **What the Thinking pill lists:** `buildThinkingItems()` in `src/renderer/utils/thinkingItems.ts` (read through `useThinkingItems()`); `useBackgroundAutoRuns()` in `src/renderer/hooks/batch/useBackgroundAutoRuns.ts`
+- **Where a History panel reads from (local agent or Federation mirror):** `localHistorySource()`, `mirrorHistorySource()` in `src/renderer/components/History/historySource.ts`, via `HistoryPanel`'s `source` prop
 - **Whether this renderer owns an app-wide side effect:** `useIsLifecycleOwner()` in `src/renderer/contexts/WindowContext.tsx`
 
 #### Tabs
@@ -300,6 +313,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Any CLI verb that can move the Maestro view:** `resolveBackgroundFlag()` (CLI) / `readBackgroundField()` (handler) in `src/shared/focusPlacement.ts` (never `message.background !== false`)
 - **Which tab a tab-scoped action targets:** `resolveActiveTabRef(session)`, `resolveTabRefRenameValue()`, `resolveTabRefTitle()` in `src/renderer/utils/panelLayout.ts`
 - **Whether an AI tab is drawn in the tab strip:** `isAiTabHidden(tab)`, `visibleAiTabs(tabs)`, `hasUnreadVisibleTab(tabs)` in `src/renderer/utils/unifiedTabOrderUtils.ts` (never `aiTabs.length` or `aiTabs.some((t) => t.hasUnread)`)
+- **Counting or listing an agent's tabs by visibility:** `tabStripSlotKeys()`, `tabStripVisibility()`, `countTabStrip()`, `countOpenTabs()`, `dropOrphanedTabs()`, `collectGroupMemberTabKeys()` in `src/shared/tabStripMembership.ts`
 - **What an unnamed tab is called:** `getTabDisplayName(tab)`, `isSessionIdLabel()` in `src/renderer/utils/tabHelpers`, over `formatSessionId(agentSessionId)`
 - **Where a closed tab's name still exists:** `HistoryEntry.sessionName` only; pass it as the third argument of `handleResumeSession`
 - **Resolving a History conversation's provider:** `resolveHistorySession()` in `src/shared/maestro-lib/translation/session.ts`
@@ -406,6 +420,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Un-parking an Auto Run stopped on an error:** `registerBatchResumer()`, `getBatchResumer()` in `src/renderer/services/batchResumer.ts`; `resolveAutoResumePolicy()` in `src/shared/autorunAutoResume.ts`; `scheduleAutoResume()`, `cancelPendingAutoResume()` in `src/renderer/stores/autoRunResumeStore.ts`
 - **Auto Run markers (HITL / halt / model hint):** `scanMaestroMarkers()`, `findPendingHitlGate()`, `detectHaltMarker()`, `hasMaestroMarker()` in `src/shared/autorunMarkers.ts`, rendered by `<MarkerPill>`
 - **Auto Run steering notes (mid-run course correction):** `formatSteeringNotesBlock()` in `src/shared/autorunSteering.ts`; `submitSteeringNote()`, `recordSteeringResponse()`, `runRemoteSteeringCommand()` in `src/renderer/services/autoRunSteering.ts`; wire shape in `src/shared/autoRunSteeringCommands.ts`
+- **Auto Run delegation (a task hands work to another agent):** `formatDelegationResultsBlock()`, `applyAutoRunDelegationEvent()` in `src/shared/autoRunDelegation.ts`; `awaitDelegationsBeforeTurn()`, `settleDelegationsAtRunEnd()` in `src/renderer/services/autoRunDelegations.ts`
 - **Fence-aware markdown scanning:** `forEachMarkdownLine()`, `UNCHECKED_TASK_REGEX`, `CHECKED_TASK_COUNT_REGEX`, `CHECKED_TASK_REGEX` in `src/shared/markdownTaskScan.ts`
 - **Auto Run document names (absolute path to folder-relative):** `resolveAutoRunDocumentName()`, `resolveAutoRunDocumentNames()` in `src/shared/autoRunDocumentPaths.ts`
 - **Ordering the Auto Run run list from the picker:** `applySelectionOrder()`, `selectFolderFiles()` in `src/renderer/utils/documentSelectionOrder.ts`
@@ -516,6 +531,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Usage Dashboard metric tile:** `<MetricCard>` in `src/renderer/components/UsageDashboard/MetricCard.tsx`
 - **Color for the Nth chart series:** `getSeriesColor(index, theme, colorBlindMode?)` in `src/renderer/components/UsageDashboard/chartUtils.ts`
 - **A label that must not truncate:** `useOptionalLabelFits(rowRef)`, `useOptionalContentFits(ref, { axis })` in `src/renderer/hooks/ui/useOptionalLabelFits.ts`
+- **A Settings section the search can show inline:** `GENERAL_SECTIONS`, `DISPLAY_SECTIONS`, `ENCORE_SECTIONS` in each tab's `sections.tsx`, `findSettingsSection(settingId)` in `src/renderer/components/Settings/settingsSections.ts`
 - **Adding a control to the Left Bar header:** three zones (identity, indicators, menu); a status control goes in the CENTER band and the wordmark never truncates (`showWordmark` in `SessionList.tsx`)
 - **Color math and contrast:** `readableTextOn()`, `isReadableOn()`, `contrastRatio()`, `blendColors()`, `transparentize()`, `adjustBrightness()`, `hexToRgb()` in `src/shared/colorContrast.ts`
 - **Diagram labels on fills the AUTHOR chose:** `repairDiagramLabelContrast(svg)` in `src/renderer/utils/diagramLabelContrast.ts`, over `cssColorToHex()` in `src/shared/colorContrast.ts`
@@ -635,6 +651,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a DataviewJS block may run:** `dataviewJsRunPolicy()`, `isTrustedDataviewRoot()` in `src/shared/dataview/trust.ts`; `useDataviewJsRunPolicy()` in `src/renderer/hooks/file/useDataviewJsRunPolicy.ts`
 - **A message from the DataviewJS sandbox:** `parseSandboxMessage(raw, from)` in `src/shared/dataview/sandboxProtocol.ts`
 - **What a Dataview block shows while it computes:** `DataviewSkeleton`, `DataviewRefreshing`, `DataviewInlineRefreshing`, `DataviewCalculatingPill`, `useDataviewRefreshIndicator()` in `src/renderer/components/Markdown/components/DataviewLoading.tsx`
+- **Highlighting a `dataview` or `dataviewjs` fence:** `DQL_TOKEN_RULES` in `src/shared/dataview/syntax.ts`; adapters in `src/renderer/utils/dataviewSyntax.ts`; editor fences via `fenceLanguage()` in `src/renderer/components/FilePreview/giantPreview/languageLoader.ts`
 - **What counts as a wiki link, embed, or file path in markdown text:** `WIKI_LINK_PATTERN`, `IMAGE_EMBED_PATTERN`, `PATH_PATTERN` in `src/shared/fileLinkPatterns.ts`
 
 #### Layout, scroll, sizing, and hook utilities
@@ -662,6 +679,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Data a surface fetches that must survive it unmounting:** `useCachedResource()`, `revalidateCachedResource()`, `readCachedResource()` in `src/renderer/hooks/utils/useCachedResource.ts`; `useDashboardResource()`, `useTokenUsage()` in `src/renderer/components/UsageDashboard/`
 - **Steering a turn that is ALREADY RUNNING:** `getSteerEligibility()` in `src/renderer/utils/executionQueue.ts`, `steerQueuedItem()`, `applyCodexTransport()` in `src/renderer/services/chatSteering.ts`, protocol in `src/shared/chatSteering.ts`, `steerCodexAppServerTurn()` in `src/main/codex-app-server/steering.ts`
 - **Honoring the user's settings in a secondary window:** `useWindowSettingsSync()`, `usePublishTypographyVars()`, `useReloadSettingsOnExternalChange()` in `src/renderer/hooks/settings/useWindowSettingsSync.ts`
+- **Reading settings without the lifecycle effects:** `useSettingsValues()` in `src/renderer/hooks/settings/useSettings.ts`
 
 #### Phone and touch (web-desktop)
 

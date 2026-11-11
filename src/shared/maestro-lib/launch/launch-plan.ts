@@ -43,8 +43,18 @@ import {
  */
 
 import { isWindows } from '../../platformDetection';
+import {
+	dirsWithAnyAccess,
+	dirsWithWriteAccess,
+	normalizeAdditionalDirectories,
+} from '../../additionalDirectories';
+import {
+	GrokModelEffortError,
+	resolveGrokModelEffortArgs,
+	type GrokEffortMenu,
+} from './agent-args';
 import type { QuerySource } from '../../querySource';
-import type { AgentSshRemoteConfig, SshRemoteConfig } from '../../types';
+import type { AdditionalDirectory, AgentSshRemoteConfig, SshRemoteConfig } from '../../types';
 import { resolveAgentGateway, type AgentGatewayRefusalCode } from '../../local-models/gateway';
 import {
 	resolveRunOnLaunch,
@@ -60,12 +70,20 @@ import {
 	type SecretProblem,
 	type SecretSource,
 } from '../../serverSecrets';
-import { buildAgentEnvironment, resolveAgentEnvVars, type AgentEnvSurface } from './env';
+import {
+	buildAgentEnvironment,
+	resolveAgentEnvVars,
+	type AgentEnvSurface,
+	type LaunchPermissionMode,
+} from './env';
 import {
 	resolvePromptDelivery,
+	selectPromptFileDestination,
 	type PromptDelivery,
 	type PromptDeliveryAgent,
+	type PromptFileDestination,
 } from './prompt-delivery';
+import type { AcpPromptBlock, EmbeddedImageSupport } from './image-refs';
 import {
 	resolveSshLaunchTarget,
 	type SshLaunchTarget,
@@ -173,10 +191,24 @@ export interface AgentLaunchInput {
 	remoteCommand?: string;
 	/** Every argument except the prompt. */
 	args: string[];
+	/** Host-scoped native wire menu; picker options are not validation evidence. */
+	grokEffortMenu?: GrokEffortMenu;
 	cwd: string;
+	/**
+	 * Explicit grants on the selected host, separate from cwd and prompt paths.
+	 * Other providers retain their existing argument builders. Grok refuses active
+	 * grants until a native mechanism is qualified; never expand remote roots here.
+	 */
+	additionalDirectories?: AdditionalDirectory[];
 	/** The user prompt, already final (system prompt embedded if that applies). */
 	prompt?: string;
 	hasImages?: boolean;
+	/** Ordered, resolved content, including composed instructions, instead of prompt text. */
+	promptBlocks?: readonly AcpPromptBlock[];
+	/** Executing host's admission for embedded images on this route/model/turn. */
+	embeddedImageSupport?: EmbeddedImageSupport;
+	/** Fresh executing-host path; the launch owner materializes and cleans the planned artifact. */
+	promptFileDestination?: PromptFileDestination;
 
 	/** Settings -> Environment. Applied on desktop only. */
 	globalShellEnvVars?: Record<string, string>;
@@ -186,6 +218,14 @@ export interface AgentLaunchInput {
 	sessionCustomEnvVars?: Record<string, string>;
 	/** Applies the provider's `readOnlyEnvOverrides` on top of every user layer. */
 	readOnlyMode?: boolean;
+	/**
+	 * The permission mode this launch asks for, by the surface's own rule: the
+	 * CLI's unattended default is `full`, the desktop's is what the request
+	 * named. Absent derives `readonly` from `readOnlyMode` and `standard`
+	 * otherwise, so a surface whose default is full access must say so.
+	 * Reported back as `plan.permission`.
+	 */
+	permissionMode?: LaunchPermissionMode;
 	/** Adds the provider's `batchModeEnvVars` (CLI batch spawns only). */
 	batchMode?: boolean;
 	/** Vars Maestro states about this spawn (caller identity and the like). */
@@ -233,6 +273,24 @@ export interface AgentLaunchInput {
 	cmdShellLaunch?: boolean;
 }
 
+/** The permission mode a planned launch runs with, as the launch asked for it. */
+export interface LaunchPermissionDecision {
+	requested: LaunchPermissionMode;
+}
+
+/**
+ * The mode a launch asks for when its surface names none: `readonly` when the
+ * read-only layer is on, `standard` (the provider's own prompting) otherwise.
+ * Never `full`: a surface whose default bypasses approvals names it.
+ */
+export function defaultLaunchPermissionMode(input: {
+	permissionMode?: LaunchPermissionMode;
+	readOnlyMode?: boolean;
+}): LaunchPermissionMode {
+	if (input.permissionMode) return input.permissionMode;
+	return input.readOnlyMode ? 'readonly' : 'standard';
+}
+
 interface LaunchPlanCommon {
 	/** Command and args to hand the process launcher (or the SSH wrapper, for a remote). */
 	command: string;
@@ -245,7 +303,7 @@ interface LaunchPlanCommon {
 	 */
 	launchArgs: string[];
 	cwd: string;
-	prompt: PromptDelivery;
+	prompt: Exclude<PromptDelivery, { via: 'refused' }>;
 	/**
 	 * Text to write to the child's stdin and then close it, for a stdin
 	 * delivery. Undefined when the prompt travels any other way.
@@ -275,6 +333,8 @@ interface LaunchPlanCommon {
 	 * when the agent declares none or the surface does not deliver them.
 	 */
 	secrets?: LaunchSecretsReport;
+	/** The mode this launch runs with. */
+	permission: LaunchPermissionDecision;
 }
 
 export interface LaunchSecretsReport {
@@ -307,7 +367,10 @@ export type AgentLaunchPlanResult =
 			reason:
 				| Extract<SshLaunchTarget, { kind: 'unresolved' }>['reason']
 				| AgentGatewayRefusalCode
-				| RunOnRefusalCode;
+				| RunOnRefusalCode
+				| 'grok-model-effort-refused'
+				| 'grok-directory-grants-refused'
+				| 'prompt-delivery-refused';
 			error: string;
 	  };
 
@@ -325,6 +388,51 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 	}
 
 	const agent = input.agent;
+	const requestedMode = defaultLaunchPermissionMode(input);
+	let selectionArgs = [...input.args];
+	if (agent?.id === 'grok') {
+		// --add-dir belongs to other providers. Refuse both spellings even when
+		// no typed grant was supplied, rather than forward a fabricated Grok flag.
+		if (input.args.some((arg) => arg === '--add-dir' || arg.startsWith('--add-dir='))) {
+			return {
+				ok: false,
+				reason: 'grok-directory-grants-refused',
+				error: 'Grok CLI has no qualified --add-dir argument for additional-directory grants.',
+			};
+		}
+		// Reuse saved-row semantics (blank/inert rows, last duplicate wins).
+		// No local home, filesystem lookup or cwd substitution: these roots belong
+		// to the selected host, including on a resumed turn.
+		const grants = dirsWithAnyAccess(normalizeAdditionalDirectories(input.additionalDirectories));
+		if (grants.length > 0) {
+			const readOnly = input.readOnlyMode || requestedMode === 'readonly';
+			if (readOnly && dirsWithWriteAccess(grants).length > 0) {
+				return {
+					ok: false,
+					reason: 'grok-directory-grants-refused',
+					error: "Grok CLI writable directory grants exceed this launch's read-only mode.",
+				};
+			}
+			// Read grants are not writable roots. Neither has qualified native
+			// support, so refusing the request is the only safe intersection today.
+			// Plan mode, approval rules and paths in a prompt are not root grants.
+			return {
+				ok: false,
+				reason: 'grok-directory-grants-refused',
+				error:
+					'Grok CLI additional-directory read and write grants have no qualified native mechanism. Remove the grants to run with the selected working directory.',
+			};
+		}
+		try {
+			// Validate before prompts or secret reads. Direct launch-plan callers
+			// receive the same guard as config builders.
+			selectionArgs = resolveGrokModelEffortArgs(selectionArgs, input.grokEffortMenu);
+		} catch (error) {
+			if (!(error instanceof GrokModelEffortError)) throw error;
+			return { ok: false, reason: 'grok-model-effort-refused', error: error.message };
+		}
+	}
+
 	// The same "own vars replace the provider-level set" rule the layers use.
 	const userEnvVars = input.sessionCustomEnvVars ?? input.agentCustomEnvVars;
 	const remote = target.kind === 'remote' ? { name: target.remote.name } : null;
@@ -359,13 +467,13 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			? { envVar: gateway.envVar, url: gateway.url, args: gateway.args }
 			: undefined;
 
-	let launchArgs = input.args;
+	let launchArgs = selectionArgs;
 	let planRunOn: LaunchPlanRunOn | undefined;
 	if (runOn.kind === 'inject') {
 		const applied = applyRunOnToLaunch({
 			agent,
 			toolType: input.runOn?.toolType ?? '',
-			args: input.args,
+			args: selectionArgs,
 			runOn,
 			gatewayUrl: input.gateway?.url,
 		});
@@ -374,7 +482,7 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 		planRunOn = applied.runOn;
 	} else if (planGateway) {
 		// A global option: ahead of the agent's own arguments, subcommand included.
-		launchArgs = [...planGateway.args, ...input.args];
+		launchArgs = [...planGateway.args, ...selectionArgs];
 	}
 	const layers = {
 		defaultEnvVars: agent?.defaultEnvVars,
@@ -423,6 +531,32 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 					JSON.stringify({ autoMemoryDirectory: nativePaths.join(knowledgeDirectory, 'memory') }),
 				]
 			: launchArgs;
+	let promptBlocks = input.promptBlocks;
+	if (target.kind === 'local' && knowledgeDirectory && Array.isArray(promptBlocks)) {
+		// Keep ordered content intact, binding staged instructions once to the
+		// first nonempty text block just as the text-only path does. Empty text
+		// retains the canonical binder's no-op behavior; never flatten images.
+		const textIndex = promptBlocks.findIndex(
+			(block) => block?.type === 'text' && typeof block.text === 'string' && block.text.length > 0
+		);
+		if (textIndex < 0 && promptBlocks.some((block) => block?.type === 'image')) {
+			return {
+				ok: false,
+				reason: 'prompt-delivery-refused',
+				error:
+					'Image-only content requires a composed text block for staged translation knowledge.',
+			};
+		}
+		promptBlocks = promptBlocks.map((block, index) =>
+			index === textIndex && block.type === 'text'
+				? {
+						...block,
+						text: bindTranslationKnowledge(block.text, knowledgeDirectory, knowledge!.root)!,
+					}
+				: block
+		);
+	}
+	const sshRemoteId = target.kind === 'remote' ? target.remote.id : undefined;
 	const prompt = resolvePromptDelivery({
 		agent,
 		prompt: effectivePrompt,
@@ -436,8 +570,19 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 		// stdin on every surface: in argv the spawn could only fail.
 		hostIsWindows: input.isWindowsHost ?? isWindows(),
 		sshRemote: target.kind === 'remote',
+		sshRemoteId,
 		hasImages: input.hasImages,
+		promptBlocks,
+		embeddedImageSupport: input.embeddedImageSupport,
+		args: launchArgs,
+		promptFileDestination:
+			input.prompt !== undefined || promptBlocks !== undefined || input.hasImages
+				? selectPromptFileDestination(agent, sshRemoteId, input.promptFileDestination)
+				: input.promptFileDestination,
 	});
+	if (prompt.via === 'refused') {
+		return { ok: false, reason: 'prompt-delivery-refused', error: prompt.error };
+	}
 
 	if (target.kind === 'remote') {
 		return {
@@ -445,8 +590,9 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			plan: {
 				target,
 				command: input.remoteCommand || agent?.binaryName || input.command,
-				// The SSH wrapper places the prompt itself (inline or via its script).
-				args: launchArgs,
+				// A file source is final: the SSH wrapper must not append the prompt
+				// again. Other deliveries retain the wrapper's script placement.
+				args: prompt.via === 'file' ? [...launchArgs, ...prompt.args] : launchArgs,
 				launchArgs,
 				cwd: input.cwd,
 				prompt,
@@ -464,6 +610,7 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 							},
 						}
 					: {}),
+				permission: { requested: requestedMode },
 				env: undefined,
 			},
 		};
@@ -474,7 +621,7 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 		: undefined;
 
 	const args =
-		prompt.via === 'argv' || prompt.via === 'stdin'
+		prompt.via === 'argv' || prompt.via === 'stdin' || prompt.via === 'file'
 			? [...launchArgs, ...prompt.args]
 			: [...launchArgs];
 	return {
@@ -500,6 +647,7 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 						},
 					}
 				: {}),
+			permission: { requested: requestedMode },
 			env: buildAgentEnvironment({
 				...layers,
 				secretEnvVars: resolved?.values,

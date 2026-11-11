@@ -75,9 +75,10 @@ export function annotateTreeLines(rows: FlattenedNode[]): void {
 		}
 	}
 
-	// Forward pass. `running` carries one bit per depth: set while the most
-	// recent row at that depth still has a following sibling, i.e. while its
-	// guide line has somewhere further down to reach.
+	// Forward pass. `running` carries one bit per guide COLUMN. Column `c` is the
+	// line that joins the siblings at depth `c + 1`, so a row at depth `d` owns
+	// column `d - 1`, and that bit is set while the most recent row at depth `d`
+	// still has a following sibling. Root rows own no column.
 	let running = 0;
 	for (const row of rows) {
 		const depth = row.depth;
@@ -85,11 +86,11 @@ export function annotateTreeLines(rows: FlattenedNode[]): void {
 			row.ancestorGuideMask = 0;
 			continue;
 		}
-		// Drop the bits of any sibling subtree we just left.
-		running &= (1 << depth) - 1;
-		// Column `depth - 1` is this row's own elbow column, drawn from
-		// `isLastChild`, so it never appears in the pass-through mask.
-		row.ancestorGuideMask = depth > 0 ? running & ((1 << (depth - 1)) - 1) : 0;
-		if (!row.isLastChild) running |= 1 << depth;
+		// Keep only the columns left of this row's own elbow column. Its own
+		// column is drawn from `isLastChild`, and anything further right belonged
+		// to the sibling subtree we just left.
+		running &= depth > 0 ? (1 << (depth - 1)) - 1 : 0;
+		row.ancestorGuideMask = running;
+		if (depth > 0 && !row.isLastChild) running |= 1 << (depth - 1);
 	}
 }

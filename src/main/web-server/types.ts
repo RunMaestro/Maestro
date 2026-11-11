@@ -1559,6 +1559,19 @@ export type StartGroupChatCallback = (
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
 export type ArchiveGroupChatCallback = (chatId: string, archived: boolean) => Promise<boolean>;
+export interface AddGroupChatParticipantResult {
+	success: boolean;
+	/** The participant's name in the chat. */
+	participantName?: string;
+	/** True when the agent was already a participant; nothing changed. */
+	alreadyMember?: boolean;
+	error?: string;
+}
+/** Add the agent with this exact GUID to a group chat. */
+export type AddGroupChatParticipantCallback = (
+	chatId: string,
+	agentId: string
+) => Promise<AddGroupChatParticipantResult>;
 export type SendGroupChatMessageCallback = (chatId: string, message: string) => Promise<boolean>;
 /** What to steer into a chat's running round: a queued message by id, or new text. */
 export interface SteerGroupChatRequest {

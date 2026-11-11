@@ -24,6 +24,9 @@ import {
 import {
 	PaginationOptions,
 	ORPHANED_SESSION_ID,
+	filterHistoryEntries,
+	historyLookbackCutoff,
+	historyOffsetForTimestamp,
 	sortEntriesByTimestamp,
 	paginateEntries,
 } from '../../../shared/history';
@@ -46,7 +49,12 @@ import {
 	HISTORY_BUCKET_CACHE_VERSION,
 	type CachedGraphBucket,
 } from '../../utils/history-bucket-cache';
-import { buildBucketAggregate, LOCAL_HOST_AGG_KEY } from '../../utils/history-bucket-builder';
+import {
+	aggregateToGraphData,
+	buildBucketAggregate,
+	LOCAL_HOST_AGG_KEY,
+	type HistoryGraphData,
+} from '../../utils/history-bucket-builder';
 import type { PluginEvent } from '../../../shared/plugins/events';
 import type {
 	CueHistoryBucket,
@@ -75,66 +83,7 @@ export interface SharedHistoryContext {
 	remoteCwd: string;
 }
 
-/**
- * Aggregated graph data returned by `history:getGraphData` and
- * `director-notes:getGraphData`. Buckets are computed over the full source
- * history (not the renderer's lookback window) so the graph view stays
- * "all-encompassing" while the entry list paginates beneath it.
- */
-export interface HistoryGraphData {
-	buckets: CachedGraphBucket[];
-	bucketCount: number;
-	earliestTimestamp: number;
-	latestTimestamp: number;
-	totalCount: number;
-	autoCount: number;
-	userCount: number;
-	cueCount: number;
-	agentCount: number;
-	/**
-	 * Per-host entry counts in the same window the buckets cover. Key is
-	 * the entry's `hostname`, or `"__local__"` for entries with no
-	 * hostname. Lookback-aware via the same `lookbackMs` that bucketing
-	 * uses, so flipping the renderer's lookback selector updates these
-	 * numbers too.
-	 */
-	hostCounts: Record<string, number>;
-	/** True when served from the disk cache (diagnostics only). */
-	cached: boolean;
-}
-
-/** Internal: shape returned by `buildBucketAggregate`. */
-interface BucketAggregateLike {
-	buckets: CachedGraphBucket[];
-	earliestTimestamp: number;
-	latestTimestamp: number;
-	totalCount: number;
-	autoCount: number;
-	userCount: number;
-	cueCount: number;
-	agentCount: number;
-	hostCounts: Record<string, number>;
-}
-
-function aggregateToGraphData(
-	agg: BucketAggregateLike,
-	bucketCount: number,
-	cached: boolean
-): HistoryGraphData {
-	return {
-		buckets: agg.buckets,
-		bucketCount,
-		earliestTimestamp: agg.earliestTimestamp,
-		latestTimestamp: agg.latestTimestamp,
-		totalCount: agg.totalCount,
-		autoCount: agg.autoCount,
-		userCount: agg.userCount,
-		cueCount: agg.cueCount,
-		agentCount: agg.agentCount,
-		hostCounts: agg.hostCounts,
-		cached,
-	};
-}
+export type { HistoryGraphData };
 
 function cachedToGraphData(
 	cached: {
@@ -416,10 +365,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 					hostKey,
 					groupCue,
 				} = options || {};
-				const cutoffTime =
-					lookbackHours !== null && lookbackHours !== undefined && lookbackHours > 0
-						? Date.now() - lookbackHours * 60 * 60 * 1000
-						: 0;
+				const cutoffTime = historyLookbackCutoff(lookbackHours);
 
 				// Type filter runs server-side (before pagination) so the loaded
 				// window holds the newest N entries OF THE SELECTED TYPES rather
@@ -438,14 +384,8 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 				// (which comes from the full-source graph aggregate). The key
 				// must match the aggregate / renderer: `hostname` or the
 				// synthetic `LOCAL_HOST_AGG_KEY` for entries with no hostname.
-				const applyFilters = (entries: HistoryEntry[]): HistoryEntry[] => {
-					let out = cutoffTime > 0 ? entries.filter((e) => e.timestamp >= cutoffTime) : entries;
-					if (typeSet) out = out.filter((e) => typeSet.has(e.type));
-					if (hostKey) {
-						out = out.filter((e) => (e.hostname ?? LOCAL_HOST_AGG_KEY) === hostKey);
-					}
-					return out;
-				};
+				const applyFilters = (entries: HistoryEntry[]): HistoryEntry[] =>
+					filterHistoryEntries(entries, { cutoffTime, types, hostKey });
 
 				// Cue runs come from `cue_events`, so they are merged in before
 				// the filters and pagination run - a page must hold the newest N
@@ -699,10 +639,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 				lookbackHours?: number | null,
 				types?: HistoryEntryType[]
 			): Promise<number> => {
-				const cutoffTime =
-					lookbackHours !== null && lookbackHours !== undefined && lookbackHours > 0
-						? Date.now() - lookbackHours * 60 * 60 * 1000
-						: 0;
+				const cutoffTime = historyLookbackCutoff(lookbackHours);
 				let entries = await historyManager.getEntries(sessionId);
 				// Cue rows are part of the rendered list but not of the JSONL
 				// file, so they have to be merged here too or every offset past
@@ -716,21 +653,12 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 						})
 					)
 				);
-				if (cutoffTime > 0) entries = entries.filter((e) => e.timestamp >= cutoffTime);
-				// Mirror the paginated list's type filter so the resolved offset
-				// lines up with the rendered (type-filtered) indices.
-				if (types) {
-					const typeSet = new Set(types);
-					entries = entries.filter((e) => typeSet.has(e.type));
-				}
-				if (entries.length === 0) return 0;
-				const sorted = sortEntriesByTimestamp(entries);
-				let offset = 0;
-				for (const entry of sorted) {
-					if (entry.timestamp <= timestamp) return offset;
-					offset++;
-				}
-				return Math.max(0, sorted.length - 1);
+				// Mirror the paginated list's lookback and type filter so the resolved
+				// offset lines up with the rendered (type-filtered) indices.
+				return historyOffsetForTimestamp(
+					filterHistoryEntries(entries, { cutoffTime, types }),
+					timestamp
+				);
 			}
 		)
 	);

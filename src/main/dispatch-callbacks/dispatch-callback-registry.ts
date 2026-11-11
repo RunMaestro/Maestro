@@ -61,6 +61,13 @@ export interface DispatchCallbackRegistryDeps {
 	autoRunRunningSince?: (agentId: string) => number | undefined;
 	/** Invoked exactly once per entry when it fires. */
 	onFire: (fire: DispatchCallbackFire) => void;
+	/** Invoked when an entry is armed, before any replayed exit can fire it. */
+	onRegister?: (entry: DispatchCallbackEntry) => void;
+	/**
+	 * Invoked when `cancel()` withdraws an entry silently (its dispatch was
+	 * refused). Not called for `cancelForTab`, which fires `cancelled` instead.
+	 */
+	onCancel?: (entry: DispatchCallbackEntry) => void;
 	graceMs?: number;
 	setTimeoutFn?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
 	clearTimeoutFn?: (handle: ReturnType<typeof setTimeout>) => void;
@@ -151,8 +158,9 @@ export class DispatchCallbackRegistry {
 
 		this.entries.set(entry.callbackId, entry);
 		this.deps.logger?.info(
-			`[DispatchCallback] armed ${entry.callbackId} target=${entry.processSessionId} caller=${entry.callerAgentId}`
+			`[DispatchCallback] armed ${entry.callbackId} target=${entry.processSessionId} caller=${entry.callerAgentId}${entry.autoRunId ? ` autoRun=${entry.autoRunId}` : ''}`
 		);
+		this.deps.onRegister?.(entry);
 		if (replayExit) {
 			this.deps.logger?.info(
 				`[DispatchCallback] ${entry.callbackId} replaying exit observed before registration`
@@ -338,6 +346,7 @@ export class DispatchCallbackRegistry {
 		this.clearGraceTimer(callbackId);
 		entry.state = 'cancelled';
 		this.entries.delete(callbackId);
+		this.deps.onCancel?.(entry);
 		return true;
 	}
 

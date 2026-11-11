@@ -26,8 +26,22 @@ import {
 	applyTabTranslation,
 	recoverTranslation,
 } from '../../../shared/maestro-lib/translation/transaction';
-import { createTranslationRegistry } from '../../../shared/maestro-lib/translation/adapters';
-import { extractNativeConversation } from '../../../shared/maestro-lib/translation/native-records';
+import {
+	createTranslationRegistry,
+	readGrokSessionSnapshot,
+} from '../../../shared/maestro-lib/translation/adapters';
+import {
+	encodeGrokCwdDirname,
+	extractGrokConversation,
+	extractNativeConversation,
+} from '../../../shared/maestro-lib/translation/native-records';
+import { TRANSLATION_PROVIDER_VERSIONS } from '../../../shared/maestro-lib/translation/support';
+import type {
+	PortableConversation,
+	TranslationIdentity,
+	TranslationRpc,
+} from '../../../shared/maestro-lib/translation/types';
+import { encodeClaudeProjectPath } from '../../../shared/pathUtils';
 import {
 	planTranslation,
 	planTabTranslation,
@@ -1262,4 +1276,453 @@ describe('all-tabs migration journal', () => {
 			await rm(s.root, { recursive: true, force: true });
 		}
 	});
+});
+
+// Grok carry-over transactions. Deterministic fixture tests only: synthetic
+// accounts under a temp root and a fake Codex import channel. They prove the shared
+// transaction's apply, retry, crash, rollback and round-trip rules for Grok; they do not
+// qualify any real Grok, Claude or Codex binary or certify a direction.
+describe('Grok carry-over transactions (deterministic fixtures, not native qualification)', () => {
+	const GROK_MODEL = 'synthetic-grok-model';
+	const SECRET = 'SYNTHETIC-GROK-CREDENTIAL';
+	async function grokWorld() {
+		const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'maestro-grok-txn-')));
+		const projectRoot = path.join(root, 'project');
+		await mkdir(projectRoot);
+		// The selected Grok accounts exist (a sessions root under a missing account is refused).
+		for (const name of ['grok-a', 'grok-b']) await mkdir(path.join(root, name));
+		const grok = (name: string): TranslationIdentity => ({
+			provider: 'grok',
+			version: TRANSLATION_PROVIDER_VERSIONS.grok.testedVersions[0],
+			accountRoot: path.join(root, name),
+			nativeSessionRoot: path.join(root, name, 'sessions'),
+			projectRoot,
+		});
+		const claude: TranslationIdentity = {
+			provider: 'claude-code',
+			version: TRANSLATION_PROVIDER_VERSIONS['claude-code'].testedVersions[0],
+			accountRoot: path.join(root, 'claude'),
+			projectRoot,
+		};
+		const codex: TranslationIdentity = {
+			provider: 'codex',
+			version: TRANSLATION_PROVIDER_VERSIONS.codex.testedVersions[0],
+			accountRoot: path.join(root, 'codex'),
+			projectRoot,
+		};
+		// A Codex app-server double: it creates a rollout inside the selected account and
+		// persists injected items with provider-assigned IDs, as the real channel does.
+		let threads = 0;
+		const rollouts = new Map<string, string>();
+		const codexRpc: TranslationRpc = {
+			request: (async (method: string, params: any) => {
+				if (method === 'thread/start') {
+					const id = `synthetic-thread-${++threads}`;
+					const file = path.join(codex.accountRoot, 'sessions', `${id}.jsonl`);
+					await mkdir(path.dirname(file), { recursive: true });
+					await writeFile(file, '');
+					rollouts.set(id, file);
+					return { thread: { id, path: file } };
+				}
+				if (method === 'thread/inject_items') {
+					const rows = params.items.map((item: object, i: number) =>
+						JSON.stringify({
+							type: 'response_item',
+							payload: { ...item, id: `msg_${params.threadId}_${i}` },
+						})
+					);
+					await writeFile(rollouts.get(params.threadId)!, rows.join('\n') + '\n', { flag: 'a' });
+					return {};
+				}
+				throw new Error(`unexpected ${method}`);
+			}) as TranslationRpc['request'],
+			onNotification: () => () => {},
+		};
+		const committed = new Set<string>();
+		const host = {
+			assertSourceUnchanged: vi.fn(async (_journal: TranslationJournal) => {}),
+			setMigration: vi.fn(async () => {}),
+			commit: vi.fn(async (journal: TranslationJournal) => {
+				committed.add(journal.plan.id);
+			}),
+			isCommitted: vi.fn(async (id: string) => committed.has(id)),
+			destinationModel: vi.fn((_tabId: string) => GROK_MODEL as string | undefined),
+			codex: codexRpc,
+		};
+		const archive = new TranslationArchive(path.join(root, 'private'));
+		const registry = createTranslationRegistry();
+		const writeGrokSession = async (identity: TranslationIdentity, id: string, marker: string) => {
+			const dir = path.join(
+				identity.accountRoot,
+				'sessions',
+				encodeGrokCwdDirname(projectRoot)!,
+				id
+			);
+			await mkdir(dir, { recursive: true });
+			await writeFile(
+				path.join(dir, 'summary.json'),
+				JSON.stringify({ info: { id, cwd: projectRoot }, chat_format_version: 1 })
+			);
+			const rows = [
+				{ type: 'system', content: 'SYNTHETIC-SYSTEM-PROMPT' },
+				{ type: 'user', content: `<user_query>${marker} question</user_query>` },
+				{
+					type: 'assistant',
+					content: 'reading',
+					model_id: 'SYNTHETIC-MODEL-ID',
+					reasoning: { encrypted_content: 'SYNTHETIC-ENCRYPTED' },
+					tool_calls: [{ id: `call_${marker}`, name: 'read_file', arguments: '{"path":"a"}' }],
+				},
+				{ type: 'tool_result', tool_call_id: `call_${marker}`, content: `${marker} file body` },
+				{ type: 'assistant', content: `${marker} answer` },
+			];
+			await writeFile(
+				path.join(dir, 'chat_history.jsonl'),
+				rows.map((row) => JSON.stringify(row)).join('\n') + '\n'
+			);
+		};
+		const readGrok = async (identity: TranslationIdentity, tabId: string, id: string) =>
+			extractGrokConversation(
+				identity,
+				tabId,
+				id,
+				(await readGrokSessionSnapshot(identity, id)).bytes
+			);
+		const readNative = async (identity: TranslationIdentity, tabId: string, id: string) => {
+			if (identity.provider === 'grok') return readGrok(identity, tabId, id);
+			const file =
+				identity.provider === 'codex'
+					? path.join(identity.accountRoot, 'sessions', `${id}.jsonl`)
+					: path.join(
+							identity.accountRoot,
+							'projects',
+							encodeClaudeProjectPath(projectRoot),
+							`${id}.jsonl`
+						);
+			return extractNativeConversation(identity, tabId, id, await readFile(file));
+		};
+		const claudeConversation = (tabId: string, marker: string) =>
+			extractNativeConversation(
+				claude,
+				tabId,
+				`claude-${tabId}`,
+				Buffer.from(
+					[
+						{
+							type: 'user',
+							uuid: `${tabId}-u`,
+							message: { role: 'user', content: `${marker} ask` },
+						},
+						{
+							type: 'assistant',
+							uuid: `${tabId}-a`,
+							message: { role: 'assistant', content: [{ type: 'text', text: `${marker} reply` }] },
+						},
+					]
+						.map((row) => JSON.stringify(row))
+						.join('\n')
+				)
+			);
+		const journalFor = (
+			source: TranslationIdentity,
+			destination: TranslationIdentity,
+			conversations: PortableConversation[],
+			newRecords?: Record<string, number>
+		): TranslationJournal => ({
+			schemaVersion: 1,
+			plan: planTranslation({
+				agentId: 'agent',
+				source,
+				destination,
+				scope: { projectKnowledge: true, selectedUserResources: [] },
+				conversations,
+				registry,
+				newRecords,
+			}),
+			state: 'planned',
+			conversations,
+			resources: [],
+			mappings: [],
+			resourceWrites: [],
+		});
+		const grokSessionDirs = async (identity: TranslationIdentity) =>
+			(
+				await readdir(
+					path.join(identity.accountRoot, 'sessions', encodeGrokCwdDirname(projectRoot)!)
+				)
+			).sort();
+		const tree = async (dir: string) => {
+			const files: Record<string, string> = {};
+			for (const entry of await readdir(dir, { recursive: true, withFileTypes: true }))
+				if (entry.isFile()) {
+					const file = path.join(entry.parentPath, entry.name);
+					files[path.relative(dir, file)] = await readFile(file, 'utf8');
+				}
+			return files;
+		};
+		const twoTabs = () => [claudeConversation('one', 'ALPHA'), claudeConversation('two', 'BETA')];
+		return {
+			root,
+			grok,
+			claude,
+			codex,
+			host,
+			archive,
+			registry,
+			writeGrokSession,
+			readGrok,
+			readNative,
+			claudeConversation,
+			twoTabs,
+			journalFor,
+			grokSessionDirs,
+			tree,
+		};
+	}
+	const LATER_ROW = '{"type":"user","content":"later native turn"}\n';
+
+	it('stages every tab as its own Grok session and a committed retry creates no duplicate', async () => {
+		const w = await grokWorld();
+		try {
+			const destination = w.grok('grok-b');
+			const journal = w.journalFor(w.claude, destination, w.twoTabs());
+			expect(journal.plan.status).toBe('ready');
+			expect(journal.plan.verification).toBe('unverified');
+			const result = await applyTranslation(w.archive, w.registry, journal, w.host, true);
+			expect(result.state).toBe('committed');
+			expect(w.host.destinationModel.mock.calls.map(([tab]) => tab)).toEqual(['one', 'two']);
+			const ids = result.mappings.map((m) => m.destinationSessionId!);
+			expect(new Set(ids).size).toBe(2);
+			expect(await w.grokSessionDirs(destination)).toEqual([...ids].sort());
+			// Each tab reads back from its own session with only its own history.
+			for (const [index, marker] of ['ALPHA', 'BETA'].entries()) {
+				const back = JSON.stringify(
+					(await w.readGrok(destination, result.mappings[index].tabId, ids[index])).records
+				);
+				expect(back).toContain(`${marker} ask`);
+				expect(back).not.toContain(index ? 'ALPHA' : 'BETA');
+			}
+			// Readback is keyed by Grok's own row identities, which a later Grok-source plan reconciles.
+			const eventIds = Object.keys(journal.destinationObserved!).map(
+				(key) => JSON.parse(key).eventId
+			);
+			expect(eventIds.sort()).toEqual(['line:0', 'line:0', 'line:1', 'line:1']);
+			const durable = await w.archive.read('agent', journal.plan.id);
+			const stage = vi.spyOn(w.registry.get('grok')!, 'stage');
+			expect(await applyTranslation(w.archive, w.registry, durable, w.host, true)).toEqual(result);
+			expect(stage).not.toHaveBeenCalled();
+			expect(w.host.commit).toHaveBeenCalledTimes(1);
+			expect(await w.grokSessionDirs(destination)).toEqual([...ids].sort());
+		} finally {
+			await rm(w.root, { recursive: true, force: true });
+		}
+	});
+
+	it('recovers a failed Grok mapping commit without restaging, and refuses recovery over a native edit', async () => {
+		const w = await grokWorld();
+		try {
+			const destination = w.grok('grok-b');
+			const journal = w.journalFor(w.claude, destination, [w.claudeConversation('one', 'ALPHA')]);
+			w.host.commit.mockRejectedValueOnce(new Error('store unavailable'));
+			const failed = await applyTranslation(w.archive, w.registry, journal, w.host, true);
+			expect(failed.state).toBe('failed');
+			expect(journal.failurePhase).toBe('committing');
+			const ids = failed.mappings.map((m) => m.destinationSessionId);
+			const stage = vi.spyOn(w.registry.get('grok')!, 'stage');
+			const recovered = await recoverTranslation(
+				w.archive,
+				await w.archive.read('agent', journal.plan.id),
+				w.host
+			);
+			expect(recovered.state).toBe('committed');
+			expect(recovered.mappings.map((m) => m.destinationSessionId)).toEqual(ids);
+			expect(stage).not.toHaveBeenCalled();
+			expect(await w.grokSessionDirs(destination)).toEqual(ids);
+
+			// A second operation whose staged transcript gained native work before recovery.
+			stage.mockRestore();
+			const second = w.journalFor(w.claude, destination, [w.claudeConversation('one', 'GAMMA')]);
+			w.host.commit.mockRejectedValueOnce(new Error('store unavailable'));
+			const pending = await applyTranslation(w.archive, w.registry, second, w.host, true);
+			expect(pending.state).toBe('failed');
+			const transcript = pending.mappings[0].artifacts[0].path;
+			await writeFile(transcript, (await readFile(transcript, 'utf8')) + LATER_ROW);
+			await expect(
+				recoverTranslation(w.archive, await w.archive.read('agent', second.plan.id), w.host)
+			).rejects.toThrow('Destination readback changed');
+			expect(w.host.commit).toHaveBeenCalledTimes(3);
+			expect(await readFile(transcript, 'utf8')).toContain('later native turn');
+		} finally {
+			await rm(w.root, { recursive: true, force: true });
+		}
+	});
+
+	it('rolls back an interrupted multi-tab Grok stage and keeps a conflicting or later native session', async () => {
+		const w = await grokWorld();
+		try {
+			const destination = w.grok('grok-b');
+			const persist = w.archive.write.bind(w.archive);
+			// Crash: the durable journal holds tab one staged and tab two's intent when the process dies.
+			const crash = w.journalFor(w.claude, destination, w.twoTabs());
+			let snapshot: TranslationJournal | undefined;
+			const crashWrite = vi.spyOn(w.archive, 'write').mockImplementation(async (journal) => {
+				await persist(journal);
+				const two = journal.mappings.find((m) => m.tabId === 'two');
+				if (!snapshot && two && two.artifacts.every((a) => !a.created)) {
+					snapshot = structuredClone(journal);
+					throw new Error('synthetic crash');
+				}
+			});
+			await applyTranslation(w.archive, w.registry, crash, w.host, true);
+			crashWrite.mockRestore();
+			await w.archive.write(snapshot!);
+			const durable = await w.archive.read('agent', crash.plan.id);
+			expect(durable.state).toBe('staging');
+			expect(await w.grokSessionDirs(destination)).toEqual([
+				durable.mappings.find((m) => m.tabId === 'one')!.destinationSessionId,
+			]);
+			await expect(recoverTranslation(w.archive, durable, w.host)).rejects.toThrow(
+				'uncertain writes are not retried'
+			);
+			expect((await recoverTranslation(w.archive, durable, w.host, true)).state).toBe(
+				'rolled-back'
+			);
+			expect(await w.grokSessionDirs(destination)).toEqual([]);
+			expect(w.host.commit).not.toHaveBeenCalled();
+
+			// Conflict: another writer creates tab two's session directory after its intent is journaled.
+			const conflict = w.journalFor(w.claude, destination, w.twoTabs());
+			let foreign: string | undefined;
+			const conflictWrite = vi.spyOn(w.archive, 'write').mockImplementation(async (journal) => {
+				await persist(journal);
+				const two = journal.mappings.find((m) => m.tabId === 'two');
+				if (!foreign && two && two.artifacts.every((a) => !a.created)) {
+					foreign = path.dirname(two.artifacts[0].path);
+					await mkdir(foreign, { recursive: true });
+					await writeFile(path.join(foreign, 'updates.jsonl'), 'SYNTHETIC-FOREIGN\n');
+				}
+			});
+			const result = await applyTranslation(w.archive, w.registry, conflict, w.host, true);
+			conflictWrite.mockRestore();
+			expect(result.state).toBe('failed');
+			expect(w.host.commit).not.toHaveBeenCalled();
+			const staged = await w.archive.read('agent', conflict.plan.id);
+			expect(staged.mappings.find((m) => m.tabId === 'two')!.artifacts.some((a) => a.created)).toBe(
+				false
+			);
+			expect((await recoverTranslation(w.archive, staged, w.host, true)).state).toBe('rolled-back');
+			expect(await w.grokSessionDirs(destination)).toEqual([path.basename(foreign!)]);
+			expect(await readFile(path.join(foreign!, 'updates.jsonl'), 'utf8')).toBe(
+				'SYNTHETIC-FOREIGN\n'
+			);
+
+			// Later work: one tab's transcript changed, so nothing in the operation is deleted.
+			await rm(foreign!, { recursive: true });
+			const later = w.journalFor(w.claude, destination, w.twoTabs());
+			w.host.commit.mockRejectedValueOnce(new Error('store unavailable'));
+			const pending = await applyTranslation(w.archive, w.registry, later, w.host, true);
+			const [first, second] = pending.mappings;
+			const edited = first.artifacts[0].path;
+			const stagedBytes = await readFile(edited, 'utf8');
+			await writeFile(edited, stagedBytes + LATER_ROW);
+			const before = await w.tree(destination.accountRoot);
+			await expect(
+				recoverTranslation(w.archive, await w.archive.read('agent', later.plan.id), w.host, true)
+			).rejects.toThrow('Rollback refused');
+			expect(await w.tree(destination.accountRoot)).toEqual(before);
+			// An untouched transcript beside a new native file: the files go, the directory stays.
+			await writeFile(edited, stagedBytes);
+			const extra = path.join(path.dirname(second.artifacts[0].path), 'updates.jsonl');
+			await writeFile(extra, 'SYNTHETIC-LATER-NATIVE\n');
+			expect(
+				(
+					await recoverTranslation(
+						w.archive,
+						await w.archive.read('agent', later.plan.id),
+						w.host,
+						true
+					)
+				).state
+			).toBe('rolled-back');
+			expect(await w.grokSessionDirs(destination)).toEqual([second.destinationSessionId]);
+			expect(await readdir(path.dirname(extra))).toEqual(['updates.jsonl']);
+		} finally {
+			await rm(w.root, { recursive: true, force: true });
+		}
+	});
+
+	it.each(['claude-code', 'codex'] as const)(
+		'repeats Grok -> %s -> Grok round trips without duplicating history or crossing accounts',
+		async (middleProvider) => {
+			const w = await grokWorld();
+			try {
+				const grok = w.grok('grok-a');
+				const other = w.grok('grok-b');
+				const middle = middleProvider === 'codex' ? w.codex : w.claude;
+				await w.writeGrokSession(grok, 'grok-source', 'ALPHA');
+				await w.writeGrokSession(other, 'grok-source', 'OTHER');
+				await writeFile(path.join(grok.accountRoot, 'auth.json'), SECRET);
+				await writeFile(path.join(other.accountRoot, 'auth.json'), SECRET);
+				const otherBefore = await w.tree(other.accountRoot);
+				const original = await w.readGrok(grok, 'one', 'grok-source');
+				const visible = original.records.filter((r) => r.role === 'user' || r.role === 'assistant');
+				const origins = original.records.map((r) => r.origin);
+
+				let current = { identity: grok, sessionId: 'grok-source' };
+				for (let round = 0; round < 2; round++) {
+					for (const destination of [middle, grok]) {
+						const checkpoint = await w.archive.checkpoint('agent');
+						const incoming = await w.readNative(current.identity, 'one', current.sessionId);
+						const reconciled = reconcileConversation(incoming, checkpoint);
+						expect(reconciled.limitations.filter((l) => l.severity === 'block')).toEqual([]);
+						// Only the very first read is new; every echo maps back to its origin.
+						expect(reconciled.newRecords).toBe(checkpoint ? 0 : original.records.length);
+						expect(reconciled.conversation.records.map((r) => r.origin)).toEqual(origins);
+						const journal = w.journalFor(current.identity, destination, [reconciled.conversation], {
+							one: reconciled.newRecords,
+						});
+						expect(journal.plan.status).toBe('ready');
+						expect(journal.plan.verification).toBe('unverified');
+						const result = await applyTranslation(w.archive, w.registry, journal, w.host, true);
+						expect(result.state).toBe('committed');
+						expect(result.mappings).toHaveLength(1);
+						current = {
+							identity: destination,
+							sessionId: result.mappings[0].destinationSessionId!,
+						};
+					}
+					// One new Grok session per Grok-destination apply, all in the selected account.
+					expect(await w.grokSessionDirs(grok)).toHaveLength(round + 2);
+					const back = await w.readGrok(grok, 'one', current.sessionId);
+					// Archived payloads (inline reasoning) stay in the checkpoint, never in the Grok rows.
+					const shown = (records: typeof visible) =>
+						records.map((r) => [r.role, r.blocks.filter((b) => b.kind !== 'opaque')]);
+					expect(shown(back.records)).toEqual(shown(visible));
+					expect(back.records.flatMap((r) => r.blocks).some((b) => b.kind === 'opaque')).toBe(
+						false
+					);
+					const transcript = await readFile(
+						(await readGrokSessionSnapshot(grok, current.sessionId)).transcriptPath,
+						'utf8'
+					);
+					for (const internal of [
+						'SYNTHETIC-SYSTEM-PROMPT',
+						'SYNTHETIC-ENCRYPTED',
+						'SYNTHETIC-MODEL-ID',
+					])
+						expect(transcript).not.toContain(internal);
+				}
+				// No write reached the unselected Grok account, and no credential left either account.
+				expect(await w.tree(other.accountRoot)).toEqual(otherBefore);
+				for (const [file, text] of Object.entries(await w.tree(w.root)))
+					if (path.basename(file) !== 'auth.json') {
+						expect(text).not.toContain(SECRET);
+						expect(text).not.toContain(Buffer.from(SECRET).toString('base64'));
+					}
+				expect(w.host.commit).toHaveBeenCalledTimes(4);
+			} finally {
+				await rm(w.root, { recursive: true, force: true });
+			}
+		}
+	);
 });

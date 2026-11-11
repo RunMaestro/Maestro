@@ -8,16 +8,11 @@
  */
 
 import { useMemo } from 'react';
-import type { ToolType } from '../../types';
-import type { ResumeSessionOptions } from '../agent/useAgentSessionManagement';
+import type { Session, Theme, RightPanelTab, BatchRunState } from '../../types';
 import type {
-	Session,
-	Theme,
-	RightPanelTab,
-	BatchRunState,
-	LogEntry,
-	UsageStats,
-} from '../../types';
+	ResumeSessionOptions,
+	UseAgentSessionManagementReturn,
+} from '../agent/useAgentSessionManagement';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
 import type { FileNode } from '../../types/fileTree';
 import type { FileClickOptions } from '../ui/useAppHandlers';
@@ -90,15 +85,7 @@ export interface UseRightPanelPropsDeps {
 	handleAbortBatchOnError: () => void;
 	handleResumeAfterError: () => void;
 	handleJumpToAgentSession: (agentSessionId: string) => void;
-	handleResumeSession: (
-		agentSessionId: string,
-		providedMessages?: LogEntry[],
-		sessionName?: string,
-		starred?: boolean,
-		usageStats?: UsageStats,
-		projectPath?: string,
-		opts?: ResumeSessionOptions
-	) => void;
+	handleResumeSession: UseAgentSessionManagementReturn['handleResumeSession'];
 
 	// Modal handlers
 	handleOpenAboutModal: () => void;
@@ -162,10 +149,7 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			onAbortBatchOnError: deps.handleAbortBatchOnError,
 			onResumeAfterError: deps.handleResumeAfterError,
 			onJumpToAgentSession: deps.handleJumpToAgentSession,
-			onResumeSession: (id: string, provider?: ToolType) =>
-				deps.handleResumeSession(id, undefined, undefined, undefined, undefined, undefined, {
-					provider,
-				}),
+			onResumeSession: deps.handleResumeSession,
 			// `sessionName` is the name the history entry already shows on its pill.
 			// It has to travel: the resume fallback reads the session-origins store,
 			// which is Claude-only and only ever written by a synopsis, so for every
@@ -175,7 +159,7 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 				agentSessionId: string,
 				projectPath?: string,
 				sessionName?: string,
-				provider?: ToolType
+				opts?: ResumeSessionOptions
 			) =>
 				deps.handleResumeSession(
 					agentSessionId,
@@ -184,7 +168,7 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 					undefined,
 					undefined,
 					projectPath,
-					{ provider }
+					opts
 				),
 
 			// Modal handlers

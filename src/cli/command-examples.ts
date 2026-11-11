@@ -51,9 +51,12 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'host endpoint': ['maestro-cli host endpoint --json'],
 	'remote-host status': ['maestro-cli remote-host status <ssh-remote> --json'],
 	'remote-host start': ['maestro-cli remote-host start <ssh-remote> --timeout 120'],
+	'remote-host install': ['maestro-cli remote-host install <ssh-remote> --start --json'],
 	lift: ['maestro-cli lift <agent-id> --dry-run'],
 	'federation peers': ['maestro-cli federation peers --json'],
 	'federation reconnect': ['maestro-cli federation reconnect <peer>'],
+	'federation auto': ['maestro-cli federation auto --json'],
+	'federation auto run': ['maestro-cli federation auto run --json'],
 	// Dataview commands introduced by RC also participate in the CLI help audit.
 	'dataview query': ['maestro-cli dataview query <file> --agent <agent-id> --json'],
 	'dataview eval': ['maestro-cli dataview eval <file> "LIST FROM #meeting" --json'],
@@ -181,6 +184,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'group-chat status': ['maestro-cli group-chat status <chat> --tail 10'],
 	'group-chat list': ['maestro-cli group-chat list --json'],
 	'group-chat stop': ['maestro-cli group-chat stop <chat>'],
+	'group-chat add': ['maestro-cli group-chat add <chat> <agent-id>'],
 
 	// Open things in the desktop app
 	'open-file': ['maestro-cli open-file ./README.md --agent <agent-id> --background'],

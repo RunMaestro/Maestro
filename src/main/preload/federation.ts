@@ -14,6 +14,12 @@ import type { MirrorPeerSummary, MirrorPush } from '../../shared/maestro-lib/cli
 import type { PeerAgentAction } from '../../shared/maestro-lib/client/peer-actions';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { DesktopLiftAnswer, DesktopLiftOptions } from '../federation/lift';
+import type { DesktopSetupHostAnswer, DesktopSetupHostOptions } from '../federation/setup-host';
+import type { AutoFederationSnapshot } from '../../shared/federationAuto';
+import type { PeerHistoryPageQuery } from '../federation/peer-history';
+import type { PaginatedResult } from '../../shared/history';
+import type { HistoryEntry, HistoryEntryType } from '../../shared/types';
+import type { HistoryGraphData } from '../utils/history-bucket-builder';
 import type {
 	PeerActionAnswer,
 	PeerMirrorSnapshot,
@@ -24,7 +30,7 @@ import type {
 /** Creates the Federation API object for contextBridge exposure. */
 export function createFederationApi() {
 	return {
-		/** `enabled` is false while the Federation Encore Feature is off. */
+		/** `enabled` is false before boot starts the peer mirror. */
 		status: (): Promise<{ enabled: boolean }> => ipcRenderer.invoke('federation:status'),
 		/** Every mirrored peer, in stored order, with its connection and agent count. */
 		peers: (): Promise<MirrorPeerSummary[]> => ipcRenderer.invoke('federation:peers'),
@@ -38,6 +44,40 @@ export function createFederationApi() {
 			options?: TranscriptReadOptions
 		): Promise<LogEntryRecord[]> =>
 			ipcRenderer.invoke('federation:transcript', peerId, agentId, tabId, options ?? {}),
+		/**
+		 * One page of a mirrored agent's History, newest first, after the lookback and the type and
+		 * host filters: the host's entries and the shared History of the agent's project.
+		 */
+		historyPage: (
+			peerId: string,
+			agentId: string,
+			query?: PeerHistoryPageQuery
+		): Promise<PaginatedResult<HistoryEntry>> =>
+			ipcRenderer.invoke('federation:historyPage', peerId, agentId, query ?? {}),
+		/** The activity graph of a mirrored agent's History. */
+		historyGraph: (
+			peerId: string,
+			agentId: string,
+			bucketCount: number,
+			lookbackHours: number | null
+		): Promise<HistoryGraphData> =>
+			ipcRenderer.invoke('federation:historyGraph', peerId, agentId, bucketCount, lookbackHours),
+		/** The page offset a bar of a mirrored agent's activity graph jumps to. */
+		historyOffset: (
+			peerId: string,
+			agentId: string,
+			timestamp: number,
+			lookbackHours: number | null,
+			types?: HistoryEntryType[]
+		): Promise<number> =>
+			ipcRenderer.invoke(
+				'federation:historyOffset',
+				peerId,
+				agentId,
+				timestamp,
+				lookbackHours,
+				types
+			),
 		/** Restart the forward or the client when down, then reload the peer's agents. */
 		reconnect: (peerId: string): Promise<PeerReconnectResult> =>
 			ipcRenderer.invoke('federation:reconnect', peerId),
@@ -53,6 +93,28 @@ export function createFederationApi() {
 		 */
 		lift: (agentId: string, options?: DesktopLiftOptions): Promise<DesktopLiftAnswer> =>
 			ipcRenderer.invoke('federation:lift', agentId, options ?? {}),
+		/**
+		 * Install this app's maestro-cli on an SSH remote (or upgrade an older one), start the host
+		 * there, and reload the peer: Make Federated and Start Host. Takes minutes on a first install.
+		 */
+		setupHost: (
+			remoteId: string,
+			options?: DesktopSetupHostOptions
+		): Promise<DesktopSetupHostAnswer> =>
+			ipcRenderer.invoke('federation:setupHost', remoteId, options ?? {}),
+		/** What automatic Federation did, waits on, or could not do, per remote and per agent. */
+		autoStatus: (): Promise<AutoFederationSnapshot> => ipcRenderer.invoke('federation:autoStatus'),
+		/** Run an automatic Federation pass now and answer what it left behind. */
+		autoRun: (): Promise<AutoFederationSnapshot> => ipcRenderer.invoke('federation:autoRun'),
+		/** Fires with a new snapshot whenever automatic Federation changes something. */
+		onAuto: (handler: (snapshot: AutoFederationSnapshot) => void): (() => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, snapshot: AutoFederationSnapshot) =>
+				handler(snapshot);
+			ipcRenderer.on('federation:auto', wrapped);
+			return () => {
+				ipcRenderer.removeListener('federation:auto', wrapped);
+			};
+		},
 		/** Fires on every change to a mirrored peer. */
 		onEvent: (handler: (payload: MirrorPush) => void): (() => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, payload: MirrorPush) => handler(payload);

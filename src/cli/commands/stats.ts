@@ -34,6 +34,7 @@ import {
 } from '../../shared/statsIndexing';
 import type { PromptCadence } from '../../shared/promptCadence';
 import type { TokenUsageAggregate } from '../../shared/tokenUsage';
+import { usageCostUsd } from '../../shared/maestro-lib/streaming/usage-totals';
 import type { TokenSpeedStats } from '../../shared/tokenSpeed';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
@@ -184,6 +185,7 @@ export async function statsTokens(options: StatsTokensOptions): Promise<void> {
 }
 
 function speedLine(stats: TokenSpeedStats): string {
+	if (stats.calls === 0) return 'Unknown (no timed calls)';
 	return (
 		`avg ${formatTokensPerSecond(stats.avgInputTps)} in / ${formatTokensPerSecond(stats.avgOutputTps)} out / ${formatTokensPerSecond(stats.avgTotalTps)} total` +
 		`, peak ${formatTokensPerSecond(stats.peakInputTps)} / ${formatTokensPerSecond(stats.peakOutputTps)} / ${formatTokensPerSecond(stats.peakTotalTps)}` +
@@ -195,11 +197,42 @@ function printTokenUsageSummary(range: string, data: TokenUsageAggregate): void 
 	const { totals, speed } = data;
 	const lines: string[] = [];
 	lines.push(`Token Usage (${range})`);
-	lines.push(`  Cost:            ${totals.costEstimated ? '~' : ''}${formatCost(totals.costUsd)}`);
-	lines.push(
-		`  Tokens:          ${formatTokensCompact(totals.inputTokens)} in / ${formatTokensCompact(totals.outputTokens)} out / ${formatTokensCompact(totals.cacheReadTokens)} cache read`
-	);
-	lines.push(`  Sessions:        ${totals.sessionCount}`);
+	// Render the accessor's totals and groups directly: model detail can be partial
+	// and must never be summed again to reconstruct a native lifetime total.
+	for (const { title, groups } of [
+		{ title: undefined, groups: [{ ...totals, key: '', label: '' }] },
+		{ title: 'By provider', groups: data.byAgent },
+		{ title: 'By model', groups: data.byModel },
+		{ title: 'By account', groups: data.byAccount },
+	]) {
+		if (groups.length === 0) continue;
+		if (title) lines.push('', `${title}:`);
+		for (const group of groups) {
+			const cost = group.accounting?.cost;
+			const amount = cost ? usageCostUsd(cost) : group.costUsd;
+			const partial =
+				cost?.status === 'partial' ||
+				(cost?.status === 'estimated' && cost.completeness !== 'complete');
+			const estimated = cost ? cost.status === 'estimated' : group.costEstimated;
+			const costLabel =
+				(amount === undefined ? 'Unknown' : `${estimated ? '~' : ''}${formatCost(amount)}`) +
+				(partial ? ' (partial)' : '');
+			const tokenLabel =
+				`${formatTokensCompact(group.inputTokens)} in / ${formatTokensCompact(group.outputTokens)} out / ` +
+				`${formatTokensCompact(group.cacheReadTokens)} cache read / ${formatTokensCompact(group.cacheCreationTokens)} cache creation`;
+			if (title) {
+				// Account labels can share a basename; model keys include their provider.
+				// Keep both the readable label and opaque identity supplied by the accessor.
+				const identity = group.key === group.label ? group.label : `${group.label} [${group.key}]`;
+				lines.push(`  ${identity}: ${costLabel}`);
+				lines.push(`    ${tokenLabel}; ${group.sessionCount} sessions`);
+			} else {
+				lines.push(`  Cost:            ${costLabel}`);
+				lines.push(`  Tokens:          ${tokenLabel}`);
+				lines.push(`  Sessions:        ${group.sessionCount}`);
+			}
+		}
+	}
 	lines.push('');
 	lines.push('Tokens per second (per API call)');
 	lines.push(`  Overall:         ${speedLine(speed.overall)}`);

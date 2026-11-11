@@ -68,14 +68,20 @@ function getRecoveryActionsForError(
 			// The login runs inside Maestro's re-authentication terminal, so the
 			// description names the actual command instead of telling the user to
 			// go find a terminal themselves.
-			const login = getAgentLoginCommand(agentId);
+			// This hook has no selected credential environment. For Grok, keep
+			// access to ReauthModal's credential gate, host and custom executable
+			// selection without promising that running a login will repair it.
+			const login = agentId === 'grok' ? null : getAgentLoginCommand(agentId);
 			if (options.onAuthenticate) {
 				actions.push({
 					id: 'authenticate',
-					label: 'Re-authenticate',
-					description: login
-						? `Run "${formatAgentLoginCommand(login)}" here`
-						: 'Log in again to restore access',
+					label: agentId === 'grok' ? 'Review Authentication' : 'Re-authenticate',
+					description:
+						agentId === 'grok'
+							? 'Check the active credentials; sign in only if this account uses provider login'
+							: login
+								? `Run "${formatAgentLoginCommand(login)}" here`
+								: 'Log in again to restore access',
 					primary: true,
 					icon: login ? <Terminal className="w-4 h-4" /> : <KeyRound className="w-4 h-4" />,
 					onClick: options.onAuthenticate,

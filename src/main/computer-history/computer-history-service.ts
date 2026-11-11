@@ -820,7 +820,7 @@ export class ComputerHistoryService {
 
 	/** Newest digests (with bodies) overlapping `range`. */
 	async digestsWithBodies(
-		options: TimeRange & { kind?: DigestKind; limit?: number }
+		options: TimeRange & { kind?: DigestKind; limit?: number; grep?: string }
 	): Promise<DigestWithBody[]> {
 		const limit = Math.min(options.limit ?? 50, MAX_DIGEST_LIMIT);
 		return readRecentDigests(this.storeDir, { ...options, limit });

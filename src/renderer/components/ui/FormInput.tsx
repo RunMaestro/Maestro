@@ -31,6 +31,7 @@
 import React, { forwardRef, useId } from 'react';
 import type { Theme } from '../../types';
 import { FormFieldLabel } from './FormFieldLabel';
+import { isImeComposing } from '../../utils/ime';
 
 export interface FormInputProps {
 	/** Theme object for styling */
@@ -116,6 +117,10 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
 
 			// If not prevented and Enter was pressed, submit
 			if (e.key === 'Enter' && !e.defaultPrevented && onSubmit && submitEnabled) {
+				if (isImeComposing(e)) {
+					e.stopPropagation();
+					return;
+				}
 				e.preventDefault();
 				e.stopPropagation(); // Prevent Enter from propagating to parent listeners after modal closes
 				onSubmit();

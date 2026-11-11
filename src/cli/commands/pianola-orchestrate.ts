@@ -65,7 +65,7 @@ import {
 } from '../../shared/pianola/pianola-validation';
 import type { PianolaMessage, PianolaMessageRole } from '../../shared/pianola/types';
 import { selectAgentForTask, type AgentCandidate } from '../../shared/pianola/pianola-agent-select';
-import { DEFAULT_CAPABILITIES } from '../../shared/types';
+import { getAgentCapabilities } from '../../shared/maestro-lib/providers/capabilities';
 import { enrichWithAwaitingInput } from '../../shared/pianola/pianola-awaiting-detector';
 import { classifyMessages } from '../../shared/pianola/pianola-classifier';
 import { rateRisk } from '../../shared/pianola/pianola-risk';
@@ -563,6 +563,77 @@ export function resolveExistingPianolaAgentType(
 		(session) => session.agentId === task.agentId || session.sessionId === task.agentId
 	);
 	return (matches.find((session) => session.active) ?? matches[0])?.toolType;
+}
+
+/** The provider a fresh session is created with when a task names none. */
+export const PIANOLA_COLD_START_TOOL_TYPE = 'claude-code';
+
+export interface PianolaToolTypeChoice {
+	toolType: string;
+	/** Why the choice is not a plain selection, for the orchestrator log. */
+	note?: string;
+}
+
+/**
+ * Choose the provider a FRESH session is created with for a task that names
+ * none, through the shared selector over the live session pool. One candidate
+ * per distinct live tool type (present in the pool means runnable, status
+ * 'ok'), with that provider's real capability record, so a required flag the
+ * provider lacks (Grok's included) excludes it. Load is this plan's tasks
+ * occupying that type: `running` and `fixing` both hold a live agent. A type
+ * counts as busy only when every one of its sessions is mid-turn.
+ *
+ * When every live type is busy the fresh session is still made of a type the
+ * pool runs (the least-loaded, through the same selector with busy cleared,
+ * because a freshly created session is never itself busy): the provider the
+ * user chose is never substituted by another one. Only a cold start, an empty
+ * pool, where no provider has been chosen yet, creates the default provider;
+ * failing there would deadlock the plan (no session would ever appear). Total
+ * parallelism stays bounded by the dispatch loop's concurrency limit.
+ */
+export function choosePianolaToolType(
+	task: PianolaTask,
+	sessions: readonly DesktopSessionEntry[],
+	planTasks: readonly PianolaTask[]
+): PianolaToolTypeChoice {
+	const load: Record<string, number> = {};
+	for (const t of planTasks) {
+		if ((t.status === 'running' || t.status === 'fixing') && t.agentType) {
+			load[t.agentType] = (load[t.agentType] ?? 0) + 1;
+		}
+	}
+	const pool = new Map<string, { total: number; busy: number }>();
+	for (const s of sessions) {
+		const e = pool.get(s.toolType) ?? { total: 0, busy: 0 };
+		e.total += 1;
+		if (s.state === 'busy') e.busy += 1;
+		pool.set(s.toolType, e);
+	}
+	const candidates: AgentCandidate[] = [...pool.entries()].map(([type, e]) => ({
+		agentId: type,
+		capabilities: getAgentCapabilities(type),
+		status: 'ok',
+		busy: e.total > 0 && e.busy === e.total,
+		inFlight: load[type] ?? 0,
+	}));
+	const selection = selectAgentForTask(task, candidates);
+	if ('agentId' in selection) return { toolType: selection.agentId };
+	if (candidates.length > 0) {
+		const fresh = selectAgentForTask(
+			task,
+			candidates.map((c) => ({ ...c, busy: false }))
+		);
+		if ('agentId' in fresh) {
+			return {
+				toolType: fresh.agentId,
+				note: `${selection.escalate}; creating a fresh ${fresh.agentId} session`,
+			};
+		}
+	}
+	return {
+		toolType: PIANOLA_COLD_START_TOOL_TYPE,
+		note: `${selection.escalate}; defaulting to ${PIANOLA_COLD_START_TOOL_TYPE}`,
+	};
 }
 
 function campaignIdForPianolaPlan(planId: string): string {
@@ -1126,57 +1197,22 @@ export async function pianolaOrchestrate(
 					...(tabId ? { tabId } : {}),
 				};
 			}
-			// Capability/load-aware selection: pick a ready, least-loaded tool type
-			// from the live session pool instead of always spawning the default
-			// agent. One candidate per distinct live tool type (present in the pool
-			// means runnable, status 'ok'); load is this plan's tasks currently
-			// running on that type; a type counts as busy only when every one of its
-			// sessions is mid-turn. Selection creates a FRESH session of the chosen
+			// Capability/load-aware selection (choosePianolaToolType): a task that
+			// names a provider keeps it; otherwise a ready, least-loaded tool type
+			// from the live pool. Selection creates a FRESH session of the chosen
 			// type (no cross-task reuse, so task transcripts never bleed together).
 			let toolType = task.agentType;
 			if (!toolType) {
-				const sessions = await listDesktopSessions();
-				const running: Record<string, number> = {};
-				for (const t of state.plan.tasks) {
-					if (t.status === 'running' && t.agentType) {
-						running[t.agentType] = (running[t.agentType] ?? 0) + 1;
-					}
-				}
-				const pool = new Map<string, { total: number; busy: number }>();
-				for (const s of sessions) {
-					const e = pool.get(s.toolType) ?? { total: 0, busy: 0 };
-					e.total += 1;
-					if (s.state === 'busy') e.busy += 1;
-					pool.set(s.toolType, e);
-				}
-				const candidates: AgentCandidate[] = [...pool.entries()].map(([type, e]) => ({
-					agentId: type,
-					capabilities: DEFAULT_CAPABILITIES,
-					status: 'ok',
-					busy: e.total > 0 && e.busy === e.total,
-					inFlight: running[type] ?? 0,
-				}));
-				const selection = selectAgentForTask(task, candidates);
-				if ('agentId' in selection) {
-					toolType = selection.agentId;
-				} else {
-					// No reusable ready tool type in the live pool (cold start = empty pool,
-					// or every live type is mid-turn). Create a fresh default session rather
-					// than returning { error } / leaving the task pending: on a cold start the
-					// pool is empty until WE create the first session, so failing here would
-					// deadlock the plan (no session would ever appear). A freshly created
-					// session is never itself "busy", and total parallelism is already bounded
-					// by options.concurrencyLimit in the dispatch loop. Noted for observability.
-					console.log(`[orchestrator] ${selection.escalate}; defaulting to claude-code`);
-					toolType = 'claude-code';
-				}
+				const choice = choosePianolaToolType(task, await listDesktopSessions(), state.plan.tasks);
+				if (choice.note) console.log(`[orchestrator] ${choice.note}`);
+				toolType = choice.toolType;
 			}
 
 			const result = await client.sendCommand<CreateSessionResult>(
 				{
 					type: 'create_session',
 					name: task.title,
-					toolType: toolType || 'claude-code',
+					toolType,
 					cwd: task.cwd || process.cwd(),
 				},
 				'create_session_result'
@@ -1191,12 +1227,12 @@ export async function pianolaOrchestrate(
 				const target = matching.find((entry) => entry.active) ?? matching[0];
 				return {
 					agentId: result.sessionId,
-					agentType: toolType || 'claude-code',
+					agentType: toolType,
 					tabId: target?.tabId,
 				};
 			} catch {
 				// Preserve the newly created agent so a discovery timeout cannot orphan it.
-				return { agentId: result.sessionId, agentType: toolType || 'claude-code' };
+				return { agentId: result.sessionId, agentType: toolType };
 			}
 		},
 		dispatch: async (task, agentId) => {

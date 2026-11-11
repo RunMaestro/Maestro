@@ -20,6 +20,7 @@ import { logger } from '../../utils/logger';
 import { MaestroSettings } from './persistence';
 import { parseSshConfig, SshConfigParseResult } from '../../utils/ssh-config-parser';
 import { normalizeSshOptions } from '../../../shared/sshOptions';
+import { federationFieldFor } from '../../../shared/federationRemote';
 
 const LOG_CONTEXT = '[SshRemote]';
 
@@ -122,8 +123,8 @@ export function registerSshRemoteHandlers(deps: SshRemoteHandlerDependencies): v
 					enabled: config.enabled ?? true,
 					useSshConfig: config.useSshConfig,
 					sshConfigHost: config.sshConfigHost,
-					// Stored only when on, so a remote that never opted in carries no trace.
-					federation: config.federation === true ? true : undefined,
+					// Federation is opportunistic: stored only as an opt-out (`false`).
+					federation: federationFieldFor(config.federation !== false),
 				};
 
 				// Validate the configuration

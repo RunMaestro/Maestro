@@ -31,11 +31,13 @@ import {
 } from '../../utils/providerTabSessions';
 import { routeQueuedAutoItem, settleAutoTurn, turnSpawnSettings } from '../../services/autoTurn';
 import type { AutoRouteStamp } from '../../../shared/autoTurn';
-import { substituteTemplateVariables } from '../../utils/templateVariables';
+import { buildQueuedMessageItem } from '../../services/queuedPrompt';
 import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
+import { isLimitPausedSession } from '../agent/useAutoResumeCoordinator';
+import { useAgentStore } from '../../stores/agentStore';
 import { stripShellCommandEscape, type ComposerCommandMode } from '../../utils/shellCommandInput';
 import { dispatchShellCommand } from '../../services/shellCommand';
 import { requestAiCommand } from '../../services/aiCommand';
@@ -72,6 +74,7 @@ import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 import { steerQueuedItemOrExplain } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
+import { admitGrokNativeCommand } from '../../slashCommands';
 import { liftedSendRefusal } from '../../../shared/maestro-lib/agents/lift-pointer';
 
 let cachedImageOnlyPrompt: string = '';
@@ -311,7 +314,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		onWizardSendMessage,
 		isWizardActive,
 		onSkillsCommand,
-		conductorProfile,
 		onPlanCrossAgentMentions,
 		onDispatchCrossAgentMentions,
 	} = deps;
@@ -361,9 +363,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// process reconciliation or agent configuration is in flight, but this send
 			// must keep using the tab that owned the submitted input.
 			const targetTabId = activeSession
-				? options?.tabId && activeSession.aiTabs.some((tab) => tab.id === options.tabId)
-					? options.tabId
-					: getActiveTab(activeSession)?.id
+				? (options?.tabId ?? getActiveTab(activeSession)?.id)
 				: undefined;
 			const resolveTargetTab = (session: Session) =>
 				targetTabId ? session.aiTabs.find((tab) => tab.id === targetTabId) : getActiveTab(session);
@@ -404,6 +404,18 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				if (options?.forceParallel) {
 					logger.info('[ForcedParallel] Early return: no session or empty input');
 				}
+				return;
+			}
+
+			if (options?.tabId && !resolveTargetTab(activeSession)) {
+				notifyToast({
+					color: 'yellow',
+					title: 'Message not submitted',
+					message: 'The selected AI tab no longer exists. Your draft was kept.',
+					dismissible: true,
+					skipCustomNotification: true,
+					skipOsNotification: true,
+				});
 				return;
 			}
 
@@ -552,19 +564,22 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 				// Check for custom AI commands (only in AI mode)
 				if (!isTerminalMode) {
-					// Parse command and arguments: "/speckit.plan Blah blah" -> baseCommand="/speckit.plan", args="Blah blah"
-					const firstSpaceIndex = commandText.indexOf(' ');
+					// Match the command name; the canonical queue builder retains its arguments.
+					const firstWhitespaceIndex = commandText.search(/\s/);
 					const baseCommand =
-						firstSpaceIndex === -1 ? commandText : commandText.substring(0, firstSpaceIndex);
-					const commandArgs =
-						firstSpaceIndex === -1 ? '' : commandText.substring(firstSpaceIndex + 1).trim();
+						firstWhitespaceIndex === -1
+							? commandText
+							: commandText.substring(0, firstWhitespaceIndex);
 
 					// Check custom AI commands first, then agent-discovered commands with prompts
-					const matchingAgentCommand = getAgentCommands(
-						activeSession,
-						resolveTargetTab(activeSession),
-						submittedProvider
-					)?.find((cmd) => cmd.command === baseCommand && cmd.prompt);
+					const matchingAgentCommand =
+						activeSession.toolType === 'grok'
+							? undefined
+							: getAgentCommands(
+									activeSession,
+									resolveTargetTab(activeSession),
+									submittedProvider
+								)?.find((cmd) => cmd.command === baseCommand && cmd.prompt);
 					const matchingCustomCommand =
 						customAICommands.find((cmd) => cmd.command === baseCommand) ||
 						(matchingAgentCommand
@@ -574,141 +589,151 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 									prompt: matchingAgentCommand.prompt!,
 								}
 							: undefined);
-					if (matchingCustomCommand) {
+					// Any other Grok slash text is a native command: admitted against this
+					// tab's live catalog, or refused here keeping the draft, images and target.
+					// No naming, mention consult, Claude skill scan or ordinary prompt follows.
+					if (!matchingCustomCommand && activeSession.toolType === 'grok') {
+						const admission = await admitGrokNativeCommand(
+							activeSession,
+							resolveTargetTab(activeSession),
+							commandText,
+							{ imageCount: effectiveImages.length }
+						);
+						if (admission.refusal) {
+							if (targetTabId) {
+								useSessionStore
+									.getState()
+									.addLogToTab(
+										activeSession.id,
+										{ source: 'error', text: admission.refusal },
+										targetTabId
+									);
+							}
+							return;
+						}
+					}
+					// The queue drain re-admits a native command against the catalog current
+					// when it runs, and the host revalidates it on the new process.
+					const queuedCommand =
+						matchingCustomCommand ??
+						(activeSession.toolType === 'grok'
+							? { command: baseCommand, description: 'Grok native command' }
+							: undefined);
+					if (queuedCommand) {
+						const activeTab = resolveTargetTab(activeSession);
+						if (!activeTab) {
+							logger.error('[processInput] Custom command has no target AI tab');
+							return;
+						}
+
 						// Execute the custom AI command by sending its prompt
 						setInputValue('');
 						setSlashCommandOpen(false);
 						syncAiInputToSession('', syncTarget); // We're in AI mode here (isTerminalMode === false)
 						if (inputRef.current) inputRef.current.style.height = 'auto';
 
-						// Substitute template variables and send to the AI agent
-						(async () => {
-							let gitBranch: string | undefined;
-							if (activeSession.isGitRepo) {
-								try {
-									const status = await gitService.getStatus(activeSession.cwd);
-									gitBranch = status.branch;
-								} catch {
-									// Ignore git errors
-								}
-							}
-							substituteTemplateVariables(matchingCustomCommand.prompt, {
+						// Custom prompts use the existing queue dispatcher, including idle sends.
+						// Check both session busy state AND AutoRun state
+						// AutoRun runs in isolation and doesn't set session to busy, so we check it explicitly
+						const isAutoRunActive = getBatchState(activeSession.id).isRunning;
+						// Forced parallel: explicit user override (Cmd+Shift+Enter / Force Send button).
+						// Mirrors the regular message path - only THIS tab's state matters; cross-tab
+						// busyness and AutoRun are intentionally bypassed.
+						const forceParallel = resolveForceParallel(options?.forceParallel);
+						// Agent Resilience holds the line for this tab - see the message
+						// path below for the full reasoning. A held tab is idle, so
+						// without this the command would spawn straight into the wall.
+						const retryHoldsTab = hasPendingRetry(
+							activeSession.id,
+							activeTab?.id || activeSession.activeTabId
+						);
+						const sessionIsIdle =
+							!options?.hold &&
+							!retryHoldsTab &&
+							(forceParallel
+								? activeTab?.state !== 'busy'
+								: activeSession.state !== 'busy' && !isAutoRunActive);
+
+						// Keep the raw command and arguments. The queue owns expansion once,
+						// against the target it admits; no Git read or template pass runs here.
+						const queuedItem: QueuedItem = {
+							...buildQueuedMessageItem({
 								session: activeSession,
-								gitBranch,
-								groupId: activeSession.groupId,
-								activeTabId: activeSession.activeTabId,
-								conductorProfile,
-							});
-
-							// ALWAYS queue slash commands - they execute in order like write messages
-							// This ensures commands are processed sequentially through the queue
-							const activeTab = resolveTargetTab(activeSession);
-							const isReadOnlyMode = activeTab?.readOnlyMode === true;
-							// Check both session busy state AND AutoRun state
-							// AutoRun runs in isolation and doesn't set session to busy, so we check it explicitly
-							const isAutoRunActive = getBatchState(activeSession.id).isRunning;
-							// Forced parallel: explicit user override (Cmd+Shift+Enter / Force Send button).
-							// Mirrors the regular message path - only THIS tab's state matters; cross-tab
-							// busyness and AutoRun are intentionally bypassed.
-							const forceParallel = resolveForceParallel(options?.forceParallel);
-							// Agent Resilience holds the line for this tab - see the message
-							// path below for the full reasoning. A held tab is idle, so
-							// without this the command would spawn straight into the wall.
-							const retryHoldsTab = hasPendingRetry(
-								activeSession.id,
-								activeTab?.id || activeSession.activeTabId
-							);
-							const sessionIsIdle =
-								!options?.hold &&
-								!retryHoldsTab &&
-								(forceParallel
-									? activeTab?.state !== 'busy'
-									: activeSession.state !== 'busy' && !isAutoRunActive);
-
-							const queuedItem: QueuedItem = {
-								id: generateId(),
-								timestamp: Date.now(),
-								tabId: activeTab?.id || activeSession.activeTabId,
-								type: 'command',
-								querySource,
-								command: matchingCustomCommand.command,
-								commandArgs, // Arguments passed after the command (for $ARGUMENTS substitution)
-								commandDescription: matchingCustomCommand.description,
-								// Last-known label, used only if the tab is gone by the time
-								// the queue drains - the queue UI resolves the live name first.
-								tabName: activeTab ? getTabDisplayName(activeTab) : undefined,
-								readOnlyMode: isReadOnlyMode,
-								...(forceParallel && { forceParallel: true }),
-								...(options?.hold && { paused: true }),
-								// Freeze the model/effort now: the queue may not drain until
-								// after the user has switched to something else, and this
-								// command must run under - and be labeled with - what was
-								// selected when they sent it.
+								tab: activeTab,
+								text: commandText,
+								images: effectiveImages,
+								slashCommand: true,
+								// Frozen at submit: the queue may drain after the user switched
+								// model or provider, and this command runs under what was picked.
 								turnSettings: submittedSettings,
-							};
+							}),
+							querySource,
+							commandDescription: queuedCommand.description,
+							...(forceParallel && { forceParallel: true }),
+							...(options?.hold && { paused: true }),
+						};
 
-							// If session is idle, we need to set up state and process immediately
-							// If session is busy, just add to queue - it will be processed when current item finishes
-							if (sessionIsIdle) {
-								// Set up session and tab state for immediate processing
-								// NOTE: Don't add to executionQueue when processing immediately - it's not actually queued,
-								// and adding it would cause duplicate display (once as sent message, once in queue section)
-								updateSessionWith(resolvedSessionId, (s) => {
-									// Set the target tab to busy
-									const updatedAiTabs = s.aiTabs.map((tab) =>
-										tab.id === queuedItem.tabId
-											? {
-													...tab,
-													state: 'busy' as const,
-													thinkingStartTime: Date.now(),
-													...codifyQueuedTurnSettings({ turnSettings: submittedSettings }, tab, s),
-												}
-											: tab
-									);
+						// If session is idle, we need to set up state and process immediately
+						// If session is busy, just add to queue - it will be processed when current item finishes
+						if (sessionIsIdle) {
+							// Set up session and tab state for immediate processing
+							// NOTE: Don't add to executionQueue when processing immediately - it's not actually queued,
+							// and adding it would cause duplicate display (once as sent message, once in queue section)
+							updateSessionWith(resolvedSessionId, (s) => {
+								// Set the target tab to busy
+								const updatedAiTabs = s.aiTabs.map((tab) =>
+									tab.id === queuedItem.tabId
+										? {
+												...tab,
+												state: 'busy' as const,
+												thinkingStartTime: Date.now(),
+												...codifyQueuedTurnSettings({ turnSettings: submittedSettings }, tab, s),
+											}
+										: tab
+								);
 
-									return {
-										...s,
-										state: 'busy' as SessionState,
-										busySource: 'ai',
-										thinkingStartTime: Date.now(),
-										currentCycleTokens: 0,
-										currentCycleBytes: 0,
-										aiTabs: updatedAiTabs,
-										// Don't add to queue - we're processing immediately, not queuing
-										aiCommandHistory: Array.from(
-											new Set([...(s.aiCommandHistory || []), commandText])
-										).slice(-50),
-									};
-								});
-
-								// Process immediately after state is set up
-								// 50ms delay allows React to flush the setState above, ensuring the session
-								// is marked 'busy' before processQueuedItem runs (prevents duplicate processing)
-								setTimeout(() => {
-									// Rejects on a dispatch failure. This item was never queued (it
-									// is being sent immediately), so agentStore's recovery is what
-									// puts it INTO the queue rather than back - the prompt survives
-									// a failed spawn instead of disappearing from the composer.
-									processQueuedItemRef.current?.(resolvedSessionId, queuedItem).catch((err) => {
-										logger.error(
-											'[useInputProcessing] Immediate command dispatch failed, prompt queued',
-											undefined,
-											err
-										);
-									});
-								}, 50);
-							} else {
-								// Session is busy - just add to queue
-								updateSessionWith(resolvedSessionId, (s) => ({
+								return {
 									...s,
-									executionQueue: [...s.executionQueue, queuedItem],
+									state: 'busy' as SessionState,
+									busySource: 'ai',
+									thinkingStartTime: Date.now(),
+									currentCycleTokens: 0,
+									currentCycleBytes: 0,
+									aiTabs: updatedAiTabs,
+									// Don't add to queue - we're processing immediately, not queuing
 									aiCommandHistory: Array.from(
 										new Set([...(s.aiCommandHistory || []), commandText])
 									).slice(-50),
-								}));
-							}
-							// Note: Input already cleared synchronously before this async block
-						})();
+								};
+							});
+
+							// Process immediately after state is set up
+							// 50ms delay allows React to flush the setState above, ensuring the session
+							// is marked 'busy' before processQueuedItem runs (prevents duplicate processing)
+							setTimeout(() => {
+								// Rejects on a dispatch failure. This item was never queued (it
+								// is being sent immediately), so agentStore's recovery is what
+								// puts it INTO the queue rather than back - the prompt survives
+								// a failed spawn instead of disappearing from the composer.
+								processQueuedItemRef.current?.(resolvedSessionId, queuedItem).catch((err) => {
+									logger.error(
+										'[useInputProcessing] Immediate command dispatch failed, prompt queued',
+										undefined,
+										err
+									);
+								});
+							}, 50);
+						} else {
+							// Session is busy - just add to queue
+							updateSessionWith(resolvedSessionId, (s) => ({
+								...s,
+								executionQueue: [...s.executionQueue, queuedItem],
+								aiCommandHistory: Array.from(
+									new Set([...(s.aiCommandHistory || []), commandText])
+								).slice(-50),
+							}));
+						}
+						if (!usingOverrideImages) setStagedImages([]);
 						return;
 					}
 				}
@@ -1260,6 +1285,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							executionQueue: [...s.executionQueue, queuedItem],
 						};
 					});
+					// Sending is the user moving past the error, exactly as the direct
+					// send below clears it. A queued send has to say so explicitly: an
+					// agent in 'error' never drains its queue (useQueueProcessing only
+					// dispatches from 'idle'), so a message queued behind work that was
+					// already waiting when the error landed sat there until the user
+					// found the banner's X. A provider-limit pause is the exception: its
+					// queue is held on purpose until the auto-resume coordinator sees the
+					// window reopen, and draining now would only hit the same wall.
+					if (liveSession.state === 'error' && !isLimitPausedSession(liveSession)) {
+						useAgentStore.getState().clearAgentError(resolvedSessionId);
+					}
 					// A message queued on the Auto model is routed NOW, while it waits,
 					// and the answer is written onto the item: what the router said is
 					// part of what was frozen at send. A no-op on a named model.

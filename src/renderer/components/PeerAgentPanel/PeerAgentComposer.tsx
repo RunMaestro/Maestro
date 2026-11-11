@@ -3,8 +3,9 @@
  *
  * It types and sends the way the AI composer does for a local agent: Enter or Cmd+Enter per the
  * tab's Enter-to-send setting, Shift+Enter for a newline, an IME guard, trimmed text pastes, an
- * auto-growing box, the shared Send column, and the Stop pill while the tab works. A message to a
- * busy tab waits in the HOST's queue, as a local one waits in the local queue.
+ * auto-growing box, the shared Send column, and the same Thinking pill above it, which lists every
+ * busy tab (local and mirrored) and stops this tab's turn on the host. A message to a busy tab
+ * waits in the HOST's queue, as a local one waits in the local queue.
  *
  * What it does NOT do is reach anything local. Every send goes through `sendToMirroredTab()` to
  * the main-process mirror service; nothing here touches `sessionStore` or the local execution
@@ -18,14 +19,18 @@ import { Image as ImageIcon, Slash, Terminal } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { AITabRecord } from '../../../shared/maestro-lib/store/records';
 import { ComposerSendColumn, applyTrimmedTextPaste, clipboardHasImage } from '../ChatComposer';
-import { StopTurnButton } from '../ui/StopTurnButton';
+import { ThinkingStatusPill } from '../ThinkingStatusPill';
 import { useAutosizeTextarea } from '../../hooks/ui/useAutosizeTextarea';
+import { handleComposerSendKey } from '../../hooks/input/composerKeyDown';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../../utils/textareaSizing';
 import { mirrorDraftKey, usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { interruptMirroredAgent, sendToMirroredTab } from '../../services/peerMirror';
+import { jumpToAgent } from '../../services/agentNavigation';
+import { useThinkingItems } from '../../hooks/session/useThinkingItems';
+import { mirrorKey } from '../../../shared/maestro-lib/client/peer-mirror';
 import { MIRROR_COMPOSER_UNAVAILABLE, mirrorSendBlockReason } from '../../utils/peerMirrorView';
 
 export interface PeerAgentComposerProps {
@@ -83,6 +88,7 @@ export function PeerAgentComposer({
 	const busy = tab.state === 'busy';
 	const [sending, setSending] = useState(false);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
+	const thinkingItems = useThinkingItems();
 
 	useAutosizeTextarea({
 		textareaRef: inputRef,
@@ -118,19 +124,12 @@ export function PeerAgentComposer({
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
-			const modified = e.metaKey || e.ctrlKey;
-			if (modified) {
-				// Cmd+Enter never reaches the window handler from here, whichever setting is on.
-				e.preventDefault();
-				e.stopPropagation();
-				if (!enterToSend) void handleSend();
-				return;
-			}
-			if (enterToSend && !e.shiftKey) {
-				e.preventDefault();
-				void handleSend();
-			}
+			handleComposerSendKey(e, {
+				enterToSend,
+				send: () => void handleSend(),
+				inputRef,
+				isolateFromWindowKeys: true,
+			});
 		},
 		[enterToSend, handleSend]
 	);
@@ -161,20 +160,18 @@ export function PeerAgentComposer({
 			style={{ borderColor: theme.colors.border }}
 			data-testid="peer-agent-composer"
 		>
-			{busy && (
-				<div className="flex items-center gap-2 pb-2 text-xs select-none">
-					<span
-						className="w-2 h-2 rounded-full animate-pulse"
-						style={{ backgroundColor: theme.colors.warning }}
-					/>
-					<span style={{ color: theme.colors.textDim }}>Working on {peerName}</span>
-					<StopTurnButton
-						theme={theme}
-						onClick={() => void interruptMirroredAgent(peerId, agentId, tabId)}
-						title={`Stop this turn on ${peerName}`}
-					/>
-				</div>
-			)}
+			{/* The same pill a local agent's composer shows. A mirrored entry opens its mirror; a local
+			    one jumps to that agent. Stop on this tab's entry stops it on the host. */}
+			<ThinkingStatusPill
+				thinkingItems={thinkingItems}
+				theme={theme}
+				onSessionClick={(sessionId, targetTabId) => {
+					jumpToAgent(sessionId, targetTabId ? { tabId: targetTabId } : {});
+				}}
+				activeSessionId={mirrorKey(peerId, agentId)}
+				activeTabId={tabId}
+				onInterrupt={busy ? () => void interruptMirroredAgent(peerId, agentId, tabId) : undefined}
+			/>
 			<div className="flex gap-3 items-end">
 				<div
 					className="flex-1 flex flex-col rounded-lg border"

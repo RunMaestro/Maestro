@@ -1,10 +1,11 @@
 // Show agent command
 // Displays detailed information about a specific agent including history and usage stats.
 // A `peer:agent` target (Federation) reads the agent from that peer's host instead, in the same
-// shape: History lives on the host and the bridge does not carry it, so `stats` is null there.
+// shape: its History is the host's (with the project's shared History), the same entries the
+// desktop's mirrored History column shows.
 
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
-import type { SessionInfo } from '../../shared/types';
+import type { HistoryEntry, SessionInfo } from '../../shared/types';
 import {
 	getSessionById,
 	readHarnessTierDefaults,
@@ -80,6 +81,64 @@ function maskSecrets(
 	);
 }
 
+/** The History entry fields the stats and the recent rows read. */
+type StatsEntry = Pick<
+	HistoryEntry,
+	'id' | 'type' | 'timestamp' | 'summary' | 'success' | 'elapsedTimeMs' | 'usageStats' | 'hostname'
+>;
+
+/** Totals over an agent's History: the same for a local agent and a peer's. */
+function historyStats(history: readonly StatsEntry[]) {
+	let totalInputTokens = 0;
+	let totalOutputTokens = 0;
+	let totalCacheReadTokens = 0;
+	let totalCacheCreationTokens = 0;
+	let totalCost = 0;
+	let totalElapsedMs = 0;
+	let successCount = 0;
+	let failureCount = 0;
+	for (const entry of history) {
+		if (entry.usageStats) {
+			totalInputTokens += entry.usageStats.inputTokens || 0;
+			totalOutputTokens += entry.usageStats.outputTokens || 0;
+			totalCacheReadTokens += entry.usageStats.cacheReadInputTokens || 0;
+			totalCacheCreationTokens += entry.usageStats.cacheCreationInputTokens || 0;
+			totalCost += entry.usageStats.totalCostUsd || 0;
+		}
+		if (entry.elapsedTimeMs) totalElapsedMs += entry.elapsedTimeMs;
+		if (entry.success === true) successCount++;
+		else if (entry.success === false) failureCount++;
+	}
+	return {
+		historyEntries: history.length,
+		successCount,
+		failureCount,
+		totalInputTokens,
+		totalOutputTokens,
+		totalCacheReadTokens,
+		totalCacheCreationTokens,
+		totalCost,
+		totalElapsedMs,
+	};
+}
+
+/** The newest 10 entries as `show agent` lists them; `hostname` names another machine's work. */
+function recentHistoryRows(history: readonly StatsEntry[]) {
+	return [...history]
+		.sort((a, b) => b.timestamp - a.timestamp)
+		.slice(0, 10)
+		.map((entry) => ({
+			id: entry.id,
+			type: entry.type,
+			timestamp: entry.timestamp,
+			summary: entry.summary,
+			success: entry.success,
+			elapsedTimeMs: entry.elapsedTimeMs,
+			cost: entry.usageStats?.totalCostUsd,
+			...(entry.hostname ? { hostname: entry.hostname } : {}),
+		}));
+}
+
 export function showAgent(agentId: string, options: ShowAgentOptions): void | Promise<void> {
 	const route = routeAgentTarget(agentId);
 	if (route.kind === 'peer') return showPeerAgent(route.target, options);
@@ -96,37 +155,6 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void | Pr
 
 		// Get history entries for this agent
 		const history = readHistory(undefined, agent.id);
-
-		// Calculate aggregate stats from history
-		let totalInputTokens = 0;
-		let totalOutputTokens = 0;
-		let totalCacheReadTokens = 0;
-		let totalCacheCreationTokens = 0;
-		let totalCost = 0;
-		let totalElapsedMs = 0;
-		let successCount = 0;
-		let failureCount = 0;
-
-		for (const entry of history) {
-			if (entry.usageStats) {
-				totalInputTokens += entry.usageStats.inputTokens || 0;
-				totalOutputTokens += entry.usageStats.outputTokens || 0;
-				totalCacheReadTokens += entry.usageStats.cacheReadInputTokens || 0;
-				totalCacheCreationTokens += entry.usageStats.cacheCreationInputTokens || 0;
-				totalCost += entry.usageStats.totalCostUsd || 0;
-			}
-			if (entry.elapsedTimeMs) {
-				totalElapsedMs += entry.elapsedTimeMs;
-			}
-			if (entry.success === true) {
-				successCount++;
-			} else if (entry.success === false) {
-				failureCount++;
-			}
-		}
-
-		// Get recent history (last 10 entries)
-		const recentHistory = history.sort((a, b) => b.timestamp - a.timestamp).slice(0, 10);
 
 		// Resolve the Claude token source to the friendly tri-state (api | tui via
 		// 'interactive' | dynamic) the Edit Agent modal shows. SSH enablement flips
@@ -264,26 +292,8 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void | Pr
 			// agent's remote, working-dir override, and history-sync state without
 			// reading raw store files.
 			sessionSshRemoteConfig: agent.sessionSshRemoteConfig ?? null,
-			stats: {
-				historyEntries: history.length,
-				successCount,
-				failureCount,
-				totalInputTokens,
-				totalOutputTokens,
-				totalCacheReadTokens,
-				totalCacheCreationTokens,
-				totalCost,
-				totalElapsedMs,
-			},
-			recentHistory: recentHistory.map((entry) => ({
-				id: entry.id,
-				type: entry.type,
-				timestamp: entry.timestamp,
-				summary: entry.summary,
-				success: entry.success,
-				elapsedTimeMs: entry.elapsedTimeMs,
-				cost: entry.usageStats?.totalCostUsd,
-			})),
+			stats: historyStats(history),
+			recentHistory: recentHistoryRows(history),
 		};
 
 		if (options.json) {
@@ -305,8 +315,17 @@ interface PeerTabRow {
 	agentSessionId: string | null;
 }
 
-/** The peer's agent in the local output shape, plus `peer` and its tabs. */
-function peerAgentOutput(agent: AgentRecord, peer: string, groupName: string | undefined) {
+/**
+ * The peer's agent in the local output shape, plus `peer` and its tabs. `history` is the host's
+ * (its own entries and the project's shared History); null when the host could not serve it, and
+ * `stats` is null then too.
+ */
+function peerAgentOutput(
+	agent: AgentRecord,
+	peer: string,
+	groupName: string | undefined,
+	history: HistoryEntry[] | null
+) {
 	const worktree = agent.worktreeConfig as { basePath?: string } | undefined;
 	const tabs: PeerTabRow[] = (agent.aiTabs ?? []).map((tab) => ({
 		id: tab.id,
@@ -330,8 +349,8 @@ function peerAgentOutput(agent: AgentRecord, peer: string, groupName: string | u
 		peer,
 		activeTabId: agent.activeTabId ?? null,
 		tabs,
-		stats: null,
-		recentHistory: [],
+		stats: history ? historyStats(history) : null,
+		recentHistory: history ? recentHistoryRows(history) : [],
 	};
 }
 
@@ -344,7 +363,9 @@ async function showPeerAgent(target: PeerTarget, options: ShowAgentOptions): Pro
 				const groups = await client.groups.list();
 				if (groups.ok) groupName = groups.value.find((g) => g.id === agent.groupId)?.name;
 			}
-			return peerAgentOutput(agent, peer, groupName);
+			// A host too old to serve History still shows the agent, with `stats: null`.
+			const history = await client.history.list(agent.id);
+			return peerAgentOutput(agent, peer, groupName, history.ok ? history.value : null);
 		});
 		if (options.json) {
 			console.log(JSON.stringify(output, null, 2));

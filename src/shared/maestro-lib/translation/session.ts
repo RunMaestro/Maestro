@@ -4,6 +4,7 @@ import { agentRunOnSupport } from '../../local-models/run-on';
 import { OFF_TOKEN_PROXY_FIELDS } from '../../local-models/token-proxy';
 import type { ToolType } from '../../types';
 import { resolveTabProvider, type ProviderSwitchTab } from '../agents/providerSwap';
+import type { NativeSessionBinding } from '../agents/providerSwap';
 import type {
 	ProviderMigrationState,
 	TranslationTabMapping,
@@ -27,6 +28,7 @@ export function switchTabProvider<T extends Omit<TranslationTab, 'id' | 'tabProv
 	const parked = { ...(tab.providerSessions ?? {}) };
 	parked[fromProvider] = {
 		agentSessionId: tab.agentSessionId,
+		nativeSessionBinding: tab.nativeSessionBinding,
 		usageStats: tab.usageStats,
 		customModel: tab.customModel,
 		customEffort: tab.customEffort,
@@ -37,6 +39,7 @@ export function switchTabProvider<T extends Omit<TranslationTab, 'id' | 'tabProv
 	return {
 		...tab,
 		agentSessionId: restored?.agentSessionId ?? null,
+		nativeSessionBinding: restored?.nativeSessionBinding,
 		usageStats: restored?.usageStats,
 		customModel: restored?.customModel,
 		customEffort: restored?.customEffort,
@@ -248,6 +251,12 @@ export function commitTranslationSession<T extends TranslatableSession>(
 				pendingTranslation: pendingSource === destination ? undefined : pendingSource,
 			};
 		}
+		// A mapping supplies no observed account/host ownership, including when
+		// its ID equals a previous destination ID. Only a committed operation's
+		// replay may retain ownership observed after that same commit.
+		const destinationBinding: NativeSessionBinding | undefined = mapping.destinationSessionId
+			? { version: 1, state: 'unknown', reason: 'unobserved' }
+			: undefined;
 		if (tabId !== undefined) {
 			const sourceId =
 				sourceProvider === liveProvider
@@ -267,6 +276,8 @@ export function commitTranslationSession<T extends TranslatableSession>(
 			const translated = {
 				...switchTabProvider(sourceTab, sourceProvider, destination),
 				agentSessionId: mapping.destinationSessionId,
+				// The source binding stays parked; the mapped destination is unobserved.
+				nativeSessionBinding: destinationBinding,
 				turnSessionId: tab.turnSessionId ?? tab.agentSessionId ?? undefined,
 				pendingTranslation: undefined,
 			};
@@ -277,14 +288,21 @@ export function commitTranslationSession<T extends TranslatableSession>(
 			session.toolType === destination &&
 			tab.agentSessionId === mapping.destinationSessionId &&
 			tab.providerSessions?.[sourceProvider]?.agentSessionId === mapping.sourceSessionId
-		)
-			return tab;
+		) {
+			return session.providerMigration?.operationId === operationId &&
+				session.providerMigration.destination === destination &&
+				session.providerMigration.state === 'committed'
+				? tab
+				: { ...tab, nativeSessionBinding: destinationBinding };
+		}
 		if (tab.agentSessionId !== mapping.sourceSessionId)
 			throw new Error(`Native source identity changed before translation commit for tab ${tab.id}`);
 		const switched = switchTabProvider(tab, sourceProvider, destination);
 		return {
 			...switched,
 			agentSessionId: mapping.destinationSessionId,
+			// The source binding stays parked; the mapped destination is unobserved.
+			nativeSessionBinding: destinationBinding,
 			turnSessionId: tab.turnSessionId ?? tab.agentSessionId ?? undefined,
 			pendingTranslation: undefined,
 		};
@@ -364,6 +382,7 @@ export function commitTranslationSession<T extends TranslatableSession>(
 				id: tab.id,
 				tabProvider: tab.tabProvider,
 				agentSessionId: tab.agentSessionId,
+				nativeSessionBinding: tab.nativeSessionBinding,
 				providerSessions: tab.providerSessions,
 				pendingTranslation: tab.pendingTranslation,
 			})),

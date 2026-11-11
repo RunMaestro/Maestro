@@ -60,6 +60,7 @@ import { FONT_SCALE_DEFAULT, FONT_SCALE_MAX, FONT_SCALE_MIN } from '../../shared
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { isImeComposing } from '../utils/ime';
 import { ZOOM_VIEWER_ATTR, ZoomViewerHost, useZoomViewerStore } from '../components/ZoomViewer';
 import { LayerStackProvider } from '../contexts/LayerStackContext';
 import type { Theme } from '../types';
@@ -734,7 +735,7 @@ function QuickChatWindow() {
 				onChange={(e) => setDraft(e.target.value)}
 				onPaste={onPaste}
 				onKeyDown={(e) => {
-					if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+					if (e.key === 'Enter' && !e.shiftKey && !isImeComposing(e)) {
 						e.preventDefault();
 						void send();
 					}

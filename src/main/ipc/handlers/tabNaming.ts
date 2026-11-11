@@ -37,7 +37,8 @@ import {
 } from '../../../shared/effortRejection';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
-import { buildSshCommand } from '../../utils/ssh-command-builder';
+import { buildSshCommand, newRemotePromptFileDestination } from '../../utils/ssh-command-builder';
+import { buildAgentLaunchPlan } from '../../../shared/maestro-lib/launch/launch-plan';
 import { getPrompt } from '../../prompt-manager';
 import { isWindows } from '../../../shared/platformDetection';
 import { truncateAtWordBoundary } from '../../../shared/formatters';
@@ -46,6 +47,7 @@ import type { SafeSendFn } from '../../utils/safe-send';
 import { runLocalTask, type LocalTaskResult } from '../../local-models/task-router';
 import { resolveUtilityProvider } from '../../../shared/local-models/tasks';
 import { clearLocalTaskNotice, reportLocalTaskUnavailable } from '../../local-models/task-notices';
+import type { ProcessConfig } from '../../process-manager/types';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
@@ -151,6 +153,8 @@ export async function generateTabName(
 	skipCheapEffort = false
 ): Promise<string | null> {
 	if (signal?.aborted) return null;
+	// Keep the request's account and host stable across preparation.
+	config = structuredClone(config);
 	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore } = deps;
 
 	// Local Models assignment first, for ordinary tab naming only. A plugin
@@ -182,6 +186,7 @@ export async function generateTabName(
 
 	// Generate a unique session ID for this ephemeral request
 	const sessionId = `tab-naming-${uuidv4()}`;
+	let privatePrompt = config.agentType === 'grok';
 
 	logger.info('Starting tab naming request', LOG_CONTEXT, {
 		sessionId,
@@ -190,15 +195,16 @@ export async function generateTabName(
 	});
 
 	try {
-		const sshRemote = config.sessionSshRemoteConfig?.enabled
+		const selectedRemote = config.sessionSshRemoteConfig?.enabled
 			? getSshRemoteConfig(createSshRemoteStoreAdapter(settingsStore), {
 					sessionSshConfig: config.sessionSshRemoteConfig,
 				}).config
 			: null;
-		if (config.sessionSshRemoteConfig?.enabled && !sshRemote) {
+		if (config.sessionSshRemoteConfig?.enabled && !selectedRemote) {
 			logger.warn('Configured SSH remote unavailable for tab naming', LOG_CONTEXT);
 			return null;
 		}
+		const sshRemote = selectedRemote ? structuredClone(selectedRemote) : null;
 		// Resolve the agent: use the utility agent if configured, otherwise the
 		// session agent. Null/empty leaves behavior unchanged (session agent).
 		const utility = resolveUtilityProvider(
@@ -212,9 +218,19 @@ export async function generateTabName(
 			config.agentType
 		);
 		const effectiveAgentType = utility.agentType;
+		privatePrompt = effectiveAgentType === 'grok';
+		const agentConfigValues = structuredClone(
+			agentConfigsStore.get('configs', {})[effectiveAgentType] || {}
+		);
+		const globalShellEnvVars = {
+			...(settingsStore.get('shellEnvVars', {}) as Record<string, string>),
+		};
+		const customPaths = agentDetector.getCustomPaths?.();
+		const configuredPath = customPaths?.[effectiveAgentType];
 
 		// Get the agent configuration
 		const agent = await agentDetector.getAgent(effectiveAgentType);
+		if (signal?.aborted) return null;
 		if (!agent) {
 			logger.warn('Agent not found for tab naming', LOG_CONTEXT, {
 				agentType: effectiveAgentType,
@@ -222,6 +238,12 @@ export async function generateTabName(
 			});
 			return null;
 		}
+		privatePrompt = !!agent.promptFile || privatePrompt;
+		const effectiveCwd =
+			agent.promptFile && sshRemote
+				? config.sessionSshRemoteConfig?.workingDirOverride || config.cwd
+				: config.cwd;
+		const customPath = configuredPath || (!customPaths ? agent.customPath : undefined);
 
 		// Build the prompt: combine the tab naming prompt with the user's message.
 		// The message is fenced as data and the instruction is restated AFTER it:
@@ -249,10 +271,16 @@ export async function generateTabName(
 		// `--tools <list>` that contradicts their own `--no-tools`. Agents with no
 		// way to disable tools stay read-only.
 		const readOnlyMode = !agent.noToolsArgs?.length;
+		if (agent.promptFile && readOnlyMode && agent.readOnlyCliEnforced !== true) {
+			logger.warn('Prompt-file tab naming requires enforced read-only mode', LOG_CONTEXT, {
+				sessionId,
+			});
+			return null;
+		}
 		let finalArgs = buildAgentArgs(agent, {
 			baseArgs,
 			prompt: fullPrompt,
-			cwd: config.cwd,
+			cwd: effectiveCwd,
 			readOnlyMode,
 			// Only apply the model override when a utility agent is actually in use.
 			modelId: utility.modelId,
@@ -274,8 +302,6 @@ export async function generateTabName(
 		// this one, the retry below runs again with the effort left to the
 		// agent - a tab named at the wrong effort beats a tab with no name.
 		const cheapNaming = skipCheapEffort ? { ...cheapSettings, effort: undefined } : cheapSettings;
-		const allConfigs = agentConfigsStore.get('configs', {});
-		const agentConfigValues = allConfigs[effectiveAgentType] || {};
 		const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
 			agentConfigValues,
 			readOnlyMode,
@@ -297,15 +323,12 @@ export async function generateTabName(
 		}
 
 		// Determine command and working directory
-		let command = agent.path || agent.command;
-		let cwd = config.cwd;
-		// Match the chat spawn's env layering so naming uses the SAME provider
-		// auth. The chat merges global shell env (Settings) -> agent-level ->
-		// session-level (see process.ts). globalShellEnvVars is threaded
-		// separately as `shellEnvVars` into processManager.spawn (the lowest
-		// layer, applied by buildChildProcessEnv); customEnvVars carries the
-		// agent-level overrides merged with the session-level overrides.
-		const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
+		let command = (agent.promptFile && customPath) || agent.path || agent.command;
+		let cwd = effectiveCwd;
+		// Preserve legacy naming's environment merge. Explicit file turns below
+		// use the canonical planner's selected account layers, including an empty
+		// session record replacing provider vars and blank values unsetting them.
+		// Global shell vars remain the lowest layer at the local or remote owner.
 		// The session's env overrides belong to the SESSION's agent (its
 		// API keys, its base URL). Layering them onto a different utility
 		// agent points that agent at the wrong provider, so they are only
@@ -373,13 +396,63 @@ export async function generateTabName(
 			});
 		}
 
-		// Handle SSH remote execution if configured
-		// IMPORTANT: For SSH, we must send the prompt via stdin to avoid shell escaping issues.
-		// The prompt contains special characters that break when passed through multiple layers
-		// of shell escaping (local spawn -> SSH -> remote zsh -> bash -c).
+		// Explicit file turns use one host-owned artifact. Legacy SSH delivery
+		// keeps the provider's existing stdin or quoted-argument route.
 		let shouldSendPromptViaStdin = false;
 		let promptAlreadyInArgs = false;
-		if (sshRemote) {
+		let promptArtifact: ProcessConfig['promptArtifact'];
+		let sshStdinScript: string | undefined;
+		let sshRemoteCommand: string | undefined;
+		if (agent.promptFile) {
+			const planned = buildAgentLaunchPlan({
+				surface: 'desktop',
+				agent,
+				command,
+				remoteCommand: customPath || agent.binaryName || agent.command,
+				args: finalArgs,
+				cwd: effectiveCwd,
+				prompt: fullPrompt,
+				readOnlyMode,
+				globalShellEnvVars,
+				agentCustomEnvVars: agentConfigValues.customEnvVars,
+				sessionCustomEnvVars:
+					effectiveAgentType === config.agentType ? config.sessionCustomEnvVars : undefined,
+				sshRemoteConfig: config.sessionSshRemoteConfig,
+				sshStore: { getSshRemotes: () => (sshRemote ? [sshRemote] : []) },
+				promptFileDestination: sshRemote
+					? newRemotePromptFileDestination(sshRemote.id, agent.promptFile.format)
+					: undefined,
+			});
+			if (!planned.ok || planned.plan.prompt.via !== 'file') {
+				logger.warn('Prompt-file tab naming launch refused', LOG_CONTEXT, { sessionId });
+				return null;
+			}
+			const plan = planned.plan;
+			promptArtifact = planned.plan.prompt.artifact;
+			command = plan.command;
+			finalArgs = plan.args;
+			customEnvVars = plan.envVars;
+			if (plan.target.kind === 'remote') {
+				// Preparation only: the shared sink binds the remote stop owner and
+				// materializes the private file after admission, on this captured host.
+				const wrapped = await buildSshCommand(plan.target.remote, {
+					command: plan.command,
+					args: plan.args,
+					cwd: plan.cwd,
+					env: { ...globalShellEnvVars, ...plan.envVars },
+					promptArtifact,
+				});
+				if (signal?.aborted) return null;
+				if (!wrapped.stdinScript) {
+					throw new Error('Prompt-file tab naming remote preparation unavailable.');
+				}
+				command = wrapped.command;
+				finalArgs = wrapped.args;
+				cwd = process.cwd();
+				sshStdinScript = wrapped.stdinScript;
+				sshRemoteCommand = wrapped.remoteCommandLine;
+			}
+		} else if (sshRemote) {
 			// Use the agent's command (not path) for remote execution
 			// since the path is local and remote host has its own binary location
 			let remoteCommand = agent.command;
@@ -519,13 +592,15 @@ export async function generateTabName(
 				logger.info(`Tab naming ${reason}`, LOG_CONTEXT, {
 					sessionId,
 					outputLength: output.length,
-					tabName,
+					...(privatePrompt ? {} : { tabName }),
 				});
 				// Kill the process if it's still running (fire-and-forget)
 				try {
 					processManager.kill(sessionId);
 				} catch {
-					// Process may have already exited
+					if (privatePrompt) {
+						logger.warn('Prompt-file tab naming stop unavailable', LOG_CONTEXT, { sessionId });
+					}
 				}
 				resolve(tabName);
 			};
@@ -535,7 +610,9 @@ export async function generateTabName(
 				logger.warn('Tab naming request timed out', LOG_CONTEXT, {
 					sessionId,
 					outputLength: output.length,
-					outputSnippet: output.substring(0, 500) || '(no output received)',
+					...(privatePrompt
+						? {}
+						: { outputSnippet: output.substring(0, 500) || '(no output received)' }),
 				});
 				resolveWith(null, 'timed out');
 			}, TAB_NAMING_TIMEOUT_MS);
@@ -592,13 +669,23 @@ export async function generateTabName(
 				// the tab unnamed. Only when THIS attempt sent the cheap effort,
 				// so a refusal of the agent's own configured value cannot loop.
 				const rejection = effortRejection ?? parseEffortRejection(output);
-				if (rejection && cheapNaming.effort !== undefined) {
+				// Grok is keyed on the provider that actually ran, not the one the
+				// request named. This turn carries no automatic-hint provenance and
+				// clearing the effort validates no distinct fallback for the selected
+				// model/account/host/version: the agent's own value may be the refused
+				// one, or an explicit choice. So the first failure stands (as in
+				// spawnAgent and the context groomer); the error listener records it.
+				if (rejection && effectiveAgentType === 'grok') {
+					logger.warn('Tab naming effort rejected by Grok; keeping the failure', LOG_CONTEXT, {
+						sessionId,
+					});
+				} else if (rejection && cheapNaming.effort !== undefined) {
 					resolved = true;
 					cleanup();
 					logger.warn(
 						'Tab naming effort rejected by the provider; retrying at the agent default',
 						LOG_CONTEXT,
-						{ sessionId, effort: cheapNaming.effort, ...rejection }
+						{ sessionId, ...(privatePrompt ? {} : { effort: cheapNaming.effort, ...rejection }) }
 					);
 					resolve(generateTabName(deps, config, signal, true));
 					return;
@@ -615,7 +702,7 @@ export async function generateTabName(
 						sessionId,
 						exitCode: code,
 						outputLength: output.length,
-						outputSnippet: output.substring(0, 200),
+						...(privatePrompt ? {} : { outputSnippet: output.substring(0, 200) }),
 					});
 					resolveWith(null, `failed (exit code ${code})`);
 					return;
@@ -628,10 +715,10 @@ export async function generateTabName(
 				if (!extraction.name) {
 					logger.warn('Tab naming extraction failed', LOG_CONTEXT, {
 						sessionId,
-						reason: extraction.reason,
+						reason: privatePrompt ? 'unavailable' : extraction.reason,
 						exitCode: code,
 						outputLength: output.length,
-						outputSnippet: output.substring(0, 500),
+						...(privatePrompt ? {} : { outputSnippet: output.substring(0, 500) }),
 					});
 				}
 				resolveWith(extraction.name, `completed (exit code ${code})`);
@@ -656,6 +743,7 @@ export async function generateTabName(
 			// prompt positionally (omp) would run with no prompt and name
 			// nothing.
 			const sendPromptViaStdinRaw =
+				!promptArtifact &&
 				isWindows() &&
 				!config.sessionSshRemoteConfig?.enabled &&
 				(agent.capabilities?.supportsPromptViaStdin ?? false);
@@ -671,43 +759,63 @@ export async function generateTabName(
 			// returned rather than awaited. Bail to null like every other
 			// failure path here so a cosmetic feature can't break the send.
 			try {
-				processManager.spawn({
+				const result = processManager.spawn({
 					sessionId,
 					toolType: effectiveAgentType,
 					cwd,
 					command,
 					args: finalArgs,
-					prompt: fullPrompt,
+					prompt: promptArtifact ? undefined : fullPrompt,
+					...(promptArtifact
+						? {
+								promptArtifact,
+								sshStdinScript,
+								sshRemoteCommand,
+								sshRemoteId: sshRemote?.id,
+								sshRemoteHost: sshRemote?.host,
+							}
+						: {}),
 					// Global shell env vars (Settings -> Shell Configuration) are the
 					// lowest env layer the chat applies; without them a subscription
 					// auth carried via CLAUDE_CONFIG_DIR / ANTHROPIC_API_KEY never
 					// reaches the naming spawn and claude exits "Not logged in".
 					shellEnvVars: globalShellEnvVars,
 					customEnvVars,
-					promptArgs: agent.promptArgs,
+					promptArgs: promptArtifact ? undefined : agent.promptArgs,
 					noPromptSeparator: agent.noPromptSeparator,
 					sendPromptViaStdin: shouldSendPromptViaStdin,
 					sendPromptViaStdinRaw,
 					promptAlreadyInArgs,
 				});
+				if (promptArtifact && resolved && result?.success && result.pid > 0) {
+					processManager.kill(sessionId);
+				}
+				// A synchronous prompt-file refusal has no process and no later exit.
+				if (promptArtifact && (!result?.success || result.pid <= 0)) {
+					resolveWith(null, 'spawn refused');
+				}
 			} catch (error) {
 				if (!isExpectedSpawnFailure(error)) {
-					void captureException(error);
+					void captureException(
+						privatePrompt ? new Error('Prompt-file tab naming spawn failed.') : error
+					);
 				}
 				logger.warn('Tab naming spawn failed', LOG_CONTEXT, {
 					sessionId,
-					command,
-					code: (error as NodeJS.ErrnoException).code,
-					error: String(error),
+					...(privatePrompt
+						? {}
+						: { command, code: (error as NodeJS.ErrnoException).code, error: String(error) }),
 				});
 				resolveWith(null, 'spawn failed');
 			}
 		});
 	} catch (error) {
-		void captureException(error);
+		void captureException(
+			privatePrompt ? new Error('Prompt-file tab naming request failed.') : error
+		);
 		logger.error('Tab naming request failed', LOG_CONTEXT, {
 			sessionId,
-			error: String(error),
+			error: privatePrompt ? 'Prompt-file tab naming request failed.' : String(error),
 		});
 		// Clean up the process if it was started
 		try {

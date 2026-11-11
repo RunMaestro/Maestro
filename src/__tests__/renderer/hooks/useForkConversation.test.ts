@@ -42,6 +42,7 @@ vi.mock('../../../renderer/utils/spawnHelpers', () => ({
 
 import { useForkConversation } from '../../../renderer/hooks/agent/useForkConversation';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
 
 // ============================================================================
 // Helpers
@@ -170,6 +171,170 @@ describe('useForkConversation', () => {
 		});
 	});
 
+	describe('Grok native fork refusal', () => {
+		it.each([
+			['grok', undefined, 'idle', false],
+			['grok', 'claude-code', 'idle', false],
+			['claude-code', 'grok', 'idle', false],
+			['codex', 'grok', 'busy', false],
+			['grok', undefined, 'idle', true],
+		] as const)(
+			'preserves %s history with owner %s, state %s and pending ID %s',
+			(toolType, turnProvider, state, awaitingSessionId) => {
+				const binding = {
+					version: 1,
+					state: 'bound',
+					provider: 'grok',
+					nativeSessionId: 'shared-native',
+					accountRef: 'account-a',
+					host: { kind: 'local', identity: 'machine-a' },
+					cwd: '/project',
+				} as const;
+				const sourceTab = buildSourceTab({
+					agentSessionId: binding.nativeSessionId,
+					nativeSessionBinding: { ...binding, provider: toolType },
+					turnProvider,
+					state,
+					awaitingSessionId,
+					providerSessions:
+						toolType === 'grok'
+							? undefined
+							: {
+									grok: { agentSessionId: binding.nativeSessionId, nativeSessionBinding: binding },
+								},
+				});
+				const session = buildSession({ toolType, aiTabs: [sourceTab] });
+				const others = [
+					{ ...binding, accountRef: 'account-b' },
+					{ ...binding, host: { kind: 'ssh' as const, identity: 'endpoint-b' } },
+				].map((nativeSessionBinding, index) =>
+					buildSession({
+						id: `other-${index}`,
+						toolType: 'grok',
+						aiTabs: [
+							buildSourceTab({ agentSessionId: binding.nativeSessionId, nativeSessionBinding }),
+						],
+					})
+				);
+				const sessions = [session, ...others];
+				const snapshot = structuredClone(sessions);
+				const { fork, getSessions, setSessions } = mountHook(sessions, session.id);
+
+				fork('log-2');
+
+				expect(getSessions()).toEqual(snapshot);
+				expect(setSessions).not.toHaveBeenCalled();
+				expect(window.maestro.agents.get).not.toHaveBeenCalled();
+				expect(prepareMaestroSystemPrompt).not.toHaveBeenCalled();
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(mockCaptureException).not.toHaveBeenCalled();
+				expect(mockNotifyToast).toHaveBeenCalledTimes(1);
+				const busy = state === 'busy' || awaitingSessionId;
+				expect(mockNotifyToast).toHaveBeenCalledWith({
+					type: 'warning',
+					title: busy ? 'Grok conversation is busy' : 'Grok native fork unavailable',
+					message: expect.stringContaining(
+						busy ? 'Wait for the current turn' : 'separate context conversation'
+					),
+					sessionId: session.id,
+					tabId: sourceTab.id,
+				});
+				if (!busy) {
+					expect(mockNotifyToast.mock.calls[0][0].message).toContain('Use Grok CLI');
+				}
+			}
+		);
+
+		it('refuses a selected remote account without falling back to a local context fork', () => {
+			const session = buildSession({
+				toolType: 'grok',
+				cwd: '/remote/project',
+				customEnvVars: { GROK_HOME: '/remote/account-b' },
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'endpoint-b' },
+			});
+			const { fork, getSessions, setSessions } = mountHook([session], session.id);
+
+			fork('log-1');
+
+			expect(getSessions()[0]).toBe(session);
+			expect(setSessions).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'warning',
+					title: 'Grok native fork unavailable',
+				})
+			);
+		});
+	});
+
+	describe('reference prompt context fork identity', () => {
+		it.each([
+			['claude-code', 'u1', 1],
+			['claude-code', 'tool-1', 2],
+			['codex', 'a1', 3],
+		] as const)(
+			'copies %s context through %s without resuming native history',
+			async (toolType, logId, count) => {
+				const logs: LogEntry[] = [
+					{ id: 'u1', timestamp: 1, source: 'user', text: 'Selected question' },
+					{ id: 'tool-1', timestamp: 2, source: 'tool', text: 'Historical tool evidence' },
+					{ id: 'a1', timestamp: 3, source: 'stdout', text: 'Selected answer' },
+					{ id: 'u2', timestamp: 4, source: 'user', text: 'Excluded later turn' },
+				];
+				const sourceTab = buildSourceTab({
+					agentSessionId: 'source-native',
+					logs,
+					saveToHistory: true,
+				});
+				const session = buildSession({
+					toolType,
+					aiTabs: [sourceTab],
+					cwd: '/remote/project',
+					customEnvVars: { SELECTED_ACCOUNT: 'account-b' },
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'endpoint-b' },
+				});
+				const snapshot = structuredClone(sourceTab);
+				const { fork, getSessions } = mountHook([session], session.id);
+
+				fork(logId);
+
+				await waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1));
+				const [original, child] = getSessions()[0].aiTabs;
+				expect(original).toEqual(snapshot);
+				expect(child.agentSessionId).toBeNull();
+				expect(child.nativeSessionBinding).toBeUndefined();
+				expect(child.providerSessions).toBeUndefined();
+				expect(child.awaitingSessionId).toBe(true);
+				expect(child.saveToHistory).toBe(true);
+				const spawn = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
+				expect(spawn).toMatchObject({
+					sessionId: `${session.id}-ai-${child.id}`,
+					toolType,
+					cwd: session.cwd,
+					sessionCustomEnvVars: session.customEnvVars,
+					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					args: ['--flag'],
+				});
+				expect(spawn.agentSessionId).toBeUndefined();
+				expect(spawn.prompt).toContain(`at message ${count} of 4`);
+				for (const [index, log] of logs.entries()) {
+					if (index < count) expect(spawn.prompt).toContain(log.text);
+					else expect(spawn.prompt).not.toContain(log.text);
+				}
+				expect(spawn.prompt).not.toContain('source-native');
+				expect(mockNotifyToast.mock.calls[0][0].title).toBe('Conversation Forked');
+				expect(
+					[
+						child.name,
+						...child.logs.map((log) => log.text),
+						mockNotifyToast.mock.calls[0][0].message,
+					].join(' ')
+				).not.toMatch(/native history|native fork|history duplicated/i);
+			}
+		);
+	});
+
 	describe('session-level invariants', () => {
 		it('creates a new tab in the existing session (does NOT create a new session)', () => {
 			const session = buildSession();
@@ -292,6 +457,30 @@ describe('useForkConversation', () => {
 			expect(toast.tabId).toBe(newTab.id);
 			expect(toast.title).toBe('Conversation Forked');
 		});
+
+		// A fork names the source tab's resolved mode, never none (which
+		// plans `standard` whatever the source tab shows).
+		it.each([
+			['an explicit standard tab', { permissionMode: 'standard' as const }, 'standard'],
+			['a tab never set (the pill reads Full Access)', {}, 'full'],
+			['a legacy read-only tab', { readOnlyMode: true }, 'readonly'],
+		])('spawns and stamps the fork with the mode of %s', async (_label, tabFields, expected) => {
+			const sourceTab = buildSourceTab(tabFields);
+			const session = buildSession({ aiTabs: [sourceTab], activeTabId: sourceTab.id });
+			const { fork, getSessions } = mountHook([session], session.id);
+
+			fork('log-2');
+
+			const newTab = getSessions()[0].aiTabs.find((t) => t.id !== 'source-tab')!;
+			expect(newTab.permissionMode).toBe(expected);
+			expect(newTab.readOnlyMode).toBe(expected === 'readonly');
+			await waitFor(() => {
+				expect((window as any).maestro.process.spawn).toHaveBeenCalledTimes(1);
+			});
+			const spawnArgs = (window as any).maestro.process.spawn.mock.calls[0][0];
+			expect(spawnArgs.permissionMode).toBe(expected);
+			expect(spawnArgs.readOnlyMode).toBe(expected === 'readonly');
+		});
 	});
 
 	describe('multi-chunk AI response', () => {
@@ -351,7 +540,9 @@ describe('useForkConversation', () => {
 		it('flips tab and session back to idle and appends an error log on spawn failure', async () => {
 			(window as any).maestro.process.spawn = vi.fn().mockRejectedValueOnce(new Error('boom'));
 
-			const session = buildSession();
+			const sourceTab = buildSourceTab({ agentSessionId: 'retained-native' });
+			const session = buildSession({ aiTabs: [sourceTab] });
+			const sourceBefore = structuredClone(sourceTab);
 			const { fork, getSessions } = mountHook([session], session.id);
 
 			fork('log-2');
@@ -366,6 +557,10 @@ describe('useForkConversation', () => {
 			expect(after.busySource).toBeUndefined();
 			expect(newTab.state).toBe('idle');
 			expect(newTab.awaitingSessionId).toBe(false);
+			expect(after.aiTabs[0]).toEqual(sourceBefore);
+			expect(newTab.agentSessionId).toBeNull();
+			expect(newTab.nativeSessionBinding).toBeUndefined();
+			expect(mockNotifyToast.mock.calls[0][0].message).not.toMatch(/native history|native fork/i);
 			const errorLog = newTab.logs.find((l: LogEntry) => l.text?.startsWith('Error:'));
 			expect(errorLog).toBeDefined();
 			expect(errorLog!.source).toBe('system');

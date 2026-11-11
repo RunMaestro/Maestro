@@ -11,10 +11,18 @@
 import type { AITab, LogEntry, Session } from '../types';
 import type { ContextSource, DuplicateDetectionResult, DuplicateInfo } from '../types/contextMerge';
 import type { ToolType } from '../../shared/types';
+import type { SessionMessagesResult, SessionReadOptions } from '../../main/agents/session-storage';
+import { canonicalJson } from '../../shared/canonicalJson';
+import { redactSecrets } from '../../shared/redactSecrets';
+import { matchesNativeSessionBinding } from '../../shared/maestro-lib/agents/providerSwap';
 import { countTokens, estimateTokens } from './tokenCounter';
 import { calculateContextTokens } from './contextUsage';
 import { logger } from './logger';
 import { projectTabProvider, resolveTabNativeProvider } from './providerTabSessions';
+
+// Marks a text projection so shared formatters keep its provenance and tool
+// evidence. It conveys no native ownership or permission to resume/migrate.
+const GROK_CONTEXT_PROVENANCE_ID = 'grok-context-provenance';
 
 /**
  * Extract context from an AI tab's conversation logs.
@@ -55,30 +63,17 @@ export function extractTabContext(
 }
 
 /**
- * Result from fetching a stored agent session.
- * Matches the SessionMessagesResult from agent-session-storage.
- */
-interface StoredSessionResult {
-	messages: Array<{
-		type: string;
-		role?: string;
-		content: string;
-		timestamp: string;
-		uuid: string;
-		toolUse?: unknown;
-	}>;
-	total: number;
-	hasMore: boolean;
-}
-
-/**
  * Extract context from a stored/closed agent session.
  * Fetches the session data from the agent's session storage via IPC.
  *
  * @param agentId - The agent type (e.g., 'claude-code')
  * @param projectRoot - The project root path where the session is stored
  * @param agentSessionId - The agent's session identifier
- * @returns Promise resolving to ContextSource, or null if session not found
+ * @param options - Grok requires the owning Maestro agent; its existing history
+ * boundary resolves and rechecks account, cwd and host. A retained binding may
+ * pin a previously selected native session. Thinking text is opt-in.
+ * @returns ContextSource, or null if session not found. Grok scope/read failures
+ * reject; unavailable/partial source reads return explicit context notices.
  *
  * @example
  * const context = await extractStoredSessionContext(
@@ -93,15 +88,123 @@ interface StoredSessionResult {
 export async function extractStoredSessionContext(
 	agentId: ToolType,
 	projectRoot: string,
-	agentSessionId: string
+	agentSessionId: string,
+	options?: Pick<SessionReadOptions, 'nativeSessionBinding'> & {
+		ownerAgentId?: string;
+		sshRemoteId?: string;
+		includeThinking?: boolean;
+	}
 ): Promise<ContextSource | null> {
+	if (agentId === 'grok' && !options?.ownerAgentId?.trim()) {
+		throw new Error('Select the owning Grok agent before exporting its stored context.');
+	}
 	try {
-		// Fetch session messages via IPC
-		const result = (await window.maestro.agentSessions.read(
-			agentId,
-			projectRoot,
-			agentSessionId
-		)) as StoredSessionResult | null;
+		// One bounded snapshot, rather than stitching pages from different native
+		// generations. Grok returns the latest 1,000 records in source order.
+		const result: SessionMessagesResult | null =
+			agentId === 'grok' || options
+				? await window.maestro.agentSessions.read(
+						agentId,
+						projectRoot,
+						agentSessionId,
+						{
+							ownerAgentId: options?.ownerAgentId,
+							nativeSessionBinding: options?.nativeSessionBinding,
+							...(agentId === 'grok' ? { includeNativeRecords: true, offset: 0, limit: 1000 } : {}),
+						},
+						options?.sshRemoteId
+					)
+				: await window.maestro.agentSessions.read(agentId, projectRoot, agentSessionId);
+
+		if (agentId === 'grok') {
+			if (!result)
+				throw new Error('Grok context could not be read. Refresh the history selection.');
+			const binding = result.nativeSessionBinding;
+			const observed =
+				binding?.state === 'bound' &&
+				binding.provider === 'grok' &&
+				binding.nativeSessionId === agentSessionId &&
+				matchesNativeSessionBinding(binding, options?.nativeSessionBinding ?? binding);
+			if (!observed && result.messages.length) {
+				throw new Error('Grok context ownership is unverified. Refresh the history selection.');
+			}
+			const notices = [
+				'Grok context export: a redacted text projection, not lossless native migration or a resumable session.',
+				'Historical tools and image references are inert evidence; no stored tool ran and no referenced image file or URL was opened.',
+				// Raw assistant/unknown rows may embed legacy or opaque reasoning.
+				// Keep line references, never leak those bytes through another role.
+				'Raw native payloads and opaque reasoning are omitted; unknown or unprojected content requires the original source.',
+				options?.includeThinking
+					? 'Normalized visible reasoning text is available only when the output visibility policy includes it.'
+					: 'Reasoning text is omitted by the export visibility policy.',
+				`Source: ${canonicalJson(result.source ?? { provider: 'grok', status: 'unavailable', reason: 'source-status-unobserved' })}`,
+				`Ownership: ${observed ? canonicalJson(binding) : 'unverified; no transcript content exported'}`,
+			];
+			if (!result.source || result.source.status !== 'available') {
+				notices.push(
+					'Missing content: the native source is partial or unavailable; this is not an empty complete transcript.'
+				);
+			}
+			if (result.hasMore || result.total > result.messages.length) {
+				notices.push(
+					`Partial export: the latest ${result.messages.length} of ${result.total} normalized records are included; earlier content is omitted.`
+				);
+			}
+			if (observed && !result.messages.length && result.source?.status === 'available') {
+				notices.push('The observed transcript contains no records.');
+			}
+			const logs: LogEntry[] = [
+				{
+					id: GROK_CONTEXT_PROVENANCE_ID,
+					timestamp: Number.NaN,
+					source: 'system',
+					text: redactSecrets(notices.join('\n')).text,
+				},
+			];
+			for (const [index, msg] of result.messages.entries()) {
+				const thinking = msg.type === 'reasoning';
+				const text = [
+					`[Grok ${msg.type}; role ${msg.role ?? msg.type}; source line ${msg.native?.line ?? 'unknown'}; timestamp ${msg.timestamp || 'unknown'}]`,
+					thinking && !options?.includeThinking
+						? '[Reasoning text omitted by export visibility policy]'
+						: msg.content || '[No normalized text; original content may be unavailable or opaque]',
+				];
+				if (msg.toolUse !== undefined)
+					text.push(`Historical tool calls: ${canonicalJson(msg.toolUse)}`);
+				if (msg.toolCallId !== undefined) text.push(`Tool result for call: ${msg.toolCallId}`);
+				if (msg.native?.issues?.length) text.push(`Source issues: ${msg.native.issues.join(', ')}`);
+				const references = msg.imageReferences ?? msg.images;
+				if (references?.length) {
+					text.push(
+						`Image references (not loaded; image content not interpreted): ${canonicalJson(references)}`
+					);
+				}
+				logs.push({
+					id: msg.uuid || `grok-context-${index}`,
+					// NaN is unknown in the existing LogEntry shape, never a made-up date.
+					timestamp: new Date(msg.timestamp).getTime(),
+					source: thinking
+						? options?.includeThinking
+							? 'thinking'
+							: 'system'
+						: msg.type === 'tool_result' || msg.type === 'backend_tool_call'
+							? 'tool'
+							: mapRoleToSource(msg.role || msg.type),
+					// No native raw, live tool state, executable metadata or image URLs
+					// escape in secondary fields; redact the entire final evidence text.
+					text: redactSecrets(text.join('\n\n')).text,
+				});
+			}
+			return {
+				type: 'session',
+				sessionId: options!.ownerAgentId!,
+				agentSessionId,
+				projectRoot,
+				name: redactSecrets(`Grok context ${agentSessionId.slice(0, 8)}`).text,
+				logs,
+				agentType: agentId,
+			};
+		}
 
 		if (!result || !result.messages || result.messages.length === 0) {
 			return null;
@@ -132,6 +235,7 @@ export async function extractStoredSessionContext(
 			agentType: agentId,
 		};
 	} catch (error) {
+		if (agentId === 'grok') throw error;
 		logger.error('Failed to extract stored session context:', undefined, error);
 		return null;
 	}
@@ -166,6 +270,11 @@ function truncateForDisplay(text: string, maxLength: number): string {
 	return text.slice(0, maxLength - 3) + '...';
 }
 
+/** A stored context projection must keep its disclosure/evidence through formatting. */
+function isGrokContextExport(logs: LogEntry[]): boolean {
+	return logs.some((log) => log.id === GROK_CONTEXT_PROVENANCE_ID && log.source === 'system');
+}
+
 /**
  * Format log entries into a text summary suitable for grooming.
  * Produces a structured markdown-like format that preserves conversation flow.
@@ -196,6 +305,7 @@ export function formatLogsForGrooming(
 ): string {
 	const { maxImageTokens = 0 } = options;
 	const sections: string[] = [];
+	const storedContext = isGrokContextExport(logs);
 
 	// Track images for potential stripping (oldest first)
 	const imageEntries: Array<{ logIndex: number; images: string[]; timestamp: number }> = [];
@@ -209,7 +319,7 @@ export function formatLogsForGrooming(
 		}
 
 		// Skip internal system messages (like connection status)
-		if (log.source === 'system' && isInternalSystemMessage(log.text)) {
+		if (!storedContext && log.source === 'system' && isInternalSystemMessage(log.text)) {
 			continue;
 		}
 
@@ -223,7 +333,9 @@ export function formatLogsForGrooming(
 		}
 
 		// Strip full file contents from code blocks and map source to header
-		const processedText = stripFullFileContents(log.text);
+		// Historical/remote tool output may be the only surviving evidence. A
+		// context export must never replace it with a claim of current disk access.
+		const processedText = storedContext ? log.text : stripFullFileContents(log.text);
 		const header = getSourceHeader(log.source);
 		sections.push(`## ${header}\n${processedText}`);
 	}
@@ -263,7 +375,7 @@ export function formatLogsForGrooming(
 		}
 	}
 
-	return result;
+	return storedContext ? redactSecrets(result).text : result;
 }
 
 /**
@@ -328,6 +440,10 @@ function getSourceHeader(source: LogEntry['source']): string {
 			return 'Assistant';
 		case 'system':
 			return 'System';
+		case 'thinking':
+			return 'Reasoning';
+		case 'tool':
+			return 'Tool';
 		case 'error':
 			return 'Error';
 		case 'stdout':
@@ -432,6 +548,18 @@ function mapHeaderToSource(header: string): LogEntry['source'] {
 }
 
 /**
+ * Whether a source's usage stats measure the context it carries. Grok's usage
+ * is per-turn and per-session accounting (phase03 semantics): a cumulative
+ * session total is not context occupancy, and its combined-window gauge math
+ * is unverified. Size a Grok context from its text instead.
+ */
+function usageStatsMeasureContext(
+	context: ContextSource
+): context is ContextSource & { usageStats: NonNullable<ContextSource['usageStats']> } {
+	return !!context.usageStats && context.agentType !== 'grok';
+}
+
+/**
  * Estimate the token count for a context source (synchronous).
  * Uses a character-based heuristic for quick estimates.
  * For accurate counts, use countContextTokens() instead.
@@ -445,7 +573,7 @@ function mapHeaderToSource(header: string): LogEntry['source'] {
  */
 export function estimateTokenCount(context: ContextSource): number {
 	// If we have usage stats, use the actual token counts with agent-specific logic
-	if (context.usageStats) {
+	if (usageStatsMeasureContext(context)) {
 		return calculateContextTokens(
 			{
 				inputTokens: context.usageStats.inputTokens ?? 0,
@@ -483,7 +611,7 @@ export function estimateTokenCount(context: ContextSource): number {
  */
 export async function countContextTokens(context: ContextSource): Promise<number> {
 	// If we have usage stats, use the actual token counts with agent-specific logic
-	if (context.usageStats) {
+	if (usageStatsMeasureContext(context)) {
 		return calculateContextTokens(
 			{
 				inputTokens: context.usageStats.inputTokens ?? 0,
@@ -651,6 +779,156 @@ export function calculateTotalTokens(contexts: ContextSource[]): number {
 	return contexts.reduce((total, context) => total + estimateTokenCount(context), 0);
 }
 
+/** Options for {@link formatLogsForContextInjection}. */
+export interface ContextInjectionOptions {
+	/** Provider that produced the logs; Grok text is redacted like its export. */
+	sourceAgentType?: ToolType;
+	/** Include visible reasoning entries (default false: the visibility policy omits them). */
+	includeThinking?: boolean;
+	/**
+	 * Token budget for the formatted context. 0 or absent means unbounded.
+	 * Oldest whole entries are dropped first so the newest turns survive.
+	 */
+	maxTokens?: number;
+}
+
+/** Result of {@link formatLogsForContextInjection}. */
+export interface ContextInjectionResult {
+	/** Formatted conversation, or '' when nothing survives. */
+	text: string;
+	/** Entries carried, in source order. */
+	includedEntries: number;
+	/** Maestro notices, agent errors and stderr left out of the conversation. */
+	omittedNotices: number;
+	/** Reasoning entries left out by the visibility policy. */
+	omittedThinking: number;
+	/** Oldest entries dropped to fit `maxTokens`. */
+	omittedForBudget: number;
+	/** Image attachments named but not carried (images are not text). */
+	omittedImages: number;
+	/** Estimated tokens of `text`, from its characters (never from usage totals). */
+	estimatedTokens: number;
+}
+
+const INJECTED_TOOL_OUTPUT_MAX_CHARS = 2000;
+
+function describeInjectedTool(log: LogEntry): string {
+	const state = log.metadata?.toolState;
+	const status = state?.status ? `, ${state.status}` : '';
+	const lines = [`Tool call${status} (historical; it does not run again): ${log.text.trim()}`];
+	const output = state?.output;
+	if (typeof output === 'string' && output.trim()) {
+		const trimmed = output.trim();
+		lines.push(
+			trimmed.length > INJECTED_TOOL_OUTPUT_MAX_CHARS
+				? `Result (truncated): ${trimmed.slice(0, INJECTED_TOOL_OUTPUT_MAX_CHARS)}...`
+				: `Result: ${trimmed}`
+		);
+	}
+	return lines.join('\n');
+}
+
+/**
+ * Format a tab's logs as conversation context for ANOTHER agent's prompt (the
+ * merge-into-tab path).
+ *
+ * - Keeps source order; never re-sorts by timestamp (unknown timestamps are NaN).
+ * - Keeps user prose, assistant prose and tool calls distinct instead of
+ *   labelling everything that is not the user "Assistant".
+ * - Leaves Maestro notices (`system`, `error`, `stderr`) out of the
+ *   conversation, except a stored Grok export's provenance disclosure.
+ * - Omits reasoning unless `includeThinking` is set.
+ * - Names attached images by count; their bytes are not carried in text.
+ * - Bounds the result to `maxTokens`, dropping the oldest entries first and
+ *   saying so, so a long conversation cannot overflow the target's window.
+ */
+export function formatLogsForContextInjection(
+	logs: LogEntry[],
+	options: ContextInjectionOptions = {}
+): ContextInjectionResult {
+	const { includeThinking = false, maxTokens = 0, sourceAgentType } = options;
+	let omittedNotices = 0;
+	let omittedThinking = 0;
+	let omittedImages = 0;
+	const blocks: string[] = [];
+
+	for (const log of logs) {
+		if (!log.text || !log.text.trim()) continue;
+		let block: string | null = null;
+		switch (log.source) {
+			case 'user':
+				block = `User: ${log.text}`;
+				break;
+			case 'ai':
+			case 'stdout':
+				block = `Assistant: ${log.text}`;
+				break;
+			case 'tool':
+				block = describeInjectedTool(log);
+				break;
+			case 'thinking':
+				if (includeThinking) block = `Assistant reasoning (visible text): ${log.text}`;
+				else omittedThinking++;
+				break;
+			case 'system':
+				if (log.id === GROK_CONTEXT_PROVENANCE_ID) block = `Provenance: ${log.text}`;
+				else omittedNotices++;
+				break;
+			default:
+				// error, stderr and any future notice kind: Maestro's, not the conversation's.
+				omittedNotices++;
+		}
+		if (block === null) continue;
+		const imageCount = log.images?.length ?? 0;
+		if (imageCount > 0) {
+			omittedImages += imageCount;
+			block += `\n[${imageCount} attached image(s) not carried over; re-attach them to share their content]`;
+		}
+		blocks.push(block);
+	}
+
+	let kept = blocks;
+	let omittedForBudget = 0;
+	if (maxTokens > 0) {
+		let used = 0;
+		let start = blocks.length;
+		while (start > 0) {
+			const cost = estimateTokens(blocks[start - 1]) + 1;
+			if (used + cost > maxTokens) break;
+			used += cost;
+			start--;
+		}
+		if (start === blocks.length && blocks.length > 0) {
+			// The newest entry alone exceeds the budget: keep its head, marked.
+			const newest = blocks[blocks.length - 1];
+			const chars = Math.max(0, maxTokens * 4 - 64);
+			kept = [`${newest.slice(0, chars)}\n[Entry truncated to fit the target's context budget]`];
+			omittedForBudget = blocks.length - 1;
+		} else {
+			kept = blocks.slice(start);
+			omittedForBudget = start;
+		}
+		if (omittedForBudget > 0) {
+			kept = [
+				`[${omittedForBudget} earlier entr${omittedForBudget === 1 ? 'y' : 'ies'} omitted to fit the target's context budget]`,
+				...kept,
+			];
+		}
+	}
+
+	let text = kept.join('\n\n');
+	if (sourceAgentType === 'grok') text = redactSecrets(text).text;
+	return {
+		text,
+		includedEntries: blocks.length - omittedForBudget,
+		omittedNotices,
+		omittedThinking,
+		omittedForBudget,
+		omittedImages,
+		estimatedTokens: estimateTokens(text),
+	};
+}
+
 export interface FormatLogsOptions {
 	/**
 	 * Include `source: 'thinking'` entries in the output, labeled as `THINKING:`.
@@ -683,10 +961,22 @@ export interface FormatLogsOptions {
 export function formatLogsForClipboard(logs: LogEntry[], options: FormatLogsOptions = {}): string {
 	const { includeThinking = false } = options;
 	const sections: string[] = [];
+	const storedContext = isGrokContextExport(logs);
 
 	for (const log of logs) {
 		// Skip empty entries
 		if (!log.text || log.text.trim() === '') {
+			continue;
+		}
+
+		// Context exports include source/missing-content notices and tool evidence.
+		// Reasoning remains opt-in even if the extractor was asked to retain it.
+		if (storedContext) {
+			if (log.source === 'thinking' && !includeThinking) {
+				sections.push('SYSTEM:\n[Reasoning text omitted by clipboard visibility policy]');
+			} else {
+				sections.push(`${getSourceHeader(log.source).toUpperCase()}:\n${log.text}`);
+			}
 			continue;
 		}
 
@@ -702,7 +992,8 @@ export function formatLogsForClipboard(logs: LogEntry[], options: FormatLogsOpti
 		// Skip: tool, system, stderr, error (and thinking when not opted in)
 	}
 
-	return sections.join('\n\n');
+	const result = sections.join('\n\n');
+	return storedContext ? redactSecrets(result).text : result;
 }
 
 /**

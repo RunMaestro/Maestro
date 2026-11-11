@@ -27,6 +27,7 @@ import {
 	breakApartGroup,
 	collectLeafTabRefs,
 	generateGroupName,
+	resolveModelEffortTabId,
 	resolveTabRefTitle,
 } from '../../utils/panelLayout';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -66,6 +67,7 @@ import type { Theme, UnifiedTabRef } from '../../types';
 import type { MainPanelHandle, MainPanelProps } from './types';
 import { projectTabProvider, resolveTabNativeProvider } from '../../utils/providerTabSessions';
 import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
+import type { AgentDiscoveryRequest } from '../../../shared/types';
 
 /**
  * Empty placeholder shown when this window has no agent to display - either no
@@ -425,6 +427,45 @@ export const MainPanel = React.memo(
 		// Model/Effort pills: available options, current values, and agent-level
 		// defaults. Shared with the keyboard-only Model & Effort modal and with the
 		// queued-message edit modal, so all three show the same truth.
+		const modelEffortTabId = useMemo(() => resolveModelEffortTabId(activeSession), [activeSession]);
+		// Grok discovers per tab context. The tab's own provider decides, since a
+		// tab can run a provider other than the agent's default.
+		const discoveryContext = useMemo<AgentDiscoveryRequest['context'] | undefined>(() => {
+			const agent = composerProvider?.agent;
+			const tab = composerProvider?.tab;
+			if (agent?.toolType !== 'grok' || !agent.cwd?.trim() || !tab || modelEffortTabId !== tab.id)
+				return;
+			const { model, effort } = resolveModelEffort(tab, agent, {
+				defaultModel: '',
+				defaultEffort: '',
+			});
+			return {
+				kind: 'draft',
+				cwd: agent.cwd,
+				customPath: agent.customPath,
+				customEnvVars: agent.customEnvVars,
+				model,
+				effort,
+				sessionSshRemoteConfig: agent.sessionSshRemoteConfig,
+				sshRemoteId: agent.sshRemoteId,
+			};
+			// Field-level deps: a streaming flush replaces the agent object, and a new
+			// context identity would restart Grok discovery.
+		}, [
+			composerProvider?.agent.id,
+			composerProvider?.agent.toolType,
+			composerProvider?.agent.cwd,
+			composerProvider?.agent.customPath,
+			composerProvider?.agent.customEnvVars,
+			composerProvider?.agent.customModel,
+			composerProvider?.agent.customEffort,
+			composerProvider?.agent.sessionSshRemoteConfig,
+			composerProvider?.agent.sshRemoteId,
+			composerProvider?.tab?.id,
+			composerProvider?.tab?.customModel,
+			composerProvider?.tab?.customEffort,
+			modelEffortTabId,
+		]);
 		const {
 			models: pillModels,
 			efforts: pillEfforts,
@@ -432,9 +473,13 @@ export const MainPanel = React.memo(
 			defaultEffort: agentDefaultEffort,
 			refreshModels: refreshPillModels,
 			refreshingModels: refreshingPillModels,
+			loaded: discoveryLoaded,
+			modelStatus,
+			effortStatus,
 		} = useAgentModelEffortOptions(
 			composerProvider?.agent.toolType,
-			getSessionSshRemoteId(activeSession)
+			getSessionSshRemoteId(activeSession),
+			discoveryContext
 		);
 		const setSessions = useSessionStore((s) => s.setSessions);
 
@@ -1551,6 +1596,35 @@ export const MainPanel = React.memo(
 									onRefreshModels={refreshPillModels}
 									refreshingModels={refreshingPillModels}
 								/>
+								{activeSession.toolType === 'grok' &&
+									!isMobileLandscape &&
+									activeTab &&
+									!activeTab.wizardState?.isGeneratingDocs &&
+									modelEffortTabId === activeTab.id && (
+										<button
+											type="button"
+											className="relative z-[3] shrink-0 px-3 py-1 text-xs text-left border-t hover:brightness-110"
+											style={{
+												color: theme.colors.textDim,
+												backgroundColor: theme.colors.bgMain,
+												borderColor: theme.colors.border,
+											}}
+											onClick={() =>
+												useModalStore.getState().openModal('modelEffort', { tabId: activeTab.id })
+											}
+										>
+											Model: {resolvedModel || 'default'} · Effort: {resolvedEffort || 'default'}.
+											{!discoveryLoaded
+												? ' Checking available options.'
+												: modelStatus === 'configured-fallback' ||
+													  effortStatus === 'configured-fallback'
+													? ' Using configured values; available options could not be verified.'
+													: modelStatus !== 'discovered' || effortStatus !== 'discovered'
+														? ' Model or effort discovery is unavailable.'
+														: ' Model and effort options available.'}
+											{' Edit model and effort.'}
+										</button>
+									)}
 							</>
 						)}
 					</div>

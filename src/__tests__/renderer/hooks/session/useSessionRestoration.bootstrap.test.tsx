@@ -38,6 +38,7 @@ vi.mock('../../../../main/utils/logger', () => ({
 }));
 vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
 	broadcastBridgeEvent: vi.fn(),
+	isBridgeInvokeEvent: (event: { type?: unknown } | null | undefined) => event?.type === 'bridge',
 }));
 const runtime = vi.hoisted(() => ({ web: true }));
 vi.mock('../../../../renderer/utils/runtimeContext', () => ({

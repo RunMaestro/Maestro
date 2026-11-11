@@ -872,6 +872,71 @@ describe('substituteTemplateVariables', () => {
 		});
 	});
 
+	describe('Grok custom-command literal context', () => {
+		it.each(['$&', '$$', '$`', "$'", '{{TOOL_TYPE}} {{CUE_SOURCE_OUTPUT}}'])(
+			'preserves inserted context %s without replacement-string or recursive expansion',
+			(literal) => {
+				const context = createTestContext({
+					session: createTestSession({ name: literal, toolType: 'grok', cwd: literal }),
+					conductorProfile: literal,
+					gitBranch: literal,
+					cue: { sourceOutput: literal },
+				});
+				const template =
+					'{{TOOL_TYPE}}|{{AGENT_NAME}}|{{CWD}}|{{CONDUCTOR_PROFILE}}|{{GIT_BRANCH}}|{{CUE_SOURCE_OUTPUT}}|{{AGENT_NAME}}';
+
+				expect(substituteTemplateVariables(template, context)).toBe(
+					['grok', literal, literal, literal, literal, literal, literal].join('|')
+				);
+				expect(context.session.name).toBe(literal);
+				expect(context.cue?.sourceOutput).toBe(literal);
+			}
+		);
+
+		it('keeps cyclic Cue outputs and ordinary placeholders literal after insertion', () => {
+			const cue = {
+				eventType: 'cli.trigger',
+				output_FIRST: '{{CUE_FORWARDED_SECOND}} {{AGENT_ID}}',
+				forwarded_SECOND: '{{CUE_OUTPUT_FIRST}}',
+			};
+			const context = createTestContext({
+				session: createTestSession({ toolType: 'grok' }),
+				cue,
+			});
+
+			expect(
+				substituteTemplateVariables(
+					'{{cue_output_first}}|{{CUE_FORWARDED_SECOND}}|{{AGENT_ID}}',
+					context
+				)
+			).toBe('{{CUE_FORWARDED_SECOND}} {{AGENT_ID}}|{{CUE_OUTPUT_FIRST}}|test-session-123');
+			expect(cue).toEqual({
+				eventType: 'cli.trigger',
+				output_FIRST: '{{CUE_FORWARDED_SECOND}} {{AGENT_ID}}',
+				forwarded_SECOND: '{{CUE_OUTPUT_FIRST}}',
+			});
+		});
+
+		it.each(['BUILD.+', 'BUILD[0]', '(BUILD|TEST)', 'BUILD*'])(
+			'matches the entire dynamic Cue name %s literally',
+			(name) => {
+				const cue = { eventType: 'cli.trigger', [`output_${name}`]: 'literal $& {{TOOL_TYPE}}' };
+				const context = createTestContext({
+					session: createTestSession({ toolType: 'grok' }),
+					cue,
+				});
+				expect(
+					substituteTemplateVariables(
+						`{{cue_output_${name.toLowerCase()}}}|{{CUE_OUTPUT_BUILD}}|{{CUE_OUTPUT_BUILD0}}|{{CUE_OUTPUT_TEST}}`,
+						context
+					)
+				).toBe(
+					'literal $& {{TOOL_TYPE}}|{{CUE_OUTPUT_BUILD}}|{{CUE_OUTPUT_BUILD0}}|{{CUE_OUTPUT_TEST}}'
+				);
+			}
+		);
+	});
+
 	describe('Case Insensitivity', () => {
 		it('should handle lowercase variables', () => {
 			const context = createTestContext({

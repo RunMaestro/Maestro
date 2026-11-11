@@ -80,6 +80,13 @@ export interface ScheduledTask extends CueTurnSettings {
 	 *  `gate`, and only when the task spells it out (absent = run). */
 	gateOnUnavailable?: CueGateOnUnavailable;
 	/**
+	 * AI tab the prompt is delivered into, when the task was scheduled into an
+	 * existing conversation (`cue schedule --tab`). Such a task is stored as an
+	 * `action: command` cli dispatch, so `action` reads `command` and `prompt`
+	 * is the dispatched message. Absent: the prompt runs as its own Cue turn.
+	 */
+	tabId?: string;
+	/**
 	 * Epoch ms of the next projected fire, or `null` when it cannot be known
 	 * (an `interval` task's phase depends on engine run state, and an expired
 	 * one-shot has nothing left to project).
@@ -118,6 +125,13 @@ export interface ScheduledTaskCreateInput extends CueTurnSettings {
 	gate?: string;
 	/** What the gate does when its model cannot answer. Needs a `gate`. */
 	gateOnUnavailable?: CueGateOnUnavailable;
+	/**
+	 * Deliver the prompt into this existing AI tab of `agentId` instead of
+	 * running it as a detached Cue turn. It waits behind a busy turn, never
+	 * moves the user's view, and the reply marks the tab unread. The tab runs
+	 * on its own model, so `tier` / `model` / `effort` are refused with it.
+	 */
+	tabId?: string;
 }
 
 /**

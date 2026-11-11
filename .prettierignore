@@ -30,3 +30,6 @@ src/__tests__/fixtures/dataview-vault/
 # Vendored Dataview source: keep upstream's quotes and line breaks so an upstream
 # bump diffs cleanly (docs/agent-guides/DATAVIEW.md, "Formatting, lint, and placement").
 src/shared/dataview/vendor/
+
+# Local SlopTimize command output cache
+.sloptimize/

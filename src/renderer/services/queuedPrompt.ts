@@ -39,6 +39,148 @@ import { routeQueuedAutoItem } from './autoTurn';
 import { generateId } from '../utils/ids';
 import type { ConsultChain } from '../../shared/consultBudget';
 import { logger } from '../utils/logger';
+import { canonicalJson } from '../../shared/canonicalJson';
+import { resolveTabPermissionMode } from '../../shared/agentMetadata';
+import { resumeSelectionKey, matchesNativeSessionBinding } from './resumableSession';
+import { useSettingsStore } from '../stores/settingsStore';
+import { getSessionSshRemoteId } from '../utils/sessionHelpers';
+import {
+	fingerprintGrokSpawnSelection,
+	type GrokSpawnSelectionFingerprint,
+} from '../../shared/grokSpawnSelection';
+
+// Identity survives queue/retry object spreads, but not persistence or cloning.
+// Sensitive selection keys and IPC snapshots never become part of the queue.
+const commandScopes = new WeakMap<
+	NonNullable<QueuedItem['commandScope']>,
+	{
+		itemId: string;
+		selection: string;
+		configuration: Promise<GrokSpawnSelectionFingerprint | null>;
+	}
+>();
+
+function commandSelectionKey(session: Session, tab: AITab): string {
+	return canonicalJson({
+		selection: resumeSelectionKey(session),
+		tabId: tab.id,
+		nativeSessionId: tab.agentSessionId ?? null,
+		binding: tab.nativeSessionBinding,
+		permissionMode: resolveTabPermissionMode(tab),
+		shellEnvVars: useSettingsStore.getState().shellEnvVars,
+	});
+}
+
+/** Read configuration only, with a deadline for a disconnected desktop bridge. */
+async function readCommandConfiguration(
+	session: Session
+): Promise<GrokSpawnSelectionFingerprint | null> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		// Match the launch resolver: configured SSH selects the next turn;
+		// sshRemoteId/remoteCwd describe a previous process or terminal.
+		const remote = session.sessionSshRemoteConfig?.enabled === true;
+		const remoteId = remote
+			? getSessionSshRemoteId({ sessionSshRemoteConfig: session.sessionSshRemoteConfig })
+			: undefined;
+		if (remote && !remoteId) return null;
+		return await Promise.race([
+			Promise.all([
+				window.maestro.agents.getConfig('grok'),
+				window.maestro.settings.get('shellEnvVars'),
+				remoteId ? window.maestro.sshRemote.getConfigs() : undefined,
+			]).then(([config, shellEnvVars, remotes]) => {
+				const remote = remotes?.configs?.find((entry) => entry.id === remoteId);
+				if (!config || (remoteId && (!remotes?.success || !remote?.enabled))) return null;
+				const globalEnv = shellEnvVars ?? {};
+				if (
+					typeof globalEnv !== 'object' ||
+					Array.isArray(globalEnv) ||
+					Object.values(globalEnv).some((value) => typeof value !== 'string')
+				)
+					return null;
+				return fingerprintGrokSpawnSelection({
+					providerConfig: config,
+					shellEnvVars: globalEnv as Record<string, string>,
+					sshRemote: remote ?? null,
+				});
+			}),
+			new Promise<null>((resolve) => {
+				timer = setTimeout(() => resolve(null), 3_000);
+			}),
+		]);
+	} catch {
+		// Missing/failed IPC is unavailable ownership, never permission to send.
+		return null;
+	} finally {
+		if (timer !== undefined) clearTimeout(timer);
+	}
+}
+
+/** A command must keep its selected owner even if the provider has since changed. */
+export function getQueuedCommandSelectionRefusal(
+	sessionId: string,
+	item: QueuedItem
+): string | undefined {
+	const session = useSessionStore.getState().sessions.find((entry) => entry.id === sessionId);
+	if (item.type !== 'command' || (session?.toolType !== 'grok' && !item.commandScope)) return;
+	const scope = item.commandScope && commandScopes.get(item.commandScope);
+	const tab =
+		session?.aiTabs.find((entry) => entry.id === item.tabId) ??
+		session?.orphanedThinkingTabs?.find((entry) => entry.id === item.tabId);
+	const refusal =
+		'Queued Grok command ownership is missing or changed. Requeue it from the intended tab, account and host.';
+	if (
+		!scope ||
+		scope.itemId !== item.id ||
+		!session ||
+		!tab ||
+		session.toolType !== 'grok' ||
+		scope.selection !== commandSelectionKey(session, tab)
+	)
+		return refusal;
+	if (
+		tab.agentSessionId &&
+		(!matchesNativeSessionBinding(tab.nativeSessionBinding, tab.nativeSessionBinding) ||
+			tab.nativeSessionBinding?.state !== 'bound' ||
+			tab.nativeSessionBinding.provider !== 'grok' ||
+			tab.nativeSessionBinding.nativeSessionId !== tab.agentSessionId)
+	)
+		return refusal;
+}
+
+/** Recheck inherited configuration as well as the live renderer selection. */
+export async function getQueuedCommandScopeRefusal(
+	sessionId: string,
+	item: QueuedItem
+): Promise<string | undefined> {
+	const refusal = getQueuedCommandSelectionRefusal(sessionId, item);
+	if (refusal || item.type !== 'command' || !item.commandScope) return refusal;
+	const scope = commandScopes.get(item.commandScope)!;
+	const session = useSessionStore.getState().sessions.find((entry) => entry.id === sessionId)!;
+	const [captured, current] = await Promise.all([
+		scope.configuration,
+		readCommandConfiguration(session),
+	]);
+	if (captured === null || current === null || captured !== current) {
+		return 'Queued Grok command configuration is unavailable or changed. Requeue it with the intended settings.';
+	}
+	return getQueuedCommandSelectionRefusal(sessionId, item);
+}
+
+/** Forward the original receipt to main, never a freshly read replacement. */
+export async function getQueuedCommandSpawnSelection(
+	sessionId: string,
+	item: QueuedItem
+): Promise<GrokSpawnSelectionFingerprint | null> {
+	if (
+		item.type !== 'command' ||
+		!item.commandScope ||
+		getQueuedCommandSelectionRefusal(sessionId, item)
+	)
+		return null;
+	return commandScopes.get(item.commandScope)?.configuration ?? null;
+}
 
 /** What to queue, and where. */
 export interface QueuedPromptOptions {
@@ -94,7 +236,7 @@ export function buildQueuedMessageItem({
 	const mentionPlan = slashCommand
 		? null
 		: planCrossAgentMentions(text, session.id, mentionRouting);
-	return {
+	const item: QueuedItem = {
 		id: generateId(),
 		timestamp: Date.now(),
 		tabId: tab.id,
@@ -113,6 +255,15 @@ export function buildQueuedMessageItem({
 		...(mentionPlan && { crossAgentOnly: mentionPlan.suppressLocal }),
 		...(consultChain ? { consultChain } : {}),
 	};
+	if (item.type === 'command' && session.toolType === 'grok') {
+		item.commandScope = { provider: 'grok' };
+		commandScopes.set(item.commandScope, {
+			itemId: item.id,
+			selection: commandSelectionKey(session, tab),
+			configuration: readCommandConfiguration(session),
+		});
+	}
+	return item;
 }
 
 /**
@@ -134,7 +285,9 @@ function matchSlashCommand(
 		deps?.speckitCommands.find((cmd) => cmd.command === commandText) ??
 		deps?.openspecCommands.find((cmd) => cmd.command === commandText) ??
 		deps?.bmadCommands?.find((cmd) => cmd.command === commandText) ??
-		getAgentCommands(session, tab)?.find((cmd) => cmd.command === commandText && cmd.prompt) ??
+		(session.toolType !== 'grok'
+			? getAgentCommands(session, tab)?.find((cmd) => cmd.command === commandText && cmd.prompt)
+			: undefined) ??
 		null
 	);
 }
@@ -143,7 +296,8 @@ function matchSlashCommand(
  * Queue a prompt for one tab of one agent, reading both from the store.
  *
  * `tabId` names the tab the prompt belongs to. An id that no longer resolves
- * falls back to the agent's active tab rather than dropping the prompt: the
+ * falls back to the agent's active tab for reference providers. Grok refuses
+ * a missing tab rather than changing the selected owner. For other providers the
  * caller has already decided this agent should be asked something, and losing
  * that because a tab moved is worse than answering it in the tab next door.
  *
@@ -179,33 +333,24 @@ export function enqueuePromptForTab(options: {
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	if (!session) return null;
 
-	const tab = session.aiTabs?.find((t) => t.id === tabId) ?? getActiveTab(session);
+	const tab =
+		session.aiTabs?.find((t) => t.id === tabId) ??
+		(session.toolType === 'grok' ? undefined : getActiveTab(session));
 	if (!tab) return null;
 
+	const command = expandCommands && !slashCommand ? matchSlashCommand(session, text, tab) : null;
 	const message = buildQueuedMessageItem({
 		session,
 		tab,
 		text,
 		images,
 		consultChain,
-		slashCommand,
+		slashCommand: slashCommand || !!command,
 		mentionRouting,
 		turnSettings: options.turnSettings,
 	});
-	const command = expandCommands && !slashCommand ? matchSlashCommand(session, text, tab) : null;
 	const item: QueuedItem = command
-		? {
-				id: message.id,
-				timestamp: message.timestamp,
-				tabId: message.tabId,
-				type: 'command',
-				command: command.command,
-				commandDescription: command.description,
-				tabName: message.tabName,
-				readOnlyMode: message.readOnlyMode,
-				turnSettings: message.turnSettings,
-				consultChain: message.consultChain,
-			}
+		? { ...message, commandDescription: command.description }
 		: message;
 	updateSessionWith(sessionId, (s) => ({
 		...s,

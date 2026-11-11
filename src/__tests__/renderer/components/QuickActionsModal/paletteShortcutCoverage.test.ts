@@ -97,7 +97,6 @@ const MISSING_PALETTE_ENTRY = new Set<string>([
 	'paneCyclePrev',
 	// Tab-scoped.
 	'focusBrowserAddress',
-	'reopenClosedTab',
 	'toggleSaveToHistory',
 	'filterUnreadTabs',
 	'goToTab1',

@@ -538,7 +538,8 @@ export function handleListDesktopSessions(
 		type: 'desktop_sessions_list',
 		success: true,
 		// Old callbacks remain usable for ordinary tab-list clients, but must
-		// never masquerade as a complete supervision census.
+		// never masquerade as a complete supervision census. A snapshot also
+		// carries the file, browser and terminal tabs (`session list --type`).
 		...(Array.isArray(snapshot) ? { sessions: snapshot, capturedAt } : snapshot),
 		requestId: message.requestId,
 	});

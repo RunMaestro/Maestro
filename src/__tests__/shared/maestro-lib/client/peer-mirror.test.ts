@@ -13,11 +13,13 @@ import {
 	markAllTabsStale,
 	mirrorKey,
 	replacePeerAgents,
+	setAgentQueue,
 	setPeerConnection,
 	summarizePeer,
 	type MirrorPeerSummary,
 	type MirroredPeer,
 } from '../../../../shared/maestro-lib/client/peer-mirror';
+import type { QueuedTurn } from '../../../../shared/maestro-lib/client/types';
 import type { AgentRecord } from '../../../../shared/maestro-lib/store/records';
 
 const ctx = () => {
@@ -40,6 +42,15 @@ function peerWith(agents: AgentRecord[]): MirroredPeer {
 		500
 	).peer;
 }
+
+const waiting = (itemId: string): QueuedTurn => ({
+	itemId,
+	tabId: 't1',
+	queuedAt: 1,
+	kind: 'message',
+	text: itemId,
+	paused: false,
+});
 
 describe('mirrorKey', () => {
 	it('is peerId:agentId, the CLI address', () => {
@@ -164,6 +175,68 @@ describe('applyPeerEvent', () => {
 			expect(step.peer).toBe(peer);
 			expect(step.push).toEqual([]);
 		}
+	});
+});
+
+describe('host queues', () => {
+	it('a new peer holds no queues', () => {
+		expect(
+			createMirroredPeer({ peerId: 'buildbox', remoteId: 'r1', name: 'buildbox' }).queues
+		).toEqual({});
+	});
+
+	it('setAgentQueue replaces the agent queue and pushes agent.queue', () => {
+		const peer = peerWith([agent('a1')]);
+		const step = setAgentQueue(peer, 'a1', [waiting('q1'), waiting('q2')]);
+		expect(step.peer.queues).toEqual({ a1: [waiting('q1'), waiting('q2')] });
+		expect(step.push).toEqual([
+			{ type: 'agent.queue', agentId: 'a1', items: [waiting('q1'), waiting('q2')] },
+		]);
+		const next = setAgentQueue(step.peer, 'a1', [waiting('q2')]);
+		expect(next.peer.queues).toEqual({ a1: [waiting('q2')] });
+	});
+
+	it('an empty list drops the entry and still pushes, so a window clears its cards', () => {
+		const held = setAgentQueue(peerWith([agent('a1')]), 'a1', [waiting('q1')]).peer;
+		const step = setAgentQueue(held, 'a1', []);
+		expect(step.peer.queues).toEqual({});
+		expect(step.push).toEqual([{ type: 'agent.queue', agentId: 'a1', items: [] }]);
+	});
+
+	it('empty to empty, or an agent the peer does not have, changes nothing', () => {
+		const peer = peerWith([agent('a1')]);
+		const empty = setAgentQueue(peer, 'a1', []);
+		expect(empty.peer).toBe(peer);
+		expect(empty.push).toEqual([]);
+		const unknown = setAgentQueue(peer, 'ghost', [waiting('q1')]);
+		expect(unknown.peer).toBe(peer);
+		expect(unknown.push).toEqual([]);
+	});
+
+	it('queue.changed from the host sets the agent queue', () => {
+		const step = applyPeerEvent(
+			peerWith([agent('a1')]),
+			{ type: 'queue.changed', agentId: 'a1', items: [waiting('q1')] },
+			ctx()
+		);
+		expect(step.peer.queues).toEqual({ a1: [waiting('q1')] });
+		expect(step.push.map((e) => e.type)).toEqual(['agent.queue']);
+	});
+
+	it('a snapshot keeps the queues of agents still there and drops the rest', () => {
+		let peer = peerWith([agent('a1'), agent('a2')]);
+		peer = setAgentQueue(peer, 'a1', [waiting('q1')]).peer;
+		peer = setAgentQueue(peer, 'a2', [waiting('q2')]).peer;
+		const replaced = replacePeerAgents(peer, [agent('a2')], [], 2000);
+		expect(replaced.peer.queues).toEqual({ a2: [waiting('q2')] });
+	});
+
+	it('agent.removed drops that agent queue only', () => {
+		let peer = peerWith([agent('a1'), agent('a2')]);
+		peer = setAgentQueue(peer, 'a1', [waiting('q1')]).peer;
+		peer = setAgentQueue(peer, 'a2', [waiting('q2')]).peer;
+		const removed = applyPeerEvent(peer, { type: 'agent.removed', agentId: 'a1' }, ctx());
+		expect(removed.peer.queues).toEqual({ a2: [waiting('q2')] });
 	});
 });
 

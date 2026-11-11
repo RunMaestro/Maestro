@@ -247,7 +247,7 @@ const OUTPUT_FIXTURES: Partial<Record<MemoryCliProvider, string>> = {
 	}),
 	grok: [
 		JSON.stringify({ type: 'text', data: '{"memories":[]}' }),
-		JSON.stringify({ type: 'end', stop_reason: 'end_turn' }),
+		JSON.stringify({ type: 'end', stopReason: 'end_turn' }),
 	].join('\n'),
 };
 

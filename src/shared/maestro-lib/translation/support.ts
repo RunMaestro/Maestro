@@ -9,6 +9,8 @@ import type {
 export const TRANSLATION_PROVIDER_VERSIONS = {
 	'claude-code': { minVersion: '2.1.296', testedVersions: ['2.1.296', '2.1.302'] },
 	codex: { minVersion: '0.162.1', testedVersions: ['0.162.1', '0.163.0'] },
+	/** Schema pinned at public source 2bdd1d6. */
+	grok: { minVersion: '1.0.70', testedVersions: ['1.0.70'] },
 } as const satisfies Record<string, TranslationVersionSupport>;
 
 /** Share strict schema compatibility and test coverage rules across every entry point. */
@@ -49,6 +51,44 @@ export const TRANSLATION_DIRECTIONS: readonly TranslationDirection[] = [
 		destinationMinVersion: TRANSLATION_PROVIDER_VERSIONS['claude-code'].minVersion,
 		sourceTestedVersions: TRANSLATION_PROVIDER_VERSIONS.codex.testedVersions,
 		destinationTestedVersions: TRANSLATION_PROVIDER_VERSIONS['claude-code'].testedVersions,
+		verification: 'unverified',
+	},
+	// Grok: declared with the host seams that read a Grok source and
+	// bind a Grok destination to GROK_HOME. Fixture-tested only, never certified.
+	{
+		source: 'grok',
+		destination: 'claude-code',
+		sourceMinVersion: TRANSLATION_PROVIDER_VERSIONS.grok.minVersion,
+		destinationMinVersion: TRANSLATION_PROVIDER_VERSIONS['claude-code'].minVersion,
+		sourceTestedVersions: TRANSLATION_PROVIDER_VERSIONS.grok.testedVersions,
+		destinationTestedVersions: TRANSLATION_PROVIDER_VERSIONS['claude-code'].testedVersions,
+		verification: 'unverified',
+	},
+	{
+		source: 'grok',
+		destination: 'codex',
+		sourceMinVersion: TRANSLATION_PROVIDER_VERSIONS.grok.minVersion,
+		destinationMinVersion: TRANSLATION_PROVIDER_VERSIONS.codex.minVersion,
+		sourceTestedVersions: TRANSLATION_PROVIDER_VERSIONS.grok.testedVersions,
+		destinationTestedVersions: TRANSLATION_PROVIDER_VERSIONS.codex.testedVersions,
+		verification: 'unverified',
+	},
+	{
+		source: 'claude-code',
+		destination: 'grok',
+		sourceMinVersion: TRANSLATION_PROVIDER_VERSIONS['claude-code'].minVersion,
+		destinationMinVersion: TRANSLATION_PROVIDER_VERSIONS.grok.minVersion,
+		sourceTestedVersions: TRANSLATION_PROVIDER_VERSIONS['claude-code'].testedVersions,
+		destinationTestedVersions: TRANSLATION_PROVIDER_VERSIONS.grok.testedVersions,
+		verification: 'unverified',
+	},
+	{
+		source: 'codex',
+		destination: 'grok',
+		sourceMinVersion: TRANSLATION_PROVIDER_VERSIONS.codex.minVersion,
+		destinationMinVersion: TRANSLATION_PROVIDER_VERSIONS.grok.minVersion,
+		sourceTestedVersions: TRANSLATION_PROVIDER_VERSIONS.codex.testedVersions,
+		destinationTestedVersions: TRANSLATION_PROVIDER_VERSIONS.grok.testedVersions,
 		verification: 'unverified',
 	},
 ];

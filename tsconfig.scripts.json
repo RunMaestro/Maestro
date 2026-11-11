@@ -13,5 +13,8 @@
 	// The ambient module declarations ride along: a script that reaches a
 	// main-process module which imports an untyped package needs them too.
 	"include": ["scripts/**/*.ts", "src/types/**/*.d.ts"],
-	"exclude": ["node_modules", "dist", "release"]
+	// The Grok qualification harness came from rc, which never type-checked it.
+	// It reaches into renderer modules (no DOM lib here) and still targets the
+	// pre-acappella translation host API, so it is excluded until it is ported.
+	"exclude": ["node_modules", "dist", "release", "scripts/grok-qualification/**"]
 }

@@ -2,6 +2,10 @@
 // `dispatch --queue` feeds. The queue lives authoritatively in the desktop
 // renderer; these verbs proxy to it over the same WebSocket the `dispatch`
 // verb uses, so they fail with MAESTRO_NOT_RUNNING when the app is down.
+//
+// With Federation on, `--agent <peer:agent>` names a peer's agent instead: list,
+// remove, hold, and resume act on that host's queue through the same shared
+// action the desktop's mirrored queued cards run (`runPeerAgentAction`).
 
 import { withMaestroClient } from '../services/maestro-client';
 import { exitIfMaestroNotRunning } from '../services/session-command';
@@ -13,6 +17,21 @@ import {
 } from '../../shared/chatSteering';
 import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 import type { MentionRouting } from '../../shared/crossAgentContext';
+import {
+	PeerResolveError,
+	hostCallError,
+	peerAgentRef,
+	peerErrorCode,
+	routeAgentTarget,
+	withPeerAgent,
+	type PeerTarget,
+} from '../services/peer-resolver';
+import {
+	runPeerAgentAction,
+	type PeerAgentAction,
+	type PeerAgentActionResult,
+} from '../../shared/maestro-lib/client/peer-actions';
+import { queuedTurnsToWire } from '../../shared/maestro-lib/runtime/server-frames';
 
 interface QueueListItem {
 	id: string;
@@ -74,6 +93,8 @@ function mapQueueError(error: unknown): { error: string; code: string } {
  * without it, every agent that currently has queued items.
  */
 export async function queueList(options: QueueListOptions): Promise<void> {
+	const peer = peerQueueTarget(options.agent);
+	if (peer) return queueListPeer(peer);
 	let sessionId: string | undefined;
 	if (options.agent) {
 		try {
@@ -111,6 +132,109 @@ function countItems(queues: QueueListSession[]): number {
 	return queues.reduce((sum, q) => sum + (q.items?.length ?? 0), 0);
 }
 
+/** `--agent` as a peer target, or null for a local agent (and always null while Federation is off). */
+function peerQueueTarget(agent: string | undefined): PeerTarget | null {
+	if (!agent) return null;
+	const route = routeAgentTarget(agent);
+	return route.kind === 'peer' ? route.target : null;
+}
+
+/** A failed peer call, in the queue verbs' JSON shape, with the `PEER_*` code and its exit code. */
+function failPeer(error: unknown): void {
+	const message = error instanceof Error ? error.message : String(error);
+	const peerError = error instanceof PeerResolveError ? error : undefined;
+	console.log(
+		JSON.stringify(
+			{
+				success: false,
+				error: message,
+				code: peerError ? peerErrorCode(peerError.code) : 'COMMAND_FAILED',
+				...(peerError ? { peer: peerError.peer } : {}),
+			},
+			null,
+			2
+		)
+	);
+	exitWith(peerError?.exitCode ?? ExitCode.GeneralError);
+}
+
+/** `queue list --agent <peer:agent>`: the host's queue, in the local verb's shape plus `peer`. */
+async function queueListPeer(target: PeerTarget): Promise<void> {
+	let read: { peer: string; queue: QueueListSession };
+	try {
+		read = await withPeerAgent(target, async ({ agent, client, peer }) => {
+			const listed = await client.turns.queue.list(agent.id);
+			if (!listed.ok) throw hostCallError(peer, listed.error);
+			return {
+				peer,
+				queue: {
+					sessionId: peerAgentRef(peer, agent.id),
+					name: agent.name,
+					state: agent.state ?? 'idle',
+					items: queuedTurnsToWire(listed.value),
+				},
+			};
+		});
+	} catch (error) {
+		failPeer(error);
+		return;
+	}
+	const queues = [read.queue];
+	console.log(
+		JSON.stringify(
+			{ success: true, queues, totalItems: countItems(queues), peer: read.peer },
+			null,
+			2
+		)
+	);
+}
+
+/**
+ * One queue action on a peer's agent. `found` reads the host's answer: false means the message no
+ * longer waits there (it started, or another client took it out), the local verbs' ITEM_NOT_FOUND.
+ */
+async function queueActPeer(
+	target: PeerTarget,
+	itemId: string,
+	action: PeerAgentAction,
+	found: (result: PeerAgentActionResult) => boolean,
+	report: Record<string, unknown>
+): Promise<void> {
+	let done: { peer: string; agentId: string; result: PeerAgentActionResult };
+	try {
+		done = await withPeerAgent(target, async ({ agent, client, peer }) => {
+			const ran = await runPeerAgentAction(client, agent, action);
+			if (!ran.ok) throw hostCallError(peer, ran.error);
+			return { peer, agentId: agent.id, result: ran.value };
+		});
+	} catch (error) {
+		failPeer(error);
+		return;
+	}
+	const agentRef = peerAgentRef(done.peer, done.agentId);
+	if (!found(done.result)) {
+		emitError(`No queued item with id ${itemId} for agent ${agentRef}`, 'ITEM_NOT_FOUND');
+		process.exit(1);
+		return;
+	}
+	console.log(
+		JSON.stringify(
+			{ success: true, agentId: agentRef, itemId, ...report, peer: done.peer },
+			null,
+			2
+		)
+	);
+}
+
+/** A queue verb the host does not serve: refused before anything reaches the peer. */
+function refusePeerVerb(verb: string, agent: string): void {
+	emitError(
+		`queue ${verb} is not available for a peer's agent: the host's queue serves list, remove, hold, and resume. Agent: ${agent}`,
+		'PEER_UNSUPPORTED_VERB'
+	);
+	process.exit(1);
+}
+
 /**
  * `maestro-cli queue remove <item-id> --agent <id>` - drop a queued item by id
  * from the desktop execution queue. Fails with ITEM_NOT_FOUND when no item with
@@ -121,6 +245,16 @@ export async function queueRemove(itemId: string, options: QueueRemoveOptions): 
 		emitError('queue remove requires --agent <id>', 'INVALID_OPTIONS');
 		exitWith(ExitCode.GeneralError);
 		return;
+	}
+	const peer = peerQueueTarget(options.agent);
+	if (peer) {
+		return queueActPeer(
+			peer,
+			itemId,
+			{ kind: 'remove-queued', itemId },
+			(result) => result.kind === 'remove-queued' && result.removed,
+			{ removed: true }
+		);
 	}
 
 	let sessionId: string;
@@ -174,6 +308,17 @@ async function setQueueItemPaused(
 		emitError(`queue ${verb} requires --agent <id>`, 'INVALID_OPTIONS');
 		process.exit(1);
 		return;
+	}
+	const peer = peerQueueTarget(options.agent);
+	if (peer) {
+		const held = verb === 'hold';
+		return queueActPeer(
+			peer,
+			itemId,
+			{ kind: 'pause-queued', itemId, paused: held },
+			(result) => result.kind === 'pause-queued' && result.found,
+			{ paused: held }
+		);
 	}
 
 	let sessionId: string;
@@ -234,6 +379,7 @@ export async function queueMerge(itemId: string, options: QueueMergeOptions): Pr
 		process.exit(1);
 		return;
 	}
+	if (peerQueueTarget(options.agent)) return refusePeerVerb('merge', options.agent);
 
 	let sessionId: string;
 	try {
@@ -307,6 +453,7 @@ export async function queueSteer(itemId: string, options: QueueSteerOptions): Pr
 		exitWith(ExitCode.GeneralError);
 		return;
 	}
+	if (peerQueueTarget(options.agent)) return refusePeerVerb('steer', options.agent);
 
 	let sessionId: string;
 	try {

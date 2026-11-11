@@ -108,7 +108,10 @@ function taskTitle(task: ScheduledTask): string {
 function subtitleFor(task: ScheduledTask): string {
 	const parts = [task.name];
 	if (task.pipelineName && task.pipelineName !== task.agentName) parts.push(task.pipelineName);
-	if (task.action !== 'prompt') parts.push(task.action);
+	// A task scheduled into an existing tab is stored as a cli dispatch; say
+	// where it goes rather than the storage detail.
+	if (task.tabId) parts.push(`into tab ${task.tabId.slice(0, 8)}`);
+	else if (task.action !== 'prompt') parts.push(task.action);
 	// A gate decides whether a fire runs at all, so the row says it has one.
 	if (task.gate) parts.push('gated');
 	const model = formatCueTurnSettings(task);

@@ -26,9 +26,10 @@
  * ```
  */
 
-import type { ToolType, AgentError, CallUsage } from '../../types';
+import type { ToolType, AgentError, CallUsage, UsageStats } from '../../types';
 import { isValidAgentId } from '../../agentIds';
 import type { ClaudeCostState } from '../../claudeCostTracker';
+import type { TurnTerminal } from '../streaming/turn-outcome';
 
 // Re-export error types for convenience
 export type { AgentError, AgentErrorType } from '../../types';
@@ -41,6 +42,80 @@ export type { AgentError, AgentErrorType } from '../../types';
  */
 function isValidToolType(id: string): id is ToolType {
 	return isValidAgentId(id);
+}
+
+/** A reported plan item, using the existing update_plan input shape. */
+export interface ParsedPlanEntry {
+	/** Only a provider-supplied identity; position and wording are not identities. */
+	id?: string;
+	step: string;
+	status: 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'unsupported';
+	providerStatus?: unknown;
+	priority?: string;
+	providerMeta?: Record<string, unknown>;
+}
+
+/**
+ * Plan snapshots travel through toolState and the existing tool-event consumer
+ * port. The update operation is complete; that says nothing about its items.
+ * Consumers replace the ordered list only within this owner's capture, and
+ * must not turn unsupported/cancelled items into completed work.
+ */
+export interface ParsedPlanState {
+	status: 'completed';
+	input: { plan: ParsedPlanEntry[] };
+	planUpdate: {
+		reporting: 'snapshot';
+		/** Monotonic arrival order within this capture, not a provider revision. */
+		revision: number;
+		providerSessionId: string;
+		turnId: string;
+		scopeId?: string;
+		processGeneration?: string;
+		requestId?: string | number;
+		promptId?: string;
+		eventId?: string;
+	};
+}
+
+/**
+ * A provider-reported child (subagent) as one capture observed it. Every field
+ * is what the provider reported; nothing is derived from task prose. Fields the
+ * provider did not report are named in `unavailable` instead of being guessed.
+ * Persona, role and capability mode are behavioral configuration the provider
+ * applied, never a permission boundary Maestro enforces.
+ */
+export interface ParsedSubagentState {
+	/**
+	 * `closed-with-parent` is the capture's own closure: the parent turn settled
+	 * while the child had reported no finish, and the owned process ends with it.
+	 */
+	lifecycle: 'spawned' | 'progress' | 'finished' | 'closed-with-parent';
+	/** Monotonic: a finished child never returns to running on a late progress report. */
+	status: 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown';
+	providerStatus?: string;
+	agentType?: string;
+	description?: string;
+	/** The child's reported model, which may differ from the parent's. */
+	model?: string;
+	persona?: string;
+	role?: string;
+	capabilityMode?: string;
+	contextSource?: string;
+	resumedFrom?: string;
+	error?: string;
+	output?: string;
+	/** Counters the provider reported; contextTokens is window occupancy, not spend. */
+	progress?: {
+		durationMs?: number;
+		turnCount?: number;
+		toolCallCount?: number;
+		contextTokens?: number;
+		contextWindowTokens?: number;
+		toolsUsed?: string[];
+		errorCount?: number;
+	};
+	unavailable: string[];
 }
 
 /**
@@ -65,6 +140,13 @@ export interface ParsedEvent {
 	 * Session ID for conversation continuity (if available)
 	 */
 	sessionId?: string;
+
+	/**
+	 * Structured settlement, when supplied by the protocol/lifecycle adapter.
+	 * A terminal envelope is not necessarily success; partial output and usage
+	 * remain useful on refusal, cancellation, timeout and incomplete turns.
+	 */
+	terminal?: TurnTerminal;
 
 	/**
 	 * Text content (for 'text', 'result', 'error', 'warning' types)
@@ -96,6 +178,23 @@ export interface ParsedEvent {
 	 */
 	parentToolUseId?: string;
 
+	/** Reported provider lineage when a child session has no parent tool-call ID. */
+	sessionRelation?: {
+		parentSessionId?: string;
+		parentTurnId?: string;
+		childSessionId?: string;
+		subagentId?: string;
+		attemptId?: string;
+		/**
+		 * True when the child session itself produced this event (its prose, tools
+		 * or opaque updates) and the parent capture routed it. Child prose is never
+		 * the parent's answer and child usage is never added to parent spend.
+		 */
+		nested?: boolean;
+		/** The tracked child's state after this event; absent when lineage was not admitted. */
+		child?: ParsedSubagentState;
+	};
+
 	/** Stable provider model-step identity; distinguishes equal per-step usage from replay. */
 	usageEventId?: string;
 
@@ -126,6 +225,8 @@ export interface ParsedEvent {
 		 */
 		model?: string;
 		costUsd?: number;
+		/** Exact cost, completeness and report scope before legacy numeric defaults. */
+		accounting?: UsageStats['accounting'];
 		/**
 		 * Reasoning/thinking tokens (separate from outputTokens)
 		 * Some models like OpenAI o3/o4-mini report reasoning tokens separately.
@@ -142,13 +243,7 @@ export interface ParsedEvent {
 		 * physically sent to the model. Copied straight onto `UsageStats.absoluteUsage`
 		 * by StdoutHandler.buildUsageStats.
 		 */
-		absoluteUsage?: {
-			inputTokens: number;
-			outputTokens: number;
-			cacheReadInputTokens: number;
-			cacheCreationInputTokens: number;
-			reasoningTokens: number;
-		};
+		absoluteUsage?: UsageStats['absoluteUsage'];
 	};
 
 	/**

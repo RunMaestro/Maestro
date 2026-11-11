@@ -155,7 +155,6 @@ export function ExtensionsView({ theme, settingsBodies, tileRequest }: Extension
 			<span data-setting-id="encore-groups-plus" aria-hidden="true" />
 			<span data-setting-id="encore-a-cappella" aria-hidden="true" />
 			<span data-setting-id="encore-web-login" aria-hidden="true" />
-			<span data-setting-id="encore-federation" aria-hidden="true" />
 			<div className="flex items-center justify-between gap-3 mb-1">
 				<h3 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
 					Plugins

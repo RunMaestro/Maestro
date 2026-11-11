@@ -43,17 +43,15 @@ Remote worktree aliases: `resolveWorktreeAliasesRemote(paths, sshRemote)` in `sr
 
 ## Model & Effort Options (Renderer)
 
-An agent's model list, effort levels, and agent-level defaults are fetched
-through one hook, and the tab > session > agent-default ladder is applied by one
-resolver. Both live in `src/renderer/hooks/agent/useAgentModelEffortOptions.ts`
-and are shared by the composer pills (`ModelEffortPills`) and the keyboard-only
-picker (`ModelEffortModal`), so the two surfaces cannot disagree about what an
-agent offers or what a tab is currently running.
+Model/effort menus and stored provider defaults use
+`src/renderer/hooks/agent/useAgentModelEffortOptions.ts`. The composer, keyboard
+picker and queued-message editor share this hook; `resolveModelEffort` applies
+the tab > session > provider-default ladder for live tab selections.
 
-| Function                     | Signature                                                                                              | Purpose                                                                                                                                                                                                                                   |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `useAgentModelEffortOptions` | `(agentId?: string, sshRemoteId?: string) => { models, efforts, defaultModel, defaultEffort, loaded }` | Fetches all four with a stale guard. Probes BOTH `effort` and `reasoningEffort` config keys, since agents split between them. `loaded` is false until every lookup settles - an empty list means "still loading" and "not offered" alike. |
-| `resolveModelEffort`         | `(tab, session, { defaultModel, defaultEffort }) => { model, effort }`                                 | Applies tab override > session override > agent default > empty. Do NOT re-derive this ladder inline - it drifts.                                                                                                                         |
+| Function                     | Signature                                                                                   | Purpose                                                                                                                                                                                                                            |
+| ---------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useAgentModelEffortOptions` | `(agentId?: string, context?: AgentDiscoveryRequest['context']) => AgentModelEffortOptions` | Returns `models`, `efforts`, `defaultModel`, `defaultEffort`, `loaded`, `modelStatus` and `effortStatus`. Probes both `effort` and `reasoningEffort`, preferring discovered metadata over the alternate key's configured fallback. |
+| `resolveModelEffort`         | `(tab, session, { defaultModel, defaultEffort }) => { model, effort }`                      | Applies tab override > session override > agent default > empty. Do NOT re-derive this ladder inline - it drifts.                                                                                                                  |
 
 For an existing tab, pass the provider and overrides from `projectTabProvider()`
 to discovery and `resolveModelEffort()`. Queue editors project the captured item
@@ -61,9 +59,53 @@ provider. Model discovery passes the SSH host; provider/host changes hide old
 options immediately and discard stale replies. Config/effort APIs remain
 provider-scoped.
 
-Effort options are agent-scoped, not model-scoped: the underlying CLIs expose a
-single list per agent, and a model with no reasoning budget just ignores the
-flag. Don't invent per-model effort lists without a data source for them.
+The optional context uses the shared `AgentDiscoveryRequest` in
+`src/shared/types.ts`. Memoize it: the hook compares object identity, and a new
+object means a new selection. Existing-agent context uses `kind: 'agent'` with
+`sessionId` and optional current model/effort overrides. Draft and
+`provider-settings` contexts carry the actual cwd, executable override, raw
+optional environment, model/effort selection and both SSH identity fields. The
+host resolves the remaining configuration/account layers; the renderer does not
+build a process environment. Preserve absent env
+versus explicit `{}` replacement and blank/unset values.
+
+Only Grok consumes this context in the hook; other providers retain the legacy
+provider-ID discovery calls. Without Grok context, model/config-option discovery
+is skipped and its statuses settle as `unavailable`; stored defaults still load
+through `getConfig`. A supplied context with no usable workspace is refused by
+the host, possibly retaining a configured fallback. Do not invent a home cwd or
+fall back to another account's catalog.
+
+Grok context changes debounce requests by 300 ms through `useDebouncedValue`,
+but hide the old menus, defaults and statuses on the changing render. Late
+responses cannot repopulate a different selection. `loaded` becomes true only
+after model, effort and default lookups settle for the current provider/context;
+it does not certify discovery. `modelStatus` and `effortStatus` use the shared
+`AgentDiscoveryResult['status']`:
+
+- `discovered`: discovery supplied options for the request.
+- `configured-fallback`: a configured value is retained without a verified catalog.
+- `unavailable`: discovery supplied no usable options; this is not proof that a
+  manually selected value is invalid.
+
+Effort metadata is not universally provider-scoped. Grok requests carry the
+selected model and account/executable/workspace/host context, so a model or
+account change invalidates the old options. Do not invent model-specific levels
+or infer support from a static list. The current Grok host path withholds effort
+metadata (`metadata-unavailable`); native model probes also remain refused until
+process containment is qualified. SSH remote discovery remains unqualified
+(`remote-unqualified`). Typed context and statuses do not establish native capability.
+
+The related `useAgentConfiguration` hook accepts optional draft/provider-settings
+`discoveryContext`, overlays current editor values, and exposes
+`modelDiscoveryStatus`/`dynamicOptionStatuses`. It debounces automatic discovery
+while expanded, invalidates stale menus immediately, and supports explicit
+refresh. Missing cwd is sent as a typed draft for host refusal. Local Group Chat
+and Director Notes have no selected discovery workspace; Group Chat supplies
+context only for an explicit SSH workspace. Keep manual Grok model/effort fields
+available and preserve stored or typed selections when options are absent or
+omit them. See [state guidance](STATE-PATTERNS.md#model-and-effort-discovery-state)
+for queued selections and remaining consumer qualification limits.
 
 ---
 
@@ -84,8 +126,16 @@ Precedence (later wins), mirroring `process:spawnTerminalTab`:
 | ------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `resolveAgentEnvironment` | `(layers: AgentEnvironmentLayers) => ResolvedEnvVar[]` | Merge the three layers, key-sorted. Each entry carries the winning `source` plus `shadowedBy`, the layers it overrode. Empty-string values are kept: `FOO=` is a real override, not an absent one. |
 | `isSecretEnvKey`          | `(key: string) => boolean`                             | Whether a value should be masked until revealed. Matched loosely on purpose - a false positive costs one click, a false negative puts a live key on screen during a screen share.                  |
-| `maskEnvValue`            | `(value: string) => string`                            | Mask a secret, keeping the last four characters so one credential is still tellable from another. Values of 8 characters or fewer are masked whole.                                                |
+| `maskEnvValue`            | `(value: string, key?: string) => string`              | Pass the environment key to mask Grok credential bundles and gateway values wholly. Other secrets retain their last four characters; values of 8 characters or fewer are masked whole.             |
 | `envSourceLabel`          | `(source: EnvVarSource) => string`                     | Human label for a layer: `Global`, `Provider`, `This agent`.                                                                                                                                       |
+
+`isSecretEnvKey` treats `GROK_AUTH`, `GROK_MODELS_BASE_URL`,
+`GROK_CLI_CHAT_PROXY_BASE_URL` and `GROK_XAI_API_BASE_URL` as secrets,
+case-insensitively. Pass the key to `maskEnvValue(value, key)` to replace their
+whole value with eight bullets, including malformed JSON or URLs. Gateway
+credentials can appear in userinfo, queries or arbitrary paths, so masking is
+conservative even for apparently credential-free URLs; never parse a bundle or
+URL to guess which suffix is safe. Omitting the key keeps legacy suffix masking.
 
 **Do NOT re-derive this merge inline.** The precedence has to match the spawner's
 or the UI describes a process nobody is running. Render the result with
