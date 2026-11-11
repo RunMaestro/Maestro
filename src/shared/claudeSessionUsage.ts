@@ -14,12 +14,13 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { computeClaudeUsageCost, type ClaudeUsageBreakdown } from './modelPricing';
+import { createClaudeUsageAccumulator, type ClaudeUsageBreakdown } from './modelPricing';
 
 /** Read failures that mean "no subagent transcript here", not "something is wrong". */
 const ABSENT_CODES = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'EISDIR']);
 
-function isAbsent(error: unknown): boolean {
+/** Whether a read failure means the transcript is simply not there. */
+export function isAbsentTranscriptError(error: unknown): boolean {
 	const code = (error as NodeJS.ErrnoException | undefined)?.code;
 	return typeof code === 'string' && ABSENT_CODES.has(code);
 }
@@ -29,23 +30,53 @@ export function claudeSubagentDir(sessionFilePath: string): string {
 	return path.join(sessionFilePath.replace(/\.jsonl$/, ''), 'subagents');
 }
 
-/** Contents of every subagent transcript a session spawned (async). */
-export async function readClaudeSubagentTranscripts(sessionFilePath: string): Promise<string[]> {
+/**
+ * Paths of every subagent transcript a session spawned, in a stable order
+ * (async). For a caller that streams each file rather than reading it whole.
+ * A session with no subagent directory has none.
+ */
+export async function listClaudeSubagentTranscriptPaths(
+	sessionFilePath: string
+): Promise<string[]> {
 	const dir = claudeSubagentDir(sessionFilePath);
 	let names: string[];
 	try {
 		names = await fs.promises.readdir(dir);
 	} catch (error) {
-		if (isAbsent(error)) return [];
+		if (isAbsentTranscriptError(error)) return [];
 		throw error;
 	}
-	const contents: string[] = [];
-	for (const name of names.filter((n) => n.endsWith('.jsonl')).sort()) {
+	return names
+		.filter((n) => n.endsWith('.jsonl'))
+		.sort()
+		.map((n) => path.join(dir, n));
+}
+
+/**
+ * Each subagent transcript a session spawned, read one at a time (async). A
+ * caller that only folds the contents into a total holds one file at a time
+ * instead of every subagent's transcript at once.
+ */
+export async function* iterateClaudeSubagentTranscripts(
+	sessionFilePath: string
+): AsyncGenerator<string> {
+	for (const filePath of await listClaudeSubagentTranscriptPaths(sessionFilePath)) {
+		let content: string;
 		try {
-			contents.push(await fs.promises.readFile(path.join(dir, name), 'utf-8'));
+			content = await fs.promises.readFile(filePath, 'utf-8');
 		} catch (error) {
-			if (!isAbsent(error)) throw error;
+			if (isAbsentTranscriptError(error)) continue;
+			throw error;
 		}
+		yield content;
+	}
+}
+
+/** Contents of every subagent transcript a session spawned (async). */
+export async function readClaudeSubagentTranscripts(sessionFilePath: string): Promise<string[]> {
+	const contents: string[] = [];
+	for await (const content of iterateClaudeSubagentTranscripts(sessionFilePath)) {
+		contents.push(content);
 	}
 	return contents;
 }
@@ -57,7 +88,7 @@ export function readClaudeSubagentTranscriptsSync(sessionFilePath: string): stri
 	try {
 		names = fs.readdirSync(dir);
 	} catch (error) {
-		if (isAbsent(error)) return [];
+		if (isAbsentTranscriptError(error)) return [];
 		throw error;
 	}
 	const contents: string[] = [];
@@ -65,7 +96,7 @@ export function readClaudeSubagentTranscriptsSync(sessionFilePath: string): stri
 		try {
 			contents.push(fs.readFileSync(path.join(dir, name), 'utf-8'));
 		} catch (error) {
-			if (!isAbsent(error)) throw error;
+			if (!isAbsentTranscriptError(error)) throw error;
 		}
 	}
 	return contents;
@@ -73,24 +104,30 @@ export function readClaudeSubagentTranscriptsSync(sessionFilePath: string): stri
 
 /**
  * Price a session from contents already in hand: its own transcript plus its
- * subagents'. The parser is line-based and counts each API response once, so the
- * parent and its subagent transcripts can simply be priced as one document.
+ * subagents'. The parser counts each API response once across all of them, so
+ * the result is the same as pricing them as one document. They are never joined
+ * into one: on a long session with many subagents the joined string can pass
+ * V8's maximum string length (MAESTRO-17M).
  */
 export function computeClaudeUsageWithSubagents(
 	parentContent: string,
 	subagentContents: readonly string[]
 ): ClaudeUsageBreakdown {
-	if (subagentContents.length === 0) return computeClaudeUsageCost(parentContent);
-	return computeClaudeUsageCost([parentContent, ...subagentContents].join('\n'));
+	const usage = createClaudeUsageAccumulator();
+	usage.add(parentContent);
+	for (const content of subagentContents) usage.add(content);
+	return usage.finish();
 }
 
-/** Usage and cost for a session file plus its subagents (async). */
+/** Usage and cost for a session file plus its subagents (async), one subagent file at a time. */
 export async function computeClaudeSessionUsage(
 	sessionFilePath: string,
 	parentContent: string
 ): Promise<ClaudeUsageBreakdown> {
-	return computeClaudeUsageWithSubagents(
-		parentContent,
-		await readClaudeSubagentTranscripts(sessionFilePath)
-	);
+	const usage = createClaudeUsageAccumulator();
+	usage.add(parentContent);
+	for await (const content of iterateClaudeSubagentTranscripts(sessionFilePath)) {
+		usage.add(content);
+	}
+	return usage.finish();
 }

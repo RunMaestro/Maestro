@@ -23,16 +23,15 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { buildChildProcessEnv } from '../process-manager/utils/envBuilder';
 
-/**
- * Auto-approve every tool. This mirrors the CLI path's `OPENCODE_CONFIG_CONTENT`
- * so the SDK migration is behavior-preserving: no permission prompts today. When
- * the permission-bubbling feature lands, this becomes per-tool `ask` and the
- * `permission.updated` SSE events get surfaced to the renderer.
- */
-const AUTO_APPROVE_CONFIG = {
-	permission: { '*': 'allow', external_directory: 'allow', question: 'deny' },
-	tools: { question: false },
-} as const;
+function permissionConfig(mode: EnsureServerOptions['permissionMode']) {
+	return {
+		permission:
+			mode === 'standard'
+				? { '*': 'ask', external_directory: 'ask', question: 'deny' }
+				: { '*': 'allow', external_directory: 'allow', question: 'deny' },
+		tools: { question: false },
+	} as const;
+}
 
 // COWORKING FOLLOW-UP (gated behind encoreFeatures.opencodeServer): the shared
 // serve process gets no per-session coworking env, so its env-less MCP
@@ -72,6 +71,8 @@ export interface EnsureServerOptions {
 	shellEnvVars?: Record<string, string>;
 	/** Extra PATH dirs (ProcessConfig.extraPathDirs). */
 	extraPathDirs?: string[];
+	/** Standard uses native approval requests; other modes preserve auto-approval. */
+	permissionMode?: 'full' | 'standard' | 'readonly';
 	/** Working directory to spawn the server in (any workspace; requests are
 	 *  scoped per-call via `directory`). */
 	cwd: string;
@@ -122,7 +123,7 @@ class OpencodeServerManager {
 			opts.shellEnvVars,
 			opts.extraPathDirs
 		);
-		env.OPENCODE_CONFIG_CONTENT = JSON.stringify(AUTO_APPROVE_CONFIG);
+		env.OPENCODE_CONFIG_CONTENT = JSON.stringify(permissionConfig(opts.permissionMode));
 
 		logger.info('[OpencodeServer] Starting shared server', 'OpencodeServer', {
 			binaryPath: opts.binaryPath,
@@ -304,6 +305,7 @@ function buildServerKey(opts: EnsureServerOptions): string {
 		fingerprint(opts.customEnvVars),
 		fingerprint(opts.shellEnvVars),
 		(opts.extraPathDirs ?? []).join(':'),
+		opts.permissionMode ?? 'current',
 	].join('\u0001');
 }
 

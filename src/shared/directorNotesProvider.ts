@@ -32,6 +32,13 @@ export type SynopsisProviderChoice = ToolType | typeof AUTO_SYNOPSIS_PROVIDER;
  * because the main process resolves this and cannot import renderer modules.
  * `terminal` and the unsupported agents are deliberately absent: a synopsis is a
  * one-shot batch prompt, and only these providers are wired for it.
+ *
+ * `grok` is last on purpose: a synopsis runs as a read-only batch turn, and
+ * Grok's batch turn and its read-only arguments (`--permission-mode plan`
+ * plus a `Bash(*)` deny rule, CLI-enforced) are verified, so it may be picked.
+ * Appending it means an install whose auto pick is already one of the other
+ * providers keeps that pick; Grok is chosen only when nothing above it is
+ * installed. It has no all-tools-off switch, which a synopsis does not need.
  */
 export const SYNOPSIS_PROVIDER_PREFERENCE: readonly ToolType[] = [
 	'claude-code',
@@ -39,6 +46,7 @@ export const SYNOPSIS_PROVIDER_PREFERENCE: readonly ToolType[] = [
 	'opencode',
 	'factory-droid',
 	'copilot-cli',
+	'grok',
 ];
 
 /** True when a stored or wire value means "auto-select". */

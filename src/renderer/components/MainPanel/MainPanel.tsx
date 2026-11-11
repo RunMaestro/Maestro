@@ -27,6 +27,7 @@ import {
 	breakApartGroup,
 	collectLeafTabRefs,
 	generateGroupName,
+	resolveModelEffortTabId,
 	resolveTabRefTitle,
 } from '../../utils/panelLayout';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -64,6 +65,7 @@ import { useWindowOwnsSession } from '../../contexts/WindowContext';
 import type { PaneFileActions, PaneTabActions } from './TiledLayout';
 import type { Theme, UnifiedTabRef } from '../../types';
 import type { MainPanelHandle, MainPanelProps } from './types';
+import type { AgentDiscoveryRequest } from '../../../shared/types';
 
 /**
  * Empty placeholder shown when this window has no agent to display - either no
@@ -417,12 +419,55 @@ export const MainPanel = React.memo(
 		// Model/Effort pills: available options, current values, and agent-level
 		// defaults. Shared with the keyboard-only Model & Effort modal and with the
 		// queued-message edit modal, so all three show the same truth.
+		const modelEffortTabId = useMemo(() => resolveModelEffortTabId(activeSession), [activeSession]);
+		const discoveryContext = useMemo<AgentDiscoveryRequest['context'] | undefined>(() => {
+			if (
+				activeSession?.toolType !== 'grok' ||
+				!activeSession.cwd?.trim() ||
+				!activeTab ||
+				modelEffortTabId !== activeTab.id
+			)
+				return;
+			const { model, effort } = resolveModelEffort(activeTab, activeSession, {
+				defaultModel: '',
+				defaultEffort: '',
+			});
+			return {
+				kind: 'draft',
+				cwd: activeSession.cwd,
+				customPath: activeSession.customPath,
+				customEnvVars: activeSession.customEnvVars,
+				model,
+				effort,
+				sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
+				sshRemoteId: activeSession.sshRemoteId,
+			};
+		}, [
+			activeSession?.id,
+			activeSession?.toolType,
+			activeSession?.cwd,
+			activeSession?.customPath,
+			activeSession?.customEnvVars,
+			activeSession?.customModel,
+			activeSession?.customEffort,
+			activeSession?.sessionSshRemoteConfig,
+			activeSession?.sshRemoteId,
+			activeTab?.id,
+			activeTab?.customModel,
+			activeTab?.customEffort,
+			modelEffortTabId,
+		]);
 		const {
 			models: pillModels,
 			efforts: pillEfforts,
 			defaultModel: agentDefaultModel,
 			defaultEffort: agentDefaultEffort,
-		} = useAgentModelEffortOptions(activeSession?.toolType);
+			refreshModels: refreshPillModels,
+			refreshingModels: refreshingPillModels,
+			loaded: discoveryLoaded,
+			modelStatus,
+			effortStatus,
+		} = useAgentModelEffortOptions(activeSession?.toolType, discoveryContext);
 		const setSessions = useSessionStore((s) => s.setSessions);
 
 		// Navigate to agent/tab when clicking an agent pill in the log viewer
@@ -1534,7 +1579,38 @@ export const MainPanel = React.memo(
 									availableEfforts={pillEfforts}
 									onModelChange={handleModelChange}
 									onEffortChange={handleEffortChange}
+									onRefreshModels={refreshPillModels}
+									refreshingModels={refreshingPillModels}
 								/>
+								{activeSession.toolType === 'grok' &&
+									!isMobileLandscape &&
+									activeTab &&
+									!activeTab.wizardState?.isGeneratingDocs &&
+									modelEffortTabId === activeTab.id && (
+										<button
+											type="button"
+											className="relative z-[3] shrink-0 px-3 py-1 text-xs text-left border-t hover:brightness-110"
+											style={{
+												color: theme.colors.textDim,
+												backgroundColor: theme.colors.bgMain,
+												borderColor: theme.colors.border,
+											}}
+											onClick={() =>
+												useModalStore.getState().openModal('modelEffort', { tabId: activeTab.id })
+											}
+										>
+											Model: {resolvedModel || 'default'} · Effort: {resolvedEffort || 'default'}.
+											{!discoveryLoaded
+												? ' Checking available options.'
+												: modelStatus === 'configured-fallback' ||
+													  effortStatus === 'configured-fallback'
+													? ' Using configured values; available options could not be verified.'
+													: modelStatus !== 'discovered' || effortStatus !== 'discovered'
+														? ' Model or effort discovery is unavailable.'
+														: ' Model and effort options available.'}
+											{' Edit model and effort.'}
+										</button>
+									)}
 							</>
 						)}
 					</div>

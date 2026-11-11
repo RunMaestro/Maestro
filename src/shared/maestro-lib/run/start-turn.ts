@@ -1,6 +1,9 @@
 // src/shared/maestro-lib/run/start-turn.ts
 
 import { spawn, type ChildProcess } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import { StringDecoder } from 'node:string_decoder';
 
 import type { AgentOutputParser, ParsedEvent } from '../parsers/agent-output-parser';
 import { createOutputParser } from '../parsers/parser-factory';
@@ -8,10 +11,13 @@ import { BufferedLineReader } from '../streaming/buffered-line-reader';
 import {
 	markProcessGroupLeader,
 	stopProcess,
+	trackProcessTree,
 	type StopHandle,
 	type StopStage,
 } from '../control/termination';
 import type { AgentLaunchPlan } from '../launch/launch-plan';
+import type { PromptDelivery } from '../launch/prompt-delivery';
+import { logger } from '../host';
 import { quoteCommandForCmdShell, windowsShellReason } from '../launch/windows-command';
 import { escapeCmdArgs } from '../launch/windows-shell-escape';
 import { isWindows } from '../../platformDetection';
@@ -42,6 +48,8 @@ export interface TurnProcessSpec {
 	 * plan chose to deliver over stdin, or the script an SSH remote runs.
 	 */
 	stdin?: string;
+	/** Private local artifact, created exclusively at the sink and removed after the reader closes. */
+	promptArtifact?: Extract<PromptDelivery, { via: 'file' }>['artifact'];
 	/**
 	 * Run the command through a shell: `true` for the platform default, or the
 	 * shell's path. Needed on Windows for a bare `.exe` name (PATH resolution),
@@ -49,6 +57,11 @@ export interface TurnProcessSpec {
 	 * sets it, with the command and args prepared for that shell.
 	 */
 	shell?: boolean | string;
+	/**
+	 * A bidirectional protocol process (`grokAcpProcessSpec`). Only its protocol driver
+	 * may start it: open stdin, no prompt bytes, no output-only parser.
+	 */
+	transport?: 'acp-stdio';
 }
 
 export interface WindowsShellRulesOptions {
@@ -106,6 +119,7 @@ export function turnProcessSpecFromPlan(
 			cwd: plan.cwd,
 			env: plan.env,
 			stdin: plan.stdin,
+			...(plan.prompt.via === 'file' ? { promptArtifact: { ...plan.prompt.artifact } } : {}),
 		},
 		options
 	);
@@ -122,6 +136,11 @@ export interface TurnHandlers {
 	/** Each stdout chunk as it arrived, before it is split into lines. */
 	onStdout?(text: string): void;
 	onStderr?(text: string): void;
+	/** Original pipe bytes, before UTF-8 decoding. Opts that pipe out of setEncoding. */
+	onStdoutBytes?(chunk: Uint8Array): void;
+	onStderrBytes?(chunk: Uint8Array): void;
+	/** Synchronous invalidation before signals reach the process. Must not throw or stop again. */
+	onStopRequested?(): void;
 	/** Each complete stdout line, including an unterminated last one at exit. */
 	onLine?(line: string): void;
 	/** Each line the provider's parser understood. */
@@ -154,6 +173,12 @@ export interface StartTurnOptions {
 	parser?: AgentOutputParser;
 	/** How long each stop stage gets before the next one runs. */
 	stopGraceMs: number;
+	/**
+	 * Observe POSIX descendants throughout the turn so cancellation after the
+	 * parent exits can still stop recorded tools holding its pipes. Not a strict
+	 * containment guarantee: unobserved descendants and Windows need host support.
+	 */
+	trackDescendants?: boolean;
 	/** Aborting this stops the turn, from `terminate`. */
 	signal?: AbortSignal;
 	/**
@@ -284,28 +309,104 @@ export function startTurn(
 	handlers: TurnHandlers,
 	options: StartTurnOptions
 ): TurnHandle {
+	// A routed ACP process started as a one-shot turn would get a closed stdin and an
+	// output-only parser: a parallel run that silently drops its interactions.
+	if (
+		spec.transport === 'acp-stdio' &&
+		(!options.keepStdinOpen ||
+			spec.stdin !== undefined ||
+			spec.promptArtifact ||
+			options.parser ||
+			options.agentId)
+	) {
+		throw new Error('An ACP process can only be started by its protocol driver.');
+	}
+	const artifact = spec.promptArtifact;
+	let artifactFd: number | undefined;
+	const removeArtifact = (): void => {
+		if (!artifact || artifactFd === undefined) return;
+		try {
+			const ownedArtifact = fs.fstatSync(artifactFd);
+			const current = fs.lstatSync(artifact.path);
+			if (current.dev !== ownedArtifact.dev || current.ino !== ownedArtifact.ino) {
+				logger.warn('Prompt artifact changed ownership; cleanup skipped.', 'startTurn');
+				return;
+			}
+			fs.unlinkSync(artifact.path);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+				// OS errors include the private path. Never forward them to logs.
+				logger.warn('Could not remove an owned prompt artifact.', 'startTurn');
+			}
+		} finally {
+			try {
+				fs.closeSync(artifactFd);
+			} catch {
+				logger.warn('Could not close an owned prompt artifact.', 'startTurn');
+			}
+			artifactFd = undefined;
+		}
+	};
 	const hasStdin = spec.stdin !== undefined && spec.stdin !== '';
 	const stdinMode = hasStdin ? 'pipe' : (options.emptyStdin ?? 'pipe');
 
 	const processGroup = options.processGroup === true && !isWindows();
 
+	// Construct the parser before owning a file or child, so a constructor
+	// failure cannot leave either without a settlement handler.
+	const parser = options.parser ?? (options.agentId ? createOutputParser(options.agentId) : null);
 	let child: ChildProcess;
 	try {
-		child = spawn(spec.command, spec.args, {
-			cwd: spec.cwd,
-			env: spec.env,
-			shell: spec.shell ?? false,
-			stdio: [stdinMode, 'pipe', 'pipe'],
-			// On POSIX `detached` makes the child a session and group leader. It is
-			// not unref'd: the host still waits for it and reads its pipes.
-			detached: processGroup,
-		});
+		if (artifact) {
+			if (
+				artifact.owner !== 'local' ||
+				!path.isAbsolute(artifact.path) ||
+				artifact.path.includes('\0') ||
+				artifact.encoding !== 'utf8' ||
+				artifact.mode !== 0o600 ||
+				artifact.flag !== 'wx' ||
+				artifact.cleanup !== 'turn' ||
+				typeof artifact.content !== 'string' ||
+				spec.stdin !== undefined
+			) {
+				throw new Error('Prompt-file delivery requires an exclusive local artifact without stdin.');
+			}
+			if (options.signal?.aborted)
+				throw new Error('Prompt-file launch was cancelled before spawn.');
+			try {
+				// Register ownership immediately after exclusive creation. Retain
+				// the descriptor until cleanup can compare its inode with the path;
+				// a failed write, collision or replacement must not delete another file.
+				artifactFd = fs.openSync(artifact.path, artifact.flag, artifact.mode);
+				fs.writeFileSync(artifactFd, artifact.content, artifact.encoding);
+			} catch {
+				throw new Error('Could not prepare the private prompt artifact.');
+			}
+		}
+		if (artifact && options.signal?.aborted) {
+			throw new Error('Prompt-file launch was cancelled before spawn.');
+		}
+		try {
+			child = spawn(spec.command, spec.args, {
+				cwd: spec.cwd,
+				env: spec.env,
+				shell: spec.shell ?? false,
+				stdio: [stdinMode, 'pipe', 'pipe'],
+				// On POSIX `detached` makes the child a session and group leader. It is
+				// not unref'd: the host still waits for it and reads its pipes. Left
+				// out entirely otherwise, so an ordinary spawn is unchanged.
+				...(processGroup ? { detached: true } : {}),
+			});
+		} catch (error) {
+			throw new TurnNotStartedError(error);
+		}
 	} catch (error) {
-		throw new TurnNotStartedError(error);
+		removeArtifact();
+		throw error;
 	}
 	if (processGroup && child.pid) markProcessGroupLeader(child);
+	const finishTracking = options.trackDescendants ? trackProcessTree(child) : undefined;
 
-	const parser = options.parser ?? (options.agentId ? createOutputParser(options.agentId) : null);
 	const tailLimit = options.stdoutTailLimit ?? DEFAULT_STDOUT_TAIL_LIMIT;
 
 	let droppedOutputBytes = 0;
@@ -325,6 +426,7 @@ export function startTurn(
 	let stopLadder: StopHandle | undefined;
 
 	const stop = (from: StopStage, extra: { immediate?: boolean; blocking?: boolean } = {}): void => {
+		if (settled) return;
 		stopLadder = stopProcess(
 			{ child },
 			{
@@ -332,6 +434,7 @@ export function startTurn(
 				graceMs: options.stopGraceMs,
 				onStopRequested: () => {
 					stopWasRequested = true;
+					handlers.onStopRequested?.();
 				},
 				sessionId: options.sessionId,
 				label: options.label,
@@ -361,36 +464,64 @@ export function startTurn(
 			// The ladder ends itself when the process exits. This covers a turn
 			// that settles with no exit to hear: a process that never started.
 			stopLadder?.dispose();
-			resolve({
+			const turnExit: TurnExit = {
 				...exit,
 				interrupted: stopWasRequested,
 				stderrText,
 				stdoutText,
 				droppedOutputBytes,
 				...(stdinError ? { stdinError } : {}),
-			});
+			};
+			const release = (): void => {
+				removeArtifact();
+				resolve(turnExit);
+			};
+			// Preserve normal stream draining, then join any pending ownership
+			// observation/sweep before settling exactly once.
+			if (finishTracking) void finishTracking().then(release);
+			else release();
 		};
 
 		// Decode on the stream, not per chunk: a multibyte character split across
 		// two reads would otherwise decode to replacement characters on both
 		// sides of the boundary.
-		child.stdout?.setEncoding('utf8');
-		child.stderr?.setEncoding('utf8');
+		const stdoutDecoder = handlers.onStdoutBytes ? new StringDecoder('utf8') : undefined;
+		const stderrDecoder = handlers.onStderrBytes ? new StringDecoder('utf8') : undefined;
+		if (!stdoutDecoder) child.stdout?.setEncoding('utf8');
+		if (!stderrDecoder) child.stderr?.setEncoding('utf8');
 
-		child.stdout?.on('data', (text: string) => {
+		const readStdout = (text: string): void => {
 			stdoutText = appendBoundedTail(stdoutText, text, tailLimit);
 			handlers.onStdout?.(text);
 			if (framesLines) for (const line of lineReader.push(text)) readLine(line);
-		});
+		};
 
-		child.stderr?.on('data', (text: string) => {
+		const readStderr = (text: string): void => {
 			stderrText = appendBoundedTail(stderrText, text, options.stderrTailLimit);
 			handlers.onStderr?.(text);
+		};
+		child.stdout?.on('data', (chunk: Buffer | string) => {
+			if (stdoutDecoder) {
+				handlers.onStdoutBytes!(chunk as Buffer);
+				const text = stdoutDecoder.write(chunk as Buffer);
+				if (text) readStdout(text);
+			} else readStdout(chunk as string);
+		});
+		child.stderr?.on('data', (chunk: Buffer | string) => {
+			if (stderrDecoder) {
+				handlers.onStderrBytes!(chunk as Buffer);
+				const text = stderrDecoder.write(chunk as Buffer);
+				if (text) readStderr(text);
+			} else readStderr(chunk as string);
 		});
 
 		// `close`, not `exit`: it fires once the streams have ended, so every
 		// line the process wrote has been read by the time the turn settles.
 		child.on('close', (exitCode, signal) => {
+			const stdoutEnd = stdoutDecoder?.end();
+			const stderrEnd = stderrDecoder?.end();
+			if (stdoutEnd) readStdout(stdoutEnd);
+			if (stderrEnd) readStderr(stderrEnd);
 			// The last line may have no trailing newline.
 			const trailing = lineReader.flush();
 			if (trailing) readLine(trailing);
@@ -399,6 +530,12 @@ export function startTurn(
 		});
 
 		child.on('error', (error) => {
+			// A failed signal can emit `error` on a process that did start. Keep
+			// ownership and drain its pipes; only a spawn failure releases here.
+			if ((options.trackDescendants || artifact) && child.pid !== undefined) {
+				stop('terminate');
+				return;
+			}
 			settle({ exitCode: null, signal: null, spawnError: error });
 		});
 	});

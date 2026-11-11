@@ -197,6 +197,24 @@ describe('SSH Remote IPC Handlers', () => {
 			});
 		});
 
+		it('persists only the Federation opt-out: on (or absent) stores nothing', async () => {
+			const on = (await invokeHandler('ssh-remote:saveConfig', {
+				name: 'Host Box',
+				host: 'box',
+				port: 22,
+				federation: true,
+			})) as { success: boolean; config?: SshRemoteConfig };
+			expect(on.config?.federation).toBeUndefined();
+
+			const off = (await invokeHandler('ssh-remote:saveConfig', {
+				name: 'Plain Box',
+				host: 'box',
+				port: 22,
+				federation: false,
+			})) as { success: boolean; config?: SshRemoteConfig };
+			expect(off.config?.federation).toBe(false);
+		});
+
 		it('strips a reserved ssh option before it reaches disk', async () => {
 			const result = (await invokeHandler('ssh-remote:saveConfig', {
 				name: 'Tunnelled',

@@ -9,7 +9,7 @@
 
 import * as fs from 'fs';
 import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
-import { exitIfMaestroNotRunning } from '../services/session-command';
+import { diskFallbackPeer, exitIfMaestroNotRunning } from '../services/session-command';
 
 interface CommonOptions {
 	json?: boolean;
@@ -51,6 +51,24 @@ function reportError(message: string, options: CommonOptions): never {
 		console.error(`Error: ${message}`);
 	}
 	process.exit(1);
+}
+
+/**
+ * What a headless host says to every `cue pipeline` verb. The layout file is
+ * the desktop Pipeline Graph's own document (it carries node positions and
+ * colors the engine never reads), so a host does not serve it. What the engine
+ * runs is each agent's `.maestro/cue.yaml`, which other verbs change without
+ * the app.
+ */
+export const CUE_PIPELINE_HEADLESS_MESSAGE =
+	'`cue pipeline` edits the desktop Pipeline Graph layout (cue-pipeline-layout.json), which the headless host (`maestro-cli host`) does not serve. ' +
+	"Run it while the desktop app serves this data directory, or change what Cue runs in the agent's .maestro/cue.yaml (`cue schedule` and `cue model` edit it with no app running).";
+
+function reportBridgeError(error: unknown, options: CommonOptions): never {
+	exitIfMaestroNotRunning(error, { json: options.json, jsonExtra: { type: 'error' } });
+	if (diskFallbackPeer(error) === 'headless-host')
+		reportError(CUE_PIPELINE_HEADLESS_MESSAGE, options);
+	return reportError(error instanceof Error ? error.message : String(error), options);
 }
 
 async function listPipelines(client: MaestroClient): Promise<PipelineEntry[]> {
@@ -133,8 +151,7 @@ export async function cuePipelineList(options: CommonOptions): Promise<void> {
 		}
 		console.log(lines.join('\n'));
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json, jsonExtra: { type: 'error' } });
-		reportError(error instanceof Error ? error.message : String(error), options);
+		reportBridgeError(error, options);
 	}
 }
 
@@ -150,8 +167,7 @@ export async function cuePipelineGet(name: string, options: CommonOptions): Prom
 		// or piped into `add`/`replace --from -`.
 		console.log(JSON.stringify(pipeline, null, 2));
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json, jsonExtra: { type: 'error' } });
-		reportError(error instanceof Error ? error.message : String(error), options);
+		reportBridgeError(error, options);
 	}
 }
 
@@ -181,8 +197,7 @@ export async function cuePipelineAdd(name: string, options: AddOptions): Promise
 		}
 		reportError(`${result.message} (${result.code})`, options);
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json, jsonExtra: { type: 'error' } });
-		reportError(error instanceof Error ? error.message : String(error), options);
+		reportBridgeError(error, options);
 	}
 }
 
@@ -206,8 +221,7 @@ export async function cuePipelineReplace(name: string, options: ReplaceOptions):
 		}
 		reportError(`${result.message} (${result.code})`, options);
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json, jsonExtra: { type: 'error' } });
-		reportError(error instanceof Error ? error.message : String(error), options);
+		reportBridgeError(error, options);
 	}
 }
 
@@ -224,7 +238,6 @@ export async function cuePipelineRemove(name: string, options: RemoveOptions): P
 		}
 		reportError(`${result.message} (${result.code})`, options);
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json, jsonExtra: { type: 'error' } });
-		reportError(error instanceof Error ? error.message : String(error), options);
+		reportBridgeError(error, options);
 	}
 }

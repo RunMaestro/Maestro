@@ -113,6 +113,24 @@ export const PROVIDER_ENV_VAR_SUGGESTIONS: Readonly<Record<string, readonly Cata
 		{ key: 'GH_TOKEN', description: 'GitHub token, also read by the gh CLI.' },
 		{ key: 'GITHUB_TOKEN', description: 'GitHub token, lowest of the three in precedence.' },
 	],
+	grok: [
+		{
+			key: 'GROK_HOME',
+			description: 'State and default login root. Explicit credential overrides still apply.',
+		},
+		{
+			key: 'GROK_AUTH_PATH',
+			description: 'Auth file path, replacing auth.json under GROK_HOME without moving sessions.',
+		},
+		{
+			key: 'GROK_AUTH',
+			description: 'Inline credential JSON, tried before the auth file. Contains secrets.',
+		},
+		{
+			key: 'XAI_API_KEY',
+			description: 'Fallback API key when no per-model credential or active login token applies.',
+		},
+	],
 };
 
 /** Names the user has already set, as gathered by `agents:getKnownEnvVarKeys`. */

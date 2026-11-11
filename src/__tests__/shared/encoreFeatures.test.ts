@@ -29,6 +29,10 @@ describe('ENCORE_FEATURE_DEFAULTS', () => {
 	it('ships Dataview off', () => {
 		expect(ENCORE_FEATURE_DEFAULTS.dataview).toBe(false);
 	});
+
+	it('has no Federation flag: Federation is built in and opportunistic', () => {
+		expect(ENCORE_FEATURE_DEFAULTS).not.toHaveProperty('federation');
+	});
 });
 
 describe('resolveEncoreFeatures', () => {

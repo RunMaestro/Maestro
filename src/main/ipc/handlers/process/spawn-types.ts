@@ -1,13 +1,23 @@
 import type { AdditionalDirectory } from '../../../../shared/types';
 import type { CodexTransport } from '../../../../shared/codexTransport';
+import type { NativeSessionLaunch } from '../../../process-manager/types';
+import type { GrokSpawnSelectionFingerprint } from '../../../../shared/grokSpawnSelection';
+import type { GrokAcpNativeCommandIntent } from '../../../../shared/maestro-lib/grok/acp-turn';
 
+import type { HarnessControlMode } from '../../../../shared/maestro-lib/providers/native-control';
 /**
  * IPC payload for `process:spawn`.
  * Supports agent-specific argument builders for batch mode, JSON output,
  * resume, read-only mode, and YOLO mode.
  */
 export interface SpawnProcessConfig {
+	/** Submitted native transcript row; a missing boundary disables full-turn observation. */
+	transcriptBoundaryId?: string;
 	sessionId: string;
+	pianolaDispatchId?: string;
+	/** Owning desktop queue consumer only; host releases and claims within this spawn request. */
+	pianolaQueueItemId?: string;
+	pianolaQueueStepId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;
@@ -20,6 +30,19 @@ export interface SpawnProcessConfig {
 	sendPromptViaStdinRaw?: boolean; // If true, send prompt via stdin as raw text (for OpenCode, Codex, etc.)
 	// Agent-specific spawn options (used to build args via agent config)
 	agentSessionId?: string; // For session resume
+	/** Caller correlation only; does not supply a native ID, scope or admission. */
+	nativeSessionRequestId?: NativeSessionLaunch['nativeSessionRequestId'];
+	/** Ephemeral enqueue configuration check, never a native binding or admission.
+	 *  Omitted for unguarded turns; null means guarded but evidence unavailable.
+	 *  A guarded request must refuse missing/stale evidence before preparation. */
+	expectedGrokSpawnSelection?: GrokSpawnSelectionFingerprint | null;
+	/** One ACP-advertised native Grok command the person picked (the command intent),
+	 *  riding this same request: there is no second queue. It authorizes nothing;
+	 *  `prompt` must be its exact text, the turn must resume its native session on
+	 *  its tab, and the newly admitted process must advertise the same entry before
+	 *  submission. A request carrying it is refused, never run as an ordinary prompt,
+	 *  when any of that cannot hold. Grok only. */
+	grokNativeCommand?: GrokAcpNativeCommandIntent;
 	readOnlyMode?: boolean; // For read-only/plan mode
 	modelId?: string; // For model selection
 	yoloMode?: boolean; // For YOLO/full-access mode (bypasses confirmations)
@@ -57,6 +80,8 @@ export interface SpawnProcessConfig {
 	// the authoritative value is read from the persisted session; this is only
 	// a fallback for callers that pass it inline.
 	codexTransport?: CodexTransport;
+	// Native protocol control mode. Persisted per agent; absent means current.
+	harnessControlMode?: HarnessControlMode;
 	// maestro-p idle cap (`--max-wait`) for a TUI turn. Unset keeps maestro-p's
 	// 300s default. Auto Run raises it to its own inactivity budget, or a long
 	// silent tool call (a test suite) is killed long before Auto Run would.
@@ -66,4 +91,7 @@ export interface SpawnProcessConfig {
 	// Stats tracking options
 	querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 	tabId?: string; // Tab ID for multi-tab tracking
+	// The Auto Run this spawn is a task of (MAESTRO_CALLER_AUTORUN_ID), so a
+	// `maestro-cli dispatch` it runs reports its result back to the run.
+	autoRunId?: string;
 }

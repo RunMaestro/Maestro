@@ -280,7 +280,8 @@ function settingsKey(
 	toolType: ToolType,
 	hint: ModelHint | null,
 	baselineModel?: string,
-	baselineEffort?: string
+	baselineEffort?: string,
+	supportedEfforts?: readonly string[]
 ): string {
 	let model = baselineModel;
 	let effort = baselineEffort;
@@ -288,7 +289,7 @@ function settingsKey(
 		model = resolveTierModel(toolType, hint.tier) ?? baselineModel;
 	}
 	if (hint?.effort && hint.effort !== INHERIT_KEYWORD) {
-		effort = resolveEffortLevel(toolType, hint.effort) ?? baselineEffort;
+		effort = resolveEffortLevel(toolType, hint.effort, supportedEfforts) ?? baselineEffort;
 	}
 	return `${model ?? ''}\u0000${effort ?? ''}`;
 }
@@ -316,12 +317,17 @@ function settingsKey(
  * @param toolType - provider, because tier to model mapping is per provider
  * @param baselineModel - the agent's configured model, the fallback a hint overrides
  * @param baselineEffort - the agent's configured effort
+ * @param supportedEfforts - the same selected-model Grok wire-value evidence
+ * used for dispatch; omit unavailable/stale menus and configured fallbacks.
+ * Inspection and replay must use the same evidence as resolveTurnSettings so
+ * their segment boundaries agree. Menu order never defines hint positions.
  */
 export function countTasksUnderActiveHint(
 	content: string,
 	toolType: ToolType,
 	baselineModel?: string,
-	baselineEffort?: string
+	baselineEffort?: string,
+	supportedEfforts?: readonly string[]
 ): { count: number; total: number } {
 	let documentHint: ModelHint | null = null;
 	let firstKey: string | null = null;
@@ -335,7 +341,7 @@ export function countTasksUnderActiveHint(
 			total++;
 			const taskHint = markerMatch ? parseModelMarker(markerMatch[1] || '', index, 'task') : null;
 			const merged = mergeHints(documentHint, taskHint);
-			const key = settingsKey(toolType, merged, baselineModel, baselineEffort);
+			const key = settingsKey(toolType, merged, baselineModel, baselineEffort, supportedEfforts);
 			if (firstKey === null) {
 				firstKey = key;
 				count = 1;

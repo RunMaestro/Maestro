@@ -6,12 +6,14 @@
  * into phases, with Phase 1 designed to be completable without user input.
  */
 
-import type { ToolType } from '../../../types';
+import type { ToolType, ProcessConfig } from '../../../types';
 import type { WizardMessage, GeneratedDocument } from '../WizardContext';
+import { GROK_WIZARD_GENERATION_ARGS, readGrokWizardOutput } from '../../../utils/grokWizard';
 import {
 	substituteTemplateVariables,
 	type TemplateContext,
 } from '../../../utils/templateVariables';
+import { createGenericErrorMessage } from './wizardErrorDetection';
 
 let cachedPhaseGenDocPrompt: string | null = null;
 let phaseGeneratorPromptsLoaded = false;
@@ -37,7 +39,10 @@ function getWizardDocumentGenerationPrompt(): string {
 /**
  * Configuration for document generation
  */
-export interface GenerationConfig {
+export interface GenerationConfig extends Pick<
+	ProcessConfig,
+	'sessionCustomPath' | 'sessionCustomArgs' | 'sessionCustomEnvVars' | 'sessionCustomEffort'
+> {
 	/** Agent type to use for generation */
 	agentType: ToolType;
 	/** Working directory for the agent */
@@ -61,6 +66,8 @@ export interface GenerationConfig {
 	};
 	/** The Claude token source picked for the new agent, so a TUI pick plans through maestro-p */
 	claudeTokenSource?: ClaudeTokenSourceFields;
+	/** Native protocol selection for document-generation turns. */
+	harnessControlMode?: import('../../../../shared/maestro-lib/providers/native-control').HarnessControlMode;
 }
 
 /**
@@ -173,7 +180,10 @@ interface ParsedDocument {
 
 import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 import { logger } from '../../../utils/logger';
-import { createPlaybookDocumentEmitter } from '../../../services/inlineWizardDocumentGeneration';
+import {
+	createPlaybookDocumentEmitter,
+	parseGeneratedDocuments as parseCompleteDocuments,
+} from '../../../services/inlineWizardDocumentGeneration';
 import {
 	getClaudeTokenSourceFields,
 	type ClaudeTokenSourceFields,
@@ -385,7 +395,7 @@ export function generateDocumentGenerationPrompt(config: GenerationConfig): stri
 		session: {
 			id: 'wizard-gen',
 			name: projectDisplay,
-			toolType: 'claude-code',
+			toolType: config.agentType,
 			cwd: directoryPath,
 			fullPath: directoryPath,
 		},
@@ -587,10 +597,15 @@ export function deriveSshRemoteId(sshConfig?: {
 class PhaseGenerator {
 	private isGenerating = false;
 	private outputBuffer = '';
+	/** stderr for the current run: the only place a CLI that fails on startup says why (#1983). */
+	private stderrBuffer = '';
 	private dataListenerCleanup?: () => void;
 	private exitListenerCleanup?: () => void;
+	private stderrListenerCleanup?: () => void;
 	private currentWatchPath?: string;
 	private pollIntervalId?: ReturnType<typeof setInterval>;
+	private generationAbort?: AbortController;
+	private cancelRun?: () => void;
 
 	/**
 	 * Generate Auto Run documents based on the project discovery conversation
@@ -609,6 +624,18 @@ class PhaseGenerator {
 
 		this.isGenerating = true;
 		this.outputBuffer = '';
+		const controller = new AbortController();
+		this.generationAbort = controller;
+		const { signal } = controller;
+		const isGrok = config.agentType === 'grok';
+		config = {
+			...config,
+			sessionCustomEnvVars:
+				config.sessionCustomEnvVars === undefined ? undefined : { ...config.sessionCustomEnvVars },
+			sshRemoteConfig: config.sshRemoteConfig ? { ...config.sshRemoteConfig } : undefined,
+			claudeTokenSource: getClaudeTokenSourceFields(config.claudeTokenSource),
+		};
+		this.stderrBuffer = '';
 
 		// Start debug logging session
 		wizardDebugLogger.startSession(config);
@@ -621,7 +648,15 @@ class PhaseGenerator {
 			wizardDebugLogger.log('info', 'Fetching agent configuration', {
 				agentType: config.agentType,
 			});
-			const agent = await window.maestro.agents.get(config.agentType);
+			const cancelled = new Promise<never>((_resolve, reject) => {
+				this.cancelRun = () => reject(new Error('Document generation was cancelled.'));
+			});
+			const agent = await Promise.race([window.maestro.agents.get(config.agentType), cancelled]);
+			signal.throwIfAborted();
+			this.cancelRun = undefined;
+			if (config.sshRemoteConfig?.enabled && !config.sshRemoteConfig.remoteId) {
+				throw new Error('Select an SSH remote before generating documents.');
+			}
 
 			// For SSH remote sessions, skip the availability check since we're executing remotely
 			// The agent detector checks for binaries locally, but we need to execute on the remote host
@@ -636,7 +671,7 @@ class PhaseGenerator {
 			}
 
 			// Only check availability for local sessions
-			if (!isRemoteSession && !agent.available) {
+			if (!isRemoteSession && !agent.available && !(isGrok && config.sessionCustomPath?.trim())) {
 				wizardDebugLogger.log('error', 'Agent not available locally', {
 					agentType: config.agentType,
 					agent,
@@ -686,7 +721,8 @@ class PhaseGenerator {
 
 			// Spawn the agent and wait for completion
 			wizardDebugLogger.log('info', 'Starting agent run');
-			const result = await this.runAgent(agent, config, prompt, callbacks);
+			const result = await this.runAgent(agent, config, prompt, signal, callbacks);
+			signal.throwIfAborted();
 
 			if (!result.success) {
 				wizardDebugLogger.log('error', 'Agent run failed', {
@@ -709,7 +745,9 @@ class PhaseGenerator {
 				rawOutputLength: rawOutput.length,
 				rawOutputPreview: rawOutput.slice(0, 500),
 			});
-			let documents = parseGeneratedDocuments(rawOutput);
+			let documents = isGrok
+				? parseCompleteDocuments(rawOutput, true)
+				: parseGeneratedDocuments(rawOutput);
 			let documentsFromDisk = false;
 
 			wizardDebugLogger.log('info', 'Initial document parsing result', {
@@ -718,7 +756,7 @@ class PhaseGenerator {
 			});
 
 			// If no documents parsed with markers, try splitting intelligently
-			if (documents.length === 0 && rawOutput.trim()) {
+			if (!isGrok && documents.length === 0 && rawOutput.trim()) {
 				callbacks?.onProgress?.('Processing document structure...');
 				wizardDebugLogger.log('info', 'No documents parsed with markers, trying splitIntoPhases');
 				documents = splitIntoPhases(rawOutput);
@@ -744,15 +782,42 @@ class PhaseGenerator {
 			// Check for files on disk if:
 			// 1. No documents were parsed at all, OR
 			// 2. Parsed documents don't contain valid tasks (likely just status output)
-			if (!hasValidParsedDocs) {
+			if (isGrok || !hasValidParsedDocs) {
 				callbacks?.onProgress?.('Checking for documents on disk...');
 				wizardDebugLogger.log('info', 'Checking for documents on disk (parsed docs invalid)');
 				// Build the correct path including subfolder if specified
 				const autoRunPath = config.subfolder
 					? `${config.directoryPath}/${PLAYBOOKS_DIR}/${config.subfolder}`
 					: `${config.directoryPath}/${PLAYBOOKS_DIR}`;
-				const diskDocs = await this.readDocumentsFromDisk(autoRunPath, sshRemoteId);
-				if (diskDocs.length > 0) {
+				const diskDocs = await this.readDocumentsFromDisk(autoRunPath, sshRemoteId, isGrok);
+				signal.throwIfAborted();
+				if (isGrok) {
+					if (new Set(documents.map((doc) => doc.filename)).size !== documents.length) {
+						throw new Error('Grok returned duplicate document names.');
+					}
+					const documentsByName = new Map(diskDocs.map((doc) => [doc.filename, doc]));
+					documentsFromDisk = documents.length === 0 && diskDocs.length > 0;
+					for (const doc of documents) {
+						const diskDoc = documentsByName.get(doc.filename);
+						if (diskDoc && diskDoc.content.trim() !== doc.content.trim()) {
+							throw new Error('Grok returned conflicting disk and response documents.');
+						}
+						documentsByName.set(doc.filename, doc);
+					}
+					documents = [...documentsByName.values()].sort((a, b) => a.phase - b.phase);
+					if (!documents.length) throw new Error('Grok did not produce complete task documents.');
+					for (const doc of documents) {
+						if (
+							sanitizeFilename(doc.filename) !== doc.filename ||
+							!doc.filename.endsWith('.md') ||
+							countTasks(doc.content) === 0
+						) {
+							throw new Error(
+								'Grok returned invalid or task-free documents. Please regenerate the plan.'
+							);
+						}
+					}
+				} else if (diskDocs.length > 0) {
 					logger.info('[PhaseGenerator] Found documents on disk:', undefined, diskDocs.length);
 					wizardDebugLogger.log('info', 'Found documents on disk', {
 						count: diskDocs.length,
@@ -797,7 +862,9 @@ class PhaseGenerator {
 
 			// Convert to GeneratedDocument format
 			// If read from disk, set savedPath since they're already saved
-			const autoRunPath = `${config.directoryPath}/${PLAYBOOKS_DIR}`;
+			const autoRunPath = config.subfolder
+				? `${config.directoryPath}/${PLAYBOOKS_DIR}/${config.subfolder}`
+				: `${config.directoryPath}/${PLAYBOOKS_DIR}`;
 			const generatedDocs: GeneratedDocument[] = documents.map((doc) => ({
 				filename: doc.filename,
 				content: doc.content,
@@ -820,24 +887,35 @@ class PhaseGenerator {
 				documentsFromDisk,
 			};
 
+			signal.throwIfAborted();
 			callbacks?.onComplete?.(finalResult);
 			return finalResult;
 		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+			const errorMessage = signal.aborted
+				? 'Document generation was cancelled.'
+				: error instanceof Error
+					? error.message
+					: 'Unknown error occurred';
 			wizardDebugLogger.log('error', 'Generation failed with exception', {
 				errorMessage,
 				errorStack: error instanceof Error ? error.stack : undefined,
 				outputBufferLength: this.outputBuffer.length,
 			});
-			callbacks?.onError?.(errorMessage);
+			if (!signal.aborted) callbacks?.onError?.(errorMessage);
 			return {
 				success: false,
 				error: errorMessage,
-				rawOutput: this.outputBuffer,
+				rawOutput: signal.aborted ? undefined : this.outputBuffer,
 			};
 		} finally {
-			this.isGenerating = false;
-			this.cleanup();
+			if (this.generationAbort === controller) {
+				// Also release run-local resources if synchronous setup threw.
+				this.cancelRun?.();
+				this.isGenerating = false;
+				this.generationAbort = undefined;
+				this.cancelRun = undefined;
+				this.cleanup();
+			}
 		}
 	}
 
@@ -848,10 +926,12 @@ class PhaseGenerator {
 		agent: any,
 		config: GenerationConfig,
 		prompt: string,
+		signal: AbortSignal,
 		callbacks?: GenerationCallbacks
 	): Promise<GenerationResult> {
 		const sessionId = `wizard-gen-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 		const startTime = Date.now();
+		const isGrok = config.agentType === 'grok';
 
 		logger.info('[PhaseGenerator] Starting agent run:', undefined, {
 			sessionId,
@@ -876,12 +956,45 @@ class PhaseGenerator {
 			let lastDataTime = Date.now();
 			let dataChunks = 0;
 			let fileWatcherCleanup: (() => void) | undefined;
+			let errorListenerCleanup: (() => void) | undefined;
+			let settled = false;
+			let stopRequested = false;
+			let providerError: string | undefined;
+			let spawnAccepted = false;
+			let pendingExit: GenerationResult | undefined;
+			const finish = (result: GenerationResult) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timeoutId);
+				this.cleanup();
+				fileWatcherCleanup?.();
+				errorListenerCleanup?.();
+				this.cancelRun = undefined;
+				resolve(result);
+			};
+			const stopProcess = () => {
+				stopRequested = true;
+				void window.maestro.process
+					.kill(sessionId)
+					.catch((error) =>
+						logger.warn('[PhaseGenerator] Failed to stop generation:', undefined, error)
+					);
+			};
+			this.cancelRun = () => {
+				finish({ success: false, error: 'Document generation was cancelled.' });
+				stopProcess();
+			};
+			if (signal.aborted) {
+				this.cancelRun();
+				return;
+			}
 
 			/**
 			 * Reset the inactivity timeout - called on any activity (data chunk or file change)
 			 * This ensures the timeout only fires after 5 minutes of NO activity
 			 */
 			const resetTimeout = () => {
+				if (settled) return;
 				clearTimeout(timeoutId);
 				lastDataTime = Date.now();
 
@@ -909,26 +1022,18 @@ class PhaseGenerator {
 						bufferPreview: this.outputBuffer.slice(-1000),
 					});
 
-					this.cleanup();
-					if (fileWatcherCleanup) {
-						fileWatcherCleanup();
-					}
-					window.maestro.process
-						.kill(sessionId)
-						.catch((err) =>
-							logger.warn('[PhaseGenerator] Failed to kill session:', undefined, err)
-						);
-					resolve({
+					finish({
 						success: false,
 						error: 'Generation timed out after 20 minutes of inactivity. Please try again.',
 						rawOutput: this.outputBuffer,
 					});
+					stopProcess();
 				}, GENERATION_TIMEOUT);
 			};
 
 			// Set up data listener
 			this.dataListenerCleanup = window.maestro.process.onData((sid: string, data: string) => {
-				if (sid === sessionId) {
+				if (sid === sessionId && !settled) {
 					this.outputBuffer += data;
 					dataChunks++;
 					callbacks?.onChunk?.(data);
@@ -957,71 +1062,98 @@ class PhaseGenerator {
 				}
 			});
 
-			// Set up exit listener
-			this.exitListenerCleanup = window.maestro.process.onExit((sid: string, code: number) => {
+			// Set up stderr listener (kept out of outputBuffer so it never reaches the parser)
+			this.stderrListenerCleanup = window.maestro.process.onStderr((sid: string, data: string) => {
 				if (sid === sessionId) {
-					clearTimeout(timeoutId);
-					this.cleanup();
-					if (fileWatcherCleanup) {
-						fileWatcherCleanup();
-					}
-
-					const elapsed = Date.now() - startTime;
-					logger.info('[PhaseGenerator] Agent exited:', undefined, {
-						sessionId,
-						exitCode: code,
-						elapsedMs: elapsed,
-						totalChunks: dataChunks,
-						bufferSize: this.outputBuffer.length,
-					});
-
-					wizardDebugLogger.log('exit', `Agent exited with code ${code}`, {
-						exitCode: code,
-						elapsedMs: elapsed,
-						totalChunks: dataChunks,
-						bufferSize: this.outputBuffer.length,
-					});
-
-					if (code === 0) {
-						// Try to extract result from stream-json format
-						const extracted = extractResultFromStreamJson(this.outputBuffer);
-						const output = extracted || this.outputBuffer;
-
-						logger.info('[PhaseGenerator] Extraction result:', undefined, {
-							hadExtraction: !!extracted,
-							outputLength: output.length,
-						});
-
-						wizardDebugLogger.log('info', 'Agent completed successfully', {
-							hadExtraction: !!extracted,
-							outputLength: output.length,
-						});
-
-						resolve({
-							success: true,
-							rawOutput: output,
-						});
-					} else {
-						logger.error('[PhaseGenerator] Agent failed with code:', undefined, code);
-						logger.error(
-							'[PhaseGenerator] Output buffer preview:',
-							undefined,
-							this.outputBuffer.slice(0, 500)
-						);
-
-						wizardDebugLogger.log('error', `Agent failed with exit code ${code}`, {
-							exitCode: code,
-							bufferPreview: this.outputBuffer.slice(0, 1000),
-						});
-
-						resolve({
-							success: false,
-							error: `Agent exited with code ${code}`,
-							rawOutput: this.outputBuffer,
-						});
-					}
+					this.stderrBuffer += data;
 				}
 			});
+
+			// Set up exit listener
+			this.exitListenerCleanup = window.maestro.process.onExit(
+				(sid: string, code: number, exitSignal?: number) => {
+					if (sid === sessionId && !settled) {
+						const elapsed = Date.now() - startTime;
+						logger.info('[PhaseGenerator] Agent exited:', undefined, {
+							sessionId,
+							exitCode: code,
+							elapsedMs: elapsed,
+							totalChunks: dataChunks,
+							bufferSize: this.outputBuffer.length,
+						});
+
+						wizardDebugLogger.log('exit', `Agent exited with code ${code}`, {
+							exitCode: code,
+							elapsedMs: elapsed,
+							totalChunks: dataChunks,
+							bufferSize: this.outputBuffer.length,
+							stderrLength: this.stderrBuffer.length,
+							stderrPreview: this.stderrBuffer.slice(-1000),
+						});
+
+						const grokOutput = isGrok ? readGrokWizardOutput(this.outputBuffer) : undefined;
+						const error =
+							providerError ||
+							grokOutput?.error ||
+							(isGrok && exitSignal != null ? 'Document generation was cancelled.' : undefined);
+						if (code === 0 && !error) {
+							// Try to extract result from stream-json format
+							const extracted = isGrok
+								? grokOutput!.text
+								: extractResultFromStreamJson(this.outputBuffer);
+							const output = isGrok ? extracted! : extracted || this.outputBuffer;
+
+							logger.info('[PhaseGenerator] Extraction result:', undefined, {
+								hadExtraction: !!extracted,
+								outputLength: output.length,
+							});
+
+							wizardDebugLogger.log('info', 'Agent completed successfully', {
+								hadExtraction: !!extracted,
+								outputLength: output.length,
+							});
+
+							const result: GenerationResult = {
+								success: true,
+								rawOutput: output,
+							};
+							// A fast exit may precede the IPC spawn receipt. Both must succeed.
+							if (isGrok && !spawnAccepted) pendingExit = result;
+							else finish(result);
+						} else {
+							logger.error('[PhaseGenerator] Agent failed with code:', undefined, code);
+							logger.error(
+								'[PhaseGenerator] Output buffer preview:',
+								undefined,
+								this.outputBuffer.slice(0, 500)
+							);
+
+							wizardDebugLogger.log('error', `Agent failed with exit code ${code}`, {
+								exitCode: code,
+								bufferPreview: this.outputBuffer.slice(0, 1000),
+							});
+
+							finish({
+								success: false,
+								error:
+									error ||
+									(this.stderrBuffer.trim()
+										? createGenericErrorMessage(this.stderrBuffer, code)
+										: `Agent exited with code ${code}`),
+								rawOutput: this.outputBuffer,
+							});
+						}
+					}
+				}
+			);
+			if (isGrok) {
+				errorListenerCleanup = window.maestro.process.onAgentError((id, error) => {
+					if (id !== sessionId || settled) return;
+					providerError ??= error.message || 'Grok document generation failed.';
+					finish({ success: false, error: providerError });
+					stopProcess();
+				});
+			}
 
 			// Set up file system watcher for Auto Run Docs folder (including subfolder if specified)
 			// This detects when the agent creates files and resets the timeout
@@ -1046,6 +1178,7 @@ class PhaseGenerator {
 				subfolderPath: autoRunPath,
 				sshRemoteId,
 				onEmit: (doc) => {
+					if (settled || signal.aborted) return;
 					callbacks?.onFileCreated?.({
 						filename: doc.filename,
 						size: new Blob([doc.content]).size,
@@ -1058,9 +1191,13 @@ class PhaseGenerator {
 			});
 
 			// Start watching the folder for file changes
+			this.currentWatchPath = autoRunPath;
 			window.maestro.autorun
 				.watchFolder(autoRunPath, sshRemoteId)
 				.then((result) => {
+					// cleanup releases the lease even while watchFolder is pending.
+					// A late receipt must not release a retry's lease for the same path.
+					if (settled) return;
 					if (result.success) {
 						logger.info('[PhaseGenerator] Started watching folder:', undefined, autoRunPath);
 						wizardDebugLogger.log('info', 'File watcher started successfully', { autoRunPath });
@@ -1068,7 +1205,7 @@ class PhaseGenerator {
 
 						// Set up file change listener
 						fileWatcherCleanup = window.maestro.autorun.onFileChanged((data) => {
-							if (data.folderPath === autoRunPath) {
+							if (!settled && data.folderPath === autoRunPath) {
 								logger.info('[PhaseGenerator] File system activity:', undefined, [
 									data.filename,
 									data.eventType,
@@ -1139,6 +1276,8 @@ class PhaseGenerator {
 				if (!argsForSpawn.includes('--allowedTools')) {
 					argsForSpawn.push('--allowedTools', 'Read', 'Glob', 'Grep', 'LS', 'Write');
 				}
+			} else if (isGrok) {
+				argsForSpawn.push(...GROK_WIZARD_GENERATION_ARGS);
 			}
 
 			// Use the agent's resolved path if available, falling back to command name
@@ -1167,26 +1306,42 @@ class PhaseGenerator {
 					prompt,
 					// Planning model for this run (see applyAgentConfigOverrides).
 					sessionCustomModel: config.model,
+					sessionCustomPath: config.sessionCustomPath,
+					sessionCustomArgs: config.sessionCustomArgs,
+					sessionCustomEnvVars: config.sessionCustomEnvVars,
+					sessionCustomEffort: config.sessionCustomEffort,
+					...(isGrok ? { permissionMode: 'full' as const } : {}),
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: config.sshRemoteConfig,
 					...getClaudeTokenSourceFields(config.claudeTokenSource),
+					harnessControlMode: config.harnessControlMode,
 				})
-				.then(() => {
+				.then((spawnResult) => {
+					if (stopRequested || signal.aborted) {
+						stopProcess();
+						return;
+					}
+					if (settled) return;
+					if (isGrok && !spawnResult.success) {
+						finish({
+							success: false,
+							error: providerError || 'Grok generation launch was refused.',
+						});
+						return;
+					}
+					spawnAccepted = true;
+					if (pendingExit) finish(pendingExit);
 					logger.info('[PhaseGenerator] Agent spawned successfully');
 					wizardDebugLogger.log('spawn', 'Agent spawned successfully', { sessionId });
 				})
 				.catch((error: Error) => {
+					if (settled) return;
 					logger.error('[PhaseGenerator] Spawn failed:', undefined, error.message);
 					wizardDebugLogger.log('error', 'Spawn failed', {
 						errorMessage: error.message,
 						errorStack: error.stack,
 					});
-					clearTimeout(timeoutId);
-					this.cleanup();
-					if (fileWatcherCleanup) {
-						fileWatcherCleanup();
-					}
-					resolve({
+					finish({
 						success: false,
 						error: `Failed to spawn agent: ${error.message}`,
 					});
@@ -1206,13 +1361,17 @@ class PhaseGenerator {
 	 */
 	private async readDocumentsFromDisk(
 		autoRunPath: string,
-		sshRemoteId?: string
+		sshRemoteId?: string,
+		requireComplete = false
 	): Promise<ParsedDocument[]> {
 		const documents: ParsedDocument[] = [];
 
 		try {
 			// List files in the Auto Run folder
 			const listResult = await window.maestro.autorun.listDocs(autoRunPath, sshRemoteId);
+			if (requireComplete && (!listResult.success || !Array.isArray(listResult.files))) {
+				throw new Error('The generated Grok documents could not be listed completely.');
+			}
 			if (!listResult.success || !listResult.files) {
 				return [];
 			}
@@ -1238,6 +1397,8 @@ class PhaseGenerator {
 						content: readResult.content,
 						phase,
 					});
+				} else if (requireComplete) {
+					throw new Error('A generated Grok document could not be read completely.');
 				}
 			}
 
@@ -1246,6 +1407,7 @@ class PhaseGenerator {
 
 			return documents;
 		} catch (error) {
+			if (requireComplete) throw error;
 			logger.error('[PhaseGenerator] Error reading documents from disk:', undefined, error);
 			return [];
 		}
@@ -1267,6 +1429,10 @@ class PhaseGenerator {
 		if (this.exitListenerCleanup) {
 			this.exitListenerCleanup();
 			this.exitListenerCleanup = undefined;
+		}
+		if (this.stderrListenerCleanup) {
+			this.stderrListenerCleanup();
+			this.stderrListenerCleanup = undefined;
 		}
 		// Stop watching the Auto Run folder
 		if (this.currentWatchPath) {
@@ -1371,6 +1537,10 @@ class PhaseGenerator {
 	 * Call this when the component unmounts to ensure proper cleanup.
 	 */
 	abort(): void {
+		this.generationAbort?.abort();
+		this.generationAbort = undefined;
+		this.cancelRun?.();
+		this.cancelRun = undefined;
 		this.isGenerating = false;
 		this.cleanup();
 	}

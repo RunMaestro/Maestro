@@ -87,7 +87,7 @@ import { matchSshErrorPattern } from '../../../../shared/maestro-lib/parsers/err
 import { getSshRemoteById } from '../../../../main/stores/getters';
 import { readFileRemote, readFileTailRemote } from '../../../../main/utils/remote-fs';
 import { waitForCopilotShutdown } from '../../../../main/process-manager/CopilotShutdownWaiter';
-
+import { cleanupTempFiles } from '../../../../main/process-manager/utils/imageUtils';
 const { waitForCopilotShutdown: actualWaitForCopilotShutdown } = await vi.importActual<
 	typeof import('../../../../main/process-manager/CopilotShutdownWaiter')
 >('../../../../main/process-manager/CopilotShutdownWaiter');
@@ -151,6 +151,7 @@ describe('ExitHandler', () => {
 	let exitHandler: ExitHandler;
 
 	beforeEach(() => {
+		vi.mocked(cleanupTempFiles).mockClear();
 		processes = new Map();
 		emitter = new EventEmitter();
 		bufferManager = new DataBufferManager(processes, emitter);
@@ -1001,6 +1002,26 @@ describe('ExitHandler', () => {
 			});
 		};
 
+		it('cleans only predecessor files after replacement during shutdown reconciliation, once', async () => {
+			const predecessor = registerPredecessor({ tempFiles: ['/tmp/old-prompt.md'] });
+			vi.mocked(waitForCopilotShutdown).mockImplementation(async () => {
+				// kill() releases the key before the replacement registers its generation.
+				processes.delete('test-session');
+				successor = createMockProcess({ pid: 4321, tempFiles: ['/tmp/new-prompt.md'] });
+				successor.spawnGeneration = nextSpawnGeneration('test-session');
+				processes.set('test-session', successor);
+				return 'timeout';
+			});
+
+			await exitHandler.handleExit('test-session', 143, predecessor);
+			await exitHandler.handleExit('test-session', 143, predecessor);
+
+			expect(cleanupTempFiles).toHaveBeenCalledExactlyOnceWith(['/tmp/old-prompt.md']);
+			expect(predecessor.tempFiles).toBeUndefined();
+			expect(successor!.tempFiles).toEqual(['/tmp/new-prompt.md']);
+			expect(processes.get('test-session')).toBe(successor);
+		});
+
 		it('suppresses the exit event and leaves the successor tracked', async () => {
 			registerPredecessor();
 			supersedeDuringShutdownWait();
@@ -1590,6 +1611,28 @@ describe('ExitHandler', () => {
 				});
 			}
 		);
+
+		it('preserves full redacted native output without serializing it into the exit payload', async () => {
+			const answer =
+				'BEGIN-FULL\npassword=private-output-secret\n' + 'x'.repeat(20000) + 'END-FULL';
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				resultEmitted: true,
+				streamedText: answer,
+				outputParser: createMockOutputParser(),
+			});
+			processes.set('worker-ai-tab', proc);
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+			await exitHandler.handleExit('worker-ai-tab', 0);
+			const settlement = onExit.mock.calls[0][3];
+			expect(settlement.nativeAnswer).toContain('BEGIN-FULL');
+			expect(settlement.nativeAnswer).toContain('END-FULL');
+			expect(settlement.nativeAnswer).not.toContain('private-output-secret');
+			expect(settlement.answerTail).toHaveLength(4000);
+			expect(JSON.stringify(settlement)).not.toContain('BEGIN-FULL');
+			expect(Object.keys(settlement)).not.toContain('nativeAnswer');
+		});
 
 		it('redacts a secret whose label falls just before the stored tail boundary', async () => {
 			const secret = 'private-boundary-password';

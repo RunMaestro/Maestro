@@ -7,6 +7,7 @@ import {
 	shouldOpenSendMenu,
 	steerFeatureRequestUrl,
 } from '../../../renderer/utils/sendMenu';
+import { describeSteerBlocked, getSteerEligibility } from '../../../renderer/utils/executionQueue';
 
 function workingSession(overrides: Partial<Session> = {}): Session {
 	return createMockSession({
@@ -128,6 +129,17 @@ describe('buildSendMenuModel', () => {
 		expect(rowFor(session, 'hold').enabled).toBe(true);
 	});
 
+	it('reports whether any tab works, for a right-click on an idle agent', () => {
+		const opts = { forcedParallelEnabled: true };
+		const draft = { text: 'hi', imageCount: 0 };
+		expect(buildSendMenuModel(workingSession(), draft, opts).agentWorking).toBe(true);
+		const idle = workingSession({ state: 'idle', aiTabs: [createMockAITab({ id: 'tab-1' })] });
+		expect(buildSendMenuModel(idle, draft, opts)).toMatchObject({
+			agentWorking: false,
+			activeTabWorking: false,
+		});
+	});
+
 	it('offers Force Send, not Steer, when only another tab is working', () => {
 		const session = workingSession({
 			aiTabs: [
@@ -171,6 +183,61 @@ describe('buildSendMenuModel', () => {
 			{ forcedParallelEnabled: true }
 		);
 		expect(withImages.rows.find((r) => r.action === 'steer')?.reason).toMatch(/Images/);
+	});
+});
+
+describe('Grok steering', () => {
+	const grokTwoTabs = (overrides: Partial<Session> = {}) =>
+		workingSession({
+			toolType: 'grok',
+			aiTabs: [
+				createMockAITab({ id: 'tab-1', state: 'busy' }),
+				createMockAITab({ id: 'tab-2', state: 'busy' }),
+			],
+			...overrides,
+		});
+
+	it('names the absent input operation on either transport, local or remote', () => {
+		for (const session of [grokTwoTabs(), grokTwoTabs({ sshRemoteId: 'remote-1' })]) {
+			const support = getSteerSupport(session);
+			expect(support).toMatchObject({ kind: 'unsupported', reason: 'grok-no-input-op' });
+			expect(support.kind !== 'supported' && support.detail).toMatch(/headless route/);
+			expect(support.kind !== 'supported' && support.detail).toMatch(/ACP route/);
+		}
+	});
+
+	it('ghosts Steer on each of two active turns with the reason the steer itself gives', () => {
+		for (const activeTabId of ['tab-1', 'tab-2']) {
+			const session = grokTwoTabs({ activeTabId });
+			const row = rowFor(session, 'steer');
+			expect(row).toEqual({
+				action: 'steer',
+				enabled: false,
+				reason: describeSteerBlocked('grok-no-input-op'),
+			});
+			// The row and the queued card's predicate agree for the same tab.
+			expect(getSteerEligibility(session, { tabId: activeTabId, text: 'also' })).toEqual({
+				canSteer: false,
+				blockedReason: 'grok-no-input-op',
+			});
+			// Queue stays the way the message reaches the turn; no Force Send replaces it.
+			expect(rowFor(session, 'queue').enabled).toBe(true);
+			expect(rowFor(session, 'force').enabled).toBe(false);
+		}
+	});
+
+	it('reads tab-not-working for an idle Grok tab, not the provider gap', () => {
+		const session = grokTwoTabs({
+			aiTabs: [
+				createMockAITab({ id: 'tab-1', state: 'idle' }),
+				createMockAITab({ id: 'tab-2', state: 'busy' }),
+			],
+		});
+		expect(getSteerEligibility(session, { tabId: 'tab-1', text: 'x' })).toEqual({
+			canSteer: false,
+			blockedReason: 'tab-not-working',
+		});
+		expect(rowFor(session, 'force').enabled).toBe(true);
 	});
 });
 

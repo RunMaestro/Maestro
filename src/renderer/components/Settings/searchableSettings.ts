@@ -25,6 +25,19 @@ import {
 import { NOTIFICATION_SETTINGS, AI_COMMANDS_SETTINGS } from './searchableSettingsNotifications';
 import { ENCORE_SETTINGS } from './searchableSettingsEncore';
 import type { EncoreFeatureFlags } from '../../types';
+import type { SettingsStore } from '../../stores/settingsStore';
+
+/**
+ * A settings-store key that holds a boolean AND has a matching `set<Key>`
+ * setter - the only kind of setting a search result can flip in place.
+ */
+export type ToggleSettingKey = {
+	[K in keyof SettingsStore & string]: SettingsStore[K] extends boolean
+		? `set${Capitalize<K>}` extends keyof SettingsStore
+			? K
+			: never
+		: never;
+}[keyof SettingsStore & string];
 
 export interface SearchableSetting {
 	/** Unique id used as data-setting-id on the DOM element */
@@ -81,6 +94,13 @@ export interface SearchableSetting {
 	 * this the jump would land on the grid and give up.
 	 */
 	encoreTile?: keyof EncoreFeatureFlags;
+	/**
+	 * The one boolean this entry's `data-setting-id` wrapper controls. Set it
+	 * only when the wrapper holds that single switch and the section calls the
+	 * plain store setter (no confirm dialog, no dependent control): the search
+	 * result then shows the switch and flips it in place.
+	 */
+	toggle?: ToggleSettingKey;
 }
 
 // ---------------------------------------------------------------------------

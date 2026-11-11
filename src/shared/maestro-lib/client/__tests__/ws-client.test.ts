@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createWsMaestroClient } from '../ws-client';
-import type { MaestroClient, MaestroEvent, TurnEvent } from '../types';
+import { normalizeOriginHost } from '../types';
+import type {
+	MaestroClient,
+	MaestroEvent,
+	TurnEvent,
+	WsMaestroClientTransportOptions,
+} from '../types';
 import { CLI_SECRET, FakeBridge, TOKEN, agentRecord, tabProcessId, type Frame } from './fakeBridge';
 
 const A1 = 'a1';
@@ -39,7 +45,8 @@ describe('createWsMaestroClient', () => {
 		events.flatMap((event) => (event.type === 'turn' ? [event.event] : []));
 	const turnKinds = () => turnEvents().map((event) => event.kind);
 
-	function makeClient(options: Partial<Parameters<typeof createWsMaestroClient>[0]> = {}) {
+	// The explicit-endpoint path is covered in src/__tests__/shared/maestro-lib/client/ws-client-endpoint.test.ts.
+	function makeClient(options: WsMaestroClientTransportOptions = {}) {
 		const created = createWsMaestroClient({
 			userDataDir: bridge.dataDir,
 			requestTimeoutMs: 1000,
@@ -273,6 +280,81 @@ describe('createWsMaestroClient', () => {
 			expect(await client.agents.create({ name: 'A', provider: 'codex', cwd: '/x' })).toMatchObject(
 				{ ok: false, error: { code: 'failed', method: 'agents.create' } }
 			);
+		});
+
+		describe('import', () => {
+			const logs = [{ id: 'l1', timestamp: 1, source: 'user', text: 'hi' }];
+			const input = {
+				agent: { name: ' Lifted ', provider: 'claude-code', cwd: '/srv/app', model: 'opus' },
+				tabs: [
+					{ id: 't1', name: 'Main', agentSessionId: 'sess-1', logs, model: 'sonnet' },
+					{ id: 't2', logs: [] },
+				],
+				activeTabId: 't2',
+				queue: [{ tabId: 't1', text: 'next' }],
+			};
+
+			it('sends the agent in create spelling, the tabs in record spelling, and the queue', async () => {
+				bridge.typed.set(
+					'import_agent',
+					reply('import_agent_result', { sessionId: 'host-agent', queued: 1 })
+				);
+				expect(await client.agents.import(input)).toEqual({
+					ok: true,
+					value: { agentId: 'host-agent', queued: 1 },
+				});
+				expect(bridge.sent('import_agent')[0]).toMatchObject({
+					agent: { name: 'Lifted', toolType: 'claude-code', cwd: '/srv/app', customModel: 'opus' },
+					tabs: [
+						{ id: 't1', name: 'Main', agentSessionId: 'sess-1', logs, customModel: 'sonnet' },
+						{ id: 't2', logs: [] },
+					],
+					activeTabId: 't2',
+					queue: [{ tabId: 't1', text: 'next' }],
+				});
+			});
+
+			it('passes on the notices for queued messages the host did not accept', async () => {
+				bridge.typed.set(
+					'import_agent',
+					reply('import_agent_result', { sessionId: 'h', queued: 0, notices: ['not queued'] })
+				);
+				expect(await client.agents.import(input)).toEqual({
+					ok: true,
+					value: { agentId: 'h', queued: 0, notices: ['not queued'] },
+				});
+			});
+
+			it.each([
+				['no tabs', { ...input, tabs: [] }],
+				['two tabs with one id', { ...input, tabs: [input.tabs[0], input.tabs[0]] }],
+				[
+					'a queued message for a tab it does not bring',
+					{ ...input, queue: [{ tabId: 'tX', text: 'x' }] },
+				],
+				[
+					'an SSH remote',
+					{ ...input, agent: { ...input.agent, ssh: { enabled: true, remoteId: 'r' } } },
+				],
+			])('refuses %s without sending anything', async (_label, bad) => {
+				expect(await client.agents.import(bad as never)).toMatchObject({
+					ok: false,
+					error: { code: 'invalid', method: 'agents.import' },
+				});
+				expect(bridge.sent('import_agent')).toHaveLength(0);
+			});
+
+			it('reports a host refusal with its reason', async () => {
+				bridge.typed.set('import_agent', () => ({
+					type: 'import_agent_result',
+					success: false,
+					error: 'Working directory does not exist: /srv/app',
+				}));
+				expect(await client.agents.import(input)).toMatchObject({
+					ok: false,
+					error: { method: 'agents.import', message: 'Working directory does not exist: /srv/app' },
+				});
+			});
 		});
 
 		it('adds an agent the host announces through sessions:lifecycleSync, and removes one', async () => {
@@ -770,6 +852,62 @@ describe('createWsMaestroClient', () => {
 			expect(turnKinds()).toEqual(['started']);
 		});
 
+		it('sends the origin host on enqueue_command, trimmed, and leaves out one that is not a hostname', async () => {
+			bridge.typed.set(
+				'enqueue_command',
+				reply('enqueue_command_result', { tabId: A1_TAB, queued: false })
+			);
+			await client.turns.send(A1, A1_TAB, { text: 'one', originHost: '  laptop.local ' });
+			await client.turns.send(A1, A1_TAB, { text: 'two', originHost: 'bad\nhost' });
+			await client.turns.send(A1, A1_TAB, { text: 'three' });
+			const sent = bridge.sent('enqueue_command');
+			expect(sent[0]).toMatchObject({ command: 'one', originHost: 'laptop.local' });
+			expect(sent[1]).not.toHaveProperty('originHost');
+			expect(sent[2]).not.toHaveProperty('originHost');
+		});
+
+		it('preserves managed unknown queue receipts and never emits a native start', async () => {
+			const dispatchId = '22222222-2222-4222-8222-222222222222';
+			const admission = { dispatchId, outcome: 'unknown' };
+			bridge.typed.set('enqueue_command', () => ({
+				type: 'enqueue_command_result',
+				success: false,
+				unknown: true,
+				dispatchId,
+				admission,
+			}));
+			expect(await client.turns.send(A1, A1_TAB, { text: 'task', dispatchId })).toMatchObject({
+				ok: false,
+				error: { unknown: true, dispatchId, admission },
+			});
+			expect(bridge.sent('enqueue_command')).toHaveLength(1);
+			expect(bridge.sent('enqueue_command')[0]).toMatchObject({ dispatchId });
+			expect(turnKinds()).toEqual([]);
+		});
+
+		it('propagates a durable managed queue outcome without claiming a native start', async () => {
+			const dispatchId = '22222222-2222-4222-8222-222222222222';
+			const admission = { dispatchId, outcome: 'queued', supervision: 'unavailable' };
+			bridge.typed.set(
+				'enqueue_command',
+				reply('enqueue_command_result', {
+					queued: true,
+					queuedAccepted: true,
+					durable: true,
+					unknown: false,
+					itemId: dispatchId,
+					dispatchId,
+					admission,
+				})
+			);
+			expect(await client.turns.send(A1, A1_TAB, { text: 'task', dispatchId })).toMatchObject({
+				ok: true,
+				value: { status: 'queued', dispatchId, admission, durable: true, itemId: dispatchId },
+			});
+			expect(bridge.sent('enqueue_command')).toHaveLength(1);
+			expect(turnKinds()).toEqual([]);
+		});
+
 		it('reports a queued message with its place in line', async () => {
 			bridge.typed.set(
 				'enqueue_command',
@@ -873,6 +1011,123 @@ describe('createWsMaestroClient', () => {
 				value: { removed: true },
 			});
 			expect(bridge.sent('remove_queue_item')[0]).toMatchObject({ sessionId: A1, itemId: 'q1' });
+		});
+
+		describe('history.list', () => {
+			const good = { id: 'h1', type: 'USER', timestamp: 5, summary: 's', projectPath: '/p' };
+
+			it('reads get_history, with the limit when given, and keeps only well-formed entries', async () => {
+				bridge.typed.set(
+					'get_history',
+					reply('get_history_result', {
+						entries: [
+							good,
+							'not an entry',
+							null,
+							{ ...good, id: 7 },
+							{ ...good, id: 'h2', timestamp: '5' },
+							{ id: 'h3', timestamp: 6 },
+							{ ...good, id: 'h4', hostname: 'laptop' },
+						],
+					})
+				);
+				expect(await client.history.list(A1, { limit: 10 })).toEqual({
+					ok: true,
+					value: [good, { ...good, id: 'h4', hostname: 'laptop' }],
+				});
+				await client.history.list(A1);
+				expect(bridge.sent('get_history')).toEqual([
+					expect.objectContaining({ type: 'get_history', sessionId: A1, limit: 10 }),
+					expect.not.objectContaining({ limit: expect.anything() }),
+				]);
+			});
+
+			it('answers an empty list for a reply with no entries array', async () => {
+				bridge.typed.set('get_history', reply('get_history_result', { entries: 'nope' }));
+				expect(await client.history.list(A1)).toEqual({ ok: true, value: [] });
+			});
+
+			it('reports a refused read as a failure', async () => {
+				bridge.typed.set('get_history', () => ({
+					type: 'get_history_result',
+					success: false,
+					error: 'No agent a1.',
+				}));
+				const result = await client.history.list(A1);
+				expect(result.ok).toBe(false);
+				expect(!result.ok && result.error.method).toBe('history.list');
+			});
+
+			it('answers unsupported from a desktop bridge that does not know get_history', async () => {
+				const result = await client.history.list(A1);
+				expect(result).toMatchObject({ ok: false, error: { code: 'unsupported' } });
+			});
+		});
+
+		it('holds and releases a queued item with set_queue_item_paused', async () => {
+			bridge.typed.set('set_queue_item_paused', (message) => ({
+				type: 'set_queue_item_paused_result',
+				success: true,
+				found: message.itemId === 'q1',
+				paused: message.paused,
+			}));
+
+			expect(await client.turns.queue.setPaused(A1, 'q1', true)).toEqual({
+				ok: true,
+				value: { found: true, paused: true },
+			});
+			expect(await client.turns.queue.setPaused(A1, 'gone', false)).toEqual({
+				ok: true,
+				value: { found: false, paused: false },
+			});
+			expect(bridge.sent('set_queue_item_paused')).toEqual([
+				expect.objectContaining({ sessionId: A1, itemId: 'q1', paused: true }),
+				expect.objectContaining({ sessionId: A1, itemId: 'gone', paused: false }),
+			]);
+		});
+
+		it('reports a refused set_queue_item_paused as a failure', async () => {
+			bridge.typed.set('set_queue_item_paused', () => ({
+				type: 'set_queue_item_paused_result',
+				success: false,
+				error: 'Missing sessionId, itemId, or paused',
+			}));
+			const result = await client.turns.queue.setPaused(A1, 'q1', true);
+			expect(result.ok).toBe(false);
+		});
+
+		it("reads a headless host's queue_changed into queue.changed, and drops one it cannot read", async () => {
+			await connect();
+			bridge.push({
+				type: 'queue_changed',
+				sessionId: A1,
+				items: [
+					{ id: 'q1', timestamp: 5, tabId: A1_TAB, type: 'message', text: 'next', paused: true },
+				],
+			});
+			bridge.push({ type: 'queue_changed', items: [] });
+			bridge.push({ type: 'queue_changed', sessionId: A1, items: 'nope' });
+			bridge.push({ type: 'queue_changed', sessionId: A1, items: [] });
+			await vi.waitFor(() =>
+				expect(events.filter((event) => event.type === 'queue.changed')).toHaveLength(2)
+			);
+			expect(events.filter((event) => event.type === 'queue.changed')).toEqual([
+				{
+					type: 'queue.changed',
+					agentId: A1,
+					items: [
+						{
+							itemId: 'q1',
+							tabId: A1_TAB,
+							queuedAt: 5,
+							kind: 'message',
+							text: 'next',
+							paused: true,
+						},
+					],
+				},
+				{ type: 'queue.changed', agentId: A1, items: [] },
+			]);
 		});
 
 		describe('event stream', () => {
@@ -2091,5 +2346,24 @@ describe('createWsMaestroClient', () => {
 			await client.connection.connect();
 			expect(seen).toEqual([]);
 		});
+	});
+});
+
+describe('normalizeOriginHost', () => {
+	it('trims a hostname and keeps it', () => {
+		expect(normalizeOriginHost('laptop.local')).toBe('laptop.local');
+		expect(normalizeOriginHost('  box  ')).toBe('box');
+	});
+
+	it('drops anything that is not a printable string of at most 253 characters', () => {
+		expect(normalizeOriginHost(undefined)).toBeUndefined();
+		expect(normalizeOriginHost(42)).toBeUndefined();
+		expect(normalizeOriginHost('')).toBeUndefined();
+		expect(normalizeOriginHost('   ')).toBeUndefined();
+		expect(normalizeOriginHost('a\u0000b')).toBeUndefined();
+		expect(normalizeOriginHost('a\tb')).toBeUndefined();
+		expect(normalizeOriginHost('a\u007fb')).toBeUndefined();
+		expect(normalizeOriginHost('x'.repeat(254))).toBeUndefined();
+		expect(normalizeOriginHost('x'.repeat(253))).toBe('x'.repeat(253));
 	});
 });

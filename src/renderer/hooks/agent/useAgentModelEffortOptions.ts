@@ -10,14 +10,18 @@
  * lives here so there is a single request shape, a single stale-guard, and a
  * single fallback story.
  *
- * Effort options are agent-scoped, not model-scoped: agents expose the list
+ * Effort options use the selected discovery context when supplied: agents expose the list
  * under either `effort` (Claude Code) or `reasoningEffort` (Codex, Copilot-CLI,
  * Factory Droid, Grok), so both keys are probed and whichever the agent defines
  * wins. That keeps this correct as agents are added without touching callers.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AgentDiscoveryRequest, AgentDiscoveryResult } from '../../../shared/types';
 import { readEffortFromConfig } from '../../utils/agentEffort';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { describeModelsRefresh, summarizeModelsRefresh } from '../../../shared/agentModelsRefresh';
+import { useDebouncedValue } from '../utils/useThrottle';
 
 export interface AgentModelEffortOptions {
 	/** Model ids the agent offers. Empty when the agent has no model selection. */
@@ -35,6 +39,16 @@ export interface AgentModelEffortOptions {
 	 * nothing to show.
 	 */
 	loaded: boolean;
+	/**
+	 * Re-run model discovery past the cache (a model just pulled into Ollama,
+	 * say) and report the result in a center flash. Every other open picker
+	 * picks the new list up from the main-process broadcast.
+	 */
+	refreshModels: () => Promise<void>;
+	/** True while a refresh started by THIS surface is in flight. */
+	refreshingModels: boolean;
+	modelStatus: AgentDiscoveryResult['status'];
+	effortStatus: AgentDiscoveryResult['status'];
 }
 
 /**
@@ -46,36 +60,94 @@ export interface AgentModelEffortOptions {
  *
  * @param agentId - The agent's tool type, or undefined when no agent is active.
  */
-export function useAgentModelEffortOptions(agentId?: string): AgentModelEffortOptions {
+export function useAgentModelEffortOptions(
+	agentId?: string,
+	/** Memoized selected context. Grok never discovers from a provider ID alone. */
+	context?: AgentDiscoveryRequest['context']
+): AgentModelEffortOptions {
+	const scopedContext = agentId === 'grok' ? context : undefined;
+	const debouncedContext = useDebouncedValue(scopedContext, 300);
+	// Legacy requests have no context, even while a prior Grok context is debouncing.
+	const discoveryContext = agentId === 'grok' ? debouncedContext : undefined;
 	const [models, setModels] = useState<string[]>([]);
 	const [efforts, setEfforts] = useState<string[]>([]);
 	const [defaultModel, setDefaultModel] = useState('');
 	const [defaultEffort, setDefaultEffort] = useState('');
 	const [loaded, setLoaded] = useState(false);
+	const [refreshingModels, setRefreshingModels] = useState(false);
+	const [modelStatus, setModelStatus] = useState<AgentDiscoveryResult['status']>('unavailable');
+	const [effortStatus, setEffortStatus] = useState<AgentDiscoveryResult['status']>('unavailable');
+	const [resolvedFor, setResolvedFor] = useState<{
+		agentId: string;
+		context: typeof context;
+	}>();
+
+	// Read after the refresh's await: the surface may have moved to another
+	// agent (or another Grok account), and that list must not be overwritten.
+	const agentIdRef = useRef(agentId);
+	agentIdRef.current = agentId;
+	const scopedContextRef = useRef(scopedContext);
+	scopedContextRef.current = scopedContext;
+	const modelsRef = useRef(models);
+	modelsRef.current = models;
 
 	useEffect(() => {
-		if (!agentId) return;
 		let stale = false;
 		setLoaded(false);
+		setResolvedFor(undefined);
+		setModels([]);
+		setEfforts([]);
+		setDefaultModel('');
+		setDefaultEffort('');
+		setModelStatus('unavailable');
+		setEffortStatus('unavailable');
+		if (!agentId || (agentId === 'grok' && discoveryContext !== scopedContext)) return;
 
-		const modelsDone = window.maestro.agents
-			.getModels(agentId)
+		const modelsDone = (
+			agentId === 'grok'
+				? discoveryContext
+					? window.maestro.agents.getModels({ providerId: agentId, context: discoveryContext })
+					: Promise.resolve<AgentDiscoveryResult>({ status: 'unavailable', options: [] })
+				: window.maestro.agents.getModels(agentId).then((options) => ({
+						status: options.length ? ('discovered' as const) : ('unavailable' as const),
+						options,
+					}))
+		)
 			.then((fetched) => {
-				if (!stale) setModels(fetched);
+				if (stale) return;
+				setModels(fetched.options);
+				setModelStatus(fetched.status);
 			})
 			.catch(() => {
 				if (!stale) setModels([]);
 			});
 
-		const effortsDone = Promise.all([
-			window.maestro.agents.getConfigOptions(agentId, 'effort').catch(() => [] as string[]),
-			window.maestro.agents
-				.getConfigOptions(agentId, 'reasoningEffort')
-				.catch(() => [] as string[]),
-		])
+		const effortsDone = Promise.all(
+			['effort', 'reasoningEffort'].map((key) =>
+				(agentId === 'grok'
+					? discoveryContext
+						? window.maestro.agents.getConfigOptions(
+								{ providerId: agentId, context: discoveryContext },
+								key
+							)
+						: Promise.resolve<AgentDiscoveryResult>({ status: 'unavailable', options: [] })
+					: window.maestro.agents.getConfigOptions(agentId, key).then((options) => ({
+							status: options.length ? ('discovered' as const) : ('unavailable' as const),
+							options,
+						}))
+				).catch((): AgentDiscoveryResult => ({ status: 'unavailable', options: [] }))
+			)
+		)
 			.then(([effortOpts, reasoningOpts]) => {
 				if (stale) return;
-				setEfforts(effortOpts.length > 0 ? effortOpts : reasoningOpts);
+				const selected =
+					effortOpts.status === 'discovered' && effortOpts.options.length > 0
+						? effortOpts
+						: reasoningOpts.status === 'discovered' || effortOpts.options.length === 0
+							? reasoningOpts
+							: effortOpts;
+				setEfforts(selected.options);
+				setEffortStatus(selected.status);
 			})
 			.catch(() => {
 				if (!stale) setEfforts([]);
@@ -95,15 +167,84 @@ export function useAgentModelEffortOptions(agentId?: string): AgentModelEffortOp
 			});
 
 		Promise.all([modelsDone, effortsDone, defaultsDone]).then(() => {
-			if (!stale) setLoaded(true);
+			if (stale) return;
+			setResolvedFor({ agentId, context: discoveryContext });
+			setLoaded(true);
 		});
 
 		return () => {
 			stale = true;
 		};
+	}, [agentId, discoveryContext, scopedContext]);
+
+	// A forced discovery anywhere (Settings, another picker, the CLI) carries
+	// the fresh list. Without this a picker that stays mounted - the composer
+	// does not remount per tab - kept the list it fetched on first render.
+	// Grok lists belong to a selected context, so an unscoped broadcast is never
+	// a Grok list.
+	useEffect(() => {
+		if (!agentId || agentId === 'grok') return;
+		return window.maestro.agents.onModelsRefreshed((payload) => {
+			// This hook discovers on this machine, so a remote host's list is not ours.
+			if (payload.agentId !== agentId || payload.sshRemoteId !== null) return;
+			setModels(payload.models);
+		});
 	}, [agentId]);
 
-	return { models, efforts, defaultModel, defaultEffort, loaded };
+	const refreshModels = useCallback(async () => {
+		const target = agentId;
+		if (!target) return;
+		const targetContext = scopedContext;
+		// Grok never discovers from a provider ID alone.
+		if (target === 'grok' && !targetContext) return;
+		const previous = modelsRef.current;
+		setRefreshingModels(true);
+		try {
+			const next: AgentDiscoveryResult =
+				target === 'grok' && targetContext
+					? await window.maestro.agents.getModels({
+							providerId: target,
+							forceRefresh: true,
+							context: targetContext,
+						})
+					: await window.maestro.agents.getModels(target, true).then((options) => ({
+							status: options.length ? ('discovered' as const) : ('unavailable' as const),
+							options,
+						}));
+			if (agentIdRef.current !== target || scopedContextRef.current !== targetContext) return;
+			setModels(next.options);
+			setModelStatus(next.status);
+			notifyCenterFlash({
+				message: 'Models refreshed',
+				detail: describeModelsRefresh(summarizeModelsRefresh(previous, next.options)),
+				color: 'green',
+			});
+		} catch (error) {
+			if (agentIdRef.current !== target || scopedContextRef.current !== targetContext) return;
+			notifyCenterFlash({
+				message: 'Could not refresh models',
+				detail: error instanceof Error ? error.message : String(error),
+				color: 'red',
+			});
+		} finally {
+			setRefreshingModels(false);
+		}
+	}, [agentId, scopedContext]);
+
+	// Hide the previous account's lists on the render that changes context,
+	// before the effect has a chance to clear them or a consumer validates a pick.
+	const current = resolvedFor?.agentId === agentId && resolvedFor?.context === scopedContext;
+	return {
+		models: current ? models : [],
+		efforts: current ? efforts : [],
+		defaultModel: current ? defaultModel : '',
+		defaultEffort: current ? defaultEffort : '',
+		loaded: current && loaded,
+		refreshModels,
+		refreshingModels,
+		modelStatus: current ? modelStatus : 'unavailable',
+		effortStatus: current ? effortStatus : 'unavailable',
+	};
 }
 
 /**

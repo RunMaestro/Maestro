@@ -6,22 +6,23 @@
  * transcript pools behind them.
  *
  * The account-selecting env var per provider (`CLAUDE_CONFIG_DIR`,
- * `CODEX_HOME`, `COPILOT_HOME`) lives in `PROVIDER_PROFILE_CONFIGS`, so this
+ * `CODEX_HOME`, `COPILOT_HOME`, `GROK_HOME`) lives in `PROVIDER_PROFILE_CONFIGS`, so this
  * module is provider-agnostic: a provider gains multi-account attribution by
  * gaining an entry there, not by gaining a discovery function here.
  *
- * Four sources, in order:
- *   1. Every live agent's effective env. Authoritative - it is literally the
- *      value the spawned process receives - and the only source that can find
- *      an account dir outside `$HOME`.
- *   2. Maestro's own `process.env`, for a user who exports the var in a shell
+ * Five sources, in order:
+ *   1. Every local live agent's account, resolved through the canonical
+ *      session/provider/global/process environment layers.
+ *   2. The provider-default selection through those same layers, even when no
+ *      local agent currently inherits it.
+ *   3. Maestro's own `process.env`, for a user who exports the var in a shell
  *      profile.
- *   3. `~/<defaultSubdir>`, the implicit default account.
- *   4. A sibling scan of `$HOME` for `<defaultSubdir>` and `<defaultSubdir>-*`.
+ *   4. `~/<defaultSubdir>`, the implicit default account.
+ *   5. A sibling scan of `$HOME` for `<defaultSubdir>` and `<defaultSubdir>-*`.
  *      The only source that still finds an account whose agents have all been
  *      deleted.
  *
- * Sources 1, 2 and 4 are each sorted before being appended, so the output order
+ * Sources 1 and 5 are each sorted before being appended, so the output order
  * (and therefore which dir wins a dedupe) is stable across runs.
  */
 
@@ -35,9 +36,11 @@ import { isInitialized } from '../stores/instances';
 import { getAgentConfigsStore, getSessionsStore, getSettingsStore } from '../stores/getters';
 import { isBlankEnvValue } from '../../shared/agentEnvironment';
 import { filterLiveAgents } from '../../shared/agentVisibility';
-import { resolveAgentAccountDir as resolveAccountDirForAgent } from '../../shared/agentAccountDir';
 import {
-	effectiveAgentCustomEnvVars,
+	resolveAgentAccountDir as resolveAccountDirForAgent,
+	type AgentAccountDirLayers,
+} from '../../shared/agentAccountDir';
+import {
 	getProviderProfileConfig,
 	isAccountDirName,
 	type ProviderProfileConfig,
@@ -68,6 +71,8 @@ export interface ProviderAccountDirsOptions {
 	sessions?: Array<Record<string, unknown>>;
 	/** Provider-level `customEnvVars`. Defaults to the agent configs store. */
 	agentLevelEnvVars?: Record<string, string>;
+	/** Settings -> Environment. Defaults to the settings store. */
+	globalShellEnvVars?: Record<string, string>;
 }
 
 /**
@@ -99,10 +104,9 @@ function readAgentLevelEnvVars(toolType: string): Record<string, string> {
  */
 function collectConfiguredAccountDirs(
 	toolType: string,
-	config: ProviderProfileConfig,
-	options: ProviderAccountDirsOptions
+	options: ProviderAccountDirsOptions,
+	layers: AgentAccountDirLayers
 ): string[] {
-	const agentLevelEnvVars = options.agentLevelEnvVars ?? readAgentLevelEnvVars(toolType);
 	const sessions = options.sessions ?? readStoredSessions();
 	const dirs = new Set<string>();
 
@@ -119,12 +123,8 @@ function collectConfiguredAccountDirs(
 			session.customEnvVars && typeof session.customEnvVars === 'object'
 				? (session.customEnvVars as Record<string, string>)
 				: undefined;
-		add(effectiveAgentCustomEnvVars(sessionEnvVars, agentLevelEnvVars)[config.envVar]);
+		add(resolveAccountDirForAgent({ toolType, customEnvVars: sessionEnvVars }, layers));
 	}
-
-	// The provider-level value counts even when no agent inherits it: the
-	// transcripts under it are still this machine's spend.
-	add(agentLevelEnvVars[config.envVar]);
 
 	return Array.from(dirs).sort((a, b) => a.localeCompare(b));
 }
@@ -192,11 +192,25 @@ export async function getProviderAccountDirs(
 
 	const homeDir = options.homeDir ?? os.homedir();
 	const env = options.env ?? process.env;
+	const layers: AgentAccountDirLayers = {
+		agentLevelEnvVars: options.agentLevelEnvVars ?? readAgentLevelEnvVars(toolType),
+		globalShellEnvVars: options.globalShellEnvVars ?? readGlobalShellEnvVars(),
+		env,
+		homeDir,
+	};
 
-	const candidates = collectConfiguredAccountDirs(toolType, config, options);
+	const candidates = collectConfiguredAccountDirs(toolType, options, layers);
+	// An implicit provider default must not win a shared-pool alias over an
+	// explicitly configured agent. Keep it after the sorted agent selections.
+	const providerDefault = resolveAccountDirForAgent({ toolType }, layers);
+	if (providerDefault) candidates.push(providerDefault);
+
+	// These are independent native pools, not fallbacks for a missing selected
+	// account. Normalize the host selection without borrowing higher layers.
 	const fromProcessEnv = env[config.envVar];
 	if (typeof fromProcessEnv === 'string' && !isBlankEnvValue(fromProcessEnv)) {
-		candidates.push(fromProcessEnv.trim());
+		const processAccount = resolveAccountDirForAgent({ toolType }, { env, homeDir });
+		if (processAccount) candidates.push(processAccount);
 	}
 	candidates.push(path.join(homeDir, config.defaultSubdir));
 	candidates.push(...(await scanHomeForAccountDirs(config, homeDir)));
@@ -227,10 +241,7 @@ export async function getProviderAccountDirs(
 	return Array.from(byRealSessionsDir.values());
 }
 
-export interface AgentAccountDirOptions extends ProviderAccountDirsOptions {
-	/** Settings -> Environment. Defaults to the settings store. */
-	globalShellEnvVars?: Record<string, string>;
-}
+export type AgentAccountDirOptions = ProviderAccountDirsOptions;
 
 /** Settings -> Environment, or none before `initializeStores()` has run. */
 function readGlobalShellEnvVars(): Record<string, string> {

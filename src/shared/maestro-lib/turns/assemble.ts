@@ -51,7 +51,11 @@ export interface TurnAgent {
 	worktreeConfig?: { basePath?: string };
 	isGitRepo?: boolean;
 	contextUsage?: number;
-	/** Deprecated agent-level id. Read for `{{AGENT_SESSION_ID}}` only, as the desktop does (F6). */
+	/**
+	 * Deprecated agent-level id. A chat turn names its tab's provider session in
+	 * `{{AGENT_SESSION_ID}}` instead (`prepareMaestroSystemPrompt`); this is read only by a
+	 * caller with no tab.
+	 */
 	agentSessionId?: string;
 	isPianola?: boolean;
 	nudgeMessage?: string;
@@ -295,7 +299,14 @@ export function assembleTurn(
 	if (readOnly) entry.readOnly = true;
 
 	// The system prompt. The template not loading means the turn goes without one.
-	const systemPrompt = buildAgentSystemPrompt(agent, tab.id, context);
+	// `{{AGENT_SESSION_ID}}` is this tab's provider session, as the desktop's
+	// `prepareMaestroSystemPrompt` reads it: a new tab never inherits another tab's
+	// (or the deprecated agent-level) identity.
+	const systemPrompt = buildAgentSystemPrompt(
+		{ ...agent, agentSessionId: tab.agentSessionId ?? undefined },
+		tab.id,
+		context
+	);
 
 	// Arguments: the provider's own, minus bypass flags when read-only, then the system prompt.
 	const providerArgs = provider.args ?? [];
@@ -365,6 +376,8 @@ export function assembleTurn(
 				remoteCommand: agent.customPath || provider.binaryName,
 				args: placement.args,
 				cwd: agent.cwd,
+				// Keep the selected grants with this turn even if the session is edited later.
+				additionalDirectories: agent.additionalDirectories?.map((directory) => ({ ...directory })),
 				prompt: finalPrompt,
 				hasImages,
 				globalShellEnvVars: context.globalEnvVars ? { ...context.globalEnvVars } : undefined,

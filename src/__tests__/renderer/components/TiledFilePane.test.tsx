@@ -141,4 +141,27 @@ describe('tiled file pane', () => {
 		(props.onNavigateForward as () => void)();
 		expect(onFileTabNavigateToIndex).toHaveBeenCalledWith(2, 'f1');
 	});
+
+	it('shows floating controls only on the focused file pane', async () => {
+		const session = makeSession();
+		useSessionStore.getState().setSessions([session]);
+
+		const { rerender } = render(
+			<TiledLayout group={makeGroup()} session={session} theme={theme} />
+		);
+		await waitFor(() => expect(previewProps.length).toBeGreaterThan(0));
+		expect(previewProps[previewProps.length - 1].showFloatingControls).toBe(true);
+
+		// Focus moves to another pane: this document's font zoom and ToC buttons hide.
+		rerender(
+			<TiledLayout
+				group={{ ...makeGroup(), focusedPaneId: 'leaf-other' }}
+				session={session}
+				theme={theme}
+			/>
+		);
+		await waitFor(() =>
+			expect(previewProps[previewProps.length - 1].showFloatingControls).toBe(false)
+		);
+	});
 });

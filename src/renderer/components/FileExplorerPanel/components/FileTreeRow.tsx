@@ -9,7 +9,7 @@ import type { FileExplorerIconTheme } from '../../../utils/fileExplorerIcons/sha
 import type { FlattenedNode } from '../types';
 import { FILE_TREE_SINGLE_MIME, FILE_TREE_MULTI_MIME } from '../types';
 import { parentDirOf } from '../utils/pathHelpers';
-import { CONNECTOR_ARM_WIDTH, INDENT_STEP, guideLeft, rowPaddingLeft } from '../utils/treeLines';
+import { INDENT_STEP, connectorArmWidth, guideLeft, rowPaddingLeft } from '../utils/treeLines';
 
 interface VirtualRow {
 	index: number;
@@ -33,12 +33,6 @@ interface FileTreeRowProps {
 	selectedPathsRef: React.MutableRefObject<Set<string>>;
 	setSelectedPaths: React.Dispatch<React.SetStateAction<Set<string>>>;
 	fileExplorerIconTheme: FileExplorerIconTheme;
-	/**
-	 * Draw elbow connectors from each folder's guide line into its children and
-	 * stop a guide at the folder's last child. Off by default: the pane then
-	 * draws plain full-height indent guides. Settings > Display.
-	 */
-	fileTreeBranchConnectors: boolean;
 	fileTreeFilter: string;
 	htmlDoubleClickOpensInBrowser: boolean;
 	sshRemoteId: string | undefined;
@@ -104,7 +98,6 @@ export const FileTreeRow = memo(function FileTreeRow({
 	selectedPathsRef,
 	setSelectedPaths,
 	fileExplorerIconTheme,
-	fileTreeBranchConnectors,
 	fileTreeFilter,
 	htmlDoubleClickOpensInBrowser,
 	sshRemoteId,
@@ -178,13 +171,12 @@ export const FileTreeRow = memo(function FileTreeRow({
 		void handleFileClick(node, fullPath);
 	};
 
-	// Indent guides. The default is one full-height line per ancestor level.
-	// With branch connectors on (Settings > Display), a line only runs the full
-	// height when the ancestor it belongs to still has a row further down, and
-	// the row's own parent column gets an elbow that points at this row - so a
-	// leaf reads as hanging off its folder instead of continuing the chain (#1585).
+	// Indent guides with branch connectors. A line only runs the full height
+	// when the ancestor it belongs to still has a row further down, and the
+	// row's own parent column gets an elbow that points at this row - so a leaf
+	// reads as hanging off its folder instead of continuing the chain (#1585).
 	const indentGuides: React.ReactNode[] = [];
-	if (fileTreeBranchConnectors && depth > 0) {
+	if (depth > 0) {
 		for (let level = 0; level < depth - 1; level++) {
 			if (!(ancestorGuideMask & (1 << level))) continue;
 			indentGuides.push(
@@ -211,22 +203,11 @@ export const FileTreeRow = memo(function FileTreeRow({
 				style={{
 					left: `${elbowLeft}px`,
 					top: '50%',
-					width: `${CONNECTOR_ARM_WIDTH}px`,
+					width: `${connectorArmWidth(isFolder)}px`,
 					backgroundColor: theme.colors.border,
 				}}
 			/>
 		);
-	} else {
-		for (let level = 0; level < depth; level++) {
-			indentGuides.push(
-				<div
-					key={level}
-					data-testid="file-tree-indent-guide"
-					className="absolute top-0 bottom-0 w-px"
-					style={{ left: `${guideLeft(level)}px`, backgroundColor: theme.colors.border }}
-				/>
-			);
-		}
 	}
 
 	// A row's drop destination: folders accept the move INTO themselves; files

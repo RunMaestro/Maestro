@@ -61,6 +61,7 @@ import {
 } from './web';
 import { registerWebLoginHandlers } from './webLogin';
 import { registerComputerHistoryHandlers } from './computerHistory';
+import { registerFederationHandlers } from './federation';
 import { registerMaestroRunHandlers } from './maestroRun';
 import { registerDataviewHandlers, DataviewHandlerDependencies } from './dataview';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
@@ -148,6 +149,7 @@ export {
 export type { WebHandlerDependencies };
 export { registerWebLoginHandlers };
 export { registerComputerHistoryHandlers };
+export { registerFederationHandlers };
 export { registerMaestroRunHandlers };
 export { registerDataviewHandlers };
 export type { DataviewHandlerDependencies };
@@ -276,6 +278,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		sessionsStore: deps.sessionsStore,
 	});
 	registerProcessHandlers({
+		groupsStore: deps.groupsStore,
+		getWebServer: deps.getWebServer,
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
@@ -406,7 +410,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
 	});
-	// Cue bundles - export / import pipelines and agents (Cue modal Bundles tab)
+	// Cue bundles - export / import pipelines and agents (Export Agent and Import Agent modals)
 	registerCueBundleHandlers({
 		sessionsStore: deps.sessionsStore,
 		getMainWindow: deps.getMainWindow,

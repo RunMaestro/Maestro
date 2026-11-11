@@ -244,6 +244,7 @@ class BridgeClient {
 	private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 	private reconnectAttempt = 0;
 	private terminalDisconnect = false;
+	private messageChunks: { parts: string[]; offset: number; total: number } | undefined;
 	constructor(private readonly config: BridgeConfig) {
 		this.ready = new Promise((r) => (this.resolveReady = r));
 		setConnectionState('connecting');
@@ -317,7 +318,9 @@ class BridgeClient {
 	private connect(url: string): void {
 		let socket: WebSocket;
 		try {
-			socket = new WebSocket(this.hadOpenConnection ? this.resumeUrl(url) : url);
+			const target = new URL(this.hadOpenConnection ? this.resumeUrl(url) : url);
+			target.searchParams.set('bridgeChunks', '1');
+			socket = new WebSocket(target.toString());
 			this.ws = socket;
 		} catch (error) {
 			console.error('[bridge] WebSocket construction failed - scheduling recovery', error);
@@ -350,9 +353,37 @@ class BridgeClient {
 		socket.addEventListener('message', (ev: MessageEvent) => {
 			if (this.ws !== socket) return;
 			this.notePong();
+			let messageLength = String(ev.data).length;
 			let msg: { type?: string; [key: string]: unknown };
 			try {
 				msg = JSON.parse(typeof ev.data === 'string' ? ev.data : String(ev.data));
+				if (msg.type === 'bridge.chunk') {
+					const { data, offset, total, final } = msg;
+					if (
+						typeof data !== 'string' ||
+						data.length === 0 ||
+						typeof final !== 'boolean' ||
+						!Number.isSafeInteger(offset) ||
+						!Number.isSafeInteger(total) ||
+						(total as number) <= 0 ||
+						offset !== (this.messageChunks?.offset ?? 0) ||
+						total !== (this.messageChunks?.total ?? total) ||
+						(offset as number) + data.length > (total as number) ||
+						final !== ((offset as number) + data.length === total)
+					)
+						throw new Error('Invalid bridge chunk');
+					this.messageChunks ??= { parts: [], offset: 0, total: total as number };
+					this.messageChunks.parts.push(data);
+					this.messageChunks.offset += data.length;
+					socket.send(
+						JSON.stringify({ type: 'bridge.chunkAck', offset: this.messageChunks.offset })
+					);
+					if (!final) return;
+					const assembled = this.messageChunks.parts.join('');
+					this.messageChunks = undefined;
+					messageLength = assembled.length;
+					msg = JSON.parse(assembled);
+				}
 			} catch (error) {
 				captureException(error, { extra: { component: 'BridgeClient', action: 'message.parse' } });
 				this.disconnect(socket, 1003);
@@ -417,7 +448,7 @@ class BridgeClient {
 			if (!channel) return;
 			if (this.invalidState) {
 				// Snapshot first, then events that arrived while it was being read.
-				this.recoveryEventBytes += String(ev.data).length * 2;
+				this.recoveryEventBytes += messageLength * 2;
 				if (this.recoveryEventBytes > 8 * 1024 * 1024) {
 					this.invalidateState('recovery event backlog exceeded');
 					return;
@@ -463,6 +494,7 @@ class BridgeClient {
 		// Retire locally. A dead peer can leave close() hanging for many seconds;
 		// neither that handshake nor late events may hold the next socket hostage.
 		this.ws = null;
+		this.messageChunks = undefined;
 		this.connected = false;
 		this.resumePending = false;
 		this.recoveryController?.abort();

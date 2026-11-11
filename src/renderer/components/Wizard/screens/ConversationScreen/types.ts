@@ -55,8 +55,12 @@ export type WizardConversationState = Pick<
 	| 'isConversationLoading'
 	| 'existingDocsChoice'
 	| 'plannerModel'
+	| 'customPath'
+	| 'customArgs'
+	| 'customEnvVars'
 	| 'sessionSshRemoteConfig'
 	| 'enableMaestroP'
 	| 'maestroPMode'
 	| 'maestroPPath'
+	| 'harnessControlMode'
 >;

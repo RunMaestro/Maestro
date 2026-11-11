@@ -10,12 +10,16 @@ The Usage Dashboard (`src/renderer/components/UsageDashboard/`) provides analyti
 
 ```
 src/renderer/components/UsageDashboard/
-├── UsageDashboardModal.tsx      # Main modal - view tabs: Overview, Agents, Agent Overview, Activity, Auto Run (+ Cue when both Encore flags are on)
-├── SummaryCards.tsx             # 12 metric cards (queries, duration, top agent, streak, best day, active days, worktree %, etc.)
+├── UsageDashboardModal/         # Main modal folder: UsageDashboardModal.tsx, views/ (one per tab), hooks/, components/, constants.ts, sections.ts, types.ts
+│                                # Tabs in order: Overview, Agent Overview, Agents, Groups, Tokens, Activity, Auto Run (+ Cue when both Encore flags are on), Shortcuts;
+│                                # "Anthropic Usage" / "OpenAI Usage" appended when that provider has quota data (constants.ts, hooks/useUsageDashboardTabs.ts)
+├── SummaryCards.tsx             # 14 metric cards (agents, open tabs, queries, queries/session, tokens, cost, time, peak hour, top agent, streak, best day, active days, image annotations) + conditional "Interactive vs Auto"
 ├── AgentOverviewCards.tsx       # Per-agent overview cards (Agents tab) + the fuzzy agent filter
 ├── AgentDetailModal.tsx         # Per-agent stats sub-modal, opened by clicking an agent card
-├── TabBreakdown.tsx             # Per-tab stat tiles inside AgentDetailModal (groups query events by tab_id)
-├── EntityTile.tsx               # Shared card-grid tile behind BOTH the agent grid and the tab grid
+├── TabBreakdown.tsx             # Per-tab sortable TABLE inside AgentDetailModal (groups query events by tab_id); not a tile grid
+├── GroupOverviewCards.tsx       # Per-group cards (Groups tab); GroupDetailModal.tsx is its sub-modal
+├── EntityTile.tsx               # Shared card-grid tile behind the agent grid and the group grid (and MetricCard)
+├── MetricCard.tsx               # Metric tile; MetricModeToggle.tsx switches its mode
 ├── SessionStats.tsx             # Session statistics (Agent Overview tab)
 ├── AgentEfficiencyChart.tsx     # Agent efficiency chart (Agent Overview tab)
 ├── AgentComparisonChart.tsx     # Bar chart comparing provider usage
@@ -32,25 +36,39 @@ src/renderer/components/UsageDashboard/
 ├── TasksByHourChart.tsx         # Auto Run tasks-by-hour chart
 ├── LongestAutoRunsTable.tsx     # Longest Auto Runs leaderboard
 ├── CueStats.tsx                 # Cue automation analytics (Cue tab, gated on Encore flags)
-├── Sparkline.tsx                # Reusable mini trend line for metric cards
+├── TokenStats.tsx               # Tokens tab; with TokenSpeedStats, TokenSpeedCards, TokenSeriesContext, useTokenUsage.ts
+├── DelegationScoreCard.tsx      # Delegation analytics; with DelegationSplitBar, DelegationTrendChart
+├── KeyboardStats.tsx            # Shortcuts tab; siblings WizardStats, ResilienceStats, PromptCadenceStats, PercentilesCard, ProviderTrendsChart, PeakHoursChart
+├── ClaudePlanUsage.tsx          # Provider quota tabs (CodexPlanUsage.tsx); shared pieces in quota/
+├── UsageDashboardFooter.tsx     # Footer summary (useFooterSummary.ts)
+├── useDashboardResource.ts      # useCachedResource + stats:updated refresh for dashboard panels
+├── *Utils.ts                    # Pure helpers beside their chart (activityHeatmapUtils, agentOverviewUtils, autoRunStatsUtils, ...)
 ├── chartUtils.ts                # Shared chart helpers (palettes, tooltip clamping)
-├── ChartSkeletons.tsx           # Loading skeleton components
-├── ChartErrorBoundary.tsx       # Error boundary with retry
+├── ChartSkeletons.tsx           # Loading skeleton components (ChartLoadingOverlay.tsx, DetailPrimitives.tsx beside it)
+├── Sparkline.tsx                # Re-export shim over components/widgets/output/Sparkline
+├── ChartErrorBoundary.tsx       # Re-export shim over components/widgets/output/ChartErrorBoundary
+├── ChartTooltip.tsx             # Re-export shim over components/widgets/output/ChartTooltip
 └── EmptyState.tsx               # Empty state when no data
 ```
+
+`Sparkline`, `ChartErrorBoundary`, and `ChartTooltip` live in the widget library (`src/renderer/components/widgets/output/`); the files here are one-line shims kept for the old import path. Import from `components/widgets` in new code.
 
 ### Backend Components
 
 ```
 src/main/
-├── stats-db.ts                  # SQLite database (better-sqlite3) with WAL mode
-│   ├── query_events table       # AI queries with duration, tokens, cost
-│   ├── auto_run_sessions table  # Auto Run session tracking
-│   ├── auto_run_tasks table     # Individual task tracking
-│   └── _migrations table        # Schema migration tracking
-├── ipc/handlers/stats.ts        # IPC handlers for stats operations
-└── utils/statsCache.ts          # Query result caching
+├── stats/                       # SQLite database (better-sqlite3) with WAL mode, split across ~25 modules
+│   ├── stats-db.ts              # The StatsDB class; schema.ts + migrations.ts own the tables
+│   ├── aggregations.ts          # Dashboard aggregate queries
+│   ├── query-events-buffer.ts   # Buffered query_events inserts
+│   ├── wizard-runs.ts           # wizard_runs reads/writes
+│   ├── usage-export.ts          # Export
+│   └── tables: query_events, auto_run_sessions, auto_run_tasks, session_lifecycle, image_annotations,
+│       shortcut_usage_daily, multi_window_usage_daily, resilience_events, wizard_runs, _meta, _migrations
+└── ipc/handlers/stats.ts        # IPC handlers for stats operations
 ```
+
+`src/main/utils/statsCache.ts` is NOT dashboard caching: it caches Claude session statistics for the session browser.
 
 ### Key Patterns
 
@@ -62,7 +80,7 @@ mainWindow?.webContents.send('stats:updated');
 
 // Frontend subscribes with debouncing
 useEffect(() => {
-	const unsubscribe = window.maestro.stats.onStatsUpdated(() => {
+	const unsubscribe = window.maestro.stats.onStatsUpdate(() => {
 		debouncedRefresh();
 	});
 	return () => unsubscribe?.();
@@ -79,7 +97,7 @@ import { COLORBLIND_AGENT_PALETTE, getColorBlindAgentColor } from '../constants/
 **Chart Error Boundaries:**
 
 ```typescript
-<ChartErrorBoundary chartName="Agent Comparison" onRetry={handleRetry}>
+<ChartErrorBoundary theme={theme} chartName="Agent Comparison" onRetry={handleRetry}>
   <AgentComparisonChart data={data} colorBlindMode={colorBlindMode} />
 </ChartErrorBoundary>
 ```
@@ -87,9 +105,9 @@ import { COLORBLIND_AGENT_PALETTE, getColorBlindAgentColor } from '../constants/
 ### Related Settings
 
 ```typescript
-// In useSettings.ts
+// In settingsStore.ts
 statsCollectionEnabled: boolean; // Enable/disable stats collection (default: true)
-defaultStatsTimeRange: 'day' | 'week' | 'month' | 'year' | 'all'; // Default time filter
+defaultStatsTimeRange: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'; // Default time filter (default: 'week')
 colorBlindMode: boolean; // Use accessible color palettes
 preventSleepEnabled: boolean; // Prevent system sleep while agents are busy (default: false)
 showSessionIdPill: boolean; // Show session UUID pill in main panel header (default: false - opt-in)
@@ -102,7 +120,7 @@ showSessionCostPill: boolean; // Show cost pill in main panel header (default: t
 
 The Document Graph (`src/renderer/components/DocumentGraph/`) visualizes markdown file relationships and wiki-link connections.
 
-It renders to a **single HTML canvas**, not to React Flow. `MindMap.tsx` owns one `<canvas>` and draws every node, edge, hull, and caption into it by hand. That is why the graph can hold hundreds of documents without the DOM node count becoming the bottleneck, and it is also the constraint behind most of the patterns below: nothing here is a React component that can be styled or queried, so hit testing, layout, and text truncation are all arithmetic the module has to do itself.
+It renders to a **single HTML canvas**, not to React Flow. `MindMap.tsx` owns one `<canvas>` and its zoom, pan, and pointer handling; `mindMapCanvas.ts` paints the node cards, pills, icons, and links into it by hand so the painted glyph and the click hit test cannot drift. That is why the graph can hold hundreds of documents without the DOM node count becoming the bottleneck, and it is also the constraint behind most of the patterns below: nothing here is a React component that can be styled or queried, so hit testing, layout, and text truncation are all arithmetic the module has to do itself.
 
 **Three files in this directory are dead.** `DocumentNode.tsx`, `ExternalLinkNode.tsx`, and `layoutAlgorithms.ts` are the React Flow implementation this replaced. They still import `reactflow` and are still referenced by tests, but no production code imports them. Do not extend them, and do not read them to learn how the graph works - they describe a rendering model this feature no longer uses.
 
@@ -111,7 +129,9 @@ It renders to a **single HTML canvas**, not to React Flow. `MindMap.tsx` owns on
 ```
 src/renderer/components/DocumentGraph/
 ├── DocumentGraphView.tsx        # Modal shell: toolbar, search, preview pane, shortcuts, data loading
-├── MindMap.tsx                  # The canvas. Rendering, hit testing, pan/zoom, drag, keyboard nav
+├── MindMap.tsx                  # The canvas. Hit testing, pan/zoom, drag, keyboard nav, render pass
+├── mindMapCanvas.ts             # Canvas painting: node cards, pills, icons, links, open-file box
+├── viewportResize.ts            # On canvas resize: re-fit an untouched view, keep zoom/pan on a touched one
 ├── mindMapLayouts.ts            # All six layout algorithms + the geometry they share
 ├── layoutTypes.ts               # The layout vocabulary (leaf module, no d3 import)
 ├── graphDataBuilder.ts          # Scans directory, extracts links, builds graph data
@@ -218,12 +238,12 @@ window.maestro.documentGraph.unwatchFolder(rootPath);
 
 **Keyboard handling is split across two elements, and the order matters.** The canvas (`MindMap`) handles anything about the SELECTED NODE and returns; whatever it does not claim bubbles to the container (`DocumentGraphView`), which handles the view-level controls. A container binding on a key the canvas already claims never fires.
 
-| Handler                    | Keys                                                         |
-| -------------------------- | ------------------------------------------------------------ |
-| Canvas (`MindMap`)         | `Arrows` (spatial navigation), `Enter`, `Space`, `O`         |
-| Container (`...GraphView`) | `L`, `D`, `P`, `F`, `S`, `C`, `+` / `-`, `Cmd/Ctrl+F`, `Esc` |
+| Handler                    | Keys                                                  |
+| -------------------------- | ----------------------------------------------------- |
+| Canvas (`MindMap`)         | `Arrows` (spatial navigation), `Enter`, `Space`, `O`  |
+| Container (`...GraphView`) | `L`, `D`, `P`, `F`, `S`, `C`, `+` / `-`, `Cmd/Ctrl+F` |
 
-The container handler also skips every bare key while a modifier is held or focus is in an `INPUT` / `TEXTAREA`, or searching for "documentation" would cycle the layout four times on the way through.
+`Esc` is not in the container handler: it is the layer stack's, via `useModalLayer(MODAL_PRIORITIES.DOCUMENT_GRAPH, undefined, handleEscapeRequest)`. The container handler also skips every bare key while a modifier is held or focus is in an `INPUT` / `TEXTAREA`, or searching for "documentation" would cycle the layout four times on the way through.
 
 **Screenshots go through the compositor, not the canvas.** `C` (and the camera button in the footer) opens a chooser that copies the graph to the clipboard or writes it to disk, via `window.maestro.shell.capturePage(rect)`. Serializing `MindMap`'s `<canvas>` would be the obvious route and is the wrong one: the markdown preview pane and the legend are React, not canvas, so a canvas export silently drops most of what the user is looking at. `captureGraphImage()` waits two animation frames after dismissing its own modal so the shot is taken from a frame that no longer has the dialog on top of the graph, and both the key and the button are gated on `capturePage` existing, so the web renderer offers neither.
 

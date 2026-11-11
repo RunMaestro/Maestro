@@ -64,6 +64,8 @@ export function useBatchBroadcast({ dispatch }: UseBatchBroadcastDeps): UseBatch
 				goalProgress: state.goalProgress,
 				goalRationale: state.goalRationale,
 				goalIteration: state.goalIteration,
+				// Delegated work the run is waiting on (both modes).
+				pendingDelegations: state.pendingDelegations,
 				// Mirror fields - what a web-desktop client needs to draw the same
 				// Auto Run card the owning client draws. Auto Run is renderer-owned
 				// in-memory state, so this broadcast is the only way a second client
@@ -179,6 +181,10 @@ export function useBatchBroadcast({ dispatch }: UseBatchBroadcastDeps): UseBatch
 									goalExitReason:
 										newStateForSession.goalExitReason !== prevSessionState.goalExitReason
 											? newStateForSession.goalExitReason
+											: undefined,
+									pendingDelegations:
+										newStateForSession.pendingDelegations !== prevSessionState.pendingDelegations
+											? newStateForSession.pendingDelegations
 											: undefined,
 								},
 							});

@@ -40,12 +40,32 @@ describe('prCreationStore', () => {
 	it('records a running attempt keyed by repo path', () => {
 		usePRCreationStore.getState().startPRCreation(TARGET);
 
-		expect(createPR).toHaveBeenCalledWith('/test/worktree', 'main', 'visual polish', '');
+		expect(createPR).toHaveBeenCalledWith(
+			'/test/worktree',
+			'main',
+			'visual polish',
+			'',
+			undefined,
+			undefined
+		);
 		expect(usePRCreationStore.getState().runs[KEY]).toMatchObject({
 			status: 'running',
 			sessionId: 'session-1',
 			sourceBranch: 'visual-polish',
 		});
+	});
+
+	it('passes the SSH remote so the PR is opened where the repo lives', () => {
+		usePRCreationStore.getState().startPRCreation({ ...TARGET, sshRemoteId: 'ssh-remote-1' });
+
+		expect(createPR).toHaveBeenCalledWith(
+			'/test/worktree',
+			'main',
+			'visual polish',
+			'',
+			undefined,
+			'ssh-remote-1'
+		);
 	});
 
 	it('folds the PR url back into the run', async () => {

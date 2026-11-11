@@ -28,6 +28,7 @@ import {
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
+import { isImeComposing } from '../../utils/ime';
 import { NotificationCenter } from '../NotificationCenter';
 import {
 	subscribeSidebarReveal,
@@ -47,6 +48,7 @@ import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
 import { LongPressable, longPressMouseEvent } from '../shared/LongPressable';
 import { GroupChatList } from '../GroupChatList';
+import { PeerMirrorSection } from './PeerMirrorSection';
 import { useLiveOverlay, useResizablePanel, useViewportBreakpoint } from '../../hooks';
 import { useGitFileStatus } from '../../contexts/GitStatusContext';
 import { useUIStore } from '../../stores/uiStore';
@@ -1660,7 +1662,7 @@ function SessionListInner(props: SessionListProps) {
 								value={sessionFilter}
 								onChange={(e) => setSessionFilter(e.target.value)}
 								onKeyDown={(e) => {
-									if (e.key === 'Escape') {
+									if (e.key === 'Escape' && !isImeComposing(e)) {
 										setSessionFilterOpen(false);
 										setSessionFilter('');
 									}
@@ -2080,7 +2082,7 @@ function SessionListInner(props: SessionListProps) {
 													}}
 													onKeyDown={(e) => {
 														e.stopPropagation();
-														if (e.key === 'Enter') {
+														if (e.key === 'Enter' && !isImeComposing(e)) {
 															ignoreNextBlurRef.current = true;
 															finishRenamingGroup(group.id, e.currentTarget.value);
 														}
@@ -2382,6 +2384,13 @@ function SessionListInner(props: SessionListProps) {
 								</button>
 							</div>
 						)}
+
+					{/* FEDERATION PEERS - one group per mirrored peer, read-only. Built from the
+					    peer mirror store, never from local groups, so nothing above sees them.
+					    Primary window only: a peer cannot be claimed by a window. */}
+					{!activeVirtualGrouping && !isSecondaryWindow && !showUnreadAgentsOnly && (
+						<PeerMirrorSection theme={theme} />
+					)}
 
 					{/* Flexible spacer to push group chats to bottom */}
 					<div className="flex-grow min-h-4" />

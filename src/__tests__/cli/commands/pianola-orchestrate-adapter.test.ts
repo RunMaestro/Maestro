@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../../cli/services/storage', () => ({
 	readSettingValue: (...args: unknown[]) => mocks.settings(...args),
 	resolveAgentId: (id: string) => id,
+	getSessionById: () => undefined,
 	readLiveSessions: () => [],
 	readGroups: () => [],
 }));
@@ -26,6 +27,7 @@ vi.mock('../../../cli/services/pianola-store', () => ({
 	getPianolaPlan: mocks.readPlan,
 	upsertPianolaPlan: mocks.savePlan,
 	readPianolaPlans: () => [],
+	withPianolaPlanLock: (_id: string, operation: () => Promise<unknown>) => operation(),
 }));
 vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../cli/services/maestro-client')>()),

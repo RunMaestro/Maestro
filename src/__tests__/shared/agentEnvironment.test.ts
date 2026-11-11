@@ -109,6 +109,23 @@ describe('isSecretEnvKey', () => {
 	it('is case-insensitive', () => {
 		expect(isSecretEnvKey('anthropic_api_key')).toBe(true);
 	});
+
+	it.each([
+		'GROK_AUTH',
+		'GROK_MODELS_BASE_URL',
+		'GROK_CLI_CHAT_PROXY_BASE_URL',
+		'GROK_XAI_API_BASE_URL',
+	])('treats %s as an opaque credential, including lowercase names', (key) => {
+		expect(isSecretEnvKey(key)).toBe(true);
+		expect(isSecretEnvKey(key.toLowerCase())).toBe(true);
+		expect(maskEnvValue('synthetic-sensitive-tail', key.toLowerCase())).toBe('••••••••');
+	});
+
+	it('keeps ordinary Grok configuration visible without broadening URL masking', () => {
+		for (const key of ['GROK_HOME', 'GROK_MODEL', 'ANTHROPIC_BASE_URL', 'NODE_ENV']) {
+			expect(isSecretEnvKey(key), key).toBe(false);
+		}
+	});
 });
 
 describe('maskEnvValue', () => {
@@ -126,6 +143,53 @@ describe('maskEnvValue', () => {
 	it('never renders as blank for an empty value', () => {
 		expect(maskEnvValue('')).toBe('•');
 	});
+
+	it.each([
+		'{"accessToken":"synthetic-access","refreshToken":"synthetic-refresh-tail"}',
+		'{"accessToken":"synthetic-malformed-tail',
+		'synthetic-opaque-non-json-tail',
+	])('hides the entire inline bundle without exposing its suffix: %s', (value) => {
+		const masked = maskEnvValue(value, 'GROK_AUTH');
+		expect(masked).toBe('••••••••');
+		expect(masked).not.toContain(value.slice(-4));
+	});
+
+	describe.each(['GROK_MODELS_BASE_URL', 'GROK_CLI_CHAT_PROXY_BASE_URL', 'GROK_XAI_API_BASE_URL'])(
+		'%s gateway masking',
+		(key) => {
+			it.each([
+				'https://synthetic-user:synthetic-password@gateway.invalid/v1',
+				'https://gateway.invalid/v1?credential=synthetic-query-tail',
+				'https://gateway.invalid/synthetic-private-path-tail',
+				'https://[malformed/synthetic-malformed-tail',
+				'https://gateway.invalid/v1',
+			])('keeps userinfo, query, path and malformed URL content opaque: %s', (value) => {
+				const masked = maskEnvValue(value, key);
+				expect(masked).toBe('••••••••');
+				expect(masked).not.toContain(value.slice(-4));
+			});
+		}
+	);
+
+	describe.each([
+		'GROK_AUTH',
+		'GROK_MODELS_BASE_URL',
+		'GROK_CLI_CHAT_PROXY_BASE_URL',
+		'GROK_XAI_API_BASE_URL',
+	])('%s empty and short values', (key) => {
+		it.each(['', 'x', ' \t '])('remains wholly masked for %j', (value) => {
+			expect(maskEnvValue(value, key)).toBe('••••••••');
+		});
+	});
+
+	it.each(['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'])(
+		'preserves legacy secret tails when the caller supplies %s',
+		(key) => {
+			expect(maskEnvValue('synthetic-provider-key-abcd', key)).toBe('••••••••abcd');
+			expect(maskEnvValue('short', key)).toBe('•••••');
+			expect(maskEnvValue('', key)).toBe('•');
+		}
+	);
 });
 
 describe('envSourceLabel', () => {

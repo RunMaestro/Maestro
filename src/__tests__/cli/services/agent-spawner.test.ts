@@ -20,8 +20,13 @@ import * as path from 'path';
 import { EventEmitter } from 'events';
 import { StringDecoder } from 'string_decoder';
 import { DEFAULT_STDERR_TAIL_LIMIT } from '../../../shared/maestro-lib/run/start-turn';
+import { CODEX_STARTUP_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
 
 // Create mock spawn function at module level
+const mockSpawnNativeSdkAgent = vi.hoisted(() => vi.fn());
+vi.mock('../../../cli/services/native-sdk-agent', () => ({
+	spawnNativeSdkAgent: mockSpawnNativeSdkAgent,
+}));
 const mockSpawn = vi.fn();
 const mockStdin = {
 	end: vi.fn(),
@@ -133,7 +138,10 @@ vi.mock('os', async () => {
 	const mocked = {
 		...actual,
 		homedir: vi.fn(() => '/Users/testuser'),
-		tmpdir: vi.fn(() => '/tmp'),
+		// The real temp folder: a Grok turn writes its private prompt file there
+		// (the shared prompt-file sink opens it with real fs), and a literal
+		// '/tmp' is a drive-relative folder the Windows runner does not have.
+		tmpdir: vi.fn(() => actual.tmpdir()),
 	};
 	return {
 		...mocked,
@@ -172,10 +180,25 @@ import {
 } from '../../../cli/services/agent-spawner';
 import { getAgentDefinition } from '../../../main/agents/definitions';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
+import {
+	GROK_SYNTHETIC_ROUNDS,
+	GROK_SYNTHETIC_SESSION_ID,
+	grokSyntheticStream,
+	rechunk,
+} from '../../helpers/grokSyntheticStream';
 // Static, so they share one module instance with the statically imported
 // `spawnAgent` above; other suites here call `vi.resetModules()`.
-import { resetEffortRejections } from '../../../shared/effortRejection';
+import { getEffortRejection, resetEffortRejections } from '../../../shared/effortRejection';
 import { resolveEffortLevel } from '../../../shared/modelTiers';
+import { embedSystemPromptInPrompt } from '../../../shared/embeddedSystemPrompt';
+import * as remoteSignal from '../../../shared/maestro-lib/control/ssh-remote-signal';
+
+vi.mock('../../../shared/maestro-lib/control/ssh-remote-signal', async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import('../../../shared/maestro-lib/control/ssh-remote-signal')
+	>()),
+	signalRemoteAgent: vi.fn(),
+}));
 
 const hostPlatform = process.platform;
 
@@ -2152,7 +2175,7 @@ Some text with [x] in it that's not a checkbox
 						)
 					);
 					mockStderr.emit('data', Buffer.from('Reading additional input from stdin...'));
-					await vi.advanceTimersByTimeAsync(119_999);
+					await vi.advanceTimersByTimeAsync(CODEX_STARTUP_TIMEOUT_MS - 1);
 					expect(mockChild.kill).not.toHaveBeenCalled();
 					await vi.advanceTimersByTimeAsync(1);
 					expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
@@ -2161,7 +2184,7 @@ Some text with [x] in it that's not a checkbox
 						success: false,
 						outcome: 'crashed',
 						agentSessionId: 'waiting',
-						error: expect.stringContaining('Startup or authentication may be blocked'),
+						error: expect.stringContaining('Last observed startup phase: turn started at +0s.'),
 					});
 					expect(mockSpawn.mock.calls[0][1]).toContain('cli_auth_credentials_store=file');
 					expect(vi.getTimerCount()).toBe(0);
@@ -2182,7 +2205,7 @@ Some text with [x] in it that's not a checkbox
 				});
 				await vi.advanceTimersByTimeAsync(0);
 				mockStdout.emit('data', Buffer.from(activity + '\n'));
-				await vi.advanceTimersByTimeAsync(180_000);
+				await vi.advanceTimersByTimeAsync(CODEX_STARTUP_TIMEOUT_MS + 60_000);
 				expect(mockChild.kill).not.toHaveBeenCalled();
 				mockStdout.emit(
 					'data',
@@ -2331,20 +2354,36 @@ Some text with [x] in it that's not a checkbox
 			expect(result.agentSessionId).toBe('cop-resume-1');
 		});
 
-		it('should spawn grok headless with -p, --always-approve, streaming-json and accumulate text deltas', async () => {
+		it('should spawn grok headless with a private ACP prompt file and accumulate text deltas', async () => {
+			vi.spyOn(fs, 'openSync').mockReturnValue(73);
+			vi.spyOn(fs, 'fstatSync').mockReturnValue({ dev: 1, ino: 73 } as fs.Stats);
+			vi.spyOn(fs, 'lstatSync').mockReturnValue({ dev: 1, ino: 73 } as fs.Stats);
+			vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+			vi.spyOn(fs, 'closeSync').mockImplementation(() => {});
+			vi.mocked(fs.writeFileSync).mockImplementation(() => {});
 			const resultPromise = spawnAgent('grok', '/project', 'Hello grok');
-			await new Promise((resolve) => setTimeout(resolve, 0));
+			await waitForSpawnCall();
 
-			const [cmd, args] = mockSpawn.mock.calls[0];
-			expect(cmd).toBeTruthy();
+			const { command, args, options } = spawnCall();
+			expect(command).toBe('/usr/local/bin/grok');
+			expect(options).toMatchObject({ cwd: '/project', shell: false });
 
-			// Grok batch mode: grok --always-approve --output-format streaming-json -p "prompt"
+			// The canonical file transport keeps ACP content out of argv and stdin.
 			expect(args).toContain('--always-approve');
-			expect(args).toContain('--output-format');
-			expect(args).toContain('streaming-json');
-			expect(args).toContain('-p');
-			expect(args).toContain('Hello grok');
-			// promptArgs path replaces the '--' separator
+			expect(args[args.indexOf('--output-format') + 1]).toBe('streaming-json');
+			expect(args.filter((arg) => arg === '--prompt-file')).toHaveLength(1);
+			const file = args[args.indexOf('--prompt-file') + 1];
+			expect(fs.openSync).toHaveBeenCalledExactlyOnceWith(file, 'wx', 0o600);
+			expect(fs.writeFileSync).toHaveBeenCalledExactlyOnceWith(
+				73,
+				JSON.stringify({ type: 'acp', content: [{ type: 'text', text: 'Hello grok' }] }),
+				'utf8'
+			);
+			expect(fs.unlinkSync).not.toHaveBeenCalled();
+			expect(fs.closeSync).not.toHaveBeenCalled();
+			expect(args).not.toContain('-p');
+			expect(args.join(' ')).not.toContain('Hello grok');
+			expect(mockStdin.write).not.toHaveBeenCalled();
 			expect(args).not.toContain('--');
 			// --permission-mode belongs to read-only mode only; grok's clap errors
 			// with "cannot be used multiple times" if the flag ever repeats.
@@ -2378,6 +2417,8 @@ Some text with [x] in it that's not a checkbox
 			expect(result.success).toBe(true);
 			expect(result.response).toBe('READY');
 			expect(result.agentSessionId).toBe('grok-sess-1');
+			expect(fs.unlinkSync).toHaveBeenCalledExactlyOnceWith(file);
+			expect(fs.closeSync).toHaveBeenCalledExactlyOnceWith(73);
 		});
 
 		it('should run grok read-only with a single --permission-mode plan and no approve flag', async () => {
@@ -3233,7 +3274,7 @@ Some text with [x] in it that's not a checkbox
 
 		it('delivers a declared secret from a credentials file to that agent only', async () => {
 			const actualFs = await vi.importActual<typeof import('fs')>('fs');
-			// os.tmpdir() is mocked to '/tmp' for this suite, which is no folder on Windows.
+			// os.tmpdir() is mocked for this suite; create the folder through the real module.
 			const actualOs = await vi.importActual<typeof import('os')>('os');
 			const credentials = actualFs.mkdtempSync(path.join(actualOs.tmpdir(), 'cli-secret-'));
 			const secretFile = path.join(credentials, 'MAESTRO_TEST_DEPLOY_TOKEN');
@@ -3389,37 +3430,58 @@ Some text with [x] in it that's not a checkbox
 		const effortArg = (args: string[]) =>
 			args.find((arg) => arg.startsWith('model_reasoning_effort='));
 
-		it('runs the turn once more with the effort left to the agent', async () => {
-			const p = spawnAgent('codex', '/p', 'hi', undefined, { customEffort: 'low' });
+		it.each([true, false])(
+			'retries Codex once at a distinct configured effort (success=%s)',
+			async (succeeds) => {
+				mockReadAgentConfig.mockReturnValue({ reasoningEffort: 'medium' });
+				const p = spawnAgent('codex', '/p', 'hi', 'codex-resume', {
+					customEffort: 'low',
+					customModel: 'gpt-6-astra',
+				});
 
-			await waitForSpawnCall(1);
-			expect(effortArg(argsOfSpawn(0))).toBe('model_reasoning_effort="low"');
-			mockStdout.emit('data', Buffer.from(REFUSAL_LINE));
-			await yieldTick();
-			(mockChild as EventEmitter).emit('close', 1);
+				await waitForSpawnCall(1);
+				expect(effortArg(argsOfSpawn(0))).toBe('model_reasoning_effort="low"');
+				mockStdout.emit('data', Buffer.from(REFUSAL_LINE));
+				await yieldTick();
+				(mockChild as EventEmitter).emit('close', 1);
 
-			await waitForSpawnCall(2);
-			expect(mockSpawn).toHaveBeenCalledTimes(2);
-			expect(effortArg(argsOfSpawn(1))).toBeUndefined();
-			await yieldTick();
-			// A turn that closes with no final text reads as crashed, so the
-			// retry answers before it exits.
-			mockStdout.emit(
-				'data',
-				Buffer.from(
-					JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'hi' } }) +
-						'\n'
-				)
-			);
-			await yieldTick();
-			(mockChild as EventEmitter).emit('close', 0);
+				await waitForSpawnCall(2);
+				expect(mockSpawn).toHaveBeenCalledTimes(2);
+				expect(effortArg(argsOfSpawn(1))).toBe('model_reasoning_effort="medium"');
+				for (const index of [0, 1]) {
+					expect(argsOfSpawn(index)).toEqual(
+						expect.arrayContaining(['-m', 'gpt-6-astra', 'resume', 'codex-resume'])
+					);
+				}
+				await yieldTick();
+				// A turn that closes with no final text reads as crashed, so the
+				// retry answers before it exits.
+				mockStdout.emit(
+					'data',
+					Buffer.from(
+						succeeds
+							? JSON.stringify({
+									type: 'item.completed',
+									item: { type: 'agent_message', text: 'hi' },
+								}) + '\n'
+							: REFUSAL_LINE.replaceAll("'low'", "'medium'").replace(
+									"Supported values are: 'medium', 'high'.",
+									"Supported values are: 'high'."
+								)
+					)
+				);
+				await yieldTick();
+				(mockChild as EventEmitter).emit('close', succeeds ? 0 : 1);
 
-			const result = await p;
-			expect(result.success).toBe(true);
-			expect(errorSpy).toHaveBeenCalledWith(
-				expect.stringContaining('codex rejected effort "low" for gpt-6-astra')
-			);
-		});
+				const result = await p;
+				expect(result.success).toBe(succeeds);
+				expect(mockSpawn).toHaveBeenCalledTimes(2);
+				if (!succeeds) expect(result.error).toContain("Unsupported value: 'medium'");
+				expect(errorSpy).toHaveBeenCalledWith(
+					expect.stringContaining('codex rejected effort "low" for gpt-6-astra')
+				);
+			}
+		);
 
 		it('takes the refused value out of the ladder for the rest of the run', async () => {
 			expect(resolveEffortLevel('codex', 'low')).toBe('low');
@@ -3449,6 +3511,117 @@ Some text with [x] in it that's not a checkbox
 			const result = await p;
 			expect(result.success).toBe(false);
 			expect(mockSpawn).toHaveBeenCalledTimes(1);
+		});
+
+		describe.each([false, true])('Grok refusal (SSH=%s)', (remote) => {
+			it.each([
+				['automatic hint, equal inherited value', 'automatic', 'minimal'],
+				['automatic hint, different inherited value', 'automatic', 'high'],
+				['explicit ladder value, equal inherited value', 'minimal', 'minimal'],
+				['explicit ladder value, different inherited value', 'minimal', 'high'],
+				['provider-only effort', undefined, 'minimal'],
+				['unknown provenance and default', undefined, undefined],
+			] as const)(
+				'preserves %s without an unqualified fallback',
+				async (_label, chosen, inherited) => {
+					// The caller can produce a real hint, but SpawnAgentOptions cannot
+					// prove its provenance or authorize the diagnostic's offered fallback.
+					const customEffort =
+						chosen === 'automatic'
+							? resolveEffortLevel('grok', 'low', ['minimal', 'high'])
+							: chosen;
+					expect(customEffort).toBe(chosen === 'automatic' ? 'minimal' : chosen);
+					mockReadAgentConfig.mockReturnValue({ reasoningEffort: inherited });
+					const accountEnv = { GROK_HOME: '/synthetic/account-a' };
+					const sshRemoteConfig = remote ? { enabled: true, remoteId: 'r1' } : undefined;
+					if (remote) {
+						mockWrapSpawnWithSsh.mockResolvedValue({
+							command: 'ssh',
+							args: ['remotehost', ...remoteSignal.SSH_STDIN_REMOTE_SHELL],
+							cwd: '/local',
+							sshStdinScript: 'exec grok --prompt-file /synthetic-owned-file',
+							sshRemoteUsed: { id: 'r1', name: 'r1', host: 'remotehost' },
+						});
+					}
+					const options = {
+						customEffort,
+						customModel: 'grok-selected',
+						customEnvVars: accountEnv,
+						sshRemoteConfig,
+					};
+					const p = spawnAgent('grok', '/p', 'hi', 'grok-resume', options);
+					await waitForSpawnCall();
+					expect(mockSpawn).toHaveBeenCalledTimes(1);
+					const args = remote
+						? (mockWrapSpawnWithSsh.mock.calls[0][0].args as string[])
+						: argsOfSpawn(0);
+					expect(args).toEqual(
+						expect.arrayContaining(['-m', 'grok-selected', '--resume', 'grok-resume'])
+					);
+					const effort = customEffort ?? inherited;
+					if (effort) {
+						expect(args.filter((arg) => arg === '--reasoning-effort')).toHaveLength(1);
+						expect(args[args.indexOf('--reasoning-effort') + 1]).toBe(effort);
+					} else {
+						expect(args).not.toContain('--reasoning-effort');
+					}
+					if (remote) {
+						expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+							expect.objectContaining({
+								cwd: '/p',
+								agentBinaryName: 'grok',
+								prompt: undefined,
+								promptArtifact: expect.objectContaining({
+									owner: 'remote',
+									sshRemoteId: 'r1',
+									content: JSON.stringify({ type: 'acp', content: [{ type: 'text', text: 'hi' }] }),
+								}),
+								customEnvVars: expect.objectContaining(accountEnv),
+							}),
+							sshRemoteConfig,
+							expect.anything()
+						);
+						expect(spawnCall().command).toBe('ssh');
+						expect(spawnCall().options).toMatchObject({ cwd: '/local' });
+						expect(mockStdin.write).toHaveBeenCalledTimes(1);
+						expect(mockStdin.write.mock.calls[0][0]).toContain('exec grok --prompt-file');
+					} else {
+						expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+						expect(spawnCall().options.env).toMatchObject(accountEnv);
+					}
+					const refusal =
+						"--effort/--reasoning-effort: unknown effort level 'MINIMAL'; use one of: high";
+					if (remote) mockStderr.emit('data', Buffer.from(refusal));
+					else
+						mockStdout.emit(
+							'data',
+							Buffer.from(JSON.stringify({ type: 'error', message: refusal }) + '\n')
+						);
+					await yieldTick();
+					mockChild.emit('close', 1);
+					const result = await p;
+					expect(result).toMatchObject({ success: false, error: refusal });
+					expect(mockSpawn).toHaveBeenCalledTimes(1);
+					expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(remote ? 1 : 0);
+					expect(options).toEqual({
+						customEffort,
+						customModel: 'grok-selected',
+						customEnvVars: accountEnv,
+						sshRemoteConfig,
+					});
+					expect(getEffortRejection('grok', 'minimal')).toMatchObject({
+						value: 'MINIMAL',
+						supported: ['high'],
+					});
+					expect(getEffortRejection('grok', 'MiNiMaL')).toBe(getEffortRejection('grok', 'minimal'));
+					expect(resolveEffortLevel('grok', 'low', ['minimal', 'high'])).toBeUndefined();
+					expect(resolveEffortLevel('codex', 'low')).toBe('low');
+					expect(errorSpy).toHaveBeenCalledWith(
+						expect.stringContaining('grok rejected effort "MINIMAL"')
+					);
+					expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('Retrying'));
+				}
+			);
 		});
 
 		it('does not retry an ordinary failure', async () => {
@@ -3786,6 +3959,35 @@ Some text with [x] in it that's not a checkbox
 			}
 		});
 
+		it('sends a Windows codex.cmd prompt over stdin, not the cmd.exe command line (#1971)', async () => {
+			// A `.cmd` shim starts through cmd.exe, which caps the command line at
+			// 8191 characters and ends it at a line break. An Auto Run prompt fit
+			// the 30,000-character CreateProcess check, so it stayed in argv and
+			// the spawn failed with ENAMETOOLONG.
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			const shim = 'C:\\Users\\t\\AppData\\Roaming\\npm\\codex.cmd';
+			pathProbeResolver = () => shim;
+			const prompt = `# Task\n\n${'x'.repeat(9000)}\n- [ ] create a one-line file`;
+
+			try {
+				const { spawnAgent: freshSpawnAgent } = await freshSpawner();
+				await driveSpawnToCompletion(
+					freshSpawnAgent('codex', 'C:\\project', prompt),
+					0,
+					CODEX_INIT()
+				);
+
+				const { args } = spawnCall();
+				expect(args.some((arg) => arg.includes('create a one-line file'))).toBe(false);
+				const written = mockStdin.write.mock.calls.map((call) => String(call[0])).join('');
+				expect(written).toContain('create a one-line file');
+				expect(mockStdin.end).toHaveBeenCalled();
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
 		it('resolves a JSON-line agent on a cold cache too', async () => {
 			mockCheckBinaryExists.mockResolvedValue({ exists: true, path: '/opt/homebrew/bin/codex' });
 
@@ -3867,6 +4069,15 @@ Some text with [x] in it that's not a checkbox
 	describe('spawnAgent: regression', () => {
 		beforeEach(() => {
 			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		it('uses the current transport for a stale native value on an unsupported provider', async () => {
+			const pending = spawnAgent('codex', '/p', 'hi', undefined, {
+				harnessControlMode: 'native',
+			});
+			await driveSpawnToCompletion(pending, 0, CODEX_INIT());
+			expect(mockSpawnNativeSdkAgent).not.toHaveBeenCalled();
+			expect(mockSpawn).toHaveBeenCalled();
 		});
 
 		it('returns only the latest phase-less Codex answer after interim text and a tool', async () => {
@@ -4744,6 +4955,805 @@ Some text with [x] in it that's not a checkbox
 			const sepIdx = args.indexOf('--');
 			expect(sepIdx).toBeGreaterThan(0);
 			expect(args[sepIdx + 1]).toBe('just the user message');
+		});
+	});
+
+	// Headless Grok turns on the fake child above, fed the
+	// streaming-json record shapes captured from real grok (see the parser
+	// fixtures in grok-output-parser.test.ts). Each case is one task turn as the
+	// Auto Run engine sees it: success only on a native `end` record.
+	describe('spawnAgent: Grok headless automation records', () => {
+		isolateAgentEnv(['GROK_HOME', 'GROK_AUTH', 'GROK_AUTH_PATH']);
+		const ACCOUNT = { GROK_HOME: '/accounts/grok-selected' };
+		const line = (record: Record<string, unknown>) => JSON.stringify(record) + '\n';
+		const text = (data: string) => line({ type: 'text', data });
+		const end = (sessionId: string) => line({ type: 'end', stopReason: 'EndTurn', sessionId });
+
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+			vi.spyOn(fs, 'openSync').mockReturnValue(73);
+			vi.spyOn(fs, 'fstatSync').mockReturnValue({ dev: 1, ino: 73 } as fs.Stats);
+			vi.spyOn(fs, 'lstatSync').mockReturnValue({ dev: 1, ino: 73 } as fs.Stats);
+			vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+			vi.spyOn(fs, 'closeSync').mockImplementation(() => {});
+			vi.mocked(fs.writeFileSync).mockImplementation(() => {});
+		});
+
+		/** One Grok process: wait for the spawn, write stdout/stderr, exit. */
+		async function grokTurn(
+			pending: Promise<AgentResult>,
+			{ stdout = '', stderr = '', code = 0 as number | null, calls = 1 } = {}
+		): Promise<AgentResult> {
+			await waitForSpawnCall(calls);
+			if (stdout) mockStdout.emit('data', stdout);
+			if (stderr) mockStderr.emit('data', stderr);
+			await yieldTick();
+			mockChild.emit('close', code);
+			return pending;
+		}
+
+		it('runs two task turns, the second resuming the first, with model, effort and account on both', async () => {
+			const options = {
+				customModel: 'grok-code-fast-1',
+				customEffort: 'high',
+				customEnvVars: ACCOUNT,
+			};
+			const first = await grokTurn(spawnAgent('grok', '/project', 'task one', undefined, options), {
+				stdout:
+					line({ type: 'thought', data: 'planning' }) +
+					text('one ') +
+					text('done') +
+					end('grok-native-1'),
+			});
+			expect(first).toMatchObject({
+				success: true,
+				outcome: 'completed',
+				response: 'one done',
+				agentSessionId: 'grok-native-1',
+			});
+			// Grok reports no usage or cost: unknown stays unknown.
+			expect(first.usageStats).toBeUndefined();
+
+			const second = await grokTurn(
+				spawnAgent('grok', '/project', 'task two', first.agentSessionId, options),
+				// The final record without a trailing newline is still read.
+				{ stdout: text('two done') + end('grok-native-1').trimEnd(), calls: 2 }
+			);
+			expect(second).toMatchObject({
+				success: true,
+				response: 'two done',
+				agentSessionId: 'grok-native-1',
+			});
+
+			expect(mockSpawn).toHaveBeenCalledTimes(2);
+			mockSpawn.mock.calls.forEach(([, args, spawnOptions], index) => {
+				expect(args[args.indexOf('-m') + 1]).toBe('grok-code-fast-1');
+				expect(args.filter((a: string) => a === '--reasoning-effort')).toHaveLength(1);
+				expect(args[args.indexOf('--reasoning-effort') + 1]).toBe('high');
+				expect(args.includes('--resume')).toBe(index === 1);
+				expect(spawnOptions.env.GROK_HOME).toBe('/accounts/grok-selected');
+			});
+			const resumed = mockSpawn.mock.calls[1][1] as string[];
+			expect(resumed[resumed.indexOf('--resume') + 1]).toBe('grok-native-1');
+			// Options are read, never rewritten.
+			expect(options.customEnvVars).toEqual(ACCOUNT);
+		});
+
+		it.each([
+			['an empty stdout', '', /native terminal record/],
+			[
+				'a stream cut inside its last record',
+				text('partial ') + '{"type":"text","da',
+				/malformed native/,
+			],
+			['a malformed final line', text('partial') + '{not json}\n', /malformed native/],
+			[
+				'thoughts and text with no end record',
+				line({ type: 'thought', data: 'hmm' }) + text('half'),
+				/native terminal record|incomplete/i,
+			],
+		])(
+			'fails a clean exit with %s instead of completing the task',
+			async (_label, stdout, failure) => {
+				const result = await grokTurn(spawnAgent('grok', '/project', 'task'), { stdout });
+				expect(result.success).toBe(false);
+				expect(result.outcome).not.toMatch(/^completed/);
+				expect(result.error).toMatch(failure);
+				expect(result.response ?? '').not.toMatch(/partial|half/);
+				expect(result.agentError).toBeUndefined();
+				expect(result.agentSessionId).toBeUndefined();
+			}
+		);
+
+		it('fails a partial answer that exits non-zero with no end record', async () => {
+			const result = await grokTurn(spawnAgent('grok', '/project', 'task'), {
+				stdout: text('I started the'),
+				stderr: 'worker exited unexpectedly\n',
+				code: 1,
+			});
+			expect(result.success).toBe(false);
+			expect(result.response ?? '').not.toBe('I started the');
+			expect(result.agentError).toBeUndefined();
+		});
+
+		it('fails an unclassified nonzero exit without inventing a category', async () => {
+			const result = await grokTurn(spawnAgent('grok', '/project', 'task'), {
+				stderr: 'thread main panicked at src/run.rs:12\n',
+				code: 101,
+			});
+			expect(result.success).toBe(false);
+			expect(result.agentError).toBeUndefined();
+			expect(result.error).toBeTruthy();
+		});
+
+		it.each([
+			[
+				'an in-band auth error on exit 0',
+				{
+					stdout: line({ type: 'error', message: 'Not authenticated. Run grok login to sign in.' }),
+				},
+				'auth_expired',
+				'Not authenticated',
+			],
+			[
+				'a stderr-only grok login hint on exit 1',
+				{ stderr: 'Error: please run `grok login` first\n', code: 1 },
+				'auth_expired',
+				null,
+			],
+			[
+				'an in-band rate limit on exit 1',
+				{
+					stdout: line({ type: 'error', message: '429 Too Many Requests: rate limit exceeded' }),
+					stderr: 'Error: 429 Too Many Requests: rate limit exceeded\n',
+					code: 1,
+				},
+				'rate_limited',
+				'429 Too Many Requests: rate limit exceeded',
+			],
+		] as const)(
+			'classifies %s for the Auto Run pause rules',
+			async (_label, records, type, providerWords) => {
+				const result = await grokTurn(
+					spawnAgent('grok', '/project', 'task', undefined, { customEnvVars: ACCOUNT }),
+					records
+				);
+				expect(result.success).toBe(false);
+				expect(result.agentError?.type).toBe(type);
+				// The canned, actionable message leads; the provider's words are kept.
+				expect(result.error?.startsWith(result.agentError!.message)).toBe(true);
+				if (providerWords) expect(result.error).toContain(providerWords);
+				expect(spawnCall().options.env.GROK_HOME).toBe('/accounts/grok-selected');
+			}
+		);
+
+		it('reports a cancelled Grok turn as interrupted and stops the child', async () => {
+			const controller = new AbortController();
+			const pending = spawnAgent('grok', '/project', 'long task', undefined, {
+				signal: controller.signal,
+			});
+			await waitForSpawnCall();
+			mockStdout.emit('data', text('working on it'));
+			controller.abort();
+			await yieldTick();
+			mockChild.emit('close', null, 'SIGTERM');
+			const result = await pending;
+			expect(result).toMatchObject({ success: false, outcome: 'interrupted' });
+			expect(result.agentError).toBeUndefined();
+			expect(result.response ?? '').not.toBe('working on it');
+			expect(mockKill).toHaveBeenCalled();
+		});
+
+		// The CLI consumer's result state for sanitized records, each
+		// stdout chunk a separate pipe read. Synthetic records, not native qualification.
+		async function grokChunks(
+			pending: Promise<AgentResult>,
+			chunks: string[],
+			close: { code?: number | null; signal?: NodeJS.Signals } = {}
+		): Promise<AgentResult> {
+			await waitForSpawnCall();
+			for (const chunk of chunks) {
+				mockStdout.emit('data', Buffer.from(chunk));
+				await yieldTick();
+			}
+			mockChild.emit('close', close.code === undefined ? 0 : close.code, close.signal);
+			return pending;
+		}
+
+		it('returns only the answer of a long fragmented stream, never thought or tool output', async () => {
+			const stream = grokSyntheticStream(GROK_SYNTHETIC_ROUNDS);
+			const result = await grokChunks(
+				spawnAgent('grok', '/project', 'task'),
+				rechunk(stream.lines, 4096)
+			);
+			expect(result).toMatchObject({
+				success: true,
+				outcome: 'completed',
+				agentSessionId: GROK_SYNTHETIC_SESSION_ID,
+			});
+			expect(result.response).toBe(stream.answer);
+			expect(result.response).not.toMatch(/Step \d|contents \d/);
+		});
+
+		it('hands a long input to the private prompt file, never argv or stdin', async () => {
+			const longInput = 'L'.repeat(300_000);
+			const result = await grokChunks(spawnAgent('grok', '/project', longInput), [
+				text('ok') + end('grok-long'),
+			]);
+			expect(result).toMatchObject({ success: true, agentSessionId: 'grok-long' });
+			const { args } = spawnCall();
+			expect(args.join(' ')).not.toContain('LLLL');
+			expect(mockStdin.write).not.toHaveBeenCalled();
+			expect(fs.writeFileSync).toHaveBeenCalledExactlyOnceWith(
+				73,
+				JSON.stringify({ type: 'acp', content: [{ type: 'text', text: longInput }] }),
+				'utf8'
+			);
+		});
+
+		it('learns a late native session id from an end record split across reads', async () => {
+			const result = await grokChunks(spawnAgent('grok', '/project', 'task'), [
+				text('a'),
+				text('b') + '{"type":"end","stopReason":"EndTurn","sess',
+				'ionId":"grok-late"}\n',
+			]);
+			expect(result).toMatchObject({
+				success: true,
+				outcome: 'completed',
+				response: 'ab',
+				agentSessionId: 'grok-late',
+			});
+		});
+
+		it('fails a malformed line between valid records, keeping the native id for resume', async () => {
+			const result = await grokChunks(spawnAgent('grok', '/project', 'task'), [
+				text('a ') + '{not json}\n' + text('b') + end('grok-malformed'),
+			]);
+			expect(result.success).toBe(false);
+			expect(result.outcome).toBe('crashed');
+			expect(result.error).toMatch(/malformed/);
+			expect(result.response ?? '').toBe('');
+			expect(result.agentSessionId).toBe('grok-malformed');
+		});
+
+		it('returns an oversized record whole and once', async () => {
+			const oversized = 'x'.repeat(2 * 1024 * 1024);
+			const result = await grokChunks(spawnAgent('grok', '/project', 'task'), [
+				text(oversized) + text('tail') + end('grok-oversized'),
+			]);
+			expect(result).toMatchObject({ success: true, agentSessionId: 'grok-oversized' });
+			expect(result.response).toBe(oversized + 'tail');
+		});
+
+		it('completes exactly once on a duplicated end record and a repeated close', async () => {
+			const pending = spawnAgent('grok', '/project', 'task');
+			const result = await grokChunks(pending, [text('once') + end('grok-dup') + end('grok-dup')]);
+			mockChild.emit('close', 1);
+			await yieldTick();
+			expect(result).toMatchObject({
+				success: true,
+				outcome: 'completed',
+				response: 'once',
+				agentSessionId: 'grok-dup',
+			});
+			expect(await pending).toBe(result);
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('reads a forced process loss nobody asked for as a crash, never an interrupt', async () => {
+			const result = await grokChunks(
+				spawnAgent('grok', '/project', 'task'),
+				[line({ type: 'thought', data: 'planning' }) + text('I started the')],
+				{ code: null, signal: 'SIGKILL' }
+			);
+			expect(result.success).toBe(false);
+			expect(result.outcome).toBe('crashed');
+			expect(result.error).toMatch(/without a successful terminal record/);
+			expect(result.response ?? '').toBe('');
+			expect(result.agentSessionId).toBeUndefined();
+			expect(mockKill).not.toHaveBeenCalled();
+		});
+
+		it('follows a queued resume whose end record reports a rotated native id', async () => {
+			const result = await grokChunks(spawnAgent('grok', '/project', 'next task', 'grok-old'), [
+				text('continued') + end('grok-new'),
+			]);
+			const { args } = spawnCall();
+			expect(args[args.indexOf('--resume') + 1]).toBe('grok-old');
+			expect(result).toMatchObject({
+				success: true,
+				response: 'continued',
+				agentSessionId: 'grok-new',
+			});
+		});
+	});
+
+	// Grok launch composition: directory grants (refused before any artifact
+	// or spawn, no native mechanism) and the opt-in prompt-file handoff, local
+	// and over SSH.
+	describe('spawnAgent: Grok launch composition', () => {
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		describe('Grok directory-grant launch composition', () => {
+			isolateAgentEnv(['GROK_HOME', 'GROK_AUTH', 'GROK_AUTH_PATH']);
+			const read = { path: '/private/read λ', read: true, write: false };
+			const write = { path: '/private/write λ', read: false, write: true };
+			const unsupported =
+				'Grok CLI additional-directory read and write grants have no qualified native mechanism. Remove the grants to run with the selected working directory.';
+			const readonly = "Grok CLI writable directory grants exceed this launch's read-only mode.";
+			const customConflict =
+				'Grok CLI has no qualified --add-dir argument for additional-directory grants.';
+			beforeEach(() => {
+				vi.spyOn(fs, 'openSync').mockReturnValue(73);
+				vi.spyOn(fs, 'fstatSync').mockReturnValue({ dev: 1, ino: 73 } as fs.Stats);
+				vi.spyOn(fs, 'lstatSync').mockReturnValue({ dev: 1, ino: 73 } as fs.Stats);
+				vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+				vi.spyOn(fs, 'closeSync').mockImplementation(() => {});
+				vi.mocked(fs.writeFileSync).mockImplementation(() => {});
+			});
+
+			describe.each([false, true])('SSH=%s', (remote) => {
+				describe.each([undefined, 'selected-resume'])('resume=%s', (session) => {
+					it.each([
+						['read', [read], false, undefined, unsupported],
+						['write', [write], false, undefined, unsupported],
+						['mixed', [read, write], false, undefined, unsupported],
+						['readonly write', [write], true, undefined, readonly],
+						['readonly read', [read], true, undefined, unsupported],
+						['custom separate', [], false, '--add-dir "/private/custom λ"', customConflict],
+						['custom equals', [], false, '--add-dir=/private/custom', customConflict],
+					] as const)(
+						'refuses %s before artifacts or spawn',
+						async (_label, dirs, readOnlyMode, customArgs, error) => {
+							const result = await spawnAgent(
+								'grok',
+								'/selected/project',
+								'private-user-content',
+								session,
+								{
+									additionalDirectories: [...dirs],
+									readOnlyMode,
+									customArgs,
+									customEnvVars: { GROK_HOME: '/account/selected' },
+									sshRemoteConfig: remote ? { enabled: true, remoteId: 'r1' } : undefined,
+								}
+							);
+							expect(result).toMatchObject({ success: false, error });
+							expect(JSON.stringify(result)).not.toMatch(
+								/private-user-content|\/private\/|SSH|ssh-unresolved/
+							);
+							expect(fs.openSync).not.toHaveBeenCalled();
+							expect(fs.writeFileSync).not.toHaveBeenCalled();
+							expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+							expect(mockSpawn).not.toHaveBeenCalled();
+							expect(mockStdin.write).not.toHaveBeenCalled();
+						}
+					);
+
+					it.each([
+						{ additionalDirectories: [] },
+						{
+							additionalDirectories: [
+								{ path: ' ', read: true, write: true },
+								read,
+								{ ...read, read: false },
+							],
+						},
+					])(
+						'runs empty/inert grant case %# with selected identity',
+						async ({ additionalDirectories }) => {
+							if (remote)
+								mockWrapSpawnWithSsh.mockImplementation(async (_config, ssh, store) => {
+									expect(ssh.remoteId).toBe('r1');
+									expect(store.getSshRemotes()[0].host).toBe('remotehost');
+									return {
+										command: 'ssh',
+										args: ['remotehost', ...remoteSignal.SSH_STDIN_REMOTE_SHELL],
+										cwd: '/local',
+										sshStdinScript: 'exec grok --prompt-file /synthetic-owned-file',
+										sshRemoteUsed: { id: 'r1', name: 'r1', host: 'remotehost' },
+									};
+								});
+							const result = await driveSpawnToCompletion(
+								spawnAgent('grok', '/selected/project', 'hello', session, {
+									additionalDirectories,
+									customEnvVars: { GROK_HOME: '/account/selected' },
+									sshRemoteConfig: remote ? { enabled: true, remoteId: 'r1' } : undefined,
+								}),
+								0,
+								'{"type":"text","data":"done"}\n{"type":"end","stopReason":"EndTurn","sessionId":"selected-resume"}\n'
+							);
+							expect(result.success).toBe(true);
+							const wrapped = mockWrapSpawnWithSsh.mock.calls[0]?.[0];
+							const args = remote ? wrapped.args : spawnCall().args;
+							expect(args).toContain('--prompt-file');
+							expect(args).not.toContain('--cwd');
+							expect(args).not.toContain('--add-dir');
+							expect(args.join(' ')).not.toContain('/private/');
+							if (session) expect(args).toEqual(expect.arrayContaining(['--resume', session]));
+							else expect(args).not.toContain('--resume');
+							if (remote)
+								expect(wrapped).toMatchObject({
+									cwd: '/selected/project',
+									customEnvVars: { GROK_HOME: '/account/selected' },
+								});
+							else
+								expect(mockSpawn.mock.calls[0][2]).toMatchObject({
+									cwd: '/selected/project',
+									env: { GROK_HOME: '/account/selected' },
+								});
+							expect(mockSpawn).toHaveBeenCalledTimes(1);
+						}
+					);
+				});
+			});
+
+			it.each(['claude-code', 'codex'] as const)(
+				'retains the %s native grant builder',
+				async (provider) => {
+					const result = await driveSpawnToCompletion(
+						spawnAgent(provider, '/selected/project', 'hello', undefined, {
+							additionalDirectories: [read, write],
+						}),
+						0,
+						provider === 'claude-code'
+							? CLAUDE_OK()
+							: JSON.stringify({
+									type: 'item.completed',
+									item: { type: 'agent_message', text: 'hi' },
+								}) + '\n'
+					);
+					expect(result.success).toBe(true);
+					const { args } = spawnCall();
+					expect(args).toEqual(expect.arrayContaining(['--add-dir', write.path]));
+					if (provider === 'claude-code') expect(args).toContain(read.path);
+					else expect(args).not.toContain(read.path);
+				}
+			);
+		});
+
+		describe('opt-in Grok prompt artifacts', () => {
+			const grok = getAgentDefinition('grok')!;
+			const original = { promptFile: grok.promptFile, promptFileArgs: grok.promptFileArgs };
+			isolateAgentEnv(['GROK_HOME', 'GROK_AUTH', 'GROK_AUTH_PATH']);
+			beforeEach(() => {
+				// Opt in only this fixture; native provider activation has its own task.
+				grok.promptFile = { format: 'acp-json', exclusivePromptFlags: ['-p', '--prompt-file'] };
+				grok.promptFileArgs = (file) => ['--prompt-file', file];
+				vi.spyOn(fs, 'openSync').mockReturnValue(73);
+				vi.spyOn(fs, 'fstatSync').mockReturnValue({ dev: 1, ino: 73 } as fs.Stats);
+				vi.spyOn(fs, 'lstatSync').mockReturnValue({ dev: 1, ino: 73 } as fs.Stats);
+				vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+				vi.spyOn(fs, 'closeSync').mockImplementation(() => {});
+				vi.mocked(fs.writeFileSync).mockImplementation(() => {});
+			});
+			afterEach(() => {
+				Object.assign(grok, original);
+			});
+
+			describe.each([false, true])('host handoff (SSH=%s)', (remote) => {
+				it.each([
+					['', undefined, undefined, 0],
+					['  café\n\t末尾  ', 'private rules', undefined, 0],
+					['large λ\n'.repeat(8192), 'private rules', undefined, 1],
+					['resume exactly\n', 'already delivered rules', 'resume-id', 0],
+				] as const)(
+					'preserves prompt bytes and exit outcome for case %#',
+					async (prompt, rules, session, code) => {
+						if (remote) {
+							mockWrapSpawnWithSsh.mockImplementation(async (_config, _ssh, store) => {
+								mockReadSshRemotes.mockReturnValue([{ id: 'r1', host: 'replacement-host' }]);
+								expect(store.getSshRemotes()[0].host).toBe('remotehost');
+								return {
+									command: 'ssh',
+									args: ['remotehost', ...remoteSignal.SSH_STDIN_REMOTE_SHELL],
+									cwd: '/local',
+									sshStdinScript: 'exec grok --prompt-file /synthetic-owned-file',
+									sshRemoteUsed: { id: 'r1', name: 'r1', host: 'remotehost' },
+								};
+							});
+						}
+						const result = await driveSpawnToCompletion(
+							spawnAgent('grok', '/project', prompt, session, {
+								appendSystemPrompt: rules,
+								customModel: 'fixture-model',
+								customEnvVars: { GROK_HOME: '/account/selected' },
+								sshRemoteConfig: remote ? { enabled: true, remoteId: 'r1' } : undefined,
+							}),
+							code,
+							'{"type":"text","data":"done"}\n{"type":"end","stopReason":"EndTurn","sessionId":"fixture-session"}\n'
+						);
+						expect(result).toMatchObject({
+							success: true,
+							response: 'done',
+							agentSessionId: 'fixture-session',
+							outcome: code === 0 ? 'completed' : 'completed-with-warning',
+						});
+						const composed = rules && !session ? embedSystemPromptInPrompt(rules, prompt) : prompt;
+						const content = JSON.stringify({
+							type: 'acp',
+							content: [{ type: 'text', text: composed }],
+						});
+						const wrapped = mockWrapSpawnWithSsh.mock.calls[0]?.[0];
+						const args = remote ? wrapped.args : spawnCall().args;
+						expect(args).toEqual(expect.arrayContaining(['-m', 'fixture-model', '--prompt-file']));
+						expect(args).not.toContain('--cwd');
+						expect(args).not.toContain('-p');
+						expect(args).not.toContain(composed);
+						if (session) expect(args).toEqual(expect.arrayContaining(['--resume', session]));
+						if (remote) {
+							expect(wrapped).toMatchObject({
+								command: 'grok',
+								agentBinaryName: 'grok',
+								cwd: '/project',
+								prompt: undefined,
+								customEnvVars: { GROK_HOME: '/account/selected' },
+								promptArtifact: {
+									owner: 'remote',
+									sshRemoteId: 'r1',
+									content,
+									encoding: 'utf8',
+									flag: 'wx',
+									mode: 0o600,
+									cleanup: 'turn',
+								},
+							});
+							expect(args[args.indexOf('--prompt-file') + 1]).toBe(wrapped.promptArtifact.path);
+							expect(fs.openSync).not.toHaveBeenCalled();
+							expect(fs.writeFileSync).not.toHaveBeenCalled();
+							expect(mockStdin.write).toHaveBeenCalledTimes(1);
+							expect(mockStdin.write.mock.calls[0][0]).toContain('exec grok --prompt-file');
+							expect(mockStdin.write.mock.calls[0][0]).not.toContain(content);
+						} else {
+							const file = args[args.indexOf('--prompt-file') + 1];
+							expect(fs.openSync).toHaveBeenCalledExactlyOnceWith(file, 'wx', 0o600);
+							expect(fs.writeFileSync).toHaveBeenCalledExactlyOnceWith(73, content, 'utf8');
+							expect(fs.unlinkSync).toHaveBeenCalledExactlyOnceWith(file);
+							expect(fs.closeSync).toHaveBeenCalledExactlyOnceWith(73);
+							expect(spawnCall().options).toMatchObject({ cwd: '/project' });
+							expect(spawnCall().options.env.GROK_HOME).toBe('/account/selected');
+							expect(mockStdin.write).not.toHaveBeenCalled();
+						}
+						expect(mockSpawn).toHaveBeenCalledTimes(1);
+					}
+				);
+
+				it('refuses competing sources without preparation or a text retry', async () => {
+					const result = await spawnAgent('grok', '/project', 'private-user-content', undefined, {
+						customArgs: '--prompt-file=/private/conflict.json',
+						sshRemoteConfig: remote ? { enabled: true, remoteId: 'r1' } : undefined,
+					});
+					expect(result.success).toBe(false);
+					expect(result.error).toContain('conflicts with another prompt source');
+					expect(JSON.stringify(result)).not.toMatch(/private-user-content|conflict.json/);
+					expect(mockSpawn).not.toHaveBeenCalled();
+					expect(fs.openSync).not.toHaveBeenCalled();
+					expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+				});
+			});
+
+			it.each(['write', 'cancel'] as const)(
+				'cleans a partial local preparation on %s',
+				async (failure) => {
+					const controller = new AbortController();
+					vi.mocked(fs.writeFileSync).mockImplementationOnce(() => {
+						if (failure === 'write') throw new Error('/private/artifact.json private-user-content');
+						if (failure === 'cancel') controller.abort();
+					});
+					const result = await spawnAgent('grok', '/project', 'private-user-content', undefined, {
+						signal: controller.signal,
+					});
+					expect(result.success).toBe(false);
+					if (failure === 'cancel') expect(result.outcome).toBe('interrupted');
+					expect(JSON.stringify(result)).not.toMatch(/private-user-content|artifact.json/);
+					expect(fs.unlinkSync).toHaveBeenCalledExactlyOnceWith(
+						vi.mocked(fs.openSync).mock.calls[0][0]
+					);
+					expect(fs.closeSync).toHaveBeenCalledExactlyOnceWith(73);
+					expect(mockSpawn).not.toHaveBeenCalled();
+					expect(mockStdin.write).not.toHaveBeenCalled();
+				}
+			);
+
+			it('refuses failed SSH preparation without a local artifact or fallback', async () => {
+				mockWrapSpawnWithSsh.mockRejectedValue(
+					new Error('/private/artifact.json private-user-content')
+				);
+				const result = await spawnAgent('grok', '/project', 'private-user-content', undefined, {
+					sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				});
+				expect(result.error).toBe('Remote prompt preparation unavailable.');
+				expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(1);
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(fs.openSync).not.toHaveBeenCalled();
+				expect(remoteSignal.signalRemoteAgent).not.toHaveBeenCalled();
+			});
+		});
+	});
+
+	describe('spawnAgent: long prompt file delivery (Windows, omp)', () => {
+		const withPlatform = async (platform: string, fn: () => Promise<void>) => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+			const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+			try {
+				await fn();
+			} finally {
+				writeSpy.mockRestore();
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		};
+		// omp has no native system-prompt flag, so the embedded instructions
+		// ride in the user message; a Pianola-sized instruction block alone
+		// exceeded CreateProcess's argv cap and failed the spawn (ENAMETOOLONG).
+		const longSystemPrompt = 'x'.repeat(30_000);
+
+		it('removes the prompt file on close before the fallback timer, only once', async () => {
+			await withPlatform('win32', async () => {
+				const unlink = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => undefined);
+				const p = spawnAgent('omp', 'C:\\proj', 'user msg', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(p, 0);
+				const file = (fs.writeFileSync as Mock).mock.calls[0][0];
+				expect(unlink).toHaveBeenCalledExactlyOnceWith(file);
+				mockChild.emit('close', 0);
+				expect(unlink).toHaveBeenCalledTimes(1);
+			});
+		});
+
+		it('cleans the prompt file on an asynchronous spawn error before close', async () => {
+			await withPlatform('win32', async () => {
+				const unlink = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => undefined);
+				const p = spawnAgent('omp', 'C:\\proj', 'task', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await waitForSpawnCall();
+				mockChild.emit('error', new Error('Spawn failed'));
+				expect((await p).success).toBe(false);
+				expect(unlink).toHaveBeenCalledExactlyOnceWith((fs.writeFileSync as Mock).mock.calls[0][0]);
+				mockChild.emit('close', -1);
+				expect(unlink).toHaveBeenCalledTimes(1);
+			});
+		});
+
+		it('cleans the prompt file when spawn throws synchronously', async () => {
+			await withPlatform('win32', async () => {
+				const unlink = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => undefined);
+				mockSpawn.mockImplementationOnce(() => {
+					throw new Error('Invalid argument');
+				});
+				await expect(
+					spawnAgent('omp', 'C:\\proj', 'task', undefined, {
+						appendSystemPrompt: longSystemPrompt,
+					})
+				).rejects.toThrow('Invalid argument');
+				expect(unlink).toHaveBeenCalledExactlyOnceWith((fs.writeFileSync as Mock).mock.calls[0][0]);
+			});
+		});
+
+		it('delivers oversized prompts over stdin for agents without file-delivery support', async () => {
+			await withPlatform('win32', async () => {
+				const p = spawnAgent('codex', 'C:\\proj', 'task', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(p, 0, CODEX_INIT());
+				expect(spawnCall().args.join(' ')).not.toContain(longSystemPrompt);
+				expect(mockChild.stdin.write).toHaveBeenCalledWith(
+					expect.stringContaining(longSystemPrompt),
+					expect.any(Function)
+				);
+				expect(fs.writeFileSync).not.toHaveBeenCalled();
+			});
+		});
+
+		it('does not create local prompt files for an SSH omp turn', async () => {
+			await withPlatform('win32', async () => {
+				mockWrapSpawnWithSsh.mockResolvedValue({
+					command: 'ssh',
+					args: ['remotehost', 'omp'],
+					cwd: '/home/user',
+					sshRemoteUsed: { id: 'r1', name: 'r1', host: 'remotehost' },
+				});
+				const p = spawnAgent('omp', '/p', 'task', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+					sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				});
+				await driveSpawnToCompletion(p, 0);
+				expect(mockWrapSpawnWithSsh.mock.calls[0][0].prompt).toContain(longSystemPrompt);
+				expect(fs.writeFileSync).not.toHaveBeenCalled();
+			});
+		});
+
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		it('delivers an over-limit prompt through a temp file via omp @path on Windows', async () => {
+			await withPlatform('win32', async () => {
+				const p = spawnAgent('omp', 'C:\\proj', 'user msg', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(p, 0);
+
+				const { args } = spawnCall();
+				const fileArg = args.find((a) => /^@.*maestro-prompt-/.test(a));
+				expect(fileArg).toBeDefined();
+				expect(args.at(-1)).toBe(fileArg);
+				expect(args[args.indexOf(fileArg!) - 1]).not.toBe('--');
+				expect(args.some((a) => a.includes('user msg'))).toBe(false);
+				expect(fs.writeFileSync).toHaveBeenCalledWith(
+					expect.stringMatching(/maestro-prompt-/),
+					expect.stringContaining('user msg'),
+					expect.objectContaining({ encoding: 'utf-8' })
+				);
+			});
+		});
+
+		it('creates distinct exclusive prompt files for turns started in the same millisecond', async () => {
+			await withPlatform('win32', async () => {
+				vi.spyOn(Date, 'now').mockReturnValue(123456);
+				const first = spawnAgent('omp', 'C:\\proj', 'first', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(first, 0);
+				const firstFile = (fs.writeFileSync as Mock).mock.calls[0][0];
+				const second = spawnAgent('omp', 'C:\\proj', 'second', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(second, 0);
+				const writes = (fs.writeFileSync as Mock).mock.calls;
+				expect(writes[1][0]).not.toBe(firstFile);
+				for (const call of writes) {
+					expect(call[2]).toEqual({ encoding: 'utf-8', mode: 0o600, flag: 'wx' });
+				}
+			});
+		});
+
+		it('retries a colliding prompt file without reverting to oversized argv', async () => {
+			await withPlatform('win32', async () => {
+				vi.mocked(fs.writeFileSync).mockImplementationOnce(() => {
+					throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+				});
+				const p = spawnAgent('omp', 'C:\\proj', 'user msg', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(p, 0);
+				const writes = (fs.writeFileSync as Mock).mock.calls;
+				expect(writes).toHaveLength(2);
+				expect(writes[1][0]).not.toBe(writes[0][0]);
+				expect(spawnCall().args).toContain('@' + writes[1][0]);
+				expect(writes[1][2]).toEqual({ encoding: 'utf-8', mode: 0o600, flag: 'wx' });
+			});
+		});
+
+		it('keeps a short prompt inline on Windows', async () => {
+			await withPlatform('win32', async () => {
+				const p = spawnAgent('omp', 'C:\\proj', 'short task');
+				await driveSpawnToCompletion(p, 0);
+
+				const { args } = spawnCall();
+				expect(args[args.length - 1]).toBe('short task');
+				expect(fs.writeFileSync).not.toHaveBeenCalled();
+			});
+		});
+
+		it('keeps an over-limit prompt inline off Windows', async () => {
+			await withPlatform('linux', async () => {
+				const p = spawnAgent('omp', '/proj', 'user msg', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(p, 0);
+
+				const { args } = spawnCall();
+				expect(args[args.length - 1]).toContain('user msg');
+				expect(fs.writeFileSync).not.toHaveBeenCalled();
+			});
 		});
 	});
 });

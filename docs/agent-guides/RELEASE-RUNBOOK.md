@@ -118,6 +118,13 @@ Each owner, for their branch only:
   and fixes nobody experienced. No source file paths or function names.
 - The audit runs both ways: also find user-visible features that shipped and
   never got written up, and promote them over weaker entries.
+- Significant prompt changes are user-facing, even though they are markdown.
+  Check `git log <previous tag>..origin/<branch> -- src/prompts`: any change
+  that alters what agents do, refuse, report, or ask gets an entry that says
+  what agents now do, and that a prompt customized in Settings > Maestro
+  Prompts keeps the user's version (compare it with the new default there).
+  Skip pure wording or formatting edits. The daily Release Notes Digest Cue
+  pipeline applies the same rule, so the drafts should already carry them.
 - One emoji per highlight or bullet. Light, direct tone.
 - No stock closer. No line (opener, transition, heading, or closer) that appeared
   in either of the previous two releases on the same channel. Never "go poke at

@@ -122,6 +122,26 @@ export function selectConsultedSessionIds(
 	return ids;
 }
 
+/**
+ * Whether `agentId` is the one ASKING: a consult it started is still running.
+ *
+ * Read by the Auto Run watchdog. A task that runs `maestro-cli ask` prints
+ * nothing while it waits for the answer, which is exactly what the inactivity
+ * watchdog kills on; a consult that took longer than the timeout used to cost
+ * the task. Keyed by agent, not by run: a CLI ask from any of the agent's turns
+ * registers with the same stand-in tab, so an interactive tab asking at the same
+ * moment also keeps the run alive. The ask's own timeout bounds that.
+ */
+export function isAgentAwaitingConsult(
+	requests: Record<string, InFlightCrossAgentRequest>,
+	agentId: string
+): boolean {
+	for (const id in requests) {
+		if (requests[id].sourceSessionId === agentId) return true;
+	}
+	return false;
+}
+
 /** Reactive form of {@link selectConsultedSessionIds}. */
 export function useConsultedSessionIds(): ReadonlySet<string> {
 	const requests = useCrossAgentInFlightStore((s) => s.requests);

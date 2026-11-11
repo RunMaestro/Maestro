@@ -84,6 +84,7 @@ function getOpenCodeDataDir(): string {
 
 /**
  * Get OpenCode JSON storage directory (pre-v1.2)
+ * Resolve only during local storage operations, never at import or construction.
  */
 function getOpenCodeStorageDir(): string {
 	return path.join(getOpenCodeDataDir(), 'storage');
@@ -91,6 +92,7 @@ function getOpenCodeStorageDir(): string {
 
 /**
  * Get OpenCode SQLite database path (v1.2+).
+ * Resolve only during local storage operations, never at import or construction.
  *
  * Checks each candidate data dir for an existing `opencode.db` and returns
  * the first hit. Falls back to the preferred candidate's path when none exist,
@@ -105,9 +107,6 @@ function getOpenCodeDbPath(): string {
 	}
 	return path.join(getOpenCodeDataDirCandidates()[0], 'opencode.db');
 }
-
-const OPENCODE_STORAGE_DIR = getOpenCodeStorageDir();
-const OPENCODE_DB_PATH = getOpenCodeDbPath();
 
 /**
  * OpenCode project metadata structure
@@ -260,7 +259,7 @@ interface SqlitePartData {
  * Open the OpenCode SQLite database in read-only mode.
  * Returns null if the database file doesn't exist.
  */
-function openOpenCodeDb(dbPath: string = OPENCODE_DB_PATH): Database.Database | null {
+function openOpenCodeDb(dbPath: string = getOpenCodeDbPath()): Database.Database | null {
 	if (!fsSync.existsSync(dbPath)) {
 		return null;
 	}
@@ -408,26 +407,41 @@ async function listJsonFilesRemote(dirPath: string, sshConfig: SshRemoteConfig):
  */
 export class OpenCodeSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'opencode';
+	constructor(private readonly historyRoot?: string) {
+		super();
+	}
 
 	/**
 	 * Get the session directory for a project (local)
 	 */
 	private getSessionDir(projectId: string): string {
-		return path.join(OPENCODE_STORAGE_DIR, 'session', projectId);
+		return path.join(
+			this.historyRoot ? path.join(this.historyRoot, 'storage') : getOpenCodeStorageDir(),
+			'session',
+			projectId
+		);
 	}
 
 	/**
 	 * Get the message directory for a session (local)
 	 */
 	private getMessageDir(sessionId: string): string {
-		return path.join(OPENCODE_STORAGE_DIR, 'message', sessionId);
+		return path.join(
+			this.historyRoot ? path.join(this.historyRoot, 'storage') : getOpenCodeStorageDir(),
+			'message',
+			sessionId
+		);
 	}
 
 	/**
 	 * Get the part directory for a message (local)
 	 */
 	private getPartDir(messageId: string): string {
-		return path.join(OPENCODE_STORAGE_DIR, 'part', messageId);
+		return path.join(
+			this.historyRoot ? path.join(this.historyRoot, 'storage') : getOpenCodeStorageDir(),
+			'part',
+			messageId
+		);
 	}
 
 	/**
@@ -463,7 +477,10 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 * Find the project ID for a given path by checking existing projects
 	 */
 	private async findProjectId(projectPath: string): Promise<string | null> {
-		const projectDir = path.join(OPENCODE_STORAGE_DIR, 'project');
+		const projectDir = path.join(
+			this.historyRoot ? path.join(this.historyRoot, 'storage') : getOpenCodeStorageDir(),
+			'project'
+		);
 
 		try {
 			await fs.access(projectDir);
@@ -622,6 +639,24 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
+	 * The SQL form of {@link sessionMatchesPath}.
+	 *
+	 * The store keeps a session's working directory with forward slashes while
+	 * `path.resolve` on Windows produces backslashes, so an exact or LIKE
+	 * comparison between the two silently matches nothing. The comparison is
+	 * therefore made separator-agnostic: both sides are compared with forward
+	 * slashes, and the subdirectory case matches on a slash boundary so that
+	 * `/project` does not also match `/project-other`.
+	 */
+	private directoryMatchClause(normalizedPath: string): { sql: string; params: string[] } {
+		const forward = normalizedPath.replace(/\\/g, '/').replace(TRAILING_SEP_RE, '');
+		return {
+			sql: "REPLACE(directory, '\\', '/') = ? OR REPLACE(directory, '\\', '/') LIKE ? ESCAPE '\\'",
+			params: [forward, forward.replace(/[%_]/g, '\\$&') + '/%'],
+		};
+	}
+
+	/**
 	 * Check if a session's directory matches the requested project path (remote version)
 	 * Used for filtering global project sessions by their working directory
 	 * Note: On remote, we don't use path.resolve since we're operating on remote paths
@@ -647,7 +682,12 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	/**
 	 * Load all messages for a session
 	 */
-	private async loadSessionMessages(sessionId: string): Promise<{
+	private async loadSessionMessages(
+		sessionId: string,
+		window?: SessionReadOptions
+	): Promise<{
+		nativeCursor?: number;
+		nativeTotal?: number;
 		messages: OpenCodeMessage[];
 		parts: Map<string, OpenCodePart[]>;
 		totalInputTokens: number;
@@ -666,11 +706,16 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		let totalCacheWriteTokens = 0;
 		let totalCost = 0;
 		const modelAcc = new ModelUsageAccumulator();
-
+		let nativeCursor = window?.offset ?? 0;
+		let nativeTotal = 0;
 		try {
 			const messageFiles = await listJsonFiles(messageDir);
-
-			for (const file of messageFiles) {
+			nativeTotal = messageFiles.length;
+			const selected = window
+				? messageFiles.sort().slice(nativeCursor, nativeCursor + (window.limit ?? 64))
+				: messageFiles;
+			for (const file of selected) {
+				nativeCursor++;
 				const msg = await readJsonFile<OpenCodeMessage>(path.join(messageDir, file));
 				if (msg) {
 					messages.push(msg);
@@ -725,6 +770,8 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		});
 
 		return {
+			nativeCursor,
+			nativeTotal,
 			messages,
 			parts,
 			totalInputTokens,
@@ -834,7 +881,9 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 * Returns null if the database doesn't exist or lacks the expected schema.
 	 */
 	private listSessionsSqlite(projectPath: string): AgentSessionInfo[] | null {
-		const db = openOpenCodeDb();
+		const db = openOpenCodeDb(
+			this.historyRoot ? path.join(this.historyRoot, 'opencode.db') : undefined
+		);
 		if (!db) return null;
 
 		try {
@@ -882,15 +931,14 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 
 			// Also include global project sessions that match by directory field
 			if (hasGlobalProject) {
-				// Escape the separator too: on Windows it IS the LIKE escape
-				// character, so a raw `\` before the `%` would turn the wildcard
-				// into a literal percent and match no subdirectory at all.
-				const escapedPrefix = (normalizedPath + path.sep).replace(/[%_\\]/g, '\\$&');
+				const clause = this.directoryMatchClause(normalizedPath);
 				const globalSessions = db
 					.prepare(
-						"SELECT id, project_id, directory, title, version, time_created, time_updated, summary_additions, summary_deletions, summary_files FROM session WHERE project_id = 'global' AND (directory = ? OR directory LIKE ? ESCAPE '\\') ORDER BY time_updated DESC"
+						"SELECT id, project_id, directory, title, version, time_created, time_updated, summary_additions, summary_deletions, summary_files FROM session WHERE project_id = 'global' AND (" +
+							clause.sql +
+							') ORDER BY time_updated DESC'
 					)
-					.all(normalizedPath, escapedPrefix + '%') as SqliteSessionRow[];
+					.all(...clause.params) as SqliteSessionRow[];
 				if (globalSessions.length > 0) {
 					const existingIds = new Set(sessions.map((s) => s.id));
 					for (const gs of globalSessions) {
@@ -1133,8 +1181,11 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 */
 	private loadSessionMessagesSqlite(
 		sessionId: string,
-		existingDb?: Database.Database
+		existingDb?: Database.Database,
+		window?: SessionReadOptions
 	): {
+		nativeCursor?: number;
+		nativeTotal?: number;
 		messages: OpenCodeMessage[];
 		parts: Map<string, OpenCodePart[]>;
 		totalInputTokens: number;
@@ -1144,7 +1195,9 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		totalCost: number;
 	} | null {
 		const ownsDb = !existingDb;
-		const db = existingDb ?? openOpenCodeDb();
+		const db =
+			existingDb ??
+			openOpenCodeDb(this.historyRoot ? path.join(this.historyRoot, 'opencode.db') : undefined);
 		if (!db) return null;
 
 		try {
@@ -1152,9 +1205,9 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 
 			const messageRows = db
 				.prepare(
-					'SELECT id, session_id, time_created, time_updated, data FROM message WHERE session_id = ? ORDER BY time_created ASC'
+					'SELECT id, session_id, time_created, time_updated, data FROM message WHERE session_id = ? ORDER BY time_created ASC, id ASC LIMIT ? OFFSET ?'
 				)
-				.all(sessionId) as SqliteMessageRow[];
+				.all(sessionId, window?.limit ?? -1, window?.offset ?? 0) as SqliteMessageRow[];
 
 			if (messageRows.length === 0) {
 				// Verify session actually exists in SQLite before blocking JSON fallback
@@ -1164,6 +1217,18 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 						.get(sessionId);
 					if (sessionExists) {
 						return {
+							...(window
+								? {
+										nativeCursor: window.offset ?? 0,
+										nativeTotal: Number(
+											(
+												db
+													.prepare('SELECT COUNT(*) AS count FROM message WHERE session_id=?')
+													.get(sessionId) as { count: number }
+											).count
+										),
+									}
+								: {}),
 							messages: [],
 							parts: new Map(),
 							totalInputTokens: 0,
@@ -1235,6 +1300,18 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			}
 
 			return {
+				...(window
+					? {
+							nativeCursor: (window.offset ?? 0) + messageRows.length,
+							nativeTotal: Number(
+								(
+									db
+										.prepare('SELECT COUNT(*) AS count FROM message WHERE session_id=?')
+										.get(sessionId) as { count: number }
+								).count
+							),
+						}
+					: {}),
 				messages,
 				parts,
 				totalInputTokens,
@@ -1259,7 +1336,12 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	/**
 	 * Load messages for a local session, trying SQLite first then JSON fallback.
 	 */
-	private async loadMessagesLocal(sessionId: string): Promise<{
+	private async loadMessagesLocal(
+		sessionId: string,
+		window?: SessionReadOptions
+	): Promise<{
+		nativeCursor?: number;
+		nativeTotal?: number;
 		messages: OpenCodeMessage[];
 		parts: Map<string, OpenCodePart[]>;
 		totalInputTokens: number;
@@ -1268,9 +1350,9 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		totalCacheWriteTokens: number;
 		totalCost: number;
 	}> {
-		const sqliteResult = this.loadSessionMessagesSqlite(sessionId);
+		const sqliteResult = this.loadSessionMessagesSqlite(sessionId, undefined, window);
 		if (sqliteResult) return sqliteResult;
-		return this.loadSessionMessages(sessionId);
+		return this.loadSessionMessages(sessionId, window);
 	}
 
 	// ─── Merged listing (SQLite + JSON) ─────────────────────────────────────
@@ -1571,9 +1653,10 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		options?: SessionReadOptions,
 		sshConfig?: SshRemoteConfig
 	): Promise<SessionMessagesResult> {
-		const { messages, parts } = sshConfig
+		const result = sshConfig
 			? await this.loadSessionMessagesRemote(sessionId, sshConfig)
-			: await this.loadMessagesLocal(sessionId);
+			: await this.loadMessagesLocal(sessionId, options?.nativeWindow ? options : undefined);
+		const { messages, parts } = result;
 
 		const sessionMessages: SessionMessage[] = [];
 
@@ -1602,6 +1685,19 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			}
 		}
 
+		if (
+			options?.nativeWindow &&
+			'nativeCursor' in result &&
+			typeof result.nativeCursor === 'number' &&
+			'nativeTotal' in result &&
+			typeof result.nativeTotal === 'number'
+		)
+			return {
+				messages: sessionMessages,
+				total: result.nativeTotal,
+				hasMore: result.nativeCursor < result.nativeTotal,
+				nativeCursor: result.nativeCursor,
+			};
 		return BaseSessionStorage.applyMessagePagination(sessionMessages, options);
 	}
 
@@ -1632,7 +1728,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			return this.getRemoteMessageDir(sessionId);
 		}
 		if (sessionExistsInSqlite(sessionId)) {
-			return OPENCODE_DB_PATH;
+			return getOpenCodeDbPath();
 		}
 		return this.getMessageDir(sessionId);
 	}

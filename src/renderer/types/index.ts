@@ -76,6 +76,8 @@ import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { CodexTransport } from '../../shared/codexTransport';
+import type { HarnessControlMode } from '../../shared/maestro-lib/providers/native-control';
+import type { LiftedToPointer } from '../../shared/maestro-lib/agents/lift-pointer';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -278,9 +280,12 @@ export interface LogEntry {
 		};
 		/**
 		 * For tool entries produced inside a subagent: the `toolCallId` of the
-		 * parent tool call that spawned it (claude-code's Task tool). The
-		 * transcript nests these badges under the matching parent entry; entries
-		 * whose parent is not in the log render flat. Only claude-code sets it.
+		 * entry to nest under, either the parent tool call that spawned it
+		 * (claude-code's Task tool) or, for a Grok child reported by session
+		 * lineage, the `Subagent` entry keyed by the child session
+		 * (`subagentToolCallId`), never a provider tool-call id. The transcript
+		 * nests these badges under the matching parent entry; entries whose parent
+		 * is not in the log render flat.
 		 */
 		parentToolUseId?: string;
 		hiddenProgress?: {
@@ -509,6 +514,8 @@ export interface MentionHandoff {
 
 export interface QueuedItem {
 	id: string; // Unique item ID
+	/** Increases only when a failed dispatch restores this ID. Older removals must not erase it. */
+	dispatchRecoveryGeneration?: number;
 	timestamp: number; // When it was queued (for ordering)
 	tabId: string; // Target tab for this item
 	type: QueuedItemType; // 'message' or 'command'
@@ -521,6 +528,9 @@ export interface QueuedItem {
 	command?: string; // Slash command (e.g., '/commit')
 	commandArgs?: string; // Arguments passed after the command (e.g., 'Blah blah' from '/speckit.plan Blah blah')
 	commandDescription?: string; // Command description for display
+	// Opaque renderer receipt. Its evidence lives only in queuedPrompt's WeakMap;
+	// restored/cloned items must be requeued, never rebound to current settings.
+	commandScope?: { readonly provider: ToolType };
 	// Display metadata
 	// Last-known tab label, snapshotted when the item was queued. This is a
 	// FALLBACK only: the queue UI resolves the live tab name first (see
@@ -534,6 +544,11 @@ export interface QueuedItem {
 	// Held/paused: kept in the queue (preserving order) but skipped by every
 	// dispatch path until the user resumes it. See utils/executionQueue.ts.
 	paused?: boolean;
+	/** Dispatch ID held until host admission and its pre-start baseline are complete. */
+	pendingAdmissionId?: string;
+	/** Host-journaled release revision. Pending ID remains provenance and a
+	 * renderer safety barrier until the guarded native queue consumer claims it. */
+	admissionRelease?: { generation: string };
 	// Hold set when the process ownership probe cannot reach main. The
 	// item becomes runnable only after bridge reconciliation confirms ownership.
 	waitingForConnection?: boolean;
@@ -565,6 +580,11 @@ export interface QueuedItem {
 	// transcript. Carries a consult's replies verbatim without repeating them in
 	// the user bubble, where they are already shown as the consult's own reply.
 	agentContext?: string;
+	// A `dispatch --notify-on-complete` wake that main queued because this tab was
+	// mid-turn: another agent reporting back, not the user's message. It runs as
+	// its own turn when the tab goes idle and is never steered into the running
+	// one (see getSteerEligibility).
+	dispatchCallback?: boolean;
 	// Model/effort captured when the user queued this item. Both the spawn and
 	// the transcript pills read it, so a queued turn runs under - and is labeled
 	// with - the configuration it was queued with, not whatever is selected by
@@ -711,6 +731,11 @@ export interface BatchRunState {
 	goalIteration?: number; // 1-based iteration number the goal loop is on
 	goalExitReason?: import('../../shared/goalDriven/types').GoalExitReason; // Why the goal run stopped
 
+	// Work this run handed to other agents that is still running. Set only while
+	// the run waits for it before its next turn (both modes); empty otherwise.
+	// See src/shared/autoRunDelegation.ts.
+	pendingDelegations?: import('../../shared/autoRunDelegation').AutoRunPendingDelegation[];
+
 	// Live playbook status parsed from .maestro/STATUS.json (feature, phase,
 	// tests, summary). Populated by the STATUS.json watcher while the run is
 	// active; cleared when the file is deleted or the run completes.
@@ -798,9 +823,18 @@ export interface AITab {
 	origin?: 'user' | 'auto' | 'relay';
 	id: string; // Unique tab ID (generated UUID)
 	agentSessionId: string | null; // Agent session UUID (null for new tabs)
+	/** Native ownership captured by the host; absent on legacy tabs means unknown. */
+	nativeSessionBinding?: ProviderTabSession['nativeSessionBinding'];
 	name: string | null; // User-defined name (null = show UUID octet)
 	starred: boolean; // Whether session is starred (for pill display)
 	logs: LogEntry[]; // Conversation history
+	/**
+	 * Messages pinned in this tab (see `src/shared/messagePins.ts`). Belongs to
+	 * this tab only: forking or sending the tab elsewhere does not copy it. The
+	 * closed-tab stack keeps it, and it is mirrored to the provider session's
+	 * origin record so a conversation reopened from History gets it back.
+	 */
+	pinnedMessages?: import('../../shared/messagePins').MessagePin[];
 	agentError?: AgentError; // Tab-specific agent error (shown in banner)
 	inputValue: string; // Pending input text for this tab
 	/**
@@ -884,8 +918,8 @@ export interface AITab {
 	pendingMentionHandoff?: MentionHandoff;
 	/**
 	 * Parked per-provider state for every provider this tab is NOT currently
-	 * using. The live provider's values stay in `agentSessionId` / `usageStats` /
-	 * `customModel` / `customEffort` as they always have, so this map never holds
+	 * using. The live provider's values stay in `agentSessionId` / `nativeSessionBinding` /
+	 * `usageStats` / `customModel` / `customEffort`, so this map never holds
 	 * an entry for `session.toolType`. Changing the agent's provider swaps the
 	 * live values with this map's entry rather than clearing them.
 	 */
@@ -916,9 +950,23 @@ export interface AITab {
 
 // A single "thinking item" - one busy tab within a session.
 // Used by ThinkingStatusPill to show all active work across all agents.
-export interface ThinkingItem {
-	session: Session;
+/**
+ * The agent fields the Thinking pill reads. A local agent passes its `Session`; a Federation peer's
+ * mirrored agent passes a view built by `buildMirrorThinkingItems()`, which is never a `Session`.
+ */
+export type ThinkingItemAgent = Pick<
+	Session,
+	'id' | 'name' | 'state' | 'agentSessionId' | 'thinkingStartTime' | 'currentCycleTokens'
+>;
+
+export interface ThinkingItem<S extends ThinkingItemAgent = ThinkingItemAgent> {
+	session: S;
 	tab: AITab | null; // null for legacy sessions without tab-level tracking
+	/**
+	 * Set for a peer's mirrored agent: `session.id` is then its mirror key (`peerId:agentId`), a
+	 * click opens the mirror, and Stop reaches the host.
+	 */
+	mirror?: { peerId: string; agentId: string };
 }
 
 // An Auto Run in progress on an agent other than the one being viewed. Auto Run
@@ -1304,12 +1352,16 @@ export interface PendingSteer {
 }
 
 export interface Session {
+	/** Named exclusions override the group and worktree grants. */
+	peerAgents?: import('../../shared/types').PeerAgent[];
+	groupPeerAccess?: import('../../shared/types').PeerAccess;
+	worktreePeerAccess?: import('../../shared/types').PeerAccess;
 	providerMigration?: ProviderMigrationState;
 	providerTranslationQueuedOrigins?: Record<string, ToolType>;
 	providerTranslationHistoryMappings?: HistoryTranslationMapping[];
 	providerTranslationKnowledgeDirectory?: string;
 	providerTranslationTabInventory?: Array<
-		Pick<AITab, 'id' | 'agentSessionId' | 'providerSessions'>
+		Pick<AITab, 'id' | 'agentSessionId' | 'nativeSessionBinding' | 'providerSessions'>
 	>;
 	id: string;
 	/** Browser-only marker. Main restores omitted content on every partial save. */
@@ -1546,6 +1598,9 @@ export interface Session {
 	// SSH Remote context (session-wide, for all operations - file explorer, git, auto run, etc.)
 	sshRemoteId?: string; // ID of SSH remote config being used (flattened from sshRemote.id)
 	remoteCwd?: string; // Current working directory on remote host
+	// Federation: set once this SSH agent was lifted onto its remote's host. Every tab and
+	// transcript stays; sends are refused with a pointer at `peer:agentId` (liftedSendRefusal()).
+	liftedTo?: LiftedToPointer;
 
 	// Inline wizard state for /wizard command
 	// Keeps per-session/per-tab wizard state for creating or iterating on Auto Run documents
@@ -1616,6 +1671,8 @@ export interface Session {
 	// Absent means 'exec'. Experimental. Always read it through
 	// `resolveCodexTransport` in shared/codexTransport, never directly.
 	codexTransport?: CodexTransport;
+	/** Optional native protocol control mode. Absent means the current transport. */
+	harnessControlMode?: HarnessControlMode;
 	/**
 	 * Parked agent-level overrides (the per-session fields above that belong to
 	 * one provider: path, args, env, model, effort, context window, token
@@ -1660,7 +1717,12 @@ export interface Session {
 
 // Process spawning configuration
 export interface ProcessConfig {
+	/** Submitted native transcript row; a missing boundary disables full-turn observation. */
+	transcriptBoundaryId?: string;
 	sessionId: string;
+	pianolaDispatchId?: string;
+	/** Owning desktop queue consumer only; host releases and claims within this spawn request. */
+	pianolaQueueItemId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;

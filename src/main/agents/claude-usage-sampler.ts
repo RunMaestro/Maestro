@@ -106,11 +106,12 @@ export interface SampleUsageOptions {
 // `resets_at` is optional per window - claude paints no "Resets ..." row for a
 // window with nothing running in it, and rejecting the envelope over that
 // discarded the panel's real percentages (see the parser's module docblock).
+// `session` is optional too: claude 2.1.317 stopped painting the 5-hour window.
 interface StatusWireEnvelope {
 	type: 'status';
 	auth_state?: 'authenticated' | 'unauthenticated';
 	config_dir: string;
-	session: { percent: number; resets_at?: string };
+	session?: { percent: number; resets_at?: string };
 	week_all_models: { percent: number; resets_at?: string };
 	/** `unread` marks the parser's 0% placeholder for a section it could not read. */
 	week_sonnet_only: { percent: number; resets_at?: string; label?: string; unread?: true };
@@ -293,7 +294,7 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 		...(identity?.email ? { accountEmail: identity.email } : {}),
 		...(identity?.accountUuid ? { accountUuid: identity.accountUuid } : {}),
 		...(identity?.organizationName ? { organizationName: identity.organizationName } : {}),
-		session: toStoreWindow(parsed.session),
+		...(parsed.session ? { session: toStoreWindow(parsed.session) } : {}),
 		weekAllModels: toStoreWindow(parsed.week_all_models),
 		weekSonnetOnly: parsed.week_sonnet_only.unread
 			? keepLastSecondaryWeekReading(configDirKey, parsed.week_sonnet_only)
@@ -389,8 +390,12 @@ function isStatusWireEnvelope(obj: unknown): obj is StatusWireEnvelope {
 	) {
 		return false;
 	}
+	// The session window may be absent (no 5-hour bar on the panel), but when
+	// present it must be well-formed like the other two.
 	return (
-		isWireWindow(e.session) && isWireWindow(e.week_all_models) && isWireWindow(e.week_sonnet_only)
+		(e.session === undefined || isWireWindow(e.session)) &&
+		isWireWindow(e.week_all_models) &&
+		isWireWindow(e.week_sonnet_only)
 	);
 }
 

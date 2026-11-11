@@ -28,6 +28,7 @@ import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 import { revealAgentInSidebar } from '../../services/agentNavigation';
 import { buildSessionJumpSlotMap } from '../../utils/sessionJumpSlots';
+import { isImeComposing } from '../../utils/ime';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
@@ -89,6 +90,15 @@ import {
 	buildSessionManagementCommands,
 } from './commands/sessionCommands';
 import { buildStarredSessionCommands } from './commands/starredSessionCommands';
+import { buildFederationCommands } from './commands/federationCommands';
+import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
+import { canMoveToHost, isPeerFederated } from '../../utils/peerMirrorView';
+import { copyPeerAgentRef, reconnectPeer } from '../../services/peerMirror';
+import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
+import {
+	useAgentFederationStatus,
+	useLiftedMirrorTarget,
+} from '../../hooks/federation/useAgentLift';
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
 import { buildTabGroupCommands } from './commands/tabGroupCommands';
@@ -110,7 +120,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		sessions,
 		visibleSessions: visibleSessionsProp,
 		setSessions,
-		activeSessionId,
+		activeSessionId: localActiveSessionId,
 		groups,
 		setGroups,
 		shortcuts,
@@ -444,6 +454,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const modalRef = useRef<HTMLDivElement>(null);
 	const resetSelectionToFirstRef = useRef<() => void>(() => {});
 	const resetSelectionToFirst = useCallback(() => resetSelectionToFirstRef.current(), []);
+	// While a Federation peer's mirrored agent is on screen the local active agent is hidden, not
+	// gone. Resolve NO active agent then, so every builder below bails out of its agent commands
+	// (rename, move, tabs, git, context, ...) instead of acting on an agent the user cannot see.
+	const mirrorShown = usePeerMirrorStore((s) => s.activeMirror !== null);
+	const activeSessionId = mirrorShown ? '' : localActiveSessionId;
 	const activeSession = sessions.find((s) => s.id === activeSessionId);
 	// The group a "Move Group to ..." command carries: a worktree child is filed
 	// under its parent's group, the same unit the window move relocates.
@@ -571,6 +586,38 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const activateStarredItem = useSidebarNavStore((s) => s.activateStarredItem);
 	const starredActions = buildStarredSessionCommands({ starredItems, activateStarredItem });
 
+	const mirrorOrder = usePeerMirrorStore((s) => s.order);
+	const mirrorPeers = usePeerMirrorStore((s) => s.peers);
+	const activeMirror = usePeerMirrorStore((s) => s.activeMirror);
+	const federationStatus = useAgentFederationStatus(activeSession);
+	const liftedTarget = useLiftedMirrorTarget(activeSession?.liftedTo);
+	const federationActions = buildFederationCommands({
+		// Only remotes that run a host: every other SSH remote was probed and is plain SSH.
+		peers: mirrorOrder.flatMap((peerId) =>
+			mirrorPeers[peerId] && isPeerFederated(mirrorPeers[peerId]) ? [mirrorPeers[peerId]] : []
+		),
+		activeMirror,
+		selectMirroredAgent: usePeerMirrorStore.getState().selectMirroredAgent,
+		reconnectPeer,
+		copyPeerAgentRef,
+		// The active LOCAL agent's entries; hidden while the Main Window shows a mirrored one.
+		moveToHost:
+			activeSession && !activeMirror && canMoveToHost(federationStatus)
+				? {
+						sessionId: activeSession.id,
+						agentName: activeSession.name,
+						peerName: federationStatus.peer.name,
+						hostReady: federationStatus.hostReady,
+					}
+				: undefined,
+		requestMoveToHost,
+		liftedTarget: activeMirror ? undefined : liftedTarget,
+		openLiftedAgent: () => {
+			if (activeSession) openLiftedAgent(activeSession);
+		},
+		setQuickActionOpen,
+	});
+
 	const groupChatActions = buildGroupChatJumpCommands({
 		groupChats,
 		onOpenGroupChat,
@@ -581,6 +628,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...sessionActions,
 		...starredActions,
 		...groupChatActions,
+		...federationActions,
 		...buildMediaPlayerCommands({
 			canOpenMediaPlayer,
 			openMediaPlayer,
@@ -788,6 +836,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				focusActiveTab: shortcuts.focusActiveTab,
 				clearTerminal: shortcuts.clearTerminal,
 				openModelEffort: shortcuts.openModelEffort,
+				toggleMessagePins: shortcuts.toggleMessagePins,
 			},
 			tabShortcuts,
 			toggleInputMode,
@@ -810,6 +859,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		}),
 		...buildFeatureCommands({
 			activeSession,
+			activeGroupChatId,
 			activeTabType,
 			canSummarizeActiveTab,
 			markdownEditMode,
@@ -866,6 +916,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildActiveTabContextCommands({
 			activeSession,
 			activeSessionId,
+			activeGroupChatId,
 			activeTabType,
 			ghCliAvailable,
 			setSessions,
@@ -1130,10 +1181,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		// Handle rename mode separately
 		if (renamingSession) {
-			if (e.key === 'Enter') {
+			if (e.key === 'Enter' && !isImeComposing(e)) {
 				e.preventDefault();
 				handleRenameSession();
-			} else if (e.key === 'Escape') {
+			} else if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();
 				setRenamingSession(false);
 			}
@@ -1144,10 +1195,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		// the command list. Handled here so neither the list nav nor the modal's
 		// Escape-to-close fires while the input is focused.
 		if (renamingWindow) {
-			if (e.key === 'Enter') {
+			if (e.key === 'Enter' && !isImeComposing(e)) {
 				e.preventDefault();
 				commitRenameCurrentWindow();
-			} else if (e.key === 'Escape') {
+			} else if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();
 				setRenamingWindow(false);
 			}

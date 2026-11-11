@@ -2,12 +2,13 @@
  * Plugins management panel (Settings -> Encore -> Plugins).
  *
  * Lists installed community plugins and lets the user enable/disable, install
- * (by picking a folder that contains a plugin.json), and uninstall them. Reads
+ * (from an archive or a folder that contains plugin.json), and uninstall them. Reads
  * window.maestro.plugins, which is gated in the main process on the `plugins`
  * Encore flag. Tier 0 (data) plugins apply on enable; tier 1 (code) plugins run
  * sandboxed and require permission consent before they are enabled.
  */
 
+import { selectPluginSource } from '../../services/pluginSource';
 import { pluginSettingsId } from '../../../shared/plugins/panel-host';
 import { useState, useEffect, useCallback } from 'react';
 import {
@@ -143,32 +144,38 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 		[applyEnabled]
 	);
 
-	const handleInstall = useCallback(async () => {
-		const dir = await window.maestro.dialog.selectFolder();
-		if (!dir) return;
-		setLoading(true);
-		try {
-			const result = await window.maestro.plugins.install(dir);
-			if (result.success) {
-				notifyToast({
-					color: 'green',
-					title: 'Plugins',
-					message: `Installed ${result.record?.manifest?.name ?? result.record?.id ?? 'plugin'}`,
-				});
-				await load();
-			} else {
-				notifyToast({
-					color: 'orange',
-					title: 'Plugins',
-					message: `Install failed: ${result.error ?? 'unknown error'}`,
-				});
+	const handleInstall = useCallback(
+		async (fromFolder = false) => {
+			const sourcePath = await selectPluginSource(
+				'Install plugin: archive or plugin.json',
+				fromFolder
+			);
+			if (!sourcePath) return;
+			setLoading(true);
+			try {
+				const result = await window.maestro.plugins.install(sourcePath);
+				if (result.success) {
+					notifyToast({
+						color: 'green',
+						title: 'Plugins',
+						message: `Installed ${result.record?.manifest?.name ?? result.record?.id ?? 'plugin'}`,
+					});
+					await load();
+				} else {
+					notifyToast({
+						color: 'orange',
+						title: 'Plugins',
+						message: `Install failed: ${result.error ?? 'unknown error'}`,
+					});
+				}
+			} catch (err) {
+				notifyToast({ color: 'red', title: 'Plugins', message: `Install failed: ${String(err)}` });
+			} finally {
+				setLoading(false);
 			}
-		} catch (err) {
-			notifyToast({ color: 'red', title: 'Plugins', message: `Install failed: ${String(err)}` });
-		} finally {
-			setLoading(false);
-		}
-	}, [load]);
+		},
+		[load]
+	);
 
 	const handleUninstall = useCallback(
 		async (record: PluginRecord) => {
@@ -229,6 +236,14 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 						disabled={loading}
 					>
 						<FolderPlus className="w-3.5 h-3.5" />
+						Install archive
+					</button>
+					<button
+						className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium"
+						style={{ color: theme.colors.textMain }}
+						onClick={() => void handleInstall(true)}
+						disabled={loading}
+					>
 						Install from folder
 					</button>
 				</div>
@@ -238,7 +253,7 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 				<div className="text-xs italic py-4 text-center" style={{ color: theme.colors.textDim }}>
 					{loading
 						? 'Loading...'
-						: 'No plugins installed. Install one from a folder to get started.'}
+						: 'No plugins installed. Install an archive or folder to get started.'}
 				</div>
 			) : (
 				<div className="flex flex-col gap-2">

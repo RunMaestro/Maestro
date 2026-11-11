@@ -1,3 +1,4 @@
+import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import { ipcRenderer } from 'electron';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
@@ -20,9 +21,15 @@ export function createQueueRemoteApi() {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				dispatchCallback?: boolean,
+				control?: PianolaQueueControl
 			) => void
 		): (() => void) => {
+			/**
+			 * Forward queue IPC arguments including held state and admission control. On synchronous
+			 * callback failure, send an explicit unsuccessful response and propagate the error.
+			 */
 			const handler = (
 				_: unknown,
 				sessionId: string,
@@ -33,7 +40,9 @@ export function createQueueRemoteApi() {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				dispatchCallback?: boolean,
+				control?: PianolaQueueControl
 			) => {
 				try {
 					callback(
@@ -45,7 +54,9 @@ export function createQueueRemoteApi() {
 						images,
 						background,
 						held,
-						mentionRouting
+						mentionRouting,
+						dispatchCallback,
+						control
 					);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, { success: false });

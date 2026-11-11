@@ -2,9 +2,7 @@
 
 import { EventEmitter } from 'events';
 import * as path from 'path';
-import * as fs from 'fs';
 import * as os from 'os';
-import { randomUUID } from 'crypto';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
@@ -15,10 +13,18 @@ import { StdoutHandler } from '../handlers/StdoutHandler';
 import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
 import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder';
-import { buildPromptArgv } from '../../../shared/maestro-lib/launch/prompt-delivery';
+import {
+	buildPromptArgv,
+	promptExceedsArgvLimit,
+} from '../../../shared/maestro-lib/launch/prompt-delivery';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { readClaudeTurnBaseline } from '../../../shared/claudeCostTracker';
-import { saveImageToTempFile, buildImagePromptPrefix, cleanupTempFiles } from '../utils/imageUtils';
+import {
+	saveImageToTempFile,
+	savePromptToTempFile,
+	buildImagePromptPrefix,
+	cleanupTempFiles,
+} from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { stripNulBytesFromArgs } from '../utils/argvNulBytes';
 import { isPowerShellShell } from '../utils/shellEscape';
@@ -55,6 +61,9 @@ const WINDOWS_SHELL_LOG_MESSAGES: Record<WindowsShellReason, string> = {
 	'batch-file': '[ProcessManager] Auto-enabling shell for Windows to spawn batch-file command',
 	'shebang-script': '[ProcessManager] Auto-enabling shell for Windows to execute shell script',
 };
+
+/** Prompts longer than this go through a file on Windows; well under PowerShell's ~32K argv cap. */
+const PROMPT_FILE_THRESHOLD_CHARS = 24_000;
 
 /**
  * Handles spawning of child processes (non-PTY).
@@ -102,17 +111,51 @@ export class ChildProcessSpawner {
 			imageArgs,
 			imagePromptBuilder,
 			promptArgs,
+			promptFileArgs,
 			contextWindow,
 			ompModelCatalogKey,
 			customEnvVars,
 			shellEnvVars,
 			noPromptSeparator,
 			sendPromptViaStdin,
-			sendPromptViaStdinRaw,
 		} = config;
 
 		const hasImages = images && images.length > 0;
 		const capabilities = getAgentCapabilities(toolType);
+		const promptArtifact = config.promptArtifact ? { ...config.promptArtifact } : undefined;
+		if (promptArtifact) {
+			const remote = promptArtifact.owner === 'remote';
+			let fileArgs: string[] | undefined;
+			try {
+				if (!remote) fileArgs = getAgentDefinition(toolType)?.promptFileArgs?.(promptArtifact.path);
+			} catch {
+				return { pid: -1, success: false, error: 'Prompt-file arguments could not be validated.' };
+			}
+			if (
+				remote
+					? !config.sshStdinScript ||
+						!config.sshRemoteId ||
+						promptArtifact.sshRemoteId !== config.sshRemoteId ||
+						!sshConnectionArgs(args)
+					: !!config.sshRemoteId ||
+						!!config.sshStdinScript ||
+						!fileArgs?.length ||
+						fileArgs.length > args.length ||
+						!fileArgs.every((arg, index) => args[args.length - fileArgs.length + index] === arg)
+			) {
+				return {
+					pid: -1,
+					success: false,
+					error: 'Prompt-file delivery does not match its host plan.',
+				};
+			}
+		} else if (getAgentDefinition(toolType)?.promptFile && (prompt !== undefined || hasImages)) {
+			return {
+				pid: -1,
+				success: false,
+				error: 'Explicit prompt-file delivery must be planned before child spawning.',
+			};
+		}
 
 		// Check if prompt will be sent via stdin instead of command line
 		// This is critical for SSH remote execution to avoid shell escaping issues
@@ -128,6 +171,39 @@ export class ChildProcessSpawner {
 		const argsHaveInputStreamJson = args.some(
 			(arg, i) => arg === 'stream-json' && i > 0 && args[i - 1] === '--input-format'
 		);
+
+		// The launch plan (`resolvePromptDelivery`) already moves an over-limit
+		// prompt to stdin. This is the safety net for a caller that skips it: on
+		// Linux and macOS a prompt past the argv limit (a long group chat history,
+		// a big Cue payload) fails the spawn with E2BIG (MAESTRO-VR), so send it as
+		// raw stdin instead when the agent reads its prompt there. Local spawns
+		// only: an SSH spawn's prompt belongs to the remote command or script.
+		const promptTooLongForArgv =
+			!!prompt &&
+			!hasImages &&
+			!isWindows() &&
+			!sendPromptViaStdin &&
+			!argsHaveInputStreamJson &&
+			!config.sendPromptViaStdinRaw &&
+			!config.promptAlreadyInArgs &&
+			!config.sshStdinScript &&
+			!config.sshRemoteCommand &&
+			!config.sshRemoteId &&
+			capabilities.supportsPromptViaStdin &&
+			promptExceedsArgvLimit(prompt, false);
+		const sendPromptViaStdinRaw = !!config.sendPromptViaStdinRaw || promptTooLongForArgv;
+		if (promptTooLongForArgv) {
+			logger.info(
+				'[ProcessManager] Prompt too long for argv, sending via stdin',
+				'ProcessManager',
+				{
+					sessionId,
+					toolType,
+					promptLength: prompt?.length,
+				}
+			);
+		}
+
 		const promptViaStdin = sendPromptViaStdin || sendPromptViaStdinRaw || argsHaveInputStreamJson;
 
 		// Build final args based on batch mode and images
@@ -135,12 +211,42 @@ export class ChildProcessSpawner {
 		let finalArgs: string[];
 		let tempFiles: string[] = [];
 		// effectivePrompt may be modified (e.g., image path prefix prepended for resume mode)
-		let effectivePrompt = prompt;
+		let effectivePrompt = promptArtifact ? undefined : prompt;
 		// If the caller pre-embedded the prompt in args (e.g., SSH tab naming wraps it
 		// inside bash -c), skip the appending paths below and treat it as already-added.
 		let promptAddedToArgs = !!config.promptAlreadyInArgs;
 
-		if (hasImages && prompt && capabilities.supportsStreamJsonInput) {
+		const deliverPromptFile = promptFileArgs ?? getAgentDefinition(toolType)?.promptFileArgs;
+		const appendPromptArgs = (text: string): void => {
+			// File-backed delivery avoids Windows' argv limit, including image turns.
+			const promptFilePath =
+				isWindows() && deliverPromptFile && text.length > PROMPT_FILE_THRESHOLD_CHARS
+					? savePromptToTempFile(text)
+					: null;
+			if (promptFilePath && deliverPromptFile) {
+				tempFiles.push(promptFilePath);
+				finalArgs = [...finalArgs, ...deliverPromptFile(promptFilePath)];
+				logger.info(
+					'[ProcessManager] Delivering long prompt through a temp file',
+					'ProcessManager',
+					{
+						sessionId,
+						toolType,
+						promptLength: text.length,
+					}
+				);
+			} else {
+				finalArgs = [...finalArgs, ...buildPromptArgv({ promptArgs, noPromptSeparator }, text)];
+			}
+			promptAddedToArgs = true;
+		};
+
+		if (promptArtifact) {
+			// The canonical plan already owns the complete content and file argv.
+			// No image files, stdin prompt or legacy Windows attachment may compete.
+			finalArgs = [...args];
+			promptAddedToArgs = true;
+		} else if (hasImages && prompt && capabilities.supportsStreamJsonInput) {
 			// For agents that support stream-json input (like Claude Code)
 			// Always add --input-format stream-json when sending images via stdin.
 			// This flag is required for Claude Code to parse the JSON+base64 message
@@ -174,11 +280,7 @@ export class ChildProcessSpawner {
 					: buildImagePromptPrefix(tempFiles);
 				effectivePrompt = imagePrefix + prompt;
 				if (!promptViaStdin) {
-					finalArgs = [
-						...finalArgs,
-						...buildPromptArgv({ promptArgs, noPromptSeparator }, effectivePrompt),
-					];
-					promptAddedToArgs = true;
+					appendPromptArgs(effectivePrompt);
 				}
 				logger.debug('[ProcessManager] Embedded image paths in prompt', 'ProcessManager', {
 					sessionId,
@@ -196,8 +298,7 @@ export class ChildProcessSpawner {
 					finalArgs = [...finalArgs, ...imageArgs(tempPath)];
 				}
 				if (!promptViaStdin) {
-					finalArgs = [...finalArgs, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
-					promptAddedToArgs = true;
+					appendPromptArgs(prompt);
 				}
 				logger.debug('[ProcessManager] Using file-based image args', 'ProcessManager', {
 					sessionId,
@@ -207,11 +308,8 @@ export class ChildProcessSpawner {
 				});
 			}
 		} else if (prompt && !promptViaStdin && !promptAddedToArgs) {
-			// Regular batch mode - prompt as CLI arg
-			// SKIP this when prompt is sent via stdin to avoid shell escaping issues,
-			// or when the caller already embedded the prompt in args (promptAlreadyInArgs).
-			finalArgs = [...args, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
-			promptAddedToArgs = true;
+			finalArgs = args;
+			appendPromptArgs(prompt);
 		} else {
 			finalArgs = args;
 		}
@@ -257,29 +355,6 @@ export class ChildProcessSpawner {
 		});
 
 		try {
-			// OMP expands @file attachments, including on resume. Keep its full prompt
-			// out of the Windows command line without assuming stdin support.
-			const promptFileArgs = getAgentDefinition(toolType)?.promptFileArgs;
-			if (
-				isWindows() &&
-				effectivePrompt &&
-				promptAddedToArgs &&
-				promptFileArgs &&
-				!config.sshStdinScript &&
-				!config.promptAlreadyInArgs
-			) {
-				const promptFile = path.join(os.tmpdir(), 'maestro-prompt-' + randomUUID() + '.txt');
-				tempFiles.push(promptFile);
-				fs.writeFileSync(promptFile, effectivePrompt, {
-					encoding: 'utf8',
-					mode: 0o600,
-					flag: 'wx',
-				});
-				// `--` makes OMP treat @file as a literal message, not an attachment.
-				const promptOffset = finalArgs.at(-2) === '--' ? 2 : 1;
-				finalArgs = [...finalArgs.slice(0, -promptOffset), ...promptFileArgs(promptFile)];
-			}
-
 			// Build environment
 			const isResuming = argsResumeSession(args);
 			const env = buildChildProcessEnv(
@@ -357,7 +432,7 @@ export class ChildProcessSpawner {
 				promptArgLength: prompt ? spawnArgs[spawnArgs.length - 1]?.length : undefined,
 			});
 
-			const isBatchMode = !!prompt;
+			const isBatchMode = !!promptArtifact || !!prompt;
 			// Detect JSON streaming mode from args or config flag
 			// IMPORTANT: SSH stdin script mode (sshStdinScript) MUST enable stream-json parsing
 			// because the SSH command wraps the actual agent command. Without this, the output
@@ -423,19 +498,23 @@ export class ChildProcessSpawner {
 			//   mode with nothing to write leaves it open for `ProcessManager.write()`.
 			// A stdin-script SSH spawn records the remote agent's pid so Stop can
 			// reach it: signalling only the local ssh client leaves it running.
+			const remoteArtifactPath =
+				promptArtifact?.owner === 'remote' ? promptArtifact.path : undefined;
 			const sshRemotePidFile =
-				config.sshStdinScript && sshConnectionArgs(finalArgs) ? newRemotePidFilePath() : undefined;
+				config.sshStdinScript && sshConnectionArgs(finalArgs)
+					? newRemotePidFilePath(remoteArtifactPath !== undefined)
+					: undefined;
 
 			let stdinText: string | undefined;
 			if (config.sshStdinScript) {
 				stdinText = sshRemotePidFile
-					? withRemotePidRecord(config.sshStdinScript, sshRemotePidFile)
+					? withRemotePidRecord(config.sshStdinScript, sshRemotePidFile, remoteArtifactPath)
 					: config.sshStdinScript;
 				logger.debug('[ProcessManager] Sending SSH stdin script', 'ProcessManager', {
 					sessionId,
 					scriptLength: config.sshStdinScript.length,
 				});
-			} else if (config.sendPromptViaStdinRaw && effectivePrompt) {
+			} else if (sendPromptViaStdinRaw && effectivePrompt) {
 				stdinText = effectivePrompt;
 				logger.debug('[ProcessManager] Sending raw prompt via stdin', 'ProcessManager', {
 					sessionId,
@@ -474,6 +553,7 @@ export class ChildProcessSpawner {
 					env,
 					stdin: stdinText,
 					shell: spawnShell,
+					...(promptArtifact?.owner === 'local' ? { promptArtifact } : {}),
 				},
 				{
 					onStdout: (output) => {
@@ -483,10 +563,13 @@ export class ChildProcessSpawner {
 						try {
 							this.emitter.emit('raw-stdout', sessionId, output);
 						} catch (err) {
-							void captureException(err);
+							const reported = promptArtifact
+								? new Error('Prompt-file output listener failed.')
+								: err;
+							void captureException(reported);
 							logger.error('[ProcessManager] raw-stdout listener error', 'ProcessManager', {
 								sessionId,
-								error: String(err),
+								error: String(reported),
 							});
 						}
 						this.stdoutHandler.handleData(sessionId, output);
@@ -530,7 +613,7 @@ export class ChildProcessSpawner {
 				} else {
 					logger.error('[ProcessManager] stdin error', 'ProcessManager', {
 						sessionId,
-						error: String(err),
+						error: promptArtifact ? 'Prompt-file process stdin failed.' : String(err),
 						code: errorCode,
 					});
 				}
@@ -538,13 +621,13 @@ export class ChildProcessSpawner {
 			childProcess.stdout?.on('error', (err) => {
 				logger.error('[ProcessManager] stdout error', 'ProcessManager', {
 					sessionId,
-					error: String(err),
+					error: promptArtifact ? 'Prompt-file process stdout failed.' : String(err),
 				});
 			});
 			childProcess.stderr?.on('error', (err) => {
 				logger.error('[ProcessManager] stderr error', 'ProcessManager', {
 					sessionId,
-					error: String(err),
+					error: promptArtifact ? 'Prompt-file process stderr failed.' : String(err),
 				});
 			});
 
@@ -588,14 +671,17 @@ export class ChildProcessSpawner {
 				ompModelCatalogKey,
 				tempFiles: tempFiles.length > 0 ? tempFiles : undefined,
 				command,
-				args: finalArgs,
+				// Local argv is display metadata here; withhold the private file path.
+				// Remote argv only names SSH and is retained for the existing stop owner.
+				args: promptArtifact?.owner === 'local' ? [] : finalArgs,
 				querySource: config.querySource,
 				tabId: config.tabId,
 				projectPath: config.projectPath,
 				sshRemoteId: config.sshRemoteId,
 				sshRemoteHost: config.sshRemoteHost,
-				sshRemoteCommand: config.sshRemoteCommand,
+				sshRemoteCommand: promptArtifact ? undefined : config.sshRemoteCommand,
 				sshRemotePidFile,
+				sshRemotePromptArtifactPath: remoteArtifactPath,
 				// Seed from config on resume. Copilot emits `session.resume`
 				// (no sessionId) instead of `session.start` when --resume=<id>
 				// is set, so StdoutHandler can't populate this from the stream
@@ -709,21 +795,53 @@ export class ChildProcessSpawner {
 					: {
 							exitCode: 1,
 							signal: null,
+							interrupted: false,
 							spawnError: undefined,
 							stdinError: undefined,
 						};
+				if (
+					remoteArtifactPath &&
+					sshRemotePidFile &&
+					(isSuperseded() ||
+						managedProcess.interrupted ||
+						exit.interrupted ||
+						exit.spawnError ||
+						exit.stdinError ||
+						(exit.exitCode ?? 0) !== 0 ||
+						exit.signal)
+				) {
+					signalRemoteAgent(
+						{
+							sshCommand: command,
+							sshArgs: finalArgs,
+							pidFile: sshRemotePidFile,
+							sessionId,
+							promptArtifactPath: remoteArtifactPath,
+						},
+						'terminate'
+					);
+				}
 				if (isSuperseded()) {
+					// Release only this generation's files, never the current map entry's.
 					logger.warn('[ProcessManager] Ignoring exit from superseded process', 'ProcessManager', {
 						sessionId,
 						pid: childProcess.pid,
 						exitCode: exit.exitCode,
-						error: exit.spawnError ? String(exit.spawnError) : undefined,
+						error: exit.spawnError
+							? promptArtifact
+								? 'Prompt-file process failed to start.'
+								: String(exit.spawnError)
+							: undefined,
 					});
 					cleanupTempFiles(managedProcess.tempFiles ?? []);
+					managedProcess.tempFiles = undefined;
 					return;
 				}
 				if (exit.spawnError) {
-					this.exitHandler.handleError(sessionId, exit.spawnError);
+					this.exitHandler.handleError(
+						sessionId,
+						promptArtifact ? new Error('Prompt-file process failed to start.') : exit.spawnError
+					);
 					return;
 				}
 				// The local ssh client failed on its own (a dropped connection, a dead
@@ -734,6 +852,7 @@ export class ChildProcessSpawner {
 				// signalled the remote; a finished agent leaves nothing to signal.
 				if (
 					sshRemotePidFile &&
+					!remoteArtifactPath &&
 					!managedProcess.interrupted &&
 					((exit.exitCode ?? 0) !== 0 || exit.signal)
 				) {
@@ -778,12 +897,23 @@ export class ChildProcessSpawner {
 				};
 				if (supervisionFailure) this.emitter.prependListener('exit', onSupervisedExit);
 				return this.exitHandler
-					.handleExit(sessionId, exit.exitCode || 0, managedProcess, exit.signal, exit.stdinError)
+					.handleExit(
+						sessionId,
+						exit.exitCode || 0,
+						managedProcess,
+						exit.signal,
+						promptArtifact && exit.stdinError
+							? new Error('Prompt-file process input failed.')
+							: exit.stdinError
+					)
 					.catch((err) => {
-						void captureException(err);
+						const reported = promptArtifact
+							? new Error('Prompt-file process settlement failed.')
+							: err;
+						void captureException(reported);
 						logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
 							sessionId,
-							error: String(err),
+							error: String(reported),
 						});
 						// handleExit releases the entry immediately before emitting `exit`,
 						// so an entry that is still ours means it threw before getting there.
@@ -817,7 +947,13 @@ export class ChildProcessSpawner {
 						// working would put a second writer on the session next turn.
 						if (sshRemotePidFile) {
 							signalRemoteAgent(
-								{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
+								{
+									sshCommand: command,
+									sshArgs: finalArgs,
+									pidFile: sshRemotePidFile,
+									sessionId,
+									promptArtifactPath: remoteArtifactPath,
+								},
 								'terminate'
 							);
 						}
@@ -826,15 +962,18 @@ export class ChildProcessSpawner {
 
 			return { pid: childProcess.pid || -1, success: !!childProcess.pid };
 		} catch (error) {
-			void captureException(error);
-			logger.error('[ProcessManager] Failed to spawn process', 'ProcessManager', {
-				error: String(error),
-			});
 			cleanupTempFiles(tempFiles);
+			const reported = promptArtifact
+				? new Error('Prompt-file process could not be started.')
+				: error;
+			void captureException(reported);
+			logger.error('[ProcessManager] Failed to spawn process', 'ProcessManager', {
+				error: String(reported),
+			});
 			return {
 				pid: -1,
 				success: false,
-				error: error instanceof Error ? error.message : String(error),
+				error: reported instanceof Error ? reported.message : String(reported),
 			};
 		}
 	}

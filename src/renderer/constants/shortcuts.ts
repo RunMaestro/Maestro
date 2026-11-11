@@ -166,6 +166,11 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Meta', 'Shift', 'y'],
 	},
 	toggleTabStar: { id: 'toggleTabStar', label: 'Toggle Tab Star', keys: ['Meta', 'Shift', 's'] },
+	toggleMessagePins: {
+		id: 'toggleMessagePins',
+		label: 'Toggle Pinned Messages',
+		keys: ['Control', 'Meta', 'p'],
+	},
 	openPromptComposer: {
 		id: 'openPromptComposer',
 		label: 'Open Prompt Composer',

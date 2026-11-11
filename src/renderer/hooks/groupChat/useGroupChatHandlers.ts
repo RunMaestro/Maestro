@@ -355,14 +355,12 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		const unsubModeratorUsage = window.maestro.groupChat.onModeratorUsage?.((id, usage) => {
 			if (id === activeGroupChatId) {
 				// When contextUsage is -1, tokens were accumulated from multi-tool turns.
-				// Preserve previous context/token values; only update cost.
-				if (usage.contextUsage < 0) {
-					setModeratorUsage((prev) =>
-						prev
-							? { ...prev, totalCost: usage.totalCost }
-							: { contextUsage: 0, totalCost: usage.totalCost, tokenCount: 0 }
-					);
+				// Preserve previous context/token values, including unavailable ones; only update cost.
+				// Without a previous observation, keep usage unavailable rather than inventing zero.
+				if (usage.contextUsage === -1) {
+					setModeratorUsage((prev) => (prev ? { ...prev, totalCost: usage.totalCost } : usage));
 				} else {
+					// Unknown-window observations (-2) replace any stale measurement.
 					setModeratorUsage(usage);
 				}
 			}

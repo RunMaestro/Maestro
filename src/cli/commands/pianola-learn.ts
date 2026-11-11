@@ -1,8 +1,8 @@
 /**
  * Pianola learn CLI command.
  *
- * `pianola learn` crawls the installed CLIs' native transcripts (Claude Code +
- * Codex) into a labeled decision corpus: every awaiting-input moment paired with
+ * `pianola learn` crawls the installed CLIs' native transcripts (Claude Code,
+ * Codex and Grok) into a labeled decision corpus: every awaiting-input moment paired with
  * how the user actually replied, classified via the shared brain. This is the raw
  * material Pianola synthesizes its decision profile and hard-rule suggestions
  * from. Split out of pianola.ts (the watcher shell) so each command file stays
@@ -18,12 +18,20 @@ import {
 	parseCodexTranscriptLine,
 	parseClaudeCwd,
 	parseCodexCwd,
+	parseGrokTranscriptLine,
+	parseGrokCwdFromSessionDir,
 	extractDecisionPairs,
 	aggregateDecisionPairs,
+	GROK_PERMISSION_DECISIONS_UNSUPPORTED,
 	type DecisionPair,
 	type TranscriptAgent,
 } from '../../shared/pianola/transcript-mining';
 import type { PianolaMessage } from '../../shared/pianola/types';
+import { resolveAgentAccountDir } from '../../shared/agentAccountDir';
+import { getProviderProfileConfig } from '../../shared/providerProfiles';
+
+const LEARN_AGENTS: readonly TranscriptAgent[] = ['claude-code', 'codex', 'grok'];
+const GROK_TRANSCRIPT_FILE = 'chat_history.jsonl';
 
 const LEARN_MAX_FILE_BYTES = 50 * 1024 * 1024; // skip transcripts larger than 50 MB
 const LEARN_DEFAULT_SESSION_LIMIT = 300; // per agent, newest first
@@ -81,8 +89,41 @@ function readTranscriptLines(file: string): string[] | null {
 	}
 }
 
+/**
+ * The sessions root of the Grok account this process runs as: `GROK_HOME` when
+ * set (blank selects the default), else `~/.grok`, by the same resolver the
+ * launch path uses, joined with the provider's sessions folder.
+ */
+function grokSessionsRoot(home: string): string {
+	const accountDir =
+		resolveAgentAccountDir({ toolType: 'grok' }, { env: process.env, homeDir: home }) ??
+		path.join(home, '.grok');
+	return path.join(accountDir, getProviderProfileConfig('grok')?.sessionsSubdir ?? 'sessions');
+}
+
+/**
+ * Mine one Grok session transcript. The layout is
+ * `<sessions>/<percent-encoded cwd>/<session id>/chat_history.jsonl`, so the
+ * session id and project path come from the two parent folder names.
+ */
+function minePairsFromGrokFile(file: string): DecisionPair[] {
+	const lines = readTranscriptLines(file);
+	if (!lines) return [];
+	const sessionDir = path.dirname(file);
+	const sessionId = path.basename(sessionDir);
+	const projectPath = parseGrokCwdFromSessionDir(path.basename(path.dirname(sessionDir)));
+	const messages: PianolaMessage[] = [];
+	lines.forEach((line, index) => {
+		const parsed = parseGrokTranscriptLine(line, index + 1);
+		if (parsed) messages.push(parsed);
+	});
+	if (messages.length === 0) return [];
+	return extractDecisionPairs(messages, { agent: 'grok', sessionId, projectPath });
+}
+
 /** Mine one transcript file into decision pairs using the per-agent parser. */
 function minePairsFromFile(agent: TranscriptAgent, file: string): DecisionPair[] {
+	if (agent === 'grok') return minePairsFromGrokFile(file);
 	const lines = readTranscriptLines(file);
 	if (!lines) return [];
 	const sessionId = path.basename(file, '.jsonl');
@@ -116,10 +157,11 @@ export function pianolaLearn(options: PianolaLearnOptions): void {
 		.filter(Boolean);
 	const agents: TranscriptAgent[] = [];
 	for (const a of requested) {
-		if ((a === 'claude-code' || a === 'codex') && !agents.includes(a)) agents.push(a);
+		const known = LEARN_AGENTS.find((agent) => agent === a);
+		if (known && !agents.includes(known)) agents.push(known);
 	}
 	if (agents.length === 0) {
-		const message = '--agent must include claude-code and/or codex';
+		const message = '--agent must include claude-code, codex and/or grok';
 		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
 		else console.error(message);
 		process.exit(1);
@@ -149,18 +191,32 @@ export function pianolaLearn(options: PianolaLearnOptions): void {
 
 	const home = os.homedir();
 	const allPairs: DecisionPair[] = [];
-	const scanned: Record<string, { files: number; sessionsWithDecisions: number }> = {};
+	const scanned: Record<
+		string,
+		{
+			files: number;
+			sessionsWithDecisions: number;
+			unsupported?: { code: string; reason: string }[];
+		}
+	> = {};
 
 	for (const agent of agents) {
 		const dir =
 			agent === 'claude-code'
 				? path.join(home, '.claude', 'projects')
-				: path.join(home, '.codex', 'sessions');
+				: agent === 'grok'
+					? grokSessionsRoot(home)
+					: path.join(home, '.codex', 'sessions');
 		const match =
 			agent === 'claude-code'
 				? (n: string): boolean => n.endsWith('.jsonl')
-				: (n: string): boolean => /^rollout-.*\.jsonl$/i.test(n);
+				: agent === 'grok'
+					? (n: string): boolean => n === GROK_TRANSCRIPT_FILE
+					: (n: string): boolean => /^rollout-.*\.jsonl$/i.test(n);
 		const files = collectTranscriptFiles(dir, match)
+			// A Grok transcript sits exactly at <cwd>/<id>/chat_history.jsonl; a
+			// copy deeper in a session's runtime folders is not the live history.
+			.filter((f) => agent !== 'grok' || path.relative(dir, f.path).split(path.sep).length === 3)
 			.filter((f) => f.mtime >= sinceMs)
 			.sort((a, b) => b.mtime - a.mtime)
 			.slice(0, sessionLimit);
@@ -179,7 +235,14 @@ export function pianolaLearn(options: PianolaLearnOptions): void {
 			if (pairs.length > 0) sessionsWithDecisions += 1;
 			allPairs.push(...pairs);
 		}
-		scanned[agent] = { files: files.length, sessionsWithDecisions };
+		scanned[agent] =
+			agent === 'grok'
+				? {
+						files: files.length,
+						sessionsWithDecisions,
+						unsupported: [{ ...GROK_PERMISSION_DECISIONS_UNSUPPORTED }],
+					}
+				: { files: files.length, sessionsWithDecisions };
 	}
 
 	const aggregates = aggregateDecisionPairs(allPairs);

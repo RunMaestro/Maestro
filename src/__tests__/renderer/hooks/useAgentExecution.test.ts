@@ -5,8 +5,11 @@ import type { Session, AITab, UsageStats, QueuedItem } from '../../../renderer/t
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
-import { observeEffortRejection } from '../../../renderer/services/effortRejection';
-import { resetEffortRejections } from '../../../shared/effortRejection';
+import {
+	isEffortFallbackArmed,
+	observeEffortRejection,
+} from '../../../renderer/services/effortRejection';
+import { getEffortRejection, resetEffortRejections } from '../../../shared/effortRejection';
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -46,6 +49,8 @@ describe('useAgentExecution', () => {
 		onUsage: vi.fn(),
 		onExit: vi.fn(),
 		onAgentError: vi.fn(),
+		onToolExecution: vi.fn(),
+		onThinkingChunk: vi.fn(),
 	};
 
 	let onDataHandler: ((sid: string, data: string) => void) | undefined;
@@ -53,6 +58,8 @@ describe('useAgentExecution', () => {
 	let onUsageHandler: ((sid: string, usage: UsageStats) => void) | undefined;
 	let onExitHandler: ((sid: string) => void) | undefined;
 	let onAgentErrorHandler: ((sid: string, error: { message: string }) => void) | undefined;
+	let onToolExecutionHandler: ((sid: string, toolEvent: unknown) => void) | undefined;
+	let onThinkingChunkHandler: ((sid: string, content: string) => void) | undefined;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -62,6 +69,8 @@ describe('useAgentExecution', () => {
 		onUsageHandler = undefined;
 		onExitHandler = undefined;
 		onAgentErrorHandler = undefined;
+		onToolExecutionHandler = undefined;
+		onThinkingChunkHandler = undefined;
 
 		mockProcess.spawn.mockResolvedValue(undefined);
 		mockProcess.onData.mockImplementation((handler: (sid: string, data: string) => void) => {
@@ -85,6 +94,18 @@ describe('useAgentExecution', () => {
 		mockProcess.onAgentError.mockImplementation(
 			(handler: (sid: string, error: { message: string }) => void) => {
 				onAgentErrorHandler = handler;
+				return () => {};
+			}
+		);
+		mockProcess.onToolExecution.mockImplementation(
+			(handler: (sid: string, toolEvent: unknown) => void) => {
+				onToolExecutionHandler = handler;
+				return () => {};
+			}
+		);
+		mockProcess.onThinkingChunk.mockImplementation(
+			(handler: (sid: string, content: string) => void) => {
+				onThinkingChunkHandler = handler;
 				return () => {};
 			}
 		);
@@ -1106,6 +1127,61 @@ describe('useAgentExecution', () => {
 			expect(res.errorKind).toBe('watchdog-stalled');
 		});
 
+		// #1962: stream-json providers (Claude Code) emit `data` only for the final
+		// result, so mid-turn tool calls, thinking and usage must count as activity
+		// or the silence watchdog becomes a wall-clock limit on busy tasks.
+		it('treats tool executions, thinking chunks and usage as activity for the inactivity watchdog', async () => {
+			vi.useFakeTimers();
+			const mockKill = vi.fn().mockResolvedValue(true);
+			window.maestro.process.kill = mockKill;
+			useSettingsStore.setState({
+				autoRunInactivityTimeoutMin: 1,
+				autoRunMaxTaskDurationMin: 0,
+			} as any);
+
+			const session = createMockSession({ state: 'busy' });
+			const { result } = renderForWatchdog(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Batch task',
+				undefined,
+				{
+					isAutoRun: true,
+				}
+			);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+
+			// No `data` at all, but a non-data event every 45s for 4.5 minutes,
+			// far past the 1-minute silence threshold measured from the start.
+			const pulses = [
+				() =>
+					onToolExecutionHandler?.(targetSessionId, { toolName: 'Bash', timestamp: Date.now() }),
+				() => onThinkingChunkHandler?.(targetSessionId, 'thinking...'),
+				() => onUsageHandler?.(targetSessionId, baseUsage),
+			];
+			for (let i = 0; i < 6; i++) {
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(45 * 1000);
+					pulses[i % pulses.length]();
+				});
+			}
+			expect(mockKill).not.toHaveBeenCalled();
+
+			// Events stop: silence now crosses the threshold and the watchdog fires.
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(75 * 1000);
+			});
+
+			const res = await spawnPromise;
+			expect(mockKill).toHaveBeenCalledWith(targetSessionId);
+			expect(res.errorKind).toBe('watchdog-stalled');
+		});
+
 		it('never starts a watchdog when both inactivity and max-duration are unlimited (0)', async () => {
 			vi.useFakeTimers();
 			const mockKill = vi.fn().mockResolvedValue(true);
@@ -1215,6 +1291,127 @@ describe('useAgentExecution', () => {
 			const outcome = await spawnPromise;
 			expect(outcome.success).toBe(true);
 			expect(outcome.response).toBe('done');
+		});
+
+		it.each([
+			['Auto Run override, equal inherited effort', true, 'LOW', 'low', 1],
+			['Auto Run override, distinct but unqualified fallback', true, 'LOW', 'high', 1],
+			['explicit override', false, 'LOW', 'high', 1],
+			['unknown override provenance', true, 'LOW', undefined, 1],
+			['explicit session effort and zero exit', false, undefined, 'LOW', 0],
+			['provider effort unknown to renderer', true, undefined, undefined, 1],
+		] as const)(
+			'preserves Grok refusal without retry for %s',
+			async (_name, isAutoRun, effortOverride, customEffort, exitCode) => {
+				vi.mocked(window.maestro.agents.get).mockResolvedValue({
+					id: 'grok',
+					command: 'grok',
+					args: [],
+				} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+				const session = createMockSession({
+					toolType: 'grok',
+					customModel: 'grok-test-model',
+					customEffort,
+					customEnvVars: { GROK_HOME: 'synthetic-account' },
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'synthetic-host' },
+				});
+				const unsubscribeError = vi.fn();
+				mockProcess.onAgentError.mockImplementationOnce((handler) => {
+					onAgentErrorHandler = handler;
+					return unsubscribeError;
+				});
+				const { result } = renderExecution(session);
+				const spawnPromise = result.current.spawnAgentForSession(
+					session.id,
+					'Do the task',
+					undefined,
+					{ isAutoRun, effortOverride }
+				);
+				await waitFor(() => expect(mockProcess.spawn).toHaveBeenCalledTimes(1));
+				const first = mockProcess.spawn.mock.calls[0][0];
+				expect(first).toMatchObject({
+					toolType: 'grok',
+					command: 'grok',
+					cwd: session.cwd,
+					sessionCustomModel: session.customModel,
+					sessionCustomEffort: effortOverride ?? customEffort,
+					sessionCustomEnvVars: session.customEnvVars,
+					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					querySource: isAutoRun ? 'auto' : 'user',
+				});
+				// These origins share an API with no hint-provenance or validated-menu
+				// input. Even diagnostic supported values cannot authorize a retry.
+				const nativeError = {
+					agentId: 'grok',
+					message: "--effort/--reasoning-effort: unknown effort level 'LOW'; use one of: high",
+				};
+				expect(isEffortFallbackArmed(first.sessionId)).toBe(false);
+				expect(observeEffortRejection(first.sessionId, nativeError)?.value).toBe('LOW');
+				expect(getEffortRejection('grok', 'low')?.value).toBe('LOW');
+				await act(async () => {
+					onAgentErrorHandler?.('unrelated-process', { message: 'unrelated failure' });
+					onAgentErrorHandler?.(first.sessionId, nativeError);
+					onAgentErrorHandler?.(first.sessionId, { message: 'later generic exit error' });
+					(onExitHandler as (sid: string, code: number) => void)(first.sessionId, exitCode);
+				});
+				expect(await spawnPromise).toMatchObject({
+					success: false,
+					response: '',
+					error: nativeError.message,
+					errorKind: 'process-exit',
+				});
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+				expect(unsubscribeError).toHaveBeenCalledOnce();
+				expect(isEffortFallbackArmed(first.sessionId)).toBe(false);
+			}
+		);
+
+		it('preserves a resumed Grok synopsis refusal without dropping inherited effort', async () => {
+			vi.mocked(window.maestro.agents.get).mockResolvedValue({
+				id: 'grok',
+				command: 'grok',
+				args: [],
+			} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+			const session = createMockSession({ toolType: 'grok' });
+			const config = {
+				customModel: 'grok-test-model',
+				customEffort: 'LOW',
+				customEnvVars: { GROK_HOME: 'synthetic-account' },
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'synthetic-host' },
+			};
+			const { result } = renderExecution(session);
+			const spawnPromise = result.current.spawnBackgroundSynopsis(
+				session.id,
+				session.cwd,
+				'resume-grok',
+				'Summarize session',
+				'grok',
+				config
+			);
+			await waitFor(() => expect(mockProcess.spawn).toHaveBeenCalledTimes(1));
+			const first = mockProcess.spawn.mock.calls[0][0];
+			expect(first).toMatchObject({
+				toolType: 'grok',
+				agentSessionId: 'resume-grok',
+				cwd: session.cwd,
+				sessionCustomModel: config.customModel,
+				sessionCustomEffort: 'LOW',
+				sessionCustomEnvVars: config.customEnvVars,
+				sessionSshRemoteConfig: config.sessionSshRemoteConfig,
+			});
+			expect(isEffortFallbackArmed(first.sessionId)).toBe(false);
+			const nativeError = {
+				agentId: 'grok',
+				message: "--effort/--reasoning-effort: unknown effort level 'LOW'; use one of: high",
+			};
+			observeEffortRejection(first.sessionId, nativeError);
+			await act(async () => {
+				onAgentErrorHandler?.(first.sessionId, nativeError);
+				(onExitHandler as (sid: string, code: number) => void)(first.sessionId, 1);
+			});
+			expect(await spawnPromise).toMatchObject({ success: false, error: nativeError.message });
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			expect(isEffortFallbackArmed(first.sessionId)).toBe(false);
 		});
 
 		it('does not retry a task that sent no effort override', async () => {

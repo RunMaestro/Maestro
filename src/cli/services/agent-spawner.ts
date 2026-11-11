@@ -5,9 +5,12 @@ import { redactSecrets } from '../../shared/redactSecrets';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import type {
 	AdditionalDirectory,
+	AgentError,
 	AgentSshRemoteConfig,
+	SshRemoteConfig,
 	ToolType,
 	UsageStats,
 } from '../../shared/types';
@@ -15,7 +18,10 @@ import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-fact
 import { aggregateModelUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
 import { ClaudeOutputParser } from '../../shared/maestro-lib/parsers/claude-output-parser';
 import { claudeTurnCost, readClaudeTurnBaseline } from '../../shared/claudeCostTracker';
-import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
+import {
+	getAgentDefinition,
+	type AgentDefinition,
+} from '../../shared/maestro-lib/providers/definitions';
 import {
 	getAgentCapabilities,
 	hasCapability,
@@ -25,8 +31,10 @@ import {
 	describeUndeliveredSecrets,
 	type AgentLaunchPlanResult,
 } from '../../shared/maestro-lib/launch/launch-plan';
+import { windowsShellReason } from '../../shared/maestro-lib/launch/windows-command';
 import {
 	resolveSystemPromptDelivery,
+	type PromptFileDestination,
 	type SystemPromptDelivery,
 } from '../../shared/maestro-lib/launch/prompt-delivery';
 import { buildChildProcessEnv } from '../../shared/maestro-lib/launch/env';
@@ -34,8 +42,10 @@ import { checkBinaryExists, checkCustomPath } from '../../shared/maestro-lib/lau
 import { BACKGROUND_STOP_GRACE_MS } from '../../shared/maestro-lib/control/termination';
 import {
 	startTurn,
+	turnProcessSpecFromPlan,
 	DEFAULT_STDERR_TAIL_LIMIT,
 	type StartTurnOptions,
+	type TurnProcessSpec,
 } from '../../shared/maestro-lib/run/start-turn';
 import { TurnCapture, usageReportingFor } from '../../shared/maestro-lib/run/turn-capture';
 import { replaceUsageStats } from '../../shared/maestro-lib/streaming/usage-totals';
@@ -83,6 +93,15 @@ import {
 	type ClaudeSpawnCoreDeps,
 	type PackagedAppHost,
 } from '../../shared/maestro-lib/launch/interactive-mode';
+import {
+	resolveHarnessControlMode,
+	type HarnessControlMode,
+} from '../../shared/maestro-lib/providers/native-control';
+import type {
+	HarnessInteractionRequest,
+	HarnessInteractionResolution,
+} from '../../shared/harness-control/types';
+import { spawnNativeSdkAgent } from './native-sdk-agent';
 
 // Types from the SSH wrapper are imported type-only so no runtime module load
 // happens for non-SSH sessions - the SSH chain pulls in execFile/which helpers
@@ -146,10 +165,14 @@ const cliSpawnCoreDeps: ClaudeSpawnCoreDeps = createStandaloneClaudeSpawnCoreDep
 
 async function maybeWrapSpawnWithSsh(
 	config: SshSpawnWrapConfig,
-	sshConfig: AgentSshRemoteConfig
+	sshConfig: AgentSshRemoteConfig,
+	selectedRemote?: SshRemoteConfig
 ): Promise<SshSpawnWrapResult> {
+	selectedRemote = selectedRemote ? structuredClone(selectedRemote) : undefined;
 	const { wrapSpawnWithSsh } = await import('../../main/utils/ssh-spawn-wrapper');
-	return wrapSpawnWithSsh(config, sshConfig, { getSshRemotes: () => readSshRemotes() });
+	return wrapSpawnWithSsh(config, sshConfig, {
+		getSshRemotes: () => (selectedRemote ? [selectedRemote] : readSshRemotes()),
+	});
 }
 
 type SpawnOverrides = Pick<
@@ -382,6 +405,66 @@ function localPluginMcp(
 const SYSTEM_PROMPT_TMPFILE_CLEANUP_MS = 30_000;
 
 /**
+ * Prompts longer than this go through a file on Windows for agents that
+ * declare `promptFileArgs` (omp's `@path`). Same threshold as the desktop's
+ * `ChildProcessSpawner`: agents without a native system-prompt flag get the
+ * instructions embedded in the user message, which alone can exceed
+ * CreateProcess's ~32K argv cap and fail the spawn with ENAMETOOLONG.
+ */
+const PROMPT_FILE_THRESHOLD_CHARS = 24_000;
+
+/**
+ * Write a long prompt to a unique, exclusive temp file and return its file-delivery
+ * args, or null when the agent cannot take a file, the platform does not
+ * need it, or the write fails (the caller then delivers inline as before).
+ * The child lifecycle removes the file; an unref'd timer is a fallback.
+ */
+function buildPromptFileArgs(
+	def: AgentDefinition | undefined,
+	prompt: string,
+	isSshSession: boolean
+): { args: string[]; cleanup: () => void } | null {
+	if (!isWindows() || isSshSession || !def?.promptFileArgs) return null;
+	if (prompt.length <= PROMPT_FILE_THRESHOLD_CHARS) return null;
+	let tempFile: string;
+	for (;;) {
+		tempFile = path.join(
+			os.tmpdir(),
+			`maestro-prompt-${Date.now()}-${process.pid}-${randomUUID()}.md`
+		);
+		try {
+			fs.writeFileSync(tempFile, prompt, { encoding: 'utf-8', mode: 0o600, flag: 'wx' });
+			break;
+		} catch (writeErr) {
+			if ((writeErr as NodeJS.ErrnoException).code === 'EEXIST') continue;
+			const reason = writeErr instanceof Error ? writeErr.message : String(writeErr);
+			console.error(
+				`[maestro-cli] prompt tempfile write failed (${reason}); delivering the prompt inline`
+			);
+			return null;
+		}
+	}
+	let cleaned = false;
+	const cleanup = () => {
+		if (cleaned) return;
+		cleaned = true;
+		clearTimeout(cleanupTimer);
+		try {
+			fs.unlinkSync(tempFile);
+		} catch (unlinkErr) {
+			if ((unlinkErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+				console.error(
+					`[maestro-cli] prompt temp file cleanup failed (${String(unlinkErr)}): ${tempFile}`
+				);
+			}
+		}
+	};
+	const cleanupTimer = setTimeout(cleanup, SYSTEM_PROMPT_TMPFILE_CLEANUP_MS);
+	cleanupTimer.unref?.();
+	return { args: def.promptFileArgs(tempFile), cleanup };
+}
+
+/**
  * Resolve agent-level + session-level overrides and produce final args plus
  * the user-configured customEnvVars. Mirrors what the desktop process handler
  * does in `applyAgentConfigOverrides()` so CLI-spawned agents honor the same
@@ -422,7 +505,7 @@ function resolveAgentOverrides(
  * Plan a CLI agent launch with the shared `buildAgentLaunchPlan`, as the `cli`
  * surface: provider defaults fill only what the shell has not set, so a value
  * exported in the shell that runs the command survives; the user's own vars
- * override it; and the prompt goes on the command line on every host. The
+ * override it; explicit file delivery takes priority over legacy argv. The
  * CLI's own inputs: SSH remotes read from disk, and batch-mode vars always on
  * (every CLI spawn is a batch spawn). A desktop-backed local turn with live
  * global settings uses the canonical desktop environment rules, including
@@ -436,7 +519,9 @@ function planCliLaunch(
 		args: string[];
 		cwd: string;
 		prompt: string;
+		promptFileDestination?: PromptFileDestination;
 		readOnlyMode?: boolean;
+		additionalDirectories?: AdditionalDirectory[];
 		agentCustomEnvVars?: Record<string, string>;
 		globalEnvVars?: Record<string, string>;
 		sessionCustomEnvVars?: Record<string, string>;
@@ -450,12 +535,21 @@ function planCliLaunch(
 		surface: 'cli',
 		agent: def ? { ...def, capabilities: getAgentCapabilities(toolType) } : null,
 		command: input.command,
+		// A Windows `.cmd` shim (codex.cmd, claude.cmd from npm) only starts
+		// through cmd.exe, which caps the whole command line at 8191 characters
+		// and ends it at a line break. The CreateProcess check in the launch plan
+		// allows 30,000, so a long prompt passed it and failed the spawn with
+		// ENAMETOOLONG (#1971). Send it over stdin instead, as Cue and the CLI
+		// session turn do, for a provider that reads it there.
+		cmdShellLaunch: isWindows() && windowsShellReason(input.command).reason !== null,
 		args: input.args,
 		cwd: input.cwd,
 		prompt: input.prompt,
+		promptFileDestination: input.promptFileDestination,
 		agentCustomEnvVars: input.agentCustomEnvVars,
 		sessionCustomEnvVars: input.sessionCustomEnvVars,
 		readOnlyMode: input.readOnlyMode,
+		additionalDirectories: input.additionalDirectories,
 		batchMode: true,
 		isResuming: input.isResuming,
 		querySource: input.querySource,
@@ -593,6 +687,12 @@ export interface AgentResult {
 	agentSessionId?: string;
 	usageStats?: UsageStats;
 	error?: string;
+	/**
+	 * The classified provider failure (auth, rate limit, quota, context, model,
+	 * network) behind a failed turn, so the Auto Run engine can pause on it and
+	 * tell a limit from a crash. Set only for Grok today (`grokCliFailure`).
+	 */
+	agentError?: AgentError;
 	/**
 	 * How the turn ended, from the shared `resolveTurnOutcome`. `success` is
 	 * derived from it (`completed` and `completed-with-warning` succeed), so
@@ -751,8 +851,8 @@ const NO_EXIT_CLASSIFICATION = { detectErrorFromExit: () => null };
  * `interrupted`; timeout and startup failures settle as `crashed`.
  *
  * Over SSH this stops the LOCAL ssh client; without a forced TTY the remote
- * process is not guaranteed to receive the hangup, so a remote agent may
- * outlive an interrupted CLI run. Documented in Plans/maestro-lib-cli-migration.md.
+ * process is not guaranteed to receive the hangup on legacy routes. Explicit
+ * file routes additionally bind the shared remote owner and turn guard below.
  */
 function cliTurnOptions(signal: AbortSignal | undefined): StartTurnOptions {
 	return {
@@ -795,6 +895,8 @@ async function spawnClaudeAgent(
 	} else {
 		preOverrideArgs.push(...CLAUDE_YOLO_ARGS);
 	}
+
+	preOverrideArgs.push(...buildAdditionalDirArgs(def, overrides.additionalDirectories));
 
 	if (agentSessionId) {
 		preOverrideArgs.push('--resume', agentSessionId);
@@ -855,6 +957,7 @@ async function spawnClaudeAgent(
 		cwd,
 		prompt,
 		readOnlyMode,
+		additionalDirectories: overrides.additionalDirectories,
 		agentCustomEnvVars,
 		globalEnvVars: overrides.globalEnvVars,
 		sessionCustomEnvVars: overrides.customEnvVars,
@@ -1300,6 +1403,7 @@ async function spawnJsonLineAgent(
 	overrides: SpawnOverrides = {}
 ): Promise<AgentResult> {
 	const def = getAgentDefinition(toolType);
+	sshRemoteConfig = sshRemoteConfig ? { ...sshRemoteConfig } : undefined;
 
 	// Build args from agent definition (without the prompt or model/customArgs -
 	// those come from applyAgentConfigOverrides via configOptions).
@@ -1325,8 +1429,9 @@ async function spawnJsonLineAgent(
 
 	// Native Additional Directories grants (e.g. `--add-dir`). Shares the exact
 	// mapping the desktop uses via `buildAgentArgs`, so a CLI/playbook spawn and
-	// an interactive turn hand the provider identical flags. Providers with no
-	// native mechanism emit nothing here and rely on the prompt block instead.
+	// an interactive turn hand the provider identical flags. The typed requests
+	// also reach launch planning: Grok refuses unqualified native grants there
+	// even though its absent builder emits no flags here.
 	// Emitted BEFORE the resume selector, same as the desktop: Codex resumes with
 	// a subcommand, and `codex exec resume` rejects `--add-dir` with exit 2.
 	preOverrideArgs.push(...buildAdditionalDirArgs(def, overrides.additionalDirectories));
@@ -1378,9 +1483,6 @@ async function spawnJsonLineAgent(
 		const mcp = localPluginMcp(toolType, overrides);
 		baseArgs = mergeMcpInjectionArgs(MCP_CONFIG_BY_AGENT[toolType], baseArgs, mcp.args);
 	}
-
-	const noPromptSeparator = !!def?.noPromptSeparator;
-
 	// A local spawn needs a REAL path (see resolveLocalAgentCommand). An SSH run
 	// keeps the bare name so the remote's own PATH resolves it.
 	const agentCommand = sshRemoteConfig?.enabled
@@ -1389,15 +1491,29 @@ async function spawnJsonLineAgent(
 
 	// Target, environment and prompt delivery come from the shared launch plan,
 	// by the CLI's own rules (see planCliLaunch): the provider's own prompt flag
-	// (Copilot's `-p`), a bare positional or `-- <prompt>`, on the command line
-	// on every host. An SSH remote that cannot be resolved fails here, before
-	// anything is spawned.
+	// (Copilot's `-p`), a bare positional or `-- <prompt>`. Local Windows
+	// providers that accept a prompt file use that transport below. An SSH
+	// remote that cannot be resolved fails here, before anything is spawned.
+	// A provider with a declared prompt file (Grok) selects only a name on the
+	// executing host; the shared sink owns all I/O, and the canonical planner
+	// chooses local file destinations and refuses competing prompt sources.
+	let promptFileDestination: PromptFileDestination | undefined;
+	if (def?.promptFile && sshRemoteConfig?.enabled && sshRemoteConfig.remoteId) {
+		const { newRemotePromptFileDestination } =
+			await import('../../shared/maestro-lib/launch/ssh-command-builder');
+		promptFileDestination = newRemotePromptFileDestination(
+			sshRemoteConfig.remoteId,
+			def.promptFile.format
+		);
+	}
 	const planResult = planCliLaunch(toolType, def, {
 		command: agentCommand,
 		args: baseArgs,
 		cwd,
 		prompt: effectivePrompt,
+		promptFileDestination,
 		readOnlyMode,
+		additionalDirectories: overrides.additionalDirectories,
 		agentCustomEnvVars,
 		globalEnvVars: overrides.globalEnvVars,
 		sessionCustomEnvVars: overrides.customEnvVars,
@@ -1410,6 +1526,7 @@ async function spawnJsonLineAgent(
 		return spawnFailureResult(planResult.error);
 	}
 	const plan = planResult.plan;
+	const artifact = plan.prompt.via === 'file' ? plan.prompt.artifact : undefined;
 
 	// See the note in spawnClaudeAgent: CLI runs are invisible to the desktop
 	// WakaTime listener, so they beat from their own output stream.
@@ -1419,239 +1536,348 @@ async function spawnJsonLineAgent(
 		Boolean(sshRemoteConfig?.enabled)
 	);
 
-	let spawnCommand = plan.command;
-	let spawnArgs = plan.args;
-	let spawnCwd = plan.cwd;
-	let spawnEnv: NodeJS.ProcessEnv = plan.env ?? { ...process.env };
-	let sshStdinScript: string | undefined;
+	const promptFileArgs = buildPromptFileArgs(def, effectivePrompt, plan.target.kind === 'remote');
+	try {
+		let spawnCommand = plan.command;
+		let spawnArgs = promptFileArgs ? [...baseArgs, ...promptFileArgs.args] : plan.args;
+		let spawnCwd = plan.cwd;
+		let spawnEnv: NodeJS.ProcessEnv = plan.env ?? { ...process.env };
+		let sshStdinScript: string | undefined;
 
-	if (plan.target.kind === 'remote' && sshRemoteConfig) {
-		// Pass `effectivePrompt` (not the raw `prompt`) so the embed-in-turn-1
-		// fallback for agents without native --append-system-prompt support
-		// also reaches the SSH remote. baseArgs already carries the native
-		// flag for agents that support it.
-		const wrapped = await maybeWrapSpawnWithSsh(
-			{
-				command: agentCommand,
-				args: plan.args,
-				cwd,
-				prompt: effectivePrompt,
-				customEnvVars: plan.envVars,
-				agentBinaryName: def?.binaryName,
-				noPromptSeparator,
-				promptArgs: def?.promptArgs,
-				querySource: overrides.querySource,
-			},
-			sshRemoteConfig
-		);
-		if (!wrapped.sshRemoteUsed) {
-			return sshUnresolvedFailure(sshRemoteConfig);
-		}
-		({ spawnCommand, spawnArgs, spawnCwd, spawnEnv, sshStdinScript } = applySshWrapResult(wrapped));
-	}
-
-	// Resolve the output parser before spawning so a misconfigured agent type
-	// fails fast instead of leaving an orphaned child process. Reviewer flagged
-	// the previous post-spawn null-check as a process leak (greptile P1).
-	const parser = createOutputParser(toolType);
-	if (!parser) {
-		return spawnFailureResult(`No parser available for agent type: ${toolType}`);
-	}
-	if (toolType === 'antigravity') {
-		// Registers agy's conversation-store reader with maestro-lib (see host.ts),
-		// so the run keeps its thinking text and command status. Loaded on demand:
-		// the reader links better-sqlite3, which the plain-Node CLI bundle cannot
-		// reach through a static import (plain-node-imports.test.ts).
-		await import('../../main/parsers/antigravity-step-store');
-	}
-
-	// The shared capture applies the provider's usage rule (Codex reports a
-	// running session total that is turned into deltas before summing; everyone
-	// else reports per-step values that sum as they are), keeps the first
-	// session id announced, and falls back to the streamed text when no result
-	// event carries any. This path settles on the text of `error` events, so the
-	// in-band classifier stays off and its outcomes are what they always were.
-	const capture = new TurnCapture(toolType, parser, { classifyInBandErrors: false });
-	let stopped = false;
-	let stopReason: string | undefined;
-	const progressSummaries = new Map<string, string>();
-	let codexCandidate: string | undefined;
-	let codexFinal: string | undefined;
-	const codexProgressTexts = new Set<string>();
-	const emitCodexInterim = (text: string): void => {
-		if (codexProgressTexts.has(text)) return;
-		codexProgressTexts.add(text);
-		if (codexProgressTexts.size > 128)
-			codexProgressTexts.delete(codexProgressTexts.values().next().value!);
-		emitAgentProgress(overrides.onProgress, {
-			type: 'commentary',
-			text: text.slice(0, 2000),
-			at: new Date().toISOString(),
-		});
-	};
-
-	if (overrides.signal?.aborted) return interruptedResult();
-	if (overrides.deadlineAt !== undefined && Date.now() >= overrides.deadlineAt)
-		return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
-	const turn = startTurn(
-		{
-			command: spawnCommand,
-			args: spawnArgs,
-			cwd: spawnCwd,
-			env: spawnEnv,
-			stdin: sshStdinScript || plan.stdin,
-		},
-		{
-			onStarted: overrides.onProcessStarted,
-			onStdout: () => wakaHeartbeat?.(),
-			onEvent: (event) => {
-				if (stopped || overrides.signal?.aborted) {
-					capture.handleEvent({ ...event, type: 'system', text: undefined });
-					return;
+		let remote: import('../../shared/maestro-lib/control/turn-guard').RemoteAgentTarget | undefined;
+		let remoteControl: typeof import('../../shared/maestro-lib/control/turn-guard') | undefined;
+		if (plan.target.kind === 'remote' && sshRemoteConfig) {
+			// Pass `effectivePrompt` (not the raw `prompt`) so the embed-in-turn-1
+			// fallback for agents without native --append-system-prompt support
+			// also reaches the SSH remote. baseArgs already carries the native
+			// flag for agents that support it. A prompt-file route (Grok) sends
+			// the artifact instead, on the remote the plan selected, and binds the
+			// remote owner so a stop reaches the remote process.
+			try {
+				const wrapped = await maybeWrapSpawnWithSsh(
+					{
+						command: artifact ? plan.command : agentCommand,
+						args: plan.args,
+						cwd,
+						prompt: artifact ? undefined : effectivePrompt,
+						...(artifact ? { promptArtifact: artifact } : {}),
+						customEnvVars: plan.envVars,
+						agentBinaryName: artifact ? plan.command : def?.binaryName,
+						noPromptSeparator: !!def?.noPromptSeparator,
+						promptArgs: def?.promptArgs,
+						querySource: overrides.querySource,
+					},
+					sshRemoteConfig,
+					artifact ? plan.target.remote : undefined
+				);
+				if (!wrapped.sshRemoteUsed) {
+					return sshUnresolvedFailure(sshRemoteConfig);
 				}
-				capture.handleEvent(event);
-				supervision.observe(event);
-				// A nonfatal provider notice (Codex item-level `error`) goes to stderr,
-				// never into the answer or the error path.
-				if (event.type === 'warning' && event.text) {
-					console.error(event.text);
-				}
-				if (event.type === 'tool_use') {
-					const tool =
-						typeof event.toolName === 'string' &&
-						/^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(event.toolName)
-							? event.toolName
-							: 'Tool';
-					const state =
-						event.toolState && typeof event.toolState === 'object' && 'status' in event.toolState
-							? (event.toolState as { status?: unknown }).status
-							: undefined;
-					const status =
-						state === 'failed' || state === 'error'
-							? 'failed'
-							: state === 'completed' || state === 'success'
-								? 'completed'
-								: 'started';
-					const input =
-						event.toolState && typeof event.toolState === 'object' && 'input' in event.toolState
-							? (event.toolState as { input?: unknown }).input
-							: undefined;
-					let summary = status === 'started' ? publicToolSummary(tool, input) : undefined;
-					if (event.toolCallId && event.toolCallId.length <= 128) {
-						if (status === 'started' && summary) {
-							progressSummaries.set(event.toolCallId, summary);
-							if (progressSummaries.size > 128) {
-								const oldest = progressSummaries.keys().next().value;
-								if (oldest) progressSummaries.delete(oldest);
-							}
-						} else if (status !== 'started') {
-							summary = progressSummaries.get(event.toolCallId);
-							progressSummaries.delete(event.toolCallId);
-						}
-					}
-					emitAgentProgress(overrides.onProgress, {
-						type: 'tool',
-						tool,
-						status,
-						...(summary ? { summary } : {}),
-						at: new Date().toISOString(),
+				({ spawnCommand, spawnArgs, spawnCwd, spawnEnv, sshStdinScript } =
+					applySshWrapResult(wrapped));
+				if (artifact) {
+					remoteControl = await import('../../shared/maestro-lib/control/turn-guard');
+					const recorded = remoteControl.recordRemoteAgent({
+						command: spawnCommand,
+						args: spawnArgs,
+						sshStdinScript,
+						sessionId: agentSessionId ?? 'cli-turn',
+						promptArtifactPath: artifact.path,
 					});
+					sshStdinScript = recorded.sshStdinScript;
+					remote = recorded.remote;
 				}
-				// Phase-less Codex messages remain buffered until a distinct answer
-				// follows. Only then can we safely release one as public progress.
-				if (toolType === 'codex' && event.responsePhase === 'commentary' && event.text) {
-					emitCodexInterim(event.text);
-				}
+			} catch (error) {
+				if (artifact) return spawnFailureResult('Remote prompt preparation unavailable.');
+				throw error;
+			}
+		}
 
-				if (event.type === 'result' && event.text) {
-					if (toolType === 'codex') {
-						if (event.responsePhase === 'final') {
-							if (codexCandidate && codexCandidate !== event.text) {
-								emitCodexInterim(codexCandidate);
-							}
-							codexCandidate = undefined;
-							codexFinal = event.text;
-						} else if (!codexFinal && event.text !== codexCandidate) {
-							if (codexCandidate) emitCodexInterim(codexCandidate);
-							codexCandidate = event.text;
-						}
-					}
-				}
-			},
-			onOversizedLine: warnOversizedLineBuffer,
-		},
-		{ ...cliTurnOptions(undefined), parser }
-	);
-	let forcedStop!: () => void;
-	const forced = new Promise<undefined>((resolve) => {
-		forcedStop = () => resolve(undefined);
-	});
-	const supervision = superviseAgentProcess(turn.child, {
-		timeoutMs:
-			overrides.deadlineAt === undefined
-				? overrides.timeoutMs
-				: Math.max(1, overrides.deadlineAt - Date.now()),
-		idle: overrides.idle,
-		usageReporting: usageReportingFor(toolType),
-		onStatus: (text) =>
+		// Resolve the output parser before spawning so a misconfigured agent type
+		// fails fast instead of leaving an orphaned child process. Reviewer flagged
+		// the previous post-spawn null-check as a process leak (greptile P1).
+		const parser = createOutputParser(toolType);
+		if (!parser) {
+			return spawnFailureResult(`No parser available for agent type: ${toolType}`);
+		}
+		if (toolType === 'antigravity') {
+			// Registers agy's conversation-store reader with maestro-lib (see host.ts),
+			// so the run keeps its thinking text and command status. Loaded on demand:
+			// the reader links better-sqlite3, which the plain-Node CLI bundle cannot
+			// reach through a static import (plain-node-imports.test.ts).
+			await import('../../main/parsers/antigravity-step-store');
+		}
+
+		// The shared capture applies the provider's usage rule (Codex reports a
+		// running session total that is turned into deltas before summing; everyone
+		// else reports per-step values that sum as they are), keeps the first
+		// session id announced, and falls back to the streamed text when no result
+		// event carries any. This path settles on the text of `error` events, so the
+		// in-band classifier stays off and its outcomes are what they always were.
+		// Grok alone classifies in-band failures, so an auth or rate-limit error
+		// envelope keeps its category (grokCliFailure); everyone else is unchanged.
+		const capture = new TurnCapture(toolType, parser, {
+			classifyInBandErrors: toolType === 'grok',
+		});
+		let stopped = false;
+		let stopReason: string | undefined;
+		const progressSummaries = new Map<string, string>();
+		let codexCandidate: string | undefined;
+		let codexFinal: string | undefined;
+		const codexProgressTexts = new Set<string>();
+		const emitCodexInterim = (text: string): void => {
+			if (codexProgressTexts.has(text)) return;
+			codexProgressTexts.add(text);
+			if (codexProgressTexts.size > 128)
+				codexProgressTexts.delete(codexProgressTexts.values().next().value!);
 			emitAgentProgress(overrides.onProgress, {
-				type: 'activity',
-				text,
+				type: 'commentary',
+				text: text.slice(0, 2000),
 				at: new Date().toISOString(),
-			}),
-		signal: overrides.signal,
-		startupMs: toolType === 'codex' ? CODEX_STARTUP_TIMEOUT_MS : undefined,
-		onStop: (reason) => {
-			stopped = true;
-			stopReason = reason;
-		},
-		onForcedStop: forcedStop,
-	});
-	const exit = await Promise.race([turn.done, forced]);
-	if (overrides.requireProcessExit) await supervision.processExited;
-	stopped = true;
-	supervision.dispose();
-	if (stopReason)
-		return {
-			...(overrides.signal?.aborted ? interruptedResult() : spawnFailureResult(stopReason)),
-			error: stopReason,
+			});
+		};
+
+		if (overrides.signal?.aborted) return interruptedResult();
+		if (overrides.deadlineAt !== undefined && Date.now() >= overrides.deadlineAt)
+			return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
+		// A local prompt-file route starts from the plan's own spec, so the turn
+		// owns the artifact and removes it when the process settles.
+		const spec: TurnProcessSpec =
+			artifact?.owner === 'local' && plan.env !== undefined
+				? turnProcessSpecFromPlan({ ...plan, env: spawnEnv })
+				: {
+						command: spawnCommand,
+						args: spawnArgs,
+						cwd: spawnCwd,
+						env: spawnEnv,
+						stdin: sshStdinScript || plan.stdin,
+					};
+		let turn: ReturnType<typeof startTurn>;
+		try {
+			turn = startTurn(
+				spec,
+				{
+					onStarted: overrides.onProcessStarted,
+					onStdout: () => wakaHeartbeat?.(),
+					onEvent: (event) => {
+						if (stopped || overrides.signal?.aborted) {
+							capture.handleEvent({ ...event, type: 'system', text: undefined });
+							return;
+						}
+						capture.handleEvent(event);
+						supervision.observe(event);
+						// A nonfatal provider notice (Codex item-level `error`) goes to stderr,
+						// never into the answer or the error path.
+						if (event.type === 'warning' && event.text) {
+							console.error(event.text);
+						}
+						if (event.type === 'tool_use') {
+							const tool =
+								typeof event.toolName === 'string' &&
+								/^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(event.toolName)
+									? event.toolName
+									: 'Tool';
+							const state =
+								event.toolState &&
+								typeof event.toolState === 'object' &&
+								'status' in event.toolState
+									? (event.toolState as { status?: unknown }).status
+									: undefined;
+							const status =
+								state === 'failed' || state === 'error'
+									? 'failed'
+									: state === 'completed' || state === 'success'
+										? 'completed'
+										: 'started';
+							const input =
+								event.toolState && typeof event.toolState === 'object' && 'input' in event.toolState
+									? (event.toolState as { input?: unknown }).input
+									: undefined;
+							let summary = status === 'started' ? publicToolSummary(tool, input) : undefined;
+							if (event.toolCallId && event.toolCallId.length <= 128) {
+								if (status === 'started' && summary) {
+									progressSummaries.set(event.toolCallId, summary);
+									if (progressSummaries.size > 128) {
+										const oldest = progressSummaries.keys().next().value;
+										if (oldest) progressSummaries.delete(oldest);
+									}
+								} else if (status !== 'started') {
+									summary = progressSummaries.get(event.toolCallId);
+									progressSummaries.delete(event.toolCallId);
+								}
+							}
+							emitAgentProgress(overrides.onProgress, {
+								type: 'tool',
+								tool,
+								status,
+								...(summary ? { summary } : {}),
+								at: new Date().toISOString(),
+							});
+						}
+						// Phase-less Codex messages remain buffered until a distinct answer
+						// follows. Only then can we safely release one as public progress.
+						if (toolType === 'codex' && event.responsePhase === 'commentary' && event.text) {
+							emitCodexInterim(event.text);
+						}
+
+						if (event.type === 'result' && event.text) {
+							if (toolType === 'codex') {
+								if (event.responsePhase === 'final') {
+									if (codexCandidate && codexCandidate !== event.text) {
+										emitCodexInterim(codexCandidate);
+									}
+									codexCandidate = undefined;
+									codexFinal = event.text;
+								} else if (!codexFinal && event.text !== codexCandidate) {
+									if (codexCandidate) emitCodexInterim(codexCandidate);
+									codexCandidate = event.text;
+								}
+							}
+						}
+					},
+					onOversizedLine: warnOversizedLineBuffer,
+				},
+				{ ...cliTurnOptions(artifact ? overrides.signal : undefined), parser }
+			);
+		} catch (error) {
+			if (artifact)
+				return overrides.signal?.aborted
+					? interruptedResult()
+					: spawnFailureResult('Could not start the private prompt-file turn.');
+			throw error;
+		}
+		const guarded = remoteControl?.guardTurn(turn, {
+			sessionId: agentSessionId ?? 'cli-turn',
+			graceMs: BACKGROUND_STOP_GRACE_MS,
+			remote,
+		});
+		let forcedStop!: () => void;
+		const forced = new Promise<undefined>((resolve) => {
+			forcedStop = () => resolve(undefined);
+		});
+		const supervision = superviseAgentProcess(turn.child, {
+			timeoutMs:
+				overrides.deadlineAt === undefined
+					? overrides.timeoutMs
+					: Math.max(1, overrides.deadlineAt - Date.now()),
+			idle: overrides.idle,
+			usageReporting: usageReportingFor(toolType),
+			onStatus: (text) =>
+				emitAgentProgress(overrides.onProgress, {
+					type: 'activity',
+					text,
+					at: new Date().toISOString(),
+				}),
+			signal: overrides.signal,
+			startupMs: toolType === 'codex' ? CODEX_STARTUP_TIMEOUT_MS : undefined,
+			onStop: (reason) => {
+				stopped = true;
+				stopReason = reason;
+				guarded?.terminateNow();
+			},
+			onForcedStop: forcedStop,
+		});
+		const exit = await Promise.race([turn.done, forced]);
+		if (overrides.requireProcessExit) await supervision.processExited;
+		stopped = true;
+		supervision.dispose();
+		if (stopReason)
+			return {
+				...(overrides.signal?.aborted ? interruptedResult() : spawnFailureResult(stopReason)),
+				error: stopReason,
+				agentSessionId: capture.sessionId,
+				usageStats: capture.usage,
+			};
+		if (!exit) return interruptedResult();
+		if (exit.spawnError) {
+			const agentName = def?.name || toolType;
+			return spawnFailureResult(
+				artifact
+					? 'Could not start the private prompt-file turn.'
+					: `Failed to spawn ${agentName}: ${exit.spawnError.message}`
+			);
+		}
+
+		// Soft success: a provider that exits non-zero after a full answer with no
+		// structured error event resolves `completed-with-warning`, still a
+		// success; the answer is preferred over raw stderr when there is no
+		// errorText. Not Grok: its native stream proves success only with an
+		// end_turn record (see grokCliFailure), as the desktop's structured
+		// terminal rule does.
+		const grok = toolType === 'grok';
+		const result = resolveCliTurnResult({
+			toolType,
+			provider: parser,
+			exitCode: exit.exitCode,
+			signal: exit.signal,
+			interrupted: exit.interrupted,
+			stderrText: exit.stderrText,
+			stdoutText: exit.stdoutText,
+			stdinError: exit.stdinError,
+			errorText:
+				capture.errorText ??
+				(toolType === 'codex' && exit.exitCode === 0 && !codexFinal && !codexCandidate
+					? 'Agent returned no final text'
+					: grok && exit.exitCode === 0 && !exit.interrupted && !capture.resultMessageSeen
+						? GROK_NO_TERMINAL_MESSAGE
+						: undefined),
+			answerText: toolType === 'codex' ? codexFinal || codexCandidate : capture.answerText,
+			resultMessageSeen: capture.resultMessageSeen,
 			agentSessionId: capture.sessionId,
 			usageStats: capture.usage,
-		};
-	if (!exit) return interruptedResult();
-	if (exit.spawnError) {
-		const agentName = def?.name || toolType;
-		return spawnFailureResult(`Failed to spawn ${agentName}: ${exit.spawnError.message}`);
+			// This path has always accepted a clean exit with no answer.
+			strictEmptyAnswer: toolType === 'codex' || overrides.timeoutMs !== undefined,
+			answerOutranksBareExit: !grok || capture.resultMessageSeen,
+			droppedOutputBytes: exit.droppedOutputBytes,
+		});
+		return grok ? grokCliFailure(result, capture, parser, exit) : result;
+	} finally {
+		promptFileArgs?.cleanup();
 	}
+}
 
-	// Soft success: agents like Grok may exit non-zero after a full
-	// answer (e.g. --max-turns) with no structured error event. The shared
-	// resolver reports that as `completed-with-warning`, still a success;
-	// the answer is preferred over raw stderr when there is no errorText.
-	return resolveCliTurnResult({
-		toolType,
-		provider: parser,
-		exitCode: exit.exitCode,
-		signal: exit.signal,
-		interrupted: exit.interrupted,
-		stderrText: exit.stderrText,
-		stdoutText: exit.stdoutText,
-		stdinError: exit.stdinError,
-		errorText:
-			capture.errorText ??
-			(toolType === 'codex' && exit.exitCode === 0 && !codexFinal && !codexCandidate
-				? 'Agent returned no final text'
-				: undefined),
-		answerText: toolType === 'codex' ? codexFinal || codexCandidate : capture.answerText,
-		resultMessageSeen: capture.resultMessageSeen,
-		agentSessionId: capture.sessionId,
-		usageStats: capture.usage,
-		// This path has always accepted a clean exit with no answer, and a
-		// non-zero exit after a full answer (Grok with `--max-turns`).
-		strictEmptyAnswer: toolType === 'codex' || overrides.timeoutMs !== undefined,
-		answerOutranksBareExit: true,
-		droppedOutputBytes: exit.droppedOutputBytes,
-	});
+/**
+ * What a Grok CLI turn that wrote no native terminal record reads as. A clean
+ * exit with no `end` record (an empty stdout, a stream cut before its last
+ * line) is never a completed task: the shared parser says the same when it saw
+ * native frames, and this covers the stream that carried none at all.
+ */
+const GROK_NO_TERMINAL_MESSAGE =
+	'Grok exited without a native terminal record. Any response is incomplete.';
+
+/**
+ * Keep a failed Grok turn's failure actionable. The in-band error
+ * envelope, or a non-zero exit's stderr, is classified by the Grok parser's
+ * own pattern bank; an auth, rate-limit, quota, context, model or network
+ * category is carried on `agentError` (the Auto Run engine's pause and limit
+ * rules read it) and its message leads `error`, with the provider's own words
+ * kept beside it. An unclassified or generic crash keeps the error it had.
+ * Success and interruption pass through untouched.
+ */
+function grokCliFailure(
+	result: AgentResult,
+	capture: TurnCapture,
+	parser: NonNullable<ReturnType<typeof createOutputParser>>,
+	exit: { exitCode: number | null; stderrText: string }
+): AgentResult {
+	if (result.success || result.outcome === 'interrupted') return result;
+	const classified =
+		capture.inBandError ??
+		(exit.exitCode !== null && exit.exitCode !== 0
+			? parser.detectErrorFromExit(exit.exitCode, exit.stderrText, '')
+			: null);
+	if (!classified || classified.type === 'unknown' || classified.type === 'agent_crashed') {
+		return result;
+	}
+	const detail = result.error?.trim();
+	return {
+		...result,
+		agentError: classified,
+		error:
+			detail && detail !== classified.message
+				? `${classified.message} (${detail})`
+				: classified.message,
+	};
 }
 
 /**
@@ -1680,6 +1906,17 @@ export interface SpawnAgentOptions {
 	agentSessionId?: string;
 	/** Run in read-only/plan mode (uses centralized agent definitions for provider-specific flags) */
 	readOnlyMode?: boolean;
+	/** Opt into a provider-native SDK/protocol transport for this CLI turn. */
+	harnessControlMode?: HarnessControlMode;
+	/** Native approval behavior. Absent preserves the CLI's existing full-access behavior. */
+	permissionMode?: 'full' | 'standard' | 'readonly';
+	/** Authorized CLI owner for native permission, question, and elicitation requests. */
+	onHarnessInteraction?: (
+		request: HarnessInteractionRequest
+	) => Promise<HarnessInteractionResolution> | HarnessInteractionResolution;
+	/** Stable ownership identity included in native interaction requests. */
+	nativeSessionId?: string;
+	nativeTabId?: string;
 	/** Per-session model override (wins over agent-level model). */
 	customModel?: string;
 	/** Per-session effort/reasoning override (wins over agent-level). */
@@ -1704,7 +1941,8 @@ export interface SpawnAgentOptions {
 	 * the definition's `additionalDirArgs` (e.g. `--add-dir`); every agent also
 	 * receives them in the `{{ADDITIONAL_DIRECTORIES}}` system-prompt block built
 	 * by `prepareMaestroSystemPromptCli()`. Mirrors the desktop `process:spawn`
-	 * handler's `sessionAdditionalDirectories`.
+	 * handler's `sessionAdditionalDirectories`. Grok refuses active requests in
+	 * shared launch planning; a prompt block does not qualify a native grant.
 	 */
 	additionalDirectories?: AdditionalDirectory[];
 	/**
@@ -1769,6 +2007,8 @@ export interface SpawnAgentOptions {
  * failing every task of a playbook on a value nobody typed is the wrong
  * outcome. The refusal is noted, so later `resolveTurnSettings` calls in this
  * run stop asking for the value and report why (see shared/effortRejection.ts).
+ * Grok preserves the failure: these options carry neither automatic-hint
+ * provenance nor a distinct fallback validated for the selected model/account/host.
  */
 export async function spawnAgent(
 	toolType: ToolType,
@@ -1838,12 +2078,18 @@ export async function spawnAgent(
 		}
 	};
 	const result = await runAttempt(options);
-	if (result.success || !options?.customEffort) return result;
+	if (result.success || (!options?.customEffort && toolType !== 'grok')) return result;
 
 	const rejection = parseEffortRejection(`${result.error ?? ''}\n${result.response ?? ''}`);
 	if (!rejection) return result;
 
 	noteEffortRejection(toolType, rejection);
+	// Dropping Grok's override could resend the same configured value or change
+	// an explicit choice. Diagnostic supported values are not fallback authority.
+	if (toolType === 'grok') {
+		console.error(`[maestro] ${describeEffortRejection(toolType, rejection)}`);
+		return result;
+	}
 	console.error(
 		`[maestro] ${describeEffortRejection(toolType, rejection)} Retrying at the agent's configured effort.`
 	);
@@ -1860,6 +2106,17 @@ async function spawnAgentOnce(
 ): Promise<AgentResult> {
 	if (options?.signal?.aborted) return interruptedResult();
 
+	if (
+		options &&
+		resolveHarnessControlMode({ toolType, harnessControlMode: options.harnessControlMode }) ===
+			'native'
+	) {
+		if (options.sshRemoteConfig?.enabled) {
+			return spawnFailureResult('Native CLI control is local-only; use the current SSH transport');
+		}
+		const command = options.agentCommand ?? (await resolveLocalAgentCommand(toolType));
+		return spawnNativeSdkAgent(toolType, cwd, prompt, agentSessionId, options, command);
+	}
 	const readOnly = options?.readOnlyMode;
 	const sshRemoteConfig = options?.sshRemoteConfig;
 	const overrides: SpawnOverrides = {

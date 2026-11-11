@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -7,6 +7,8 @@ import {
 	readDirRemote,
 	readFileRemote,
 	readFileInRootRemote,
+	observePathRemote,
+	type RemotePathIdentity,
 	readBinaryFileRemoteAsBase64,
 	readBinaryFileBlockRemoteAsBase64,
 	readFileTailRemote,
@@ -27,6 +29,18 @@ import {
 } from '../../../main/utils/remote-fs';
 import type { SshRemoteConfig } from '../../../shared/types';
 import type { ExecResult } from '../../../main/utils/execFile';
+import { execFileNoThrow } from '../../../main/utils/execFile';
+import { resolveSshPath } from '../../../main/utils/cliDetection';
+
+// All transports are injected; even SSH discovery must stay off the real host.
+vi.mock('../../../main/utils/cliDetection', () => ({
+	resolveSshPath: vi.fn().mockResolvedValue('ssh'),
+}));
+vi.mock('../../../main/utils/execFile', () => ({
+	execFileNoThrow: vi.fn(() => {
+		throw new Error('Unexpected real transport in remote-fs tests');
+	}),
+}));
 
 describe('remote-fs', () => {
 	// Base SSH config for testing
@@ -353,7 +367,1245 @@ describe('remote-fs', () => {
 		});
 	});
 
+	describe('remote physical source identity', () => {
+		const identity: RemotePathIdentity = {
+			canonicalPath: '/physical/account/sessions/chat_history.jsonl',
+			device: '18446744073709551615',
+			inode: '9007199254740993',
+			kind: 'file',
+		};
+		const launchReceipt = {
+			launchCwd: { ...identity, kind: 'directory' },
+			processCwd: { ...identity, kind: 'directory' },
+			cwd: { ...identity, kind: 'directory' },
+			account: { ...identity, kind: 'directory' },
+			inherited: { HOME: null, GROK_HOME: null },
+			effective: { HOME: null, GROK_HOME: null },
+		};
+		afterEach(() => {
+			vi.useRealTimers();
+			vi.restoreAllMocks();
+			vi.clearAllMocks();
+		});
+
+		it.each([
+			{ expectedIdentity: null },
+			{ expectedIdentity: { ...identity, kind: 'directory' } },
+			{ expectedIdentity: { ...identity, inode: '0' } },
+			{ expectedIdentity: { ...identity, canonicalPath: '/a/../b' } },
+			{ maxBytes: undefined },
+			{ expectedIdentity: undefined, expectedPaths: [] },
+			{ expectedPaths: {} },
+			{ expectedPaths: Array(17).fill({ path: '/guard', identity }) },
+			{ expectedPaths: [null] },
+			{ expectedPaths: [{ path: '/guard', identity: {} }] },
+			...['', '/bad\npath', '/bad\0path', 'a'.repeat(16385)].map((guard) => ({
+				expectedPaths: [{ path: guard, identity }],
+			})),
+		])('rejects invalid requested identity/guards %# before transport', async (patch) => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			const options = { maxBytes: 8, expectedIdentity: identity, ...patch };
+			expect(
+				await readFileRemote(
+					'/alias',
+					baseConfig,
+					deps,
+					options as Parameters<typeof readFileRemote>[3]
+				)
+			).toMatchObject({ success: false, errorCode: 'identity-unavailable' });
+			expect(deps.execSsh).not.toHaveBeenCalled();
+			expect(deps.buildSshArgs).not.toHaveBeenCalled();
+		});
+
+		it.each(['file', 'directory'] as const)(
+			'observes a physical %s without inventing endpoint identity',
+			async (kind) => {
+				const data = { ...identity, kind };
+				const deps = createMockDeps({ stdout: JSON.stringify(data), stderr: '', exitCode: 0 });
+				expect(await observePathRemote('~/account-alias', baseConfig, deps)).toEqual({
+					success: true,
+					data,
+				});
+				expect(deps.execSsh).toHaveBeenCalledTimes(1);
+				expect(execFileNoThrow).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each([
+			'null',
+			'[]',
+			'{}',
+			'{',
+			' '.repeat(100001),
+			...[
+				{ canonicalPath: 'relative' },
+				{ canonicalPath: '/a/../b' },
+				{ canonicalPath: '/a\0b' },
+				{ canonicalPath: '/' + 'a'.repeat(16384) },
+				{ device: 1 },
+				{ device: '-1' },
+				{ inode: '0' },
+				{ inode: '01' },
+				{ inode: '1'.repeat(21) },
+				{ kind: 'symlink' },
+				{ endpoint: 'configured-host-is-not-proof' },
+			].map((patch) => JSON.stringify({ ...identity, ...patch })),
+		])('rejects malformed physical observation %#', async (stdout) => {
+			const deps = createMockDeps({ stdout, stderr: '', exitCode: 0 });
+			expect(await observePathRemote('/alias', baseConfig, deps)).toMatchObject({
+				success: false,
+				errorCode: 'identity-unavailable',
+			});
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+		});
+
+		it.each([
+			{ account: { ...identity, kind: 'file' } },
+			{ cwd: identity },
+			{ effective: { HOME: null } },
+			{ inherited: { HOME: null, GROK_HOME: 7 } },
+			{ effective: { HOME: 'x'.repeat(16385), GROK_HOME: null } },
+			{ inherited: { HOME: null, GROK_HOME: 'bad\nroot' } },
+			{ extra: 'not-a-receipt' },
+		])('rejects malformed launch ownership field %#', async (patch) => {
+			const stdout = JSON.stringify({ ...launchReceipt, ...patch });
+			const deps = createMockDeps({ stdout, stderr: '', exitCode: 0 });
+			expect(await observePathRemote('/alias', baseConfig, deps, { env: {} })).toMatchObject({
+				success: false,
+				errorCode: 'identity-unavailable',
+			});
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+		});
+
+		it.each(['HOME', 'GROK_HOME', 'nativeCwd'])('rejects invalid %s before SSH', async (key) => {
+			for (const value of ['bad\nroot', 'bad\0root', 'x'.repeat(16385)]) {
+				const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+				const options =
+					key === 'nativeCwd' ? { env: {}, nativeCwd: value } : { env: { [key]: value } };
+				expect(await observePathRemote('/alias', baseConfig, deps, options)).toMatchObject({
+					success: false,
+					errorCode: 'identity-unavailable',
+				});
+				expect(deps.execSsh).not.toHaveBeenCalled();
+				expect(deps.buildSshArgs).not.toHaveBeenCalled();
+			}
+		});
+
+		it.each([100000, 100001])('bounds the launch receipt at %i ASCII bytes', async (size) => {
+			const stdout = JSON.stringify(launchReceipt).padEnd(size, ' ');
+			expect(Buffer.byteLength(stdout)).toBe(size);
+			const deps = createMockDeps({ stdout, stderr: '', exitCode: 0 });
+			const result = await observePathRemote('/alias', baseConfig, deps, { env: {} });
+			if (size === 100000) expect(result).toEqual({ success: true, data: launchReceipt });
+			else {
+				expect(result).toMatchObject({ success: false, errorCode: 'identity-unavailable' });
+				expect(result.data).toBeUndefined();
+			}
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+		});
+
+		it.each([
+			['launchCwd', 'canonicalPath'],
+			['processCwd', 'canonicalPath'],
+			['cwd', 'canonicalPath'],
+			['account', 'canonicalPath'],
+			['inherited', 'HOME'],
+			['inherited', 'GROK_HOME'],
+			['effective', 'HOME'],
+			['effective', 'GROK_HOME'],
+		] as const)('bounds launch receipt field %s.%s independently', async (section, key) => {
+			for (const size of [16384, 16385]) {
+				const receipt = {
+					...launchReceipt,
+					[section]: { ...launchReceipt[section], [key]: '/' + 'a'.repeat(size - 1) },
+				};
+				const deps = createMockDeps({ stdout: JSON.stringify(receipt), stderr: '', exitCode: 0 });
+				const result = await observePathRemote('/alias', baseConfig, deps, { env: {} });
+				if (size === 16384) expect(result).toEqual({ success: true, data: receipt });
+				else {
+					expect(result).toMatchObject({ success: false, errorCode: 'identity-unavailable' });
+					expect(result.data).toBeUndefined();
+				}
+				expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			}
+		});
+
+		it.each([
+			{ failures: 1, exitCode: 255, stderr: 'Connection reset by peer' },
+			{ failures: 3, exitCode: 255, stderr: 'Broken pipe' },
+			{ failures: 4, exitCode: 255, stderr: 'Connection reset by peer' },
+			{ failures: 4, exitCode: 'ETIMEDOUT', stderr: '' },
+		])(
+			'bounds launch retries and ignores failed receipts %#',
+			async ({ failures, exitCode, stderr }) => {
+				vi.useFakeTimers();
+				vi.spyOn(Math, 'random').mockReturnValue(0);
+				const deps = createMockDeps({ stdout: JSON.stringify(launchReceipt), stderr, exitCode });
+				vi.mocked(deps.buildSshArgs).mockImplementation(() => ['inert-fixture-host']);
+				vi.mocked(deps.execSsh).mockImplementation(async () =>
+					vi.mocked(deps.execSsh).mock.calls.length <= failures
+						? { stdout: JSON.stringify(launchReceipt), stderr, exitCode }
+						: { stdout: JSON.stringify(launchReceipt), stderr: '', exitCode: 0 }
+				);
+				const pending = observePathRemote('/alias', baseConfig, deps, { env: {} });
+				await vi.advanceTimersByTimeAsync(0);
+				expect(deps.execSsh).toHaveBeenCalledTimes(1);
+				const attempts = Math.min(failures + 1, 4);
+				for (let retry = 0; retry < attempts - 1; retry++) {
+					await vi.advanceTimersByTimeAsync(500 * 2 ** retry - 1);
+					expect(deps.execSsh).toHaveBeenCalledTimes(retry + 1);
+					await vi.advanceTimersByTimeAsync(1);
+					expect(deps.execSsh).toHaveBeenCalledTimes(retry + 2);
+				}
+				const result = await pending;
+				if (failures < 4) expect(result).toEqual({ success: true, data: launchReceipt });
+				else {
+					expect(result).toEqual({
+						success: false,
+						errorCode: undefined,
+						error: stderr || 'Remote path identity unavailable',
+					});
+					expect(result.data).toBeUndefined();
+				}
+				expect(vi.getTimerCount()).toBe(0);
+				await vi.advanceTimersByTimeAsync(60000);
+				expect(deps.execSsh).toHaveBeenCalledTimes(attempts);
+				expect(deps.buildSshArgs).toHaveBeenCalledTimes(attempts);
+				for (const call of vi.mocked(deps.execSsh).mock.calls)
+					expect(call).toEqual(vi.mocked(deps.execSsh).mock.calls[0]);
+				expect(execFileNoThrow).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(['', '/bad\npath', '/bad\0path', 'a'.repeat(16385)])(
+			'rejects invalid observer path %# before SSH',
+			async (filePath) => {
+				const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+				expect(await observePathRemote(filePath, baseConfig, deps)).toMatchObject({
+					success: false,
+					errorCode: 'identity-unavailable',
+				});
+				expect(deps.execSsh).not.toHaveBeenCalled();
+				expect(deps.buildSshArgs).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each([
+			[70, 'absent, non-directory or inaccessible path', 'identity-unavailable'],
+			[71, 'Remote source identity changed', 'identity-mismatch'],
+			[127, 'python3 unavailable', 'identity-unavailable'],
+			[73, 'unexpected filesystem failure', undefined],
+			[255, 'Permission denied (publickey)', undefined],
+		] as const)(
+			'preserves observer/read refusal %s without a receipt or content',
+			async (exitCode, stderr, errorCode) => {
+				for (const operation of ['observe', 'launch', 'read']) {
+					const deps = createMockDeps({ stdout: 'untrusted bytes', stderr, exitCode });
+					const result =
+						operation === 'observe'
+							? await observePathRemote('/alias', baseConfig, deps)
+							: operation === 'launch'
+								? await observePathRemote('/alias', baseConfig, deps, { env: {} })
+								: await readFileRemote('/alias', baseConfig, deps, {
+										maxBytes: 8,
+										expectedIdentity: identity,
+									});
+					expect(result).toEqual({ success: false, errorCode, error: stderr });
+					expect(deps.execSsh).toHaveBeenCalledTimes(1);
+				}
+			}
+		);
+
+		it.each([
+			{ body: Buffer.from('雪'), changed: false, exitCode: 0, errorCode: undefined },
+			{ body: Buffer.from(''), changed: true, exitCode: 0, errorCode: undefined },
+			{
+				body: Buffer.from([0xf0, 0x90, 0x80]),
+				changed: false,
+				exitCode: 0,
+				errorCode: 'invalid-encoding',
+			},
+			{ body: Buffer.from('four'), changed: true, exitCode: 0, errorCode: 'too-large' },
+			{ body: Buffer.from(''), changed: false, exitCode: 72, errorCode: 'too-large' },
+		])(
+			'keeps descriptor ownership independent of content availability %#',
+			async ({ body, changed, exitCode, errorCode }) => {
+				const deps = createMockDeps({
+					stdout:
+						JSON.stringify({ identity, contentChanged: changed }) +
+						'\n' +
+						Buffer.concat([body, Buffer.from('\n0')]).toString('base64'),
+					stderr: '',
+					exitCode,
+				});
+				const result = await readFileRemote('/alias', baseConfig, deps, {
+					maxBytes: 3,
+					expectedIdentity: identity,
+				});
+				expect(result).toMatchObject({
+					success: !errorCode,
+					observedIdentity: identity,
+					contentChanged: changed,
+				});
+				if (errorCode) {
+					expect(result.errorCode).toBe(errorCode);
+					expect(result.data).toBeUndefined();
+				} else expect(result.data).toBe(body.toString('utf8'));
+				expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			}
+		);
+
+		it.each([
+			'{}',
+			'{',
+			JSON.stringify({ identity }),
+			JSON.stringify({ identity, contentChanged: 'false' }),
+			...[
+				{ canonicalPath: '/replaced' },
+				{ inode: '2' },
+				{ device: '2' },
+				{ kind: 'directory' },
+			].map((patch) =>
+				JSON.stringify({ identity: { ...identity, ...patch }, contentChanged: false })
+			),
+			' '.repeat(100001),
+		])(
+			'never exposes content from malformed or mismatched descriptor header %#',
+			async (header) => {
+				const deps = createMockDeps({ stdout: header + '\neAow', stderr: '', exitCode: 0 });
+				expect(
+					await readFileRemote('/alias', baseConfig, deps, {
+						maxBytes: 8,
+						expectedIdentity: identity,
+					})
+				).toEqual({
+					success: false,
+					errorCode: 'identity-unavailable',
+					error: 'Remote descriptor identity unavailable',
+				});
+			}
+		);
+
+		it.each([
+			['~/account 雪/file', '"$HOME/account 雪/file"'],
+			["/account's/file", "'/account'\\''s/file'"],
+			['-n', "'-n'"],
+			['/a/$(whoami);`id`', "'/a/$(whoami);`id`'"],
+		])('quotes observer/read path %s and every guarded alias', async (filePath, escaped) => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 70 });
+			vi.mocked(deps.buildSshArgs).mockImplementation(() => ['testuser@dev.example.com']);
+			await observePathRemote(filePath, baseConfig, deps);
+			await readFileRemote(filePath, baseConfig, deps, {
+				maxBytes: 8,
+				expectedIdentity: identity,
+				expectedPaths: [{ path: "~/parent's 雪", identity: { ...identity, kind: 'directory' } }],
+			});
+			const commands = vi.mocked(deps.execSsh).mock.calls.map((call) => call[1].at(-1)!);
+			expect(commands[0]).toMatch(/^python3 -I -S -B -c /);
+			expect(commands[0].endsWith(' ' + escaped)).toBe(true);
+			expect(commands[1]).toContain(` ${escaped} 8 '${JSON.stringify(identity)}'`);
+			expect(commands[1]).toContain(' "$HOME/parent\'s 雪" ');
+		});
+
+		it.each(['observe', 'launch', 'read'])(
+			'bounds the default %s SSH timeout',
+			async (operation) => {
+				vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+					stdout: '',
+					stderr: 'unavailable',
+					exitCode: 70,
+				});
+				if (operation === 'observe') await observePathRemote('/alias', baseConfig);
+				else if (operation === 'launch')
+					await observePathRemote('/alias', baseConfig, undefined, { env: {} });
+				else
+					await readFileRemote('/alias', baseConfig, undefined, {
+						maxBytes: 1,
+						expectedIdentity: identity,
+					});
+				expect(execFileNoThrow).toHaveBeenCalledExactlyOnceWith(
+					'ssh',
+					expect.any(Array),
+					undefined,
+					{
+						timeout: 30000,
+						input: undefined,
+					}
+				);
+			}
+		);
+	});
+
+	// This transport executes the emitted program; response-only mocks above do not.
+	describe('emitted Python against disposable POSIX fixtures', () => {
+		let root: string;
+		let transcript: string;
+		let alias: string;
+		let account: string;
+		let fault = '';
+		let deps: RemoteFsDeps;
+		let inherited: NodeJS.ProcessEnv;
+		let passwdHome: string | null;
+		const audits: Array<{
+			reads: number;
+			bytes: number;
+			requests: number[];
+			opened: number;
+			closed: number;
+			live: number;
+			alarm: number;
+			writes: string[];
+			flags: number[];
+			outputBytes: number;
+			fileOpens: string[];
+			passwdCalls: number;
+			mutations: number;
+		}> = [];
+		// Instrument syscalls, not the program's branches. Faults model an external writer.
+		const instrument = `import os, sys, json, shlex, signal, errno, stat, base64, pwd, types
+v = json.load(sys.stdin)
+args = shlex.split(v['command'])
+root, fault = v['root'], v['fault']
+launch = args[0] == '/bin/bash'
+if launch:
+ assert args[:4] == ['/bin/bash', '--norc', '--noprofile', '-c'] and len(args) == 5
+ args = shlex.split(args[4])
+ # Only the new absolute-cwd cases use this transport. Real Bash controls below
+ # separately verify shell cd and literal export semantics.
+ assert args[:6] == ['cd', root, '||', 'exit', '70;', 'exec']
+ args = args[6:]
+assert args[:5] == ['python3', '-I', '-S', '-B', '-c']
+program, sys.argv = args[5], ['-c'] + args[6:]
+assert all(os.path.commonpath([root, p]) == root for p in sys.argv[1:] if p.startswith('/'))
+audit = dict(reads=0, bytes=0, requests=[], opened=0, closed=0, live=0, alarm=0,
+ writes=[], flags=[], fileOpens=[], passwdCalls=0, mutations=0)
+opened = set()
+original_open, original_read, original_close = os.open, os.read, os.close
+original_stat = os.stat
+original_alarm = signal.alarm
+injected = False
+def passwd_home(uid):
+ audit['passwdCalls'] += 1
+ assert uid == os.getuid()
+ if v['passwdHome'] is None: raise KeyError(uid)
+ return types.SimpleNamespace(pw_dir=v['passwdHome'])
+pwd.getpwuid = passwd_home
+def mutation(which):
+ global injected
+ injected = True
+ audit['mutations'] += 1
+ try:
+  if which == 'replace': os.replace(root + '/replacement', root + '/transcript')
+  elif which == 'grow':
+   fd = original_open(root + '/transcript', os.O_WRONLY | os.O_APPEND)
+   try: os.write(fd, b'yz')
+   finally: original_close(fd)
+  elif which in ('home', 'cwd'):
+   link = root + '/' + which + '-alias'
+   os.unlink(link)
+   os.symlink(root + '/account-b', link)
+  else:
+   link = root + ('/account-alias' if which == 'guard' else '/transcript-alias')
+   os.unlink(link)
+   os.symlink(root + ('/account-b' if which == 'guard' else '/replacement'), link)
+ finally: injected = False
+def audit_event(event, args):
+ writing = event == 'open' and args[2] & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND)
+ if not injected and (writing or event in ('os.remove', 'os.rename', 'os.symlink', 'os.mkdir')):
+  audit['writes'].append(event)
+  raise RuntimeError('Reader attempted a mutation')
+ if not injected and event == 'open':
+  audit['fileOpens'].append(str(args[0]))
+  if launch: raise RuntimeError('Launch observer attempted a content read')
+sys.addaudithook(audit_event)
+def tracked_stat(p, *args, **kw):
+ assert os.path.commonpath([root, os.path.abspath(p)]) == root
+ result = original_stat(p, *args, **kw)
+ trigger = root + ('/account-a/.grok' if fault == 'home' else '/.grok')
+ if fault in ('home', 'cwd') and str(p) == trigger and audit['mutations'] == 0:
+  mutation(fault)
+ return result
+os.stat = tracked_stat
+def tracked_open(p, flags, *rest, **kw):
+ if fault == 'replace-before-open': mutation('replace')
+ fd = original_open(p, flags, *rest, **kw)
+ opened.add(fd)
+ audit['opened'] += 1
+ audit['flags'].append(flags)
+ if fault in ('alias-before', 'guard-before'): mutation(fault.split('-')[0])
+ return fd
+def tracked_read(fd, count):
+ audit['reads'] += 1
+ audit['requests'].append(count)
+ if fault == 'read-error': raise OSError(errno.EIO, 'injected read failure')
+ data = original_read(fd, count)
+ audit['bytes'] += len(data)
+ if audit['reads'] == 1 and fault in ('alias-during', 'guard-during', 'grow'):
+  mutation(fault.split('-')[0])
+ return data
+def tracked_close(fd):
+ original_close(fd)
+ audit['closed'] += 1
+ opened.remove(fd)
+def tracked_alarm(seconds):
+ audit['alarm'] = seconds
+ return original_alarm(seconds)
+os.open, os.read, os.close, signal.alarm = tracked_open, tracked_read, tracked_close, tracked_alarm
+if fault == 'unsupported': del os.O_NOFOLLOW
+try: exec(compile(program, '<emitted-remote-observer>', 'exec'))
+finally:
+ for fd in opened:
+  try: os.fstat(fd); audit['live'] += 1
+  except OSError as exc:
+   if exc.errno != errno.EBADF: raise
+ sys.stderr.write('\\nAUDIT:' + json.dumps(audit))
+`;
+
+		beforeEach((context) => {
+			root = '';
+			audits.length = 0;
+			if (process.platform === 'win32') context.skip(true, 'POSIX Python observer requires POSIX');
+			const probe = spawnSync(
+				'python3',
+				[
+					'-I',
+					'-S',
+					'-B',
+					'-c',
+					'import os, signal; assert hasattr(os, "O_NOFOLLOW") and hasattr(signal, "alarm")',
+				],
+				{ timeout: 3000 }
+			);
+			if (probe.error || probe.status !== 0)
+				context.skip(true, 'Python 3 descriptor APIs unavailable');
+			const parent = path.resolve('tmp');
+			fs.mkdirSync(parent, { recursive: true });
+			root = fs.realpathSync(fs.mkdtempSync(path.join(parent, 'remote-identity-')));
+			transcript = path.join(root, 'transcript');
+			alias = path.join(root, 'transcript-alias');
+			account = path.join(root, 'account-alias');
+			for (const dir of ['account-a', 'account-b', 'pool']) fs.mkdirSync(path.join(root, dir));
+			fs.writeFileSync(transcript, 'x');
+			fs.writeFileSync(path.join(root, 'replacement'), 'other');
+			fs.symlinkSync(transcript, alias);
+			fs.symlinkSync(path.join(root, 'account-a'), account);
+			fs.symlinkSync(path.join(root, 'pool'), path.join(root, 'account-a/sessions'));
+			fault = '';
+			inherited = { PATH: process.env.PATH, HOME: root, GROK_HOME: account };
+			passwdHome = null;
+			deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			vi.mocked(deps.buildSshArgs).mockImplementation(() => ['inert-fixture-host']);
+			vi.mocked(deps.execSsh).mockImplementation(async (_ssh, args) => {
+				const result = spawnSync('python3', ['-I', '-S', '-B', '-c', instrument], {
+					input: JSON.stringify({ command: args.at(-1), root, fault, passwdHome }),
+					env: inherited,
+					encoding: 'utf8',
+					cwd: root,
+					timeout: 3000,
+					maxBuffer: 1024 * 1024,
+				});
+				expect(result.error).toBeUndefined();
+				expect(result.signal).toBeNull();
+				const marker = result.stderr.lastIndexOf('\nAUDIT:');
+				expect(marker).toBeGreaterThanOrEqual(0);
+				audits.push({
+					...JSON.parse(result.stderr.slice(marker + 7)),
+					outputBytes: Buffer.byteLength(result.stdout),
+				});
+				return {
+					stdout: result.stdout,
+					stderr: result.stderr.slice(0, marker),
+					exitCode: result.status!,
+				};
+			});
+		});
+		afterEach(() => {
+			if (root) fs.rmSync(root, { recursive: true, force: true });
+			for (const audit of audits) {
+				expect(audit).toMatchObject({ live: 0, alarm: 25, writes: [] });
+				expect(audit.closed).toBe(audit.opened);
+			}
+		});
+
+		describe('audited Grok launch ownership', () => {
+			beforeEach(() => {
+				for (const dir of ['.grok', 'passwd-home/.grok', 'account-a/.grok', 'account-b/.grok']) {
+					fs.mkdirSync(path.join(root, dir), { recursive: true });
+					// Synthetic contents make unexpected access detectable without real account data.
+					fs.writeFileSync(path.join(root, dir, 'auth.json'), '{"fixture":"not-a-credential"}');
+					fs.writeFileSync(path.join(root, dir, 'chat_history.jsonl'), '{"fixture":"not-a-chat"}');
+				}
+			});
+			afterEach(() => {
+				if (!root) return; // The enclosing POSIX prerequisite may skip this case.
+				expect(audits).toHaveLength(1);
+				expect(audits[0]).toMatchObject({
+					fileOpens: [],
+					reads: 0,
+					bytes: 0,
+					opened: 0,
+					closed: 0,
+					live: 0,
+					writes: [],
+				});
+				expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			});
+
+			it.each(
+				[undefined, ''].flatMap((home) =>
+					[
+						{
+							label: 'fixture home',
+							passwd: 'passwd-home',
+							success: true,
+							suffix: 'passwd-home/.grok',
+						},
+						{ label: 'empty passwd home', passwd: '', success: true, suffix: '.grok' },
+						{ label: 'missing passwd entry', passwd: null, success: false, suffix: '' },
+						{
+							label: 'missing passwd directory',
+							passwd: 'missing-home',
+							success: false,
+							suffix: '',
+						},
+					].map((scenario) => ({ home, ...scenario }))
+				)
+			)(
+				'uses only the stubbed passwd fallback for HOME=$home, $label',
+				async ({ home, passwd, success, suffix }) => {
+					inherited.HOME = home;
+					delete inherited.GROK_HOME;
+					passwdHome = passwd ? path.join(root, passwd) : passwd;
+					const result = await observePathRemote(root, baseConfig, deps, { env: {} });
+					if (success) {
+						expect(result).toMatchObject({
+							success: true,
+							data: {
+								account: { canonicalPath: path.join(root, suffix), kind: 'directory' },
+								inherited: { HOME: home ?? null, GROK_HOME: null },
+								effective: { HOME: home ?? null, GROK_HOME: null },
+							},
+						});
+					} else {
+						expect(result).toMatchObject({ success: false, errorCode: 'identity-unavailable' });
+						expect(result.data).toBeUndefined();
+					}
+					expect(audits[0]).toMatchObject({ passwdCalls: 1, mutations: 0 });
+				}
+			);
+
+			it.each([undefined, ''])(
+				'resolves empty passwd home from native process cwd with HOME=%j',
+				async (home) => {
+					inherited.HOME = home;
+					delete inherited.GROK_HOME;
+					passwdHome = '';
+					const nativeCwd = path.join(root, 'account-a');
+					expect(
+						await observePathRemote(root, baseConfig, deps, { env: {}, nativeCwd })
+					).toMatchObject({
+						success: true,
+						data: {
+							launchCwd: { canonicalPath: root },
+							processCwd: { canonicalPath: nativeCwd },
+							cwd: { canonicalPath: nativeCwd },
+							account: { canonicalPath: path.join(nativeCwd, '.grok') },
+						},
+					});
+					expect(audits[0]).toMatchObject({ passwdCalls: 1, mutations: 0 });
+				}
+			);
+
+			it.each([undefined, ''])(
+				'keeps an explicit account independent of HOME=%j and missing passwd',
+				async (home) => {
+					inherited.HOME = home;
+					const result = await observePathRemote(root, baseConfig, deps, { env: {} });
+					expect(result).toMatchObject({
+						success: true,
+						data: { account: { canonicalPath: path.join(root, 'account-a') } },
+					});
+					expect(audits[0]).toMatchObject({ passwdCalls: 0, mutations: 0 });
+				}
+			);
+
+			it.each(['home', 'cwd'] as const)(
+				'rejects a %s alias retargeted after initial observation',
+				async (scenario) => {
+					const link = path.join(root, `${scenario}-alias`);
+					fs.symlinkSync(path.join(root, 'account-a'), link);
+					inherited.HOME = scenario === 'home' ? link : root;
+					inherited.GROK_HOME = scenario === 'home' ? undefined : path.join(root, '.grok');
+					fault = scenario;
+					const result = await observePathRemote(root, baseConfig, deps, {
+						env: {},
+						nativeCwd: scenario === 'cwd' ? link : undefined,
+					});
+					expect(result).toMatchObject({ success: false, errorCode: 'identity-mismatch' });
+					expect(result.data).toBeUndefined();
+					expect(audits[0]).toMatchObject({ passwdCalls: 0, mutations: 1 });
+					expect(fs.realpathSync(link)).toBe(path.join(root, 'account-b'));
+				}
+			);
+		});
+
+		describe('Grok launch environment through the emitted bash wrapper', () => {
+			beforeEach(() => {
+				inherited = { PATH: process.env.PATH, HOME: root, GROK_HOME: account };
+				for (const dir of [
+					'.grok',
+					'  ',
+					'~/literal',
+					"account 雪's",
+					'alternate/.grok',
+					'workspace/step/step',
+				])
+					fs.mkdirSync(path.join(root, dir), { recursive: true });
+				vi.mocked(deps.execSsh).mockImplementation(async (_ssh, args) => {
+					const command = args.at(-1)!;
+					expect(command).toMatch(/^\/bin\/bash --norc --noprofile -c /);
+					expect(command).not.toContain('secret-must-not-travel');
+					const result = spawnSync('/bin/bash', ['--norc', '--noprofile', '-c', command], {
+						env: inherited,
+						cwd: root,
+						encoding: 'utf8',
+						timeout: 3000,
+						maxBuffer: 128 * 1024,
+					});
+					expect(result.error).toBeUndefined();
+					expect(result.signal).toBeNull();
+					return { stdout: result.stdout, stderr: result.stderr, exitCode: result.status! };
+				});
+			});
+
+			it.each([
+				['inherited', undefined, 'account-a'],
+				['empty', '', '.grok'],
+				['whitespace', '  ', '  '],
+				['relative', 'account-b', 'account-b'],
+				['literal tilde', '~/literal', '~/literal'],
+				['quoted Unicode', "account 雪's", "account 雪's"],
+			])(
+				'observes %s GROK_HOME without rewriting its native meaning',
+				async (_label, value, suffix) => {
+					const result = await observePathRemote(root, baseConfig, deps, {
+						env: { GROK_HOME: value, GROK_AUTH: 'secret-must-not-travel' },
+					});
+					expect(result).toMatchObject({
+						success: true,
+						data: {
+							account: { canonicalPath: path.join(root, suffix!), kind: 'directory' },
+							inherited: { HOME: root, GROK_HOME: account },
+							effective: { HOME: root, GROK_HOME: value ?? account },
+						},
+					});
+					expect(deps.execSsh).toHaveBeenCalledTimes(1);
+				}
+			);
+
+			it.each([undefined, ''])(
+				'uses exported HOME after shell cd when GROK_HOME is %j',
+				async (value) => {
+					delete inherited.GROK_HOME;
+					const result = await observePathRemote('~/workspace', baseConfig, deps, {
+						env: { HOME: path.join(root, 'alternate'), GROK_HOME: value },
+					});
+					expect(result).toMatchObject({
+						success: true,
+						data: {
+							launchCwd: { canonicalPath: path.join(root, 'workspace') },
+							cwd: { canonicalPath: path.join(root, 'workspace') },
+							account: { canonicalPath: path.join(root, 'alternate/.grok') },
+							inherited: { HOME: root, GROK_HOME: null },
+							effective: { HOME: path.join(root, 'alternate'), GROK_HOME: value ?? null },
+						},
+					});
+				}
+			);
+
+			it('resolves relative account from native process cwd and repeats native cwd for the session', async () => {
+				const result = await observePathRemote('~/workspace', baseConfig, deps, {
+					env: { GROK_HOME: '../../account-b' },
+					nativeCwd: 'step',
+				});
+				expect(result).toMatchObject({
+					success: true,
+					data: {
+						launchCwd: { canonicalPath: path.join(root, 'workspace') },
+						processCwd: { canonicalPath: path.join(root, 'workspace/step') },
+						cwd: { canonicalPath: path.join(root, 'workspace/step/step') },
+						account: { canonicalPath: path.join(root, 'account-b') },
+					},
+				});
+			});
+
+			it('honors explicit account even with unavailable HOME and an absolute native cwd', async () => {
+				const result = await observePathRemote(root, baseConfig, deps, {
+					env: { HOME: '/absent-fixture-home', GROK_HOME: account },
+					nativeCwd: path.join(root, 'workspace'),
+				});
+				expect(result).toMatchObject({
+					success: true,
+					data: {
+						account: { canonicalPath: path.join(root, 'account-a') },
+						processCwd: { canonicalPath: path.join(root, 'workspace') },
+						cwd: { canonicalPath: path.join(root, 'workspace') },
+					},
+				});
+			});
+
+			it.each([
+				{ env: { GROK_HOME: 'missing-account' } },
+				{ env: { GROK_HOME: 'transcript' } },
+				{ env: { GROK_HOME: '', HOME: '~/missing-home' } },
+				{ env: {}, nativeCwd: '~/workspace' },
+				{ env: {}, nativeCwd: '' },
+			])(
+				'refuses absent/non-directory literal paths without creation or fallback %#',
+				async (options) => {
+					const before = fs.readdirSync(root, { recursive: true }).sort();
+					expect(await observePathRemote(root, baseConfig, deps, options)).toMatchObject({
+						success: false,
+						errorCode: 'identity-unavailable',
+					});
+					expect(fs.readdirSync(root, { recursive: true }).sort()).toEqual(before);
+					expect(deps.execSsh).toHaveBeenCalledTimes(1);
+				}
+			);
+		});
+
+		it('observes canonical account, sessions and transcript aliases without reading or writing', async () => {
+			for (const [logical, physical, kind] of [
+				[account, path.join(root, 'account-a'), 'directory'],
+				[path.join(account, 'sessions'), path.join(root, 'pool'), 'directory'],
+				[alias, transcript, 'file'],
+			]) {
+				const observed = await observePathRemote(logical, baseConfig, deps);
+				const stat = fs.statSync(physical, { bigint: true });
+				expect(observed).toEqual({
+					success: true,
+					data: {
+						canonicalPath: physical,
+						kind,
+						device: String(stat.dev),
+						inode: String(stat.ino),
+					},
+				});
+				expect(audits.at(-1)).toMatchObject({ reads: 0, opened: 0 });
+			}
+		});
+
+		it.each(['missing', 'transcript/child'])(
+			'refuses absent/non-directory root %s',
+			async (suffix) => {
+				expect(await observePathRemote(path.join(root, suffix), baseConfig, deps)).toMatchObject({
+					success: false,
+					errorCode: 'identity-unavailable',
+				});
+				expect(audits.at(-1)).toMatchObject({ reads: 0, opened: 0 });
+			}
+		);
+
+		it.each([
+			['replace-before-open', 'identity-mismatch', 0, 1],
+			['alias-before', 'identity-mismatch', 0, 1],
+			['guard-before', 'identity-mismatch', 0, 1],
+			['alias-during', 'identity-mismatch', 2, 1],
+			['guard-during', 'identity-mismatch', 2, 1],
+			['read-error', undefined, 1, 1],
+			['unsupported', 'identity-unavailable', 0, 0],
+		] as const)(
+			'rejects %s and closes every descriptor',
+			async (scenario, errorCode, reads, opened) => {
+				const expected = (await observePathRemote(alias, baseConfig, deps)).data!;
+				const guard = (await observePathRemote(account, baseConfig, deps)).data!;
+				fault = scenario;
+				const result = await readFileRemote(alias, baseConfig, deps, {
+					maxBytes: 8,
+					expectedIdentity: expected,
+					expectedPaths: [{ path: account, identity: guard }],
+				});
+				expect(result).toMatchObject({ success: false, errorCode });
+				expect(result.data).toBeUndefined();
+				expect(result.observedIdentity).toBeUndefined();
+				expect(audits.at(-1)).toMatchObject({ reads, opened, closed: opened, live: 0 });
+			}
+		);
+
+		it.each([
+			{ content: '雪', cap: 3, grow: false, bytes: 3, success: true, reads: 2 },
+			{
+				content: 'x'.repeat(65537),
+				cap: 65537,
+				grow: false,
+				bytes: 65537,
+				success: true,
+				reads: 3,
+			},
+			{ content: '', cap: 1, grow: false, bytes: 0, success: true, reads: 1 },
+			{ content: 'four', cap: 3, grow: false, bytes: 0, success: false, reads: 0 },
+			{ content: 'x', cap: 8, grow: true, bytes: 3, success: true, reads: 3 },
+			{ content: 'x', cap: 1, grow: true, bytes: 2, success: false, reads: 2 },
+		])(
+			'bounds actual content and sentinel reads %#',
+			async ({ content, cap, grow, bytes, success, reads }) => {
+				fs.writeFileSync(transcript, content);
+				const names = fs.readdirSync(root, { recursive: true }).sort();
+				const before = fs.statSync(transcript);
+				const expected = (await observePathRemote(alias, baseConfig, deps)).data!;
+				fault = grow ? 'grow' : '';
+				const result = await readFileRemote(alias, baseConfig, deps, {
+					maxBytes: cap,
+					expectedIdentity: expected,
+				});
+				expect(result).toMatchObject({ success, observedIdentity: expected, contentChanged: grow });
+				if (success) expect(result.data).toBe(content + (grow ? 'yz' : ''));
+				else {
+					expect(result.errorCode).toBe('too-large');
+					expect(result.data).toBeUndefined();
+				}
+				const audit = audits.at(-1)!;
+				expect(audit).toMatchObject({ bytes, reads, opened: 1, closed: 1 });
+				expect(bytes).toBeLessThanOrEqual(cap + 1);
+				expect(audit.outputBytes).toBeLessThanOrEqual(100001 + 4 * Math.ceil((cap + 3) / 3));
+				expect(audit.requests.every((count) => count <= Math.min(65536, cap + 1))).toBe(true);
+				expect(
+					audit.flags[0] & (fs.constants.O_WRONLY | fs.constants.O_RDWR | fs.constants.O_CREAT)
+				).toBe(0);
+				expect(fs.readdirSync(root, { recursive: true }).sort()).toEqual(names);
+				expect(fs.readFileSync(transcript, 'utf8')).toBe(content + (grow ? 'yz' : ''));
+				if (!grow) expect(fs.statSync(transcript).mtimeMs).toBe(before.mtimeMs);
+			}
+		);
+	});
+
 	describe('readFileRemote', () => {
+		afterEach(() => {
+			vi.useRealTimers();
+			vi.restoreAllMocks();
+			try {
+				expect(execFileNoThrow).not.toHaveBeenCalled();
+			} finally {
+				vi.clearAllMocks();
+			}
+		});
+
+		it.each([undefined, {}, { maxBytes: undefined }])(
+			'keeps legacy commands and raw output when the budget is absent: %j',
+			async (options) => {
+				const stdout = 'not base64: \uFFFD\0\n0\n';
+				const deps = createMockDeps({ stdout, stderr: '', exitCode: 0 });
+				expect(await readFileRemote('~/project/file.txt', baseConfig, deps, options)).toEqual({
+					success: true,
+					data: stdout,
+				});
+				expect(vi.mocked(deps.execSsh).mock.calls[0][1].slice(-1)).toEqual([
+					'cat "$HOME/project/file.txt"',
+				]);
+				expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			}
+		);
+
+		it.each([0, -1, 0.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER, 104857600, 104857601])(
+			'rejects invalid byte budget %s before transport or argument construction',
+			async (maxBytes) => {
+				const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+				await expect(readFileRemote('/file', baseConfig, deps, { maxBytes })).rejects.toThrow(
+					RangeError
+				);
+				expect(deps.execSsh).not.toHaveBeenCalled();
+				expect(deps.buildSshArgs).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each([
+			['', 1],
+			['a', 1],
+			['abc', 3],
+			['abc', 4],
+			['é', 2],
+			['雪', 3],
+			['😀', 4],
+			['\uFFFD', 3],
+			['\uFEFF\0\r\n0\n255\n', 14],
+			['a'.repeat(65535) + '😀', 65539],
+			['small', 104857599],
+		] as const)('round-trips bounded UTF-8 case %#', async (content, maxBytes) => {
+			const deps = createMockDeps({
+				stdout: Buffer.from(content + '\n0').toString('base64'),
+				stderr: '',
+				exitCode: 0,
+			});
+			expect(await readFileRemote('/file', baseConfig, deps, { maxBytes })).toEqual({
+				success: true,
+				data: content,
+			});
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+		});
+
+		it.each(['\n', '\r\n'])(
+			'accepts base64 line wrapping %j across Unicode bytes',
+			async (newline) => {
+				const content = 'x'.repeat(56) + '😀雪\uFFFD\n0\n';
+				const encoded = Buffer.from(content + '\n0').toString('base64');
+				const deps = createMockDeps({
+					stdout: encoded.match(/.{1,76}/g)!.join(newline) + newline,
+					stderr: '',
+					exitCode: 0,
+				});
+				expect(
+					await readFileRemote('/file', baseConfig, deps, { maxBytes: Buffer.byteLength(content) })
+				).toEqual({ success: true, data: content });
+			}
+		);
+
+		it.each([
+			[0xf0, 0x90, 0x80], // Same byte count after lossy decoding: must inspect original bytes.
+			[0x80],
+			[0xc0, 0xaf],
+			[0xed, 0xa0, 0x80],
+			[0xf4, 0x90, 0x80, 0x80],
+			[0xe2, 0x82],
+		])('rejects malformed UTF-8 case %# without returning replacement text', async (...bytes) => {
+			const deps = createMockDeps({
+				stdout: Buffer.from([...bytes, 0x0a, 0x30]).toString('base64'),
+				stderr: '',
+				exitCode: 0,
+			});
+			expect(await readFileRemote('/file', baseConfig, deps, { maxBytes: bytes.length })).toEqual({
+				success: false,
+				error: 'File is not valid UTF-8: /file',
+				errorCode: 'invalid-encoding',
+			});
+		});
+
+		it.each([
+			{ bytes: Buffer.from('abcd'), maxBytes: 3 },
+			// The sentinel cuts through an emoji; overflow takes precedence over encoding.
+			{ bytes: Buffer.from([0x61, 0xf0, 0x9f]), maxBytes: 2 },
+			// An oversized peer response is rejected before decoding its allocation.
+			{ bytes: Buffer.alloc(1024, 0x61), maxBytes: 3 },
+		])('rejects sentinel or transport overflow case %#', async ({ bytes, maxBytes }) => {
+			const deps = createMockDeps({
+				stdout: Buffer.concat([bytes, Buffer.from('\n0')]).toString('base64'),
+				stderr: '',
+				exitCode: 0,
+			});
+			expect(await readFileRemote('/file', baseConfig, deps, { maxBytes })).toEqual({
+				success: false,
+				error: `File exceeds the ${maxBytes} byte read limit: /file`,
+				errorCode: 'too-large',
+			});
+		});
+
+		it('keeps a growing remote file bounded to one sentinel without rereading', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			const grownFile = Buffer.alloc(1024 * 1024, 0x61);
+			vi.mocked(deps.execSsh).mockImplementation(async (_ssh, args) => {
+				const command = args[args.length - 1];
+				expect(command).toContain("head -c 5 < '/file'");
+				const requested = Number(command.match(/head -c (\d+) </)![1]);
+				return {
+					stdout: Buffer.concat([grownFile.subarray(0, requested), Buffer.from('\n0')]).toString(
+						'base64'
+					),
+					stderr: '',
+					exitCode: 0,
+				};
+			});
+			expect(await readFileRemote('/file', baseConfig, deps, { maxBytes: 4 })).toMatchObject({
+				success: false,
+				errorCode: 'too-large',
+			});
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+		});
+
+		it.each(['!', 'YQ=', 'YQ===', '=YQ=', 'Y Q=', 'YQ-_', 'YQ==\t'])(
+			'rejects malformed base64 %j',
+			async (stdout) => {
+				const deps = createMockDeps({ stdout, stderr: '', exitCode: 0 });
+				expect(await readFileRemote('/file', baseConfig, deps, { maxBytes: 16 })).toEqual({
+					success: false,
+					error: 'Invalid base64 file response: /file',
+				});
+			}
+		);
+
+		it.each([
+			'',
+			'body',
+			'body\n',
+			'body\n00',
+			'body\n-1',
+			'body\n256',
+			'body\n1000',
+			'body\nx',
+			'body\n0\n',
+			'body\n0\r',
+		])('rejects missing or malformed head status %j', async (frame) => {
+			const deps = createMockDeps({
+				stdout: Buffer.from(frame).toString('base64'),
+				stderr: '',
+				exitCode: 0,
+			});
+			expect(await readFileRemote('/file', baseConfig, deps, { maxBytes: 16 })).toEqual({
+				success: false,
+				error: 'Missing remote file read status: /file',
+			});
+		});
+
+		it.each([
+			['~', '"$HOME"'],
+			['~/account 雪/file', '"$HOME/account 雪/file"'],
+			['~/a "quote"/$value', '"$HOME/a \\"quote\\"/\\$value"'],
+			['$HOME/account space/file', '"$HOME/account space/file"'],
+			["/account's/file", "'/account'\\''s/file'"],
+			['-n', "'-n'"],
+			['/space dir/$value;$(whoami)`id`\nfile', "'/space dir/$value;$(whoami)`id`\nfile'"],
+		])(
+			'guards and escapes remote path %j before bounded redirection',
+			async (filePath, escaped) => {
+				const deps = createMockDeps({ stdout: 'eAow', stderr: '', exitCode: 0 });
+				// Fixed wire fixture is x + newline + status 0, independent of command assembly.
+				expect(await readFileRemote(filePath, baseConfig, deps, { maxBytes: 1 })).toEqual({
+					success: true,
+					data: 'x',
+				});
+				expect(vi.mocked(deps.execSsh).mock.calls[0]).toEqual([
+					'ssh',
+					[
+						'-i',
+						'/home/user/.ssh/id_ed25519',
+						'-o',
+						'BatchMode=yes',
+						'-p',
+						'22',
+						'testuser@dev.example.com',
+						`if test -f ${escaped}; then { head -c 2 < ${escaped}; printf '\\n%s' "$?"; } | base64; else echo 'File not found or not a regular file' >&2; exit 1; fi`,
+					],
+					undefined,
+				]);
+				expect(deps.buildSshArgs).toHaveBeenCalledWith(baseConfig);
+			}
+		);
+
+		it.each(['directory', 'fifo', 'device', 'missing', 'dangling-symlink'])(
+			'discloses a rejected %s path with no partial content',
+			async (kind) => {
+				const deps = createMockDeps({
+					stdout: '',
+					stderr: 'File not found or not a regular file\n',
+					exitCode: 1,
+				});
+				expect(
+					await readFileRemote(`/fixture/${kind}`, baseConfig, deps, { maxBytes: 16 })
+				).toEqual({
+					success: false,
+					error: 'File not found or not a regular file\n',
+				});
+				expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			}
+		);
+
+		it.each([
+			['head: No such file or directory', 'File not found: /file'],
+			['head: Permission denied', 'Permission denied: /file'],
+			['head: Is a directory', 'Path is a directory: /file'],
+			['head: Input/output error', 'head: Input/output error'],
+			['', 'Failed to read file: /file'],
+		])(
+			'preserves read failure %j even after partial bytes and successful base64',
+			async (stderr, error) => {
+				for (const status of [1, 255]) {
+					const deps = createMockDeps({
+						stdout: Buffer.from(`partial\n${status}`).toString('base64'),
+						stderr,
+						exitCode: 0,
+					});
+					expect(await readFileRemote('/file', baseConfig, deps, { maxBytes: 16 })).toEqual({
+						success: false,
+						error,
+					});
+					expect(deps.execSsh).toHaveBeenCalledTimes(1);
+				}
+			}
+		);
+
+		it.each([
+			[1, 'head: Permission denied', 'Permission denied: /file'],
+			[1, 'head: No such file or directory', 'File not found: /file'],
+			[127, 'base64: command not found', 'base64: command not found'],
+			[255, 'Permission denied (publickey).', 'Permission denied: /file'],
+		] as const)('does not decode stdout on outer exit %s: %s', async (exitCode, stderr, error) => {
+			const deps = createMockDeps({ stdout: 'eAow', stderr, exitCode });
+			expect(await readFileRemote('/file', baseConfig, deps, { maxBytes: 16 })).toEqual({
+				success: false,
+				error,
+			});
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+		});
+
+		it.each([undefined, { maxBytes: 16 }])(
+			'classifies max-buffer failure only for bounded reads: %j',
+			async (options) => {
+				const deps = createMockDeps({
+					stdout: 'eAow',
+					stderr: 'stdout maxBuffer length exceeded',
+					exitCode: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+				});
+				expect(await readFileRemote('/file', baseConfig, deps, options)).toEqual(
+					options
+						? {
+								success: false,
+								error: 'File exceeds the 16 byte read limit: /file',
+								errorCode: 'too-large',
+							}
+						: { success: false, error: 'stdout maxBuffer length exceeded' }
+				);
+				expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			}
+		);
+
+		it.each([true, false])(
+			'bounds disconnect retries and discards failed output (recovers: %s)',
+			async (recovers) => {
+				vi.useFakeTimers();
+				const deps = createMockDeps({
+					stdout: 'cGFydGlhbAow',
+					stderr: 'Connection reset by peer',
+					exitCode: 255,
+				});
+				vi.mocked(deps.buildSshArgs).mockImplementation(() => ['testuser@dev.example.com']);
+				if (recovers)
+					vi.mocked(deps.execSsh)
+						.mockResolvedValueOnce({
+							stdout: 'cGFydGlhbAow',
+							stderr: 'Connection reset by peer',
+							exitCode: 255,
+						})
+						.mockResolvedValue({ stdout: 'eAow', stderr: '', exitCode: 0 });
+				const pending = readFileRemote('/file', baseConfig, deps, { maxBytes: 16 });
+				await vi.runAllTimersAsync();
+				expect(await pending).toEqual(
+					recovers
+						? { success: true, data: 'x' }
+						: { success: false, error: 'Connection reset by peer' }
+				);
+				expect(deps.execSsh).toHaveBeenCalledTimes(recovers ? 2 : 4);
+				const calls = vi.mocked(deps.execSsh).mock.calls;
+				for (const call of calls) expect(call).toEqual(calls[0]);
+				expect(vi.getTimerCount()).toBe(0);
+			}
+		);
+
+		it('propagates unexpected transport exceptions without falling back to a real read', async () => {
+			const fault = new Error('inert transport fault');
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			vi.mocked(deps.execSsh).mockRejectedValue(fault);
+			await expect(readFileRemote('/file', baseConfig, deps, { maxBytes: 16 })).rejects.toBe(fault);
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+		});
+
 		it('returns file contents successfully', async () => {
 			const deps = createMockDeps({
 				stdout: '# README\n\nThis is my project.\n',

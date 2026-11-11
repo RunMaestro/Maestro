@@ -3,9 +3,20 @@ import { renderHook, act } from '@testing-library/react';
 import { useAgentSessionsRename } from '../../../../../renderer/components/AgentSessionsBrowser/hooks/useAgentSessionsRename';
 import type { AgentSession } from '../../../../../renderer/hooks/agent/useSessionViewer';
 import { createMockSession } from '../../../../helpers/mockSession';
+import { createMockAITab } from '../../../../helpers/mockTab';
+import { resetStore } from '../../../../helpers/resetStores';
+import { useNotificationStore } from '../../../../../renderer/stores/notificationStore';
+import { captureException } from '../../../../../renderer/utils/sentry';
+
+vi.mock('../../../../../renderer/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
+}));
 
 const mockUpdateSessionName = vi.fn();
 const mockSetSessionName = vi.fn();
+const mockHistoryUpdateSessionName = vi.fn();
+const mockLog = vi.fn();
 const updateSession = vi.fn();
 const setViewingSession = vi.fn();
 const onUpdateTab = vi.fn();
@@ -13,15 +24,21 @@ const onUpdateTab = vi.fn();
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.useFakeTimers();
+	resetStore(useNotificationStore);
+	useNotificationStore.getState().setOsNotifications(false);
 	mockUpdateSessionName.mockResolvedValue(undefined);
 	mockSetSessionName.mockResolvedValue(undefined);
 	(window as any).maestro = {
 		claude: { updateSessionName: mockUpdateSessionName },
 		agentSessions: { setSessionName: mockSetSessionName },
+		history: { updateSessionName: mockHistoryUpdateSessionName },
+		logger: { log: mockLog },
 	};
 });
 
 afterEach(() => {
+	useNotificationStore.getState().clearToasts();
+	resetStore(useNotificationStore);
 	vi.useRealTimers();
 });
 
@@ -186,6 +203,119 @@ describe('useAgentSessionsRename', () => {
 		});
 		expect(mockSetSessionName).toHaveBeenCalledWith('codex', '/project', 'sess-1', 'New Name');
 	});
+
+	it.each(['grok', 'codex'] as const)(
+		'refuses Grok History rename visibly without changing rows or tabs when current provider is %s',
+		async (toolType) => {
+			const viewing = makeAgentSession();
+			const tab = createMockAITab({
+				agentSessionId: viewing.sessionId,
+				name: 'Maestro label',
+				nativeSessionBinding: {
+					version: 1,
+					state: 'bound',
+					provider: 'grok',
+					nativeSessionId: viewing.sessionId,
+					accountRef: 'grok-account-a',
+					host: { kind: 'ssh', identity: 'endpoint-a' },
+					cwd: '/project',
+				},
+			});
+			if (toolType === 'codex') {
+				tab.providerSessions = {
+					grok: {
+						agentSessionId: tab.agentSessionId,
+						nativeSessionBinding: tab.nativeSessionBinding,
+					},
+				};
+				tab.agentSessionId = 'codex-native';
+				tab.nativeSessionBinding = undefined;
+			}
+			const activeSession = createMockSession({ toolType, aiTabs: [tab] });
+			const before = structuredClone({ viewing, activeSession });
+			const { result } = renderHook(() =>
+				useAgentSessionsRename(
+					defaultArgs({
+						agentId: 'grok',
+						activeSession,
+						viewingSession: viewing,
+					})
+				)
+			);
+			act(() => {
+				result.current.beginRename(viewing);
+			});
+			act(() => {
+				result.current.setRenameValue('Requested native title');
+			});
+			await act(async () => {
+				const pending = result.current.submitRename(viewing.sessionId);
+				expect(useNotificationStore.getState().toasts).toHaveLength(1);
+				expect(updateSession).not.toHaveBeenCalled();
+				expect(setViewingSession).not.toHaveBeenCalled();
+				expect(onUpdateTab).not.toHaveBeenCalled();
+				await pending;
+			});
+			expect(useNotificationStore.getState().toasts[0]).toMatchObject({
+				color: 'yellow',
+				title: 'Grok native rename unavailable',
+				message: expect.stringContaining('same account and host'),
+			});
+			expect(useNotificationStore.getState().toasts[0].message).toContain('refresh History');
+			expect(useNotificationStore.getState().toasts[0].message).toContain(
+				'rename the open conversation tab'
+			);
+			expect(mockSetSessionName).not.toHaveBeenCalled();
+			expect(mockUpdateSessionName).not.toHaveBeenCalled();
+			expect(mockHistoryUpdateSessionName).not.toHaveBeenCalled();
+			expect(updateSession).not.toHaveBeenCalled();
+			expect(setViewingSession).not.toHaveBeenCalled();
+			expect(onUpdateTab).not.toHaveBeenCalled();
+			expect({ viewing, activeSession }).toEqual(before);
+			expect(result.current.renamingSessionId).toBe(viewing.sessionId);
+			expect(result.current.renameValue).toBe('Requested native title');
+			expect(captureException).not.toHaveBeenCalled();
+			expect(mockLog).not.toHaveBeenCalled();
+		}
+	);
+
+	it.each(['claude-code', 'codex'])(
+		'reports unexpected %s rename failures without optimistic success',
+		async (agentId) => {
+			const failure = new Error('rename transport unavailable');
+			const writer = agentId === 'claude-code' ? mockUpdateSessionName : mockSetSessionName;
+			writer.mockRejectedValueOnce(failure);
+			const viewing = makeAgentSession();
+			const { result } = renderHook(() =>
+				useAgentSessionsRename(defaultArgs({ agentId, viewingSession: viewing }))
+			);
+			act(() => {
+				result.current.beginRename(viewing);
+			});
+			act(() => {
+				result.current.setRenameValue('New name');
+			});
+			await act(async () => {
+				await result.current.submitRename(viewing.sessionId);
+			});
+			expect(writer).toHaveBeenCalledOnce();
+			expect(captureException).toHaveBeenCalledWith(failure, {
+				extra: { agentId, sessionId: viewing.sessionId, projectPath: '/project' },
+			});
+			expect(mockLog).toHaveBeenCalledWith(
+				'error',
+				'Failed to rename session:',
+				undefined,
+				failure
+			);
+			expect(updateSession).not.toHaveBeenCalled();
+			expect(setViewingSession).not.toHaveBeenCalled();
+			expect(onUpdateTab).not.toHaveBeenCalled();
+			expect(useNotificationStore.getState().toasts).toEqual([]);
+			expect(result.current.renamingSessionId).toBeNull();
+			expect(viewing.sessionName).toBe('Original Name');
+		}
+	);
 
 	it('submitRename trims whitespace', async () => {
 		const { result } = renderHook(() => useAgentSessionsRename(defaultArgs()));

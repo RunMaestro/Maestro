@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	AGENT_CAPABILITIES,
 	AGENT_DEFINITIONS,
 	getAgentDefinition,
 	getAgentIds,
@@ -14,6 +15,7 @@ import {
 	type AgentConfigOption,
 } from '../../../main/agents';
 import { getAgentCapabilities } from '../../../main/agents/capabilities';
+import { getAgentLoginCommand } from '../../../shared/agentMetadata';
 
 describe('agent-definitions', () => {
 	describe('AGENT_DEFINITIONS', () => {
@@ -95,7 +97,7 @@ describe('agent-definitions', () => {
 			const opencode = AGENT_DEFINITIONS.find((def) => def.id === 'opencode');
 			expect(opencode).toBeDefined();
 			expect(opencode?.batchModePrefix).toEqual(['run']);
-			expect(opencode?.jsonOutputArgs).toEqual(['--format', 'json']);
+			expect(opencode?.jsonOutputArgs).toEqual(['--format', 'json', '--thinking']);
 			// noPromptSeparator removed: '--' separator prevents yargs from misinterpreting prompt content (#527)
 			expect(opencode?.noPromptSeparator).toBeUndefined();
 		});
@@ -330,9 +332,12 @@ describe('agent-definitions', () => {
 					'Use these attached images as context:\n/tmp/a.png\n/tmp/b.jpg\n\n'
 				);
 				expect(agent?.imagePromptBuilder?.([])).toBe('');
+				// Grok keeps the legacy builder but withholds the flags: its
+				// prompt-file plan refuses image turns until a host image-bounds producer exists.
+				const advertised = agentId !== 'grok';
 				expect(getAgentCapabilities(agentId)).toMatchObject({
-					supportsImageInput: true,
-					supportsImageInputOnResume: true,
+					supportsImageInput: advertised,
+					supportsImageInputOnResume: advertised,
 				});
 			}
 		);
@@ -423,44 +428,71 @@ describe('agent-definitions', () => {
 			expect(grok?.readOnlyArgs).toEqual(['--permission-mode', 'plan', '--deny', 'Bash(*)']);
 		});
 
-		it('should define the Grok model option as a dynamic select with static fallback', () => {
+		it('preserves explicit Grok models without inventing a fallback catalog', () => {
 			const grok = getAgentDefinition('grok');
-			expect(grok?.configOptions).toBeDefined();
-
 			const modelOption = grok?.configOptions?.find((opt) => opt.key === 'model');
-			expect(modelOption?.type).toBe('select');
-			expect((modelOption as any)?.dynamic).toBe(true);
-			// Static fallback for fresh installs where ~/.grok/models_cache.json
-			// hasn't been written yet (per `grok models` v0.2.93).
-			expect((modelOption as any)?.options).toEqual(['', 'grok-4.5', 'grok-composer-2.5-fast']);
-			expect(modelOption?.default).toBe('');
-			expect(modelOption?.argBuilder?.('grok-4.5')).toEqual(['-m', 'grok-4.5']);
-			expect(modelOption?.argBuilder?.('')).toEqual([]);
-			expect(modelOption?.argBuilder?.('  ')).toEqual([]);
+			if (modelOption?.type !== 'text') throw new Error('Expected Grok model text option');
+			expect(modelOption).toMatchObject({ type: 'text', default: '' });
+			expect(modelOption).not.toHaveProperty('options');
+			expect(modelOption).not.toHaveProperty('dynamic');
+			expect(modelOption?.argBuilder?.(modelOption.default)).toEqual([]);
+			const selectedModel = ' gateway/custom-model-v2 ';
+			expect(modelOption?.argBuilder?.(selectedModel)).toEqual(['-m', 'gateway/custom-model-v2']);
+			expect(grok?.modelArgs?.(selectedModel)).toEqual(['-m', 'gateway/custom-model-v2']);
 		});
 
-		it('should expose the full Grok reasoning-effort ladder the CLI accepts', () => {
+		it('keeps Grok effort inherited until a value is selected without advertising a universal menu', () => {
 			const grok = getAgentDefinition('grok');
 			const reasoningEffort = grok?.configOptions?.find((opt) => opt.key === 'reasoningEffort');
-			expect(reasoningEffort?.type).toBe('select');
-			// Empirically discovered from grok v0.2.93: passing a bogus value errors
-			// with "Use none, minimal, low, medium, high, xhigh, max, or a model menu
-			// option id".
-			expect((reasoningEffort as any)?.options).toEqual([
-				'',
-				'none',
-				'minimal',
-				'low',
-				'medium',
-				'high',
-				'xhigh',
-				'max',
-			]);
-			expect(reasoningEffort?.default).toBe('');
-			expect(reasoningEffort?.argBuilder?.('xhigh')).toEqual(['--reasoning-effort', 'xhigh']);
-			expect(reasoningEffort?.argBuilder?.('')).toEqual([]);
-			expect(reasoningEffort?.argBuilder?.('  ')).toEqual([]);
+			if (reasoningEffort?.type !== 'text') throw new Error('Expected Grok effort text option');
+			expect(reasoningEffort).toMatchObject({ type: 'text', default: '' });
+			expect(reasoningEffort).not.toHaveProperty('options');
+			expect(reasoningEffort).not.toHaveProperty('dynamic');
+			expect(grok?.configOptions?.filter((opt) => opt.key === 'reasoningEffort')).toHaveLength(1);
+			expect(reasoningEffort?.argBuilder?.(reasoningEffort.default)).toEqual([]);
 		});
+
+		it.each(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])(
+			'emits exactly one Grok reasoning pair for explicit %s without changing its value',
+			(effort) => {
+				const grok = getAgentDefinition('grok');
+				const reasoningEffort = grok?.configOptions?.find((opt) => opt.key === 'reasoningEffort');
+				if (reasoningEffort?.type !== 'text') throw new Error('Expected Grok effort text option');
+				// The scalar builder preserves input. Final composition owns selected-model
+				// validation, including none and refusal memory (agent-args.test.ts).
+				expect(reasoningEffort?.argBuilder?.(effort)).toEqual(['--reasoning-effort', effort]);
+				expect(reasoningEffort?.argBuilder?.(` \t${effort.toUpperCase()}\n `)).toEqual([
+					'--reasoning-effort',
+					effort.toUpperCase(),
+				]);
+			}
+		);
+
+		it.each(['budget:balanced', 'custom-menu/high', 'medium (preferred)'])(
+			'preserves Grok menu ID %s for final validation without translating it to a rung',
+			(menuId) => {
+				const grok = getAgentDefinition('grok');
+				const reasoningEffort = grok?.configOptions?.find((opt) => opt.key === 'reasoningEffort');
+				if (reasoningEffort?.type !== 'text') throw new Error('Expected Grok effort text option');
+				expect(reasoningEffort?.argBuilder?.(` ${menuId} `)).toEqual([
+					'--reasoning-effort',
+					menuId,
+				]);
+			}
+		);
+
+		it.each(['', '   ', '\t\n'])(
+			'keeps blank Grok model and effort %j inherited without emitting empty flags',
+			(value) => {
+				const grok = getAgentDefinition('grok');
+				for (const key of ['model', 'reasoningEffort']) {
+					const option = grok?.configOptions?.find((opt) => opt.key === key);
+					if (option?.type !== 'text') throw new Error(`Expected Grok ${key} text option`);
+					expect(option?.argBuilder?.(value)).toEqual([]);
+				}
+				expect(grok?.modelArgs?.(value)).toEqual([]);
+			}
+		);
 
 		it('should run Copilot batch with --allow-all (no --silent, no per-flag toggles)', () => {
 			const copilot = getAgentDefinition('copilot-cli');
@@ -596,5 +628,33 @@ describe('additionalDirArgs', () => {
 
 	it('opencode has no native mechanism and falls back to the prompt', () => {
 		expect(argsFor('opencode')).toBeUndefined();
+	});
+});
+
+/**
+ * The definition, the capability record, and the login table describe one
+ * binary from three files. They drifted for Qwen: the definition wired
+ * `--approval-mode plan` with `readOnlyCliEnforced: true` while the capability
+ * record said read-only was unsupported (so the composer never offered the
+ * toggle), and the login table named a binary `qwen3-coder` that does not
+ * exist (`binaryName` is `qwen`).
+ */
+describe('definition / capability / login parity', () => {
+	it('advertises read-only mode for every agent whose CLI enforces it', () => {
+		for (const def of AGENT_DEFINITIONS) {
+			if (!def.readOnlyCliEnforced || !def.readOnlyArgs?.length) continue;
+			expect(
+				AGENT_CAPABILITIES[def.id]?.supportsReadOnlyMode,
+				`${def.id} enforces read-only on the CLI but hides the toggle`
+			).toBe(true);
+		}
+	});
+
+	it('runs the login flow through the same binary the agent spawns with', () => {
+		for (const def of AGENT_DEFINITIONS) {
+			const login = getAgentLoginCommand(def.id);
+			if (!login) continue;
+			expect(login.binary, `${def.id} login binary`).toBe(def.binaryName);
+		}
 	});
 });

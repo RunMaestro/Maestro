@@ -37,6 +37,7 @@ import { useAtMentionCompletion } from '../hooks/input/useAtMentionCompletion';
 import { useModalStore } from '../stores/modalStore';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { displayImageSrc } from '../utils/sessionImageSrc';
+import { isImeComposing } from '../utils/ime';
 
 const EMPTY_STAGED_IMAGES: string[] = [];
 
@@ -339,6 +340,7 @@ export function PromptComposerModal({
 	};
 
 	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		if (e.key === 'Enter' && isImeComposing(e)) return;
 		// Handle mention dropdown navigation
 		if (showMentions && filteredMentions.length > 0) {
 			if (e.key === 'ArrowDown') {

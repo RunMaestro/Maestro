@@ -14,6 +14,8 @@ import { useModalStore, selectModalData, getModalActions } from '../../stores/mo
 import { daysToLookbackHours, formatLookbackSinceDate } from './lookback';
 import { ResizeHandles } from '../ui/ResizeHandles';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import { revealActiveProps, useRevealActiveItem } from '../../hooks/ui/useRevealActiveItem';
+import type { UnifiedHistoryTabProps } from './UnifiedHistoryTab';
 
 // Lazy load tab components
 const UnifiedHistoryTab = lazy(() =>
@@ -26,8 +28,8 @@ const AIOverviewTab = lazy(() =>
 interface DirectorNotesModalProps {
 	theme: Theme;
 	onClose: () => void;
-	// Session navigation - jumps to an agent's session tab (closes modal first)
-	onResumeSession?: (sourceSessionId: string, agentSessionId: string, sessionName?: string) => void;
+	// Forward recorded ownership and confirmed success to the outer navigation handler.
+	onResumeSession?: UnifiedHistoryTabProps['onResumeSession'];
 	// File linking props passed through to history detail modal
 	fileTree?: any[];
 	cwd?: string;
@@ -232,6 +234,8 @@ export function DirectorNotesModal({
 	// two lines; the activity graph's own axis already shows the window) and the
 	// tabs use their short labels.
 	const phone = usePhoneLayout();
+	// The tab strip scrolls on a narrow window; keep the active tab in it.
+	const tabStripRef = useRevealActiveItem<HTMLDivElement>(activeTab);
 
 	return createPortal(
 		<div
@@ -287,6 +291,7 @@ export function DirectorNotesModal({
 
 				{/* Tab navigation */}
 				<div
+					ref={tabStripRef}
 					className="flex items-center gap-1 px-4 py-2 border-b overflow-x-auto no-scrollbar"
 					style={{ borderColor: theme.colors.border }}
 				>
@@ -300,6 +305,7 @@ export function DirectorNotesModal({
 						return (
 							<button
 								key={tab.id}
+								{...revealActiveProps(isActive)}
 								onClick={() => !isDisabled && setActiveTab(tab.id)}
 								disabled={isDisabled}
 								className={`px-3 py-1.5 rounded text-sm flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 ${isActive ? 'font-semibold' : ''}`}
@@ -356,6 +362,7 @@ export function DirectorNotesModal({
 								ref={historyTabRef}
 								theme={theme}
 								onResumeSession={onResumeSession}
+								isActive={activeTab === 'history'}
 								fileTree={fileTree}
 								cwd={cwd}
 								projectRoot={projectRoot}

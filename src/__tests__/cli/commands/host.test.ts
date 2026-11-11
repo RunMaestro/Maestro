@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	createSignalDrain,
 	formatHostStatus,
+	hostEndpoint,
 	hostLogFilePath,
 	hostStart,
 	hostStatus,
@@ -76,6 +77,7 @@ describe('maestro-cli host', () => {
 			},
 			now: () => clock,
 			cliScript: '/bundle/maestro-cli.js',
+			checkLinger: async () => undefined,
 			...overrides,
 		};
 	}
@@ -183,7 +185,7 @@ describe('maestro-cli host', () => {
 			);
 			const text = out.join('\n');
 			expect(text).toContain('Host started (pid');
-			expect(text).toContain('Cue: failed to start: better-sqlite3 could not be loaded');
+			expect(text).toContain('Cue: not running: better-sqlite3 could not be loaded');
 			expect(text).toContain('The host is up, but Cue is not');
 			// The host itself did start, and the output says exactly that.
 			expect(process.exitCode).toBeUndefined();
@@ -338,15 +340,128 @@ describe('maestro-cli host', () => {
 		});
 	});
 
+	describe('start --no-prevent-sleep', () => {
+		it('hands the opt-out to the detached child', async () => {
+			const spawnDetached = vi.fn((_args: string[]): DetachedChild => {
+				publish(process.pid, 4321);
+				return { pid: process.pid, exited: () => undefined };
+			});
+			await hostStart({ dataDir: dir, preventSleep: false }, undefined, deps({ spawnDetached }));
+			const [args] = spawnDetached.mock.calls[0] as unknown as [string[]];
+			expect(args).toContain('--no-prevent-sleep');
+		});
+
+		it('passes nothing when sleep prevention stays on (the default)', async () => {
+			const spawnDetached = vi.fn((_args: string[]): DetachedChild => {
+				publish(process.pid, 4321);
+				return { pid: process.pid, exited: () => undefined };
+			});
+			await hostStart({ dataDir: dir, preventSleep: true }, undefined, deps({ spawnDetached }));
+			const [args] = spawnDetached.mock.calls[0] as unknown as [string[]];
+			expect(args).not.toContain('--no-prevent-sleep');
+		});
+	});
+
+	describe('Linux lingering', () => {
+		const lingerOff = async () =>
+			({ linger: false, lingerFix: 'loginctl enable-linger alice' }) as const;
+
+		it('warns on start, with the fix, and puts linger: false in the JSON', async () => {
+			const spawnDetached = vi.fn((_args: string[]): DetachedChild => {
+				publish(process.pid, 4321);
+				return { pid: process.pid, exited: () => undefined };
+			});
+			await hostStart({ dataDir: dir }, undefined, deps({ spawnDetached, checkLinger: lingerOff }));
+			expect(out.join('\n')).toContain('Host started');
+			expect(err.join('\n')).toContain('lingering is off');
+			expect(err.join('\n')).toContain('loginctl enable-linger alice');
+
+			out.length = 0;
+			err.length = 0;
+			await hostStart(
+				{ dataDir: dir, json: true },
+				undefined,
+				deps({ spawnDetached, checkLinger: lingerOff })
+			);
+			expect(JSON.parse(out.join('\n'))).toMatchObject({
+				alreadyRunning: true,
+				linger: false,
+				lingerFix: 'loginctl enable-linger alice',
+			});
+			expect(err).toEqual([]);
+		});
+
+		it('warns on status, running or not', async () => {
+			await hostStatus({ dataDir: dir, json: true }, deps({ checkLinger: lingerOff }));
+			expect(JSON.parse(out.join('\n'))).toMatchObject({ running: true, linger: false });
+
+			out.length = 0;
+			await hostStatus(
+				{ dataDir: dir },
+				deps({
+					checkLinger: lingerOff,
+					requestStatus: async () => {
+						throw new Error('Maestro desktop app is not running');
+					},
+				})
+			);
+			expect(out.join('\n')).toBe('No host is running.');
+			expect(err.join('\n')).toContain('loginctl enable-linger alice');
+		});
+
+		it('says nothing when lingering is on or the platform is not Linux', async () => {
+			await hostStatus({ dataDir: dir, json: true }, deps());
+			expect(JSON.parse(out.join('\n'))).not.toHaveProperty('linger');
+			expect(err).toEqual([]);
+		});
+
+		it('rides the endpoint report, so remote-host status can pass it on', async () => {
+			await hostEndpoint({ dataDir: dir, json: true }, deps({ checkLinger: lingerOff }));
+			expect(JSON.parse(out.join('\n'))).toEqual({
+				running: false,
+				linger: false,
+				lingerFix: 'loginctl enable-linger alice',
+			});
+
+			out.length = 0;
+			publish(process.pid, 4321);
+			await hostEndpoint({ dataDir: dir, json: true }, deps({ checkLinger: lingerOff }));
+			expect(JSON.parse(out.join('\n'))).toMatchObject({ running: true, linger: false });
+		});
+	});
+
+	describe('status: sleep prevention', () => {
+		it('says the host holds the Mac awake, and puts it in the JSON', async () => {
+			expect(formatHostStatus(report({ preventingSleep: true }))).toContain(
+				'Sleep: prevented while work is in flight'
+			);
+			expect(formatHostStatus(report({ preventingSleep: false }))).not.toContain('Sleep:');
+
+			await hostStatus(
+				{ dataDir: dir, json: true },
+				deps({ requestStatus: vi.fn(async () => report({ preventingSleep: true })) })
+			);
+			expect(JSON.parse(out.join('\n'))).toMatchObject({ running: true, preventingSleep: true });
+		});
+	});
+
 	describe('a signal to a foreground host', () => {
-		/** A host whose work is whatever `work` says, and whose stop is recorded. */
+		/** A host whose work is whatever `work` says, and whose stop and Cue drain are recorded. */
 		function drainable(work: () => HostWork) {
 			let finish!: () => void;
 			const stopped = new Promise<void>((resolve) => {
 				finish = resolve;
 			});
-			const stop = vi.fn(async () => finish());
-			return { host: { work, stop, stopped }, stop };
+			const order: string[] = [];
+			const stop = vi.fn(async () => {
+				order.push('stop');
+				finish();
+			});
+			const cue = {
+				drain: vi.fn(async (_timeoutMs: number) => void order.push('cue.drain')),
+				forceStop: vi.fn(() => void order.push('cue.forceStop')),
+			};
+			return { host: { work, stop, stopped, cue }, stop, cue, order };
 		}
 		/** A clock that moves only when the drain sleeps. */
 		function clock() {
@@ -410,6 +525,45 @@ describe('maestro-cli host', () => {
 			expect(time.lines.join('\n')).toContain('1 consult');
 		});
 
+		it('starts the Cue drain on the first signal, with the grace, before it waits for anything', async () => {
+			const { host, stop, cue } = drainable(() => ({ turns: 1, runs: [] }));
+			const time = clock();
+			const handler = createSignalDrain(host, 30_000, {
+				...time.deps,
+				sleep: () => new Promise<void>(() => undefined),
+			});
+			handler('SIGTERM');
+			// Disarmed at once, while the host is still waiting on its turn.
+			expect(cue.drain).toHaveBeenCalledWith(30_000);
+			await settle();
+			expect(stop).not.toHaveBeenCalled();
+			expect(cue.forceStop).not.toHaveBeenCalled();
+		});
+
+		it('force-stops Cue on a second signal, then stops the host', async () => {
+			const { host, cue, order } = drainable(() => ({ turns: 0, runs: [], cueRuns: 1 }));
+			const time = clock();
+			const handler = createSignalDrain(host, 30_000, {
+				...time.deps,
+				sleep: () => new Promise<void>(() => undefined),
+			});
+			handler('SIGTERM');
+			await settle();
+			handler('SIGINT');
+			expect(cue.drain).toHaveBeenCalledTimes(1);
+			expect(order).toEqual(['cue.drain', 'cue.forceStop', 'stop']);
+		});
+
+		it('still stops the host when the Cue drain fails', async () => {
+			const { host, stop, cue } = drainable(() => ({ turns: 0, runs: [] }));
+			cue.drain.mockRejectedValueOnce(new Error('db closed'));
+			const time = clock();
+			createSignalDrain(host, 30_000, time.deps)('SIGTERM');
+			await settle();
+			expect(stop).toHaveBeenCalledTimes(1);
+			expect(time.lines.join('\n')).toContain('Draining Cue failed: db closed');
+		});
+
 		it('stops at once on a second signal', async () => {
 			const { host, stop } = drainable(() => ({ turns: 1, runs: [] }));
 			// A sleep that never ends: only the second signal can stop the host.
@@ -434,6 +588,81 @@ describe('maestro-cli host', () => {
 			expect(stop).toHaveBeenCalledTimes(1);
 			expect(time.elapsed()).toBe(0);
 		});
+	});
+
+	describe('endpoint', () => {
+		it('prints the live host endpoint, token and secret included, under --json', async () => {
+			publish(process.pid, 4321);
+			await hostEndpoint({ dataDir: dir, json: true }, deps());
+			expect(JSON.parse(out.join('\n'))).toEqual({
+				running: true,
+				port: 4321,
+				token: 't',
+				cliSecret: 's',
+				pid: process.pid,
+			});
+			expect(process.exitCode).toBeUndefined();
+		});
+
+		it('reports the host version when the discovery file has one', async () => {
+			writeCliServerInfoTo(dir, {
+				port: 4000,
+				token: 't',
+				pid: process.pid,
+				startedAt: Date.now(),
+				version: '9.9.9',
+			});
+			await hostEndpoint({ dataDir: dir, json: true }, deps());
+			expect(JSON.parse(out.join('\n'))).toMatchObject({ running: true, version: '9.9.9' });
+		});
+
+		it('keeps the token and the secret out of the human output', async () => {
+			writeCliServerInfoTo(dir, {
+				port: 4000,
+				token: 'tok-SECRET-1',
+				pid: process.pid,
+				startedAt: Date.now(),
+				cliSecret: 'cli-SECRET-2',
+			});
+			await hostEndpoint({ dataDir: dir }, deps());
+			const printed = [...out, ...err].join('\n');
+			expect(printed).toContain('port 4000');
+			expect(printed).not.toContain('tok-SECRET-1');
+			expect(printed).not.toContain('cli-SECRET-2');
+		});
+
+		it('says running: false with exit 3 when no host publishes', async () => {
+			await hostEndpoint({ dataDir: dir, json: true }, deps());
+			expect(JSON.parse(out.join('\n'))).toEqual({ running: false });
+			expect(process.exitCode).toBe(3);
+		});
+
+		it('says running: false for a discovery file whose pid is dead', async () => {
+			publish(424242);
+			await hostEndpoint({ dataDir: dir, json: true }, deps());
+			expect(JSON.parse(out.join('\n'))).toEqual({ running: false });
+			expect(process.exitCode).toBe(3);
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			'refuses, without the token or the secret, when other users can read the discovery file',
+			async () => {
+				writeCliServerInfoTo(dir, {
+					port: 4000,
+					token: 'tok-SECRET-1',
+					pid: process.pid,
+					startedAt: Date.now(),
+					cliSecret: 'cli-SECRET-2',
+				});
+				fs.chmodSync(path.join(dir, 'cli-server.json'), 0o644);
+				await hostEndpoint({ dataDir: dir, json: true }, deps());
+				const printed = [...out, ...err].join('\n');
+				expect(JSON.parse(out.join('\n')).error).toContain('chmod 600');
+				expect(printed).not.toContain('tok-SECRET-1');
+				expect(printed).not.toContain('cli-SECRET-2');
+				expect(process.exitCode).toBe(1);
+			}
+		);
 	});
 
 	describe('stop --wait', () => {

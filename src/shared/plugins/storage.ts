@@ -29,10 +29,12 @@ export const PLUGINS_DIRNAME = 'plugins';
 /** Current schema version of the plugin state file. */
 export const PLUGIN_STATE_SCHEMA_VERSION = 1;
 
-/** Per-plugin persisted state. Only the user toggle is persisted; everything
- * else (manifest, load status) is re-derived from disk on each discovery. */
+/** Per-plugin persisted state. Runtime loadability is still re-derived from disk. */
 export interface PluginStateEntry {
 	enabled: boolean;
+	/** First authenticated publisher: update continuity only, never code authorization.
+	 * Absent in legacy files; null preserves a malformed-present anchor as blocked. */
+	trustedPublisher?: string | null;
 }
 
 /** The full, versioned plugin state file. */
@@ -160,10 +162,10 @@ export function validatePluginGrantsFile(input: unknown): PluginGrantsFile {
 
 /**
  * Validate (and migrate) a parsed plugin state file. Always returns a
- * well-formed PluginStateFile: unknown/old shapes are migrated, invalid entries
- * are dropped, and a totally unrecognizable input degrades to an empty state
- * rather than throwing. The persistence boundary calls this on both read and
- * write so a corrupt hand-edit can never poison the subsystem.
+ * well-formed PluginStateFile: unknown/old shapes are migrated and invalid legacy
+ * entries are dropped. A malformed-present publisher remains a blocking null
+ * marker. Totally unrecognizable input degrades to an empty state. Persistence
+ * calls this on both read and write.
  */
 export function validatePluginStateFile(input: unknown): PluginStateFile {
 	const raw = isPlainObject(input) ? input : {};
@@ -172,8 +174,22 @@ export function validatePluginStateFile(input: unknown): PluginStateFile {
 	const pluginsRaw = isPlainObject(migrated.plugins) ? migrated.plugins : {};
 	const plugins: Record<string, PluginStateEntry> = {};
 	for (const [id, entry] of Object.entries(pluginsRaw)) {
-		if (isPlainObject(entry) && typeof entry.enabled === 'boolean') {
-			plugins[id] = { enabled: entry.enabled };
+		if (!isPlainObject(entry)) continue;
+		const hasPublisher = Object.prototype.hasOwnProperty.call(entry, 'trustedPublisher');
+		if (typeof entry.enabled === 'boolean' || hasPublisher) {
+			plugins[id] = {
+				enabled: typeof entry.enabled === 'boolean' ? entry.enabled : false,
+				...(hasPublisher
+					? {
+							trustedPublisher:
+								typeof entry.trustedPublisher === 'string' &&
+								entry.trustedPublisher.trim() !== '' &&
+								entry.trustedPublisher.length <= 4096
+									? entry.trustedPublisher
+									: null,
+						}
+					: {}),
+			};
 		}
 	}
 	return { schemaVersion: PLUGIN_STATE_SCHEMA_VERSION, plugins };

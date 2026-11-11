@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { resolveTurnOutcome, type TurnFacts, type TurnOutcomeProvider } from '../turn-outcome';
+import {
+	resolveTurnOutcome,
+	type TurnFacts,
+	type TurnOutcomeProvider,
+	type TurnTerminal,
+} from '../turn-outcome';
 import type { AgentError } from '../../../types';
 
 function baseFacts(overrides: Partial<TurnFacts> = {}): TurnFacts {
@@ -374,4 +379,183 @@ describe('resolveTurnOutcome', () => {
 
 		expect(result).toEqual({ outcome: 'crashed' });
 	});
+});
+
+describe('structured terminal outcomes', () => {
+	const context = { providerId: 'grok', sessionId: 'maestro-tab' };
+
+	it.each<[TurnTerminal, 'crashed' | 'interrupted']>([
+		[{ status: 'refused', origin: 'provider' }, 'crashed'],
+		[{ status: 'refused', origin: 'admission' }, 'crashed'],
+		[{ status: 'refused', origin: 'effect' }, 'crashed'],
+		[{ status: 'cancelled', origin: 'user' }, 'interrupted'],
+		[{ status: 'cancelled', origin: 'provider' }, 'interrupted'],
+		[{ status: 'timeout', kind: 'idle' }, 'crashed'],
+		[{ status: 'timeout', kind: 'deadline' }, 'crashed'],
+		[{ status: 'incomplete', kind: 'limit' }, 'crashed'],
+		[{ status: 'incomplete', kind: 'missing-terminal' }, 'crashed'],
+		[{ status: 'incomplete', kind: 'unknown-stop-reason' }, 'crashed'],
+	])('does not upgrade %j despite text, a result and exit zero', (shape, outcome) => {
+		const terminal: TurnTerminal = Object.freeze({
+			...shape,
+			reason: 'original settlement',
+			providerStopReason: 'native-reason',
+			dispatchState: 'dispatched',
+		});
+		const provider = neverErrorsProvider();
+		// Cleanup may set interrupted after a timeout or refusal. It cannot
+		// erase the earlier cause, and cancellation needs no cleanup bit.
+		for (const interrupted of [false, true]) {
+			const facts = Object.freeze(
+				baseFacts({
+					terminal,
+					interrupted,
+					resultMessageSeen: true,
+					capturedAnswerText: 'partial answer',
+				})
+			);
+			expect(resolveTurnOutcome(facts, provider, context)).toEqual({ outcome, terminal });
+			expect(facts.terminal).toBe(terminal);
+		}
+		expect(provider.detectErrorFromExit).not.toHaveBeenCalled();
+	});
+
+	it.each<TurnTerminal['dispatchState']>(['not-dispatched', 'dispatched', 'unknown'])(
+		'preserves transport loss with dispatch certainty %s without declaring success',
+		(dispatchState) => {
+			const terminal: TurnTerminal = {
+				status: 'failed',
+				kind: 'transport',
+				dispatchState,
+				reason: 'connection closed before settlement',
+			};
+			const result = resolveTurnOutcome(
+				baseFacts({
+					terminal,
+					resultMessageSeen: true,
+					capturedAnswerText: 'work may have happened',
+				}),
+				neverErrorsProvider(),
+				context
+			);
+			expect(result).toEqual({ outcome: 'crashed', terminal });
+		}
+	);
+
+	it('accepts recognized success on a resident transport without a process exit or result envelope', () => {
+		const terminal: TurnTerminal = Object.freeze({
+			status: 'success',
+			providerStopReason: 'end_turn',
+			dispatchState: 'dispatched',
+		});
+		const facts = Object.freeze(baseFacts({ exitCode: null, terminal }));
+		expect(resolveTurnOutcome(facts, neverErrorsProvider(), context)).toEqual({
+			outcome: 'completed',
+			terminal,
+		});
+		expect(facts.resultMessageSeen).toBe(false);
+		expect(facts.terminal).toBe(terminal);
+	});
+
+	it.each<[string, Partial<TurnFacts>, TurnTerminal, 'crashed' | 'interrupted']>([
+		[
+			'requested stop',
+			{ interrupted: true },
+			{ status: 'cancelled', origin: 'unknown' },
+			'interrupted',
+		],
+		['nonzero exit', { exitCode: 1 }, { status: 'failed', kind: 'process' }, 'crashed'],
+		[
+			'unrequested signal',
+			{ exitCode: null, signal: 'SIGKILL' },
+			{ status: 'failed', kind: 'process' },
+			'crashed',
+		],
+		[
+			'undelivered prompt',
+			{ stdinError: new Error('write EPIPE') },
+			{ status: 'failed', kind: 'prompt-delivery' },
+			'crashed',
+		],
+	])(
+		'overrides structured success after %s while retaining its original reason',
+		(_label, overrides, replacement, outcome) => {
+			const terminal: TurnTerminal = Object.freeze({
+				status: 'success',
+				reason: 'provider finished',
+				providerStopReason: 'end_turn',
+				dispatchState: 'dispatched',
+			});
+			const facts = Object.freeze(
+				baseFacts({
+					terminal,
+					resultMessageSeen: true,
+					capturedAnswerText: 'answer',
+					...overrides,
+				})
+			);
+			const result = resolveTurnOutcome(facts, neverErrorsProvider(), context);
+			expect(result).toMatchObject({ outcome, terminal: { ...terminal, ...replacement } });
+			expect(facts.terminal).toBe(terminal);
+			expect(terminal.status).toBe('success');
+			if (overrides.stdinError) {
+				expect(result.error).toMatchObject({ type: 'agent_crashed', agentId: 'grok' });
+			} else {
+				expect(result).not.toHaveProperty('error');
+			}
+		}
+	);
+
+	it.each(['explicit', 'detected'] as const)(
+		'preserves a %s error over structured success',
+		(source) => {
+			const error: AgentError = {
+				type: 'auth_expired',
+				message: 'authentication expired',
+				recoverable: true,
+				agentId: 'grok',
+				timestamp: 0,
+			};
+			const terminal: TurnTerminal = {
+				status: 'success',
+				providerStopReason: 'end_turn',
+				dispatchState: 'dispatched',
+			};
+			const provider = alwaysErrorsProvider(error);
+			const result = resolveTurnOutcome(
+				baseFacts({
+					terminal,
+					resultMessageSeen: true,
+					capturedAnswerText: 'answer',
+					explicitError: source === 'explicit' ? error : undefined,
+				}),
+				provider,
+				context
+			);
+			expect(result).toEqual({
+				outcome: 'crashed',
+				error,
+				terminal: { ...terminal, status: 'failed', kind: 'provider' },
+			});
+			expect(result.error).toBe(error);
+			expect(provider.detectErrorFromExit).toHaveBeenCalledTimes(source === 'explicit' ? 0 : 1);
+		}
+	);
+
+	it.each(['claude-code', 'codex', 'antigravity'])(
+		'keeps legacy %s results free of invented structured terminal facts',
+		(providerId) => {
+			const legacyContext = { providerId, sessionId: 'legacy-session' };
+			const provider = neverErrorsProvider();
+			expect(
+				resolveTurnOutcome(baseFacts({ resultMessageSeen: true }), provider, legacyContext)
+			).toEqual({ outcome: 'completed' });
+			expect(
+				resolveTurnOutcome(baseFacts({ capturedAnswerText: 'answer' }), provider, legacyContext)
+			).toEqual({ outcome: 'completed-with-warning' });
+			expect(resolveTurnOutcome(baseFacts({ interrupted: true }), provider, legacyContext)).toEqual(
+				{ outcome: 'interrupted' }
+			);
+		}
+	);
 });

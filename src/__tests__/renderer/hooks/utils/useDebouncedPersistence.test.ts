@@ -16,13 +16,15 @@ import type {
 	TerminalTab,
 } from '../../../../renderer/types';
 import type { BrowserTab } from '../../../../shared/browserPage';
+import {
+	switchTabProvider,
+	updateProviderSlot,
+	type NativeSessionBinding,
+} from '../../../../shared/maestro-lib/agents/providerSwap';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { resetStore } from '../../../helpers/resetStores';
 
-import {
-	useSessionLifecycleSync,
-	type SessionLifecycleSyncPayload,
-} from '../../../../renderer/hooks/session/useSessionLifecycleSync';
+import { useSessionLifecycleSync } from '../../../../renderer/hooks/session/useSessionLifecycleSync';
 import { mergeSessionPersistenceChanges } from '../../../../shared/sessionPersistenceMerge';
 import { BridgeTransportError } from '../../../../shared/bridgeError';
 // The renderer sentry module only exports these two helpers, so a full mock is
@@ -134,7 +136,7 @@ function seedSessions(sessions: Session[]) {
 
 function mockPersistedSessions(initial: Session[]) {
 	let stored = structuredClone(initial);
-	const save = async (updates: Session[], removedIds: string[], baselines?: Session[]) => {
+	const save = async (updates: Session[], removedIds: string[] = [], baselines?: Session[]) => {
 		stored = stored.filter((session) => !removedIds.includes(session.id));
 		for (const update of updates) {
 			const index = stored.findIndex((session) => session.id === update.id);
@@ -189,6 +191,67 @@ describe('useDebouncedPersistence', () => {
 	// initialLoadComplete is set in a finally, so it is true either way, and
 	// flushNow with a snapshot skips it altogether. persistInternal is the one
 	// gate every flush path shares, so the refusal lives there.
+	describe('queue synchronization during streaming', () => {
+		it('persists a dequeue promptly while another agent keeps streaming', async () => {
+			const item = { id: 'consumed', type: 'message' as const, text: 'Ja bitte', timestamp: 1 };
+			const owner = makeSession({ id: 'owner', executionQueue: [item] });
+			const other = makeSession({ id: 'streaming' });
+			seedSessions([owner, other]);
+			const stored = mockPersistedSessions([owner, other]);
+			renderPersistence(makeInitialLoadRef(true));
+			act(() => seedSessions([{ ...owner, executionQueue: [] }, other]));
+			for (let i = 0; i < 4; i++) {
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(500);
+				});
+				act(() =>
+					useSessionStore
+						.getState()
+						.setSessions((prev) =>
+							prev.map((session) =>
+								session.id === other.id ? { ...session, contextUsage: i + 1 } : session
+							)
+						)
+				);
+			}
+			expect(stored().find((session) => session.id === owner.id)?.executionQueue).toEqual([]);
+		});
+
+		it('bounds persistence delay even when ordinary session updates never stop', async () => {
+			const session = makeSession({ id: 'streaming' });
+			seedSessions([session]);
+			const stored = mockPersistedSessions([session]);
+			renderPersistence(makeInitialLoadRef(true));
+			for (let i = 1; i <= 20; i++) {
+				act(() => seedSessions([{ ...session, contextUsage: i }]));
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(500);
+				});
+			}
+			expect(stored()[0].contextUsage).toBeGreaterThan(0);
+		});
+
+		it('coalesces a synchronous queue burst into one save of the final queue', async () => {
+			const session = makeSession({ id: 'queue' });
+			seedSessions([session]);
+			const stored = mockPersistedSessions([session]);
+			renderPersistence(makeInitialLoadRef(true));
+			const item = { id: 'queued', type: 'message' as const, text: 'new work', timestamp: 1 };
+			act(() => {
+				seedSessions([{ ...session, executionQueue: [item] }]);
+				seedSessions([{ ...session, executionQueue: [{ ...item, paused: true }] }]);
+			});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(stored()[0].executionQueue).toEqual([{ ...item, paused: true }]);
+			expect(
+				vi.mocked(window.maestro.sessions.setAll).mock.calls.length +
+					vi.mocked(window.maestro.sessions.setMany).mock.calls.length
+			).toBe(1);
+		});
+	});
+
 	describe('sessionsReadOk gate', () => {
 		it('does not persist on the debounce timer when the read never came back', () => {
 			useSessionStore.setState({ sessionsReadOk: false });
@@ -436,6 +499,171 @@ describe('useDebouncedPersistence', () => {
 				expect(persisted[0].aiTabs[0].state).toBe('idle');
 				expect(persisted[0].aiTabs[0].inputValue).toBe('');
 				expect(persisted[0].aiTabs[0].starred).toBe(false);
+			});
+		});
+
+		describe('native session binding persistence', () => {
+			const observed: Extract<NativeSessionBinding, { state: 'bound' }> = {
+				version: 1,
+				state: 'bound',
+				provider: 'grok',
+				nativeSessionId: 'same-native-id',
+				accountRef: 'grok:fixture-account-a',
+				host: { kind: 'local', identity: 'fixture-machine-a' },
+				cwd: '/fixture/project-a',
+			};
+
+			it.each<[string, NativeSessionBinding | undefined]>([
+				['observed', observed],
+				['different account', { ...observed, accountRef: 'grok:fixture-account-b' }],
+				['different host', { ...observed, host: { kind: 'ssh', identity: 'fixture-host-b' } }],
+				['different cwd', { ...observed, cwd: '/fixture/project-b' }],
+				['different provider', { ...observed, provider: 'codex' }],
+				['legacy absent', undefined],
+				['explicit legacy unknown', { version: 1, state: 'unknown', reason: 'legacy' }],
+				['explicit unobserved', { version: 1, state: 'unknown', reason: 'unobserved' }],
+			])('retains %s scope through open/snoozed serialization and reload', async (_, binding) => {
+				const provider = binding?.state === 'bound' ? binding.provider : 'grok';
+				const tab = makeTab({
+					id: 'scoped-tab',
+					agentSessionId: observed.nativeSessionId,
+					...(binding ? { nativeSessionBinding: binding } : {}),
+					logs: [makeLog('retained-history')],
+				});
+				const parked = switchTabProvider(tab, provider, 'claude-code');
+				const sessions = [
+					makeSession({
+						id: 'original-owner',
+						toolType: 'grok',
+						aiTabs: [makeTab({ ...tab, nativeSessionBinding: observed })],
+					}),
+					makeSession({ id: 'live-owner', toolType: provider, aiTabs: [tab] }),
+					makeSession({
+						id: 'parked-owner',
+						toolType: 'claude-code',
+						aiTabs: [parked],
+						snoozedTabs: [
+							{
+								id: 'snooze',
+								type: 'ai',
+								tab: { ...parked, id: 'snoozed-tab' },
+								unifiedIndex: 1,
+								snoozedAt: 100,
+								wakeAt: 200,
+							},
+						],
+						closedTabHistory: [{ tab: parked, index: 0, closedAt: 100 }],
+						unifiedClosedTabHistory: [{ type: 'ai', tab: parked, unifiedIndex: 0, closedAt: 100 }],
+					}),
+				];
+				seedSessions(sessions);
+				const hook = renderPersistence(makeInitialLoadRef(true));
+				await act(async () => hook.result.current.flushNow(sessions));
+				const reloaded: Session[] = JSON.parse(
+					JSON.stringify(vi.mocked(window.maestro.sessions.setAll).mock.calls.at(-1)![0])
+				);
+				hook.unmount();
+				vi.mocked(window.maestro.sessions.setAll).mockClear();
+				expect(reloaded[0].aiTabs[0].nativeSessionBinding).toEqual(observed);
+				expect(reloaded[1].aiTabs[0].nativeSessionBinding).toEqual(binding);
+				expect(reloaded[2].aiTabs[0].agentSessionId).toBeNull();
+				expect(reloaded[2].aiTabs[0].nativeSessionBinding).toBeUndefined();
+				const snoozed = reloaded[2].snoozedTabs![0];
+				if (snoozed.type !== 'ai') throw new Error('Expected persisted AI snooze');
+				for (const snapshot of [reloaded[2].aiTabs[0], snoozed.tab]) {
+					expect(snapshot.providerSessions?.[provider]?.nativeSessionBinding).toEqual(binding);
+					const restored = switchTabProvider(snapshot, 'claude-code', provider);
+					expect(restored.agentSessionId).toBe(observed.nativeSessionId);
+					expect(restored.nativeSessionBinding).toEqual(binding);
+					expect(restored.logs).toEqual(tab.logs);
+				}
+				expect(reloaded[2].closedTabHistory).toBeUndefined();
+				// The closed-tab stack persists as pointers (src/shared/closedTabHistory.ts), and a
+				// pointer still carries the parked provider slot with its binding.
+				const closed = reloaded[2].unifiedClosedTabHistory;
+				expect(closed).toHaveLength(1);
+				if (closed[0].type !== 'ai') throw new Error('Expected persisted AI closed tab');
+				expect(closed[0].tab.agentSessionId).toBeNull();
+				expect(closed[0].tab.nativeSessionBinding).toBeUndefined();
+				expect(closed[0].tab.providerSessions?.[provider]?.nativeSessionBinding).toEqual(binding);
+				expect(sessions[2].closedTabHistory[0].tab).toBe(parked);
+				seedSessions(reloaded);
+				const restarted = renderPersistence(makeInitialLoadRef(true));
+				await act(async () => restarted.result.current.flushNow(reloaded));
+				expect(window.maestro.sessions.setAll).toHaveBeenCalledTimes(1);
+				expect(
+					JSON.parse(
+						JSON.stringify(vi.mocked(window.maestro.sessions.setAll).mock.calls.at(-1)![0])
+					)
+				).toEqual(reloaded);
+				restarted.unmount();
+				expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
+				expect(window.maestro.agentSessions.read).not.toHaveBeenCalled();
+			});
+
+			it('persists late Grok allocations into separate parked slots before reload', async () => {
+				const bindings = [observed, { ...observed, accountRef: 'grok:fixture-account-b' }];
+				const incoming = { agentSessionId: 'codex-native-id', customModel: 'codex-model' };
+				const sessions = bindings.map((_, index) =>
+					makeSession({
+						id: `owner-${index}`,
+						toolType: 'codex',
+						aiTabs: [
+							switchTabProvider(
+								makeTab({
+									id: `tab-${index}`,
+									turnProvider: 'grok',
+									logs: [makeLog(`history-${index}`)],
+									providerSessions: { codex: incoming },
+								}),
+								'grok',
+								'codex'
+							),
+						],
+					})
+				);
+				const setAll = vi.mocked(window.maestro.sessions.setAll);
+				const setMany = vi.mocked(window.maestro.sessions.setMany);
+				const previousAll = setAll.getMockImplementation();
+				const previousMany = setMany.getMockImplementation();
+				const stored = mockPersistedSessions([]);
+				seedSessions(sessions);
+				const hook = renderPersistence(makeInitialLoadRef(true));
+				try {
+					await act(async () => hook.result.current.flushNow(sessions));
+					const allocated = sessions.map((session, index) => ({
+						...session,
+						aiTabs: [
+							updateProviderSlot(session.aiTabs[0], session, 'grok', {
+								agentSessionId: bindings[index].nativeSessionId,
+								nativeSessionBinding: bindings[index],
+							}),
+						],
+					}));
+					act(() => seedSessions(allocated));
+					await act(async () => hook.result.current.flushNow(allocated));
+					expect(setMany).toHaveBeenCalledTimes(1);
+					const reloaded: Session[] = JSON.parse(JSON.stringify(stored()));
+					for (const [index, session] of reloaded.entries()) {
+						const tab = session.aiTabs[0];
+						expect(tab).toMatchObject(incoming);
+						expect(tab.nativeSessionBinding).toBeUndefined();
+						expect(tab.providerSessions?.grok).toEqual({
+							agentSessionId: bindings[index].nativeSessionId,
+							nativeSessionBinding: bindings[index],
+						});
+						const restored = switchTabProvider(tab, 'codex', 'grok');
+						expect(restored.nativeSessionBinding).toEqual(bindings[index]);
+						expect(restored.agentSessionId).toBe(observed.nativeSessionId);
+						expect(restored.logs).toEqual(sessions[index].aiTabs[0].logs);
+						expect(restored.providerSessions?.codex).toMatchObject(incoming);
+						expect(sessions[index].aiTabs[0].providerSessions?.grok?.agentSessionId).toBeNull();
+					}
+				} finally {
+					hook.unmount();
+					setAll.mockImplementation(previousAll!);
+					setMany.mockImplementation(previousMany!);
+				}
 			});
 		});
 
@@ -788,10 +1016,11 @@ describe('useDebouncedPersistence', () => {
 				const tab = makeTab({
 					id: 't',
 					agentError: {
-						type: 'overloaded',
+						type: 'network_error',
 						message: 'API overloaded',
 						timestamp: Date.now(),
-						recovery: { type: 'retry' },
+						recoverable: true,
+						agentId: 'claude-code',
 					},
 				});
 				const session = makeSession({
@@ -905,10 +1134,11 @@ describe('useDebouncedPersistence', () => {
 			it('should remove session-level agentError', () => {
 				const session = makeSession({
 					agentError: {
-						type: 'overloaded',
+						type: 'network_error',
 						message: 'API overloaded',
 						timestamp: Date.now(),
-						recovery: { type: 'retry' },
+						recoverable: true,
+						agentId: 'claude-code',
 					},
 				});
 
@@ -1003,7 +1233,7 @@ describe('useDebouncedPersistence', () => {
 						{ name: 'README.md', type: 'file' },
 					],
 					fileTreeStats: { fileCount: 2, folderCount: 1, totalSize: 1024 },
-					fileTreeLoading: false,
+					fileTreeLoading: true,
 					fileTreeLastScanTime: Date.now(),
 				});
 
@@ -1018,8 +1248,30 @@ describe('useDebouncedPersistence', () => {
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].fileTree).toEqual([]);
 				expect(persisted[0].fileTreeStats).toBeUndefined();
-				expect(persisted[0].fileTreeLoading).toBeUndefined();
+				expect(persisted[0].fileTreeLoading).toBe(false);
 				expect(persisted[0].fileTreeLastScanTime).toBeUndefined();
+			});
+
+			it('should remove fileTreeLoadedCap and fileTreeTruncated', () => {
+				// Regression: a persisted fileTreeLoadedCap beside the stripped tree
+				// told the auto-loader the empty tree was already loaded, so the
+				// Files panel stayed on "No files found" after every restart.
+				const session = makeSession({
+					fileTreeLoadedCap: 250_000,
+					fileTreeTruncated: true,
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].fileTreeLoadedCap).toBeUndefined();
+				expect(persisted[0].fileTreeTruncated).toBeUndefined();
 			});
 
 			it('should remove fileTreeError and fileTreeRetryAt', () => {
@@ -2889,9 +3141,172 @@ describe('useDebouncedPersistence', () => {
 		});
 	});
 
+	it.each([true, false])(
+		'saves removal of an observed recovery despite an older in-flight save (initially queued=%s)',
+		async (initiallyQueued) => {
+			const item = {
+				id: 'recovered',
+				type: 'message' as const,
+				text: 'work',
+				timestamp: 1,
+				tabId: 'default-tab',
+			};
+			const original = makeSession({
+				id: 'observed-removal',
+				executionQueue: initiallyQueued ? [item] : [],
+			});
+			seedSessions([original]);
+			useSessionStore.setState({ initialLoadComplete: true });
+			let host = structuredClone(original);
+			let releaseSave!: () => void;
+			const gate = new Promise<void>((resolve) => {
+				releaseSave = resolve;
+			});
+			let calls = 0;
+			const save = async (updates: Session[], _removedIds: string[], baselines?: Session[]) => {
+				if (++calls === 1) await gate;
+				for (const update of updates)
+					host = mergeSessionPersistenceChanges(
+						update,
+						host,
+						baselines?.find((s) => s.id === update.id),
+						true
+					);
+				return true;
+			};
+			vi.mocked(window.maestro.sessions.setMany).mockImplementation(save);
+			vi.mocked(window.maestro.sessions.setAll).mockImplementation((updates, baselines) =>
+				save(updates, [], baselines)
+			);
+			const previousListener = window.maestro.sessions.onLifecycleSync;
+			const listeners = new Set<(payload: SessionLifecycleSyncPayload) => void>();
+			window.maestro.sessions.onLifecycleSync = (callback) => {
+				listeners.add(callback);
+				return () => listeners.delete(callback);
+			};
+			const initialLoad = makeInitialLoadRef(true);
+			const view = renderHook(() => {
+				const persistence = useDebouncedPersistence(initialLoad);
+				useSessionLifecycleSync(async (session) => session);
+				return persistence;
+			});
+			try {
+				let first!: Promise<void>;
+				await act(async () => {
+					first = view.result.current.flushNow([{ ...original, name: 'older save' }]);
+				});
+				host = {
+					...host,
+					executionQueue: [{ ...item, paused: true, dispatchRecoveryGeneration: 1 }],
+				};
+				await act(async () => {
+					for (const listener of listeners)
+						listener({ updated: [structuredClone(host)], baselines: [original] });
+				});
+				expect(
+					useSessionStore.getState().sessions[0].executionQueue[0].dispatchRecoveryGeneration
+				).toBe(1);
+				let cancellation!: Promise<void>;
+				await act(async () => {
+					const local = useSessionStore.getState().sessions[0];
+					seedSessions([{ ...local, executionQueue: [] }]);
+					cancellation = view.result.current.flushNow();
+				});
+				expect(rebasePendingSessionChanges([host])[0].executionQueue).toEqual([]);
+				await act(async () => {
+					releaseSave();
+					await first;
+					await cancellation;
+				});
+				expect(host.executionQueue).toEqual([]);
+				expect(view.result.current.isPending).toBe(false);
+			} finally {
+				view.unmount();
+				window.maestro.sessions.onLifecycleSync = previousListener;
+			}
+		}
+	);
+
+	it('does not discard a newer cancellation of the same object when an older save acknowledges', async () => {
+		const item = {
+			id: 'same-object',
+			type: 'message' as const,
+			text: 'work',
+			timestamp: 1,
+			tabId: 'default-tab',
+		};
+		const original = makeSession({ id: 'successive-removals', executionQueue: [item] });
+		seedSessions([original]);
+		const stored = mockPersistedSessions([original]);
+		const view = renderPersistence(makeInitialLoadRef(true));
+		await act(async () => {
+			await view.result.current.flushNow([original]);
+		});
+		let acknowledge!: (ok: boolean) => void;
+		vi.mocked(window.maestro.sessions.setMany).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					acknowledge = resolve;
+				})
+		);
+		let first!: Promise<void>;
+		await act(async () => {
+			seedSessions([{ ...original, executionQueue: [] }]);
+			first = view.result.current.flushNow();
+		});
+		// Its first cancellation was accepted, but another event restored the same
+		// object before the acknowledgement reached the browser. Cancel again.
+		act(() => {
+			seedSessions([original]);
+			seedSessions([{ ...original, executionQueue: [] }]);
+		});
+		let second!: Promise<void>;
+		await act(async () => {
+			second = view.result.current.flushNow();
+		});
+		await act(async () => {
+			acknowledge(true);
+			await first;
+			await second;
+		});
+		expect(stored()[0].executionQueue).toEqual([]);
+	});
+
+	it('rebases only later cancellations, without replaying an uncertain submitted removal', async () => {
+		const item = {
+			id: 'uncertain-removal',
+			type: 'message' as const,
+			text: 'work',
+			timestamp: 1,
+			tabId: 'default-tab',
+			dispatchRecoveryGeneration: 1,
+		};
+		const original = makeSession({ id: 'uncertain-removal', executionQueue: [item] });
+		seedSessions([original]);
+		const view = renderPersistence(makeInitialLoadRef(true));
+		await act(async () => {
+			await view.result.current.flushNow([original]);
+		});
+		vi.mocked(window.maestro.sessions.setMany).mockRejectedValueOnce(
+			new Error('Submission uncertainty: removal response lost')
+		);
+		await act(async () => {
+			seedSessions([{ ...original, executionQueue: [] }]);
+			await view.result.current.flushNow();
+		});
+		// The attempted mutation is not safe to replay from an unknown outcome.
+		expect(rebasePendingSessionChanges([original])[0].executionQueue).toEqual([item]);
+		act(() => {
+			seedSessions([original]);
+			seedSessions([{ ...original, executionQueue: [] }]);
+		});
+		// A later explicit cancellation is new work, even for the same object.
+		expect(rebasePendingSessionChanges([original])[0].executionQueue).toEqual([]);
+	});
+
 	it('saves an agent created on the host after an empty bootstrap with its unmodified observed baseline', async () => {
 		const originalListener = window.maestro.sessions.onLifecycleSync;
-		const listeners = new Set<(payload: SessionLifecycleSyncPayload) => void>();
+		const listeners = new Set<Parameters<typeof window.maestro.sessions.onLifecycleSync>[0]>();
 		window.maestro.sessions.onLifecycleSync = (callback) => {
 			listeners.add(callback);
 			return () => listeners.delete(callback);
@@ -2930,7 +3345,7 @@ describe('useDebouncedPersistence', () => {
 				await vi.runAllTimersAsync();
 			});
 			await act(async () => {
-				const payload = { added: [structuredClone(host)] };
+				const payload = { added: [structuredClone(host)], removedIds: [] };
 				for (const listener of listeners) listener(payload);
 			});
 			host = { ...host, cwd: '/host-changed-after-event' };

@@ -16,7 +16,11 @@ import {
 	SERVER_MODE_ENV_VAR,
 } from '../../../../shared/maestro-lib/launch/env';
 import { QUERY_SOURCE_ENV_VAR } from '../../../../shared/querySource';
-import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../../../shared/agentDelegation';
+import {
+	CALLER_AGENT_ID_ENV_VAR,
+	CALLER_TAB_ID_ENV_VAR,
+	CALLER_RUN_PROOF_FILE_ENV_VAR,
+} from '../../../../shared/agentDelegation';
 
 const ENGINE_SECRETS = {
 	ODIN_API_TOKEN: 'odin-secret',
@@ -102,6 +106,7 @@ describe('filterServerProcessEnv', () => {
 			MAESTRO_CUE_WEBHOOK_PORT: '8787',
 			[CALLER_AGENT_ID_ENV_VAR]: 'agent-1',
 			[CALLER_TAB_ID_ENV_VAR]: 'tab-1',
+			[CALLER_RUN_PROOF_FILE_ENV_VAR]: '/private/launcher-proof',
 			[QUERY_SOURCE_ENV_VAR]: 'user',
 		});
 		expect(filtered).toEqual({ MAESTRO_USER_DATA: '/data', MAESTRO_CUE_WEBHOOK_PORT: '8787' });

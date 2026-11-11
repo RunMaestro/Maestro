@@ -189,7 +189,8 @@ export function rollUpGroup(
 			tokens.outputTokens += usage.outputTokens;
 			tokens.cacheReadTokens += usage.cacheReadTokens;
 			tokens.cacheCreationTokens += usage.cacheCreationTokens;
-			tokens.costUsd += usage.costUsd;
+			// An unknown charge (null) adds no figure; it is never summed as $0.
+			if (usage.costUsd !== null) tokens.costUsd += usage.costUsd;
 			tokens.pricedQueries += usage.pricedQueries;
 		}
 	}

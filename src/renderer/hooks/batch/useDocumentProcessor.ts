@@ -23,10 +23,15 @@ import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemS
 import { extractTaskSynopsis } from '../../../shared/maestro-lib/autorun/synopsis';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../../shared/autorunModelHints';
 import { resolveTurnSettings } from '../../../shared/autorunTurnSettings';
+import { restoreTasksCheckedByFailedTurn } from '../../../shared/markdownTaskScan';
 import {
 	formatSteeringNotesBlock,
 	type AutoRunSteeringNote,
 } from '../../../shared/autorunSteering';
+import {
+	formatDelegationResultsBlock,
+	type AutoRunDelegation,
+} from '../../../shared/autoRunDelegation';
 
 /**
  * Configuration for document processing
@@ -91,6 +96,13 @@ export interface DocumentProcessorConfig {
 	 * Already consumed by the caller - this hook only formats them.
 	 */
 	steeringNotes?: readonly AutoRunSteeringNote[];
+	/** The run this task belongs to; stamped on the spawn so its dispatches report back. */
+	autoRunId?: string;
+	/**
+	 * Results of work earlier tasks delegated to other agents, settled since the
+	 * last task. Prepended to this task's prompt. Already consumed by the caller.
+	 */
+	delegationResults?: readonly AutoRunDelegation[];
 }
 
 /**
@@ -207,6 +219,8 @@ export interface DocumentReadResult {
 export interface AutoRunTurnOverrides {
 	modelOverride?: string;
 	effortOverride?: string;
+	/** The run the task belongs to, so a dispatch it makes reports back to it. */
+	autoRunId?: string;
 }
 
 /**
@@ -363,6 +377,8 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				sshRemoteId,
 				runOverrides,
 				steeringNotes,
+				autoRunId,
+				delegationResults,
 			} = config;
 
 			const docFilePath = `${folderPath}/${filename}.md`;
@@ -469,9 +485,12 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			// substitution on purpose: a `{{...}}` the operator typed into a note is
 			// their literal text, not a variable for Maestro to expand.
 			const steeringBlock = formatSteeringNotesBlock(steeringNotes ?? []);
-			const steeredPrompt = steeringBlock
-				? `${steeringBlock}\n\n---\n\n${substitutedPrompt}`
-				: substitutedPrompt;
+			// Delegated results ride in front too, for the same reason: another
+			// agent's report is data, and a `{{...}}` inside it stays literal.
+			const delegationBlock = formatDelegationResultsBlock(delegationResults ?? []);
+			const steeredPrompt = [steeringBlock, delegationBlock, substitutedPrompt]
+				.filter(Boolean)
+				.join('\n\n---\n\n');
 			if (steeringBlock) {
 				logger.info(
 					`[DocumentProcessor] Delivering ${steeringNotes?.length ?? 0} steering note(s)`,
@@ -496,7 +515,11 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				session.id,
 				finalPrompt,
 				effectiveCwd !== session.cwd ? effectiveCwd : undefined,
-				{ modelOverride: turnSettings.model, effortOverride: turnSettings.effort }
+				{
+					modelOverride: turnSettings.model,
+					effortOverride: turnSettings.effort,
+					...(autoRunId ? { autoRunId } : {}),
+				}
 			);
 
 			// Capture elapsed time (machine sleep excluded)
@@ -513,7 +536,33 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			}
 
 			// Re-read document to get updated task count and content
-			const afterResult = await readDocAndCountTasks(folderPath, filename, sshRemoteId);
+			let afterResult = await readDocAndCountTasks(folderPath, filename, sshRemoteId);
+
+			// A failed or cancelled Grok turn finished nothing, whatever it ticked on
+			// its way to the failure. Put those boxes back so the next pass runs the
+			// task again; the rest of the document is left exactly as the turn left it.
+			const isFailedGrokTurn = session.toolType === 'grok' && !result.success;
+			if (isFailedGrokTurn && afterResult.content) {
+				const contentAtDispatch = documentContent || contentBeforeTask;
+				const restore = restoreTasksCheckedByFailedTurn(contentAtDispatch, afterResult.content);
+				if (restore.restored > 0) {
+					await window.maestro.autorun.writeDoc(
+						folderPath,
+						filename + '.md',
+						restore.content,
+						sshRemoteId
+					);
+					afterResult = await readDocAndCountTasks(folderPath, filename, sshRemoteId);
+				}
+				if (restore.restored > 0 || restore.unmatched > 0) {
+					logger.warn(
+						`[DocumentProcessor] Failed Grok turn: restored ${restore.restored} task checkbox(es), ${restore.unmatched} could not be matched to a task at dispatch`,
+						undefined,
+						{ document: filename, errorKind: result.errorKind }
+					);
+				}
+			}
+
 			const {
 				content: contentAfterTask,
 				taskCount: newRemainingTasks,
@@ -521,8 +570,11 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			} = afterResult;
 
 			// Calculate tasks completed based on newly checked tasks
-			// This remains accurate even if new unchecked tasks are added
-			const tasksCompletedThisRun = Math.max(0, newCheckedCount - previousCheckedCount);
+			// This remains accurate even if new unchecked tasks are added.
+			// A failed Grok turn completes nothing, even a tick that could not be undone.
+			const tasksCompletedThisRun = isFailedGrokTurn
+				? 0
+				: Math.max(0, newCheckedCount - previousCheckedCount);
 
 			// Calculate the actual change in total tasks (checked + unchecked)
 			// This correctly handles cases where tasks are both completed and added
@@ -547,7 +599,11 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				({ shortSummary, fullSynopsis } = extractTaskSynopsis(result.response, filename));
 			} else if (!result.success) {
 				shortSummary = `[${filename}] Task failed`;
-				fullSynopsis = result.error || result.response || shortSummary;
+				// A failed Grok turn's streamed text is a preamble, not a report of
+				// work done: name the failure, never the partial answer.
+				fullSynopsis = isFailedGrokTurn
+					? result.error || shortSummary
+					: result.error || result.response || shortSummary;
 			}
 
 			return {

@@ -6,7 +6,7 @@
  *   - handleQuickActionsToggleRemoteControl (live mode toggle)
  *   - sessionSshRemoteNames (memoized map for group chat participant cards)
  *
- * Reads from: sessionStore, settingsStore, uiStore
+ * Reads from: sessionStore, uiStore
  * Event: 'maestro:remoteCommand' custom DOM event
  */
 
@@ -19,7 +19,6 @@ import {
 	type AgentCapabilities,
 } from '../agent/useAgentCapabilities';
 import { useSessionStore, updateAiTab } from '../../stores/sessionStore';
-import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import {
 	getActiveTab,
@@ -29,8 +28,9 @@ import {
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { generateId } from '../../utils/ids';
 import { codifyTurnSettings } from '../../utils/providerTabSessions';
-import { substituteTemplateVariables } from '../../utils/templateVariables';
-import { gitService } from '../../services/git';
+import { enqueuePromptForTab, sendQueuedItemNow } from '../../services/queuedPrompt';
+import { getGrokCommandScope, getGrokSlashCommandRefusal } from '../../slashCommands';
+import { canonicalJson } from '../../../shared/canonicalJson';
 import { captureException } from '../../utils/sentry';
 import { isAgentAlreadyRunningError } from '../../../shared/processErrors';
 import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
@@ -162,9 +162,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				 *  to the active tab - callers chaining `--session <tabId>` would
 				 *  otherwise believe the command landed in the requested tab). */
 				tabId?: string;
-				/** When true, bypass the renderer's busy-state guard. Mirrors the
-				 *  server-side `force` bit so `dispatch --force` can land on a
-				 *  busy session without being dropped at this boundary. */
+				/** When true, the prompt may land in a tab that is itself mid-turn
+				 *  (`dispatch --force` behind `allowConcurrentSend`, a Cadenza
+				 *  decision answered mid-turn). An idle tab needs no force. */
 				force?: boolean;
 				/** Optional base64 data URLs pasted from a web/mobile client.
 				 *  Forwarded to the agent spawn so AI tabs can render and send
@@ -179,6 +179,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				 *  command arrived over `remote:executeCommand`; absent for
 				 *  in-renderer synthetic dispatches. */
 				receiptChannel?: string;
+				pianolaDispatchId?: string;
 			}>;
 			const {
 				sessionId,
@@ -190,6 +191,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				literalPrompt,
 				mentionRouting,
 				receiptChannel,
+				pianolaDispatchId,
 			} = customEvent.detail;
 
 			// The CLI's `dispatch` success flag is this ack, not the fact that an
@@ -231,6 +233,19 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				toolType: session.toolType,
 			});
 
+			if (
+				pianolaDispatchId &&
+				(effectiveInputMode !== 'ai' ||
+					!requestedTabId ||
+					session.state === 'busy' ||
+					session.agentErrorPaused ||
+					!session.aiTabs.some(
+						(t) => t.id === requestedTabId && t.state !== 'busy' && !t.agentError
+					))
+			) {
+				reportDelivery(false, 'DispatchTargetUnavailable');
+				return;
+			}
 			// Handle terminal mode commands
 			if (effectiveInputMode === 'terminal') {
 				logger.info('[Remote] Terminal mode - using runCommand for clean output');
@@ -312,6 +327,33 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
+			// Pin the target BEFORE capability lookup can yield so unknown-
+			// command error logs land on the targeted tab instead of whichever
+			// tab happens to be active. This also lets us short-circuit early
+			// when `--session <tabId>` names a tab that no longer exists, rather
+			// than silently re-routing to the active tab (which would mislead
+			// callers chaining `command_result.tabId` back as `--session`).
+			const requestedTab = requestedTabId
+				? session.aiTabs?.find((t) => t.id === requestedTabId)
+				: undefined;
+			if (requestedTabId && !requestedTab) {
+				logger.warn(
+					`[Remote] Requested tabId "${requestedTabId}" not found in session ${sessionId} - dropping command (avoiding silent re-route to active tab)`
+				);
+				reportDelivery(false, `tab-not-found:${requestedTabId}`);
+				return;
+			}
+			const targetTab = requestedTab ?? getActiveTab(session);
+			const writeTabId = targetTab?.id;
+
+			const grokCommandScope = canonicalJson({
+				...getGrokCommandScope({ ...session, activeTabId: writeTabId ?? session.activeTabId }),
+				pid: undefined,
+				state: undefined,
+				remoteCwd: session.remoteCwd,
+				permissionMode: resolveTabPermissionMode(targetTab),
+			});
+
 			// Handle AI mode for batch-mode agents.
 			//
 			// A cache MISS is not an answer. `hasCapabilityCached` reports one as
@@ -347,43 +389,142 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
-			// Check if session is busy. `force: true` (from `dispatch --force`)
-			// bypasses this guard - without that escape hatch, the renderer would
-			// silently drop forced dispatches and the server-side allow-list
-			// would be moot.
-			if (session.state === 'busy' && !force) {
-				logger.info('[Remote] Session is busy, cannot process command');
-				reportDelivery(false, 'session-busy');
+			// Busy guard, decided per TAB. A busy agent only means some tab of it is
+			// working; an idle tab beside it runs its own turn in parallel, the same
+			// as a desktop tab. Only a tab that is itself mid-turn is refused,
+			// because a second turn there interleaves two answers in one
+			// conversation. `force` (`dispatch --force` behind allowConcurrentSend,
+			// a Cadenza decision) lifts even that.
+			if (targetTab?.state === 'busy' && !force) {
+				logger.info('[Remote] Target tab is mid-turn, cannot process command');
+				reportDelivery(false, 'tab-busy');
 				return;
 			}
 
-			// Resolve the target tab BEFORE the slash-command branch so unknown-
-			// command error logs land on the targeted tab instead of whichever
-			// tab happens to be active. This also lets us short-circuit early
-			// when `--session <tabId>` names a tab that no longer exists, rather
-			// than silently re-routing to the active tab (which would mislead
-			// callers chaining `command_result.tabId` back as `--session`).
-			const requestedTab = requestedTabId
-				? session.aiTabs?.find((t) => t.id === requestedTabId)
-				: undefined;
-			if (requestedTabId && !requestedTab) {
-				logger.warn(
-					`[Remote] Requested tabId "${requestedTabId}" not found in session ${sessionId} - dropping command (avoiding silent re-route to active tab)`
+			// Maestro prompt commands share the ordinary queue's argument/template
+			// expansion and admitted spawn. A native advertisement is never a prompt.
+			const commandText = command.trim();
+			if (commandText.startsWith('/') && (!literalPrompt || session.toolType === 'grok')) {
+				const baseCommand = commandText.split(/\s/, 1)[0];
+				const matchingCommand =
+					!literalPrompt &&
+					[
+						...customAICommandsRef.current,
+						...speckitCommandsRef.current,
+						...openspecCommandsRef.current,
+						...(bmadCommandsRef?.current ?? []),
+					].find((candidate) => candidate.command === baseCommand);
+
+				if (matchingCommand) {
+					// enqueuePromptForTab intentionally falls back to the active tab.
+					// This dispatch has a pinned recipient: refuse a missing target
+					// before the synchronous enqueue instead of accepting that fallback.
+					const liveSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+					const liveTab = liveSession?.aiTabs.find((tab) => tab.id === writeTabId);
+					if (!liveSession || !liveTab || !writeTabId) {
+						reportDelivery(false, 'command-target-unavailable');
+						return;
+					}
+					if (
+						liveSession.toolType !== session.toolType ||
+						(session.toolType === 'grok' &&
+							canonicalJson({
+								...getGrokCommandScope({ ...liveSession, activeTabId: writeTabId }),
+								pid: undefined,
+								state: undefined,
+								remoteCwd: liveSession.remoteCwd,
+								permissionMode: resolveTabPermissionMode(liveTab),
+							}) !== grokCommandScope)
+					) {
+						addLogToTab(
+							sessionId,
+							{
+								source: 'error',
+								text: 'The command target changed during preparation. Retry with the intended account, host and tab.',
+							},
+							writeTabId
+						);
+						reportDelivery(false, 'command-target-changed');
+						return;
+					}
+					if (liveTab.state === 'busy' && !force) {
+						reportDelivery(false, 'tab-busy');
+						return;
+					}
+					// The command queue does not yet forward attachments at its spawn
+					// boundary. Refuse before accepting a prompt whose images it would drop.
+					if (images?.length) {
+						addLogToTab(
+							sessionId,
+							{
+								source: 'error',
+								text: 'Attachments are not supported for queued AI commands yet.',
+							},
+							writeTabId
+						);
+						reportDelivery(false, 'command-images-unsupported');
+						return;
+					}
+					const queued = enqueuePromptForTab({
+						sessionId,
+						tabId: writeTabId,
+						text: command,
+						images,
+						slashCommand: true,
+					});
+					if (!queued) {
+						reportDelivery(false, 'command-target-unavailable');
+						return;
+					}
+					setSessions((prev) =>
+						prev.map((s) =>
+							s.id === sessionId
+								? {
+										...s,
+										aiCommandHistory: Array.from(
+											new Set([...(s.aiCommandHistory || []), commandText])
+										).slice(-50),
+									}
+								: s
+						)
+					);
+					// Delivery is accepted by the queue, not proof of provider execution.
+					reportDelivery(true);
+					if (force) sendQueuedItemNow(sessionId, queued.id);
+					return;
+				}
+
+				if (session.toolType === 'grok') {
+					// Discovery may wait three seconds; refuse the receipt immediately
+					// so the sender does not time out while the explanation is loading.
+					reportDelivery(false, 'unsupported-grok-command');
+					const refusal = await getGrokSlashCommandRefusal(session, targetTab, commandText);
+					if (writeTabId) addLogToTab(sessionId, { source: 'error', text: refusal }, writeTabId);
+					return;
+				}
+				addLogToTab(
+					sessionId,
+					{ source: 'error', text: `Unknown command: ${commandText}` },
+					writeTabId
 				);
-				reportDelivery(false, `tab-not-found:${requestedTabId}`);
+				// No command arguments enter the receipt's main-process log.
+				reportDelivery(false, 'unknown-command');
 				return;
 			}
-			const targetTab = requestedTab ?? getActiveTab(session);
-			const writeTabId = targetTab?.id;
 
 			// Cross-agent @mentions, resolved the way the composer does it
 			// (useInputProcessing): a remote prompt is the same message a user would
 			// have typed, so a mention in it must consult the target agent too.
-			// The agent is idle here (the busy guard above), so the consult fires
-			// now; a busy agent's prompt goes through `dispatch --queue`, which
-			// stamps the intent on the queued item instead. A routing the caller
-			// picked (`dispatch --routing`) wins over the wording, as the strip's does.
+			// The target tab is idle here (the busy guard above), so the consult
+			// fires now; a prompt that should wait goes through `dispatch --queue`,
+			// which stamps the intent on the queued item instead. A routing the
+			// caller picked (`dispatch --routing`) wins over the wording, as the
+			// strip's does.
 			const mentionPlan = planCrossAgentMentions(command, sessionId, mentionRouting);
+			if (pianolaDispatchId && mentionPlan) {
+				reportDelivery(false, 'DispatchMentionRoutingUnavailable');
+				return;
+			}
 			if (mentionPlan?.suppressLocal) {
 				// Leading mention: addressed only at the consulted agent(s). This
 				// agent does not answer, so record the user's bubble and skip the spawn.
@@ -419,110 +560,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
-			// Check for slash commands (built-in and custom)
 			let promptToSend = command;
-			let commandMetadata: { command: string; description: string } | undefined;
-
-			// Handle slash commands (custom AI commands only)
-			if (!literalPrompt && command.trim().startsWith('/')) {
-				const commandText = command.trim();
-				logger.info('[Remote] Detected slash command:', undefined, commandText);
-
-				const matchingCustomCommand = customAICommandsRef.current.find(
-					(cmd) => cmd.command === commandText
-				);
-				const matchingSpeckitCommand = speckitCommandsRef.current.find(
-					(cmd) => cmd.command === commandText
-				);
-				const matchingOpenspecCommand = openspecCommandsRef.current.find(
-					(cmd) => cmd.command === commandText
-				);
-				const matchingBmadCommand = bmadCommandsRef?.current.find(
-					(cmd) => cmd.command === commandText
-				);
-
-				const matchingCommand =
-					matchingCustomCommand ||
-					matchingSpeckitCommand ||
-					matchingOpenspecCommand ||
-					matchingBmadCommand;
-
-				if (matchingCommand) {
-					logger.info('[Remote] Found matching command:', undefined, [
-						matchingCommand.command,
-						matchingSpeckitCommand
-							? '(spec-kit)'
-							: matchingOpenspecCommand
-								? '(openspec)'
-								: matchingBmadCommand
-									? '(bmad)'
-									: '(custom)',
-					]);
-
-					// Get git branch for template substitution
-					let gitBranch: string | undefined;
-					if (session.isGitRepo) {
-						try {
-							const status = await gitService.getStatus(session.cwd);
-							gitBranch = status.branch;
-						} catch (error) {
-							captureException(error, {
-								extra: {
-									cwd: session.cwd,
-									sessionId: session.id,
-									sessionName: session.name,
-									operation: 'git-status-for-remote-command',
-								},
-							});
-						}
-					}
-
-					// Read conductorProfile from settings store at call time
-					const conductorProfile = useSettingsStore.getState().conductorProfile;
-
-					// Substitute template variables. Use the resolved target tab
-					// id for `activeTabId` so substitutions reflect the dispatch
-					// target rather than whatever tab is actually active in the UI.
-					promptToSend = substituteTemplateVariables(matchingCommand.prompt, {
-						session,
-						gitBranch,
-						groupId: session.groupId,
-						activeTabId: writeTabId ?? session.activeTabId,
-						conductorProfile,
-					});
-					commandMetadata = {
-						command: matchingCommand.command,
-						description: matchingCommand.description,
-					};
-
-					logger.info(
-						'[Remote] Substituted prompt (first 100 chars):',
-						undefined,
-						promptToSend.substring(0, 100)
-					);
-				} else {
-					// Unknown slash command - route the error log to the targeted
-					// tab (not whichever tab happens to be active) so the caller
-					// sees the error in the conversation they dispatched into.
-					logger.info('[Remote] Unknown slash command:', undefined, commandText);
-					addLogToTab(
-						sessionId,
-						{
-							source: 'error',
-							text: `Unknown command: ${commandText}`,
-						},
-						writeTabId
-					);
-					// Stable code with no command text: the reason string is sent
-					// over the receipt channel and the main process logs it at warn
-					// level, so interpolating remote input here would persist
-					// whatever the caller typed - potentially a secret - into the
-					// app log (review of PR #1357). The text is still shown in the
-					// tab above and logged renderer-side for the operator.
-					reportDelivery(false, 'unknown-command');
-					return;
-				}
-			}
 
 			// Image-only sends (web/mobile composer paste with no text) arrive
 			// with an empty command. Inject the user-customizable image-only
@@ -610,7 +648,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				// skips `command` items): its text is a command name, not a request.
 				// Runs after the awaits above, and the helper reads the live tab, so a
 				// tab closed or named in the meantime is left alone.
-				if (targetTab && !commandMetadata) {
+				if (targetTab) {
 					requestTabAutoNameForMessage(session, targetTab.id, command, 'remote');
 				}
 
@@ -621,7 +659,6 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					source: 'user',
 					text: promptToSend,
 					...(remoteImages && { images: remoteImages }),
-					...(commandMetadata && { aiCommand: commandMetadata }),
 				};
 
 				setSessions((prev) =>
@@ -661,11 +698,6 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 							thinkingStartTime: Date.now(),
 							currentCycleTokens: 0,
 							currentCycleBytes: 0,
-							...(commandMetadata && {
-								aiCommandHistory: Array.from(
-									new Set([...(s.aiCommandHistory || []), command.trim()])
-								).slice(-50),
-							}),
 							aiTabs: updatedAiTabs,
 						};
 					})
@@ -718,6 +750,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					// Spawn agent with the prompt
 					await window.maestro.process.spawn({
 						sessionId: targetSessionId,
+						transcriptBoundaryId: userLogEntry.id,
+						pianolaDispatchId,
 						toolType: session.toolType,
 						cwd: session.cwd,
 						command: commandToUse,

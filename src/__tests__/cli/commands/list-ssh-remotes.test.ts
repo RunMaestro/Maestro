@@ -147,4 +147,21 @@ describe('list-ssh-remotes command', () => {
 			expect(consoleSpy).not.toHaveBeenCalled();
 		});
 	});
+
+	describe('federation field', () => {
+		it('reports every remote as taking part unless it opted out', () => {
+			vi.mocked(readSshRemotes).mockReturnValue([
+				mockRemote({ id: 'r1' }),
+				mockRemote({ id: 'r2', federation: true }),
+				mockRemote({ id: 'r3', federation: false }),
+			]);
+			vi.mocked(readSettingValue).mockReturnValue(null);
+
+			listSshRemotes({ json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).federation).toBe(true);
+			expect(JSON.parse(consoleSpy.mock.calls[1][0]).federation).toBe(true);
+			expect(JSON.parse(consoleSpy.mock.calls[2][0]).federation).toBe(false);
+		});
+	});
 });

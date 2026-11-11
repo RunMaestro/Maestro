@@ -7,6 +7,46 @@ import { isImageFile } from '../../shared/gitUtils';
 import { isMediaFile } from '../../shared/mediaTypes';
 import { shouldIgnore, parseGitignoreContent, LOCAL_IGNORE_DEFAULTS } from '../../shared/globUtils';
 import { logger } from './logger';
+import type { Session } from '../types';
+
+/** Session fields that describe the in-memory file-tree scan, not the agent. */
+export type FileTreeCacheFields = Pick<
+	Session,
+	| 'fileTree'
+	| 'fileTreeStats'
+	| 'fileTreeTruncated'
+	| 'fileTreeLoadedCap'
+	| 'fileTreeLoading'
+	| 'fileTreeLoadingProgress'
+	| 'fileTreeLastScanTime'
+	| 'fileTreeError'
+	| 'fileTreeRetryAt'
+>;
+
+/**
+ * The file-tree fields of an agent whose tree has not been scanned yet.
+ *
+ * The auto-loader in useFileTreeManagement decides "already loaded" from
+ * `fileTreeLoadedCap` and `fileTreeStats`. The tree itself is never persisted,
+ * so any of these fields that survives a restart (or a directory move) next to
+ * an empty tree tells the loader to skip a folder it never scanned, and the
+ * Files panel stays on "No files found". Persistence, restore, and relocation
+ * all reset through this one object so a new field cannot be missed in one of
+ * them.
+ */
+export function unloadedFileTreeState(): FileTreeCacheFields {
+	return {
+		fileTree: [],
+		fileTreeStats: undefined,
+		fileTreeTruncated: undefined,
+		fileTreeLoadedCap: undefined,
+		fileTreeLoading: false,
+		fileTreeLoadingProgress: undefined,
+		fileTreeLastScanTime: undefined,
+		fileTreeError: undefined,
+		fileTreeRetryAt: undefined,
+	};
+}
 
 /**
  * Check if a file should be opened in external app based on extension
@@ -921,6 +961,26 @@ function collectPaths(
 	return paths;
 }
 
+// Matching ordered shapes guarantee equal path sets, even with duplicate names.
+// Any difference falls back to the set comparison, which handles reordering and duplicates.
+function sameTreeStructure(oldNodes: FileTreeNode[], newNodes: FileTreeNode[]): boolean {
+	if (oldNodes === newNodes) return true;
+	if (oldNodes.length !== newNodes.length) return false;
+	for (let i = 0; i < oldNodes.length; i++) {
+		const oldNode = oldNodes[i];
+		const newNode = newNodes[i];
+		if (oldNode.name !== newNode.name || oldNode.type !== newNode.type) return false;
+		if (oldNode.type === 'folder') {
+			const oldChildren = oldNode.children;
+			const newChildren = newNode.children;
+			if (oldChildren && newChildren) {
+				if (!sameTreeStructure(oldChildren, newChildren)) return false;
+			} else if ((oldChildren?.length ?? 0) !== (newChildren?.length ?? 0)) return false;
+		}
+	}
+	return true;
+}
+
 /**
  * Compare two file trees and count the differences
  */
@@ -928,6 +988,11 @@ export function compareFileTrees(
 	oldTree: FileTreeNode[],
 	newTree: FileTreeNode[]
 ): FileTreeChanges {
+	if (sameTreeStructure(oldTree, newTree)) {
+		const cached = rootPathSetsCache.get(oldTree);
+		if (cached) rootPathSetsCache.set(newTree, cached);
+		return { totalChanges: 0, newFiles: 0, newFolders: 0, removedFiles: 0, removedFolders: 0 };
+	}
 	const oldPaths = collectPaths(oldTree);
 	const newPaths = collectPaths(newTree);
 

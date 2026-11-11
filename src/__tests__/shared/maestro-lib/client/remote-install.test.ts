@@ -1,0 +1,630 @@
+/**
+ * Tests for src/shared/maestro-lib/client/remote-install.ts: copying this machine's maestro-cli to
+ * an SSH remote for Federation. The ssh side is stood in for; the install script itself is
+ * syntax-checked with bash and run for real against stub tools for its early refusals.
+ */
+
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { spawnSync } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import * as zlib from 'zlib';
+import {
+	REMOTE_SQLITE_RANGE,
+	RemoteInstallError,
+	buildRemoteInstallScript,
+	installErrorMessage,
+	installRemoteCli,
+	packLocalCliBundle,
+	readInstallMarkers,
+	resolveLocalCliBundle,
+	setupRemoteHost,
+	type LocalCliBundle,
+	type RemoteBinaryExec,
+	type RemoteInstallReport,
+} from '../../../../shared/maestro-lib/client/remote-install';
+import {
+	RemoteDiscoveryError,
+	type RemoteHostDiscovery,
+} from '../../../../shared/maestro-lib/client/remote-discovery';
+import { isWindows } from '../../../../shared/platformDetection';
+import type { SshRemoteConfig } from '../../../../shared/types';
+
+const remote: SshRemoteConfig = {
+	id: 'r1',
+	name: 'Build box',
+	host: 'build.example.com',
+	port: 22,
+	username: 'pedram',
+	privateKeyPath: '',
+	enabled: true,
+};
+
+const onPosix = !isWindows();
+
+let tmp: string;
+let bundle: LocalCliBundle;
+
+beforeAll(() => {
+	tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'remote-install-'));
+	const cliDir = path.join(tmp, 'app');
+	const promptsDir = path.join(cliDir, 'prompts', 'core');
+	fs.mkdirSync(path.join(promptsDir, 'pianola-program-loop'), { recursive: true });
+	fs.writeFileSync(path.join(cliDir, 'maestro-cli.js'), 'console.log("1.0.0")\n');
+	fs.writeFileSync(path.join(promptsDir, 'maestro-system-prompt.md'), '# prompt\n');
+	fs.writeFileSync(path.join(promptsDir, 'pianola-program-loop', 'step.md'), '# step\n');
+	bundle = { cliFile: path.join(cliDir, 'maestro-cli.js'), promptsDir, version: '1.0.0' };
+});
+
+afterAll(() => {
+	fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+/** The `RemoteInstallError` a call rejected with. */
+async function rejection(call: Promise<unknown>): Promise<RemoteInstallError> {
+	try {
+		await call;
+	} catch (error) {
+		expect(error).toBeInstanceOf(RemoteInstallError);
+		return error as RemoteInstallError;
+	}
+	throw new Error('the call did not reject');
+}
+
+/** The entry names of a gzip tar, read from its 512-byte headers. */
+function tarNames(archive: Buffer): string[] {
+	const tar = zlib.gunzipSync(archive);
+	const names: string[] = [];
+	for (let offset = 0; offset + 512 <= tar.length; ) {
+		const header = tar.subarray(offset, offset + 512);
+		if (header.every((byte) => byte === 0)) break;
+		const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/s, '');
+		const prefix = header.subarray(345, 500).toString('utf8').replace(/\0.*$/s, '');
+		const size = parseInt(header.subarray(124, 136).toString('utf8').replace(/\0.*$/s, ''), 8) || 0;
+		if (header[156] !== 53 /* '5' = directory */) names.push(prefix ? `${prefix}/${name}` : name);
+		offset += 512 + Math.ceil(size / 512) * 512;
+	}
+	return names.sort();
+}
+
+const report: RemoteInstallReport = {
+	platform: 'linux-x64',
+	nodeVersion: 'v24.11.0',
+	nodeSource: 'downloaded',
+	cliVersion: '1.0.0',
+};
+
+function execReturning(stdout: string, stderr = '', exitCode: number | string = 0) {
+	return vi.fn<RemoteBinaryExec>().mockResolvedValue({ stdout, stderr, exitCode });
+}
+
+const SUCCESS = [
+	'MAESTRO_INSTALL=platform=linux-x64',
+	'MAESTRO_INSTALL=node=v24.11.0',
+	'MAESTRO_INSTALL=node-source=downloaded',
+	'MAESTRO_INSTALL=cli-version=1.0.0',
+	'MAESTRO_INSTALL=done',
+].join('\n');
+
+describe('the local bundle', () => {
+	it('finds the prompts beside the CLI file', () => {
+		const found = resolveLocalCliBundle(bundle.cliFile, '1.0.0');
+		expect(found).toEqual(bundle);
+	});
+
+	it('refuses a source module that is not a built bundle', () => {
+		expect(() => resolveLocalCliBundle(path.join(tmp, 'remote-host.ts'), '1')).toThrow(
+			/not a built maestro-cli bundle/
+		);
+	});
+
+	it('refuses a missing CLI file, and a bundle without its prompts', () => {
+		expect(() => resolveLocalCliBundle(path.join(tmp, 'nope.js'), '1')).toThrow(RemoteInstallError);
+		const bare = path.join(tmp, 'bare');
+		fs.mkdirSync(bare, { recursive: true });
+		fs.writeFileSync(path.join(bare, 'maestro-cli.js'), '');
+		expect(() => resolveLocalCliBundle(path.join(bare, 'maestro-cli.js'), '1')).toThrow(
+			/bundled prompts were not found/
+		);
+	});
+
+	it('packs maestro-cli.js and every prompt under prompts/core', async () => {
+		const names = tarNames(await packLocalCliBundle(bundle));
+		expect(names).toEqual([
+			'maestro-cli.js',
+			'prompts/core/maestro-system-prompt.md',
+			'prompts/core/pianola-program-loop/step.md',
+		]);
+	});
+
+	it("ships Pianola's sandbox runner when it sits beside the CLI", async () => {
+		const runner = path.join(tmp, 'app', 'scripts', 'pianola-sandbox', 'sandbox_runner.py');
+		fs.mkdirSync(path.dirname(runner), { recursive: true });
+		fs.writeFileSync(runner, 'print("ok")\n');
+		try {
+			const found = resolveLocalCliBundle(bundle.cliFile, '1.0.0');
+			expect(found.companions).toEqual([
+				{ file: runner, name: 'scripts/pianola-sandbox/sandbox_runner.py' },
+			]);
+			expect(tarNames(await packLocalCliBundle(found))).toContain(
+				'scripts/pianola-sandbox/sandbox_runner.py'
+			);
+		} finally {
+			fs.rmSync(path.join(tmp, 'app', 'scripts'), { recursive: true, force: true });
+		}
+	});
+
+	it('installs the better-sqlite3 range the bundle was built against', () => {
+		const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')) as {
+			dependencies: Record<string, string>;
+		};
+		expect(REMOTE_SQLITE_RANGE).toBe(pkg.dependencies['better-sqlite3']);
+	});
+});
+
+describe('buildRemoteInstallScript', () => {
+	it.skipIf(!onPosix)('is valid bash', () => {
+		for (const options of [{}, { force: true, restart: true }]) {
+			const check = spawnSync('bash', ['-n'], { input: buildRemoteInstallScript(options) });
+			expect(check.stderr.toString()).toBe('');
+			expect(check.status).toBe(0);
+		}
+	});
+
+	it('stays inside ~/.maestro, verifies Node downloads, and swaps only after the checks', () => {
+		const script = buildRemoteInstallScript();
+		expect(script).toContain('root="$HOME/.maestro"');
+		expect(script).not.toMatch(/\bsudo\b/);
+		expect(script).toContain('SHASUMS256.txt');
+		expect(script).toContain('fail node-checksum');
+		const swap = script.indexOf('mv "$stage" "$cli"');
+		expect(swap).toBeGreaterThan(script.indexOf('fail sqlite-load'));
+		expect(swap).toBeGreaterThan(script.indexOf('fail cli-broken'));
+		// Stdin is drained before the first check that can exit.
+		expect(script.indexOf('cat > "$stage/bundle.tgz"')).toBeLessThan(
+			script.indexOf('fail unsupported-os')
+		);
+	});
+
+	it('stops a running host with whatever CLI started it before the swap', () => {
+		const script = buildRemoteInstallScript({ restart: true });
+		const stop = script.indexOf('host stop --wait 120');
+		expect(stop).toBeGreaterThan(-1);
+		expect(script).toContain('elif [ -n "$existing" ]; then stopper="$existing"');
+		expect(script).toContain('"$node" "$stage/maestro-cli.js" host stop --wait 120');
+		expect(stop).toBeLessThan(script.indexOf('mv "$stage" "$cli"'));
+	});
+
+	it('writes the launcher before the swap and rolls the old install back if it cannot land', () => {
+		const script = buildRemoteInstallScript();
+		const written = script.indexOf('cat > "$bin/maestro-cli.new"');
+		const oldMoved = script.indexOf('mv "$cli" "$root/cli.old"');
+		expect(written).toBeGreaterThan(-1);
+		expect(written).toBeLessThan(oldMoved);
+		expect(script).toContain(
+			'mv -f "$bin/maestro-cli.new" "$bin/maestro-cli" || { rollback; fail launcher; }'
+		);
+		// The old install is removed only after both the new install and its launcher are in place.
+		expect(script.indexOf('rm -rf "$root/cli.old" "$cli/npm.log"')).toBeGreaterThan(
+			script.indexOf('mv -f "$bin/maestro-cli.new"')
+		);
+	});
+
+	it('writes a launcher that finds Node when it runs, and keeps npm caches under ~/.maestro', () => {
+		const script = buildRemoteInstallScript();
+		const launcher = script.slice(
+			script.indexOf('<<MAESTRO_LAUNCHER'),
+			script.lastIndexOf('MAESTRO_LAUNCHER')
+		);
+		// Escaped so they expand when the launcher runs, not at install time.
+		expect(launcher).toContain('"\\$HOME/.maestro/node/bin/node"');
+		// The install-time Node, which better-sqlite3 was built for, is tried first.
+		expect(launcher).toMatch(/for n in "\$node" "\\\$HOME/);
+		expect(launcher).toContain('n=\\$(command -v node)');
+		expect(launcher).toContain('"\\$@"');
+		expect(script).toContain('npm_config_cache="$root/npm-cache"');
+	});
+
+	it('carries the force and restart choices', () => {
+		expect(buildRemoteInstallScript()).toMatch(/^FORCE=0\nRESTART=0/);
+		expect(buildRemoteInstallScript({ force: true, restart: true })).toMatch(/^FORCE=1\nRESTART=1/);
+	});
+
+	/** Run the script for real, with stub tools ahead of the system ones on PATH. */
+	function runWithStubs(stubs: Record<string, string>, options = {}) {
+		const home = fs.mkdtempSync(path.join(tmp, 'home-'));
+		const bin = fs.mkdtempSync(path.join(tmp, 'bin-'));
+		for (const [name, body] of Object.entries(stubs)) {
+			fs.writeFileSync(path.join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+		}
+		const run = spawnSync(
+			'bash',
+			['--norc', '--noprofile', '-c', buildRemoteInstallScript(options)],
+			{
+				input: Buffer.from('not really a tarball'),
+				env: { HOME: home, PATH: `${bin}:/usr/bin:/bin` },
+			}
+		);
+		return { stdout: run.stdout.toString(), status: run.status, home };
+	}
+
+	it.skipIf(!onPosix)('refuses an OS it cannot install on, and cleans up', () => {
+		const run = runWithStubs({ uname: '[ "$1" = -s ] && echo Plan9 || echo x86_64' });
+		const markers = readInstallMarkers(run.stdout);
+		expect(markers.get('error')).toBe('unsupported-os');
+		expect(markers.get('os')).toBe('Plan9');
+		expect(run.status).toBe(3);
+		expect(fs.readdirSync(path.join(run.home, '.maestro'))).toEqual([]);
+	});
+
+	it.skipIf(!onPosix)('leaves a maestro-cli it did not install alone unless forced', () => {
+		const stubs = {
+			uname: '[ "$1" = -s ] && echo Linux || echo x86_64',
+			'maestro-cli': 'echo 0.9.0',
+		};
+		const run = runWithStubs(stubs);
+		const markers = readInstallMarkers(run.stdout);
+		expect(markers.get('platform')).toBe('linux-x64');
+		expect(markers.get('error')).toBe('foreign-cli');
+		expect(markers.get('existing')).toMatch(/maestro-cli$/);
+
+		// Forced, it gets past that check (and stops at the fake tarball).
+		const forced = runWithStubs(stubs, { force: true });
+		expect(readInstallMarkers(forced.stdout).get('error')).toBe('unpack');
+	});
+});
+
+describe('readInstallMarkers', () => {
+	it('reads key=value markers and bare ones, and ignores other lines', () => {
+		const markers = readInstallMarkers(`banner\n${SUCCESS}\r\nnoise`);
+		expect(Object.fromEntries(markers)).toEqual({
+			platform: 'linux-x64',
+			node: 'v24.11.0',
+			'node-source': 'downloaded',
+			'cli-version': '1.0.0',
+			done: '',
+		});
+	});
+});
+
+describe('installRemoteCli', () => {
+	it('sends the bundle on stdin over one ssh call and reports what was installed', async () => {
+		const exec = execReturning(SUCCESS);
+		const result = await installRemoteCli(remote, bundle, { exec, sshPath: 'ssh' });
+		expect(result).toEqual(report);
+		expect(exec).toHaveBeenCalledTimes(1);
+		const [command, args, options] = exec.mock.calls[0];
+		expect(command).toBe('ssh');
+		expect(args.at(-1)).toContain('/bin/bash --norc --noprofile -c');
+		expect(args).toContain('pedram@build.example.com');
+		expect(zlib.gunzipSync(options.input).length).toBeGreaterThan(0);
+		expect(options.timeout).toBe(10 * 60_000);
+	});
+
+	it.each([
+		['node-download', /reach nodejs.org/],
+		['sqlite-install', /compiler/],
+		['unsupported-arch', /x64 and arm64/],
+		['host-stop', /Nothing changed/],
+	])('turns error=%s into a message that names the fix', async (code, message) => {
+		const exec = execReturning(`MAESTRO_INSTALL=platform=linux-x64\nMAESTRO_INSTALL=error=${code}`);
+		const error = await installRemoteCli(remote, bundle, { exec, sshPath: 'ssh' }).catch(
+			(caught: unknown) => caught
+		);
+		expect(error).toBeInstanceOf(RemoteInstallError);
+		expect((error as RemoteInstallError).code).toBe(code);
+		expect((error as RemoteInstallError).message).toMatch(message);
+	});
+
+	it('redacts what the remote printed before it goes in a message', async () => {
+		const exec = execReturning(
+			'MAESTRO_INSTALL=platform=linux-x64\nMAESTRO_INSTALL=error=sqlite-install',
+			'npm ERR! token ghp_abcdefghijklmnopqrstuvwxyz0123456789 rejected'
+		);
+		const error = (await installRemoteCli(remote, bundle, { exec, sshPath: 'ssh' }).catch(
+			(caught: unknown) => caught
+		)) as RemoteInstallError;
+		expect(error.message).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz0123456789');
+		expect(error.message).toContain('Remote said:');
+	});
+
+	it('reports ssh failing, a timeout, and an install that stopped half way', async () => {
+		const ssh = await rejection(
+			installRemoteCli(remote, bundle, {
+				exec: execReturning(
+					'',
+					'ssh: connect to host build.example.com port 22: Connection refused',
+					255
+				),
+				sshPath: 'ssh',
+			})
+		);
+		expect(ssh.code).toBe('ssh-failed');
+
+		const late = await rejection(
+			installRemoteCli(remote, bundle, {
+				exec: execReturning('', '', 'ETIMEDOUT'),
+				sshPath: 'ssh',
+				timeoutMs: 120_000,
+			})
+		);
+		expect(late.code).toBe('timeout');
+		expect(late.message).toContain('2 minutes');
+
+		const half = await rejection(
+			installRemoteCli(remote, bundle, {
+				exec: execReturning(
+					'MAESTRO_INSTALL=platform=linux-x64\nMAESTRO_INSTALL=node=v24.11.0',
+					'',
+					1
+				),
+				sshPath: 'ssh',
+			})
+		);
+		expect(half.code).toBe('malformed');
+	});
+
+	it('says the host is stopped when the install failed after stopping it', async () => {
+		const exec = execReturning(
+			'MAESTRO_INSTALL=platform=linux-x64\nMAESTRO_INSTALL=host-stopped\nMAESTRO_INSTALL=error=swap'
+		);
+		const error = await rejection(
+			installRemoteCli(remote, bundle, { exec, sshPath: 'ssh', restart: true })
+		);
+		expect(error.code).toBe('swap');
+		expect(error.message).toContain('was stopped for the upgrade and is not running now');
+		expect(error.message).toContain('maestro-cli remote-host start r1');
+	});
+
+	it('names an existing install it will not replace', () => {
+		const markers = new Map([['existing', '/usr/local/bin/maestro-cli']]);
+		expect(installErrorMessage('foreign-cli', 'Build box', markers, '')).toContain(
+			'/usr/local/bin/maestro-cli'
+		);
+	});
+});
+
+describe('setupRemoteHost', () => {
+	const notInstalled: RemoteHostDiscovery = { installed: false, fix: 'Install it.' };
+	const stopped = (cliVersion: string): RemoteHostDiscovery => ({
+		installed: true,
+		running: false,
+		launcher: 'path',
+		cliVersion,
+	});
+	const running = (cliVersion: string): RemoteHostDiscovery => ({
+		installed: true,
+		running: true,
+		launcher: 'path',
+		cliVersion,
+		endpoint: { port: 41234, token: 't', pid: 9 },
+	});
+	const started = {
+		installed: true as const,
+		started: true as const,
+		alreadyRunning: false,
+		pid: 9,
+		port: 41234,
+	};
+
+	function seams(found: RemoteHostDiscovery | Error) {
+		const discover = vi.fn();
+		if (found instanceof Error) discover.mockRejectedValue(found);
+		else discover.mockResolvedValue(found);
+		return {
+			discover,
+			install: vi.fn().mockResolvedValue(report),
+			startHost: vi.fn().mockResolvedValue(started),
+		};
+	}
+
+	it('installs where there is none, then starts the host when asked', async () => {
+		const s = seams(notInstalled);
+		const result = await setupRemoteHost(remote, bundle, { ...s, start: true });
+		expect(result).toMatchObject({
+			cli: 'installed',
+			cliVersion: '1.0.0',
+			install: report,
+			start: started,
+		});
+		expect(s.install).toHaveBeenCalledWith(
+			remote,
+			bundle,
+			expect.objectContaining({ restart: false })
+		);
+	});
+
+	it('leaves the same version alone, and never downgrades a newer one', async () => {
+		const same = seams(stopped('1.0.0'));
+		expect(await setupRemoteHost(remote, bundle, same)).toEqual({
+			cli: 'current',
+			cliVersion: '1.0.0',
+		});
+		expect(same.install).not.toHaveBeenCalled();
+		expect(same.startHost).not.toHaveBeenCalled();
+
+		const newer = seams(stopped('2.0.0'));
+		expect((await setupRemoteHost(remote, bundle, newer)).cli).toBe('newer');
+		expect(newer.install).not.toHaveBeenCalled();
+	});
+
+	it('upgrades an older stopped install, and one too old to know host endpoint', async () => {
+		const older = seams(stopped('0.9.0'));
+		expect((await setupRemoteHost(remote, bundle, older)).cli).toBe('upgraded');
+
+		const ancient = seams(new RemoteDiscoveryError('unsupported', 'no host endpoint verb'));
+		expect((await setupRemoteHost(remote, bundle, ancient)).cli).toBe('upgraded');
+	});
+
+	it('refuses to replace a running older host without restart, and restarts it with it', async () => {
+		const refused = seams(running('0.9.0'));
+		const error = await rejection(setupRemoteHost(remote, bundle, refused));
+		expect(error.code).toBe('host-running');
+		expect(error.message).toContain('--restart');
+		expect(refused.install).not.toHaveBeenCalled();
+
+		const restarted = seams(running('0.9.0'));
+		const result = await setupRemoteHost(remote, bundle, { ...restarted, restart: true });
+		expect(restarted.install).toHaveBeenCalledWith(
+			remote,
+			bundle,
+			expect.objectContaining({ restart: true })
+		);
+		// The upgrade stopped the host, so it is started again even without `start`.
+		expect(result.start).toEqual(started);
+	});
+
+	it('replaces an install whose launcher no longer runs only with force', async () => {
+		const refused = seams(new RemoteDiscoveryError('malformed', 'not a host endpoint'));
+		const error = await rejection(setupRemoteHost(remote, bundle, refused));
+		expect(error.code).toBe('broken-cli');
+		expect(error.message).toContain('--force');
+		expect(refused.install).not.toHaveBeenCalled();
+
+		const forced = seams(new RemoteDiscoveryError('malformed', 'not a host endpoint'));
+		expect((await setupRemoteHost(remote, bundle, { ...forced, force: true })).cli).toBe(
+			'upgraded'
+		);
+		expect(forced.install).toHaveBeenCalled();
+	});
+
+	it('lets a discovery failure that is not about the CLI through', async () => {
+		const down = seams(new RemoteDiscoveryError('ssh-failed', 'Connection refused'));
+		await expect(setupRemoteHost(remote, bundle, down)).rejects.toThrow('Connection refused');
+	});
+
+	it('keeps the linger warning a first install only learns from the start', async () => {
+		const s = seams(notInstalled);
+		s.startHost.mockResolvedValue({
+			...started,
+			linger: false,
+			lingerFix: 'loginctl enable-linger pedram',
+		});
+		expect((await setupRemoteHost(remote, bundle, { ...s, start: true })).lingerFix).toBe(
+			'loginctl enable-linger pedram'
+		);
+	});
+
+	it('passes a linger warning through', async () => {
+		const s = seams({
+			installed: true,
+			running: false,
+			launcher: 'path',
+			cliVersion: '1.0.0',
+			linger: false,
+			lingerFix: 'loginctl enable-linger pedram',
+		});
+		expect((await setupRemoteHost(remote, bundle, s)).lingerFix).toBe(
+			'loginctl enable-linger pedram'
+		);
+	});
+
+	describe('with the service', () => {
+		const onePass = { sleep: async () => undefined, serviceStartTimeoutMs: 0 };
+
+		it('lets the service start the host and never races it with host start', async () => {
+			const s = seams(notInstalled);
+			s.discover.mockResolvedValueOnce(notInstalled).mockResolvedValueOnce(running('1.0.0'));
+			const installService = vi
+				.fn()
+				.mockResolvedValue({ kind: 'systemd', state: 'started', linger: true });
+			const result = await setupRemoteHost(remote, bundle, {
+				...s,
+				...onePass,
+				installService,
+				start: true,
+				service: true,
+			});
+			expect(installService).toHaveBeenCalledTimes(1);
+			expect(s.startHost).not.toHaveBeenCalled();
+			expect(result.service).toEqual({ kind: 'systemd', state: 'started', linger: true });
+			expect(result.start).toEqual({
+				installed: true,
+				started: true,
+				alreadyRunning: false,
+				pid: 9,
+				port: 41234,
+			});
+		});
+
+		it('falls back to host start when there is no service, or it deferred to a running host', async () => {
+			const none = seams(notInstalled);
+			await setupRemoteHost(remote, bundle, {
+				...none,
+				...onePass,
+				installService: vi
+					.fn()
+					.mockResolvedValue({ kind: 'none', reason: 'unsupported-os', fix: 'x' }),
+				start: true,
+				service: true,
+			});
+			expect(none.startHost).toHaveBeenCalledTimes(1);
+
+			const deferred = seams(running('1.0.0'));
+			const result = await setupRemoteHost(remote, bundle, {
+				...deferred,
+				...onePass,
+				installService: vi.fn().mockResolvedValue({ kind: 'systemd', state: 'deferred' }),
+				start: true,
+				service: true,
+			});
+			expect(deferred.startHost).toHaveBeenCalledTimes(1);
+			expect(result.service).toEqual({ kind: 'systemd', state: 'deferred' });
+		});
+
+		it('keeps the rest of the setup when the service ssh call fails', async () => {
+			const s = seams(notInstalled);
+			const result = await setupRemoteHost(remote, bundle, {
+				...s,
+				...onePass,
+				installService: vi.fn().mockRejectedValue(new Error('Connection refused')),
+				start: true,
+				service: true,
+			});
+			expect(result.serviceError).toBe('Connection refused');
+			expect(result.cli).toBe('installed');
+			expect(s.startHost).toHaveBeenCalledTimes(1);
+		});
+
+		it('never starts a detached host beside a service that is still starting one', async () => {
+			const s = seams(notInstalled);
+			const result = await setupRemoteHost(remote, bundle, {
+				...s,
+				...onePass,
+				installService: vi.fn().mockResolvedValue({ kind: 'systemd', state: 'started' }),
+				start: true,
+				service: true,
+			});
+			// Discovery keeps saying "not installed" (the fake), so the wait gives up: no host start.
+			expect(s.startHost).not.toHaveBeenCalled();
+			expect(result.start).toBeUndefined();
+			expect(result.serviceError).toContain('may still be starting');
+		});
+
+		it('clears the linger warning once the service turned lingering on', async () => {
+			const s = seams({
+				...stopped('1.0.0'),
+				lingerFix: 'loginctl enable-linger pedram',
+				linger: false,
+			} as RemoteHostDiscovery);
+			s.discover
+				.mockResolvedValueOnce({
+					...stopped('1.0.0'),
+					linger: false,
+					lingerFix: 'loginctl enable-linger pedram',
+				} as RemoteHostDiscovery)
+				.mockResolvedValue(running('1.0.0'));
+			const result = await setupRemoteHost(remote, bundle, {
+				...s,
+				...onePass,
+				installService: vi
+					.fn()
+					.mockResolvedValue({ kind: 'systemd', state: 'started', linger: true }),
+				start: true,
+				service: true,
+			});
+			expect(result.lingerFix).toBeUndefined();
+		});
+	});
+});

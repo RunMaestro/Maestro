@@ -3,6 +3,10 @@
  *
  * Writes per-hostname JSONL files to <project>/.maestro/history/ so that
  * multiple Maestro instances (local or SSH-remote) can share history visibility.
+ * The file format and the local reads and writes live in
+ * `src/shared/maestro-lib/store/shared-history.ts`, which a headless
+ * `maestro-cli host` uses too; this module adds the SSH half, the cache, and
+ * the logging and Sentry policy.
  *
  * Each Maestro instance writes to its own file (history-<hostname>.jsonl) and
  * reads from all other files when loading history. This avoids write conflicts
@@ -12,11 +16,18 @@
  */
 
 import * as os from 'os';
-import * as fs from 'fs';
-import * as path from 'path';
 import { logger } from './utils/logger';
 import { captureException } from './utils/sentry';
 import { SHARED_HISTORY_DIR } from '../shared/maestro-paths';
+import {
+	appendSharedHistoryEntry,
+	listSharedHistoryFiles,
+	parseSharedHistoryJsonl,
+	readSharedHistoryEntries,
+	rotateSharedHistoryFile,
+	sharedHistoryFilename,
+	sharedHistoryLabelOf,
+} from '../shared/maestro-lib/store/shared-history';
 import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
 import type { HistoryEntry, SshRemoteConfig } from '../shared/types';
 import {
@@ -88,39 +99,15 @@ export function __resetSharedHistoryCacheForTest(): void {
 	sharedFileCache.clear();
 }
 
-/**
- * Build the JSONL filename for a given hostname.
- */
-function historyFilename(hostname: string): string {
-	// Sanitize hostname for filesystem safety
-	const safe = hostname.replace(/[^a-zA-Z0-9._-]/g, '_');
-	return `history-${safe}.jsonl`;
-}
-
-/**
- * Parse a JSONL string into HistoryEntry objects.
- * Skips malformed lines with a warning instead of failing entirely.
- */
+/** Every other host's entries in one shared file's text, with a warning for lines that did not parse. */
 function parseJsonl(content: string, sourceHostname: string): HistoryEntry[] {
-	const entries: HistoryEntry[] = [];
-	const lines = content.split('\n');
-
-	for (const line of lines) {
-		const trimmed = line.trim();
-		if (!trimmed) continue;
-
-		try {
-			const entry = JSON.parse(trimmed) as HistoryEntry;
-			// Ensure hostname is set (backfill from filename if missing)
-			if (!entry.hostname) {
-				entry.hostname = sourceHostname;
-			}
-			entries.push(entry);
-		} catch {
-			logger.warn(`Skipping malformed JSONL line from ${sourceHostname}`, LOG_CONTEXT);
-		}
+	const { entries, malformedLines } = parseSharedHistoryJsonl(content, sourceHostname);
+	if (malformedLines > 0) {
+		logger.warn(
+			`Skipped ${malformedLines} malformed JSONL line(s) from ${sourceHostname}`,
+			LOG_CONTEXT
+		);
 	}
-
 	return entries;
 }
 
@@ -138,20 +125,12 @@ export function writeEntryLocal(
 	entry: HistoryEntry,
 	maxEntries: number = MAX_ENTRIES_PER_SESSION
 ): void {
+	let filePath: string;
 	try {
-		const dir = path.join(projectPath, SHARED_HISTORY_DIR);
-		if (!fs.existsSync(dir)) {
-			fs.mkdirSync(dir, { recursive: true });
-		}
-
-		const filePath = path.join(dir, historyFilename(LOCAL_HOSTNAME));
-		const line = JSON.stringify({ ...entry, hostname: LOCAL_HOSTNAME }) + '\n';
-
-		fs.appendFileSync(filePath, line, 'utf-8');
-
-		// Rotate if over limit
-		rotateLocalFile(filePath, maxEntries);
-
+		filePath = appendSharedHistoryEntry(projectPath, LOCAL_HOSTNAME, {
+			...entry,
+			hostname: LOCAL_HOSTNAME,
+		});
 		logger.debug(`Wrote shared history entry to ${filePath}`, LOG_CONTEXT);
 	} catch (error) {
 		logger.warn(`Failed to write local shared history: ${error}`, LOG_CONTEXT);
@@ -162,7 +141,9 @@ export function writeEntryLocal(
 		if (!isExpectedFsError(error)) {
 			captureException(error, { operation: 'sharedHistory:writeLocal', projectPath });
 		}
+		return;
 	}
+	rotateLocalFile(filePath, maxEntries);
 }
 
 /**
@@ -174,13 +155,7 @@ export function writeEntryLocal(
  */
 export function hasLocalSharedHistory(projectPath: string): boolean {
 	try {
-		const dir = path.join(projectPath, SHARED_HISTORY_DIR);
-		if (!fs.existsSync(dir)) return false;
-		const ownFilename = historyFilename(LOCAL_HOSTNAME);
-		const files = fs
-			.readdirSync(dir)
-			.filter((f) => f.startsWith('history-') && f.endsWith('.jsonl') && f !== ownFilename);
-		return files.length > 0;
+		return listSharedHistoryFiles(projectPath, LOCAL_HOSTNAME).length > 0;
 	} catch {
 		return false;
 	}
@@ -197,40 +172,22 @@ export function readRemoteEntriesLocal(
 	projectPath: string,
 	maxEntries: number = MAX_ENTRIES_PER_SESSION
 ): HistoryEntry[] {
-	const dir = path.join(projectPath, SHARED_HISTORY_DIR);
-	if (!fs.existsSync(dir)) {
-		return [];
-	}
-
-	const allEntries: HistoryEntry[] = [];
-	const ownFilename = historyFilename(LOCAL_HOSTNAME);
-
 	try {
-		const files = fs
-			.readdirSync(dir)
-			.filter((f) => f.startsWith('history-') && f.endsWith('.jsonl') && f !== ownFilename);
-
-		for (const file of files) {
-			try {
-				const content = fs.readFileSync(path.join(dir, file), 'utf-8');
-				// Extract hostname from filename: history-<hostname>.jsonl
-				const hostname = file.replace(/^history-/, '').replace(/\.jsonl$/, '');
-				const entries = parseJsonl(content, hostname);
-				// Take only the last N entries (most recent = end of file in JSONL)
-				const trimmed =
-					entries.length > maxEntries ? entries.slice(entries.length - maxEntries) : entries;
-				allEntries.push(...trimmed);
-			} catch (error) {
+		return readSharedHistoryEntries(projectPath, {
+			excludeLabel: LOCAL_HOSTNAME,
+			maxEntriesPerFile: maxEntries,
+			onFileError: (file, error) => {
 				void captureException(error);
 				logger.warn(`Failed to read shared history file ${file}: ${error}`, LOG_CONTEXT);
-			}
-		}
+			},
+			onMalformedLines: (file, count) =>
+				logger.warn(`Skipped ${count} malformed JSONL line(s) from ${file}`, LOG_CONTEXT),
+		});
 	} catch (error) {
 		void captureException(error);
 		logger.warn(`Failed to list shared history directory: ${error}`, LOG_CONTEXT);
+		return [];
 	}
-
-	return allEntries;
 }
 
 // ─── SSH remote operations ──────────────────────────────────────────────────
@@ -254,7 +211,7 @@ export async function writeEntryRemote(
 		// Ensure directory exists
 		await mkdirRemote(remoteDir, sshRemote);
 
-		const remotePath = `${remoteDir}/${historyFilename(LOCAL_HOSTNAME)}`;
+		const remotePath = `${remoteDir}/${sharedHistoryFilename(LOCAL_HOSTNAME)}`;
 		const line = JSON.stringify({ ...entry, hostname: LOCAL_HOSTNAME }) + '\n';
 
 		// Read existing content, append, and write back
@@ -301,12 +258,9 @@ export async function readRemoteEntriesSsh(
 			return [];
 		}
 
-		const ownFilename = historyFilename(LOCAL_HOSTNAME);
+		const ownFilename = sharedHistoryFilename(LOCAL_HOSTNAME);
 		const historyFiles = statsResult.data.filter(
-			(entry) =>
-				entry.name.startsWith('history-') &&
-				entry.name.endsWith('.jsonl') &&
-				entry.name !== ownFilename
+			(entry) => sharedHistoryLabelOf(entry.name) !== null && entry.name !== ownFilename
 		);
 
 		const scope = sshScopeKey(sshRemote);
@@ -325,8 +279,7 @@ export async function readRemoteEntriesSsh(
 					if (!fileResult.success || fileResult.data === undefined) {
 						continue;
 					}
-					const hostname = file.name.replace(/^history-/, '').replace(/\.jsonl$/, '');
-					entries = parseJsonl(fileResult.data, hostname);
+					entries = parseJsonl(fileResult.data, sharedHistoryLabelOf(file.name) ?? file.name);
 					sharedFileCache.set(cacheKey, {
 						size: file.size,
 						mtime: file.mtime,
@@ -363,19 +316,9 @@ export async function readRemoteEntriesSsh(
  */
 function rotateLocalFile(filePath: string, maxEntries: number): void {
 	try {
-		const content = fs.readFileSync(filePath, 'utf-8');
-		const lines = content.split('\n').filter((l) => l.trim());
-
-		if (lines.length <= maxEntries) return;
-
-		// Keep the most recent entries (end of file = most recent)
-		const trimmed = lines.slice(lines.length - maxEntries);
-		fs.writeFileSync(filePath, trimmed.join('\n') + '\n', 'utf-8');
-
-		logger.debug(
-			`Rotated shared history file: ${lines.length} -> ${trimmed.length} entries`,
-			LOG_CONTEXT
-		);
+		if (rotateSharedHistoryFile(filePath, maxEntries)) {
+			logger.debug(`Rotated shared history file to ${maxEntries} entries`, LOG_CONTEXT);
+		}
 	} catch (error) {
 		void captureException(error);
 		logger.warn(`Failed to rotate shared history file: ${error}`, LOG_CONTEXT);

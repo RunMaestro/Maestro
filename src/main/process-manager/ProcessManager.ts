@@ -1,9 +1,13 @@
 // src/main/process-manager/ProcessManager.ts
 
 import { EventEmitter } from 'events';
+import { canonicalJson } from '../../shared/canonicalJson';
+import { currentSpawnGeneration } from './generation';
+import { grokLaunchArgsProblem } from './types';
 import { randomUUID } from 'crypto';
 import type {
 	ProcessConfig,
+	NativeSessionLaunch,
 	ManagedProcess,
 	SpawnResult,
 	CommandResult,
@@ -14,6 +18,18 @@ import { PtySpawner } from './spawners/PtySpawner';
 import { ChildProcessSpawner } from './spawners/ChildProcessSpawner';
 import { OpencodeServerSpawner } from './spawners/OpencodeServerSpawner';
 import { CodexAppServerSpawner } from './spawners/CodexAppServerSpawner';
+import { AcpServerSpawner } from './spawners/AcpServerSpawner';
+import { RpcServerSpawner } from './spawners/RpcServerSpawner';
+import { HermesApiSpawner } from './spawners/HermesApiSpawner';
+import { ClaudeSdkSpawner } from './spawners/ClaudeSdkSpawner';
+import { CopilotSdkSpawner } from './spawners/CopilotSdkSpawner';
+import { AntigravitySdkSpawner } from './spawners/AntigravitySdkSpawner';
+import {
+	GrokAcpSpawner,
+	wantsGrokAcp,
+	type GrokCommandObservationSelection,
+} from './spawners/GrokAcpSpawner';
+import type { GrokCommandObservation } from '../agents/grok-skills';
 import { codexAppServerConfigBlocker, wantsCodexAppServer } from '../codex-app-server/invocation';
 import { DataBufferManager } from './handlers/DataBufferManager';
 import { pushResolvedOmpContextWindow } from './handlers/StdoutHandler';
@@ -29,6 +45,7 @@ import { expandTilde } from '../../shared/pathUtils';
 import { agentAlreadyRunningMessage } from '../../shared/processErrors';
 import type { AgentError, SshRemoteConfig } from '../../shared/types';
 import { unusableCwdReason } from './utils/spawnCwd';
+import { argsResumeSession } from './utils/resumeArgs';
 import { getDefaultShell } from '../stores/defaults';
 import { captureException } from '../utils/sentry';
 import {
@@ -41,7 +58,10 @@ import {
 	stopProcess,
 	INTERACTIVE_STOP_GRACE_MS,
 } from '../../shared/maestro-lib/control/termination';
+import { cleanupTempFiles } from './utils/imageUtils';
 import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-signal';
+import { HarnessControlRegistry } from '../harness-control/HarnessControlRegistry';
+import type { HarnessControlCapabilities } from '../../shared/harness-control/types';
 
 export interface ProcessManagerOptions {
 	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
@@ -66,13 +86,22 @@ export interface ProcessManagerOptions {
  */
 export class ProcessManager extends EventEmitter {
 	private processes: Map<string, ManagedProcess> = new Map();
+	private readonly nativeSessionLaunches = new Map<string, NativeSessionLaunch>();
 	private bufferManager: DataBufferManager;
 	private ptySpawner: PtySpawner;
 	private childProcessSpawner: ChildProcessSpawner;
 	private opencodeServerSpawner: OpencodeServerSpawner;
 	private codexAppServerSpawner: CodexAppServerSpawner;
+	private grokAcpSpawner: GrokAcpSpawner;
+	private acpServerSpawner: AcpServerSpawner;
+	private rpcServerSpawner: RpcServerSpawner;
+	private hermesApiSpawner: HermesApiSpawner;
+	private claudeSdkSpawner: ClaudeSdkSpawner;
+	private copilotSdkSpawner: CopilotSdkSpawner;
+	private antigravitySdkSpawner: AntigravitySdkSpawner;
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
+	private readonly harnessControls = new HarnessControlRegistry();
 	private readonly isCoworkingEnabled: () => boolean;
 
 	constructor(
@@ -86,6 +115,12 @@ export class ProcessManager extends EventEmitter {
 		options: ProcessManagerOptions = {}
 	) {
 		super();
+		this.on('exit', (sessionId: string) => this.harnessControls.forget(sessionId));
+		// A launch receipt leaves with its process. A newer process already holding
+		// the session id keeps its own receipt.
+		this.on('exit', (sessionId: string) => {
+			if (!this.processes.has(sessionId)) this.nativeSessionLaunches.delete(sessionId);
+		});
 		this.isCoworkingEnabled = options.isCoworkingEnabled ?? (() => true);
 		this.bufferManager = new DataBufferManager(this.processes, this);
 		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager);
@@ -96,7 +131,7 @@ export class ProcessManager extends EventEmitter {
 			this.processes,
 			this,
 			this.bufferManager,
-			(config) => this.childProcessSpawner.spawn(config)
+			(config) => this.fallbackToCli(config)
 		);
 		// Same contract for Codex: a turn the app-server transport cannot carry,
 		// or whose server will not start, runs on `codex exec` instead.
@@ -104,9 +139,50 @@ export class ProcessManager extends EventEmitter {
 			this.processes,
 			this,
 			this.bufferManager,
-			(config) => this.childProcessSpawner.spawn(config),
+			(config) => this.fallbackToCli(config),
 			{ clientVersion: options.appVersion }
 		);
+		this.acpServerSpawner = new AcpServerSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.fallbackToCli(config),
+			{ clientVersion: options.appVersion }
+		);
+		this.rpcServerSpawner = new RpcServerSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.fallbackToCli(config)
+		);
+		this.hermesApiSpawner = new HermesApiSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.fallbackToCli(config)
+		);
+		this.claudeSdkSpawner = new ClaudeSdkSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.fallbackToCli(config)
+		);
+		this.copilotSdkSpawner = new CopilotSdkSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.fallbackToCli(config)
+		);
+		this.antigravitySdkSpawner = new AntigravitySdkSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.fallbackToCli(config)
+		);
+		// A Grok turn that asked for the provider's own prompting runs on the shared
+		// ACP driver or is refused by the route selector; it never falls back to the
+		// output-only headless CLI, which answers permission prompts by itself.
+		this.grokAcpSpawner = new GrokAcpSpawner(this.processes, this, this.bufferManager);
 		this.localCommandRunner = new LocalCommandRunner(this);
 		this.sshCommandRunner = new SshCommandRunner(this);
 	}
@@ -118,9 +194,22 @@ export class ProcessManager extends EventEmitter {
 	 * creation attaches to a live handle; generic terminal spawn can still replace it.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
+		// Capture before spawner callbacks can mutate the caller's record.
+		// This is an opaque correlation echo, never an ownership claim.
+		// Invalid untyped inputs remain absent rather than manufacturing a token.
+		const requestId = config.nativeSessionRequestId;
+		const nativeSessionRequestId =
+			config.toolType === 'grok' &&
+			typeof requestId === 'string' &&
+			requestId.length > 0 &&
+			requestId.length <= 128 &&
+			!/[^A-Za-z0-9_-]/.test(requestId)
+				? requestId
+				: undefined;
 		const existing = this.processes.get(config.sessionId);
 		if (
 			config.reuseTerminal &&
+			!config.promptArtifact &&
 			config.toolType === 'terminal' &&
 			existing?.isTerminal &&
 			(existing.ptyProcess ||
@@ -129,6 +218,56 @@ export class ProcessManager extends EventEmitter {
 					!existing.childProcess.signalCode))
 		) {
 			return { pid: existing.pid, success: true, attached: true };
+		}
+		const grokArgsProblem =
+			config.toolType === 'grok' && !config.sshRemoteId
+				? grokLaunchArgsProblem(config.args, config.agentSessionId, config.cwd)
+				: undefined;
+		if (
+			grokArgsProblem ||
+			(config.toolType === 'grok' &&
+				(config.agentSessionId || argsResumeSession(config.args)) &&
+				(!config.agentSessionId ||
+					config.nativeSessionScope?.state !== 'bound' ||
+					canonicalJson(config.nativeSessionBinding ?? null) !==
+						canonicalJson({
+							...config.nativeSessionScope,
+							nativeSessionId: config.agentSessionId,
+						})))
+		) {
+			const message =
+				grokArgsProblem ??
+				'Grok resume ownership is unknown or changed. Restore the original account and host before resuming.';
+			this.emit('agent-error', config.sessionId, {
+				type: 'session_not_found',
+				message,
+				recoverable: false,
+				agentId: 'grok',
+				sessionId: config.sessionId,
+				timestamp: Date.now(),
+			} satisfies AgentError);
+			return { pid: -1, success: false, error: message };
+		}
+		// Only the child-process sink owns prompt files. Refuse before attaching,
+		// replacing an existing process or selecting a transport that drops them.
+		if (
+			config.promptArtifact &&
+			(config.toolType === 'terminal' ||
+				config.harnessControlMode === 'native' ||
+				this.shouldUsePty(config) ||
+				this.shouldUseOpencodeServer(config) ||
+				this.shouldUseCodexAppServer(config))
+		) {
+			const message = 'Prompt-file delivery is unavailable on this transport. Nothing was started.';
+			this.emit('agent-error', config.sessionId, {
+				type: 'unknown',
+				message,
+				recoverable: false,
+				agentId: config.toolType,
+				sessionId: config.sessionId,
+				timestamp: Date.now(),
+			} satisfies AgentError);
+			return { pid: -1, success: false, error: message };
 		}
 		// Expand a leading `~` in the working directory before spawning. node-pty
 		// and child_process hand `cwd` straight to the OS, which - unlike a shell -
@@ -238,7 +377,14 @@ export class ProcessManager extends EventEmitter {
 				);
 				// Drop the dead entry and let the spawn below take the session id. No
 				// kill() here: there is no process left to signal, and kill() would
-				// emit a spurious exit for a turn that ended long ago.
+				// emit a spurious exit for a turn that ended long ago. The local PID is
+				// gone, but a remote prompt reader can outlive its SSH client: hand
+				// cleanup to that owner before replacing the entry.
+				if (existing.sshRemotePromptArtifactPath !== undefined) {
+					this.signalRemote(config.sessionId, existing, 'terminate');
+				}
+				cleanupTempFiles(existing.tempFiles ?? []);
+				existing.tempFiles = undefined;
 				this.processes.delete(config.sessionId);
 			} else if (existingProcessRunning) {
 				logger.warn('[ProcessManager] Restarting existing terminal process', 'ProcessManager', {
@@ -265,7 +411,10 @@ export class ProcessManager extends EventEmitter {
 			// The same `spawn` seam the CLI path emits below. This transport
 			// reports `exit` through the shared handlers, so a listener that pairs
 			// the two would otherwise see every turn here end without a start.
-			if (serveResult.success) this.emitSpawn(config);
+			if (serveResult.success) {
+				this.registerHarnessControl(config);
+				this.emitSpawn(config);
+			}
 			return serveResult;
 		}
 
@@ -306,7 +455,25 @@ export class ProcessManager extends EventEmitter {
 		// fingerprint, unlike OpenCode serve), so it takes the coworking env like
 		// any CLI spawn and is routed after the injection.
 		let result: SpawnResult;
-		if (this.shouldUseCodexAppServer(configWithCoworkingSession)) {
+		if (wantsGrokAcp(configWithCoworkingSession)) {
+			result = this.grokAcpSpawner.spawn(configWithCoworkingSession);
+		} else if (configWithCoworkingSession.harnessControlMode === 'native') {
+			if (configWithCoworkingSession.toolType === 'hermes') {
+				result = this.hermesApiSpawner.spawn(configWithCoworkingSession);
+			} else if (configWithCoworkingSession.toolType === 'claude-code') {
+				result = this.claudeSdkSpawner.spawn(configWithCoworkingSession);
+			} else if (configWithCoworkingSession.toolType === 'copilot-cli') {
+				result = this.copilotSdkSpawner.spawn(configWithCoworkingSession);
+			} else if (configWithCoworkingSession.toolType === 'antigravity') {
+				result = this.antigravitySdkSpawner.spawn(configWithCoworkingSession);
+			} else if (configWithCoworkingSession.nativeAcpArgs) {
+				result = this.acpServerSpawner.spawn(configWithCoworkingSession);
+			} else if (configWithCoworkingSession.nativeRpcProtocol) {
+				result = this.rpcServerSpawner.spawn(configWithCoworkingSession);
+			} else {
+				result = this.childProcessSpawner.spawn(configWithCoworkingSession);
+			}
+		} else if (this.shouldUseCodexAppServer(configWithCoworkingSession)) {
 			result = this.codexAppServerSpawner.spawn(configWithCoworkingSession);
 		} else if (this.shouldUsePty(configWithCoworkingSession)) {
 			result = this.ptySpawner.spawn(configWithCoworkingSession);
@@ -314,9 +481,70 @@ export class ProcessManager extends EventEmitter {
 			result = this.childProcessSpawner.spawn(configWithCoworkingSession);
 		}
 
-		if (result.success) this.emitSpawn(config);
+		if (result.success) {
+			const proc = this.processes.get(config.sessionId);
+			if (config.toolType === 'grok' && proc?.spawnGeneration !== undefined) {
+				const scope =
+					config.nativeSessionScope ??
+					({ version: 1, state: 'unknown', reason: 'unobserved' } as const);
+				const captured = Object.freeze({
+					scope: Object.freeze(
+						scope.state === 'bound'
+							? { ...scope, host: Object.freeze({ ...scope.host }) }
+							: { ...scope }
+					),
+					processGeneration: proc.spawnGeneration,
+					tabId: config.tabId,
+					requestedNativeSessionId: config.agentSessionId,
+					...(nativeSessionRequestId === undefined ? {} : { nativeSessionRequestId }),
+				});
+				proc.nativeSessionLaunch = captured;
+				this.nativeSessionLaunches.set(config.sessionId, captured);
+			}
+			this.registerHarnessControl(config);
+			this.emitSpawn(config);
+		}
 
 		return result;
+	}
+
+	/**
+	 * Spawn after a host-owned final ownership check. `process:spawn` passes the
+	 * Grok launch fence (account, cwd, endpoint and tab unchanged since the
+	 * launch was prepared); a refusal string starts nothing and is returned as a
+	 * failed `SpawnResult`. A Grok request is copied first so a caller that
+	 * mutates its record while the check is pending cannot change what spawns.
+	 */
+	async spawnChecked(
+		config: ProcessConfig,
+		options: {
+			beforeSpawn?: () => string | undefined | Promise<string | undefined>;
+			assertSpawnAllowed?: () => void;
+		} = {}
+	): Promise<SpawnResult> {
+		if (config.toolType === 'grok') {
+			const scope = config.nativeSessionScope;
+			config = {
+				...config,
+				args: [...config.args],
+				customEnvVars: config.customEnvVars && { ...config.customEnvVars },
+				shellEnvVars: config.shellEnvVars && { ...config.shellEnvVars },
+				nativeSessionBinding:
+					config.nativeSessionBinding && structuredClone(config.nativeSessionBinding),
+				nativeSessionScope:
+					scope &&
+					Object.freeze(
+						scope.state === 'bound'
+							? { ...scope, host: Object.freeze({ ...scope.host }) }
+							: { ...scope }
+					),
+			};
+		}
+		const refusal = await options.beforeSpawn?.();
+		if (refusal) return { pid: -1, success: false, error: refusal };
+		// Recheck synchronous ownership after the asynchronous launch fence settles.
+		options.assertSpawnAllowed?.();
+		return this.spawn(config);
 	}
 
 	/**
@@ -327,9 +555,50 @@ export class ProcessManager extends EventEmitter {
 	 */
 	private emitSpawn(config: ProcessConfig): void {
 		try {
-			this.emit('spawn', config);
+			if (config.promptArtifact) {
+				// Project lifecycle metadata only. Args, stdin scripts, images and
+				// prompt callbacks can carry private file content or destinations.
+				// Keep the spawned request intact; this copy is observational.
+				const captureConfig: ProcessConfig = {
+					sessionId: config.sessionId,
+					toolType: config.toolType,
+					cwd: config.cwd,
+					command: config.command,
+					args: [],
+					querySource: config.querySource,
+					tabId: config.tabId,
+					projectPath: config.projectPath,
+					agentSessionId: config.agentSessionId,
+					sshRemoteId: config.sshRemoteId,
+					sshRemoteHost: config.sshRemoteHost,
+				};
+				this.emit('spawn', captureConfig);
+			} else {
+				this.emit('spawn', config);
+			}
 		} catch {
 			// Capture is best-effort; never let it break process spawning.
+		}
+	}
+
+	/** Negotiated control features for an explicitly selected native transport. */
+	getHarnessControlCapabilities(sessionId: string): HarnessControlCapabilities | null {
+		return this.harnessControls.getCapabilities(sessionId);
+	}
+
+	private fallbackToCli(config: ProcessConfig): SpawnResult {
+		this.harnessControls.forget(config.sessionId);
+		return this.childProcessSpawner.spawn(config);
+	}
+
+	private registerHarnessControl(config: ProcessConfig): void {
+		const managed = this.processes.get(config.sessionId);
+		if (managed?.harnessControl && managed.spawnGeneration) {
+			this.harnessControls.register(
+				config.sessionId,
+				managed.spawnGeneration,
+				managed.harnessControl
+			);
 		}
 	}
 
@@ -412,6 +681,13 @@ export class ProcessManager extends EventEmitter {
 				detail: STEERING_TURN_FINISHED_DETAIL,
 			};
 		}
+		if (this.harnessControls.has(sessionId)) {
+			return this.harnessControls.steer(sessionId, text);
+		}
+		// A Grok process never reaches the maestro-p channel below: its own host answers
+		// from the active route, and today that answer is a structured refusal
+		// until Grok advertises an in-progress input operation (parity S21).
+		if (process.toolType === 'grok') return this.grokAcpSpawner.steer(process, id);
 		if (process.codexAppServer) {
 			return steerCodexAppServerTurn(process.codexAppServer, { id, text }, (verdict) =>
 				this.emit('steering-verdict', sessionId, verdict)
@@ -500,6 +776,10 @@ export class ProcessManager extends EventEmitter {
 		process.interrupted = true;
 
 		try {
+			if (this.harnessControls.has(sessionId)) {
+				void this.harnessControls.interrupt(sessionId);
+				return true;
+			}
 			if (process.sdkController) {
 				// Server-backed process (OpenCode SDK, Codex app-server): interrupt the
 				// in-flight turn over its protocol; the controller escalates if needed.
@@ -572,7 +852,7 @@ export class ProcessManager extends EventEmitter {
 		{ sync = false, shutdown = false }: { sync?: boolean; shutdown?: boolean } = {}
 	): boolean {
 		const proc = this.processes.get(sessionId);
-		if (!proc) return false;
+		if (!proc) return this.copilotSdkSpawner.closeSession(sessionId);
 
 		// A kill is a stop Maestro asked for (a closed tab, the Process Monitor, a
 		// watchdog), so the exit it causes is not a crash. The resolver reads any
@@ -585,7 +865,9 @@ export class ProcessManager extends EventEmitter {
 			}
 			this.bufferManager.flushDataBuffer(sessionId);
 
-			if (proc.sdkController) {
+			if (this.harnessControls.has(sessionId)) {
+				void this.harnessControls.close(sessionId, { sync, shutdown });
+			} else if (proc.sdkController) {
 				// Server-backed process (OpenCode SDK, Codex app-server): the stop
 				// starts with a protocol call. The controller tears its transport down
 				// (and runs the stop ladder on any child it owns); the exit event
@@ -638,12 +920,24 @@ export class ProcessManager extends EventEmitter {
 	 */
 	private signalRemote(sessionId: string, proc: ManagedProcess, mode: RemoteSignalMode): void {
 		if (!proc.sshRemotePidFile || !proc.command || !proc.args) return;
+		// Prompt-owner records require their artifact witness. Never send one
+		// through the legacy signal script, which cannot preserve file ownership.
+		if (
+			proc.sshRemotePromptArtifactPath === undefined &&
+			!proc.sshRemotePidFile.startsWith('/tmp/maestro-agent-')
+		) {
+			logger.warn('Remote signal ownership is unavailable', 'ProcessManager', { sessionId, mode });
+			return;
+		}
 		signalRemoteAgent(
 			{
 				sshCommand: proc.command,
 				sshArgs: proc.args,
 				pidFile: proc.sshRemotePidFile,
 				sessionId,
+				...(proc.sshRemotePromptArtifactPath !== undefined
+					? { promptArtifactPath: proc.sshRemotePromptArtifactPath }
+					: {}),
 			},
 			mode
 		);
@@ -652,8 +946,9 @@ export class ProcessManager extends EventEmitter {
 	/**
 	 * The stop ladder escalates only the local ssh client. When an interrupted
 	 * SSH agent has not exited after the grace period, ask its host for SIGTERM
-	 * too. Test for an observed exit, never `.killed`, which is set as soon as a
-	 * signal is delivered.
+	 * too. Local SSH exit does not prove a remote prompt reader has stopped;
+	 * its owner must recheck remote PID and descriptor identity after the grace.
+	 * Ordinary turns still stop escalating on observed exit, never `.killed`.
 	 */
 	private scheduleRemoteTerminate(
 		sessionId: string,
@@ -662,11 +957,18 @@ export class ProcessManager extends EventEmitter {
 	): void {
 		if (!proc.sshRemotePidFile) return;
 		const timer = setTimeout(() => {
-			if (child.exitCode === null && child.signalCode === null) {
+			if (
+				proc.sshRemotePromptArtifactPath !== undefined ||
+				(child.exitCode === null && child.signalCode === null)
+			) {
 				this.signalRemote(sessionId, proc, 'terminate');
 			}
 		}, INTERACTIVE_STOP_GRACE_MS);
-		child.once('exit', () => clearTimeout(timer));
+		if (proc.sshRemotePromptArtifactPath === undefined) {
+			child.once('exit', () => clearTimeout(timer));
+		} else {
+			timer.unref?.();
+		}
 	}
 
 	/**
@@ -687,6 +989,18 @@ export class ProcessManager extends EventEmitter {
 		}
 		// Tear down the shared OpenCode server(s) that back the SDK path.
 		opencodeServerManager.shutdown();
+		void this.copilotSdkSpawner.closeAll().catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				context: 'Copilot native connection shutdown',
+			});
+		});
+	}
+	/** Stop every active turn for an agent and dispose retained native runtimes. */
+	closeAgent(agentId: string): void {
+		for (const proc of [...this.processes.values()]) {
+			if (proc.sessionId.replace(/-ai(?:-.+)?$/, '') === agentId) this.kill(proc.sessionId);
+		}
+		this.copilotSdkSpawner.closeAgent(agentId);
 	}
 
 	/**
@@ -696,9 +1010,26 @@ export class ProcessManager extends EventEmitter {
 		return Array.from(this.processes.values());
 	}
 
+	/** Read synchronously in the session-ID listener, before exit clears the receipt.
+	 * A killed process can still deliver its final unterminated line; a superseded
+	 * generation can never borrow the successor's ownership. */
+	nativeSessionLaunchOf(sessionId: string): NativeSessionLaunch | undefined {
+		const launch = this.nativeSessionLaunches.get(sessionId);
+		return launch?.processGeneration === currentSpawnGeneration(sessionId) ? launch : undefined;
+	}
+
 	/**
-	 * Get a specific process
+	 * The command discovery handoff (`ProcessManagerForAgents.grokCommandObservation`): the
+	 * live ACP advertisement of the current Grok turn that owns this exact selection, or
+	 * undefined. No standalone probe and no disk fallback; see `GrokAcpSpawner.observeCommands`.
 	 */
+	grokCommandObservation(
+		selection: GrokCommandObservationSelection
+	): GrokCommandObservation | undefined {
+		return this.grokAcpSpawner.observeCommands(selection);
+	}
+
+	/** Get a specific live process. */
 	get(sessionId: string): ManagedProcess | undefined {
 		return this.processes.get(sessionId);
 	}

@@ -39,9 +39,9 @@ export type HostCueState =
 	| { state: 'disabled' }
 	/** This host runs the Cue engine. */
 	| { state: 'running' }
-	/** Another engine holds the Cue lock, so this host runs without Cue. */
+	/** Another engine holds the Cue lock, so this host runs without Cue. Also what a host reports after another engine took the lock over from it. */
 	| { state: 'held'; mode: string; pid: number }
-	/** Cue is on, but the engine did not start. */
+	/** Cue is on, but the engine is not running here: it did not start, or it lost the lock to a holder that cannot be read. */
 	| { state: 'failed'; reason: string };
 
 export interface HostStatusReport {
@@ -56,6 +56,12 @@ export interface HostStatusReport {
 	clients: number;
 	work: HostWork;
 	cue: HostCueState;
+	/**
+	 * The host holds the machine awake (`caffeinate` on macOS) while work is in flight. `false` when
+	 * idle, on another platform, or under `host start --no-prevent-sleep`. Absent from a host that
+	 * predates it.
+	 */
+	preventingSleep?: boolean;
 }
 
 export type HostStopReply =

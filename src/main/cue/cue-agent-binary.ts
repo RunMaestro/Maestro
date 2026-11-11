@@ -2,16 +2,19 @@
  * Which binary a Cue prompt run executes.
  *
  * Same precedence a tab spawn uses (`process:spawn`): the agent's OWN custom
- * path, then the provider-level one (Settings -> Agents), then whatever
- * detection found. Cue used to skip the first rung, so an agent pinned to a
- * specific binary ran the provider's binary whenever Cue drove it: the same
- * agent executed two different programs depending on who sent the turn.
+ * path, then the provider-level one (Settings -> Agents), then local detection
+ * or the remote's bare binary name. Cue used to skip the first rung, so an
+ * agent pinned to a specific binary ran the provider's binary whenever Cue
+ * drove it: the same agent executed two programs depending on the turn source.
  *
- * An agent's own path is checked before it is used, exactly as the tab spawn
- * does, and an invalid one falls through with a warning rather than failing
- * the run. Over SSH it is skipped: it names a file on the REMOTE host, which
- * nothing here can check, and the launch plan runs the provider's bare binary
- * name there regardless of the local command.
+ * Locally, an agent's own path is checked before it is used, exactly as the tab
+ * spawn does, and an invalid one falls through with a warning rather than
+ * failing the run. Over SSH, only the agent's own path is used, preserved as
+ * supplied: it names a file on the remote host, so neither local validation nor
+ * detection applies. The provider-level path names a file on THIS machine, so it
+ * never reaches the remote (the same rule `process:spawn` applies to
+ * `remoteCommand`). Without an agent override the launch plan uses the remote's
+ * bare binary.
  */
 
 import { checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
@@ -23,7 +26,7 @@ export interface ResolveCueAgentBinaryInput {
 	providerCustomPath?: string;
 	/** True when the agent runs on an SSH remote. */
 	sshEnabled: boolean;
-	/** Path the agent detector resolved, or undefined when unavailable. */
+	/** Local detector result, or undefined when unavailable. Never called for SSH. */
 	getDetectedPath: () => Promise<string | undefined>;
 	onWarn?: (message: string) => void;
 	/** Injected by tests. */
@@ -31,7 +34,7 @@ export interface ResolveCueAgentBinaryInput {
 }
 
 /**
- * Resolve the local binary for a Cue run, or undefined to let the spawn
+ * Resolve the selected host's binary for a Cue run, or undefined to let the spawn
  * builder fall back to the provider's bare command name.
  */
 export async function resolveCueAgentBinary(
@@ -39,7 +42,9 @@ export async function resolveCueAgentBinary(
 ): Promise<string | undefined> {
 	const { sessionCustomPath, providerCustomPath, sshEnabled } = input;
 
-	if (sessionCustomPath && !sshEnabled) {
+	if (sshEnabled) return sessionCustomPath || undefined;
+
+	if (sessionCustomPath) {
 		const detection = await (input.checkPath ?? checkCustomPath)(sessionCustomPath);
 		if (detection.exists && detection.path) return detection.path;
 		input.onWarn?.(

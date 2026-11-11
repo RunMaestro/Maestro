@@ -19,10 +19,13 @@ import * as yaml from 'js-yaml';
 
 // Mocks must be set up before importing the module under test.
 const mockReadSessions = vi.fn();
+const mockResolveStoredAiTabId = vi.fn();
 
 vi.mock('../../../cli/services/storage', () => ({
 	readSessions: () => mockReadSessions(),
 	readLiveSessions: () => mockReadSessions(),
+	resolveStoredAiTabId: (agentId: string, tabId: string) =>
+		mockResolveStoredAiTabId(agentId, tabId),
 }));
 
 vi.mock('../../../main/utils/sentry', () => ({
@@ -710,5 +713,123 @@ describe('cue schedule (create)', () => {
 		const { parsed } = readCueYaml(projectRoot);
 		const sub = (parsed.subscriptions as Array<Record<string, unknown>>)[0];
 		expect(sub.fire_at as string).toMatch(TZ_SUFFIX_REGEX);
+	});
+
+	describe('--tab / --here (deliver into an existing AI tab)', () => {
+		const CALLER_ENV = ['MAESTRO_CALLER_AGENT_ID', 'MAESTRO_CALLER_TAB_ID'] as const;
+		const savedEnv: Record<string, string | undefined> = {};
+
+		beforeEach(() => {
+			for (const key of CALLER_ENV) savedEnv[key] = process.env[key];
+			for (const key of CALLER_ENV) delete process.env[key];
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+		});
+
+		afterEach(() => {
+			for (const key of CALLER_ENV) {
+				if (savedEnv[key] === undefined) delete process.env[key];
+				else process.env[key] = savedEnv[key];
+			}
+		});
+
+		function onlySub(): Record<string, unknown> {
+			const subs = readCueYaml(projectRoot).parsed.subscriptions as Array<Record<string, unknown>>;
+			expect(subs).toHaveLength(1);
+			return subs[0];
+		}
+
+		it('--tab resolves a prefix and writes a cli dispatch into that tab', async () => {
+			mockResolveStoredAiTabId.mockReturnValue('tab-full-id');
+
+			await cueSchedule({
+				in: '1d',
+				agent: 'Alpha',
+				tab: 'tab-f',
+				prompt: 'find more',
+				json: true,
+			});
+
+			expect(mockResolveStoredAiTabId).toHaveBeenCalledWith('agent-alpha', 'tab-f');
+			expect(onlySub()).toMatchObject({
+				action: 'command',
+				command: {
+					mode: 'cli',
+					cli: { command: 'send', target: 'agent-alpha', tab: 'tab-full-id', message: 'find more' },
+				},
+			});
+			const out = JSON.parse(consoleSpy.mock.calls[0][0] as string);
+			expect(out).toMatchObject({ ok: true, tab_id: 'tab-full-id' });
+		});
+
+		it('--tab naming no tab of the agent fails before writing', async () => {
+			mockResolveStoredAiTabId.mockReturnValue(null);
+
+			await expect(
+				cueSchedule({ in: '1d', agent: 'Alpha', tab: 'nope', prompt: 'x', json: true })
+			).rejects.toThrow('process.exit');
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0] as string)).toMatchObject({
+				ok: false,
+				code: 'TAB_NOT_FOUND',
+			});
+			expect(fs.existsSync(path.join(projectRoot, '.maestro', 'cue.yaml'))).toBe(false);
+		});
+
+		it('--here takes the caller tab and agent from the environment, without a disk check', async () => {
+			process.env.MAESTRO_CALLER_AGENT_ID = 'agent-alpha';
+			process.env.MAESTRO_CALLER_TAB_ID = 'tab-caller';
+
+			await cueSchedule({ at: '2030-01-01 15:00', here: true, prompt: 'follow up' });
+
+			expect(mockResolveStoredAiTabId).not.toHaveBeenCalled();
+			const cli = (onlySub().command as { cli: Record<string, unknown> }).cli;
+			expect(cli).toMatchObject({ target: 'agent-alpha', tab: 'tab-caller' });
+		});
+
+		it('--here outside an AI tab is refused', async () => {
+			await expect(
+				cueSchedule({ in: '1h', agent: 'Alpha', here: true, prompt: 'x', json: true })
+			).rejects.toThrow('process.exit');
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0] as string)).toMatchObject({
+				code: 'NOT_IN_TAB',
+			});
+		});
+
+		it('--here with an --agent that does not own the caller tab is refused', async () => {
+			process.env.MAESTRO_CALLER_AGENT_ID = 'agent-other';
+			process.env.MAESTRO_CALLER_TAB_ID = 'tab-caller';
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+				session({ id: 'agent-other', name: 'Other', projectRoot }),
+			]);
+
+			await expect(
+				cueSchedule({ in: '1h', agent: 'Alpha', here: true, prompt: 'x', json: true })
+			).rejects.toThrow('process.exit');
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0] as string)).toMatchObject({
+				code: 'TAB_AGENT_MISMATCH',
+			});
+		});
+
+		it.each([
+			[{ tab: 't', here: true, prompt: 'x' }, 'CONFLICTING_TAB'],
+			[{ tab: 't', notify: true, message: 'm' }, 'TAB_WITHOUT_PROMPT'],
+			[{ tab: 't', prompt: 'x', tier: 'low' }, 'MODEL_WITH_TAB'],
+		])('rejects %o with %s', async (flags, code) => {
+			mockResolveStoredAiTabId.mockReturnValue('t');
+
+			await expect(cueSchedule({ in: '1h', agent: 'Alpha', json: true, ...flags })).rejects.toThrow(
+				'process.exit'
+			);
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0] as string)).toMatchObject({ code });
+		});
 	});
 });

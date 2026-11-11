@@ -16,6 +16,8 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Session, LeaderboardRegistration, AgentError } from '../../types';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
+import type { UnifiedHistoryTabProps } from '../../components/DirectorNotes/UnifiedHistoryTab';
+import type { UseAgentSessionManagementReturn } from '../agent/useAgentSessionManagement';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import {
@@ -32,10 +34,11 @@ import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { useQuitWhenIdleStore } from '../../stores/quitWhenIdleStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
-import { resolveActiveTabRef, resolveTabRefRenameValue } from '../../utils/panelLayout';
+import { resolveActiveTabRef, resolveTabRefRenameValue, sameTabRef } from '../../utils/panelLayout';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import { gitService } from '../../services/git';
 import { cueService } from '../../services/cue';
+import { resumeSelectionKey } from '../../services/resumableSession';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useGitDetail } from '../../contexts/GitStatusContext';
 
@@ -163,10 +166,8 @@ export interface ModalHandlersReturn {
 
 	// Director's Notes session navigation (Tier 3C)
 	handleDirectorNotesResumeSession: (
-		sourceSessionId: string,
-		agentSessionId: string,
-		sessionName?: string
-	) => void;
+		...args: Parameters<NonNullable<UnifiedHistoryTabProps['onResumeSession']>>
+	) => Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,10 +189,8 @@ const selectShortcutsHelpOpen = (s: ReturnType<typeof useModalStore.getState>) =
 export function useModalHandlers(
 	inputRef: React.RefObject<HTMLTextAreaElement | null>,
 	terminalOutputRef: React.RefObject<HTMLDivElement | null>,
-	// Third slot is `sessionName`; the second is `providedMessages` and is
-	// deliberately left to the resume itself to read from disk.
 	handleResumeSessionRef?: React.MutableRefObject<
-		((agentSessionId: string, providedMessages?: undefined, sessionName?: string) => void) | null
+		UseAgentSessionManagementReturn['handleResumeSession'] | null
 	>,
 	groupChatInputRef?: React.RefObject<HTMLTextAreaElement | null>
 ): ModalHandlersReturn {
@@ -1012,46 +1011,143 @@ export function useModalHandlers(
 	// Director's Notes Session Navigation (Tier 3C)
 	// ====================================================================
 
-	// `sessionName` rides along because the deferred branch resumes on a LATER
-	// tick, by which point the entry that carried the name is gone.
-	const pendingResumeRef = useRef<{
-		agentSessionId: string;
-		targetSessionId: string;
-		sessionName?: string;
-	} | null>(null);
+	const directorNotesResumeRequestRef = useRef(0);
+	const directorNotesResumeCleanupRef = useRef<(() => void) | null>(null);
+	useEffect(() => {
+		return () => {
+			directorNotesResumeRequestRef.current++;
+			directorNotesResumeCleanupRef.current?.();
+			directorNotesResumeCleanupRef.current = null;
+		};
+	}, []);
 
-	const handleDirectorNotesResumeSession = useCallback(
-		(sourceSessionId: string, agentSessionId: string, sessionName?: string) => {
-			// Close the Director's Notes modal
-			getModalActions().setDirectorNotesOpen(false);
-
-			// A group chat outranks the agent view in the main window, so landing
-			// on the right agent is not enough - without this the jump appears to
-			// do nothing because the room is still what's rendered. Also covers the
-			// early-return below, where activeSessionId already points at the target.
-			useGroupChatStore.getState().setActiveGroupChatId(null);
-
-			// If already on the right agent, resume directly
-			if (useSessionStore.getState().activeSessionId === sourceSessionId) {
-				handleResumeSessionRef?.current?.(agentSessionId, undefined, sessionName);
-				return;
+	const handleDirectorNotesResumeSession = useCallback<
+		ModalHandlersReturn['handleDirectorNotesResumeSession']
+	>(
+		async (sourceSessionId, agentSessionId, sessionName, projectPath, opts, isCurrent) => {
+			const request = ++directorNotesResumeRequestRef.current;
+			directorNotesResumeCleanupRef.current?.();
+			directorNotesResumeCleanupRef.current = null;
+			const resume = handleResumeSessionRef?.current;
+			const state = useSessionStore.getState();
+			const owner = selectSessionById(sourceSessionId)(state);
+			if (
+				!sourceSessionId ||
+				!agentSessionId ||
+				!owner ||
+				!resume ||
+				isCurrent?.() === false ||
+				!useModalStore.getState().isOpen('directorNotes') ||
+				(opts?.targetSessionId !== undefined && opts.targetSessionId !== sourceSessionId)
+			) {
+				return false;
 			}
+			const scope = {
+				...opts,
+				targetSessionId: sourceSessionId,
+				nativeSessionBinding:
+					opts?.nativeSessionBinding === undefined
+						? undefined
+						: structuredClone(opts.nativeSessionBinding),
+			};
+			const ownerKey = resumeSelectionKey(owner);
+			const initialGroupChatId = useGroupChatStore.getState().activeGroupChatId;
+			let invalidated = false;
+			let expectedOwner = owner;
+			let expectedActive = selectSessionById(state.activeSessionId)(state);
+			let expectedCommit: Session | undefined;
+			const navigationMatches = (current: Session | undefined, expected: Session | undefined) => {
+				if (!current || !expected) return current === expected;
+				const currentTab = resolveActiveTabRef(current);
+				const expectedTab = resolveActiveTabRef(expected);
+				return (
+					current.inputMode === expected.inputMode &&
+					current.activeGroupId === expected.activeGroupId &&
+					current.tabGroups?.find((group) => group.id === current.activeGroupId)?.focusedPaneId ===
+						expected.tabGroups?.find((group) => group.id === expected.activeGroupId)
+							?.focusedPaneId &&
+					(currentTab && expectedTab
+						? sameTabRef(currentTab, expectedTab)
+						: currentTab === expectedTab)
+				);
+			};
+			const selectionIsCurrent = (nextSession?: Session) => {
+				const currentState = useSessionStore.getState();
+				const currentOwner = selectSessionById(sourceSessionId)(currentState);
+				// Only this exact admitted updater result may move the focus baseline.
+				// Other navigation, including away-and-back, remains invalidating.
+				if (expectedCommit && currentOwner === expectedCommit) {
+					expectedOwner = expectedCommit;
+					if (expectedActive?.id === sourceSessionId) expectedActive = expectedCommit;
+					expectedCommit = undefined;
+				}
+				return (
+					!invalidated &&
+					directorNotesResumeRequestRef.current === request &&
+					isCurrent?.() !== false &&
+					currentState.activeSessionId === state.activeSessionId &&
+					useGroupChatStore.getState().activeGroupChatId === initialGroupChatId &&
+					useModalStore.getState().isOpen('directorNotes') &&
+					!!currentOwner &&
+					resumeSelectionKey(currentOwner) === ownerKey &&
+					navigationMatches(currentOwner, expectedOwner) &&
+					navigationMatches(
+						selectSessionById(state.activeSessionId)(currentState),
+						expectedActive
+					) &&
+					opts?.canResume?.(nextSession) !== false
+				);
+			};
+			// Latch transitions synchronously so navigating away and back cannot
+			// make a stale completion current again. Ordinary session updates are fine.
+			const invalidateSelection = () => {
+				if (!selectionIsCurrent()) invalidated = true;
+			};
+			const unsubscribeSession = useSessionStore.subscribe(invalidateSelection);
+			const unsubscribeGroupChat = useGroupChatStore.subscribe(invalidateSelection);
+			const unsubscribeModal = useModalStore.subscribe(invalidateSelection);
+			const cleanup = () => {
+				unsubscribeSession();
+				unsubscribeGroupChat();
+				unsubscribeModal();
+			};
+			directorNotesResumeCleanupRef.current = cleanup;
+			try {
+				if (!selectionIsCurrent()) return false;
+				const resumed = await resume(
+					agentSessionId,
+					undefined,
+					sessionName,
+					undefined,
+					undefined,
+					projectPath,
+					{
+						...scope,
+						canResume: (nextSession) => {
+							if (!selectionIsCurrent(nextSession)) return false;
+							if (nextSession) expectedCommit = nextSession;
+							return true;
+						},
+					}
+				);
+				if (resumed !== true || !selectionIsCurrent()) return false;
 
-			// Switch to the target agent and defer resume until activeSessionId updates
-			pendingResumeRef.current = { agentSessionId, targetSessionId: sourceSessionId, sessionName };
-			useSessionStore.getState().setActiveSessionId(sourceSessionId);
+				// Admission succeeded for the recorded owner. Only now leave history
+				// and clear the group chat that otherwise takes precedence in the view.
+				cleanup();
+				useSessionStore.getState().setActiveSessionId(sourceSessionId);
+				useGroupChatStore.getState().setActiveGroupChatId(null);
+				getModalActions().setDirectorNotesOpen(false);
+				return true;
+			} finally {
+				cleanup();
+				if (directorNotesResumeCleanupRef.current === cleanup) {
+					directorNotesResumeCleanupRef.current = null;
+				}
+			}
 		},
 		[handleResumeSessionRef]
 	);
-
-	// Effect: process pending resume after agent switch completes
-	useEffect(() => {
-		if (pendingResumeRef.current && activeSessionId === pendingResumeRef.current.targetSessionId) {
-			const { agentSessionId, sessionName } = pendingResumeRef.current;
-			pendingResumeRef.current = null;
-			handleResumeSessionRef?.current?.(agentSessionId, undefined, sessionName);
-		}
-	}, [activeSessionId, handleResumeSessionRef]);
 
 	// ====================================================================
 	// Return

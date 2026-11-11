@@ -3,7 +3,7 @@
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: get_group_chats,
  * start_group_chat, get_group_chat_state, send_group_chat_message,
- * steer_group_chat, stop_group_chat, archive_group_chat.
+ * steer_group_chat, stop_group_chat, archive_group_chat, add_group_chat_participant.
  */
 
 import type { StartGroupChatOptions } from '../../types';
@@ -309,5 +309,48 @@ export function handleArchiveGroupChat(
 			ctx.sendError(client, `Failed to archive group chat: ${error.message}`, {
 				requestId: message.requestId,
 			});
+		});
+}
+
+/**
+ * Handle add_group_chat_participant message - add the agent with this exact
+ * GUID to a group chat, no @mention needed. Answered in main (the router owns
+ * participants), not by the renderer.
+ */
+export function handleAddGroupChatParticipant(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const chatId = message.chatId as string;
+	const agentId = message.agentId as string;
+	const reply = { requestId: message.requestId };
+
+	if (!chatId || typeof chatId !== 'string') {
+		ctx.sendError(client, 'Missing chatId', reply);
+		return;
+	}
+	if (!agentId || typeof agentId !== 'string') {
+		ctx.sendError(client, 'Missing agentId', reply);
+		return;
+	}
+	if (!ctx.callbacks.addGroupChatParticipant) {
+		ctx.sendError(client, 'Group chat not configured', reply);
+		return;
+	}
+
+	ctx.callbacks
+		.addGroupChatParticipant(chatId, agentId)
+		.then((result) => {
+			ctx.send(client, {
+				type: 'add_group_chat_participant_result',
+				...result,
+				chatId,
+				agentId,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			ctx.sendError(client, `Failed to add participant: ${error.message}`, reply);
 		});
 }

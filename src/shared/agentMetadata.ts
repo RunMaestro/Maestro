@@ -7,6 +7,8 @@
  */
 
 import type { AgentId } from './agentIds';
+import { resolveHarnessControlMode } from './maestro-lib/providers/native-control';
+import { resolveCodexTransport } from './codexTransport';
 
 /**
  * Human-readable display names for every agent.
@@ -62,6 +64,9 @@ export function getReadOnlyModeLabel(agentId: AgentId | string): string {
  * Get the tooltip text for the read-only mode toggle based on the agent.
  */
 export function getReadOnlyModeTooltip(agentId: AgentId | string): string {
+	if (agentId === 'grok') {
+		return 'Read-Only requests Grok plan mode with shell commands denied. This is not a filesystem sandbox or an all-tools-off mode.';
+	}
 	return PLAN_MODE_AGENTS.has(agentId as AgentId)
 		? 'Toggle plan mode (agent will plan but not modify files)'
 		: "Toggle Read-Only mode (agent won't modify files)";
@@ -97,6 +102,9 @@ export function getPermissionModeTooltip(
 	mode: 'full' | 'standard' | 'readonly',
 	agentId?: AgentId | string
 ): string {
+	if (agentId === 'grok' && mode === 'standard') {
+		return 'Standard: Grok runs over its local ACP route (grok agent stdio). Each tool approval arrives as an in-app prompt. Ask-back questions cannot be answered yet; they show as an unavailable notice. Not available on SSH remotes (refused before anything starts) or under management.';
+	}
 	switch (mode) {
 		case 'full':
 			return 'Full Access: All permission prompts bypassed. Agent can read, write, and execute without confirmation. Ask-back questions (AskUserQuestion) are not surfaced in this mode.';
@@ -124,6 +132,35 @@ export function resolveTabPermissionMode(
 	tab?: { permissionMode?: 'full' | 'standard' | 'readonly'; readOnlyMode?: boolean } | null
 ): 'full' | 'standard' | 'readonly' {
 	return tab?.permissionMode ?? (tab?.readOnlyMode ? 'readonly' : 'full');
+}
+
+export interface StandardApprovalChannelContext {
+	toolType: string;
+	harnessControlMode?: unknown;
+	codexTransport?: unknown;
+	opencodeServer?: boolean;
+	sshEnabled?: boolean;
+	hasImages?: boolean;
+	/** Composer eligibility assumes a future prompt; spawn guards pass the actual value. */
+	hasPrompt?: boolean;
+}
+
+/** Whether this exact turn has a transport able to surface Standard approvals. */
+export function hasStandardApprovalChannel(context: StandardApprovalChannelContext): boolean {
+	const harnessControlMode = resolveHarnessControlMode(context);
+	if (harnessControlMode === 'native' || context.toolType === 'claude-code') return true;
+	if (context.toolType === 'codex') {
+		return resolveCodexTransport(context) === 'app-server' && context.hasImages !== true;
+	}
+	if (context.toolType === 'opencode') {
+		return (
+			context.opencodeServer === true &&
+			context.hasPrompt !== false &&
+			context.sshEnabled !== true &&
+			context.hasImages !== true
+		);
+	}
+	return false;
 }
 
 /**
@@ -269,14 +306,14 @@ const AGENT_LOGIN_COMMANDS: Record<AgentId, AgentLoginCommand | null> = {
 	'claude-code': { binary: 'claude', args: '/login' },
 	codex: { binary: 'codex', args: 'login', remoteArgs: 'login --device-auth' },
 	'gemini-cli': { binary: 'gemini', args: '', followUp: '/auth' },
-	'qwen3-coder': { binary: 'qwen3-coder', args: '', followUp: '/auth' },
+	'qwen3-coder': { binary: 'qwen', args: '', followUp: '/auth' },
 	opencode: { binary: 'opencode', args: 'auth login' },
 	'factory-droid': { binary: 'droid', args: '', followUp: '/login' },
 	'copilot-cli': { binary: 'copilot', args: 'login' },
 	// Antigravity has no login subcommand: headless runs reuse the credentials
 	// cached by one interactive sign-in, so the bare TUI is the whole flow.
 	antigravity: { binary: 'agy', args: '' },
-	grok: { binary: 'grok', args: 'login' },
+	grok: { binary: 'grok', args: 'login', remoteArgs: 'login --device-auth' },
 	hermes: null,
 	pi: null,
 	omp: null,

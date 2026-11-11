@@ -10,6 +10,9 @@ import {
 } from '../../../utils/cliDetection';
 import { getShellPath } from '../../../runtime/getShellPath';
 import { captureMessage } from '../../../utils/sentry';
+import { getSshRemoteById } from '../../../stores';
+import { execGitRemote } from '../../../utils/remote-git';
+import { buildSshCommand } from '../../../utils/ssh-command-builder';
 import { LOG_CONTEXT, handlerOpts } from './shared';
 
 /**
@@ -18,6 +21,7 @@ import { LOG_CONTEXT, handlerOpts } from './shared';
 export function registerGithubHandlers(): void {
 	// Create a PR from the worktree branch to a base branch
 	// ghPath parameter allows specifying custom path to gh binary
+	// sshRemoteId runs the push and `gh pr create` on that remote, where the worktree lives
 	ipcMain.handle(
 		'git:createPR',
 		withIpcErrorLogging(
@@ -27,8 +31,46 @@ export function registerGithubHandlers(): void {
 				baseBranch: string,
 				title: string,
 				body: string,
-				ghPath?: string
+				ghPath?: string,
+				sshRemoteId?: string
 			) => {
+				if (sshRemoteId) {
+					const sshRemote = getSshRemoteById(sshRemoteId);
+					if (!sshRemote) {
+						return { success: false, error: `SSH remote not found: ${sshRemoteId}` };
+					}
+
+					const pushResult = await execGitRemote(['push', '-u', 'origin', 'HEAD'], {
+						sshRemote,
+						remoteCwd: worktreePath,
+					});
+					if (pushResult.exitCode !== 0) {
+						return { success: false, error: `Failed to push branch: ${pushResult.stderr}` };
+					}
+
+					// ghPath points at the local binary, so the remote resolves gh from its own PATH.
+					// The body goes through stdin: the SSH command line is logged.
+					const ghRemote = await buildSshCommand(sshRemote, {
+						command: 'gh',
+						args: ['pr', 'create', '--base', baseBranch, '--title', title, '--body-file', '-'],
+						cwd: worktreePath,
+					});
+					const prResult = await execFileNoThrow(ghRemote.command, ghRemote.args, undefined, {
+						input: body,
+					});
+					if (prResult.exitCode !== 0) {
+						if (prResult.stderr.includes('command not found')) {
+							return {
+								success: false,
+								error: `GitHub CLI (gh) is not installed on ${sshRemote.name || sshRemote.host}. Please install it there to create PRs.`,
+							};
+						}
+						return { success: false, error: prResult.stderr || 'Failed to create PR' };
+					}
+
+					return { success: true, prUrl: prResult.stdout.trim() };
+				}
+
 				// Resolve gh CLI path (uses cached detection or custom path)
 				const ghCommand = await resolveGhPath(ghPath);
 				logger.debug(`Using gh CLI at: ${ghCommand}`, LOG_CONTEXT);

@@ -1,3 +1,4 @@
+import { newEmptyTranscript } from './sessionTranscript';
 /**
  * The record a brand-new agent starts as: one idle AI tab and every empty
  * collection the desktop expects to find on a restored agent.
@@ -22,6 +23,7 @@
 import { PLAYBOOKS_DIR } from './maestro-paths';
 import { isAdaptiveModeDefaultOn, resilienceEnabled } from './agentConstants';
 import type { CodexTransport } from './codexTransport';
+import type { HarnessControlMode } from './maestro-lib/providers/native-control';
 import type { AdditionalDirectory, ThinkingMode } from './types';
 
 export interface NewAgentRecordInput {
@@ -57,7 +59,7 @@ export function buildNewAgentRecord(input: NewAgentRecordInput, deps: NewAgentRe
 		agentSessionId: null,
 		name: null,
 		starred: false,
-		logs: [] as never[],
+		logs: newEmptyTranscript<never>(),
 		inputValue: '',
 		stagedImages: [] as string[],
 		createdAt: now,
@@ -157,6 +159,7 @@ export interface DuplicateAgentSource {
 	retryOnTokenExhaustion?: boolean;
 	codexAutoResetOnExhaustion?: boolean;
 	codexTransport?: CodexTransport;
+	harnessControlMode?: HarnessControlMode;
 	sessionSshRemoteConfig?: {
 		enabled?: boolean;
 		remoteId?: string | null;
@@ -201,6 +204,7 @@ export interface DuplicateAgentInput {
 	retryOnTokenExhaustion: boolean;
 	codexAutoResetOnExhaustion: boolean;
 	codexTransport: CodexTransport;
+	harnessControlMode?: HarnessControlMode;
 	sessionSshRemoteConfig:
 		| { enabled: true; remoteId: string; workingDirOverride?: string }
 		| { enabled: false; remoteId: null };
@@ -276,6 +280,7 @@ export function buildDuplicateAgentInput(
 		// A copy must not start spending reset credits the original never did.
 		codexAutoResetOnExhaustion: source.codexAutoResetOnExhaustion === true,
 		codexTransport: source.codexTransport === 'app-server' ? 'app-server' : 'exec',
+		...(source.harnessControlMode === 'native' ? { harnessControlMode: 'native' as const } : {}),
 		// The override is always the copy's own directory, never the source's
 		// stored one: carrying that pinned the copy's terminals, git and file
 		// tree to the OLD remote directory. History-sync flags are not carried.

@@ -17,11 +17,18 @@ export interface TabsApi {
 	 * a valid dispatch target until that work finishes).
 	 */
 	notifyAiTabClosed: (agentId: string, tabId: string) => void;
+	/**
+	 * Agent Resilience is holding a retry of this tab's failed turn (`pending`),
+	 * or no longer is. Lets a dispatch callback wait for the resend.
+	 */
+	notifyAiTabRetryState: (agentId: string, tabId: string, pending: boolean) => void;
 }
 
 export function createTabsApi(): TabsApi {
 	return {
 		notifyAiTabClosed: (agentId: string, tabId: string) =>
 			ipcRenderer.send('tabs:aiTabClosed', agentId, tabId),
+		notifyAiTabRetryState: (agentId: string, tabId: string, pending: boolean) =>
+			ipcRenderer.send('tabs:aiTabRetryState', agentId, tabId, pending),
 	};
 }

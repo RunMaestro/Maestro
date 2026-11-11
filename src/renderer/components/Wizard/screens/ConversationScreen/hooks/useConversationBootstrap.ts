@@ -1,4 +1,10 @@
-import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import {
+	useEffect,
+	useLayoutEffect,
+	type Dispatch,
+	type MutableRefObject,
+	type SetStateAction,
+} from 'react';
 import type { WizardMessage } from '../../../WizardContext';
 import { conversationManager } from '../../../services/conversationManager';
 import { logger } from '../../../../../utils/logger';
@@ -23,7 +29,7 @@ export function useConversationBootstrap({
 	initialQuestionAddedRef: MutableRefObject<boolean>;
 	setConversationError: (error: string | null) => void;
 }): void {
-	useEffect(() => {
+	useLayoutEffect(() => {
 		let mounted = true;
 
 		async function initConversation() {
@@ -37,20 +43,27 @@ export function useConversationBootstrap({
 					state.existingDocsChoice
 				);
 
+				if (!mounted) return;
+
 				await conversationManager.startConversation({
 					agentType: state.selectedAgent,
 					directoryPath: state.directoryPath,
 					projectName: projectNameFromPath(state.directoryPath),
 					model: state.plannerModel,
+					sessionCustomPath: state.customPath,
+					sessionCustomArgs: state.customArgs,
+					sessionCustomEnvVars: state.customEnvVars,
 					existingDocs: existingDocs.length > 0 ? existingDocs : undefined,
 					sshRemoteConfig: state.sessionSshRemoteConfig,
 					claudeTokenSource: getClaudeTokenSourceFields(state),
+					harnessControlMode: state.harnessControlMode,
 				});
 
 				if (mounted) {
 					setConversationStarted(true);
 				}
 			} catch (error) {
+				if (!mounted) return;
 				logger.error('Failed to initialize conversation:', undefined, error);
 				captureException(error, {
 					level: 'error',
@@ -72,7 +85,11 @@ export function useConversationBootstrap({
 			}
 		}
 
-		if (!conversationStarted && state.conversationHistory.length === 0) {
+		if (
+			!conversationStarted &&
+			state.conversationHistory.length === 0 &&
+			!state.isConversationLoading
+		) {
 			initConversation();
 		} else {
 			setConversationStarted(true);
@@ -91,6 +108,14 @@ export function useConversationBootstrap({
 		state.agentName,
 		state.conversationHistory.length,
 		state.existingDocsChoice,
+		state.isConversationLoading,
+		state.plannerModel,
+		state.customPath,
+		state.customArgs,
+		state.customEnvVars,
+		state.enableMaestroP,
+		state.maestroPMode,
+		state.maestroPPath,
 		state.sessionSshRemoteConfig,
 		conversationStarted,
 		setConversationStarted,

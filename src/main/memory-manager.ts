@@ -32,6 +32,7 @@ import {
 	resolveClaudeMemoryPath,
 	analyzeMemoryLinks,
 } from '../shared/maestro-lib/translation/memory';
+import { assertTranslationTarget } from '../shared/maestro-lib/translation/resource-projections';
 import {
 	MEMORY_INDEX_FILE,
 	type MemoryEntry,
@@ -54,6 +55,12 @@ export interface MemoryLayout extends MemoryLayoutInfo {
 	directoryPath: string;
 	/** Whether the viewer may delete this entry. */
 	isProtected: (name: string) => boolean;
+	/**
+	 * Explicitly bound translation knowledge (`providerTranslationKnowledgeDirectory`), not
+	 * native provider memory: every entry is checked against the root for symlink escapes
+	 * and never written through a link.
+	 */
+	boundKnowledge?: boolean;
 }
 
 export interface MemoryListResult {
@@ -119,6 +126,11 @@ export function memoryLayoutFor(
 				isProtected: (name) =>
 					CODEX_GENERATED_FILES.has(name) || /^extensions\/[^/]+\/instructions\.md$/.test(name),
 			};
+		case 'grok':
+			// Explicitly bound translation knowledge is separate from native provider memory.
+			throw new Error(
+				'Grok native project memory is not supported in Maestro: the active account, workspace, and memory storage binding have not been verified. Project rules do not establish persistent memory support.'
+			);
 		default:
 			throw new Error(`Memory viewer is not supported for agent "${toolType}"`);
 	}
@@ -153,6 +165,13 @@ function resolveEntryPath(layout: MemoryLayout, filename: string): string {
 		throw new Error(`Memory filenames must end with .md: ${filename}`);
 	}
 	return path.join(layout.directoryPath, ...segments);
+}
+
+/** `resolveEntryPath`, plus the symlink-escape check a bound knowledge root needs. */
+async function guardedEntryPath(layout: MemoryLayout, filename: string): Promise<string> {
+	const full = resolveEntryPath(layout, filename);
+	if (layout.boundKnowledge) await assertTranslationTarget(full, layout.directoryPath);
+	return full;
 }
 
 /** Every `.md` file under the root, as `/`-separated relative names. */
@@ -203,7 +222,7 @@ export async function listMemoryEntries(layout: MemoryLayout): Promise<MemoryLis
 
 	for (const name of names) {
 		try {
-			const stat = await fs.stat(resolveEntryPath(layout, name));
+			const stat = await fs.stat(await guardedEntryPath(layout, name));
 			// birthtime is not reliable on Linux; fall back to mtime.
 			const created = stat.birthtimeMs && stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs;
 			const modified = stat.mtimeMs;
@@ -246,7 +265,7 @@ export async function listMemoryEntries(layout: MemoryLayout): Promise<MemoryLis
 }
 
 export async function readMemoryEntry(layout: MemoryLayout, filename: string): Promise<string> {
-	return fs.readFile(resolveEntryPath(layout, filename), 'utf8');
+	return fs.readFile(await guardedEntryPath(layout, filename), 'utf8');
 }
 
 export async function writeMemoryEntry(
@@ -256,7 +275,25 @@ export async function writeMemoryEntry(
 ): Promise<void> {
 	const full = resolveEntryPath(layout, filename);
 	await fs.mkdir(path.dirname(full), { recursive: true });
-	await fs.writeFile(full, content, 'utf8');
+	if (layout.boundKnowledge) {
+		// A dangling link has no realpath to validate; never write through a link.
+		try {
+			if ((await fs.lstat(full)).isSymbolicLink())
+				throw new Error('Writing memory through a symbolic link is not supported');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+		}
+		await assertTranslationTarget(full, layout.directoryPath);
+	}
+	await fs.writeFile(full, content, {
+		encoding: 'utf8',
+		flag: layout.boundKnowledge
+			? fs.constants.O_WRONLY |
+				fs.constants.O_CREAT |
+				fs.constants.O_TRUNC |
+				fs.constants.O_NOFOLLOW
+			: 'w',
+	});
 }
 
 /**
@@ -270,6 +307,16 @@ export async function createMemoryEntry(
 ): Promise<void> {
 	const full = resolveEntryPath(layout, filename);
 	await fs.mkdir(path.dirname(full), { recursive: true });
+	if (layout.boundKnowledge) {
+		await assertTranslationTarget(full, layout.directoryPath);
+		// Windows `wx` (CREATE_NEW) follows a dangling link and creates its target outside
+		// the root, so any existing entry, a link included, already exists here.
+		const existing = await fs.lstat(full).catch((error: NodeJS.ErrnoException) => {
+			if (error.code === 'ENOENT') return null;
+			throw error;
+		});
+		if (existing) throw new Error(`A memory file named "${filename}" already exists`);
+	}
 	try {
 		// wx flag: fail if exists.
 		const handle = await fs.open(full, 'wx');
@@ -292,6 +339,7 @@ export async function deleteMemoryEntry(layout: MemoryLayout, filename: string):
 	if (layout.isProtected(filename)) {
 		throw new Error(`${filename} is managed by the agent and cannot be deleted from the viewer`);
 	}
+	if (layout.boundKnowledge) await assertTranslationTarget(full, layout.directoryPath);
 	await fs.unlink(full);
 }
 
@@ -320,7 +368,7 @@ export async function searchMemoryEntries(
 		const matchedName = entry.name.toLowerCase().includes(needle);
 		let snippet: string | undefined;
 		try {
-			const content = await fs.readFile(resolveEntryPath(layout, entry.name), 'utf8');
+			const content = await readMemoryEntry(layout, entry.name);
 			const line = content
 				.split('\n')
 				.find((l) => l.toLowerCase().includes(needle))
@@ -363,7 +411,7 @@ export async function findOrphanMemories(layout: MemoryLayout): Promise<OrphanMe
 	for (const entry of entries) {
 		let content = '';
 		try {
-			content = await fs.readFile(resolveEntryPath(layout, entry.name), 'utf8');
+			content = await readMemoryEntry(layout, entry.name);
 		} catch {
 			/* Retain unreadable files as link targets. */
 		}

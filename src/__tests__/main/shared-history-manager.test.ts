@@ -48,6 +48,7 @@ vi.mock('fs', async (importOriginal) => {
 		appendFileSync: vi.fn(),
 		readFileSync: vi.fn(),
 		writeFileSync: vi.fn(),
+		renameSync: vi.fn(),
 		readdirSync: vi.fn(),
 	};
 });
@@ -61,6 +62,7 @@ import {
 } from '../../main/shared-history-manager';
 import * as remoteFs from '../../main/utils/remote-fs';
 import { captureException } from '../../main/utils/sentry';
+import { logger } from '../../main/utils/logger';
 import type { HistoryEntry, SshRemoteConfig } from '../../shared/types';
 
 const LOCAL_HOSTNAME = os.hostname();
@@ -138,6 +140,55 @@ describe('SharedHistoryManager', () => {
 
 			expect(() => writeEntryLocal('/test/project', createMockEntry())).not.toThrow();
 			expect(captureException).toHaveBeenCalledTimes(1);
+		});
+
+		it('rotates the own file down to maxEntries after the append', () => {
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(fs.appendFileSync).mockReturnValue(undefined);
+			vi.mocked(fs.readFileSync).mockReturnValue('{"id":"1"}\n{"id":"2"}\n{"id":"3"}\n');
+
+			writeEntryLocal('/test/project', createMockEntry(), 2);
+
+			// Written to a temporary file, then renamed over the original, so a reader never
+			// sees the file half written.
+			const own = path.join(
+				'/test/project',
+				'.maestro/history',
+				`history-${LOCAL_HOSTNAME.replace(/[^a-zA-Z0-9._-]/g, '_')}.jsonl`
+			);
+			const tmp = `${own}.${process.pid}.tmp`;
+			expect(fs.writeFileSync).toHaveBeenCalledWith(tmp, '{"id":"2"}\n{"id":"3"}\n', 'utf-8');
+			expect(fs.renameSync).toHaveBeenCalledWith(tmp, own);
+		});
+
+		it('does not rotate when the append failed', () => {
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(fs.appendFileSync).mockImplementation(() => {
+				throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+			});
+
+			writeEntryLocal('/test/project', createMockEntry(), 1);
+
+			expect(fs.readFileSync).not.toHaveBeenCalled();
+			expect(fs.writeFileSync).not.toHaveBeenCalled();
+		});
+
+		it('reports a rotate failure on its own, after a write that succeeded', () => {
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(fs.appendFileSync).mockReturnValue(undefined);
+			vi.mocked(fs.readFileSync).mockImplementation(() => {
+				throw new Error('read failed');
+			});
+
+			expect(() => writeEntryLocal('/test/project', createMockEntry())).not.toThrow();
+
+			const warnings = vi.mocked(logger.warn).mock.calls.map((call) => String(call[0]));
+			expect(warnings.some((w) => w.startsWith('Failed to rotate shared history file'))).toBe(true);
+			expect(warnings.some((w) => w.startsWith('Failed to write local shared history'))).toBe(
+				false
+			);
+			expect(captureException).toHaveBeenCalledTimes(1);
+			vi.mocked(fs.readFileSync).mockReset();
 		});
 	});
 
@@ -235,6 +286,44 @@ describe('SharedHistoryManager', () => {
 
 		beforeEach(() => {
 			__resetSharedHistoryCacheForTest();
+		});
+
+		it('warns once per file with the count of malformed lines', async () => {
+			vi.mocked(remoteFs.listDirWithStatsRemote).mockResolvedValue({
+				success: true,
+				data: [{ name: 'history-other-host.jsonl', size: 10, mtime: 1 }],
+			});
+			vi.mocked(remoteFs.readFileRemote).mockResolvedValue({
+				success: true,
+				data: 'bad one\n{"id":"good","type":"USER","timestamp":1,"summary":"","projectPath":"/p"}\nbad two\n{oops\n',
+			});
+
+			const entries = await readRemoteEntriesSsh('/home/testuser/project', sshConfig);
+
+			expect(entries.map((e) => e.id)).toEqual(['good']);
+			expect(entries[0].hostname).toBe('other-host');
+			const malformed = vi
+				.mocked(logger.warn)
+				.mock.calls.filter((call) => String(call[0]).includes('malformed'));
+			expect(malformed).toHaveLength(1);
+			expect(malformed[0][0]).toBe('Skipped 3 malformed JSONL line(s) from other-host');
+		});
+
+		it('logs no malformed warning for a clean file', async () => {
+			vi.mocked(remoteFs.listDirWithStatsRemote).mockResolvedValue({
+				success: true,
+				data: [{ name: 'history-other-host.jsonl', size: 10, mtime: 1 }],
+			});
+			vi.mocked(remoteFs.readFileRemote).mockResolvedValue({
+				success: true,
+				data: '{"id":"good","type":"USER","timestamp":1,"summary":"","projectPath":"/p"}\n',
+			});
+
+			await readRemoteEntriesSsh('/home/testuser/project', sshConfig);
+
+			expect(
+				vi.mocked(logger.warn).mock.calls.some((call) => String(call[0]).includes('malformed'))
+			).toBe(false);
 		});
 
 		it('skips re-reading files when size + mtime are unchanged', async () => {

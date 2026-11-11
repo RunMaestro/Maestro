@@ -80,6 +80,8 @@ export async function requestCliSynopsis(
 					customEnvVars: session.customEnvVars,
 					requiredSecrets: session.requiredSecrets,
 					sshRemoteConfig: session.sessionSshRemoteConfig,
+					harnessControlMode: session.harnessControlMode,
+					nativeSessionId: session.id,
 					// A synopsis is never someone typing, whatever turn it summarizes.
 					querySource: 'auto',
 					// Honor the agent's Claude token source for the synopsis turn too.

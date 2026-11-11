@@ -253,12 +253,40 @@ function toInt(value: unknown): number {
  * message id cannot be matched to its siblings and is counted as-is.
  */
 export function computeClaudeUsageCost(content: string): ClaudeUsageBreakdown {
+	const usage = createClaudeUsageAccumulator();
+	usage.add(content);
+	return usage.finish();
+}
+
+/** Folds several Claude transcripts into one {@link ClaudeUsageBreakdown}. */
+export interface ClaudeUsageAccumulator {
+	/** Count one transcript's usage lines. Duplicates of earlier responses are skipped. */
+	add(content: string): void;
+	/**
+	 * Count one line of a transcript. Lets a caller stream a file line by line
+	 * instead of holding it as one string; feeding every line of a document
+	 * here is the same as passing the document to `add`.
+	 */
+	addLine(line: string): void;
+	/** Price what has been added so far. */
+	finish(): ClaudeUsageBreakdown;
+}
+
+/**
+ * {@link computeClaudeUsageCost} over several documents (a session plus its
+ * subagent transcripts) without concatenating them. Joining them into one
+ * string can pass V8's maximum string length on a long session with many
+ * subagents (`RangeError: Invalid string length`, MAESTRO-17M), and it holds a
+ * second copy of every byte while the parse runs. The response dedupe set is
+ * shared across documents, so the result equals pricing the joined text.
+ */
+export function createClaudeUsageAccumulator(): ClaudeUsageAccumulator {
 	const totals = emptyBucket();
 	const byModel = new Map<string, TokenBucket>();
 	const seenResponses = new Set<string>();
 
-	for (const line of content.split('\n')) {
-		if (line.indexOf('"usage"') === -1) continue;
+	const addLine = (line: string): void => {
+		if (line.indexOf('"usage"') === -1) return;
 		let entry: {
 			model?: unknown;
 			requestId?: unknown;
@@ -268,24 +296,24 @@ export function computeClaudeUsageCost(content: string): ClaudeUsageBreakdown {
 		try {
 			entry = JSON.parse(line);
 		} catch {
-			continue;
+			return;
 		}
 		// Real Claude Code files nest usage/model under `message`; tolerate a
 		// top-level `usage`/`model` too so any variant is counted.
 		const usage = entry?.message?.usage ?? entry?.usage;
-		if (!usage || typeof usage !== 'object') continue;
+		if (!usage || typeof usage !== 'object') return;
 
 		const input = toInt(usage.input_tokens);
 		const output = toInt(usage.output_tokens);
 		const cacheRead = toInt(usage.cache_read_input_tokens);
 		const cacheCreation = toInt(usage.cache_creation_input_tokens);
-		if (input === 0 && output === 0 && cacheRead === 0 && cacheCreation === 0) continue;
+		if (input === 0 && output === 0 && cacheRead === 0 && cacheCreation === 0) return;
 
 		const messageId = entry.message?.id;
 		if (typeof messageId === 'string' && messageId) {
 			const requestId = typeof entry.requestId === 'string' ? entry.requestId : '';
 			const responseKey = `${messageId}:${requestId}`;
-			if (seenResponses.has(responseKey)) continue;
+			if (seenResponses.has(responseKey)) return;
 			seenResponses.add(responseKey);
 		}
 
@@ -305,29 +333,37 @@ export function computeClaudeUsageCost(content: string): ClaudeUsageBreakdown {
 		bucket.outputTokens += output;
 		bucket.cacheReadTokens += cacheRead;
 		bucket.cacheCreationTokens += cacheCreation;
-	}
-
-	let costUsd = 0;
-	const byModelCosts: ModelCost[] = [];
-	for (const [model, bucket] of byModel) {
-		const modelCost = calculateModelCost(bucket, model || undefined);
-		costUsd += modelCost;
-		byModelCosts.push({
-			model,
-			inputTokens: bucket.inputTokens,
-			outputTokens: bucket.outputTokens,
-			cacheReadTokens: bucket.cacheReadTokens,
-			cacheCreationTokens: bucket.cacheCreationTokens,
-			costUsd: modelCost,
-		});
-	}
-
-	return {
-		inputTokens: totals.inputTokens,
-		outputTokens: totals.outputTokens,
-		cacheReadTokens: totals.cacheReadTokens,
-		cacheCreationTokens: totals.cacheCreationTokens,
-		costUsd,
-		byModel: byModelCosts,
 	};
+
+	const add = (content: string): void => {
+		for (const line of content.split('\n')) addLine(line);
+	};
+
+	const finish = (): ClaudeUsageBreakdown => {
+		let costUsd = 0;
+		const byModelCosts: ModelCost[] = [];
+		for (const [model, bucket] of byModel) {
+			const modelCost = calculateModelCost(bucket, model || undefined);
+			costUsd += modelCost;
+			byModelCosts.push({
+				model,
+				inputTokens: bucket.inputTokens,
+				outputTokens: bucket.outputTokens,
+				cacheReadTokens: bucket.cacheReadTokens,
+				cacheCreationTokens: bucket.cacheCreationTokens,
+				costUsd: modelCost,
+			});
+		}
+
+		return {
+			inputTokens: totals.inputTokens,
+			outputTokens: totals.outputTokens,
+			cacheReadTokens: totals.cacheReadTokens,
+			cacheCreationTokens: totals.cacheCreationTokens,
+			costUsd,
+			byModel: byModelCosts,
+		};
+	};
+
+	return { add, addLine, finish };
 }

@@ -13,8 +13,12 @@
 
 import { getAutoRunStateTracker } from '../autorun/autorun-state-tracker';
 import { DispatchCallbackRegistry } from './dispatch-callback-registry';
-import { renderCallbackPrompt } from './dispatch-callback-prompt';
-import type { DispatchCallbackFire } from './types';
+import { renderCallbackPrompt, truncateDispatchOutput } from './dispatch-callback-prompt';
+import type { DispatchCallbackEntry, DispatchCallbackFire } from './types';
+import type {
+	AutoRunDelegationEvent,
+	AutoRunDelegationEventKind,
+} from '../../shared/autoRunDelegation';
 
 export interface DispatchCallbackServiceDeps {
 	/**
@@ -26,11 +30,24 @@ export interface DispatchCallbackServiceDeps {
 		prompt: string,
 		tabId?: string
 	) => Promise<{ success: boolean; error?: string; reason?: string }>;
+	/**
+	 * Open a new background AI tab in the caller agent with the prompt as its
+	 * first turn. Used when the callback has no tab of its own to return to.
+	 */
+	openTab: (agentId: string, prompt: string) => Promise<{ success: boolean; error?: string }>;
 	/** Best-effort result text for the finished dispatch. */
 	getTargetOutput?: (
 		agentId: string,
 		since: number
 	) => Promise<string | undefined> | string | undefined;
+	/**
+	 * Report an Auto Run delegation's lifecycle to the renderer that owns the run
+	 * (entries armed with `autoRunId`). Those never wake a tab: the run itself
+	 * waits for the result and feeds it into its next turn.
+	 */
+	notifyAutoRun?: (event: AutoRunDelegationEvent) => void;
+	/** Called only after the parent queue/new-tab accepted delivery. */
+	onDelivered?: (fire: DispatchCallbackFire) => void | Promise<void>;
 	/** Display name lookup for {{DISPATCH_TARGET_NAME}} at fire time. */
 	logger?: {
 		info: (msg: string, context?: string) => void;
@@ -60,6 +77,12 @@ export function initDispatchCallbacks(deps: DispatchCallbackServiceDeps): Dispat
 		autoRunRunningSince: (agentId) => tracker.getRunningSince(agentId),
 		onFire: (fire) => {
 			void deliverCallback(fire, deps);
+		},
+		onRegister: (entry) => {
+			if (entry.autoRunId) deps.notifyAutoRun?.(buildAutoRunDelegationEvent(entry, 'started'));
+		},
+		onCancel: (entry) => {
+			if (entry.autoRunId) deps.notifyAutoRun?.(buildAutoRunDelegationEvent(entry, 'withdrawn'));
 		},
 		logger: deps.logger
 			? {
@@ -94,6 +117,34 @@ export function disposeDispatchCallbacks(): void {
 	registry = null;
 }
 
+/** The wire event for one Auto Run delegation. Pure; exported for tests. */
+export function buildAutoRunDelegationEvent(
+	entry: DispatchCallbackEntry,
+	kind: AutoRunDelegationEventKind,
+	settled?: { fire: DispatchCallbackFire; output?: string }
+): AutoRunDelegationEvent {
+	return {
+		kind,
+		autoRunId: entry.autoRunId ?? '',
+		callbackId: entry.callbackId,
+		callerAgentId: entry.callerAgentId,
+		targetAgentId: entry.targetAgentId,
+		targetTabId: entry.targetTabId,
+		...(entry.targetName ? { targetName: entry.targetName } : {}),
+		prompt: entry.prompt,
+		startedAt: entry.createdAt,
+		...(settled
+			? {
+					status: settled.fire.status,
+					durationMs: settled.fire.durationMs,
+					// Capped here so a long transcript never rides the IPC push whole; the
+					// tail is kept because that is where an agent states its result.
+					...(settled.output ? { output: truncateDispatchOutput(settled.output).text } : {}),
+				}
+			: {}),
+	};
+}
+
 async function deliverCallback(
 	fire: DispatchCallbackFire,
 	deps: DispatchCallbackServiceDeps
@@ -109,23 +160,52 @@ async function deliverCallback(
 		);
 	}
 
-	const prompt = renderCallbackPrompt({ fire, output });
-
-	try {
-		let result = await deps.enqueue(entry.callerAgentId, prompt, entry.callerTabId);
-
-		// The caller closed its `--callback-tab` while the dispatch was running, so
-		// the wake has nowhere specific to land. Rather than drop it (the whole
-		// class of failure V1/W1 document), retry once at agent level - the exact
-		// path a `--notify-on-complete` without `--callback-tab` already takes, so
-		// the notification lands in the caller's active tab where the user sees it.
-		// Only this cause is retried: dropping the tab id fixes none of the others.
-		if (!result.success && entry.callerTabId && result.reason === 'tab-not-found') {
-			deps.logger?.info(
-				`Callback ${entry.callbackId}: caller tab ${entry.callerTabId} no longer exists, delivering to ${entry.callerAgentId} at agent level instead`,
+	// An Auto Run delegation goes back to the run, never into a tab: the run is
+	// parked waiting for it and hands the result to its next turn itself.
+	if (entry.autoRunId) {
+		if (!deps.notifyAutoRun) {
+			deps.logger?.warn(
+				`Callback ${entry.callbackId}: no Auto Run delivery is wired, result dropped`,
 				LOG_CONTEXT
 			);
-			result = await deps.enqueue(entry.callerAgentId, prompt);
+			return;
+		}
+		deps.notifyAutoRun(buildAutoRunDelegationEvent(entry, 'settled', { fire, output }));
+		deps.logger?.info(
+			`Callback ${entry.callbackId} delivered to Auto Run ${entry.autoRunId} (status=${fire.status})`,
+			LOG_CONTEXT
+		);
+		return;
+	}
+
+	const prompt = renderCallbackPrompt({ fire, output });
+
+	// A callback only ever lands in the conversation that asked for it. With no
+	// such tab it opens a fresh one, never the caller's ACTIVE tab: that tab is
+	// whatever the user happens to be reading when the dispatch finishes, so the
+	// result arrived mid-thread in an unrelated conversation that then had to make
+	// sense of a plan it never made. Two cases have no tab: the dispatch came from
+	// a run with no tab at all (a Cue or bot run, which has exited by now), or the
+	// `--callback-tab` was closed while the dispatch ran.
+	const openTab = () => deps.openTab(entry.callerAgentId, prompt);
+	try {
+		let result: { success: boolean; error?: string; reason?: string };
+		if (!entry.callerTabId) {
+			deps.logger?.info(
+				`Callback ${entry.callbackId}: no caller tab, delivering to a new tab in ${entry.callerAgentId}`,
+				LOG_CONTEXT
+			);
+			result = await openTab();
+		} else {
+			result = await deps.enqueue(entry.callerAgentId, prompt, entry.callerTabId);
+			// Only a closed tab is retried: a new tab fixes none of the other causes.
+			if (!result.success && result.reason === 'tab-not-found') {
+				deps.logger?.info(
+					`Callback ${entry.callbackId}: caller tab ${entry.callerTabId} no longer exists, delivering to a new tab in ${entry.callerAgentId} instead`,
+					LOG_CONTEXT
+				);
+				result = await openTab();
+			}
 		}
 
 		if (!result.success) {
@@ -135,6 +215,7 @@ async function deliverCallback(
 			);
 			return;
 		}
+		await deps.onDelivered?.(fire);
 		deps.logger?.info(
 			`Callback ${entry.callbackId} delivered to ${entry.callerAgentId} (status=${fire.status})`,
 			LOG_CONTEXT

@@ -184,6 +184,10 @@ describe('queued messages across a quota outage', () => {
 		scheduleRetryForError(SESSION, TAB, quotaError());
 
 		const first = getRetryEntry(SESSION, TAB)!;
+		const firstGeneration = session().executionQueue.find(
+			(item) => item.id === 'q0'
+		)?.dispatchRecoveryGeneration;
+		expect(firstGeneration).toBe(1);
 		await vi.advanceTimersByTimeAsync(first.nextRetryAt - NOW + 10);
 
 		// The resend fails too. agent-error arrives BEFORE process-exit, so the
@@ -200,6 +204,9 @@ describe('queued messages across a quota outage', () => {
 		expect(getRetryEntry(SESSION, TAB)?.outageId).toBe(first.outageId);
 		expect(getRetryEntry(SESSION, TAB)?.attempt).toBe(1);
 		expect(getRetryEntry(SESSION, TAB)?.heldItemId).toBe('q0');
+		expect(
+			session().executionQueue.find((item) => item.id === 'q0')?.dispatchRecoveryGeneration
+		).toBe(2);
 	});
 });
 

@@ -20,7 +20,13 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { isExpectedSessionReadError } from '../utils/session-read-errors';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
-import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
+import {
+	readFileRemote,
+	listDirWithStatsRemote,
+	writeFileRemote,
+	renameRemote,
+} from '../utils/remote-fs';
+import { removeClaudeMessagePair } from './claude-message-pair';
 import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
 import { getSessionInfoCache, fileFingerprint, type SessionFileRef } from './session-info-cache';
 import { runTranscriptParse } from '../transcript-parse/transcript-parse-pool';
@@ -773,9 +779,16 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 				if (line.trim()) collect(line);
 			}
 		} else {
-			// Streamed, never read whole: a transcript can be hundreds of MB (#1862).
-			const sessionFile = await this.locateLocalSessionFile(projectPath, sessionId);
-			await forEachJsonlLine(sessionFile, collect);
+			const sessionFile =
+				options?.filePath ?? (await this.locateLocalSessionFile(projectPath, sessionId));
+			if (options?.content !== undefined) {
+				for (const line of options.content.split('\n')) {
+					if (line.trim()) collect(line);
+				}
+			} else {
+				// Streamed, never read whole: a transcript can be hundreds of MB (#1862).
+				await forEachJsonlLine(sessionFile, collect);
+			}
 		}
 
 		return page.result();
@@ -845,172 +858,53 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		fallbackContent?: string,
 		sshConfig?: SshRemoteConfig
 	): Promise<{ success: boolean; error?: string; linesRemoved?: number }> {
-		// Note: Delete operations on remote sessions are not supported yet
-		// This would require implementing writeFileRemote
-		if (sshConfig) {
-			logger.warn('Delete message pair not supported for SSH remote sessions', LOG_CONTEXT);
-			return { success: false, error: 'Delete not supported for remote sessions' };
-		}
-
-		const sessionFile = await this.locateLocalSessionFile(projectPath, sessionId);
-
 		try {
-			const content = await fs.readFile(sessionFile, 'utf-8');
-			const lines = content.split('\n').filter((l) => l.trim());
+			const sessionFile = sshConfig
+				? this.getSessionPath(projectPath, sessionId, sshConfig)!
+				: await this.locateLocalSessionFile(projectPath, sessionId);
 
-			const parsedLines: Array<{ line: string; entry: unknown }> = [];
-			let userMessageIndex = -1;
-
-			for (let i = 0; i < lines.length; i++) {
-				try {
-					const entry = JSON.parse(lines[i]);
-					parsedLines.push({ line: lines[i], entry });
-
-					if (entry.uuid === userMessageUuid && entry.type === 'user') {
-						userMessageIndex = parsedLines.length - 1;
-					}
-				} catch {
-					parsedLines.push({ line: lines[i], entry: null });
+			let content: string;
+			if (sshConfig) {
+				const read = await readFileRemote(sessionFile, sshConfig);
+				if (!read.success || read.data === undefined) {
+					return { success: false, error: read.error || `Could not read ${sessionFile}` };
 				}
+				content = read.data;
+			} else {
+				content = await fs.readFile(sessionFile, 'utf-8');
 			}
 
-			// If UUID match failed, try content match
-			if (userMessageIndex === -1 && fallbackContent) {
-				const normalizedFallback = fallbackContent.trim();
-
-				for (let i = parsedLines.length - 1; i >= 0; i--) {
-					const entry = parsedLines[i].entry as {
-						type?: string;
-						message?: { content?: unknown };
-					} | null;
-					if (entry?.type === 'user') {
-						let messageText = '';
-						if (entry.message?.content) {
-							if (typeof entry.message.content === 'string') {
-								messageText = entry.message.content;
-							} else if (Array.isArray(entry.message.content)) {
-								const textBlocks = (
-									entry.message.content as Array<{ type?: string; text?: string }>
-								).filter((b) => b.type === 'text');
-								messageText = textBlocks.map((b) => b.text).join('\n');
-							}
-						}
-
-						if (messageText.trim() === normalizedFallback) {
-							userMessageIndex = i;
-							logger.info('Found message by content match', LOG_CONTEXT, { sessionId, index: i });
-							break;
-						}
-					}
-				}
-			}
-
-			if (userMessageIndex === -1) {
+			const removal = removeClaudeMessagePair(content, userMessageUuid, fallbackContent);
+			if (!removal.found) {
 				logger.warn('User message not found for deletion', LOG_CONTEXT, {
 					sessionId,
 					userMessageUuid,
 					hasFallback: !!fallbackContent,
+					remote: !!sshConfig,
 				});
 				return { success: false, error: 'User message not found' };
 			}
 
-			// Find the end of the response and collect tool_use IDs being deleted
-			let endIndex = parsedLines.length;
-			const deletedToolUseIds = new Set<string>();
-
-			for (let i = userMessageIndex + 1; i < parsedLines.length; i++) {
-				const entry = parsedLines[i].entry as {
-					type?: string;
-					message?: { content?: unknown };
-				} | null;
-
-				if (entry?.type === 'user') {
-					endIndex = i;
-					break;
-				}
-
-				// Collect tool_use IDs from assistant messages being deleted
-				if (entry?.type === 'assistant' && entry.message?.content) {
-					const content = entry.message.content;
-					if (Array.isArray(content)) {
-						for (const block of content as Array<{ type?: string; id?: string }>) {
-							if (block.type === 'tool_use' && block.id) {
-								deletedToolUseIds.add(block.id);
-							}
-						}
-					}
-				}
+			if (sshConfig) {
+				// Write beside the transcript, then rename over it: a connection that
+				// drops mid-write must not leave the remote transcript truncated.
+				const tempFile = `${sessionFile}.maestro-delete.tmp`;
+				const write = await writeFileRemote(tempFile, removal.content, sshConfig);
+				if (!write.success) return { success: false, error: write.error };
+				const rename = await renameRemote(tempFile, sessionFile, sshConfig);
+				if (!rename.success) return { success: false, error: rename.error };
+			} else {
+				await fs.writeFile(sessionFile, removal.content, 'utf-8');
 			}
-
-			// Remove the message pair
-			let linesToKeep = [...parsedLines.slice(0, userMessageIndex), ...parsedLines.slice(endIndex)];
-
-			// If we deleted any tool_use blocks, clean up orphaned tool_result blocks
-			if (deletedToolUseIds.size > 0) {
-				linesToKeep = linesToKeep
-					.map((item) => {
-						const entry = item.entry as {
-							type?: string;
-							message?: { content?: unknown };
-						} | null;
-
-						// Only process user messages (tool_result blocks are in user messages)
-						if (entry?.type !== 'user' || !entry.message?.content) {
-							return item;
-						}
-
-						const content = entry.message.content;
-						if (!Array.isArray(content)) {
-							return item;
-						}
-
-						// Filter out tool_result blocks that reference deleted tool_use IDs
-						const filteredContent = (
-							content as Array<{ type?: string; tool_use_id?: string }>
-						).filter((block) => {
-							if (block.type === 'tool_result' && block.tool_use_id) {
-								return !deletedToolUseIds.has(block.tool_use_id);
-							}
-							return true;
-						});
-
-						// If we removed all content blocks, mark this line for removal
-						if (filteredContent.length === 0) {
-							return { line: '', entry: null, remove: true };
-						}
-
-						// If content changed, update the line
-						if (filteredContent.length !== content.length) {
-							const updatedEntry = {
-								...entry,
-								message: {
-									...entry.message,
-									content: filteredContent,
-								},
-							};
-							return { line: JSON.stringify(updatedEntry), entry: updatedEntry };
-						}
-
-						return item;
-					})
-					.filter((item) => !(item as { remove?: boolean }).remove);
-
-				logger.info(`Cleaned up orphaned tool_result blocks`, LOG_CONTEXT, {
-					sessionId,
-					deletedToolUseIds: Array.from(deletedToolUseIds),
-				});
-			}
-
-			const newContent = linesToKeep.map((p) => p.line).join('\n') + '\n';
-			await fs.writeFile(sessionFile, newContent, 'utf-8');
 
 			logger.info(`Deleted message pair from Claude session`, LOG_CONTEXT, {
 				sessionId,
 				userMessageUuid,
-				linesRemoved: endIndex - userMessageIndex,
+				linesRemoved: removal.linesRemoved,
+				deletedToolUseIds: removal.deletedToolUseIds,
+				remote: !!sshConfig,
 			});
-
-			return { success: true, linesRemoved: endIndex - userMessageIndex };
+			return { success: true, linesRemoved: removal.linesRemoved };
 		} catch (error) {
 			logger.error(`Error deleting message pair: ${sessionId}`, LOG_CONTEXT, error);
 			captureException(error, { operation: 'claudeStorage:deleteMessagePair', sessionId });

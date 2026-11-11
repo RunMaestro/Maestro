@@ -53,4 +53,5 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      - run: npm run rebuild:node-native
       - run: npm run test -- --shard=${{ matrix.shard }}/2

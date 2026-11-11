@@ -142,7 +142,8 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 			inputTokens: t?.inputTokens ?? 0,
 			outputTokens: t?.outputTokens ?? 0,
 			cacheReadTokens: t?.cacheReadTokens ?? 0,
-			costUsd: t?.costUsd ?? 0,
+			// null: no turn in the range carried a charge figure (an unknown Grok cost).
+			costUsd: t ? t.costUsd : 0,
 			note: usageCoverageNote(pricedQueries, aggregates.totalQueries),
 		};
 	}, [data, session.id, aggregates.totalQueries]);
@@ -335,7 +336,7 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 								/>
 								<Kpi
 									label="Cost"
-									value={formatCost(rangeUsage.costUsd)}
+									value={rangeUsage.costUsd === null ? 'Unknown' : formatCost(rangeUsage.costUsd)}
 									title={rangeUsage.note}
 									theme={theme}
 									testId="agent-detail-range-cost"

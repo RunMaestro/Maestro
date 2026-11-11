@@ -322,7 +322,11 @@ const SYSTEM_PROMPT_TEMP_SUFFIX = /(maestro-sysprompt-[A-Za-z0-9_-]+-\d+-)[0-9a-
 
 /** `value` with what differs between any two spawns taken out, at any depth. */
 function withoutSpawnNoise(value: unknown): unknown {
-	if (typeof value === 'string') return value.replace(SYSTEM_PROMPT_TEMP_SUFFIX, '$1<random>$2');
+	// Each spawn also owns a fresh caller-proof directory, regardless of export state.
+	if (typeof value === 'string')
+		return value
+			.replace(SYSTEM_PROMPT_TEMP_SUFFIX, '$1<random>$2')
+			.replace(/([/\\]plugin-tool-run-proofs[/\\]run-)[A-Za-z0-9]{6}([/\\]proof)/g, '$1<random>$2');
 	if (Array.isArray(value)) return value.map(withoutSpawnNoise);
 	if (
 		value !== null &&
@@ -591,6 +595,7 @@ describe.each(SCENARIOS)('a turn of $label', (scenario) => {
 		mocks.userDataPath = userData;
 		previousUserData = process.env.MAESTRO_USER_DATA;
 		process.env.MAESTRO_USER_DATA = userData;
+		vi.stubEnv(COWORKING_SESSION_ID_ENV_VAR, undefined);
 
 		// One instant for all three runs. On Windows the handler names a temp
 		// file after the clock, and that name is one of the arguments.
@@ -621,6 +626,7 @@ describe.each(SCENARIOS)('a turn of $label', (scenario) => {
 		__resetCotConfigStoreForTests();
 		__resetCotWriterForTests();
 		vi.useRealTimers();
+		vi.unstubAllEnvs();
 		if (previousUserData === undefined) delete process.env.MAESTRO_USER_DATA;
 		else process.env.MAESTRO_USER_DATA = previousUserData;
 		fs.rmSync(root, { recursive: true, force: true });

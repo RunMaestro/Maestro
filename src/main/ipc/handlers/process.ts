@@ -1,18 +1,25 @@
+import { buildMaestroSystemPromptForSession } from '../../utils/maestro-system-prompt';
+import { queueLocalPrompt } from '../../pianola/pianola-queue-routing';
+import type { PianolaQueueItem } from '../../../shared/pianola/pianola-dispatch';
 import {
 	cancelRelayConversationTurn,
 	getLiveRelayConversationTurns,
 } from '../../plugins/relay-conversations';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
+import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
+import { getPrompt } from '../../prompt-manager';
 import { getPendingPermissionSnapshot } from '../../permission-relay/registry';
 import { getHeadlessAgentActivity } from '../../utils/headless-agent-activity';
 import { ipcMain, BrowserWindow } from 'electron';
 import Store from 'electron-store';
-import type { AgentConfigsData } from '../../stores/types';
+import type { AgentConfigsData, GroupsData } from '../../stores/types';
 import * as os from 'os';
 import * as path from 'path';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
 import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
-import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
+import type { ProcessConfig as ProcessSpawnConfig, SpawnResult } from '../../process-manager/types';
 import { logger } from '../../utils/logger';
 import { getChildProcesses } from '../../process-manager/utils/childProcessInfo';
 import { addBreadcrumb } from '../../utils/sentry';
@@ -32,10 +39,19 @@ import { getDefaultShell, resolveConfiguredShell } from '../../stores/defaults';
 import { handleProcessSpawn, cancelPendingDesktopSpawns } from './process/handle-spawn';
 import type { SpawnProcessConfig } from './process/spawn-types';
 import {
+	liftedOwnerOfProcess,
+	liftedSendRefusal,
+} from '../../../shared/maestro-lib/agents/lift-pointer';
+import {
 	initPermissionRelay,
 	resolvePermissionResponse,
 	type PermissionDecision,
 } from '../../permission-relay';
+import {
+	initHarnessControl,
+	pendingHarnessInteractions,
+	resolveHarnessInteractionResponse,
+} from '../../harness-control/integration';
 import { releaseConcertoHtmlDocument, restoreConcertoHtmlDocument } from '../../concerto-html';
 
 const LOG_CONTEXT = '[ProcessManager]';
@@ -51,6 +67,70 @@ const handlerOpts = (
 	operation,
 	...extra,
 });
+
+/** Extract a fail-closed owner from either an Electron or bridge invocation event. */
+function harnessControlOwner(event: { sender?: { id: number }; clientId?: unknown }): {
+	webContentsId?: number;
+	bridgeClientId?: string;
+} {
+	if (typeof event.clientId === 'string') return { bridgeClientId: event.clientId };
+	return { webContentsId: event.sender?.id };
+}
+
+/**
+ * How long a terminal spawn waits for its real PID. node-pty on Windows reports
+ * pid 0 until ConPTY has connected, which happens asynchronously and gives up
+ * after node-pty's own 5 s timeout; a little longer than that covers it.
+ */
+const TERMINAL_PID_WAIT_MS = 6000;
+const TERMINAL_PID_POLL_MS = 25;
+
+/**
+ * Resolve a terminal spawn to its real PID before it reaches the renderer.
+ *
+ * On Windows, node-pty's `IPty.pid` is 0 until the ConPTY connection completes
+ * ("Not available until `ready` event emitted", node-pty windowsTerminal), but
+ * PtySpawner reads it synchronously. The renderer treats `pid === 0` as "this
+ * tab never spawned" (terminalSpawn.ts: "`pid !== 0` is the durable guard"), so
+ * a successful Windows spawn reported as pid 0 is spawned again on the next
+ * render, which kills the previous PTY, which reports pid 0 again: a respawn
+ * loop at render rate that ends with the app crashing.
+ *
+ * Waits for the PTY this call created (not a successor that may have taken the
+ * session id meanwhile), records the PID on the managed process so kill paths
+ * that use it (`taskkill /pid`) see the real one, and turns a PTY that never
+ * produced a PID, or exited first, into a failed spawn, which the renderer
+ * handles without retrying.
+ */
+async function settleTerminalPid(
+	processManager: ProcessManager,
+	sessionId: string,
+	result: SpawnResult
+): Promise<SpawnResult> {
+	if (!result.success || result.pid > 0) return result;
+	const proc = processManager.get(sessionId);
+	const pty = proc?.ptyProcess;
+	if (!proc || !pty) return { success: false, pid: 0 };
+	const deadline = Date.now() + TERMINAL_PID_WAIT_MS;
+	while (Date.now() < deadline) {
+		if (processManager.get(sessionId) !== proc) {
+			// Exited (or was replaced) before its PID arrived.
+			return { success: false, pid: 0 };
+		}
+		if (pty.pid > 0) {
+			proc.pid = pty.pid;
+			// Spread keeps `attached` when the spawn reused a live terminal.
+			return { ...result, pid: pty.pid };
+		}
+		await new Promise((resolve) => setTimeout(resolve, TERMINAL_PID_POLL_MS));
+	}
+	logger.warn('Terminal PTY reported no PID; treating the spawn as failed', LOG_CONTEXT, {
+		sessionId,
+		waitedMs: TERMINAL_PID_WAIT_MS,
+	});
+	if (processManager.get(sessionId) === proc) processManager.kill(sessionId);
+	return { success: false, pid: 0 };
+}
 
 // AgentConfigsData imported from stores/types
 
@@ -84,7 +164,10 @@ export interface ProcessHandlerDependencies {
 	settingsStore: Store<MaestroSettings>;
 	getMainWindow: () => BrowserWindow | null;
 	safeSend?: (channel: string, ...args: unknown[]) => void;
+	getWindowForSession?: (sessionId: string) => BrowserWindow | null;
+	getWebServer?: () => import('../../web-server/WebServer').WebServer | null;
 	sessionsStore: Store<{ sessions: any[] }>;
+	groupsStore?: Store<GroupsData>;
 	/** Optional callback to get active Cue run processes for Process Monitor */
 	getCueProcesses?: () => CueProcessEntry[];
 	/**
@@ -123,6 +206,13 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Wire the Claude Code permission relay: surface requests to the renderer
 	// and clean up per-spawn bindings when a process exits.
 	initPermissionRelay(getMainWindow, getProcessManager());
+	initHarnessControl(
+		{
+			getMainWindow,
+			getWindowForSession: deps.getWindowForSession,
+		},
+		getProcessManager()
+	);
 
 	// Manual renderer closes are ownership events, not remote Movement/Cadenza
 	// mutations. Release their isolated documents explicitly so closed mockups do
@@ -161,13 +251,200 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			return resolvePermissionResponse(requestId, decision);
 		}
 	);
+	ipcMain.handle('harnessControl:listPending', (event) =>
+		pendingHarnessInteractions(harnessControlOwner(event))
+	);
+	ipcMain.handle('harnessControl:respond', (event, response: unknown) =>
+		resolveHarnessInteractionResponse(response, harnessControlOwner(event))
+	);
 
 	// Spawn a new process for a session
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
-	ipcMain.handle(
-		'process:spawn',
-		withIpcErrorLogging(handlerOpts('spawn'), (config: SpawnProcessConfig) =>
-			handleProcessSpawn(config, {
+	ipcMain.handle('process:spawn', async (event, config: SpawnProcessConfig) => {
+		// A lifted agent runs on its Federation host now. Its local copy keeps every tab, but no turn
+		// of it may start here: it would resume the provider session the host owns. Shell tabs stay.
+		if (config.toolType !== 'terminal') {
+			const lifted = liftedOwnerOfProcess(deps.sessionsStore.get('sessions', []), config.sessionId);
+			const refusal = lifted && liftedSendRefusal(lifted);
+			if (refusal) throw new Error(refusal);
+		}
+		// A web/CLI caller cannot assert the native renderer's submitted log boundary.
+		if ('clientId' in event || (event as { type?: string }).type === 'bridge')
+			config = { ...config, transcriptBoundaryId: undefined };
+		if (config.transcriptBoundaryId) {
+			const agent = deps.sessionsStore
+				.get('sessions', [])
+				.find((session) =>
+					session.aiTabs?.some(
+						(tab: { id: string }) => `${session.id}-ai-${tab.id}` === config.sessionId
+					)
+				);
+			const owner = agent && deps.getWindowForSession?.(agent.id);
+			if (
+				!owner ||
+				!event.sender ||
+				event.sender.id !== owner.webContents.id ||
+				event.sender.isDestroyed()
+			)
+				config = { ...config, transcriptBoundaryId: undefined };
+		}
+		let hostQueueAgent: Awaited<ReturnType<AgentDetector['getAgent']>> | undefined;
+		let hostLocalConfig: string | undefined;
+		let hostSystemPrompt: string | undefined;
+		const assertOwner = () => {
+			const agent = deps.sessionsStore
+				.get('sessions', [])
+				.find((s) =>
+					s.aiTabs?.some((t: { id: string }) => `${s.id}-ai-${t.id}` === config.sessionId)
+				);
+			const owner = agent && deps.getWindowForSession?.(agent.id);
+			if (
+				!agent ||
+				!owner ||
+				!event.sender ||
+				'clientId' in event ||
+				event.sender.id !== owner.webContents.id ||
+				event.sender.isDestroyed()
+			)
+				throw new Error('DispatchWindowOwnerMismatch');
+			const tab = agent.aiTabs.find(
+				(t: { id: string }) => `${agent.id}-ai-${t.id}` === config.sessionId
+			);
+			const item = agent.executionQueue?.find(
+				(i: { id: string }) => i.id === config.pianolaQueueItemId
+			);
+			const readOnly =
+				item?.readOnlyMode === true ||
+				tab.readOnlyMode === true ||
+				tab.permissionMode === 'readonly';
+			let expected = item?.text?.trim() ? item.text : getPrompt('image-only-default');
+			if (item?.crossAgentMention) {
+				if (!hostQueueAgent || hostQueueAgent.id !== agent.toolType)
+					throw new Error('DispatchAgentUnavailable');
+				expected = queueLocalPrompt(item as PianolaQueueItem, agent.id, {
+					agents: deps.sessionsStore.get('sessions', []),
+					groups: (deps.groupsStore?.get('groups', []) ?? []).map((group) => ({ ...group })),
+				});
+				const settings = item.turnSettings;
+				// The owner transports a request. Every executable field is host-derived;
+				// renderer prompt/context/args/system-prompt overrides confer no authority.
+				const local: SpawnProcessConfig = {
+					sessionId: config.sessionId,
+					pianolaDispatchId: config.pianolaDispatchId,
+					pianolaQueueItemId: config.pianolaQueueItemId,
+					pianolaQueueStepId: config.pianolaQueueStepId,
+					transcriptBoundaryId: config.transcriptBoundaryId,
+					tabId: tab.id,
+					toolType: agent.toolType,
+					cwd: agent.cwd,
+					command: hostQueueAgent.path || hostQueueAgent.binaryName,
+					args: [...(hostQueueAgent.apiModeArgs ?? hostQueueAgent.args)],
+					agentSessionId: tab.agentSessionId ?? undefined,
+					prompt: prependNewSessionMessageOnFirstTurn(
+						expected,
+						agent.newSessionMessage,
+						tab.agentSessionId
+					),
+					images: item.images,
+					sessionCustomModel: settings ? settings.model : (tab.customModel ?? agent.customModel),
+					sessionCustomEffort: settings
+						? settings.effort
+						: (tab.customEffort ?? agent.customEffort),
+					readOnlyMode: readOnly,
+					permissionMode: readOnly ? 'readonly' : resolveTabPermissionMode(tab),
+					sessionCustomPath: agent.customPath,
+					sessionCustomArgs: agent.customArgs,
+					sessionCustomEnvVars: agent.customEnvVars,
+					sessionCustomContextWindow: agent.customContextWindow,
+					sessionAdditionalDirectories: agent.additionalDirectories,
+					sessionSshRemoteConfig: agent.sessionSshRemoteConfig,
+				};
+				if (hostLocalConfig !== undefined && hostLocalConfig !== canonicalJson(local))
+					throw new Error('DispatchQueueSpawnIntentMismatch');
+				hostLocalConfig = canonicalJson(local);
+				config = { ...local, appendSystemPrompt: hostSystemPrompt };
+			}
+			const settings = item?.turnSettings;
+			if (
+				!item ||
+				item.pendingAdmissionId !== config.pianolaDispatchId ||
+				item.type !== 'message' ||
+				item.agentContext ||
+				config.toolType !== agent.toolType ||
+				config.cwd !== agent.cwd ||
+				config.agentSessionId !== (tab.agentSessionId ?? undefined) ||
+				config.prompt !==
+					prependNewSessionMessageOnFirstTurn(
+						expected,
+						agent.newSessionMessage,
+						tab.agentSessionId
+					) ||
+				config.sessionCustomModel !==
+					(settings ? settings.model : (tab.customModel ?? agent.customModel)) ||
+				config.sessionCustomEffort !==
+					(settings ? settings.effort : (tab.customEffort ?? agent.customEffort)) ||
+				config.readOnlyMode !== readOnly ||
+				config.permissionMode !== (readOnly ? 'readonly' : resolveTabPermissionMode(tab)) ||
+				canonicalJson(config.images ?? []) !== canonicalJson(item.images ?? []) ||
+				[
+					'customPath',
+					'customArgs',
+					'customEnvVars',
+					'customContextWindow',
+					'additionalDirectories',
+					'sessionSshRemoteConfig',
+				].some(
+					(key) =>
+						canonicalJson(
+							config[
+								key === 'sessionSshRemoteConfig'
+									? key
+									: (`session${key[0].toUpperCase()}${key.slice(1)}` as keyof SpawnProcessConfig)
+							] ?? null
+						) !== canonicalJson(agent[key] ?? null)
+				)
+			)
+				throw new Error('DispatchQueueSpawnIntentMismatch');
+		};
+		return withIpcErrorLogging(handlerOpts('spawn'), async () => {
+			if (config.pianolaQueueItemId) {
+				hostQueueAgent = await getAgentDetector()?.getAgent(config.toolType);
+				assertOwner();
+				if (config.pianolaDispatchId !== config.pianolaQueueItemId)
+					throw new Error('DispatchIdentityMismatch');
+				const server = deps.getWebServer?.();
+				if (!server) throw new Error('DispatchQueueDrainUnavailable');
+				const agent = deps.sessionsStore
+					.get('sessions', [])
+					.find((s) =>
+						s.aiTabs?.some((t: { id: string }) => `${s.id}-ai-${t.id}` === config.sessionId)
+					);
+				const tab = agent?.aiTabs?.find(
+					(t: { id: string }) => `${agent.id}-ai-${t.id}` === config.sessionId
+				);
+				if (hostLocalConfig) {
+					hostSystemPrompt = await buildMaestroSystemPromptForSession(agent, {
+						activeTabId: tab.id,
+					});
+					assertOwner();
+				}
+				const prepared = await server.prepareQueueSpawnFromMain(
+					agent.id,
+					tab.id,
+					config.pianolaQueueItemId,
+					assertOwner,
+					undefined,
+					config.pianolaQueueStepId
+				);
+				if (prepared.reconciled)
+					return {
+						success: true,
+						pid: -1,
+						pianolaRunId: prepared.runId,
+						pianolaQueueReconciled: true,
+					};
+			}
+			return handleProcessSpawn(config, {
 				getProcessManager,
 				getAgentDetector,
 				agentConfigsStore,
@@ -176,9 +453,10 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				safeSend,
 				sessionsStore: deps.sessionsStore,
 				interactiveReplayController: deps.interactiveReplayController,
-			})
-		)
-	);
+				assertQueueOwner: config.pianolaQueueItemId ? assertOwner : undefined,
+			});
+		})(event);
+	});
 
 	// Write data to a process
 	ipcMain.handle(
@@ -275,6 +553,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			return processManager.kill(sessionId);
 		})
 	);
+	ipcMain.handle('process:closeAgent', (_event, agentId: string) => {
+		const processManager = requireProcessManager(getProcessManager);
+		processManager.closeAgent(agentId);
+		return true;
+	});
 
 	// Resize PTY dimensions
 	ipcMain.handle(
@@ -510,17 +793,21 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						remoteParts.push('exec "$SHELL" -l');
 						sshArgs.push(remoteParts.join(' && '));
 
-						return processManager.spawn({
-							sessionId: config.sessionId,
-							reuseTerminal: true,
-							toolType: 'terminal',
-							cwd: os.homedir(),
-							command: await resolveSshPath(),
-							args: sshArgs,
-							shellEnvVars: mergedEnvVars,
-							cols: config.cols || 80,
-							rows: config.rows || 24,
-						});
+						return settleTerminalPid(
+							processManager,
+							config.sessionId,
+							processManager.spawn({
+								sessionId: config.sessionId,
+								reuseTerminal: true,
+								toolType: 'terminal',
+								cwd: os.homedir(),
+								command: await resolveSshPath(),
+								args: sshArgs,
+								shellEnvVars: mergedEnvVars,
+								cols: config.cols || 80,
+								rows: config.rows || 24,
+							})
+						);
 					}
 					// SSH is enabled but the remote config was not found (deleted or disabled).
 					// Fail explicitly rather than silently falling through to a local terminal,
@@ -532,15 +819,19 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					return { success: false, pid: 0 };
 				}
 
-				return processManager.spawnTerminalTab({
-					sessionId: config.sessionId,
-					cwd: config.cwd,
-					shell: shellToUse,
-					shellArgs: config.shellArgs || settingsStore.get('shellArgs', ''),
-					shellEnvVars: mergedEnvVars,
-					cols: config.cols || 80,
-					rows: config.rows || 24,
-				});
+				return settleTerminalPid(
+					processManager,
+					config.sessionId,
+					processManager.spawnTerminalTab({
+						sessionId: config.sessionId,
+						cwd: config.cwd,
+						shell: shellToUse,
+						shellArgs: config.shellArgs || settingsStore.get('shellArgs', ''),
+						shellEnvVars: mergedEnvVars,
+						cols: config.cols || 80,
+						rows: config.rows || 24,
+					})
+				);
 			}
 		)
 	);

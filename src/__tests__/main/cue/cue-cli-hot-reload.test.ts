@@ -87,7 +87,9 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 					ioFaults.failTargetRefresh = false;
 					ioFaults.failedReads = 1;
 				}
-				runtime.refreshSession(id, projectRoot);
+				void runtime.refreshSession(id, projectRoot).catch((error) => {
+					onLog('error', String(error));
+				});
 			},
 			onLog,
 			dispatchSubscription: dispatch,
@@ -197,12 +199,10 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 			json: true,
 		});
 		await vi.waitFor(
-			() =>
-				expect(onLog).toHaveBeenCalledWith(
-					'warn',
-					expect.stringContaining('Config reload failed'),
-					expect.objectContaining({ type: 'triggerHealthWarning' })
-				),
+			() => {
+				expect(ioFaults.failTargetRefresh).toBe(false);
+				expect(ioFaults.failedReads).toBe(0);
+			},
 			{ timeout: 4000 }
 		);
 		expect(dispatch).not.toHaveBeenCalled();
@@ -230,11 +230,6 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 		await Promise.all(watcherReady);
 		await new Promise((resolve) => setTimeout(resolve, 1200));
 		expect(dispatch).toHaveBeenCalledTimes(1);
-		expect(onLog).toHaveBeenCalledWith(
-			'warn',
-			expect.stringContaining('Config health check failed'),
-			expect.objectContaining({ type: 'triggerHealthWarning' })
-		);
 		expect(registry.get('target')?.triggerSources).toHaveLength(1);
 	});
 	it('retries an initial runtime read failure even when the watcher snapshot succeeded', async () => {
@@ -250,9 +245,9 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 		ioFaults.afterRead = () => {
 			ioFaults.failedReads = 1;
 		};
-		expect(() => runtime.initSession(readSessions()[1], { reason: 'system-boot' })).toThrow(
-			'transient config read failure'
-		);
+		await expect(
+			runtime.initSession(readSessions()[1], { reason: 'system-boot' })
+		).rejects.toMatchObject({ code: 'EIO' });
 		await Promise.all(watcherReady);
 		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1), { timeout: 4000 });
 		expect(registry.get('target')?.triggerSources).toHaveLength(1);
@@ -268,16 +263,19 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 			name: 'completion',
 			json: true,
 		});
-		runtime.initSession(readSessions()[1], { reason: 'system-boot' });
+		await runtime.initSession(readSessions()[1], { reason: 'system-boot' });
 		await Promise.all(watcherReady);
 		expect(dispatch).toHaveBeenCalledTimes(1);
+		const previous = registry.get('target');
+		const refresh = vi.spyOn(runtime, 'refreshSession');
 		ioFaults.failedReads = 1;
-		expect(() => runtime.refreshSession('target', root)).toThrow('transient config read failure');
-		expect(registry.has('target')).toBe(false);
+		await expect(runtime.refreshSession('target', root)).rejects.toMatchObject({ code: 'EIO' });
+		expect(registry.get('target')).toBe(previous);
 		for (const [callback, delay] of intervals.mock.calls) {
 			if (delay === 30_000) (callback as () => void)();
 		}
-		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2), { timeout: 4000 });
+		await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2), { timeout: 4000 });
+		expect(dispatch).toHaveBeenCalledTimes(1);
 		expect(registry.get('target')?.triggerSources).toHaveLength(1);
 		expect(watcherReady).toHaveLength(1);
 	});

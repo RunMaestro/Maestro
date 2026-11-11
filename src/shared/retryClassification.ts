@@ -19,7 +19,7 @@
  *    account can be switched, the plan can roll over early, and the notice can
  *    name the wrong window. See {@link tokenExhaustionDelayMs}.
  *
- * This module is intentionally pure and dependency-free so it can run in either
+ * This module is intentionally pure and renderer-safe so it can run in either
  * the renderer or the main process. It classifies by MESSAGE CONTENT rather than
  * {@link AgentErrorType} because Maestro's taxonomy lumps plan-quota exhaustion
  * in with rate limits under `rate_limited` (while the `token_exhaustion` type
@@ -27,6 +27,8 @@
  */
 
 import type { AgentErrorType } from './types';
+import type { TurnTerminal } from './maestro-lib/streaming/turn-outcome';
+import { getErrorPatterns, matchErrorPattern, stripJsonEventLines } from './agentErrorPatterns';
 
 /** Which backoff strategy applies to a retryable error. */
 export type RetryStrategy = 'availability' | 'token-exhaustion';
@@ -147,16 +149,44 @@ const PERMANENT_FAILURE_RE =
  * the CLI bundle can call it.
  */
 function isPermanentFailure(error: ClassifiableError): boolean {
-	const json = error.parsedJson;
-	if (json && typeof json === 'object') {
-		const obj = json as Record<string, unknown>;
-		if (typeof obj.status === 'number' && PERMANENT_HTTP_STATUSES.has(obj.status)) return true;
-		const inner = obj.error;
-		if (inner && typeof inner === 'object') {
-			const innerType = (inner as Record<string, unknown>).type;
-			if (typeof innerType === 'string' && PERMANENT_ERROR_TYPES.has(innerType)) return true;
+	let json = error.parsedJson;
+	if (error.agentId === 'grok' && json === undefined) {
+		const raw = error.raw?.errorLine ?? error.message;
+		if (typeof raw === 'string' && /^\s*[\[{]/.test(raw)) {
+			try {
+				json = JSON.parse(raw);
+			} catch {
+				return true;
+			}
 		}
-		if (typeof obj.type === 'string' && PERMANENT_ERROR_TYPES.has(obj.type)) return true;
+	}
+	if (json && typeof json === 'object') {
+		const pending: unknown[] = [json];
+		const seen = new Set<object>();
+		// Only error/data envelopes, never arbitrary response/tool/content trees.
+		// Bound traversal even for malformed or cyclic host-supplied metadata.
+		for (let index = 0; index < pending.length && index < 16; index++) {
+			const value = pending[index];
+			if (!value || typeof value !== 'object' || Array.isArray(value) || seen.has(value)) continue;
+			seen.add(value);
+			const obj = value as Record<string, unknown>;
+			if (
+				(index === 0 || error.agentId === 'grok') &&
+				typeof obj.status === 'number' &&
+				PERMANENT_HTTP_STATUSES.has(obj.status)
+			)
+				return true;
+			if (typeof obj.type === 'string' && PERMANENT_ERROR_TYPES.has(obj.type)) return true;
+			// ACP parse/params/method faults, auth-required, missing resources and
+			// cancellation cannot be repaired by replaying the same prompt.
+			if (
+				error.agentId === 'grok' &&
+				[-32700, -32600, -32601, -32602, -32000, -32002, -32800].includes(obj.code as number)
+			)
+				return true;
+			if (error.agentId === 'grok') pending.push(obj.error, obj.data);
+			else if (index === 0) pending.push(obj.error);
+		}
 	}
 	return classifiableTexts(error).some((text) => PERMANENT_FAILURE_RE.test(text));
 }
@@ -166,6 +196,10 @@ export interface ClassifiableError {
 	type: AgentErrorType;
 	message: string;
 	recoverable: boolean;
+	/** Existing AgentError identity; absent retains legacy-provider behavior. */
+	agentId?: string;
+	/** Host-owned settlement, never inferred from provider prose or copied out of raw JSON. */
+	terminal?: TurnTerminal;
 	/** Optional structured payload from the agent; may carry a reset/retry hint. */
 	parsedJson?: unknown;
 	/**
@@ -197,6 +231,50 @@ export interface ClassifiableError {
 function classifiableTexts(error: ClassifiableError): string[] {
 	const texts: string[] = [];
 	const rawLine = error.raw?.errorLine;
+	if (error.agentId === 'grok') {
+		let payload = error.parsedJson;
+		const source = rawLine ?? error.message;
+		if (payload === undefined && typeof source === 'string' && /^\s*[\[{]/.test(source)) {
+			try {
+				payload = JSON.parse(source);
+			} catch {
+				// Malformed frames are not evidence of a transient provider failure.
+				return [];
+			}
+		}
+		if (payload !== undefined) {
+			if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
+			const obj = payload as Record<string, unknown>;
+			// Existing callers may supply only reset metadata, rather than a wire
+			// envelope. These fields say nothing about dispatch or success.
+			const hintsOnly = isResetHintMetadata(obj);
+			// Native errors and ACP error responses only. A success,
+			// notification, tool or answer containing error words cannot authorize retry.
+			const body =
+				obj.type === 'error'
+					? obj
+					: obj.jsonrpc === '2.0' &&
+						  (typeof obj.id === 'string' || typeof obj.id === 'number') &&
+						  !('method' in obj) &&
+						  !('result' in obj)
+						? obj.error
+						: undefined;
+			if (!hintsOnly) {
+				if (!body || typeof body !== 'object' || Array.isArray(body)) return [];
+				const record = body as Record<string, unknown>;
+				if (typeof record.message !== 'string' || !record.message.trim()) return [];
+				texts.push(record.message);
+				if (obj.jsonrpc === '2.0' && typeof record.data === 'string') texts.push(record.data);
+			} else if (typeof rawLine === 'string' && !/^\s*[\[{]/.test(rawLine)) {
+				texts.push(stripJsonEventLines(rawLine, { dropMalformed: true }));
+			}
+		} else if (typeof rawLine === 'string') {
+			texts.push(stripJsonEventLines(rawLine, { dropMalformed: true }));
+		}
+		if (typeof error.message === 'string')
+			texts.push(stripJsonEventLines(error.message, { dropMalformed: true }));
+		return texts.filter((text) => text.trim() !== '');
+	}
 	if (typeof rawLine === 'string' && rawLine.trim() !== '') texts.push(rawLine);
 	if (typeof error.message === 'string' && error.message !== '') texts.push(error.message);
 	return texts;
@@ -211,6 +289,17 @@ function classifiableTexts(error: ClassifiableError): string[] {
 export function classifyRetryableError(error: ClassifiableError): RetryStrategy | null {
 	if (!error.recoverable) return null;
 	if (NON_RETRYABLE_TYPES.has(error.type)) return null;
+	const terminal = error.terminal;
+	if (
+		terminal &&
+		(terminal.status !== 'failed' ||
+			terminal.kind !== 'provider' ||
+			terminal.dispatchState !== 'not-dispatched')
+	)
+		return null;
+	// Native errors may follow completed tools, and ACP loss cannot prove whether
+	// a prompt ran. Existing Grok callers without host dispatch facts fail closed.
+	if (error.agentId === 'grok' && terminal?.dispatchState !== 'not-dispatched') return null;
 
 	// Exhaustion is decided across EVERY text before availability is considered
 	// for any of them, not per text in turn. A quota notice that also says "429"
@@ -223,6 +312,15 @@ export function classifyRetryableError(error: ClassifiableError): RetryStrategy 
 	if (isPermanentFailure(error)) return null;
 
 	const texts = classifiableTexts(error);
+	if (error.agentId === 'grok') {
+		if (texts.length === 0) return null;
+		// Reuse the canonical bank for permanent/cancelled/malformed prose, including
+		// nested ACP error.data strings; a transient phrase must not override it.
+		for (const text of texts) {
+			const matched = matchErrorPattern(getErrorPatterns('grok'), text);
+			if (matched && (!matched.recoverable || NON_RETRYABLE_TYPES.has(matched.type))) return null;
+		}
+	}
 	if (texts.some((text) => TOKEN_EXHAUSTION_RE.test(text))) return 'token-exhaustion';
 	if (texts.some((text) => AVAILABILITY_RE.test(text)) || error.type === 'network_error') {
 		return 'availability';
@@ -266,13 +364,17 @@ export function availabilityDelayMs(attempt: number): number {
  * @param now   current epoch ms (injectable for tests)
  */
 export function tokenExhaustionResetAt(error: ClassifiableError, now: number): number | undefined {
+	// Do not extract a retry clock from successful answer/tool JSON or broken frames.
+	const texts = classifiableTexts(error);
+	if (error.agentId === 'grok' && texts.length === 0 && !isResetHintMetadata(error.parsedJson))
+		return undefined;
 	const fromJson = parseResetFromJson(error.parsedJson, now);
 	if (fromJson !== undefined) return fromJson + RESET_TIME_BUFFER_MS;
 
 	// The provider's own line first: a curated bank message never carries a reset
 	// hint, so for any agent whose parser rewrites `message` this is the only
 	// place a "resets in 4h 12m" can still be read.
-	for (const text of classifiableTexts(error)) {
+	for (const text of texts) {
 		const fromMessage = parseRetryAfterFromMessage(text, now);
 		if (fromMessage !== undefined) return fromMessage + RESET_TIME_BUFFER_MS;
 
@@ -376,6 +478,20 @@ function coerceResetNumber(value: number, now: number): number | undefined {
  * exact reset second rather than an hourly poll.
  */
 const RESET_JSON_CONTAINERS = ['quotaLimits', 'quota_limits', 'rateLimit', 'rate_limit'] as const;
+
+/** Legacy reset-only payloads carry no provider envelope or answer/tool content. */
+function isResetHintMetadata(value: unknown): boolean {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+	const keys = Object.keys(value);
+	return (
+		keys.length > 0 &&
+		keys.every(
+			(key) =>
+				RESET_JSON_KEYS.some((hint) => hint === key) ||
+				RESET_JSON_CONTAINERS.some((hint) => hint === key)
+		)
+	);
+}
 
 /** Scan one flat object for any recognized reset key. */
 function scanResetKeys(record: Record<string, unknown>, now: number): number | undefined {

@@ -56,7 +56,20 @@ export interface RuntimeServerOptions {
 	/** The host agreed to stop and said so; the caller shuts the process down. */
 	onStopRequested(): void;
 	/** What only the host process knows: where Cue stands, how many Cue runs are in flight, and the build version. */
-	describe?(): { cue: HostCueState; cueRuns?: number; version?: string };
+	describe?(): {
+		cue: HostCueState;
+		cueRuns?: number;
+		version?: string;
+		/** A macOS host holding the machine awake for its work in flight. */
+		preventingSleep?: boolean;
+	};
+	/**
+	 * Desktop bridge messages the runtime does not serve but the host process can, asked after the
+	 * runtime declined: Cue's, answered by the engine the host runs. The message and reply types are
+	 * the desktop's own, so no client learns anything new. `undefined` echoes the message, as for any
+	 * message nobody serves.
+	 */
+	answer?(message: Record<string, unknown>): Frame | undefined | Promise<Frame | undefined>;
 }
 
 export interface RuntimeServer {
@@ -85,8 +98,9 @@ function refuse(socket: Duplex, status: string): void {
 export async function startRuntimeServer(options: RuntimeServerOptions): Promise<RuntimeServer> {
 	const { runtime } = options;
 	const epoch = crypto.randomUUID();
-	const handle = createRequestHandler(runtime);
-	const frameState = createFrameState();
+	// Every agent record the host sends carries its live tab state, in replies and in pushes alike.
+	const handle = createRequestHandler(runtime, { liveTabs: runtime.liveTabs });
+	const frameState = createFrameState(runtime.liveTabs);
 	const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES });
 	const sockets = new Set<WebSocket>();
 	const expectedPath = `/${options.token}/ws`;
@@ -138,6 +152,9 @@ export async function startRuntimeServer(options: RuntimeServerOptions): Promise
 			clients: sockets.size,
 			work: work(described.cueRuns),
 			cue: described.cue,
+			...(described.preventingSleep !== undefined
+				? { preventingSleep: described.preventingSleep }
+				: {}),
 		};
 	};
 
@@ -181,7 +198,7 @@ export async function startRuntimeServer(options: RuntimeServerOptions): Promise
 				reply(control.frame, control.afterSend);
 				return;
 			}
-			const answer = await handle(message);
+			const answer = (await handle(message)) ?? (await options.answer?.(message));
 			if (answer) {
 				reply(answer);
 				return;

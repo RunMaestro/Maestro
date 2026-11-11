@@ -235,3 +235,27 @@ describe('evaluateGoalExit', () => {
 		});
 	});
 });
+
+describe('evaluateGoalExit with delegated work outstanding', () => {
+	it('does not end a run on "complete" while delegates are still working', () => {
+		const history = [rec(1, 100, { complete: true })];
+		expect(evaluateGoalExit(history, config(), { pendingDelegations: 2 })).toEqual({
+			action: 'continue',
+		});
+	});
+
+	it('completes once nothing delegated is still running', () => {
+		const history = [rec(1, 100, { complete: true })];
+		expect(evaluateGoalExit(history, config(), { pendingDelegations: 0 })).toMatchObject({
+			action: 'stop',
+			reason: 'completed',
+		});
+	});
+
+	it('still honors the iteration cap when completion is deferred', () => {
+		const history = [rec(1, 100, { complete: true })];
+		expect(
+			evaluateGoalExit(history, config({ maxIterations: 1 }), { pendingDelegations: 1 })
+		).toMatchObject({ action: 'stop', reason: 'max-iterations' });
+	});
+});

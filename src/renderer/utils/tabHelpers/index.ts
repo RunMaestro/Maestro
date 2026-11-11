@@ -1,3 +1,4 @@
+import { newEmptyTranscript } from '../../../shared/sessionTranscript';
 // Tab helper functions for AI multi-tab support
 // These helpers manage AITab state within Maestro sessions
 
@@ -24,6 +25,8 @@ import {
 } from '../../../shared/maestro-lib/store/tab-display';
 import { generateId } from '../ids';
 import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
+import type { MessagePin } from '../../../shared/messagePins';
+import { collectGroupMemberTabKeys } from '../../../shared/tabStripMembership';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
 import { createTerminalTab, nextTerminalCoworkingId } from '../terminalTabHelpers';
 import {
@@ -210,27 +213,6 @@ export function buildUnifiedTabs(session: Session): UnifiedTab[] {
 	const memberKeys = collectGroupMemberTabKeys(session);
 	if (memberKeys.size === 0) return result;
 	return result.filter((t) => !memberKeys.has(`${t.type}:${t.id}`));
-}
-
-/**
- * Collect the `type:id` keys of every tab that is a leaf in one of the session's
- * tiled groups. Walks each group's layout tree directly (kept local to avoid a
- * circular import with panelLayout, which imports from this module). Used by
- * buildUnifiedTabs to keep tiled tabs out of the standalone strip.
- */
-function collectGroupMemberTabKeys(session: Session): Set<string> {
-	const keys = new Set<string>();
-	const groups = session.tabGroups;
-	if (!groups || groups.length === 0) return keys;
-	const walk = (node: PanelLayoutNode): void => {
-		if (node.kind === 'leaf') {
-			keys.add(`${node.tab.type}:${node.tab.id}`);
-			return;
-		}
-		node.children.forEach(walk);
-	};
-	for (const group of groups) walk(group.layout);
-	return keys;
 }
 
 /**
@@ -833,7 +815,7 @@ export function getNavigableTabs(session: Session, showUnreadOnly = false): AITa
  * @param session - The Maestro session
  * @returns The active AITab or undefined if no tabs exist
  */
-export function getActiveTab(session: Session): AITab | undefined {
+export function getActiveTab(session: Pick<Session, 'aiTabs' | 'activeTabId'>): AITab | undefined {
 	if (!session || !session.aiTabs || session.aiTabs.length === 0) {
 		return undefined;
 	}
@@ -932,12 +914,12 @@ export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 
  */
 export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: Session): AITab {
 	const next = markTabRunningTurn(tab, item, session);
-	if (item.type === 'message' && item.text) {
+	if (item.type === 'message' && (item.text || item.images?.length)) {
 		const logEntry: LogEntry = {
 			id: generateId(),
 			timestamp: next.thinkingStartTime ?? Date.now(),
 			source: 'user',
-			text: item.text,
+			text: item.text ?? '',
 			images: item.images,
 			// Stamped so a dispatch that throws before spawning can take this card
 			// back out again - the prompt never reached a model, and leaving the
@@ -1128,6 +1110,8 @@ export interface CreateTabOptions {
 	name?: string | null; // User-defined name (null = show UUID octet)
 	starred?: boolean; // Whether session is starred
 	usageStats?: UsageStats; // Token usage stats
+	/** Pins read back with the conversation (see `AITab.pinnedMessages`). */
+	pinnedMessages?: MessagePin[];
 	saveToHistory?: boolean; // Whether to save synopsis to history after completions
 	showThinking?: ThinkingMode; // Thinking display mode: 'off' | 'on' (temporary) | 'sticky' (persistent)
 	/** When false, append the tab without making it active (background create).
@@ -1138,8 +1122,9 @@ export interface CreateTabOptions {
 	 *  tab is never activated: focusing a tab the strip does not draw strands the
 	 *  user on it, so this overrides `activate`. Default false. */
 	hidden?: boolean;
-	/** Adopt an id minted elsewhere instead of generating one. The only caller
-	 *  is a web-desktop client drawing the tab the DESKTOP just created for it
+	/** Adopt an id minted elsewhere instead of generating one. Callers are
+	 *  the host admission adapter reserving an exact empty tab, and a web-desktop
+	 *  client drawing the tab the DESKTOP just created for it
 	 *  (see `createNewAITab`): the id has to match, or the inventory broadcast
 	 *  that follows adds the same tab a second time under the desktop's id.
 	 *  Omit everywhere else - a caller that passes an id it did not receive
@@ -1187,10 +1172,11 @@ export function createTab(
 	const {
 		origin,
 		agentSessionId = null,
-		logs = [],
+		logs = newEmptyTranscript<LogEntry>(),
 		name = null,
 		starred = false,
 		usageStats,
+		pinnedMessages,
 		saveToHistory = true,
 		showThinking = 'off',
 		activate: activateOption = true,
@@ -1215,6 +1201,7 @@ export function createTab(
 		saveToHistory,
 		showThinking,
 		...(hidden ? { hidden: true } : {}),
+		...(pinnedMessages && pinnedMessages.length > 0 ? { pinnedMessages } : {}),
 	};
 
 	// Update the session with the new tab added. When `activate` is true (the

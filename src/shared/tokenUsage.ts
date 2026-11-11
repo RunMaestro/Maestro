@@ -14,8 +14,10 @@
  */
 
 import type { TokenCounts } from './modelPricing';
+import type { UsageAccounting, UsageBreakdown } from './types';
 import type { TokenSpeedBucket, TokenSpeedSummary } from './tokenSpeed';
 import type { StatsTimeRange } from './stats-types';
+import { startOfLocalDay } from './localDay';
 
 /**
  * Per-agent token coverage, mirroring the Cue accessor's classification so both
@@ -43,17 +45,22 @@ export interface ModelTokenUsage extends Required<
 	Pick<TokenCounts, 'inputTokens' | 'outputTokens'>
 > {
 	/**
-	 * Normalized model id (via `normalizeModelId`), e.g. `claude-opus-4-8`. Empty
-	 * string when the transcript carried no model id (rare fallback bucket).
+	 * Legacy normalized id, or the raw id when canonical accounting is available.
+	 * Empty string when the transcript carried no model id.
 	 */
 	model: string;
+	/** Native identity, before pricing aliases or normalization. */
+	rawModel?: string;
+	/** Canonical detail; numeric fields below are compatibility projections. */
+	accounting?: UsageBreakdown;
 	inputTokens: number;
 	outputTokens: number;
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
 	/**
-	 * USD cost for this model's tokens. Provider-reported when the agent tracks
-	 * cost; otherwise computed from the `modelPricing` rate table.
+	 * Numeric projection of accounting.cost when present (zero if unavailable).
+	 * Legacy providers retain reported or rate-table amounts; consult accounting
+	 * before interpreting a numeric zero as measured free usage.
 	 */
 	costUsd: number;
 	/** True when `costUsd` was estimated from the rate table, not provider-reported. */
@@ -63,7 +70,7 @@ export interface ModelTokenUsage extends Required<
 /**
  * One session's token consumption, split by model. Produced by the token-usage
  * accessor from a single on-disk transcript and cached per source-file
- * fingerprint. Session totals are the sum across `byModel`.
+ * fingerprint. Native lifetime totals are authoritative; `byModel` may be partial.
  */
 export interface SessionTokenBreakdown {
 	/** Provider session id (e.g. Claude's `session_id`) the totals were read from. */
@@ -86,10 +93,13 @@ export interface SessionTokenBreakdown {
 	 */
 	origin?: 'user' | 'auto' | 'relay';
 	byModel: ModelTokenUsage[];
+	/** Native lifetime evidence, including model/child detail already in the totals. */
+	accounting?: UsageAccounting;
 	inputTokens: number;
 	outputTokens: number;
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
+	/** Compatibility projection; canonical cost evidence takes precedence. */
 	costUsd: number;
 	/** True when any contributing model bucket was rate-table estimated. */
 	costEstimated: boolean;
@@ -100,10 +110,13 @@ export interface SessionTokenBreakdown {
 
 /** Rolled-up token + cost totals over an arbitrary set of sessions/models. */
 export interface TokenUsageTotals {
+	/** Aggregate evidence without claiming a single native session as its source. */
+	accounting?: Pick<UsageAccounting, 'completeness' | 'cost'>;
 	inputTokens: number;
 	outputTokens: number;
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
+	/** Compatibility projection; canonical cost evidence takes precedence. */
 	costUsd: number;
 	/** True when any part of `costUsd` was rate-table estimated. */
 	costEstimated: boolean;
@@ -112,7 +125,7 @@ export interface TokenUsageTotals {
 
 /** A named group of totals (one agent, one model, or one project). */
 export interface TokenUsageGroup extends TokenUsageTotals {
-	/** Stable grouping key: agent id, normalized model id, or project path. */
+	/** Stable key: agent, legacy model, provider/raw-model tuple, account or project. */
 	key: string;
 	/** Human-facing label for the group. */
 	label: string;
@@ -220,5 +233,7 @@ export function tokenUsageQueryForRange(
 	if (range === 'all') return { granularity: 'month' };
 	const days = RANGE_DAYS[range];
 	const granularity = days <= 30 ? 'day' : days <= 90 ? 'week' : 'month';
-	return { sinceMs: nowMs - days * 24 * 60 * 60 * 1000, granularity };
+	// "Today" starts at local midnight, the same window `getTimeRangeStart` uses.
+	const sinceMs = range === 'day' ? startOfLocalDay(nowMs) : nowMs - days * 24 * 60 * 60 * 1000;
+	return { sinceMs, granularity };
 }

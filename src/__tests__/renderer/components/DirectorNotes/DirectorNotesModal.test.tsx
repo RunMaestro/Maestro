@@ -2,10 +2,14 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import type { Theme } from '../../../../renderer/types';
+import type { UnifiedHistoryTabProps } from '../../../../renderer/components/DirectorNotes/UnifiedHistoryTab';
+import type { NativeSessionBinding } from '../../../../shared/maestro-lib/agents/providerSwap';
+import path from 'node:path';
 
 // Mock layer stack context
 const mockRegisterLayer = vi.fn(() => 'layer-director-notes');
 const mockUnregisterLayer = vi.fn();
+const mockHistoryProps = vi.fn<(props: UnifiedHistoryTabProps) => void>();
 
 vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
 	useLayerStack: () => ({
@@ -24,17 +28,10 @@ vi.mock('../../../../renderer/constants/modalPriorities', () => ({
 
 // Mock lazy-loaded child components (use forwardRef to match real components)
 vi.mock('../../../../renderer/components/DirectorNotes/UnifiedHistoryTab', () => ({
-	UnifiedHistoryTab: React.forwardRef(
-		(
-			{
-				theme,
-				onResumeSession,
-			}: {
-				theme: Theme;
-				onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
-			},
-			_ref: any
-		) => (
+	UnifiedHistoryTab: React.forwardRef((props: UnifiedHistoryTabProps, _ref: any) => {
+		mockHistoryProps(props);
+		const { onResumeSession } = props;
+		return (
 			<div data-testid="unified-history-tab" tabIndex={0}>
 				Unified History Content
 				{onResumeSession && (
@@ -46,8 +43,8 @@ vi.mock('../../../../renderer/components/DirectorNotes/UnifiedHistoryTab', () =>
 					</button>
 				)}
 			</div>
-		)
-	),
+		);
+	}),
 }));
 
 vi.mock('../../../../renderer/components/DirectorNotes/AIOverviewTab', () => ({
@@ -401,6 +398,24 @@ describe('DirectorNotesModal', () => {
 				color: mockTheme.colors.textDim,
 			});
 		});
+
+		it('marks the active tab for the strip to scroll into view', async () => {
+			renderModal();
+
+			await waitFor(() => {
+				expect(screen.getByText('Unified History')).toBeInTheDocument();
+			});
+
+			const historyTabButton = screen.getByText('Unified History').closest('button');
+			const helpTabButton = screen.getByText('Help').closest('button');
+			expect(historyTabButton).toHaveAttribute('data-reveal-active', 'true');
+			expect(helpTabButton).not.toHaveAttribute('data-reveal-active');
+
+			fireEvent.click(helpTabButton!);
+
+			expect(helpTabButton).toHaveAttribute('data-reveal-active', 'true');
+			expect(historyTabButton).not.toHaveAttribute('data-reveal-active');
+		});
 	});
 
 	describe('Keyboard Tab Navigation', () => {
@@ -566,7 +581,7 @@ describe('DirectorNotesModal', () => {
 		});
 
 		it('passes onResumeSession through to UnifiedHistoryTab', async () => {
-			const onResumeSession = vi.fn();
+			const onResumeSession = vi.fn().mockReturnValue(true);
 
 			renderModal({ onResumeSession });
 
@@ -578,6 +593,72 @@ describe('DirectorNotesModal', () => {
 
 			expect(onResumeSession).toHaveBeenCalledWith('source-session-1', 'agent-session-abc');
 		});
+
+		it.each([true, false, undefined])('forwards recorded scope and %s', async (value) => {
+			const onResumeSession = vi.fn().mockReturnValue(value);
+			renderModal({ onResumeSession, cwd: path.resolve('visible-project') });
+			await screen.findByTestId('mock-resume-session');
+			const resume = mockHistoryProps.mock.lastCall![0].onResumeSession!;
+			expect(resume).toBe(onResumeSession);
+			const project = path.resolve('recorded-project');
+			const nativeSessionBinding: NativeSessionBinding = Object.freeze({
+				version: 1,
+				state: 'bound',
+				provider: 'grok',
+				nativeSessionId: 'native',
+				accountRef: 'fixture-account',
+				host: Object.freeze({ kind: 'ssh', identity: 'fixture-host' }),
+				cwd: project,
+			});
+			const opts = Object.freeze({ targetSessionId: 'owner', nativeSessionBinding });
+			const isCurrent = vi.fn(() => true);
+			const args = ['owner', 'native', 'Recorded', project, opts, isCurrent] as const;
+			expect(resume(...args)).toBe(value);
+			expect(onResumeSession).toHaveBeenCalledWith(...args);
+			expect(onResumeSession.mock.calls[0][4]).toBe(opts);
+			expect(onClose).not.toHaveBeenCalled();
+		});
+
+		it.each(['resolve', 'reject'] as const)(
+			'retains a pending %s while forwarding history visibility',
+			async (settlement) => {
+				let resolve!: (value: boolean) => void;
+				let reject!: (error: Error) => void;
+				const pending = new Promise<boolean>((yes, no) => {
+					resolve = yes;
+					reject = no;
+				});
+				const onResumeSession = vi.fn().mockReturnValue(pending);
+				renderModal({ onResumeSession });
+				await screen.findByTestId('mock-resume-session');
+				const child = mockHistoryProps.mock.lastCall![0];
+				expect(child.isActive).toBe(true);
+				const opts = {
+					nativeSessionBinding: { version: 1, state: 'unknown', reason: 'legacy' },
+				} as const;
+				expect(
+					child.onResumeSession!('recorded-owner', 'colliding-id', undefined, undefined, opts)
+				).toBe(pending);
+				expect(onResumeSession.mock.calls[0][4]).toBe(opts);
+				fireEvent.click(screen.getByRole('button', { name: 'Help' }));
+				expect(mockHistoryProps.mock.lastCall![0].isActive).toBe(false);
+				expect(onClose).not.toHaveBeenCalled();
+				await act(async () => {
+					if (settlement === 'reject') {
+						const assertion = expect(pending).rejects.toThrow('resume refused');
+						reject(new Error('resume refused'));
+						await assertion;
+					} else {
+						resolve(true);
+						await expect(pending).resolves.toBe(true);
+					}
+				});
+				expect(onClose).not.toHaveBeenCalled();
+				expect(screen.getByTestId('overview-tab').closest('.h-full')).not.toHaveClass('hidden');
+				fireEvent.click(screen.getByRole('button', { name: 'Unified History' }));
+				expect(mockHistoryProps.mock.lastCall![0].isActive).toBe(true);
+			}
+		);
 
 		it('does not render resume button when onResumeSession is not provided', async () => {
 			renderModal();

@@ -457,6 +457,37 @@ describe('path-prober', () => {
 			expect(await probeWindowsPaths('copilot')).toBe(wingetLink);
 		});
 
+		// Pinned: only the npm global .cmd wrappers are known on Windows.
+		it('finds the npm global grok.cmd wrapper', async () => {
+			const home = os.homedir();
+			const npmShim = path.join(
+				process.env.APPDATA || path.join(home, 'AppData', 'Roaming'),
+				'npm',
+				'grok.cmd'
+			);
+			accessMock.mockImplementation(async (probePath) => {
+				if (String(probePath) === npmShim) return undefined;
+				throw new Error('ENOENT');
+			});
+
+			expect(await probeWindowsPaths('grok')).toBe(npmShim);
+		});
+
+		it('lists no undocumented Windows install location for grok', async () => {
+			const home = os.homedir();
+			const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+			const guessed = [
+				path.join(home, '.local', 'bin', 'grok.exe'),
+				path.join(localAppData, 'grok', 'bin', 'grok.exe'),
+			];
+			accessMock.mockImplementation(async (probePath) => {
+				if (guessed.includes(String(probePath))) return undefined;
+				throw new Error('ENOENT');
+			});
+
+			expect(await probeWindowsPaths('grok')).toBeNull();
+		});
+
 		it('should probe the current Codex Desktop executable', async () => {
 			const originalLocalAppData = process.env.LOCALAPPDATA;
 			const readdirMock = vi.spyOn(fs.promises, 'readdir');
@@ -646,6 +677,41 @@ describe('path-prober', () => {
 			expect(await probeUnixPaths('opencode')).toBe(
 				path.join(home, '.opencode', 'bin', 'opencode')
 			);
+		});
+
+		// Pinned: a Grok binary off PATH is found from the known table.
+		describe('grok known install paths', () => {
+			let originalPath: string | undefined;
+			beforeEach(() => {
+				originalPath = process.env.PATH;
+				process.env.PATH = '';
+			});
+			afterEach(() => {
+				process.env.PATH = originalPath;
+			});
+
+			it("finds the vendor installer's ~/.grok/bin/grok with PATH empty", async () => {
+				onlyExecutable(path.join(home, '.grok', 'bin', 'grok'), '/opt/homebrew/bin/grok');
+
+				expect(await probeUnixPaths('grok')).toBe(path.join(home, '.grok', 'bin', 'grok'));
+			});
+
+			it('prefers the npm global prefix over a Node version manager copy', async () => {
+				vi.mocked(detectNodeVersionManagerBinPaths).mockReturnValueOnce(['/old/nvm/bin']);
+				const npmPrefix = path.join(home, '.npm-global', 'bin', 'grok');
+				onlyExecutable(npmPrefix, '/old/nvm/bin/grok');
+
+				expect(await probeUnixPaths('grok')).toBe(npmPrefix);
+			});
+
+			it('does not guess locations Grok is not documented to install to', async () => {
+				onlyExecutable(
+					path.join(home, '.local', 'bin', 'grok'),
+					path.join(home, 'go', 'bin', 'grok')
+				);
+
+				expect(await probeUnixPaths('grok')).toBeNull();
+			});
 		});
 
 		it('lists /usr/local/bin/copilot once, not twice', async () => {

@@ -74,6 +74,8 @@ interface CreatePRModalProps {
 	agentName?: string;
 	/** Agent this repo belongs to, recorded on the in-flight creation. */
 	sessionId?: string;
+	/** SSH remote the repo lives on, so the push and `gh pr create` run there. */
+	sshRemoteId?: string;
 	// Available branches for target selection
 	availableBranches: string[];
 }
@@ -101,6 +103,7 @@ export function CreatePRModal({
 	worktreePath,
 	worktreeBranch,
 	sessionId,
+	sshRemoteId,
 	availableBranches,
 	agentName,
 }: CreatePRModalProps) {
@@ -169,6 +172,11 @@ export function CreatePRModal({
 	}, [isOpen, availableBranches, runKey]);
 
 	const checkGhCli = async () => {
+		// A remote PR runs gh on the SSH host, which reports its own errors on create
+		if (sshRemoteId) {
+			setGhCliStatus({ installed: true, authenticated: true });
+			return;
+		}
 		try {
 			const status = await window.maestro.git.checkGhCli();
 			setGhCliStatus(status);
@@ -204,6 +212,7 @@ export function CreatePRModal({
 			targetBranch,
 			title: title.trim(),
 			description,
+			sshRemoteId,
 		});
 	};
 

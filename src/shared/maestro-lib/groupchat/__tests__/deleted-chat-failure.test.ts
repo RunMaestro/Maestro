@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { isDeletedGroupChatFailure } from '../router';
+import { isDeletedGroupChatFailure, isRemovedParticipantFailure } from '../router';
 
 describe('isDeletedGroupChatFailure', () => {
 	it('matches the error routeAgentResponse throws for a deleted chat', () => {
@@ -49,5 +49,30 @@ describe('isDeletedGroupChatFailure', () => {
 		expect(isDeletedGroupChatFailure(new Error('Unexpected token < in JSON'))).toBe(false);
 		expect(isDeletedGroupChatFailure(undefined)).toBe(false);
 		expect(isDeletedGroupChatFailure(null)).toBe(false);
+	});
+});
+
+describe('isRemovedParticipantFailure', () => {
+	// removeParticipant kills the participant and drops it from the chat, so the
+	// exit that follows routes into a chat that no longer lists it (MAESTRO-WJ).
+	it('matches the error routeAgentResponse throws for a removed participant', () => {
+		expect(
+			isRemovedParticipantFailure(
+				new Error("Participant 'Forge - Builder' not found in group chat")
+			)
+		).toBe(true);
+	});
+
+	it('matches a non-Error thrown value carrying the same message', () => {
+		expect(isRemovedParticipantFailure("Participant 'alice' not found in group chat")).toBe(true);
+	});
+
+	it('does not match a deleted chat or unrelated routing failures', () => {
+		expect(isRemovedParticipantFailure(new Error('Group chat not found: abc-123'))).toBe(false);
+		expect(
+			isRemovedParticipantFailure(new Error("Participant 'alice' not found in group chat: extra"))
+		).toBe(false);
+		expect(isRemovedParticipantFailure(new Error('ENOENT: no such file or directory'))).toBe(false);
+		expect(isRemovedParticipantFailure(undefined)).toBe(false);
 	});
 });

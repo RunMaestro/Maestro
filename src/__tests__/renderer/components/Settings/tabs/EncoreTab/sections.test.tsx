@@ -252,6 +252,21 @@ describe('EncoreTab section components', () => {
 		expect(state.removeRegistryUrl).toHaveBeenCalledWith('https://custom.example/registry.json');
 	});
 
+	it('leaves Enter in the registry URL field to the input method during an IME composition', () => {
+		const state = registryState({ newRegistryUrl: 'https://new.example/registry.json' });
+
+		render(
+			<SymphonyRegistrySection theme={mockTheme} symphonyRegistryUrls={[]} registryState={state} />
+		);
+
+		const input = screen.getByPlaceholderText('https://example.com/registry.json');
+		for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+			expect(fireEvent.keyDown(input, { key: 'Enter', ...ime })).toBe(true);
+		}
+
+		expect(state.addRegistryUrl).not.toHaveBeenCalled();
+	});
+
 	it('wires Cue loading, save status, and setting inputs', () => {
 		const state = cueState({ cueSettingsSaveState: 'no-targets' });
 
