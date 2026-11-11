@@ -178,9 +178,10 @@ export async function captureBoardCardFromHost(command: BoardCaptureCommand, hum
 		human,
 		() => {
 			const current = storage.db
-				.prepare('SELECT outcome_json FROM runs WHERE run_id=?')
-				.get(source.run_id) as { outcome_json: string } | undefined;
+				.prepare('SELECT specification_json, outcome_json FROM runs WHERE run_id=?')
+				.get(source.run_id) as { specification_json: string; outcome_json: string } | undefined;
 			if (
+				current?.specification_json !== specification?.specification_json ||
 				current?.outcome_json !== source.outcome_json ||
 				boardReviewSourceDigest(storage.db, handoff, command.card.assigneeAgentId!) !== digest
 			)

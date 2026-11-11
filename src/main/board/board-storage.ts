@@ -1265,13 +1265,20 @@ export class BoardStorageFacade {
 			if (
 				handoff &&
 				(card.kind !== 'review' ||
+					BOARD_CAPTURE_SPEC_FIELDS.some(
+						(field) =>
+							canonicalJson({ v: original!.payload[field] }) !==
+							canonicalJson({ v: (card as unknown as Record<string, unknown>)[field] })
+					) ||
+					canonicalJson({ v: card.parents }) !== canonicalJson({ v: original!.payload.parents }) ||
+					canonicalJson({ v: card.title }) !== canonicalJson({ v: original!.payload.title }) ||
 					!card.parents.includes(handoff.cardId) ||
 					card.repositoryId !== handoff.repositoryId ||
 					card.worktree)
 			)
 				throw new BoardWorkspaceStorageError(
 					'protected-field',
-					'A bound review must retain its source dependency, repository and artifact'
+					'Bound review execution is host-derived; assign its reviewer on the completed work'
 				);
 			const captureChanged =
 				!original ||

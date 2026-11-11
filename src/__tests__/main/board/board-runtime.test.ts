@@ -1,3 +1,4 @@
+import * as remoteGit from '../../../main/utils/remote-git';
 import { createBoardAgentAdmission } from '../../../main/board/board-claims';
 import { configureBoardFeatures } from '../../../main/board/board-feature';
 import { snapshotSqlite } from '../../helpers/sqliteSnapshot';
@@ -446,89 +447,127 @@ describe('durable Board runtime over SQLite and the existing run-service seam', 
 		settle(good);
 		await pending;
 	});
-	it('binds a separate review to a real clean source commit and refuses dirty or forged handoffs', async () => {
-		agents.push({ id: 'reviewer', groupId: 'other' });
-		const git = (...args: string[]) =>
-			execFileSync('git', args, { cwd: roots[0], encoding: 'utf8' });
-		git('init', '--quiet');
-		fs.writeFileSync(path.join(roots[0], 'work.txt'), 'source work');
-		git('add', 'work.txt');
-		git(
-			'-c',
-			'user.name=Fixture',
-			'-c',
-			'user.email=fixture@example.test',
-			'commit',
-			'--quiet',
-			'-m',
-			'fixture'
-		);
-		const base = await readBoardRunArtifact(roots[0]);
-		const artifact = await readBoardRunArtifact(roots[0], base!.commit);
-		expect(artifact?.commit).toMatch(/^[a-f0-9]{40}$/);
-		const token = claim();
-		const pending = runtime.start(token);
-		settle({
-			...good,
-			output: '<!-- maestro:card-complete | scoped checks passed -->',
-			artifact: artifact!,
-		});
-		await pending;
-		configureBoardStorage(storage);
-		const board = storage.read(roots[0], 'board');
-		const command = {
-			projectRoot: roots[0],
-			boardId: board.id,
-			expectedRevision: board.storage!.expectedRevision!,
-			reviewSource: { cardId: 'same', attempt: 1 },
-			card: {
-				id: 'review',
-				assigneeAgentId: 'reviewer',
-				title: 'Review work',
-				body: '',
-				kind: 'review' as const,
-				parents: ['same'],
-				status: 'todo' as const,
-				createdAt: 'now',
-				updatedAt: 'now',
-				repositoryId: 'repo0',
-				workingDirectory: roots[0],
-				executionScope: { kind: 'agent' as const, agentId: 'reviewer' },
-			},
-		};
-		fs.writeFileSync(path.join(roots[0], 'work.txt'), 'dirty source');
-		await expect(captureBoardCardFromHost(command)).rejects.toThrow('changed');
-		expect(storage.read(roots[0], 'board').cards).toHaveLength(1);
-		git('checkout', '--', 'work.txt');
-		const response = await captureBoardCardFromHost(command);
-		const review = response.value.cards.find((card) => card.id === 'review')!;
-		expect(review.reviewHandoff).toMatchObject({
-			runId: token.runId,
-			attempt: 1,
-			artifact,
-			checks: 'scoped checks passed',
-		});
-		expect(await prepareBoardReviewHandoff(storage, review.reviewHandoff!)).toBe(
-			canonicalJson(review.reviewHandoff)
-		);
-		const changed = {
-			...review,
-			reviewHandoff: {
-				...review.reviewHandoff!,
-				artifact: { ...artifact!, commit: 'a'.repeat(40) },
-			},
-		};
-		expect(() =>
-			storage.capture({
-				...command,
-				reviewSource: undefined,
-				expectedRevision: response.value.storage!.expectedRevision!,
-				card: changed,
-			})
-		).toThrow(expect.objectContaining({ code: 'protected-field' }));
-		fs.writeFileSync(path.join(roots[0], 'work.txt'), 'later dirt');
-		expect(await prepareBoardReviewHandoff(storage, review.reviewHandoff!)).toBeNull();
-	});
+	it.each(['artifact integrity', 'specification drift'] as const)(
+		'binds a separate review to a real clean source commit (%s)',
+		async (scenario) => {
+			agents.push({ id: 'reviewer', groupId: 'other' });
+			const git = (...args: string[]) =>
+				execFileSync('git', args, { cwd: roots[0], encoding: 'utf8' });
+			git('init', '--quiet');
+			fs.writeFileSync(path.join(roots[0], 'work.txt'), 'source work');
+			git('add', 'work.txt');
+			git(
+				'-c',
+				'user.name=Fixture',
+				'-c',
+				'user.email=fixture@example.test',
+				'commit',
+				'--quiet',
+				'-m',
+				'fixture'
+			);
+			const base = await readBoardRunArtifact(roots[0]);
+			const artifact = await readBoardRunArtifact(roots[0], base!.commit);
+			expect(artifact?.commit).toMatch(/^[a-f0-9]{40}$/);
+			const token = claim();
+			const pending = runtime.start(token);
+			settle({
+				...good,
+				output: '<!-- maestro:card-complete | scoped checks passed -->',
+				artifact: artifact!,
+			});
+			await pending;
+			configureBoardStorage(storage);
+			const board = storage.read(roots[0], 'board');
+			const command = {
+				projectRoot: roots[0],
+				boardId: board.id,
+				expectedRevision: board.storage!.expectedRevision!,
+				reviewSource: { cardId: 'same', attempt: 1 },
+				card: {
+					id: 'review',
+					assigneeAgentId: 'reviewer',
+					title: 'Review work',
+					body: '',
+					kind: 'review' as const,
+					parents: ['same'],
+					status: 'todo' as const,
+					createdAt: 'now',
+					updatedAt: 'now',
+					repositoryId: 'repo0',
+					workingDirectory: roots[0],
+					executionScope: { kind: 'agent' as const, agentId: 'reviewer' },
+				},
+			};
+			if (scenario === 'specification drift') {
+				const observed = db
+					.prepare('SELECT specification_json FROM runs WHERE run_id=?')
+					.get(token.runId) as { specification_json: string };
+				const actualRead = remoteGit.execGitReadOnly;
+				const probe = vi
+					.spyOn(remoteGit, 'execGitReadOnly')
+					.mockImplementationOnce(async (...args) => {
+						const result = await actualRead(...args);
+						const spec = JSON.parse(observed.specification_json);
+						db.prepare('UPDATE runs SET specification_json=? WHERE run_id=?').run(
+							canonicalJson({
+								...spec,
+								card: { ...spec.card, body: 'Changed during the real artifact read' },
+							}),
+							token.runId
+						);
+						return result;
+					});
+				try {
+					await expect(captureBoardCardFromHost(command)).rejects.toThrow(
+						'Source run changed while preparing'
+					);
+					expect(storage.read(roots[0], 'board').cards).toHaveLength(1);
+				} finally {
+					probe.mockRestore();
+					db.prepare('UPDATE runs SET specification_json=? WHERE run_id=?').run(
+						observed.specification_json,
+						token.runId
+					);
+				}
+				return;
+			}
+
+			fs.writeFileSync(path.join(roots[0], 'work.txt'), 'dirty source');
+			await expect(captureBoardCardFromHost(command)).rejects.toThrow('changed');
+			expect(storage.read(roots[0], 'board').cards).toHaveLength(1);
+			git('checkout', '--', 'work.txt');
+
+			const response = await captureBoardCardFromHost(command);
+			const review = response.value.cards.find((card) => card.id === 'review')!;
+			expect(review.reviewHandoff).toMatchObject({
+				runId: token.runId,
+				attempt: 1,
+				artifact,
+				checks: 'scoped checks passed',
+			});
+			expect(await prepareBoardReviewHandoff(storage, review.reviewHandoff!)).toBe(
+				canonicalJson(review.reviewHandoff)
+			);
+			const changed = {
+				...review,
+				reviewHandoff: {
+					...review.reviewHandoff!,
+					artifact: { ...artifact!, commit: 'a'.repeat(40) },
+				},
+			};
+			expect(() =>
+				storage.capture({
+					...command,
+					reviewSource: undefined,
+					expectedRevision: response.value.storage!.expectedRevision!,
+					card: changed,
+				})
+			).toThrow(expect.objectContaining({ code: 'protected-field' }));
+			fs.writeFileSync(path.join(roots[0], 'work.txt'), 'later dirt');
+			expect(await prepareBoardReviewHandoff(storage, review.reviewHandoff!)).toBeNull();
+		}
+	);
 	it('will not dispatch an unbound review even with otherwise valid scope and direct policy', () => {
 		const row = storage.workspace.readCollection(storage.workspace.listCollections(roots[0])[0])!
 			.cards[0];
@@ -2368,6 +2407,35 @@ describe('work, linked review and explicit final human decision', () => {
 		}
 	);
 
+	it('queues an initially assigned independent reviewer for a fresh producer-only capture', async () => {
+		setupWorkflow();
+		const board = storage.read(roots[0], 'board');
+		storage.capture({
+			projectRoot: roots[0],
+			boardId: 'board',
+			expectedRevision: board.storage!.expectedRevision!,
+			card: {
+				...board.cards[0],
+				kind: 'documentation',
+				executionScope: { kind: 'agent', agentId: 'worker' },
+				reviewerAgentId: 'reviewer',
+			},
+		});
+		nativeService(
+			undefined,
+			'# Synthetic analysis\n<!-- maestro:card-review: Independent review required -->',
+			false,
+			true
+		);
+		const work = await runWork();
+		const review = storage.read(roots[0], 'board').cards[1];
+		expect(review.executionScope).toEqual({ kind: 'agent', agentId: 'reviewer' });
+		expect(review.reviewHandoff?.runId).toBe(work.runId);
+		await runReview();
+		expect(card().status).toBe('ready-for-human');
+		expect(card().executionScope).toEqual({ kind: 'agent', agentId: 'worker' });
+		expect(card().workflow?.humanDecision).toBeUndefined();
+	});
 	it('refuses the actual producer as reviewer even when the original group capture was unpinned', async () => {
 		setupWorkflow();
 		let board = storage.read(roots[0], 'board');
@@ -2424,6 +2492,37 @@ describe('work, linked review and explicit final human decision', () => {
 		}
 	);
 
+	it.each(['instructions', 'reviewer', 'title'] as const)(
+		'refuses repurposing the derived review %s through ordinary capture',
+		async (field) => {
+			setupWorkflow();
+			nativeService();
+			await runWork();
+			const board = storage.read(roots[0], 'board');
+			const review = board.cards[1];
+			const before = persisted();
+			const change =
+				field === 'instructions'
+					? { body: 'Implement a different task before human approval' }
+					: field === 'title'
+						? { title: 'Implement a different task' }
+						: {
+								assigneeAgentId: 'foreign',
+								executionScope: { kind: 'agent' as const, agentId: 'foreign' },
+							};
+			expect(() =>
+				storage.capture({
+					projectRoot: roots[0],
+					boardId: 'board',
+					expectedRevision: board.storage!.expectedRevision!,
+					card: { ...review, ...change },
+				})
+			).toThrow('Bound review execution');
+			expect(persisted()).toBe(before);
+			expect(card().status).toBe('review');
+			expect(reservations()).toHaveLength(0);
+		}
+	);
 	it('refuses reassignment while the bound independent review owns a reservation', async () => {
 		setupWorkflow();
 		nativeService();
