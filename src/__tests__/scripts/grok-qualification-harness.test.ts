@@ -2810,8 +2810,13 @@ describe('qualification harness', () => {
 				uncertainEffect: true,
 				turnsUsed: 1,
 			});
-			const [run] = runs();
-			expect(alive(run.pid)).toBe(false);
+			// The deadline can expire before the child writes its own PID log.
+			// Assert cleanup against the process actually returned by spawn.
+			expect(spawnSpies[0]).toHaveBeenCalledTimes(1);
+			const child = spawnSpies[0].mock.results[0]
+				.value as import('node:child_process').ChildProcess;
+			expect(child.pid).toBeTypeOf('number');
+			expect(alive(child.pid!)).toBe(false);
 			// The same leg on the same ledger is refused, never re-sent.
 			spawnSpies.forEach((s) => s.mockClear());
 			const again = await execute(id, cfg, { ledger });
