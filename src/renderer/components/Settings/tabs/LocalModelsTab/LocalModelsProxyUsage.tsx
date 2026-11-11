@@ -18,7 +18,11 @@
 
 import { useCallback, useState } from 'react';
 
-import { formatCount, formatRelativeTime } from '../../../../../shared/formatters';
+import {
+	formatCount,
+	formatRelativeTime,
+	formatTokensCompact,
+} from '../../../../../shared/formatters';
 import {
 	describeAddedLatency,
 	describeTokensSaved,
@@ -167,6 +171,18 @@ export function LocalModelsProxyUsage({
 			{usage && usage.totals.compressRequests > 0 && (
 				<p className="text-xs opacity-70" data-testid="token-proxy-estimate-note">
 					{TOKEN_PROXY_ESTIMATE_NOTE}
+				</p>
+			)}
+
+			{usage && (usage.totals.provider?.requests ?? 0) > 0 && (
+				<p className="text-xs select-text" data-testid="token-proxy-provider-usage">
+					<span className="opacity-70">
+						Provider counted, {formatCount(usage.totals.provider.requests)} requests:{' '}
+					</span>
+					input {formatTokensCompact(usage.totals.provider.inputTokens)}, cache read{' '}
+					{formatTokensCompact(usage.totals.provider.cacheReadTokens)}, cache write{' '}
+					{formatTokensCompact(usage.totals.provider.cacheWriteTokens)}, output{' '}
+					{formatTokensCompact(usage.totals.provider.outputTokens)}
 				</p>
 			)}
 

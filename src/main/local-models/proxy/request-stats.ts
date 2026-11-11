@@ -78,6 +78,14 @@ export function proxyRequestFromLog(entry: TokenProxyRequestLog): Omit<ProxyRequ
 		...(compression?.skipped ? { skipReason: compression.skipped } : {}),
 		// Only the target: why a request stayed on the provider is in the log.
 		...(entry.background?.routedTo ? { routedTo: entry.background.routedTo } : {}),
+		...(entry.providerUsage
+			? {
+					providerInputTokens: entry.providerUsage.inputTokens,
+					providerCacheReadTokens: entry.providerUsage.cacheReadTokens,
+					providerCacheWriteTokens: entry.providerUsage.cacheWriteTokens,
+					providerOutputTokens: entry.providerUsage.outputTokens,
+				}
+			: {}),
 	};
 }
 

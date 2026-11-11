@@ -453,6 +453,28 @@ export interface ProxyRequest {
 	 * in `outcome`.
 	 */
 	routedTo?: string;
+	/**
+	 * What the provider counted for the request, from the `usage` in its answer
+	 * (migration v21). Absent when the answer named none or could not be read,
+	 * and for a request a background target answered.
+	 */
+	providerInputTokens?: number;
+	providerCacheReadTokens?: number;
+	providerCacheWriteTokens?: number;
+	providerOutputTokens?: number;
+}
+
+/**
+ * The provider's own counts, summed over the requests whose answer named them.
+ * Unlike the proxy's estimates these cover passthrough requests too.
+ */
+export interface ProxyProviderUsageTotals {
+	/** Requests whose answer named a usage. */
+	requests: number;
+	inputTokens: number;
+	cacheReadTokens: number;
+	cacheWriteTokens: number;
+	outputTokens: number;
 }
 
 /** What the proxy carried, summed. */
@@ -466,6 +488,8 @@ export interface ProxyRequestTotals {
 	tokensSaved: number;
 	/** Mean time those requests were held. 0 when there were none. */
 	avgAddedLatencyMs: number;
+	/** What the provider counted, where its answer said. */
+	provider: ProxyProviderUsageTotals;
 }
 
 /** {@link ProxyRequestTotals} for one agent. `agentId` is null for unattributed requests. */
@@ -507,4 +531,4 @@ export interface UsageExportResult {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 20;
+export const STATS_DB_VERSION = 21;

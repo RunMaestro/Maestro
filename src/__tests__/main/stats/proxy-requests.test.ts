@@ -94,6 +94,11 @@ describe('proxy-requests', () => {
 				JSON.stringify([block]),
 				null,
 				// It went to the provider.
+				null,
+				// The provider's own counts were not given.
+				null,
+				null,
+				null,
 				null
 			);
 		});
@@ -136,11 +141,15 @@ describe('proxy-requests', () => {
 				null,
 				null,
 				null,
+				null,
+				null,
+				null,
+				null,
 				null
 			);
 		});
 
-		it('stores the target of a request that was routed, as the last column', () => {
+		it('stores the target of a request that was routed, in its own column', () => {
 			recordProxyRequest(mockDb, {
 				agentId: 'agent-1',
 				route: 'anthropic',
@@ -161,11 +170,46 @@ describe('proxy-requests', () => {
 			const sql = (mockDb.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
 			// One placeholder per column, and the target bound where its column is.
 			const columns = sql.slice(sql.indexOf('(') + 1, sql.indexOf(')')).split(',');
-			expect(columns.map((column) => column.trim()).at(-1)).toBe('routed_to');
+			const names = columns.map((column) => column.trim());
 			expect(sql.match(/\?/g)).toHaveLength(columns.length);
 			const bound = mockStatement.run.mock.calls[0] as unknown[];
 			expect(bound).toHaveLength(columns.length);
-			expect(bound.at(-1)).toBe('maestro-server:qwen3.5-4b');
+			expect(bound[names.indexOf('routed_to')]).toBe('maestro-server:qwen3.5-4b');
+		});
+
+		it("stores the provider's own counts where the answer named them", () => {
+			recordProxyRequest(mockDb, {
+				route: 'anthropic',
+				kind: 'anthropic-messages',
+				mode: 'passthrough',
+				startedAt: 5_000,
+				durationMs: 900,
+				status: 200,
+				outcome: 'completed',
+				requestBytes: 900,
+				sentBytes: 900,
+				responseBytes: 4_000,
+				blocksCompressed: 0,
+				cacheHits: 0,
+				providerInputTokens: 12,
+				providerCacheReadTokens: 26_102,
+				providerCacheWriteTokens: 1_750,
+				providerOutputTokens: 214,
+			});
+			const sql = (mockDb.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+			const names = sql
+				.slice(sql.indexOf('(') + 1, sql.indexOf(')'))
+				.split(',')
+				.map((column) => column.trim());
+			const bound = mockStatement.run.mock.calls[0] as unknown[];
+			expect(
+				[
+					'provider_input_tokens',
+					'provider_cache_read_tokens',
+					'provider_cache_write_tokens',
+					'provider_output_tokens',
+				].map((column) => bound[names.indexOf(column)])
+			).toEqual([12, 26_102, 1_750, 214]);
 		});
 
 		it('stores no JSON for counts that are all zero or a block list that is empty', () => {
@@ -194,7 +238,7 @@ describe('proxy-requests', () => {
 			const bound = mockStatement.run.mock.calls[0] as unknown[];
 			// A zero is a measurement and is kept; an empty summary is not stored.
 			expect(bound.slice(12, 15)).toEqual([25, 25, 0]);
-			expect(bound.slice(17)).toEqual([null, null, 'encoding', null]);
+			expect(bound.slice(17, 21)).toEqual([null, null, 'encoding', null]);
 		});
 	});
 
@@ -208,6 +252,11 @@ describe('proxy-requests', () => {
 					original_tokens: 40_000,
 					sent_tokens: 30_000,
 					added_latency_ms: 50,
+					provider_requests: 9,
+					provider_input_tokens: 120,
+					provider_cache_read_tokens: 90_000,
+					provider_cache_write_tokens: 8_000,
+					provider_output_tokens: 2_000,
 				},
 				{
 					agent_id: null,
@@ -216,8 +265,27 @@ describe('proxy-requests', () => {
 					original_tokens: 0,
 					sent_tokens: 0,
 					added_latency_ms: 0,
+					provider_requests: 0,
+					provider_input_tokens: 0,
+					provider_cache_read_tokens: 0,
+					provider_cache_write_tokens: 0,
+					provider_output_tokens: 0,
 				},
 			]);
+			const none = {
+				requests: 0,
+				inputTokens: 0,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				outputTokens: 0,
+			};
+			const agentOne = {
+				requests: 9,
+				inputTokens: 120,
+				cacheReadTokens: 90_000,
+				cacheWriteTokens: 8_000,
+				outputTokens: 2_000,
+			};
 
 			const usage = getProxyRequestUsage(mockDb, 'month');
 
@@ -232,6 +300,7 @@ describe('proxy-requests', () => {
 					tokensSaved: 10_000,
 					// 50 ms over the 4 requests that were held, not over all 10.
 					avgAddedLatencyMs: 13,
+					provider: agentOne,
 				},
 				{
 					agentId: null,
@@ -241,6 +310,7 @@ describe('proxy-requests', () => {
 					sentTokens: 0,
 					tokensSaved: 0,
 					avgAddedLatencyMs: 0,
+					provider: none,
 				},
 			]);
 			expect(usage.totals).toEqual({
@@ -250,6 +320,7 @@ describe('proxy-requests', () => {
 				sentTokens: 30_000,
 				tokensSaved: 10_000,
 				avgAddedLatencyMs: 13,
+				provider: agentOne,
 			});
 		});
 
@@ -264,6 +335,13 @@ describe('proxy-requests', () => {
 				sentTokens: 0,
 				tokensSaved: 0,
 				avgAddedLatencyMs: 0,
+				provider: {
+					requests: 0,
+					inputTokens: 0,
+					cacheReadTokens: 0,
+					cacheWriteTokens: 0,
+					outputTokens: 0,
+				},
 			});
 		});
 

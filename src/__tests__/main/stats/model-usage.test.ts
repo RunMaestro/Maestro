@@ -190,6 +190,13 @@ describe.skipIf(!canLoadNodeSqlite())('getModelUsage', () => {
 				sentTokens: 0,
 				tokensSaved: 0,
 				avgAddedLatencyMs: 0,
+				provider: {
+					requests: 0,
+					inputTokens: 0,
+					cacheReadTokens: 0,
+					cacheWriteTokens: 0,
+					outputTokens: 0,
+				},
 			},
 			routedRequests: 0,
 			byAgent: [],
@@ -701,6 +708,13 @@ describe.skipIf(!canLoadNodeSqlite())('getModelUsage', () => {
 			sentTokens: 3000,
 			tokensSaved: 1000,
 			avgAddedLatencyMs: 20,
+			provider: {
+				requests: 0,
+				inputTokens: 0,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				outputTokens: 0,
+			},
 		});
 		expect(proxy.byAgent.map((row) => [row.agentId, row.name, row.requests])).toEqual(
 			expect.arrayContaining([

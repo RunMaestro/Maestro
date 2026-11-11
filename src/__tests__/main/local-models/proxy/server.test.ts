@@ -173,6 +173,51 @@ function lowerNames(rawHeaders: string[]): string[] {
 }
 
 describe('token proxy server', () => {
+	describe("the provider's own usage", () => {
+		const STREAM =
+			'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":7,"cache_creation_input_tokens":40,"cache_read_input_tokens":900,"output_tokens":1}}}\n\n' +
+			'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":55}}\n\n' +
+			'event: message_stop\ndata: {"type":"message_stop"}\n\n';
+
+		it('reads it from the answer it forwards, byte for byte unchanged, in passthrough', async () => {
+			const upstream = await startUpstream((_req, res) => {
+				res.writeHead(200, { 'content-type': 'text/event-stream' });
+				res.end(STREAM);
+			});
+			const { port, logs } = await startProxy({ anthropic: upstream.origin });
+
+			const answer = await send(port, { path: '/anthropic/v1/messages', body: Buffer.from('{}') });
+
+			expect(answer.body.toString('utf-8')).toBe(STREAM);
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0].providerUsage).toEqual({
+				inputTokens: 7,
+				cacheReadTokens: 900,
+				cacheWriteTokens: 40,
+				outputTokens: 55,
+			});
+		});
+
+		it('records none for an error answer, or a request that is not a message', async () => {
+			const upstream = await startUpstream((req, res) => {
+				if (req.url?.endsWith('/v1/messages')) {
+					res.writeHead(529, { 'content-type': 'application/json' });
+					res.end('{"type":"error","usage":{"input_tokens":5}}');
+					return;
+				}
+				res.writeHead(200, { 'content-type': 'application/json' });
+				res.end('{"input_tokens":12000,"usage":{"input_tokens":1}}');
+			});
+			const { port, logs } = await startProxy({ anthropic: upstream.origin });
+
+			await send(port, { path: '/anthropic/v1/messages', body: Buffer.from('{}') });
+			await send(port, { path: '/anthropic/v1/messages/count_tokens', body: Buffer.from('{}') });
+
+			await vi.waitFor(() => expect(logs).toHaveLength(2));
+			expect(logs.map((log) => log.providerUsage)).toEqual([undefined, undefined]);
+		});
+	});
+
 	describe('streaming passthrough', () => {
 		it('delivers each server-sent event as it is written, without waiting for the end', async () => {
 			let releaseSecondEvent: () => void = () => {};

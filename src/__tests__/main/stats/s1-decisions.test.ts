@@ -98,9 +98,9 @@ describe.skipIf(!canLoadNodeSqlite())('s1_decisions', () => {
 				'tab_id',
 				'cached',
 			]);
-			expect(getCurrentVersion(db)).toBe(20);
-			expect(getTargetVersion()).toBe(20);
-			expect(STATS_DB_VERSION).toBe(20);
+			expect(getCurrentVersion(db)).toBe(21);
+			expect(getTargetVersion()).toBe(21);
+			expect(STATS_DB_VERSION).toBe(21);
 		});
 
 		it('indexes the two columns a read filters on', () => {
@@ -130,7 +130,7 @@ describe.skipIf(!canLoadNodeSqlite())('s1_decisions', () => {
 
 			runMigrations(older);
 
-			expect(getCurrentVersion(older)).toBe(20);
+			expect(getCurrentVersion(older)).toBe(21);
 			expect(columnNames(older, 's1_decisions')).toContain('outcome');
 			expect(older.prepare('SELECT COUNT(*) AS n FROM local_model_runs').get()).toEqual({ n: 1 });
 		});

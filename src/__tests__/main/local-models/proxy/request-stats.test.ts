@@ -228,6 +228,26 @@ describe('proxyRequestFromLog', () => {
 		).toMatchObject({ outcome: 'upstream-failed', routedTo: 'ep-ollama:qwen3:4b' });
 	});
 
+	it("records the provider's own counts when its answer named them", () => {
+		const row = proxyRequestFromLog(
+			logEntry({
+				providerUsage: {
+					inputTokens: 7,
+					cacheReadTokens: 900,
+					cacheWriteTokens: 40,
+					outputTokens: 55,
+				},
+			})
+		);
+		expect(row).toMatchObject({
+			providerInputTokens: 7,
+			providerCacheReadTokens: 900,
+			providerCacheWriteTokens: 40,
+			providerOutputTokens: 55,
+		});
+		expect(proxyRequestFromLog(logEntry())).not.toHaveProperty('providerInputTokens');
+	});
+
 	it('leaves the agent out of a request that named none', () => {
 		const row = proxyRequestFromLog(logEntry({ agentId: null }));
 		expect(row).not.toBeNull();

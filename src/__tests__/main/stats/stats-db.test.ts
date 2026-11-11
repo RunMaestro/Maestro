@@ -301,13 +301,14 @@ describe('StatsDB class (mocked)', () => {
 			// auto_run_sessions kind column, local_model_runs table, proxy_requests
 			// table, proxy_requests routed_to column, s1_decisions table,
 			// s1_decisions tab_id and cached columns, the local_model_runs rebuild
-			// with the query_events Run on and routed tier columns.
-			expect(db.getTargetVersion()).toBe(20);
+			// with the query_events Run on and routed tier columns, and the proxy_requests
+			// provider usage columns.
+			expect(db.getTargetVersion()).toBe(21);
 		});
 
 		it('should return false from hasPendingMigrations() when up to date', async () => {
 			mockDb.pragma.mockImplementation((sql: string) => {
-				if (sql === 'user_version') return [{ user_version: 20 }];
+				if (sql === 'user_version') return [{ user_version: 21 }];
 				return undefined;
 			});
 
@@ -323,7 +324,7 @@ describe('StatsDB class (mocked)', () => {
 			// by checking current version < target version
 
 			// Simulate a database that's already at the target version
-			let currentVersion = 20;
+			let currentVersion = 21;
 			mockDb.pragma.mockImplementation((sql: string) => {
 				if (sql === 'user_version') return [{ user_version: currentVersion }];
 				// Handle version updates from migration
@@ -338,8 +339,8 @@ describe('StatsDB class (mocked)', () => {
 			db.initialize();
 
 			// At target version, no pending migrations
-			expect(db.getCurrentVersion()).toBe(20);
-			expect(db.getTargetVersion()).toBe(20);
+			expect(db.getCurrentVersion()).toBe(21);
+			expect(db.getTargetVersion()).toBe(21);
 			expect(db.hasPendingMigrations()).toBe(false);
 		});
 

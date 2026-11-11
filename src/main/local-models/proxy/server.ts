@@ -73,11 +73,13 @@ import {
 	TOKEN_PROXY_NAME,
 	tokenProxyErrorBody,
 	type TokenProxyErrorCode,
+	type TokenProxyProviderUsage,
 	type TokenProxyRequestKind,
 	type TokenProxyRequestMode,
 	type TokenProxyTarget,
 	type TokenProxyUpstreams,
 } from '../../../shared/local-models/token-proxy';
+import { createProviderUsageReader, type ProviderUsageReader } from './response-usage';
 import {
 	planBackgroundRoute,
 	withRequestModel,
@@ -231,6 +233,12 @@ export interface TokenProxyRequestLog {
 	 * background requests somewhere: where this one went, or why it stayed.
 	 */
 	background?: TokenProxyBackgroundLog;
+	/**
+	 * What the provider counted, read from its answer to a message request
+	 * (`response-usage.ts`). Absent when the answer named none, could not be
+	 * read, or came from a background target rather than the provider.
+	 */
+	providerUsage?: TokenProxyProviderUsage;
 }
 
 export interface TokenProxyServerOptions {
@@ -488,6 +496,8 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 		// A cold model takes seconds to load, and a client that gives up in that
 		// time is still logged with how long it was held.
 		let waitingForTargetSince: number | null = null;
+		// The provider's answer to a message request, kept (bounded) for its usage.
+		let usageReader: ProviderUsageReader | null = null;
 
 		// 'close' is the one event every ending reaches: a finished response, a
 		// client that went away, and a response this module destroyed.
@@ -498,6 +508,13 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 			if (waitingForTargetSince !== null && entry.background) {
 				entry.background.addedLatencyMs = Date.now() - waitingForTargetSince;
 			}
+			// A routed request was answered by a Local Models target, not the
+			// provider, so what it counted is not the provider's usage.
+			if (usageReader && !entry.background?.routedTo) {
+				const usage = usageReader.finish();
+				if (usage) entry.providerUsage = usage;
+			}
+			usageReader = null;
 			if (failure) {
 				entry.outcome = failure.outcome;
 				entry.error = failure.error;
@@ -638,8 +655,20 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 				const eventStream =
 					/^text\/event-stream\b/i.test(contentType) ||
 					(contentType === '' && target.kind !== 'other');
+				// Only a successful answer to a message request names a usage.
+				const status = upstreamResponse.statusCode ?? 0;
+				usageReader =
+					target.kind !== 'other' && status >= 200 && status < 300
+						? createProviderUsageReader(
+								target.kind,
+								String(upstreamResponse.headers['content-encoding'] ?? '')
+									.trim()
+									.toLowerCase() || null
+							)
+						: null;
 				upstreamResponse.on('data', (chunk: Buffer) => {
 					entry.responseBytes += chunk.length;
+					usageReader?.push(chunk);
 					if (eventStream && !streamEnded) {
 						// The marker can straddle two chunks, so the end of the last one
 						// is kept and read together with this one.

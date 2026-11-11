@@ -507,6 +507,18 @@ export interface TokenProxyBlockDetail {
 	createdAt: number;
 }
 
+/**
+ * What the provider counted for one request, from the `usage` in its answer.
+ * Input is uncached input; OpenAI's cached tokens are moved out of its prompt
+ * total into `cacheReadTokens`, and it reports no cache writes (0).
+ */
+export interface TokenProxyProviderUsage {
+	inputTokens: number;
+	cacheReadTokens: number;
+	cacheWriteTokens: number;
+	outputTokens: number;
+}
+
 /** What the compression cache directory holds (`maestro-cli models proxy cache`). */
 export interface TokenProxyCacheUsage {
 	/** Verdict records. */

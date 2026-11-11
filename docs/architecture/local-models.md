@@ -3014,17 +3014,19 @@ Stats migration v16 adds one table. `proxyRequestFromLog()` in
 `recordTokenProxyRequest()` writes it on the same contract as `local_model_runs`: it honors
 `statsCollectionEnabled`, and a failed write is reported and swallowed.
 
-| Column                                                 | Holds                                                           |
-| ------------------------------------------------------ | --------------------------------------------------------------- |
-| `agent_id`                                             | The agent the base URL named. NULL for a launch outside the app |
-| `route`, `kind`, `mode`, `status`, `outcome`           | What the request was and how it ended                           |
-| `started_at`, `duration_ms`                            | When it arrived and how long it took end to end                 |
-| `request_bytes`, `sent_bytes`, `response_bytes`        | Body bytes received, sent upstream, and returned                |
-| `original_tokens`, `sent_tokens`                       | The body as it arrived and as it was sent, characters / 4       |
-| `added_latency_ms`                                     | How long the request was held to be read and shortened          |
-| `blocks_compressed`, `cache_hits`, `compressor_counts` | Blocks sent shortened, verdicts from the cache, per compressor  |
-| `new_blocks`                                           | JSON: the blocks shortened for the FIRST time in this request   |
-| `skip_reason`                                          | Why a compress mode request went out unread                     |
+| Column                                                  | Holds                                                           |
+| ------------------------------------------------------- | --------------------------------------------------------------- |
+| `agent_id`                                              | The agent the base URL named. NULL for a launch outside the app |
+| `route`, `kind`, `mode`, `status`, `outcome`            | What the request was and how it ended                           |
+| `started_at`, `duration_ms`                             | When it arrived and how long it took end to end                 |
+| `request_bytes`, `sent_bytes`, `response_bytes`         | Body bytes received, sent upstream, and returned                |
+| `original_tokens`, `sent_tokens`                        | The body as it arrived and as it was sent, characters / 4       |
+| `added_latency_ms`                                      | How long the request was held to be read and shortened          |
+| `blocks_compressed`, `cache_hits`, `compressor_counts`  | Blocks sent shortened, verdicts from the cache, per compressor  |
+| `new_blocks`                                            | JSON: the blocks shortened for the FIRST time in this request   |
+| `skip_reason`                                           | Why a compress mode request went out unread                     |
+| `provider_input_tokens`, `provider_cache_read_tokens`   | What the provider counted (v21): uncached input, cache reads    |
+| `provider_cache_write_tokens`, `provider_output_tokens` | Cache writes and output, from the `usage` in its answer         |
 
 1. **Only requests that hold a message list are recorded.** Token counting and model lists are
    forwarded and logged, not recorded: they have no tokens to save and would dilute the averages.
@@ -3037,8 +3039,23 @@ Stats migration v16 adds one table. `proxyRequestFromLog()` in
    appears in every later request. `new_blocks` holds only the blocks with `cached: false`, and
    the cache makes the first verdict the only one, so "Recent compressions" needs no dedupe.
 
+5. **The provider's own count rides along, for every mode.** `response-usage.ts` keeps a bounded
+   copy (16 MB) of each successful answer to a message request as it is piped to the client,
+   unchanged, and once the response has ended reads the `usage` it names: Anthropic's
+   `message_start` and cumulative `message_delta`, an OpenAI chat completion's final chunk, and a
+   Responses `response.completed`, in an event stream or a whole JSON body, decoding gzip, deflate,
+   br and zstd. OpenAI's cached tokens are moved out of its prompt total, so `input` is uncached
+   input on every route, and OpenAI reports no cache writes (0). An answer that names no usage, an
+   error status, a body past the bound, an encoding with no decoder, and an answer from a
+   background target all leave the four columns NULL, never zero. These are exact where the proxy's
+   own figures are characters / 4, and they cover passthrough requests the proxy never reads, so a
+   passthrough week is the baseline a compress week is compared against. A cache write that grows
+   on a request where nothing new arrived is the mark of a broken cached prefix.
+
 `readTokenProxyUsage()` returns the totals for the last 30 days (`getProxyRequestUsage`, in all
-and per agent) and the 25 newest compressions (`getRecentProxyCompressions`).
+and per agent, with the provider's counts summed in `provider`) and the 25 newest compressions
+(`getRecentProxyCompressions`). The Gateway section and `models proxy status` print the provider's
+sums under the table.
 
 ### The report and the diff
 

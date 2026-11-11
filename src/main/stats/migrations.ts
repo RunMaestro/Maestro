@@ -39,6 +39,7 @@ import {
 	CREATE_PROXY_REQUESTS_SQL,
 	CREATE_PROXY_REQUESTS_INDEXES_SQL,
 	ADD_PROXY_REQUEST_ROUTED_TO_COLUMN_SQL,
+	ADD_PROXY_REQUEST_PROVIDER_USAGE_COLUMNS,
 	CREATE_S1_DECISIONS_SQL,
 	CREATE_S1_DECISIONS_INDEXES_SQL,
 	ADD_S1_DECISION_TAB_ID_COLUMN_SQL,
@@ -192,6 +193,15 @@ function getMigrations(): Migration[] {
 			isApplied: (db) =>
 				localModelRunsIsCurrent(db) &&
 				ADD_QUERY_EVENT_MODEL_COLUMNS.every((column) => hasColumn(db, 'query_events', column)),
+		},
+		{
+			version: 21,
+			description: "Add the provider's own token counts to proxy_requests",
+			up: (db) => migrateV21(db),
+			isApplied: (db) =>
+				ADD_PROXY_REQUEST_PROVIDER_USAGE_COLUMNS.every((column) =>
+					hasColumn(db, 'proxy_requests', column)
+				),
 		},
 	];
 }
@@ -557,6 +567,22 @@ function migrateV20(db: Database.Database): void {
 		'Rebuilt local_model_runs and added model columns to query_events table',
 		LOG_CONTEXT
 	);
+}
+
+/**
+ * Migration v21: proxy_requests gains what the provider counted for each
+ * request (uncached input, cache reads, cache writes, output), read from the
+ * `usage` in its answer. The proxy's own figures are characters / 4 and exist
+ * only for requests it read; these are exact and cover passthrough too. Each
+ * column is guarded, and `isApplied` is declared, for a database another
+ * branch stamped past 21.
+ */
+function migrateV21(db: Database.Database): void {
+	for (const column of ADD_PROXY_REQUEST_PROVIDER_USAGE_COLUMNS) {
+		if (hasColumn(db, 'proxy_requests', column)) continue;
+		db.prepare(`ALTER TABLE proxy_requests ADD COLUMN ${column} INTEGER`).run();
+	}
+	logger.debug('Added provider usage columns to proxy_requests', LOG_CONTEXT);
 }
 
 /**

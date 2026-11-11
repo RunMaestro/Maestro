@@ -381,7 +381,8 @@ export const CREATE_LOCAL_MODEL_RUNS_AGENT_INDEX_SQL = `
  * `new_blocks` lists only the blocks shortened for the first time in this
  * request, so a block appears in one row however many later requests resend it.
  * `routed_to` (migration v17) is the Local Models target a background request
- * was sent to in place of the provider, and NULL for every other request.
+ * was sent to in place of the provider, and NULL for every other request. The
+ * `provider_*` columns (migration v21) are what the provider counted.
  */
 export const CREATE_PROXY_REQUESTS_SQL = `
   CREATE TABLE IF NOT EXISTS proxy_requests (
@@ -405,7 +406,11 @@ export const CREATE_PROXY_REQUESTS_SQL = `
     compressor_counts TEXT,
     new_blocks TEXT,
     skip_reason TEXT,
-    routed_to TEXT
+    routed_to TEXT,
+    provider_input_tokens INTEGER,
+    provider_cache_read_tokens INTEGER,
+    provider_cache_write_tokens INTEGER,
+    provider_output_tokens INTEGER
   )
 `;
 
@@ -413,6 +418,20 @@ export const CREATE_PROXY_REQUESTS_SQL = `
 export const ADD_PROXY_REQUEST_ROUTED_TO_COLUMN_SQL = `
   ALTER TABLE proxy_requests ADD COLUMN routed_to TEXT
 `;
+
+/**
+ * Migration v21: what the provider counted for each request, from the `usage`
+ * in its answer. NULL when the answer named none, could not be read, or came
+ * from a background target. Like `routed_to`, the v16 table definition above
+ * already holds them, so a new table (or one a repair creates) has nothing for
+ * v21 to add; v21 adds them to a table an older build created.
+ */
+export const ADD_PROXY_REQUEST_PROVIDER_USAGE_COLUMNS = [
+	'provider_input_tokens',
+	'provider_cache_read_tokens',
+	'provider_cache_write_tokens',
+	'provider_output_tokens',
+] as const;
 
 export const CREATE_PROXY_REQUESTS_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_proxy_requests_started ON proxy_requests(started_at);

@@ -307,8 +307,8 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v20', () => {
 	});
 
 	it('is the target version', () => {
-		expect(getTargetVersion()).toBe(20);
-		expect(STATS_DB_VERSION).toBe(20);
+		expect(getTargetVersion()).toBe(21);
+		expect(STATS_DB_VERSION).toBe(21);
 	});
 
 	describe('the seeded fixture', () => {
@@ -354,7 +354,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v20', () => {
 
 			runMigrations(db);
 
-			expect(getCurrentVersion(db)).toBe(20);
+			expect(getCurrentVersion(db)).toBe(21);
 			expect(getMigrationHistory(db).find((m) => m.version === 20)).toMatchObject({
 				status: 'success',
 			});
@@ -445,7 +445,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v20', () => {
 
 			expect(allRuns(db)).toEqual(once);
 			expect(tableSql(db, 'local_model_runs')).toBe(sqlOnce);
-			expect(getCurrentVersion(db)).toBe(20);
+			expect(getCurrentVersion(db)).toBe(21);
 			expect(logger.warn).not.toHaveBeenCalled();
 		});
 
@@ -538,7 +538,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v20', () => {
 			runMigrations(db);
 
 			expect(allRuns(db)).toEqual(before.map((row) => ({ ...row, agent_id: null })));
-			expect(getCurrentVersion(db)).toBe(20);
+			expect(getCurrentVersion(db)).toBe(21);
 			expect(getMigrationHistory(db).find((m) => m.version === 20)).toMatchObject({
 				status: 'success',
 			});
@@ -618,7 +618,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v20', () => {
 
 			runMigrations(db);
 
-			expect(getCurrentVersion(db)).toBe(20);
+			expect(getCurrentVersion(db)).toBe(21);
 			expect(columnNames(db, 'local_model_runs')).toContain('agent_id');
 			expect(tableSql(db, 'local_model_runs')).toContain("'system-one'");
 			expect(indexNames(db, 'local_model_runs')).toContain('idx_local_model_runs_agent');
@@ -673,7 +673,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v20', () => {
 					'idx_local_model_runs_task',
 				])
 			);
-			expect(getCurrentVersion(db)).toBe(20);
+			expect(getCurrentVersion(db)).toBe(21);
 		});
 	});
 

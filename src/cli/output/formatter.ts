@@ -1,7 +1,13 @@
 // Human-readable output formatter for CLI
 // Provides beautiful, colored terminal output
 
-import { formatDurationDecimal, formatRelativeTime, formatSize } from '../../shared/formatters';
+import {
+	formatCount,
+	formatDurationDecimal,
+	formatRelativeTime,
+	formatSize,
+	formatTokensCompact,
+} from '../../shared/formatters';
 import {
 	MODEL_SERVER_NAME,
 	modelServerBindLabel,
@@ -1317,6 +1323,13 @@ export function formatTokenProxyReport(report: TokenProxyReport): string {
 		}
 		if (report.usage.totals.compressRequests > 0) {
 			lines.push(dim(`  ${TOKEN_PROXY_ESTIMATE_NOTE}`));
+		}
+		// An older desktop answers without the provider's counts.
+		const provider = report.usage.totals.provider;
+		if (provider && provider.requests > 0) {
+			lines.push(
+				`  Provider counted (${formatCount(provider.requests)} requests): input ${formatTokensCompact(provider.inputTokens)}, cache read ${formatTokensCompact(provider.cacheReadTokens)}, cache write ${formatTokensCompact(provider.cacheWriteTokens)}, output ${formatTokensCompact(provider.outputTokens)}`
+			);
 		}
 	}
 

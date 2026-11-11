@@ -27,8 +27,9 @@ const INSERT_SQL = `
     (id, agent_id, route, kind, mode, started_at, duration_ms, status, outcome,
      request_bytes, sent_bytes, response_bytes, original_tokens, sent_tokens,
      added_latency_ms, blocks_compressed, cache_hits, compressor_counts, new_blocks, skip_reason,
-     routed_to)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     routed_to, provider_input_tokens, provider_cache_read_tokens, provider_cache_write_tokens,
+     provider_output_tokens)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 function roundedOrNull(value: number | undefined): number | null {
@@ -67,7 +68,11 @@ export function recordProxyRequest(
 			hasCounts ? JSON.stringify(counts) : null,
 			blocks && blocks.length > 0 ? JSON.stringify(blocks) : null,
 			request.skipReason ?? null,
-			request.routedTo ?? null
+			request.routedTo ?? null,
+			roundedOrNull(request.providerInputTokens),
+			roundedOrNull(request.providerCacheReadTokens),
+			roundedOrNull(request.providerCacheWriteTokens),
+			roundedOrNull(request.providerOutputTokens)
 		);
 	logger.debug(`Recorded proxy request: ${request.route} (${request.mode})`, LOG_CONTEXT);
 	return id;
@@ -80,9 +85,16 @@ interface AgentTotalsRow {
 	original_tokens: number;
 	sent_tokens: number;
 	added_latency_ms: number;
+	provider_requests: number;
+	provider_input_tokens: number;
+	provider_cache_read_tokens: number;
+	provider_cache_write_tokens: number;
+	provider_output_tokens: number;
 }
 
-function toTotals(row: Omit<AgentTotalsRow, 'agent_id'>): ProxyRequestTotals {
+type TotalsRow = Omit<AgentTotalsRow, 'agent_id'>;
+
+function toTotals(row: TotalsRow): ProxyRequestTotals {
 	return {
 		requests: row.requests,
 		compressRequests: row.compress_requests,
@@ -91,6 +103,13 @@ function toTotals(row: Omit<AgentTotalsRow, 'agent_id'>): ProxyRequestTotals {
 		tokensSaved: row.original_tokens - row.sent_tokens,
 		avgAddedLatencyMs:
 			row.compress_requests > 0 ? Math.round(row.added_latency_ms / row.compress_requests) : 0,
+		provider: {
+			requests: row.provider_requests,
+			inputTokens: row.provider_input_tokens,
+			cacheReadTokens: row.provider_cache_read_tokens,
+			cacheWriteTokens: row.provider_cache_write_tokens,
+			outputTokens: row.provider_output_tokens,
+		},
 	};
 }
 
@@ -112,7 +131,12 @@ export function getProxyRequestUsage(
         SUM(CASE WHEN original_tokens IS NOT NULL THEN 1 ELSE 0 END) AS compress_requests,
         COALESCE(SUM(original_tokens), 0) AS original_tokens,
         COALESCE(SUM(sent_tokens), 0) AS sent_tokens,
-        COALESCE(SUM(added_latency_ms), 0) AS added_latency_ms
+        COALESCE(SUM(added_latency_ms), 0) AS added_latency_ms,
+        SUM(CASE WHEN provider_input_tokens IS NOT NULL THEN 1 ELSE 0 END) AS provider_requests,
+        COALESCE(SUM(provider_input_tokens), 0) AS provider_input_tokens,
+        COALESCE(SUM(provider_cache_read_tokens), 0) AS provider_cache_read_tokens,
+        COALESCE(SUM(provider_cache_write_tokens), 0) AS provider_cache_write_tokens,
+        COALESCE(SUM(provider_output_tokens), 0) AS provider_output_tokens
       FROM proxy_requests
       WHERE started_at >= ?
       GROUP BY agent_id
@@ -120,19 +144,20 @@ export function getProxyRequestUsage(
     `
 	);
 	const rows = stmt.all(getTimeRangeStart(range)) as AgentTotalsRow[];
-	const sum = {
+	const sum: TotalsRow = {
 		requests: 0,
 		compress_requests: 0,
 		original_tokens: 0,
 		sent_tokens: 0,
 		added_latency_ms: 0,
+		provider_requests: 0,
+		provider_input_tokens: 0,
+		provider_cache_read_tokens: 0,
+		provider_cache_write_tokens: 0,
+		provider_output_tokens: 0,
 	};
 	const byAgent: ProxyAgentTotals[] = rows.map((row) => {
-		sum.requests += row.requests;
-		sum.compress_requests += row.compress_requests;
-		sum.original_tokens += row.original_tokens;
-		sum.sent_tokens += row.sent_tokens;
-		sum.added_latency_ms += row.added_latency_ms;
+		for (const key of Object.keys(sum) as Array<keyof TotalsRow>) sum[key] += row[key];
 		return { agentId: row.agent_id, ...toTotals(row) };
 	});
 	return { range, totals: toTotals(sum), byAgent };
