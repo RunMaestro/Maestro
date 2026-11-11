@@ -140,6 +140,30 @@ subscriptions:
 			});
 		});
 
+		it('keeps the target tab of an action: command cli send subscription', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: follow-up
+    event: time.once
+    fire_at: '2030-01-01T10:00:00.000Z'
+    action: command
+    command:
+      mode: cli
+      cli:
+        command: send
+        target: agent-1
+        tab: tab-1
+        message: find more candidates
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result!.subscriptions[0].command).toEqual({
+				mode: 'cli',
+				cli: { command: 'send', target: 'agent-1', tab: 'tab-1', message: 'find more candidates' },
+			});
+		});
+
 		it('falls back to legacy maestro-cue.yaml when canonical does not exist', () => {
 			// Only legacy path exists
 			mockExistsSync.mockImplementation((p: string) => {
@@ -1502,6 +1526,24 @@ subscriptions:
 				expect(result.valid).toBe(false);
 				expect(result.errors).toEqual(
 					expect.arrayContaining([expect.stringContaining('"command.cli.target" is required')])
+				);
+			});
+
+			it('rejects a cli command whose tab is blank', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'broken',
+							event: 'time.once',
+							fire_at: '2030-01-01T10:00:00.000Z',
+							action: 'command',
+							command: { mode: 'cli', cli: { command: 'send', target: 'x', tab: '  ' } },
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"command.cli.tab" must be a non-empty')])
 				);
 			});
 

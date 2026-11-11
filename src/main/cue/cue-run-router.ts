@@ -102,6 +102,17 @@ export interface CueRunActionDeps {
 	/** Read on EVERY run, never cached at boot, so a profile edit applies to the next run. */
 	getConductorProfile?: () => string | undefined;
 	onNotify: (params: CueNotifyParams) => Promise<CueRunResult>;
+	/**
+	 * A CLI send's `tab` was closed before the run fired, so the message went to
+	 * a new tab (`newTabId`, null when that failed too). The desktop raises a
+	 * toast so the move is not silent; a runner without a UI may omit it.
+	 */
+	onCliTabFallback?: (info: {
+		subscriptionName: string;
+		agentId: string;
+		requestedTab: string;
+		newTabId: string | null;
+	}) => void;
 	onAutoRun?: (params: {
 		runId: string;
 		session: SessionInfo;
@@ -337,6 +348,9 @@ export async function executeCueRunAction(
 					templateContext,
 					timeoutMs,
 					onLog: deps.onLog,
+					onTabFallback: deps.onCliTabFallback
+						? (info) => deps.onCliTabFallback?.({ subscriptionName, ...info })
+						: undefined,
 					// CLI mode intentionally stays local: `maestro-cli send`
 					// targets the local Maestro daemon (routing messages to
 					// sessions managed by this app), so SSH wrapping would

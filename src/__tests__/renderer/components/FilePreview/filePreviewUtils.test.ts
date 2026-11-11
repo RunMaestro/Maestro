@@ -7,7 +7,7 @@ import {
 	formatDateTime,
 	countMarkdownTasks,
 	extractHeadings,
-	resolveImagePath,
+	deriveProjectRoot,
 	isCodeFile,
 	LARGE_FILE_TOKEN_SKIP_THRESHOLD,
 	LARGE_FILE_PREVIEW_LIMIT,
@@ -297,43 +297,21 @@ describe('filePreviewUtils', () => {
 		});
 	});
 
-	describe('resolveImagePath', () => {
-		it('returns data URLs as-is', () => {
-			expect(resolveImagePath('data:image/png;base64,abc', '/docs/readme.md')).toBe(
-				'data:image/png;base64,abc'
-			);
+	describe('deriveProjectRoot', () => {
+		it('strips the cwd and file name from the end of the path', () => {
+			expect(deriveProjectRoot('/vault/Body/note.md', 'Body')).toBe('/vault');
+			expect(deriveProjectRoot('/x/Body/vault/Body/note.md', 'Body')).toBe('/x/Body/vault');
 		});
 
-		it('returns http URLs as-is', () => {
-			expect(resolveImagePath('https://example.com/img.png', '/docs/readme.md')).toBe(
-				'https://example.com/img.png'
-			);
+		it('handles a nested cwd', () => {
+			expect(deriveProjectRoot('/vault/a/b/note.md', 'a/b')).toBe('/vault');
 		});
 
-		it('returns absolute paths as-is', () => {
-			expect(resolveImagePath('/absolute/path.png', '/docs/readme.md')).toBe('/absolute/path.png');
-		});
-
-		it('resolves relative paths from markdown directory', () => {
-			expect(resolveImagePath('images/photo.png', '/project/docs/readme.md')).toBe(
-				'/project/docs/images/photo.png'
-			);
-		});
-
-		it('handles ./ prefix', () => {
-			expect(resolveImagePath('./images/photo.png', '/project/docs/readme.md')).toBe(
-				'/project/docs/images/photo.png'
-			);
-		});
-
-		it('resolves ../ paths by normalization', () => {
-			expect(resolveImagePath('../assets/img.png', '/project/docs/readme.md')).toBe(
-				'/project/assets/img.png'
-			);
-		});
-
-		it('resolves deeply nested ../ paths', () => {
-			expect(resolveImagePath('../../img.png', '/a/b/c/readme.md')).toBe('/a/img.png');
+		it('uses the file tree to tell a root-level file from one outside the project', () => {
+			const indices = { allPaths: new Set(['note.md']), filenameIndex: new Map() };
+			expect(deriveProjectRoot('/vault/note.md', '', indices)).toBe('/vault');
+			expect(deriveProjectRoot('/elsewhere/other.md', '', indices)).toBeUndefined();
+			expect(deriveProjectRoot('/vault/note.md', undefined)).toBeUndefined();
 		});
 	});
 

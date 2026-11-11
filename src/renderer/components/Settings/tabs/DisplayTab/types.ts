@@ -3,6 +3,7 @@ import type { Theme } from '../../../../types';
 
 export interface DisplayTabProps {
 	theme: Theme;
+	isOpen: boolean;
 }
 
 export type DisplayTabSettings = UseSettingsReturn;

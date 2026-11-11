@@ -1592,6 +1592,23 @@ app
 			onLog: cueRunLog,
 			getConductorProfile: () => (store.get('conductorProfile', '') as string) || undefined,
 			onNotify: (params) => executeCueNotify({ ...params, mainWindow }),
+			// The tab this message was scheduled into is gone, so it went to a
+			// new tab. Say where, so the move is not silent.
+			onCliTabFallback: ({ subscriptionName, agentId, newTabId }) => {
+				emitCueNotifyToast(mainWindow, {
+					agentId,
+					title: subscriptionName,
+					color: newTabId ? 'yellow' : 'red',
+					message: newTabId
+						? 'The tab this task was scheduled into was closed, so it ran in a new tab.'
+						: 'The tab this task was scheduled into was closed, and a new tab could not be opened.',
+					clickAction: {
+						kind: 'jump-session',
+						sessionId: agentId,
+						...(newTabId ? { tabId: newTabId } : {}),
+					},
+				});
+			},
 			onAutoRun: (params) => {
 				const autoRunLog = (level: string, message: string) => {
 					if (level === 'error') logger.error(message, 'Cue');

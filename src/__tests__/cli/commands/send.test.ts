@@ -52,6 +52,12 @@ vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(),
 	addHistoryEntry: vi.fn(),
+	readStoredAiTabs: vi.fn(() => []),
+}));
+
+// Mock the desktop tab list `--session` is checked against
+vi.mock('../../../cli/services/session-command', () => ({
+	listDesktopTabs: vi.fn(),
 }));
 
 // Mock prompt-loader so the synopsis turn gets a fixed prompt
@@ -81,7 +87,14 @@ import { send } from '../../../cli/commands/send';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { UnsupportedCommandError } from '../../../cli/services/maestro-client';
 import { spawnAgent, detectAgent } from '../../../cli/services/agent-spawner';
-import { resolveAgentId, getSessionById, addHistoryEntry } from '../../../cli/services/storage';
+import {
+	resolveAgentId,
+	getSessionById,
+	addHistoryEntry,
+	readStoredAiTabs,
+} from '../../../cli/services/storage';
+import { listDesktopTabs } from '../../../cli/services/session-command';
+import type { DesktopTabEntry } from '../../../shared/desktopTabs';
 import { estimateContextUsage } from '../../../shared/maestro-lib/parsers/usage-aggregator';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 import { CALLER_AGENT_ID_ENV_VAR } from '../../../shared/agentDelegation';
@@ -109,6 +122,8 @@ describe('send command', () => {
 		// that don't include `appendSystemPrompt` keep passing (vitest treats
 		// undefined-valued object keys as absent in `toHaveBeenCalledWith`).
 		vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue(undefined);
+		vi.mocked(listDesktopTabs).mockResolvedValue([]);
+		vi.mocked(readStoredAiTabs).mockReturnValue([]);
 		// A test run started from an agent's own shell inherits its caller
 		// identity and its turn's origin, which would turn every entry here into
 		// an AGENT or CUE entry. Blank reads as absent.
@@ -1243,6 +1258,91 @@ describe('send command', () => {
 			expect(processExitSpy).not.toHaveBeenCalled();
 			expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('disk full'));
 			errSpy.mockRestore();
+		});
+	});
+
+	describe('--session safety checks', () => {
+		const desktopTab = (overrides: Partial<DesktopTabEntry>): DesktopTabEntry =>
+			({
+				tabId: 'tab-810d',
+				agentId: 'agent-abc-123',
+				agentSessionId: 'provider-2515',
+				state: 'idle',
+				...overrides,
+			}) as DesktopTabEntry;
+
+		beforeEach(() => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockReturnValue(mockAgent());
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.spyOn(console, 'error').mockImplementation(() => {});
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+		});
+
+		it('refuses a Maestro tab id and names the dispatch that delivers into it', async () => {
+			vi.mocked(listDesktopTabs).mockResolvedValue([desktopTab({})]);
+
+			await expect(send('agent-abc', 'hi', { session: 'tab-810d' })).rejects.toThrow(
+				'process.exit'
+			);
+
+			expect(spawnAgent).not.toHaveBeenCalled();
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.code).toBe('SESSION_IS_TAB_ID');
+			expect(output.error).toContain('provider-2515');
+			expect(output.error).toContain('dispatch agent-abc-123 "<message>" --tab tab-810d --queue');
+		});
+
+		it('refuses the provider session of a tab that is mid-turn', async () => {
+			vi.mocked(listDesktopTabs).mockResolvedValue([desktopTab({ state: 'busy' })]);
+
+			await expect(send('agent-abc', 'hi', { session: 'provider-2515' })).rejects.toThrow(
+				'process.exit'
+			);
+
+			expect(spawnAgent).not.toHaveBeenCalled();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('TAB_BUSY');
+		});
+
+		it('resumes the provider session of an idle tab', async () => {
+			vi.mocked(listDesktopTabs).mockResolvedValue([desktopTab({})]);
+			vi.mocked(spawnAgent).mockResolvedValue({ success: true, response: 'ok' });
+
+			await send('agent-abc', 'hi', { session: 'provider-2515' });
+
+			expect(spawnAgent).toHaveBeenCalled();
+		});
+
+		it('ignores tabs of other agents', async () => {
+			vi.mocked(listDesktopTabs).mockResolvedValue([
+				desktopTab({ agentId: 'someone-else', state: 'busy' }),
+			]);
+			vi.mocked(spawnAgent).mockResolvedValue({ success: true, response: 'ok' });
+
+			await send('agent-abc', 'hi', { session: 'provider-2515' });
+
+			expect(spawnAgent).toHaveBeenCalled();
+		});
+
+		it('still catches a tab id from the persisted tabs when the desktop is down', async () => {
+			vi.mocked(listDesktopTabs).mockRejectedValue(new Error('Maestro desktop app is not running'));
+			vi.mocked(readStoredAiTabs).mockReturnValue([{ id: 'tab-810d' }]);
+
+			await expect(send('agent-abc', 'hi', { session: 'tab-810d' })).rejects.toThrow(
+				'process.exit'
+			);
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).code).toBe('SESSION_IS_TAB_ID');
+		});
+
+		it('does not consult the desktop for a send that opens a new session', async () => {
+			vi.mocked(spawnAgent).mockResolvedValue({ success: true, response: 'ok' });
+
+			await send('agent-abc', 'hi', {});
+
+			expect(listDesktopTabs).not.toHaveBeenCalled();
 		});
 	});
 });

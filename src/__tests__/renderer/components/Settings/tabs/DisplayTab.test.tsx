@@ -69,8 +69,9 @@ const mockSetShowWorktreeProvider = vi.fn();
 // Per-test overrides (merged into useSettings return)
 let mockUseSettingsOverrides: Record<string, any> = {};
 
-vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
-	useSettings: () => ({
+vi.mock('../../../../../renderer/hooks/settings/useSettings', () => {
+	// Sections read settings through useSettingsValues; both return the same mock.
+	const useSettings = () => ({
 		showWorktreeProvider: false,
 		setShowWorktreeProvider: mockSetShowWorktreeProvider,
 		fontFamily: 'Menlo',
@@ -174,9 +175,12 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		typographySnapshot: null,
 		saveTypographySnapshot: mockSaveTypographySnapshot,
 		restoreTypographySnapshot: mockRestoreTypographySnapshot,
+		// The Left Side Panel section reads the Cue flag through useSettingsValues.
+		encoreFeatures: { maestroCue: false },
 		...mockUseSettingsOverrides,
-	}),
-}));
+	});
+	return { useSettings, useSettingsValues: useSettings };
+});
 
 // Mock the IgnorePatternsSection to avoid deep sub-component rendering complexity
 // while still verifying props are passed correctly
