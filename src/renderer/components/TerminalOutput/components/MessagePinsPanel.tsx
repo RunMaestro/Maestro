@@ -30,6 +30,7 @@ import {
 import { renamePinnedMessage, unpinMessage } from '../../../services/messagePins';
 import { highlightMatches } from '../../../utils/highlightMatches';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { isImeComposing } from '../../../utils/ime';
 
 const PANEL_WIDTH = 380;
 
@@ -86,6 +87,10 @@ function PinRenameField({ theme, pin, onCommit, onCancel }: PinRenameFieldProps)
 				onBlur={() => settle(true)}
 				onKeyDown={(e) => {
 					if (e.key === 'Enter') {
+						if (isImeComposing(e)) {
+							e.stopPropagation();
+							return;
+						}
 						e.preventDefault();
 						e.stopPropagation();
 						settle(true);

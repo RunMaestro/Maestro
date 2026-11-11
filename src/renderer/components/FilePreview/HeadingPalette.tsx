@@ -102,6 +102,7 @@ export const HeadingPalette = React.memo(function HeadingPalette({
 			return;
 		}
 		if (e.key === 'Enter') {
+			if (isImeComposing(e)) return;
 			e.preventDefault();
 			jumpTo(selectedIndex);
 			return;
