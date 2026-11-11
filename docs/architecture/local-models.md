@@ -2803,7 +2803,9 @@ The rules, and why each is a rule:
    `gateway.args` on the launch plan). OpenCode reads no base-URL variable: the gateway is added to
    its inline config document, `OPENCODE_CONFIG_CONTENT` (see
    [OpenCode: the gateway in its inline config](#opencode-the-gateway-in-its-inline-config)).
-   Copilot CLI ignores base-URL variables. Factory Droid is not verified (see
+   Copilot CLI reads a base URL only for a BYOK provider, which takes it off the Copilot
+   subscription, so it stays refused (see
+   [Copilot CLI: a BYOK variable only](#copilot-cli-a-byok-variable-only)). Factory Droid is not verified (see
    [Factory Droid: not verified](#factory-droid-not-verified)), so it stays refused, and so do the
    providers in [Other providers: not verified](#other-providers-not-verified). A guessed name fails silently: the CLI ignores it and the agent runs direct while the UI
    says it is proxied. **The Codex mapping shipped as exactly that failure**, with the variable
@@ -2901,6 +2903,44 @@ and nothing of the user's config read or written:
 Not verified: an OpenCode login other than an API key (a Claude or ChatGPT subscription through an
 OpenCode auth plugin), and an OpenCode older than `--standalone`, which fails the launch on the
 unknown option (as it does for Run on).
+
+### Copilot CLI: a BYOK variable only
+
+Checked 2026-11-11 (G03.4) against Copilot CLI 1.0.95 (`/opt/homebrew/bin/copilot`). Every run
+used `env -i` with a throwaway `HOME` and `COPILOT_HOME`, `COPILOT_AUTO_UPDATE=false`, a fake
+key, and `copilot -p "Reply with one word: hi" --allow-all-tools -s`. No GitHub login was present
+and no real provider was reached.
+
+`copilot help environment` documents `COPILOT_PROVIDER_BASE_URL` ("API endpoint URL for a custom
+model provider (BYOK). When set, the CLI uses this provider instead of GitHub Copilot's model
+routing. GitHub authentication is not required"), with `COPILOT_PROVIDER_TYPE` (`openai`,
+`azure`, `anthropic`), `COPILOT_PROVIDER_API_KEY` and `COPILOT_PROVIDER_WIRE_API`. The reported
+`COPILOT_PROVIDER_API_URL` is not among them.
+
+| Setting                                                                  | Result                                                                                               |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `COPILOT_PROVIDER_BASE_URL=http://127.0.0.1:1`, type `anthropic`         | "Could not connect to local model provider at http://127.0.0.1:1" (also with `COPILOT_OFFLINE=true`) |
+| `COPILOT_PROVIDER_BASE_URL=http://127.0.0.1:1/v1`, type `openai`         | "Could not connect to local model provider at http://127.0.0.1:1/v1"                                 |
+| Recording listener (answers 500), type `anthropic`, URL without `/v1`    | `POST /v1/messages`, key in `x-api-key`, 6 attempts                                                  |
+| Recording listener, type `openai`, URL with `/v1`                        | `POST /v1/chat/completions`, bearer                                                                  |
+| Recording listener, type `openai`, `COPILOT_PROVIDER_WIRE_API=responses` | `POST /v1/responses`, bearer                                                                         |
+| `COPILOT_PROVIDER_API_URL=http://127.0.0.1:1`, no login                  | Ignored: the CLI asked for a GitHub login                                                            |
+| Control: no base URL, no login                                           | The CLI asked for a GitHub login                                                                     |
+
+So the variable is honored, and the closed port proves it. It is still not mapped, because it is a
+BYOK switch, not a base URL for the subscription:
+
+- **A Copilot subscription cannot be proxied with it.** Setting it takes the turn off GitHub's
+  model routing and sends only the provider key, so a subscription agent pointed at the Maestro
+  proxy would arrive with no usable credential. Proxying a subscription needs the GitHub token to
+  Copilot token exchange and the Copilot API as the upstream, which the proxy does not do.
+- **A BYOK user already sets it.** Rule 1 then lets the user's value win, so the gateway would
+  never apply to the one login it could carry.
+
+The `copilot-cli` reason says this. A BYOK user who wants the Maestro proxy can set
+`COPILOT_PROVIDER_BASE_URL` to the proxy URL in the agent's own environment variables; Maestro does
+not do that for them (not measured end to end). Run on (`run-on.ts`) uses the same
+variable on purpose, to put the agent on a local model.
 
 ### Factory Droid: not verified
 

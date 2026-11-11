@@ -153,7 +153,7 @@ describe('remoteUpdateSessionConfig - Local Models gateway', () => {
 		});
 
 		expect(reply.success).toBe(false);
-		expect(reply.error).toContain('ignores base-URL variables');
+		expect(reply.error).toContain('reads a base URL only for a BYOK provider');
 	});
 
 	it('refuses a value that is not a URL, even beside a valid field', async () => {
@@ -206,7 +206,7 @@ describe('remoteUpdateSessionConfig - token proxy mode', () => {
 	it('reports the reason the service refused, and writes nothing', async () => {
 		gatewayService.setAgentTokenProxyMode.mockResolvedValue({
 			ok: false,
-			error: 'Copilot CLI ignores base-URL variables',
+			error: 'Copilot CLI reads a base URL only for a BYOK provider',
 		});
 
 		const reply = await refusePatch(makeSession({ toolType: 'copilot-cli' } as Partial<Session>), {
@@ -214,7 +214,7 @@ describe('remoteUpdateSessionConfig - token proxy mode', () => {
 		});
 
 		expect(reply.success).toBe(false);
-		expect(reply.error).toContain('Copilot CLI ignores base-URL variables');
+		expect(reply.error).toContain('Copilot CLI reads a base URL only for a BYOK provider');
 	});
 
 	it('refuses a value that is not a mode, without asking the service', async () => {

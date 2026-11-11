@@ -409,7 +409,7 @@ describe('update-agent command', () => {
 			await updateAgent('agent-1', { gatewayUrl: 'http://127.0.0.1:8787' });
 
 			expect(formatError).toHaveBeenCalledWith(
-				expect.stringContaining('ignores base-URL variables')
+				expect.stringContaining('reads a base URL only for a BYOK provider')
 			);
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});

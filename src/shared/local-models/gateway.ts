@@ -103,9 +103,22 @@ const GATEWAY_SUPPORT: Record<AgentId, AgentGatewaySupport> = {
 		// basic string for any URL `parseGatewayUrl` accepts.
 		configArgs: (url) => ['-c', `openai_base_url=${JSON.stringify(url)}`],
 	},
+	// Measured on 2026-11-11 against Copilot CLI 1.0.95 (G03.4, throwaway HOME
+	// and COPILOT_HOME, fake key): `COPILOT_PROVIDER_BASE_URL` IS honored. At
+	// `http://127.0.0.1:1` every `copilot -p` turn failed with "Could not connect
+	// to local model provider" (types `anthropic` and `openai`), and a recording
+	// listener saw `POST /v1/messages` (x-api-key), `POST /v1/chat/completions`
+	// and, with `COPILOT_PROVIDER_WIRE_API=responses`, `POST /v1/responses`
+	// (bearer). The reported `COPILOT_PROVIDER_API_URL` is ignored. But that
+	// variable is BYOK: it switches the CLI off GitHub's model routing and sends
+	// only the provider key, so a Copilot subscription cannot be proxied with it
+	// (that needs the Copilot token exchange, which Maestro does not do), and a
+	// BYOK user already sets it, which rule 1 lets win. Not mapped. Run on
+	// (`run-on.ts`) uses the same variable for a local model on purpose.
 	'copilot-cli': {
 		supported: false,
-		reason: 'Copilot CLI ignores base-URL variables, so its traffic cannot go through a gateway.',
+		reason:
+			'Copilot CLI reads a base URL only for a BYOK provider (COPILOT_PROVIDER_BASE_URL), which takes it off the Copilot subscription, so Maestro does not send it through a gateway.',
 	},
 	// OpenCode reads no base-URL variable: each provider's `options.baseURL`
 	// lives in its config, and `OPENCODE_CONFIG_CONTENT` is an inline config

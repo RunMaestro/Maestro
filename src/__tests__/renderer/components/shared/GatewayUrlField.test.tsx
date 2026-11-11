@@ -80,7 +80,7 @@ describe('GatewayUrlField', () => {
 		const { input } = renderField({ toolType: 'copilot-cli' });
 
 		expect(input.disabled).toBe(true);
-		expect(status()).toHaveTextContent('Copilot CLI ignores base-URL variables');
+		expect(status()).toHaveTextContent('Copilot CLI reads a base URL only for a BYOK provider');
 	});
 
 	it("says the gateway is not applied when the agent's own variable wins", () => {

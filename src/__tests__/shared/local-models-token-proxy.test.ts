@@ -483,7 +483,8 @@ describe('tokenProxyRouteForAgent', () => {
 	it('refuses a provider that cannot use a gateway, with its reason', () => {
 		const copilot = tokenProxyRouteForAgent('copilot-cli', {});
 		expect(copilot.ok).toBe(false);
-		if (!copilot.ok) expect(copilot.error).toContain('Copilot CLI ignores base-URL variables');
+		if (!copilot.ok)
+			expect(copilot.error).toContain('Copilot CLI reads a base URL only for a BYOK provider');
 		expect(tokenProxyRouteForAgent('terminal', {}).ok).toBe(false);
 	});
 });

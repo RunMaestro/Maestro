@@ -308,7 +308,7 @@ describe('create-agent command', () => {
 
 			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
 			expect(parsed.success).toBe(false);
-			expect(parsed.error).toContain('Copilot CLI ignores base-URL variables');
+			expect(parsed.error).toContain('Copilot CLI reads a base URL only for a BYOK provider');
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 	});

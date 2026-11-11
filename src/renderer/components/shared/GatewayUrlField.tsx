@@ -6,8 +6,8 @@
  * what the launch will do with what is typed, from the same
  * `resolveAgentGateway` the launch plan runs:
  *
- * - a provider with no base-URL variable shows the field DISABLED with the
- *   reason (Copilot CLI ignores base-URL variables);
+ * - a provider Maestro cannot point at a gateway shows the field DISABLED with
+ *   the reason (Copilot CLI reads a base URL only for a BYOK provider);
  * - an agent that sets the variable itself is told the gateway is not applied;
  * - a loopback URL on an SSH-remote agent is flagged before the launch
  *   refuses it;

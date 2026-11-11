@@ -37,12 +37,15 @@ describe('agentGatewaySupport', () => {
 		expect(claude.configArgs).toBeUndefined();
 	});
 
-	it('refuses Copilot CLI and says it ignores base-URL variables', () => {
+	it('refuses Copilot CLI and says its base URL is BYOK-only', () => {
 		const support = agentGatewaySupport('copilot-cli');
 
 		expect(support.supported).toBe(false);
 		if (support.supported) throw new Error('expected unsupported');
-		expect(support.reason).toContain('ignores base-URL variables');
+		expect(support.reason).toContain('reads a base URL only for a BYOK provider');
+		// The measured variable, not the reported COPILOT_PROVIDER_API_URL.
+		expect(support.reason).toContain('COPILOT_PROVIDER_BASE_URL');
+		expect(support.reason).toContain('takes it off the Copilot subscription');
 	});
 
 	it('refuses Factory Droid as unverified and names where its base URL lives', () => {
@@ -358,7 +361,7 @@ describe('parseGatewayUrlEdit', () => {
 
 		expect(edit.ok).toBe(false);
 		if (edit.ok) throw new Error('expected a refusal');
-		expect(edit.error).toContain('ignores base-URL variables');
+		expect(edit.error).toContain('reads a base URL only for a BYOK provider');
 	});
 
 	it('refuses a value that is not a URL', () => {

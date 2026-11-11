@@ -197,7 +197,7 @@ describe('setAgentGatewayUrl', () => {
 
 		expect(result).toEqual({
 			ok: false,
-			error: expect.stringContaining('ignores base-URL variables'),
+			error: expect.stringContaining('reads a base URL only for a BYOK provider'),
 		});
 	});
 
@@ -366,7 +366,8 @@ describe('setAgentTokenProxyMode', () => {
 		const result = await setAgentTokenProxyMode('agent-1', 'compress');
 
 		expect(result.ok).toBe(false);
-		if (!result.ok) expect(result.error).toContain('Copilot CLI ignores base-URL variables');
+		if (!result.ok)
+			expect(result.error).toContain('Copilot CLI reads a base URL only for a BYOK provider');
 		expect(window.maestro.localModels.proxy.ensurePort).not.toHaveBeenCalled();
 		expect(stored().gatewayUrl).toBeUndefined();
 	});
