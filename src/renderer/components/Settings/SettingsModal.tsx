@@ -433,9 +433,13 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						theme={theme}
 						query={search.query}
 						results={search.results}
-						onNavigate={handleSearchNavigate}
+						isOpen={isOpen}
 						selectedIndex={search.selectedIndex}
 						setSelectedIndex={search.setSelectedIndex}
+						expandedId={search.expandedId}
+						rowRefs={search.rowRefs}
+						onActivate={search.activate}
+						onNavigate={search.navigate}
 					/>
 				)}
 
@@ -491,7 +495,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					>
 						{activeTab === 'general' && <GeneralTab theme={theme} isOpen={isOpen} />}
 
-						{activeTab === 'display' && <DisplayTab theme={theme} />}
+						{activeTab === 'display' && <DisplayTab theme={theme} isOpen={isOpen} />}
 
 						{activeTab === 'shortcuts' && (
 							<ShortcutsTab

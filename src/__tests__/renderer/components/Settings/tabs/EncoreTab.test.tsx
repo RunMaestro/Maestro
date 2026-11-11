@@ -139,8 +139,9 @@ const mockSetDefaultStatsTimeRange = vi.fn();
 // Override mechanism for per-test customization
 let mockUseSettingsOverrides: Record<string, unknown> = {};
 
-vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
-	useSettings: () => ({
+vi.mock('../../../../../renderer/hooks/settings/useSettings', () => {
+	// Sections read settings through useSettingsValues; both return the same mock.
+	const useSettings = () => ({
 		encoreFeatures: { directorNotes: false },
 		setEncoreFeatures: vi.fn(),
 		directorNotesSettings: {
@@ -167,8 +168,9 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		symphonyRegistryUrls: [],
 		setSymphonyRegistryUrls: vi.fn(),
 		...mockUseSettingsOverrides,
-	}),
-}));
+	});
+	return { useSettings, useSettingsValues: useSettings };
+});
 
 const mockAvailableAgents: AgentConfig[] = [
 	{

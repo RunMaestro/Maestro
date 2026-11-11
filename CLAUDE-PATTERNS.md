@@ -47,7 +47,7 @@ Skipping step 3 is the classic "setting resets on restart" bug. Full checklist, 
 
 **MANDATORY: Register the setting with Settings Search.** Every user-facing setting must be findable from the Settings modal search bar (Cmd+F). Two steps, both required:
 
-1. Wrap the rendered control in `<div data-setting-id="<tab>-<slug>">…</div>` inside the appropriate tab file (e.g., `src/renderer/components/Settings/tabs/GeneralTab/GeneralTab.tsx`). The id must be unique and kebab-case.
+1. Wrap the rendered control in `<div data-setting-id="<tab>-<slug>">…</div>` inside its section component, and register the section in the tab's `sections.tsx` (e.g., `src/renderer/components/Settings/tabs/GeneralTab/sections.tsx`) with the id in its `settingIds`. The id must be unique and kebab-case. See [[CLAUDE-SETTINGS.md]] §9.
 2. Add a matching entry to the per-tab registry file (`searchableSettingsGeneral.ts`, `searchableSettingsDisplay.ts`, `searchableSettingsMisc.ts`, `searchableSettingsNotifications.ts`, `searchableSettingsEncore.ts` under `src/renderer/components/Settings/`; `searchableSettings.ts` only composes them) with `id`, `tab`, `tabLabel`, `label`, `description`, and `keywords` covering every visible string a user might type after seeing the section in the UI.
 
 The DOM-parity test at `src/__tests__/renderer/components/Settings/searchableSettings.test.ts` enforces both directions (rendered-id ↔ registry-entry). It will fail CI if either is missing. For any new visible string you want guaranteed-findable, add a query to the `it.each` block in that test.

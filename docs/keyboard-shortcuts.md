@@ -543,6 +543,29 @@ so the selection slides sideways instead of jumping to another branch's tip.
 message selects it, the same as clicking its dot. The graph is built from every
 branch, so all of this reaches commits the List view does not hold.
 
+## Settings Search
+
+Type in the search box at the top of Settings to find a setting on any tab. You
+can change most results without leaving the search: a single on/off setting
+shows its switch on the result row, and a larger setting opens its full section
+under the row.
+
+| Action                                   | macOS              | Windows/Linux      |
+| ---------------------------------------- | ------------------ | ------------------ |
+| Focus the search box                     | `Cmd+F`            | `Ctrl+F`           |
+| Move from the search box into results    | `Down Arrow`       | `Down Arrow`       |
+| Move between results                     | `Up/Down Arrow`    | `Up/Down Arrow`    |
+| Flip a switch, or open/close its section | `Space`            | `Space`            |
+| Open or close a section                  | `Right/Left Arrow` | `Right/Left Arrow` |
+| Go to the setting on its tab             | `Enter`            | `Enter`            |
+| Back to the search box                   | `Esc`              | `Esc`              |
+
+`Space` only acts on a result when the result has focus, so you can still type a
+space in a search of two or more words. `Enter` in the search box goes to the
+highlighted result. A result with nothing to change in place, such as the theme
+picker, goes to its tab with either key. Typing any letter while a result has
+focus returns you to the search box.
+
 ## Maestro Prompts (Settings)
 
 Settings -> Maestro Prompts edits the system prompts Maestro sends to agents.

@@ -68,8 +68,9 @@ const mockSetFilePreviewToolbarButtonVisibility = vi.fn();
 // Per-test overrides (merged into useSettings return)
 let mockUseSettingsOverrides: Record<string, any> = {};
 
-vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
-	useSettings: () => ({
+vi.mock('../../../../../renderer/hooks/settings/useSettings', () => {
+	// Sections read settings through useSettingsValues; both return the same mock.
+	const useSettings = () => ({
 		fontFamily: 'Menlo',
 		setFontFamily: mockSetFontFamily,
 		fontSize: 14,
@@ -172,8 +173,9 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		saveTypographySnapshot: mockSaveTypographySnapshot,
 		restoreTypographySnapshot: mockRestoreTypographySnapshot,
 		...mockUseSettingsOverrides,
-	}),
-}));
+	});
+	return { useSettings, useSettingsValues: useSettings };
+});
 
 // Mock the IgnorePatternsSection to avoid deep sub-component rendering complexity
 // while still verifying props are passed correctly
