@@ -202,9 +202,9 @@ describe('MoveToHostModal', () => {
 			);
 		});
 
-		it('cannot set up a remote that opted out of Federation', () => {
+		it('cannot set up a remote Federation does not reach (opted out, disabled, not checked)', () => {
 			renderModal(vi.fn(), { kind: 'ssh', remoteId: 'r1', hostReady: false });
-			expect(screen.getByText('Federation is off for this remote')).toBeTruthy();
+			expect(screen.getByText('Federation does not reach this remote')).toBeTruthy();
 			expect(setupButton()).toBeDisabled();
 		});
 	});

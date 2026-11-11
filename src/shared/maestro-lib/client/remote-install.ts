@@ -105,6 +105,13 @@ function findCompanions(cliFile: string): Array<{ file: string; name: string }> 
  * the bundle. Throws when the prompts are missing: a host installed without them refuses to start.
  */
 export function resolveLocalCliBundle(cliFile: string, version: string): LocalCliBundle {
+	// A source launch (ts-node, vitest) would copy a `.ts` module as the bundle.
+	if (path.extname(cliFile) !== '.js') {
+		throw new RemoteInstallError(
+			'local-bundle',
+			`${cliFile} is not a built maestro-cli bundle. Run the built CLI (npm run build:cli, then node dist/cli/maestro-cli.js).`
+		);
+	}
 	if (!fs.existsSync(cliFile)) {
 		throw new RemoteInstallError('local-bundle', `The maestro-cli bundle is missing: ${cliFile}`);
 	}
@@ -269,7 +276,7 @@ export function buildRemoteInstallScript(options: RemoteInstallScriptOptions = {
 		`npmcli=$("$node" -p "${npmCliProbe}" 2>/dev/null)`,
 		'if [ -n "$npmcli" ]; then runnpm() { "$node" "$npmcli" "$@"; }; elif command -v npm >/dev/null 2>&1; then runnpm() { npm "$@"; }; else fail no-npm; fi',
 		`printf '%s\\n' '{"name":"maestro-remote-host","private":true}' > "$stage/package.json"`,
-		`(cd "$stage" && PATH="$(dirname "$node"):$PATH" runnpm install --omit=dev --no-audit --no-fund --loglevel=error "${SQLITE_PACKAGE}@${REMOTE_SQLITE_RANGE}") > "$stage/npm.log" 2>&1 || { tail -n 15 "$stage/npm.log" >&2; fail sqlite-install; }`,
+		`(cd "$stage" && PATH="$(dirname "$node"):$PATH" npm_config_cache="$root/npm-cache" runnpm install --omit=dev --no-audit --no-fund --loglevel=error "${SQLITE_PACKAGE}@${REMOTE_SQLITE_RANGE}") > "$stage/npm.log" 2>&1 || { tail -n 15 "$stage/npm.log" >&2; fail sqlite-install; }`,
 		// The package name is an argument, not a literal in the code: this module ships in the CLI,
 		// whose plain-Node import guard follows every `require()` it can see.
 		`(cd "$stage" && "$node" -e "new (require(process.argv[1]))(':memory:').close()" ${SQLITE_PACKAGE}) 2> "$stage/sqlite.log" || { tail -n 5 "$stage/sqlite.log" >&2; fail sqlite-load; }`,
@@ -282,13 +289,26 @@ export function buildRemoteInstallScript(options: RemoteInstallScriptOptions = {
 		'  if [ -x "$bin/maestro-cli" ]; then stopper="$bin/maestro-cli"; elif [ -n "$existing" ]; then stopper="$existing"; else stopper=""; fi',
 		'  if [ -n "$stopper" ]; then "$stopper" host stop --wait 120 >/dev/null 2>&1 || fail host-stop;',
 		'  else "$node" "$stage/maestro-cli.js" host stop --wait 120 >/dev/null 2>&1 || fail host-stop; fi',
+		// From here a failure leaves the host stopped: the caller says so with the fix.
+		'  say host-stopped',
 		'fi',
 		'rm -rf "$root/cli.old"',
 		'if [ -d "$cli" ]; then mv "$cli" "$root/cli.old" || fail swap; fi',
 		'mv "$stage" "$cli" || { [ -d "$root/cli.old" ] && mv "$root/cli.old" "$cli"; fail swap; }',
 		'rm -rf "$root/cli.old" "$cli/npm.log" "$cli/sqlite.log"',
 		'mkdir -p "$bin" || fail launcher',
-		`printf '%s\\n' '#!/bin/sh' "exec \\"$node\\" \\"$cli/maestro-cli.js\\" \\"\\$@\\"" > "$bin/maestro-cli" || fail launcher`,
+		// The launcher finds Node when it runs, not only where it was at install time: Maestro's own
+		// copy, then the install-time Node, then whatever `node` is on PATH. A Node the user later
+		// upgrades or removes (a version manager) then does not strand the install.
+		'cat > "$bin/maestro-cli" <<MAESTRO_LAUNCHER || fail launcher',
+		'#!/bin/sh',
+		'for n in "\\$HOME/.maestro/node/bin/node" "\\$HOME/.maestro/node/node.exe" "$node"; do',
+		'  [ -x "\\$n" ] && exec "\\$n" "$cli/maestro-cli.js" "\\$@"',
+		'done',
+		'n=\\$(command -v node) && exec "\\$n" "$cli/maestro-cli.js" "\\$@"',
+		'echo "maestro-cli: no Node.js to run $cli/maestro-cli.js" >&2',
+		'exit 127',
+		'MAESTRO_LAUNCHER',
 		'chmod 755 "$bin/maestro-cli" || fail launcher',
 		'say "cli-version=$ver"',
 		'say done',
@@ -488,7 +508,13 @@ export async function installRemoteCli(
 	const failed = markers.get('error');
 	if (failed !== undefined) {
 		const code = (SCRIPT_ERROR_CODES.has(failed) ? failed : 'malformed') as RemoteInstallErrorCode;
-		throw new RemoteInstallError(code, installErrorMessage(code, label, markers, result.stderr));
+		const stopped = markers.has('host-stopped')
+			? ` The host on ${label} was stopped for the upgrade and is not running now: once the cause is fixed, install again, or start the old one with maestro-cli remote-host start ${remote.id}.`
+			: '';
+		throw new RemoteInstallError(
+			code,
+			installErrorMessage(code, label, markers, result.stderr) + stopped
+		);
 	}
 	if (!markers.has('platform')) {
 		const detail = describeSshConnectionError(safeText(result.stderr));
@@ -577,9 +603,15 @@ export async function setupRemoteHost(
 	try {
 		found = await discover(remote, discoveryOptions);
 	} catch (error) {
-		// A CLI too old to know `host endpoint` is an install to upgrade, not a failure.
-		if (error instanceof RemoteDiscoveryError && error.code === 'unsupported') found = 'too-old';
-		else throw error;
+		// A CLI too old to know `host endpoint`, or one that no longer runs (its launcher answers
+		// with something that is not a report, such as a Node that was removed), is an install to
+		// replace, not a failure. The script still refuses to replace a CLI Maestro did not install.
+		if (
+			error instanceof RemoteDiscoveryError &&
+			(error.code === 'unsupported' || error.code === 'malformed')
+		) {
+			found = 'too-old';
+		} else throw error;
 	}
 
 	let cli: RemoteCliAction;

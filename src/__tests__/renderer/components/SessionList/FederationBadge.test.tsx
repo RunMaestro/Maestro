@@ -31,7 +31,7 @@ describe('federationBadgeCopy', () => {
 		expect(ready.lines.at(-1)).toMatch(/Move to Host/);
 
 		const off = federationBadgeCopy({ ...base, hostReady: false, canFederate: false });
-		expect(off.lines.at(-1)).toMatch(/Federation is off for this remote/);
+		expect(off.lines.at(-1)).toMatch(/does not reach this remote right now/);
 	});
 });
 

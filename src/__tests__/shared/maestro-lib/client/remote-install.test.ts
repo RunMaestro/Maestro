@@ -113,6 +113,12 @@ describe('the local bundle', () => {
 		expect(found).toEqual(bundle);
 	});
 
+	it('refuses a source module that is not a built bundle', () => {
+		expect(() => resolveLocalCliBundle(path.join(tmp, 'remote-host.ts'), '1')).toThrow(
+			/not a built maestro-cli bundle/
+		);
+	});
+
 	it('refuses a missing CLI file, and a bundle without its prompts', () => {
 		expect(() => resolveLocalCliBundle(path.join(tmp, 'nope.js'), '1')).toThrow(RemoteInstallError);
 		const bare = path.join(tmp, 'bare');
@@ -188,6 +194,19 @@ describe('buildRemoteInstallScript', () => {
 		expect(script).toContain('elif [ -n "$existing" ]; then stopper="$existing"');
 		expect(script).toContain('"$node" "$stage/maestro-cli.js" host stop --wait 120');
 		expect(stop).toBeLessThan(script.indexOf('mv "$stage" "$cli"'));
+	});
+
+	it('writes a launcher that finds Node when it runs, and keeps npm caches under ~/.maestro', () => {
+		const script = buildRemoteInstallScript();
+		const launcher = script.slice(
+			script.indexOf('<<MAESTRO_LAUNCHER'),
+			script.lastIndexOf('MAESTRO_LAUNCHER')
+		);
+		// Escaped so they expand when the launcher runs, not at install time.
+		expect(launcher).toContain('"\\$HOME/.maestro/node/bin/node"');
+		expect(launcher).toContain('n=\\$(command -v node)');
+		expect(launcher).toContain('"\\$@"');
+		expect(script).toContain('npm_config_cache="$root/npm-cache"');
 	});
 
 	it('carries the force and restart choices', () => {
@@ -329,6 +348,18 @@ describe('installRemoteCli', () => {
 		expect(half.code).toBe('malformed');
 	});
 
+	it('says the host is stopped when the install failed after stopping it', async () => {
+		const exec = execReturning(
+			'MAESTRO_INSTALL=platform=linux-x64\nMAESTRO_INSTALL=host-stopped\nMAESTRO_INSTALL=error=swap'
+		);
+		const error = await rejection(
+			installRemoteCli(remote, bundle, { exec, sshPath: 'ssh', restart: true })
+		);
+		expect(error.code).toBe('swap');
+		expect(error.message).toContain('was stopped for the upgrade and is not running now');
+		expect(error.message).toContain('maestro-cli remote-host start r1');
+	});
+
 	it('names an existing install it will not replace', () => {
 		const markers = new Map([['existing', '/usr/local/bin/maestro-cli']]);
 		expect(installErrorMessage('foreign-cli', 'Build box', markers, '')).toContain(
@@ -425,6 +456,12 @@ describe('setupRemoteHost', () => {
 		);
 		// The upgrade stopped the host, so it is started again even without `start`.
 		expect(result.start).toEqual(started);
+	});
+
+	it('replaces an install whose launcher no longer runs', async () => {
+		const broken = seams(new RemoteDiscoveryError('malformed', 'not a host endpoint'));
+		expect((await setupRemoteHost(remote, bundle, broken)).cli).toBe('upgraded');
+		expect(broken.install).toHaveBeenCalled();
 	});
 
 	it('lets a discovery failure that is not about the CLI through', async () => {

@@ -39,7 +39,7 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 	}
 	const where = mode.remoteName ? ` on ${mode.remoteName}` : '';
 	const next = !mode.canFederate
-		? 'Federation is off for this remote, so it stays an SSH agent.'
+		? 'Federation does not reach this remote right now: it is disabled, Federation is off for it, or Maestro has not checked it yet.'
 		: mode.hostReady
 			? 'This remote runs a Maestro host: right-click > Move to Host to federate this agent.'
 			: 'Right-click > Make Federated to install a Maestro host on the remote and move this agent onto it.';

@@ -193,6 +193,13 @@ export async function runLift(
 	if (!isFederationRemote(remote)) {
 		throw new LiftRunError('PEER_FEDERATION_OFF', federationOffMessage(remote));
 	}
+	// A disabled remote is not mirrored, so its pointer would lead nowhere.
+	if (remote.enabled === false) {
+		throw new LiftRunError(
+			liftErrorCode('remote-disabled'),
+			`SSH remote "${remote.name}" is disabled. Enable it in Settings > SSH Hosts first.`
+		);
+	}
 
 	const busy = deps.busyReason(agent.id);
 	if (busy) {

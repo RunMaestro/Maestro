@@ -75,7 +75,7 @@ The provider CLIs your agents use (Claude Code, Codex, and so on) must already b
 
 ### What Make Federated installs
 
-Maestro installs into `~/.maestro` on the remote, as the SSH user. It never uses root and writes nothing outside that folder.
+Maestro installs into `~/.maestro` on the remote, as the SSH user. It never uses root and writes nothing outside that folder, npm's cache included.
 
 | On the remote             | What Maestro uses                                                                                                                                    |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |

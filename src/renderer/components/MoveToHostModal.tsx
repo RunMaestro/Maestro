@@ -200,10 +200,11 @@ export function MoveToHostModal({
 						this agent can move onto it. Same as maestro-cli remote-host install --start.
 					</p>
 					{!canSetUp && (
-						<BundleNotice theme={theme} tone="error" title="Federation is off for this remote">
+						<BundleNotice theme={theme} tone="error" title="Federation does not reach this remote">
 							<div>
-								Turn Federation back on for this SSH remote in Settings &gt; SSH Hosts, or run
-								maestro-cli update-ssh-remote &lt;id&gt; --federation on.
+								The remote is disabled, Federation is off for it, or Maestro has not checked it yet.
+								Check Settings &gt; SSH Hosts: the remote must be enabled with Federation on
+								(maestro-cli update-ssh-remote &lt;id&gt; --enabled true --federation on).
 							</div>
 						</BundleNotice>
 					)}

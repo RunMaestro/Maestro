@@ -2328,7 +2328,7 @@ maestro-cli remote-host install build-box --start
 maestro-cli remote-host install build-box --restart   # upgrade a running host
 ```
 
-A refusal names its cause and the fix, with a `code` in `--json`: `unsupported-os`, `unsupported-arch`, `foreign-cli`, `host-running`, `node-download` (the remote cannot reach nodejs.org and has no Node.js 22+), `sqlite-install`, and so on. Nothing is installed as root, and nothing outside `~/.maestro` is written.
+A refusal names its cause and the fix, with a `code` in `--json`: `unsupported-os`, `unsupported-arch`, `foreign-cli`, `host-running`, `node-download` (the remote cannot reach nodejs.org and has no Node.js 22+), `sqlite-install`, and so on. Nothing is installed as root, and nothing outside `~/.maestro` is written: npm's cache goes to `~/.maestro/npm-cache` too. The launcher finds Node.js each time it runs (Maestro's own copy, then the one used at install time, then `node` on PATH), and an install whose launcher no longer runs is replaced on the next `remote-host install`.
 
 `remote-host status` makes one SSH call and reports whether Maestro is installed on the remote (with the fix when it is not), whether a host is running there (its pid, its port on the remote's loopback and its version), and the version skew against this CLI: `none`, `remote-older`, `remote-newer` or `unknown`. It exits `0` with a running host and `3` when no host runs or Maestro is not installed. `remote-host start` runs `maestro-cli host start` on the remote, as the SSH user, when no host is running there, then reports status the same way. It does nothing when a host already runs. The SSH calls run one after the other, never at the same time. Neither verb prints the host's token or CLI secret, with or without `--json`. A timeout exits `5`, and a remote CLI too old to know `host endpoint` exits `4`.
 
@@ -2388,6 +2388,7 @@ Before it acts, `lift` prints what moves and what stays. `--json` gives the same
 | The agent was already lifted                          | `LIFT_ALREADY_LIFTED`     |
 | The agent is not an SSH remote agent                  | `LIFT_NOT_SSH`            |
 | Its SSH remote opted out of Federation                | `PEER_FEDERATION_OFF`     |
+| Its SSH remote is disabled                            | `LIFT_REMOTE_DISABLED`    |
 | A tab is running a turn                               | `LIFT_BUSY`               |
 | No host is running on the remote                      | `PEER_HOST_DOWN` (exit 3) |
 | A local `maestro-cli host` owns this machine's agents | `LIFT_LOCAL_HOST`         |
