@@ -401,6 +401,8 @@ export function isCueDbCorruptionError(err: unknown): boolean {
  * without firing, and the telemetry outbox and persisted queue are best-effort.
  *
  * @returns the quarantined main-file path, or null when it could not be moved
+ *   or a `-wal` / `-shm` beside it could be neither moved nor removed (the main
+ *   file is then put back, because a fresh database would replay that WAL)
  */
 export function quarantineCorruptCueDb(dbPathOverride?: string): string | null {
 	if (db) {
@@ -413,36 +415,67 @@ export function quarantineCorruptCueDb(dbPathOverride?: string): string | null {
 	}
 
 	const dbPath = resolveCueDbPath(dbPathOverride);
-	const dir = path.dirname(dbPath);
-	const base = path.basename(dbPath, '.db');
-	const quarantinedPath = path.join(dir, `${base}.corrupt-${fileTimestampSlug()}.db`);
+	const quarantinedPath = unusedQuarantinePath(dbPath);
 
 	try {
 		fs.renameSync(dbPath, quarantinedPath);
 	} catch (err) {
-		log(
-			'error',
-			`Could not move corrupt database ${dbPath} aside: ${err instanceof Error ? err.message : String(err)}`
-		);
+		log('error', `Could not move corrupt database ${dbPath} aside: ${errorMessage(err)}`);
 		return null;
 	}
 
-	for (const suffix of ['-wal', '-shm']) {
+	for (const suffix of CUE_DB_SIDECARS) {
+		const sidecar = `${dbPath}${suffix}`;
 		try {
-			fs.renameSync(`${dbPath}${suffix}`, `${quarantinedPath}${suffix}`);
+			fs.renameSync(sidecar, `${quarantinedPath}${suffix}`);
+			continue;
 		} catch (err) {
 			if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
-			// A WAL left beside a fresh cue.db would be replayed into it, so remove it.
+		}
+		// A WAL left beside a fresh cue.db would be replayed into it, so remove it.
+		try {
+			fs.rmSync(sidecar, { force: true });
+		} catch {
+			// Checked below.
+		}
+		if (fs.existsSync(sidecar)) {
+			// Starting fresh beside this file would defeat the quarantine. Put the
+			// main file back so the next boot meets the same, honest failure.
+			log('error', `Could not clear ${sidecar}; leaving the corrupt database in place`);
 			try {
-				fs.rmSync(`${dbPath}${suffix}`, { force: true });
-			} catch {
-				// Nothing left to try; initCueDb() reports whatever SQLite makes of it.
+				fs.renameSync(quarantinedPath, dbPath);
+			} catch (err) {
+				log('error', `Could not restore ${dbPath}: ${errorMessage(err)}`);
 			}
+			return null;
 		}
 	}
 
 	log('warn', `Corrupt database moved to ${path.basename(quarantinedPath)}; starting a new one`);
 	return quarantinedPath;
+}
+
+const CUE_DB_SIDECARS = ['-wal', '-shm'] as const;
+
+function errorMessage(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * `cue.corrupt-<stamp>.db`, plus `-2`, `-3`, ... when that name (or one of its
+ * sidecars) is already taken. The stamp has whole-second resolution, so two
+ * quarantines in one second would otherwise rename onto the earlier copy.
+ */
+function unusedQuarantinePath(dbPath: string): string {
+	const dir = path.dirname(dbPath);
+	const stem = `${path.basename(dbPath, '.db')}.corrupt-${fileTimestampSlug()}`;
+	const taken = (candidate: string) =>
+		fs.existsSync(candidate) || CUE_DB_SIDECARS.some((s) => fs.existsSync(`${candidate}${s}`));
+	let candidate = path.join(dir, `${stem}.db`);
+	for (let n = 2; taken(candidate); n++) {
+		candidate = path.join(dir, `${stem}-${n}.db`);
+	}
+	return candidate;
 }
 
 // ============================================================================

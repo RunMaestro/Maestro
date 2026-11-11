@@ -18,6 +18,31 @@ import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
 
+// Real fs, except that a path in `stuckPaths` can be neither renamed nor
+// removed (a sidecar another process holds open on Windows).
+const { stuckPaths } = vi.hoisted(() => ({ stuckPaths: new Set<string>() }));
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	const refuse = (p: fs.PathLike) => {
+		if (stuckPaths.has(String(p))) {
+			throw Object.assign(new Error(`EBUSY: resource busy or locked, '${String(p)}'`), {
+				code: 'EBUSY',
+			});
+		}
+	};
+	return {
+		...actual,
+		renameSync: (from: fs.PathLike, to: fs.PathLike) => {
+			refuse(from);
+			return actual.renameSync(from, to);
+		},
+		rmSync: (p: fs.PathLike, options?: fs.RmOptions) => {
+			refuse(p);
+			return actual.rmSync(p, options);
+		},
+	};
+});
+
 // Store parameters passed to mock statement methods
 const runCalls: unknown[][] = [];
 const getCalls: unknown[][] = [];
@@ -270,7 +295,39 @@ describe('cue-db corruption handling', () => {
 		});
 
 		afterEach(() => {
+			stuckPaths.clear();
+			vi.useRealTimers();
 			fs.rmSync(dir, { recursive: true, force: true });
+		});
+
+		it('never renames onto an earlier quarantine from the same second', () => {
+			vi.useFakeTimers({ toFake: ['Date'] });
+			vi.setSystemTime(new Date(2026, 10, 11, 9, 30, 0));
+			const dbPath = path.join(dir, 'cue.db');
+
+			fs.writeFileSync(dbPath, 'first');
+			const first = quarantineCorruptCueDb(dbPath);
+			fs.writeFileSync(dbPath, 'second');
+			const second = quarantineCorruptCueDb(dbPath);
+
+			expect(first).not.toBeNull();
+			expect(second).not.toBeNull();
+			expect(second).not.toBe(first);
+			expect(path.basename(second!)).toMatch(/^cue\.corrupt-.+-2\.db$/);
+			expect(fs.readFileSync(first!, 'utf-8')).toBe('first');
+			expect(fs.readFileSync(second!, 'utf-8')).toBe('second');
+		});
+
+		it('puts the database back when a WAL can be neither moved nor removed', () => {
+			const dbPath = path.join(dir, 'cue.db');
+			fs.writeFileSync(dbPath, 'main');
+			fs.writeFileSync(`${dbPath}-wal`, 'wal');
+			stuckPaths.add(`${dbPath}-wal`);
+
+			expect(quarantineCorruptCueDb(dbPath)).toBeNull();
+			expect(fs.readFileSync(dbPath, 'utf-8')).toBe('main');
+			expect(fs.readFileSync(`${dbPath}-wal`, 'utf-8')).toBe('wal');
+			expect(fs.readdirSync(dir).filter((f) => f.includes('.corrupt-'))).toEqual([]);
 		});
 
 		it('closes the database and moves the file and its WAL/SHM aside', () => {
