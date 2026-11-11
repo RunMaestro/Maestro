@@ -412,6 +412,32 @@ describe('applyAgentGatewayToSpawn', () => {
 		]);
 	});
 
+	it("adds OpenCode's gateway to its inline config, built on the provider default", async () => {
+		configure();
+		agents = [{ id: 'a1', toolType: 'opencode', gatewayUrl: 'https://litellm.example.com/v1' }];
+		const defaults = '{"permission":{"question":"deny"},"tools":{"question":false}}';
+
+		const result = await applyAgentGatewayToSpawn({
+			...input,
+			toolType: 'opencode',
+			agent: {
+				batchModePrefix: ['run'],
+				defaultEnvVars: { OPENCODE_CONFIG_CONTENT: defaults },
+			},
+			args: ['run', '--format', 'json'],
+		});
+
+		if (!result.ok) throw new Error(result.error);
+		expect(result.args).toEqual(['run', '--standalone', '--format', 'json']);
+		const config = JSON.parse(result.customEnvVars?.OPENCODE_CONFIG_CONTENT ?? 'null');
+		expect(config.permission).toEqual({ question: 'deny' });
+		expect(config.provider.anthropic.options.baseURL).toBe('https://litellm.example.com/v1');
+		expect(result.gateway).toEqual({
+			envVar: 'OPENCODE_CONFIG_CONTENT',
+			url: 'https://litellm.example.com/v1',
+		});
+	});
+
 	it("starts the Maestro proxy and puts the agent's id in the URL", async () => {
 		configure();
 		const port = await ensureTokenProxyPort();

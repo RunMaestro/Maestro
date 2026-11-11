@@ -2800,9 +2800,11 @@ The rules, and why each is a rule:
    compile until it has a variable or a reason. Claude Code is reached through
    `ANTHROPIC_BASE_URL`. Codex is reached through `OPENAI_BASE_URL` AND a config argument,
    `-c openai_base_url="<url>"`, placed ahead of its own arguments (`configArgs` on the mapping,
-   `gateway.args` on the launch plan). Copilot CLI ignores base-URL variables. OpenCode and Factory
-   Droid set a base URL per model provider in their own config files, so no single variable routes
-   them. A guessed name fails silently: the CLI ignores it and the agent runs direct while the UI
+   `gateway.args` on the launch plan). OpenCode reads no base-URL variable: the gateway is added to
+   its inline config document, `OPENCODE_CONFIG_CONTENT` (see
+   [OpenCode: the gateway in its inline config](#opencode-the-gateway-in-its-inline-config)).
+   Copilot CLI ignores base-URL variables. Factory Droid sets a base URL per model provider in its
+   own config file, so no single variable routes it. A guessed name fails silently: the CLI ignores it and the agent runs direct while the UI
    says it is proxied. **The Codex mapping shipped as exactly that failure**, with the variable
    alone: Codex CLI 0.162.1 on a ChatGPT login does not read `OPENAI_BASE_URL`. See
    [Real run](#real-run-2026-10-11-darwin-arm64), finding 2, for the measurement and the fix.
@@ -2850,6 +2852,55 @@ provider's API), and a worktree agent inherits its parent's. Provenance is a fou
 `EnvVarSource`, `gateway` ("Local Models gateway"), in `resolveAgentEnvironment()`; the gateway
 table's **Show environment** draws it with `<EnvVarList>`.
 
+### OpenCode: the gateway in its inline config
+
+OpenCode has no base-URL variable. Each provider's address is `provider.<id>.options.baseURL` in
+its config, and `OPENCODE_CONFIG_CONTENT` is an inline config merged over the user's files. That
+variable already carries Maestro's permission block (the provider default, and its read-only
+override), so the gateway ADDS to it instead of setting it. The mapping is a third form of
+`AgentGatewaySupport`:
+
+- `configDocument.merge` (`withOpenCodeGateway()` in `src/shared/local-models/opencode-config.ts`)
+  sets `options.baseURL` on `anthropic` and `openai`, keeps every other key, and sets
+  `enabled_providers` to those two (narrowed by the document's own list, when it has one). A model
+  from any other provider then fails by name ("Model unavailable") instead of running direct while
+  the agent is shown as proxied. The launch applies it as `gateway.envVarMerges`, last, on the value
+  every layer settled on (`gatewayEnvVarMerges` in `resolveAgentEnvVars()`), the way a Run on
+  recipe's merge is applied. `applyAgentGatewayToSpawn()` builds it on the provider default.
+- Rule 1 reads the document: an agent whose own `OPENCODE_CONFIG_CONTENT` names a base URL for
+  either provider wins (`user-override` with `inDocument`); a document that does not is the base the
+  gateway is added to.
+- `subcommandArgs: ['--standalone']`, placed after `run` (`placeSubcommandArgs()`). Without it,
+  `opencode run` talks to the background service when one is up, and whether that service reads
+  the run's document was not measured. With it, the run is proven to read it.
+- `urlIncludesApiVersion`: the gateway URL is the SDK base URL, WITH `/v1`. OpenCode appends
+  `/messages` (Anthropic) and `/responses` (OpenAI) to it. So `tokenProxyGatewayUrl(port, route,
+'opencode')` gives `/anthropic/v1` and `/openai/v1`, and a user pointing OpenCode at LiteLLM or
+  Headroom types the address that serves `/v1/messages`, with the `/v1`.
+- The route is the provider the agent's model names (`tokenProxyRouteForAgent(toolType, env,
+model)`, the model being the agent's own or the Settings -> Agents default): `anthropic/...` takes
+  the `anthropic` route, `openai/...` the `openai` route, and any other model (or none) is refused
+  by name. A gateway set for one provider while a turn runs a model of the other fails loudly at the
+  proxy (an upstream 404), never direct.
+
+Evidence, 2026-11-11, OpenCode 2.2.7 (`/opt/homebrew/bin/opencode`), with a throwaway `HOME` and
+XDG directories, a fake key (`ANTHROPIC_API_KEY=sk-ant-fake-...`, or `OPENAI_API_KEY=sk-fake-...`),
+and nothing of the user's config read or written:
+
+| Command (`opencode run --standalone --format json -m <model> "Say hi"`)                  | Result                                                             |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `anthropic/claude-haiku-4-5`, `provider.anthropic.options.baseURL=http://127.0.0.1:1/v1` | every attempt `ECONNREFUSED` (the closed port)                     |
+| `openai/gpt-5-mini`, `provider.openai.options.baseURL=http://127.0.0.1:1/v1`             | every attempt `ECONNREFUSED`                                       |
+| `anthropic/claude-haiku-4-5`, no `baseURL` (control)                                     | `401 invalid x-api-key` from Anthropic: the key went out           |
+| Anthropic `baseURL` at a recording listener                                              | `POST /v1/messages?beta=true`, `x-api-key`, title request included |
+| OpenAI `baseURL` at a recording listener                                                 | `POST /v1/responses` (and one `GET /v1/responses`), bearer         |
+| `ollama/...` or `opencode/...` with `enabled_providers: ["anthropic","openai"]`          | `provider.no-route`: "Model unavailable", exit 1                   |
+| no `-m`, same `enabled_providers`                                                        | picked an enabled provider; `ECONNREFUSED`                         |
+
+Not verified: an OpenCode login other than an API key (a Claude or ChatGPT subscription through an
+OpenCode auth plugin), and an OpenCode older than `--standalone`, which fails the launch on the
+unknown option (as it does for Run on).
+
 ## Token conservation proxy
 
 Maestro's own proxy is an HTTP server on `127.0.0.1` that an agent reaches through its gateway
@@ -2885,6 +2936,10 @@ request is never inspected to learn where it goes. The table is `TOKEN_PROXY_ROU
 | `http://127.0.0.1:PORT/openai/v1` | `https://api.openai.com/v1`             | Codex with an OpenAI API key |
 | `http://127.0.0.1:PORT/chatgpt`   | `https://chatgpt.com/backend-api/codex` | Codex with a ChatGPT login   |
 
+OpenCode is given the same routes with the version in the URL: `/anthropic/v1` for an
+`anthropic/...` model and `/openai/v1` for an `openai/...` model
+([OpenCode](#opencode-the-gateway-in-its-inline-config)).
+
 The `anthropic` and `chatgpt` routes are confirmed against real turns
 ([Real run](#real-run-2026-10-11-darwin-arm64)); the `chatgpt` one only when Codex is given the
 address through its `openai_base_url` config key, because Codex 0.162.1 ignores the variable the
@@ -2912,9 +2967,9 @@ EVERY path under a route is forwarded (a provider CLI also calls token counting 
 | --------------------------------------------------------- | ------------------------------------------------------------------ |
 | `resolveTokenProxyTarget(method, url, upstreams)`         | Route, upstream, path and query of one request, or a named refusal |
 | `classifyTokenProxyPath(method, path)`                    | Which API a forwarded request speaks                               |
-| `tokenProxyGatewayUrl(port, route)`                       | The base URL to store on an agent                                  |
+| `tokenProxyGatewayUrl(port, route, toolType?)`            | The base URL to store on an agent (OpenCode's carries `/v1`)       |
 | `tokenProxyAgentGatewayUrl(url, port, agentId)`           | The base URL to give that agent's process for one launch           |
-| `tokenProxyRouteForAgent(toolType, env)`                  | Which route an agent's provider and credential take                |
+| `tokenProxyRouteForAgent(toolType, env, model?)`          | Which route an agent's provider, credential and model take         |
 | `gatewayPointsAtTokenProxy(gatewayUrl, port)`             | Whether a stored gateway reaches the proxy (any loopback spelling) |
 | `resolveTokenProxyMode({ gatewayUrl, storedMode, port })` | An agent's mode: `off`, `passthrough` or `compress`                |
 | `tokenProxyErrorBody(code, message)`                      | The body of an error the PROXY raises                              |

@@ -201,8 +201,20 @@ export function resolveTokenProxyTarget(
 }
 
 /** The base URL an agent is given to reach `route` through the proxy. */
-export function tokenProxyGatewayUrl(port: number, route: TokenProxyRouteId): string {
-	return `http://${TOKEN_PROXY_HOST}:${port}${TOKEN_PROXY_ROUTES[route].gatewayPath}`;
+export function tokenProxyGatewayUrl(
+	port: number,
+	route: TokenProxyRouteId,
+	toolType?: string
+): string {
+	const path = TOKEN_PROXY_ROUTES[route].gatewayPath;
+	// A provider whose gateway URL carries the API version (OpenCode's SDK
+	// `baseURL`) is given the route's `/v1`, which it then never appends itself.
+	const support = toolType === undefined ? undefined : agentGatewaySupport(toolType);
+	const versioned =
+		support?.supported && support.urlIncludesApiVersion && !path.endsWith('/v1')
+			? `${path}/v1`
+			: path;
+	return `http://${TOKEN_PROXY_HOST}:${port}${versioned}`;
 }
 
 /**
@@ -464,11 +476,14 @@ export function resolveTokenProxyMode(input: {
  * Which route an agent's traffic takes through the proxy, or null with the
  * reason when it cannot use the proxy at all. `env` is the agent's effective
  * environment (`resolveAgentEnvironment`): Codex with an API key talks to
- * api.openai.com, and with a ChatGPT login to a different host.
+ * api.openai.com, and with a ChatGPT login to a different host. `model` is the
+ * agent's model (its own, or the provider default): OpenCode's route is the
+ * provider its model names (`anthropic/...`, `openai/...`).
  */
 export function tokenProxyRouteForAgent(
 	toolType: string,
-	env: Record<string, string>
+	env: Record<string, string>,
+	model?: string
 ): { ok: true; route: TokenProxyRouteId } | { ok: false; error: string } {
 	const support = agentGatewaySupport(toolType);
 	if (!support.supported) return { ok: false, error: support.reason };
@@ -476,6 +491,18 @@ export function tokenProxyRouteForAgent(
 	if (toolType === 'codex') {
 		const apiKey = classifyCredentialKind(toolType, env).kind === 'api-key';
 		return { ok: true, route: apiKey ? 'openai' : 'chatgpt' };
+	}
+	if (toolType === 'opencode') {
+		const provider = model?.trim().split('/')[0] ?? '';
+		if (provider === 'anthropic') return { ok: true, route: 'anthropic' };
+		if (provider === 'openai') return { ok: true, route: 'openai' };
+		return {
+			ok: false,
+			error:
+				provider === ''
+					? `${TOKEN_PROXY_NAME} carries OpenCode only for an anthropic/... or openai/... model, and this agent names none. Set its model first.`
+					: `${TOKEN_PROXY_NAME} carries OpenCode only for an anthropic/... or openai/... model, not "${model?.trim()}".`,
+		};
 	}
 	return { ok: false, error: `${TOKEN_PROXY_NAME} has no route for "${toolType}".` };
 }

@@ -65,11 +65,19 @@ export function describeGatewayStatus(
 		case 'none':
 			return null;
 		case 'inject':
-			return { tone: 'dim', text: `Sets ${resolution.envVar} when this agent starts.` };
+			return {
+				tone: 'dim',
+				text:
+					Object.keys(resolution.envVarMerges).length > 0
+						? `Adds the gateway to ${resolution.envVar} when this agent starts.`
+						: `Sets ${resolution.envVar} when this agent starts.`,
+			};
 		case 'user-override':
 			return {
 				tone: 'warning',
-				text: `Not applied: ${resolution.envVar} is set in this agent's environment variables, and that value wins.`,
+				text: resolution.inDocument
+					? `Not applied: ${resolution.envVar} in this agent's environment variables names a base URL, and that value wins.`
+					: `Not applied: ${resolution.envVar} is set in this agent's environment variables, and that value wins.`,
 			};
 		case 'refused':
 			return {

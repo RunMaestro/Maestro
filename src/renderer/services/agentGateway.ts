@@ -121,6 +121,18 @@ async function agentEffectiveEnv(session: Session): Promise<Record<string, strin
 	};
 }
 
+/** The agent's model: its own, or the provider default from Settings -> Agents. */
+async function agentEffectiveModel(session: Session): Promise<string | undefined> {
+	if (session.customModel?.trim()) return session.customModel;
+	try {
+		const model = (await window.maestro.agents?.getConfig?.(session.toolType))?.model;
+		return typeof model === 'string' ? model : undefined;
+	} catch {
+		// Without the provider default the agent's own model (none) decides.
+		return undefined;
+	}
+}
+
 /**
  * Set how the Maestro token proxy carries one agent's requests.
  *
@@ -168,9 +180,13 @@ export async function setAgentTokenProxyMode(
 	const port = await proxy.ensurePort();
 	let gatewayUrl = session.gatewayUrl;
 	if (!gatewayPointsAtTokenProxy(gatewayUrl, port)) {
-		const route = tokenProxyRouteForAgent(session.toolType, await agentEffectiveEnv(session));
+		const route = tokenProxyRouteForAgent(
+			session.toolType,
+			await agentEffectiveEnv(session),
+			await agentEffectiveModel(session)
+		);
 		if (!route.ok) return route;
-		gatewayUrl = tokenProxyGatewayUrl(port, route.route);
+		gatewayUrl = tokenProxyGatewayUrl(port, route.route, session.toolType);
 	}
 	if (gatewayUrl !== session.gatewayUrl || session.tokenProxyMode !== mode) {
 		updateSessionWith(sessionId, (s) => ({ ...s, gatewayUrl, tokenProxyMode: mode }));

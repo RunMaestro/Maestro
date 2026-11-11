@@ -3,7 +3,8 @@
  * provider traffic through an HTTP proxy (Headroom, LiteLLM, or Maestro's own).
  *
  * A gateway is reached through the provider's base-URL environment variable
- * (and, for a CLI that does not read one, a config argument as well), so "how
+ * (and, for a CLI that does not read one, a config argument as well, or an
+ * entry added to the config document it reads from a variable), so "how
  * is this provider pointed at a URL" is a per-provider fact and "may Maestro do
  * it" is a per-launch decision. Both live here, pure, so the launch plan, the
  * env provenance view, the settings UI and the CLI cannot disagree about them.
@@ -12,7 +13,9 @@
  *
  * 1. An explicit user variable wins. An agent whose own environment (its own
  *    vars, or the provider-level set when it has none) already sets the
- *    base-URL variable keeps that value, and the gateway is not applied.
+ *    base-URL variable keeps that value, and the gateway is not applied. For
+ *    a config document (OpenCode), the user's document is the base the gateway
+ *    is added to, and it wins only where it names a base URL itself.
  * 2. A provider whose base-URL variable Maestro does not know is refused, never
  *    guessed. A wrong variable name is ignored by the CLI, so the agent would
  *    run direct while the UI says it is proxied. A mapping is only as good as
@@ -22,9 +25,14 @@
  *    is never dropped so the turn can go to another endpoint.
  */
 
-import { isEnvVarSet } from '../agentEnvironment';
+import { isEnvVarSet, type EnvVarMerge } from '../agentEnvironment';
 import type { AgentId } from '../agentIds';
 import { getAgentDisplayName } from '../agentMetadata';
+import {
+	OPENCODE_CONFIG_ENV_VAR,
+	openCodeConfigNamesBaseUrl,
+	withOpenCodeGateway,
+} from './opencode-config';
 
 /** Whether an agent's traffic can be sent through a gateway, and how. */
 export type AgentGatewaySupport =
@@ -38,6 +46,30 @@ export type AgentGatewaySupport =
 			 * any subcommand), which is where a CLI reads a global option.
 			 */
 			configArgs?: (url: string) => string[];
+			/**
+			 * Arguments for the provider's batch subcommand, placed right after it
+			 * (`placeSubcommandArgs`). OpenCode reads `--standalone` after `run`.
+			 */
+			subcommandArgs?: string[];
+			/**
+			 * The gateway URL is the API root WITH its version (`.../v1`), which
+			 * is what an SDK `baseURL` takes (OpenCode), rather than the root a
+			 * CLI appends `/v1/...` to (Claude Code's `ANTHROPIC_BASE_URL`).
+			 */
+			urlIncludesApiVersion?: true;
+			/**
+			 * For a CLI that reads its base URL from a config DOCUMENT held in
+			 * `envVar` (OpenCode's inline JSON), how the gateway is added to that
+			 * document instead of replacing it. The launch applies `merge` to the
+			 * value it would otherwise carry (Maestro's permission block, its
+			 * read-only override, or the user's own document), so nothing in it
+			 * is lost. Rule 1 then reads the document: it wins only when it names
+			 * a base URL itself.
+			 */
+			configDocument?: {
+				merge: (current: string | undefined, url: string) => string;
+				namesBaseUrl: (document: string) => boolean;
+			};
 	  }
 	| {
 			supported: false;
@@ -74,7 +106,27 @@ const GATEWAY_SUPPORT: Record<AgentId, AgentGatewaySupport> = {
 		supported: false,
 		reason: 'Copilot CLI ignores base-URL variables, so its traffic cannot go through a gateway.',
 	},
-	opencode: { supported: false, reason: `OpenCode ${OWN_CONFIG_REASON}` },
+	// OpenCode reads no base-URL variable: each provider's `options.baseURL`
+	// lives in its config, and `OPENCODE_CONFIG_CONTENT` is an inline config
+	// merged over the user's files. Measured on 2026-11-11 against OpenCode
+	// 2.2.7 (`opencode run --standalone --format json`, a throwaway HOME and a
+	// fake key): with `provider.anthropic.options.baseURL` (and, separately,
+	// `provider.openai.options.baseURL`) set to `http://127.0.0.1:1/v1` every
+	// attempt failed with ECONNREFUSED; without it the same key reached
+	// Anthropic (401). A recording listener saw `POST /v1/messages?beta=true`
+	// (Anthropic) and `POST /v1/responses` (OpenAI), so the gateway URL is the
+	// API root WITH `/v1`. `enabled_providers` limited to those two makes a
+	// model from any other provider fail ("Model unavailable") instead of
+	// running direct. `--standalone` makes the run read this launch's document:
+	// without it `run` talks to a background service when one is up, and
+	// whether that service honors the per-run document was not measured.
+	opencode: {
+		supported: true,
+		envVar: OPENCODE_CONFIG_ENV_VAR,
+		subcommandArgs: ['--standalone'],
+		urlIncludesApiVersion: true,
+		configDocument: { merge: withOpenCodeGateway, namesBaseUrl: openCodeConfigNamesBaseUrl },
+	},
 	'factory-droid': { supported: false, reason: `Factory Droid ${OWN_CONFIG_REASON}` },
 	antigravity: unknownVariable('antigravity'),
 	'gemini-cli': unknownVariable('gemini-cli'),
@@ -170,18 +222,25 @@ export type AgentGatewayResolution =
 	/** The agent has no gateway. */
 	| { kind: 'none' }
 	/**
-	 * Set this variable on the agent's process, and put `args` ahead of its own
-	 * arguments (empty for a provider whose variable is enough).
+	 * Set `envVars` on the agent's process (or, for a config document, apply
+	 * `envVarMerges` to the value it would otherwise carry), put `args` ahead of
+	 * its own arguments, and `subcommandArgs` after its batch subcommand. Each is
+	 * empty when the provider does not need it.
 	 */
 	| {
 			kind: 'inject';
 			envVar: string;
 			url: string;
 			envVars: Record<string, string>;
+			envVarMerges: Record<string, EnvVarMerge>;
 			args: string[];
+			subcommandArgs: string[];
 	  }
-	/** The agent sets the variable itself; the gateway is not applied (rule 1). */
-	| { kind: 'user-override'; envVar: string; url: string; userValue: string }
+	/**
+	 * The agent sets the variable itself; the gateway is not applied (rule 1).
+	 * `inDocument` when the variable is a config document that names a base URL.
+	 */
+	| { kind: 'user-override'; envVar: string; url: string; userValue: string; inDocument?: true }
 	/** The launch must fail with this message (rule 3). */
 	| { kind: 'refused'; code: AgentGatewayRefusalCode; message: string };
 
@@ -225,12 +284,18 @@ export function resolveAgentGateway(input: AgentGatewayInput): AgentGatewayResol
 		};
 	}
 
-	if (isEnvVarSet(input.userEnvVars, support.envVar)) {
+	const userValue = input.userEnvVars?.[support.envVar];
+	const userSetsUrl = support.configDocument
+		? isEnvVarSet(input.userEnvVars, support.envVar) &&
+			support.configDocument.namesBaseUrl(userValue as string)
+		: isEnvVarSet(input.userEnvVars, support.envVar);
+	if (userSetsUrl) {
 		return {
 			kind: 'user-override',
 			envVar: support.envVar,
 			url: parsed.url,
-			userValue: (input.userEnvVars as Record<string, string>)[support.envVar],
+			userValue: userValue as string,
+			...(support.configDocument ? { inDocument: true as const } : {}),
 		};
 	}
 
@@ -242,12 +307,17 @@ export function resolveAgentGateway(input: AgentGatewayInput): AgentGatewayResol
 		};
 	}
 
+	const document = support.configDocument;
 	return {
 		kind: 'inject',
 		envVar: support.envVar,
 		url: parsed.url,
-		envVars: { [support.envVar]: parsed.url },
+		envVars: document ? {} : { [support.envVar]: parsed.url },
+		envVarMerges: document
+			? { [support.envVar]: (current) => document.merge(current, parsed.url) }
+			: {},
 		args: support.configArgs?.(parsed.url) ?? [],
+		subcommandArgs: support.subcommandArgs ?? [],
 	};
 }
 
@@ -261,7 +331,13 @@ export function gatewayEnvVarsFor(
 	gatewayUrl: string | null | undefined
 ): Record<string, string> | undefined {
 	const resolution = resolveAgentGateway({ toolType, gatewayUrl });
-	return resolution.kind === 'inject' ? resolution.envVars : undefined;
+	if (resolution.kind !== 'inject') return undefined;
+	// A config document is shown with only the gateway's part in it: the
+	// launch adds that part to whatever document the agent carries.
+	const merged = Object.fromEntries(
+		Object.entries(resolution.envVarMerges).map(([key, merge]) => [key, merge(undefined)])
+	);
+	return { ...resolution.envVars, ...merged };
 }
 
 export type GatewayUrlEdit =

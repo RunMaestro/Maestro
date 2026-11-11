@@ -243,6 +243,31 @@ describe('tokenProxyGatewayUrl', () => {
 		});
 	});
 
+	it("gives OpenCode the route's /v1, because its SDK base URL carries the version", () => {
+		expect(tokenProxyGatewayUrl(41234, 'anthropic', 'opencode')).toBe(
+			'http://127.0.0.1:41234/anthropic/v1'
+		);
+		expect(tokenProxyGatewayUrl(41234, 'openai', 'opencode')).toBe(
+			'http://127.0.0.1:41234/openai/v1'
+		);
+		expect(tokenProxyGatewayUrl(41234, 'anthropic', 'claude-code')).toBe(
+			'http://127.0.0.1:41234/anthropic'
+		);
+		// What OpenCode 2.2.7 sends: `<baseURL>/messages`, `<baseURL>/responses`.
+		for (const [route, suffix] of [
+			['anthropic', '/messages'],
+			['openai', '/responses'],
+		] as const) {
+			const requestPath = new URL(tokenProxyGatewayUrl(41234, route, 'opencode') + suffix).pathname;
+			expect(resolveTokenProxyTarget('POST', requestPath)).toMatchObject({
+				ok: true,
+				route,
+				path: `/v1${suffix}`,
+				kind: route === 'anthropic' ? 'anthropic-messages' : 'openai-responses',
+			});
+		}
+	});
+
 	it('has an upstream for every route', () => {
 		expect(Object.keys(defaultTokenProxyUpstreams()).sort()).toEqual(
 			Object.keys(TOKEN_PROXY_ROUTES).sort()
@@ -436,6 +461,23 @@ describe('tokenProxyRouteForAgent', () => {
 			ok: true,
 			route: 'chatgpt',
 		});
+	});
+
+	it('sends OpenCode by the provider its model names, and refuses any other', () => {
+		expect(tokenProxyRouteForAgent('opencode', {}, 'anthropic/claude-opus-4-5')).toEqual({
+			ok: true,
+			route: 'anthropic',
+		});
+		expect(tokenProxyRouteForAgent('opencode', {}, ' openai/gpt-5 ')).toEqual({
+			ok: true,
+			route: 'openai',
+		});
+		const ollama = tokenProxyRouteForAgent('opencode', {}, 'ollama/gpt-oss:latest');
+		expect(ollama.ok).toBe(false);
+		if (!ollama.ok) expect(ollama.error).toContain('"ollama/gpt-oss:latest"');
+		const none = tokenProxyRouteForAgent('opencode', {});
+		expect(none.ok).toBe(false);
+		if (!none.ok) expect(none.error).toContain('Set its model first');
 	});
 
 	it('refuses a provider that cannot use a gateway, with its reason', () => {

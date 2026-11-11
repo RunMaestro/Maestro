@@ -296,6 +296,27 @@ describe('setAgentTokenProxyMode', () => {
 		expect(stored().gatewayUrl).toBe(proxyUrl('/openai/v1'));
 	});
 
+	it("routes OpenCode by its model's provider, on a URL that carries /v1", async () => {
+		seed({ toolType: 'opencode', customModel: 'anthropic/claude-opus-4-5' } as Partial<Session>);
+		await setAgentTokenProxyMode('agent-1', 'passthrough');
+		expect(stored().gatewayUrl).toBe(proxyUrl('/anthropic/v1'));
+
+		// With no model of its own, the provider default decides.
+		seed({ toolType: 'opencode' } as Partial<Session>);
+		vi.mocked(window.maestro.agents.getConfig).mockResolvedValueOnce({ model: 'openai/gpt-5' });
+		await setAgentTokenProxyMode('agent-1', 'passthrough');
+		expect(stored().gatewayUrl).toBe(proxyUrl('/openai/v1'));
+
+		// A model the proxy cannot carry is refused, and nothing is stored.
+		const original = seed({
+			toolType: 'opencode',
+			customModel: 'ollama/qwen3:8b',
+		} as Partial<Session>);
+		const refused = await setAgentTokenProxyMode('agent-1', 'passthrough');
+		expect(refused.ok).toBe(false);
+		expect(stored()).toBe(original);
+	});
+
 	it('writes nothing when the mode did not change', async () => {
 		seed({ gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'compress' });
 

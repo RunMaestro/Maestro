@@ -467,6 +467,13 @@ export interface AgentEnvLayers {
 	 * nothing.
 	 */
 	runOnEnvVarMerges?: Record<string, EnvVarMerge>;
+	/**
+	 * Variables the agent's Local Models gateway ADDS TO (`resolveAgentGateway`'s
+	 * `envVarMerges`): OpenCode's inline config again, for the same reason and
+	 * applied at the same point. Never together with `runOnEnvVarMerges`: a Run
+	 * on target takes the gateway's place.
+	 */
+	gatewayEnvVarMerges?: Record<string, EnvVarMerge>;
 }
 
 /**
@@ -477,7 +484,7 @@ export interface AgentEnvLayers {
  *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < gatewayEnvVars
  *     < runOnEnvVars < readOnlyEnvOverrides
  *
- * and then `runOnEnvVarMerges`, each applied to the value that order settled
+ * and then `gatewayEnvVarMerges` or `runOnEnvVarMerges`, each applied to the value that order settled
  * on. The same on every surface. This is the record that crosses to an SSH remote,
  * where `process.env` does not exist, and the one Process Details shows. The
  * global Settings vars are NOT in it: on desktop they sit beneath this record.
@@ -497,6 +504,7 @@ export function resolveAgentEnvVars(layers: AgentEnvLayers): Record<string, stri
 		...(layers.runOnEnvVars ?? {}),
 		...(layers.readOnlyEnvOverrides ?? {}),
 	};
+	applyEnvVarMerges(merged, layers.gatewayEnvVarMerges);
 	applyEnvVarMerges(merged, layers.runOnEnvVarMerges);
 	for (const key of Object.keys(merged)) {
 		if (isBlankEnvKey(key)) delete merged[key];
@@ -618,6 +626,7 @@ function buildCliAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS
 	Object.assign(env, options.readOnlyEnvOverrides ?? {});
 	// After every layer, the shell's own value included: a merge adds to
 	// whichever value this launch ended up with.
+	applyEnvVarMerges(env, options.gatewayEnvVarMerges);
 	applyEnvVarMerges(env, options.runOnEnvVarMerges);
 	Object.assign(env, options.maestroEnvVars ?? {});
 	env[QUERY_SOURCE_ENV_VAR] = options.querySource ?? DEFAULT_QUERY_SOURCE;

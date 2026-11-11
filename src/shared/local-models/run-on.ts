@@ -53,6 +53,7 @@ import { getAgentDisplayName } from '../agentMetadata';
 import type { LocalModelEndpoint } from './endpoints';
 import { isLoopbackGatewayUrl } from './gateway';
 import { getLocalModel } from './model-catalog';
+import { OPENCODE_CONFIG_ENV_VAR, withOpenCodeProvider } from './opencode-config';
 import {
 	MODEL_SERVER_AGENT_MIN_CONTEXT,
 	MODEL_SERVER_ENDPOINT_ID,
@@ -132,8 +133,8 @@ const RUN_ON_PROVIDER_ID = 'maestro';
  */
 const COPILOT_NEUTRAL_MODEL_ID = 'maestro-run-on';
 
-/** The variable OpenCode reads an inline config document from. */
-export const OPENCODE_CONFIG_ENV_VAR = 'OPENCODE_CONFIG_CONTENT';
+/** Re-exported for the callers that name it beside the Run on recipe. */
+export { OPENCODE_CONFIG_ENV_VAR };
 
 /**
  * Claude Code's own output reservation. It holds this many tokens back from the
@@ -341,7 +342,7 @@ const RUN_ON_SUPPORT: Record<AgentId, AgentRunOnSupport> = {
 			harnessModel: `${RUN_ON_PROVIDER_ID}/${model}`,
 			envVarMerges: {
 				[OPENCODE_CONFIG_ENV_VAR]: (current) =>
-					withOpenCodeProvider(current, {
+					withOpenCodeProvider(current, RUN_ON_PROVIDER_ID, {
 						npm: '@ai-sdk/openai-compatible',
 						name: 'Maestro',
 						options: { baseURL: `${baseUrl}/v1`, apiKey: `{env:${RUN_ON_KEY_ENV_VAR}}` },
@@ -409,36 +410,6 @@ function geminiWireOnly(agentId: AgentId): AgentRunOnSupport {
  */
 function tomlLiteral(url: string): string {
 	return `'${url.replace(/'/g, '%27')}'`;
-}
-
-/**
- * OpenCode's inline config with Maestro's provider added to it. `current` is
- * the document the launch would otherwise carry (Maestro's permission block,
- * or the user's own); every other key of it is kept. A value that is not a
- * JSON object cannot be added to, and OpenCode could not have read it either,
- * so the provider is then the whole document.
- */
-function withOpenCodeProvider(current: string | undefined, provider: unknown): string {
-	const config = parseJsonObject(current);
-	const providers = isJsonObject(config.provider) ? config.provider : {};
-	return JSON.stringify({
-		...config,
-		provider: { ...providers, [RUN_ON_PROVIDER_ID]: provider },
-	});
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function parseJsonObject(text: string | undefined): Record<string, unknown> {
-	if (!text) return {};
-	try {
-		const parsed: unknown = JSON.parse(text);
-		return isJsonObject(parsed) ? parsed : {};
-	} catch {
-		return {};
-	}
 }
 
 /** Whether (and by which recipe) a provider's harness can run on another model server. */

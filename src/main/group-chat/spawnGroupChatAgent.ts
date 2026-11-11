@@ -177,6 +177,7 @@ export async function spawnGroupChatAgent(
 			const gateway = await applyAgentGatewayToSpawn({
 				agentId: config.maestroAgentId,
 				toolType: agentId,
+				agent,
 				args,
 				customEnvVars,
 				remote,

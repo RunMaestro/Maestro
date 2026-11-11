@@ -49,6 +49,7 @@
 import * as fs from 'fs/promises';
 import { randomBytes } from 'crypto';
 import * as path from 'path';
+import { applyEnvVarMerges } from '../../../shared/agentEnvironment';
 import { estimateTokenCount } from '../../../shared/formatters';
 import {
 	backgroundRequestsUnavailable,
@@ -57,6 +58,8 @@ import {
 } from '../../../shared/local-models/background-requests';
 import { endpointServesAnthropicMessages } from '../../../shared/local-models/endpoints';
 import { resolveAgentGateway } from '../../../shared/local-models/gateway';
+import { placeSubcommandArgs } from '../../../shared/maestro-lib/launch/agent-args';
+import type { LaunchPlanAgent } from '../../../shared/maestro-lib/launch/launch-plan';
 import { formatRunOnSpec, type RunOnSourceTarget } from '../../../shared/local-models/run-on';
 import {
 	asStoredTokenProxyMode,
@@ -738,6 +741,12 @@ export interface SpawnGatewayInput {
 	agentId: string;
 	/** That agent's provider, e.g. `claude-code`. */
 	toolType: string;
+	/**
+	 * The provider's definition: its batch subcommand places the gateway's
+	 * subcommand arguments, and its default variables are what a config
+	 * document merge builds on when the agent sets none (OpenCode).
+	 */
+	agent?: Pick<LaunchPlanAgent, 'batchModePrefix' | 'defaultEnvVars'> | null;
 	/** The arguments the spawn was about to use. */
 	args: string[];
 	/** The agent's effective custom vars; a base-URL variable set here wins. */
@@ -788,11 +797,19 @@ export async function applyAgentGatewayToSpawn(
 
 	const proxy = await ensureTokenProxyForGateway(gateway.url);
 	if (!proxy.ok) return { ok: false, error: proxy.error };
+	const customEnvVars = { ...(input.customEnvVars ?? {}), ...gateway.envVars };
+	// The spawn puts these over the provider's defaults, so a config document
+	// (OpenCode's inline config) is built here from the default it will cover.
+	applyEnvVarMerges(customEnvVars, gateway.envVarMerges, input.agent?.defaultEnvVars);
 	return {
 		ok: true,
-		// A global option: ahead of the agent's own arguments, subcommand included.
-		args: [...gateway.args, ...input.args],
-		customEnvVars: { ...(input.customEnvVars ?? {}), ...gateway.envVars },
+		// A global option: ahead of the agent's own arguments, subcommand
+		// included. A subcommand option: right after the subcommand.
+		args: [
+			...gateway.args,
+			...placeSubcommandArgs(input.agent, input.args, gateway.subcommandArgs),
+		],
+		customEnvVars,
 		gateway: { envVar: gateway.envVar, url: gateway.url },
 	};
 }
