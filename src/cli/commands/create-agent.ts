@@ -13,7 +13,7 @@ import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { formatError, formatSuccess } from '../output/formatter';
 import { AGENT_IDS } from '../../shared/agentIds';
-import { parseCliBool } from '../utils/parse';
+import { parseCliBool, resolveAgentCwdArg } from '../utils/parse';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { parseGatewayUrlEdit } from '../../shared/local-models/gateway';
 import {
@@ -163,7 +163,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 		!options.sshRemote && groupDefaults?.sessionSshRemoteConfig?.enabled === true;
 	let cwd: string;
 	if (options.cwd !== undefined) {
-		cwd = path.resolve(options.cwd);
+		cwd = resolveAgentCwdArg(options.cwd);
 	} else if (groupDefaults?.projectRoot) {
 		cwd = seededRemote ? groupDefaults.projectRoot : path.resolve(groupDefaults.projectRoot);
 	} else {

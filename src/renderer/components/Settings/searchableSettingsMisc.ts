@@ -117,7 +117,7 @@ export const SSH_SETTINGS: SearchableSetting[] = [
 			'federation automation',
 			'move ssh agents to their host automatically',
 			'move to host',
-			'make federated',
+			'hosted',
 			'host',
 			'service',
 			'systemd',

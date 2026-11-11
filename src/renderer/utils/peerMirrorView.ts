@@ -294,29 +294,12 @@ export interface LiftableAgent {
 }
 
 /**
- * The mirrored peer "Move to Host" lifts `agent` onto, or undefined when the action is not offered:
- * the agent already moved, it is not an SSH remote agent, or its remote is not a Federation peer
- * with a running host the mirror is connected to right now. The main-process lift checks the
- * same rules again (`runLift()`); this one only decides whether to offer the action.
- */
-export function moveToHostPeer(
-	agent: LiftableAgent,
-	peers: readonly MirroredPeer[]
-): MirroredPeer | undefined {
-	if (readLiftedTo(agent.liftedTo)) return undefined;
-	const ssh = agent.sessionSshRemoteConfig;
-	if (!ssh?.enabled || !ssh.remoteId) return undefined;
-	return peers.find((peer) => peer.remoteId === ssh.remoteId && peer.connection === 'connected');
-}
-
-/**
- * How a local agent stands with Federation, for its Left Bar badge and its Make Federated / Move to
- * Host actions:
+ * How a local agent stands with Federation, for its Left Bar badge and its Move to Host action:
  * - `local`: not an SSH agent.
  * - `moved`: lifted onto a host already; the row is a pointer.
  * - `ssh`: an SSH agent this Maestro drives over SSH. `peer` is its remote's mirror entry (absent
- *   when the remote opted out or is disabled, so it cannot federate); `hostReady` when that peer is
- *   connected right now, so Move to Host can run without setting anything up.
+ *   when the remote opted out or is disabled, so it cannot move); `hostReady` when that peer is
+ *   connected right now, so Move to Host moves it without setting a host up first.
  */
 export type AgentFederationStatus =
 	| { kind: 'local' }
@@ -339,9 +322,14 @@ export function agentFederationStatus(
 	};
 }
 
-/** Whether Make Federated is offered: an SSH agent whose remote takes part but runs no host now. */
-export function canMakeFederated(status: AgentFederationStatus): boolean {
-	return status.kind === 'ssh' && status.peer !== undefined && !status.hostReady;
+/**
+ * Whether Move to Host is offered: an SSH agent whose remote takes part in Federation. With no host
+ * there yet, the same action sets one up first (`hostReady` false).
+ */
+export function canMoveToHost(
+	status: AgentFederationStatus
+): status is Extract<AgentFederationStatus, { kind: 'ssh' }> & { peer: MirroredPeer } {
+	return status.kind === 'ssh' && status.peer !== undefined;
 }
 
 /** Where a lifted agent's pointer leads, and whether the mirror holds that agent right now. */

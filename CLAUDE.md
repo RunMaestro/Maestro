@@ -73,7 +73,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Format profiling spans (ms):** `formatDuration()` in `src/shared/performance-metrics.ts` (NOT formatters.ts; perf traces only)
 - **Format relative time:** `formatRelativeTime()` in `src/shared/formatters.ts`
 - **Format a calendar day:** `formatCalendarDay()` in `src/shared/formatters.ts`
-- **Local calendar day keys:** `toLocalYmd()`, `parseLocalYmd()`, `addLocalDays()` in `src/shared/localDay.ts`
+- **Local calendar day keys:** `toLocalYmd()`, `parseLocalYmd()`, `addLocalDays()`, `startOfLocalDay()` in `src/shared/localDay.ts`
 - **Format an hour of day:** `formatHourOfDay()` in `src/shared/formatters.ts`
 - **Format cost:** `formatCost()` in `src/shared/formatters.ts`
 - **The text of a group's pill:** `groupBadgeLabel(group)`, `GROUP_SHORT_LABEL_MAX_LENGTH` in `src/shared/formatters.ts`; `<GroupPill>` in `src/renderer/components/ui/GroupPill.tsx`; `withGroupShortLabel()` in `src/shared/groupAgentDefaults.ts` (never `abbreviateGroupName(group.name)` directly)
@@ -220,7 +220,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Keeping a Federation host running across reboots (service):** `installRemoteService()`, `buildRemoteServiceScript()`, `describeRemoteService()` in `src/shared/maestro-lib/client/remote-service.ts`
 - **Automatic Federation (keep hosts, install, move SSH agents):** `AutoFederationCoordinator` in `src/main/federation/auto-federation.ts`; `useFederationAutoStore` in `src/renderer/stores/federationAutoStore.ts`; types in `src/shared/federationAuto.ts`
 - **Whether an SSH remote takes part in Federation:** `isFederationRemote()`, `federationFieldFor()` in `src/shared/federationRemote.ts`
-- **How a local agent stands with Federation (badge, Make Federated):** `agentFederationStatus()`, `canMakeFederated()`, `isPeerFederated()` in `src/renderer/utils/peerMirrorView.ts`; `<FederationBadge>` in `src/renderer/components/SessionList/FederationBadge.tsx`
+- **How a local agent stands with Federation (badge, Move to Host):** `agentFederationStatus()`, `canMoveToHost()`, `isPeerFederated()` in `src/renderer/utils/peerMirrorView.ts`; `<FederationBadge>` in `src/renderer/components/SessionList/FederationBadge.tsx`
 - **Showing a Federation peer's mirrored agent (renderer):** `usePeerMirrorStore`, `isMirrorShown()` in `src/renderer/stores/peerMirrorStore.ts`; `buildMirrorViewSession()` in `src/renderer/utils/peerMirrorView.ts`; `gateKeyForMirror()` in `src/renderer/hooks/keyboard/mirrorKeyboardGate.ts`
 - **A loopback port for an SSH local forward:** `availableLocalPort()`, `waitForLocalPort()` in `src/shared/maestro-lib/client/local-port.ts`
 - **Building or delivering the Maestro system prompt:** `assembleMaestroSystemPrompt()` in `src/shared/maestroSystemPrompt.ts`; `applySystemPromptDelivery()` in `src/main/utils/system-prompt-delivery.ts`; `buildMaestroSystemPromptForSession()` in `src/main/utils/maestro-system-prompt.ts`

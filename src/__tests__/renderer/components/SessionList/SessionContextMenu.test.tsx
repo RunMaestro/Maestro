@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SessionContextMenu } from '../../../../renderer/components/SessionList/SessionContextMenu';
 import {
 	gitRunKey,
@@ -606,9 +606,8 @@ describe('SessionContextMenu', () => {
 		});
 	});
 
-	// Make Federated, Move to Host and Open on Host live in the Agent Tools submenu beside
-	// Duplicate and Export.
-	describe('Federation (Make Federated, Move to Host)', () => {
+	// Move to Host and Open on Host live in the Agent Tools submenu beside Duplicate and Export.
+	describe('Federation (Move to Host)', () => {
 		const sshSession = (overrides: Partial<Session> = {}) =>
 			makeSession({
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
@@ -633,15 +632,16 @@ describe('SessionContextMenu', () => {
 			renderMenu({ session: sshSession() });
 			fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
 			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
-			expect(screen.queryByText(/Make Federated/)).not.toBeInTheDocument();
 		});
 
-		it('offers Make Federated for an SSH agent whose remote runs no host', () => {
+		it('offers Move to Host for an SSH agent whose remote runs no host (it sets one up first)', () => {
 			mirror('not-installed');
 			const props = renderMenu({ session: sshSession() });
 			fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
-			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
-			fireEvent.click(screen.getByText('Make Federated (Build Box)...'));
+			const item = screen.getByTestId('session-menu-move-to-host');
+			expect(item).toHaveTextContent('Move to Host (Build Box)...');
+			expect(item.getAttribute('title')).toMatch(/^Set up a Maestro host on Build Box/);
+			fireEvent.click(item);
 			expect(requestMoveToHost).toHaveBeenCalledWith('session-1');
 			expect(props.onDismiss).toHaveBeenCalled();
 		});
@@ -650,18 +650,25 @@ describe('SessionContextMenu', () => {
 			mirror();
 			const props = renderMenu({ session: sshSession() });
 			fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
-			fireEvent.click(screen.getByText('Move to Host (Build Box)...'));
+			const item = screen.getByTestId('session-menu-move-to-host');
+			expect(item.getAttribute('title')).toMatch(
+				/^Run this agent on the Maestro host on Build Box/
+			);
+			fireEvent.click(item);
 			expect(requestMoveToHost).toHaveBeenCalledWith('session-1');
 			expect(props.onDismiss).toHaveBeenCalled();
 		});
 
-		it('hides Move to Host for a local agent or a peer that is not connected', () => {
+		it('offers one Move to Host when the peer is not connected, and none for a local agent', () => {
 			mirror('lost');
 			renderMenu({ session: sshSession() });
 			fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
+			// A host that went away is set up again through the same action.
+			expect(screen.getAllByText(/Move to Host/)).toHaveLength(1);
+			cleanup();
+			renderMenu({ session: makeSession() });
+			fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
 			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
-			// A host that went away is set up again through Make Federated.
-			expect(screen.getByText('Make Federated (Build Box)...')).toBeInTheDocument();
 		});
 
 		it('offers Open on Host instead once the agent moved', () => {
@@ -670,7 +677,6 @@ describe('SessionContextMenu', () => {
 			renderMenu({ session });
 			fireEvent.click(screen.getByRole('button', { name: /^Agent Tools/ }));
 			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
-			expect(screen.queryByText(/Make Federated/)).not.toBeInTheDocument();
 			fireEvent.click(screen.getByText('Open on Host (box:h1)'));
 			expect(openLiftedAgent).toHaveBeenCalledWith(session);
 		});

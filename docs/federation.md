@@ -6,13 +6,13 @@ icon: network-wired
 
 Federation lets a Maestro that runs on another machine **own** an agent. That Maestro, a headless `maestro-cli host`, runs the turns, the queue, Auto Run, and Cue. The Maestro on your laptop is a **mirror**: it shows the host's agents in the Left Bar, streams their output, and sends your input. Close the laptop and the host keeps working. Open it again and the mirror reloads the current state.
 
-Federation is built in and **opportunistic**. Every SSH remote you add is a candidate: when one runs a Maestro host, its agents show up in your Left Bar; when it does not, it stays a plain SSH remote and nothing changes. One right-click turns an SSH agent into a federated one, and Maestro installs what the remote needs. The laptop reaches the host over the SSH remote you already have. Nothing new listens on the network.
+Federation is built in and **opportunistic**. Every SSH remote you add is a candidate: when one runs a Maestro host, its agents show up in your Left Bar; when it does not, it stays a plain SSH remote and nothing changes. One right-click (**Move to Host**) turns an SSH agent into a hosted one that keeps running while your laptop sleeps, and Maestro installs what the remote needs. The laptop reaches the host over the SSH remote you already have. Nothing new listens on the network.
 
-## SSH remote agent or federated agent
+## SSH remote agent or hosted agent
 
-Maestro has two ways to use another machine. An [SSH remote agent](./ssh-remote-execution) is owned by your local Maestro, which starts the provider over SSH for each turn. A federated agent is owned by the Maestro on the remote.
+Maestro has two ways to use another machine. An [SSH remote agent](./ssh-remote-execution) is owned by your local Maestro, which starts the provider over SSH for each turn. A hosted agent is owned by the Maestro host on the remote, so it keeps running while your laptop sleeps. Federation is the feature that makes this work; **Hosted** is what the Left Bar calls the result.
 
-|                                                          | SSH remote agent | Federated agent                      |
+|                                                          | SSH remote agent | Hosted agent                         |
 | -------------------------------------------------------- | ---------------- | ------------------------------------ |
 | Who owns the agent                                       | Local Maestro    | Remote Maestro                       |
 | Turn survives the laptop closing                         | No               | Yes                                  |
@@ -21,16 +21,16 @@ Maestro has two ways to use another machine. An [SSH remote agent](./ssh-remote-
 | Several clients can use the same agent                   | No               | Yes                                  |
 | Needs Maestro on the other machine                       | No               | Yes, and Maestro installs it for you |
 
-You can turn an existing SSH remote agent into a federated one with **Make Federated**. See [Make an SSH agent federated](#make-an-ssh-agent-federated).
+You can turn an existing SSH remote agent into a hosted one with **Move to Host**. See [Move an SSH agent to its host](#move-an-ssh-agent-to-its-host).
 
 ### Tell them apart in the Left Bar
 
 Every agent on another machine wears a badge under its name. Hover it to see what it means and what to do next.
 
-| Badge       | Agent            | What the hover card says                                                                                                                                                                                          |
-| ----------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SSH`       | SSH remote agent | This Maestro starts every turn over SSH, so the work stops when this machine sleeps or disconnects. Then the next step: **Move to Host** when the remote already runs a host, **Make Federated** when it does not |
-| `Federated` | Federated agent  | The Maestro host on that remote owns the agent and runs its turns, queue, Auto Run, and Cue, and the work keeps going while this machine is off                                                                   |
+| Badge    | Agent            | What the hover card says                                                                                                                                                                        |
+| -------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SSH`    | SSH remote agent | Stops when this machine sleeps or disconnects, because this Maestro starts every turn over SSH. Then the next step: **Move to Host**, which sets up a host on the remote first when it has none |
+| `Hosted` | Hosted agent     | Keeps running while this machine sleeps or is off. The Maestro host on that remote owns the agent and runs its turns, queue, Auto Run, and Cue                                                  |
 
 A local agent has no badge. An SSH agent that moved to its host shows `on <peer>` instead: click it to open the agent on the host.
 
@@ -50,7 +50,7 @@ sequenceDiagram
 
 - **SSH is the authentication.** On every connect the laptop reads the host's own port, token, and CLI secret over SSH. It keeps them in memory and never writes them to disk.
 - **The host stays on loopback.** The laptop reaches it through an SSH local forward. No port is opened on the remote's network.
-- **Opportunistic, with an opt-out per remote.** Maestro probes every enabled SSH remote once at startup, with one SSH call, to see whether it runs a host. A remote with no host stays a plain SSH remote and is not shown as a peer. Maestro probes it again after the laptop wakes, when you edit your SSH remotes, after **Make Federated** or **Start Host**, and every 15 minutes. Turn **Federation** off on a remote and Maestro never probes it.
+- **Opportunistic, with an opt-out per remote.** Maestro probes every enabled SSH remote once at startup, with one SSH call, to see whether it runs a host. A remote with no host stays a plain SSH remote and is not shown as a peer. Maestro probes it again after the laptop wakes, when you edit your SSH remotes, after **Move to Host** sets up a host, or **Start Host**, and every 15 minutes. Turn **Federation** off on a remote and Maestro never probes it.
 - **One at a time.** Maestro connects to the remotes one after another, never at the same time, so a laptop with many remotes does not start an SSH storm.
 - **The host is the only record.** Mirrored agents live in memory only. They are never written to your local agent store, so a disconnect or a removed remote cannot damage local data.
 
@@ -61,13 +61,13 @@ A remote with Federation on and a running host is called a **peer**. Its peer na
 There is nothing to set up. With **Move SSH agents to their host automatically** on (the default, in **Settings > SSH Hosts > Federation automation**), Maestro does the whole job on its own, one remote and one agent at a time:
 
 1. It checks each SSH remote for a Maestro host.
-2. Where a remote has an SSH agent but no host, it installs its own `maestro-cli` there. See [What Make Federated installs](#what-make-federated-installs).
+2. Where a remote has an SSH agent but no host, it installs its own `maestro-cli` there. See [What Maestro installs on the remote](#what-maestro-installs-on-the-remote).
 3. It registers the host with the remote's service manager and starts it. See [Durability](#durability).
 4. It moves each SSH agent onto the host once every [sanity check](#automatic-moves-and-their-sanity-checks) passes.
 
 When it cannot do a step on its own, it tells you what to do. See [When Maestro needs you](#when-maestro-needs-you).
 
-To do the same steps by hand (or with automatic moves off), right-click the agent in the Left Bar and choose **Make Federated**. The item shows for an SSH agent whose remote runs no host yet. **Set Up Host** installs and starts the host. Once the host answers, the same window shows the plan: what moves and which env vars stay. Confirm to move the agent. From the CLI:
+To do the same steps by hand (or with automatic moves off), right-click the agent in the Left Bar and choose **Move to Host**. When the remote runs no host yet, the window first offers **Set Up Host**, which installs and starts it. Once the host answers, the same window shows the plan: what moves and which env vars stay. Confirm to move the agent. From the CLI:
 
 ```bash
 maestro-cli remote-host install build-box --start
@@ -111,10 +111,10 @@ The usual cases:
 | A provider is not available to the host       | Install it on the remote and log in as the SSH user. If it lives outside `~/.local/bin` or a Node version manager, add `export PATH="<its folder>:$PATH"` to `~/.maestro/host.env` on the remote (Maestro never rewrites that file), then **Start Host**                                                                                             |
 | Secret env vars would stay on this machine    | **Move to Host** with **Send secret env vars too**, or set them on the remote and remove them from this agent                                                                                                                                                                                                                                        |
 | Could not download Node.js, or install SQLite | Let the remote reach nodejs.org and the npm registry, or install Node.js 22+ there                                                                                                                                                                                                                                                                   |
-| A `maestro-cli` that Maestro did not install  | **Make Federated** offers **Install Maestro's Own Copy**                                                                                                                                                                                                                                                                                             |
+| A `maestro-cli` that Maestro did not install  | **Move to Host** offers **Install Maestro's Own Copy**                                                                                                                                                                                                                                                                                               |
 | No service manager (Windows, a container)     | Shown as a note, not a blocker: Maestro starts the host again when it finds it stopped. To start it at boot yourself, run `~/.maestro/bin/maestro-host-service` from your init (Linux), or on Windows add a Task Scheduler task "At log on" that runs `"C:\Program Files\Git\bin\bash.exe" -lc "~/.maestro/bin/maestro-cli host start --foreground"` |
 
-### What Make Federated installs
+### What Maestro installs on the remote
 
 Maestro installs into `~/.maestro` on the remote, as the SSH user. It never asks for sudo and runs only as the SSH user you connect as. The install writes nothing outside that folder, npm's cache included. Registering the [service](#durability) adds one file in the service manager's folder (`~/.config/systemd/user/maestro-host.service`, or `~/Library/LaunchAgents/sh.maestro.host.plist`), and may turn lingering on for that user.
 
@@ -165,7 +165,7 @@ The Left Bar shows one group per remote that runs a host, below your local group
 | Pulsing orange | Connecting or reconnecting                                                     |
 | Red            | Connection lost, no host running, Maestro not installed, or the forward failed |
 
-Each row carries a `Federated` badge. Right-click a row to copy its `peer:agent` target or to reconnect the peer, and right-click a peer that is down to start its host. When the connection drops, the agents stay in the list, dimmed, with their last known state, and Maestro reconnects on its own. After the laptop wakes, it reconnects every peer and reloads its agents.
+Each row carries a `Hosted` badge. Right-click a row to copy its `peer:agent` target or to reconnect the peer, and right-click a peer that is down to start its host. When the connection drops, the agents stay in the list, dimmed, with their last known state, and Maestro reconnects on its own. After the laptop wakes, it reconnects every peer and reloads its agents.
 
 From the CLI:
 
@@ -176,7 +176,7 @@ maestro-cli federation peers                  # what the desktop probes, with co
 maestro-cli federation reconnect build-box
 ```
 
-## Drive a federated agent
+## Drive a hosted agent
 
 Click a mirrored agent to open it. Its tabs, transcript, and live output come from the host. The composer works as it does for a local agent:
 
@@ -219,7 +219,7 @@ maestro-cli tab star active --agent build-box:docs
 
 `show agent`, `ask`, and `dispatch` also take a `peer:agent` target. [Agents on a Peer](./cli#agents-on-a-peer) lists every verb and the options a peer refuses.
 
-## Make an SSH agent federated
+## Move an SSH agent to its host
 
 An SSH remote agent already runs its provider on the remote as the SSH user, so its provider session files are already there. A **lift** moves the agent onto the host on that remote:
 
@@ -228,7 +228,7 @@ An SSH remote agent already runs its provider on the remote as the SSH user, so 
 - Non-secret custom env vars move. Secret ones stay on your laptop unless you choose to send them. The variable that selects the provider's config or session directory (such as `CLAUDE_CONFIG_DIR` or `CODEX_HOME`) always moves.
 - Your local agent keeps its tabs and transcripts but becomes a pointer. Its Left Bar row shows `on <peer>`: click it to open the agent on its host. Sends to the local copy are refused.
 
-From the desktop, right-click the agent in the Left Bar and choose **Make Federated** (when its remote runs no host yet) or **Move to Host** (when it does), or run either from the command palette. Make Federated sets up the host first, then continues as Move to Host. Both show the plan (what moves and which env vars stay) before anything moves. From the CLI:
+From the desktop, right-click the agent in the Left Bar and choose **Move to Host**, or run it from the command palette. When the remote runs no host yet, it sets one up first and then continues. Either way it shows the plan (what moves and which env vars stay) before anything moves. From the CLI:
 
 ```bash
 maestro-cli lift docs --dry-run    # the same plan, nothing moves
@@ -243,7 +243,7 @@ A lift refuses, and moves nothing, while a tab is running a turn, when no host r
 A host is only useful while it keeps running.
 
 - **macOS sleep.** While the host has work in flight (a turn, an Auto Run, a group chat round, a consult, or a Cue run), it holds `caffeinate -i` so the Mac does not sleep mid-turn, and releases it when idle. `host start --no-prevent-sleep` turns this off. `host status --json` reports `preventingSleep`.
-- **Reboots and crashes.** Maestro registers the host with the remote's service manager when it sets the host up (Make Federated, Start Host, automatic setup, or `remote-host install`), and once per app run for a host it is already connected to:
+- **Reboots and crashes.** Maestro registers the host with the remote's service manager when it sets the host up (Move to Host, Start Host, automatic setup, or `remote-host install`), and once per app run for a host it is already connected to:
 
   | Remote                                   | Service                                                                                                                                                                                                    |
   | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -263,7 +263,7 @@ Run the host as the same user your SSH agents run as. The host then reads the sa
 
 ## Known limits
 
-- **Driving an agent means running commands as the host user.** Anyone who can send to a federated agent can make it do anything that agent's permissions allow, on the host, as the SSH user. Federation is for your own machines. Sharing an agent with another person is out of scope.
+- **Driving an agent means running commands as the host user.** Anyone who can send to a hosted agent can make it do anything that agent's permissions allow, on the host, as the SSH user. Federation is for your own machines. Sharing an agent with another person is out of scope.
 - **SSH is the only transport.** A peer must be an SSH remote you can already reach. There is no bundled tunnel, no pairing with a short code, and no offline invite link.
 - **No re-export.** A host does not offer agents that it mirrors from a third Maestro.
 - **No phone or web interface control.** The browser build of Maestro and the web interface do not show peers. Use the desktop app or the CLI.

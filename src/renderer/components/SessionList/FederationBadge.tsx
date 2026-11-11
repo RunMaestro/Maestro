@@ -4,12 +4,14 @@
  *
  * - `ssh`: an SSH agent. This Maestro starts each turn over SSH, so the work stops when this
  *   machine sleeps or loses the connection.
- * - `federated`: an agent owned by the Maestro host on the remote (a mirrored peer row). Turns, the
+ * - `hosted`: an agent owned by the Maestro host on the remote (a mirrored peer row). Turns, the
  *   queue, Auto Run, and Cue keep running there while this machine is off.
  *
- * Federation is opportunistic, so the card on an SSH agent also says what the next step is: Move
- * to Host when its remote already runs a host, Make Federated when it does not. A local agent gets
- * no badge, and an agent that moved already shows `LiftedPointerChip` instead.
+ * Users see "Hosted", not "Federated": the word names what they get (the agent keeps working while
+ * this machine sleeps), where "federation" names the mechanism. Federation is opportunistic, so the
+ * card on an SSH agent also says what the next step is (Move to Host, which sets a host up first
+ * when the remote has none). A local agent gets no badge, and an agent that moved already shows
+ * `LiftedPointerChip` instead.
  */
 
 import { memo } from 'react';
@@ -33,7 +35,7 @@ export type FederationBadgeMode =
 			canFederate: boolean;
 			auto?: FederationBadgeAuto;
 	  }
-	| { kind: 'federated'; peerName: string };
+	| { kind: 'hosted'; peerName: string };
 
 /** The hover card's lines, exported so tests and docs read the same words. */
 export function federationBadgeCopy(mode: FederationBadgeMode): {
@@ -43,13 +45,13 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 	/** Automatic Federation could not move the agent: the reason and what to do. */
 	blocked?: { reason?: string; fix?: string };
 } {
-	if (mode.kind === 'federated') {
+	if (mode.kind === 'hosted') {
 		return {
-			label: 'Federated',
-			title: `Federated agent on ${mode.peerName}`,
+			label: 'Hosted',
+			title: `Hosted on ${mode.peerName}`,
 			lines: [
-				`The Maestro host on ${mode.peerName} owns this agent and runs its turns, queue, Auto Run, and Cue.`,
-				'The work keeps going while this machine sleeps or is off. This window is a live view of it.',
+				'Keeps running while this machine sleeps or is off.',
+				`The Maestro host on ${mode.peerName} owns this agent and runs its turns, queue, Auto Run, and Cue. This window is a live view of it.`,
 			],
 		};
 	}
@@ -58,8 +60,8 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 	const manualNext = !mode.canFederate
 		? 'Federation does not reach this remote right now: it is disabled, Federation is off for it, or Maestro has not checked it yet.'
 		: mode.hostReady
-			? 'This remote runs a Maestro host: right-click > Move to Host to federate this agent.'
-			: 'Right-click > Make Federated to install a Maestro host on the remote and move this agent onto it.';
+			? 'This remote runs a Maestro host: right-click > Move to Host to run this agent there.'
+			: 'Right-click > Move to Host: Maestro sets up a host on the remote, then runs this agent there.';
 	const next =
 		auto?.state === 'pending' || auto?.state === 'waiting'
 			? `Maestro moves it onto the remote's host automatically. ${auto.reason ?? ''}`.trim()
@@ -70,8 +72,8 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 		label: 'SSH',
 		title: `SSH agent${where}`,
 		lines: [
-			'This Maestro starts every turn over SSH, so the work stops when this machine sleeps or disconnects.',
-			"A federated agent runs on the remote's own Maestro host instead and keeps working with this machine off.",
+			'Stops when this machine sleeps or disconnects: this Maestro starts every turn over SSH.',
+			"A hosted agent runs on the remote's own Maestro host instead and keeps working with this machine off.",
 			next,
 		],
 		...(auto?.state === 'blocked' ? { blocked: { reason: auto.reason, fix: auto.fix } } : {}),
@@ -87,7 +89,7 @@ export const FederationBadge = memo(function FederationBadge({
 }) {
 	const copy = federationBadgeCopy(mode);
 	const color =
-		mode.kind === 'federated'
+		mode.kind === 'hosted'
 			? theme.colors.accent
 			: copy.blocked
 				? theme.colors.error

@@ -11,10 +11,11 @@ interface BuildFederationCommandsArgs {
 	selectMirroredAgent: (peerId: string, agentId: string) => void;
 	reconnectPeer: (peerId: string) => void | Promise<void>;
 	copyPeerAgentRef: (peerId: string, agentId: string) => void | Promise<void>;
-	/** The active local agent and the connected peer it can move to (`useMoveToHostPeer()`). */
-	moveToHost?: { sessionId: string; agentName: string; peerName: string };
-	/** The active local SSH agent whose remote runs no host yet (`canMakeFederated()`). */
-	makeFederated?: { sessionId: string; agentName: string; remoteName: string };
+	/**
+	 * The active local SSH agent whose remote takes part (`canMoveToHost()`). `hostReady` false: the
+	 * same Move to Host sets a host up first.
+	 */
+	moveToHost?: { sessionId: string; agentName: string; peerName: string; hostReady: boolean };
 	/** Open the Move to Host modal for an agent. */
 	requestMoveToHost: (sessionId: string) => void;
 	/** The active local agent's lift pointer (`useLiftedMirrorTarget()`). */
@@ -37,7 +38,6 @@ export function buildFederationCommands({
 	reconnectPeer,
 	copyPeerAgentRef,
 	moveToHost,
-	makeFederated,
 	requestMoveToHost,
 	liftedTarget,
 	openLiftedAgent,
@@ -48,20 +48,11 @@ export function buildFederationCommands({
 		actions.push({
 			id: 'federation-move-to-host',
 			label: `Move to Host: ${moveToHost.agentName} (${moveToHost.peerName})`,
-			subtext: 'Lift this SSH agent onto the maestro-cli host on its remote',
+			subtext: moveToHost.hostReady
+				? "Run this SSH agent on its remote's Maestro host, so it keeps working while this machine sleeps"
+				: 'Set up a Maestro host on the remote, then run this SSH agent there so it keeps working while this machine sleeps',
 			action: () => {
 				requestMoveToHost(moveToHost.sessionId);
-				setQuickActionOpen(false);
-			},
-		});
-	}
-	if (makeFederated) {
-		actions.push({
-			id: 'federation-make-federated',
-			label: `Make Federated: ${makeFederated.agentName} (${makeFederated.remoteName})`,
-			subtext: 'Install a Maestro host on the SSH remote, then move this agent onto it',
-			action: () => {
-				requestMoveToHost(makeFederated.sessionId);
 				setQuickActionOpen(false);
 			},
 		});

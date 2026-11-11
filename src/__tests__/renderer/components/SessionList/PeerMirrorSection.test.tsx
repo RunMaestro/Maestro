@@ -92,9 +92,7 @@ describe('PeerMirrorSection', () => {
 		const rows = build.getAllByTestId('peer-mirror-agent-row');
 		expect(rows.map((row) => row.getAttribute('title'))).toEqual(['build:a1', 'build:a2']);
 		expect(within(rows[0]).getByText('Agent a1')).toBeInTheDocument();
-		expect(within(rows[0]).getByTestId('federation-badge-federated')).toHaveTextContent(
-			'Federated'
-		);
+		expect(within(rows[0]).getByTestId('federation-badge-hosted')).toHaveTextContent('Hosted');
 	});
 
 	it('leaves out a remote that was probed and runs no host: it is a plain SSH remote', () => {

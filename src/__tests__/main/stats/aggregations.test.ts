@@ -15,6 +15,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { DatabaseSync } from 'node:sqlite';
 import { canLoadNodeSqlite } from '../../helpers/nodeSqlite';
+import { startOfLocalDay } from '../../../shared/localDay';
 
 // Track Database constructor calls to verify file path
 let lastDbPath: string | null = null;
@@ -121,9 +122,8 @@ describe('Time-range filtering works correctly for all ranges', () => {
 	});
 
 	describe('getQueryEvents time range calculations', () => {
-		it('should filter by "day" range (last 24 hours)', async () => {
+		it('should filter by "day" range (since local midnight)', async () => {
 			const now = Date.now();
-			const oneDayMs = 24 * 60 * 60 * 1000;
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -131,16 +131,15 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			db.getQueryEvents('day');
 
-			// Verify the start_time parameter is approximately 24 hours ago
+			// Verify the start_time parameter is local midnight today
 			const allCalls = mockStatement.all.mock.calls;
 			expect(allCalls.length).toBeGreaterThan(0);
 
 			const lastCall = allCalls[allCalls.length - 1];
 			const startTimeParam = lastCall[0] as number;
 
-			// The start time should be approximately now - 24 hours (within a few seconds tolerance)
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneDayMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneDayMs + 5000);
+			// "Today" is the local calendar day, not a rolling 24 hours (#1960)
+			expect(startTimeParam).toBe(startOfLocalDay(now));
 		});
 
 		it('should filter by "week" range (last 7 days)', async () => {
@@ -227,7 +226,6 @@ describe('Time-range filtering works correctly for all ranges', () => {
 	describe('getAutoRunSessions time range calculations', () => {
 		it('should filter Auto Run sessions by "day" range', async () => {
 			const now = Date.now();
-			const oneDayMs = 24 * 60 * 60 * 1000;
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -241,8 +239,8 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			const lastCall = allCalls[allCalls.length - 1];
 			const startTimeParam = lastCall[0] as number;
 
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneDayMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneDayMs + 5000);
+			// "Today" is the local calendar day, not a rolling 24 hours (#1960)
+			expect(startTimeParam).toBe(startOfLocalDay(now));
 		});
 
 		it('should filter Auto Run sessions by "week" range', async () => {
@@ -325,7 +323,6 @@ describe('Time-range filtering works correctly for all ranges', () => {
 	describe('getAggregatedStats time range calculations', () => {
 		it('should aggregate stats for "day" range', async () => {
 			const now = Date.now();
-			const oneDayMs = 24 * 60 * 60 * 1000;
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -341,8 +338,8 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			const firstCall = getCalls[0];
 			const startTimeParam = firstCall[0] as number;
 
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneDayMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneDayMs + 5000);
+			// "Today" is the local calendar day, not a rolling 24 hours (#1960)
+			expect(startTimeParam).toBe(startOfLocalDay(now));
 		});
 
 		it('should aggregate stats for "week" range', async () => {
@@ -429,7 +426,6 @@ describe('Time-range filtering works correctly for all ranges', () => {
 	describe('getQueryEvents time range calculations', () => {
 		it('should query events for the "day" range only', async () => {
 			const now = Date.now();
-			const oneDayMs = 24 * 60 * 60 * 1000;
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -443,8 +439,8 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			const lastCall = allCalls[allCalls.length - 1];
 			const startTimeParam = lastCall[0] as number;
 
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneDayMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneDayMs + 5000);
+			// "Today" is the local calendar day, not a rolling 24 hours (#1960)
+			expect(startTimeParam).toBe(startOfLocalDay(now));
 		});
 
 		it('should query events for the "all" range', async () => {

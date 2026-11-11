@@ -1,7 +1,7 @@
 /**
  * Federation peer mirror IPC (`federation:*`): the desktop's mirror of its Federation peers
  * (FED-SSH-05), `federation:act`, the input that drives a mirrored agent, and `federation:lift`,
- * the desktop's "Move to Host" (FED-SSH-06), `federation:setupHost`, its Make Federated and Start
+ * the desktop's "Move to Host" (FED-SSH-06), `federation:setupHost`, its setup step and Start
  * Host (install the CLI on the remote and start the host), and `federation:history*`, the History panel of a
  * mirrored agent (paged, filtered, and graphed here by `src/main/federation/peer-history.ts`).
  *
@@ -276,7 +276,7 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				liftAgentFromDesktop(requireId(agentId, 'agent id'), readLiftOptions(options), liftDeps)
 		)
 	);
-	// Make Federated / Start Host: the same `setupRemoteHost()` as `maestro-cli remote-host install --start`.
+	// Move to Host's setup step / Start Host: the same `setupRemoteHost()` as `maestro-cli remote-host install --start`.
 	const setupDeps = buildDesktopSetupHostDeps({
 		readSshRemotes: deps.readSshRemotes,
 		service: getPeerMirrorService,

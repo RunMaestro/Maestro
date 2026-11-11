@@ -501,6 +501,11 @@ const wakatimeManager = new WakaTimeManager(store, app.getVersion());
 setWakaTimeManager(wakatimeManager);
 const maestroCliManager = new MaestroCliManager();
 
+// Repair an AppImage-installed shim when an update renamed the AppImage, or
+// when an older build recorded a /tmp/.mount_* path that is gone. Fire and
+// forget: the shim is marker-guarded, and a failed repair must not block startup.
+void maestroCliManager.healAppImageShim();
+
 // Auto-install WakaTime CLI on startup if enabled
 if (store.get('wakatimeEnabled', false)) {
 	wakatimeManager.ensureCliInstalled();

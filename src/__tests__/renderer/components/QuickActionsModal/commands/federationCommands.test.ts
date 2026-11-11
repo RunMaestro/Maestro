@@ -62,10 +62,11 @@ describe('buildFederationCommands', () => {
 	it('offers Move to Host for the active agent only when it can move', () => {
 		expect(build().commands.some((c) => c.id === 'federation-move-to-host')).toBe(false);
 		const { deps, commands } = build({
-			moveToHost: { sessionId: 's1', agentName: 'Docs', peerName: 'Build Box' },
+			moveToHost: { sessionId: 's1', agentName: 'Docs', peerName: 'Build Box', hostReady: true },
 		});
 		const move = commands.find((c) => c.id === 'federation-move-to-host');
 		expect(move?.label).toBe('Move to Host: Docs (Build Box)');
+		expect(move?.subtext).toMatch(/^Run this SSH agent/);
 		move?.action();
 		expect(deps.requestMoveToHost).toHaveBeenCalledWith('s1');
 		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
@@ -80,16 +81,17 @@ describe('buildFederationCommands', () => {
 		expect(deps.openLiftedAgent).toHaveBeenCalled();
 	});
 
-	it('offers Make Federated for the active SSH agent whose remote runs no host', () => {
+	it('offers the same Move to Host when the remote runs no host yet, saying it sets one up', () => {
 		const { deps, commands } = build({
 			peers: [],
-			makeFederated: { sessionId: 's1', agentName: 'Docs', remoteName: 'Build Box' },
+			moveToHost: { sessionId: 's1', agentName: 'Docs', peerName: 'Build Box', hostReady: false },
 		});
-		const entry = commands.find((c) => c.id === 'federation-make-federated');
-		expect(entry?.label).toBe('Make Federated: Docs (Build Box)');
-		entry?.action();
+		const entries = commands.filter((c) => c.id.startsWith('federation-move'));
+		expect(entries).toHaveLength(1);
+		expect(entries[0].label).toBe('Move to Host: Docs (Build Box)');
+		expect(entries[0].subtext).toMatch(/^Set up a Maestro host/);
+		entries[0].action();
 		expect(deps.requestMoveToHost).toHaveBeenCalledWith('s1');
 		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
-		expect(build().commands.some((c) => c.id === 'federation-make-federated')).toBe(false);
 	});
 });

@@ -21,7 +21,6 @@ import { formatTranslationRecordCounts } from '../../shared/maestro-lib/translat
 // Use `--ssh-remote none` to revert the agent to local execution. All of these
 // (like `--cwd`) are refused by the renderer while the agent process is alive.
 
-import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId, resolveGroupId, getSessionById } from '../services/storage';
 import { ExitCode, exitWith } from '../exit-codes';
@@ -63,7 +62,7 @@ import {
 } from '../services/agent-setting-flags';
 import { failCommand, failFromError } from '../services/session-command';
 import { errorFrameMessage } from '../services/session-command';
-import { resolveCliPath } from '../utils/parse';
+import { resolveAgentCwdArg, resolveCliPath } from '../utils/parse';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -358,7 +357,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		}
 	}
 
-	const resolvedCwd = options.cwd !== undefined ? path.resolve(options.cwd) : undefined;
+	const resolvedCwd = options.cwd !== undefined ? resolveAgentCwdArg(options.cwd) : undefined;
 
 	const applied: {
 		group?: string | null;
