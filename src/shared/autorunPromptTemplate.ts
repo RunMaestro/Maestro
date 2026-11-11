@@ -17,6 +17,9 @@
  * - A template that names `{{DOCUMENT_PATH}}` was written for the run. It is left as it is.
  * - One that does not gets the selection block (unless it already has its own placeholder) and
  *   the document block appended, after a rule.
+ * - Where the engine pastes the document in itself (the CLI policy's `inlineDocument`), only the
+ *   document block is left out. The selection block still goes in: it carries the run's mode and
+ *   the model-hint boundary, which a pasted document says nothing about.
  *
  * Variables inside the result (`{{DOCUMENT_PATH}}` and the rest) are left for the caller's
  * template-variable pass, which runs after this.
@@ -30,7 +33,8 @@ export interface AutoRunPromptBlocks {
 	selectionBlock: string;
 	/**
 	 * The `autorun-document` block, which names `{{DOCUMENT_PATH}}`. `null` when the engine puts
-	 * the document in the prompt itself (the CLI policy's `inlineDocument`): nothing is appended.
+	 * the document in the prompt itself (the CLI policy's `inlineDocument`): only this block is
+	 * left out, and a missing selection block is still appended.
 	 */
 	documentBlock: string | null;
 }
@@ -50,11 +54,11 @@ export function resolveAutoRunPromptTemplate(
 		new RegExp(TASK_SELECTION_PLACEHOLDER.source, 'gi'),
 		() => selectionBlock
 	);
-	if (documentBlock === null || namesAutoRunDocument(template)) return resolved;
+	if (namesAutoRunDocument(template)) return resolved;
 
-	const missing = [hasSelectionPlaceholder ? '' : selectionBlock, documentBlock]
+	const missing = [hasSelectionPlaceholder ? '' : selectionBlock, documentBlock ?? '']
 		.map((block) => block.trim())
 		.filter(Boolean);
 	if (missing.length === 0) return resolved;
-	return `${resolved.trimEnd()}\n\n---\n\n${missing.join('\n\n')}\n`;
+	return `${resolved.trimEnd()}\n\n---\n\n${missing.join('\n\n')}`;
 }

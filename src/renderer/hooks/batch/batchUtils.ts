@@ -5,6 +5,7 @@
 
 import { describeSegmentLimit } from '../../../shared/autorunModelHints';
 import type { TaskSelectionMode } from '../../types';
+import { resolveAutoRunPromptTemplate } from '../../../shared/autorunPromptTemplate';
 import {
 	CHECKED_TASK_REGEX,
 	UNCHECKED_TASK_REGEX,
@@ -86,12 +87,49 @@ export function getTaskSelectionBlock(
 }
 
 /**
- * The cached `autorun-document` block: the default prompt's closing section that names
- * `{{DOCUMENT_PATH}}`. Appended to a playbook prompt that never names the document
- * (`resolveAutoRunPromptTemplate`).
+ * The prompt a desktop Auto Run task starts from, before template variables: the selection block
+ * for `mode` spliced in, and, for a template that never names `{{DOCUMENT_PATH}}`, the selection
+ * and `autorun-document` blocks appended (`resolveAutoRunPromptTemplate`). The desktop never
+ * pastes the document into the prompt, so the document block is always offered.
+ *
+ * Synchronous, from the cached prompts, so the Auto Run modal can validate what will actually be
+ * sent. A task must go through {@link prepareDesktopAutoRunPrompt}, which refuses to build from
+ * prompts that never loaded.
  */
-export function getAutorunDocumentBlock(): string {
-	return cachedAutorunDocumentBlock;
+export function buildDesktopAutoRunPrompt(
+	template: string,
+	mode: TaskSelectionMode | undefined,
+	segment?: { count: number; total: number }
+): string {
+	return resolveAutoRunPromptTemplate(template, {
+		selectionBlock: getTaskSelectionBlock(mode, segment),
+		documentBlock: cachedAutorunDocumentBlock,
+	});
+}
+
+/**
+ * {@link buildDesktopAutoRunPrompt} for a task about to be dispatched. When the startup load of the
+ * Auto Run prompts failed or has not finished, the cache is empty, and a custom prompt would go out
+ * with no task document. So the prompts are loaded again first, and a second failure throws: the
+ * batch runner records the task as failed and no agent is spawned with a prompt that cannot work.
+ */
+export async function prepareDesktopAutoRunPrompt(
+	template: string,
+	mode: TaskSelectionMode | undefined,
+	segment?: { count: number; total: number }
+): Promise<string> {
+	if (!batchUtilsPromptsLoaded) {
+		try {
+			await loadBatchUtilsPrompts(true);
+		} catch (error) {
+			throw new Error(
+				`Auto Run could not load its task prompts, so the task was not sent: ${
+					error instanceof Error ? error.message : String(error)
+				}`
+			);
+		}
+	}
+	return buildDesktopAutoRunPrompt(template, mode, segment);
 }
 
 // Default batch processing prompt (exported for use by BatchRunnerModal and playbook management)

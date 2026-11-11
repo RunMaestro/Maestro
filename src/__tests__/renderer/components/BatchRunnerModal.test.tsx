@@ -33,6 +33,7 @@ import {
 	DEFAULT_BATCH_PROMPT,
 	validateAgentPromptHasTaskReference,
 } from '../../../renderer/components/BatchRunnerModal';
+import { loadBatchUtilsPrompts } from '../../../renderer/hooks/batch/batchUtils';
 import type { Theme, Playbook } from '../../../renderer/types';
 import type { AgentDiscoveryResult } from '../../../shared/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -1736,7 +1737,8 @@ describe('Agent Prompt Validation in UI', () => {
 
 		// Set prompt to something without task references
 		const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
-		fireEvent.change(textarea, { target: { value: 'Just do some coding please.' } });
+		// Names the document, so no task plumbing is appended: the text alone must reference tasks.
+		fireEvent.change(textarea, { target: { value: 'Just code in {{DOCUMENT_PATH}} please.' } });
 
 		await waitFor(() => {
 			const goButton = screen.getByRole('button', { name: 'Go' });
@@ -1761,7 +1763,8 @@ describe('Agent Prompt Validation in UI', () => {
 		render(<BatchRunnerModal {...props} />);
 
 		const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
-		fireEvent.change(textarea, { target: { value: 'Just do some coding please.' } });
+		// Names the document, so no task plumbing is appended: the text alone must reference tasks.
+		fireEvent.change(textarea, { target: { value: 'Just code in {{DOCUMENT_PATH}} please.' } });
 
 		await waitFor(() => {
 			expect(screen.getByText(/Agent prompt must reference Markdown tasks/)).toBeInTheDocument();
@@ -1780,6 +1783,63 @@ describe('Agent Prompt Validation in UI', () => {
 		// Default prompt should be valid - Go should be enabled
 		const goButton = screen.getByRole('button', { name: 'Go' });
 		expect(goButton).not.toBeDisabled();
+	});
+});
+
+describe('Agent Prompt Validation with a custom playbook prompt', () => {
+	// The real Auto Run blocks, loaded the way the app loads them at startup.
+	const loadRealAutoRunPrompts = async () => {
+		const fs = await import('fs');
+		const path = await import('path');
+		const read = (id: string) =>
+			fs
+				.readFileSync(
+					path.resolve(__dirname, '..', '..', '..', '..', 'src', 'prompts', `${id}.md`),
+					'utf-8'
+				)
+				.replace(/\r\n/g, '\n');
+		vi.mocked(window.maestro.prompts.get).mockImplementation(async (id: string) => ({
+			success: true,
+			content: id === 'autorun-default' ? DEFAULT_BATCH_PROMPT : read(id),
+		}));
+		await loadBatchUtilsPrompts(true);
+	};
+
+	afterEach(async () => {
+		// Back to the empty prompts every other test in this file runs with.
+		vi.mocked(window.maestro.prompts.get).mockResolvedValue({ success: true, content: '' });
+		await loadBatchUtilsPrompts(true);
+	});
+
+	it('enables Go for a prompt with no task words that never names the document', async () => {
+		await loadRealAutoRunPrompts();
+		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await waitFor(() => {
+			expect(screen.getByText('5')).toBeInTheDocument();
+		});
+
+		const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
+		// An Exchange-style prompt: Maestro appends the selection and document blocks at dispatch.
+		fireEvent.change(textarea, { target: { value: 'You curate agent memory.' } });
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: 'Go' })).not.toBeDisabled();
+		});
+		expect(
+			screen.queryByText(/Agent prompt must reference Markdown tasks/)
+		).not.toBeInTheDocument();
+	});
+
+	it('still disables Go for a prompt that names the document but never mentions tasks', async () => {
+		await loadRealAutoRunPrompts();
+		render(<BatchRunnerModal {...createDefaultProps()} />);
+
+		const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
+		fireEvent.change(textarea, { target: { value: 'Tidy {{DOCUMENT_PATH}}.' } });
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: 'Go' })).toBeDisabled();
+		});
 	});
 });
 

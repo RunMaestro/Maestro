@@ -16,13 +16,12 @@ import { useCallback } from 'react';
 import type { Session, TaskSelectionMode, UsageStats } from '../../types';
 import { substituteTemplateVariables, TemplateContext } from '../../utils/templateVariables';
 import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
-import { countMarkdownTasks, getAutorunDocumentBlock, getTaskSelectionBlock } from './batchUtils';
+import { countMarkdownTasks, prepareDesktopAutoRunPrompt } from './batchUtils';
 import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
 import { extractTaskSynopsis } from '../../../shared/maestro-lib/autorun/synopsis';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../../shared/autorunModelHints';
-import { resolveAutoRunPromptTemplate } from '../../../shared/autorunPromptTemplate';
 import { resolveTurnSettings } from '../../../shared/autorunTurnSettings';
 import { restoreTasksCheckedByFailedTurn } from '../../../shared/markdownTaskScan';
 import {
@@ -471,13 +470,14 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 						baselineModel,
 						baselineEffort
 					);
-			// The desktop never pastes the document into the prompt, so a playbook
-			// prompt that does not name {{DOCUMENT_PATH}} gets the default's
-			// selection and document blocks appended (resolveAutoRunPromptTemplate).
-			const promptWithSelectionBlock = resolveAutoRunPromptTemplate(customPrompt, {
-				selectionBlock: getTaskSelectionBlock(taskSelectionMode, hintSegment),
-				documentBlock: getAutorunDocumentBlock(),
-			});
+			// A playbook prompt that does not name {{DOCUMENT_PATH}} gets the default's
+			// selection and document blocks appended. Throws, before anything is
+			// spawned, when the Auto Run prompts cannot be loaded.
+			const promptWithSelectionBlock = await prepareDesktopAutoRunPrompt(
+				customPrompt,
+				taskSelectionMode,
+				hintSegment
+			);
 
 			// Substitute template variables in the prompt
 			const substitutedPrompt = substituteTemplateVariables(

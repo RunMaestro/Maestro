@@ -48,9 +48,13 @@ describe('useDocumentProcessor - custom prompt task plumbing', () => {
 		onSpawnAgent.mockResolvedValue({ success: true, response: 'Curated the index.' });
 	});
 
-	const runTask = async (customPrompt: string, taskSelectionMode?: 'task' | 'document') => {
+	const runTask = async (
+		customPrompt: string,
+		taskSelectionMode?: 'task' | 'document',
+		useProcessor = useDocumentProcessor
+	) => {
 		const session = createMockSession({ cwd: '/test/project' });
-		const { result } = renderHook(() => useDocumentProcessor());
+		const { result } = renderHook(() => useProcessor());
 		await result.current.processTask(
 			{
 				folderPath: '/test/project/.maestro/playbooks',
@@ -82,6 +86,31 @@ describe('useDocumentProcessor - custom prompt task plumbing', () => {
 		const prompt = await runTask('You curate agent memory.', 'document');
 		expect(prompt).toContain('PER-DOCUMENT: process ALL unchecked tasks.');
 		expect(prompt).not.toContain('PER-TASK');
+	});
+
+	/** A fresh module graph: the renderer as it is when the startup prompt load failed. */
+	const freshProcessor = async () => {
+		vi.resetModules();
+		return (await import('../../../../renderer/hooks/batch/useDocumentProcessor'))
+			.useDocumentProcessor;
+	};
+
+	it('loads the prompts again, then refuses to dispatch, when they never loaded', async () => {
+		const useFreshProcessor = await freshProcessor();
+		vi.mocked(window.maestro.prompts.get).mockResolvedValue({ success: false, error: 'EACCES' });
+
+		await expect(runTask('You curate agent memory.', undefined, useFreshProcessor)).rejects.toThrow(
+			/could not load its task prompts, so the task was not sent/
+		);
+		expect(onSpawnAgent).not.toHaveBeenCalled();
+	});
+
+	it('dispatches with the document block when the retry load succeeds', async () => {
+		const useFreshProcessor = await freshProcessor();
+
+		const prompt = await runTask('You curate agent memory.', undefined, useFreshProcessor);
+		expect(window.maestro.prompts.get).toHaveBeenCalledWith('autorun-document');
+		expect(prompt).toContain('Process tasks from this document:');
 	});
 
 	it('leaves a prompt that names the document as written', async () => {

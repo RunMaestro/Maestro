@@ -19,12 +19,12 @@ const blocks = { selectionBlock: SELECTION, documentBlock: DOCUMENT };
 describe('resolveAutoRunPromptTemplate', () => {
 	it('appends the selection and document blocks to a prompt that names neither', () => {
 		const out = resolveAutoRunPromptTemplate('You are a memory curator.\n\n', blocks);
-		expect(out).toBe(`You are a memory curator.\n\n---\n\n${SELECTION}\n\n${DOCUMENT.trim()}\n`);
+		expect(out).toBe(`You are a memory curator.\n\n---\n\n${SELECTION}\n\n${DOCUMENT.trim()}`);
 	});
 
 	it('appends only the document block when the prompt places its own selection block', () => {
 		const out = resolveAutoRunPromptTemplate('Intro\n\n{{TASK_SELECTION_BLOCK}}\n\nOutro', blocks);
-		expect(out).toBe(`Intro\n\n${SELECTION}\n\nOutro\n\n---\n\n${DOCUMENT.trim()}\n`);
+		expect(out).toBe(`Intro\n\n${SELECTION}\n\nOutro\n\n---\n\n${DOCUMENT.trim()}`);
 	});
 
 	it('leaves a prompt that names the document alone, apart from the selection splice', () => {
@@ -38,13 +38,20 @@ describe('resolveAutoRunPromptTemplate', () => {
 		);
 	});
 
-	it('appends nothing when the engine inlines the document itself', () => {
+	it('keeps only the selection block when the engine inlines the document itself', () => {
 		expect(
 			resolveAutoRunPromptTemplate('Custom prompt', {
 				selectionBlock: SELECTION,
 				documentBlock: null,
 			})
-		).toBe('Custom prompt');
+		).toBe(`Custom prompt\n\n---\n\n${SELECTION}`);
+		// Its own placeholder already carries the mode: nothing to add.
+		expect(
+			resolveAutoRunPromptTemplate('A {{TASK_SELECTION_BLOCK}} B', {
+				selectionBlock: SELECTION,
+				documentBlock: null,
+			})
+		).toBe(`A ${SELECTION} B`);
 	});
 
 	it('appends nothing when both blocks are empty', () => {
