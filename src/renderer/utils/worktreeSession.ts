@@ -7,6 +7,8 @@
 
 import type { Session, AITab, ThinkingMode } from '../types';
 import { generateId } from './ids';
+import { resolveTabPermissionMode } from '../../shared/agentMetadata';
+import { permissionModeFields } from './tabHelpers/focusFields';
 
 /**
  * Parameters for building a worktree Session object.
@@ -37,6 +39,20 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 	const newId = generateId();
 	const initialTabId = generateId();
 	const isLegacy = !!params.worktreeParentPath;
+	const parentTab = params.parentSession.aiTabs?.find(
+		(tab) => tab.id === params.parentSession.activeTabId
+	);
+	// Runtime-only SSH state predates the session config. Preserve that target,
+	// but an explicit local config always wins over a previous remote spawn.
+	const parentSshConfig: Session['sessionSshRemoteConfig'] =
+		params.parentSession.sessionSshRemoteConfig ??
+		(params.parentSession.sshRemoteId
+			? { enabled: true, remoteId: params.parentSession.sshRemoteId }
+			: undefined);
+	const sessionSshRemoteConfig = parentSshConfig ? { ...parentSshConfig } : undefined;
+	if (sessionSshRemoteConfig?.enabled && sessionSshRemoteConfig.workingDirOverride) {
+		sessionSshRemoteConfig.workingDirOverride = params.path;
+	}
 
 	const initialTab: AITab = {
 		id: initialTabId,
@@ -50,6 +66,10 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		state: 'idle',
 		saveToHistory: params.defaultSaveToHistory,
 		showThinking: params.defaultShowThinking,
+		// Carry selections, never conversation IDs, bindings, logs or usage.
+		customModel: parentTab?.customModel,
+		customEffort: parentTab?.customEffort,
+		...permissionModeFields(resolveTabPermissionMode(parentTab)),
 	};
 
 	return {
@@ -72,7 +92,7 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		worktreeBranch: isLegacy ? undefined : params.branch || undefined,
 		worktreeParentPath: params.worktreeParentPath,
 		// Inherit SSH configuration from parent session
-		sessionSshRemoteConfig: params.parentSession.sessionSshRemoteConfig,
+		sessionSshRemoteConfig,
 		aiLogs: [],
 		shellLogs: [
 			{
@@ -120,11 +140,16 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		activeGroupId: null,
 		customPath: params.parentSession.customPath,
 		customArgs: params.parentSession.customArgs,
-		customEnvVars: params.parentSession.customEnvVars,
+		customEnvVars: params.parentSession.customEnvVars
+			? { ...params.parentSession.customEnvVars }
+			: undefined,
 		// Parked vars come along too, or the worktree agent silently loses the
 		// switched-off entries the user is keeping for later.
-		customEnvVarsDisabled: params.parentSession.customEnvVarsDisabled,
+		customEnvVarsDisabled: params.parentSession.customEnvVarsDisabled
+			? { ...params.parentSession.customEnvVarsDisabled }
+			: undefined,
 		customModel: params.parentSession.customModel,
+		customEffort: params.parentSession.customEffort,
 		// New model inherits these; legacy does not
 		customContextWindow: isLegacy ? undefined : params.parentSession.customContextWindow,
 		// Provenance travels WITH the value it describes (finding AD1). Copying

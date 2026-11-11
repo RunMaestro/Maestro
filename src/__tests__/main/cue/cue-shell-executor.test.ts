@@ -397,6 +397,8 @@ describe('cue-shell-executor', () => {
 		expect(mockExecFile).toHaveBeenCalledWith(
 			'taskkill',
 			['/pid', String(mockChild.pid), '/t', '/f'],
+			// taskkill is bounded so a hung tree walk cannot hold the stop ladder.
+			{ timeout: expect.any(Number) },
 			expect.any(Function)
 		);
 		// POSIX signals are a no-op for shell-spawned trees on Windows.
@@ -494,5 +496,95 @@ describe('cue-shell-executor', () => {
 				expect.objectContaining({ operation: 'cue:shell:sshWrap' })
 			);
 		});
+	});
+});
+
+/**
+ * A Grok pipeline's shell action, driven on the executor itself.
+ * The owner is a Grok agent: the command still runs as a terminal child in
+ * the owner's project root, never as a Grok turn, and carries the Cue query
+ * source and no Grok env. A stop or a non-zero exit is never `completed`.
+ */
+describe('cue-shell-executor with a Grok owner', () => {
+	const grokSession = (): SessionInfo => ({
+		...createSession(),
+		id: 'grok-1',
+		name: 'Grok Reviewer',
+		toolType: 'grok',
+		cwd: '/work/grok',
+		projectRoot: '/work/grok',
+	});
+	const grokConfig = (overrides: Record<string, unknown> = {}) =>
+		createConfig({
+			session: grokSession(),
+			shellCommand: 'make check',
+			subscription: createSubscription({ command: { mode: 'shell', shell: 'make check' } }),
+			projectRoot: '/work/grok',
+			...overrides,
+		});
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockIsWindows.mockReturnValue(false);
+		vi.useFakeTimers();
+		vi.stubEnv('GROK_HOME', '');
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+		vi.useRealTimers();
+	});
+
+	it('runs the command as a terminal child in the Grok project root with the Cue source and no Grok env', async () => {
+		const promise = executeCueShell(grokConfig() as any);
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(mockSpawn).toHaveBeenCalledTimes(1);
+		const [command, args, opts] = mockSpawn.mock.calls[0] as [
+			string,
+			string[],
+			{ cwd: string; env: Record<string, string> },
+		];
+		expect(command).toBe('make check');
+		expect(args).toEqual([]);
+		expect(opts.cwd).toBe('/work/grok');
+		expect(opts.env.MAESTRO_QUERY_SOURCE).toBe('cue');
+		expect(opts.env.GROK_HOME ?? '').toBe('');
+		expect(getProcessList()).toContainEqual(
+			expect.objectContaining({ runId: 'run-1', toolType: 'terminal' })
+		);
+
+		mockChild.emit('close', 0);
+		const result = await promise;
+		expect(result).toMatchObject({ status: 'completed', sessionId: 'grok-1', exitCode: 0 });
+		expect(getProcessList()).not.toContainEqual(expect.objectContaining({ runId: 'run-1' }));
+	});
+
+	it('a run already stopped, called on the executor directly, spawns nothing and lists nothing', async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const result = await executeCueShell(grokConfig({ signal: controller.signal }) as any);
+		expect(mockSpawn).not.toHaveBeenCalled();
+		expect(result).toMatchObject({ status: 'stopped', exitCode: null, sessionId: 'grok-1' });
+		expect(getProcessList()).not.toContainEqual(expect.objectContaining({ runId: 'run-1' }));
+	});
+
+	it('a non-zero exit or a stop mid-run is never completed', async () => {
+		const failing = executeCueShell(grokConfig() as any);
+		await vi.advanceTimersByTimeAsync(0);
+		mockChild.stderr.emit('data', 'check failed\n');
+		mockChild.emit('close', 3);
+		expect(await failing).toMatchObject({
+			status: 'failed',
+			exitCode: 3,
+			stderr: 'check failed\n',
+		});
+
+		const running = executeCueShell(grokConfig({ runId: 'run-2' }) as any);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(stopProcess('run-2')).toBe(true);
+		expect(mockChild.killed).toBe(true);
+		mockChild.emit('close', null, 'SIGTERM');
+		expect((await running).status).not.toBe('completed');
 	});
 });

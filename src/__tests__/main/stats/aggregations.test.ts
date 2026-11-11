@@ -13,6 +13,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
+import { DatabaseSync } from 'node:sqlite';
+import { canLoadNodeSqlite } from '../../helpers/nodeSqlite';
 
 // Track Database constructor calls to verify file path
 let lastDbPath: string | null = null;
@@ -1517,6 +1519,90 @@ describe('Aggregation queries return correct calculations', () => {
 			// Ensures duration is summed alongside the count for the activity-split bar
 			expect(worktreeCall![0]).toContain('SUM(duration)');
 		});
+	});
+
+	// A session whose rows carry no cost figure (a Grok
+	// turn whose charge is unknown, or partial with no figure) totals NULL, never
+	// a priced $0; a session mixing priced and unknown rows totals the priced ones.
+	describe('bySessionTokens cost of unknown-charge turns', () => {
+		const tokensSql = () =>
+			(mockDb.prepare.mock.calls as unknown as Array<[string]>)
+				.map((call) => call[0])
+				.find((sql) => sql.includes('as priced_queries'));
+		// The 12th .all call in getAggregatedStats is bySessionTokens.
+		const withSessionTokenRows = (rows: unknown[]) => {
+			for (let i = 0; i < 11; i++) mockStatement.all.mockReturnValueOnce([]);
+			mockStatement.all.mockReturnValueOnce(rows as never[]);
+		};
+		const row = (session_id: string, cost_usd: number | null, priced_queries = 1) => ({
+			session_id,
+			input_tokens: 10,
+			output_tokens: 5,
+			cache_read_tokens: 0,
+			cache_creation_tokens: 0,
+			cost_usd,
+			priced_queries,
+		});
+
+		it('maps a NULL session cost to costUsd null, keeping priced and mixed figures', async () => {
+			mockStatement.get.mockReturnValue({ count: 3, total_duration: 300 });
+			withSessionTokenRows([row('priced', 0.25), row('unknown', null), row('mixed', 0.1, 2)]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const { bySessionTokens } = db.getAggregatedStats('week');
+			expect(bySessionTokens.priced.costUsd).toBe(0.25);
+			expect(bySessionTokens.unknown).toMatchObject({ costUsd: null, pricedQueries: 1 });
+			expect(bySessionTokens.mixed).toMatchObject({ costUsd: 0.1, pricedQueries: 2 });
+		});
+
+		it.skipIf(!canLoadNodeSqlite())(
+			'the real query sums no figure for unknown rows: priced, unknown, partial-without-figure and legacy sessions',
+			async () => {
+				const { StatsDB } = await import('../../../main/stats');
+				const db = new StatsDB();
+				db.initialize();
+				db.getAggregatedStats('all');
+				const sql = tokensSql();
+				expect(sql).toBeDefined();
+
+				const real = new DatabaseSync(':memory:');
+				try {
+					real.exec(`CREATE TABLE query_events (
+						session_id TEXT, start_time INTEGER,
+						input_tokens INTEGER, output_tokens INTEGER,
+						cache_read_tokens INTEGER, cache_creation_tokens INTEGER,
+						cost_usd REAL)`);
+					const insert = real.prepare('INSERT INTO query_events VALUES (?, ?, ?, ?, ?, ?, ?)');
+					insert.run('priced', 1000, 10, 5, 0, 0, 0.25);
+					insert.run('priced', 1001, 10, 5, 0, 0, 0.5);
+					// Unknown charge: tokens reported, cost column NULL (usageStatsToTurnFields omits it).
+					insert.run('unknown', 1002, 10, 5, 0, 0, null);
+					// Priced turn plus a partial-without-figure turn (also NULL).
+					insert.run('mixed', 1003, 10, 5, 0, 0, 0.1);
+					insert.run('mixed', 1004, 10, 5, 0, 0, null);
+					// Pre-v8 row: nothing reported at all.
+					insert.run('legacy', 1005, null, null, null, null, null);
+					const rows = real.prepare(sql!).all(0);
+
+					mockStatement.get.mockReturnValue({ count: 6, total_duration: 600 });
+					withSessionTokenRows(rows);
+					const { bySessionTokens } = db.getAggregatedStats('all');
+					expect(bySessionTokens.priced).toMatchObject({ costUsd: 0.75, pricedQueries: 2 });
+					expect(bySessionTokens.unknown).toMatchObject({
+						costUsd: null,
+						inputTokens: 10,
+						pricedQueries: 1,
+					});
+					expect(bySessionTokens.mixed).toMatchObject({ costUsd: 0.1, pricedQueries: 2 });
+					expect(bySessionTokens.legacy).toBeUndefined();
+				} finally {
+					real.close();
+				}
+			}
+		);
 	});
 
 	describe('prompt cadence', () => {

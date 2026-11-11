@@ -11,7 +11,7 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 | `opencode`      | OpenCode        | **Beta**   | Multi-provider support (75+ LLMs), SQLite `opencode.db` session storage with JSON fallback                                                                                              |
 | `factory-droid` | Factory Droid   | **Beta**   | Factory's AI coding assistant, `-o stream-json`                                                                                                                                         |
 | `copilot-cli`   | Copilot-CLI     | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker                                                     |
-| `grok`          | Grok CLI        | **Beta**   | `-p` headless, `--output-format streaming-json` (JSONL), `--resume`, `--permission-mode plan --deny Bash(*)`, thought/text deltas, models_cache.json model picker                       |
+| `grok`          | Grok CLI        | **Beta**   | Official `@xai-official/grok`; headless `--prompt-file` + `streaming-json` for full-access/read-only, `grok agent stdio` (ACP) for standard permission; no version qualified yet        |
 | `antigravity`   | Antigravity CLI | **Beta**   | `agy -p`, `--output-format stream-json`, `--conversation <id>`, `--model` / `--effort`, 30m `--print-timeout`, thinking, exit codes, and History from its SQLite stores, images by path |
 | `qwen3-coder`   | Qwen3 Coder     | **Beta**   | Gemini CLI fork, stream-json headless interface, `--resume`                                                                                                                             |
 | `hermes`        | Hermes          | **Beta**   | Nous Research's coding agent                                                                                                                                                            |
@@ -160,22 +160,18 @@ moderator dropdown does not filter on it, and offers any installed provider.
 
 ### Grok CLI
 
-- **Binary:** `grok`
-- **JSON Output:** `--output-format streaming-json` (JSONL: `thought`, `text`, `tool_call`, `tool_call_update`, `end`, `error` events)
-- **Batch Mode:** `-p/--single <prompt>` (headless, no subcommand)
-- **Resume:** `--resume <session-id>` (session ID is a UUIDv7, emitted only on the final `end` event)
-- **Read-only:** `--permission-mode plan --deny Bash(*)` (CLI-enforced; plan mode alone lets a cancelled headless permission prompt kill the whole turn, the deny rule resolves by policy so the turn survives)
-- **YOLO Mode:** `--always-approve` (also used for batch mode)
-- **Thinking Display:** Streams `thought` deltas into Maestro's thinking panel
-- **Tool Events:** grok 1.x emits `tool_call` / `tool_call_update` and the parser reads them (0.2.93 emitted none)
-- **Session Storage:** `~/.grok/sessions/<percent-encoded-cwd>/<session-uuid>/` (local and SSH-remote)
-- **Model Discovery:** Reads `<GROK_HOME or ~/.grok>/models_cache.json` (grok-4.5 at 500K context, grok-composer-2.5-fast at 200K), then parses `grok models` output, then a static fallback list
-- **Reasoning Effort:** `--reasoning-effort` with none, minimal, low, medium, high, xhigh, max (grok-4.5 rejects `none`)
-- **Tool Display:** `tool_call` / `tool_call_update` become tool badges. Output comes from the ACP `content` blocks (shell text, file contents, edit diffs), never the raw `rawOutput` object, and a non-zero `exit_code` marks the call failed even though grok reports `completed`
-- **Images:** The temp image path is named in the prompt (`imagePromptBuilder`) and grok opens it with `read_file`; there is no attachment flag
-- **Usage and Cost:** grok 1.x reports a `usage` line per model call and the turn's totals plus `total_cost_usd` on `end`; only `end` is reported (usage events are summed), with the last call as `absoluteUsage`. History reads `usage.json`
-- **Known Limitations:**
-  - **Batch-only:** interactive PTY mode is not wired (same posture as Codex)
+Beta, tier-1 qualification pending: no Grok binary is qualified (`GROK_CAPABILITY_EVIDENCE.qualifiedVersions` is empty) and every live case is `not-run`. Full detail, refusals and evidence: the Grok CLI section of [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md).
+
+- **Package / binary:** official `@xai-official/grok`, executable `grok` (candidate 1.0.70, unqualified). Not a community `grok-cli` package
+- **Code:** definition and capabilities in `src/shared/maestro-lib/providers/`; parser `src/shared/maestro-lib/parsers/grok-output-parser.ts`; route selector and ACP driver `src/shared/maestro-lib/grok/`; desktop ACP spawner `src/main/process-manager/spawners/GrokAcpSpawner.ts`; history `src/main/storage/grok-session-storage.ts`
+- **Routes:** `selectGrokRoute` picks one route per turn with no fallback. Full-access and read-only turns run headless (`--output-format streaming-json --prompt-file <owned .json>`); standard-permission turns and native commands need ACP (`grok agent stdio`), local only; ask-back questions are not answerable on either route yet and surface as an unavailable notice (P34). A gap is a structured refusal (`GrokRouteGap`)
+- **Permissions:** desktop ACP requests go to the permission relay prompt (only an explicit Allow approves); a headless runtime turn has no consent port and is refused (`consent-port`). Read-only is `--permission-mode plan --deny Bash(*)` (containment unqualified, A11-F05); full access is `--always-approve`
+- **Resume:** `--resume <session-id>` headless; ACP needs an advertised `loadSession`. The session ID (UUIDv7) arrives on the final `end` event headless
+- **Accounts:** `GROK_HOME` (default `~/.grok`) is the state root and profile key, not a billing identity; `GROK_AUTH_PATH` / `GROK_AUTH` select credentials independently, so such profiles are withheld rather than merged
+- **Session Storage:** `$GROK_HOME/sessions/<percent-encoded-cwd>/<session-uuid>/` (`summary.json`, `chat_history.jsonl`, `usage.json`), local and SSH-remote
+- **Models / effort:** `-m` and `--reasoning-effort`, both empty by default (inherit). Options come from an owned local ACP observation (`AgentDetector.discoverGrokOptions`); an SSH remote keeps the configured value only. Context window defaults to 0 (unknown)
+- **Tool Display / usage:** `tool_call` / `tool_call_update` become badges (readable output from ACP `content` blocks; non-zero `exit_code` marks failure). Usage per model call is summed and reported on `end` with `total_cost_usd` (observed on 1.0.41); unknown cost stays unknown
+- **Withheld:** image input (the prompt-file plan refuses image turns; no tool-read fallback), context merge, slash commands, group chat moderation, append system prompt, project memory, additional directories, stdin prompts, steering, interactive PTY mode
 
 ### Factory Droid
 

@@ -250,6 +250,93 @@ describe('CoworkingSetup', () => {
 		expect(screen.queryByRole('spinbutton', { name: /Limit/ })).not.toBeInTheDocument();
 	});
 
+	// The Grok row renders only what the main process reports.
+	describe('the Grok row', () => {
+		const grokRow = (installed: boolean): InstallStatusRow => ({
+			agentId: 'grok',
+			configPath: '/home/user/.grok/config.toml',
+			installed,
+		});
+		const rowOf = (name: string) => screen.getByText(name).closest('.rounded') as HTMLElement;
+
+		it('renders the Grok CLI name, its account config path and Install while not installed', async () => {
+			mockGetInstallStatus.mockResolvedValue([uninstalledCodex, grokRow(false)]);
+			render(<CoworkingSetup theme={mockTheme} />);
+			await screen.findByText('Grok CLI');
+
+			const row = rowOf('Grok CLI');
+			expect(within(row).getByText('/home/user/.grok/config.toml')).toBeInTheDocument();
+			expect(within(row).getByRole('button', { name: 'Install' })).toBeInTheDocument();
+			expect(within(row).queryByRole('button', { name: 'Uninstall' })).not.toBeInTheDocument();
+			expect(
+				screen.queryByRole('switch', { name: 'Browser interaction for Grok CLI' })
+			).not.toBeInTheDocument();
+		});
+
+		it('installs grok, then shows Uninstall only once a refreshed status reports it installed', async () => {
+			mockGetInstallStatus
+				.mockResolvedValueOnce([grokRow(false)])
+				.mockResolvedValueOnce([grokRow(true)]);
+			const install = (window.maestro as unknown as { coworking: { install: Mock } }).coworking
+				.install;
+			render(<CoworkingSetup theme={mockTheme} />);
+			await screen.findByText('Grok CLI');
+
+			fireEvent.click(screen.getByRole('button', { name: 'Install' }));
+			expect(await screen.findByRole('button', { name: 'Uninstall' })).toBeInTheDocument();
+			expect(install).toHaveBeenCalledWith('grok');
+			expect(mockGetInstallStatus).toHaveBeenCalledTimes(2);
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ color: 'green', title: 'Coworking installed' })
+			);
+			expect(
+				screen.getByRole('switch', { name: 'Browser interaction for Grok CLI' })
+			).toBeInTheDocument();
+		});
+
+		it('surfaces a refused install verbatim and keeps the row not installed', async () => {
+			const message =
+				'Grok coworking install refused (config-unreadable): /home/user/.grok/config.toml is not valid TOML';
+			mockGetInstallStatus.mockResolvedValue([grokRow(false)]);
+			(window.maestro as unknown as { coworking: { install: Mock } }).coworking.install = vi
+				.fn()
+				.mockRejectedValue(new Error(message));
+			render(<CoworkingSetup theme={mockTheme} />);
+			await screen.findByText('Grok CLI');
+
+			fireEvent.click(screen.getByRole('button', { name: 'Install' }));
+			await waitFor(() =>
+				expect(mockNotifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({ color: 'red', title: 'Coworking install failed', message })
+				)
+			);
+			expect(screen.getByRole('button', { name: 'Install' })).toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Uninstall' })).not.toBeInTheDocument();
+		});
+
+		it('names grok in the partial-failure toast when install-for-all refuses it', async () => {
+			mockGetInstallStatus.mockResolvedValue([uninstalledCodex, grokRow(false)]);
+			(window.maestro as unknown as { coworking: { installAll: Mock } }).coworking.installAll = vi
+				.fn()
+				.mockResolvedValue([
+					{ agentId: 'codex', ok: true },
+					{ agentId: 'grok', ok: false, error: '[managed-server-denied] ...' },
+				]);
+			render(<CoworkingSetup theme={mockTheme} />);
+			await screen.findByText('Grok CLI');
+
+			fireEvent.click(screen.getByRole('button', { name: /Install for all/ }));
+			await waitFor(() =>
+				expect(mockNotifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({
+						color: 'orange',
+						message: expect.stringContaining('Failed for: grok'),
+					})
+				)
+			);
+		});
+	});
+
 	it('surfaces a red toast and renders zero agent rows when getInstallStatus rejects', async () => {
 		mockGetInstallStatus.mockRejectedValue(new Error('config unreadable'));
 		render(<CoworkingSetup theme={mockTheme} />);

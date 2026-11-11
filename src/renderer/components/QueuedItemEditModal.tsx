@@ -1,8 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ImagePlus, PenLine, X } from 'lucide-react';
 import type { Theme, QueuedItem, QueuedItemEditPatch, QueuedTurnSettings } from '../types';
 import { Modal, ModalFooter } from './ui/Modal';
+import { FormInput } from './ui/FormInput';
+import type { AgentDiscoveryRequest } from '../../shared/types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { addStagedImageIfUnique } from './InputArea/utils/stagedImages';
@@ -59,17 +61,57 @@ export function QueuedItemEditModal({
 	// Model/effort for THIS message. Seeded from the item's own capture; an item
 	// from before the capture existed falls back to what the agent would run it
 	// under right now, which is what it would actually have spawned with.
-	const [turnSettings, setTurnSettings] = useState<QueuedTurnSettings>(() => {
+	const initialTurnSettings = useMemo<QueuedTurnSettings>(() => {
 		if (item.turnSettings) return item.turnSettings;
 		if (!session) return {};
 		const tab = session.aiTabs?.find((t) => t.id === item.tabId);
 		const live = codifyTurnSettings(tab, session);
 		return { model: live.turnModel, effort: live.turnEffort };
-	});
+	}, [item.turnSettings, item.tabId, session]);
+	const [turnSettings, setTurnSettings] = useState(initialTurnSettings);
+	const [draftOwner, setDraftOwner] = useState({ sessionId: session?.id, itemId: item.id });
+	if (draftOwner.sessionId !== session?.id || draftOwner.itemId !== item.id) {
+		// Reset before React commits this render: neither discovery nor Save may
+		// pair the previous queued message's draft with a different owner.
+		setDraftOwner({ sessionId: session?.id, itemId: item.id });
+		setText(item.text ?? '');
+		setImages(item.images ?? []);
+		setTurnSettings(initialTurnSettings);
+	}
 
 	// Options come from the agent's own provider, never a hardcoded list: Claude
 	// Code's thinking levels and Codex's reasoning efforts are different sets.
-	const providerOptions = useAgentModelEffortOptions(session?.toolType);
+	const discoveryContext = useMemo<AgentDiscoveryRequest['context'] | undefined>(
+		() =>
+			session?.cwd?.trim()
+				? {
+						kind: 'draft',
+						cwd: session.cwd,
+						customPath: session.customPath,
+						customEnvVars: session.customEnvVars,
+						// A captured undefined value means provider default, even if
+						// the agent or tab has acquired an override since queuing.
+						model: turnSettings.model,
+						effort: turnSettings.effort,
+						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+						sshRemoteId: session.sshRemoteId,
+					}
+				: undefined,
+		[
+			session?.id,
+			session?.toolType,
+			session?.cwd,
+			session?.customPath,
+			session?.customEnvVars,
+			session?.sessionSshRemoteConfig,
+			session?.sshRemoteId,
+			item.id,
+			item.tabId,
+			turnSettings.model,
+			turnSettings.effort,
+		]
+	);
+	const providerOptions = useAgentModelEffortOptions(session?.toolType, discoveryContext);
 	const menus = useModelEffortMenus();
 	// Currently-viewed image in the local carousel; null when the carousel is closed.
 	const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -294,7 +336,7 @@ export function QueuedItemEditModal({
 						</button>
 						<div className="flex items-center gap-2 ml-auto">
 							<ModelEffortPills
-								isVisible
+								isVisible={session?.toolType !== 'grok'}
 								theme={theme}
 								currentModel={turnSettings.model ?? providerOptions.defaultModel}
 								currentEffort={turnSettings.effort ?? providerOptions.defaultEffort}
@@ -312,6 +354,59 @@ export function QueuedItemEditModal({
 							/>
 						</div>
 					</div>
+					{session?.toolType === 'grok' && (
+						<div className="grid grid-cols-2 gap-3 mt-3">
+							{(['model', 'effort'] as const).map((key) => {
+								const options = key === 'model' ? providerOptions.models : providerOptions.efforts;
+								const status =
+									key === 'model' ? providerOptions.modelStatus : providerOptions.effortStatus;
+								return (
+									<FormInput
+										key={key}
+										theme={theme}
+										label={key === 'model' ? 'Model for this message' : 'Effort for this message'}
+										value={turnSettings[key] ?? ''}
+										onChange={(value) =>
+											setTurnSettings((prev) => ({ ...prev, [key]: value || undefined }))
+										}
+										placeholder="Use provider default"
+										helperText={
+											status === 'discovered'
+												? undefined
+												: status === 'configured-fallback'
+													? 'Options unavailable; configured value retained. Enter a supported value.'
+													: 'Options unavailable. Enter a supported value or leave blank for default.'
+										}
+										addon={
+											status === 'discovered' && options.length > 0 ? (
+												<select
+													aria-label={`Suggested ${key} values for this message`}
+													value=""
+													onChange={(e) => {
+														const value = e.target.value;
+														setTurnSettings((prev) => ({ ...prev, [key]: value || undefined }));
+													}}
+													style={{
+														backgroundColor: theme.colors.bgMain,
+														color: theme.colors.textMain,
+													}}
+												>
+													<option value="" disabled>
+														Suggestions
+													</option>
+													{options.map((value) => (
+														<option key={value} value={value}>
+															{value || '(default)'}
+														</option>
+													))}
+												</select>
+											) : undefined
+										}
+									/>
+								);
+							})}
+						</div>
+					)}
 					<input
 						ref={fileInputRef}
 						type="file"

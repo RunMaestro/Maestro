@@ -10,11 +10,12 @@ import { EventEmitter } from 'events';
 import type { ChildProcess } from 'child_process';
 import type { SpawnSpec } from '../../../main/cue/cue-spawn-builder';
 import { ClaudeOutputParser } from '../../../shared/maestro-lib/parsers/claude-output-parser';
+import { GrokOutputParser } from '../../../shared/maestro-lib/parsers/grok-output-parser';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
 // Mock parsers - default returns null (no parser)
-const mockGetOutputParser = vi.fn(() => null as any);
+const mockGetOutputParser = vi.fn((..._args: unknown[]) => null as any);
 vi.mock('../../../main/parsers', () => ({
 	getOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
 	createOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
@@ -32,7 +33,7 @@ vi.mock('../../../main/utils/sentry', () => ({
 // kill tests flip this to true to exercise the taskkill branch.
 const { mockIsWindows, mockExecFile, mockExecFileSync } = vi.hoisted(() => ({
 	mockIsWindows: vi.fn(() => false),
-	mockExecFile: vi.fn((_cmd: unknown, _args: unknown, cb?: unknown) => {
+	mockExecFile: vi.fn((_cmd: unknown, _args: unknown, _options: unknown, cb?: unknown) => {
 		if (typeof cb === 'function') (cb as (e: Error | null) => void)(null);
 	}),
 	mockExecFileSync: vi.fn(),
@@ -59,7 +60,7 @@ class MockChildProcess extends EventEmitter {
 	stderr = new EventEmitter();
 	killed = false;
 
-	kill(signal?: string) {
+	kill(_signal?: string) {
 		this.killed = true;
 		return true;
 	}
@@ -72,7 +73,7 @@ class MockChildProcess extends EventEmitter {
 }
 
 let mockChild: MockChildProcess;
-const mockSpawn = vi.fn(() => {
+const mockSpawn = vi.fn((..._args: unknown[]) => {
 	mockChild = new MockChildProcess();
 	return mockChild as unknown as ChildProcess;
 });
@@ -82,12 +83,14 @@ vi.mock('child_process', async (importOriginal) => {
 	return {
 		...actual,
 		spawn: (...args: unknown[]) => mockSpawn(...args),
-		execFile: (...args: unknown[]) => mockExecFile(...(args as [unknown, unknown, unknown?])),
+		execFile: (...args: unknown[]) =>
+			mockExecFile(...(args as [unknown, unknown, unknown, unknown?])),
 		execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
 		default: {
 			...actual,
 			spawn: (...args: unknown[]) => mockSpawn(...args),
-			execFile: (...args: unknown[]) => mockExecFile(...(args as [unknown, unknown, unknown?])),
+			execFile: (...args: unknown[]) =>
+				mockExecFile(...(args as [unknown, unknown, unknown, unknown?])),
 			execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
 		},
 	};
@@ -927,9 +930,7 @@ describe('cue-process-lifecycle', () => {
 				expect(result.stdout).toBe('command not found: something\n');
 			});
 
-			// `null` rather than `undefined` at this layer: the streaming capture
-			// starts null and `cue-executor` maps it to undefined on the way out.
-			it('leaves usage unset when the provider reports none', async () => {
+			it('records unknown Claude usage when the provider reports none', async () => {
 				mockGetOutputParser.mockReturnValue(resultParser());
 
 				const resultPromise = runProcess('run-1', createSpec(), createOptions());
@@ -938,7 +939,7 @@ describe('cue-process-lifecycle', () => {
 				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'done' }));
 				mockChild.emit('close', 0, null);
 
-				expect((await resultPromise).usage).toBeNull();
+				expect((await resultPromise).usage?.accounting?.cost.status).toBe('unknown');
 			});
 
 			it('fails a signal kill even when the agent had streamed an answer', async () => {
@@ -1147,7 +1148,7 @@ describe('cue-process-lifecycle', () => {
 				expect(result.providerSessionId).toBe('sess-2');
 			});
 
-			it('returns null providerSessionId/usage when no parser is registered', async () => {
+			it('retains unknown provider provenance when no parser is registered', async () => {
 				mockGetOutputParser.mockReturnValue(null);
 
 				const resultPromise = runProcess('run-1', createSpec(), createOptions());
@@ -1158,7 +1159,8 @@ describe('cue-process-lifecycle', () => {
 				const result = await resultPromise;
 
 				expect(result.providerSessionId).toBeNull();
-				expect(result.usage).toBeNull();
+				expect(result.usage?.accounting?.providerId).toBe('claude-code');
+				expect(result.usage?.accounting?.cost.status).toBe('unknown');
 			});
 
 			it('passes through per-turn usage unmodified for a non-combined-context provider', async () => {
@@ -1217,6 +1219,426 @@ describe('cue-process-lifecycle', () => {
 				// 300. Keeping only the newest delta would report 200 and lose
 				// the first event; taking the raw value would double-count.
 				expect(result.usage).toMatchObject({ inputTokens: 300 });
+			});
+		});
+
+		describe('Grok Cue accounting receipts', () => {
+			afterEach(() => mockGetOutputParser.mockReturnValue(null));
+
+			const model = {
+				inputTokens: 50,
+				outputTokens: 20,
+				cacheReadInputTokens: 10,
+				cacheCreationInputTokens: 5,
+				modelCalls: 1,
+			};
+			const terminal = {
+				type: 'end',
+				stopReason: 'end_turn',
+				sessionId: 'native-shared',
+				requestId: 'new',
+				usage: {
+					input_tokens: 100,
+					output_tokens: 40,
+					cache_read_input_tokens: 20,
+					cache_creation_input_tokens: 10,
+					reasoning_tokens: 5,
+					total_tokens: 170,
+				},
+				total_cost_usd_ticks: '9007199254740993',
+				modelUsage: {
+					'grok/raw-a': { ...model, costUSD: 0.01 },
+					'grok/raw-b': model,
+				},
+			};
+
+			it.each([false, true])(
+				'preserves new/resumed terminal receipts with missing ID=%s',
+				async (missingId) => {
+					for (const requestId of ['new', 'resumed']) {
+						mockGetOutputParser.mockReturnValue(new GrokOutputParser());
+						const spec = createSpec({
+							command: 'grok',
+							args: requestId === 'new' ? [] : ['--resume', 'native-shared'],
+						});
+						const pending = runProcess(requestId, spec, createOptions({ toolType: 'grok' }));
+						await vi.advanceTimersByTimeAsync(0);
+						const end = JSON.stringify({
+							...terminal,
+							requestId,
+							sessionId: missingId ? undefined : terminal.sessionId,
+						});
+						// Per-call occupancy and repeated finals cannot add the turn twice.
+						mockChild.stdout.emit(
+							'data',
+							JSON.stringify({ type: 'usage', usage: terminal.usage }) + '\n' + end + '\n' + end
+						);
+						mockChild.emit('close', 0);
+						const result = await pending;
+						expect(result.status).toBe('completed');
+						expect(result.providerSessionId).toBe(missingId ? null : 'native-shared');
+						const receipt = JSON.parse(JSON.stringify(result.usage));
+						expect(receipt).toMatchObject({
+							inputTokens: 100,
+							outputTokens: 40,
+							cacheReadInputTokens: 20,
+							cacheCreationInputTokens: 10,
+							reasoningTokens: 5,
+							accounting: {
+								providerId: 'grok',
+								source: 'runtime-stream',
+								route: 'native-headless',
+								scope: 'turn',
+								final: true,
+								requestId,
+								cacheReadCounting: 'beside-input',
+								cacheCreationCounting: 'beside-input',
+								completeness: 'complete',
+								cost: { status: 'exact', costUsdTicks: '9007199254740993' },
+							},
+						});
+						expect(receipt.accounting.models).toMatchObject([
+							{ model: 'grok/raw-a', inputTokens: 50, cost: { status: 'exact', costUsd: 0.01 } },
+							{ model: 'grok/raw-b', cacheCreationInputTokens: 5, cost: { status: 'unknown' } },
+						]);
+					}
+				}
+			);
+
+			it.each(['native-session', 'process-session', 'child'] as const)(
+				'never adds %s snapshots to a turn',
+				async (scope) => {
+					const event = new GrokOutputParser().parseJsonObject(terminal)!;
+					mockGetOutputParser.mockReturnValue({
+						parseJsonLine: JSON.parse,
+						extractUsage: (parsed: typeof event) => parsed.usage ?? null,
+					});
+					const pending = runProcess('scoped', createSpec(), createOptions({ toolType: 'grok' }));
+					await vi.advanceTimersByTimeAsync(0);
+					const lifetime = structuredClone(event);
+					lifetime.usage!.inputTokens = 9000000;
+					lifetime.usage!.accounting!.scope = scope;
+					mockChild.stdout.emit(
+						'data',
+						[lifetime, event, lifetime].map((row) => JSON.stringify(row)).join('\n') + '\n'
+					);
+					mockChild.emit('close', 0);
+					const receipt = (await pending).usage;
+					expect(receipt?.inputTokens).toBe(100);
+					expect(receipt?.accounting?.scope).toBe('turn');
+				}
+			);
+
+			it.each([
+				['cancelled', { cost_is_partial: true }, 'partial'],
+				['error', { total_cost_usd_ticks: undefined }, 'unknown'],
+			] as const)(
+				'retains %s spend without complete cost',
+				async (stopReason, changes, costStatus) => {
+					mockGetOutputParser.mockReturnValue(new GrokOutputParser());
+					const pending = runProcess('fail', createSpec(), createOptions({ toolType: 'grok' }));
+					await vi.advanceTimersByTimeAsync(0);
+					mockChild.stdout.emit(
+						'data',
+						JSON.stringify({ ...terminal, ...changes, stopReason }) + '\n'
+					);
+					mockChild.emit('close', 1);
+					const result = await pending;
+					expect(result.status).toBe('failed');
+					expect(result.usage).toMatchObject({
+						inputTokens: 100,
+						cacheReadInputTokens: 20,
+						accounting: { providerId: 'grok', cost: { status: costStatus } },
+					});
+				}
+			);
+
+			it.each([
+				'prelaunch-stop',
+				'spawn-throw',
+				'spawn-error',
+				'completed',
+				'failed',
+				'stopped',
+				'timeout',
+			] as const)('emits an unknown provider receipt without usage/ID on %s', async (ending) => {
+				mockGetOutputParser.mockReturnValue(new GrokOutputParser());
+				const controller = new AbortController();
+				if (ending === 'prelaunch-stop') controller.abort();
+				if (ending === 'spawn-throw')
+					mockSpawn.mockImplementationOnce(() => {
+						throw new Error('synthetic spawn failure');
+					});
+				const pending = runProcess(
+					'no-usage',
+					createSpec(),
+					createOptions({ toolType: 'grok', signal: controller.signal })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				if (ending === 'spawn-error') mockChild.emit('error', new Error('synthetic ENOENT'));
+				else if (ending !== 'prelaunch-stop' && ending !== 'spawn-throw') {
+					if (ending === 'stopped') stopProcess('no-usage');
+					if (ending === 'timeout') await vi.advanceTimersByTimeAsync(30000);
+					if (ending === 'completed')
+						mockChild.stdout.emit('data', '{"type":"end","stopReason":"end_turn"}\n');
+					mockChild.emit('close', ending === 'completed' ? 0 : 1);
+				}
+				const result = await pending;
+				expect(result.status).toBe(
+					ending === 'prelaunch-stop' ? 'stopped' : ending.startsWith('spawn-') ? 'failed' : ending
+				);
+				expect(result.providerSessionId).toBeNull();
+				expect(result.usage).toMatchObject({
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCostUsd: 0,
+					accounting: {
+						providerId: 'grok',
+						source: 'none',
+						scope: 'turn',
+						reporting: 'snapshot',
+						completeness: 'unknown',
+						cost: { status: 'unknown' },
+					},
+				});
+			});
+		});
+
+		// A Grok Cue turn read through the real parser: what {{CUE_SOURCE_OUTPUT}}
+		// hands the next agent, the session a chain resumes, and the status that
+		// decides whether a success chain fires.
+		describe('Grok Cue turn text and status', () => {
+			afterEach(() => mockGetOutputParser.mockReturnValue(null));
+
+			const line = (record: Record<string, unknown>) => JSON.stringify(record) + '\n';
+			const end = line({
+				type: 'end',
+				stopReason: 'end_turn',
+				sessionId: 'grok-chain-session',
+				usage: { input_tokens: 30, output_tokens: 6 },
+			});
+
+			async function runGrok(chunks: string[], exitCode: number | null, options = {}) {
+				mockGetOutputParser.mockReturnValue(new GrokOutputParser());
+				const pending = runProcess(
+					'grok-run',
+					createSpec({ command: 'grok', args: ['--prompt-file', '/tmp/prompt.json'] }),
+					createOptions({ toolType: 'grok', ...options })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				for (const chunk of chunks) mockChild.stdout.emit('data', chunk);
+				return { pending, close: () => mockChild.emit('close', exitCode) };
+			}
+
+			it('joins split-word deltas, drops thoughts and keeps the final session and usage', async () => {
+				const { pending, close } = await runGrok(
+					[
+						line({ type: 'thought', data: 'The user wants a greeting.' }),
+						line({ type: 'text', data: 'Hel' }),
+						// A chunk boundary inside one record must not split the word either.
+						'{"type":"text","da',
+						'ta":"lo wor"}\n',
+						line({ type: 'thought', data: 'Add punctuation.' }),
+						line({ type: 'text', data: 'ld!' }),
+						end,
+					],
+					0
+				);
+				close();
+				const result = await pending;
+
+				expect(result.status).toBe('completed');
+				expect(result.stdout).toBe('Hello world!');
+				expect(result.stdout).not.toContain('greeting');
+				expect(result.providerSessionId).toBe('grok-chain-session');
+				expect(result.usage).toMatchObject({
+					inputTokens: 30,
+					outputTokens: 6,
+					accounting: { providerId: 'grok', final: true },
+				});
+			});
+
+			it.each([
+				['empty stdout', []],
+				['plain text from a CLI that ignored the stream flag', ['pong\n']],
+			] as const)('fails a clean exit with %s and names why', async (_label, chunks) => {
+				const { pending, close } = await runGrok([...chunks], 0);
+				close();
+				const result = await pending;
+
+				expect(result.status).toBe('failed');
+				expect(result.stderr).toContain('Grok exited without a native terminal record.');
+			});
+
+			// The parser fails a native stream that stopped short of its terminal
+			// record, so no success chain fires. The stream wrote no stderr of its
+			// own, so the run names the parser's reason there.
+			it('fails answer deltas that never reached a terminal record', async () => {
+				const { pending, close } = await runGrok([line({ type: 'text', data: 'pong' })], 0);
+				close();
+				const result = await pending;
+
+				expect(result.status).toBe('failed');
+				expect(result.stderr).toBe(
+					'Grok closed the native stream without a successful terminal record. Any response is incomplete.'
+				);
+				// The partial answer is not the reason, and nothing marks it as a
+				// finished turn a chain could read: no session, no final usage.
+				expect(result.stderr).not.toContain('pong');
+				expect(result.providerSessionId).toBeNull();
+				expect(result.usage?.accounting).toMatchObject({ source: 'none', providerId: 'grok' });
+				expect(result.usage?.accounting).not.toMatchObject({ final: true });
+				expect(result.usage?.outputTokens).toBe(0);
+			});
+
+			it('fails an in-band auth error and names it in stderr for the auth classifier', async () => {
+				const { pending, close } = await runGrok(
+					[line({ type: 'error', message: 'Not authenticated. Run grok login.' })],
+					0
+				);
+				close();
+				const result = await pending;
+
+				expect(result.status).toBe('failed');
+				expect(result.stderr).toContain('Grok authentication is required or failed.');
+			});
+
+			it('fails a stderr-only auth rejection on a non-zero exit', async () => {
+				const { pending } = await runGrok([], 1);
+				mockChild.stderr.emit('data', 'Error: authentication required\n');
+				mockChild.emit('close', 1);
+				const result = await pending;
+
+				expect(result.status).toBe('failed');
+				expect(result.stderr).toContain('authentication required');
+			});
+
+			it('stops a Grok turn mid-stream as stopped, never completed', async () => {
+				const { pending } = await runGrok([line({ type: 'text', data: 'partial ' })], null);
+				expect(stopProcess('grok-run')).toBe(true);
+				mockChild.emit('close', null, 'SIGTERM');
+				const result = await pending;
+
+				expect(result.status).toBe('stopped');
+				expect(getActiveProcessMap().has('grok-run')).toBe(false);
+			});
+
+			it('times a silent Grok turn out instead of waiting forever', async () => {
+				const { pending } = await runGrok([], null, { timeoutMs: 5000 });
+				await vi.advanceTimersByTimeAsync(5000);
+				mockChild.emit('close', null, 'SIGTERM');
+				const result = await pending;
+
+				expect(result.status).toBe('timeout');
+			});
+		});
+
+		// Grok Cue runs as a workflow. This lifecycle is the one the desktop
+		// executor and the headless engine (`maestro-cli cue`) both settle a prompt run
+		// on, so a run it reads as completed is what fires a downstream chain. Composed
+		// with the Grok failure cases above (empty stdout, auth, stop, timeout).
+		describe('Grok Cue workflow outcomes', () => {
+			afterEach(() => mockGetOutputParser.mockReturnValue(null));
+
+			const line = (record: Record<string, unknown>) => JSON.stringify(record) + '\n';
+			const end = (stopReason = 'end_turn') =>
+				line({ type: 'end', stopReason, sessionId: 'grok-cue-session' });
+
+			async function runGrok(chunks: string[]) {
+				mockGetOutputParser.mockReturnValue(new GrokOutputParser());
+				const pending = runProcess(
+					'grok-flow',
+					createSpec({ command: 'grok', args: ['--prompt-file', '/tmp/prompt.json'] }),
+					createOptions({ toolType: 'grok' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				for (const chunk of chunks) mockChild.stdout.emit('data', chunk);
+				return pending;
+			}
+
+			it('fails an in-band rate limit, names it, and spawns the run once', async () => {
+				const pending = runGrok([
+					line({ type: 'text', data: 'Working on' }),
+					line({ type: 'error', message: 'Rate limit exceeded (429). Try again later.' }),
+				]);
+				const result = await (async () => {
+					await vi.advanceTimersByTimeAsync(0);
+					mockChild.emit('close', 1);
+					return pending;
+				})();
+
+				expect(result.status).toBe('failed');
+				expect(result.stderr).toMatch(/rate limit/i);
+				// No second process: a failed run is never retried behind the chain's back.
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+			});
+
+			it('fails a turn a failed tool cancelled, with the headless approval hint', async () => {
+				const pending = runGrok([
+					line({ type: 'text', data: 'Deleting the build folder' }),
+					line({ type: 'tool_call', toolCallId: 't1', toolName: 'run_terminal_command' }),
+					line({ type: 'tool_call_update', toolCallId: 't1', status: 'failed' }),
+					end('cancelled'),
+				]);
+				await vi.advanceTimersByTimeAsync(0);
+				mockChild.emit('close', 0);
+				const result = await pending;
+
+				expect(result.status).toBe('failed');
+				expect(result.stderr).toContain('stopReason: cancelled');
+				expect(result.stderr).toContain('permission approval');
+				// The streamed partial stays as the record; the failed status is what keeps
+				// it from reaching a chain as a finished answer.
+				expect(result.usage?.accounting).not.toMatchObject({ final: true });
+			});
+
+			it('completes a turn that finished after one of its tools failed, with the answer alone', async () => {
+				const pending = runGrok([
+					line({ type: 'tool_call', toolCallId: 't1', toolName: 'read_file' }),
+					line({
+						type: 'tool_call_update',
+						toolCallId: 't1',
+						status: 'failed',
+						rawOutput: 'ENOENT: tool output',
+					}),
+					line({ type: 'text', data: 'The file is missing.' }),
+					end(),
+				]);
+				await vi.advanceTimersByTimeAsync(0);
+				mockChild.emit('close', 0);
+				const result = await pending;
+
+				expect(result.status).toBe('completed');
+				expect(result.stdout).toBe('The file is missing.');
+				expect(result.stdout).not.toContain('ENOENT');
+				expect(result.providerSessionId).toBe('grok-cue-session');
+			});
+
+			it.each(['max_tokens', 'refusal', 'max_turn_requests'])(
+				'fails a turn interrupted by stopReason %s instead of chaining partial text',
+				async (stopReason) => {
+					const pending = runGrok([line({ type: 'text', data: 'half an answ' }), end(stopReason)]);
+					await vi.advanceTimersByTimeAsync(0);
+					mockChild.emit('close', 0);
+					const result = await pending;
+
+					expect(result.status).toBe('failed');
+					expect(result.stderr).toContain(`stopReason: ${stopReason}`);
+				}
+			);
+
+			it('settles a Grok run once, whatever the child emits after its close', async () => {
+				const pending = runGrok([line({ type: 'text', data: 'ok' }), end()]);
+				await vi.advanceTimersByTimeAsync(0);
+				mockChild.emit('close', 0);
+				mockChild.emit('error', new Error('late failure'));
+				mockChild.emit('close', 1);
+				const result = await pending;
+
+				expect(result.status).toBe('completed');
+				expect(result.stdout).toBe('ok');
+				expect(getActiveProcessMap().has('grok-flow')).toBe(false);
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
 			});
 		});
 
@@ -1361,6 +1783,7 @@ describe('cue-process-lifecycle', () => {
 			expect(mockExecFile).toHaveBeenCalledWith(
 				'taskkill',
 				['/pid', String(mockChild.pid), '/t', '/f'],
+				{ timeout: 5000 },
 				expect.any(Function)
 			);
 			// POSIX signals must not be used on Windows (no-op for shell-spawned trees).
@@ -1372,19 +1795,30 @@ describe('cue-process-lifecycle', () => {
 
 		it('tolerates taskkill failing because the process is already dead', async () => {
 			mockIsWindows.mockReturnValue(true);
-			mockExecFile.mockImplementationOnce((_cmd: unknown, _args: unknown, cb?: unknown) => {
-				if (typeof cb === 'function') {
-					(cb as (e: Error | null) => void)(new Error('ERROR: The process "12345" not found.'));
+			mockExecFile.mockImplementationOnce(
+				(_cmd: unknown, _args: unknown, _options: unknown, cb?: unknown) => {
+					// The child exits after dispatch, before taskkill reports its failure.
+					// Its exit state, not localized error text, makes the failure benign.
+					mockChild.exitCode = 1;
+					if (typeof cb === 'function') {
+						(cb as (e: Error | null) => void)(new Error('ERROR: The process "12345" not found.'));
+					}
 				}
-			});
+			);
 
 			const resultPromise = runProcess('win-dead', createSpec(), createOptions());
 			await vi.advanceTimersByTimeAsync(0);
 
-			// The child exited before taskkill ran. The exit code, not the
-			// (localized) error text, is what marks the failure as benign.
-			mockChild.exitCode = 1;
-			stopProcess('win-dead');
+			const childKill = vi.spyOn(mockChild, 'kill');
+			expect(stopProcess('win-dead')).toBe(true);
+			expect(mockExecFile).toHaveBeenCalledWith(
+				'taskkill',
+				['/pid', String(mockChild.pid), '/t', '/f'],
+				{ timeout: 5000 },
+				expect.any(Function)
+			);
+			expect(mockChild.exitCode).toBe(1);
+			expect(childKill).not.toHaveBeenCalled();
 			// Already-dead is expected on Windows and must not be reported to Sentry.
 			expect(mockCaptureException).not.toHaveBeenCalled();
 

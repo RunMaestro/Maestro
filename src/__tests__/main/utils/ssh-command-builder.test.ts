@@ -3,10 +3,21 @@ import {
 	buildSshCommand,
 	buildRemoteCommand,
 	buildSshCommandWithStdin,
+	newRemotePromptFileDestination,
 	wrapRemoteCommandWithPath,
 } from '../../../main/utils/ssh-command-builder';
 import type { SshRemoteConfig } from '../../../shared/types';
 import * as os from 'os';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { logger } from '../../../shared/maestro-lib/host';
+import { resolveSshPath } from '../../../shared/maestro-lib/launch/ssh-path';
+import { resolvePromptDelivery } from '../../../shared/maestro-lib/launch/prompt-delivery';
+import { getAgentDefinition } from '../../../shared/maestro-lib/providers/definitions';
+import { getAgentCapabilities } from '../../../shared/maestro-lib/providers/capabilities';
+import { newRemotePidFilePath, withRemotePidRecord } from '../../../main/utils/ssh-remote-signal';
+import { createScratchDir } from '../../shared/maestro-lib/run/fakeAgent';
 
 // Mock os.homedir() for consistent path expansion tests
 vi.mock('os', async () => {
@@ -42,6 +53,264 @@ describe('ssh-command-builder', () => {
 		privateKeyPath: '~/.ssh/id_ed25519',
 		enabled: true,
 	};
+
+	describe('private remote prompt files', () => {
+		function options(content = 'synthetic private prompt\n雪 🐱\n') {
+			const destination = newRemotePromptFileDestination(baseConfig.id);
+			const delivery = resolvePromptDelivery({
+				agent: { ...getAgentDefinition('grok'), capabilities: getAgentCapabilities('grok') },
+				prompt: content,
+				isWindowsHost: false,
+				sshRemote: true,
+				sshRemoteId: baseConfig.id,
+				promptFileDestination: destination,
+			});
+			expect(delivery.via).toBe('file');
+			if (delivery.via !== 'file') throw new Error('Grok must select owned prompt-file delivery');
+			return {
+				command: '~/bin/grok custom',
+				args: delivery.args,
+				promptArtifact: delivery.artifact,
+			};
+		}
+
+		afterEach(() => vi.restoreAllMocks());
+
+		it.each([buildSshCommand, buildSshCommandWithStdin])(
+			'%s transfers exactly one encoded body without exposing private data in argv or logs',
+			async (build) => {
+				const localTemp = vi.spyOn(os, 'tmpdir').mockReturnValue('/local-only-temp');
+				const prompt = 'synthetic private prompt 雪 🐱\r\n$(exit 42) `whoami` " & | > '.repeat(
+					2000
+				);
+				const request = options(prompt);
+				expect(request.args).toEqual(['--prompt-file', request.promptArtifact.path]);
+				expect(request.promptArtifact.owner).toBe('remote');
+				expect(request.promptArtifact.sshRemoteId).toBe(baseConfig.id);
+				expect(request.promptArtifact.path).toMatch(/\.json$/);
+				expect(JSON.parse(request.promptArtifact.content)).toEqual({
+					type: 'acp',
+					content: [{ type: 'text', text: prompt }],
+				});
+				expect(Buffer.byteLength(prompt, 'utf8')).toBeGreaterThan(32767);
+				const info = vi.spyOn(logger, 'info');
+				const debug = vi.spyOn(logger, 'debug');
+				const result = await build(baseConfig, request);
+				const encoded = Buffer.from(request.promptArtifact.content).toString('base64');
+				expect(result.args.slice(-4)).toEqual(['/bin/bash', '--norc', '--noprofile', '-s']);
+				expect(result.args).not.toContain('-tt');
+				expect(result.stdinScript!.split('\n').filter((line) => line === encoded)).toEqual([
+					encoded,
+				]);
+				expect(result.stdinScript).toContain('"$HOME/bin/grok custom"');
+				expect(result.stdinScript).toContain('</dev/null 8>&- 9>&-');
+				expect(result.stdinScript).not.toContain(request.promptArtifact.content);
+				expect(result.remoteTempImagePaths).toBeUndefined();
+				expect(info).toHaveBeenCalled();
+				const publicData = JSON.stringify([
+					result.args,
+					result.remoteCommandLine,
+					info.mock.calls,
+					debug.mock.calls,
+				]);
+				expect(publicData).not.toContain('synthetic private prompt');
+				for (const privateValue of [
+					request.promptArtifact.content,
+					request.promptArtifact.path,
+					encoded,
+				]) {
+					expect(publicData).not.toContain(privateValue);
+				}
+				expect(localTemp).not.toHaveBeenCalled();
+				expect(newRemotePromptFileDestination(baseConfig.id).path).not.toBe(
+					request.promptArtifact.path
+				);
+			}
+		);
+
+		it.each([
+			{ prompt: '' },
+			{ stdinInput: '' },
+			{ images: ['data:image/png;base64,AAAA'] },
+			{ args: [] },
+			{ env: { _maestro_prompt_path: 'unowned' } },
+		])('refuses competing or missing delivery sources: %j', async (extra) => {
+			await expect(
+				buildSshCommandWithStdin(baseConfig, { ...options(), ...extra })
+			).rejects.toThrow(
+				'Prompt-file delivery requires an exclusive artifact on the selected remote without other prompt sources.'
+			);
+		});
+
+		it.each([{ owner: 'local' as const }, { sshRemoteId: 'other-host' }, { path: '/unowned' }])(
+			'refuses unowned destinations: %j',
+			async (extra) => {
+				const request = options();
+				await expect(
+					buildSshCommand(baseConfig, {
+						...request,
+						promptArtifact: { ...request.promptArtifact, ...extra },
+					})
+				).rejects.toThrow('Prompt-file delivery requires an exclusive artifact');
+			}
+		);
+
+		it('snapshots bytes and argv before SSH path resolution yields', async () => {
+			let resolve!: (value: string) => void;
+			vi.mocked(resolveSshPath).mockImplementationOnce(
+				() =>
+					new Promise((done) => {
+						resolve = done;
+					})
+			);
+			const request = options();
+			const original = { ...request.promptArtifact };
+			const pending = buildSshCommandWithStdin(baseConfig, request);
+			request.promptArtifact.content = 'mutated body';
+			request.args.push('mutated argument');
+			resolve('ssh');
+			const result = await pending;
+			expect(result.stdinScript).toContain(Buffer.from(original.content).toString('base64'));
+			expect(result.stdinScript).not.toContain('mutated');
+		});
+
+		// Reuse the real-bash/isolated-file pattern from ssh-remote-signal.test.ts.
+		// These exercise a synthetic provider on Linux, never an SSH host or Grok.
+		describe.skipIf(process.platform !== 'linux' || !fs.existsSync('/bin/bash'))(
+			'owned script lifetime',
+			() => {
+				let scratch: ReturnType<typeof createScratchDir>;
+				let request: ReturnType<typeof options>;
+				let pidFile: string;
+				beforeEach(() => {
+					scratch = createScratchDir('maestro-prompt-script');
+					request = options();
+					pidFile = newRemotePidFilePath(true);
+					request.command = path.join(scratch.dir, "fake provider's.sh");
+					fs.writeFileSync(
+						request.command,
+						'#!/bin/bash\n[ "$#" = 2 ] && [ "$1" = --prompt-file ] || exit 98\n[ ! -e /proc/$$/fd/8 ] && [ ! -e /proc/$$/fd/9 ] || exit 99\nif read -r line; then exit 97; fi\nstat -c %a -- "$2" >&2\ncat -- "$2"\nexit "${TEST_EXIT:-0}"\n',
+						{ mode: 0o700 }
+					);
+				});
+				afterEach(() => {
+					for (const file of [request.promptArtifact.path, pidFile, `${pidFile}.cancel`])
+						fs.rmSync(file, { force: true });
+					scratch.cleanup();
+				});
+				function run(script: string) {
+					const processOptions = {
+						input: script,
+						detached: true,
+						timeout: 3000,
+						env: { PATH: '/usr/bin:/bin', HOME: scratch.dir },
+					};
+					return spawnSync('/bin/bash', ['--norc', '--noprofile', '-s'], processOptions);
+				}
+				async function script() {
+					const built = await buildSshCommandWithStdin(baseConfig, request);
+					return withRemotePidRecord(built.stdinScript!, pidFile, request.promptArtifact.path);
+				}
+
+				it.each(['', "雪 🐱\r\n$(exit 42)\n'quoted'\n", 'large prompt\n'.repeat(20000)])(
+					'preserves exact bytes, private mode and closed stdin for payload %#',
+					async (content) => {
+						request.promptArtifact.content = content;
+						const result = run(await script());
+						expect(result.error).toBeUndefined();
+						expect(result.status).toBe(0);
+						expect(result.stdout).toEqual(Buffer.from(content));
+						expect(result.stderr.toString()).toBe('600\n');
+						expect(fs.existsSync(request.promptArtifact.path)).toBe(false);
+						expect(fs.existsSync(pidFile)).toBe(false);
+					}
+				);
+
+				it.each([
+					'truncated',
+					'checksum',
+					'decode',
+					'collision',
+					'symlink',
+					'owner-collision',
+					'unbound',
+				])('refuses %s without launching or deleting another owner', async (failure) => {
+					let input = await script();
+					const artifact = request.promptArtifact;
+					const encoded = Buffer.from(artifact.content).toString('base64');
+					const survivor = path.join(scratch.dir, 'unowned.txt');
+					fs.writeFileSync(survivor, 'untouched');
+					if (failure === 'truncated') input = input.slice(0, input.indexOf(encoded) + 2);
+					if (failure === 'checksum')
+						input = input.replace(encoded, Buffer.from('changed bytes').toString('base64'));
+					if (failure === 'decode') input = input.replace(encoded, '!invalid!');
+					if (failure === 'collision') fs.writeFileSync(artifact.path, 'untouched');
+					if (failure === 'symlink') fs.symlinkSync(survivor, artifact.path);
+					if (failure === 'owner-collision') fs.writeFileSync(pidFile, 'untouched');
+					if (failure === 'unbound')
+						input = (await buildSshCommandWithStdin(baseConfig, request)).stdinScript!;
+					const result = run(input);
+					expect(result.error).toBeUndefined();
+					expect(result.status).not.toBe(0);
+					expect(result.stdout.length).toBe(0);
+					expect(result.stderr.toString()).not.toContain(artifact.content);
+					expect(result.stderr.toString()).not.toContain(artifact.path);
+					expect(fs.readFileSync(survivor, 'utf8')).toBe('untouched');
+					if (failure === 'collision' || failure === 'symlink')
+						expect(fs.readFileSync(artifact.path, 'utf8')).toBe('untouched');
+					else expect(fs.existsSync(artifact.path)).toBe(false);
+					if (failure === 'symlink')
+						expect(fs.lstatSync(artifact.path).isSymbolicLink()).toBe(true);
+					if (failure === 'owner-collision')
+						expect(fs.readFileSync(pidFile, 'utf8')).toBe('untouched');
+					else expect(fs.existsSync(pidFile)).toBe(false);
+				});
+
+				it('refuses a cancelled Grok transfer before creating files or starting its reader', async () => {
+					fs.writeFileSync(`${pidFile}.cancel`, '', { flag: 'wx', mode: 0o600 });
+					const result = run(await script());
+					expect(result.error).toBeUndefined();
+					expect(result.status).toBe(1);
+					expect(result.stdout.length).toBe(0);
+					expect(result.stderr.toString()).toBe('Remote prompt preparation unavailable.\n');
+					expect(fs.existsSync(request.promptArtifact.path)).toBe(false);
+					expect(fs.existsSync(pidFile)).toBe(false);
+					expect(fs.readFileSync(`${pidFile}.cancel`, 'utf8')).toBe('');
+				});
+
+				it.each([23, 127])(
+					'preserves provider exit %i while removing owned files',
+					async (status) => {
+						if (status === 127) fs.unlinkSync(request.command);
+						const built = await buildSshCommandWithStdin(baseConfig, {
+							...request,
+							env: { TEST_EXIT: String(status) },
+						});
+						const result = run(
+							withRemotePidRecord(built.stdinScript!, pidFile, request.promptArtifact.path)
+						);
+						expect(result.status).toBe(status);
+						expect(fs.existsSync(request.promptArtifact.path)).toBe(false);
+						expect(fs.existsSync(pidFile)).toBe(false);
+					}
+				);
+
+				it('preserves a destination replaced while the provider runs', async () => {
+					fs.writeFileSync(
+						request.command,
+						'#!/bin/bash\nrm -- "$2"\nprintf replacement > "$2"\nexit 19\n'
+					);
+					const result = run(await script());
+					expect(result.status).toBe(19);
+					expect(fs.readFileSync(request.promptArtifact.path, 'utf8')).toBe('replacement');
+					expect(result.stderr.toString()).toBe(
+						'Remote prompt artifact changed ownership; cleanup skipped.\n'
+					);
+					expect(fs.existsSync(pidFile)).toBe(false);
+				});
+			}
+		);
+	});
 
 	describe('buildRemoteCommand', () => {
 		// Note: The command itself is NOT escaped - it comes from agent config (trusted).

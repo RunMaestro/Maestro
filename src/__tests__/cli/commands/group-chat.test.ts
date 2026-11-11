@@ -170,6 +170,49 @@ describe('group-chat commands', () => {
 			expect(exitSpy).toHaveBeenCalledWith(1);
 		});
 
+		it('refuses --moderator grok with the storage text before the desktop is contacted', async () => {
+			const { sent } = mockBridge({
+				start_group_chat: { type: 'start_group_chat_result', success: true, chatId: 'never' },
+			});
+
+			await expect(
+				groupChatStart('R', { participant: ['rc'], moderator: 'grok', message: 'go' })
+			).rejects.toThrow('process.exit');
+
+			expect(errorSpy).toHaveBeenCalledWith(
+				'Error: Invalid moderator agent ID: grok. Agent does not support group chat moderation.'
+			);
+			expect(exitSpy).toHaveBeenCalledWith(1);
+			// The chat is created and its agents spawned only through the bridge.
+			expect(withMaestroClient).not.toHaveBeenCalled();
+			expect(sent).toEqual([]);
+		});
+
+		it('reports the --moderator grok refusal as JSON with success false', async () => {
+			mockBridge({});
+
+			await expect(
+				groupChatStart('R', { participant: ['rc'], moderator: 'grok', json: true })
+			).rejects.toThrow('process.exit');
+
+			expect(JSON.parse(logSpy.mock.calls[0][0])).toEqual({
+				success: false,
+				error: 'Invalid moderator agent ID: grok. Agent does not support group chat moderation.',
+			});
+			expect(exitSpy).toHaveBeenCalledWith(1);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('still starts a chat moderated by Codex', async () => {
+			const { sent } = mockBridge({
+				start_group_chat: { type: 'start_group_chat_result', success: true, chatId: 'chat-c' },
+			});
+
+			await groupChatStart('R', { participant: ['rc'], moderator: 'codex' });
+
+			expect(sent[0]).toMatchObject({ type: 'start_group_chat', moderatorAgentId: 'codex' });
+		});
+
 		it('surfaces a bridge validation error', async () => {
 			mockBridge({ start_group_chat: { type: 'error', message: 'At least 1 participant' } });
 

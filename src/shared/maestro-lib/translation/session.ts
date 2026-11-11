@@ -1,4 +1,5 @@
 import type { ToolType } from '../../types';
+import type { NativeSessionBinding } from '../agents/providerSwap';
 import type {
 	ProviderMigrationState,
 	TranslationTabMapping,
@@ -8,6 +9,7 @@ import type {
 export interface TranslationTab {
 	id: string;
 	agentSessionId: string | null;
+	nativeSessionBinding?: NativeSessionBinding;
 	usageStats?: unknown;
 	customModel?: string;
 	customEffort?: string;
@@ -17,6 +19,7 @@ export interface TranslationTab {
 			ToolType,
 			{
 				agentSessionId: string | null;
+				nativeSessionBinding?: NativeSessionBinding;
 				usageStats?: any;
 				customModel?: string;
 				customEffort?: string;
@@ -35,6 +38,7 @@ export function switchTabProvider<T extends Omit<TranslationTab, 'id'>>(
 	const parked = { ...(tab.providerSessions ?? {}) };
 	parked[fromProvider] = {
 		agentSessionId: tab.agentSessionId,
+		nativeSessionBinding: tab.nativeSessionBinding,
 		usageStats: tab.usageStats,
 		customModel: tab.customModel,
 		customEffort: tab.customEffort,
@@ -44,6 +48,7 @@ export function switchTabProvider<T extends Omit<TranslationTab, 'id'>>(
 	return {
 		...tab,
 		agentSessionId: restored?.agentSessionId ?? null,
+		nativeSessionBinding: restored?.nativeSessionBinding,
 		usageStats: restored?.usageStats,
 		customModel: restored?.customModel,
 		customEffort: restored?.customEffort,
@@ -145,16 +150,32 @@ export function commitTranslationSession<T extends TranslatableSession>(
 	const translate = (tab: TranslationTab): TranslationTab => {
 		const mapping = map.get(tab.id);
 		if (!mapping) throw new Error(`Missing native translation mapping for tab ${tab.id}`);
+		// A mapping supplies no observed account/host ownership, including when
+		// its ID equals a previous destination ID. Only a committed operation's
+		// replay may retain ownership observed after that same commit.
+		const destinationBinding: NativeSessionBinding | undefined = mapping.destinationSessionId
+			? { version: 1, state: 'unknown', reason: 'unobserved' }
+			: undefined;
 		if (
 			session.toolType === destination &&
 			tab.agentSessionId === mapping.destinationSessionId &&
 			tab.providerSessions?.[sourceProvider]?.agentSessionId === mapping.sourceSessionId
-		)
-			return tab;
+		) {
+			return session.providerMigration?.operationId === operationId &&
+				session.providerMigration.destination === destination &&
+				session.providerMigration.state === 'committed'
+				? tab
+				: { ...tab, nativeSessionBinding: destinationBinding };
+		}
 		if (tab.agentSessionId !== mapping.sourceSessionId)
 			throw new Error(`Native source identity changed before translation commit for tab ${tab.id}`);
 		const switched = switchTabProvider(tab, sourceProvider, destination);
-		return { ...switched, agentSessionId: mapping.destinationSessionId };
+		return {
+			...switched,
+			agentSessionId: mapping.destinationSessionId,
+			// The source binding stays parked; the mapped destination is unobserved.
+			nativeSessionBinding: destinationBinding,
+		};
 	};
 	const historyMappings = new Map<string, HistoryTranslationMapping>();
 	for (const previous of session.providerTranslationHistoryMappings ?? []) {
@@ -204,6 +225,7 @@ export function commitTranslationSession<T extends TranslatableSession>(
 			.map((tab) => ({
 				id: tab.id,
 				agentSessionId: tab.agentSessionId,
+				nativeSessionBinding: tab.nativeSessionBinding,
 				providerSessions: tab.providerSessions,
 			})),
 		customPath: undefined,

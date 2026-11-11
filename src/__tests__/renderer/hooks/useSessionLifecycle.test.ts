@@ -33,10 +33,17 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session } from '../../../renderer/types';
 import { createMockFileTab, createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { prepareSessionForPersistence } from '../../../renderer/hooks/utils/useDebouncedPersistence';
+import { useSessionRestoration } from '../../../renderer/hooks/session/useSessionRestoration';
+import { captureException } from '../../../renderer/utils/sentry';
 import { createGroupFromTabRefs } from '../../../renderer/utils/panelLayout';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 
 vi.mock('../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
+vi.mock('../../../renderer/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
+}));
 
 // ============================================================================
 // Test Helpers
@@ -638,6 +645,152 @@ describe('useSessionLifecycle', () => {
 				'New Tab Name'
 			);
 		});
+
+		it.each([
+			['grok', undefined],
+			['grok', 'claude-code'],
+			['codex', 'grok'],
+			['claude-code', 'grok'],
+		] as const)(
+			'keeps %s labels local with retained owner %s through reload',
+			async (toolType, turnProvider) => {
+				const binding = {
+					version: 1,
+					state: 'bound',
+					provider: 'grok',
+					nativeSessionId: 'shared-native',
+					accountRef: 'account-a',
+					host: { kind: 'local', identity: 'machine-a' },
+					cwd: '/projects/myapp',
+				} as const;
+				const tab = createMockAITab({
+					id: 'tab-1',
+					name: 'Before',
+					agentSessionId: binding.nativeSessionId,
+					nativeSessionBinding: { ...binding, provider: toolType },
+					turnProvider,
+					isGeneratingName: true,
+					providerSessions:
+						toolType === 'grok'
+							? undefined
+							: {
+									grok: { agentSessionId: binding.nativeSessionId, nativeSessionBinding: binding },
+								},
+				});
+				const sibling = createMockAITab({ ...tab, id: 'tab-2', name: 'Sibling' });
+				const session = createMockSession({ id: 'session-1', toolType, aiTabs: [tab, sibling] });
+				const others = [
+					{ ...binding, accountRef: 'account-b' },
+					{ ...binding, host: { kind: 'ssh' as const, identity: 'endpoint-b' } },
+				].map((nativeSessionBinding, index) =>
+					createMockSession({
+						id: `other-${index}`,
+						toolType: 'grok',
+						aiTabs: [
+							createMockAITab({
+								...tab,
+								name: `Other ${index}`,
+								nativeSessionBinding,
+								providerSessions: undefined,
+								turnProvider: undefined,
+							}),
+						],
+					})
+				);
+				useSessionStore.setState({ sessions: [session, ...others], activeSessionId: session.id });
+				useModalStore.getState().openModal('renameTab', { tabId: tab.id, initialName: tab.name! });
+
+				for (const label of ['Maestro label', '']) {
+					const view = renderHook(() => useSessionLifecycle(createDeps()));
+					act(() => view.result.current.handleRenameTab(label));
+					const [updated, ...untouched] = useSessionStore.getState().sessions;
+					expect(updated.aiTabs[0]).toEqual({
+						...tab,
+						name: label || null,
+						isGeneratingName: false,
+					});
+					expect(updated.aiTabs[1]).toBe(sibling);
+					expect(untouched).toEqual(others);
+					expect(window.maestro.agentSessions.setSessionName).not.toHaveBeenCalled();
+					expect(window.maestro.claude.updateSessionName).not.toHaveBeenCalled();
+					expect(window.maestro.history.updateSessionName).not.toHaveBeenCalled();
+
+					// Exercise the production serializer and startup restoration, with IPC in memory.
+					const saved = JSON.parse(JSON.stringify(prepareSessionForPersistence(updated)));
+					view.unmount();
+					Object.assign(window.maestro, {
+						sessions: {
+							getAll: vi.fn().mockResolvedValue([saved]),
+							getActiveSessionId: vi.fn().mockResolvedValue(session.id),
+						},
+						groups: { getAll: vi.fn().mockResolvedValue([]), setAll: vi.fn() },
+						groupChat: { list: vi.fn().mockResolvedValue([]) },
+						agents: { get: vi.fn().mockResolvedValue({ id: toolType }) },
+						git: { isRepo: vi.fn().mockResolvedValue(false) },
+						process: {
+							...window.maestro.process,
+							getActiveProcesses: vi.fn().mockResolvedValue([]),
+						},
+					});
+					act(() => useSessionStore.setState({ sessions: [], sessionsLoaded: false }));
+					const restoration = renderHook(() => useSessionRestoration());
+					await act(async () => {});
+					expect(useSessionStore.getState().sessionsReadOk).toBe(true);
+					expect(useSessionStore.getState().sessionsLoaded).toBe(true);
+					const reloaded = useSessionStore.getState().sessions[0];
+					expect(reloaded.aiPid).toBe(0);
+					expect(reloaded.aiTabs[0]).toMatchObject({
+						name: label || null,
+						agentSessionId: binding.nativeSessionId,
+						nativeSessionBinding: tab.nativeSessionBinding,
+						isGeneratingName: false,
+					});
+					expect(reloaded.aiTabs[0].providerSessions).toEqual(tab.providerSessions);
+					expect(reloaded.aiTabs[1].name).toBe('Sibling');
+					expect(window.maestro.agentSessions.setSessionName).not.toHaveBeenCalled();
+					expect(window.maestro.history.updateSessionName).not.toHaveBeenCalled();
+					restoration.unmount();
+					// Re-seed for the clearing case without retaining restored runtime fields.
+					act(() => useSessionStore.setState({ sessions: [session, ...others] }));
+				}
+				expect(captureException).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(['claude-code', 'codex'] as const)(
+			'reports unexpected %s naming failures while preserving the local label',
+			async (toolType) => {
+				const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'native' });
+				useSessionStore.setState({
+					sessions: [createMockSession({ id: 'session-1', toolType, aiTabs: [tab] })],
+					activeSessionId: 'session-1',
+				});
+				useModalStore.getState().openModal('renameTab', { tabId: tab.id, initialName: '' });
+				const failure = new Error('metadata unavailable');
+				const write =
+					toolType === 'claude-code'
+						? window.maestro.claude.updateSessionName
+						: window.maestro.agentSessions.setSessionName;
+				vi.mocked(write).mockRejectedValueOnce(failure);
+				const historyFailure = new Error('History unavailable');
+				vi.mocked(window.maestro.history.updateSessionName).mockRejectedValueOnce(historyFailure);
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+				await act(async () => result.current.handleRenameTab('Local name'));
+				expect(useSessionStore.getState().sessions[0].aiTabs[0].name).toBe('Local name');
+				expect(captureException).toHaveBeenCalledWith(
+					failure,
+					expect.objectContaining({
+						extra: expect.objectContaining({
+							operation:
+								toolType === 'claude-code' ? 'persist-tab-name-claude' : 'persist-tab-name-agent',
+						}),
+					})
+				);
+				expect(captureException).toHaveBeenCalledWith(historyFailure, {
+					extra: { agentSessionId: 'native', operation: 'update-history-session-name' },
+				});
+			}
+		);
 
 		// A terminal tile inside a tiled group renames through this same modal, so the
 		// commit must land on terminalTabs[].name (the tile title reads it back).

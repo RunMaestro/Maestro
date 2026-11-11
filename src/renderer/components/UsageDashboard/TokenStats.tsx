@@ -6,10 +6,9 @@
  * account, and time.
  *
  * Two things this view is careful about:
- * - **Estimated vs reported cost.** Only some agents report a real cost
- *   (OpenCode). Everything else is priced from the `modelPricing` rate table.
- *   Estimated figures are marked with a `~` and explained in the footnote, so a
- *   number is never presented as authoritative when it isn't.
+ * - **Cost evidence.** Reported amounts, partial ledgers and unavailable costs
+ *   remain distinct. Legacy rate-table estimates retain their `~` marker; a
+ *   compatibility zero never overrides canonical missing-cost evidence.
  * - **Multiple provider accounts.** Users commonly run several accounts from
  *   separate provider homes (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
  *   `COPILOT_HOME`); the Accounts breakdown shows each one's spend rather than
@@ -22,7 +21,12 @@ import { memo, useMemo, useState } from 'react';
 import { ArrowDownToLine, ArrowUpFromLine, Coins, Database, RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../../shared/stats-types';
-import type { TokenUsageAggregate, TokenUsageGroup } from '../../../shared/tokenUsage';
+import type {
+	TokenUsageAggregate,
+	TokenUsageGroup,
+	TokenUsageTotals,
+} from '../../../shared/tokenUsage';
+import { usageCostUsd } from '../../../shared/maestro-lib/streaming/usage-totals';
 import { formatCost, formatNumber, formatTokensCompact } from '../../../shared/formatters';
 import { parseProviderProfileKey } from '../../../shared/providerProfiles';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
@@ -52,9 +56,20 @@ function allTokens(t: {
 	return t.inputTokens + t.outputTokens + t.cacheReadTokens + t.cacheCreationTokens;
 }
 
-/** Cost string, prefixed with `~` when any part of it was rate-table estimated. */
-function costText(costUsd: number, estimated: boolean): string {
-	return `${estimated ? '~' : ''}${formatCost(costUsd)}`;
+/** Canonical cost evidence takes precedence over legacy numeric projections. */
+function costText(
+	costUsd: number,
+	estimated: boolean,
+	accounting?: TokenUsageTotals['accounting']
+): string {
+	const cost = accounting?.cost;
+	const amount = cost ? usageCostUsd(cost) : costUsd;
+	const partial =
+		cost?.status === 'partial' ||
+		(cost?.status === 'estimated' && cost.completeness !== 'complete');
+	if (amount === undefined) return partial ? 'Unknown (partial)' : 'Unknown';
+	const prefix = (cost ? cost.status === 'estimated' : estimated) ? '~' : '';
+	return `${prefix}${formatCost(amount)}${partial ? ' (partial)' : ''}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +111,14 @@ const Breakdown = memo(function Breakdown({
 		null
 	);
 
-	const max = useMemo(() => Math.max(...groups.map((g) => g.costUsd), 0), [groups]);
+	const max = useMemo(
+		() =>
+			Math.max(
+				...groups.map((g) => (g.accounting ? (usageCostUsd(g.accounting.cost) ?? 0) : g.costUsd)),
+				0
+			),
+		[groups]
+	);
 
 	if (groups.length === 0) {
 		return (
@@ -121,9 +143,9 @@ const Breakdown = memo(function Breakdown({
 					const color = colorBlindMode
 						? COLORBLIND_AGENT_PALETTE[idx % COLORBLIND_AGENT_PALETTE.length]
 						: theme.colors.accent;
-					// Cost can legitimately be 0 (e.g. an agent with no rate data); fall
-					// back to a hairline so the row still reads as present.
-					const pct = max > 0 ? Math.max((g.costUsd / max) * 100, 1) : 1;
+					// Unknown amounts have no magnitude; known zero keeps a visible hairline.
+					const amount = g.accounting ? usageCostUsd(g.accounting.cost) : g.costUsd;
+					const pct = amount === undefined ? 0 : max > 0 ? Math.max((amount / max) * 100, 1) : 1;
 					return (
 						<div
 							key={g.key}
@@ -152,7 +174,7 @@ const Breakdown = memo(function Breakdown({
 								className="text-xs tabular-nums text-right"
 								style={{ color: theme.colors.textMain, minWidth: '4.5rem' }}
 							>
-								{costText(g.costUsd, g.costEstimated)}
+								{costText(g.costUsd, g.costEstimated, g.accounting)}
 							</span>
 						</div>
 					);
@@ -162,14 +184,19 @@ const Breakdown = memo(function Breakdown({
 			{hovered && (
 				<ChartTooltip anchor={{ x: hovered.x, y: hovered.y }} theme={theme}>
 					<div className="font-semibold mb-1">{hovered.group.label}</div>
-					<div>Cost: {costText(hovered.group.costUsd, hovered.group.costEstimated)}</div>
+					<div>
+						Cost:{' '}
+						{costText(hovered.group.costUsd, hovered.group.costEstimated, hovered.group.accounting)}
+					</div>
 					<div>Tokens: {formatNumber(allTokens(hovered.group))}</div>
 					<div>
 						In {formatTokensCompact(hovered.group.inputTokens)} / Out{' '}
 						{formatTokensCompact(hovered.group.outputTokens)}
 					</div>
 					<div>Sessions: {formatNumber(hovered.group.sessionCount)}</div>
-					{hovered.group.costEstimated && (
+					{(hovered.group.accounting
+						? hovered.group.accounting.cost.status === 'estimated'
+						: hovered.group.costEstimated) && (
 						<div style={{ color: theme.colors.textDim }}>~ cost estimated from rates</div>
 					)}
 				</ChartTooltip>
@@ -370,7 +397,11 @@ const Timeline = memo(function Timeline({ data, theme, colorBlindMode }: Timelin
 					))}
 					<div>
 						Cost:{' '}
-						{costText(data.timeline[hovered.idx].costUsd, data.timeline[hovered.idx].costEstimated)}
+						{costText(
+							data.timeline[hovered.idx].costUsd,
+							data.timeline[hovered.idx].costEstimated,
+							data.timeline[hovered.idx].accounting
+						)}
 					</div>
 					<div>Sessions: {formatNumber(data.timeline[hovered.idx].sessionCount)}</div>
 				</ChartTooltip>
@@ -433,7 +464,7 @@ export const TokenStats = memo(function TokenStats({
 				<MetricCard
 					icon={<Coins size={16} />}
 					label="Total Cost"
-					value={costText(totals.costUsd, totals.costEstimated)}
+					value={costText(totals.costUsd, totals.costEstimated, totals.accounting)}
 					theme={theme}
 					animationIndex={0}
 					variant="filled"
@@ -528,6 +559,8 @@ export const TokenStats = memo(function TokenStats({
 				<span>
 					{formatNumber(totals.sessionCount)} sessions read from agent transcripts.
 					{totals.costEstimated && ' Costs marked ~ are estimated from model rates.'}
+					{totals.accounting &&
+						' Unknown costs are unavailable; partial amounts include only known spend.'}
 				</span>
 				<button
 					type="button"

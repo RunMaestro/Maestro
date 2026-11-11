@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useAgentSessionsResume } from '../../../../../renderer/components/AgentSessionsBrowser/hooks/useAgentSessionsResume';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../../../shared/agentConstants';
+import type { NativeSessionBinding } from '../../../../../shared/maestro-lib/agents/providerSwap';
 import type {
 	AgentSession,
 	SessionMessage,
@@ -41,7 +42,7 @@ describe('useAgentSessionsResume', () => {
 	const onClose = vi.fn();
 
 	beforeEach(() => {
-		onResumeSession.mockClear();
+		onResumeSession.mockReset().mockResolvedValue(true);
 		onClose.mockClear();
 	});
 
@@ -108,7 +109,18 @@ describe('useAgentSessionsResume', () => {
 			})
 		);
 		result.current.handleResume();
-		expect(onResumeSession).toHaveBeenCalledWith('sess-1', [], 'My Work', false, undefined);
+		expect(onResumeSession).toHaveBeenCalledWith(
+			'sess-1',
+			[],
+			'My Work',
+			false,
+			undefined,
+			undefined,
+			{
+				targetSessionId: undefined,
+				nativeSessionBinding: undefined,
+			}
+		);
 	});
 
 	it('handleResume preserves starred from starredSessions Set', () => {
@@ -142,7 +154,7 @@ describe('useAgentSessionsResume', () => {
 		expect(usageStats?.inputTokens).toBe(0);
 	});
 
-	it('handleResume calls onClose after onResumeSession', () => {
+	it('handleResume calls onClose after onResumeSession', async () => {
 		const { result } = renderHook(() =>
 			useAgentSessionsResume({
 				viewingSession: makeSession(),
@@ -152,7 +164,7 @@ describe('useAgentSessionsResume', () => {
 				onClose,
 			})
 		);
-		result.current.handleResume();
+		await result.current.handleResume();
 		expect(onClose).toHaveBeenCalled();
 	});
 
@@ -218,7 +230,7 @@ describe('useAgentSessionsResume', () => {
 		expect(onResumeSession.mock.calls[0][3]).toBe(true);
 	});
 
-	it('handleQuickResume calls onResumeSession + onClose', () => {
+	it('handleQuickResume calls onResumeSession + onClose', async () => {
 		const session = makeSession();
 		const { result } = renderHook(() =>
 			useAgentSessionsResume({
@@ -230,8 +242,193 @@ describe('useAgentSessionsResume', () => {
 			})
 		);
 		const e = { stopPropagation: vi.fn() } as any;
-		result.current.handleQuickResume(session, e);
+		await result.current.handleQuickResume(session, e);
 		expect(onResumeSession).toHaveBeenCalled();
 		expect(onClose).toHaveBeenCalled();
+	});
+	describe.each(['detailed', 'quick'] as const)('%s scoped resume', (mode) => {
+		const binding = {
+			version: 1,
+			state: 'bound',
+			provider: 'grok',
+			nativeSessionId: 'sess-1',
+			accountRef: 'account-a',
+			host: { kind: 'ssh', identity: 'endpoint-a' },
+			cwd: '/p',
+		} as const satisfies NativeSessionBinding;
+
+		it('forwards the selected owner and clones its receipt across colliding IDs', async () => {
+			const first = makeSession({ ownerAgentId: 'owner-a', nativeSessionBinding: binding });
+			const second = makeSession({
+				ownerAgentId: 'owner-b',
+				nativeSessionBinding: {
+					...binding,
+					accountRef: 'account-b',
+					host: { kind: 'local', identity: 'machine-b' },
+				},
+			});
+			onResumeSession.mockResolvedValue(false);
+			const { result, rerender } = renderHook(
+				({ viewingSession }) =>
+					useAgentSessionsResume({
+						viewingSession,
+						messages: [makeMsg()],
+						starredSessions: new Set(),
+						onResumeSession,
+						onClose,
+					}),
+				{ initialProps: { viewingSession: first } }
+			);
+			for (const selected of [first, second]) {
+				rerender({ viewingSession: selected });
+				const event = { stopPropagation: vi.fn() } as unknown as React.MouseEvent;
+				if (mode === 'detailed') await result.current.handleResume();
+				else await result.current.handleQuickResume(selected, event);
+				const args = onResumeSession.mock.lastCall!;
+				expect(args[0]).toBe('sess-1');
+				expect(args[1]).toHaveLength(mode === 'detailed' ? 1 : 0);
+				expect(args[5]).toBeUndefined(); // Parent resolves project-root aliases.
+				expect(args[6]).toEqual({
+					targetSessionId: selected.ownerAgentId,
+					nativeSessionBinding: selected.nativeSessionBinding,
+				});
+				expect(args[6].nativeSessionBinding).not.toBe(selected.nativeSessionBinding);
+				expect(args[6].nativeSessionBinding.host).not.toBe(binding.host);
+				args[6].nativeSessionBinding.host.identity = 'callback-mutation';
+				expect(selected.nativeSessionBinding).toEqual(
+					selected === first
+						? binding
+						: {
+								...binding,
+								accountRef: 'account-b',
+								host: { kind: 'local', identity: 'machine-b' },
+							}
+				);
+				if (mode === 'quick') expect(event.stopPropagation).toHaveBeenCalledOnce();
+			}
+			expect(onClose).not.toHaveBeenCalled();
+		});
+
+		it.each([undefined, { version: 1, state: 'unknown', reason: 'legacy' } as const])(
+			'preserves missing owner and unknown legacy receipt %j',
+			async (nativeSessionBinding) => {
+				const session = makeSession({ nativeSessionBinding });
+				onResumeSession.mockResolvedValue(false);
+				const { result } = renderHook(() =>
+					useAgentSessionsResume({
+						viewingSession: session,
+						messages: [],
+						starredSessions: new Set(),
+						onResumeSession,
+						onClose,
+					})
+				);
+				if (mode === 'detailed') await result.current.handleResume();
+				else
+					await result.current.handleQuickResume(session, {
+						stopPropagation: vi.fn(),
+					} as unknown as React.MouseEvent);
+				expect(onResumeSession.mock.lastCall![6]).toEqual({
+					targetSessionId: undefined,
+					nativeSessionBinding,
+				});
+				expect(onClose).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each([true, false, undefined])(
+			'closes only after confirmed deferred result %s',
+			async (outcome) => {
+				let complete!: (value: boolean | undefined) => void;
+				onResumeSession.mockReturnValue(
+					new Promise<boolean | undefined>((resolve) => {
+						complete = resolve;
+					})
+				);
+				const session = makeSession({ ownerAgentId: 'owner-a', nativeSessionBinding: binding });
+				const { result } = renderHook(() =>
+					useAgentSessionsResume({
+						viewingSession: session,
+						messages: [],
+						starredSessions: new Set(),
+						onResumeSession,
+						onClose,
+					})
+				);
+				const pending =
+					mode === 'detailed'
+						? result.current.handleResume()
+						: result.current.handleQuickResume(session, {
+								stopPropagation: vi.fn(),
+							} as unknown as React.MouseEvent);
+				expect(onResumeSession).toHaveBeenCalledOnce();
+				expect(onClose).not.toHaveBeenCalled();
+				complete(outcome);
+				await pending;
+				expect(onClose).toHaveBeenCalledTimes(outcome === true ? 1 : 0);
+			}
+		);
+
+		it('propagates rejected opens without closing the selected history', async () => {
+			const error = new Error('native session refused');
+			onResumeSession.mockRejectedValue(error);
+			const session = makeSession({ ownerAgentId: 'owner-a', nativeSessionBinding: binding });
+			const { result } = renderHook(() =>
+				useAgentSessionsResume({
+					viewingSession: session,
+					messages: [],
+					starredSessions: new Set(),
+					onResumeSession,
+					onClose,
+				})
+			);
+			const pending =
+				mode === 'detailed'
+					? result.current.handleResume()
+					: result.current.handleQuickResume(session, {
+							stopPropagation: vi.fn(),
+						} as unknown as React.MouseEvent);
+			await expect(pending).rejects.toBe(error);
+			expect(onClose).not.toHaveBeenCalled();
+		});
+
+		it.each(['navigation', 'unmount', 'newer resume'] as const)(
+			'keeps an old success from closing after %s',
+			async (change) => {
+				let complete!: (value: boolean) => void;
+				onResumeSession
+					.mockReturnValueOnce(
+						new Promise<boolean>((resolve) => {
+							complete = resolve;
+						})
+					)
+					.mockResolvedValue(false);
+				const session = makeSession({ ownerAgentId: 'owner-a', nativeSessionBinding: binding });
+				const { result, rerender, unmount } = renderHook(
+					({ viewingSession }) =>
+						useAgentSessionsResume({
+							viewingSession,
+							messages: [],
+							starredSessions: new Set(),
+							onResumeSession,
+							onClose,
+						}),
+					{ initialProps: { viewingSession: session } }
+				);
+				const event = { stopPropagation: vi.fn() } as unknown as React.MouseEvent;
+				const pending =
+					mode === 'detailed'
+						? result.current.handleResume()
+						: result.current.handleQuickResume(session, event);
+				if (change === 'navigation')
+					rerender({ viewingSession: makeSession({ ownerAgentId: 'owner-b' }) });
+				else if (change === 'unmount') unmount();
+				else if (mode === 'detailed') await result.current.handleResume();
+				else await result.current.handleQuickResume(session, event);
+				complete(true);
+				await pending;
+				expect(onClose).not.toHaveBeenCalled();
+			}
+		);
 	});
 });

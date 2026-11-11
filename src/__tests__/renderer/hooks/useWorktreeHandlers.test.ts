@@ -964,6 +964,7 @@ describe('handleCreateWorktreeFromConfig', () => {
 describe('handleCreateWorktree', () => {
 	it('reads session from modalStore data, creates worktree', async () => {
 		// Set up the createWorktree session in modal store
+		useSessionStore.setState({ sessions: [mockParentSession] });
 		getModalActions().setCreateWorktreeSession(mockParentSession);
 
 		const { result } = renderHook(() => useWorktreeHandlers());
@@ -985,6 +986,7 @@ describe('handleCreateWorktree', () => {
 	});
 
 	it('auto-focuses the new worktree session after creation', async () => {
+		useSessionStore.setState({ sessions: [mockParentSession] });
 		getModalActions().setCreateWorktreeSession(mockParentSession);
 
 		const { result } = renderHook(() => useWorktreeHandlers());
@@ -1005,6 +1007,7 @@ describe('handleCreateWorktree', () => {
 			worktreeConfig: undefined,
 			cwd: '/projects/myapp',
 		};
+		useSessionStore.setState({ sessions: [sessionNoConfig] });
 		getModalActions().setCreateWorktreeSession(sessionNoConfig);
 
 		const { result } = renderHook(() => useWorktreeHandlers());
@@ -1030,6 +1033,7 @@ describe('handleCreateWorktree', () => {
 		// IPC layer; the IPC handler then becomes the single point that
 		// decides whether to honor it (depending on whether the named branch
 		// already exists). Don't drop it on the floor in the renderer.
+		useSessionStore.setState({ sessions: [mockParentSession] });
 		getModalActions().setCreateWorktreeSession(mockParentSession);
 
 		const { result } = renderHook(() => useWorktreeHandlers());
@@ -1050,6 +1054,7 @@ describe('handleCreateWorktree', () => {
 	it('forwards undefined baseBranch when caller omits it (legacy callers must not break)', async () => {
 		// Pre-feature callers that only pass branchName should still work and
 		// the IPC handler will fall back to the main repo's current HEAD.
+		useSessionStore.setState({ sessions: [mockParentSession] });
 		getModalActions().setCreateWorktreeSession(mockParentSession);
 
 		const { result } = renderHook(() => useWorktreeHandlers());
@@ -1105,6 +1110,172 @@ describe('handleCreateWorktree', () => {
 		});
 
 		expect(mockGit.worktreeSetup).not.toHaveBeenCalled();
+	});
+});
+
+describe('Grok worktree creation ownership', () => {
+	it.each([
+		['quick', false],
+		['quick', true],
+		['config', false],
+		['config', true],
+	] as const)('%s uses the current pinned account with SSH=%s', async (mode, remote) => {
+		const stale = {
+			...mockParentSession,
+			toolType: 'grok',
+			customEnvVars: { GROK_HOME: '/fixture/account-a' },
+		};
+		const parent = {
+			...stale,
+			customPath: '/fixture/custom grok',
+			customArgs: '--max-turns 8',
+			customEnvVars: { GROK_HOME: '/fixture/account-b' },
+			customModel: 'grok-4.5',
+			customEffort: 'high',
+			agentSessionId: 'original-native-id',
+			sshRemoteId: 'stale-runtime-host',
+			sessionSshRemoteConfig: { enabled: remote, remoteId: 'selected-host' },
+		};
+		const unrelated = { ...mockParentSession, id: 'other-parent' };
+		const before = structuredClone(parent);
+		useSessionStore.setState({ sessions: [parent, unrelated], activeSessionId: unrelated.id });
+		const { result } = renderHook(() => useWorktreeHandlers({ isLifecycleOwner: false }));
+		await act(async () => {
+			if (mode === 'quick') {
+				result.current.handleQuickCreateWorktree(stale);
+				await result.current.handleCreateWorktree('grok-child');
+			} else {
+				result.current.handleOpenWorktreeConfigSession(stale);
+				await result.current.handleCreateWorktreeFromConfig(
+					'grok-child',
+					parent.worktreeConfig.basePath
+				);
+			}
+		});
+		const child = useSessionStore.getState().sessions.find((s) => s.parentSessionId === parent.id)!;
+		const target = remote ? 'selected-host' : undefined;
+		expect(mockGit.worktreeSetup).toHaveBeenCalledTimes(1);
+		expect(mockGit.worktreeSetup.mock.calls[0].slice(0, 4)).toEqual([
+			parent.cwd,
+			child.cwd,
+			'grok-child',
+			target,
+		]);
+		expect(gitService.getBranches).toHaveBeenCalledWith(child.cwd, target);
+		expect(child).toMatchObject({
+			toolType: 'grok',
+			customPath: parent.customPath,
+			customArgs: parent.customArgs,
+			customEnvVars: parent.customEnvVars,
+			customModel: 'grok-4.5',
+			customEffort: 'high',
+			sessionSshRemoteConfig: parent.sessionSshRemoteConfig,
+		});
+		expect(child.agentSessionId).toBeUndefined();
+		expect(child.aiTabs[0].agentSessionId).toBeNull();
+		expect(child.id).not.toBe(parent.id);
+		expect(useSessionStore.getState().sessions.find((s) => s.id === parent.id)).toEqual({
+			...before,
+			worktreesExpanded: true,
+		});
+		expect(parent).toEqual(before);
+		expect(useSessionStore.getState().sessions.find((s) => s.id === unrelated.id)).toBe(unrelated);
+	});
+
+	it.each(['quick', 'config'] as const)(
+		'%s rejects an unresolved SSH target before Git',
+		async (mode) => {
+			const parent = {
+				...mockParentSession,
+				toolType: 'grok',
+				sshRemoteId: 'stale-host',
+				sessionSshRemoteConfig: { enabled: true, remoteId: null },
+			};
+			useSessionStore.setState({ sessions: [parent], activeSessionId: parent.id });
+			const { result } = renderHook(() => useWorktreeHandlers({ isLifecycleOwner: false }));
+			await act(async () => {
+				result.current.handleQuickCreateWorktree(parent);
+				const creation =
+					mode === 'quick'
+						? result.current.handleCreateWorktree('invalid')
+						: result.current.handleCreateWorktreeFromConfig(
+								'invalid',
+								parent.worktreeConfig.basePath
+							);
+				await expect(creation).rejects.toThrow('Select an SSH remote before creating a worktree.');
+			});
+			expect(mockGit.worktreeSetup).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions).toEqual([parent]);
+		}
+	);
+
+	it('does not resurrect a deleted quick-create owner from stale modal data', async () => {
+		getModalActions().setCreateWorktreeSession({ ...mockParentSession, toolType: 'grok' });
+		const { result } = renderHook(() => useWorktreeHandlers({ isLifecycleOwner: false }));
+		await act(async () => {
+			await result.current.handleCreateWorktree('deleted-owner');
+		});
+		expect(mockGit.worktreeSetup).not.toHaveBeenCalled();
+		expect(useSessionStore.getState().sessions).toEqual([]);
+	});
+
+	it.each([
+		['other account', 'other-parent', 'host-a', 'feature', false],
+		['other host', 'parent-1', 'host-b', 'feature', false],
+		['local collision', 'parent-1', undefined, 'feature', false],
+		['different POSIX case', 'parent-1', 'host-a', 'Feature', false],
+		['different POSIX separator', 'parent-1', 'host-a', 'feature\\nested', false],
+		['same owner and host', 'parent-1', 'host-a', 'feature', true],
+	] as const)('reopening checks %s', async (_label, owner, host, branch, reuse) => {
+		const parent = {
+			...mockParentSession,
+			toolType: 'grok',
+			customEnvVars: { GROK_HOME: '/fixture/account-a' },
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'host-a' },
+		};
+		const other = {
+			...parent,
+			id: 'other-parent',
+			customEnvVars: { GROK_HOME: '/fixture/account-b' },
+		};
+		const requestedBranch = branch.includes('\\') ? 'feature/nested' : 'feature';
+		const path = `${parent.worktreeConfig.basePath}/${requestedBranch}`;
+		const existing = createChildSession({
+			id: 'existing',
+			parentSessionId: owner,
+			toolType: 'grok',
+			cwd: `${parent.worktreeConfig.basePath}/${branch}`,
+			projectRoot: `${parent.worktreeConfig.basePath}/${branch}`,
+			sessionSshRemoteConfig: { enabled: !!host, remoteId: host ?? null },
+			customEnvVars: { GROK_HOME: '/fixture/existing-child-account' },
+			agentSessionId: 'existing-native-id',
+		});
+		mockGit.worktreeSetup.mockResolvedValueOnce({
+			success: true,
+			alreadyExisted: true,
+			existingPath: path,
+		});
+		useSessionStore.setState({ sessions: [parent, other, existing], activeSessionId: parent.id });
+		const { result } = renderHook(() => useWorktreeHandlers({ isLifecycleOwner: false }));
+		await act(async () => {
+			result.current.handleQuickCreateWorktree(parent);
+			await result.current.handleCreateWorktree(requestedBranch);
+		});
+		const state = useSessionStore.getState();
+		expect(state.sessions).toHaveLength(reuse ? 3 : 4);
+		expect(state.sessions.find((s) => s.id === existing.id)).toBe(existing);
+		expect(state.sessions.find((s) => s.id === other.id)).toBe(other);
+		if (reuse) expect(state.activeSessionId).toBe(existing.id);
+		else {
+			const child = state.sessions.find((s) => s.id === state.activeSessionId)!;
+			expect(child).toMatchObject({
+				parentSessionId: parent.id,
+				cwd: path,
+				customEnvVars: parent.customEnvVars,
+			});
+			expect(child.agentSessionId).toBeUndefined();
+			expect(child.aiTabs[0].agentSessionId).toBeNull();
+		}
 	});
 });
 

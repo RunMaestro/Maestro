@@ -25,8 +25,15 @@ import { useCallback, useRef } from 'react';
 import type { Session, AITab, LogEntry } from '../../types';
 import type { MergeResult, GroomingProgress, MergeRequest } from '../../types/contextMerge';
 import type { MergeOptions } from '../../components/MergeSessionModal';
-import { ContextGroomingService, contextGroomingService } from '../../services/contextGroomer';
-import { extractTabContext } from '../../utils/contextExtractor';
+import {
+	ContextGroomingService,
+	contextGroomingService,
+	groomingIdentityOf,
+} from '../../services/contextGroomer';
+import { extractTabContext, formatLogsForContextInjection } from '../../utils/contextExtractor';
+import { resolveContextWindow } from '../../utils/contextWindowPrecedence';
+import { getContextWindowForAgent } from '../../../shared/agentConstants';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { createMergedSession, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { useOperationStore, selectIsAnyMerging } from '../../stores/operationStore';
@@ -43,6 +50,83 @@ export type { MergeState, TabMergeState } from '../../stores/operationStore';
  * Default: 100,000 tokens (safe for most models)
  */
 const MAX_CONTEXT_TOKENS_WARNING = 100000;
+
+/**
+ * Share of the target's context window merged-in context may take, leaving
+ * room for the target's own conversation and the reply.
+ */
+const MERGE_CONTEXT_WINDOW_SHARE = 0.5;
+
+/**
+ * Token budget for context injected into a target tab. Uses the same window
+ * ranking as the header gauge (model marker, user-edited, provider-reported,
+ * stored, agent default). A provider with no known window (Grok until its
+ * selected model reports one) gets the conservative fixed bound, never a
+ * figure derived from cumulative usage totals.
+ */
+function resolveMergeContextBudget(
+	targetSession: Session,
+	targetTab: AITab
+): { maxTokens: number; windowKnown: boolean } {
+	const { window } = resolveContextWindow({
+		customModel: targetTab.customModel ?? targetSession.customModel,
+		customContextWindow: targetSession.customContextWindow,
+		contextWindowSource: targetSession.contextWindowSource,
+		reportedWindow: targetTab.usageStats?.contextWindow,
+		reportedResolved: targetTab.usageStats?.contextWindowResolved,
+		configuredWindow: getContextWindowForAgent(targetSession.toolType),
+	});
+	if (window > 0) {
+		return { maxTokens: Math.floor(window * MERGE_CONTEXT_WINDOW_SHARE), windowKnown: true };
+	}
+	return { maxTokens: MAX_CONTEXT_TOKENS_WARNING, windowKnown: false };
+}
+
+/**
+ * Combine two tabs' logs for a merged agent. Each side keeps its own order;
+ * timestamps interleave them only when asked AND every timestamp is known
+ * (a stored Grok projection carries NaN for an unknown time, which would make
+ * a comparator sort inconsistent). Array.prototype.sort is stable.
+ */
+function orderMergedLogs(
+	sourceLogs: LogEntry[],
+	targetLogs: LogEntry[],
+	preserveTimestamps: boolean | undefined
+): LogEntry[] {
+	const combined = [...sourceLogs, ...targetLogs];
+	if (!preserveTimestamps || !combined.every((log) => Number.isFinite(log.timestamp))) {
+		return combined;
+	}
+	return combined.sort((a, b) => a.timestamp - b.timestamp);
+}
+
+/**
+ * Identity a merged agent inherits from its source: the provider account
+ * (custom env such as GROK_HOME), host, binary, model and working directory.
+ * Without it a merged Grok agent would run under the process-global account
+ * or locally instead of on the source's SSH remote.
+ */
+function mergedSessionIdentity(source: Session): Partial<Session> {
+	const identity: Partial<Session> = { cwd: source.cwd };
+	const keys = [
+		'customPath',
+		'customArgs',
+		'customEnvVars',
+		'customModel',
+		'customEffort',
+		'customContextWindow',
+		'contextWindowSource',
+		'sshRemoteId',
+		'sessionSshRemoteConfig',
+		'additionalDirectories',
+	] as const;
+	for (const key of keys) {
+		if (source[key] !== undefined) {
+			(identity as Record<string, unknown>)[key] = source[key];
+		}
+	}
+	return identity;
+}
 
 /**
  * Request to merge two sessions/tabs
@@ -348,6 +432,7 @@ export function useMergeSession(activeTabId?: string): UseMergeSessionResult {
 			// Step 3: Determine which logs to use (groomed or raw)
 			let mergedLogs: LogEntry[];
 			let tokensSaved = 0;
+			let groomed = false;
 
 			if (options.groomContext) {
 				// Use AI grooming to consolidate and deduplicate
@@ -359,10 +444,16 @@ export function useMergeSession(activeTabId?: string): UseMergeSessionResult {
 					},
 				});
 
+				// The source agent's provider runs the turn, so it runs on that
+				// agent's account, binary and host. A merge into an existing tab
+				// grooms the source alone: the target already holds its own
+				// history, and grooming it too would paste it back (duplicate
+				// context).
 				const groomingRequest: MergeRequest = {
-					sources: [sourceContext, targetContext],
+					sources: options.createNewSession ? [sourceContext, targetContext] : [sourceContext],
 					targetAgent: sourceSession.toolType,
 					targetProjectRoot: sourceSession.projectRoot,
+					...groomingIdentityOf(sourceSession),
 				};
 
 				const groomingResult = await groomingServiceRef.current.groomContexts(
@@ -387,6 +478,7 @@ export function useMergeSession(activeTabId?: string): UseMergeSessionResult {
 
 				mergedLogs = groomingResult.groomedLogs;
 				tokensSaved = groomingResult.tokensSaved;
+				groomed = true;
 			} else {
 				// Simply concatenate logs without grooming
 				useOperationStore.getState().updateMergeTabState(sourceTabId, {
@@ -398,9 +490,11 @@ export function useMergeSession(activeTabId?: string): UseMergeSessionResult {
 				});
 
 				// Merge logs maintaining chronological order
-				mergedLogs = options.preserveTimestamps
-					? [...sourceContext.logs, ...targetContext.logs].sort((a, b) => a.timestamp - b.timestamp)
-					: [...sourceContext.logs, ...targetContext.logs];
+				mergedLogs = orderMergedLogs(
+					sourceContext.logs,
+					targetContext.logs,
+					options.preserveTimestamps
+				);
 			}
 
 			// Check for cancellation
@@ -446,6 +540,8 @@ export function useMergeSession(activeTabId?: string): UseMergeSessionResult {
 					newSessionId: mergedSession.id,
 					newTabId,
 					tokensSaved,
+					mergedLogs,
+					groomed,
 					sourceSessionName: sourceDisplayName,
 					targetSessionName: targetDisplayName,
 					estimatedTokens,
@@ -456,6 +552,7 @@ export function useMergeSession(activeTabId?: string): UseMergeSessionResult {
 					success: true,
 					tokensSaved,
 					mergedLogs,
+					groomed,
 					targetSessionId: targetSession.id,
 					targetTabId: targetTab.id,
 					sourceSessionName: sourceDisplayName,
@@ -656,28 +753,30 @@ export function useMergeSessionWithSessions(
 							targetTab
 						);
 
-						// Extract and merge logs (simplified - actual implementation uses groomed logs)
-						const sourceContext = extractTabContext(
-							sourceTab,
-							getSessionDisplayName(sourceSession),
-							sourceSession
-						);
-						const targetContext = extractTabContext(
-							targetTab,
-							getSessionDisplayName(targetSession),
-							targetSession
-						);
-						const mergedLogs = [...sourceContext.logs, ...targetContext.logs].sort(
-							(a, b) => a.timestamp - b.timestamp
-						);
+						// The logs startMerge produced: the groomed output when grooming
+						// ran, else both raw sides in order. Never a fresh raw
+						// concatenation that would discard the grooming.
+						const mergedLogs =
+							result.mergedLogs ??
+							orderMergedLogs(
+								extractTabContext(sourceTab, getSessionDisplayName(sourceSession), sourceSession)
+									.logs,
+								extractTabContext(targetTab, getSessionDisplayName(targetSession), targetSession)
+									.logs,
+								options.preserveTimestamps
+							);
 
-						const { session: newSession } = createMergedSession({
+						const { session: createdSession } = createMergedSession({
 							name: mergedName,
 							projectRoot: sourceSession.projectRoot,
 							toolType: sourceSession.toolType,
 							mergedLogs,
 							groupId: sourceSession.groupId,
 						});
+						const newSession: Session = {
+							...createdSession,
+							...mergedSessionIdentity(sourceSession),
+						};
 
 						// Add new session to state
 						setSessions((prev) => [...prev, newSession]);
@@ -730,23 +829,46 @@ export function useMergeSessionWithSessions(
 					// Format the source context as a string to inject into the AI conversation
 					// Filter out system messages (including system prompts) - only include user/assistant messages
 
-					// Always use the SOURCE tab's logs for injection - we're transferring source context to target
-					// The result.mergedLogs contains both source AND target logs (for createNewSession=true case)
-					// but when injecting into existing tab, we only want the source context
+					// Inject SOURCE context only. When grooming ran, startMerge groomed
+					// the source alone, so its output is injected (and only then is it
+					// called cleaned). Otherwise result.mergedLogs holds both sides, so
+					// the source tab's own logs are injected.
 					const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
-					const logsToInject = sourceTab?.logs ?? [];
+					const injectGroomed = result.groomed === true && result.mergedLogs !== undefined;
+					const logsToInject = injectGroomed ? result.mergedLogs! : (sourceTab?.logs ?? []);
+					const injectTargetTab = targetSession.aiTabs.find((t) => t.id === result.targetTabId);
+					const budget = injectTargetTab
+						? resolveMergeContextBudget(targetSession, injectTargetTab)
+						: { maxTokens: MAX_CONTEXT_TOKENS_WARNING, windowKnown: false };
 
-					const sourceContext = logsToInject
-						.filter((log) => log.text && log.text.trim() && log.source !== 'system')
-						.map((log) => {
-							const role = log.source === 'user' ? 'User' : 'Assistant';
-							return `${role}: ${log.text}`;
-						})
-						.join('\n\n');
+					// Order, tools vs prose, notices, reasoning visibility, images and
+					// the budget are the shared formatter's job, not an inline map.
+					const injected = formatLogsForContextInjection(logsToInject, {
+						sourceAgentType: sourceSession.toolType,
+						maxTokens: budget.maxTokens,
+					});
 
 					const sourceName = getSessionDisplayName(sourceSession);
-					const formattedMergedContext = sourceContext
-						? `Additional context from another agent (${sourceName}):\n\n${sourceContext}`
+					const disclosures: string[] = [];
+					if (injected.omittedForBudget > 0) {
+						disclosures.push(
+							budget.windowKnown
+								? `Earlier entries were left out to fit this agent's context window.`
+								: `Earlier entries were left out to fit a conservative bound; this agent's context window is unknown.`
+						);
+					}
+					if (injected.omittedImages > 0) {
+						disclosures.push(
+							`${injected.omittedImages} image attachment(s) were not carried over.`
+						);
+					}
+					// Provider and working directory let the target read relative paths
+					// and tool evidence correctly. No account identifiers are included.
+					const header = `Additional context from another agent (${sourceName}; ${getAgentDisplayName(
+						sourceSession.toolType
+					)}; working directory ${sourceSession.cwd || sourceSession.projectRoot}):`;
+					const formattedMergedContext = injected.text
+						? [header, ...disclosures, injected.text].join('\n\n')
 						: undefined;
 
 					// Create a log entry to show the context was merged
@@ -754,7 +876,7 @@ export function useMergeSessionWithSessions(
 						id: generateId(),
 						timestamp: Date.now(),
 						source: 'system',
-						text: `Context merged from "${sourceName}"${options.groomContext ? ' (cleaned to reduce size)' : ''}.`,
+						text: `Context merged from "${sourceName}"${injectGroomed ? ' (cleaned to reduce size)' : ''}.`,
 					};
 
 					// Prepare an introductory message to send with the merged context

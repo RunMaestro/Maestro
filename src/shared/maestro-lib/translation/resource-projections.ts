@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import yaml from 'js-yaml';
 import { canonicalJson } from '../../canonicalJson';
 import { isPathAtOrUnderRoot } from '../../worktreePaths';
-import { projectResourceDefinition } from './resources';
+import { grokSubagentUnpinned, projectResourceDefinition } from './resources';
 import { translationArtifact, translationHash } from './identity';
 import type {
 	TranslationArtifact,
@@ -65,6 +65,7 @@ export async function planResourceProjections(
 ): Promise<{ projections: ResourceProjection[]; limitations: TranslationLimitation[] }> {
 	const projections: ResourceProjection[] = [];
 	const limitations: TranslationLimitation[] = [];
+	const grok = destination.provider === 'grok';
 	const incompatibleSkills = new Set(
 		resources
 			.filter(
@@ -93,7 +94,13 @@ export async function planResourceProjections(
 		let bytes = Buffer.from(artifact.bytesBase64, 'base64');
 		let format: ResourceProjection['format'] = 'binary';
 		let symlinkTarget: string | undefined;
-		if (artifact.kind === 'instruction' && artifact.scope === 'project') {
+		if (artifact.kind === 'instruction' && artifact.scope === 'project' && grok) {
+			// Grok always reads CLAUDE.md and AGENTS.md (pinned compat.rs
+			// INSTRUCTION_FILENAMES), so the instruction keeps its own name and no
+			// alias is made; an equal file already there is left untouched.
+			file = path.join(destination.projectRoot, artifact.relativePath);
+			format = 'markdown';
+		} else if (artifact.kind === 'instruction' && artifact.scope === 'project') {
 			file = path.join(
 				destination.projectRoot,
 				destination.provider === 'codex' ? 'AGENTS.md' : 'CLAUDE.md'
@@ -119,9 +126,11 @@ export async function planResourceProjections(
 				});
 				continue;
 			}
+			// `.agents/skills` is the always-on skill root Grok shares with Codex
+			// (pinned compat.rs `skill_config_dirs`); `.claude/skills` is gated.
 			file = path.join(
 				destination.projectRoot,
-				destination.provider === 'codex' ? '.agents' : '.claude',
+				destination.provider === 'codex' || grok ? '.agents' : '.claude',
 				'skills',
 				match[1],
 				match[2]
@@ -139,6 +148,15 @@ export async function planResourceProjections(
 				);
 				format = 'markdown';
 			}
+		} else if (artifact.kind === 'subagent' && grok) {
+			limitations.push(
+				grokSubagentUnpinned(
+					artifact.scope === 'selected-user' ? 'block' : 'warning',
+					artifact.relativePath,
+					artifact.id
+				)
+			);
+			continue;
 		} else if (artifact.kind === 'subagent') {
 			const definition = projectResourceDefinition(artifact, destination.provider);
 			if (
@@ -244,7 +262,8 @@ export async function planResourceProjections(
 	const selected = new Set(resources.map((a) => a.relativePath));
 	for (const [file, owned] of Object.entries(checkpoint?.ownedResources ?? {})) {
 		if (selected.has(owned.resourceKey)) continue;
-		const nativeRoots = destination.provider === 'codex' ? ['.agents', '.codex'] : ['.claude'];
+		const nativeRoots =
+			destination.provider === 'codex' ? ['.agents', '.codex'] : grok ? ['.agents'] : ['.claude'];
 		const relative = path.relative(destination.projectRoot, file).replace(/\\/g, '/');
 		if (!nativeRoots.some((prefix) => relative.startsWith(prefix + '/'))) continue;
 		await assertTranslationTarget(file, destination.projectRoot);
@@ -275,6 +294,13 @@ export async function planResourceProjections(
 			backup: translationArtifact('skill', file, owned.resourceKey, existing),
 		});
 	}
+	if (grok && projections.some((projection) => !projection.deleted))
+		limitations.push({
+			code: 'grok-resource-discovery-unverified',
+			severity: 'warning',
+			message:
+				"Instructions and skills are placed where Grok's pinned source scans for them, but the Grok skill format and actual native discovery are not yet qualified. A copied file is not proof that Grok loads it.",
+		});
 	return { projections, limitations };
 }
 

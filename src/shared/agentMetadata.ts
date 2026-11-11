@@ -64,6 +64,9 @@ export function getReadOnlyModeLabel(agentId: AgentId | string): string {
  * Get the tooltip text for the read-only mode toggle based on the agent.
  */
 export function getReadOnlyModeTooltip(agentId: AgentId | string): string {
+	if (agentId === 'grok') {
+		return 'Read-Only requests Grok plan mode with shell commands denied. This is not a filesystem sandbox or an all-tools-off mode.';
+	}
 	return PLAN_MODE_AGENTS.has(agentId as AgentId)
 		? 'Toggle plan mode (agent will plan but not modify files)'
 		: "Toggle Read-Only mode (agent won't modify files)";
@@ -99,6 +102,9 @@ export function getPermissionModeTooltip(
 	mode: 'full' | 'standard' | 'readonly',
 	agentId?: AgentId | string
 ): string {
+	if (agentId === 'grok' && mode === 'standard') {
+		return 'Standard: Grok runs over its local ACP route (grok agent stdio). Each tool approval arrives as an in-app prompt. Ask-back questions cannot be answered yet; they show as an unavailable notice. Not available on SSH remotes (refused before anything starts) or under management.';
+	}
 	switch (mode) {
 		case 'full':
 			return 'Full Access: All permission prompts bypassed. Agent can read, write, and execute without confirmation. Ask-back questions (AskUserQuestion) are not surfaced in this mode.';
@@ -307,7 +313,7 @@ const AGENT_LOGIN_COMMANDS: Record<AgentId, AgentLoginCommand | null> = {
 	// Antigravity has no login subcommand: headless runs reuse the credentials
 	// cached by one interactive sign-in, so the bare TUI is the whole flow.
 	antigravity: { binary: 'agy', args: '' },
-	grok: { binary: 'grok', args: 'login' },
+	grok: { binary: 'grok', args: 'login', remoteArgs: 'login --device-auth' },
 	hermes: null,
 	pi: null,
 	omp: null,

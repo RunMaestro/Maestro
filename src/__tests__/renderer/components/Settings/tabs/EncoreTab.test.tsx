@@ -59,6 +59,7 @@ vi.mock('../../../../../renderer/components/shared/AgentConfigPanel', () => ({
 		customPath?: string;
 		customArgs?: string;
 		customEnvVars?: Record<string, string>;
+		agentConfig?: Record<string, unknown>;
 		availableModels?: string[];
 		loadingModels?: boolean;
 		refreshingAgent?: boolean;
@@ -77,6 +78,23 @@ vi.mock('../../../../../renderer/components/shared/AgentConfigPanel', () => ({
 		onRefreshAgent?: () => void;
 	}) => (
 		<div data-testid="agent-config-panel">
+			{['model', 'reasoningEffort'].map((key) => (
+				<input
+					key={key}
+					aria-label={`Provider ${key}`}
+					value={String(props.agentConfig?.[key] ?? '')}
+					onChange={(event) => props.onConfigChange(key, event.target.value)}
+					onBlur={(event) => props.onConfigBlur(key, event.target.value)}
+				/>
+			))}
+			<button data-testid="remove-grok-home" onClick={() => props.onEnvVarRemove('GROK_HOME')} />
+			<button
+				data-testid="rename-grok-home-and-blur"
+				onClick={() => {
+					props.onEnvVarKeyChange('GROK_HOME', 'GROK_AUTH_PATH', '/synthetic/auth');
+					props.onEnvVarsBlur();
+				}}
+			/>
 			<span data-testid="agent-config-agent-id">{props.agent?.id}</span>
 			<span data-testid="agent-config-custom-path">{props.customPath}</span>
 			<span data-testid="agent-config-custom-args">{props.customArgs}</span>
@@ -126,6 +144,7 @@ vi.mock('../../../../../renderer/components/Wizard/screens/AgentSelectionScreen'
 	AGENT_TILES: [
 		{ id: 'claude-code', name: 'Claude Code', supported: true },
 		{ id: 'codex', name: 'Codex', supported: true },
+		{ id: 'grok', name: 'Grok CLI', supported: true },
 		{ id: 'opencode', name: 'OpenCode', supported: true },
 		{ id: 'factory-droid', name: 'Factory Droid', supported: true },
 		{ id: 'gemini-cli', name: 'Gemini CLI', supported: false },
@@ -251,6 +270,16 @@ const claudeWithModels: AgentConfig = {
 	},
 };
 
+const grokWithModels: AgentConfig = {
+	...claudeWithModels,
+	id: 'grok',
+	name: 'Grok CLI',
+	path: '/synthetic/grok',
+	configOptions: [
+		{ key: 'reasoningEffort', type: 'text', description: '', label: 'Effort', default: '' },
+	],
+};
+
 describe('EncoreTab', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
@@ -260,6 +289,7 @@ describe('EncoreTab', () => {
 		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
 		vi.mocked(window.maestro.agents.setConfig).mockResolvedValue(undefined);
 		vi.mocked(window.maestro.agents.getModels).mockResolvedValue([]);
+		vi.mocked(window.maestro.agents.getConfigOptions).mockResolvedValue([]);
 		vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({ available: false });
 		vi.mocked(window.maestro.wakatime.validateApiKey).mockResolvedValue({ valid: false });
 	});
@@ -574,6 +604,186 @@ describe('EncoreTab', () => {
 			});
 
 			expect(window.maestro.agents.getModels).toHaveBeenCalledWith('claude-code', true);
+		});
+	});
+
+	describe("Director's Notes Grok draft configuration", () => {
+		beforeEach(() => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: true },
+				directorNotesSettings: {
+					provider: 'grok',
+					autoSelectProvider: false,
+					defaultLookbackDays: 7,
+				},
+			};
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([grokWithModels]);
+			vi.mocked(window.maestro.agents.getModels).mockResolvedValue({
+				status: 'unavailable',
+				options: [],
+			} as never);
+			vi.mocked(window.maestro.agents.getConfigOptions).mockResolvedValue({
+				status: 'unavailable',
+				options: [],
+			} as never);
+		});
+
+		it.each([undefined, {}, { GROK_HOME: ' ' }])(
+			'preserves saved environment %j through unrelated edits and reopening without inventing a cwd',
+			async (customEnvVars) => {
+				mockUseSettingsOverrides.directorNotesSettings = {
+					provider: 'grok',
+					autoSelectProvider: false,
+					defaultLookbackDays: 7,
+					customPath: '/synthetic/selected-grok',
+					customEnvVars,
+				};
+				const view = render(<EncoreTab theme={mockTheme} isOpen={true} />);
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(400);
+				});
+				fireEvent.click(screen.getByTitle('Customize provider settings'));
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(400);
+				});
+				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+					providerId: 'grok',
+					forceRefresh: false,
+					context: expect.objectContaining({
+						kind: 'draft',
+						cwd: undefined,
+						sshRemoteId: undefined,
+						customPath: '/synthetic/selected-grok',
+						customEnvVars,
+					}),
+				});
+				expect(window.maestro.agents.getConfigOptions).toHaveBeenLastCalledWith(
+					vi.mocked(window.maestro.agents.getModels).mock.lastCall![0],
+					'reasoningEffort'
+				);
+				expect(screen.getByRole('status')).toHaveTextContent(
+					'unavailable until the synopsis workspace is known'
+				);
+				expect(screen.getByTestId('agent-config-available-models')).toHaveTextContent('[]');
+				fireEvent.click(screen.getByTestId('trigger-custom-args-change'));
+				fireEvent.click(screen.getByTestId('trigger-custom-args-blur'));
+				expect(mockSetDirectorNotesSettings).toHaveBeenLastCalledWith(
+					expect.objectContaining({
+						customArgs: '--verbose',
+						customEnvVars,
+					})
+				);
+				mockUseSettingsOverrides.directorNotesSettings =
+					mockSetDirectorNotesSettings.mock.lastCall![0];
+				view.rerender(<EncoreTab theme={mockTheme} isOpen={false} />);
+				view.rerender(<EncoreTab theme={mockTheme} isOpen={true} />);
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(400);
+				});
+				fireEvent.click(screen.getByTitle('Customize provider settings'));
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(400);
+				});
+				fireEvent.click(screen.getByTestId('trigger-env-vars-blur'));
+				expect(mockSetDirectorNotesSettings).toHaveBeenLastCalledWith(
+					expect.objectContaining({ customEnvVars })
+				);
+			}
+		);
+
+		it.each([
+			['remove-grok-home', {}],
+			['rename-grok-home-and-blur', { GROK_AUTH_PATH: '/synthetic/auth' }],
+		] as const)(
+			'persists %s synchronously without restoring the former account',
+			async (action, expected) => {
+				mockUseSettingsOverrides.directorNotesSettings = {
+					provider: 'grok',
+					autoSelectProvider: false,
+					defaultLookbackDays: 7,
+					customEnvVars: { GROK_HOME: '/synthetic/account-a' },
+				};
+				render(<EncoreTab theme={mockTheme} isOpen={true} />);
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(400);
+				});
+				fireEvent.click(screen.getByTitle('Customize provider settings'));
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(400);
+				});
+				fireEvent.click(screen.getByTestId(action));
+				expect(mockSetDirectorNotesSettings).toHaveBeenLastCalledWith(
+					expect.objectContaining({ customEnvVars: expected })
+				);
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(400);
+				});
+				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(
+					expect.objectContaining({
+						context: expect.objectContaining({ cwd: undefined, customEnvVars: expected }),
+					})
+				);
+			}
+		);
+
+		it('retains manual model and effort through delayed config, redetection and executable edits', async () => {
+			let resolveConfig!: (config: Record<string, unknown>) => void;
+			const pendingConfig = new Promise<Record<string, unknown>>((resolve) => {
+				resolveConfig = resolve;
+			});
+			vi.mocked(window.maestro.agents.getConfig).mockReturnValue(pendingConfig);
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(400);
+			});
+			fireEvent.click(screen.getByTitle('Customize provider settings'));
+			fireEvent.change(screen.getByLabelText('Provider model'), {
+				target: { value: 'manual-model' },
+			});
+			fireEvent.change(screen.getByLabelText('Provider reasoningEffort'), {
+				target: { value: 'manual-effort' },
+			});
+			await act(async () => {
+				resolveConfig({ model: 'saved-model', reasoningEffort: 'saved-effort' });
+			});
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+				model: 'redetected-model',
+				reasoningEffort: 'low',
+			});
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				{ ...grokWithModels, path: '/synthetic/redetected-grok' },
+			]);
+			vi.mocked(window.maestro.agents.getConfig).mockClear();
+			fireEvent.click(screen.getByTestId('trigger-refresh-agent'));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(400);
+			});
+			expect(window.maestro.agents.getConfig).toHaveBeenCalledWith('grok');
+			fireEvent.click(screen.getByTestId('trigger-custom-path-change'));
+			fireEvent.click(screen.getByTestId('trigger-custom-path-blur'));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(400);
+			});
+			expect(screen.getByLabelText('Provider model')).toHaveValue('manual-model');
+			expect(screen.getByLabelText('Provider reasoningEffort')).toHaveValue('manual-effort');
+			fireEvent.blur(screen.getByLabelText('Provider model'));
+			await act(async () => {});
+			expect(window.maestro.agents.setConfig).toHaveBeenLastCalledWith(
+				'grok',
+				expect.objectContaining({
+					model: 'manual-model',
+					reasoningEffort: 'manual-effort',
+				})
+			);
+			expect(mockSetDirectorNotesSettings).toHaveBeenLastCalledWith(
+				expect.objectContaining({ customPath: '/custom/path', customEnvVars: undefined })
+			);
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					context: expect.objectContaining({ cwd: undefined, customPath: '/custom/path' }),
+				})
+			);
+			expect(screen.getByTestId('agent-config-available-models')).toHaveTextContent('[]');
 		});
 	});
 

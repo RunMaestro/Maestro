@@ -46,6 +46,7 @@ import type { CodexTransport } from '../../../shared/codexTransport';
 import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { flushGroupsToDisk } from '../../services/groupPersistence';
+import { resolveTurnProvider } from '../../../shared/maestro-lib/agents/providerSwap';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
 import { killAgentAiProcesses } from '../../services/process';
 import {
@@ -376,6 +377,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				// Find the tab to get its agentSessionId for persistence
 				const tab = s.aiTabs.find((t) => t.id === renameTabId);
 				const oldName = tab?.name;
+				const isGrokTab = s.toolType === 'grok' || resolveTurnProvider(tab, s) === 'grok';
 
 				window.maestro.logger.log(
 					'info',
@@ -390,7 +392,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					}
 				);
 
-				if (tab?.agentSessionId) {
+				// Grok labels persist with the Maestro tab below. Origins and History
+				// naming lack account/host scope and cannot change a native title.
+				if (tab?.agentSessionId && !isGrokTab) {
 					// Persist name to agent session metadata (async, fire and forget)
 					// Use projectRoot (not cwd) for consistent session storage access
 					const agentId = s.toolType || 'claude-code';
@@ -431,7 +435,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 								},
 							});
 						});
-				} else {
+				} else if (!tab?.agentSessionId) {
 					window.maestro.logger.log(
 						'info',
 						'Tab renamed (no agentSessionId, skipping persistence)',

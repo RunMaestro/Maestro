@@ -223,7 +223,7 @@ function readProcessTable(): ProcessTableRow[] {
 /** {@link readProcessTable} without blocking, for a read that can wait. */
 async function readProcessTableAsync(): Promise<ProcessTableRow[]> {
 	if (!isLinux()) {
-		const result = await execFileNoThrow('ps', PS_TABLE_ARGS);
+		const result = await execFileNoThrow('ps', PS_TABLE_ARGS, undefined, { timeout: 2000 });
 		return result.exitCode === 0 ? parsePsTable(result.stdout) : [];
 	}
 
@@ -280,6 +280,8 @@ export interface ProcessTreeSnapshot {
 	 * stale (its process exited and the number was reused) or was never ours.
 	 */
 	owned: boolean;
+	/** The original child's identity; an old pid alone must never become a new traversal root. */
+	root?: ProcessSnapshotEntry;
 	descendants: ProcessSnapshotEntry[];
 }
 
@@ -292,17 +294,23 @@ const UNOWNED_TREE: ProcessTreeSnapshot = { owned: false, descendants: [] };
  * `collectDescendants`: once the parent dies its children are re-parented and
  * no longer lead back to it.
  *
- * Unowned and empty on Windows, where `taskkill /t` walks the tree itself.
+ * With a prior record, refresh only its verified roots, even after parent exit.
+ * Unowned and empty on Windows, where `taskkill /t` walks a live tree itself.
  */
-export function snapshotProcessTree(pid: number): ProcessTreeSnapshot {
+export function snapshotProcessTree(
+	pid: number,
+	previous?: ProcessTreeSnapshot
+): ProcessTreeSnapshot {
 	if (!pid || pid <= 0 || isWindows()) return UNOWNED_TREE;
 
 	const rows = readProcessTable();
+	if (previous) return mergeProcessTree(pid, previous, rows);
 	const root = rows.find((row) => row.pid === pid);
 	if (!root || root.ppid !== process.pid) return UNOWNED_TREE;
 
 	return {
 		owned: true,
+		root: { pid: root.pid, startedAt: root.startedAt },
 		descendants: descendantsOf(rows, [pid]).map(({ pid: descendant, startedAt }) => ({
 			pid: descendant,
 			startedAt,
@@ -314,9 +322,10 @@ export function snapshotProcessTree(pid: number): ProcessTreeSnapshot {
  * Add to `snapshot` what the tree has started since it was recorded.
  *
  * New processes are found under the agent itself, while it is still a running
- * child of this process, and under every recorded descendant that is still
- * the same process. A descendant whose pid now belongs to something else
- * (its start time differs) is not followed.
+ * child of this process with the recorded start time, and under every recorded
+ * descendant that is still the same process. A root or descendant whose pid now
+ * belongs to something else (its start time differs) is not followed. A legacy
+ * record without a root identity can only follow its recorded descendants.
  *
  * Returns `snapshot` itself when nothing was added.
  */
@@ -332,7 +341,14 @@ export function mergeProcessTree(
 		.filter((entry) => startedAtByPid.get(entry.pid) === entry.startedAt)
 		.map((entry) => entry.pid);
 	const agent = rows.find((row) => row.pid === pid);
-	if (agent && agent.ppid === process.pid) roots.unshift(pid);
+	if (
+		agent &&
+		agent.ppid === process.pid &&
+		snapshot.root?.pid === pid &&
+		agent.startedAt === snapshot.root.startedAt
+	) {
+		roots.unshift(pid);
+	}
 	if (roots.length === 0) return snapshot;
 
 	const recorded = new Set(snapshot.descendants.map((entry) => `${entry.pid} ${entry.startedAt}`));
@@ -342,7 +358,7 @@ export function mergeProcessTree(
 	if (added.length === 0) return snapshot;
 
 	return {
-		owned: true,
+		...snapshot,
 		descendants: [
 			...snapshot.descendants,
 			...added.map(({ pid: descendant, startedAt }) => ({ pid: descendant, startedAt })),

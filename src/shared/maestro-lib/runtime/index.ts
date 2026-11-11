@@ -16,6 +16,8 @@
  */
 
 import * as fs from 'fs/promises';
+import { realpathSync, statSync } from 'fs';
+import * as os from 'os';
 
 import { createSleepTracker } from '../../sleepTracking';
 import { createAgentRepository } from '../agents/repository';
@@ -24,6 +26,7 @@ import type { RuleContext, TabDefaults } from '../agents/rules';
 import { createEventBus } from '../client/event-bus';
 import type { HostInfo, MaestroClient } from '../client/types';
 import { logger } from '../host';
+import { grokInstallationId } from '../grok/host-seams';
 import { createGroupChatTurnMetrics } from '../groupchat/turn-metrics';
 import type { BinaryDetectionResult } from '../launch/path-prober';
 import { assertUserDataDirExists, type UserDataDirOptions } from '../paths/userDataDir';
@@ -337,6 +340,11 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		deps: { probeBinary: deps.probeBinary, ...deps.turns },
 		onRunEnded: (agentId) => turns.drain(agentId),
 	});
+	// The host identity a Grok native session is bound to, computed as the desktop computes it.
+	const grokInstallation = grokInstallationId({
+		hostname: os.hostname(),
+		productionDataDir: paths.productionDataDir,
+	});
 	const turns = createRuntimeTurns({
 		paths,
 		repository,
@@ -346,7 +354,36 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		historyWriter,
 		rules: deps.rules,
 		autoRunHolds: (agentId) => autoRun.holds(agentId),
-		options: options.turns,
+		options: {
+			...options.turns,
+			grokLaunchScope: options.turns?.grokLaunchScope ?? {
+				local: {
+					homedir: () => os.homedir(),
+					realpath: (directory) => fs.realpath(directory),
+					stat: (directory) => fs.stat(directory),
+					realpathSync: (directory) => {
+						const resolved = realpathSync(directory);
+						return statSync(resolved).isDirectory() ? resolved : '';
+					},
+					isExpectedError: (error) =>
+						['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'EBUSY', 'EISDIR'].includes(
+							(error as NodeJS.ErrnoException | null)?.code ?? ''
+						),
+					installationId: () => grokInstallation,
+				},
+				// The headless host has no qualified SSH directory observer. Unknown
+				// scope must refuse resume; an SSH config alias is not a host identity.
+				remote: {
+					observe: async () => ({
+						success: false,
+						errorCode: 'unavailable',
+						error: 'This host cannot observe Grok SSH launch ownership.',
+					}),
+					qualify: async () => undefined,
+					isExpectedError: () => false,
+				},
+			},
+		},
 		deps: { probeBinary: deps.probeBinary, ...deps.turns },
 	});
 

@@ -22,6 +22,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session, BatchRunState } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { resetStores } from '../../helpers/resetStores';
+import { makeGrokCommandObservation } from '../../fixtures/grok-command-observation';
+import type { GrokCommandDiscoveryResult } from '../../../main/agents/grok-skills';
+import {
+	assembleSlashCommandCompletions,
+	grokCommandCompletions,
+} from '../../../renderer/slashCommands';
+import { useInputKeyDown } from '../../../renderer/hooks/input/useInputKeyDown';
 
 // ============================================================================
 // Mock InputContext
@@ -121,7 +129,8 @@ import {
 	type UseInputHandlersDeps,
 } from '../../../renderer/hooks/input/useInputHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
-vi.mock('../../../renderer/stores/centerFlashStore', () => ({
+vi.mock('../../../renderer/stores/centerFlashStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/centerFlashStore')>()),
 	notifyCenterFlash: vi.fn(),
 }));
 
@@ -3017,5 +3026,211 @@ describe('useInputHandlers', () => {
 			expect(deps.fileTreeKeyboardNavRef.current).toBe(true);
 			expect(mockSetSelectedFileIndex).toHaveBeenCalledWith(0);
 		});
+	});
+});
+
+describe('Grok completion assembly and real keyboard acceptance', () => {
+	let discovery: GrokCommandDiscoveryResult;
+	beforeEach(async () => {
+		resetStores(useSessionStore, useSettingsStore);
+		resetStores(useUIStore, useGroupChatStore, useComposerInputStore);
+		useSettingsStore.setState({ customAICommands: [] });
+		const actual = await vi.importActual<
+			typeof import('../../../renderer/hooks/input/useInputKeyDown')
+		>('../../../renderer/hooks/input/useInputKeyDown');
+		vi.mocked(useInputKeyDown).mockImplementation(actual.useInputKeyDown);
+		mockInputContext.selectedSlashCommandIndex = 0;
+		mockInputContext.setSelectedSlashCommandIndex.mockImplementation((value) => {
+			mockInputContext.selectedSlashCommandIndex =
+				typeof value === 'function' ? value(mockInputContext.selectedSlashCommandIndex) : value;
+		});
+		mockInputContext.setSlashCommandOpen.mockImplementation((value) => {
+			mockInputContext.slashCommandOpen = value;
+		});
+		const session = createMockSession({ toolType: 'grok' });
+		session.agentCommands = [{ command: '/persisted', description: '', prompt: 'NEVER EXPAND' }];
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		const receipt = makeGrokCommandObservation({
+			cwd: useSessionStore.getState().sessions[0].cwd,
+			sessionId: 'native-1',
+			environment: { surface: 'cli' },
+		});
+		discovery = {
+			status: 'discovered',
+			commands: (
+				[
+					['repo:review', 'skill', 'repo'],
+					['plugin:review', 'workflow', 'plugin'],
+					['history', 'native-command', 'server'],
+				] as const
+			).map(([name, kind, scope], index) => ({
+				name,
+				kind,
+				scope,
+				description: name,
+				argumentHint: index === 0 ? 'x'.repeat(1024) : '<path>',
+			})),
+			binding: {
+				route: 'grok-acp',
+				sessionId: receipt.sessionId,
+				processGeneration: receipt.processGeneration,
+				configGeneration: receipt.configGeneration,
+				catalogRevision: receipt.catalogRevision,
+				agentVersion: receipt.agentVersion,
+				observedAt: receipt.observedAt,
+			},
+		};
+	});
+
+	afterEach(() => {
+		cleanup();
+		resetStores(useSessionStore, useSettingsStore);
+		resetStores(useUIStore, useGroupChatStore, useComposerInputStore);
+		vi.mocked(useInputKeyDown).mockImplementation(() => ({
+			handleInputKeyDown: mockHandleInputKeyDown,
+		}));
+		mockInputContext.setSelectedSlashCommandIndex.mockReset();
+		mockInputContext.setSlashCommandOpen.mockReset();
+	});
+
+	const completions = (
+		overrides: Partial<Parameters<typeof assembleSlashCommandCompletions>[0]> = {}
+	) =>
+		assembleSlashCommandCompletions({
+			toolType: 'grok',
+			supportsProviderCommands: true,
+			customCommands: useSettingsStore.getState().customAICommands,
+			agentCommands: useSessionStore.getState().sessions[0].agentCommands,
+			grokDiscovery: discovery,
+			...overrides,
+		});
+
+	it('preserves exact advisory provenance, argument hints and owned binding without prompt bodies', () => {
+		expect(grokCommandCompletions(discovery)).toEqual(
+			discovery.commands.map((metadata) => ({
+				command: `/${metadata.name}`,
+				description: metadata.description,
+				aiOnly: true,
+				nativeCommand: { provider: 'grok', metadata, binding: discovery.binding },
+				selectable: false,
+			}))
+		);
+		expect(grokCommandCompletions(discovery)[0].nativeCommand?.metadata.argumentHint).toHaveLength(
+			1024
+		);
+	});
+
+	it.each(['Tab', 'Enter'])('accepts %s with Maestro/custom/bundled precedence', (key) => {
+		const custom = [
+			['/history', 'CUSTOM HISTORY'],
+			['/repo:review', 'Review $ARGUMENTS'],
+			['/speckit.plan', 'PLAN'],
+			['/openspec.proposal', 'PROPOSAL'],
+			['/bmad-help', 'HELP'],
+		].map(([command, prompt], index) => ({
+			id: command,
+			command,
+			prompt,
+			description: command,
+			isBuiltIn: index >= 2,
+		}));
+		useSettingsStore.setState({ customAICommands: custom });
+		const session = useSessionStore.getState().sessions[0];
+		const commands = completions();
+		expect(commands.map((command) => command.command)).toEqual([
+			'/history',
+			'/wizard',
+			...custom.map(({ command }) => command),
+		]);
+		expect(commands.find((command) => command.command === '/history')?.prompt).toBeUndefined();
+		expect(commands.find((command) => command.command === '/repo:review')?.prompt).toBe(
+			'Review $ARGUMENTS'
+		);
+		expect(commands.every((command) => !command.nativeCommand)).toBe(true);
+		const deps = createMockDeps({ allSlashCommands: commands, allCustomCommands: custom });
+		const { result, rerender } = renderHook(() => useInputHandlers(deps));
+		const press = (pressed: string) =>
+			act(() =>
+				result.current.handleInputKeyDown(
+					new KeyboardEvent('keydown', { key: pressed }) as unknown as React.KeyboardEvent
+				)
+			);
+		for (const [draft, accepted] of [
+			['/', '/wizard '],
+			['/plugin:review', '/plugin:review'],
+			['/persisted', '/persisted'],
+		]) {
+			act(() => result.current.setInputValue(draft));
+			mockInputContext.slashCommandOpen = true;
+			rerender();
+			if (draft === '/') {
+				press('ArrowDown');
+				rerender();
+				expect(mockInputContext.selectedSlashCommandIndex).toBe(1);
+			}
+			press(key);
+			expect(inputVal()).toBe(accepted);
+			expect(mockInputContext.slashCommandOpen).toBe(draft !== '/');
+		}
+		expect(mockProcessInput).not.toHaveBeenCalled();
+		expect(session.agentCommands?.[0].prompt).toBe('NEVER EXPAND');
+		expect(useSettingsStore.getState().customAICommands).toEqual(custom);
+	});
+
+	describe.each(['claude-code', 'codex', 'opencode', 'copilot-cli', 'antigravity'] as const)(
+		'%s completion compatibility',
+		(toolType) => {
+			it.each([false, true])(
+				'preserves provider capability gating (%s) and ignores Grok receipts',
+				(supportsProviderCommands) => {
+					const agentCommands = [
+						{
+							command: '/provider:review',
+							description: 'Review the selected project',
+							prompt: 'PRIVATE PROVIDER PROMPT BODY',
+						},
+					];
+					useSessionStore.setState({
+						sessions: [{ ...useSessionStore.getState().sessions[0], toolType, agentCommands }],
+					});
+					const sessionsBefore = structuredClone(useSessionStore.getState().sessions);
+					const options = { toolType, supportsProviderCommands };
+					const commands = completions(options);
+					expect(commands).toEqual(completions({ ...options, grokDiscovery: null }));
+					expect(commands.map(({ command }) => command)).toEqual([
+						'/history',
+						'/wizard',
+						...(toolType === 'claude-code' ? ['/skills'] : []),
+						...(supportsProviderCommands ? ['/provider:review'] : []),
+					]);
+					if (supportsProviderCommands) {
+						expect(commands.at(-1)).toEqual({
+							command: '/provider:review',
+							description: 'Review the selected project',
+							aiOnly: true,
+						});
+					}
+					expect(commands.every((command) => !command.nativeCommand && !command.prompt)).toBe(true);
+					expect(useSessionStore.getState().sessions).toEqual(sessionsBefore);
+					expect(useSettingsStore.getState().customAICommands).toEqual([]);
+				}
+			);
+		}
+	);
+
+	it.each([
+		['object', {}],
+		['sparse', new Array(1)],
+		['empty name', [{ name: '', description: '', kind: 'skill' }]],
+		['kind', [{ name: 'x', description: '', kind: 'tui-command' }]],
+		['scope', [{ name: 'x', description: '', kind: 'skill', scope: 'all' }]],
+		['hint', [{ name: 'x', description: '', kind: 'skill', argumentHint: 'x'.repeat(1025) }]],
+	])('rejects %s catalogs before completion rendering', (_label, commands) => {
+		const malformed = { ...discovery, commands } as unknown as GrokCommandDiscoveryResult;
+		expect(grokCommandCompletions(malformed)).toEqual([]);
+		expect(completions({ grokDiscovery: malformed }).map((command) => command.command)).toEqual([
+			'/history',
+			'/wizard',
+		]);
 	});
 });

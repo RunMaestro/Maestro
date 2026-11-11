@@ -383,13 +383,21 @@ describe('the system prompt', () => {
 		expect(turn.systemPrompt).toBe('[][]');
 	});
 
-	it('names the deprecated agent-level session id, not the tab one (F6)', () => {
+	it("names the tab's provider session, never the deprecated agent-level one (F6)", () => {
+		// The desktop's prepareMaestroSystemPrompt reads the active tab's identity.
 		const turn = assemble({
 			agent: { agentSessionId: 'legacy' },
 			tab: { agentSessionId: 'tab-sess' },
 			context: { prompts: { imageOnlyDefault: '', maestroSystem: '[{{AGENT_SESSION_ID}}]' } },
 		});
-		expect(turn.systemPrompt).toBe('[legacy]');
+		expect(turn.systemPrompt).toBe('[tab-sess]');
+		// A new tab with no provider session does not inherit the agent-level id.
+		const fresh = assemble({
+			agent: { agentSessionId: 'legacy' },
+			tab: {},
+			context: { prompts: { imageOnlyDefault: '', maestroSystem: '[{{AGENT_SESSION_ID}}]' } },
+		});
+		expect(fresh.systemPrompt).toBe('[]');
 	});
 });
 
@@ -410,12 +418,16 @@ describe('arguments', () => {
 		expect(turn.launch.args.indexOf('--foo')).toBeGreaterThan(turn.launch.args.indexOf('--print'));
 	});
 
-	it('grants additional directories through the provider flag', () => {
-		const turn = assemble({
-			agent: { additionalDirectories: [{ path: '/extra', read: true, write: true }] },
-		});
-		expect(turn.launch.args).toEqual(expect.arrayContaining(['--add-dir', '/extra']));
-	});
+	it.each(['claude-code', 'codex'])(
+		'retains %s directory flags alongside typed grants',
+		(toolType) => {
+			const grants = [{ path: '/extra', read: true, write: true }];
+			const turn = assemble({ toolType, agent: { additionalDirectories: grants } });
+			expect(turn.launch.args).toEqual(expect.arrayContaining(['--add-dir', '/extra']));
+			expect(turn.launch.additionalDirectories).toEqual(grants);
+			expect(turn.launch.additionalDirectories?.[0]).not.toBe(grants[0]);
+		}
+	);
 
 	it('prepends a Codex working directory before the exec subcommand', () => {
 		const turn = assemble({ toolType: 'codex' });
@@ -425,6 +437,104 @@ describe('arguments', () => {
 	it('takes the provider config options', () => {
 		const turn = assemble({ context: { providerConfig: { model: 'haiku' } } });
 		expect(turn.launch.args).toContain('haiku');
+	});
+});
+
+describe('Grok additional-directory launch snapshots', () => {
+	for (const remote of [false, true]) {
+		for (const resumed of [false, true]) {
+			it.each([false, true])(
+				`preserves selected grants on ${remote ? 'SSH' : 'local'} ${resumed ? 'resumed' : 'fresh'} turns (readonly=%s)`,
+				(readOnly) => {
+					const grants = [
+						{ path: '/private/read only/資料', read: true, write: false },
+						{ path: '/private/write only', read: false, write: true },
+						{ path: '/private/duplicate', read: true, write: true },
+						{ path: '/private/duplicate', read: false, write: false },
+						{ path: '/private/off', read: false, write: false },
+					];
+					const expectedGrants = grants.map((row) => ({ ...row }));
+					const ssh = remote
+						? { enabled: true, remoteId: 'selected-host', workingDirOverride: '/remote/project' }
+						: undefined;
+					const accountEnv = { GROK_HOME: remote ? '/remote/account-a' : '/local/account-a' };
+					const agent = makeAgent({
+						id: 'chosen-agent',
+						toolType: 'grok',
+						cwd: '/chosen/project',
+						customPath: '/chosen/bin/grok',
+						customEnvVars: accountEnv,
+						additionalDirectories: grants,
+						sessionSshRemoteConfig: ssh,
+					});
+					const tab = {
+						id: 'chosen-tab',
+						agentSessionId: resumed ? 'chosen-native-session' : undefined,
+						customModel: 'selected-model',
+						readOnlyMode: readOnly,
+					};
+					const { launch } = assemble({
+						agent,
+						tab,
+						context: { command: '/chosen/bin/grok' },
+					});
+					expect(launch).toMatchObject({
+						cwd: agent.cwd,
+						command: agent.customPath,
+						remoteCommand: agent.customPath,
+						sessionCustomEnvVars: accountEnv,
+						sshRemoteConfig: ssh,
+						readOnlyMode: readOnly,
+						isResuming: resumed,
+						maestroEnvVars: {
+							MAESTRO_CALLER_AGENT_ID: 'chosen-agent',
+							MAESTRO_CALLER_TAB_ID: 'chosen-tab',
+						},
+					});
+					expect(launch.args).toEqual(expect.arrayContaining(['-m', 'selected-model']));
+					if (resumed) {
+						expect(launch.args).toEqual(
+							expect.arrayContaining(['--resume', 'chosen-native-session'])
+						);
+					} else expect(launch.args).not.toContain('--resume');
+					expect(launch.additionalDirectories).toEqual(expectedGrants);
+					expect(launch.additionalDirectories).not.toBe(grants);
+					expect(launch.args).not.toContain('--add-dir');
+					// The planner, not assembly, normalizes duplicates and enforces provider support.
+					grants[0].path = '/changed/read';
+					grants[1].write = false;
+					grants.splice(2, 3);
+					grants.push({ path: '/added/later', read: true, write: true });
+					expect(launch.additionalDirectories).toEqual(expectedGrants);
+					expect(assemble({ agent, tab }).launch.additionalDirectories).toEqual(grants);
+				}
+			);
+		}
+	}
+
+	it.each([{ grants: undefined }, { grants: [] }])(
+		'keeps absent or empty Grok grants inert ($grants)',
+		({ grants }) => {
+			const { launch } = assemble({ toolType: 'grok', agent: { additionalDirectories: grants } });
+			expect(launch.additionalDirectories).toEqual(grants);
+			expect(launch.args).not.toContain('--add-dir');
+		}
+	);
+
+	it('passes an independent grant snapshot through Auto Run assembly', () => {
+		const grants = [{ path: '/private/automation', read: true, write: false }];
+		const result = assembleAutoRunTurn(
+			makeAgent({ toolType: 'grok', additionalDirectories: grants }),
+			{ prompt: 'DO THE TASK', resumeSessionId: 'grok-automation' },
+			makeContext('grok')
+		);
+		if (!result.ok) throw new Error(result.message);
+		grants[0].read = false;
+		expect(result.turn.launch.additionalDirectories).toEqual([
+			{ path: '/private/automation', read: true, write: false },
+		]);
+		expect(result.turn.launch).toMatchObject({ querySource: 'auto', isResuming: true });
+		expect(result.turn.launch.args).not.toContain('--add-dir');
 	});
 });
 

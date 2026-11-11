@@ -671,3 +671,226 @@ describe('program charter validation requirement', () => {
 		}
 	);
 });
+
+/**
+ * Grok tasks through the generic engine. The engine never names a
+ * provider; the agent type comes from ensureAgent and is written onto the
+ * task as returned, so these prove Grok is routed, settled, retried, failed,
+ * and stopped by the same rules as a sibling, and that a refusal (an
+ * unavailable Grok, a required capability Grok lacks) leaves the task pending
+ * with no other provider substituted.
+ */
+describe('runOrchestratorIteration with Grok agents', () => {
+	const grokEnsure = (): OrchestratorDeps['ensureAgent'] =>
+		vi.fn(async (t: PianolaTask) => ({
+			agentId: t.agentId ?? `grok-${t.id}`,
+			agentType: t.agentType ?? 'grok',
+		}));
+	const taskOf = (state: OrchestratorState, id: string) =>
+		state.plan.tasks.find((t) => t.id === id);
+
+	it('dispatches a ready task to the Grok agent ensureAgent binds and records its type and tab', async () => {
+		const dispatch = vi.fn(async () => ({ success: true, tabId: 'grok-tab-1' }));
+		const deps = makeDeps({ ensureAgent: grokEnsure(), dispatch });
+		const r = await runOrchestratorIteration(
+			initialOrchestratorState(plan([task({ id: 'A' })])),
+			deps,
+			{
+				concurrencyLimit: 2,
+			}
+		);
+		expect(r.dispatchedTaskIds).toEqual(['A']);
+		expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ id: 'A' }), 'grok-A');
+		expect(taskOf(r.state, 'A')).toMatchObject({
+			status: 'running',
+			agentId: 'grok-A',
+			agentType: 'grok',
+			tabId: 'grok-tab-1',
+		});
+		expect(deps.log).toHaveBeenCalledWith('[orchestrator] task "A" dispatched to agent "grok-A"');
+	});
+
+	it('routes each task to its own provider and caps concurrency across Grok and siblings', async () => {
+		const ensureAgent: OrchestratorDeps['ensureAgent'] = vi.fn(async (t: PianolaTask) =>
+			t.id === 'C'
+				? { agentId: 'claude-C', agentType: 'claude-code' }
+				: { agentId: `grok-${t.id}`, agentType: 'grok' }
+		);
+		const p = plan([task({ id: 'C' }), task({ id: 'G1' }), task({ id: 'G2' })]);
+		const r = await runOrchestratorIteration(
+			initialOrchestratorState(p),
+			makeDeps({ ensureAgent }),
+			{
+				concurrencyLimit: 2,
+			}
+		);
+		expect(r.dispatchedTaskIds).toEqual(['C', 'G1']);
+		expect(taskOf(r.state, 'C')?.agentType).toBe('claude-code');
+		expect(taskOf(r.state, 'G1')).toMatchObject({ agentType: 'grok', agentId: 'grok-G1' });
+		expect(taskOf(r.state, 'G2')).toMatchObject({ status: 'pending' });
+		expect(taskOf(r.state, 'G2')?.agentType).toBeUndefined();
+		expect(ensureAgent).toHaveBeenCalledTimes(2);
+	});
+
+	it('settles a Grok task done on its working-to-idle transition and dispatches its dependent', async () => {
+		const p = plan([task({ id: 'A' }), task({ id: 'B', dependsOn: ['A'] })]);
+		const r1 = await runOrchestratorIteration(
+			initialOrchestratorState(p),
+			makeDeps({ ensureAgent: grokEnsure() }),
+			{ concurrencyLimit: 2 }
+		);
+		const r2 = await runOrchestratorIteration(
+			r1.state,
+			makeDeps({
+				ensureAgent: grokEnsure(),
+				runStates: { A: 'idle' },
+				messages: { A: [msg('assistant', 'Grok finished the change.')] },
+			}),
+			{ concurrencyLimit: 2 }
+		);
+		expect(r2.completedTaskIds).toEqual(['A']);
+		expect(taskOf(r2.state, 'A')).toMatchObject({ status: 'done', agentType: 'grok' });
+		expect(taskOf(r2.state, 'B')).toMatchObject({ status: 'running', agentType: 'grok' });
+	});
+
+	it('leaves the task pending with no provider bound when Grok is unavailable or lacks a required capability', async () => {
+		const refusals = [
+			'grok is auth_required',
+			'no ready, capable agent for task "A": every candidate is busy, unready, or lacks a required capability',
+		];
+		for (const error of refusals) {
+			const ensureAgent = vi.fn(async () => ({ error }));
+			const dispatch = vi.fn(async () => ({ success: true, tabId: 'never' }));
+			const deps = makeDeps({ ensureAgent, dispatch });
+			const r = await runOrchestratorIteration(
+				initialOrchestratorState(plan([task({ id: 'A' })])),
+				deps,
+				{
+					concurrencyLimit: 2,
+				}
+			);
+			expect(dispatch).not.toHaveBeenCalled();
+			expect(r.dispatchedTaskIds).toEqual([]);
+			expect(taskOf(r.state, 'A')).toEqual(task({ id: 'A' }));
+			expect(deps.log).toHaveBeenCalledWith(
+				`[orchestrator] task "A" pending (ensureAgent: ${error})`
+			);
+		}
+	});
+
+	it('keeps the Grok binding on a failed dispatch so the retry reuses the same Grok session', async () => {
+		const ensureAgent = grokEnsure();
+		let calls = 0;
+		const dispatch = vi.fn(async () =>
+			++calls === 1
+				? { success: false, error: 'grok session busy' }
+				: { success: true, tabId: 'g-tab' }
+		);
+		const r1 = await runOrchestratorIteration(
+			initialOrchestratorState(plan([task({ id: 'A' })])),
+			makeDeps({ ensureAgent, dispatch }),
+			{ concurrencyLimit: 1 }
+		);
+		expect(taskOf(r1.state, 'A')).toMatchObject({
+			status: 'pending',
+			agentId: 'grok-A',
+			agentType: 'grok',
+		});
+		const r2 = await runOrchestratorIteration(r1.state, makeDeps({ ensureAgent, dispatch }), {
+			concurrencyLimit: 1,
+		});
+		expect(ensureAgent).toHaveBeenLastCalledWith(
+			expect.objectContaining({ id: 'A', agentId: 'grok-A', agentType: 'grok' })
+		);
+		expect(dispatch).toHaveBeenLastCalledWith(expect.anything(), 'grok-A');
+		expect(taskOf(r2.state, 'A')).toMatchObject({
+			status: 'running',
+			agentType: 'grok',
+			tabId: 'g-tab',
+		});
+	});
+
+	it('fails a Grok task whose agent errors, notifies, blocks dependents, and keeps the binding', async () => {
+		const notify = vi.fn(async () => {});
+		const p = plan([
+			task({ id: 'A', status: 'running', agentId: 'grok-A', agentType: 'grok', tabId: 'g' }),
+			task({ id: 'B', dependsOn: ['A'] }),
+		]);
+		const r = await runOrchestratorIteration(
+			initialOrchestratorState(p),
+			makeDeps({ ensureAgent: grokEnsure(), runStates: { A: 'error' }, notify }),
+			{ concurrencyLimit: 2 }
+		);
+		expect(r.failedTaskIds).toEqual(['A']);
+		expect(taskOf(r.state, 'A')).toMatchObject({
+			status: 'failed',
+			agentId: 'grok-A',
+			agentType: 'grok',
+			error: 'agent entered error state',
+		});
+		expect(taskOf(r.state, 'B')?.status).toBe('blocked');
+		expect(notify).toHaveBeenCalledWith({
+			kind: 'task_failed',
+			task: expect.objectContaining({ id: 'A', agentType: 'grok', status: 'failed' }),
+		});
+	});
+
+	it('fails, never completes, a Grok turn that was stopped and reported an error before going idle', async () => {
+		const p = plan([task({ id: 'A', status: 'running', agentId: 'grok-A', agentType: 'grok' })]);
+		const state: OrchestratorState = { plan: p, prevStates: { A: 'busy' } };
+		const r = await runOrchestratorIteration(
+			state,
+			makeDeps({
+				runStates: { A: 'idle' },
+				messages: {
+					A: [msg('assistant', 'Working on it.'), msg('error', 'Grok turn cancelled by the user')],
+				},
+			}),
+			{ concurrencyLimit: 2 }
+		);
+		expect(r.completedTaskIds).toEqual([]);
+		expect(taskOf(r.state, 'A')).toMatchObject({
+			status: 'failed',
+			agentType: 'grok',
+			error: 'failure marker found in recent output',
+		});
+	});
+
+	it('keeps a Grok task running while it waits on the user and dispatches nothing new into its slot', async () => {
+		const p = plan([
+			task({ id: 'A', status: 'running', agentId: 'grok-A', agentType: 'grok' }),
+			task({ id: 'B' }),
+		]);
+		const ensureAgent = grokEnsure();
+		const r = await runOrchestratorIteration(
+			{ plan: p, prevStates: { A: 'busy' } },
+			makeDeps({ ensureAgent, runStates: { A: 'waiting_input' } }),
+			{ concurrencyLimit: 1 }
+		);
+		expect(taskOf(r.state, 'A')?.status).toBe('running');
+		expect(r.state.prevStates.A).toBe('waiting_input');
+		expect(ensureAgent).not.toHaveBeenCalled();
+		expect(taskOf(r.state, 'B')?.status).toBe('pending');
+	});
+
+	it('dispatches to the Grok session ensureAgent returns when the pinned one is gone, and rebinds the task', async () => {
+		const ensureAgent: OrchestratorDeps['ensureAgent'] = vi.fn(async () => ({
+			agentId: 'grok-fresh',
+			agentType: 'grok',
+		}));
+		const dispatch = vi.fn(async () => ({ success: true, tabId: 'fresh-tab' }));
+		const p = plan([task({ id: 'A', agentId: 'grok-closed', agentType: 'grok' })]);
+		const r = await runOrchestratorIteration(
+			initialOrchestratorState(p),
+			makeDeps({ ensureAgent, dispatch }),
+			{ concurrencyLimit: 1 }
+		);
+		expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ id: 'A' }), 'grok-fresh');
+		expect(taskOf(r.state, 'A')).toMatchObject({
+			status: 'running',
+			agentId: 'grok-fresh',
+			agentType: 'grok',
+			tabId: 'fresh-tab',
+		});
+	});
+});
