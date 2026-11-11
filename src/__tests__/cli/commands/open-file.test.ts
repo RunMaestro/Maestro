@@ -9,7 +9,7 @@
  * - Error handling when Maestro app is not running
  */
 
-import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import * as path from 'path';
 
 // Mock fs
@@ -51,6 +51,36 @@ describe('open-file command', () => {
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+		// The suite may run inside a Maestro agent or terminal tab; its own shell
+		// identity would otherwise pick the target agent.
+		vi.stubEnv('MAESTRO_CALLER_AGENT_ID', '');
+		vi.stubEnv('MAESTRO_TERMINAL_AGENT_ID', '');
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	it("defaults to the terminal tab's agent for a file outside every workspace", async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.stubEnv('MAESTRO_TERMINAL_AGENT_ID', 'session-123');
+		let captured: { sessionId?: string; filePath?: string } = {};
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			const mockClient = {
+				sendCommand: vi.fn().mockImplementation((msg) => {
+					captured = msg;
+					return Promise.resolve({ type: 'open_file_tab_result', success: true });
+				}),
+			};
+			return action(mockClient as never);
+		});
+
+		const filePath = path.resolve('/config/.bashrc');
+		await openFile(filePath, {});
+
+		expect(captured.sessionId).toBe('session-123');
+		expect(captured.filePath).toBe(filePath);
+		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
 	it('should open a valid file with explicit agent', async () => {

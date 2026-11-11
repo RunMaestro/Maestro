@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { createEventBus } from '../../client/event-bus';
 import type { ClientResult, MaestroEvent } from '../../client/types';
@@ -85,7 +84,9 @@ describe('agent repository', () => {
 	};
 
 	beforeEach(() => {
-		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-repository-test-'));
+		const root = path.join(process.cwd(), 'tmp');
+		fs.mkdirSync(root, { recursive: true });
+		dir = fs.mkdtempSync(path.join(root, 'agent-repository-test-'));
 		paths = makePaths(dir);
 		events = [];
 		stopped = [];
@@ -867,6 +868,161 @@ describe('agent repository', () => {
 				const stored = readSessions().sessions[0].aiTabs[0];
 				expect(stored.agentSessionId).toBe('S1');
 				expect(stored.providerSessions.codex.agentSessionId).toBe('C1');
+			});
+
+			it.each([false, true])(
+				'persists scoped identity and usage atomically across parking=%s and reload',
+				async (parked) => {
+					const binding = {
+						version: 1,
+						state: 'bound',
+						provider: 'grok',
+						nativeSessionId: 'collision',
+						accountRef: 'account-a',
+						host: { kind: 'local', identity: 'fixture-host' },
+						cwd: dir,
+					} as const;
+					const otherBinding = { ...binding, accountRef: 'account-b' };
+					const repo = await setup({
+						sessions: {
+							sessions: [binding, otherBinding].map((scope, index) =>
+								seedAgent(`a${index + 1}`, `Agent ${index}`, {
+									toolType: 'grok',
+									aiTabs: [
+										tab(
+											't1',
+											index
+												? { agentSessionId: 'collision', nativeSessionBinding: scope }
+												: { runtimeTurnId: 'turn-a' }
+										),
+									],
+								})
+							),
+						},
+					});
+					const guard = repo.captureTabIncarnation('a1', 't1');
+					value(await repo.updateAgent('a1', { env: { GROK_HOME: path.join(dir, 'changed') } }));
+					if (parked) value(await repo.updateAgent('a1', { provider: 'codex' }));
+					value(
+						await repo.recordTabSession(
+							'a1',
+							't1',
+							'grok',
+							{
+								agentSessionId: 'collision',
+								nativeSessionBinding: binding,
+								expected: { turnId: 'turn-a', agentSessionId: null },
+								addUsage: {
+									inputTokens: 7,
+									outputTokens: 3,
+									cacheReadInputTokens: 0,
+									cacheCreationInputTokens: 0,
+									totalCostUsd: 0.02,
+									contextWindow: 100,
+								},
+							},
+							guard
+						)
+					);
+					const stored = readSessions().sessions[0].aiTabs[0];
+					const slot = parked ? stored.providerSessions.grok : stored;
+					expect(slot).toMatchObject({
+						agentSessionId: 'collision',
+						nativeSessionBinding: binding,
+						usageStats: { inputTokens: 7, outputTokens: 3, totalCostUsd: 0.02 },
+					});
+					if (parked) expect(stored.agentSessionId).toBeNull();
+					expect(readSessions().sessions[1].aiTabs[0]).toEqual(
+						tab('t1', {
+							agentSessionId: 'collision',
+							nativeSessionBinding: otherBinding,
+						})
+					);
+					expect((await repo.load()).ok).toBe(true);
+					expect(guard()).toBe(false);
+					if (parked) value(await repo.updateAgent('a1', { provider: 'grok' }));
+					expect(repo.getTab('a1', 't1')).toMatchObject({
+						agentSessionId: 'collision',
+						nativeSessionBinding: binding,
+						usageStats: slot.usageStats,
+						logs: tab('t1').logs,
+					});
+				}
+			);
+
+			it.each(['tab', 'agent'] as const)(
+				'refuses beginTurn after same-ID %s recreation',
+				async (kind) => {
+					const ids = kind === 'tab' ? ['a1-t1'] : ['a1-t1', 'a1', 'shell-log'];
+					const repo = await setup(
+						{ sessions: twoAgents() },
+						{
+							context: { ...makeContext(), newId: () => ids.shift()! },
+						}
+					);
+					const guard = repo.captureTabIncarnation('a1', 'a1-t1');
+					if (kind === 'tab') {
+						value(await repo.closeTab('a1', 'a1-t1'));
+						expect(value(await repo.createTab('a1')).tabId).toBe('a1-t1');
+					} else {
+						value(await repo.removeAgent('a1'));
+						expect(
+							value(await repo.createAgent({ name: 'Alpha', provider: 'grok', cwd: dir })).agentId
+						).toBe('a1');
+					}
+					expect(repo.getTab('a1', 'a1-t1')).toBeDefined();
+					const before = fs.readFileSync(paths.sessionsFile, 'utf-8');
+					events.length = 0;
+					const stale = await repo.beginTurn(
+						'a1',
+						'a1-t1',
+						{
+							userEntry,
+							provider: 'grok',
+							turnId: 'stale',
+							consumedMergedContext: false,
+						},
+						guard
+					);
+					expect(errorOf(stale).code).toBe('rejected');
+					expect(fs.readFileSync(paths.sessionsFile, 'utf-8')).toBe(before);
+					expect(events).toEqual([]);
+				}
+			);
+
+			it('holds external writes across awaits, then rejects a queued append after removal', async () => {
+				const repo = await setup({ sessions: twoAgents() });
+				const guard = repo.captureTabIncarnation('a1', 'a1-t1');
+				const entered = Promise.withResolvers<void>();
+				const release = Promise.withResolvers<void>();
+				const externalFile = path.join(dir, 'external-record.json');
+				const reserved = repo.withTabWriteGuard(guard, async () => {
+					entered.resolve();
+					await release.promise;
+					await fs.promises.writeFile(externalFile, confText(repo.getTab('a1', 'a1-t1')));
+				});
+				await entered.promise;
+				const removal = repo.closeTab('a1', 'a1-t1');
+				const append = repo.appendTranscript('a1', 'a1-t1', [userEntry], guard);
+				const reload = repo.load();
+				try {
+					expect(repo.getTab('a1', 'a1-t1')).toBeDefined();
+					expect(fs.existsSync(externalFile)).toBe(false);
+				} finally {
+					release.resolve();
+				}
+				value(await reserved);
+				value(await removal);
+				expect(errorOf(await append).code).toBe('rejected');
+				expect((await reload).ok).toBe(true);
+				expect(JSON.parse(fs.readFileSync(externalFile, 'utf-8')).logs).toEqual(tab('a1-t1').logs);
+				expect((await readClosedTabs(closedTabsFile(dir, 'a1')))[0].tab.logs).toEqual(
+					tab('a1-t1').logs
+				);
+				expect(repo.getTab('a1', 'a1-t1')).toBeUndefined();
+				expect(readSessions().sessions[0].aiTabs.map((entry: { id: string }) => entry.id)).toEqual([
+					'a1-t2',
+				]);
 			});
 
 			it('answers not-found and writes nothing for an agent or tab that is gone', async () => {

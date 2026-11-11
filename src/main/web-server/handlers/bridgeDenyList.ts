@@ -57,6 +57,7 @@ const METHODS: Record<string, string> = {
 	maestroRun: 'readyPath',
 	marketplace: 'getDocument getManifest getReadme importPlaybook refreshManifest',
 	memory: 'create delete getPath list orphans read search write',
+	// Main owns the inbox; a browser marks read or clears through the same delta.
 	notification: 'changeHistory',
 	openspec: 'getCommand getMetadata getPrompts refresh resetPrompt savePrompt',
 	parquet: 'close export open query',
@@ -84,7 +85,10 @@ const METHODS: Record<string, string> = {
 	tabNaming: 'generateTabName',
 	tabs: 'aiTabClosed',
 	tempfile: 'delete read write',
-	web: 'getAutoRunStates broadcastSessionState broadcastTabsChange broadcastUserInput requestNewTab requestCloseTab requestReopenTab startAutoRun controlAutoRun',
+	// claimAutoRunStart / releaseAutoRunStartClaim serialize Auto Run starts across every
+	// client, so a browser must reach them to start a run (#1862). Reclaiming orphaned
+	// runs (takeOrphanedAutoRuns, abandonAutoRunReclaim) stays desktop-owned.
+	web: 'broadcastSessionState broadcastTabsChange broadcastUserInput claimAutoRunStart controlAutoRun getAutoRunStates releaseAutoRunStartClaim requestCloseTab requestNewTab requestReopenTab startAutoRun',
 	windows: 'getForSession getState list',
 	// floatingWidgets:* is absent on purpose: the browser build never opens widget windows.
 };
@@ -94,7 +98,7 @@ const EVENTS: Record<string, string> = {
 	agentSessions: 'globalStatsUpdate',
 	agents: 'snapshot-updated',
 	app: 'systemResume',
-	autorun: 'fileChanged statusChanged',
+	autorun: 'delegation fileChanged statusChanged',
 	claude: 'globalStatsUpdate projectStatsUpdate',
 	cli: 'activityChange',
 	'cross-agent': 'chunk',

@@ -1202,6 +1202,16 @@ export class BoardStorageFacade {
 				card.reviewerAgentId !== original.payload.reviewerAgentId
 			) {
 				const work = original.payload as unknown as BoardCard;
+				if (
+					work.workflow?.reviewCardId &&
+					this.db
+						.prepare('SELECT 1 FROM reservations WHERE collection_key=? AND card_id=?')
+						.get(ref.collectionKey, work.workflow.reviewCardId)
+				)
+					throw new BoardWorkspaceStorageError(
+						'protected-field',
+						'Settle the active review before assigning another reviewer'
+					);
 				const runId = work.workflow?.workRunId;
 				const attempt = this.db
 					.prepare('SELECT attempt FROM runs WHERE run_id=? AND collection_key=? AND card_id=?')

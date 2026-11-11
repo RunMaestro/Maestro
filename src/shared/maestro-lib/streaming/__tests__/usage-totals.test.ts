@@ -4,8 +4,9 @@ import {
 	mergeUsageStats,
 	parsedUsageToStats,
 	replaceUsageStats,
+	subtractUsageStats,
 } from '../usage-totals';
-import type { UsageStats } from '../../../types';
+import type { UsageAccounting, UsageCost, UsageStats } from '../../../types';
 
 function usage(overrides: Partial<UsageStats> = {}): UsageStats {
 	return {
@@ -160,5 +161,174 @@ describe('replaceUsageStats', () => {
 	it('is the report itself when there is no running total', () => {
 		const report = usage({ inputTokens: 100, reasoningTokens: 3 });
 		expect(replaceUsageStats(undefined, report)).toEqual(report);
+	});
+});
+
+describe('Grok scoped usage totals', () => {
+	const accounting: UsageAccounting = {
+		source: 'runtime-stream',
+		scope: 'process-session',
+		reporting: 'snapshot',
+		cacheReadCounting: 'beside-input',
+		cacheCreationCounting: 'beside-input',
+		completeness: 'complete',
+		cost: { status: 'unknown' },
+		childInclusion: 'all',
+		childCompleteness: 'complete',
+	};
+
+	it.each([
+		['native-headless', 100, 'beside-input'],
+		['acp', 130, 'inside-input'],
+	] as const)(
+		'normalizes %s cache buckets without pricing an unknown model',
+		(route, inputTokens, counting) => {
+			// Matched adapter-boundary fixtures: native input is uncached; ACP input is full.
+			const stats = parsedUsageToStats({
+				inputTokens,
+				outputTokens: 20,
+				cacheReadTokens: 20,
+				cacheCreationTokens: 10,
+				model: 'grok-unpriced-fixture',
+				accounting: {
+					...accounting,
+					scope: 'response',
+					route,
+					cacheReadCounting: counting,
+					cacheCreationCounting: counting,
+				},
+			});
+			expect(stats).toMatchObject({
+				inputTokens: 100,
+				outputTokens: 20,
+				cacheReadInputTokens: 20,
+				cacheCreationInputTokens: 10,
+				totalCostUsd: 0,
+				accounting: {
+					cost: { status: 'unknown' },
+					cacheReadCounting: 'beside-input',
+					cacheCreationCounting: 'beside-input',
+					models: [
+						{ model: 'grok-unpriced-fixture', inputTokens: 100, cost: { status: 'unknown' } },
+					],
+				},
+			});
+			expect(stats.accounting).not.toHaveProperty('estimatedCost');
+		}
+	);
+
+	it('distinguishes absent cost from authoritative zero', () => {
+		const absent = parsedUsageToStats({ inputTokens: 1, outputTokens: 0 });
+		const free = parsedUsageToStats({
+			inputTokens: 1,
+			outputTokens: 0,
+			accounting: { ...accounting, cost: { status: 'exact', costUsdTicks: '0' } },
+		});
+		expect(absent.totalCostUsd).toBe(0);
+		expect(absent.accounting?.cost.status).toBe('unknown');
+		expect(free.accounting?.cost).toEqual({ status: 'exact', costUsdTicks: '0' });
+	});
+
+	it.each([
+		['exact', 'exact', 'exact'],
+		['partial', 'exact', 'partial'],
+		['unknown', 'exact', 'unknown'],
+		['exact', 'partial', 'unknown'],
+		['exact', 'unknown', 'unknown'],
+	] as const)('differences %s cost against %s baseline as %s', (now, prior, expected) => {
+		const priorCost: UsageCost =
+			prior === 'unknown'
+				? { status: 'unknown' }
+				: prior === 'exact'
+					? { status: 'exact', costUsdTicks: '9007199254740993' }
+					: { status: 'partial', costUsdTicks: '9007199254740993' };
+		const currentCost: UsageCost =
+			now === 'unknown'
+				? { status: 'unknown' }
+				: now === 'exact'
+					? { status: 'exact', costUsdTicks: '9007199254741004' }
+					: { status: 'partial', costUsdTicks: '9007199254741004' };
+		const model = {
+			model: 'grok-a',
+			inputTokens: 100,
+			completeness: accounting.completeness,
+			cost: priorCost,
+		};
+		const baseline = usage({
+			inputTokens: 100,
+			outputTokens: 20,
+			cacheReadInputTokens: 20,
+			cacheCreationInputTokens: 10,
+			accounting: {
+				...accounting,
+				cost: priorCost,
+				models: [model],
+			},
+		});
+		const next = usage({
+			inputTokens: 130,
+			outputTokens: 24,
+			cacheReadInputTokens: 25,
+			cacheCreationInputTokens: 14,
+			accounting: {
+				...accounting,
+				cost: currentCost,
+				models: [
+					{ ...model, inputTokens: 120, cost: currentCost },
+					{ ...model, model: 'grok-b', inputTokens: 10 },
+				],
+			},
+		});
+		const delta = subtractUsageStats(next, baseline)!;
+		expect(delta).toMatchObject({
+			inputTokens: 30,
+			outputTokens: 4,
+			cacheReadInputTokens: 5,
+			cacheCreationInputTokens: 4,
+			accounting: { cost: { status: expected } },
+		});
+		if (expected !== 'unknown')
+			expect(delta.accounting?.cost).toMatchObject({ costUsdTicks: '11' });
+		else expect(delta.accounting?.cost).not.toHaveProperty('costUsdTicks');
+		expect(delta.accounting?.models?.[0]).toMatchObject({
+			inputTokens: 20,
+			cost: { status: expected },
+		});
+		expect(delta.accounting?.models?.[1]).toEqual({
+			model: 'grok-b',
+			completeness: 'partial',
+			cost: { status: 'unknown', reason: expect.any(String) },
+		});
+	});
+
+	it.each([true, false])('requires an explicit empty model ledger (%s)', (knownEmpty) => {
+		const baseline = usage({
+			accounting: {
+				...accounting,
+				cost: { status: 'exact', costUsdTicks: '0' },
+				...(knownEmpty ? { models: [] } : {}),
+			},
+		});
+		const next = parsedUsageToStats({
+			inputTokens: 7,
+			outputTokens: 0,
+			model: 'grok-a',
+			accounting: {
+				...accounting,
+				scope: 'response',
+				cost: { status: 'exact', costUsdTicks: '7' },
+			},
+		});
+		const model = subtractUsageStats(next, baseline)?.accounting?.models?.[0];
+		if (knownEmpty)
+			expect(model).toMatchObject({
+				inputTokens: 7,
+				completeness: 'complete',
+				cost: { status: 'exact', costUsdTicks: '7' },
+			});
+		else {
+			expect(model).not.toHaveProperty('inputTokens');
+			expect(model?.cost.status).toBe('unknown');
+		}
 	});
 });

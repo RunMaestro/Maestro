@@ -11,7 +11,7 @@
  * rather than on the whole catalog being present.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useRef, useState } from 'react';
 import { render, screen, fireEvent, waitFor, createEvent, act } from '@testing-library/react';
 import { ModelEffortModal } from '../../../renderer/components/ModelEffortModal';
@@ -29,13 +29,17 @@ import { restorePointer, setCoarsePointer } from '../../helpers/mockPointer';
 const MODELS = ['claude-sonnet-4.5', 'gpt-5', 'gemini-2.5-pro'];
 const EFFORTS = ['', 'low', 'medium', 'high'];
 
-function seedStore(tabOverrides: Record<string, unknown> = {}) {
+function seedStore(
+	tabOverrides: Record<string, unknown> = {},
+	sessionOverrides: Parameters<typeof createMockSession>[0] = {}
+) {
 	const tab = createMockAITab({ id: 'tab-1', name: 'Refactor', ...tabOverrides });
 	const session = createMockSession({
 		id: 'session-1',
 		toolType: 'claude-code',
 		aiTabs: [tab],
 		activeTabId: 'tab-1',
+		...sessionOverrides,
 	});
 	useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 	return session;
@@ -75,6 +79,174 @@ describe('ModelEffortModal', () => {
 		setTabEffort = vi.fn();
 		useTabStore.setState({ setTabModel, setTabEffort } as never);
 		seedStore();
+	});
+
+	describe('Grok selected-account options', () => {
+		beforeEach(() => {
+			vi.useFakeTimers();
+			(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockResolvedValue({
+				status: 'discovered',
+				options: ['account-a-model'],
+			});
+			(window.maestro.agents.getConfigOptions as ReturnType<typeof vi.fn>).mockResolvedValue({
+				status: 'discovered',
+				options: ['low'],
+			});
+		});
+		afterEach(() => vi.useRealTimers());
+
+		it.each([
+			{ customEnvVars: { GROK_HOME: '/accounts/b' } },
+			{ customPath: '/tools/grok-b' },
+			{ cwd: '/project-b' },
+			{ sshRemoteId: 'remote-b' },
+			{ sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-b' } },
+		])('invalidates suggestions immediately when context changes to %j', async (change) => {
+			const session = seedStore(
+				{ customModel: 'tab-model', customEffort: 'high' },
+				{
+					toolType: 'grok',
+					cwd: '/project-a',
+					customPath: '/tools/grok-a',
+					customEnvVars: { GROK_HOME: '/accounts/a' },
+					customModel: 'session-model',
+				}
+			);
+			renderModal();
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(screen.getByRole('option', { name: 'account-a-model' })).toBeInTheDocument();
+			expect(window.maestro.agents.getModels).toHaveBeenCalledWith({
+				providerId: 'grok',
+				context: expect.objectContaining({
+					kind: 'draft',
+					cwd: '/project-a',
+					customPath: '/tools/grok-a',
+					customEnvVars: { GROK_HOME: '/accounts/a' },
+					model: 'tab-model',
+					effort: 'high',
+				}),
+			});
+			(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockResolvedValue({
+				status: 'discovered',
+				options: ['account-b-model'],
+			});
+			act(() => useSessionStore.setState({ sessions: [{ ...session, ...change }] }));
+			expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+			expect(screen.getByLabelText('Model')).toHaveValue('tab-model');
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+				providerId: 'grok',
+				context: expect.objectContaining(change),
+			});
+			expect(screen.getByRole('option', { name: 'account-b-model' })).toBeInTheDocument();
+			expect(screen.queryByRole('option', { name: 'account-a-model' })).not.toBeInTheDocument();
+		});
+
+		it.each(['unavailable', 'configured-fallback'])(
+			'keeps manual model and effort editable when discovery is %s',
+			async (status) => {
+				(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockResolvedValue({
+					status,
+					options: status === 'unavailable' ? [] : ['configured-model'],
+				});
+				(window.maestro.agents.getConfigOptions as ReturnType<typeof vi.fn>).mockResolvedValue({
+					status,
+					options: status === 'unavailable' ? [] : ['configured-effort'],
+				});
+				seedStore(
+					{ customModel: 'tab-model', customEffort: 'tab-effort' },
+					{
+						toolType: 'grok',
+						cwd: '/project',
+						customModel: 'session-model',
+						customEffort: 'session-effort',
+					}
+				);
+				renderModal();
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(0);
+				});
+				expect(screen.getByLabelText('Model')).toHaveValue('tab-model');
+				expect(screen.getByLabelText('Effort')).toHaveValue('tab-effort');
+				expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+				expect(
+					screen.getByText(
+						status === 'unavailable'
+							? 'Model discovery unavailable. Keep or enter a model manually.'
+							: 'Only the configured model is known. Keep or enter a model manually.'
+					)
+				).toBeInTheDocument();
+				fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'manual-model' } });
+				fireEvent.change(screen.getByLabelText('Effort'), { target: { value: 'manual-effort' } });
+				fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
+				fireEvent.keyDown(keyTarget(), { key: 'ArrowRight' });
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(window.maestro.agents.getConfigOptions).toHaveBeenLastCalledWith(
+					{
+						providerId: 'grok',
+						context: expect.objectContaining({ model: 'manual-model', effort: 'manual-effort' }),
+					},
+					'reasoningEffort'
+				);
+				fireEvent.keyDown(screen.getByLabelText('Model'), { key: 'Enter', isComposing: true });
+				expect(setTabModel).not.toHaveBeenCalled();
+				fireEvent.keyDown(screen.getByLabelText('Effort'), { key: 'Enter' });
+				expect(setTabModel).toHaveBeenCalledWith('tab-1', 'manual-model');
+				expect(setTabEffort).toHaveBeenCalledWith('tab-1', 'manual-effort');
+			}
+		);
+
+		it('discards late account defaults and catalogs after the target changes', async () => {
+			let releaseModels!: (value: { status: string; options: string[] }) => void;
+			let releaseDefaults!: (value: { model: string; reasoningEffort: string }) => void;
+			(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+				new Promise((resolve) => {
+					releaseModels = resolve;
+				})
+			);
+			(window.maestro.agents.getConfig as ReturnType<typeof vi.fn>)
+				.mockReturnValueOnce(
+					new Promise((resolve) => {
+						releaseDefaults = resolve;
+					})
+				)
+				.mockResolvedValue({ model: 'account-b-default', reasoningEffort: 'medium' });
+			seedStore({}, { toolType: 'grok', cwd: '/a', customEnvVars: { GROK_HOME: '/accounts/a' } });
+			renderModal();
+			fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'unsaved-a' } });
+			act(() => {
+				seedStore(
+					{},
+					{
+						id: 'session-b',
+						toolType: 'grok',
+						cwd: '/b',
+						customEnvVars: { GROK_HOME: '/accounts/b' },
+					}
+				);
+				useSessionStore.setState({ activeSessionId: 'session-b' });
+			});
+			expect(screen.getByLabelText('Model')).toHaveValue('');
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			expect(screen.getByLabelText('Model')).toHaveValue('account-b-default');
+			await act(async () => {
+				releaseModels({ status: 'discovered', options: ['obsolete-a-model'] });
+				releaseDefaults({ model: 'obsolete-a-default', reasoningEffort: 'obsolete-a-effort' });
+			});
+			expect(screen.queryByRole('option', { name: 'obsolete-a-model' })).not.toBeInTheDocument();
+			expect(screen.getByLabelText('Model')).toHaveValue('account-b-default');
+			expect(screen.getByLabelText('Effort')).toHaveValue('medium');
+			fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+			expect(setTabModel).toHaveBeenCalledWith('tab-1', 'account-b-default');
+		});
 	});
 
 	it('opens on the value the tab is currently running', async () => {

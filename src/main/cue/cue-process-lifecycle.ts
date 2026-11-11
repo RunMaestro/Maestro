@@ -25,7 +25,11 @@ import { stripAnsiCodes } from '../../shared/stringUtils';
 import { resolveTurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { cueStatusForTurn } from './cue-turn-status';
 import { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
-import { addUsageStats, replaceUsageStats } from '../../shared/maestro-lib/streaming/usage-totals';
+import {
+	addUsageStats,
+	parsedUsageToStats,
+	replaceUsageStats,
+} from '../../shared/maestro-lib/streaming/usage-totals';
 import { FALLBACK_CONTEXT_WINDOW } from '../../shared/agentConstants';
 import {
 	stopProcess as runStopLadder,
@@ -37,14 +41,11 @@ import {
 	startTurn,
 	TurnNotStartedError,
 	type TurnHandle,
+	type TurnProcessSpec,
 } from '../../shared/maestro-lib/run/start-turn';
 import { isLaunchCancelled } from './cue-launch-cancel';
-import {
-	newRemotePidFilePath,
-	signalRemoteAgent,
-	sshConnectionArgs,
-	withRemotePidRecord,
-} from '../utils/ssh-remote-signal';
+import { signalRemoteAgent } from '../utils/ssh-remote-signal';
+import { guardTurn, recordRemoteAgent } from '../../shared/maestro-lib/control/turn-guard';
 
 // ─── Types ──────���────────────────────────────────────────────────────────────
 
@@ -61,6 +62,8 @@ export interface CueActiveProcess {
 	/** For stdin-script SSH spawns: where the remote agent's pid is recorded, so
 	 *  a stop or timeout reaches the agent and not only the local ssh client. */
 	sshRemotePidFile?: string;
+	/** Private remote file witness for the existing stop owner. Never serialized. */
+	sshRemotePromptArtifactPath?: string;
 	/** Live ref to the accumulating stdout buffer - filled by the runProcess
 	 *  closure as chunks arrive. Exposed via `getActiveProcessOutput` so the
 	 *  renderer can poll for in-flight logs without a separate subscription
@@ -98,7 +101,7 @@ export interface ProcessRunResult {
 	status: CueRunStatus;
 	/** Provider session id parsed from stdout as it streamed. Null for command/shell runs (no parser) or output that never carried one. */
 	providerSessionId: string | null;
-	/** Usage delta-normalized from the stdout stream. See `CueRunResult.usage`. Null when the run produced no usage events or has no output parser. */
+	/** Captured turn usage, or an unknown/provider receipt when no usage arrived. Null for command/shell runs. */
 	usage: UsageStats | null;
 }
 
@@ -143,32 +146,30 @@ export interface ProcessRunOptions {
 /** Map of active Cue processes by runId */
 const activeProcesses = new Map<string, CueActiveProcess>();
 
+/** The reason a Grok run that wrote no native terminal record failed (as the CLI words it). */
+const GROK_NO_TERMINAL_MESSAGE =
+	'Grok exited without a native terminal record. Any response is incomplete.';
+
 // ─── Internal Helpers ─────────��──────────────────────────────────────────────
 
 /**
- * Convert a parser's raw `extractUsage()` shape into `UsageStats`. A scoped
- * port of `StdoutHandler.buildUsageStats` - Cue has no per-process omp model
- * catalog to resolve against (that catalog only primes for interactive
- * sessions), so a model-dependent window falls back to the static per-agent
- * default rather than a runtime-resolved one. Every other field maps 1:1.
+ * Keep canonical accounting and the host-selected provider through persistence.
+ * An absent report uses compatibility zeros with explicitly unknown provenance;
+ * it is never seeded into the accumulator as a measured observation.
  */
 function toCueUsageStats(
-	usage: NonNullable<ReturnType<AgentOutputParser['extractUsage']>>
+	providerId: string,
+	usage?: NonNullable<ReturnType<AgentOutputParser['extractUsage']>>
 ): UsageStats {
-	const stats: UsageStats = {
-		inputTokens: usage.inputTokens,
-		outputTokens: usage.outputTokens,
-		cacheReadInputTokens: usage.cacheReadTokens || 0,
-		cacheCreationInputTokens: usage.cacheCreationTokens || 0,
-		totalCostUsd: usage.costUsd || 0,
-		absoluteUsage: usage.absoluteUsage,
-		contextWindow: usage.contextWindow || FALLBACK_CONTEXT_WINDOW,
-		reasoningTokens: usage.reasoningTokens,
+	const stats = parsedUsageToStats(usage ?? { inputTokens: 0, outputTokens: 0 });
+	stats.contextWindow ||= FALLBACK_CONTEXT_WINDOW;
+	stats.accounting = {
+		...stats.accounting!,
+		providerId,
+		...(!usage
+			? { source: 'none' as const, scope: 'turn' as const, reporting: 'snapshot' as const }
+			: {}),
 	};
-	if (usage.contextWindowReported && (usage.contextWindow || 0) > 0) {
-		stats.contextWindowResolved = true;
-	}
-	if (usage.model) stats.contextWindowModel = usage.model;
 	return stats;
 }
 
@@ -192,10 +193,19 @@ class CueRunStreamCapture {
 	/** This run's own parser instance (see the constructor). */
 	readonly parser: AgentOutputParser | null;
 	private readonly usageAccumulator: UsageAccumulator | undefined;
+	private readonly scopedUsage = new UsageAccumulator({ attachesAbsoluteUsage: false });
 	private readonly usageLastWriteWins: boolean;
 	private readonly resultParts: string[] = [];
 	private readonly assistantTextByMessage = new Map<string, string>();
 	private readonly assistantTextWithoutId: string[] = [];
+	/**
+	 * Grok streams its answer as token-sized `text` deltas that concatenate
+	 * directly (whitespace is in the payload), beside `thought` deltas tagged
+	 * `isReasoning`. Joining the deltas with newlines split words, and keeping
+	 * the thoughts handed the model's reasoning downstream as its answer.
+	 */
+	private readonly concatenatesDeltas: boolean;
+	private deltaText = '';
 	private rawFallback = '';
 	providerSessionId: string | null = null;
 	usage: UsageStats | null = null;
@@ -213,7 +223,7 @@ class CueRunStreamCapture {
 	 */
 	inBandError: AgentError | undefined;
 
-	constructor(toolType: string) {
+	constructor(private readonly toolType: string) {
 		// A fresh instance per run, never the shared registry parser: parsers keep
 		// per-stream state (Codex's context window and usage baseline, Claude's
 		// last-call occupancy), and concurrent Cue runs of one provider would
@@ -235,6 +245,7 @@ class CueRunStreamCapture {
 			this.usageAccumulator = new UsageAccumulator({ attachesAbsoluteUsage: true });
 		}
 		this.usageLastWriteWins = toolType === 'claude-code';
+		this.concatenatesDeltas = toolType === 'grok';
 	}
 
 	/** A raw stdout chunk, kept for agents whose output is not parsed. */
@@ -260,6 +271,8 @@ class CueRunStreamCapture {
 		if (event.type === 'result') {
 			this.resultMessageSeen = true;
 			if (event.text) this.resultParts.push(event.text);
+		} else if (this.concatenatesDeltas && event.type === 'text') {
+			if (event.isPartial && event.text && !event.isReasoning) this.deltaText += event.text;
 		} else if (event.type === 'text' && event.isPartial && event.text) {
 			const raw = event.raw as { message?: { id?: string } } | undefined;
 			const msgId = raw?.message?.id;
@@ -282,7 +295,13 @@ class CueRunStreamCapture {
 
 		const rawUsage = parser.extractUsage?.(event);
 		if (rawUsage) {
-			const stats = toCueUsageStats(rawUsage);
+			const stats = toCueUsageStats(this.toolType, rawUsage);
+			if (rawUsage.accounting) {
+				// Turn snapshots replace covered response spend. Native lifetime and
+				// child reports cannot become this run's usage without scoped proof.
+				this.usage = this.scopedUsage.accumulate(stats) ?? this.usage;
+				return;
+			}
 			// `normalize` returns the DELTA for this event, so the deltas are
 			// summed. Keeping only the newest would report one step of a run.
 			this.usage = this.usageLastWriteWins
@@ -306,17 +325,24 @@ class CueRunStreamCapture {
 			const text = this.resultParts.join('\n');
 			if (text.trim()) return text;
 		}
-		const deduped = [...this.assistantTextByMessage.values(), ...this.assistantTextWithoutId];
-		const assistantText = deduped.join('\n');
+		const assistantText = this.assistantText().join('\n');
 		return assistantText.trim() ? assistantText : undefined;
 	}
 
 	/** Clean, human-readable text: prefers result events, then assistant text, then the raw buffer verbatim (plain-text agents, or a parser that never produced either). */
 	getCleanStdout(): string {
 		if (this.resultParts.length > 0) return this.resultParts.join('\n');
-		const deduped = [...this.assistantTextByMessage.values(), ...this.assistantTextWithoutId];
+		const deduped = this.assistantText();
 		if (deduped.length > 0) return deduped.join('\n');
 		return this.rawFallback;
+	}
+
+	private assistantText(): string[] {
+		return [
+			...this.assistantTextByMessage.values(),
+			...this.assistantTextWithoutId,
+			...(this.deltaText ? [this.deltaText] : []),
+		];
 	}
 }
 
@@ -410,6 +436,9 @@ function terminateRemoteCueAgent(runId: string, entry: CueActiveProcess): void {
 			sshCommand: entry.command,
 			sshArgs: entry.args,
 			pidFile: entry.sshRemotePidFile,
+			...(entry.sshRemotePromptArtifactPath !== undefined
+				? { promptArtifactPath: entry.sshRemotePromptArtifactPath }
+				: {}),
 			sessionId: runId,
 		},
 		'terminate'
@@ -460,23 +489,29 @@ export async function runProcess(
 		onRawStdout,
 	} = options;
 
+	const stoppedResult = (): ProcessRunResult => ({
+		stdout: '',
+		stderr: '',
+		exitCode: null,
+		status: 'stopped',
+		executionStarted: false,
+		providerSessionId: null,
+		usage: toCueUsageStats(toolType),
+	});
 	// The last check before the spawn; nothing below awaits until the child
 	// is started and registered, so a stop cannot slip in between.
-	if (
-		isLaunchCancelled(options.signal) ||
-		(options.agentId && !canStartAgentTurn(options.agentId, runId)) ||
-		options.beforeLaunch?.() === false
-	) {
-		return {
-			stdout: '',
-			stderr: '',
-			exitCode: null,
-			status: 'stopped',
-			executionStarted: false,
-			providerSessionId: null,
-			usage: null,
+	if (isLaunchCancelled(options.signal)) return stoppedResult();
+	if (spec.promptArtifact) {
+		// Keep the selected bytes and transport independent of mutations to the
+		// caller's original spec once the run owns them.
+		spec = {
+			...spec,
+			args: [...spec.args],
+			env: { ...spec.env },
+			promptArtifact: { ...spec.promptArtifact },
 		};
 	}
+	const promptArtifact = spec.promptArtifact;
 
 	let stdout = '';
 	let stderr = '';
@@ -487,29 +522,63 @@ export async function runProcess(
 	// local run on a Windows host; see resolvePromptDelivery).
 	// A stdin-script SSH run records the remote agent's pid so Stop and the
 	// timeout can reach it: killing only the local ssh client leaves it running.
-	const sshRemotePidFile =
-		sshStdinScript && sshRemoteEnabled && sshConnectionArgs(spec.args)
-			? newRemotePidFilePath()
-			: undefined;
-	const stdin =
-		sshStdinScript && sshRemoteEnabled
-			? sshRemotePidFile
-				? withRemotePidRecord(sshStdinScript, sshRemotePidFile)
-				: sshStdinScript
-			: stdinPrompt;
+	let recorded: ReturnType<typeof recordRemoteAgent>;
+	try {
+		if (
+			promptArtifact &&
+			(stdinPrompt !== undefined ||
+				spec.stdinPrompt !== undefined ||
+				(promptArtifact.owner === 'remote'
+					? !sshRemoteEnabled ||
+						!spec.sshRemoteUsed ||
+						spec.sshRemoteUsed.id !== promptArtifact.sshRemoteId ||
+						sshStdinScript !== spec.sshStdinScript
+					: sshRemoteEnabled || !!spec.sshRemoteUsed || !!sshStdinScript || !!spec.sshStdinScript))
+		) {
+			throw new Error(
+				'Prompt-file delivery requires its selected transport without another source.'
+			);
+		}
+		recorded = recordRemoteAgent({
+			command: spec.command,
+			args: spec.args,
+			sshStdinScript: sshRemoteEnabled ? sshStdinScript : undefined,
+			sessionId: runId,
+			...(promptArtifact?.owner === 'remote' ? { promptArtifactPath: promptArtifact.path } : {}),
+		});
+	} catch (error) {
+		if (!promptArtifact) throw error;
+		return {
+			...stoppedResult(),
+			status: 'failed',
+			stderr: 'Prompt-file preparation unavailable.',
+		};
+	}
+	const sshRemotePidFile = recorded.remote?.pidFile;
+	const processSpec: TurnProcessSpec = {
+		command: spec.command,
+		args: spec.args,
+		cwd: spec.cwd,
+		env: spec.env,
+		stdin:
+			sshStdinScript && sshRemoteEnabled
+				? recorded.sshStdinScript
+				: promptArtifact
+					? undefined
+					: stdinPrompt,
+		...(promptArtifact?.owner === 'local' ? { promptArtifact } : {}),
+	};
 
+	if (
+		(options.agentId && !canStartAgentTurn(options.agentId, runId)) ||
+		options.beforeLaunch?.() === false
+	)
+		return stoppedResult();
 	let turn: TurnHandle;
 	try {
 		// maestro-p (interactive token mode) self-allocates its own PTY via
 		// node-pty internally, so plain pipe stdio here is sufficient; no
 		// caller-side TTY is needed.
-		const processSpec = {
-			command: spec.command,
-			args: spec.args,
-			cwd: spec.cwd,
-			env: spec.env,
-			stdin,
-		};
 		turn = startTurn(
 			// A local Windows `.cmd` / `.bat` shim (claude.cmd, codex.cmd) has to
 			// start through cmd.exe: Node refuses it without a shell (spawn EINVAL,
@@ -544,19 +613,36 @@ export async function runProcess(
 				stderrTailLimit: 0,
 				sessionId: runId,
 				label: 'cue',
+				...(options.signal ? { signal: options.signal } : {}),
 			}
 		);
 	} catch (err) {
-		captureException(err, { operation: 'cue:spawn', runId, command: spec.command });
+		const failure = promptArtifact
+			? new Error('Prompt-file launch failed.')
+			: err instanceof Error
+				? err
+				: new Error(String(err));
+		if (isLaunchCancelled(options.signal)) return stoppedResult();
+		captureException(failure, { operation: 'cue:spawn', runId, command: spec.command });
 		return {
 			stdout: '',
-			stderr: `Spawn error: ${err instanceof Error ? err.message : String(err)}`,
+			stderr: `Spawn error: ${failure.message}`,
 			exitCode: null,
 			status: 'failed',
 			executionStarted: !(err instanceof TurnNotStartedError),
 			providerSessionId: null,
-			usage: null,
+			usage: toCueUsageStats(toolType),
 		};
+	}
+	if (promptArtifact?.owner === 'remote') {
+		// A failed transport also reaches the remote owner,
+		// even when local SSH close happens before remote cleanup completes.
+		guardTurn(turn, {
+			sessionId: runId,
+			graceMs: BACKGROUND_STOP_GRACE_MS,
+			remote: recorded.remote,
+			signal: options.signal,
+		});
 	}
 
 	// Set by `stopProcess` / `stopAllProcesses` before the kill, so the exit
@@ -570,12 +656,15 @@ export async function runProcess(
 	const entry: CueActiveProcess = {
 		child: turn.child,
 		command: spec.command,
-		args: spec.args,
+		args: promptArtifact?.owner === 'local' ? [] : spec.args,
 		cwd: spec.cwd,
 		toolType,
 		startTime: Date.now(),
-		sshRemoteCommand: spec.sshRemoteCommand,
+		sshRemoteCommand: promptArtifact ? undefined : spec.sshRemoteCommand,
 		sshRemotePidFile,
+		...(promptArtifact?.owner === 'remote'
+			? { sshRemotePromptArtifactPath: promptArtifact.path }
+			: {}),
 		getStdout: () => stdout,
 		getStderr: () => stderr,
 		requestStop: () => {
@@ -628,19 +717,20 @@ export async function runProcess(
 			executionStarted: typeof turn.child.pid === 'number' || !exit.spawnError,
 			terminationConfirmed: !sshRemoteEnabled,
 			providerSessionId: capture.providerSessionId,
-			usage: capture.usage,
+			usage: capture.usage ?? toCueUsageStats(toolType),
 		};
 	};
 
 	// Spawn errors that arrive after spawn returned (e.g. ENOENT).
 	if (exit.spawnError) {
 		if (timedOut) return finish('timeout', null);
-		captureException(exit.spawnError, {
+		const failure = promptArtifact ? new Error('Prompt-file launch failed.') : exit.spawnError;
+		captureException(failure, {
 			operation: 'cue:childProcess:error',
 			runId,
 			command: spec.command,
 		});
-		stderr += `\nSpawn error: ${exit.spawnError.message}`;
+		stderr += `\nSpawn error: ${failure.message}`;
 		return finish('failed', null);
 	}
 
@@ -652,11 +742,11 @@ export async function runProcess(
 	// chat and the CLI on what finished a turn.
 	const answerText = capture.getAnswerText();
 	const parser = capture.parser;
-	const { outcome } = resolveTurnOutcome(
+	const { outcome, error: resolvedError } = resolveTurnOutcome(
 		{
 			exitCode: exit.exitCode,
 			signal: exit.signal,
-			interrupted: stopRequested,
+			interrupted: stopRequested || exit.interrupted,
 			stderrText: stderr,
 			stdoutText: stdout,
 			explicitError: capture.inBandError,
@@ -675,17 +765,36 @@ export async function runProcess(
 	);
 	// Cue's two safety rules (a silent non-zero exit, an unrequested signal
 	// kill) live in cueStatusForTurn so the desktop exit listener shares them.
-	const status = cueStatusForTurn({
+	let status = cueStatusForTurn({
 		outcome,
 		exitCode: exit.exitCode,
 		answerCaptured: Boolean(answerText?.trim()),
 		killedBySignal: exit.signal !== null,
 	});
+	// Grok proves a finished turn only with its native success record. A clean
+	// exit that wrote none (an empty stdout, plain text from a CLI that ignored
+	// the streaming flag) reads `completed` to the shared resolver, and a
+	// pipeline would chain off a turn that never answered. The parser already
+	// fails a stream that carried native records and then stopped short.
+	if (toolType === 'grok' && status === 'completed' && !capture.resultMessageSeen) {
+		status = 'failed';
+		if (!stderr.includes(GROK_NO_TERMINAL_MESSAGE)) {
+			stderr += `${stderr ? '\n' : ''}${GROK_NO_TERMINAL_MESSAGE}`;
+		}
+	}
 	// An in-band failure has no stderr of its own, so name it there: that is
 	// where a failed run's reason is read from.
 	const inBandMessage = capture.inBandError?.message;
 	if (status === 'failed' && inBandMessage && !stderr.includes(inBandMessage)) {
 		stderr += `${stderr ? '\n' : ''}${inBandMessage}`;
+	}
+	// A native Grok stream that streamed answer deltas and then exited without
+	// its `end` record is failed by the parser, not by the no-terminal rule
+	// above, and carries no stderr of its own. Name the parser's reason (the
+	// resolver already holds it), or the CLI's wording when it supplied none, so
+	// Cue history and the auth classifier read why the turn did not finish.
+	if (toolType === 'grok' && status === 'failed' && !stderr.trim()) {
+		stderr = resolvedError?.message || GROK_NO_TERMINAL_MESSAGE;
 	}
 	return finish(status, exit.exitCode);
 }

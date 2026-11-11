@@ -53,6 +53,7 @@ import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { autoRunActiveElapsedMs } from '../hooks/batch/useTimeTracking';
 import { AutoRunProgressStats } from './AutoRun/AutoRunProgressStats';
 import { autoRunProgressPercent } from '../../shared/autorunProgress';
+import { describePendingDelegations } from '../../shared/autoRunDelegation';
 import {
 	MIRRORED_RUN_CONTROL_TITLE,
 	useIsMirroredBatchRun,
@@ -137,8 +138,8 @@ interface RightPanelProps {
 	onAbortBatchOnError?: () => void;
 	onResumeAfterError?: () => void;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
-	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
+	onResumeSession?: React.ComponentProps<typeof HistoryPanel>['onResumeSession'];
+	onOpenSessionAsTab?: React.ComponentProps<typeof HistoryPanel>['onOpenSessionAsTab'];
 
 	// Modal handlers
 	onOpenAboutModal?: () => void;
@@ -905,6 +906,7 @@ export const RightPanel = memo(
 						    a pending stop, or the goal agent's rationale. */}
 						{(errorPaused ||
 							currentSessionBatchState.isStopping ||
+							(currentSessionBatchState.pendingDelegations?.length ?? 0) > 0 ||
 							(currentSessionBatchState.goalMode && currentSessionBatchState.goalRationale)) && (
 							<div className="mt-2">
 								<span
@@ -916,23 +918,29 @@ export const RightPanel = memo(
 									// iteration count + complete rationale - lives on hover so
 									// nothing is lost to truncation.
 									title={
-										currentSessionBatchState.goalMode
-											? [
-													currentSessionBatchState.goalIteration
-														? `Iteration ${currentSessionBatchState.goalIteration}`
-														: undefined,
-													currentSessionBatchState.goalRationale || undefined,
-												]
-													.filter(Boolean)
-													.join(' - ') || undefined
-											: undefined
+										(currentSessionBatchState.pendingDelegations?.length ?? 0) > 0
+											? currentSessionBatchState
+													.pendingDelegations!.map((d) => `${d.targetName}: ${d.subject}`)
+													.join('\n')
+											: currentSessionBatchState.goalMode
+												? [
+														currentSessionBatchState.goalIteration
+															? `Iteration ${currentSessionBatchState.goalIteration}`
+															: undefined,
+														currentSessionBatchState.goalRationale || undefined,
+													]
+														.filter(Boolean)
+														.join(' - ') || undefined
+												: undefined
 									}
 								>
 									{errorPaused
 										? batchError?.message || 'Paused due to error'
 										: currentSessionBatchState.isStopping
 											? 'Waiting for current task to complete before stopping...'
-											: currentSessionBatchState.goalRationale}
+											: (currentSessionBatchState.pendingDelegations?.length ?? 0) > 0
+												? describePendingDelegations(currentSessionBatchState.pendingDelegations!)
+												: currentSessionBatchState.goalRationale}
 								</span>
 							</div>
 						)}

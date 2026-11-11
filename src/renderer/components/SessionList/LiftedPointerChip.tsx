@@ -13,8 +13,7 @@ interface LiftedPointerChipProps {
 /**
  * The Left Bar's mark on an agent that moved to a Federation host (FED-SSH-06): `on <peer>`.
  * Clicking it opens the mirrored agent on that host; the row itself still opens this local copy,
- * whose tabs and transcripts all stayed. Renders null while Federation is off (zero footprint) and
- * for an agent that never moved.
+ * whose tabs and transcripts all stayed. Renders null for an agent that never moved.
  */
 export const LiftedPointerChip = memo(function LiftedPointerChip({
 	theme,

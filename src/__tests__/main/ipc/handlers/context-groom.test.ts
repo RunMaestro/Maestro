@@ -28,10 +28,14 @@ vi.mock('../../../../main/stores', () => ({ getSettingsStore: vi.fn() }));
 vi.mock('../../../../main/agents', () => ({ getSessionStorage: vi.fn() }));
 
 import { registerContextHandlers } from '../../../../main/ipc/handlers/context';
+import { getSessionStorage } from '../../../../main/agents';
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 
-function register(settings: Record<string, unknown> = {}): Handler {
+function register(
+	settings: Record<string, unknown> = {},
+	channel = 'context:groomContext'
+): Handler {
 	registerContextHandlers({
 		getMainWindow: () => null,
 		getProcessManager: () => ({}) as never,
@@ -41,15 +45,46 @@ function register(settings: Record<string, unknown> = {}): Handler {
 	});
 	const call = vi
 		.mocked(ipcMain.handle)
-		.mock.calls.find(([channel]) => channel === 'context:groomContext');
+		.mock.calls.find(([registeredChannel]) => registeredChannel === channel);
 	return call![1] as Handler;
 }
 
 beforeEach(() => {
 	vi.mocked(ipcMain.handle).mockClear();
+	vi.mocked(getSessionStorage).mockReset();
 	groomContext
 		.mockReset()
 		.mockResolvedValue({ response: '2', durationMs: 1, completionReason: '' });
+});
+
+describe('context:getStoredSession', () => {
+	it('refuses unscoped Grok export before any storage or grooming call', async () => {
+		const handler = register({}, 'context:getStoredSession');
+		await expect(handler({}, 'grok', '/fixture/project', 'native-shared')).rejects.toThrow(
+			'Grok context export requires a selected owner. Use agentSessions.read with ownerAgentId and includeNativeRecords.'
+		);
+		expect(getSessionStorage).not.toHaveBeenCalled();
+		expect(groomContext).not.toHaveBeenCalled();
+	});
+
+	it.each(['claude-code', 'codex'])('retains legacy %s storage retrieval', async (provider) => {
+		const result = {
+			messages: [{ type: 'user', content: 'Existing context', timestamp: '', uuid: 'message-1' }],
+			total: 1,
+			hasMore: false,
+		};
+		const readSessionMessages = vi.fn().mockResolvedValue(result);
+		// Only this storage method is reachable through the existing context handler.
+		vi.mocked(getSessionStorage).mockReturnValue({ readSessionMessages } as never);
+		const handler = register({}, 'context:getStoredSession');
+		await expect(handler({}, provider, '/fixture/project', 'native-shared')).resolves.toBe(result);
+		expect(getSessionStorage).toHaveBeenCalledExactlyOnceWith(provider);
+		expect(readSessionMessages).toHaveBeenCalledExactlyOnceWith(
+			'/fixture/project',
+			'native-shared'
+		);
+		expect(groomContext).not.toHaveBeenCalled();
+	});
 });
 
 describe('context:groomContext', () => {

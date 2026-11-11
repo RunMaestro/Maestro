@@ -20,6 +20,8 @@
  */
 
 import { execFileNoThrow } from './execFile';
+import { execGitReadOnly } from './remote-git';
+import type { SshRemoteConfig } from '../../shared/types';
 import { resolveGhPath } from './cliDetection';
 import { getShellPath } from '../runtime/getShellPath';
 
@@ -77,11 +79,17 @@ export interface CreatePullRequestResult {
  * Resolve a repository's default branch: ask the remote first, then fall back
  * to a local `main` or `master`. Returns null when none of those answer.
  */
-export async function resolveDefaultBranch(cwd: string, timeout?: number): Promise<string | null> {
+export async function resolveDefaultBranch(
+	cwd: string,
+	timeout?: number,
+	sshRemote?: SshRemoteConfig
+): Promise<string | null> {
 	const exec = (args: string[]) =>
-		timeout === undefined
-			? execFileNoThrow('git', args, cwd)
-			: execFileNoThrow('git', args, cwd, { timeout });
+		sshRemote
+			? execGitReadOnly(args, cwd, sshRemote, cwd)
+			: timeout === undefined
+				? execFileNoThrow('git', args, cwd)
+				: execFileNoThrow('git', args, cwd, { timeout });
 	// First try to get the default branch from remote
 	const remoteResult = await exec(['remote', 'show', 'origin']);
 	if (remoteResult.exitCode === 0) {

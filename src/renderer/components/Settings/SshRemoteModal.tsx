@@ -42,7 +42,8 @@ import { validateSshOption } from '../../../shared/sshOptions';
 import { useSaveShortcut } from '../../hooks';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 import { ToggleSwitch } from '../ui/ToggleSwitch';
-import { useSettingsStore } from '../../stores/settingsStore';
+import { federationFieldFor, isFederationRemote } from '../../../shared/federationRemote';
+import { isImeComposing } from '../../utils/ime';
 
 /**
  * SSH config host entry from ~/.ssh/config
@@ -125,10 +126,8 @@ export function SshRemoteModal({
 	const [nextSshOptionId, setNextSshOptionId] = useState(0);
 	const [useSshConfig, setUseSshConfig] = useState(false);
 	const [sshConfigHost, setSshConfigHost] = useState<string | undefined>(undefined);
-	// Kept and saved even while the Encore Feature is off, so editing a remote
-	// then does not silently drop its opt-in. Only the toggle is hidden.
-	const [federation, setFederation] = useState(false);
-	const federationEnabled = useSettingsStore((s) => s.encoreFeatures.federation);
+	// Federation is opportunistic: on unless the remote opted out.
+	const [federation, setFederation] = useState(true);
 
 	// SSH config state
 	const [sshConfigHosts, setSshConfigHosts] = useState<SshConfigHost[]>([]);
@@ -216,7 +215,7 @@ export function SshRemoteModal({
 
 	// Handle keyboard navigation in dropdown
 	const handleDropdownKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Escape') {
+		if (e.key === 'Escape' && !isImeComposing(e)) {
 			e.preventDefault();
 			e.stopPropagation();
 			setShowSshConfigDropdown(false);
@@ -228,7 +227,7 @@ export function SshRemoteModal({
 		} else if (e.key === 'ArrowUp') {
 			e.preventDefault();
 			setSshConfigHighlightIndex((prev) => (prev > 0 ? prev - 1 : 0));
-		} else if (e.key === 'Enter') {
+		} else if (e.key === 'Enter' && !isImeComposing(e)) {
 			e.preventDefault();
 			if (filteredSshConfigHosts.length > 0 && filteredSshConfigHosts[sshConfigHighlightIndex]) {
 				handleSelectSshConfigHost(filteredSshConfigHosts[sshConfigHighlightIndex]);
@@ -262,7 +261,7 @@ export function SshRemoteModal({
 				setShowSshOptions(optionRows.length > 0);
 				setUseSshConfig(initialConfig.useSshConfig || false);
 				setSshConfigHost(initialConfig.sshConfigHost);
-				setFederation(initialConfig.federation === true);
+				setFederation(isFederationRemote(initialConfig));
 			} else {
 				// Reset to defaults for new config
 				setName('');
@@ -279,7 +278,7 @@ export function SshRemoteModal({
 				setShowSshOptions(false);
 				setUseSshConfig(false);
 				setSshConfigHost(undefined);
-				setFederation(false);
+				setFederation(true);
 			}
 			setError(null);
 			setTestResult(null);
@@ -334,7 +333,8 @@ export function SshRemoteModal({
 			enabled,
 			useSshConfig,
 			sshConfigHost,
-			federation: federation || undefined,
+			// Only an opt-out is stored.
+			federation: federationFieldFor(federation),
 		};
 	}, [
 		initialConfig,
@@ -824,16 +824,14 @@ export function SshRemoteModal({
 					onChange={setEnabled}
 				/>
 
-				{federationEnabled && (
-					<SwitchRow
-						theme={theme}
-						label="Federation"
-						description="Let Maestro look for a maestro-cli host on this remote and reach its agents over SSH. Maestro never probes a remote with this off."
-						checked={federation}
-						onChange={setFederation}
-						testId="ssh-remote-federation-toggle"
-					/>
-				)}
+				<SwitchRow
+					theme={theme}
+					label="Federation"
+					description="Look for a Maestro host on this remote and mirror its agents, so they keep working while this machine sleeps. Off: Maestro never probes this remote for a host."
+					checked={federation}
+					onChange={setFederation}
+					testId="ssh-remote-federation-toggle"
+				/>
 			</div>
 		</Modal>
 	);

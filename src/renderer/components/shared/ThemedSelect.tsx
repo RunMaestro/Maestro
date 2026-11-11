@@ -15,6 +15,7 @@ import type { Theme } from '../../types';
 import { useClickOutside } from '../../hooks/ui';
 import { EscCloseButton } from '../ui/EscCloseButton';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { isImeComposing } from '../../utils/ime';
 
 export interface ThemedSelectOption {
 	value: string;
@@ -154,6 +155,7 @@ export function ThemedSelect({
 					setActiveIndex(list.length - 1);
 					break;
 				case 'Enter':
+					if (isImeComposing(e)) break;
 					e.preventDefault();
 					if (activeIndex >= 0 && activeIndex < list.length) {
 						handleSelect(list[activeIndex].value);
@@ -170,6 +172,7 @@ export function ThemedSelect({
 					}
 					break;
 				case 'Escape':
+					if (isImeComposing(e)) break;
 					e.stopPropagation();
 					closeAndRefocus();
 					break;

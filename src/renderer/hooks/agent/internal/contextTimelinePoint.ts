@@ -21,7 +21,7 @@
 import type { Session, ToolType } from '../../../types';
 import type { UsageStats } from '../../../../shared/types';
 import type { ParsedSessionId } from '../../../utils/sessionIdParser';
-import { calculateContextTokens } from '../../../utils/contextUsage';
+import { calculateContextTokens, resolveGrokContextSelection } from '../../../utils/contextUsage';
 import {
 	getContextWindowForAgent,
 	getModelContextWindowOverride,
@@ -157,7 +157,14 @@ export function buildContextTimelinePoint(
 								: agentToolType && agentToolType !== 'terminal'
 									? getContextWindowForAgent(
 											agentToolType,
-											useAgentStore.getState().getCapabilitySnapshot(agentToolType, sessionRemoteId)
+											useAgentStore
+												.getState()
+												.getCapabilitySnapshot(agentToolType, sessionRemoteId),
+											// Grok's window is per account and model; elsewhere this is undefined.
+											resolveGrokContextSelection(
+												session,
+												parsed.tabId ? session.aiTabs?.find((t) => t.id === parsed.tabId) : null
+											)
 										)
 									: 0;
 

@@ -80,7 +80,7 @@ import { createComputerHistoryForApp } from './computer-history/bootstrap';
 import { getMaestroRunService } from './maestro-run';
 import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { createDataviewSupervisorHooks } from './dataview/dataview-service';
-import { createFederationSupervisorHooks, getPeerMirrorService } from './federation';
+import { createFederationRuntime, getPeerMirrorService } from './federation';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { PluginToolRunProofFiles } from './plugins/plugin-tool-run-proof-file';
@@ -188,6 +188,7 @@ import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
 import { getHistoryManager } from './history-manager';
 import { initDispatchCallbacks } from './dispatch-callbacks';
+import { AUTORUN_DELEGATION_CHANNEL } from '../shared/autoRunDelegation';
 import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
 import {
@@ -277,6 +278,7 @@ import { configureAgentAdmission } from './utils/headless-agent-activity';
 import { startBoardRunPr, startCardPr } from './board/board-pr';
 import { PROMPT_IDS } from '../shared/promptDefinitions';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
+import { addParticipantByAgentId } from './group-chat/group-chat-router';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import {
 	captureException,
@@ -1055,6 +1057,26 @@ const createWebServer = createWebServerFactory({
 		if (!cueEngine) return [];
 		return cueEngine.getActivityLog();
 	},
+	addGroupChatParticipant: async (chatId, agentId) => {
+		try {
+			const { participant, alreadyMember } = await addParticipantByAgentId(chatId, agentId);
+			return { success: true, participantName: participant.name, alreadyMember };
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			// Expected refusals (unknown chat or agent, inactive moderator) go back
+			// to the caller as text. Anything else is a bug: report it as well.
+			const expected = [
+				'Group chat not found',
+				'No agent with ID',
+				'is a terminal agent',
+				'Moderator must be active',
+			].some((fragment) => message.includes(fragment));
+			if (!expected) {
+				void captureException(error, { operation: 'groupChat:addParticipantByAgentId', chatId });
+			}
+			return { success: false, error: message };
+		}
+	},
 });
 
 // createWindow is now handled by windowManager (Phase 4 refactoring)
@@ -1430,6 +1452,9 @@ app
 		// execution queue (or in a new tab when it has none), not as a fresh
 		// headless process.
 		initDispatchCallbacks({
+			// Every window and the web-desktop bridge hear it; only the client whose
+			// run loop owns `autoRunId` acts on it (broadcast + filter, see safeSend).
+			notifyAutoRun: (event) => safeSend(AUTORUN_DELEGATION_CHANNEL, event),
 			onDelivered: async ({ entry, status }) => {
 				if (!entry.admissionId || !['completed', 'failed'].includes(status)) return;
 				const { confirmDispatchCallback } = await import('./pianola/pianola-store-main');
@@ -1899,6 +1924,23 @@ app
 			onLog: cueRunLog,
 			getConductorProfile: () => (store.get('conductorProfile', '') as string) || undefined,
 			onNotify: (params) => executeCueNotify({ ...params, mainWindow }),
+			// The tab this message was scheduled into is gone, so it went to a
+			// new tab. Say where, so the move is not silent.
+			onCliTabFallback: ({ subscriptionName, agentId, newTabId }) => {
+				emitCueNotifyToast(mainWindow, {
+					agentId,
+					title: subscriptionName,
+					color: newTabId ? 'yellow' : 'red',
+					message: newTabId
+						? 'The tab this task was scheduled into was closed, so it ran in a new tab.'
+						: 'The tab this task was scheduled into was closed, and a new tab could not be opened.',
+					clickAction: {
+						kind: 'jump-session',
+						sessionId: agentId,
+						...(newTabId ? { tabId: newTabId } : {}),
+					},
+				});
+			},
 			onAutoRun: (params) => {
 				const autoRunLog = (level: string, message: string) => {
 					if (level === 'error') logger.error(message, 'Cue');
@@ -2371,14 +2413,6 @@ app
 				reconcile: () => void startCoworkingService(() => processManager),
 				stopAll: () => void stopCoworkingService(),
 			},
-			// Federation: the read-only peer mirror (FED-SSH-05). One SSH forward and
-			// one host client per opted-in remote, dialed one after another, held in
-			// memory only. Off = no service, no store listener, no ssh.
-			federation: createFederationSupervisorHooks({
-				readRemotes: () => (store.get('sshRemotes', []) ?? []) as SshRemoteConfig[],
-				watchRemotes: (onChange) => store.onDidChange('sshRemotes', () => onChange()),
-				safeSend,
-			}),
 			// OpenCode serve: the shared server spawns lazily on the first OpenCode
 			// turn, so there is nothing to start. Off tears down every server.
 			opencodeServer: {
@@ -3139,6 +3173,7 @@ app
 				pluginToolRunIdentity.issue(agentId, ttlMs, receiptToolId, unattended),
 			getRunReceipts: (token) => pluginToolRunIdentity.getReceipts(token),
 			hasRunReceiptOverflow: (token) => pluginToolRunIdentity.hasReceiptOverflowed(token),
+			getRunEvidence: (token) => pluginToolRunIdentity.getEvidence(token),
 			revokeRunToken: (token) => pluginToolRunIdentity.revoke(token),
 			cliScriptPath: resolveMaestroCliScriptPath,
 			audit: (agentId, resumed) =>
@@ -4253,8 +4288,15 @@ app
 		const bootEncoreFeatures = store.get('encoreFeatures');
 		encoreLifecycle.startIfEnabled('pianola', bootEncoreFeatures);
 		encoreLifecycle.startIfEnabled('plugins', bootEncoreFeatures);
-		// Federation's peer mirror dials only remotes with their own `federation` flag on.
-		encoreLifecycle.startIfEnabled('federation', bootEncoreFeatures);
+		// Federation is opportunistic and always on: the peer mirror probes each enabled SSH
+		// remote that has not opted out, one at a time, and mirrors the ones that run a host.
+		const federation = createFederationRuntime({
+			readRemotes: () => (store.get('sshRemotes', []) ?? []) as SshRemoteConfig[],
+			watchRemotes: (onChange) => store.onDidChange('sshRemotes', () => onChange()),
+			safeSend,
+		});
+		federation.start();
+		app.on('will-quit', () => federation.stop());
 
 		// Install the application menu (File / Edit / View / Window on macOS,
 		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the

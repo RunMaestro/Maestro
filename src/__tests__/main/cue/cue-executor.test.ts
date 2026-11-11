@@ -16,6 +16,16 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
+import * as fs from 'fs';
+import * as path from 'path';
+import { embedSystemPromptInPrompt } from '../../../shared/embeddedSystemPrompt';
+import { signalRemoteAgent } from '../../../shared/maestro-lib/control/ssh-remote-signal';
+import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
+import { GrokOutputParser } from '../../../main/parsers/grok-output-parser';
+import * as proofIdentity from '../../../main/plugins/plugin-tool-run-identity';
+import * as wakaTime from '../../../main/wakatime-instance';
+import { logger } from '../../../main/utils/logger';
+import type { SpawnBuildResult } from '../../../main/cue/cue-spawn-builder';
 import type { ChildProcess } from 'child_process';
 import type { CueEvent, CueSubscription } from '../../../main/cue/cue-types';
 import type { SessionInfo } from '../../../shared/types';
@@ -46,7 +56,10 @@ function sshStoreWithRemotes() {
 // transitively imports `cue-github-poller`, which calls `getExpandedEnv()` at
 // module-load time and needs `fs.existsSync` for nvm/path detection.
 const mockReadFileSync = vi.fn();
-const { injectInvalidProof } = vi.hoisted(() => ({ injectInvalidProof: { current: false } }));
+const { injectInvalidProof, buildBoundary } = vi.hoisted(() => ({
+	injectInvalidProof: { current: false },
+	buildBoundary: { afterBuild: undefined as ((result: SpawnBuildResult) => void) | undefined },
+}));
 vi.mock('fs', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('fs')>();
 	return {
@@ -65,14 +78,18 @@ vi.mock('../../../main/cue/cue-spawn-builder', async (importOriginal) => {
 				// Cleanup rejects this path after the provider has already completed.
 				result.spec.pluginRunProofFile = '/invalid/not-a-proof';
 			}
+			buildBoundary.afterBuild?.(result);
 			return result;
 		},
 	};
 });
 
-// Mock crypto
-vi.mock('crypto', () => ({
-	randomUUID: vi.fn(() => 'test-uuid-1234'),
+// Mock crypto. The real primitives stay: a plugin run proof mints its token
+// with `randomBytes`, and a stub without it denies every proof. The UUID is a
+// well-formed one: a remote prompt artifact's pid file name embeds it and is checked.
+vi.mock('crypto', async (importOriginal) => ({
+	...(await importOriginal<typeof import('crypto')>()),
+	randomUUID: vi.fn(() => '00000000-0000-4000-8000-000000000001'),
 }));
 
 // Mock substituteTemplateVariables
@@ -112,6 +129,7 @@ vi.mock('../../../main/agents', () => ({
 // Mock buildAgentArgs and applyAgentConfigOverrides.
 // buildAgentArgs returns flags only - it does NOT append the prompt as a positional arg.
 // The executor is responsible for appending the prompt after applyAgentConfigOverrides.
+// Keep Grok model/effort validation and its error class real for the launch planner.
 const mockBuildAgentArgs = vi.fn((_agent: unknown, _opts: unknown) => [
 	'--print',
 	'--verbose',
@@ -126,7 +144,8 @@ const mockApplyOverrides = vi.fn((_agent: unknown, args: string[], _overrides: u
 	customEnvSource: 'none' as const,
 	modelSource: 'default' as const,
 }));
-vi.mock('../../../shared/maestro-lib/launch/agent-args', () => ({
+vi.mock('../../../shared/maestro-lib/launch/agent-args', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../shared/maestro-lib/launch/agent-args')>()),
 	buildAgentArgs: (...args: Parameters<typeof mockBuildAgentArgs>) => mockBuildAgentArgs(...args),
 	applyAgentConfigOverrides: (...args: Parameters<typeof mockApplyOverrides>) =>
 		mockApplyOverrides(...args),
@@ -139,6 +158,12 @@ vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
 	// Stand-in; the real wording is covered by the ssh-spawn-wrapper suite.
 	sshUnresolvedRemoteMessage: (cfg: { remoteId: string | null }) =>
 		`remote "${cfg.remoteId}" could not be resolved`,
+}));
+vi.mock('../../../shared/maestro-lib/control/ssh-remote-signal', async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import('../../../shared/maestro-lib/control/ssh-remote-signal')
+	>()),
+	signalRemoteAgent: vi.fn(),
 }));
 
 // Mock parsers - default returns null (no parser), overridden per test as needed
@@ -313,6 +338,7 @@ describe('cue-executor', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		injectInvalidProof.current = false;
+		buildBoundary.afterBuild = undefined;
 		vi.useFakeTimers();
 		getActiveProcesses().clear();
 
@@ -1727,6 +1753,385 @@ describe('cue-executor', () => {
 			// Process completed - should be removed
 			expect(getActiveProcesses().has('completed-run')).toBe(false);
 			expect(getCueProcessList().some((p) => p.runId === 'completed-run')).toBe(false);
+		});
+	});
+
+	describe('plugin proof ownership after build resolution', () => {
+		const proofFile = path.resolve('maestro-plugin-run-private-fixture', 'proof');
+		const privateContent = 'SYNTHETIC_PRIVATE_CUE_PROMPT';
+		let token: string | undefined;
+		const ownedFiles = new Set<string>();
+		let removeProof: ReturnType<typeof vi.spyOn>;
+		let revoke: ReturnType<typeof vi.spyOn>;
+		let warn: ReturnType<typeof vi.spyOn>;
+
+		beforeEach(() => {
+			token = undefined;
+			ownedFiles.clear();
+			mockGetOutputParser.mockReturnValue(null);
+			removeProof = vi
+				.spyOn(proofIdentity, 'removePluginRunProofFile')
+				.mockImplementation((file) => {
+					expect(ownedFiles.delete(file)).toBe(true);
+				});
+			revoke = vi.spyOn(proofIdentity.pluginToolRunIdentity, 'revoke');
+			warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+			buildBoundary.afterBuild = (result) => {
+				if (!result.ok) return;
+				token = proofIdentity.pluginToolRunIdentity.issue('session-1');
+				ownedFiles.add(proofFile);
+				result.spec.pluginRunToken = token;
+				result.spec.pluginRunProofFile = proofFile;
+			};
+		});
+
+		afterEach(() => {
+			vi.restoreAllMocks();
+			if (token) proofIdentity.pluginToolRunIdentity.revoke(token);
+			buildBoundary.afterBuild = undefined;
+		});
+
+		function expectProofReleased() {
+			expect(token).toBeDefined();
+			expect(revoke).toHaveBeenCalledExactlyOnceWith(token);
+			expect(proofIdentity.pluginToolRunIdentity.resolve(token).callerAgentId).toBeNull();
+			expect(removeProof).toHaveBeenCalledExactlyOnceWith(proofFile);
+			expect(ownedFiles.size).toBe(0);
+		}
+
+		describe('canonical prompt artifact handoff', () => {
+			isolateAgentEnv();
+			beforeEach(() => {
+				mockGetAgentDefinition.mockReturnValue({
+					...defaultAgentDef,
+					id: 'grok',
+					command: 'grok',
+					binaryName: 'grok',
+					promptFile: { format: 'acp-json', exclusivePromptFlags: ['-p', '--prompt-file'] },
+					promptFileArgs: (file: string) => ['--prompt-file', file],
+				});
+				vi.spyOn(fs, 'openSync').mockReturnValue(91);
+				vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+				vi.spyOn(fs, 'fstatSync').mockReturnValue({ dev: 1, ino: 2 } as fs.Stats);
+				vi.spyOn(fs, 'lstatSync').mockReturnValue({ dev: 1, ino: 2 } as fs.Stats);
+				vi.spyOn(fs, 'unlinkSync').mockImplementation(() => undefined);
+				vi.spyOn(fs, 'closeSync').mockImplementation(() => undefined);
+			});
+
+			// A Grok turn finishes only on its native success record, so
+			// the clean row writes one; the failed row stays silent.
+			it.each([0, 7])('retains local bytes and identity through exit %i', async (exitCode) => {
+				if (exitCode === 0) mockGetOutputParser.mockReturnValue(new GrokOutputParser());
+				const [result, runningProcesses] = await Promise.all([
+					executeCuePrompt(
+						createExecutionConfig({
+							toolType: 'grok',
+							promptPath: privateContent,
+							appendSystemPrompt: 'SYSTEM',
+							customPath: '/fixture/grok',
+							customEnvVars: { GROK_HOME: '/fixture/account' },
+							session: createMockSession({ newSessionMessage: 'FIRST' }),
+						})
+					),
+					(async () => {
+						await vi.advanceTimersByTimeAsync(0);
+						expect(mockSpawn).toHaveBeenCalledTimes(1);
+						expect(fs.unlinkSync).not.toHaveBeenCalled();
+						const runningProcesses = getCueProcessList();
+						expect(runningProcesses).toHaveLength(1);
+						if (exitCode === 0)
+							mockChild.stdout.emit(
+								'data',
+								JSON.stringify({ type: 'end', stopReason: 'end_turn', sessionId: 'grok-s1' }) + '\n'
+							);
+						mockChild.emit('close', exitCode);
+						return JSON.stringify(runningProcesses);
+					})(),
+				]);
+				expect(result).toMatchObject({
+					exitCode,
+					status: exitCode ? 'failed' : 'completed',
+				});
+				const file = vi.mocked(fs.openSync).mock.calls[0][0];
+				expect(fs.openSync).toHaveBeenCalledExactlyOnceWith(file, 'wx', 0o600);
+				expect(fs.writeFileSync).toHaveBeenCalledExactlyOnceWith(
+					91,
+					JSON.stringify({
+						type: 'acp',
+						content: [
+							{
+								type: 'text',
+								text: embedSystemPromptInPrompt(
+									'SYSTEM',
+									`FIRST\n\n---\n\nsubstituted: ${privateContent}`
+								),
+							},
+						],
+					}),
+					'utf8'
+				);
+				expect(mockSpawn).toHaveBeenCalledExactlyOnceWith(
+					'/fixture/grok',
+					expect.arrayContaining(['--prompt-file', file]),
+					expect.objectContaining({
+						env: expect.objectContaining({ GROK_HOME: '/fixture/account' }),
+						stdio: ['ignore', 'pipe', 'pipe'],
+					})
+				);
+				expect(mockChild.stdin.write).not.toHaveBeenCalled();
+				expect(runningProcesses).not.toContain(String(file));
+				expect(fs.unlinkSync).toHaveBeenCalledExactlyOnceWith(file);
+				expect(fs.closeSync).toHaveBeenCalledExactlyOnceWith(91);
+				expectProofReleased();
+			});
+
+			it('fails a silent clean Grok exit with no native terminal record', async () => {
+				const resultPromise = executeCuePrompt(
+					createExecutionConfig({ toolType: 'grok', promptPath: privateContent })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+				expect(result).toMatchObject({ exitCode: 0, status: 'failed' });
+				expect(result.stderr).toContain('native terminal record');
+				expectProofReleased();
+			});
+
+			it.each(['partial write', 'competing stdin', 'transport mismatch'])(
+				'refuses %s and never retries text',
+				async (failure) => {
+					if (failure === 'partial write')
+						vi.mocked(fs.writeFileSync).mockImplementationOnce(() => {
+							throw new Error(`/private/artifact: ${privateContent}`);
+						});
+					else {
+						const attachProof = buildBoundary.afterBuild!;
+						buildBoundary.afterBuild = (result) => {
+							attachProof(result);
+							if (!result.ok) return;
+							if (failure === 'competing stdin') result.spec.stdinPrompt = privateContent;
+							else result.spec.promptArtifact!.owner = 'remote';
+						};
+					}
+					const config = createExecutionConfig({ toolType: 'grok', promptPath: privateContent });
+					const result = await executeCuePrompt(config);
+					expect(result).toMatchObject({
+						status: 'failed',
+						stderr:
+							failure === 'partial write'
+								? 'Spawn error: Prompt-file launch failed.'
+								: 'Prompt-file preparation unavailable.',
+					});
+					expect(mockSpawn).not.toHaveBeenCalled();
+					expect(mockBuildAgentArgs).toHaveBeenCalledTimes(1);
+					expect(fs.openSync).toHaveBeenCalledTimes(failure === 'partial write' ? 1 : 0);
+					expect(fs.unlinkSync).toHaveBeenCalledTimes(failure === 'partial write' ? 1 : 0);
+					if (failure === 'partial write') expect(fs.closeSync).toHaveBeenCalledExactlyOnceWith(91);
+					expect(JSON.stringify([result, vi.mocked(config.onLog).mock.calls])).not.toContain(
+						privateContent
+					);
+					expectProofReleased();
+				}
+			);
+
+			it.each(['cancel', 'timeout', 'transport failure'])(
+				'keeps SSH ownership on %s without local writes',
+				async (ending) => {
+					mockWrapSpawnWithSsh.mockImplementationOnce(async () => ({
+						command: 'ssh',
+						args: ['dev@r1.example.com', '/bin/bash', '--norc', '--noprofile', '-s'],
+						cwd: '/fixture-client',
+						sshStdinScript: 'fixture private launch',
+						sshRemoteUsed: { id: 'r1', name: 'Remote', host: 'r1.example.com' },
+					}));
+					const controller = new AbortController();
+					const [result] = await Promise.all([
+						executeCuePrompt(
+							createExecutionConfig({
+								toolType: 'grok',
+								signal: controller.signal,
+								timeoutMs: 100,
+								sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+								sshStore: sshStoreWithRemotes(),
+							})
+						),
+						(async () => {
+							await vi.advanceTimersByTimeAsync(0);
+							expect(mockSpawn).toHaveBeenCalledTimes(1);
+							if (ending === 'cancel') controller.abort();
+							if (ending === 'timeout') await vi.advanceTimersByTimeAsync(100);
+							mockChild.emit('close', ending === 'transport failure' ? 255 : null);
+						})(),
+					]);
+					expect(result.status).toBe(
+						ending === 'cancel' ? 'stopped' : ending === 'timeout' ? 'timeout' : 'failed'
+					);
+					expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(1);
+					const artifact = mockWrapSpawnWithSsh.mock.lastCall![0].promptArtifact;
+					expect(mockChild.stdin.write).toHaveBeenCalledOnce();
+					const script = mockChild.stdin.write.mock.calls[0][0] as string;
+					expect(script).toContain(artifact.path);
+					expect(script.match(/readonly _maestro_prompt_pid_file=/g)).toHaveLength(1);
+					expect(signalRemoteAgent).toHaveBeenCalledWith(
+						expect.objectContaining({
+							promptArtifactPath: artifact.path,
+							sessionId: 'run-1',
+							sshArgs: mockSpawn.mock.calls[0][1],
+						}),
+						'terminate'
+					);
+					expect(fs.openSync).not.toHaveBeenCalled();
+					expect(fs.unlinkSync).not.toHaveBeenCalled();
+					expect(mockSpawn).toHaveBeenCalledTimes(1);
+					expectProofReleased();
+				}
+			);
+		});
+
+		it('releases a successful build cancelled in the microtask before executor continuation', async () => {
+			const controller = new AbortController();
+			const attachProof = buildBoundary.afterBuild!;
+			buildBoundary.afterBuild = (result) => {
+				expect(result.ok).toBe(true);
+				attachProof(result);
+				void Promise.resolve().then(() => controller.abort());
+			};
+			const onRunTranscript = vi.fn();
+			const result = await executeCuePrompt(
+				createExecutionConfig({ signal: controller.signal, onRunTranscript })
+			);
+			expect(result.status).toBe('stopped');
+			expectProofReleased();
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(mockBuildAgentArgs).toHaveBeenCalledTimes(1);
+			expect(onRunTranscript).not.toHaveBeenCalled();
+		});
+
+		it('keeps cancellation ahead of a failed build without acquiring proof ownership', async () => {
+			const controller = new AbortController();
+			mockGetAgentDefinition.mockReturnValue(null);
+			buildBoundary.afterBuild = (result) => {
+				expect(result.ok).toBe(false);
+				void Promise.resolve().then(() => controller.abort());
+			};
+			const result = await executeCuePrompt(createExecutionConfig({ signal: controller.signal }));
+			expect(result).toMatchObject({ status: 'stopped', stderr: '' });
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(revoke).not.toHaveBeenCalled();
+			expect(removeProof).not.toHaveBeenCalled();
+		});
+
+		it.each(['logging', 'heartbeat'] as const)(
+			'releases proofs when %s setup throws before execution',
+			async (stage) => {
+				const failure = new Error(privateContent);
+				const config = createExecutionConfig();
+				if (stage === 'logging')
+					config.onLog = vi.fn(() => {
+						throw failure;
+					});
+				else
+					vi.spyOn(wakaTime, 'getWakaTimeManager').mockImplementation(() => {
+						throw failure;
+					});
+				await expect(executeCuePrompt(config)).rejects.toBe(failure);
+				expectProofReleased();
+				expect(mockSpawn).not.toHaveBeenCalled();
+			}
+		);
+
+		it('releases proofs when exclusive local prompt preparation fails without retry or private diagnostics', async () => {
+			const promptFile = path.resolve('private-cue-prompt.json');
+			const attachProof = buildBoundary.afterBuild!;
+			buildBoundary.afterBuild = (result) => {
+				attachProof(result);
+				if (!result.ok) return;
+				result.spec.args = ['--prompt-file', promptFile];
+				result.spec.promptArtifact = {
+					owner: 'local',
+					path: promptFile,
+					content: privateContent,
+					encoding: 'utf8',
+					mode: 0o600,
+					flag: 'wx',
+					cleanup: 'turn',
+				};
+			};
+			const open = vi.spyOn(fs, 'openSync').mockImplementation(() => {
+				throw new Error(`${promptFile}: ${privateContent}`);
+			});
+			const config = createExecutionConfig();
+			const result = await executeCuePrompt(config);
+			expect(open).toHaveBeenCalledExactlyOnceWith(promptFile, 'wx', 0o600);
+			expect(result).toMatchObject({
+				status: 'failed',
+				stderr: 'Spawn error: Prompt-file launch failed.',
+			});
+			expectProofReleased();
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(mockBuildAgentArgs).toHaveBeenCalledTimes(1);
+			const diagnostics = JSON.stringify([
+				result,
+				vi.mocked(config.onLog).mock.calls,
+				warn.mock.calls,
+			]);
+			for (const privateValue of [promptFile, privateContent, proofFile, token!])
+				expect(diagnostics).not.toContain(privateValue);
+		});
+
+		it.each([0, 7])('releases proofs before the transcript after exit %i', async (exitCode) => {
+			const onRunTranscript = vi.fn();
+			const pending = executeCuePrompt(createExecutionConfig({ onRunTranscript }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(proofIdentity.pluginToolRunIdentity.resolve(token).callerAgentId).toBe('session-1');
+			expect(ownedFiles.has(proofFile)).toBe(true);
+			mockChild.emit('close', exitCode);
+			const result = await pending;
+			expect(result).toMatchObject({ exitCode, status: exitCode === 0 ? 'completed' : 'failed' });
+			expectProofReleased();
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			expect(onRunTranscript).toHaveBeenCalledTimes(1);
+			expect(removeProof.mock.invocationCallOrder[0]).toBeLessThan(
+				onRunTranscript.mock.invocationCallOrder[0]
+			);
+		});
+
+		it('reports cleanup failure without private proof paths, tokens or prompt content', async () => {
+			removeProof.mockImplementation(() => {
+				throw new Error(`${proofFile}: ${token} ${privateContent}`);
+			});
+			const config = createExecutionConfig({ promptPath: privateContent });
+			const pending = executeCuePrompt(config);
+			await vi.advanceTimersByTimeAsync(0);
+			mockChild.emit('close', 0);
+			const result = await pending;
+			expect(result.status).toBe('completed');
+			expect(revoke).toHaveBeenCalledExactlyOnceWith(token);
+			expect(proofIdentity.pluginToolRunIdentity.resolve(token).callerAgentId).toBeNull();
+			expect(removeProof).toHaveBeenCalledExactlyOnceWith(proofFile);
+			expect(warn).toHaveBeenCalledExactlyOnceWith(
+				'Could not remove plugin run proof file',
+				'[PluginRunIdentity]'
+			);
+			const diagnostics = JSON.stringify([
+				result,
+				vi.mocked(config.onLog).mock.calls,
+				warn.mock.calls,
+			]);
+			for (const privateValue of [proofFile, token!, privateContent])
+				expect(diagnostics).not.toContain(privateValue);
+		});
+
+		it('finishes an ordinary no-proof run without attempting proof cleanup', async () => {
+			buildBoundary.afterBuild = undefined;
+			const pending = executeCuePrompt(createExecutionConfig());
+			await vi.advanceTimersByTimeAsync(0);
+			mockChild.emit('close', 0);
+			expect((await pending).status).toBe('completed');
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			expect(revoke).not.toHaveBeenCalled();
+			expect(removeProof).not.toHaveBeenCalled();
 		});
 	});
 });

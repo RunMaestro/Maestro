@@ -27,15 +27,20 @@ import {
 	type GroupChatMessage as GroupChatRoomMessage,
 	GROUP_CHAT_USER_NAME,
 	extractAllMentions,
+	findAgentByGuidMention,
+	findParticipantSourceAgent,
+	findSessionForParticipantName,
+	findUnmatchedMentions,
 	findUniqueMentionMatch,
 	getMentionNameForContext,
-	getMentionMatchPriority,
-	stripUnmatchedTrailingClosers,
+	isAgentGuid,
 	normalizeMentionName,
 	requiresIdleParticipants,
+	splitAutoRunTarget,
 	stripMarkdownFormatting,
 } from '../../group-chat-types';
-import { FALLBACK_CONTEXT_WINDOW } from '../../agentConstants';
+import { FALLBACK_CONTEXT_WINDOW, getContextWindowForAgent } from '../../agentConstants';
+import { createKeyedWriteQueue } from '../../keyedWriteQueue';
 import type { SteeringResultFrame } from '../../chatSteering';
 import {
 	GROUP_CHAT_STEER_BLOCKED_DETAILS,
@@ -64,6 +69,7 @@ import {
 import { extractFirstSentence, type GroupChatStore } from './storage';
 import { GROUP_CHAT_MODERATOR_NAME, resolveGroupChatTurnKey } from './turn-metrics';
 import type { GroupChatTurnMetrics } from './turn-metrics';
+import { mediaSubtype, parseBase64DataUrl } from '../../dataUrl';
 import type {
 	GroupChatAgentDirectory,
 	GroupChatEventSink,
@@ -158,10 +164,14 @@ interface ModeratorRoutingRetry {
  * @param participants - List of valid participants
  * @returns Array of participant names that were mentioned (using original names, not hyphenated)
  */
-export function extractMentions(text: string, participants: GroupChatParticipant[]): string[] {
+export function extractMentions(
+	text: string,
+	participants: GroupChatParticipant[],
+	sessions: readonly GroupChatSessionInfo[] = []
+): string[] {
 	const mentions: string[] = [];
-	for (const mentionedName of extractAllMentions(text)) {
-		const matchingParticipant = findUniqueMentionMatch(mentionedName, participants, (p) => p.name);
+	for (const mentionedName of extractAllMentions(text, mentionableNames(participants, sessions))) {
+		const matchingParticipant = findParticipantForMention(mentionedName, participants, sessions);
 		if (matchingParticipant && !mentions.includes(matchingParticipant.name)) {
 			mentions.push(matchingParticipant.name);
 		}
@@ -169,61 +179,81 @@ export function extractMentions(text: string, participants: GroupChatParticipant
 	return mentions;
 }
 
-export function findSessionForParticipantName(
-	participantName: string,
-	sessions: readonly GroupChatSessionInfo[]
-): GroupChatSessionInfo | undefined {
-	// This receives a persisted participant name, not a user-typed mention, so it
-	// must match the originating session conservatively. Priority-1 ("safe folded")
-	// matches collapse bracket styles (e.g. "Review Bot [Linux]" vs
-	// "Review Bot (Linux)") and could borrow the wrong session's cwd / custom args /
-	// SSH config. Only accept exact (4), legacy (3), or safe-normalized (2) matches,
-	// and bail on ties so an ambiguous lookup never silently picks one.
-	let bestPriority = 0;
-	let bestMatches: GroupChatSessionInfo[] = [];
+// Re-exported for existing importers; the conservative rule lives in shared so
+// the router and the chain of thought export reach the same answer.
+export { findSessionForParticipantName };
 
-	for (const session of sessions) {
-		const priority = getMentionMatchPriority(participantName, session.name);
-		if (priority < 2) continue;
-
-		if (priority > bestPriority) {
-			bestPriority = priority;
-			bestMatches = [session];
-			continue;
-		}
-
-		if (priority === bestPriority) {
-			bestMatches.push(session);
-		}
+/**
+ * The participant a mention addresses: by the source agent's full GUID
+ * (`@8dac9050-...`), by the participant's name, or by the CURRENT name of the
+ * agent a participant was added from (so `@New-Name` still reaches a
+ * participant that joined before its agent was renamed).
+ */
+export function findParticipantForMention(
+	mentionedName: string,
+	participants: readonly GroupChatParticipant[],
+	sessions: readonly GroupChatSessionInfo[] = []
+): GroupChatParticipant | undefined {
+	const cleaned = stripMarkdownFormatting(mentionedName);
+	if (isAgentGuid(cleaned)) {
+		const lower = cleaned.toLowerCase();
+		return participants.find((p) => p.sourceSessionId?.toLowerCase() === lower);
 	}
-
-	return bestMatches.length === 1 ? bestMatches[0] : undefined;
+	const byName = findUniqueMentionMatch(mentionedName, participants, (p) => p.name);
+	if (byName) return byName;
+	const linked = sessions.filter((s) => participants.some((p) => p.sourceSessionId === s.id));
+	const session = findUniqueMentionMatch(mentionedName, linked, (s) => s.name);
+	return session ? participants.find((p) => p.sourceSessionId === session.id) : undefined;
 }
 
 /**
  * Resolve a moderator/user @mention to the session that should be auto-added.
  *
- * Resolves against existing participants AND available (non-terminal) sessions
- * together so a weak (safe-folded) participant match can't shadow a stronger
- * (exact/legacy) session match, e.g. an existing "Review Bot [Linux]"
+ * A full agent GUID (`@8dac9050-...`) names its agent directly. Otherwise the
+ * mention resolves against existing participants AND available (non-terminal)
+ * sessions together so a weak (safe-folded) participant match can't shadow a
+ * stronger (exact/legacy) session match, e.g. an existing "Review Bot [Linux]"
  * participant must not block auto-adding a mentioned "Review Bot (Linux)"
  * session. Returns the session to add, or undefined when the mention is already
- * an existing participant or resolves ambiguously (a tie refuses to route).
+ * an existing participant (by name or by its linked agent) or resolves
+ * ambiguously (a tie refuses to route).
  */
 function resolveSessionToAutoAdd(
 	mentionedName: string,
-	existingParticipantNames: ReadonlySet<string>,
+	participants: readonly GroupChatParticipant[],
 	sessions: readonly GroupChatSessionInfo[]
 ): GroupChatSessionInfo | undefined {
+	const addable = sessions.filter((s) => s.toolType !== 'terminal');
+	const linkedIds = new Set(participants.map((p) => p.sourceSessionId).filter(Boolean));
+	const byGuid = findAgentByGuidMention(mentionedName, addable);
+	if (byGuid) return linkedIds.has(byGuid.id) ? undefined : byGuid;
+
 	type Candidate = { name: string; session: GroupChatSessionInfo | null };
 	const candidates: Candidate[] = [
-		...Array.from(existingParticipantNames, (name): Candidate => ({ name, session: null })),
-		...sessions
-			.filter((s) => s.toolType !== 'terminal')
-			.map((s): Candidate => ({ name: s.name, session: s })),
+		...participants.map((p): Candidate => ({ name: p.name, session: null })),
+		// An agent already in the chat under its old name counts as that participant.
+		...addable.map((s): Candidate => ({ name: s.name, session: linkedIds.has(s.id) ? null : s })),
 	];
 	const best = findUniqueMentionMatch(mentionedName, candidates, (c) => c.name);
 	return best?.session ?? undefined;
+}
+
+/**
+ * Every name a mention in this chat may resolve to: its participants and the
+ * agents that could be auto-added, by name and by GUID. Terminal agents are
+ * left out, as in `resolveSessionToAutoAdd`.
+ */
+function mentionableNames(
+	participants: readonly GroupChatParticipant[],
+	sessions: readonly GroupChatSessionInfo[]
+): string[] {
+	const addable = sessions.filter((s) => s.toolType !== 'terminal');
+	return [
+		...participants.map((p) => p.name),
+		...addable.map((s) => s.name),
+		// A full GUID is a valid mention too (`@8dac9050-...`).
+		...addable.map((s) => s.id),
+	];
 }
 
 // Re-exported for existing callers; the parser lives in shared so the CLI/web
@@ -244,7 +274,10 @@ export interface AutoRunDirective {
 	filename?: string;
 }
 
-export function extractAutoRunDirectives(text: string): {
+export function extractAutoRunDirectives(
+	text: string,
+	knownNames?: readonly string[]
+): {
 	autoRunDirectives: AutoRunDirective[];
 	/** @deprecated use autoRunDirectives */
 	autoRunParticipants: string[];
@@ -252,16 +285,19 @@ export function extractAutoRunDirectives(text: string): {
 } {
 	const autoRunDirectives: AutoRunDirective[] = [];
 	// Matches: !autorun @AgentName  OR  !autorun @AgentName:filename.md
-	const autoRunPattern = /!autorun\s+@([^\s@:,;!?'"<>]+)(?::([^\s,;!?'"<>]+))?/g;
+	// The target is captured whole, colons included, and split by
+	// splitAutoRunTarget: an agent name may itself hold a colon
+	// (`@Tome:-RSSidian:plan.md`), so known names decide where the file starts.
+	const autoRunPattern = /!autorun\s+@([^\s@,;!?'"<>]+)/g;
 	let match;
 
 	while ((match = autoRunPattern.exec(text)) !== null) {
-		const participantName = stripMarkdownFormatting(match[1]);
-		if (!participantName) continue;
-		// Trim unmatched trailing closers so a directive wrapped in punctuation,
-		// e.g. "(!autorun @Agent:plan.md)", yields "plan.md" not "plan.md)" while
+		// splitAutoRunTarget trims unmatched trailing closers from the file, so
+		// "(!autorun @Agent:plan.md)" yields "plan.md" not "plan.md)" while
 		// balanced brackets in names like "Phase-01-(Setup).md" are preserved.
-		const filename = match[2] ? stripUnmatchedTrailingClosers(match[2]) || undefined : undefined;
+		const target = splitAutoRunTarget(match[1], knownNames);
+		if (!target) continue;
+		const { name: participantName, filename } = target;
 		if (!autoRunDirectives.some((d) => d.participantName === participantName)) {
 			autoRunDirectives.push({ participantName, filename });
 		}
@@ -269,7 +305,7 @@ export function extractAutoRunDirectives(text: string): {
 
 	// Remove !autorun lines from the message for display
 	const cleanedText = text
-		.replace(/^.*!autorun\s+@[^\s@:,;!?'"<>]+.*$/gm, '')
+		.replace(/^.*!autorun\s+@[^\s@,;!?'"<>]+.*$/gm, '')
 		.replace(/\n{3,}/g, '\n\n')
 		.trim();
 
@@ -329,6 +365,29 @@ export function isDeletedGroupChatFailure(error: unknown): boolean {
 	return /^Group chat not found: /i.test(message);
 }
 
+/**
+ * True when routing a participant's response failed only because the user
+ * removed that participant while it was still working.
+ *
+ * `removeParticipant` kills the participant's process and drops it from the
+ * chat; it is the only code path that removes a participant once added, and
+ * `addParticipant` persists before anything is spawned. So the exit that the
+ * kill produces routes into a chat that no longer lists the participant, and
+ * `routeAgentResponse` throws `Participant '<name>' not found in group chat`.
+ * The listener already recovers (participant marked done), and the fallback
+ * path retried the same routing, so each removal produced two Sentry events
+ * (MAESTRO-WJ).
+ */
+export function isRemovedParticipantFailure(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error ?? '');
+	return /^Participant '.*' not found in group chat$/i.test(message);
+}
+
+/** Routing failures caused by a user deleting the chat or removing the participant. */
+function isExpectedRoutingFailure(error: unknown): boolean {
+	return isDeletedGroupChatFailure(error) || isRemovedParticipantFailure(error);
+}
+
 /** What the engine is built over. */
 export interface GroupChatEngineOptions {
 	/** Chat storage. Only the functions the engine calls are required. */
@@ -386,6 +445,12 @@ interface SteeredMessage {
 	readOnly: boolean;
 }
 
+export interface AddParticipantByAgentIdResult {
+	participant: GroupChatParticipant;
+	/** True when the agent was already a participant; nothing changed. */
+	alreadyMember: boolean;
+}
+
 /**
  * Creates one group chat engine. Everything that used to be module state in the
  * desktop's router (pending participants, watchdogs, the moderator registry,
@@ -417,6 +482,8 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 		wasParticipantRecentlyRemoved,
 	} = participantRegistry;
 	const recovery = createSessionRecovery({ store });
+	// Keep provider lookups and card updates ordered, including across replacement turns.
+	const usageUpdates = createKeyedWriteQueue();
 
 	/**
 	 * The moderator turn that is running for each chat, by its FULL process id and the
@@ -1122,42 +1189,28 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 		// A routing retry reuses the already-resolved participant set and must not
 		// reinterpret its correction prompt as a new user turn.
 		if (!routingRetry && launcher) {
-			const userMentions = extractAllMentions(message);
 			const sessions = agents.list();
-			const existingParticipantNames = new Set(chat.participants.map((p) => p.name));
+			await backfillParticipantSourceIds(groupChatId, chat, sessions);
+			chat = (await loadGroupChat(groupChatId)) ?? chat;
+			const userMentions = extractAllMentions(
+				message,
+				mentionableNames(chat.participants, sessions)
+			);
+			const knownParticipants = [...chat.participants];
 
 			for (const mentionedName of userMentions) {
 				// Resolve against existing participants AND available sessions together
 				// so a weak participant match can't shadow a stronger session match.
 				// Returns undefined when the mention is already a participant or
 				// resolves ambiguously.
-				const matchingSession = resolveSessionToAutoAdd(
-					mentionedName,
-					existingParticipantNames,
-					sessions
-				);
+				const matchingSession = resolveSessionToAutoAdd(mentionedName, knownParticipants, sessions);
 
 				if (matchingSession) {
 					try {
-						// Use the original session name as the participant name
-						const participantName = matchingSession.name;
 						logger.debug(
-							`[GroupChatRouter] Auto-adding participant @${participantName} from user mention @${mentionedName} (session ${matchingSession.id})`
+							`[GroupChatRouter] Auto-adding participant @${matchingSession.name} from user mention @${mentionedName} (session ${matchingSession.id})`
 						);
-						await addParticipant(groupChatId, participantName, matchingSession.toolType, {
-							customModel: matchingSession.customModel,
-							customArgs: matchingSession.customArgs,
-							customEnvVars: matchingSession.customEnvVars,
-							sshRemoteName: matchingSession.sshRemoteName,
-							sshRemoteConfig: matchingSession.sshRemoteConfig,
-						});
-						existingParticipantNames.add(participantName);
-
-						// Emit participant changed event so UI updates
-						const updatedChatForEmit = await loadGroupChat(groupChatId);
-						if (updatedChatForEmit) {
-							events.participantsChanged(groupChatId, updatedChatForEmit.participants);
-						}
+						knownParticipants.push(await addParticipantFromSession(groupChatId, matchingSession));
 					} catch (error) {
 						if (isModeratorInactiveAutoAddRace(error, groupChatId)) {
 							logger.warn(
@@ -1195,10 +1248,11 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 			savedImageFilenames = [];
 			for (const dataUrl of images) {
 				// Extract base64 data and extension from data URL
-				const match = dataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
-				if (match) {
-					const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
-					const buffer = Buffer.from(match[2], 'base64');
+				const parsed = parseBase64DataUrl(dataUrl);
+				const subtype = parsed ? mediaSubtype(parsed.mediaType) : null;
+				if (parsed && subtype && /^\w+$/.test(subtype)) {
+					const ext = subtype === 'jpeg' ? 'jpg' : subtype;
+					const buffer = Buffer.from(parsed.base64, 'base64');
 					const filename = await saveImage(chat.imagesDir, buffer, `image.${ext}`);
 					savedImageFilenames.push(filename);
 				}
@@ -1215,7 +1269,17 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 				savedImageFilenames,
 			});
 
-			const explicitParticipantNames = extractMentions(message, chat.participants);
+			// Without the agent list every non-participant would read as unmatched.
+			const userSessions = agents.list();
+			await warnAboutUnmatchedMentions(
+				groupChatId,
+				chat.logPath,
+				message,
+				mentionableNames(chat.participants, userSessions),
+				'user'
+			);
+
+			const explicitParticipantNames = extractMentions(message, chat.participants, userSessions);
 			if (launcher && explicitParticipantNames.length > 0) {
 				pendingExplicitParticipantHandoffs.set(groupChatId, {
 					message,
@@ -1277,8 +1341,9 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 					`[GroupChat:Debug] Available sessions from callback: ${sessions.map((s) => s.name).join(', ')}`
 				);
 				const participantNames = new Set(chat.participants.map((p) => p.name));
+				const linkedIds = new Set(chat.participants.map((p) => p.sourceSessionId));
 				const availableSessions = sessions.filter(
-					(s) => s.toolType !== 'terminal' && !participantNames.has(s.name)
+					(s) => s.toolType !== 'terminal' && !participantNames.has(s.name) && !linkedIds.has(s.id)
 				);
 				if (availableSessions.length > 0) {
 					// Use normalized names (spaces → hyphens) so moderator can @mention them properly
@@ -1610,6 +1675,130 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 	}
 
 	/**
+	 * Report @mentions that match no participant and no agent. Before this, such a
+	 * mention did nothing and said nothing, so a misread name looked like an agent
+	 * that ignored the chat.
+	 *
+	 * Every unmatched mention is logged. Only the user's own message also gets a
+	 * line in the chat: moderator prose often holds literal @tokens (`@example`,
+	 * decorators), and commit 600b4b9ed1 removed the chat warning for those on
+	 * purpose.
+	 */
+	async function warnAboutUnmatchedMentions(
+		groupChatId: string,
+		logPath: string,
+		text: string,
+		knownNames: readonly string[],
+		source: 'user' | 'moderator'
+	): Promise<void> {
+		const unmatched = findUnmatchedMentions(text, knownNames);
+		if (unmatched.length === 0) return;
+		logger.warn(`Group chat ${source} @mention matched no agent`, LOG_CONTEXT, {
+			groupChatId,
+			unmatched,
+		});
+		if (source !== 'user') return;
+		const list = unmatched.map((name) => `@${name}`).join(', ');
+		await announceToChat(
+			groupChatId,
+			logPath,
+			`⚠️ No agent matches ${list}. Mention an agent by its name as shown in the Left Bar, with spaces written as hyphens.`
+		);
+	}
+
+	/**
+	 * Add a Maestro agent to a group chat as a participant, carrying its cwd,
+	 * model, custom args, env and SSH config, and linking it by GUID. The one path
+	 * every add takes: a user @mention, a moderator @mention, and
+	 * `maestro-cli group-chat add`.
+	 */
+	async function addParticipantFromSession(
+		groupChatId: string,
+		session: GroupChatSessionInfo
+	): Promise<GroupChatParticipant> {
+		const participant = await addParticipant(groupChatId, session.name, session.toolType, {
+			sourceSessionId: session.id,
+			customModel: session.customModel,
+			customArgs: session.customArgs,
+			customEnvVars: session.customEnvVars,
+			sshRemoteName: session.sshRemoteName,
+			sshRemoteConfig: session.sshRemoteConfig,
+		});
+
+		// Emit participant changed event so UI updates
+		const updatedChat = await loadGroupChat(groupChatId);
+		if (updatedChat) {
+			events.participantsChanged(groupChatId, updatedChat.participants);
+		}
+		return participant;
+	}
+
+	/**
+	 * Add the agent with this exact GUID to a group chat, without an @mention.
+	 * Backs `maestro-cli group-chat add`. Posts a system line so the moderator,
+	 * which reads the log, learns the agent joined.
+	 */
+	async function addParticipantByAgentId(
+		groupChatId: string,
+		agentId: string
+	): Promise<AddParticipantByAgentIdResult> {
+		const chat = await loadGroupChat(groupChatId);
+		if (!chat) throw new Error(`Group chat not found: ${groupChatId}`);
+		const sessions = agents.list();
+		const session = sessions.find((s) => s.id === agentId);
+		if (!session) throw new Error(`No agent with ID ${agentId}`);
+		if (session.toolType === 'terminal') {
+			throw new Error(`Agent ${session.name} is a terminal agent and cannot join a group chat`);
+		}
+
+		await backfillParticipantSourceIds(groupChatId, chat, sessions);
+		const refreshed = (await loadGroupChat(groupChatId)) ?? chat;
+		const existing = refreshed.participants.find((p) => p.sourceSessionId === session.id);
+		if (existing) return { participant: existing, alreadyMember: true };
+
+		const participant = await addParticipantFromSession(groupChatId, session);
+		const peerNames = [...refreshed.participants.map((p) => p.name), participant.name];
+		await announceToChat(
+			groupChatId,
+			refreshed.logPath,
+			`@${getMentionNameForContext(participant.name, peerNames)} joined the chat.`
+		);
+		return { participant, alreadyMember: false };
+	}
+
+	/**
+	 * Migration for chats saved before participants carried `sourceSessionId`:
+	 * link each such participant to the agent its name matches (conservatively,
+	 * see `findSessionForParticipantName`), once, so later lookups go by GUID and
+	 * survive a rename. A participant whose agent was renamed or deleted before
+	 * this ran stays unlinked and keeps resolving by name.
+	 */
+	async function backfillParticipantSourceIds(
+		groupChatId: string,
+		chat: { participants: readonly GroupChatParticipant[] },
+		sessions: readonly GroupChatSessionInfo[]
+	): Promise<void> {
+		const addable = sessions.filter((s) => s.toolType !== 'terminal');
+		const linked = new Set(chat.participants.map((p) => p.sourceSessionId).filter(Boolean));
+		for (const participant of chat.participants) {
+			if (participant.sourceSessionId) continue;
+			const session = findSessionForParticipantName(participant.name, addable);
+			if (!session || linked.has(session.id)) continue;
+			linked.add(session.id);
+			try {
+				await updateParticipant(groupChatId, participant.name, { sourceSessionId: session.id });
+			} catch (error) {
+				// The participant was removed between load and write; nothing to link.
+				logger.warn('Could not link group chat participant to its agent', LOG_CONTEXT, {
+					groupChatId,
+					participantName: participant.name,
+					error: String(error),
+				});
+			}
+		}
+	}
+
+	/**
 	 * Tells the chat (and, through the log, the moderator's next turn) which agents
 	 * the turn is holding for. Emitted once per moderator turn rather than once per
 	 * agent, so a fan-out to three busy agents is one line rather than three.
@@ -1743,7 +1932,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 		// turn is the post-round summary and its history entry is classified as 'synthesis'.
 		const isSynthesisRound = pendingSynthesisRounds.delete(groupChatId);
 
-		const chat = await loadGroupChat(groupChatId);
+		let chat = await loadGroupChat(groupChatId);
 		if (!chat) {
 			// Benign race: the group chat was deleted while a moderator process was still
 			// running. The exit handler routes here on process exit; nothing left to do.
@@ -1759,7 +1948,14 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 		// Strip internal !autorun directives from the message before logging/display.
 		// These are machine-to-machine commands; storing them in the chat log causes
 		// the synthesis moderator to see them in history and potentially re-trigger them.
-		const { autoRunDirectives, cleanedText: displayMessage } = extractAutoRunDirectives(message);
+		const moderatorSessions = agents.list();
+		await backfillParticipantSourceIds(groupChatId, chat, moderatorSessions);
+		chat = (await loadGroupChat(groupChatId)) ?? chat;
+		const moderatorKnownNames = mentionableNames(chat.participants, moderatorSessions);
+		const { autoRunDirectives, cleanedText: displayMessage } = extractAutoRunDirectives(
+			message,
+			moderatorKnownNames
+		);
 
 		// Only persist/emit the moderator message if it has visible content after stripping directives
 		const shouldPersistModeratorMessage = displayMessage.trim().length > 0;
@@ -1769,12 +1965,12 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 		// summary ('synthesis'), or was a plain final response ('response').
 
 		// Extract ALL mentions from the message
-		const allMentions = extractAllMentions(message);
+		const allMentions = extractAllMentions(message, moderatorKnownNames);
 		logger.debug(`[GroupChat:Debug] Extracted @mentions: ${allMentions.join(', ') || '(none)'}`);
 
-		const existingParticipantNames = new Set(chat.participants.map((p) => p.name));
+		const knownParticipants = [...chat.participants];
 		logger.debug(
-			`[GroupChat:Debug] Existing participants: ${Array.from(existingParticipantNames).join(', ') || '(none)'}`
+			`[GroupChat:Debug] Existing participants: ${knownParticipants.map((p) => p.name).join(', ') || '(none)'}`
 		);
 
 		// Check for mentions that aren't already participants but match available sessions
@@ -1789,11 +1985,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 				// so a weak participant match can't shadow a stronger session match.
 				// Returns undefined when the mention is already a participant or
 				// resolves ambiguously.
-				const matchingSession = resolveSessionToAutoAdd(
-					mentionedName,
-					existingParticipantNames,
-					sessions
-				);
+				const matchingSession = resolveSessionToAutoAdd(mentionedName, knownParticipants, sessions);
 
 				if (matchingSession) {
 					// Respect an explicit user removal: a moderator turn that was in
@@ -1807,25 +1999,10 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 						continue;
 					}
 					try {
-						// Use the original session name as the participant name
-						const participantName = matchingSession.name;
 						logger.debug(
-							`[GroupChatRouter] Auto-adding participant @${participantName} from moderator mention @${mentionedName} (session ${matchingSession.id})`
+							`[GroupChatRouter] Auto-adding participant @${matchingSession.name} from moderator mention @${mentionedName} (session ${matchingSession.id})`
 						);
-						await addParticipant(groupChatId, participantName, matchingSession.toolType, {
-							customModel: matchingSession.customModel,
-							customArgs: matchingSession.customArgs,
-							customEnvVars: matchingSession.customEnvVars,
-							sshRemoteName: matchingSession.sshRemoteName,
-							sshRemoteConfig: matchingSession.sshRemoteConfig,
-						});
-						existingParticipantNames.add(participantName);
-
-						// Emit participant changed event so UI updates
-						const updatedChatForEmit = await loadGroupChat(groupChatId);
-						if (updatedChatForEmit) {
-							events.participantsChanged(groupChatId, updatedChatForEmit.participants);
-						}
+						knownParticipants.push(await addParticipantFromSession(groupChatId, matchingSession));
 					} catch (error) {
 						if (isModeratorInactiveAutoAddRace(error, groupChatId)) {
 							logger.warn(
@@ -1858,7 +2035,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 			return;
 		}
 
-		const mentions = extractMentions(message, updatedChat.participants);
+		const mentions = extractMentions(message, updatedChat.participants, moderatorSessions);
 		logger.debug(
 			`[GroupChat:Debug] Valid participant mentions found: ${mentions.join(', ') || '(none)'}`
 		);
@@ -1951,6 +2128,14 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 			};
 			events.message(groupChatId, moderatorMessage);
 			logger.debug(`[GroupChat:Debug] Emitted moderator message to renderer`);
+
+			await warnAboutUnmatchedMentions(
+				groupChatId,
+				chat.logPath,
+				displayMessage,
+				mentionableNames(updatedChat.participants, agents.list()),
+				'moderator'
+			);
 		}
 
 		// Track participants that will need to respond for synthesis round
@@ -2024,10 +2209,10 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 
 			for (const directive of autoRunDirectives) {
 				const { participantName: autoRunName, filename: targetFilename } = directive;
-				const participant = findUniqueMentionMatch(
+				const participant = findParticipantForMention(
 					autoRunName,
 					updatedChat.participants,
-					(p) => p.name
+					sessions
 				);
 				if (!participant) {
 					console.warn(
@@ -2052,7 +2237,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 				}
 				autoRunParticipantNames.add(participant.name);
 
-				const matchingSession = findSessionForParticipantName(participant.name, sessions);
+				const matchingSession = findParticipantSourceAgent(participant, sessions);
 
 				// An Auto Run batch runs INSIDE the user's agent, so a busy agent is an
 				// even harder conflict here than a participant spawn is. Hold the batch
@@ -2307,7 +2492,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 				logger.debug(`[GroupChat:Debug] Participant agent ID: ${participant.agentId}`);
 
 				// Find matching session to get cwd
-				const matchingSession = findSessionForParticipantName(participantName, sessions);
+				const matchingSession = findParticipantSourceAgent(participant, sessions);
 				const cwd = matchingSession?.cwd || os.homedir();
 				logger.debug(`[GroupChat:Debug] CWD for participant: ${cwd}`);
 
@@ -2781,7 +2966,7 @@ Review the agent responses above. Either:
 
 		// Find matching session for cwd
 		const sessions = agents.list();
-		const matchingSession = findSessionForParticipantName(participantName, sessions);
+		const matchingSession = findParticipantSourceAgent(participant, sessions);
 		const cwd = matchingSession?.cwd || os.homedir();
 
 		// Build the prompt with recovery context
@@ -3167,7 +3352,7 @@ Review the agent responses above. Either:
 			// Mark AFTER routing completes. No text means no response to route: done.
 			await markAndMaybeSynthesize();
 		} catch (err) {
-			if (!isDeletedGroupChatFailure(err)) void captureException(err);
+			if (!isExpectedRoutingFailure(err)) void captureException(err);
 			logger.error(
 				'[GroupChat] Failed to load chat for participant output parsing',
 				'ProcessListener',
@@ -3180,7 +3365,7 @@ Review the agent responses above. Either:
 				}
 				await markAndMaybeSynthesize();
 			} catch (routeErr) {
-				if (!isDeletedGroupChatFailure(routeErr)) void captureException(routeErr);
+				if (!isExpectedRoutingFailure(routeErr)) void captureException(routeErr);
 				logger.error('[GroupChat] Failed to route agent response', 'ProcessListener', {
 					error: String(routeErr),
 					participant: participantName,
@@ -3316,50 +3501,69 @@ Review the agent responses above. Either:
 	 *
 	 * Context usage is skipped when the total exceeds the window: a multi-tool turn reports values
 	 * accumulated over its internal calls, and a percentage over 100 is not a measurement.
+	 * An unknown window clears the previous measurement instead of reusing another model's window.
+	 * Card updates are queued; the ledger is recorded immediately so turn completion cannot miss it.
 	 */
 	function usageReported(processId: string, usage: UsageStats): void {
 		if (!processId.startsWith(GROUP_CHAT_PREFIX)) return;
 		metrics.recordUsage(processId, usage);
 
 		const totalContextTokens = calculateContextTokens(usage);
-		const effectiveWindow = usage.contextWindow > 0 ? usage.contextWindow : FALLBACK_CONTEXT_WINDOW;
-		const fits = totalContextTokens <= effectiveWindow;
-
 		const participant = parseParticipantSessionId(processId);
-		if (participant) {
-			const update: { contextUsage?: number; tokenCount?: number; totalCost: number } = {
-				totalCost: usage.totalCostUsd,
-			};
-			if (fits) {
-				update.contextUsage = Math.round((totalContextTokens / effectiveWindow) * 100);
-				update.tokenCount = totalContextTokens;
-			}
-			updateParticipant(participant.groupChatId, participant.participantName, update)
-				.then((updated) =>
-					events.participantsChanged(participant.groupChatId, updated.participants)
-				)
-				.catch((error) => {
-					logger.error('[GroupChat] Failed to update participant usage', LOG_CONTEXT, {
-						error: String(error),
-						participant: participant.participantName,
-					});
-				});
-		}
-
 		const moderatorChatId = parseModeratorSessionId(processId);
-		if (moderatorChatId) {
-			// An accumulated total is reported as -1 so the card keeps its previous values; cost always moves.
-			events.moderatorUsage(
-				moderatorChatId,
-				fits
-					? {
-							contextUsage: Math.round((totalContextTokens / effectiveWindow) * 100),
-							totalCost: usage.totalCostUsd,
-							tokenCount: totalContextTokens,
-						}
-					: { contextUsage: -1, totalCost: usage.totalCostUsd, tokenCount: -1 }
-			);
-		}
+		const groupChatId = participant?.groupChatId ?? moderatorChatId;
+		if (!groupChatId) return;
+
+		void usageUpdates
+			.enqueue(groupChatId, async () => {
+				let effectiveWindow = usage.contextWindow;
+				if (!Number.isFinite(effectiveWindow) || effectiveWindow <= 0) {
+					const chat = await loadGroupChat(groupChatId);
+					const providerId = participant
+						? chat?.participants.find((p) => p.name === participant.participantName)?.agentId
+						: chat?.moderatorAgentId;
+					if (!providerId) return;
+					// Preserve other providers' existing group-chat fallback, without inventing a Grok window.
+					effectiveWindow =
+						providerId === 'grok' ? getContextWindowForAgent(providerId) : FALLBACK_CONTEXT_WINDOW;
+				}
+				const windowKnown = effectiveWindow > 0;
+				const fits = windowKnown && totalContextTokens <= effectiveWindow;
+
+				if (participant) {
+					const update: { contextUsage?: number; tokenCount?: number; totalCost: number } = {
+						totalCost: usage.totalCostUsd,
+					};
+					if (fits) {
+						update.contextUsage = Math.round((totalContextTokens / effectiveWindow) * 100);
+						update.tokenCount = totalContextTokens;
+					} else if (!windowKnown) {
+						// Explicit undefined removes stale fields; omission would preserve the old percentage.
+						update.contextUsage = undefined;
+						update.tokenCount = undefined;
+					}
+					const updated = await updateParticipant(groupChatId, participant.participantName, update);
+					events.participantsChanged(groupChatId, updated.participants);
+				} else if (moderatorChatId) {
+					// -1 preserves an accumulated turn's last measurement; -2 clears an unknown window.
+					const unavailable = windowKnown ? -1 : -2;
+					events.moderatorUsage(groupChatId, {
+						contextUsage: fits
+							? Math.round((totalContextTokens / effectiveWindow) * 100)
+							: unavailable,
+						totalCost: usage.totalCostUsd,
+						tokenCount: fits ? totalContextTokens : unavailable,
+					});
+				}
+			})
+			.catch((error) => {
+				if (!isDeletedGroupChatFailure(error)) void captureException(error);
+				logger.error('[GroupChat] Failed to update usage', LOG_CONTEXT, {
+					error: String(error),
+					groupChatId,
+					participant: participant?.participantName,
+				});
+			});
 	}
 
 	/** A participant's output as it streams, for a peek panel. A moderator's is not shown. */
@@ -3390,12 +3594,15 @@ Review the agent responses above. Either:
 		routeAgentResponse,
 		spawnModeratorSynthesis,
 		respawnParticipantWithRecovery,
+		addParticipantByAgentId,
 		// Progression
 		turnEnded,
 		autoRunCompleted,
 		noteActivity: noteGroupChatActivity,
 		sessionAnnounced,
 		usageReported,
+		// Hosts must drain queued card writes before draining/releasing the backing store.
+		drainUsageUpdates: usageUpdates.idle,
 		liveOutput,
 		// Steering
 		runningTurns,

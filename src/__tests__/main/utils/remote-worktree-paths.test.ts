@@ -76,7 +76,8 @@ describe.skipIf(!portableShell)('remote worktree paths with a real POSIX shell',
 	}
 
 	function fixtureGit(...args: string[]): string {
-		const result = spawnSync('git', args, {
+		// Fixture commits must not invoke the developer's signing agent.
+		const result = spawnSync('git', ['-c', 'commit.gpgsign=false', ...args], {
 			cwd: path.join(fixtureRoot, 'repo'),
 			encoding: 'utf8',
 			timeout: 5000,

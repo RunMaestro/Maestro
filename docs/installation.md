@@ -21,6 +21,7 @@ Download the latest release for your platform from the [Releases](https://github
   - [OpenCode](https://github.com/sst/opencode) - Open-source AI coding assistant (fully integrated)
   - [Factory Droid](https://docs.factory.ai/cli) - Factory's AI coding assistant (fully integrated)
   - [Copilot-CLI](https://docs.github.com/copilot/how-tos/copilot-cli) - GitHub's terminal coding agent (beta integration, multi-model via [models.dev](https://models.dev))
+  - [Grok CLI](https://www.npmjs.com/package/@xai-official/grok) - xAI's official coding agent, `npm install -g @xai-official/grok`, binary `grok` (beta integration, not yet qualified; community `grok-cli` packages are not supported). Setup in [Provider Notes](./provider-notes#grok-cli)
   - [Hermes](https://hermes-agent.nousresearch.com/) - Nous Research's AI coding agent (beta integration)
   - [Pi](https://pi.dev/) - A customizable AI agent harness (beta integration)
   - [Qwen3 Coder](https://github.com/QwenLM/qwen-code) - Alibaba's Qwen Code agent, a Gemini CLI fork (beta integration)

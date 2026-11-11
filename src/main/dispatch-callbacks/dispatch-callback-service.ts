@@ -13,8 +13,12 @@
 
 import { getAutoRunStateTracker } from '../autorun/autorun-state-tracker';
 import { DispatchCallbackRegistry } from './dispatch-callback-registry';
-import { renderCallbackPrompt } from './dispatch-callback-prompt';
-import type { DispatchCallbackFire } from './types';
+import { renderCallbackPrompt, truncateDispatchOutput } from './dispatch-callback-prompt';
+import type { DispatchCallbackEntry, DispatchCallbackFire } from './types';
+import type {
+	AutoRunDelegationEvent,
+	AutoRunDelegationEventKind,
+} from '../../shared/autoRunDelegation';
 
 export interface DispatchCallbackServiceDeps {
 	/**
@@ -36,6 +40,12 @@ export interface DispatchCallbackServiceDeps {
 		agentId: string,
 		since: number
 	) => Promise<string | undefined> | string | undefined;
+	/**
+	 * Report an Auto Run delegation's lifecycle to the renderer that owns the run
+	 * (entries armed with `autoRunId`). Those never wake a tab: the run itself
+	 * waits for the result and feeds it into its next turn.
+	 */
+	notifyAutoRun?: (event: AutoRunDelegationEvent) => void;
 	/** Called only after the parent queue/new-tab accepted delivery. */
 	onDelivered?: (fire: DispatchCallbackFire) => void | Promise<void>;
 	/** Display name lookup for {{DISPATCH_TARGET_NAME}} at fire time. */
@@ -67,6 +77,12 @@ export function initDispatchCallbacks(deps: DispatchCallbackServiceDeps): Dispat
 		autoRunRunningSince: (agentId) => tracker.getRunningSince(agentId),
 		onFire: (fire) => {
 			void deliverCallback(fire, deps);
+		},
+		onRegister: (entry) => {
+			if (entry.autoRunId) deps.notifyAutoRun?.(buildAutoRunDelegationEvent(entry, 'started'));
+		},
+		onCancel: (entry) => {
+			if (entry.autoRunId) deps.notifyAutoRun?.(buildAutoRunDelegationEvent(entry, 'withdrawn'));
 		},
 		logger: deps.logger
 			? {
@@ -101,6 +117,34 @@ export function disposeDispatchCallbacks(): void {
 	registry = null;
 }
 
+/** The wire event for one Auto Run delegation. Pure; exported for tests. */
+export function buildAutoRunDelegationEvent(
+	entry: DispatchCallbackEntry,
+	kind: AutoRunDelegationEventKind,
+	settled?: { fire: DispatchCallbackFire; output?: string }
+): AutoRunDelegationEvent {
+	return {
+		kind,
+		autoRunId: entry.autoRunId ?? '',
+		callbackId: entry.callbackId,
+		callerAgentId: entry.callerAgentId,
+		targetAgentId: entry.targetAgentId,
+		targetTabId: entry.targetTabId,
+		...(entry.targetName ? { targetName: entry.targetName } : {}),
+		prompt: entry.prompt,
+		startedAt: entry.createdAt,
+		...(settled
+			? {
+					status: settled.fire.status,
+					durationMs: settled.fire.durationMs,
+					// Capped here so a long transcript never rides the IPC push whole; the
+					// tail is kept because that is where an agent states its result.
+					...(settled.output ? { output: truncateDispatchOutput(settled.output).text } : {}),
+				}
+			: {}),
+	};
+}
+
 async function deliverCallback(
 	fire: DispatchCallbackFire,
 	deps: DispatchCallbackServiceDeps
@@ -114,6 +158,24 @@ async function deliverCallback(
 			`Failed to read target output for ${entry.callbackId}: ${String(error)}`,
 			LOG_CONTEXT
 		);
+	}
+
+	// An Auto Run delegation goes back to the run, never into a tab: the run is
+	// parked waiting for it and hands the result to its next turn itself.
+	if (entry.autoRunId) {
+		if (!deps.notifyAutoRun) {
+			deps.logger?.warn(
+				`Callback ${entry.callbackId}: no Auto Run delivery is wired, result dropped`,
+				LOG_CONTEXT
+			);
+			return;
+		}
+		deps.notifyAutoRun(buildAutoRunDelegationEvent(entry, 'settled', { fire, output }));
+		deps.logger?.info(
+			`Callback ${entry.callbackId} delivered to Auto Run ${entry.autoRunId} (status=${fire.status})`,
+			LOG_CONTEXT
+		);
+		return;
 	}
 
 	const prompt = renderCallbackPrompt({ fire, output });

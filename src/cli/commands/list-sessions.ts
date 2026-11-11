@@ -13,7 +13,7 @@ import os from 'os';
 import {
 	resolveAgentId,
 	getSessionById,
-	readSessions,
+	readStoredAiTabs,
 	readAgentConfig,
 	readSettings,
 } from '../services/storage';
@@ -58,11 +58,6 @@ interface StoredAiTab {
 interface TabSessionStats {
 	messageCount: number;
 	durationSeconds: number;
-}
-
-function readAgentTabs(agentId: string): StoredAiTab[] {
-	const agent = readSessions().find((s) => s.id === agentId);
-	return ((agent as { aiTabs?: StoredAiTab[] } | undefined)?.aiTabs ?? []) as StoredAiTab[];
 }
 
 /**
@@ -239,7 +234,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 		// Both end up reporting the same conversation figures: the tab reader
 		// computes them, and the disk reader has them overlaid where a tab exists.
 		let result: { sessions: SessionDisplay[]; totalCount: number; filteredCount: number };
-		const tabs = readAgentTabs(agentId);
+		const tabs = readStoredAiTabs<StoredAiTab>(agentId);
 
 		if (DISK_SESSION_TYPES.includes(agent.toolType)) {
 			// List the account the agent runs under, as the desktop browser does:

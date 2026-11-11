@@ -59,8 +59,10 @@ export function providerAuthKey(toolType: string, sshRemoteId?: string | null): 
  *   Whatever failed belongs to that operator, not to the provider.
  * - `cloud-provider` - Bedrock or Vertex. Credentials come from the cloud SDK
  *   chain, not from the agent CLI.
+ * - `inline` - a credential bundle supplied by the environment. A login that
+ *   writes a file cannot replace that bundle on the next launch.
  */
-export type CredentialKind = 'oauth' | 'api-key' | 'gateway' | 'cloud-provider';
+export type CredentialKind = 'oauth' | 'api-key' | 'gateway' | 'cloud-provider' | 'inline';
 
 /** What an agent's environment says about the credential it will present. */
 export interface CredentialClassification {
@@ -69,6 +71,8 @@ export interface CredentialClassification {
 	envVarName?: string;
 	/** Short human name for that decision: a gateway host, a cloud provider. */
 	label?: string;
+	/** An environment key is configured, but a stored/model credential may win. */
+	fallback?: boolean;
 }
 
 /**
@@ -85,6 +89,16 @@ const CLOUD_PROVIDER_FLAGS = [
 
 /** Copilot token vars in the CLI's own precedence order (`copilot login --help`). */
 const COPILOT_TOKEN_ENV_KEYS = ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'] as const;
+
+/** Grok's verified endpoint overrides; order selects a hint, not a model route. */
+const GROK_GATEWAY_ENV_KEYS = [
+	'GROK_MODELS_BASE_URL',
+	'GROK_CLI_CHAT_PROXY_BASE_URL',
+	'GROK_XAI_API_BASE_URL',
+] as const;
+
+/** Native key lookup checks the current name before the legacy fallback. */
+const GROK_API_KEY_ENV_KEYS = ['XAI_API_KEY', 'GROK_CODE_XAI_API_KEY'] as const;
 
 /**
  * OpenCode recognizes roughly a hundred provider key vars (`ANTHROPIC_API_KEY`,
@@ -124,11 +138,11 @@ function isFlagEnabled(value: string): boolean {
 }
 
 /** The host part of a base URL, falling back to the raw value when unparseable. */
-function baseUrlHost(raw: string): string {
+function baseUrlHost(raw: string, fallback: string = raw): string {
 	try {
-		return new URL(raw).host || raw;
+		return new URL(raw).host || fallback;
 	} catch {
-		return raw;
+		return fallback;
 	}
 }
 
@@ -182,6 +196,44 @@ export function classifyCredentialKind(
 		return { kind: 'oauth' };
 	}
 
+	if (toolType === 'grok') {
+		const gatewayKey = firstSetKey(env, GROK_GATEWAY_ENV_KEYS);
+		if (gatewayKey) {
+			return {
+				kind: 'gateway',
+				envVarName: gatewayKey,
+				// Never echo a malformed URL, userinfo, path or query into the UI.
+				label: baseUrlHost(envValue(env, gatewayKey), 'a configured gateway'),
+			};
+		}
+		// Deployment management keys override the user token.
+		if (envValue(env, 'GROK_DEPLOYMENT_KEY') !== '') {
+			return { kind: 'api-key', envVarName: 'GROK_DEPLOYMENT_KEY' };
+		}
+		// Inline JSON may contain a token, refresh token and account identifiers.
+		// Do not parse or label it as an API key (billing hints expose key suffixes).
+		// Malformed inline JSON can fall back to disk, but without native validation
+		// it is safer to require correcting/unsetting the override before login.
+		if (envValue(env, 'GROK_AUTH') !== '') {
+			return { kind: 'inline', envVarName: 'GROK_AUTH', label: 'Inline credentials' };
+		}
+		const secretKey = firstSetKey(env, GROK_API_KEY_ENV_KEYS);
+		const apiKeysDisabled =
+			isFlagEnabled(envValue(env, 'GROK_DISABLE_API_KEY_AUTH')) ||
+			envValue(env, 'GROK_FORCE_LOGIN_TEAM_ID') !== '';
+		if (secretKey && !apiKeysDisabled) {
+			// Grok prefers per-model credentials and an active session over these
+			// keys. This environment-only gate cannot certify which one is active.
+			return { kind: 'api-key', envVarName: secretKey, fallback: true };
+		}
+		// An auth-file override is still writable by login. OIDC and external auth
+		// helpers are also login-capable; neither is a fixed environment token.
+		return {
+			kind: 'oauth',
+			envVarName: envValue(env, 'GROK_AUTH_PATH') !== '' ? 'GROK_AUTH_PATH' : 'GROK_HOME',
+		};
+	}
+
 	if (toolType === 'opencode') {
 		const secretKey = Object.keys(env)
 			.filter((key) => OPENCODE_API_KEY_PATTERN.test(key) || key === 'ANTHROPIC_AUTH_TOKEN')
@@ -209,10 +261,15 @@ export function credentialKindBlocksLogin(
 		case 'oauth':
 			return null;
 		case 'api-key':
+			if (classification.fallback) {
+				return `${agentName} has a fallback API key configured in ${named}. A stored session or per-model credential may take precedence. Check which credential is active and replace or unset the key if needed; signing in does not repair an invalid API key.`;
+			}
 			return `${agentName} authenticates with the key in ${named}, so signing in would not change what it presents. Replace that key, then resume.`;
 		case 'gateway':
 			return `${agentName} is pointed at ${classification.label ?? 'a gateway'} by ${named}. The credential belongs to that operator, so a provider login cannot repair it.`;
 		case 'cloud-provider':
 			return `${agentName} runs against ${classification.label ?? 'a cloud provider'} via ${named}, which takes its credentials from the cloud SDK chain rather than from the agent CLI. Refresh those credentials, then resume.`;
+		case 'inline':
+			return `${agentName} has inline credentials configured in ${named}. Signing in writes a credential file but does not replace this environment override. Update or unset ${named}, then resume.`;
 	}
 }

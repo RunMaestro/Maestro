@@ -502,6 +502,43 @@ describe('CueYamlEditor', () => {
 			});
 		});
 
+		// The assist names the mode of the agent's active tab, never none
+		// (which plans `standard` whatever that tab shows).
+		it.each([
+			['an explicit standard tab', { permissionMode: 'standard' }, 'standard'],
+			['a tab never set (the pill reads Full Access)', {}, 'full'],
+			['a legacy read-only tab', { readOnlyMode: true }, 'readonly'],
+		])('should spawn with the mode of %s', async (_label, tabFields, expected) => {
+			const session = mockSession as any;
+			session.aiTabs = [
+				{ id: 'other', permissionMode: 'readonly' },
+				{ id: 'active', ...tabFields },
+			];
+			session.activeTabId = 'active';
+			try {
+				render(<CueYamlEditor {...defaultProps} />);
+
+				await waitFor(() => {
+					expect(screen.getByTestId('ai-chat-input')).toBeInTheDocument();
+				});
+				fireEvent.change(screen.getByTestId('ai-chat-input'), {
+					target: { value: 'Run code review' },
+				});
+				fireEvent.click(screen.getByTestId('ai-chat-send'));
+
+				await waitFor(() => {
+					expect(mockBuildSpawnConfig).toHaveBeenCalled();
+				});
+				expect(mockBuildSpawnConfig.mock.calls[0][0]).toMatchObject({
+					permissionMode: expected,
+					readOnlyMode: expected === 'readonly',
+				});
+			} finally {
+				delete session.aiTabs;
+				delete session.activeTabId;
+			}
+		});
+
 		it('should freeze YAML editor while agent is working', async () => {
 			render(<CueYamlEditor {...defaultProps} />);
 

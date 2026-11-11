@@ -8,6 +8,26 @@
 // UTILITY FUNCTIONS
 // ============================================================================
 
+/** Why a provider cannot moderate a group chat, as the moderator picker shows it. */
+export const GROUP_CHAT_MODERATION_UNSUPPORTED = 'Agent does not support group chat moderation.';
+
+/**
+ * The one refusal for a moderator provider without `supportsGroupChatModeration`.
+ * Storage throws it, and the CLI and the moderator picker refuse with the same
+ * text before anything is created, so the user never picks a provider that the
+ * chat then fails to start with.
+ *
+ * @returns the refusal text, or undefined when the provider can moderate
+ */
+export function groupChatModeratorRefusal(
+	moderatorAgentId: string,
+	supportsModeration: boolean
+): string | undefined {
+	return supportsModeration
+		? undefined
+		: `Invalid moderator agent ID: ${moderatorAgentId}. ${GROUP_CHAT_MODERATION_UNSUPPORTED}`;
+}
+
 /**
  * Normalize a name for use in @mentions.
  * Replaces spaces with hyphens and drops bracket punctuation so names can be
@@ -222,33 +242,173 @@ export function stripMarkdownFormatting(name: string): string {
 	return cleanMentionName(name);
 }
 
+/** One way to read a raw `@token`: the name, and where it ends in the token. */
+interface MentionReading {
+	name: string;
+	end: number;
+}
+
+/**
+ * Every way to read a raw `@token` that holds colons, longest first: the whole
+ * token, then the token cut at each colon from the right. A colon is both a
+ * legal name character (`CyberForce: Isabelle Quinn` normalizes to
+ * `CyberForce:-Isabelle-Quinn`) and a separator (`@Agent:plan.md`, `@Agent: hi`),
+ * so only a known name can say which reading is meant.
+ */
+function colonReadings(rawToken: string): MentionReading[] {
+	const readings: MentionReading[] = [];
+	let end = rawToken.length;
+	while (end > 0) {
+		const name = stripMarkdownFormatting(rawToken.slice(0, end));
+		if (name && !readings.some((r) => r.name === name)) readings.push({ name, end });
+		end = rawToken.lastIndexOf(':', end - 1);
+	}
+	return readings;
+}
+
+/**
+ * Resolve one raw `@token` to the mention it stands for.
+ *
+ * With `knownNames`, the longest colon reading that matches a known name wins.
+ * Without them, or when nothing matches, the token is cut at its first colon,
+ * which is how mentions were read before colon names were supported.
+ * `fullWhenUnmatched` returns the whole token instead in the no-match case, so
+ * a warning can name what the user actually typed.
+ */
+function resolveMentionToken(
+	rawToken: string,
+	knownNames: readonly string[] | undefined,
+	fullWhenUnmatched = false
+): MentionReading | undefined {
+	const readings = colonReadings(rawToken);
+	if (readings.length === 0) return undefined;
+	if (knownNames && knownNames.length > 0) {
+		const matched = readings.find((reading) =>
+			knownNames.some((known) => mentionMatches(reading.name, known))
+		);
+		if (matched) return matched;
+		if (fullWhenUnmatched) return readings[0];
+	}
+	return readings[readings.length - 1];
+}
+
+/**
+ * The raw `@token`s in a text. The pattern captures characters after @
+ * excluding whitespace, @, and the punctuation that typically follows a mention
+ * (,;!?'"<>). Colons are kept and resolved later (see `colonReadings`).
+ */
+function scanMentionTokens(text: string): Array<{ raw: string; index: number }> {
+	const tokens: Array<{ raw: string; index: number }> = [];
+	const mentionPattern = /@([^\s@,;!?'"<>]+)/g;
+	let match;
+	while ((match = mentionPattern.exec(text)) !== null) {
+		tokens.push({ raw: match[1], index: match.index });
+	}
+	return tokens;
+}
+
 /**
  * Extracts ALL @mentions from text (regardless of whether they're participants).
  * Handles markdown-formatted mentions (e.g. **@name**, _@name_).
  *
- * The pattern captures characters after @ excluding whitespace, @, and the
- * punctuation that typically follows a mention (:,;!?'"<>). Names with emojis,
- * Unicode, dots, hyphens, underscores, and the bracket punctuation of legacy
- * normalized display names survive: @RunMaestro.ai, @my-agent,
- * @CIA-Agent-(Super-Cool), @日本語.
+ * Names with emojis, Unicode, dots, hyphens, underscores, colons, and the
+ * bracket punctuation of legacy normalized display names survive:
+ * @RunMaestro.ai, @my-agent, @CIA-Agent-(Super-Cool), @日本語,
+ * @Tome:-RSSidian.
+ *
+ * Pass `knownNames` (participant and agent names) so a colon inside a name is
+ * kept only when it produces a real name. Without them a mention ends at its
+ * first colon, so `@Agent:plan.md` and `@Agent: hi` both read as `Agent`.
  *
  * @param text - The text to search for mentions
+ * @param knownNames - Names a mention may resolve to
  * @returns Array of unique names that were mentioned (without @ prefix)
  */
-export function extractAllMentions(text: string): string[] {
+export function extractAllMentions(text: string, knownNames?: readonly string[]): string[] {
 	const mentions: string[] = [];
-	const mentionPattern = /@([^\s@:,;!?'"<>]+)/g;
-	let match;
-
-	while ((match = mentionPattern.exec(text)) !== null) {
-		const name = stripMarkdownFormatting(match[1]);
-		if (!name) continue;
-		if (!mentions.includes(name)) {
-			mentions.push(name);
-		}
+	for (const { raw } of scanMentionTokens(text)) {
+		const name = resolveMentionToken(raw, knownNames)?.name;
+		if (name && !mentions.includes(name)) mentions.push(name);
 	}
-
 	return mentions;
+}
+
+/**
+ * The @mentions in a text that match none of `knownNames`, as the user typed
+ * them, so the chat can say so instead of dropping them silently.
+ *
+ * Only standalone mentions count. A token glued to a preceding letter, digit,
+ * dot or underscore is an email address (`me@example.com`), and a token with a
+ * slash is a package scope or path (`@types/node`); neither is meant as a
+ * mention.
+ */
+export function findUnmatchedMentions(text: string, knownNames: readonly string[]): string[] {
+	const unmatched: string[] = [];
+	for (const { raw, index } of scanMentionTokens(text)) {
+		if (index > 0 && /[\p{L}\p{N}_.]/u.test(text[index - 1])) continue;
+		if (raw.includes('/')) continue;
+		const name = resolveMentionToken(raw, knownNames, true)?.name;
+		if (!name) continue;
+		if (knownNames.some((known) => mentionMatches(name, known))) continue;
+		if (!unmatched.includes(name)) unmatched.push(name);
+	}
+	return unmatched;
+}
+
+/**
+ * Split the `@Agent` or `@Agent:file.md` target of an `!autorun` directive.
+ *
+ * With `knownNames`, the longest colon reading that is a known name is the
+ * agent and the rest is the file, so `@Tome:-RSSidian:plan.md` targets
+ * `Tome:-RSSidian`. Without them, or when nothing matches, the first colon
+ * splits name from file.
+ */
+export function splitAutoRunTarget(
+	rawTarget: string,
+	knownNames?: readonly string[]
+): { name: string; filename?: string } | undefined {
+	const reading = resolveMentionToken(rawTarget, knownNames);
+	if (!reading) return undefined;
+	const rest = rawTarget[reading.end] === ':' ? rawTarget.slice(reading.end + 1) : '';
+	const filename = stripUnmatchedTrailingClosers(rest) || undefined;
+	return { name: reading.name, filename };
+}
+
+/** True when `text` is a full agent GUID, e.g. `8dac9050-cc32-4bfa-a0e3-33bd62d8a503`. */
+export function isAgentGuid(text: string): boolean {
+	return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text);
+}
+
+/**
+ * The agent a mention names when the mention is that agent's full GUID
+ * (`@8dac9050-...`), so a script can address an agent that has since been
+ * renamed. Only a full GUID counts: a prefix in prose could be any word.
+ */
+export function findAgentByGuidMention<T extends { id: string }>(
+	mentionedName: string,
+	agents: readonly T[]
+): T | undefined {
+	const cleaned = cleanMentionName(mentionedName);
+	if (!isAgentGuid(cleaned)) return undefined;
+	const lower = cleaned.toLowerCase();
+	return agents.find((agent) => agent.id.toLowerCase() === lower);
+}
+
+/**
+ * The Maestro agent a participant was added from. By `sourceSessionId` when
+ * the participant has one, so a renamed agent stays linked and a deleted one
+ * resolves to nothing (never to a newer agent that took its name). Chats
+ * saved before the field existed fall back to a conservative name match
+ * (`findSessionForParticipantName`).
+ */
+export function findParticipantSourceAgent<T extends { id: string; name: string }>(
+	participant: { name: string; sourceSessionId?: string },
+	agents: readonly T[]
+): T | undefined {
+	if (participant.sourceSessionId) {
+		return agents.find((agent) => agent.id === participant.sourceSessionId);
+	}
+	return findSessionForParticipantName(participant.name, agents);
 }
 
 // ============================================================================
@@ -260,7 +420,16 @@ export function extractAllMentions(text: string): string[] {
  */
 export interface GroupChatParticipant {
 	name: string;
+	/** Provider type (e.g. `claude-code`), NOT the Maestro agent. See `sourceSessionId`. */
 	agentId: string;
+	/**
+	 * GUID of the Maestro agent (`Session.id`) this participant was added from.
+	 * It is the participant's link back to that agent's cwd, SSH config and
+	 * settings, so the link survives a rename. Chats saved before this field
+	 * existed have none; the router backfills it by name (see
+	 * `findParticipantSourceAgent`).
+	 */
+	sourceSessionId?: string;
 	/** Internal process session ID (used for routing) */
 	sessionId: string;
 	/** Agent's session ID (e.g., Claude Code's session GUID for continuity) */

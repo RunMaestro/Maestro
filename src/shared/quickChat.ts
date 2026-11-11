@@ -34,6 +34,8 @@
  */
 
 import { asThinkingMode, type ThinkingMode } from './types';
+import { isValidAgentId } from './agentIds';
+import type { NativeSessionBinding } from './maestro-lib/agents/providerSwap';
 
 /** Encore Feature flag key. */
 export const QUICK_CHAT_ENCORE_FLAG = 'quickChat' as const;
@@ -346,6 +348,8 @@ export interface QuickChatRecentTurn {
 	tabId: string | null;
 	/** That tab's provider conversation, so the tab can be reopened once closed. */
 	agentSessionId: string | null;
+	/** Observed with this turn's native identity; absent legacy ownership stays unknown. */
+	nativeSessionBinding?: NativeSessionBinding;
 	tabName: string | null;
 	origin: QuickChatRouteOrigin | null;
 	queuedItemId: string | null;
@@ -369,6 +373,7 @@ export interface QuickChatRecent {
 	/** The tab the conversation lives in, and its provider conversation. */
 	homeTabId: string | null;
 	homeAgentSessionId: string | null;
+	homeNativeSessionBinding?: NativeSessionBinding;
 	homeTabName: string | null;
 	/** Tabs the chat created (see the file header on which tabs a chat owns). */
 	ownedTabIds: string[];
@@ -425,6 +430,45 @@ function parseRecentMessage(raw: unknown): QuickChatMessage | null {
 	return { id, role: r.role, text: clip(text, QUICK_CHAT_RECENT_MAX_TEXT), timestamp };
 }
 
+/** Keep only the canonical ownership fields; malformed supplied scope stays explicitly unknown. */
+function parseRecentBinding(raw: unknown): NativeSessionBinding | undefined {
+	if (raw === undefined) return undefined;
+	const unknown: NativeSessionBinding = { version: 1, state: 'unknown', reason: 'unobserved' };
+	if (!raw || typeof raw !== 'object') return unknown;
+	const r = raw as Record<string, unknown>;
+	if (r.version !== 1) return unknown;
+	if (r.state === 'unknown')
+		return { ...unknown, reason: r.reason === 'legacy' ? 'legacy' : 'unobserved' };
+	const host = r.host && typeof r.host === 'object' ? (r.host as Record<string, unknown>) : {};
+	const nativeSessionId = str(r.nativeSessionId);
+	const accountRef = str(r.accountRef);
+	const cwd = str(r.cwd);
+	const identity = str(host.identity);
+	if (
+		r.state !== 'bound' ||
+		typeof r.provider !== 'string' ||
+		!isValidAgentId(r.provider) ||
+		(host.kind !== 'local' && host.kind !== 'ssh') ||
+		!nativeSessionId ||
+		!accountRef ||
+		!cwd ||
+		!identity ||
+		[nativeSessionId, accountRef, cwd, identity].some(
+			(value) => !value.trim() || value.includes('\0')
+		)
+	)
+		return unknown;
+	return {
+		version: 1,
+		state: 'bound',
+		provider: r.provider,
+		nativeSessionId,
+		accountRef,
+		cwd,
+		host: { kind: host.kind, identity },
+	};
+}
+
 function parseRecentTurn(raw: unknown): QuickChatRecentTurn | null {
 	if (!raw || typeof raw !== 'object') return null;
 	const r = raw as Record<string, unknown>;
@@ -442,6 +486,9 @@ function parseRecentTurn(raw: unknown): QuickChatRecentTurn | null {
 		error: str(r.error),
 		tabId: str(r.tabId),
 		agentSessionId: str(r.agentSessionId),
+		...(r.nativeSessionBinding === undefined
+			? {}
+			: { nativeSessionBinding: parseRecentBinding(r.nativeSessionBinding) }),
 		tabName: str(r.tabName),
 		origin,
 		queuedItemId: str(r.queuedItemId),
@@ -478,6 +525,9 @@ export function parseQuickChatRecent(raw: unknown): QuickChatRecent | null {
 		updatedAt,
 		homeTabId: str(r.homeTabId),
 		homeAgentSessionId: str(r.homeAgentSessionId),
+		...(r.homeNativeSessionBinding === undefined
+			? {}
+			: { homeNativeSessionBinding: parseRecentBinding(r.homeNativeSessionBinding) }),
 		homeTabName: str(r.homeTabName),
 		ownedTabIds: Array.isArray(r.ownedTabIds)
 			? r.ownedTabIds.filter((t): t is string => typeof t === 'string')

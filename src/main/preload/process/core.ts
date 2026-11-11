@@ -10,6 +10,20 @@ import type {
 	HarnessInteractionResponse,
 	HarnessInteractionSettledEvent,
 } from '../../../shared/harness-control/types';
+import type { NativeSessionLaunch } from '../../process-manager/types';
+import { generateUUID } from '../../../shared/uuid';
+
+/** Local correlation only; ownership still comes from the host's launch receipt. */
+export type ProcessSpawnAttempt = Readonly<{
+	sessionId: string;
+	tabId?: string;
+	toolType: string;
+	requestedNativeSessionId?: string;
+	nativeSessionRequestId: string;
+}>;
+
+// Shared by API instances in this preload lifetime, including colliding UUIDs.
+let nativeSessionRequestSequence = 0;
 
 /**
  * Configuration for spawning a process
@@ -43,6 +57,9 @@ export interface ProcessConfig {
 	// Stats tracking options
 	querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 	tabId?: string; // Tab ID for multi-tab tracking
+	// The Auto Run this spawn is a task of (MAESTRO_CALLER_AUTORUN_ID), so a
+	// `maestro-cli dispatch` it runs reports its result back to the run.
+	autoRunId?: string;
 }
 
 /**
@@ -163,12 +180,87 @@ export interface SshRemoteInfo {
  * client bridge.
  */
 export function createProcessCoreApi() {
+	const spawnAttemptListeners = new Set<(attempt: ProcessSpawnAttempt) => void>();
+	const pendingSpawns: Array<() => void> = [];
+	let deliveringSpawns = false;
 	return {
 		/**
 		 * Spawn a new process (agent or terminal)
 		 */
-		spawn: (config: ProcessConfig): Promise<ProcessSpawnResponse> =>
-			ipcRenderer.invoke('process:spawn', config),
+		spawn: async (config: ProcessConfig): Promise<ProcessSpawnResponse> => {
+			if (config.toolType === 'terminal') return ipcRenderer.invoke('process:spawn', config);
+			// Capture before notifying renderer callbacks, which can change their own
+			// settings or request object. No caller-supplied correlation token survives.
+			let captured: ProcessConfig | undefined;
+			let captureError: unknown;
+			try {
+				captured = structuredClone(config);
+			} catch (error) {
+				captureError = error;
+			}
+			if (!Number.isSafeInteger(++nativeSessionRequestSequence)) {
+				throw new Error('Process spawn request sequence exhausted');
+			}
+			const nativeSessionRequestId = `${generateUUID()}-${nativeSessionRequestSequence}`;
+			// Even a request with uncloneable payload must fence its predecessor.
+			// The primitive notification can be delivered, but that request never invokes IPC.
+			const source = captured ?? config;
+			const attempt: ProcessSpawnAttempt = Object.freeze({
+				sessionId: source.sessionId,
+				toolType: source.toolType,
+				...(source.tabId === undefined ? {} : { tabId: source.tabId }),
+				...(source.agentSessionId === undefined
+					? {}
+					: { requestedNativeSessionId: source.agentSessionId }),
+				nativeSessionRequestId,
+			});
+			return new Promise<ProcessSpawnResponse>((resolve, reject) => {
+				pendingSpawns.push(() => {
+					try {
+						// Synchronous, before IPC: even a non-Grok successor fences queued IDs.
+						// Unsubscribing during another callback takes effect immediately.
+						let callbackFailure: { error: unknown } | undefined;
+						for (const callback of [...spawnAttemptListeners]) {
+							if (!spawnAttemptListeners.has(callback)) continue;
+							try {
+								callback(attempt);
+							} catch (error) {
+								// Every subscriber must fence even a failed attempt.
+								callbackFailure ??= { error };
+							}
+						}
+						if (callbackFailure) throw callbackFailure.error;
+						if (!captured) throw captureError;
+						// Do not restore a predecessor on rejection/false, or clear on kill/exit.
+						// Only a matching host receipt can establish native ownership, including
+						// a confirmed allocation that drains after cancellation.
+						Promise.resolve(
+							ipcRenderer.invoke('process:spawn', { ...captured, nativeSessionRequestId })
+						).then(resolve, reject);
+					} catch (error) {
+						// A callback or invoke failure rejects only this job, not queued successors.
+						reject(error);
+					}
+				});
+				if (deliveringSpawns) return;
+				deliveringSpawns = true;
+				try {
+					// A reentrant spawn waits only for this synchronous delivery, never for
+					// IPC completion. All listeners see A then B, and IPC uses the same order.
+					while (pendingSpawns.length > 0) pendingSpawns.shift()!();
+				} finally {
+					deliveringSpawns = false;
+				}
+			});
+		},
+
+		/** Local subscription, without replay across renderer reloads or cleanup. */
+		onSpawnAttempt: (callback: (attempt: ProcessSpawnAttempt) => void): (() => void) => {
+			spawnAttemptListeners.add(callback);
+			return () => {
+				spawnAttemptListeners.delete(callback);
+			};
+		},
 
 		/**
 		 * Spawn a terminal tab PTY (convenience wrapper for xterm.js terminal tabs)
@@ -368,11 +460,25 @@ export function createProcessCoreApi() {
 			ipcRenderer.invoke('harnessControl:respond', response),
 
 		/**
-		 * Subscribe to agent session ID events
+		 * Subscribe to agent session ID events. Observed native launch ownership is
+		 * optional; its absence cannot be filled from the current agent settings.
 		 */
-		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void): (() => void) => {
-			const handler = (_: unknown, sessionId: string, agentSessionId: string) =>
-				callback(sessionId, agentSessionId);
+		onSessionId: (
+			callback: (
+				sessionId: string,
+				agentSessionId: string,
+				nativeSessionLaunch?: NativeSessionLaunch
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				agentSessionId: string,
+				nativeSessionLaunch?: NativeSessionLaunch
+			) => {
+				if (nativeSessionLaunch) callback(sessionId, agentSessionId, nativeSessionLaunch);
+				else callback(sessionId, agentSessionId);
+			};
 			ipcRenderer.on('process:session-id', handler);
 			return () => ipcRenderer.removeListener('process:session-id', handler);
 		},

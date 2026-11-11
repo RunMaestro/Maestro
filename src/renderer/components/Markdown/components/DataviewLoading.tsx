@@ -81,7 +81,8 @@ export function DataviewCalculatingPill({ theme, label }: { theme: Theme; label:
 			}}
 		>
 			<Spinner size={11} color={theme.colors.accent} decorative />
-			<span className="dataview-ellipsis">{label}</span>
+			{/* A static label: animated dots changed the pill's width; the spinner is the only motion. */}
+			<span>{label}</span>
 		</span>
 	);
 }

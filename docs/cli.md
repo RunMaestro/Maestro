@@ -186,19 +186,21 @@ On failure, `success` is `false` and an `error` field is included:
 }
 ```
 
-| Flag                 | Description                                                         |
-| -------------------- | ------------------------------------------------------------------- |
-| `-s, --session <id>` | Resume an existing session instead of creating a new one            |
-| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)              |
-| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app       |
-| `--no-history`       | Do not write a History entry for this turn                          |
-| `--no-synopsis`      | Skip the synopsis turn; the History entry carries the response text |
+| Flag                 | Description                                                                                                                       |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `-s, --session <id>` | Resume a provider session (the `sessionId` a previous `send` returned, or one from `list sessions`) instead of creating a new one |
+| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)                                                                            |
+| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app                                                                     |
+| `--no-history`       | Do not write a History entry for this turn                                                                                        |
+| `--no-synopsis`      | Skip the synopsis turn; the History entry carries the response text                                                               |
+
+`send` runs headless, beside the desktop: it never writes into a desktop tab. `--session` takes a **provider** session id, not a Maestro tab id. A tab id is refused with `SESSION_IS_TAB_ID`, and the provider session of a tab that is mid-turn is refused with `TAB_BUSY` (resuming it would put a second writer on one conversation). Both errors name the command that does what you meant: to deliver a message into a live tab, waiting behind a busy turn, use `maestro-cli dispatch <agent-id> "<message>" --tab <tab-id> --queue`.
 
 Every `send` writes an entry to the agent's History, the same file the desktop History panel reads, whether or not the desktop app is running (an open app picks it up live). Who started the send decides the kind of entry. A send Maestro Cue started (a `command` action that runs `maestro-cli send`, or an agent Cue woke that runs it) is a `CUE` entry, and the turn it runs is marked `MAESTRO_QUERY_SOURCE=cue`. A send run from another agent's shell is an `AGENT` entry whose summary opens with `Sent by <agent>:`. Both carry a pass/fail indicator. A send from your own shell or a script is a `USER` entry. A successful turn is summarized by a short synopsis turn resumed on the same provider session at the cheapest model and effort, unless that would shrink the context window, in which case the agent's own model is kept. If the synopsis reports nothing to record, fails, or prints a provider error, the first line of the response is used instead. After a `--read-only` send the synopsis turn is read-only too. Failed and interrupted turns are recorded without a synopsis turn. A History write that fails prints a warning on stderr and never fails the send; the JSON on stdout is unchanged either way. Use `--no-synopsis` to skip the extra turn, or `--no-history` to record nothing.
 
 For desktop-handoff workflows (route the message through a desktop tab, return an addressable tab id, etc.) use [`maestro-cli dispatch`](#dispatching-to-a-desktop-tab) instead.
 
-Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `<AGENT>_NOT_FOUND` (e.g. `CLAUDE_CODE_NOT_FOUND`, `CODEX_NOT_FOUND`), `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`.
+Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `<AGENT>_NOT_FOUND` (e.g. `CLAUDE_CODE_NOT_FOUND`, `CODEX_NOT_FOUND`), `SESSION_IS_TAB_ID`, `TAB_BUSY`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`.
 
 Supported agent types: any installed provider - `claude-code`, `codex`, `opencode`, `factory-droid`, `copilot-cli`, `hermes`, `pi`, `qwen3-coder`, `omp`.
 
@@ -314,6 +316,28 @@ The response echoes the armed callback:
 
 Additional error cases: a callback agent that cannot be resolved (`AGENT_NOT_FOUND`), a callback that targets the dispatch tab itself, a tab that already has an armed callback (`CALLBACK_ALREADY_ARMED`), and callback flags passed without `--notify-on-complete` (all `INVALID_OPTIONS`).
 
+### Dispatching from Inside an Auto Run
+
+An Auto Run task (either mode) runs with `MAESTRO_CALLER_AUTORUN_ID` set, and `dispatch` reads it. There is no flag to pass:
+
+- A dispatch that names no destination (no `--tab`, `--new-tab`, `--queue`, `--force`, or `--notify-on-complete`) goes to a **new hidden tab**, as if `--new-tab` were passed.
+- A dispatch with `--new-tab` or `--tab` is **tracked by the run**: the run waits for it before its next task or iteration, and feeds the result into that turn's prompt. See [Delegating to Other Agents](autorun-playbooks.md#delegating-to-other-agents).
+- `--callback-timeout <seconds>` bounds that wait (default 3600, hard cap 86400). `--callback-tab` and `--callback-prompt` still require `--notify-on-complete`, which takes over: an explicit callback wakes its tab instead of reporting to the run.
+
+The reply says whether the run tracks the dispatch:
+
+```json
+{
+	"success": true,
+	"agentId": "worker-...",
+	"tabId": "tab-xyz",
+	"callbackId": "cb_01j...",
+	"autoRunTracked": true
+}
+```
+
+`"autoRunTracked": false` means the work was handed over but the run will not wait for it: it had no tab to correlate (`--queue` to the active tab), the tab already carried a callback, or the run had already ended. A note on stderr says the same. `auto-run-status -a <agent>` lists the delegations a run is waiting on.
+
 ### Listing Sessions
 
 Browse an agent's session history, sorted most recent to oldest. Supports pagination with limit/skip and keyword search.
@@ -381,7 +405,7 @@ Both verbs talk to the running desktop over the same WebSocket as `dispatch`. Th
 
 #### List Open Tabs
 
-Flatten every open AI tab across every Maestro agent into addressable entries:
+Flatten the open tabs across every Maestro agent into addressable entries. By default the list holds the AI tabs the tab strips draw, so its count matches the screen:
 
 ```bash
 # Default: compact text (one tab per line)
@@ -389,15 +413,37 @@ maestro-cli session list
 
 # JSON for scripting
 maestro-cli session list --json
+
+# Hidden tabs only, visible plus hidden, or every tab with its visibility
+maestro-cli session list --hidden
+maestro-cli session list --include-hidden --json
+maestro-cli session list --all
+
+# File, browser, and terminal tabs too (or one kind: file, browser, terminal)
+maestro-cli session list --type all
 ```
 
-Default text columns: `state` (`busy` / `idle`), star (`★` if starred), `tabId`, agent name + id, tab name, `createdAt` (relative). One tab per line so the output pipes cleanly into `grep`, `awk`, etc.
+Every entry carries a `visibility`:
 
-JSON envelope:
+| `visibility` | Meaning                                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------------------------------- |
+| `visible`    | The tab strip draws a chip for it, standalone or inside a tiled group                                      |
+| `hidden`     | A real tab the tab bar does not show, such as the transcript a `maestro-cli ask` consult leaves behind     |
+| `orphaned`   | The tab has no slot in the strip at all: a close that did not fully apply. Maestro clears these at startup |
+
+The default lists `visible` tabs only; `--hidden` lists the hidden ones, `--include-hidden` lists both, and `--all` adds orphans. `session list --type all` with no scope flag counts the same tabs as the Usage Dashboard **Open Tabs** card. AI entries also carry `hidden` and `inTabOrder` (whether the agent's tab order holds a ref for the tab; a tab tiled into a group has none but is still on screen).
+
+Default text columns: `state` (`busy` / `idle`), star (`★` if starred), `tabId`, agent name + id, tab name, `createdAt` (relative), and `[hidden]` or `[orphaned: ...]` on a tab that is not visible. A file, browser, or terminal row shows its kind, `*` if it is the agent's selected tab of that kind, `tabId`, agent, name, and the file path, URL, or shell directory. One tab per line so the output pipes cleanly into `grep`, `awk`, etc. A last line counts the tabs the chosen scope left out.
+
+JSON envelope. `scope` is `visible`, `hidden`, `visible+hidden`, or `all`; `type` is the `--type` value; `counts` holds every tab of the chosen type by visibility, whatever the scope listed; `visibilityReported` is `false` when the running Maestro is too old to tell hidden tabs apart. AI tabs are always in `sessions`. With a `--type` other than `ai`, the file, browser, and terminal tabs are in `tabs`:
 
 ```json
 {
 	"success": true,
+	"scope": "visible",
+	"type": "all",
+	"counts": { "visible": 567, "hidden": 528, "orphaned": 0 },
+	"visibilityReported": true,
 	"sessions": [
 		{
 			"tabId": "tab-1",
@@ -409,7 +455,22 @@ JSON envelope:
 			"agentSessionId": "claude-uuid-1",
 			"state": "idle",
 			"createdAt": 1714268000000,
-			"starred": false
+			"starred": false,
+			"hidden": false,
+			"inTabOrder": true,
+			"visibility": "visible"
+		}
+	],
+	"tabs": [
+		{
+			"tabId": "f1e2d3c4-...",
+			"tabType": "file",
+			"agentId": "a1b2c3d4-...",
+			"agentName": "Backend",
+			"name": "README.md",
+			"target": "/repo/README.md",
+			"active": false,
+			"visibility": "visible"
 		}
 	]
 }
@@ -891,6 +952,7 @@ maestro-cli tab move <tab-id> 2
 # Reopen a closed tab, as Cmd+Shift+T does. "tab closed" lists the stack,
 # newest first; reopen takes the newest, or one entry by --index or --tab.
 maestro-cli tab closed -a <agent-id>
+maestro-cli tab closed --all                          # every agent's stack, grouped by agent
 maestro-cli tab reopen -a <agent-id>
 maestro-cli tab reopen -a <agent-id> --index 2
 maestro-cli tab reopen -a <agent-id> --tab <closed-tab-id> --background
@@ -1683,19 +1745,19 @@ Surfaces behind an Encore Feature that you have switched off (Cue, Symphony, Dir
 
 #### Open a File
 
-Open a file as a preview tab in the Maestro desktop app. Without `--agent`, the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties), and a path outside every agent's directory is an error. Pass `--agent <id>` to name the agent yourself, which is also how you open a file that lives nowhere near a project.
+Open a file as a preview tab in the Maestro desktop app. Without `--agent`, a shell inside Maestro (an agent's own turn, or a terminal tab) opens the file in the agent it belongs to, so `maestro-cli open-file ~/.bashrc` typed in a terminal tab lands in that tab's agent. Elsewhere the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties), and a path outside every agent's directory is an error. Pass `--agent <id>` to name the agent yourself.
 
 ```bash
 maestro-cli open-file <file-path> [-a <id>] [--background | --no-switch] [--queue]
 ```
 
-| Flag               | Description                                                                                   |
-| ------------------ | --------------------------------------------------------------------------------------------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)                            |
-| `--background`     | Open the preview tab without changing anything currently rendered, on any agent               |
-| `--focus`          | Switch to the file after opening it (default)                                                 |
-| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                            |
-| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback |
+| Flag               | Description                                                                                               |
+| ------------------ | --------------------------------------------------------------------------------------------------------- |
+| `-a, --agent <id>` | Target agent (defaults to the agent owning this shell or terminal tab, else the file path's owning agent) |
+| `--background`     | Open the preview tab without changing anything currently rendered, on any agent                           |
+| `--focus`          | Switch to the file after opening it (default)                                                             |
+| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                                        |
+| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback             |
 
 A folder has no preview, so `open-file <folder>` reveals it in the agent's Files panel instead: the Right Bar opens on the Files tab, every ancestor and the folder itself expand, and its row is selected. Clicking a folder link in the chat does the same. `--background` and `--no-switch` expand and select without moving the view. A folder outside the agent's file tree cannot be revealed there.
 
@@ -2242,7 +2304,7 @@ Reports the host's pid, uptime, version, the holder of the data directory's lock
 
 ### `host endpoint`
 
-Prints the endpoint of the host serving the data directory, for [Federation](/federation) over SSH: a laptop runs `maestro-cli host endpoint --json` on the remote through the SSH remote it already has, and SSH is the authentication. With `--json` it prints `{running, port, token, cliSecret, version, pid}`, or `{running: false}` with exit code `3` when no host is running. Without `--json` it prints the pid, port and version only: the token and the CLI secret never reach a terminal or a log. On macOS and Linux it refuses, and prints neither, when the discovery file (`cli-server.json`) can be read by any user but its owner. The verb is listed in `--help` only while Federation is on.
+Prints the endpoint of the host serving the data directory, for [Federation](/federation) over SSH: a laptop runs `maestro-cli host endpoint --json` on the remote through the SSH remote it already has, and SSH is the authentication. With `--json` it prints `{running, port, token, cliSecret, version, pid}`, or `{running: false}` with exit code `3` when no host is running. Without `--json` it prints the pid, port and version only: the token and the CLI secret never reach a terminal or a log. On macOS and Linux it refuses, and prints neither, when the discovery file (`cli-server.json`) can be read by any user but its owner.
 
 | Flag                | Description                                       | Default                       |
 | ------------------- | ------------------------------------------------- | ----------------------------- |
@@ -2262,14 +2324,39 @@ Asks the host to stop and waits for its process to exit. With work in flight (a 
 | `--force`           | Stop even with work in flight. A running Auto Run records how it ended first                                                                                       | -                             |
 | `--json`            | Output as JSON (for scripting)                                                                                                                                     | -                             |
 
-### `remote-host status` and `remote-host start`
+### `remote-host install`, `remote-host status`, and `remote-host start`
 
-Check, and start, the `maestro-cli host` on an SSH remote, for [Federation](/federation) over SSH. Both verbs belong to the Federation Encore Feature and are refused while it is off. Both refuse an SSH remote that is not opted in (`update-ssh-remote <id> --federation on`): Maestro never dials a remote without that flag. The `<ssh-remote>` argument is the remote's name or its ID (a unique prefix works).
+Install, check, and start the `maestro-cli host` on an SSH remote, for [Federation](/federation) over SSH. Federation is opportunistic: every SSH remote takes part unless it opted out with `update-ssh-remote <id> --federation off`, and these verbs refuse a remote that opted out. The `<ssh-remote>` argument is the remote's name or its ID (a unique prefix works).
+
+`remote-host install` copies this machine's `maestro-cli` to the remote over one SSH call, as the SSH user, and installs it under `~/.maestro`. The same version runs on both sides, so there is no version skew. The bundle is plain JavaScript; what differs per platform is Node.js and the SQLite module, and the remote picks both for its own OS and CPU:
+
+| On the remote             | What it uses                                                                                                                             |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Operating system          | Linux, macOS, or Windows through Git Bash or WSL (the same POSIX shell an SSH agent needs there)                                         |
+| CPU                       | x64 or arm64                                                                                                                             |
+| Node.js                   | Its own Node.js 22 or newer when it has one, else Node.js 24 from nodejs.org, checked against its SHA-256 list                           |
+| SQLite (`better-sqlite3`) | Installed with npm for that Node.js. A prebuilt binary when one exists, else built from source (needs python3, make, and a C++ compiler) |
+
+The new install is staged next to the old one and swapped in only once SQLite loads and the CLI runs, so a failed install leaves the old one working. A second run with the same version does nothing; an older install is upgraded; a newer one is left alone. `~/.maestro/bin` comes first on the PATH every SSH spawn gets, so the installed CLI wins over an older copy.
+
+| Flag                  | Description                                                                                                                                                                               | Default |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--start`             | Start the host once the CLI is in place. A desktop app that runs on the remote tells it, too                                                                                              | -       |
+| `--force`             | Install even when the remote has a `maestro-cli` Maestro did not install (Maestro.app, the server bundle). Maestro's copy then takes precedence; the other one is not touched             | -       |
+| `--restart`           | Replace a running host on an older version: stop it with `host stop --wait` (work in flight finishes first), upgrade, start it again. Without it, the install refuses with `host-running` | -       |
+| `--timeout <seconds>` | Give up on the install after this many seconds                                                                                                                                            | `600`   |
+| `--json`              | Output as JSON (for scripting), with the `cli` action (`installed`, `upgraded`, `current`, `newer`), the platform, the Node.js version and where it came from, and the start result       | -       |
+
+```bash
+maestro-cli remote-host install build-box --start
+maestro-cli remote-host install build-box --restart   # upgrade a running host
+```
+
+A refusal names its cause and the fix, with a `code` in `--json`: `unsupported-os`, `unsupported-arch`, `foreign-cli`, `host-running`, `node-download` (the remote cannot reach nodejs.org and has no Node.js 22+), `sqlite-install`, and so on. It never asks for sudo and runs only as the SSH user, and nothing outside `~/.maestro` is written: npm's cache goes to `~/.maestro/npm-cache` too. The launcher finds Node.js each time it runs (Maestro's own copy, then the one used at install time, then `node` on PATH), and an install whose launcher no longer runs is replaced by `remote-host install --force` (the desktop offers **Reinstall maestro-cli**). The new launcher is written before the swap, and the old install comes back if either step fails.
 
 `remote-host status` makes one SSH call and reports whether Maestro is installed on the remote (with the fix when it is not), whether a host is running there (its pid, its port on the remote's loopback and its version), and the version skew against this CLI: `none`, `remote-older`, `remote-newer` or `unknown`. It exits `0` with a running host and `3` when no host runs or Maestro is not installed. `remote-host start` runs `maestro-cli host start` on the remote, as the SSH user, when no host is running there, then reports status the same way. It does nothing when a host already runs. The SSH calls run one after the other, never at the same time. Neither verb prints the host's token or CLI secret, with or without `--json`. A timeout exits `5`, and a remote CLI too old to know `host endpoint` exits `4`.
 
 ```bash
-maestro-cli update-ssh-remote 3f2a --federation on   # takes the remote's ID
 maestro-cli remote-host status build-box
 maestro-cli remote-host start build-box --json
 ```
@@ -2281,9 +2368,9 @@ maestro-cli remote-host start build-box --json
 
 ### Agents on a Peer
 
-A peer is an SSH remote that is opted in to Federation and runs a `maestro-cli host`. Its peer name is the remote's name, or the remote's ID when two remotes share a name. `list agents --peer <name>` reads the agents from that host over the SSH forward and prints them with the peer name beside each row. Each ID line reads `peer:agent-id`, the form other verbs take as a target. `list agents --all-peers` prints the local agents, then the agents on every enabled SSH remote opted in to Federation. It visits the peers one after another, never at the same time. With `--json` each row has a `peer` field: the peer name, or `null` for a local agent in an `--all-peers` list.
+A peer is an SSH remote that runs a `maestro-cli host` (and has not opted out of Federation). Its peer name is the remote's name, or the remote's ID when two remotes share a name. `list agents --peer <name>` reads the agents from that host over the SSH forward and prints them with the peer name beside each row. Each ID line reads `peer:agent-id`, the form other verbs take as a target. `list agents --all-peers` prints the local agents, then the agents on every enabled SSH remote that has not opted out of Federation. It visits the peers one after another, never at the same time. With `--json` each row has a `peer` field: the peer name, or `null` for a local agent in an `--all-peers` list.
 
-The host is the only record of its agents: Maestro reads them fresh every time and never writes them to the local agent store. A peer that cannot be reached is an error that names the fix (`maestro-cli remote-host start <peer>` when no host runs). `--all-peers` lists the peers it reaches first, then reports each peer it could not reach on stderr and exits with that failure's code (`3` when a host is down). Both flags belong to the Federation Encore Feature, are left out of `--help` while it is off, and are refused if passed then. Neither combines with `--group`, which filters local agents.
+The host is the only record of its agents: Maestro reads them fresh every time and never writes them to the local agent store. A peer that cannot be reached is an error that names the fix (`maestro-cli remote-host start <peer>` when no host runs). `--all-peers` lists the peers it reaches first, then reports each peer it could not reach on stderr and exits with that failure's code (`3` when a host is down). Neither flag combines with `--group`, which filters local agents.
 
 These verbs take a `peer:agent` target (an agent ID, ID prefix, or name after the first colon) and act on the host's agent. Each prints what it prints for a local agent, plus a `peer` field in its JSON:
 
@@ -2296,18 +2383,21 @@ maestro-cli interrupt build-box:docs
 maestro-cli tab new --agent build-box:docs
 maestro-cli tab rename <tab-id> "Release" --agent build-box:docs
 maestro-cli tab star active --agent build-box:docs
+maestro-cli queue list --agent build-box:docs
+maestro-cli queue remove <item-id> --agent build-box:docs
 ```
 
-| Verb                                              | On a peer                                                                                                                                                                                                                                                                                                                             |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `show agent`                                      | Reads the agent from the host and lists its tabs with their state. History stays on the host, so `stats` is `null` and `recentHistory` is empty.                                                                                                                                                                                      |
-| `send`                                            | Opens a new tab on the host (or the tab that holds `--session`, which must be idle), sends the message, and waits for the turn to end. The host records the turn in its own History. `--read-only`, `--tab`, `--no-system-prompt`, `--no-history`, `--no-synopsis` and the plugin-tool flags are refused (`PEER_UNSUPPORTED_OPTION`). |
-| `ask`                                             | Sends the same consult to the host. `--from` and `--with-context` name a local agent the host cannot see, so they are refused.                                                                                                                                                                                                        |
-| `dispatch`                                        | Sends the same message as a local dispatch to the host. `--notify-on-complete`, the `--callback-*` flags and `--routing` are refused, because they name local agents. A lost acknowledgement is `DISPATCH_UNKNOWN`, as it is locally: reconcile with the same `--dispatch-id`.                                                        |
-| `interrupt`                                       | Stops every busy tab of the agent on the host, or the one `--tab` names.                                                                                                                                                                                                                                                              |
-| `tab new`, `tab rename`, `tab star`, `tab unstar` | With `--agent <peer:agent>`, open, rename, star or unstar a tab of the host's agent. `<tab-id>` is an ID, a unique prefix, or `active`, matched against the host's tabs. `tab new --prompt` is refused: open the tab, then `send`, or use `dispatch`.                                                                                 |
+| Verb                                                       | On a peer                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `show agent`                                               | Reads the agent from the host and lists its tabs with their state. `stats` and `recentHistory` come from the host's History, which includes the project's shared History. Each recent row has a `hostname` when another machine sent it. A host that cannot serve History gives `stats: null`.                                                      |
+| `send`                                                     | Opens a new tab on the host (or the tab that holds `--session`, which must be idle), sends the message, and waits for the turn to end. The host records the turn in its own History. `--read-only`, `--tab`, `--no-system-prompt`, `--no-history`, `--no-synopsis` and the plugin-tool flags are refused (`PEER_UNSUPPORTED_OPTION`).               |
+| `ask`                                                      | Sends the same consult to the host. `--from` and `--with-context` name a local agent the host cannot see, so they are refused.                                                                                                                                                                                                                      |
+| `dispatch`                                                 | Sends the same message as a local dispatch to the host. `--notify-on-complete`, the `--callback-*` flags and `--routing` are refused, because they name local agents. A lost acknowledgement is `DISPATCH_UNKNOWN`, as it is locally: reconcile with the same `--dispatch-id`.                                                                      |
+| `interrupt`                                                | Stops every busy tab of the agent on the host, or the one `--tab` names.                                                                                                                                                                                                                                                                            |
+| `tab new`, `tab rename`, `tab star`, `tab unstar`          | With `--agent <peer:agent>`, open, rename, star or unstar a tab of the host's agent. `<tab-id>` is an ID, a unique prefix, or `active`, matched against the host's tabs. `tab new --prompt` is refused: open the tab, then `send`, or use `dispatch`.                                                                                               |
+| `queue list`, `queue remove`, `queue hold`, `queue resume` | With `--agent <peer:agent>`, read or change the messages waiting in the host's queue for that agent. `queue list` prints the local shape plus `peer`, with `sessionId` set to the `peer:agent` target. A message that already started is `ITEM_NOT_FOUND`, as it is locally. `queue merge` and `queue steer` are refused (`PEER_UNSUPPORTED_VERB`). |
 
-`send`, `interrupt`, and the tab verbs run the same shared action as the desktop's mirrored agent (its composer, Stop, and the tab controls beside its tab strip), so a script and the desktop reach the host the same way. Nothing is queued or retried on this machine. A peer that is down, or a forward that is dead, exits non-zero with a `PEER_*` code (`PEER_HOST_DOWN` exits `3`). If the forward drops while `send` waits, the turn keeps running on the host: `send` exits `3` with `PEER_CONNECTION_LOST`, the tab ID, and the command that shows the tab (`maestro-cli show agent <peer>:<agent>`). With Federation off, a target with a colon is an ordinary local agent ID or name.
+`send`, `interrupt`, the tab verbs, and the queue verbs run the same shared action as the desktop's mirrored agent (its composer, Stop, the tab controls beside its tab strip, and its queued cards), so a script and the desktop reach the host the same way. Nothing is queued or retried on this machine. A peer that is down, or a forward that is dead, exits non-zero with a `PEER_*` code (`PEER_HOST_DOWN` exits `3`). If the forward drops while `send` waits, the turn keeps running on the host: `send` exits `3` with `PEER_CONNECTION_LOST`, the tab ID, and the command that shows the tab (`maestro-cli show agent <peer>:<agent>`). A colon target that names a local agent (a name like `Maestro: rc`) stays local.
 
 ### Lift an SSH Agent Onto Its Host
 
@@ -2321,12 +2411,13 @@ Before it acts, `lift` prints what moves and what stays. `--json` gives the same
 | ----------------------------------------------------- | ------------------------- |
 | The agent was already lifted                          | `LIFT_ALREADY_LIFTED`     |
 | The agent is not an SSH remote agent                  | `LIFT_NOT_SSH`            |
-| Its SSH remote is not opted in to Federation          | `PEER_FEDERATION_OFF`     |
+| Its SSH remote opted out of Federation                | `PEER_FEDERATION_OFF`     |
+| Its SSH remote is disabled                            | `LIFT_REMOTE_DISABLED`    |
 | A tab is running a turn                               | `LIFT_BUSY`               |
 | No host is running on the remote                      | `PEER_HOST_DOWN` (exit 3) |
 | A local `maestro-cli host` owns this machine's agents | `LIFT_LOCAL_HOST`         |
 
-The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. Hidden consult tabs, queued slash commands, and images in this machine's image store stay here. The verb belongs to the Federation Encore Feature.
+The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. Hidden consult tabs, queued slash commands, and images in this machine's image store stay here.
 
 ```bash
 maestro-cli lift docs --dry-run
@@ -2334,7 +2425,7 @@ maestro-cli lift docs --with-env --json
 maestro-cli send build-box:<new-agent-id> "Carry on"
 ```
 
-The desktop app runs the same lift. Right-click the agent in the Left Bar and choose **Move to Host**, or run **Move to Host** from the command palette. The action shows only while the agent's remote is a connected Federation peer. It shows the plan `--dry-run` prints, with a choice to send secret env vars, before anything moves. Afterwards the agent's row shows `on <peer>`: click it to open the agent on its host.
+The desktop app runs the same lift. Right-click the agent in the Left Bar and choose **Move to Host**, or run **Move to Host** from the command palette. The action shows while the agent's remote is a connected Federation peer. When the remote runs no host yet, the same menu offers **Make Federated**, which first runs `remote-host install --start` and then shows the lift plan. Either way the plan `--dry-run` prints, with a choice to send secret env vars, shows before anything moves. Afterwards the agent's row shows `on <peer>`: click it to open the agent on its host.
 
 ### One Host Per Data Directory
 
@@ -2364,7 +2455,7 @@ Commands that drive the desktop's window, such as opening a file or a browser ta
 
 ### Installing on a Machine With No Desktop
 
-The host is the CLI bundle, run with Node.js. On a machine without the Maestro app:
+The host is the CLI bundle, run with Node.js. For a machine you reach over SSH, `maestro-cli remote-host install <ssh-remote>` (above) does all of this from your laptop. By hand, on a machine without the Maestro app:
 
 - **Node.js 22 or newer.**
 - **The CLI bundle with its prompts**: copy `maestro-cli.js` together with the `prompts/core` directory beside it. Without the prompts the host refuses to start, because a turn would have no Maestro system prompt and an Auto Run could not run.
@@ -2544,7 +2635,15 @@ maestro-cli cue schedule --daily-at 09:00,17:30 --agent Neema --prompt "Sweep th
 
 # Every 30 minutes
 maestro-cli cue schedule --every 30m --agent "ODIN Market" --prompt "Poll the market feed."
+
+# Into an existing conversation: an agent scheduling its own follow-up from its tab
+maestro-cli cue schedule --at "2026-11-11 15:00" --here --prompt "Find more candidates."
+
+# Into a named tab of an agent
+maestro-cli cue schedule --in 1d --agent Pedsidian --tab 810dda7e --prompt "Check the draft again."
 ```
+
+By default a scheduled prompt runs as its own detached Cue turn, and its output lands in History and `cue activity`, not in any tab. `--tab` (or `--here`, for the tab the command runs from) delivers it into that tab instead, the same as `dispatch --tab --queue`: it waits behind a busy turn, the reply marks the tab unread, and the view never moves. If the tab was closed by the time the task fires, the prompt goes to a new tab of the agent and a toast says so. The tab keeps its own model, so `--tier`, `--model`, and `--effort` are refused with it.
 
 Inspect and edit what is scheduled:
 
@@ -2580,6 +2679,8 @@ maestro-cli cue schedule --cancel standup
 | `--cancel <name>`          | Delete a task                                                            |
 | `-a, --agent <id-or-name>` | Target agent (required when creating; scopes the other modes)            |
 | `-p, --prompt <text>`      | Prompt to send when the task fires                                       |
+| `--tab <tab-id>`           | Deliver the prompt into this AI tab of `--agent` (id or unique prefix)   |
+| `--here`                   | Deliver into the AI tab this command runs from; `--agent` defaults to it |
 | `--notify` / `--sticky`    | Also raise a toast; `--sticky` keeps it up until dismissed               |
 | `-m, --message <text>`     | Toast body (defaults to the label, then the prompt)                      |
 | `-n, --name <name>`        | Custom subscription name (auto-generated when omitted)                   |

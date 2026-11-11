@@ -16,13 +16,15 @@ import type {
 	TerminalTab,
 } from '../../../../renderer/types';
 import type { BrowserTab } from '../../../../shared/browserPage';
+import {
+	switchTabProvider,
+	updateProviderSlot,
+	type NativeSessionBinding,
+} from '../../../../shared/maestro-lib/agents/providerSwap';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { resetStore } from '../../../helpers/resetStores';
 
-import {
-	useSessionLifecycleSync,
-	type SessionLifecycleSyncPayload,
-} from '../../../../renderer/hooks/session/useSessionLifecycleSync';
+import { useSessionLifecycleSync } from '../../../../renderer/hooks/session/useSessionLifecycleSync';
 import { mergeSessionPersistenceChanges } from '../../../../shared/sessionPersistenceMerge';
 import { BridgeTransportError } from '../../../../shared/bridgeError';
 // The renderer sentry module only exports these two helpers, so a full mock is
@@ -134,7 +136,7 @@ function seedSessions(sessions: Session[]) {
 
 function mockPersistedSessions(initial: Session[]) {
 	let stored = structuredClone(initial);
-	const save = async (updates: Session[], removedIds: string[], baselines?: Session[]) => {
+	const save = async (updates: Session[], removedIds: string[] = [], baselines?: Session[]) => {
 		stored = stored.filter((session) => !removedIds.includes(session.id));
 		for (const update of updates) {
 			const index = stored.findIndex((session) => session.id === update.id);
@@ -500,6 +502,171 @@ describe('useDebouncedPersistence', () => {
 			});
 		});
 
+		describe('native session binding persistence', () => {
+			const observed: Extract<NativeSessionBinding, { state: 'bound' }> = {
+				version: 1,
+				state: 'bound',
+				provider: 'grok',
+				nativeSessionId: 'same-native-id',
+				accountRef: 'grok:fixture-account-a',
+				host: { kind: 'local', identity: 'fixture-machine-a' },
+				cwd: '/fixture/project-a',
+			};
+
+			it.each<[string, NativeSessionBinding | undefined]>([
+				['observed', observed],
+				['different account', { ...observed, accountRef: 'grok:fixture-account-b' }],
+				['different host', { ...observed, host: { kind: 'ssh', identity: 'fixture-host-b' } }],
+				['different cwd', { ...observed, cwd: '/fixture/project-b' }],
+				['different provider', { ...observed, provider: 'codex' }],
+				['legacy absent', undefined],
+				['explicit legacy unknown', { version: 1, state: 'unknown', reason: 'legacy' }],
+				['explicit unobserved', { version: 1, state: 'unknown', reason: 'unobserved' }],
+			])('retains %s scope through open/snoozed serialization and reload', async (_, binding) => {
+				const provider = binding?.state === 'bound' ? binding.provider : 'grok';
+				const tab = makeTab({
+					id: 'scoped-tab',
+					agentSessionId: observed.nativeSessionId,
+					...(binding ? { nativeSessionBinding: binding } : {}),
+					logs: [makeLog('retained-history')],
+				});
+				const parked = switchTabProvider(tab, provider, 'claude-code');
+				const sessions = [
+					makeSession({
+						id: 'original-owner',
+						toolType: 'grok',
+						aiTabs: [makeTab({ ...tab, nativeSessionBinding: observed })],
+					}),
+					makeSession({ id: 'live-owner', toolType: provider, aiTabs: [tab] }),
+					makeSession({
+						id: 'parked-owner',
+						toolType: 'claude-code',
+						aiTabs: [parked],
+						snoozedTabs: [
+							{
+								id: 'snooze',
+								type: 'ai',
+								tab: { ...parked, id: 'snoozed-tab' },
+								unifiedIndex: 1,
+								snoozedAt: 100,
+								wakeAt: 200,
+							},
+						],
+						closedTabHistory: [{ tab: parked, index: 0, closedAt: 100 }],
+						unifiedClosedTabHistory: [{ type: 'ai', tab: parked, unifiedIndex: 0, closedAt: 100 }],
+					}),
+				];
+				seedSessions(sessions);
+				const hook = renderPersistence(makeInitialLoadRef(true));
+				await act(async () => hook.result.current.flushNow(sessions));
+				const reloaded: Session[] = JSON.parse(
+					JSON.stringify(vi.mocked(window.maestro.sessions.setAll).mock.calls.at(-1)![0])
+				);
+				hook.unmount();
+				vi.mocked(window.maestro.sessions.setAll).mockClear();
+				expect(reloaded[0].aiTabs[0].nativeSessionBinding).toEqual(observed);
+				expect(reloaded[1].aiTabs[0].nativeSessionBinding).toEqual(binding);
+				expect(reloaded[2].aiTabs[0].agentSessionId).toBeNull();
+				expect(reloaded[2].aiTabs[0].nativeSessionBinding).toBeUndefined();
+				const snoozed = reloaded[2].snoozedTabs![0];
+				if (snoozed.type !== 'ai') throw new Error('Expected persisted AI snooze');
+				for (const snapshot of [reloaded[2].aiTabs[0], snoozed.tab]) {
+					expect(snapshot.providerSessions?.[provider]?.nativeSessionBinding).toEqual(binding);
+					const restored = switchTabProvider(snapshot, 'claude-code', provider);
+					expect(restored.agentSessionId).toBe(observed.nativeSessionId);
+					expect(restored.nativeSessionBinding).toEqual(binding);
+					expect(restored.logs).toEqual(tab.logs);
+				}
+				expect(reloaded[2].closedTabHistory).toBeUndefined();
+				// The closed-tab stack persists as pointers (src/shared/closedTabHistory.ts), and a
+				// pointer still carries the parked provider slot with its binding.
+				const closed = reloaded[2].unifiedClosedTabHistory;
+				expect(closed).toHaveLength(1);
+				if (closed[0].type !== 'ai') throw new Error('Expected persisted AI closed tab');
+				expect(closed[0].tab.agentSessionId).toBeNull();
+				expect(closed[0].tab.nativeSessionBinding).toBeUndefined();
+				expect(closed[0].tab.providerSessions?.[provider]?.nativeSessionBinding).toEqual(binding);
+				expect(sessions[2].closedTabHistory[0].tab).toBe(parked);
+				seedSessions(reloaded);
+				const restarted = renderPersistence(makeInitialLoadRef(true));
+				await act(async () => restarted.result.current.flushNow(reloaded));
+				expect(window.maestro.sessions.setAll).toHaveBeenCalledTimes(1);
+				expect(
+					JSON.parse(
+						JSON.stringify(vi.mocked(window.maestro.sessions.setAll).mock.calls.at(-1)![0])
+					)
+				).toEqual(reloaded);
+				restarted.unmount();
+				expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
+				expect(window.maestro.agentSessions.read).not.toHaveBeenCalled();
+			});
+
+			it('persists late Grok allocations into separate parked slots before reload', async () => {
+				const bindings = [observed, { ...observed, accountRef: 'grok:fixture-account-b' }];
+				const incoming = { agentSessionId: 'codex-native-id', customModel: 'codex-model' };
+				const sessions = bindings.map((_, index) =>
+					makeSession({
+						id: `owner-${index}`,
+						toolType: 'codex',
+						aiTabs: [
+							switchTabProvider(
+								makeTab({
+									id: `tab-${index}`,
+									turnProvider: 'grok',
+									logs: [makeLog(`history-${index}`)],
+									providerSessions: { codex: incoming },
+								}),
+								'grok',
+								'codex'
+							),
+						],
+					})
+				);
+				const setAll = vi.mocked(window.maestro.sessions.setAll);
+				const setMany = vi.mocked(window.maestro.sessions.setMany);
+				const previousAll = setAll.getMockImplementation();
+				const previousMany = setMany.getMockImplementation();
+				const stored = mockPersistedSessions([]);
+				seedSessions(sessions);
+				const hook = renderPersistence(makeInitialLoadRef(true));
+				try {
+					await act(async () => hook.result.current.flushNow(sessions));
+					const allocated = sessions.map((session, index) => ({
+						...session,
+						aiTabs: [
+							updateProviderSlot(session.aiTabs[0], session, 'grok', {
+								agentSessionId: bindings[index].nativeSessionId,
+								nativeSessionBinding: bindings[index],
+							}),
+						],
+					}));
+					act(() => seedSessions(allocated));
+					await act(async () => hook.result.current.flushNow(allocated));
+					expect(setMany).toHaveBeenCalledTimes(1);
+					const reloaded: Session[] = JSON.parse(JSON.stringify(stored()));
+					for (const [index, session] of reloaded.entries()) {
+						const tab = session.aiTabs[0];
+						expect(tab).toMatchObject(incoming);
+						expect(tab.nativeSessionBinding).toBeUndefined();
+						expect(tab.providerSessions?.grok).toEqual({
+							agentSessionId: bindings[index].nativeSessionId,
+							nativeSessionBinding: bindings[index],
+						});
+						const restored = switchTabProvider(tab, 'codex', 'grok');
+						expect(restored.nativeSessionBinding).toEqual(bindings[index]);
+						expect(restored.agentSessionId).toBe(observed.nativeSessionId);
+						expect(restored.logs).toEqual(sessions[index].aiTabs[0].logs);
+						expect(restored.providerSessions?.codex).toMatchObject(incoming);
+						expect(sessions[index].aiTabs[0].providerSessions?.grok?.agentSessionId).toBeNull();
+					}
+				} finally {
+					hook.unmount();
+					setAll.mockImplementation(previousAll!);
+					setMany.mockImplementation(previousMany!);
+				}
+			});
+		});
+
 		describe('browser tab persistence', () => {
 			it('preserves browser tab order, active selection, URL, title, and safe partition', () => {
 				const browserTab = makeBrowserTab({
@@ -849,10 +1016,11 @@ describe('useDebouncedPersistence', () => {
 				const tab = makeTab({
 					id: 't',
 					agentError: {
-						type: 'overloaded',
+						type: 'network_error',
 						message: 'API overloaded',
 						timestamp: Date.now(),
-						recovery: { type: 'retry' },
+						recoverable: true,
+						agentId: 'claude-code',
 					},
 				});
 				const session = makeSession({
@@ -966,10 +1134,11 @@ describe('useDebouncedPersistence', () => {
 			it('should remove session-level agentError', () => {
 				const session = makeSession({
 					agentError: {
-						type: 'overloaded',
+						type: 'network_error',
 						message: 'API overloaded',
 						timestamp: Date.now(),
-						recovery: { type: 'retry' },
+						recoverable: true,
+						agentId: 'claude-code',
 					},
 				});
 
@@ -1064,7 +1233,7 @@ describe('useDebouncedPersistence', () => {
 						{ name: 'README.md', type: 'file' },
 					],
 					fileTreeStats: { fileCount: 2, folderCount: 1, totalSize: 1024 },
-					fileTreeLoading: false,
+					fileTreeLoading: true,
 					fileTreeLastScanTime: Date.now(),
 				});
 
@@ -1079,8 +1248,30 @@ describe('useDebouncedPersistence', () => {
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].fileTree).toEqual([]);
 				expect(persisted[0].fileTreeStats).toBeUndefined();
-				expect(persisted[0].fileTreeLoading).toBeUndefined();
+				expect(persisted[0].fileTreeLoading).toBe(false);
 				expect(persisted[0].fileTreeLastScanTime).toBeUndefined();
+			});
+
+			it('should remove fileTreeLoadedCap and fileTreeTruncated', () => {
+				// Regression: a persisted fileTreeLoadedCap beside the stripped tree
+				// told the auto-loader the empty tree was already loaded, so the
+				// Files panel stayed on "No files found" after every restart.
+				const session = makeSession({
+					fileTreeLoadedCap: 250_000,
+					fileTreeTruncated: true,
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([session]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].fileTreeLoadedCap).toBeUndefined();
+				expect(persisted[0].fileTreeTruncated).toBeUndefined();
 			});
 
 			it('should remove fileTreeError and fileTreeRetryAt', () => {
@@ -3115,7 +3306,7 @@ describe('useDebouncedPersistence', () => {
 
 	it('saves an agent created on the host after an empty bootstrap with its unmodified observed baseline', async () => {
 		const originalListener = window.maestro.sessions.onLifecycleSync;
-		const listeners = new Set<(payload: SessionLifecycleSyncPayload) => void>();
+		const listeners = new Set<Parameters<typeof window.maestro.sessions.onLifecycleSync>[0]>();
 		window.maestro.sessions.onLifecycleSync = (callback) => {
 			listeners.add(callback);
 			return () => listeners.delete(callback);
@@ -3154,7 +3345,7 @@ describe('useDebouncedPersistence', () => {
 				await vi.runAllTimersAsync();
 			});
 			await act(async () => {
-				const payload = { added: [structuredClone(host)] };
+				const payload = { added: [structuredClone(host)], removedIds: [] };
 				for (const listener of listeners) listener(payload);
 			});
 			host = { ...host, cwd: '/host-changed-after-event' };

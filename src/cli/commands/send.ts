@@ -1,9 +1,16 @@
 // Send command - send a message to an agent and get a JSON response
 // Requires a Maestro agent ID. Optionally resumes an existing agent session.
 
+import * as os from 'os';
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
 import { captureCliRun, settlementFromAgentResult } from '../services/agent-run-capture';
-import { resolveAgentId, getSessionById, addHistoryEntry } from '../services/storage';
+import {
+	resolveAgentId,
+	getSessionById,
+	addHistoryEntry,
+	readStoredAiTabs,
+} from '../services/storage';
+import { listDesktopTabs } from '../services/session-command';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
 import { requestCliSynopsis } from '../services/synopsis';
 import { estimateContextUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
@@ -274,6 +281,58 @@ function buildResponse(
 	};
 }
 
+/**
+ * Why a `--session` value must not be resumed, or `null` when it may.
+ *
+ * `send` runs a headless provider process beside the desktop; it never writes
+ * into a desktop tab. Two values used to slip through and come back as an
+ * opaque `crashed` turn:
+ *   - a Maestro TAB id, which the provider cannot resume (it is not one of its
+ *     session ids), and
+ *   - the provider session of a tab that is mid-turn, which puts a second
+ *     writer on one conversation.
+ * Both are refused with a reason that names the verb that does what the caller
+ * meant (`dispatch --tab --queue`). The desktop's live tab list is asked first
+ * because only it knows which tab is busy; with the app down, the persisted
+ * tabs still catch the tab-id mistake.
+ */
+async function sessionResumeRefusal(
+	agentId: string,
+	sessionArg: string
+): Promise<{ error: string; code: string } | null> {
+	let tabs: { tabId: string; agentSessionId: string | null; state: string }[];
+	try {
+		tabs = (await listDesktopTabs()).filter((tab) => tab.agentId === agentId);
+	} catch {
+		tabs = readStoredAiTabs(agentId).map((tab) => ({
+			tabId: tab.id,
+			agentSessionId: tab.agentSessionId ?? null,
+			state: 'unknown',
+		}));
+	}
+	const queueHint = (tabId: string) =>
+		`To deliver into that tab instead, run: maestro-cli dispatch ${agentId} "<message>" --tab ${tabId} --queue`;
+
+	const byTabId = tabs.find((tab) => tab.tabId === sessionArg);
+	if (byTabId) {
+		const providerNote = byTabId.agentSessionId
+			? ` (that tab's provider session is ${byTabId.agentSessionId})`
+			: '';
+		return {
+			code: 'SESSION_IS_TAB_ID',
+			error: `"${sessionArg}" is a Maestro tab id; --session takes a provider session id${providerNote}. ${queueHint(sessionArg)}`,
+		};
+	}
+	const busyTab = tabs.find((tab) => tab.agentSessionId === sessionArg && tab.state === 'busy');
+	if (busyTab) {
+		return {
+			code: 'TAB_BUSY',
+			error: `Provider session ${sessionArg} is mid-turn in desktop tab ${busyTab.tabId}; resuming it now would put a second writer on one conversation. Wait for the turn to finish. ${queueHint(busyTab.tabId)}`,
+		};
+	}
+	return null;
+}
+
 /** Run one prompt for the resolved stored agent and emit its provider result as JSON.
  * Prefer the authenticated desktop runner; required plugin tools/receipts prohibit
  * standalone fallback so success cannot silently omit the requested MCP boundary.
@@ -350,6 +409,15 @@ export async function send(
 		);
 		process.exit(1);
 		return;
+	}
+	if (agentSessionId) {
+		const refusal = await sessionResumeRefusal(agentId, agentSessionId);
+		if (refusal) {
+			emitErrorJson(refusal.error, refusal.code);
+			console.error(`maestro-cli send refused: ${refusal.error}`);
+			process.exit(1);
+			return;
+		}
 	}
 
 	// A send without `--session` opens a new provider session, so it carries the
@@ -709,11 +777,13 @@ async function sendToPeer(
 				onFirst: () => void client.turns.interrupt(agent.id, tabId),
 			});
 			try {
-				const sent = await runPeerAgentAction(client, agent, {
-					kind: 'send',
-					tabId,
-					text: message,
-				});
+				const sent = await runPeerAgentAction(
+					client,
+					agent,
+					{ kind: 'send', tabId, text: message },
+					// The host stamps the turn's History entry with this machine.
+					{ originHost: os.hostname() }
+				);
 				if (!sent.ok) {
 					if (sent.error.unknown || sent.error.code === 'host-lost') {
 						throw new PeerSendFailure(

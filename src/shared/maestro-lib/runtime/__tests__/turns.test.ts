@@ -7,9 +7,8 @@
  * repository, its queue, and its records are real and write to a temp data directory.
  */
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	CAPTURED_RECORDINGS,
@@ -21,11 +20,19 @@ import {
 	fakeTurnFromRecording,
 	writeFakeTurn,
 } from '../../../../__tests__/shared/maestro-lib/run/fakeAgent';
+import { nativeAccountRef } from '../../../agentAccountDir';
+import * as repositories from '../../agents/repository';
 import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
-import type { ClientResult, TurnEvent } from '../../client/types';
+import type { ClientResult, QueuedTurn, TurnEvent } from '../../client/types';
 import { readHistory } from '../../store/read-history';
+import { sharedHistoryDir, sharedHistoryFilename } from '../../store/shared-history';
 import { runAgentTurn, type RunAgentTurnOptions } from '../../turns/run-agent-turn';
-import { createMaestroRuntime, type MaestroRuntime, type RuntimeDeps } from '../index';
+import {
+	createMaestroRuntime,
+	type MaestroRuntime,
+	type MaestroRuntimeOptions,
+	type RuntimeDeps,
+} from '../index';
 import type { WatchDirectory } from '../settings-watch';
 
 const T0 = Date.parse('2026-10-04T12:00:00Z');
@@ -115,7 +122,10 @@ describe('runtime turns', () => {
 		...extra,
 	});
 
-	async function start(sessions: unknown[] = [seedAgent()]): Promise<MaestroRuntime> {
+	async function start(
+		sessions: unknown[] = [seedAgent()],
+		extra: Partial<MaestroRuntimeOptions> = {}
+	): Promise<MaestroRuntime> {
 		fs.writeFileSync(
 			path.join(dir, 'maestro-sessions.json'),
 			JSON.stringify({ sessions, activeSessionId: 'a1' }, null, '\t')
@@ -125,6 +135,7 @@ describe('runtime turns', () => {
 			mode: 'tui',
 			deps: deps(),
 			turns: { bundledPromptsDir: BUNDLED_PROMPTS },
+			...extra,
 		});
 		if (!started.ok) throw new Error(`refused: ${started.refusal.message}`);
 		open.push(started.runtime);
@@ -182,8 +193,10 @@ describe('runtime turns', () => {
 		JSON.parse(fs.readFileSync(path.join(dir, 'maestro-sessions.json'), 'utf-8'));
 
 	beforeEach(() => {
-		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-runtime-turns-'));
-		work = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-runtime-turns-work-'));
+		const fixtureRoot = path.resolve(__dirname, '../../../../../tmp');
+		fs.mkdirSync(fixtureRoot, { recursive: true });
+		dir = fs.mkdtempSync(path.join(fixtureRoot, 'maestro-runtime-turns-'));
+		work = fs.mkdtempSync(path.join(fixtureRoot, 'maestro-runtime-turns-work-'));
 		open = [];
 		hold = false;
 		argvFiles = [];
@@ -201,6 +214,7 @@ describe('runtime turns', () => {
 		};
 	});
 	afterEach(async () => {
+		vi.restoreAllMocks();
 		for (const runtime of open) await runtime.connection.close();
 		fs.rmSync(dir, { recursive: true, force: true });
 		fs.rmSync(work, { recursive: true, force: true });
@@ -266,6 +280,89 @@ describe('runtime turns', () => {
 			});
 		});
 
+		describe('History host and shared History', () => {
+			const SHARED = { sharedHistory: { label: 'box.host', hostname: 'box' } };
+			const sharedFile = () => path.join(sharedHistoryDir(work), sharedHistoryFilename('box.host'));
+			const readShared = () =>
+				fs
+					.readFileSync(sharedFile(), 'utf-8')
+					.split('\n')
+					.filter(Boolean)
+					.map((line) => JSON.parse(line));
+			const ownEntries = (runtime: MaestroRuntime) => {
+				const history = readHistory(runtime.paths, 'a1');
+				if (history.status !== 'ok') throw new Error(`history ${history.status}`);
+				return history.entries;
+			};
+
+			it('stamps the entry with the machine the send names, and copies it to the project', async () => {
+				fs.mkdirSync(sharedHistoryDir(work), { recursive: true });
+				const runtime = await start([seedAgent()], SHARED);
+				const turn = watch(runtime);
+				value(
+					await runtime.turns.send('a1', 't1', { text: 'hello', originHost: '  laptop.local ' })
+				);
+				await turn.outcome();
+
+				const [own] = ownEntries(runtime);
+				expect(own.hostname).toBe('laptop.local');
+				const shared = readShared();
+				expect(shared).toHaveLength(1);
+				expect(shared[0]).toMatchObject({ id: own.id, hostname: 'laptop.local', type: 'USER' });
+				// The runtime's own shared file is not read back as another writer's.
+				const listed = value(await runtime.history.list('a1'));
+				expect(listed.map((e) => e.id)).toEqual([own.id]);
+			});
+
+			it("gives a copy with no origin the host's own hostname, and drops an origin that is not printable", async () => {
+				fs.mkdirSync(sharedHistoryDir(work), { recursive: true });
+				const runtime = await start([seedAgent()], SHARED);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello', originHost: 'bad\u0007host' }));
+				await turn.outcome();
+
+				const [own] = ownEntries(runtime);
+				expect(own).not.toHaveProperty('hostname');
+				expect(readShared()[0]).toMatchObject({ id: own.id, hostname: 'box' });
+			});
+
+			it('copies nothing for a project that does not share, or without a shared identity', async () => {
+				const runtime = await start([seedAgent()], SHARED);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
+				await turn.outcome();
+				expect(ownEntries(runtime)).toHaveLength(1);
+				expect(fs.existsSync(sharedHistoryDir(work))).toBe(false);
+			});
+
+			it('copies nothing without a shared identity, even where the project shares', async () => {
+				fs.mkdirSync(sharedHistoryDir(work), { recursive: true });
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
+				await turn.outcome();
+				expect(ownEntries(runtime)).toHaveLength(1);
+				expect(fs.readdirSync(sharedHistoryDir(work))).toEqual([]);
+			});
+
+			it('lists the other writers entries with the agent own, newest first', async () => {
+				fs.mkdirSync(sharedHistoryDir(work), { recursive: true });
+				fs.writeFileSync(
+					path.join(sharedHistoryDir(work), sharedHistoryFilename('laptop')),
+					`${JSON.stringify({ id: 'from-laptop', type: 'USER', timestamp: 1, summary: 's', projectPath: work })}\n`
+				);
+				const runtime = await start([seedAgent()], SHARED);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
+				await turn.outcome();
+				const listed = value(await runtime.history.list('a1'));
+				expect(listed).toHaveLength(2);
+				expect(listed[1]).toMatchObject({ id: 'from-laptop', hostname: 'laptop' });
+				expect(value(await runtime.history.list('a1', { limit: 1 }))).toHaveLength(1);
+				expect(errorOf(await runtime.history.list('nope')).code).toBe('not-found');
+			});
+		});
+
 		it('resumes the tab session on the next send, and does not announce the id it resumed', async () => {
 			const runtime = await start();
 			const turn = watch(runtime);
@@ -284,6 +381,45 @@ describe('runtime turns', () => {
 				'user',
 				'stdout',
 			]);
+		});
+
+		// The runtime's public port carries no host-admitted image bounds, so a Grok
+		// message with attachments is refused whole at send: no turn, no queued item, no transcript
+		// entry, and never the text alone in its place.
+		it.each([
+			{ name: 'fresh local', resume: null, ssh: false },
+			{ name: 'resumed local', resume: 'grok-native-session', ssh: false },
+			{ name: 'fresh SSH', resume: null, ssh: true },
+		])('refuses Grok attachments at send, starting nothing: $name', async ({ resume, ssh }) => {
+			recordings.grok = writeFakeTurn(work, { chunks: [], close: { code: 0, signal: null } });
+			const runtime = await start([
+				seedAgent({
+					toolType: 'grok',
+					customEnvVars: { GROK_HOME: work },
+					aiTabs: [{ id: 't1', agentSessionId: resume, name: null, logs: [] }],
+					unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+					...(ssh ? { sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' } } : {}),
+				}),
+			]);
+			const turn = watch(runtime);
+
+			const error = errorOf(
+				await runtime.turns.send('a1', 't1', {
+					text: 'describe these',
+					images: ['data:image/png;base64,iVBORw0KGgo=', 'maestro-image://sha256/fixture'],
+				})
+			);
+
+			expect(error).toMatchObject({
+				code: 'unsupported',
+				message:
+					'Images cannot be sent from here yet. Send the message without them, or use the desktop.',
+			});
+			expect(argvFiles).toEqual([]);
+			expect(turn.events).toEqual([]);
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+			expect(await transcript(runtime)).toEqual([]);
+			expect(sessions().sessions[0].aiTabs[0]).toMatchObject({ agentSessionId: resume, logs: [] });
 		});
 
 		it('refuses what cannot run, and says which', async () => {
@@ -376,6 +512,25 @@ describe('runtime turns', () => {
 			);
 		});
 
+		it('keeps the origin host on a queued message, so its History entry names the sender', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+
+			hold = false;
+			value(await runtime.turns.send('a1', 't1', { text: 'second', originHost: 'laptop.local' }));
+			expect(value(await runtime.turns.interrupt('a1', 't1'))).toEqual({ stopped: true });
+			await turn.outcome(2);
+
+			const history = readHistory(runtime.paths, 'a1');
+			if (history.status !== 'ok') throw new Error(`history ${history.status}`);
+			// The interrupted first turn writes no entry; the queued one is stamped with its sender.
+			expect(history.entries).toHaveLength(1);
+			expect(history.entries[0].hostname).toBe('laptop.local');
+		});
+
 		it('holds a write on another tab while one runs, since the tabs share a working directory', async () => {
 			hold = true;
 			const runtime = await start();
@@ -411,6 +566,87 @@ describe('runtime turns', () => {
 			value(await runtime.turns.interrupt('a1', 't1'));
 			await turn.outcome();
 			expect(argvFiles).toHaveLength(1);
+		});
+
+		it('says what waits on every queue change, but not for a turn that never waited', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			const changes: QueuedTurn[][] = [];
+			runtime.events.subscribe(
+				(event) => {
+					if (event.type === 'queue.changed') changes.push(event.items);
+				},
+				{ types: ['queue.changed'], agentId: 'a1' }
+			);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			expect(changes).toEqual([]);
+
+			hold = false;
+			const queued = value(await runtime.turns.send('a1', 't1', { text: 'second' }));
+			if (queued.status !== 'queued') throw new Error('expected queued');
+			expect(changes).toEqual([
+				[
+					expect.objectContaining({
+						itemId: queued.itemId,
+						tabId: 't1',
+						kind: 'message',
+						text: 'second',
+						paused: false,
+					}),
+				],
+			]);
+
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome(2);
+			// The waiting message started: nothing waits now.
+			expect(changes).toHaveLength(2);
+			expect(changes[1]).toEqual([]);
+		});
+
+		it('holds and releases a waiting message, and says when none has that id', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			const changes: QueuedTurn[][] = [];
+			runtime.events.subscribe(
+				(event) => {
+					if (event.type === 'queue.changed') changes.push(event.items);
+				},
+				{ types: ['queue.changed'] }
+			);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			const queued = value(await runtime.turns.send('a1', 't1', { text: 'waits' }));
+			if (queued.status !== 'queued') throw new Error('expected queued');
+
+			expect(value(await runtime.turns.queue.setPaused('a1', queued.itemId, true))).toEqual({
+				found: true,
+				paused: true,
+			});
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+				expect.objectContaining({ itemId: queued.itemId, paused: true }),
+			]);
+			expect(changes[changes.length - 1]).toEqual([expect.objectContaining({ paused: true })]);
+
+			expect(value(await runtime.turns.queue.setPaused('a1', queued.itemId, false))).toEqual({
+				found: true,
+				paused: false,
+			});
+			expect(changes[changes.length - 1]).toEqual([expect.objectContaining({ paused: false })]);
+
+			expect(value(await runtime.turns.queue.setPaused('a1', 'missing', true))).toEqual({
+				found: false,
+				paused: true,
+			});
+			expect(errorOf(await runtime.turns.queue.setPaused('nope', queued.itemId, true)).code).toBe(
+				'not-found'
+			);
+
+			value(await runtime.turns.queue.remove('a1', queued.itemId));
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome();
 		});
 
 		it('says nothing was stopped when the tab is idle', async () => {
@@ -482,6 +718,497 @@ describe('runtime turns', () => {
 				['on claude', 'on opencode', 'back on claude']
 			);
 			expect(entries.filter((entry) => entry.source === 'stdout')).toHaveLength(3);
+		});
+	});
+
+	describe('Grok native session identity', () => {
+		/** The argv files the fake agent actually wrote: one per process that ran. */
+		const ran = () => argvFiles.filter((file) => fs.existsSync(file));
+
+		async function startWith(extra: Partial<RuntimeDeps>, agent = seedAgent()) {
+			fs.writeFileSync(
+				path.join(dir, 'maestro-sessions.json'),
+				JSON.stringify({ sessions: [agent], activeSessionId: 'a1' }, null, '\t')
+			);
+			const started = await createMaestroRuntime({
+				dataDir: dir,
+				mode: 'tui',
+				deps: { ...deps(), ...extra },
+				turns: { bundledPromptsDir: BUNDLED_PROMPTS },
+			});
+			if (!started.ok) throw new Error(`refused: ${started.refusal.message}`);
+			open.push(started.runtime);
+			return started.runtime;
+		}
+
+		/** Wait until the tab has emitted an event of this kind. */
+		const saw = (turn: ReturnType<typeof watch>, kind: TurnEvent['kind']) =>
+			new Promise<void>((resolve, reject) => {
+				const timer = setTimeout(() => reject(new Error(`no ${kind}`)), 8_000);
+				const poll = setInterval(() => {
+					if (turn.events.some((event) => event.kind === kind)) {
+						clearInterval(poll);
+						clearTimeout(timer);
+						resolve();
+					}
+				}, 10);
+			});
+
+		it.each([
+			{ name: 'new allocation', early: ['native-new'], end: 'native-new' },
+			{
+				name: 'settings change during turn',
+				early: ['native-new'],
+				end: 'native-new',
+				mutate: true,
+			},
+			{ name: 'end-only allocation', early: [], end: 'native-new' },
+			{ name: 'allocation without terminal ID', early: ['native-new'], end: undefined },
+			{
+				name: 'allocation without end event',
+				early: ['native-new'],
+				end: undefined,
+				missingEnd: true,
+			},
+			{ name: 'no allocation or end event', early: [], end: undefined, missingEnd: true },
+			{ name: 'cancelled allocation', early: ['native-new'], end: undefined, cancel: true },
+			{
+				name: 'allocation after stop',
+				early: ['native-new'],
+				end: undefined,
+				cancel: true,
+				late: true,
+			},
+			{
+				name: 'allocation without receipt',
+				early: ['native-new'],
+				end: undefined,
+				noReceipt: true,
+			},
+			{
+				name: 'resume without receipt',
+				resume: 'original',
+				early: ['original'],
+				end: undefined,
+				noReceipt: true,
+				refused: true,
+			},
+			{ name: 'raw same-ID resume', resume: 'original', early: ['original'], end: undefined },
+			{ name: 'unobserved resume', resume: 'original', early: [], end: undefined },
+			{ name: 'unobserved new turn', early: [], end: undefined },
+			{
+				name: 'rejected allocation write',
+				early: ['native-new'],
+				end: undefined,
+				refused: true,
+				writeRefused: 'allocation',
+			},
+			{
+				name: 'superseded same-ID write',
+				resume: 'original',
+				early: ['original'],
+				end: undefined,
+				refused: true,
+				writeRefused: 'check',
+			},
+			{ name: 'invalid early ID', early: ['\u0000bad'], end: undefined, refused: true },
+			{ name: 'blank early ID', early: ['   '], end: undefined, refused: true },
+			{ name: 'empty end ID', early: [], end: '', refused: true },
+			{ name: 'invalid end ID', early: [], end: 'bad\nend', refused: true },
+			{
+				name: 'replaced early ID',
+				resume: 'original',
+				early: ['replacement'],
+				end: 'original',
+				refused: true,
+			},
+			{
+				name: 'replaced end ID',
+				resume: 'original',
+				early: ['original'],
+				end: 'replacement',
+				refused: true,
+			},
+			{
+				name: 'conflicting allocation',
+				early: ['native-new', 'replacement'],
+				end: 'replacement',
+				refused: true,
+			},
+		])(
+			'records Grok identity honestly: $name',
+			async ({
+				resume,
+				early,
+				end,
+				cancel,
+				refused,
+				writeRefused,
+				mutate,
+				late,
+				noReceipt,
+				missingEnd,
+			}) => {
+				// Exercise the real repository and recorder around controlled parsed ID observations.
+				// The existing inert child still supplies the actual process and cancellation.
+				hold = cancel === true;
+				recordings.grok = writeFakeTurn(work, {
+					chunks: [
+						'{"type":"text","data":"answer"}\n',
+						...(missingEnd
+							? []
+							: [
+									JSON.stringify({
+										type: 'end',
+										stopReason: 'EndTurn',
+										...(!early.length && end === 'native-new' ? { sessionId: end } : {}),
+									}) + '\n',
+								]),
+					],
+					close: { code: 0, signal: null },
+				});
+				let changeScope: () => void = () => undefined;
+				const stopped = Promise.withResolvers<void>();
+				const run: RuntimeDeps['turns']['runAgentTurn'] = async (assembled, options) => {
+					expect(assembled.resumeSessionId).toBe(resume);
+					const started = await fakeProvider(assembled, {
+						...options,
+						grokLaunchScope: {
+							...options.grokLaunchScope!,
+							local: { ...options.grokLaunchScope!.local, installationId: () => 'recording-host' },
+						},
+					});
+					if (!started.ok) return started;
+					return {
+						ok: true,
+						run: {
+							...started.run,
+							...(noReceipt ? { nativeLaunchReceipt: undefined } : {}),
+							interrupt: () => {
+								started.run.interrupt();
+								stopped.resolve();
+							},
+							events: (async function* () {
+								if (late) await stopped.promise;
+								for (const sessionId of early) yield { type: 'system' as const, sessionId };
+								if (mutate) {
+									value(await runtime.agents.update('a1', { provider: 'codex' }));
+									changeScope();
+								}
+								for await (const event of started.run.events) yield event;
+							})(),
+							result: started.run.result.then((completed) => ({
+								...completed,
+								sessionId: !early.length && end === 'native-new' ? completed.sessionId : end,
+								usage: {
+									inputTokens: 7,
+									outputTokens: 3,
+									cacheReadInputTokens: 0,
+									cacheCreationInputTokens: 0,
+									totalCostUsd: 0.01,
+									contextWindow: 200_000,
+								},
+							})),
+						},
+					};
+				};
+				if (writeRefused || mutate) {
+					const create = repositories.createAgentRepository;
+					vi.spyOn(repositories, 'createAgentRepository').mockImplementationOnce((options) => {
+						const repository = create(options);
+						// A foreign settings snapshot can arrive outside the public busy edit guard.
+						const get = repository.getAgent.bind(repository);
+						changeScope = () => {
+							vi.spyOn(repository, 'getAgent').mockImplementation((id) => {
+								const agent = get(id);
+								return (
+									agent && {
+										...agent,
+										cwd: path.join(work, 'changed'),
+										parentSessionId: 'changed-parent',
+										sessionSshRemoteConfig: { enabled: true, remoteId: 'changed-host' },
+									}
+								);
+							});
+						};
+						const record = repository.recordTabSession.bind(repository);
+						vi.spyOn(repository, 'recordTabSession').mockImplementation((...args) => {
+							if (writeRefused && args[3].agentSessionId) {
+								// Queue a real successor ahead of the original guarded mutation.
+								const successor = repository.beginTurn('a1', 't1', {
+									turnId: 'successor',
+									provider: 'grok',
+									consumedMergedContext: false,
+									userEntry: {
+										id: 'successor-entry',
+										source: 'user',
+										text: 'successor',
+										timestamp: T0,
+									},
+								});
+								const pending = record(...args);
+								return successor.then((result) => {
+									value(result);
+									return pending;
+								});
+							}
+							return record(...args);
+						});
+						return repository;
+					});
+				}
+				const unknownBinding = { version: 1, state: 'unknown', reason: 'unobserved' };
+				const resumeBinding = {
+					version: 1,
+					state: 'bound',
+					provider: 'grok',
+					nativeSessionId: resume,
+					cwd: fs.realpathSync(work),
+					accountRef: nativeAccountRef('grok', fs.realpathSync(work)),
+					host: { kind: 'local', identity: 'recording-host' },
+				};
+				const binding = noReceipt
+					? unknownBinding
+					: { ...resumeBinding, nativeSessionId: resume ?? 'native-new' };
+				const runtime = await startWith(
+					{ turns: { runAgentTurn: run } },
+					seedAgent({
+						toolType: 'grok',
+						customEnvVars: { GROK_HOME: work },
+						aiTabs: [
+							{
+								id: 't1',
+								agentSessionId: resume ?? null,
+								name: null,
+								logs: [],
+								...(resume ? { nativeSessionBinding: resumeBinding } : {}),
+							},
+						],
+					})
+				);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'identity recording' }));
+				if (cancel) {
+					await saw(turn, late ? 'started' : 'session');
+					if (late) expect((await tabOf(runtime)).agentSessionId).toBeNull();
+					value(await runtime.turns.interrupt('a1', 't1'));
+					await saw(turn, 'session');
+					// A genuine allocation survives Stop, including one observed during drainage.
+					expect(sessions().sessions[0].aiTabs[0]).toMatchObject({
+						agentSessionId: 'native-new',
+						nativeSessionBinding: binding,
+					});
+				}
+				await turn.outcome();
+				const retained =
+					resume ??
+					(writeRefused
+						? null
+						: early[0] === 'native-new'
+							? 'native-new'
+							: !refused
+								? end
+								: null) ??
+					null;
+				const observed = refused ? undefined : (end ?? early[0]);
+				const current = await tabOf(runtime);
+				const tab = mutate
+					? (current.providerSessions as Record<string, typeof current>).grok
+					: current;
+				expect(tab.agentSessionId).toBe(retained);
+				expect(current.runtimeTurnId).toEqual(writeRefused ? 'successor' : expect.any(String));
+				if (retained) expect(tab.nativeSessionBinding).toEqual(resume ? resumeBinding : binding);
+				else expect(tab.nativeSessionBinding).toBeUndefined();
+				expect(turn.outcomes()).toEqual([
+					refused || missingEnd ? 'crashed' : cancel ? 'interrupted' : 'completed',
+				]);
+				const sessionIds = turn.events.flatMap((event) =>
+					event.kind === 'session' ? [event.providerSessionId] : []
+				);
+				expect(sessionIds).toEqual(
+					!resume && !writeRefused && early[0] === 'native-new'
+						? ['native-new']
+						: !refused && end
+							? [end]
+							: []
+				);
+				const history = readHistory(runtime.paths, 'a1');
+				if (refused || cancel || missingEnd) expect(history.status).toBe('missing');
+				else {
+					if (history.status !== 'ok') throw new Error(`history ${history.status}`);
+					expect(history.entries).toHaveLength(1);
+					expect(history.entries[0].projectPath).toBe(fs.realpathSync(work));
+					expect(history.entries[0].agentSessionId).toBe(observed);
+					expect(history.entries[0].nativeSessionBinding).toEqual(
+						observed ? binding : unknownBinding
+					);
+				}
+				if (writeRefused) {
+					expect(await transcript(runtime)).toEqual([
+						expect.objectContaining({ text: 'identity recording', source: 'user' }),
+						expect.objectContaining({ id: 'successor-entry', text: 'successor' }),
+					]);
+					expect(sessions().sessions[0].aiTabs[0].runtimeTurnId).toBe('successor');
+				}
+				if (refused) {
+					expect(tab.usageStats).toBeUndefined();
+					expect(turn.events).toContainEqual(
+						expect.objectContaining({
+							kind: 'error',
+							error: expect.objectContaining({ type: 'session_not_found', recoverable: false }),
+						})
+					);
+				} else expect(tab.usageStats).toMatchObject({ inputTokens: 7, outputTokens: 3 });
+			}
+		);
+
+		it.each([false, true])('fences pre-begin removal (recreate=%s)', async (recreate) => {
+			let repository: repositories.AgentRepository;
+			const create = repositories.createAgentRepository;
+			vi.spyOn(repositories, 'createAgentRepository').mockImplementationOnce((options) => {
+				repository = create(options);
+				return repository;
+			});
+			recordings.grok = writeFakeTurn(work, { chunks: [], close: { code: 0, signal: null } });
+			const runtime = await startWith(
+				{
+					rules: { ...deps().rules!, newId: () => 't1' },
+					turns: {
+						runAgentTurn: async (assembled, options) => {
+							const started = await fakeProvider(assembled, options);
+							expect(started.ok).toBe(true);
+							value(await repository.closeTab('a1', 't1'));
+							if (recreate) expect(value(await repository.createTab('a1')).tabId).toBe('t1');
+							return started;
+						},
+					},
+				},
+				seedAgent({ toolType: 'grok', customEnvVars: { GROK_HOME: work } })
+			);
+			const events = watch(runtime);
+			expect(errorOf(await runtime.turns.send('a1', 't1', { text: 'stale message' })).code).toBe(
+				'failed'
+			);
+			expect(events.kinds()).not.toContain('user');
+			expect(readHistory(runtime.paths, 'a1').status).toBe('missing');
+			const stored = sessions().sessions[0].aiTabs.find((tab: { id: string }) => tab.id === 't1');
+			if (recreate) {
+				expect(stored.logs).toEqual([]);
+				expect(stored.runtimeTurnId).toBeUndefined();
+				expect(stored.usageStats).toBeUndefined();
+			} else expect(stored).toBeUndefined();
+		});
+
+		it.each([
+			{ stage: 'invalid', change: 'id', rawId: '' },
+			{ stage: 'invalid', change: 'id', rawId: 7 },
+			{ stage: 'launch', change: 'none' },
+			...['context', 'launch'].flatMap((stage) =>
+				['id', 'binding', 'account', 'ssh'].map((change) => ({ stage, change }))
+			),
+		])('refuses Grok resume without replacing history: $stage / $change', async (test) => {
+			// Keep launch assembly valid so the native ownership guard supplies the refusal.
+			recordings.grok = writeFakeTurn(work, { chunks: [], close: { code: 0, signal: null } });
+			let repository: ReturnType<typeof repositories.createAgentRepository>;
+			const create = repositories.createAgentRepository;
+			vi.spyOn(repositories, 'createAgentRepository').mockImplementationOnce((options) => {
+				repository = create(options);
+				return repository;
+			});
+			const binding = { version: 1, state: 'unknown', reason: 'legacy' } as const;
+			const changeSelection = () => {
+				const tab = repository.getTab('a1', 't1')!;
+				if (test.change === 'id') tab.agentSessionId = 'replacement';
+				if (test.change === 'binding')
+					Object.assign(tab.nativeSessionBinding!, { reason: 'unobserved' });
+				if (test.change === 'account' || test.change === 'ssh') {
+					const get = repository.getAgent.bind(repository);
+					vi.spyOn(repository, 'getAgent').mockImplementation((id) => {
+						const agent = get(id);
+						return (
+							agent && {
+								...agent,
+								...(test.change === 'account'
+									? { customEnvVars: { GROK_HOME: path.join(work, 'other-account') } }
+									: { sessionSshRemoteConfig: { enabled: true, remoteId: 'other-host' } }),
+							}
+						);
+					});
+				}
+			};
+			const launch = vi.fn<NonNullable<RuntimeDeps['turns']['runAgentTurn']>>(
+				async (assembled, options) => {
+					expect(assembled.resumeSessionId).toBe('original');
+					expect(options.retainedNativeSessionBinding).toEqual(binding);
+					expect(options.retainedNativeSessionBinding).not.toBe(
+						repository.getTab('a1', 't1')!.nativeSessionBinding
+					);
+					expect(options.recheckNativeSelection?.()).toBe(true);
+					if (test.stage === 'launch') changeSelection();
+					expect(options.retainedNativeSessionBinding).toEqual(binding);
+					expect(options.recheckNativeSelection?.()).toBe(test.change === 'none');
+					const result = await fakeProvider(assembled, options);
+					expect(result).toMatchObject({ ok: false, reason: 'grok-native-session-refused' });
+					expect(result).not.toHaveProperty('run');
+					return result;
+				}
+			);
+			const oldLog = {
+				id: 'original-answer',
+				source: 'ai',
+				text: 'retained answer',
+				timestamp: T0,
+			};
+			const oldUsage = { inputTokens: 9, outputTokens: 4, totalCostUsd: 0.02 };
+			const runtime = await startWith(
+				{
+					turns: {
+						runAgentTurn: launch,
+						probeBinary: async () => {
+							if (test.stage === 'context') changeSelection();
+							return { exists: true, path: process.execPath };
+						},
+					},
+				},
+				seedAgent({
+					toolType: 'grok',
+					customEnvVars: { GROK_HOME: work },
+					aiTabs: [
+						{
+							id: 't1',
+							agentSessionId: 'rawId' in test ? test.rawId : 'original',
+							nativeSessionBinding: binding,
+							logs: [oldLog],
+							usageStats: oldUsage,
+						},
+					],
+				})
+			);
+			const historyFile = path.join(runtime.paths.historyDir, 'a1.jsonl');
+			fs.mkdirSync(runtime.paths.historyDir, { recursive: true });
+			const oldHistory =
+				JSON.stringify({
+					id: 'old',
+					type: 'USER',
+					timestamp: T0,
+					summary: 'old',
+					sessionId: 'a1',
+					agentSessionId: 'original',
+					usageStats: oldUsage,
+				}) + '\n';
+			fs.writeFileSync(historyFile, oldHistory);
+			const before = sessions().sessions[0].aiTabs[0];
+			const turn = watch(runtime);
+			const result = await runtime.turns.send('a1', 't1', { text: 'resume original' });
+			expect(errorOf(result).message).toContain('Grok');
+			expect(launch).toHaveBeenCalledTimes(test.stage === 'launch' ? 1 : 0);
+			expect(ran()).toEqual([]);
+			expect(await transcript(runtime)).toEqual([oldLog]);
+			expect(
+				turn.events.some((event) => ['started', 'session', 'outcome'].includes(event.kind))
+			).toBe(false);
+			expect(fs.readFileSync(historyFile, 'utf-8')).toBe(oldHistory);
+			expect(sessions().sessions[0].aiTabs[0]).toEqual(before);
 		});
 	});
 });

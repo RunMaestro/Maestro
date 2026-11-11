@@ -5,9 +5,102 @@
  * don't report their context window size directly.
  */
 
-import type { ToolType } from '../types';
+import type { AITab, Session, ToolType } from '../types';
 import { COMBINED_CONTEXT_AGENTS, getContextWindowForAgent } from '../../shared/agentConstants';
+import { effectiveAgentCustomEnvVars, resolveAgentAccountKey } from '../../shared/providerProfiles';
 import { useAgentStore } from '../stores/agentStore';
+import { getHomeDir } from './homeDir';
+
+/** The model and account a Grok window lookup is scoped to. */
+export interface ContextWindowSelection {
+	model?: string | null;
+	accountKey?: string | null;
+}
+
+/**
+ * Provider-level (Settings -> Agents) Grok inputs: the env the agent falls back
+ * to when it has none of its own, and the configured model. Fetched off the hot
+ * path and re-read after `GROK_PROVIDER_INPUTS_TTL_MS`, so an edit in Settings
+ * reaches the gauge within that window rather than on the next app load.
+ */
+interface GrokProviderInputs {
+	env: Record<string, string> | undefined;
+	model: string | undefined;
+	fetchedAt: number;
+}
+const GROK_PROVIDER_INPUTS_TTL_MS = 30_000;
+let grokProviderInputs: GrokProviderInputs | undefined;
+let grokProviderInputsPending = false;
+
+function primeGrokProviderInputs(): void {
+	if (grokProviderInputsPending) return;
+	if (grokProviderInputs && Date.now() - grokProviderInputs.fetchedAt < GROK_PROVIDER_INPUTS_TTL_MS)
+		return;
+	const agents = typeof window !== 'undefined' ? window.maestro?.agents : undefined;
+	if (typeof agents?.getCustomEnvVars !== 'function' || typeof agents?.getConfig !== 'function')
+		return;
+	grokProviderInputsPending = true;
+	void Promise.all([agents.getCustomEnvVars('grok'), agents.getConfig('grok')])
+		.then(([env, config]) => {
+			const model = typeof config?.model === 'string' ? config.model.trim() : '';
+			grokProviderInputs = {
+				env: env ?? undefined,
+				model: model || undefined,
+				fetchedAt: Date.now(),
+			};
+		})
+		.catch(() => {
+			// Leave the previous inputs (or none): without them the selection stays
+			// unknown, which is the honest gauge, and the next turn retries.
+		})
+		.finally(() => {
+			grokProviderInputsPending = false;
+		});
+}
+
+/** @internal Test-only reset of the provider-level Grok input cache. */
+export function __resetGrokContextSelectionForTests(): void {
+	grokProviderInputs = undefined;
+	grokProviderInputsPending = false;
+}
+
+/**
+ * The model and account key a Grok tab's context window is looked up under, or
+ * `undefined` while that cannot be named yet (so the window stays `0`, unknown).
+ *
+ * Model: the tab's override, then the agent's, then the provider-level
+ * configured model; with none, the lookup falls back to the default an owned
+ * observation recorded for that account. Account: the same attribution the
+ * provider profiles use (`effectiveAgentCustomEnvVars` then
+ * `resolveAgentAccountKey`), never a second resolver.
+ *
+ * Synchronous for the per-turn usage path: the provider-level inputs are read
+ * from a cache primed here, and nothing is returned until that cache and
+ * `$HOME` have resolved, because a guessed default account could name another
+ * account's window. Remote agents get none: discovery records windows for local
+ * accounts only, and a local key would not describe the remote's disk.
+ */
+export function resolveGrokContextSelection(
+	session: Pick<
+		Session,
+		'toolType' | 'customModel' | 'customEnvVars' | 'sessionSshRemoteConfig' | 'sshRemoteId'
+	>,
+	tab?: Pick<AITab, 'customModel'> | null
+): ContextWindowSelection | undefined {
+	if (session.toolType !== 'grok') return undefined;
+	if (session.sessionSshRemoteConfig?.enabled || session.sshRemoteId) return undefined;
+	primeGrokProviderInputs();
+	const provider = grokProviderInputs;
+	if (!provider) return undefined;
+	const accountKey = resolveAgentAccountKey(
+		'grok',
+		effectiveAgentCustomEnvVars(session.customEnvVars, provider.env),
+		getHomeDir()
+	);
+	if (!accountKey) return undefined;
+	const model = tab?.customModel?.trim() || session.customModel?.trim() || provider.model;
+	return { model: model || null, accountKey };
+}
 
 // Re-export for consumers that import from this module. The local import
 // was dropped on migration to `getContextWindowForAgent` - the re-export
@@ -188,7 +281,13 @@ export function estimateContextUsage(
 	 * key - otherwise SSH sessions fall back to the local snapshot and
 	 * then the static table, which can be wrong when remote models differ.
 	 */
-	sshRemoteId?: string
+	sshRemoteId?: string,
+	/**
+	 * The model and account the window is scoped to, for providers whose window
+	 * depends on both (Grok; see {@link resolveGrokContextSelection}). Without it
+	 * a Grok window stays unknown.
+	 */
+	selection?: ContextWindowSelection
 ): number | null {
 	// Calculate total context using agent-specific semantics
 	const totalContextTokens = calculateContextTokens(stats, agentId);
@@ -202,7 +301,8 @@ export function estimateContextUsage(
 			: agentId && agentId !== 'terminal'
 				? getContextWindowForAgent(
 						agentId,
-						useAgentStore.getState().getCapabilitySnapshot(agentId, sshRemoteId)
+						useAgentStore.getState().getCapabilitySnapshot(agentId, sshRemoteId),
+						selection
 					)
 				: 0;
 

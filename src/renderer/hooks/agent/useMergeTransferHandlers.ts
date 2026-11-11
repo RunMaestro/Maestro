@@ -28,7 +28,14 @@ import { notifyToast, showOsNotification } from '../../stores/notificationStore'
 import { useMergeSessionWithSessions } from './useMergeSession';
 import { useSendToAgentWithSessions } from './useSendToAgent';
 import { captureException } from '../../utils/sentry';
-import { aiTabFocusFields, settleTabThinkingState } from '../../utils/tabHelpers';
+import {
+	aiTabFocusFields,
+	getActiveTab,
+	permissionModeFields,
+	settleTabThinkingState,
+} from '../../utils/tabHelpers';
+import { filterYoloArgs } from '../../utils/agentArgs';
+import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { generateId } from '../../utils/ids';
 import { captureQueuedTurnSettings } from '../../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
@@ -499,6 +506,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Transfer context to the target session's active tab
 			// Create a new tab in the target session and immediately send context to agent
 			const newTabId = `tab-${Date.now()}`;
+			// The new tab takes the permission mode the person set on the target agent's
+			// active tab, resolved by the one rule the toolbar pill and the composer use,
+			// and is stamped with it so its pill, a queued dispatch and this first turn
+			// agree. Never left implicit: a spawn with no mode plans `standard`.
+			const transferPermissionMode = resolveTabPermissionMode(getActiveTab(targetSession));
 			const transferNotice: LogEntry = {
 				id: `transfer-notice-${Date.now()}`,
 				timestamp: Date.now(),
@@ -544,6 +556,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					stagedImages: [],
 					createdAt: Date.now(),
 					state: 'idle',
+					...permissionModeFields(transferPermissionMode),
 				};
 				const queuedItem: QueuedItem = {
 					id: generateId(),
@@ -607,6 +620,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				state: 'busy', // Start in busy state since we're spawning immediately
 				thinkingStartTime: Date.now(),
 				awaitingSessionId: true, // Mark as awaiting session ID
+				...permissionModeFields(transferPermissionMode),
 			};
 
 			// Add the new tab to the target session and set it as active
@@ -653,6 +667,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					const agent = await window.maestro.agents.get(targetSession.toolType);
 					if (!agent) throw new Error(`${targetSession.toolType} agent not found`);
 
+					const isReadOnly = transferPermissionMode === 'readonly';
 					const baseArgs = agent.args ?? [];
 					const commandToUse = agent.path || agent.command;
 					if (!commandToUse) {
@@ -673,9 +688,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 						toolType: targetSession.toolType,
 						cwd: targetSession.cwd,
 						command: commandToUse,
-						args: [...baseArgs],
+						args: isReadOnly ? filterYoloArgs(baseArgs, agent) : [...baseArgs],
 						prompt: effectivePrompt,
 						appendSystemPrompt,
+						readOnlyMode: isReadOnly,
+						permissionMode: transferPermissionMode,
 						// Per-session config overrides (if set)
 						sessionCustomPath: targetSession.customPath,
 						sessionCustomArgs: targetSession.customArgs,

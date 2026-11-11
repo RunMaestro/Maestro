@@ -13,6 +13,8 @@ interface BuildFederationCommandsArgs {
 	copyPeerAgentRef: (peerId: string, agentId: string) => void | Promise<void>;
 	/** The active local agent and the connected peer it can move to (`useMoveToHostPeer()`). */
 	moveToHost?: { sessionId: string; agentName: string; peerName: string };
+	/** The active local SSH agent whose remote runs no host yet (`canMakeFederated()`). */
+	makeFederated?: { sessionId: string; agentName: string; remoteName: string };
 	/** Open the Move to Host modal for an agent. */
 	requestMoveToHost: (sessionId: string) => void;
 	/** The active local agent's lift pointer (`useLiftedMirrorTarget()`). */
@@ -35,6 +37,7 @@ export function buildFederationCommands({
 	reconnectPeer,
 	copyPeerAgentRef,
 	moveToHost,
+	makeFederated,
 	requestMoveToHost,
 	liftedTarget,
 	openLiftedAgent,
@@ -48,6 +51,17 @@ export function buildFederationCommands({
 			subtext: 'Lift this SSH agent onto the maestro-cli host on its remote',
 			action: () => {
 				requestMoveToHost(moveToHost.sessionId);
+				setQuickActionOpen(false);
+			},
+		});
+	}
+	if (makeFederated) {
+		actions.push({
+			id: 'federation-make-federated',
+			label: `Make Federated: ${makeFederated.agentName} (${makeFederated.remoteName})`,
+			subtext: 'Install a Maestro host on the SSH remote, then move this agent onto it',
+			action: () => {
+				requestMoveToHost(makeFederated.sessionId);
 				setQuickActionOpen(false);
 			},
 		});

@@ -101,8 +101,11 @@ function refuse(socket: Duplex, status: string): void {
 export async function startRuntimeServer(options: RuntimeServerOptions): Promise<RuntimeServer> {
 	const { runtime } = options;
 	const epoch = crypto.randomUUID();
-	const handle = createRequestHandler(runtime, options.boardHost);
-	const frameState = createFrameState();
+	const handle = createRequestHandler(runtime, {
+		liveTabs: runtime.liveTabs,
+		boardHost: options.boardHost,
+	});
+	const frameState = createFrameState(runtime.liveTabs);
 	const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES });
 	const sockets = new Set<WebSocket>();
 	const expectedPath = `/${options.token}/ws`;

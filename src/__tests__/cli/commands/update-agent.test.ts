@@ -720,3 +720,249 @@ describe('update-agent command', () => {
 		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('no legacy provider switch'));
 	});
 });
+
+// Grok carry-over at the CLI boundary: the CLI prints the desktop's one plan
+// and never stores a provider by itself. Deterministic tests, not native qualification.
+describe('update-agent Grok carry-over', () => {
+	let consoleSpy: MockInstance;
+	let errorSpy: MockInstance;
+	let processExitSpy: MockInstance;
+	const grokPlan = (status: string, limitations: object[]) => ({
+		id: 'grok-plan',
+		agentId: 'full-session-id',
+		status,
+		verification: 'unverified',
+		source: { provider: 'claude-code' },
+		destination: { provider: 'grok' },
+		tabs: [{ tabId: 'tab' }],
+		counts: { records: 2, artifacts: 1, bytes: 10 },
+		limitations,
+	});
+	const warning = {
+		code: 'grok-native-replay-absent',
+		severity: 'warning',
+		message: 'Grok replay may be empty.',
+	};
+	const block = {
+		code: 'destination-account-missing',
+		severity: 'block',
+		message: 'The selected Grok CLI account folder does not exist yet.',
+	};
+	const printed = () => consoleSpy.mock.calls.map((call) => String(call[0])).join('\n');
+	function connect(report: object) {
+		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+		vi.mocked(getSessionById).mockReturnValue({
+			id: 'full-session-id',
+			toolType: 'claude-code',
+		} as never);
+		// Ordinary settings edits succeed; only the translation verb answers with the plan.
+		const sendCommand = vi.fn(async (message: { type: string }) =>
+			message.type === 'provider_translation' ? report : { success: true }
+		);
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+		return sendCommand;
+	}
+	/** No call may write a provider outside the translation verb. */
+	function expectNoDirectProviderWrite(sendCommand: ReturnType<typeof vi.fn>) {
+		for (const [message] of sendCommand.mock.calls) {
+			if (message.type === 'provider_translation') continue;
+			expect(message.configPatch ?? {}).not.toHaveProperty('toolType');
+		}
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+	});
+
+	it('prints a Grok dry run as unverified with each warning, without acceptance', async () => {
+		const sendCommand = connect({ success: true, plan: grokPlan('ready', [warning]) });
+		await updateAgent('agent-1', { provider: 'grok', dryRun: true });
+		expect(sendCommand).toHaveBeenCalledTimes(1);
+		expect(sendCommand).toHaveBeenCalledWith(
+			{
+				type: 'provider_translation',
+				sessionId: 'full-session-id',
+				configPatch: {
+					toolType: 'grok',
+					migrationAction: 'plan',
+					acceptTranslationLimitations: false,
+				},
+			},
+			'provider_translation_result',
+			120000
+		);
+		expect(printed()).toContain('Provider migration: claude-code -> grok; ready; unverified');
+		expect(printed()).toContain(`[warning] grok-native-replay-absent: ${warning.message}`);
+		// A plan is not a switch: no success line claims the provider changed.
+		expect(printed()).not.toContain('Provider: grok');
+		expect(formatSuccess).not.toHaveBeenCalled();
+		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
+	it('exits non-zero on a blocked Grok plan even with --force, and stores nothing', async () => {
+		const plan = grokPlan('blocked', [block]);
+		const sendCommand = connect({
+			success: false,
+			plan,
+			result: { success: false, state: 'refused', plan, mappings: [] },
+			error: block.message,
+		});
+		await updateAgent('agent-1', { provider: 'grok', force: true, model: 'grok-synthetic' });
+		const translation = sendCommand.mock.calls.filter(
+			([message]) => message.type === 'provider_translation'
+		);
+		expect(translation).toHaveLength(1);
+		expect(translation[0][0].configPatch).toMatchObject({
+			toolType: 'grok',
+			migrationAction: 'apply',
+			acceptTranslationLimitations: true,
+		});
+		expectNoDirectProviderWrite(sendCommand);
+		expect(printed()).toContain('claude-code -> grok; refused; unverified');
+		expect(printed()).toContain(`[block] destination-account-missing: ${block.message}`);
+		expect(errorSpy).toHaveBeenCalledWith(`Error: ${block.message}`);
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('passes a stale reviewed Grok plan ID through and reports the refusal', async () => {
+		const sendCommand = connect({
+			success: false,
+			plan: { ...grokPlan('ready', [warning]), id: 'fresh-plan' },
+			error: 'Preflight changed. Review the new plan before apply.',
+		});
+		await updateAgent('agent-1', {
+			provider: 'grok',
+			migrationPlan: 'reviewed-plan',
+			acceptTranslationLimitations: true,
+			json: true,
+		});
+		expect(sendCommand.mock.calls[0][0].configPatch).toEqual({
+			toolType: 'grok',
+			migrationAction: 'apply',
+			migrationPlanId: 'reviewed-plan',
+			acceptTranslationLimitations: true,
+		});
+		const output = JSON.parse(String(consoleSpy.mock.calls[0][0]));
+		expect(output).toMatchObject({
+			success: false,
+			agentId: 'full-session-id',
+			error: 'Preflight changed. Review the new plan before apply.',
+			plan: { id: 'fresh-plan', verification: 'unverified' },
+		});
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('reports a committed Grok apply as unverified, not as certified continuity', async () => {
+		const plan = grokPlan('ready', [warning]);
+		connect({
+			success: true,
+			plan,
+			result: { success: true, state: 'committed', plan, mappings: [] },
+		});
+		await updateAgent('agent-1', { provider: 'grok', acceptTranslationLimitations: true });
+		expect(printed()).toContain('claude-code -> grok; committed; unverified');
+		expect(printed()).not.toMatch(/claude-code -> grok; committed; verified/);
+		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
+	it.each(['recover', 'rollback', 'status'] as const)(
+		'routes a Grok %s through the translation verb with no provider and no acceptance',
+		async (migration) => {
+			const sendCommand = connect({ success: true, plan: grokPlan('ready', []) });
+			await updateAgent('agent-1', { migration });
+			expect(sendCommand).toHaveBeenCalledTimes(1);
+			expect(sendCommand.mock.calls[0][0]).toEqual({
+				type: 'provider_translation',
+				sessionId: 'full-session-id',
+				configPatch: { migrationAction: migration, acceptTranslationLimitations: false },
+			});
+		}
+	);
+});
+
+// Editable settings of an existing Grok agent. Model, effort and env
+// ride the generic update_session_config message; Claude-only and Codex-only
+// fields are refused with a parseable JSON error before the bridge is touched.
+describe('update-agent Grok agent settings', () => {
+	let logSpy: MockInstance;
+	let exitSpy: MockInstance;
+	let sendCommand: ReturnType<typeof vi.fn>;
+	const lastJson = () => JSON.parse(String(logSpy.mock.calls.at(-1)![0]));
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null) => {
+			throw new Error(`process.exit(${code})`);
+		});
+		vi.mocked(resolveAgentId).mockReturnValue('grok-session-id');
+		vi.mocked(getSessionById).mockReturnValue({
+			id: 'grok-session-id',
+			toolType: 'grok',
+		} as never);
+		sendCommand = vi
+			.fn()
+			.mockResolvedValue({ type: 'update_session_config_result', success: true });
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+	});
+
+	it('sends the selected model, effort and env as one config patch with no provider change', async () => {
+		await updateAgent('grok', {
+			model: 'grok-code-fast-1',
+			effort: 'high',
+			env: ['GROK_TELEMETRY=0'],
+			json: true,
+		});
+
+		expect(sendCommand).toHaveBeenCalledTimes(1);
+		const [message, expectType] = sendCommand.mock.calls[0];
+		expect(expectType).toBe('update_session_config_result');
+		expect(message).toEqual({
+			type: 'update_session_config',
+			sessionId: 'grok-session-id',
+			configPatch: {
+				customModel: 'grok-code-fast-1',
+				customEffort: 'high',
+				customEnvVars: { GROK_TELEMETRY: '0' },
+			},
+		});
+		expect(message.configPatch).not.toHaveProperty('toolType');
+		expect(lastJson()).toMatchObject({ success: true });
+		expect(exitSpy).not.toHaveBeenCalled();
+	});
+
+	it('clears the Grok model override with an empty value instead of substituting a default', async () => {
+		await updateAgent('grok', { model: '' });
+		expect(sendCommand.mock.calls[0][0].configPatch).toEqual({ customModel: null });
+	});
+
+	it.each([
+		[{ tokenSource: 'tui' }, 'only applies to Claude Code agents'],
+		[{ codexTransport: 'app-server' }, 'only applies to Codex agents'],
+	])('refuses %o on a Grok agent as parseable JSON, before any bridge call', async (flags, why) => {
+		await expect(updateAgent('grok', { ...flags, json: true })).rejects.toThrow('process.exit(1)');
+		const printed = lastJson();
+		expect(printed.success).toBe(false);
+		expect(printed.error).toContain(why);
+		expect(printed.error).toContain('is a grok agent');
+		expect(withMaestroClient).not.toHaveBeenCalled();
+	});
+
+	it('refuses a non-registry provider spelling and lists grok, without a translation request', async () => {
+		await expect(updateAgent('grok', { provider: 'grok-cli', json: true })).rejects.toThrow(
+			'process.exit(1)'
+		);
+		const printed = lastJson();
+		expect(printed.error).toContain('Invalid provider "grok-cli"');
+		expect(printed.error).toMatch(/\bgrok\b/);
+		expect(withMaestroClient).not.toHaveBeenCalled();
+	});
+});

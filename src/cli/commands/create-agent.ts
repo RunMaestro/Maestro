@@ -11,7 +11,15 @@ import { parseCliBool } from '../utils/parse';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
-const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
+/**
+ * Every provider ID `create-agent --type` accepts, in registry order. The
+ * `--type` help text in `src/cli/index.ts` is built from this same list, so a
+ * provider added to AGENT_IDS (e.g. `grok`) is both accepted and advertised;
+ * a hand-written help list once omitted providers the validator accepted.
+ */
+export const CREATE_AGENT_TYPES: readonly string[] = AGENT_IDS.filter((id) => id !== 'terminal');
+
+const VALID_TYPES: Set<string> = new Set(CREATE_AGENT_TYPES);
 
 interface CreateAgentOptions {
 	cwd: string;

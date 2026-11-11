@@ -20,7 +20,21 @@ import {
 import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
 import type { ClientResult } from '../../client/types';
 import type { GroupChatEvent, GroupChatRecord } from '../../groupchat/chat';
+import * as groupChatStorage from '../../groupchat/storage';
+import type { GroupChatTurnMetrics } from '../../groupchat/turn-metrics';
+import type { UsageStats } from '../../../types';
+import type { GroupChatRunnerHandlers } from '../background-turns';
+import { RUNTIME_LOCK_FILE_NAME } from '../data-dir-lock';
+import * as runtimeGroupChats from '../group-chats';
 import { createMaestroRuntime, type MaestroRuntime, type RuntimeDeps } from '../index';
+
+// Mutable module faces for factory spies; the engine, queues, storage and runtime stay real.
+vi.mock('../../groupchat/storage', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../groupchat/storage')>()),
+}));
+vi.mock('../group-chats', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../group-chats')>()),
+}));
 
 const T0 = Date.parse('2026-10-04T12:00:00Z');
 const BUNDLED_PROMPTS = path.resolve(__dirname, '../../../../prompts');
@@ -176,8 +190,215 @@ describe('runtime group chats', () => {
 	});
 	afterEach(async () => {
 		for (const runtime of open) await runtime.connection.close();
+		vi.restoreAllMocks();
 		fs.rmSync(dir, { recursive: true, force: true });
 		fs.rmSync(work, { recursive: true, force: true });
+	});
+
+	describe('draining Grok usage observations', () => {
+		async function startUsageFixture() {
+			const load = vi.fn<groupChatStorage.GroupChatStore['loadGroupChat']>();
+			const write = vi.fn<groupChatStorage.GroupChatStore['updateParticipant']>();
+			const storeDrain = vi.fn<groupChatStorage.GroupChatStore['drain']>();
+			const createStore = groupChatStorage.createGroupChatStore;
+			vi.spyOn(groupChatStorage, 'createGroupChatStore').mockImplementationOnce((options) => {
+				const store = createStore(options);
+				// The router captures these methods at construction, before the test arms its gates.
+				return {
+					...store,
+					loadGroupChat: load.mockImplementation(store.loadGroupChat),
+					updateParticipant: write.mockImplementation(store.updateParticipant),
+					drain: storeDrain.mockImplementation(store.drain),
+				};
+			});
+			let chats!: runtimeGroupChats.RuntimeGroupChats;
+			let handlers!: GroupChatRunnerHandlers;
+			let metrics!: GroupChatTurnMetrics;
+			const createChats = runtimeGroupChats.createRuntimeGroupChats;
+			vi.spyOn(runtimeGroupChats, 'createRuntimeGroupChats').mockImplementationOnce((options) => {
+				metrics = options.metrics;
+				const runner = vi.spyOn(options.background, 'groupChatRunner');
+				chats = createChats(options);
+				handlers = runner.mock.calls[0][0];
+				return chats;
+			});
+			const runtime = await start();
+			const chat = await chats.store.createGroupChat('Usage drain', 'claude-code');
+			const processId = `group-chat-${chat.id}-participant-Alpha-1700000000000`;
+			await chats.store.addParticipantToChat(chat.id, {
+				name: 'Alpha',
+				agentId: 'grok',
+				sessionId: processId,
+				addedAt: T0,
+				contextUsage: 25,
+				tokenCount: 50000,
+				totalCost: 0.5,
+			});
+			metrics.begin(processId);
+			const usage: UsageStats = {
+				inputTokens: 1000,
+				outputTokens: 50,
+				cacheReadInputTokens: 200,
+				cacheCreationInputTokens: 100,
+				totalCostUsd: 0.01,
+				contextWindow: 0,
+			};
+			return {
+				runtime,
+				chats,
+				handlers,
+				metrics,
+				chatId: chat.id,
+				processId,
+				usage,
+				load,
+				write,
+				storeDrain,
+			};
+		}
+
+		it.each(['drain', 'shutdown'] as const)(
+			'%s waits for the provider lookup and its participant write before releasing ownership',
+			async (operation) => {
+				const {
+					runtime,
+					chats,
+					handlers,
+					metrics,
+					chatId,
+					processId,
+					usage,
+					load,
+					write,
+					storeDrain,
+				} = await startUsageFixture();
+				const lookupGate = Promise.withResolvers<void>();
+				const writeGate = Promise.withResolvers<void>();
+				const realLoad = load.getMockImplementation()!;
+				const realWrite = write.getMockImplementation()!;
+				load.mockImplementationOnce(async (id) => {
+					await lookupGate.promise;
+					return realLoad(id);
+				});
+				write.mockImplementationOnce(async (...args) => {
+					await writeGate.promise;
+					return realWrite(...args);
+				});
+				const drain = vi.spyOn(chats, 'drain');
+				const completed = vi.fn();
+				let finishing: Promise<void> | undefined;
+				const lockPath = path.join(dir, RUNTIME_LOCK_FILE_NAME);
+				try {
+					handlers.onUsage(processId, usage);
+					await vi.waitFor(() => expect(load).toHaveBeenCalledWith(chatId));
+					finishing = (operation === 'shutdown' ? runtime.connection.close() : chats.drain()).then(
+						completed
+					);
+					await vi.waitFor(() => expect(drain).toHaveBeenCalledTimes(1));
+					// Give an incorrectly empty drain a chance to finish, without a wall-clock sleep.
+					await new Promise<void>((resolve) => setImmediate(resolve));
+					expect(completed).not.toHaveBeenCalled();
+					expect(storeDrain).not.toHaveBeenCalled();
+					expect(write).not.toHaveBeenCalled();
+					expect(fs.existsSync(lockPath)).toBe(true);
+					// The accounting ledger finishes immediately even though card persistence is pending.
+					expect(metrics.finish(chatId, 'Alpha')).toMatchObject({ tokenCount: 1350, cost: 0.01 });
+
+					lookupGate.resolve();
+					await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+					expect(write).toHaveBeenCalledWith(chatId, 'Alpha', {
+						totalCost: 0.01,
+						contextUsage: undefined,
+						tokenCount: undefined,
+					});
+					expect(completed).not.toHaveBeenCalled();
+					expect(storeDrain).not.toHaveBeenCalled();
+					expect(fs.existsSync(lockPath)).toBe(true);
+					expect(await chats.store.getParticipant(chatId, 'Alpha')).toMatchObject({
+						contextUsage: 25,
+						tokenCount: 50000,
+						totalCost: 0.5,
+					});
+
+					writeGate.resolve();
+					await finishing;
+					expect(completed).toHaveBeenCalledTimes(1);
+					expect(storeDrain).toHaveBeenCalledTimes(1);
+					const saved = await chats.store.getParticipant(chatId, 'Alpha');
+					expect(saved).toMatchObject({ agentId: 'grok', totalCost: 0.01 });
+					expect(saved).not.toHaveProperty('contextUsage');
+					expect(saved).not.toHaveProperty('tokenCount');
+					expect(metrics.finish(chatId, 'Alpha')).toEqual({});
+					expect(provider.calls).toEqual([]);
+					expect(fs.existsSync(lockPath)).toBe(operation !== 'shutdown');
+				} finally {
+					lookupGate.resolve();
+					writeGate.resolve();
+					await finishing;
+					await chats.drain();
+					metrics.reset();
+				}
+			}
+		);
+
+		it.each(['lookup', 'write'] as const)(
+			'a rejected %s releases the drain and later usage still persists with complete ledger totals',
+			async (failure) => {
+				const { chats, handlers, metrics, chatId, processId, usage, load, write, storeDrain } =
+					await startUsageFixture();
+				const gate = Promise.withResolvers<void>();
+				if (failure === 'lookup') {
+					load.mockImplementationOnce(async () => {
+						await gate.promise;
+						throw new Error('synthetic lookup failure');
+					});
+				} else {
+					write.mockImplementationOnce(async () => {
+						await gate.promise;
+						throw new Error('synthetic participant write failure');
+					});
+				}
+				const completed = vi.fn();
+				let draining: Promise<void> | undefined;
+				try {
+					handlers.onUsage(processId, usage);
+					await vi.waitFor(() =>
+						expect(failure === 'lookup' ? load : write).toHaveBeenCalledTimes(1)
+					);
+					draining = chats.drain().then(completed);
+					await new Promise<void>((resolve) => setImmediate(resolve));
+					expect(completed).not.toHaveBeenCalled();
+					expect(storeDrain).not.toHaveBeenCalled();
+					gate.resolve();
+					await expect(draining).resolves.toBeUndefined();
+					expect(completed).toHaveBeenCalledTimes(1);
+					expect(storeDrain).toHaveBeenCalledTimes(1);
+					expect(await chats.store.getParticipant(chatId, 'Alpha')).toMatchObject({
+						contextUsage: 25,
+						tokenCount: 50000,
+						totalCost: 0.5,
+					});
+
+					handlers.onUsage(processId, { ...usage, totalCostUsd: 0.03 });
+					await chats.drain();
+					const saved = await chats.store.getParticipant(chatId, 'Alpha');
+					expect(saved).toMatchObject({ agentId: 'grok', totalCost: 0.03 });
+					expect(saved).not.toHaveProperty('contextUsage');
+					expect(saved).not.toHaveProperty('tokenCount');
+					expect(load).toHaveBeenCalledTimes(2);
+					expect(write).toHaveBeenCalledTimes(failure === 'lookup' ? 1 : 2);
+					expect(storeDrain).toHaveBeenCalledTimes(2);
+					expect(metrics.finish(chatId, 'Alpha')).toMatchObject({ tokenCount: 2700, cost: 0.04 });
+					expect(metrics.finish(chatId, 'Alpha')).toEqual({});
+					expect(provider.calls).toEqual([]);
+				} finally {
+					gate.resolve();
+					await draining;
+					await chats.drain();
+					metrics.reset();
+				}
+			}
+		);
 	});
 
 	describe('a round (GC-1, GC-2)', () => {

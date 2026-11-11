@@ -20,6 +20,8 @@ import { render, screen, renderHook, act, fireEvent, waitFor } from '@testing-li
 import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { LayerStackProvider, useLayerStack } from '../../../renderer/contexts/LayerStackContext';
+import { useOutputSearchLayer } from '../../../renderer/hooks/ui/useOutputSearchLayer';
+import { isImeComposing } from '../../../renderer/utils/ime';
 
 // Mock the useLayerStack hook from the hooks module
 vi.mock('../../../renderer/hooks/ui/useLayerStack', () => {
@@ -348,6 +350,123 @@ describe('LayerStackContext', () => {
 					window.dispatchEvent(escapeEvent);
 				});
 
+				expect(preventDefaultSpy).toHaveBeenCalled();
+				expect(stopPropagationSpy).toHaveBeenCalled();
+			});
+
+			it('leaves the top layer open and does not preventDefault or stopPropagation when Escape is pressed during an active IME composition (isComposing: true)', async () => {
+				const mockLayer = {
+					id: 'test-layer',
+					type: 'modal' as const,
+					priority: 100,
+					onEscape: vi.fn(),
+				};
+
+				vi.mocked(mockLayerStackAPI.getTopLayer).mockReturnValue(mockLayer);
+
+				render(
+					<LayerStackProvider>
+						<div>Test</div>
+					</LayerStackProvider>
+				);
+
+				const escapeEvent = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+				});
+				Object.defineProperty(escapeEvent, 'isComposing', { value: true, configurable: true });
+
+				const preventDefaultSpy = vi.spyOn(escapeEvent, 'preventDefault');
+				const stopPropagationSpy = vi.spyOn(escapeEvent, 'stopPropagation');
+
+				await act(async () => {
+					window.dispatchEvent(escapeEvent);
+				});
+
+				expect(mockLayerStackAPI.closeTopLayer).not.toHaveBeenCalled();
+				expect(preventDefaultSpy).not.toHaveBeenCalled();
+				expect(stopPropagationSpy).not.toHaveBeenCalled();
+			});
+
+			it('leaves the top layer open and does not preventDefault or stopPropagation when Escape is pressed with Safari keyCode 229', async () => {
+				const mockLayer = {
+					id: 'test-layer',
+					type: 'modal' as const,
+					priority: 100,
+					onEscape: vi.fn(),
+				};
+
+				vi.mocked(mockLayerStackAPI.getTopLayer).mockReturnValue(mockLayer);
+
+				render(
+					<LayerStackProvider>
+						<div>Test</div>
+					</LayerStackProvider>
+				);
+
+				const escapeEvent = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+					keyCode: 229,
+				} as KeyboardEventInit);
+
+				const preventDefaultSpy = vi.spyOn(escapeEvent, 'preventDefault');
+				const stopPropagationSpy = vi.spyOn(escapeEvent, 'stopPropagation');
+
+				await act(async () => {
+					window.dispatchEvent(escapeEvent);
+				});
+
+				expect(mockLayerStackAPI.closeTopLayer).not.toHaveBeenCalled();
+				expect(preventDefaultSpy).not.toHaveBeenCalled();
+				expect(stopPropagationSpy).not.toHaveBeenCalled();
+			});
+
+			it('closes the top layer on normal Escape after composition ends', async () => {
+				const mockLayer = {
+					id: 'test-layer',
+					type: 'modal' as const,
+					priority: 100,
+					onEscape: vi.fn(),
+				};
+
+				vi.mocked(mockLayerStackAPI.getTopLayer).mockReturnValue(mockLayer);
+
+				render(
+					<LayerStackProvider>
+						<div>Test</div>
+					</LayerStackProvider>
+				);
+
+				// 1. Composing Escape leaves layer open
+				const composingEscape = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+				});
+				Object.defineProperty(composingEscape, 'isComposing', { value: true, configurable: true });
+
+				await act(async () => {
+					window.dispatchEvent(composingEscape);
+				});
+				expect(mockLayerStackAPI.closeTopLayer).not.toHaveBeenCalled();
+
+				// 2. Normal Escape after composition ends closes the layer
+				const normalEscape = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+				});
+				const preventDefaultSpy = vi.spyOn(normalEscape, 'preventDefault');
+				const stopPropagationSpy = vi.spyOn(normalEscape, 'stopPropagation');
+
+				await act(async () => {
+					window.dispatchEvent(normalEscape);
+				});
+
+				expect(mockLayerStackAPI.closeTopLayer).toHaveBeenCalled();
 				expect(preventDefaultSpy).toHaveBeenCalled();
 				expect(stopPropagationSpy).toHaveBeenCalled();
 			});
@@ -907,6 +1026,245 @@ describe('LayerStackContext', () => {
 			});
 
 			expect(mockLayerStackAPI.closeTopLayer).toHaveBeenCalled();
+		});
+
+		describe('IME composition with real Find bars and modal inputs', () => {
+			let registeredLayers: Array<{
+				id: string;
+				type: string;
+				onEscape: () => void;
+				ariaLabel?: string;
+			}>;
+
+			beforeEach(() => {
+				registeredLayers = [];
+				vi.mocked(mockLayerStackAPI.registerLayer).mockImplementation((layer) => {
+					const id = `layer-${Date.now()}-${Math.random()}`;
+					const entry = { ...layer, id, onEscape: layer.onEscape ?? vi.fn() };
+					registeredLayers.push(entry);
+					return id;
+				});
+				vi.mocked(mockLayerStackAPI.unregisterLayer).mockImplementation((id) => {
+					registeredLayers = registeredLayers.filter((l) => l.id !== id);
+				});
+				vi.mocked(mockLayerStackAPI.getTopLayer).mockImplementation(
+					() => (registeredLayers[registeredLayers.length - 1] as any) ?? null
+				);
+				vi.mocked(mockLayerStackAPI.closeTopLayer).mockImplementation(async () => {
+					const top = registeredLayers[registeredLayers.length - 1];
+					if (top?.onEscape) {
+						top.onEscape();
+						return true;
+					}
+					return false;
+				});
+			});
+
+			it('leaves AI chat Find bar open on composing Escape and closes on normal Escape', async () => {
+				const closeSearch = vi.fn();
+				function AiChatFindHost({ open }: { open: boolean }) {
+					useOutputSearchLayer({
+						open,
+						onEscape: closeSearch,
+						ariaLabel: 'Output Search',
+					});
+					return open ? <input data-testid="ai-find-input" data-output-search-input /> : null;
+				}
+
+				render(
+					<LayerStackProvider>
+						<AiChatFindHost open={true} />
+					</LayerStackProvider>
+				);
+
+				expect(screen.getByTestId('ai-find-input')).toBeInTheDocument();
+
+				// Composing Escape (isComposing: true)
+				const composingEvent = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+				});
+				Object.defineProperty(composingEvent, 'isComposing', { value: true, configurable: true });
+				await act(async () => {
+					window.dispatchEvent(composingEvent);
+				});
+				expect(closeSearch).not.toHaveBeenCalled();
+
+				// Composing Escape (Safari keyCode 229)
+				const safariEvent = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+					keyCode: 229,
+				} as KeyboardEventInit);
+				await act(async () => {
+					window.dispatchEvent(safariEvent);
+				});
+				expect(closeSearch).not.toHaveBeenCalled();
+
+				// Normal Escape
+				const normalEvent = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+				});
+				await act(async () => {
+					window.dispatchEvent(normalEvent);
+				});
+				expect(closeSearch).toHaveBeenCalledTimes(1);
+			});
+
+			it('leaves Group Chat Find bar open on composing Escape and closes on normal Escape', async () => {
+				const closeSearch = vi.fn();
+				function GroupChatFindHost({ open }: { open: boolean }) {
+					useOutputSearchLayer({
+						open,
+						onEscape: closeSearch,
+						ariaLabel: 'Group Chat Search',
+					});
+					return open ? <input data-testid="gc-find-input" data-output-search-input /> : null;
+				}
+
+				render(
+					<LayerStackProvider>
+						<GroupChatFindHost open={true} />
+					</LayerStackProvider>
+				);
+
+				expect(screen.getByTestId('gc-find-input')).toBeInTheDocument();
+
+				// Composing Escape (isComposing: true)
+				const composingEvent = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+				});
+				Object.defineProperty(composingEvent, 'isComposing', { value: true, configurable: true });
+				await act(async () => {
+					window.dispatchEvent(composingEvent);
+				});
+				expect(closeSearch).not.toHaveBeenCalled();
+
+				// Composing Escape (Safari keyCode 229)
+				const safariEvent = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+					keyCode: 229,
+				} as KeyboardEventInit);
+				await act(async () => {
+					window.dispatchEvent(safariEvent);
+				});
+				expect(closeSearch).not.toHaveBeenCalled();
+
+				// Normal Escape
+				const normalEvent = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+				});
+				await act(async () => {
+					window.dispatchEvent(normalEvent);
+				});
+				expect(closeSearch).toHaveBeenCalledTimes(1);
+			});
+
+			it('leaves a modal text field with its own Escape handler open and focused on composing Escape', async () => {
+				const closeModal = vi.fn();
+				const cancelRename = vi.fn();
+
+				function ModalWithRenameInput() {
+					const { registerLayer, unregisterLayer } = useLayerStack();
+					const inputRef = React.useRef<HTMLInputElement>(null);
+					const [value, setValue] = React.useState('my-agent-name');
+
+					React.useEffect(() => {
+						const id = registerLayer({
+							type: 'modal',
+							priority: 100,
+							onEscape: closeModal,
+							ariaLabel: 'Rename Modal',
+						});
+						return () => unregisterLayer(id);
+					}, [registerLayer, unregisterLayer]);
+
+					return (
+						<div>
+							<input
+								ref={inputRef}
+								data-testid="modal-rename-field"
+								autoFocus
+								value={value}
+								onChange={(e) => setValue(e.target.value)}
+								onKeyDown={(e) => {
+									if (e.key === 'Escape' && !isImeComposing(e)) {
+										e.preventDefault();
+										cancelRename();
+									}
+								}}
+							/>
+						</div>
+					);
+				}
+
+				render(
+					<LayerStackProvider>
+						<ModalWithRenameInput />
+					</LayerStackProvider>
+				);
+
+				const input = screen.getByTestId('modal-rename-field');
+				input.focus();
+				expect(document.activeElement).toBe(input);
+
+				// Composing Escape dispatched on the input field
+				const composingEvent = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+				});
+				Object.defineProperty(composingEvent, 'isComposing', { value: true, configurable: true });
+
+				await act(async () => {
+					input.dispatchEvent(composingEvent);
+				});
+
+				// Modal is NOT closed, field's own Escape is NOT triggered, and field remains focused
+				expect(closeModal).not.toHaveBeenCalled();
+				expect(cancelRename).not.toHaveBeenCalled();
+				expect(document.activeElement).toBe(input);
+
+				// Composing Escape with Safari keyCode 229
+				const safariEvent = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+					keyCode: 229,
+				} as KeyboardEventInit);
+
+				await act(async () => {
+					input.dispatchEvent(safariEvent);
+				});
+
+				expect(closeModal).not.toHaveBeenCalled();
+				expect(cancelRename).not.toHaveBeenCalled();
+				expect(document.activeElement).toBe(input);
+
+				// Normal Escape dispatched on the input field:
+				// LayerStackContext intercepts on capture and closes the modal
+				const normalEvent = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+				});
+
+				await act(async () => {
+					input.dispatchEvent(normalEvent);
+				});
+
+				expect(closeModal).toHaveBeenCalledTimes(1);
+			});
 		});
 	});
 });

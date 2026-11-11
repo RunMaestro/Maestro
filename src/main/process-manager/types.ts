@@ -11,6 +11,54 @@ import type { CodexTransport } from '../../shared/codexTransport';
 import type { CodexAppServerSshLaunch } from '../codex-app-server/ssh-launch';
 import type { CodexAppServerProcessHandle } from '../codex-app-server/protocol';
 import type { HarnessControlHandle } from '../../shared/harness-control/types';
+import type { NativeSessionBinding } from '../../shared/maestro-lib/agents/providerSwap';
+import type { GrokAcpNativeCommandIntent } from '../../shared/maestro-lib/grok/acp-turn';
+import type { LaunchPermissionMode } from '../../shared/maestro-lib/launch/env';
+import type { LaunchPermissionDecision } from '../../shared/maestro-lib/launch/launch-plan';
+import type { PromptDelivery } from '../../shared/maestro-lib/launch/prompt-delivery';
+
+export { grokLaunchArgsProblem } from '../../shared/maestro-lib/launch/agent-args';
+
+/**
+ * The three-way permission mode a spawn asks for, as the renderer sends it
+ * (`SpawnProcessConfig.permissionMode`) and the argument builder reads it.
+ */
+export type SpawnPermissionMode = LaunchPermissionMode;
+
+/**
+ * The mode a spawn request asks for, by the argument builder's own rules
+ * (`buildAgentArgs`): an explicit `permissionMode` wins; without one the
+ * legacy booleans are honored, full access first; a request that says
+ * nothing runs the provider's own prompting, which is `standard`.
+ */
+export function requestedPermissionMode(config: {
+	permissionMode?: SpawnPermissionMode;
+	readOnlyMode?: boolean;
+	yoloMode?: boolean;
+}): SpawnPermissionMode {
+	if (config.permissionMode) return config.permissionMode;
+	if (config.yoloMode === true) return 'full';
+	if (config.readOnlyMode === true) return 'readonly';
+	return 'standard';
+}
+
+/**
+ * Whether a desktop spawn runs on the Grok ACP stdio route: any spawn carrying
+ * a forwarded native command, or a Grok turn whose launch plan asked for the
+ * provider's own prompting. Read off
+ * the final config the sink receives, so the permission decision is the
+ * plan's (`config.permission`, stamped by the spawn handler after custom
+ * arguments were joined), never a flag the renderer sent. The one rule for
+ * which Grok turns take ACP; `wantsGrokAcp` in the spawner names the same.
+ */
+export function runsOnGrokAcpRoute(
+	config: Pick<ProcessConfig, 'toolType' | 'grokNativeCommand' | 'permission'>
+): boolean {
+	return (
+		config.grokNativeCommand !== undefined ||
+		(config.toolType === 'grok' && config.permission?.requested === 'standard')
+	);
+}
 
 /**
  * Kill/interrupt handle for server-backed processes, whose stop starts with a
@@ -28,6 +76,26 @@ export interface SdkProcessController {
 	 * controller that owns an OS child.
 	 */
 	kill: (options?: { sync?: boolean; shutdown?: boolean }) => void;
+}
+
+/** Observed launch ownership before a provider has allocated its native ID. */
+export type NativeSessionLaunchScope =
+	| Extract<NativeSessionBinding, { state: 'unknown' }>
+	| Omit<Extract<NativeSessionBinding, { state: 'bound' }>, 'nativeSessionId'>;
+
+/** Kept through stream drainage, including after kill removes the live process. */
+export interface NativeSessionLaunch {
+	readonly scope: NativeSessionLaunchScope;
+	readonly processGeneration: number;
+	readonly tabId?: string;
+	readonly requestedNativeSessionId?: string;
+	/**
+	 * Echo of the caller's per-spawn correlation token, when valid. Identifies
+	 * the renderer attempt before a native ID arrives; not native ownership.
+	 * Absent on legacy/headless callers, never synthesized.
+	 * Valid tokens contain 1-128 ASCII letters, digits, underscores or hyphens.
+	 */
+	readonly nativeSessionRequestId?: string;
 }
 
 /**
@@ -51,6 +119,13 @@ export interface ProcessConfig {
 	requiresPty?: boolean;
 	prompt?: string;
 	appendSystemPrompt?: string;
+	/**
+	 * Private, host-planned prompt file, retained through request copies. Local
+	 * files belong to startTurn; remote files belong to the SSH script owner.
+	 * Never log, persist or expose this artifact in Process Details, renderer
+	 * responses or spawn capture events.
+	 */
+	promptArtifact?: Extract<PromptDelivery, { via: 'file' }>['artifact'];
 	shell?: string;
 	shellArgs?: string;
 	shellEnvVars?: Record<string, string>;
@@ -110,6 +185,17 @@ export interface ProcessConfig {
 	 *  never runs and the renderer falls back to streamed commentary instead
 	 *  of the authoritative final answer / context window snapshot. */
 	agentSessionId?: string;
+	/** Caller correlation only; see NativeSessionLaunch.nativeSessionRequestId. */
+	nativeSessionRequestId?: NativeSessionLaunch['nativeSessionRequestId'];
+	/** Host-observed scope, never accepted from an IPC payload. */
+	nativeSessionScope?: NativeSessionLaunchScope;
+	/** Retained owner/tab binding that a Grok resume must match. */
+	nativeSessionBinding?: NativeSessionBinding;
+	/** One ACP-advertised native Grok command (the command intent), forwarded by the
+	 *  spawn handler after its request checks. Any spawn carrying it is routed to
+	 *  `GrokAcpSpawner`, which submits it through the shared ACP driver or refuses;
+	 *  it never reaches an ordinary prompt or the headless CLI. */
+	grokNativeCommand?: GrokAcpNativeCommandIntent;
 	/** Resolved Codex transport for this turn (`resolveCodexTransport`). Set by
 	 *  the desktop spawn handler from the persisted agent record; anything other
 	 *  than `'app-server'` (including absent) means `codex exec`. A preference:
@@ -118,6 +204,12 @@ export interface ProcessConfig {
 	modelId?: string;
 	/** Effective three-way permission mode, when the caller selected one. */
 	permissionMode?: 'full' | 'standard' | 'readonly';
+	/** The launch plan's permission decision for this spawn: the mode the turn
+	 *  asked for. Stamped by the spawn handler off `plan.permission` after
+	 *  custom arguments were joined (nothing the renderer sends names it), and
+	 *  read by `runsOnGrokAcpRoute` to send a standard-mode Grok turn to ACP.
+	 *  A terminal plans nothing and carries none. */
+	permission?: LaunchPermissionDecision;
 	/** Opt-in native protocol mode and its independently built ACP launch args. */
 	harnessControlMode?: HarnessControlMode;
 	nativeAcpArgs?: string[];
@@ -207,6 +299,9 @@ export interface ManagedProcess {
 	 *  can signal the agent on its host rather than only the local ssh client.
 	 *  See utils/ssh-remote-signal.ts. Set only for stdin-script SSH spawns. */
 	sshRemotePidFile?: string;
+	/** Private remote prompt cleanup metadata, bound to sshRemotePidFile ownership.
+	 *  Never expose in Process Details, capture events or persisted diagnostics. */
+	sshRemotePromptArtifactPath?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
 	/** Env vars Maestro explicitly set on this process (global, then the session's own set or else the agent-level set),
@@ -233,6 +328,7 @@ export interface ManagedProcess {
 	 *  the session even after that newer spawn has removed its own map entry.
 	 *  See `process-manager/generation.ts`. */
 	spawnGeneration?: number;
+	nativeSessionLaunch?: NativeSessionLaunch;
 }
 
 export interface UsageTotals {
@@ -303,9 +399,12 @@ export interface ToolExecution {
 	 *  merge `running` and `completed`/`failed` events into a single
 	 *  log entry keyed by this id instead of appending two bubbles. */
 	toolCallId?: string;
-	/** When this tool ran inside a subagent, the `toolCallId` of the parent tool
-	 *  call that spawned it (claude-code's Task tool). Renderers nest the badge
-	 *  under that parent entry; absent for main-transcript tool calls. */
+	/** When this tool ran inside a subagent, the `toolCallId` of the entry to nest
+	 *  under: the parent tool call that spawned it (claude-code's Task tool), or
+	 *  for a child reported by session lineage alone (Grok ACP) the display entry
+	 *  `subagentToolCallId(childSessionId)`, never a provider tool-call id.
+	 *  Renderers nest the badge under that parent entry; absent for
+	 *  main-transcript tool calls. */
 	parentToolUseId?: string;
 }
 

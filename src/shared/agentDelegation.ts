@@ -31,6 +31,15 @@ export const CALLER_AGENT_ID_ENV_VAR = 'MAESTRO_CALLER_AGENT_ID';
 /** The AI tab within that agent whose turn spawned the process, when known. */
 export const CALLER_TAB_ID_ENV_VAR = 'MAESTRO_CALLER_TAB_ID';
 
+/**
+ * The Auto Run a spawned agent process is a task (or goal iteration) of. Set
+ * only on Auto Run spawns, so `maestro-cli dispatch` can hand the dispatched
+ * work's completion back to the run instead of losing it: the run waits for it
+ * before its next turn and feeds the result into that turn's prompt (see
+ * `src/shared/autoRunDelegation.ts`).
+ */
+export const CALLER_AUTORUN_ID_ENV_VAR = 'MAESTRO_CALLER_AUTORUN_ID';
+
 /** Private host-issued proof delivery, separate from display attribution. */
 export const CALLER_RUN_PROOF_FILE_ENV_VAR = 'MAESTRO_CALLER_RUN_PROOF_FILE';
 export const CALLER_RUN_PROOF_HEADER = 'x-maestro-caller-run-proof';
@@ -40,6 +49,29 @@ export interface CallerRunIdentity {
 	agentId: string;
 	tabId: string;
 	spawnGeneration: string;
+}
+
+/**
+ * The agent that owns the terminal tab a shell runs in.
+ *
+ * Separate from {@link CALLER_AGENT_ID_ENV_VAR} on purpose: a terminal is a
+ * shell the user drives, not an agent turn, so it must not make `dispatch` or
+ * `ask` record a delegation in a transcript. It only answers "which agent is
+ * this shell in?" for verbs that default to one (`open-file`, `open-graph`).
+ */
+export const TERMINAL_AGENT_ID_ENV_VAR = 'MAESTRO_TERMINAL_AGENT_ID';
+
+/** The env entry that tells a terminal tab's shell which agent owns it. */
+export function buildTerminalOwnerEnv(agentId: string): Record<string, string> {
+	return { [TERMINAL_AGENT_ID_ENV_VAR]: agentId };
+}
+
+/**
+ * The agent a shell belongs to: the agent whose turn spawned it, else the agent
+ * whose terminal tab it runs in. Undefined for a shell outside Maestro.
+ */
+export function readShellOwnerAgentId(env: Record<string, string | undefined>): string | undefined {
+	return readCallerIdentity(env)?.agentId ?? (env[TERMINAL_AGENT_ID_ENV_VAR]?.trim() || undefined);
 }
 
 /** The agent (and, when known, the AI tab) a CLI invocation is running under. */
@@ -71,8 +103,20 @@ export function withoutCallerIdentityEnv(
 	const rest = { ...env };
 	delete rest[CALLER_AGENT_ID_ENV_VAR];
 	delete rest[CALLER_TAB_ID_ENV_VAR];
+	delete rest[CALLER_AUTORUN_ID_ENV_VAR];
 	delete rest[CALLER_RUN_PROOF_FILE_ENV_VAR];
 	return Object.keys(rest).length > 0 ? rest : undefined;
+}
+
+/** The env entry that tells an Auto Run task's shell which run it belongs to. */
+export function buildAutoRunCallerEnv(autoRunId: string | undefined): Record<string, string> {
+	const id = autoRunId?.trim();
+	return id ? { [CALLER_AUTORUN_ID_ENV_VAR]: id } : {};
+}
+
+/** The Auto Run a CLI invocation runs under, or undefined outside one. */
+export function readCallerAutoRunId(env: Record<string, string | undefined>): string | undefined {
+	return env[CALLER_AUTORUN_ID_ENV_VAR]?.trim() || undefined;
 }
 
 /**

@@ -1,0 +1,18 @@
+Run the agent over stdio
+
+Usage: grok agent stdio [OPTIONS]
+
+Options:
+      --debug
+          Enable debug logging
+
+      --debug-file <FILE>
+          Write debug logs to FILE
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+      --leader-socket <PATH>
+          Use a custom leader socket path instead of the default `~/.grok/leader.sock`.
+
+          A local/branch build can thus run an isolated leader without colliding with the default one already running on the machine. Name it `~/.grok/leader-*.sock` to keep `grok leader list/kill` able to find it; any other location works but won't be auto-discovered. In Grok Build unified, PATH is the leader's own socket, and its shared daemon listens beside it at `PATH.daemon`

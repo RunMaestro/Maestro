@@ -3408,6 +3408,185 @@ describe('StdoutHandler - single JSON parse per line', () => {
 		});
 	});
 
+	// The real Grok ACP capture feeding the desktop's normalized-event
+	// path; synthetic lineage following the pinned _x.ai subagent variants, never
+	// native evidence.
+	describe('Grok ACP subagents through handleNormalizedEvent (synthetic)', () => {
+		type ToolEvent = {
+			toolName: string;
+			toolCallId?: string;
+			parentToolUseId?: string;
+			state: Record<string, any>;
+		};
+		async function grokCapture() {
+			const { GrokOutputParser } = await import('../../../../main/parsers/grok-output-parser');
+			const { GrokAcpEventAdapter } =
+				await import('../../../../shared/maestro-lib/grok/acp-events');
+			const { subagentToolCallId } =
+				await import('../../../../shared/maestro-lib/turns/turn-events');
+			const ctx = createTestContext({ toolType: 'grok', outputParser: new GrokOutputParser() });
+			const adapter = new GrokAcpEventAdapter({
+				sessionId: 'native',
+				turnId: 'capture',
+				promptId: 'prompt',
+			});
+			const tools: ToolEvent[] = [];
+			ctx.emitter.on('tool-execution', (_id: string, event: ToolEvent) => tools.push(event));
+			const thinking = vi.fn();
+			const usage = vi.fn();
+			ctx.emitter.on('thinking-chunk', thinking);
+			ctx.emitter.on('usage', usage);
+			const feed = (events: ReturnType<typeof adapter.settle>) => {
+				for (const event of events)
+					ctx.handler.handleNormalizedEvent(ctx.sessionId, ctx.proc, event);
+				return events;
+			};
+			const send = (
+				channel: string,
+				update: Record<string, unknown>,
+				method = '_x.ai/session/update'
+			) =>
+				feed(
+					adapter.notification(
+						{ jsonrpc: '2.0', method, params: { sessionId: channel, update } },
+						{ replay: false, turnId: 'capture' }
+					)
+				);
+			const spawn = (child: string, parent = 'native', extra: Record<string, unknown> = {}) =>
+				send(parent, {
+					sessionUpdate: 'subagent_spawned',
+					parent_session_id: parent,
+					parent_prompt_id: 'prompt',
+					child_session_id: child,
+					...extra,
+				});
+			const finish = (child: string, status: string, extra: Record<string, unknown> = {}) =>
+				send('native', {
+					sessionUpdate: 'subagent_finished',
+					child_session_id: child,
+					status,
+					...extra,
+				});
+			const tool = (channel: string, id: string, status: string) =>
+				send(
+					channel,
+					{
+						sessionUpdate: status === 'pending' ? 'tool_call' : 'tool_call_update',
+						toolCallId: id,
+						title: 'Bash',
+						status,
+					},
+					'session/update'
+				);
+			const entries = (child: string) =>
+				tools.filter((t) => t.toolCallId === subagentToolCallId(child));
+			return {
+				...ctx,
+				adapter,
+				tools,
+				thinking,
+				usage,
+				feed,
+				send,
+				spawn,
+				finish,
+				tool,
+				entries,
+				subagentToolCallId,
+			};
+		}
+
+		it('nests each child tool under its own child entry when children overlap', async () => {
+			const g = await grokCapture();
+			g.spawn('child-a', 'native', { model: 'grok-child-a', persona: 'reviewer' });
+			g.spawn('child-b');
+			g.tool('native', 'call_1', 'pending');
+			g.tool('child-a', 'call_1', 'pending');
+			g.tool('child-b', 'call_1', 'pending');
+			g.tool('child-b', 'call_1', 'completed');
+			g.tool('child-a', 'call_1', 'failed');
+			g.send(
+				'child-a',
+				{ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'child prose' } },
+				'session/update'
+			);
+			g.send(
+				'child-b',
+				{ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'child thought' } },
+				'session/update'
+			);
+			g.finish('child-a', 'failed', { error: 'A broke' });
+			g.finish('child-b', 'completed', { output: 'B result' });
+
+			const nested = g.tools.filter((t) => t.toolName === 'Bash');
+			expect(nested.map((t) => [t.toolCallId, t.parentToolUseId, t.state.status])).toEqual([
+				['call_1', undefined, 'running'],
+				[`grok-child-tool:["child-a","call_1"]`, g.subagentToolCallId('child-a'), 'running'],
+				[`grok-child-tool:["child-b","call_1"]`, g.subagentToolCallId('child-b'), 'running'],
+				[`grok-child-tool:["child-b","call_1"]`, g.subagentToolCallId('child-b'), 'completed'],
+				[`grok-child-tool:["child-a","call_1"]`, g.subagentToolCallId('child-a'), 'failed'],
+			]);
+			// One entry per lifecycle report, nested under nothing (no spawning call was reported).
+			expect(g.entries('child-a').map((t) => t.state.status)).toEqual(['running', 'failed']);
+			expect(g.entries('child-b').map((t) => t.state.status)).toEqual(['running', 'completed']);
+			for (const t of g.tools.filter((x) => x.toolName === 'Subagent')) {
+				expect(t.parentToolUseId).toBeUndefined();
+				expect(t.state.unavailable).toEqual(expect.arrayContaining(['parentToolCallId', 'cost']));
+				expect(t.state).not.toHaveProperty('cost');
+			}
+			expect(g.entries('child-a').at(-1)?.state).toMatchObject({
+				output: 'A broke',
+				input: { model: 'grok-child-a', behavior: { persona: 'reviewer' } },
+			});
+			expect(g.entries('child-b').at(-1)?.state.output).toBe('B result');
+			expect(g.entries('child-b').some((t) => t.state.output === 'A broke')).toBe(false);
+			// Child prose and thought are neither the answer nor the parent's thinking.
+			expect(g.thinking).not.toHaveBeenCalled();
+			expect(g.bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			expect(g.proc.streamedText).toBe('');
+			expect(g.usage).not.toHaveBeenCalled();
+		});
+
+		it('leaves no child entry running once the parent turn is cancelled', async () => {
+			const g = await grokCapture();
+			g.spawn('done');
+			g.spawn('open');
+			g.spawn('grandchild', 'open');
+			g.finish('done', 'completed', { output: 'ok' });
+			g.send('open', {
+				sessionUpdate: 'response_completed',
+				message_id: 'child-response',
+				usage: { input_tokens: 10, output_tokens: 1 },
+			});
+			expect(g.usage).not.toHaveBeenCalled();
+			g.feed(
+				g.adapter.settle({ stopReason: 'cancelled' }, { status: 'cancelled', origin: 'user' })
+			);
+
+			const last = (child: string) => g.entries(child).at(-1);
+			expect(last('open')?.state).toMatchObject({
+				status: 'failed',
+				outcome: 'unknown',
+				lifecycle: 'closed-with-parent',
+			});
+			expect(last('open')?.state.unavailable).toContain('nativeStatus');
+			expect(last('grandchild')).toMatchObject({
+				parentToolUseId: g.subagentToolCallId('open'),
+				state: { status: 'failed', lifecycle: 'closed-with-parent' },
+			});
+			expect(g.entries('done').map((t) => t.state.status)).toEqual(['running', 'completed']);
+			const finals = new Map(g.tools.map((t) => [t.toolCallId, t.state.status]));
+			expect([...finals.values()]).not.toContain('running');
+
+			// After settlement the capture owns no child: nothing more reaches the desktop.
+			const count = g.tools.length;
+			g.tool('open', 'call_late', 'pending');
+			g.finish('open', 'completed');
+			g.spawn('late');
+			expect(g.tools).toHaveLength(count);
+		});
+	});
+
 	describe('Claude thinking-chunk routing', () => {
 		// Regression: claude-code was lumped into the isReasoning gate meant for
 		// Grok/Codex/OpenCode. Claude's ordinary assistant text arrives as partials
@@ -3459,7 +3638,11 @@ describe('StdoutHandler - single JSON parse per line', () => {
 		});
 	});
 
-	describe('SSH auth_expired login guidance by agentId', () => {
+	describe('auth_expired recovery guidance by agentId', () => {
+		beforeEach(() => {
+			vi.clearAllMocks();
+		});
+
 		function mockAuthParser(agentId: string, message: string) {
 			return {
 				agentId,
@@ -3482,35 +3665,135 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			};
 		}
 
-		it('uses the grok login command for grok on an SSH remote', () => {
-			const mockParser = mockAuthParser(
-				'grok',
-				'Not authenticated. Please run "grok login" to authenticate.'
-			);
-
-			const { handler, sessionId, emitter } = createTestContext({
-				isStreamJsonMode: true,
-				toolType: 'grok',
-				outputParser: mockParser as any,
+		describe.each([
+			{
+				label: 'local',
+				sshRemoteId: undefined,
+				sshRemoteHost: undefined,
+				header: 'Authentication failed.',
+			},
+			{
+				label: 'named SSH remote',
 				sshRemoteId: 'remote-1',
 				sshRemoteHost: 'build-box',
+				header: 'Authentication failed on remote host "build-box".',
+			},
+			{
+				label: 'SSH remote without a display host',
+				sshRemoteId: 'remote-2',
+				sshRemoteHost: undefined,
+				header: 'Authentication failed on the remote host.',
+			},
+		])('Grok on $label', ({ sshRemoteId, sshRemoteHost, header }) => {
+			// These are only Maestro's overrides, never the full inherited environment.
+			// Even an empty/root-only map cannot establish provider-login credentials.
+			it.each<[string, ManagedProcess['maestroEnvVars']]>([
+				['missing credential context', undefined],
+				['empty overrides', {}],
+				['account root only', { GROK_HOME: '/synthetic/grok-account' }],
+				['blank API-key override', { XAI_API_KEY: ' ' }],
+				['API-key fallback', { XAI_API_KEY: 'synthetic-api-key' }],
+				['legacy API-key fallback', { GROK_CODE_XAI_API_KEY: 'synthetic-legacy-key' }],
+				['inline credentials', { GROK_AUTH: '{"apiKey":"synthetic-inline-key"}' }],
+				['model gateway', { GROK_MODELS_BASE_URL: 'https://model.invalid/synthetic-model-key' }],
+				[
+					'chat gateway',
+					{ GROK_CLI_CHAT_PROXY_BASE_URL: 'https://chat.invalid/?key=synthetic-chat-key' },
+				],
+				['xAI gateway', { GROK_XAI_API_BASE_URL: 'https://user:synthetic-pass@api.invalid' }],
+			])('keeps login conditional with %s', (_label, maestroEnvVars) => {
+				const mockParser = mockAuthParser(
+					'grok',
+					'Not authenticated. Please run "grok login" to authenticate.'
+				);
+				const { handler, sessionId, emitter, proc } = createTestContext({
+					isStreamJsonMode: true,
+					toolType: 'grok',
+					outputParser: mockParser as any,
+					maestroEnvVars,
+					sshRemoteId,
+					sshRemoteHost,
+				});
+				const errorSpy = vi.fn();
+				emitter.on('agent-error', errorSpy);
+
+				sendJsonLine(handler, sessionId, { type: 'error', message: 'not authenticated' });
+
+				expect(errorSpy).toHaveBeenCalledTimes(1);
+				const [emittedSessionId, emitted] = errorSpy.mock.calls[0];
+				expect(emittedSessionId).toBe(sessionId);
+				expect(emitted).toMatchObject({
+					type: 'auth_expired',
+					agentId: 'grok',
+					sessionId,
+					recoverable: true,
+				});
+				expect(emitted.sshRemoteId).toBe(sshRemoteId);
+				expect(emitted.message).toBe(
+					`${header} Check the active Grok credentials on the host running the agent. Sign in only if this account uses provider login; API keys, gateway credentials and inline overrides must be corrected at their source.`
+				);
+				expect(emitted.message).not.toMatch(/grok login|claude|SSH into/);
+				expect(proc.errorEmitted).toBe(true);
+				const disclosure = JSON.stringify([
+					errorSpy.mock.calls,
+					vi.mocked(logger.error).mock.calls,
+					vi.mocked(logger.warn).mock.calls,
+					vi.mocked(logger.info).mock.calls,
+					vi.mocked(logger.debug).mock.calls,
+				]);
+				for (const value of Object.values(maestroEnvVars ?? {})) {
+					if (!value.trim()) continue;
+					expect(disclosure).not.toContain(value);
+					expect(disclosure).not.toContain(JSON.stringify(value).slice(1, -1));
+				}
 			});
-
-			const errorSpy = vi.fn();
-			emitter.on('agent-error', errorSpy);
-
-			handler.handleData(
-				sessionId,
-				JSON.stringify({ type: 'error', message: 'not authenticated' }) + '\n'
-			);
-
-			expect(errorSpy).toHaveBeenCalledTimes(1);
-			const emitted = errorSpy.mock.calls[0][1];
-			expect(emitted.message).toBe(
-				'Authentication failed on remote host "build-box". SSH into the remote and run "grok login" to re-authenticate.'
-			);
-			expect(emitted.message).not.toContain('claude login');
 		});
+
+		it.each([
+			{
+				agentId: 'claude-code' as const,
+				sshRemoteId: undefined,
+				sshRemoteHost: undefined,
+				message: 'Authentication failed. Run claude /login to re-authenticate.',
+				expected: 'Authentication failed. Run claude /login to re-authenticate.',
+			},
+			{
+				agentId: 'codex' as const,
+				sshRemoteId: undefined,
+				sshRemoteHost: undefined,
+				message: 'Authentication failed. Run codex login to re-authenticate.',
+				expected: 'Authentication failed. Run codex login to re-authenticate.',
+			},
+			{
+				agentId: 'codex' as const,
+				sshRemoteId: 'remote-1',
+				sshRemoteHost: 'build-box',
+				message: 'Authentication failed.',
+				expected:
+					'Authentication failed on remote host "build-box". SSH into the remote and run "codex login --device-auth" to re-authenticate.',
+			},
+		])(
+			'preserves $agentId login guidance and remote identity ($sshRemoteId)',
+			({ agentId, sshRemoteId, sshRemoteHost, message, expected }) => {
+				const { handler, sessionId, emitter } = createTestContext({
+					isStreamJsonMode: true,
+					toolType: agentId,
+					outputParser: mockAuthParser(agentId, message) as any,
+					sshRemoteId,
+					sshRemoteHost,
+				});
+				const errorSpy = vi.fn();
+				emitter.on('agent-error', errorSpy);
+
+				sendJsonLine(handler, sessionId, { type: 'error', message: 'authentication failed' });
+
+				expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
+					sessionId,
+					expect.objectContaining({ type: 'auth_expired', agentId, sessionId, message: expected })
+				);
+				expect(errorSpy.mock.calls[0][1].sshRemoteId).toBe(sshRemoteId);
+			}
+		);
 
 		it('uses the claude login command even when the pattern message is generic', () => {
 			// Pattern-58 style message: no login command in the text. The

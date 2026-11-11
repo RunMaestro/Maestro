@@ -400,6 +400,8 @@ describe('cue-cli-executor', () => {
 		expect(mockExecFile).toHaveBeenCalledWith(
 			'taskkill',
 			['/pid', String(mockChild.pid), '/t', '/f'],
+			// taskkill is bounded so a hung tree walk cannot hold the stop ladder.
+			{ timeout: expect.any(Number) },
 			expect.any(Function)
 		);
 		// POSIX signals are a no-op for shell-spawned trees on Windows.
@@ -411,5 +413,197 @@ describe('cue-cli-executor', () => {
 
 	it('stopProcess returns false for unknown runId', () => {
 		expect(stopProcess('does-not-exist')).toBe(false);
+	});
+
+	describe('tab delivery (cli.tab)', () => {
+		it('dispatches into the named tab with --queue so a busy turn is waited for', async () => {
+			const config = createConfig({
+				cli: { command: 'send' as const, target: 'agent-A', tab: 'tab-1', message: 'follow up' },
+			});
+			const promise = executeCueCli(config as any);
+			await Promise.resolve();
+			mockChild.emit('close', 0);
+			const result = await promise;
+
+			expect(mockSpawn.mock.calls[0][1]).toEqual([
+				expect.stringContaining('maestro-cli.js'),
+				'dispatch',
+				'agent-A',
+				'follow up',
+				'--background',
+				'--tab',
+				'tab-1',
+				'--queue',
+			]);
+			expect(result.status).toBe('completed');
+		});
+
+		it('fails without spawning when the tab template resolves to nothing', async () => {
+			const config = createConfig({
+				cli: { command: 'send' as const, target: 'agent-A', tab: '{{CUE_FROM_AGENT}}' },
+				event: createEvent({ sourceSessionId: '', sourceAgentId: '' }),
+			});
+			const result = await executeCueCli(config as any);
+
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(result.status).toBe('failed');
+			expect(result.stderr).toMatch(/cli tab resolved to empty string/);
+		});
+
+		it('falls back to a new tab and reports it when the tab is gone', async () => {
+			const onTabFallback = vi.fn();
+			const config = createConfig({
+				cli: { command: 'send' as const, target: 'agent-A', tab: 'tab-gone', message: 'hi' },
+				onTabFallback,
+			});
+			const promise = executeCueCli(config as any);
+			await Promise.resolve();
+			mockChild.stdout.emit(
+				'data',
+				JSON.stringify({ success: false, error: 'Tab not found: tab-gone', code: 'TAB_NOT_FOUND' })
+			);
+			mockChild.emit('close', 1);
+			await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalledTimes(2));
+			mockChild.stdout.emit(
+				'data',
+				JSON.stringify({ success: true, agentId: 'agent-A-full', tabId: 'tab-new' })
+			);
+			mockChild.emit('close', 0);
+			const result = await promise;
+
+			const retryArgs = mockSpawn.mock.calls[1][1] as string[];
+			expect(retryArgs.slice(1)).toEqual([
+				'dispatch',
+				'agent-A',
+				'hi',
+				'--background',
+				'--new-tab',
+				'--visible',
+			]);
+			expect(onTabFallback).toHaveBeenCalledWith({
+				agentId: 'agent-A-full',
+				requestedTab: 'tab-gone',
+				newTabId: 'tab-new',
+			});
+			expect(result.status).toBe('completed');
+		});
+
+		it('reports the failed fallback with no new tab id', async () => {
+			const onTabFallback = vi.fn();
+			const config = createConfig({
+				cli: { command: 'send' as const, target: 'agent-A', tab: 'tab-gone', message: 'hi' },
+				onTabFallback,
+			});
+			const promise = executeCueCli(config as any);
+			await Promise.resolve();
+			mockChild.stdout.emit('data', JSON.stringify({ success: false, code: 'TAB_NOT_FOUND' }));
+			mockChild.emit('close', 1);
+			await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalledTimes(2));
+			mockChild.emit('close', 1);
+			const result = await promise;
+
+			expect(onTabFallback).toHaveBeenCalledWith({
+				agentId: 'agent-A',
+				requestedTab: 'tab-gone',
+				newTabId: null,
+			});
+			expect(result.status).toBe('failed');
+		});
+
+		it('does not fall back on any other refusal', async () => {
+			const onTabFallback = vi.fn();
+			const config = createConfig({
+				cli: { command: 'send' as const, target: 'agent-A', tab: 'tab-1', message: 'hi' },
+				onTabFallback,
+			});
+			const promise = executeCueCli(config as any);
+			await Promise.resolve();
+			mockChild.stdout.emit(
+				'data',
+				JSON.stringify({ success: false, code: 'MAESTRO_NOT_RUNNING' })
+			);
+			mockChild.emit('close', 1);
+			const result = await promise;
+
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			expect(onTabFallback).not.toHaveBeenCalled();
+			expect(result.status).toBe('failed');
+		});
+	});
+});
+
+/**
+ * A Grok pipeline's nested maestro-cli action. The owner is a
+ * Grok agent and the upstream output is a Grok answer; the courier is the
+ * same mocked child. A refusal, a stop or a failed courier is never
+ * `completed`.
+ */
+describe('cue-cli-executor with a Grok owner', () => {
+	const grokSession = (): SessionInfo => ({
+		...createSession(),
+		id: 'grok-1',
+		name: 'Grok Reviewer',
+		toolType: 'grok',
+	});
+	const grokConfig = (overrides: Record<string, unknown> = {}) =>
+		createConfig({
+			session: grokSession(),
+			event: createEvent({
+				sourceSession: 'Grok Reviewer',
+				sourceSessionId: 'grok-1',
+				sourceOutput: 'grok answer: all checks pass',
+			}),
+			cli: { command: 'send' as const, target: 'agent-2' },
+			...overrides,
+		});
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockIsWindows.mockReturnValue(false);
+	});
+
+	it('dispatches the Grok answer to the target as a tracked courier', async () => {
+		const promise = executeCueCli(grokConfig() as any);
+		await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalledTimes(1));
+		expect(getProcessList()).toContainEqual(
+			expect.objectContaining({ runId: 'run-1', toolType: 'terminal' })
+		);
+		mockChild.emit('close', 0);
+		const result = await promise;
+
+		expect(result).toMatchObject({ status: 'completed', sessionId: 'grok-1', exitCode: 0 });
+		const args = mockSpawn.mock.calls[0][1] as string[];
+		expect(args.slice(1)).toEqual([
+			'dispatch',
+			'agent-2',
+			'grok answer: all checks pass',
+			'--background',
+		]);
+		expect(getProcessList()).not.toContainEqual(expect.objectContaining({ runId: 'run-1' }));
+	});
+
+	it('a stopped Grok run spawns no courier', async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const result = await executeCueCli(grokConfig({ signal: controller.signal }) as any);
+		expect(mockSpawn).not.toHaveBeenCalled();
+		expect(result).toMatchObject({ status: 'stopped', exitCode: null, sessionId: 'grok-1' });
+	});
+
+	it('a courier stopped mid-dispatch or refused by the target is failed, never completed', async () => {
+		const stopped = executeCueCli(grokConfig() as any);
+		await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalledTimes(1));
+		expect(stopProcess('run-1')).toBe(true);
+		expect(mockChild.killed).toBe(true);
+		mockChild.emit('close', null);
+		expect((await stopped).status).not.toBe('completed');
+
+		const refused = executeCueCli(grokConfig({ runId: 'run-2' }) as any);
+		await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalledTimes(2));
+		mockChild.stderr.emit('data', 'agent-2 refused the turn');
+		mockChild.emit('close', 1);
+		const result = await refused;
+		expect(result).toMatchObject({ status: 'failed', exitCode: 1 });
+		expect(result.stderr).toContain('refused the turn');
 	});
 });

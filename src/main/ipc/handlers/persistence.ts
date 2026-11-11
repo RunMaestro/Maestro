@@ -25,7 +25,10 @@ import {
 } from '../../plugins/plugin-media-tools';
 import { noteSentryAgentInventory } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
-import { broadcastBridgeEvent } from '../../web-server/handlers/bridgeHandlers';
+import {
+	broadcastBridgeEvent,
+	isBridgeInvokeEvent,
+} from '../../web-server/handlers/bridgeHandlers';
 import { forgetAgentActors } from '../../web-server/auth/turn-attribution';
 import { deleteJourney } from '../../user-journey-manager';
 import { getThemeById } from '../../themes';
@@ -48,6 +51,7 @@ import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { clearGhCache } from '../../utils/cliDetection';
 import { mergeUsagePeaks, type UsagePeaks } from '../../../shared/usagePeaks';
 import { mergeAutoRunStats } from '../../../shared/autoRunStatsMerge';
+import { dropOrphanedTabs } from '../../../shared/tabStripMembership';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
 import { normalizeStoredClosedTabs } from '../../../shared/closedTabHistory';
 import {
@@ -685,6 +689,11 @@ export function registerPersistenceHandlers(
 	});
 
 	// Sessions persistence
+	// The orphan repair runs on the first load of this process only, before any
+	// renderer holds state. A later load (a reload, a second window, a browser
+	// bootstrap) races renderers that are mid-write, where dropping a record is
+	// never safe.
+	let orphanRepairDone = false;
 	const loadStoredSessions = async (): Promise<StoredSession[]> => {
 		const sessions = sessionsStore.get('sessions', []);
 		// Heal legacy sessions files: relocate any images still stored inline as
@@ -701,14 +710,24 @@ export function registerPersistenceHandlers(
 			// raw write) carry whole transcripts and the legacy key. Bring them to
 			// the stored form the renderer projects, so its next change merges.
 			let closedTabCount = 0;
+			// Tabs with no slot in the strip are closes that did not fully apply
+			// (#2008). Restore would put each one back as a chip, so finish the
+			// close here. Their transcripts stay in their provider sessions.
+			let orphanedTabCount = 0;
+			const repairOrphans = !orphanRepairDone;
+			orphanRepairDone = true;
 			const compacted = relocated.map((session) => {
-				const normalized = normalizeStoredClosedTabs(session);
-				if (normalized !== session) closedTabCount++;
+				const { session: repaired, dropped } = repairOrphans
+					? dropOrphanedTabs(session)
+					: { session, dropped: 0 };
+				orphanedTabCount += dropped;
+				const normalized = normalizeStoredClosedTabs(repaired);
+				if (normalized !== repaired) closedTabCount++;
 				const result = compactSessionToolOutputs(normalized);
 				toolOutputCount += result.compacted;
 				return result.session;
 			});
-			if (imageCount > 0 || toolOutputCount > 0 || closedTabCount > 0) {
+			if (imageCount > 0 || toolOutputCount > 0 || closedTabCount > 0 || orphanedTabCount > 0) {
 				sessionsStore.set('sessions', compacted);
 				if (imageCount > 0) {
 					logger.info(
@@ -725,6 +744,12 @@ export function registerPersistenceHandlers(
 				if (closedTabCount > 0) {
 					logger.info(
 						`Normalized the closed-tab history of ${closedTabCount} agent(s) in maestro-sessions.json`,
+						'Sessions'
+					);
+				}
+				if (orphanedTabCount > 0) {
+					logger.info(
+						`Removed ${orphanedTabCount} closed tab(s) left without a tab-strip slot in maestro-sessions.json`,
 						'Sessions'
 					);
 				}
@@ -778,10 +803,7 @@ export function registerPersistenceHandlers(
 	ipcMain.handle(
 		'sessions:publishTranscript',
 		(event, patch: SessionTranscriptPatch, requestId?: string) => {
-			if (
-				(event as { type?: string })?.type === 'bridge' ||
-				senderWebContentsIdOf(event) === undefined
-			) {
+			if (isBridgeInvokeEvent(event) || senderWebContentsIdOf(event) === undefined) {
 				throw new Error('Only the owning host renderer can publish transcript identities');
 			}
 			if (requestId) {
@@ -820,7 +842,7 @@ export function registerPersistenceHandlers(
 	);
 	ipcMain.handle('sessions:getBootstrap', async (event) => {
 		const sessions = (await loadStoredSessions()).map(projectWebSession);
-		if ((event as { type?: string })?.type !== 'bridge') return sessions;
+		if (!isBridgeInvokeEvent(event)) return sessions;
 		return Promise.all(
 			sessions.map(async (session) => {
 				const live = await readOwningTranscript(session.id, '', true).catch((error: unknown) => {
@@ -876,7 +898,7 @@ export function registerPersistenceHandlers(
 		'sessions:getDeferredContent',
 		async (event, sessionId: string, tabId: string | null, includeCommands: boolean) => {
 			const stored = sessionsStore.get('sessions', []).find((item) => item.id === sessionId);
-			if ((event as { type?: string })?.type === 'bridge') {
+			if (isBridgeInvokeEvent(event)) {
 				// A newly acknowledged tab can exist in the owner before its disk write.
 				const content = readDeferredContent(stored, sessionId, null, includeCommands);
 				const [tab, shell] = await Promise.all([
@@ -918,7 +940,7 @@ export function registerPersistenceHandlers(
 
 	ipcMain.handle('sessions:setActiveSessionId', async (event, id: string) => {
 		// Browser navigation is client-local, never the host's persisted focus.
-		if ((event as { type?: string })?.type === 'bridge') return;
+		if (isBridgeInvokeEvent(event)) return;
 		// Coalesce rapid navigation into one disk write (see flushActiveSessionId).
 		pendingActiveSessionId = id;
 		if (activeSessionIdTimer) clearTimeout(activeSessionIdTimer);
@@ -961,7 +983,7 @@ export function registerPersistenceHandlers(
 				baselines: StoredSession[] = []
 			) => {
 				const baselineMap = await observedBaselineMap(baselines);
-				const remote = (event as { type?: string })?.type === 'bridge';
+				const remote = isBridgeInvokeEvent(event);
 				// Relocate any freshly-pasted inline images (data URLs) in the dirty
 				// sessions to the image store before they hit disk, so the sessions
 				// JSON only ever grows by lightweight refs.
@@ -1171,7 +1193,7 @@ export function registerPersistenceHandlers(
 		'sessions:setAll',
 		queueWrite(async (event, input: StoredSession[], baselines: StoredSession[] = []) => {
 			const baselineMap = await observedBaselineMap(baselines);
-			const remote = (event as { type?: string })?.type === 'bridge';
+			const remote = isBridgeInvokeEvent(event);
 			// Relocate inline images (data URLs) out of the sessions before they hit
 			// disk. setAll is the bootstrap/first-flush path, so this also migrates a
 			// legacy in-memory sessions tree the first time it is persisted.

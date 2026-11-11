@@ -2412,6 +2412,29 @@ describe('work, linked review and explicit final human decision', () => {
 		}
 	);
 
+	it('refuses reassignment while the bound independent review owns a reservation', async () => {
+		setupWorkflow();
+		nativeService();
+		await runWork();
+		let board = storage.read(roots[0], 'board');
+		const review = board.cards[1];
+		host.reviewArtifact = await prepareBoardReviewHandoff(storage, review.reviewHandoff!);
+		const claim = claimFor(review.id, 'reviewer');
+		if (!claim.ok) throw Error(claim.reason);
+		board = storage.read(roots[0], 'board');
+		const before = persisted();
+		expect(() =>
+			storage.capture({
+				projectRoot: roots[0],
+				boardId: 'board',
+				expectedRevision: board.storage!.expectedRevision!,
+				card: { ...board.cards[0], reviewerAgentId: 'foreign' },
+			})
+		).toThrow('Settle the active review');
+		expect(persisted()).toBe(before);
+		expect(card().reviewerAgentId).toBe('reviewer');
+		expect(reservations()).toHaveLength(1);
+	});
 	it('rechecks exact source output at the final native start after a successful review claim', async () => {
 		setupWorkflow();
 		nativeService();

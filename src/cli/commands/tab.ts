@@ -68,7 +68,7 @@ import {
 	type MessagePinLastTarget,
 	type MessagePinSummary,
 } from '../../shared/messagePinCommands';
-import { resolveAgentId, readActiveAgentId } from '../services/storage';
+import { resolveAgentId, readActiveAgentId, readLiveSessions } from '../services/storage';
 import {
 	PeerResolveError,
 	hostCallError,
@@ -625,6 +625,14 @@ interface ClosedTabOptions {
 	json?: boolean;
 }
 
+interface ClosedTabListOptions extends ClosedTabOptions {
+	/** Every agent's stack (`tab closed --all`). */
+	all?: boolean;
+}
+
+/** Agents asked at once by `tab closed --all`, over one connection. */
+const CLOSED_TAB_FLEET_CONCURRENCY = 8;
+
 interface TabReopenOptions extends ClosedTabOptions {
 	/** Position in the stack, as typed (0 is what Cmd+Shift+T reopens next). */
 	index?: string;
@@ -697,7 +705,11 @@ function describeClosedTab(entry: ClosedTabSummary): string {
  * Index 0 is the entry Cmd+Shift+T (and `tab reopen` with no target) restores
  * next. An empty stack is not an error here: "nothing to reopen" is an answer.
  */
-export async function tabClosed(options: ClosedTabOptions): Promise<void> {
+export async function tabClosed(options: ClosedTabListOptions): Promise<void> {
+	if (options.all) {
+		if (options.agent) failCommand('Pass --agent or --all, not both', options.json);
+		return tabClosedFleet(options.json);
+	}
 	const sessionId = resolveClosedTabAgent(options);
 	const result = await sendClosedTabCommand({ action: 'list', sessionId }, options.json);
 	const closedTabs = result.closedTabs ?? [];
@@ -712,6 +724,102 @@ export async function tabClosed(options: ClosedTabOptions): Promise<void> {
 	}
 	console.log(`Closed tabs for ${sessionId} (newest first):`);
 	for (const entry of closedTabs) console.log(describeClosedTab(entry));
+}
+
+/**
+ * `maestro-cli tab closed --all` - every agent's closed-tab stack. Each stack
+ * still comes from the window that owns the agent (one `list` per agent, a few
+ * in flight on one connection), so an entry closed a moment ago is already
+ * here. An agent the desktop could not answer for is reported, not fatal.
+ */
+async function tabClosedFleet(json?: boolean): Promise<void> {
+	const agents = readLiveSessions();
+	const results: Array<{
+		sessionId: string;
+		agentName: string;
+		closedTabs: ClosedTabSummary[];
+		error?: string;
+	}> = [];
+	try {
+		await withMaestroClient(async (client) => {
+			for (let i = 0; i < agents.length; i += CLOSED_TAB_FLEET_CONCURRENCY) {
+				const batch = agents.slice(i, i + CLOSED_TAB_FLEET_CONCURRENCY);
+				const replies = await Promise.all(
+					batch.map(async (agent) => {
+						try {
+							const reply = await client.sendCommand<ClosedTabResponse>(
+								{ type: 'closed_tab_command', action: 'list', sessionId: agent.id },
+								'closed_tab_command_result'
+							);
+							const error = reply.success
+								? null
+								: reply.error || errorFrameMessage(reply) || 'Closed-tab command failed';
+							return error ? { closedTabs: [], error } : { closedTabs: reply.closedTabs ?? [] };
+						} catch (error) {
+							// One agent's failure is its own entry, never the whole listing's.
+							// A connect() failure still reaches the outer catch.
+							return {
+								closedTabs: [],
+								error:
+									error instanceof CommandTimeoutError
+										? 'Maestro did not answer in time'
+										: error instanceof Error
+											? error.message
+											: String(error),
+							};
+						}
+					})
+				);
+				batch.forEach((agent, index) =>
+					results.push({ sessionId: agent.id, agentName: agent.name, ...replies[index] })
+				);
+			}
+		});
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json });
+		return failCommand(error instanceof Error ? error.message : String(error), json);
+	}
+
+	const failed = results.filter((r) => r.error);
+	if (results.length > 0 && failed.length === results.length) {
+		return failCommand(`No agent answered: ${failed[0].error}`, json);
+	}
+	const withTabs = results.filter((r) => !r.error && r.closedTabs.length > 0);
+	const total = withTabs.reduce((sum, r) => sum + r.closedTabs.length, 0);
+
+	if (json) {
+		console.log(
+			JSON.stringify(
+				{
+					success: true,
+					total,
+					agents: withTabs.map(({ sessionId, agentName, closedTabs }) => ({
+						sessionId,
+						agentName,
+						closedTabs,
+					})),
+					errors: failed.map(({ sessionId, agentName, error }) => ({
+						sessionId,
+						agentName,
+						error,
+					})),
+				},
+				null,
+				2
+			)
+		);
+		return;
+	}
+	if (total === 0) console.log('No closed tabs for any agent');
+	for (const r of withTabs) {
+		console.log(`${r.agentName} (${r.sessionId}), newest first:`);
+		for (const entry of r.closedTabs) console.log(describeClosedTab(entry));
+	}
+	if (total > 0) {
+		console.log(`${total} closed tab${total === 1 ? '' : 's'} across ${withTabs.length} agent(s)`);
+	}
+	for (const r of failed)
+		console.log(`(could not read ${r.agentName} (${r.sessionId}): ${r.error})`);
 }
 
 /**

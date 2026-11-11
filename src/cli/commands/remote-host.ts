@@ -7,8 +7,12 @@
 // running (decision D2: the host runs as the SSH user), then reports status. Every SSH call is
 // made one after the other, never side by side: tailcat remotes fail under concurrent dials.
 //
-// Only a remote opted in to Federation is dialed (decision D8). The endpoint's token and CLI secret
-// stay in memory: nothing here prints them, in either output form.
+// `install` copies this CLI to the remote (`setupRemoteHost()`, the same path as the desktop's Make
+// Federated), with Node.js and SQLite for the remote's own platform, and with `--start` starts the
+// host there.
+//
+// A remote that opted out of Federation (`--federation off`) is never dialed. The endpoint's token
+// and CLI secret stay in memory: nothing here prints them, in either output form.
 
 import {
 	RemoteDiscoveryError,
@@ -21,6 +25,15 @@ import {
 	type RemoteLingerWarning,
 	type RemoteVersionSkew,
 } from '../../shared/maestro-lib/client/remote-discovery';
+import {
+	DEFAULT_INSTALL_TIMEOUT_MS,
+	RemoteInstallError,
+	resolveLocalCliBundle,
+	setupRemoteHost,
+	type LocalCliBundle,
+	type RemoteHostSetupResult,
+} from '../../shared/maestro-lib/client/remote-install';
+import { peerIdFor } from '../../shared/maestro-lib/client/peer-connection';
 import type { SshRemoteConfig } from '../../shared/types';
 import { ExitCode } from '../exit-codes';
 import { colorize, formatError, formatSuccess } from '../output/formatter';
@@ -31,6 +44,7 @@ import {
 	requireFederationRemote,
 } from '../services/peer-resolver';
 import { readSshRemotes, resolveSshRemoteId } from '../services/storage';
+import { nudgeDesktopReconnect } from './federation';
 
 export interface RemoteHostOptions {
 	json?: boolean;
@@ -69,6 +83,11 @@ export interface RemoteHostDeps {
 	resolveRemoteId(ref: string): string;
 	discover: typeof discoverRemoteHost;
 	start: typeof startRemoteHost;
+	setup: typeof setupRemoteHost;
+	/** This CLI's own bundle: the file the running process loaded, and its prompts beside it. */
+	localBundle(version: string): LocalCliBundle;
+	/** Tell a running desktop to reload the peer. */
+	nudgeDesktop(peer: string): Promise<boolean>;
 }
 
 const defaultDeps: RemoteHostDeps = {
@@ -76,6 +95,9 @@ const defaultDeps: RemoteHostDeps = {
 	resolveRemoteId: resolveSshRemoteId,
 	discover: discoverRemoteHost,
 	start: startRemoteHost,
+	setup: setupRemoteHost,
+	localBundle: (version) => resolveLocalCliBundle(__filename, version),
+	nudgeDesktop: nudgeDesktopReconnect,
 };
 
 class RemoteHostUsageError extends Error {
@@ -193,6 +215,16 @@ function reportError(options: RemoteHostOptions, error: unknown): void {
 		fail(options, error.message, error.exitCode);
 		return;
 	}
+	if (error instanceof RemoteInstallError) {
+		const code = error.code === 'timeout' ? ExitCode.Timeout : ExitCode.GeneralError;
+		if (options.json) {
+			console.log(JSON.stringify({ error: error.message, code: error.code }, null, 2));
+		} else {
+			console.error(formatError(error.message));
+		}
+		process.exitCode = code;
+		return;
+	}
 	if (error instanceof RemoteDiscoveryError) {
 		const code =
 			error.code === 'timeout'
@@ -294,6 +326,118 @@ export async function remoteHostStart(
 			);
 			process.exitCode = ExitCode.GeneralError;
 		}
+	} catch (error) {
+		reportError(options, error);
+	}
+}
+
+export interface RemoteHostInstallOptions extends RemoteHostOptions {
+	/** Start the host once the CLI is in place. */
+	start?: boolean;
+	/** Install even over a `maestro-cli` Maestro did not install. */
+	force?: boolean;
+	/** Replace a running host on an older version: stop it, upgrade, start it again. */
+	restart?: boolean;
+}
+
+function installTimeoutMs(options: RemoteHostOptions): number {
+	if (options.timeout === undefined) return DEFAULT_INSTALL_TIMEOUT_MS;
+	const parsed = Number(options.timeout);
+	if (!Number.isFinite(parsed) || parsed <= 0) {
+		throw new RemoteHostUsageError(
+			'--timeout must be a positive number of seconds',
+			ExitCode.InvalidUsage
+		);
+	}
+	return Math.round(parsed * 1000);
+}
+
+const CLI_ACTION_TEXT: Record<RemoteHostSetupResult['cli'], string> = {
+	installed: 'installed',
+	upgraded: 'upgraded',
+	current: 'already current',
+	newer: 'left alone (the remote runs a newer version)',
+};
+
+/** The human form of a setup result. */
+export function formatRemoteHostSetup(
+	remote: SshRemoteConfig,
+	result: RemoteHostSetupResult
+): string {
+	const lines = [
+		`Remote: ${remote.name} (${remote.id})`,
+		`maestro-cli: ${CLI_ACTION_TEXT[result.cli]}${result.cliVersion ? ` (${result.cliVersion})` : ''}`,
+	];
+	if (result.install) {
+		const node =
+			result.install.nodeSource === 'downloaded'
+				? 'downloaded from nodejs.org'
+				: result.install.nodeSource === 'cached'
+					? 'installed earlier'
+					: "the remote's own";
+		lines.push(
+			`Platform: ${result.install.platform}`,
+			`Node.js: ${result.install.nodeVersion} (${node})`
+		);
+	}
+	if (result.start) {
+		if (!result.start.installed)
+			lines.push(`Host: ${colorize('yellow', 'not started')} (${result.start.fix})`);
+		else if (!result.start.started)
+			lines.push('Host: the Maestro desktop app on the remote is the host there');
+		else
+			lines.push(
+				`Host: ${result.start.alreadyRunning ? 'already running' : 'started'} (pid ${result.start.pid}, port ${result.start.port})`
+			);
+	}
+	if (result.lingerFix) {
+		lines.push(colorize('yellow', formatLingerWarning(result.lingerFix, remote.name)));
+	}
+	return lines.join('\n');
+}
+
+/**
+ * `remote-host install <ssh-remote>`: put this CLI on the remote (or upgrade an older one), and
+ * with `--start` start the host there. Exit 0 when the CLI is in place (and, with `--start`, the
+ * host serves); the desktop, when it runs, reloads the peer right away.
+ */
+export async function remoteHostInstall(
+	ref: string,
+	options: RemoteHostInstallOptions,
+	localVersion: string,
+	overrides: Partial<RemoteHostDeps> = {}
+): Promise<void> {
+	const deps = { ...defaultDeps, ...overrides };
+	try {
+		const remotes = deps.readRemotes();
+		const remote = findPeerRemote(ref, {
+			readRemotes: () => remotes,
+			resolveRemoteId: deps.resolveRemoteId,
+		});
+		requireFederationRemote(remote);
+		const timeoutMs = installTimeoutMs(options);
+		const bundle = deps.localBundle(localVersion);
+		if (!options.json) {
+			console.log(`Setting up a Maestro host on ${colorize('cyan', remote.name)}...`);
+		}
+		const result = await deps.setup(remote, bundle, {
+			timeoutMs,
+			start: options.start === true,
+			force: options.force === true,
+			restart: options.restart === true,
+		});
+		// A desktop app on the remote is the host there too (`desktop-running`).
+		const serving = result.start !== undefined && result.start.installed;
+		if (serving) await deps.nudgeDesktop(peerIdFor(remote, remotes));
+		if (options.json) {
+			console.log(
+				JSON.stringify({ remote: { id: remote.id, name: remote.name }, ...result }, null, 2)
+			);
+		} else {
+			console.log(formatSuccess(`maestro-cli is ready on ${remote.name}`));
+			console.log(formatRemoteHostSetup(remote, result));
+		}
+		if (result.start && !serving) process.exitCode = ExitCode.GeneralError;
 	} catch (error) {
 		reportError(options, error);
 	}

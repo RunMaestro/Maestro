@@ -741,7 +741,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.setQuickActionOpen(true, 'main');
 					trackShortcut('quickAction');
 				}
-			} else if (ctx.isShortcut(e, 'clearTerminal') && activeSession?.inputMode === 'terminal') {
+			} else if (
+				ctx.isShortcut(e, 'clearTerminal') &&
+				activeSession?.inputMode === 'terminal' &&
+				!ctx.activeGroupChatId
+			) {
 				// Clears the active xterm buffer in terminal mode
 				e.preventDefault();
 				ctx.mainPanelRef?.current?.clearActiveTerminal();
@@ -884,7 +888,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				void editClipboardImage();
 				trackShortcut('editClipboardImage');
-			} else if (ctx.isShortcut(e, 'toggleTabStar')) {
+			} else if (ctx.isShortcut(e, 'toggleTabStar') && !ctx.activeGroupChatId) {
 				e.preventDefault();
 				ctx.toggleTabStar();
 				trackShortcut('toggleTabStar');
@@ -1239,7 +1243,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (useSettingsStore.getState().autoRunDisabled) return;
 				ctx.rightPanelRef?.current?.toggleAutoRunExpanded();
 				trackShortcut('toggleAutoRunExpanded');
-			} else if (ctx.isShortcut(e, 'editLastQueuedMessage')) {
+			} else if (ctx.isShortcut(e, 'editLastQueuedMessage') && !ctx.activeGroupChatId) {
 				// Open the edit modal on the newest queued message. The picking rules
 				// and the "nothing to edit" reporting live in the service so this and
 				// the palette's "Edit Last Queued Message" entry cannot disagree.

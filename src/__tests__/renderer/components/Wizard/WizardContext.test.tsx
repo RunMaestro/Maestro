@@ -7,6 +7,7 @@
  */
 
 import React from 'react';
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import {
@@ -524,6 +525,7 @@ describe('WizardContext', () => {
 				const { result } = renderHook(() => useWizard(), { wrapper });
 
 				act(() => {
+					result.current.setAvailableAgents([createMockAgent()]);
 					result.current.setSelectedAgent('claude-code');
 				});
 
@@ -536,11 +538,83 @@ describe('WizardContext', () => {
 				const { result } = renderHook(() => useWizard(), { wrapper });
 
 				act(() => {
+					result.current.setAvailableAgents([createMockAgent()]);
 					result.current.setSelectedAgent('claude-code');
 					result.current.setAgentName('My Agent');
 				});
 
 				expect(result.current.canProceedToNext()).toBe(true);
+			});
+
+			it.each(['grok', 'claude-code', 'codex', 'antigravity'] as const)(
+				'allows detected %s without replacing the selected provider',
+				(id) => {
+					const { result } = renderHook(() => useWizard(), { wrapper });
+					act(() => {
+						result.current.setAvailableAgents([createMockAgent(), createMockAgent({ id })]);
+						result.current.setSelectedAgent(id);
+					});
+					expect(result.current.canProceedToNext()).toBe(true);
+					expect(result.current.state.selectedAgent).toBe(id);
+				}
+			);
+
+			it.each([
+				['missing detection', 'grok', []],
+				['unavailable', 'grok', [createMockAgent({ id: 'grok', available: false })]],
+				['hidden', 'grok', [createMockAgent({ id: 'grok', hidden: true })]],
+				['internal', 'terminal', [createMockAgent({ id: 'terminal' })]],
+				['unregistered', 'unknown-provider', [createMockAgent({ id: 'unknown-provider' })]],
+			] as const)('refuses %s even with a configured custom executable', (_label, id, agents) => {
+				const { result } = renderHook(() => useWizard(), { wrapper });
+				act(() => {
+					result.current.setAvailableAgents([createMockAgent(), ...agents]);
+					result.current.setSelectedAgent(id as ToolType);
+					result.current.setCustomPath(path.resolve('fixtures', 'custom-grok'));
+				});
+				expect(result.current.canProceedToNext()).toBe(false);
+				expect(result.current.state.selectedAgent).toBe(id);
+			});
+
+			it('requires successful custom-binary detection while preserving the selected account', () => {
+				const { result } = renderHook(() => useWizard(), { wrapper });
+				const customPath = path.resolve('fixtures', 'custom-grok');
+				const customEnvVars = { GROK_HOME: path.resolve('fixtures', 'account-b') };
+				act(() => {
+					result.current.setSelectedAgent('grok');
+					result.current.setAvailableAgents([createMockAgent({ id: 'grok', available: false })]);
+					result.current.setCustomPath(customPath);
+					result.current.setCustomArgs('--no-subagents');
+					result.current.setCustomEnvVars(customEnvVars);
+					result.current.setPlannerModel('grok-4.5');
+				});
+				expect(result.current.canProceedToNext()).toBe(false);
+				act(() => {
+					result.current.setAvailableAgents([createMockAgent({ id: 'grok', path: customPath })]);
+				});
+				expect(result.current.canProceedToNext()).toBe(true);
+				expect(result.current.state).toMatchObject({
+					selectedAgent: 'grok',
+					customPath,
+					customArgs: '--no-subagents',
+					customEnvVars,
+					plannerModel: 'grok-4.5',
+				});
+				act(() => result.current.setAvailableAgents([]));
+				expect(result.current.canProceedToNext()).toBe(false);
+			});
+
+			it('refuses unresolved SSH instead of using local Grok availability', () => {
+				const { result } = renderHook(() => useWizard(), { wrapper });
+				act(() => {
+					result.current.setSelectedAgent('grok');
+					result.current.setAvailableAgents([createMockAgent({ id: 'grok' })]);
+					result.current.setSessionSshRemoteConfig({ enabled: true, remoteId: null });
+				});
+				expect(result.current.canProceedToNext()).toBe(false);
+				act(() => result.current.setSessionSshRemoteConfig({ enabled: true, remoteId: 'host-b' }));
+				expect(result.current.canProceedToNext()).toBe(true);
+				expect(result.current.state.selectedAgent).toBe('grok');
 			});
 		});
 

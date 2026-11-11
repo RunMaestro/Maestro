@@ -53,7 +53,7 @@ import { buildSnapshotKey, type AgentCapabilitiesSnapshotMap } from '../../agent
 import { stripBlankEnvVars } from '../../agentEnvironment';
 import { validateGroupAppearance } from '../../groupAppearance';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../webLogin';
-import type { AgentError, SshRemoteConfig } from '../../types';
+import type { AgentError, HistoryEntry, SshRemoteConfig } from '../../types';
 import {
 	BridgeConnection,
 	CommandTimeoutError,
@@ -98,6 +98,7 @@ import type {
 	ConsultAskInput,
 	EventFilter,
 	GroupCreateInput,
+	HistoryListOptions,
 	HostInfo,
 	MaestroClient,
 	MaestroEvent,
@@ -112,6 +113,7 @@ import type {
 	Unsubscribe,
 	WsMaestroClientOptions,
 } from './types';
+import { normalizeOriginHost } from './types';
 
 const LOG_CONTEXT = '[WsMaestroClient]';
 
@@ -152,6 +154,26 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
 	return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * The waiting messages of one agent, from `list_queue`'s item shape: the desktop bridge's reply
+ * and a headless host's `queue_changed` frame (`queuedTurnsToWire`) both carry it.
+ */
+function parseQueuedTurns(raw: unknown): QueuedTurn[] {
+	const items = Array.isArray(raw) ? raw : [];
+	return items.filter(isObject).map((item): QueuedTurn => {
+		const command = asString(item.command);
+		const args = asString(item.commandArgs);
+		return {
+			itemId: asString(item.id) ?? '',
+			tabId: asString(item.tabId) ?? '',
+			queuedAt: typeof item.timestamp === 'number' ? item.timestamp : 0,
+			kind: item.type === 'command' ? 'command' : 'message',
+			text: asString(item.text) ?? (command ? (args ? `${command} ${args}` : command) : ''),
+			paused: item.paused === true,
+		};
+	});
 }
 
 /**
@@ -363,6 +385,8 @@ class WsMaestroClient implements MaestroClient {
 		queue: {
 			list: (agentId: string) => this.queueList(agentId),
 			remove: (agentId: string, itemId: string) => this.queueRemove(agentId, itemId),
+			setPaused: (agentId: string, itemId: string, paused: boolean) =>
+				this.queueSetPaused(agentId, itemId, paused),
 		},
 		subscribe: (
 			agentId: string,
@@ -418,6 +442,10 @@ class WsMaestroClient implements MaestroClient {
 
 	readonly consults = {
 		ask: (input: ConsultAskInput) => this.consultsAsk(input),
+	};
+
+	readonly history = {
+		list: (agentId: string, options?: HistoryListOptions) => this.historyList(agentId, options),
 	};
 
 	readonly settings = {
@@ -975,6 +1003,13 @@ class WsMaestroClient implements MaestroClient {
 					agentId,
 					event: { kind: 'state', at: this.now(), state: parseAutoRunProgress(frame.state) },
 				});
+				break;
+			}
+			case 'queue_changed': {
+				// A headless host's own frame: the desktop sends none (see `queue.changed`).
+				const agentId = asString(frame.sessionId);
+				if (!agentId || !Array.isArray(frame.items)) break;
+				this.emit({ type: 'queue.changed', agentId, items: parseQueuedTurns(frame.items) });
 				break;
 			}
 			case 'autorun_ended': {
@@ -1792,6 +1827,8 @@ class WsMaestroClient implements MaestroClient {
 			background: true,
 		};
 		if (hasImages) message.images = input.images;
+		const originHost = normalizeOriginHost(input.originHost);
+		if (originHost) message.originHost = originHost;
 
 		const sent = await this.send('turns.send', message, 'enqueue_command_result');
 		if (!sent.ok)
@@ -1888,21 +1925,7 @@ class WsMaestroClient implements MaestroClient {
 		if (!checked.ok) return checked;
 		const queues = Array.isArray(sent.value.queues) ? sent.value.queues : [];
 		const mine = queues.find((queue) => isObject(queue) && queue.sessionId === agentId);
-		const items = isObject(mine) && Array.isArray(mine.items) ? mine.items : [];
-		return ok(
-			items.filter(isObject).map((item): QueuedTurn => {
-				const command = asString(item.command);
-				const args = asString(item.commandArgs);
-				return {
-					itemId: asString(item.id) ?? '',
-					tabId: asString(item.tabId) ?? '',
-					queuedAt: typeof item.timestamp === 'number' ? item.timestamp : 0,
-					kind: item.type === 'command' ? 'command' : 'message',
-					text: asString(item.text) ?? (command ? (args ? `${command} ${args}` : command) : ''),
-					paused: item.paused === true,
-				};
-			})
-		);
+		return ok(parseQueuedTurns(isObject(mine) ? mine.items : undefined));
 	}
 
 	private async queueRemove(
@@ -1918,6 +1941,55 @@ class WsMaestroClient implements MaestroClient {
 		const checked = this.checkResult('turns.queue.remove', sent.value);
 		if (!checked.ok) return checked;
 		return ok({ removed: sent.value.removed === true });
+	}
+
+	/** A headless host's own request: a desktop's bridge does not serve it (`unsupported`). */
+	private async historyList(
+		agentId: string,
+		options: HistoryListOptions = {}
+	): Promise<ClientResult<HistoryEntry[]>> {
+		const sent = await this.send(
+			'history.list',
+			{
+				type: 'get_history',
+				sessionId: agentId,
+				...(options.limit !== undefined ? { limit: options.limit } : {}),
+			},
+			'get_history_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult('history.list', sent.value);
+		if (!checked.ok) return checked;
+		const entries = Array.isArray(sent.value.entries) ? sent.value.entries : [];
+		return ok(
+			entries.filter(
+				(entry): entry is HistoryEntry =>
+					isObject(entry) &&
+					typeof entry.id === 'string' &&
+					typeof entry.timestamp === 'number' &&
+					typeof entry.type === 'string'
+			)
+		);
+	}
+
+	/** The message `maestro-cli queue hold` sends a desktop, which a headless host answers too. */
+	private async queueSetPaused(
+		agentId: string,
+		itemId: string,
+		paused: boolean
+	): Promise<ClientResult<{ found: boolean; paused: boolean }>> {
+		const sent = await this.send(
+			'turns.queue.setPaused',
+			{ type: 'set_queue_item_paused', sessionId: agentId, itemId, paused },
+			'set_queue_item_paused_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult('turns.queue.setPaused', sent.value);
+		if (!checked.ok) return checked;
+		return ok({
+			found: sent.value.found === true,
+			paused: typeof sent.value.paused === 'boolean' ? sent.value.paused : paused,
+		});
 	}
 
 	// =======================================================================

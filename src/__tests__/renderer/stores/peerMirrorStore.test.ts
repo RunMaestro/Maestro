@@ -196,12 +196,120 @@ describe('peerMirrorStore', () => {
 			expect(state.activeMirror).toBeNull();
 		});
 
+		it('replaces an agent queue on agent.queue and drops it when the list empties', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([peerWith('buildbox', [agent('a1')])]);
+			const waiting = {
+				itemId: 'q1',
+				tabId: 't1',
+				queuedAt: 10,
+				kind: 'message' as const,
+				text: 'next up',
+				paused: false,
+			};
+			store.applyPush(push('buildbox', { type: 'agent.queue', agentId: 'a1', items: [waiting] }));
+			expect(usePeerMirrorStore.getState().peers.buildbox.queues).toEqual({ a1: [waiting] });
+
+			usePeerMirrorStore
+				.getState()
+				.applyPush(push('buildbox', { type: 'agent.queue', agentId: 'a1', items: [] }));
+			expect(usePeerMirrorStore.getState().peers.buildbox.queues).toEqual({});
+		});
+
+		it('ignores agent.queue for an agent the peer does not have', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([peerWith('buildbox', [agent('a1')])]);
+			store.applyPush(
+				push('buildbox', {
+					type: 'agent.queue',
+					agentId: 'ghost',
+					items: [
+						{ itemId: 'q1', tabId: 't1', queuedAt: 1, kind: 'message', text: 'x', paused: false },
+					],
+				})
+			);
+			expect(usePeerMirrorStore.getState().peers.buildbox.queues).toEqual({});
+		});
+
 		it('is pure: the reducer does not mutate the state it is given', () => {
 			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a1')])]);
 			const before = usePeerMirrorStore.getState();
 			const frozen = JSON.stringify(before.peers);
 			reducePeerMirrorPush(before, push('buildbox', { type: 'agent.removed', agentId: 'a1' }));
 			expect(JSON.stringify(before.peers)).toBe(frozen);
+		});
+	});
+
+	describe('History versions', () => {
+		const versions = () => usePeerMirrorStore.getState().historyVersions;
+		const turnEvent = (agentId: string, event: Record<string, unknown>) =>
+			push('buildbox', { type: 'turn', agentId, tabId: 't1', event: event as never });
+
+		it('sets a version for every agent of every peer on hydrate, and bumps them on the next', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([
+				peerWith('buildbox', [agent('a1'), agent('a2')]),
+				peerWith('gpu', [agent('b1')]),
+			]);
+			expect(versions()).toEqual({ 'buildbox:a1': 1, 'buildbox:a2': 1, 'gpu:b1': 1 });
+			// An agent no longer in the snapshot loses its version.
+			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a1')])]);
+			expect(versions()).toEqual({ 'buildbox:a1': 2 });
+		});
+
+		it('bumps one agent when a turn ends, and not while it streams', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([peerWith('buildbox', [agent('a1'), agent('a2')])]);
+			store.applyPush(turnEvent('a1', { kind: 'text', at: 1, text: 'working' }));
+			expect(versions()).toEqual({ 'buildbox:a1': 1, 'buildbox:a2': 1 });
+			usePeerMirrorStore
+				.getState()
+				.applyPush(turnEvent('a1', { kind: 'outcome', at: 2, outcome: 'completed', exitCode: 0 }));
+			expect(versions()).toEqual({ 'buildbox:a1': 2, 'buildbox:a2': 1 });
+		});
+
+		it('bumps every agent of the peer on peer.stale and on peer.agents', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([
+				peerWith('buildbox', [agent('a1'), agent('a2')]),
+				peerWith('gpu', [agent('b1')]),
+			]);
+			store.applyPush(push('buildbox', { type: 'peer.stale' }));
+			expect(versions()).toEqual({ 'buildbox:a1': 2, 'buildbox:a2': 2, 'gpu:b1': 1 });
+			usePeerMirrorStore
+				.getState()
+				.applyPush(
+					push('buildbox', { type: 'peer.agents', agents: [agent('a1'), agent('a3')], groups: [] })
+				);
+			expect(versions()).toEqual({
+				'buildbox:a1': 3,
+				'buildbox:a2': 2,
+				'buildbox:a3': 1,
+				'gpu:b1': 1,
+			});
+		});
+
+		it('drops the versions of a removed peer only', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([peerWith('buildbox', [agent('a1')]), peerWith('gpu', [agent('b1')])]);
+			store.applyPush(push('buildbox', { type: 'peer.removed' }));
+			expect(versions()).toEqual({ 'gpu:b1': 1 });
+		});
+
+		it('changes nothing on a push that does not touch History', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([peerWith('buildbox', [agent('a1')])]);
+			const before = versions();
+			store.applyPush(push('buildbox', { type: 'tab.stale', agentId: 'a1', tabId: 't1' }));
+			store.applyPush(push('buildbox', { type: 'agent.updated', agent: agent('a1') }));
+			expect(versions()).toBe(before);
+		});
+
+		it('starts empty and empties on reset', () => {
+			expect(versions()).toEqual({});
+			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a1')])]);
+			usePeerMirrorStore.getState().reset();
+			expect(versions()).toEqual({});
 		});
 	});
 

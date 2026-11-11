@@ -89,6 +89,12 @@ function recoveryHintFor(type: AgentErrorType, agentType: ToolType): string {
 	const generic = RECOVERY_HINTS[type] ?? RECOVERY_HINTS.unknown;
 	if (type !== 'auth_expired') return generic;
 
+	// The wizard supplies no selected credential environment or host/binary
+	// context. Do not turn an API-key/gateway/inline rejection into a login task.
+	if (agentType === 'grok') {
+		return 'Check the active Grok credentials on the host running the agent. Correct API keys, gateway credentials or inline overrides at their source. Sign in only if this account uses provider login, then start the wizard over.';
+	}
+
 	const login = getAgentLoginCommand(agentType);
 	if (!login) return generic;
 
@@ -115,7 +121,12 @@ export function detectWizardError(output: string, agentType: ToolType): WizardEr
 	return {
 		type: match.type,
 		title: ERROR_TITLES[match.type] ?? ERROR_TITLES.unknown,
-		message: match.message,
+		// The pattern bank may still carry login advice; this surface cannot
+		// establish that login repairs the credential which actually failed.
+		message:
+			agentType === 'grok' && match.type === 'auth_expired'
+				? 'Grok authentication failed.'
+				: match.message,
 		recoveryHint: recoveryHintFor(match.type, agentType),
 		canRetry: RETRYABLE_TYPES.has(match.type),
 	};

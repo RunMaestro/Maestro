@@ -122,8 +122,13 @@ docs/
 
    Notes are delivered once. A later task will not repeat one, so if a note changes something durable about how the playbook should run, record that in the document (or the Working folder) before you finish.
 
-9. Exit Immediately
-   After completing (or skipping) your task, EXIT. Do not proceed to additional tasks - another agent instance will handle them. If there are no remaining open tasks, exit immediately and state that there is nothing left to do.
+9. Delegation
+   This task may hand part of its work to other agents. A document can be a manager's plan: one task delegates, a later task integrates what came back.
+
+{{INCLUDE:_autorun-delegation}}
+
+10. Exit Immediately
+    After completing (or skipping) your task, EXIT. Do not proceed to additional tasks - another agent instance will handle them. If there are no remaining open tasks, exit immediately and state that there is nothing left to do.
 
 ---
 

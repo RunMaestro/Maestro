@@ -20,6 +20,8 @@ import {
 	openLiftedAgent,
 	planMoveToHost,
 	requestMoveToHost,
+	setupRemoteHostFromWindow,
+	startPeerHost,
 } from '../../../renderer/services/agentLift';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
@@ -31,6 +33,7 @@ import {
 import { resetStores } from '../../helpers';
 
 const lift = vi.fn();
+const setupHost = vi.fn();
 
 const okAnswer = {
 	ok: true,
@@ -48,9 +51,10 @@ beforeEach(() => {
 	vi.mocked(notifyToast).mockClear();
 	flush.mockClear();
 	lift.mockReset();
+	setupHost.mockReset();
 	(window as unknown as { maestro: Record<string, unknown> }).maestro = {
 		...(window as unknown as { maestro?: Record<string, unknown> }).maestro,
-		federation: { lift },
+		federation: { lift, setupHost },
 	};
 });
 
@@ -130,5 +134,44 @@ describe('openLiftedAgent', () => {
 	it('does nothing for an agent that never moved', () => {
 		expect(openLiftedAgent({})).toBe(false);
 		expect(notifyToast).not.toHaveBeenCalled();
+	});
+});
+
+describe('setupRemoteHostFromWindow / startPeerHost', () => {
+	const started = { ok: true, result: { cli: 'installed' }, peer: { peerId: 'box' } };
+
+	it('asks main to set the host up with the options given', async () => {
+		setupHost.mockResolvedValue(started);
+		expect(await setupRemoteHostFromWindow('r1', { restart: true })).toEqual(started);
+		expect(setupHost).toHaveBeenCalledWith('r1', { restart: true });
+		expect(notifyToast).not.toHaveBeenCalled();
+	});
+
+	it('toasts a refusal unless the caller shows it itself', async () => {
+		setupHost.mockResolvedValue({ ok: false, code: 'foreign-cli', error: 'Not ours.' });
+		await setupRemoteHostFromWindow('r1');
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ color: 'red', message: 'Not ours.' })
+		);
+		vi.mocked(notifyToast).mockClear();
+		await setupRemoteHostFromWindow('r1', {}, { toastOnError: false });
+		expect(notifyToast).not.toHaveBeenCalled();
+	});
+
+	it('answers a rejected IPC call as a failure', async () => {
+		setupHost.mockRejectedValue(new Error('main went away'));
+		expect(await setupRemoteHostFromWindow('r1', {}, { toastOnError: false })).toMatchObject({
+			ok: false,
+			code: 'SETUP_FAILED',
+		});
+	});
+
+	it('Start Host says it is starting, then that the host runs', async () => {
+		setupHost.mockResolvedValue(started);
+		expect(await startPeerHost('r1', 'box')).toBe(true);
+		expect(vi.mocked(notifyToast).mock.calls.map((call) => call[0].title)).toEqual([
+			'Starting the host on box',
+			'Host running on box',
+		]);
 	});
 });

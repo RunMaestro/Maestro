@@ -436,6 +436,29 @@ describe('DisplayTab section components', () => {
 		expect(screen.getByText(/Enter `\+\|-/)).toBeInTheDocument();
 	});
 
+	it('leaves Enter in the Bionify algorithm field to the input method during an IME composition', () => {
+		render(
+			<AccessibilitySection
+				theme={mockTheme}
+				colorBlindMode={false}
+				setColorBlindMode={vi.fn()}
+				bionifyReadingMode={true}
+				setBionifyReadingMode={vi.fn()}
+				bionifyIntensity={1}
+				setBionifyIntensity={vi.fn()}
+				bionifyAlgorithmState={bionifyState()}
+			/>
+		);
+
+		const input = screen.getByLabelText('Bionify algorithm') as HTMLInputElement;
+		const blurSpy = vi.spyOn(input, 'blur');
+		for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+			fireEvent.keyDown(input, { key: 'Enter', ...ime });
+		}
+
+		expect(blurSpy).not.toHaveBeenCalled();
+	});
+
 	it('disables Bionify detail controls when Bionify is off', () => {
 		render(
 			<AccessibilitySection

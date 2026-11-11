@@ -249,13 +249,11 @@ export function registerBranchHandlers(deps: GitHandlerDependencies): void {
 	// Get the default branch name (main or master)
 	ipcMain.handle(
 		'git:getDefaultBranch',
-		createIpcHandler(handlerOpts('getDefaultBranch'), async (cwd: string) => {
-			// Shared with pr-creator.ts, which needs the same resolution when a
-			// caller opens a PR without an explicit base branch.
-			const branch = await resolveDefaultBranch(cwd);
-			if (!branch) {
-				throw new Error('Could not determine default branch');
-			}
+		createIpcHandler(handlerOpts('getDefaultBranch'), async (cwd: string, sshRemoteId?: string) => {
+			const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+			if (sshRemoteId && !sshRemote) throw new Error(`SSH remote not found: ${sshRemoteId}`);
+			const branch = await resolveDefaultBranch(cwd, undefined, sshRemote);
+			if (!branch) throw new Error('Could not determine default branch');
 			return { branch };
 		})
 	);

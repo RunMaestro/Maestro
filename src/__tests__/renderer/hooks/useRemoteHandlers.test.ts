@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session, CustomAICommand } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { AGENT_CAPABILITIES } from '../../../shared/maestro-lib/providers/capabilities';
 
 // ============================================================================
 // Mock modules BEFORE importing the hook
@@ -34,6 +35,9 @@ vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 	dispatchCrossAgentMentions: vi.fn(),
 	previewMentionDispatch: vi.fn(() => ({ consultTargets: [], handoffTargets: [] })),
 	withMentionTurnNotes: vi.fn((prompt: string) => prompt),
+	// The upstream queue (`enqueuePromptForTab`) stamps a queued command's
+	// mention fields through this; with no plan there are none.
+	queuedMentionFields: vi.fn(() => ({})),
 }));
 
 vi.mock('../../../renderer/utils/ids', () => ({
@@ -63,9 +67,8 @@ vi.mock('../../../renderer/services/git', () => ({
 vi.mock('../../../renderer/utils/tabHelpers', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../../renderer/utils/tabHelpers')>();
 	return {
-		// The real state transitions: failure paths settle through them.
-		settleTabThinkingState: actual.settleTabThinkingState,
-		settleAgentStateFromTabs: actual.settleAgentStateFromTabs,
+		// Keep queue labels and failure transitions on their canonical implementations.
+		...actual,
 		getActiveTab: vi.fn((session: Session) => {
 			if (!session?.aiTabs?.length) return null;
 			return session.aiTabs.find((t: any) => t.id === session.activeTabId) || session.aiTabs[0];
@@ -791,7 +794,10 @@ describe('useRemoteHandlers', () => {
 					'/deploy'
 				);
 
-				expect(window.maestro.process.spawn).toHaveBeenCalled();
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([
+					expect.objectContaining({ type: 'command', command: '/deploy', tabId: 'tab-1' }),
+				]);
 				expect(requestTabAutoNameForMessage).not.toHaveBeenCalled();
 			});
 
@@ -1049,11 +1055,15 @@ describe('useRemoteHandlers', () => {
 				);
 			});
 
-			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([
 				expect.objectContaining({
-					prompt: 'Deploy the application to production',
-				})
-			);
+					type: 'command',
+					command: '/deploy',
+					commandArgs: '',
+					tabId: 'tab-1',
+				}),
+			]);
 		});
 
 		it('uses SSH remote CWD for terminal commands on remote sessions', async () => {
@@ -1580,9 +1590,15 @@ describe('useRemoteHandlers', () => {
 				);
 			});
 
-			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
-				expect.objectContaining({ prompt: 'Speckit prompt text' })
-			);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([
+				expect.objectContaining({
+					type: 'command',
+					command: '/speckit-test',
+					commandArgs: '',
+					tabId: 'tab-1',
+				}),
+			]);
 		});
 
 		it('uses openspecCommandsRef for slash command matching', async () => {
@@ -1612,9 +1628,15 @@ describe('useRemoteHandlers', () => {
 				);
 			});
 
-			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
-				expect.objectContaining({ prompt: 'OpenSpec prompt text' })
-			);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([
+				expect.objectContaining({
+					type: 'command',
+					command: '/openspec-run',
+					commandArgs: '',
+					tabId: 'tab-1',
+				}),
+			]);
 		});
 
 		it('returns early when agent config is not found', async () => {
@@ -2236,15 +2258,21 @@ describe('useRemoteHandlers', () => {
 			expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'session-not-found']]);
 		});
 
-		it('reports a mid-turn target tab as a rejection', async () => {
-			await dispatchWithReceipt(createBusyTabSession(), {
-				sessionId: 'session-1',
-				command: 'test',
-				inputMode: 'ai',
-			});
+		it.each(['claude-code', 'grok'] as const)(
+			'reports a mid-turn %s target tab as a rejection',
+			async (toolType) => {
+				await dispatchWithReceipt(
+					{ ...createBusyTabSession(), toolType },
+					{
+						sessionId: 'session-1',
+						command: 'test',
+						inputMode: 'ai',
+					}
+				);
 
-			expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'tab-busy']]);
-		});
+				expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'tab-busy']]);
+			}
+		);
 
 		it('lets force write into a mid-turn tab (allowConcurrentSend / Cadenza)', async () => {
 			await dispatchWithReceipt(createBusyTabSession(), {
@@ -2495,5 +2523,214 @@ describe('useRemoteHandlers', () => {
 			expect(item.type).toBe('message');
 			expect(item.text).toBe('explain this code');
 		});
+	});
+
+	describe('Grok remote command queue boundary', () => {
+		let session: Session;
+		let deps: UseRemoteHandlersDeps;
+		const command = {
+			command: '/deploy',
+			description: 'Deploy',
+			prompt: '{{AGENT_NAME}} $ARGUMENTS',
+		};
+		beforeEach(() => {
+			session = createMockSession({
+				toolType: 'grok',
+				customEnvVars: { GROK_HOME: '/fixtures/account-a' },
+				agentCommands: [{ ...command, prompt: 'stale native body' }],
+			});
+			session.aiTabs.push({
+				...session.aiTabs[0],
+				id: 'target',
+				name: 'Target',
+				customModel: 'grok-4.5',
+				customEffort: 'high',
+				permissionMode: 'readonly',
+			});
+			deps = createMockDeps({
+				sessionsRef: { current: [session] },
+				customAICommandsRef: { current: [command] },
+				speckitCommandsRef: { current: [{ ...command, prompt: 'bundled collision' }] },
+			});
+			useSessionStore.setState({ sessions: [session] });
+			setCapabilitiesCache('grok', AGENT_CAPABILITIES.grok);
+			Object.assign(window.maestro.agents, {
+				getConfig: vi.fn().mockResolvedValue({}),
+				discoverSlashCommands: vi.fn().mockResolvedValue(null),
+			});
+			Object.assign(window.maestro, {
+				settings: { get: vi.fn().mockResolvedValue({}) },
+				sshRemote: {
+					getConfigs: vi.fn().mockResolvedValue({
+						success: true,
+						configs: [{ id: 'remote-1', enabled: true, host: 'fixture.invalid' }],
+					}),
+				},
+			});
+		});
+
+		it.each([false, true])(
+			'queues raw arguments once for the pinned tab (SSH %s)',
+			async (remote) => {
+				if (remote)
+					session.sessionSshRemoteConfig = {
+						enabled: true,
+						remoteId: 'remote-1',
+						workingDirOverride: '/remote/work',
+					};
+				const text = '  /deploy\t  $& $$ {{AGENT_NAME}}\nnext  ';
+				renderHook(() => useRemoteHandlers(deps));
+				await act(async () => {
+					await getRemoteCommandHandler()(
+						new CustomEvent('maestro:remoteCommand', {
+							detail: {
+								sessionId: session.id,
+								tabId: 'target',
+								command: text,
+								inputMode: 'ai',
+								receiptChannel: 'macro-receipt',
+							},
+						})
+					);
+				});
+				const current = useSessionStore.getState().sessions[0];
+				expect(current.executionQueue).toEqual([
+					expect.objectContaining({
+						type: 'command',
+						command: '/deploy',
+						commandArgs: '$& $$ {{AGENT_NAME}}\nnext',
+						tabId: 'target',
+						tabName: 'Target',
+						readOnlyMode: true,
+						turnSettings: { model: 'grok-4.5', effort: 'high' },
+						commandScope: { provider: 'grok' },
+					}),
+				]);
+				expect(current.executionQueue![0]).not.toHaveProperty('text');
+				expect(current.customEnvVars).toEqual({ GROK_HOME: '/fixtures/account-a' });
+				expect(current.sessionSshRemoteConfig).toEqual(session.sessionSshRemoteConfig);
+				expect(current.activeTabId).toBe('tab-1');
+				expect(current.aiCommandHistory).toEqual([text.trim()]);
+				expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledExactlyOnceWith(
+					'macro-receipt',
+					true,
+					undefined
+				);
+				expect(window.maestro.agents.discoverSlashCommands).not.toHaveBeenCalled();
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(window.maestro.agents.get).not.toHaveBeenCalled();
+				expect(window.maestro.prompts.get).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each([
+			['missing requested tab', { tabId: 'missing' }, 'tab-not-found:missing'],
+			['attachments', { images: ['data:image/png;base64,fixture'] }, 'command-images-unsupported'],
+		] as const)('refuses %s before queue acceptance', async (_label, extra, reason) => {
+			renderHook(() => useRemoteHandlers(deps));
+			await act(async () => {
+				await getRemoteCommandHandler()(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: session.id,
+							tabId: 'target',
+							command: '/deploy argument',
+							inputMode: 'ai',
+							receiptChannel: 'macro-receipt',
+							...extra,
+						},
+					})
+				);
+			});
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledExactlyOnceWith(
+				'macro-receipt',
+				false,
+				reason
+			);
+		});
+
+		it.each([
+			['account', { customEnvVars: { GROK_HOME: '/fixtures/account-b' } }],
+			['cwd', { cwd: '/other-project' }],
+			['host', { sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-2' } }],
+			['provider', { toolType: 'claude-code' }],
+			['missing tab', { aiTabs: [] }],
+		] as const)('rejects a %s change while capabilities resolve', async (label, change) => {
+			clearCapabilitiesCache();
+			let resolve!: (value: typeof AGENT_CAPABILITIES.grok) => void;
+			vi.mocked(window.maestro.agents.getCapabilities).mockReturnValueOnce(
+				new Promise((done) => {
+					resolve = done;
+				})
+			);
+			renderHook(() => useRemoteHandlers(deps));
+			await act(async () => {
+				const pending = getRemoteCommandHandler()(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: session.id,
+							tabId: 'target',
+							command: '/deploy argument',
+							inputMode: 'ai',
+							receiptChannel: 'macro-receipt',
+						},
+					})
+				);
+				useSessionStore.setState({ sessions: [{ ...session, ...change } as Session] });
+				resolve(AGENT_CAPABILITIES.grok);
+				await pending;
+			});
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledExactlyOnceWith(
+				'macro-receipt',
+				false,
+				label === 'missing tab' ? 'command-target-unavailable' : 'command-target-changed'
+			);
+		});
+
+		it.each([false, true])(
+			'rejects native input immediately before discovery settles (literal %s)',
+			async (literalPrompt) => {
+				session.aiTabs[0].agentSessionId = 'fixture-native-session';
+				if (!literalPrompt) {
+					deps.customAICommandsRef.current = [];
+					deps.speckitCommandsRef.current = [];
+				}
+				let resolve!: (value: null) => void;
+				vi.mocked(window.maestro.agents.discoverSlashCommands).mockReturnValueOnce(
+					new Promise((done) => {
+						resolve = done;
+					})
+				);
+				renderHook(() => useRemoteHandlers(deps));
+				await act(async () => {
+					const pending = getRemoteCommandHandler()(
+						new CustomEvent('maestro:remoteCommand', {
+							detail: {
+								sessionId: session.id,
+								command: '/deploy private-argument',
+								inputMode: 'ai',
+								literalPrompt,
+								receiptChannel: 'macro-receipt',
+							},
+						})
+					);
+					expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledExactlyOnceWith(
+						'macro-receipt',
+						false,
+						'unsupported-grok-command'
+					);
+					expect(window.maestro.agents.discoverSlashCommands).toHaveBeenCalledOnce();
+					resolve(null);
+					await pending;
+				});
+				expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledTimes(1);
+				expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			}
+		);
 	});
 });

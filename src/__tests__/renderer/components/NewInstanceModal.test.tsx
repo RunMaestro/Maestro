@@ -13,8 +13,11 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Theme, Session } from '../../../renderer/types';
 import type { AgentConfig } from '../../../renderer/types';
+import type { AgentDiscoveryResult } from '../../../shared/types';
 import { buildDuplicateAgentInput } from '../../../shared/newAgentRecord';
-import { createMockSession } from '../../helpers/mockSession';
+import { getAgentDefinition } from '../../../shared/maestro-lib/providers/definitions';
+import { getAgentCapabilities } from '../../../shared/maestro-lib/providers/capabilities';
+import { createMockAITab, createMockSession } from '../../helpers';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
 
@@ -607,7 +610,7 @@ describe('NewInstanceModal', () => {
 				fireEvent.click(refreshButton);
 			});
 
-			expect(window.maestro.agents.refresh).toHaveBeenCalledWith('claude-code');
+			expect(window.maestro.agents.refresh).toHaveBeenCalledWith('claude-code', undefined);
 		});
 
 		it('should display debug info when agent refresh shows not found', async () => {
@@ -903,7 +906,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 		});
 
@@ -960,7 +963,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 		});
 
@@ -1017,7 +1020,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 		});
 	});
@@ -1075,7 +1078,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1631,7 +1634,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 		});
 
@@ -1788,7 +1791,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 		});
 	});
@@ -2129,6 +2132,742 @@ describe('NewInstanceModal', () => {
 		});
 	});
 
+	describe('Grok draft discovery', () => {
+		let source: Session;
+		const originalModels = window.maestro.agents.getModels;
+		const originalOptions = window.maestro.agents.getConfigOptions;
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'remote-b',
+						name: 'Remote B',
+						host: 'b.invalid',
+						port: 22,
+						username: 'synthetic',
+						privateKeyPath: '',
+						enabled: true,
+					},
+				],
+			});
+			source = createMockSession({
+				id: 'account-a',
+				name: 'Grok A',
+				toolType: 'grok',
+				cwd: '~/project',
+				customPath: ' /synthetic/bin/grok ',
+				customEnvVars: { GROK_HOME: '/synthetic/account-a' },
+				customModel: 'stored-model',
+				customEffort: 'stored-effort',
+			});
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({
+					...getAgentDefinition('grok'),
+					capabilities: getAgentCapabilities('grok'),
+				}),
+			]);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+			window.maestro.agents.getModels = vi
+				.fn()
+				.mockResolvedValue({ status: 'unavailable', options: [] });
+			window.maestro.agents.getConfigOptions = vi
+				.fn()
+				.mockResolvedValue({ status: 'unavailable', options: [] });
+		});
+		afterEach(() => {
+			window.maestro.agents.getModels = originalModels;
+			window.maestro.agents.getConfigOptions = originalOptions;
+			vi.mocked(window.maestro.agents.getConfig).mockReset().mockResolvedValue({});
+			vi.useRealTimers();
+		});
+
+		it.each([
+			{
+				account: 'a',
+				explicit: false,
+				env: { GROK_HOME: '/synthetic/account-a' },
+				mode: undefined,
+				expected: 'readonly',
+			},
+			{
+				account: 'b',
+				explicit: true,
+				env: { GROK_HOME: '/synthetic/account-b' },
+				mode: 'full' as const,
+				expected: 'full',
+			},
+			{
+				account: 'empty',
+				explicit: false,
+				env: {},
+				mode: 'readonly' as const,
+				expected: 'readonly',
+			},
+			{
+				account: 'inherit',
+				explicit: true,
+				env: undefined,
+				mode: 'standard' as const,
+				expected: 'standard',
+			},
+		])(
+			'submits account $account without pinning inherited selections or copying native identity',
+			async ({ account, explicit, env, mode, expected }) => {
+				const defaults = {
+					model: 'provider-model',
+					effort: 'old-alias',
+					reasoningEffort: 'provider-effort',
+					customEnvVars: { GROK_HOME: '/synthetic/provider' },
+				};
+				vi.mocked(window.maestro.agents.getConfig).mockResolvedValue(defaults);
+				const draft = {
+					...source,
+					id: `account-${account}`,
+					customEnvVars: env,
+					customModel: explicit ? 'grok-4.5' : undefined,
+					customEffort: explicit ? 'high' : undefined,
+					customArgs: '--max-turns 2',
+					agentSessionId: 'original-native',
+					activeTabId: 'active',
+					aiTabs: [
+						createMockAITab({ id: 'inactive', permissionMode: 'full' }),
+						createMockAITab({
+							id: 'active',
+							agentSessionId: 'original-native',
+							permissionMode: mode,
+							readOnlyMode: true,
+						}),
+					],
+				};
+				const before = structuredClone({ draft, defaults });
+				render(
+					<NewInstanceModal
+						isOpen
+						onClose={onClose}
+						onCreate={onCreate}
+						theme={theme}
+						existingSessions={[]}
+						sourceSession={draft}
+					/>
+				);
+				await act(async () => {});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(screen.getByRole('textbox', { name: 'Model' })).toHaveValue(draft.customModel ?? '');
+				expect(screen.getByRole('textbox', { name: 'Reasoning Effort' })).toHaveValue(
+					draft.customEffort ?? ''
+				);
+				fireEvent.click(screen.getByRole('button', { name: 'Create Agent' }));
+				expect(onCreate).toHaveBeenCalledExactlyOnceWith(
+					'grok',
+					'/home/testuser/project',
+					'Grok A (Copy)',
+					undefined,
+					undefined,
+					'/synthetic/bin/grok',
+					'--max-turns 2',
+					env,
+					draft.customModel,
+					undefined,
+					undefined,
+					{ enabled: false, remoteId: null, shareHistoryToProjectDir: undefined },
+					draft.customEffort,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					true,
+					true,
+					undefined,
+					false,
+					'exec',
+					undefined, // harnessControlMode
+					expected
+				);
+				expect({ draft, defaults }).toEqual(before);
+				expect(window.maestro.agents.setConfig).not.toHaveBeenCalled();
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(onClose).toHaveBeenCalledOnce();
+				// The next packet exercises fresh record allocation and unsupported-mode refusal.
+			}
+		);
+
+		it.each(['create', 'cancel'])(
+			'keeps final-key removal and model edits in the draft on %s',
+			async (action) => {
+				const defaults = {
+					model: 'provider-model',
+					reasoningEffort: 'medium',
+					customEnvVars: { GROK_HOME: '/synthetic/provider' },
+				};
+				vi.mocked(window.maestro.agents.getConfig).mockResolvedValue(defaults);
+				const before = structuredClone({ source, defaults });
+				render(
+					<NewInstanceModal
+						isOpen
+						onClose={onClose}
+						onCreate={onCreate}
+						theme={theme}
+						existingSessions={[]}
+						sourceSession={source}
+					/>
+				);
+				await act(async () => {});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				for (const [name, value] of [
+					['Model', 'grok-4.5'],
+					['Reasoning Effort', 'high'],
+					['Path', '/synthetic/edited-grok'],
+				]) {
+					const input = screen.getByRole('textbox', { name });
+					fireEvent.change(input, { target: { value } });
+					fireEvent.blur(input);
+				}
+				fireEvent.click(screen.getByTitle('Remove variable'));
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+					providerId: 'grok',
+					context: expect.objectContaining({
+						customEnvVars: {},
+						model: 'grok-4.5',
+						effort: 'high',
+					}),
+				});
+				fireEvent.click(
+					screen.getByRole('button', { name: action === 'create' ? 'Create Agent' : 'Cancel' })
+				);
+				if (action === 'create') {
+					expect(onCreate).toHaveBeenCalledOnce();
+					expect(onCreate.mock.calls[0].slice(5, 9)).toEqual([
+						'/synthetic/edited-grok',
+						undefined,
+						{},
+						'grok-4.5',
+					]);
+					expect(onCreate.mock.calls[0][12]).toBe('high');
+				} else expect(onCreate).not.toHaveBeenCalled();
+				expect({ source, defaults }).toEqual(before);
+				expect(window.maestro.agents.setConfig).not.toHaveBeenCalled();
+				expect(window.maestro.agents.setCustomPath).not.toHaveBeenCalled();
+				expect(onClose).toHaveBeenCalledOnce();
+			}
+		);
+
+		it.each(['Enter', ' '])(
+			'selects missing Grok with %s and only saves a custom executable draft',
+			async (key) => {
+				vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+					createAgentConfig(),
+					createAgentConfig({
+						...getAgentDefinition('grok'),
+						capabilities: getAgentCapabilities('grok'),
+						available: false,
+						path: undefined,
+					}),
+				]);
+				render(
+					<NewInstanceModal
+						isOpen
+						onClose={onClose}
+						onCreate={onCreate}
+						theme={theme}
+						existingSessions={[]}
+					/>
+				);
+				await act(async () => {});
+				fireEvent.change(screen.getByRole('textbox', { name: 'Agent Name' }), {
+					target: { value: 'Custom Grok' },
+				});
+				fireEvent.change(screen.getByPlaceholderText('Select directory...'), {
+					target: { value: '/synthetic/project' },
+				});
+				fireEvent.click(screen.getByRole('switch', { name: 'Show all supported providers' }));
+				const row = screen.getByRole('option', { name: /Grok CLI/ });
+				fireEvent.keyDown(row, { key });
+				expect(row).toHaveAttribute('aria-selected', 'true');
+				expect(row).toHaveAttribute('aria-expanded', 'true');
+				expect(screen.getByRole('option', { name: /Claude Code/ })).toHaveAttribute(
+					'aria-selected',
+					'false'
+				);
+				expect(screen.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
+				fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true });
+				expect(onCreate).not.toHaveBeenCalled();
+				fireEvent.change(screen.getByRole('textbox', { name: 'Path' }), {
+					target: { value: ' /synthetic/unverified-grok ' },
+				});
+				expect(within(row).getByText('Not Found')).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
+				fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true });
+				expect(onCreate).toHaveBeenCalledOnce();
+				expect(onCreate.mock.calls[0].slice(0, 6)).toEqual([
+					'grok',
+					'/synthetic/project',
+					'Custom Grok',
+					undefined,
+					undefined,
+					'/synthetic/unverified-grok',
+				]);
+				expect(onCreate.mock.calls[0][22]).toBeUndefined();
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			}
+		);
+
+		it('rejects a stale local refresh after host change and uses the current host for refresh', async () => {
+			const agent = createAgentConfig({
+				...getAgentDefinition('grok'),
+				capabilities: getAgentCapabilities('grok'),
+			});
+			let resolveOld!: (result: Awaited<ReturnType<typeof window.maestro.agents.refresh>>) => void;
+			vi.mocked(window.maestro.agents.refresh).mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveOld = resolve;
+				})
+			);
+			render(
+				<NewInstanceModal
+					isOpen
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={{ ...source, customPath: undefined }}
+				/>
+			);
+			await act(async () => {});
+			fireEvent.click(screen.getByTitle('Refresh detection'));
+			expect(window.maestro.agents.refresh).toHaveBeenLastCalledWith('grok', undefined);
+			expect(screen.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
+			fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true });
+			expect(onCreate).not.toHaveBeenCalled();
+			fireEvent.change(screen.getByDisplayValue('Local Execution'), {
+				target: { value: 'remote-b' },
+			});
+			await act(async () => {});
+			expect(window.maestro.agents.detect).toHaveBeenLastCalledWith('remote-b');
+			await act(async () => {
+				resolveOld({ agents: [{ ...agent, available: false }], debugInfo: null });
+			});
+			expect(screen.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
+			vi.mocked(window.maestro.agents.refresh).mockResolvedValueOnce({
+				agents: [{ ...agent, available: false }],
+				debugInfo: null,
+			});
+			fireEvent.click(screen.getByTitle('Refresh detection'));
+			await act(async () => {});
+			expect(window.maestro.agents.refresh).toHaveBeenLastCalledWith('grok', 'remote-b');
+			expect(screen.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
+			fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true });
+			expect(onCreate).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			{ label: 'absent environment', overrides: { customEnvVars: undefined }, env: undefined },
+			{ label: 'empty new-draft environment', overrides: { customEnvVars: {} }, env: {} },
+			{
+				label: 'explicit blank unset',
+				overrides: { customEnvVars: { GROK_HOME: '' } },
+				env: { GROK_HOME: '' },
+			},
+			{
+				label: 'legacy SSH identity',
+				overrides: { sshRemoteId: 'remote-a' },
+				env: { GROK_HOME: '/synthetic/account-a' },
+			},
+			{
+				label: 'unresolved enabled SSH',
+				overrides: { sessionSshRemoteConfig: { enabled: true, remoteId: null } },
+				env: { GROK_HOME: '/synthetic/account-a' },
+			},
+		])('preserves selections and scopes $label discovery', async ({ overrides, env }) => {
+			const draft = { ...source, ...overrides };
+			render(
+				<NewInstanceModal
+					isOpen
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={draft}
+				/>
+			);
+			await act(async () => {});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			const remote = draft.sessionSshRemoteConfig?.enabled || !!draft.sshRemoteId;
+			const context = {
+				kind: 'draft',
+				cwd: remote ? '~/project' : '/home/testuser/project',
+				customPath: '/synthetic/bin/grok',
+				customEnvVars: env,
+				model: 'stored-model',
+				effort: 'stored-effort',
+				sshRemoteId: draft.sshRemoteId,
+				sessionSshRemoteConfig: remote
+					? { enabled: true, remoteId: draft.sshRemoteId ?? null, workingDirOverride: '~/project' }
+					: { enabled: false, remoteId: null },
+			};
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+				providerId: 'grok',
+				context,
+			});
+			expect(window.maestro.agents.getConfigOptions).toHaveBeenCalledWith(
+				{ providerId: 'grok', context },
+				'reasoningEffort'
+			);
+			expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
+			expect(
+				screen.getByText(/Model discovery unavailable for this configuration/)
+			).toBeInTheDocument();
+			if (!remote) {
+				fireEvent.change(screen.getByDisplayValue('stored-model'), {
+					target: { value: 'manual-model' },
+				});
+				fireEvent.change(screen.getByDisplayValue('stored-effort'), {
+					target: { value: 'manual-effort' },
+				});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+					providerId: 'grok',
+					context: { ...context, model: 'manual-model', effort: 'manual-effort' },
+				});
+				fireEvent.click(screen.getByRole('button', { name: 'Create Agent' }));
+				expect(onCreate).toHaveBeenCalledOnce();
+				expect(onCreate.mock.calls[0][7]).toEqual(env);
+				expect(onCreate.mock.calls[0][8]).toBe('manual-model');
+				expect(onCreate.mock.calls[0][12]).toBe('manual-effort');
+			} else {
+				expect(window.maestro.agents.detect).toHaveBeenCalledWith(draft.sshRemoteId);
+			}
+		});
+
+		it.each([
+			{ host: 'local account B', remoteId: undefined, forced: false },
+			{ host: 'SSH account B', remoteId: 'remote-b', forced: false },
+			{ host: 'local account B', remoteId: undefined, forced: true },
+			{ host: 'SSH account B', remoteId: 'remote-b', forced: true },
+		])(
+			'rejects late options and refreshes after switching to $host (forced=$forced)',
+			async ({ remoteId, forced }) => {
+				let resolveOld!: (result: AgentDiscoveryResult) => void;
+				const old = new Promise<AgentDiscoveryResult>((resolve) => {
+					resolveOld = resolve;
+				});
+				const models = vi
+					.fn()
+					.mockResolvedValue({ status: 'discovered', options: ['current-option'] });
+				models.mockReturnValueOnce(
+					forced ? Promise.resolve({ status: 'unavailable', options: [] }) : old
+				);
+				window.maestro.agents.getModels = models;
+				const props = { isOpen: true, onClose, onCreate, theme, existingSessions: [] };
+				const view = render(<NewInstanceModal {...props} sourceSession={source} />);
+				await act(async () => {});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				if (forced) {
+					models.mockReturnValueOnce(old);
+					fireEvent.click(screen.getByTitle('Refresh available models'));
+					expect(models).toHaveBeenLastCalledWith(expect.objectContaining({ forceRefresh: true }));
+				}
+				const next = {
+					...source,
+					id: 'account-b',
+					customEnvVars: { GROK_HOME: '/synthetic/account-b' },
+					sshRemoteId: remoteId,
+				};
+				view.rerender(<NewInstanceModal {...props} sourceSession={next} />);
+				await act(async () => {});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(models).toHaveBeenLastCalledWith({
+					providerId: 'grok',
+					context: expect.objectContaining({
+						customEnvVars: next.customEnvVars,
+						sshRemoteId: remoteId,
+						sessionSshRemoteConfig: expect.objectContaining({ enabled: !!remoteId }),
+					}),
+				});
+				const calls = models.mock.calls.length;
+				await act(async () => {
+					resolveOld({ status: 'discovered', options: ['stale-one', 'stale-two'] });
+				});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(models).toHaveBeenCalledTimes(calls);
+				expect(screen.getByText('1 model available')).toBeInTheDocument();
+				expect(screen.queryByText('2 models available')).not.toBeInTheDocument();
+				expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
+			}
+		);
+
+		it.each(['reopen', 'remote source'])(
+			'waits for the current initial config and ignores a stale seed after %s',
+			async (transition) => {
+				let resolveOld!: (config: Record<string, unknown>) => void;
+				let resolveCurrent!: (config: Record<string, unknown>) => void;
+				vi.mocked(window.maestro.agents.getConfig)
+					.mockReturnValueOnce(
+						new Promise((resolve) => {
+							resolveOld = resolve;
+						})
+					)
+					.mockReturnValueOnce(
+						new Promise((resolve) => {
+							resolveCurrent = resolve;
+						})
+					);
+				const props = { isOpen: true, onClose, onCreate, theme, existingSessions: [] };
+				const view = render(<NewInstanceModal {...props} sourceSession={source} />);
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(screen.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
+				fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true });
+				expect(onCreate).not.toHaveBeenCalled();
+				expect(window.maestro.agents.getConfig).toHaveBeenCalledOnce();
+				expect(window.maestro.agents.getModels).not.toHaveBeenCalled();
+				expect(window.maestro.agents.getConfigOptions).not.toHaveBeenCalled();
+				if (transition === 'reopen') {
+					view.rerender(<NewInstanceModal {...props} isOpen={false} sourceSession={source} />);
+				}
+				const next = {
+					...source,
+					id: 'new-owner',
+					name: 'New owner',
+					cwd: '~/next',
+					sshRemoteId: transition === 'remote source' ? 'remote-b' : undefined,
+				};
+				view.rerender(<NewInstanceModal {...props} sourceSession={next} />);
+				await act(async () => {});
+				expect(window.maestro.agents.getConfig).toHaveBeenCalledTimes(2);
+				await act(async () => {
+					resolveOld({ model: 'stale-seed', reasoningEffort: 'stale-effort' });
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(window.maestro.agents.getModels).not.toHaveBeenCalled();
+				expect(window.maestro.agents.getConfigOptions).not.toHaveBeenCalled();
+				expect(screen.queryByDisplayValue('Grok A (Copy)')).not.toBeInTheDocument();
+				await act(async () => {
+					resolveCurrent({});
+				});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+					providerId: 'grok',
+					context: expect.objectContaining({
+						cwd: next.sshRemoteId ? '~/next' : '/home/testuser/next',
+						sshRemoteId: next.sshRemoteId,
+						model: 'stored-model',
+						effort: 'stored-effort',
+					}),
+				});
+				expect(screen.getByDisplayValue('New owner (Copy)')).toBeInTheDocument();
+				expect(screen.getByDisplayValue('~/next')).toBeInTheDocument();
+				expect(screen.queryByDisplayValue('stale-seed')).not.toBeInTheDocument();
+			}
+		);
+
+		it('keeps unsaved fields and configured-fallback selections through SSH redetection', async () => {
+			window.maestro.agents.getModels = vi.fn().mockResolvedValue({
+				status: 'configured-fallback',
+				options: ['fallback-model'],
+			});
+			window.maestro.agents.getConfigOptions = vi.fn().mockResolvedValue({
+				status: 'configured-fallback',
+				options: ['fallback-effort'],
+			});
+			const props = { isOpen: true, onClose, onCreate, theme, existingSessions: [] };
+			render(<NewInstanceModal {...props} sourceSession={source} />);
+			await act(async () => {});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
+			for (const [previous, value] of [
+				['~/project', '~/unsaved-project'],
+				['/synthetic/bin/grok', '/synthetic/bin/edited'],
+				['/synthetic/account-a', ''],
+				['stored-model', 'manual-model'],
+				['stored-effort', 'manual-effort'],
+			]) {
+				const input = screen.getByDisplayValue(previous, { normalizer: (value) => value });
+				fireEvent.change(input, { target: { value } });
+				fireEvent.blur(input);
+			}
+			let resolveDetection!: (agents: AgentConfig[]) => void;
+			const detected = await window.maestro.agents.detect();
+			vi.mocked(window.maestro.agents.detect).mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveDetection = resolve;
+				})
+			);
+			// Commit model autocomplete blur, then settle discovery before re-detection.
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(150);
+			});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			const configCalls = vi.mocked(window.maestro.agents.getConfig).mock.calls.length;
+			fireEvent.change(screen.getByDisplayValue('Local Execution'), {
+				target: { value: 'remote-b' },
+			});
+			expect(screen.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
+			fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true });
+			expect(onCreate).not.toHaveBeenCalled();
+			expect(window.maestro.agents.detect).toHaveBeenLastCalledWith('remote-b');
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			expect(window.maestro.agents.getConfig).toHaveBeenCalledTimes(configCalls);
+			await act(async () => {
+				resolveDetection(detected);
+			});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			const context = expect.objectContaining({
+				cwd: '~/unsaved-project',
+				customPath: '/synthetic/bin/edited',
+				customEnvVars: { GROK_HOME: '' },
+				model: 'manual-model',
+				effort: 'manual-effort',
+				sshRemoteId: 'remote-b',
+				sessionSshRemoteConfig: expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-b',
+					workingDirOverride: '~/unsaved-project',
+				}),
+			});
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+				providerId: 'grok',
+				context,
+			});
+			expect(window.maestro.agents.getConfigOptions).toHaveBeenCalledWith(
+				{ providerId: 'grok', context },
+				'reasoningEffort'
+			);
+			expect(
+				screen.getByText(/Model discovery unavailable for this configuration/)
+			).toBeInTheDocument();
+			expect(screen.getByText(/Effort discovery unavailable/)).toBeInTheDocument();
+		});
+
+		it.each(
+			['reopen', 'provider', 'SSH'].flatMap((transition) =>
+				['models', 'efforts', 'refresh'].map((pending) => ({ transition, pending }))
+			)
+		)(
+			'rejects late $pending after $transition changes the draft owner',
+			async ({ transition, pending }) => {
+				let resolveOld!: (result: AgentDiscoveryResult) => void;
+				const old = new Promise<AgentDiscoveryResult>((resolve) => {
+					resolveOld = resolve;
+				});
+				const detected = await window.maestro.agents.detect();
+				vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+					...detected,
+					createAgentConfig({
+						...getAgentDefinition('codex'),
+						capabilities: getAgentCapabilities('codex'),
+					}),
+				]);
+				const models = vi
+					.fn()
+					.mockImplementation((request) =>
+						Promise.resolve(
+							typeof request === 'string'
+								? ['legacy-model']
+								: { status: 'discovered', options: ['current-model'] }
+						)
+					);
+				const efforts = vi
+					.fn()
+					.mockImplementation((request) =>
+						Promise.resolve(
+							typeof request === 'string' ? ['high'] : { status: 'unavailable', options: [] }
+						)
+					);
+				if (pending === 'models') models.mockReturnValueOnce(old);
+				if (pending === 'efforts') efforts.mockReturnValueOnce(old).mockReturnValueOnce(old);
+				window.maestro.agents.getModels = models;
+				window.maestro.agents.getConfigOptions = efforts;
+				const props = { isOpen: true, onClose, onCreate, theme, existingSessions: [] };
+				const view = render(<NewInstanceModal {...props} sourceSession={source} />);
+				await act(async () => {});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(models).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'grok' }));
+				expect(efforts).toHaveBeenCalledWith(
+					expect.objectContaining({ providerId: 'grok' }),
+					'reasoningEffort'
+				);
+				if (pending === 'refresh') {
+					models.mockReturnValueOnce(old);
+					fireEvent.click(screen.getByTitle('Refresh available models'));
+					expect(models).toHaveBeenLastCalledWith(expect.objectContaining({ forceRefresh: true }));
+				}
+				if (transition === 'reopen') {
+					view.rerender(<NewInstanceModal {...props} isOpen={false} sourceSession={source} />);
+					expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+					view.rerender(<NewInstanceModal {...props} sourceSession={source} />);
+				} else if (transition === 'provider') {
+					fireEvent.click(screen.getByRole('option', { name: /Codex/ }));
+					await act(async () => {});
+					expect(models).toHaveBeenCalledWith('codex', false);
+					expect(efforts).toHaveBeenCalledWith('codex', 'reasoningEffort');
+					fireEvent.click(screen.getByRole('option', { name: /Grok CLI/ }));
+				} else {
+					fireEvent.change(screen.getByDisplayValue('Local Execution'), {
+						target: { value: 'remote-b' },
+					});
+				}
+				await act(async () => {});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(models).toHaveBeenLastCalledWith({
+					providerId: 'grok',
+					context: expect.objectContaining({
+						sshRemoteId: transition === 'SSH' ? 'remote-b' : undefined,
+					}),
+				});
+				const counts = [models.mock.calls.length, efforts.mock.calls.length];
+				await act(async () => {
+					resolveOld({ status: 'discovered', options: ['stale-one', 'stale-two'] });
+				});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect([models.mock.calls.length, efforts.mock.calls.length]).toEqual(counts);
+				expect(screen.getByText('1 model available')).toBeInTheDocument();
+				expect(screen.queryByText('2 models available')).not.toBeInTheDocument();
+				expect(screen.getByText(/Effort discovery unavailable/)).toBeInTheDocument();
+				expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
+				expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
+			}
+		);
+	});
+
 	describe('model autocomplete', () => {
 		it('should load models when expanding an agent with supportsModelSelection', async () => {
 			const agentWithModelSelection = createAgentConfig({
@@ -2448,7 +3187,9 @@ describe('NewInstanceModal', () => {
 				expected.retryOnTokenExhaustion,
 				expected.additionalDirectories,
 				expected.codexAutoResetOnExhaustion,
-				expected.codexTransport
+				expected.codexTransport,
+				expected.harnessControlMode,
+				'full' // permissionMode: the source's active tab, copied
 			);
 		});
 
@@ -3030,7 +3771,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 		});
 
@@ -3264,7 +4005,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 		});
 
@@ -3577,7 +4318,9 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec', // codexTransport: Standard by default
+				undefined, // harnessControlMode
+				'full' // permissionMode: source has no read-only override
 			);
 		});
 

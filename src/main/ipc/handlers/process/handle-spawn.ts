@@ -8,6 +8,7 @@ import { app, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import * as os from 'os';
 import * as fsp from 'fs/promises';
+import { realpathSync } from 'fs';
 import * as path from 'path';
 import { ProcessManager } from '../../../process-manager';
 import { AgentDetector } from '../../../agents';
@@ -28,12 +29,18 @@ import {
 } from '../../../plugins/plugin-manager-singleton';
 import {
 	buildMcpInjection,
+	mcpInjectionProblem,
 	mergeMcpInjectionArgs,
 	MCP_CONFIG_BY_AGENT,
+	type NativeMcpConfigFacts,
 } from '../../../../shared/plugins/mcp-agent-config';
+import { parse as parseToml } from 'smol-toml';
 import type { InteractiveReplayController } from '../../../agents/claude-interactive-replay';
-import type { ProcessConfig as ProcessSpawnConfig } from '../../../process-manager/types';
-import type { AgentConfigsData } from '../../../stores/types';
+import type {
+	NativeSessionLaunchScope,
+	ProcessConfig as ProcessSpawnConfig,
+} from '../../../process-manager/types';
+import type { AgentConfigsData, StoredSession } from '../../../stores/types';
 import { logger } from '../../../utils/logger';
 import { isWindows } from '../../../../shared/platformDetection';
 import {
@@ -41,10 +48,20 @@ import {
 	redactSystemPromptArg,
 } from '../../../utils/system-prompt-delivery';
 import {
+	buildAutoRunCallerEnv,
 	buildCallerIdentityEnv,
 	withoutCallerIdentityEnv,
 	CALLER_RUN_PROOF_FILE_ENV_VAR,
 } from '../../../../shared/agentDelegation';
+import { grokLaunchArgsProblem, requestedPermissionMode } from '../../../process-manager/types';
+import { canonicalJson } from '../../../../shared/canonicalJson';
+import { fingerprintGrokSpawnSelection } from '../../../../shared/grokSpawnSelection';
+import { grokInstallationId, sha256Hex } from '../../../../shared/maestro-lib/grok/host-seams';
+import {
+	validateGrokNativeCommand,
+	type GrokNativeCommandRefusal,
+} from '../../../../shared/maestro-lib/grok/acp-turn';
+import { GROK_ACP_PORT_SUPPORT } from '../../../../shared/maestro-lib/grok/route';
 import { QUERY_USER_ENV_VAR } from '../../../../shared/webLogin';
 import { getActingUser } from '../../../web-server/auth/acting-user';
 import { noteTurnActor } from '../../../web-server/auth/turn-attribution';
@@ -68,12 +85,21 @@ import { buildChildProcessEnv } from '../../../process-manager/utils/envBuilder'
 import { awaitSynopsisWriters } from '../../../process-manager/utils/synopsisWriterGate';
 import { probeClaudeSlashCommandsCached } from '../../../agents/claude-slash-command-probe';
 import { buildExpandedEnv } from '../../../../shared/pathUtils';
+import { observeGrokLaunchScope as observeSharedGrokLaunchScope } from '../../../../shared/agentAccountDir';
+import type {
+	NativeSessionBinding,
+	ProviderSwitchTab,
+} from '../../../../shared/maestro-lib/agents/providerSwap';
+import { getProductionDataPath } from '../../../stores';
+import { observePathRemote } from '../../../utils/remote-fs';
+import { isExpectedSessionReadError } from '../../../utils/session-read-errors';
+import { isExpectedRemoteError } from '../../../storage/remote-error-utils';
 import type { SshRemoteConfig } from '../../../../shared/types';
 import { powerManager } from '../../../power-manager';
 import { MaestroSettings } from '../persistence';
 import { getDefaultShell } from '../../../stores/defaults';
 import { sanitizeClaudeTranscriptBeforeApiResume } from './claude-transcript-sanitize';
-import { resolveClaudeSpawnContext } from './resolve-claude-spawn-context';
+import { findOwningSessionRecord, resolveClaudeSpawnContext } from './resolve-claude-spawn-context';
 import { resolveCodexSpawnTransport } from './resolve-codex-spawn-transport';
 import { resolveHarnessControlSpawnMode } from './resolve-harness-control-mode';
 import {
@@ -90,10 +116,25 @@ import { hasStandardApprovalChannel } from '../../../../shared/agentMetadata';
 import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-spawn';
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
-import { createSshRemoteStoreAdapter } from '../../../utils/ssh-remote-resolver';
+import {
+	createSshRemoteStoreAdapter,
+	resolveSshLaunchTarget,
+} from '../../../utils/ssh-remote-resolver';
 import { sshUnresolvedRemoteMessage } from '../../../utils/ssh-spawn-wrapper';
-import { buildAgentLaunchPlan } from '../../../../shared/maestro-lib/launch/launch-plan';
-import { resolvePromptDelivery } from '../../../../shared/maestro-lib/launch/prompt-delivery';
+import {
+	buildAgentLaunchPlan,
+	type LaunchPermissionDecision,
+	type AgentLaunchInput,
+} from '../../../../shared/maestro-lib/launch/launch-plan';
+import {
+	resolvePromptDelivery,
+	type PromptDelivery,
+} from '../../../../shared/maestro-lib/launch/prompt-delivery';
+import { newRemotePromptFileDestination } from '../../../utils/ssh-command-builder';
+import {
+	applySystemPromptDelivery as placeSystemPrompt,
+	applyCopilotPreamble,
+} from '../../../../shared/maestro-lib/turns/args';
 import { cleanupSessionRelay, preparePermissionRelayArgs } from '../../../permission-relay';
 import {
 	primeOmpModelCatalog,
@@ -141,7 +182,9 @@ export async function handleProcessSpawn(
 		config.pianolaQueueItemId,
 		config.transcriptBoundaryId
 	);
-	const proofCleanup: { release?: () => void; notStarted: boolean } = { notStarted: true };
+	const proofCleanup: { release?: () => void; privatePrompt?: boolean; notStarted: boolean } = {
+		notStarted: true,
+	};
 	const controller = new AbortController();
 	const pending = pendingDesktopSpawns.get(config.sessionId) ?? new Set<AbortController>();
 	pending.add(controller);
@@ -255,6 +298,7 @@ export async function handleProcessSpawn(
 					{ context: 'agent run proof cleanup', sessionId: config.sessionId }
 				);
 			}
+			if (proofCleanup.privatePrompt) throw new Error('Private prompt-file launch failed.');
 			throw error;
 		}
 	} finally {
@@ -268,7 +312,7 @@ export async function handleProcessSpawn(
 async function handleProcessSpawnImpl(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies,
-	proofCleanup: { release?: () => void; notStarted: boolean },
+	proofCleanup: { release?: () => void; privatePrompt?: boolean; notStarted: boolean },
 	signal: AbortSignal,
 	admissionGuard: () => void
 ) {
@@ -282,7 +326,61 @@ async function handleProcessSpawnImpl(
 		safeSend,
 	} = deps;
 
+	// IPC records are mutable while discovery and preparation await. Retain this turn's
+	// request, not references that a later settings or tab change can relabel.
+	if (config.toolType === 'grok') config = structuredClone(config);
+	// A queued command carries its enqueue-time configuration, including on a
+	// fresh tab with no native binding. Check main's stores before discovery or
+	// preparation; renderer equality cannot close the IPC handoff race.
+	const grokSelectionProblem = () => {
+		if (
+			config.toolType !== 'grok' ||
+			!Object.prototype.hasOwnProperty.call(config, 'expectedGrokSpawnSelection')
+		)
+			return undefined;
+		const refusal =
+			'Queued Grok command configuration is unavailable or changed. Requeue it with the intended settings.';
+		const expected = config.expectedGrokSpawnSelection;
+		if (typeof expected !== 'string' || !/^grok-spawn-selection-v1:[a-f0-9]{64}$/.test(expected))
+			return refusal;
+		const target = resolveSshLaunchTarget(
+			createSshRemoteStoreAdapter(settingsStore),
+			config.sessionSshRemoteConfig
+		);
+		if (target.kind === 'unresolved') return refusal;
+		const actual = fingerprintGrokSpawnSelection(
+			{
+				providerConfig: agentConfigsStore.get('configs', {}).grok || {},
+				shellEnvVars: settingsStore.get('shellEnvVars', {}),
+				sshRemote: target.kind === 'remote' ? target.remote : null,
+			},
+			sha256Hex
+		);
+		return expected === actual ? undefined : refusal;
+	};
+	const entrySelectionProblem = grokSelectionProblem();
+	if (entrySelectionProblem) {
+		reportSpawnRefusal(deps, config.sessionId, entrySelectionProblem);
+		return { success: false, pid: 0, error: entrySelectionProblem };
+	}
+	const grokOwner =
+		config.toolType === 'grok' ? grokSpawnOwner(config, deps.sessionsStore) : undefined;
+	const retainedBinding = grokOwner?.binding;
+	if (config.toolType === 'grok' && config.agentSessionId && !retainedBinding) {
+		const error =
+			'Grok resume has no retained native ownership. Reopen it from scoped native history.';
+		reportSpawnRefusal(deps, config.sessionId, error);
+		return { success: false, pid: 0, error };
+	}
 	const processManager = requireProcessManager(getProcessManager);
+	// A native command rides this request and is checked before discovery or
+	// preparation; every refusal here is final, never an ordinary prompt.
+	const nativeCommandProblem = grokNativeCommandRequestProblem(config);
+	if (nativeCommandProblem) {
+		const error = `Native Grok command refused (native-command-${nativeCommandProblem}). Nothing was started.`;
+		reportSpawnRefusal(deps, config.sessionId, error);
+		return { success: false, pid: 0, error };
+	}
 	const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 	const migrationAgentId = config.sessionId.replace(/-ai(?:-.+)?$/, '');
 	const migrationAgent = (
@@ -307,6 +405,23 @@ async function handleProcessSpawnImpl(
 	// Get agent definition to access config options and argument builders
 	const agent = await agentDetector.getAgent(config.toolType);
 	signal.throwIfAborted();
+	const discoverySelectionProblem = grokSelectionProblem();
+	if (discoverySelectionProblem) {
+		reportSpawnRefusal(deps, config.sessionId, discoverySelectionProblem);
+		return { success: false, pid: 0, error: discoverySelectionProblem };
+	}
+	proofCleanup.privatePrompt = !!agent?.promptFile;
+	if (
+		agent?.promptFile &&
+		(agent.requiresPty || config.toolType === 'opencode' || config.toolType === 'codex')
+	) {
+		reportSpawnRefusal(
+			deps,
+			config.sessionId,
+			'Prompt-file delivery is unavailable on this transport. Nothing was started.'
+		);
+		return { success: false, pid: 0 };
+	}
 	let invalidLocalCustomPath = false;
 	if (config.sessionCustomPath && !config.sessionSshRemoteConfig?.enabled) {
 		const requestedCustomPath = config.sessionCustomPath;
@@ -329,6 +444,11 @@ async function handleProcessSpawnImpl(
 			});
 		}
 	}
+	const pathSelectionProblem = grokSelectionProblem();
+	if (pathSelectionProblem) {
+		reportSpawnRefusal(deps, config.sessionId, pathSelectionProblem);
+		return { success: false, pid: 0, error: pathSelectionProblem };
+	}
 	// Use INFO level on Windows for better visibility in logs
 
 	const logFn = isWindows() ? logger.info.bind(logger) : logger.debug.bind(logger);
@@ -345,7 +465,7 @@ async function handleProcessSpawnImpl(
 		promptLength: config.prompt?.length,
 		// On Windows, show prompt preview to help debug truncation issues
 		promptPreview:
-			config.prompt && isWindows()
+			config.prompt && isWindows() && !agent?.promptFile
 				? {
 						first50: config.prompt.substring(0, 50),
 						last50: config.prompt.substring(Math.max(0, config.prompt.length - 50)),
@@ -376,8 +496,11 @@ async function handleProcessSpawnImpl(
 	// and the API-resume sanitizer) must see the same env the child will, and
 	// both layers are applied again at spawn further down.
 	const allConfigs = agentConfigsStore.get('configs', {});
-	const agentConfigValues = allConfigs[config.toolType] || {};
-	const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
+	const agentConfigValues = structuredClone(allConfigs[config.toolType] || {});
+	const globalShellEnvVars = structuredClone(settingsStore.get('shellEnvVars', {})) as Record<
+		string,
+		string
+	>;
 	const claudeEnvLayers: ClaudeSpawnEnvLayers = {
 		agentDefaultEnvVars: agent?.defaultEnvVars,
 		globalShellEnvVars,
@@ -391,6 +514,11 @@ async function handleProcessSpawnImpl(
 		envLayers: claudeEnvLayers,
 	});
 	signal.throwIfAborted();
+	const contextSelectionProblem = grokSelectionProblem();
+	if (contextSelectionProblem) {
+		reportSpawnRefusal(deps, config.sessionId, contextSelectionProblem);
+		return { success: false, pid: 0, error: contextSelectionProblem };
+	}
 	const {
 		baseSessionId,
 		claudeResolvedMode,
@@ -413,6 +541,9 @@ async function handleProcessSpawnImpl(
 	let finalArgs = buildAgentArgs(agent, {
 		baseArgs: config.args,
 		prompt: config.prompt,
+		forceBatchMode:
+			!!agent?.promptFile &&
+			(config.prompt !== undefined || (!config.agentSessionId && !!config.appendSystemPrompt)),
 		cwd: config.cwd,
 		readOnlyMode: config.readOnlyMode,
 		modelId: config.modelId,
@@ -501,34 +632,115 @@ async function handleProcessSpawnImpl(
 	// shared function.
 	// ========================================================================
 	let effectiveCustomEnvVars: Record<string, string> | undefined;
+	let launchPermission: LaunchPermissionDecision | undefined;
+	let launchInput: AgentLaunchInput | undefined;
+	let plannedFile: Extract<PromptDelivery, { via: 'file' }> | undefined;
+	let plannedTarget: string | undefined;
+	let promptRemote: SshRemoteConfig | undefined;
+	let grokLaunchRemote: SshRemoteConfig | undefined;
+	let copilotPreamble: string | undefined;
+	if (agent?.id === 'copilot-cli') {
+		try {
+			copilotPreamble = getPrompt('copilot-preamble');
+		} catch {
+			logger.debug('copilot-preamble unavailable; skipping injection', LOG_CONTEXT);
+		}
+	}
+	// Predict the same composition without creating the legacy Windows system
+	// file. The early plan snapshots knowledge and bytes; final planning below
+	// must reproduce them at this attempt's single owned destination.
+	const placed = agent?.promptFile
+		? placeSystemPrompt({
+				args: finalArgs,
+				prompt: config.prompt,
+				systemPrompt: config.appendSystemPrompt,
+				supportsAppendSystemPrompt: !!agent.capabilities?.supportsAppendSystemPrompt,
+				isResume: !!config.agentSessionId,
+				isWindowsHost: isWindows(),
+				sshRemote: !!config.sessionSshRemoteConfig?.enabled,
+			})
+		: undefined;
 	if (config.toolType !== 'terminal') {
-		const planResult = buildAgentLaunchPlan({
+		launchInput = {
 			surface: 'desktop',
 			agent: agent ?? undefined,
 			command: config.sessionCustomPath || agent?.path || config.command,
-			args: finalArgs,
+			remoteCommand: config.sessionCustomPath,
+			args: placed?.args ?? finalArgs,
 			cwd: config.cwd,
-			prompt: config.prompt,
+			// Keep typed grants for planner validation even without a native arg builder.
+			// The final file replan below retains them through this captured input.
+			additionalDirectories: config.sessionAdditionalDirectories,
+			prompt: placed
+				? applyCopilotPreamble(agent?.id ?? config.toolType, placed.prompt, copilotPreamble)
+				: config.prompt,
+			promptFileDestination:
+				agent?.promptFile &&
+				config.sessionSshRemoteConfig?.enabled &&
+				config.sessionSshRemoteConfig.remoteId
+					? newRemotePromptFileDestination(
+							config.sessionSshRemoteConfig.remoteId,
+							agent.promptFile.format
+						)
+					: undefined,
 			hasImages: !!config.images?.length,
 			globalShellEnvVars,
 			agentCustomEnvVars: agentConfigValues.customEnvVars as Record<string, string> | undefined,
 			sessionCustomEnvVars: config.sessionCustomEnvVars,
 			readOnlyMode: isReadOnly,
+			permissionMode: requestedPermissionMode(config),
 			sshRemoteConfig: config.sessionSshRemoteConfig,
 			sshStore: createSshRemoteStoreAdapter(settingsStore),
-		});
+		};
+		const planResult = buildAgentLaunchPlan(launchInput);
 		if (!planResult.ok) {
-			logger.error('SSH remote could not be resolved; not spawning', LOG_CONTEXT, {
-				sessionId: config.sessionId,
-				remoteId: config.sessionSshRemoteConfig?.remoteId,
-				reason: planResult.reason,
-			});
+			if (planResult.reason === 'grok-model-effort-refused') {
+				logger.error('Grok model/effort selection refused; not spawning', LOG_CONTEXT, {
+					sessionId: config.sessionId,
+					toolType: config.toolType,
+					reason: planResult.reason,
+				});
+			} else if (planResult.reason === 'grok-directory-grants-refused') {
+				logger.error('Grok directory-grant configuration refused; not spawning', LOG_CONTEXT, {
+					sessionId: config.sessionId,
+					toolType: config.toolType,
+					reason: planResult.reason,
+				});
+			} else if (planResult.reason === 'prompt-delivery-refused') {
+				logger.error('Prompt delivery refused; not spawning', LOG_CONTEXT, {
+					sessionId: config.sessionId,
+					toolType: config.toolType,
+					reason: planResult.reason,
+				});
+			} else {
+				logger.error('SSH remote could not be resolved; not spawning', LOG_CONTEXT, {
+					sessionId: config.sessionId,
+					remoteId: config.sessionSshRemoteConfig?.remoteId,
+					reason: planResult.reason,
+				});
+			}
 			reportSpawnRefusal(deps, config.sessionId, planResult.error);
 			return { success: false, pid: 0 };
 		}
+		if (config.toolType === 'grok' && planResult.plan.target.kind === 'remote') {
+			grokLaunchRemote = structuredClone(planResult.plan.target.remote);
+		}
 		effectiveCustomEnvVars = planResult.plan.envVars;
+		launchPermission = planResult.plan.permission;
+		if (planResult.plan.prompt.via === 'file') {
+			plannedFile = planResult.plan.prompt;
+			plannedTarget = canonicalJson(planResult.plan.target);
+			if (planResult.plan.target.kind === 'remote')
+				promptRemote = structuredClone(planResult.plan.target.remote);
+		}
 	} else {
 		effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
+	}
+
+	const preparationSelectionProblem = grokSelectionProblem();
+	if (preparationSelectionProblem) {
+		reportSpawnRefusal(deps, config.sessionId, preparationSelectionProblem);
+		return { success: false, pid: 0, error: preparationSelectionProblem };
 	}
 	if (configResolution.customEnvSource !== 'none' && effectiveCustomEnvVars) {
 		logger.debug(
@@ -570,6 +782,9 @@ async function handleProcessSpawnImpl(
 		effectiveCustomEnvVars = {
 			...(effectiveCustomEnvVars || {}),
 			...buildCallerIdentityEnv(baseSessionId, callerTabId),
+			// An Auto Run task also says which run it belongs to, so a dispatch it
+			// makes is tracked to completion and reported back to that run.
+			...(config.querySource === 'auto' ? buildAutoRunCallerEnv(config.autoRunId) : {}),
 		};
 
 		// Who asked for this turn, when the spawn came from a logged-in browser.
@@ -598,6 +813,10 @@ async function handleProcessSpawnImpl(
 	// Their registries and authority stay separate, including with Plugins off.
 	let pluginRunToken: string | undefined;
 	let pluginRunProofFile: string | undefined;
+	// The per-spawn directory holding an owned MCP config file. It lives as long
+	// as the process (a native CLI may re-read its config mid-run) and goes with
+	// the run proof on exit, stop, spawn failure or an early refusal.
+	let mcpTmpDir: string | undefined;
 	let callerRunProof: PluginToolRunProofFile | undefined;
 	let spawnReturned = false;
 	const exitListener: { current?: (sessionId: string) => void } = {};
@@ -607,8 +826,20 @@ async function handleProcessSpawnImpl(
 		signal.removeEventListener('abort', cleanupRunProofs);
 		const token = pluginRunToken;
 		const file = pluginRunProofFile;
+		const ownedMcpDir = mcpTmpDir;
 		pluginRunToken = undefined;
 		pluginRunProofFile = undefined;
+		mcpTmpDir = undefined;
+		if (ownedMcpDir) {
+			fsp.rm(ownedMcpDir, { recursive: true, force: true }).catch((err: unknown) => {
+				if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+					captureException(err instanceof Error ? err : new Error(String(err)), {
+						context: 'mcp config temp dir cleanup',
+						dir: ownedMcpDir,
+					});
+				}
+			});
+		}
 		if (exitListener.current) processManager.off('exit', exitListener.current);
 		if (token) pluginToolRunIdentity.revoke(token);
 		callerProof?.dispose();
@@ -667,10 +898,28 @@ async function handleProcessSpawnImpl(
 	// MCP plugin tools remain gated separately. Only verified local provider
 	// configs can reach the localhost bridge; SSH and maestro-p are skipped.
 	const mcpCap = MCP_CONFIG_BY_AGENT[config.toolType];
+	// One pure admission rule (`mcpInjectionProblem`; the CLI and Cue spawners
+	// still gate on `verified` alone, which refuses Grok the same way): unverified or
+	// version-unqualified strategies, remote targets and a user-owned config
+	// path all mean no injection. No version is observed before the spawn, so a
+	// version-bound strategy (grok) is never injected here until it is qualified.
+	const mcpContext = {
+		remote: !!config.sessionSshRemoteConfig?.enabled,
+		version: null,
+		env: { ...process.env, ...(effectiveCustomEnvVars || {}) },
+	};
+	let mcpProblem = mcpInjectionProblem(mcpCap, mcpContext);
+	// An overlay joins the native configuration: read the user's disabled servers
+	// and the project servers that would shadow the bridge only when that is the
+	// one remaining question, so a refused spawn never touches the user's files.
+	if (mcpProblem === 'native-config-unread') {
+		const nativeConfig = await readGrokNativeMcpConfigFacts(mcpContext.env, config.cwd);
+		mcpProblem = mcpInjectionProblem(mcpCap, { ...mcpContext, nativeConfig });
+	}
 	if (
-		mcpCap?.verified &&
+		mcpCap &&
+		!mcpProblem &&
 		isPluginsFeatureEnabled() &&
-		!config.sessionSshRemoteConfig?.enabled &&
 		// Skip the electron-as-node interactive path (claude maestro-p): there
 		// argv[0] is a script path, so prepending global flags ahead of it would
 		// make Node reject the launch. API-mode/codex spawn the agent binary
@@ -719,24 +968,19 @@ async function handleProcessSpawnImpl(
 				join: path.join,
 			});
 			if (mcpInjection.files.length > 0) {
-				const mcpTmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'maestro-mcp-'));
-				mcpInjection = buildMcpInjection(mcpCap, mcpSpec, {
-					tmpDir: mcpTmpDir,
-					join: path.join,
-				});
-				for (const file of mcpInjection.files) {
-					await fsp.writeFile(file.path, file.content, 'utf-8');
-				}
-				setTimeout(() => {
-					fsp.rm(mcpTmpDir, { recursive: true, force: true }).catch((err: unknown) => {
-						if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-							captureException(err instanceof Error ? err : new Error(String(err)), {
-								context: 'mcp config temp dir cleanup',
-								dir: mcpTmpDir,
-							});
-						}
+				try {
+					mcpTmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'maestro-mcp-'));
+					mcpInjection = buildMcpInjection(mcpCap, mcpSpec, {
+						tmpDir: mcpTmpDir,
+						join: path.join,
 					});
-				}, 30_000);
+					for (const file of mcpInjection.files) {
+						await fsp.writeFile(file.path, file.content, { encoding: 'utf-8', mode: 0o600 });
+					}
+				} catch (error) {
+					cleanupRunProofs();
+					throw error;
+				}
 			}
 			finalArgs = mergeMcpInjectionArgs(mcpCap, finalArgs, mcpInjection.globalArgs);
 			effectiveCustomEnvVars = {
@@ -811,6 +1055,33 @@ async function handleProcessSpawnImpl(
 		}
 	}
 
+	// Standard permission mode (Grok): the plan runs on the ACP stdio route,
+	// whose permission requests are answered through the local consent
+	// session. That port has no remote transport (GROK_ACP_PORT_SUPPORT.remote,
+	// the selector's `acp-remote-route` gap), so an SSH turn is refused here,
+	// before the launch-scope probe or any remote write, instead of inside the
+	// spawner after them. Never downgraded to headless streaming.
+	if (
+		config.toolType === 'grok' &&
+		isSshEnabled &&
+		launchPermission?.requested === 'standard' &&
+		!GROK_ACP_PORT_SUPPORT.remote
+	) {
+		logger.error('Grok standard permission mode is not supported over SSH', LOG_CONTEXT, {
+			sessionId: config.sessionId,
+			gap: 'acp-remote-route',
+		});
+		reportSpawnRefusal(
+			deps,
+			config.sessionId,
+			'Standard permission mode is not available for Grok over SSH (acp-remote-route): ' +
+				'tool approvals run over the local ACP route only. Switch this agent to Full Access ' +
+				'or Read-Only, or disable SSH. Nothing was started.'
+		);
+		cleanupRunProofs();
+		return { success: false, pid: 0 };
+	}
+
 	const standardApprovalChannel = hasStandardApprovalChannel({
 		toolType: config.toolType,
 		harnessControlMode,
@@ -820,7 +1091,11 @@ async function handleProcessSpawnImpl(
 		sshEnabled: isSshEnabled,
 		hasImages: (config.images?.length ?? 0) > 0,
 	});
-	if (config.permissionMode === 'standard' && !standardApprovalChannel) {
+	if (
+		config.toolType !== 'grok' &&
+		config.permissionMode === 'standard' &&
+		!standardApprovalChannel
+	) {
 		reportSpawnRefusal(
 			deps,
 			config.sessionId,
@@ -879,24 +1154,57 @@ async function handleProcessSpawnImpl(
 	// preamble has to ride in the user prompt to be in-context for
 	// that turn's reasoning. The text is user-editable via Maestro
 	// Prompts (`copilot-preamble`); an empty customization disables it.
-	if (agent?.id === 'copilot-cli' && effectivePrompt) {
-		try {
-			const preamble = getPrompt('copilot-preamble').trim();
-			if (preamble) {
-				effectivePrompt = `${preamble}\n\n${effectivePrompt}`;
-				logger.debug('Prepended copilot-preamble to user prompt', LOG_CONTEXT, {
-					preambleLength: preamble.length,
-				});
-			}
-		} catch (err) {
-			// Prompt not loaded yet (initializePrompts not called) - skip silently.
-			// This path is hit by tests that stub the IPC handler without bootstrapping
-			// prompts. Production code always runs initializePrompts() at app start.
-			logger.debug('copilot-preamble unavailable; skipping injection', LOG_CONTEXT, {
-				error: String(err),
-			});
+	effectivePrompt = applyCopilotPreamble(
+		agent?.id ?? config.toolType,
+		effectivePrompt,
+		copilotPreamble
+	);
+
+	let promptDelivery: PromptDelivery;
+	if (plannedFile && launchInput) {
+		const finalPlan = buildAgentLaunchPlan({
+			...launchInput,
+			args: finalArgs,
+			prompt: effectivePrompt,
+			promptFileDestination: plannedFile.artifact,
+		});
+		if (!finalPlan.ok) {
+			proofCleanup.release?.();
+			reportSpawnRefusal(deps, config.sessionId, finalPlan.error);
+			return { success: false, pid: 0 };
+		}
+		promptDelivery = finalPlan.plan.prompt;
+		if (
+			promptDelivery.via !== 'file' ||
+			canonicalJson(promptDelivery.artifact) !== canonicalJson(plannedFile.artifact) ||
+			canonicalJson(finalPlan.plan.target) !== plannedTarget
+		) {
+			proofCleanup.release?.();
+			reportSpawnRefusal(
+				deps,
+				config.sessionId,
+				'Prompt-file content or target changed during launch preparation. Nothing was started.'
+			);
+			return { success: false, pid: 0 };
+		}
+		finalArgs = finalPlan.plan.args;
+		launchPermission = finalPlan.plan.permission;
+	} else {
+		promptDelivery = resolvePromptDelivery({
+			agent,
+			prompt: effectivePrompt,
+			isWindowsHost: isWindows(),
+			sshRemote: !!config.sessionSshRemoteConfig?.enabled,
+			hasImages: !!config.images?.length,
+			args: finalArgs,
+		});
+		if (promptDelivery.via === 'refused') {
+			proofCleanup.release?.();
+			reportSpawnRefusal(deps, config.sessionId, promptDelivery.error);
+			return { success: false, pid: 0 };
 		}
 	}
+	const promptArtifact = promptDelivery.via === 'file' ? promptDelivery.artifact : undefined;
 
 	// If no shell is specified and this is a terminal session, use the default shell from settings
 	// For terminal sessions, we also load custom shell path, args, and env vars
@@ -942,7 +1250,7 @@ async function handleProcessSpawnImpl(
 				: config.agentSessionId;
 
 	// Redact system prompt content from logged args (can be large and sensitive)
-	const argsToLog = redactSystemPromptArg(finalArgs);
+	const argsToLog = promptArtifact ? ['[private prompt file]'] : redactSystemPromptArg(finalArgs);
 
 	logger.info(`Spawning process: ${config.command}`, LOG_CONTEXT, {
 		sessionId: config.sessionId,
@@ -958,9 +1266,11 @@ async function handleProcessSpawnImpl(
 		...(config.yoloMode && { yoloMode: true }),
 		...(config.permissionMode && { permissionMode: config.permissionMode }),
 		...(config.modelId && { modelId: config.modelId }),
-		...(config.prompt && {
-			prompt: config.prompt.length > 500 ? config.prompt.substring(0, 500) + '...' : config.prompt,
-		}),
+		...(!agent?.promptFile &&
+			config.prompt && {
+				prompt:
+					config.prompt.length > 500 ? config.prompt.substring(0, 500) + '...' : config.prompt,
+			}),
 		...(config.appendSystemPrompt && {
 			systemPromptDelivery: delivered.delivery,
 			...(systemPromptTempFile && { systemPromptFile: systemPromptTempFile }),
@@ -1066,12 +1376,19 @@ async function handleProcessSpawnImpl(
 		logger.info(`Forcing shell execution for agent on Windows for PATH access`, LOG_CONTEXT, {
 			agentId: agent?.id,
 			command: commandToSpawn,
-			args: argsToSpawn,
+			args: promptArtifact ? ['[private prompt file]'] : argsToSpawn,
 			shell: shellToUse,
 			shellSource: shellConfig.source,
 		});
 	}
 
+	if (config.toolType === 'grok') {
+		const error = grokLaunchArgsProblem(finalArgs, config.agentSessionId, config.cwd);
+		if (error) {
+			reportSpawnRefusal(deps, config.sessionId, error);
+			return { success: false, pid: 0, error };
+		}
+	}
 	const sshWrap = await wrapSpawnForSsh({
 		config,
 		agent,
@@ -1081,7 +1398,9 @@ async function handleProcessSpawnImpl(
 		headlessArgs: finalArgs,
 		customEnvVarsToPass,
 		effectiveCustomEnvVars,
-		effectivePrompt,
+		effectivePrompt: promptArtifact ? undefined : effectivePrompt,
+		promptArtifact,
+		resolvedRemote: grokLaunchRemote ?? promptRemote,
 		globalShellEnvVars,
 		useShell,
 		shellToUse,
@@ -1235,30 +1554,8 @@ async function handleProcessSpawnImpl(
 		if (sessionId !== config.sessionId) return;
 		cleanupRunProofs();
 	};
-	if (pluginRunToken || callerRunProof) processManager.on('exit', exitListener.current);
-	// ========================================================================
-	// Prompt delivery: argv vs stdin, decided HERE by the host, never by the
-	// caller, and from the FINAL prompt (system prompt and preambles folded in).
-	//
-	// Windows spawns hand the prompt to the child over stdin instead of argv to
-	// stay under the ~32K CreateProcess command-line limit. That is a property of
-	// the machine that runs the CLI and of the CLI itself, so the renderer must
-	// not decide it: a web-desktop client is a browser that can sit on a
-	// completely different OS than the host (`window.maestro.platform` there is
-	// derived from the browser's user agent), so a Windows browser driving a Linux
-	// host used to request stdin delivery. Agents that only accept a positional
-	// prompt then started with no prompt at all - omp emitted its session line and
-	// exited 0, which left the tab holding an agent session id omp never persisted,
-	// so every later turn failed to resume it too. The rule itself lives in the
-	// shared resolvePromptDelivery, which Cue and the CLI use too.
-	// ========================================================================
-	const promptDelivery = resolvePromptDelivery({
-		agent,
-		prompt: effectivePrompt,
-		isWindowsHost: isWindows(),
-		sshRemote: !!sshRemoteUsed,
-		hasImages: !!config.images?.length,
-	});
+	if ((pluginRunToken || callerRunProof) && exitListener.current)
+		processManager.on('exit', exitListener.current);
 	const sendPromptViaStdin =
 		promptDelivery.via === 'stdin' && promptDelivery.format === 'stream-json';
 	const sendPromptViaStdinRaw = promptDelivery.via === 'stdin' && promptDelivery.format === 'raw';
@@ -1279,14 +1576,83 @@ async function handleProcessSpawnImpl(
 		}
 	}
 
+	const observationSelectionProblem = grokSelectionProblem();
+	if (observationSelectionProblem) {
+		proofCleanup.release?.();
+		reportSpawnRefusal(deps, config.sessionId, observationSelectionProblem);
+		return { success: false, pid: 0, error: observationSelectionProblem };
+	}
+	const grokLaunchEnv =
+		config.toolType === 'grok'
+			? sshRemoteUsed
+				? { ...sshRemoteUsed.remoteEnv, ...globalShellEnvVars, ...effectiveCustomEnvVars }
+				: buildChildProcessEnv(customEnvVarsToPass, !!agentSessionId, globalShellEnvVars)
+			: undefined;
+	const nativeObservation =
+		config.toolType === 'grok'
+			? await observeGrokLaunchScope(config, sshRemoteUsed, grokLaunchEnv!, finalArgs)
+			: undefined;
+	const nativeSessionScope = nativeObservation?.scope;
+	const beforeSpawn =
+		config.toolType === 'grok'
+			? () => {
+					const selectionProblem = () => {
+						const expectedSelectionProblem = grokSelectionProblem();
+						if (expectedSelectionProblem) return expectedSelectionProblem;
+						const current = grokSpawnOwner(config, deps.sessionsStore);
+						if (
+							current.key !== grokOwner?.key ||
+							canonicalJson(agentConfigsStore.get('configs', {}).grok || {}) !==
+								canonicalJson(agentConfigValues) ||
+							canonicalJson(settingsStore.get('shellEnvVars', {})) !==
+								canonicalJson(globalShellEnvVars) ||
+							(sshRemoteUsed &&
+								canonicalJson(
+									createSshRemoteStoreAdapter(settingsStore)
+										.getSshRemotes()
+										.find((remote) => remote.id === sshRemoteUsed.id) ?? null
+								) !== canonicalJson(sshRemoteUsed))
+						)
+							return 'Grok launch ownership changed during preparation. Retry with the intended account, host and tab.';
+						if (!sshRemoteUsed) {
+							const env = buildChildProcessEnv(
+								customEnvVarsToPass,
+								!!agentSessionId,
+								globalShellEnvVars
+							);
+							if (
+								['GROK_HOME', 'HOME', 'USERPROFILE'].some(
+									(key) => env[key] !== grokLaunchEnv?.[key]
+								)
+							)
+								return 'Grok account environment changed before spawn. Nothing was started.';
+						}
+						return undefined;
+					};
+					const selectionRefusal = selectionProblem();
+					if (selectionRefusal) return selectionRefusal;
+					const checked = nativeObservation?.recheck?.();
+					const error = 'Grok account, cwd or endpoint changed before spawn. Nothing was started.';
+					return typeof checked === 'object'
+						? checked.then((valid) => (valid ? selectionProblem() : error))
+						: checked === false
+							? error
+							: undefined;
+				}
+			: undefined;
+
+	// The selection fingerprint was checked above; it never reaches the process.
+	// A native command passed the request checks above and is forwarded:
+	// ProcessManager routes it to GrokAcpSpawner, which submits it through the
+	// ACP driver after revalidating it against the new process, or refuses.
+	const { expectedGrokSpawnSelection: _checkedGrokSelection, ...spawnConfig } = config;
 	if (signal.aborted) throw new Error('Agent run cancelled');
-	deps.assertQueueOwner?.();
-	admissionGuard();
-	// Exceptions after entering native spawn are uncertain; retain the fence.
-	proofCleanup.notStarted = false;
-	const result = processManager.spawn({
-		...config,
-		// Native capture must see the resolved resume identity, including argument-based resumes.
+	if (promptArtifact) delete spawnConfig.appendSystemPrompt;
+	const finalSpawnConfig: ProcessSpawnConfig = {
+		...spawnConfig,
+		// The launch plan's permission decision, host-authoritative:
+		// the sinks that map access flags read it, never the renderer's word.
+		permission: launchPermission,
 		agentSessionId,
 		command: commandToSpawn,
 		args: argsToSpawn,
@@ -1298,8 +1664,9 @@ async function handleProcessSpawnImpl(
 		requiresPty: sshRemoteUsed ? false : agent?.requiresPty,
 		// For SSH, prompt is included in the stdin script, not passed separately
 		// For local execution, pass prompt (with system prompt embedded for non-append-system-prompt agents)
-		prompt: sshRemoteUsed ? undefined : effectivePrompt,
-		appendSystemPrompt: config.appendSystemPrompt,
+		prompt: sshRemoteUsed || promptArtifact ? undefined : effectivePrompt,
+		promptArtifact,
+		images: promptArtifact ? undefined : config.images,
 		// Host-authoritative (see above): overrides whatever the caller sent.
 		sendPromptViaStdin,
 		sendPromptViaStdinRaw,
@@ -1311,8 +1678,8 @@ async function handleProcessSpawnImpl(
 		ompModelCatalogKey, // Identity for the omp model catalog (local omp only)
 		// When using SSH, env vars are passed in the stdin script, not locally
 		customEnvVars: customEnvVarsToPass,
-		imageArgs: agent?.imageArgs, // Function to build image CLI args (for Codex, OpenCode)
-		imagePromptBuilder: agent?.imagePromptBuilder, // Function to embed image refs into prompts (for Copilot)
+		imageArgs: promptArtifact ? undefined : agent?.imageArgs, // Function to build image CLI args (for Codex, OpenCode)
+		imagePromptBuilder: promptArtifact ? undefined : agent?.imagePromptBuilder, // Function to embed image refs into prompts (for Copilot)
 		harnessControlMode,
 		nativeAcpArgs,
 		nativeRpcProtocol: nativeRpcProtocolId,
@@ -1325,8 +1692,8 @@ async function handleProcessSpawnImpl(
 					permissionMode: effectivePermissionMode,
 				}
 			: {}),
-		promptArgs: agent?.promptArgs, // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
-		promptFileArgs: agent?.promptFileArgs, // Prompt-in-a-file delivery for CLIs that accept it (omp @path)
+		promptArgs: promptArtifact ? undefined : agent?.promptArgs, // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
+		promptFileArgs: promptArtifact ? undefined : agent?.promptFileArgs, // Prompt-in-a-file delivery for CLIs that accept it (omp @path)
 		noPromptSeparator: agent?.noPromptSeparator, // Some agents don't support '--' before prompt
 		// Stats tracking: use cwd as projectPath if not explicitly provided
 		projectPath: config.cwd,
@@ -1341,9 +1708,24 @@ async function handleProcessSpawnImpl(
 		extraPathDirs: localAgentBinDir ? [localAgentBinDir] : undefined,
 		// Host-authoritative (see above): overrides whatever the caller sent.
 		codexTransport,
+		// Never trust ownership fields supplied in an untyped IPC payload.
+		nativeSessionScope,
+		nativeSessionBinding: retainedBinding,
+		tabId: spawnTabId(config),
 		// SSH app-server launch, when this Codex turn wants app-server.
 		codexAppServerSsh: sshWrap.codexAppServerSsh,
-	});
+	};
+	const assertSpawnAllowed = () => {
+		signal.throwIfAborted();
+		deps.assertQueueOwner?.();
+		admissionGuard();
+		// Exceptions after entering native spawn are uncertain; retain the fence.
+		proofCleanup.notStarted = false;
+	};
+	const result = beforeSpawn
+		? await processManager.spawnChecked(finalSpawnConfig, { beforeSpawn, assertSpawnAllowed })
+		: (assertSpawnAllowed(), processManager.spawn(finalSpawnConfig));
+	if (!result.success && result.error) reportSpawnRefusal(deps, config.sessionId, result.error);
 	proofCleanup.notStarted = !result.success;
 	const pianolaRunId = result.success
 		? pianolaNewTabSpawns.started(
@@ -1587,6 +1969,137 @@ async function handleProcessSpawnImpl(
 	};
 }
 
+/** Exact persisted owner/tab, never another tab with the same native ID. */
+function grokSpawnOwner(
+	config: SpawnProcessConfig,
+	store: SpawnHandlerDependencies['sessionsStore']
+) {
+	const owner = findOwningSessionRecord(
+		store.get('sessions', []) as StoredSession[],
+		config.sessionId,
+		config.sessionId.replace(REGEX_AI_SUFFIX, '')
+	);
+	const tabs = (Array.isArray(owner?.aiTabs) ? owner.aiTabs : []) as Array<
+		ProviderSwitchTab & { id: string }
+	>;
+	const tab = tabs.find((candidate) => candidate?.id === spawnTabId(config));
+	const binding: NativeSessionBinding | undefined =
+		owner?.toolType === 'grok' &&
+		(!tab?.turnProvider || tab.turnProvider === 'grok') &&
+		tab?.agentSessionId === config.agentSessionId
+			? tab?.nativeSessionBinding
+			: undefined;
+	return {
+		binding: binding && structuredClone(binding),
+		// Private mutation fence. Never persist or log environment values.
+		key: canonicalJson({
+			owner: owner && {
+				id: owner.id,
+				provider: owner.toolType,
+				cwd: owner.cwd,
+				projectRoot: owner.projectRoot,
+				ssh: owner.sessionSshRemoteConfig,
+				remoteCwd: owner.remoteCwd,
+				env: owner.customEnvVars,
+				customPath: owner.customPath,
+				customArgs: owner.customArgs,
+			},
+			tab: tab && {
+				id: tab.id,
+				provider: tab.turnProvider,
+				idOnProvider: tab.agentSessionId,
+				binding: tab.nativeSessionBinding,
+			},
+		}),
+	};
+}
+
+/** Observe directories only; never open account credentials or historical output. */
+async function observeGrokLaunchScope(
+	config: SpawnProcessConfig,
+	remote: SshRemoteConfig | null,
+	env: NodeJS.ProcessEnv,
+	args: readonly string[]
+): Promise<{ scope: NativeSessionLaunchScope; recheck?: () => boolean | Promise<boolean> }> {
+	return observeSharedGrokLaunchScope(config, remote, env, args, {
+		local: {
+			homedir: () => os.homedir(),
+			realpath: (directory) => fsp.realpath(directory),
+			stat: (directory) => fsp.stat(directory),
+			realpathSync: (directory) => realpathSync(directory),
+			isExpectedError: isExpectedSessionReadError,
+			installationId: () =>
+				grokInstallationId({
+					hostname: os.hostname(),
+					productionDataDir: getProductionDataPath(),
+				}),
+		},
+		remote: {
+			observe: (cwd, target, launch) => observePathRemote(cwd, target, undefined, launch),
+			// No host here attests a remote installation identity, so a remote
+			// launch scope stays unknown (and an unknown scope refuses native resume).
+			qualify: async () => undefined,
+			isExpectedError: isExpectedRemoteError,
+		},
+	});
+}
+
+/** Request-contract refusals a native command gets before any host work. */
+export type GrokNativeCommandRequestProblem =
+	| GrokNativeCommandRefusal
+	| 'not-grok'
+	| 'prompt-mismatch'
+	| 'images-unsupported'
+	| 'route-unavailable';
+
+/**
+ * Check a `process:spawn` request carrying `grokNativeCommand` against what the
+ * request alone can prove, before discovery or preparation. Reuses
+ * `validateGrokNativeCommand()` with no catalog: anything short of
+ * `catalog-unavailable` is a refusal the live process could never cure. The
+ * catalog, config generation and process generation are the driver's to check
+ * immediately before submission. Undefined when the request carries none.
+ */
+export function grokNativeCommandRequestProblem(
+	config: SpawnProcessConfig
+): GrokNativeCommandRequestProblem | undefined {
+	if (!Object.prototype.hasOwnProperty.call(config, 'grokNativeCommand')) return undefined;
+	if (config.toolType !== 'grok') return 'not-grok';
+	const intent = config.grokNativeCommand;
+	const tabId = spawnTabId(config);
+	const checked = validateGrokNativeCommand(intent!, undefined, {
+		tabId: tabId ?? '',
+		// The binding's own generation: the host's current one is compared at submission.
+		configGeneration:
+			typeof intent?.binding?.configGeneration === 'string' ? intent.binding.configGeneration : '',
+		processGeneration: '',
+		resumeSessionId: config.agentSessionId,
+		cancelled: false,
+	});
+	if (checked.ok) return 'invalid-intent';
+	if (checked.reason !== 'catalog-unavailable') return checked.reason;
+	// The tab is a request fact, so a wrong one is final here as well.
+	if (!tabId || tabId !== intent!.binding.tabId) return 'scope-mismatch';
+	// The binding's target is the sender's word; the request's own SSH choice decides.
+	if (config.sessionSshRemoteConfig?.enabled) return 'remote-unqualified';
+	const text = intent!.arguments ? `/${intent!.name} ${intent!.arguments}` : `/${intent!.name}`;
+	if (config.prompt !== text) return 'prompt-mismatch';
+	if (config.images?.length) return 'images-unsupported';
+	// Only the negotiated ACP route submits native commands; full and read-only
+	// requests are planned onto the native headless CLI.
+	if (config.permissionMode !== undefined && config.permissionMode !== 'standard')
+		return 'route-unavailable';
+	// Forwarded: GrokAcpSpawner refuses any plan that is not standard, and the
+	// driver checks catalog, config and process generation before submission.
+	return undefined;
+}
+
+function spawnTabId(config: Pick<SpawnProcessConfig, 'sessionId' | 'tabId'>): string | undefined {
+	if (config.tabId) return config.tabId;
+	const match = /-ai-(.+)$/.exec(config.sessionId);
+	return match ? match[1] : undefined;
+}
+
 /**
  * Tell the tab why a spawn was refused, in its own output. Used for failures
  * found before a process exists (an unresolvable SSH remote, the permission
@@ -1601,4 +2114,85 @@ function reportSpawnRefusal(
 	if (win && isWebContentsAvailable(win)) {
 		win.webContents.send('process:data', sessionId, `\r\n[Maestro] ${message}\r\n`);
 	}
+}
+
+function isTomlTable(value: unknown): value is Record<string, unknown> {
+	return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** A TOML file as a table: `{}` when absent, `null` when present but unreadable or not TOML. */
+async function readTomlTable(file: string): Promise<Record<string, unknown> | null> {
+	let text: string;
+	try {
+		text = await fsp.readFile(file, 'utf8');
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === 'ENOENT' ? {} : null;
+	}
+	try {
+		const parsed: unknown = parseToml(text);
+		return isTomlTable(parsed) ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
+/** The nearest ancestor of `cwd` holding `.git` (the native repo root), else `null`. */
+async function findRepoRoot(cwd: string): Promise<string | null> {
+	let dir = path.resolve(cwd);
+	for (;;) {
+		try {
+			await fsp.stat(path.join(dir, '.git'));
+			return dir;
+		} catch {
+			const parent = path.dirname(dir);
+			if (parent === dir) return null;
+			dir = parent;
+		}
+	}
+}
+
+/**
+ * What a Grok MCP overlay joins, read and never written. The user config
+ * (`$GROK_HOME/config.toml`, else `~/.grok/config.toml`) supplies the disabled
+ * servers (`disabled_mcp_servers` and any `[mcp_servers.<name>]` with
+ * `enabled = false`, as `grok mcp disable` persists them); `<repo-root>/.grok` and
+ * `<cwd>/.grok` supply the project server names, each of which replaces a same-named
+ * entry whole. `undefined` when any of those files exists but cannot be read or
+ * does not have the documented shape, so the overlay is refused rather than guessed.
+ */
+export async function readGrokNativeMcpConfigFacts(
+	env: Readonly<Record<string, string | undefined>>,
+	cwd: string
+): Promise<NativeMcpConfigFacts | undefined> {
+	const home = env.GROK_HOME?.trim() ? env.GROK_HOME : path.join(os.homedir(), '.grok');
+	const userFile = path.resolve(home, 'config.toml');
+	const user = await readTomlTable(userFile);
+	if (user === null) return undefined;
+	const disabled = new Set<string>();
+	const list = user.disabled_mcp_servers;
+	if (list !== undefined) {
+		if (!Array.isArray(list) || !list.every((name) => typeof name === 'string')) return undefined;
+		for (const name of list as string[]) disabled.add(name);
+	}
+	const userServers = user.mcp_servers ?? {};
+	if (!isTomlTable(userServers)) return undefined;
+	for (const [name, entry] of Object.entries(userServers)) {
+		if (isTomlTable(entry) && entry.enabled === false) disabled.add(name);
+	}
+	const projectServers = new Set<string>();
+	const repoRoot = await findRepoRoot(cwd);
+	const projectFiles = new Set(
+		[repoRoot, cwd]
+			.filter((dir): dir is string => !!dir)
+			.map((dir) => path.resolve(dir, '.grok', 'config.toml'))
+			.filter((file) => file !== userFile)
+	);
+	for (const file of projectFiles) {
+		const project = await readTomlTable(file);
+		if (project === null) return undefined;
+		const servers = project.mcp_servers ?? {};
+		if (!isTomlTable(servers)) return undefined;
+		for (const name of Object.keys(servers)) projectServers.add(name);
+	}
+	return { disabledServers: [...disabled], projectServers: [...projectServers] };
 }

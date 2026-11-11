@@ -24,7 +24,6 @@ import {
 	listHostAgents,
 } from '../services/peer-resolver';
 import { formatAgents, formatError, AgentDisplay } from '../output/formatter';
-import { requireEncore } from '../utils/encore-gate';
 
 interface ListAgentsOptions {
 	group?: string;
@@ -203,8 +202,6 @@ function printRows(rows: AgentJsonRow[], options: ListAgentsOptions, peer?: stri
 }
 
 async function listAgentsWithPeers(options: ListAgentsOptions): Promise<void> {
-	// The peer flags belong to the Federation Encore Feature: refused while it is off.
-	requireEncore('federation', options.json);
 	if (options.peer !== undefined && options.allPeers) {
 		reportFailure(
 			{ message: 'Pass --peer <name> or --all-peers, not both.', exitCode: ExitCode.InvalidUsage },

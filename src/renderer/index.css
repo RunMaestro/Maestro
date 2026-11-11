@@ -486,26 +486,6 @@ textarea::placeholder {
 	}
 }
 
-/* Dataview "Calculating..." pill: dots that fill in, in a fixed-width slot so the pill never resizes */
-.dataview-ellipsis::after {
-	content: '...';
-	display: inline-block;
-	width: 1.2em;
-	overflow: hidden;
-	vertical-align: bottom;
-	text-align: left;
-	animation: dataview-ellipsis 1.2s steps(4) infinite;
-}
-
-@keyframes dataview-ellipsis {
-	from {
-		width: 0;
-	}
-	to {
-		width: 1.2em;
-	}
-}
-
 /* Usage Dashboard - View mode transition animations */
 @keyframes dashboard-content-enter {
 	0% {
@@ -1701,8 +1681,7 @@ svg.wand-profiling-active {
 		animation: none !important;
 	}
 
-	/* Disable skeleton loading animations (and show the Dataview pill's dots whole) */
-	.dataview-ellipsis::after,
+	/* Disable skeleton loading animations */
 	[data-testid='skeleton-box'],
 	[data-testid='skeleton-circle'] {
 		animation: none !important;

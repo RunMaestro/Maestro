@@ -1,6 +1,7 @@
 import { useEffect, type RefObject } from 'react';
 import type { RegisteredRepository } from '../../../../shared/symphony-types';
 import type { ModalTab } from '../types';
+import { isImeComposing } from '../../../utils/ime';
 
 export interface UseProjectsKeyboardNavParams {
 	isOpen: boolean;
@@ -52,7 +53,7 @@ export function useProjectsKeyboardNav({
 
 			// Escape in the search input blurs + restores grid focus; stopPropagation
 			// keeps the modal from closing.
-			if (e.key === 'Escape' && e.target instanceof HTMLInputElement) {
+			if (e.key === 'Escape' && e.target instanceof HTMLInputElement && !isImeComposing(e)) {
 				e.preventDefault();
 				e.stopPropagation();
 				(e.target as HTMLInputElement).blur();

@@ -62,7 +62,11 @@ import { useModalStore, getModalActions } from '../../../renderer/stores/modalSt
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { gitService } from '../../../renderer/services/git';
 import { validateNewSession } from '../../../renderer/utils/sessionValidation';
-import type { Session } from '../../../renderer/types';
+import type { AITab, Session } from '../../../renderer/types';
+import { getAgentDefinition } from '../../../shared/maestro-lib/providers/definitions';
+import { getAgentCapabilities } from '../../../shared/maestro-lib/providers/capabilities';
+import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
+import { resetStores } from '../../helpers/resetStores';
 
 // ============================================================================
 // Window mock
@@ -677,6 +681,423 @@ describe('useSessionCrud', () => {
 			expect(aiRef!.id).toBe(session.activeTabId);
 			expect(termRef).toBeUndefined();
 			expect(session.terminalTabs).toHaveLength(0);
+		});
+
+		describe('Grok creation consumer', () => {
+			beforeEach(() => {
+				resetStores(useSessionStore, useSettingsStore, useUIStore);
+				vi.useFakeTimers();
+			});
+
+			afterEach(() => {
+				vi.clearAllTimers();
+				vi.useRealTimers();
+				resetStores(useSessionStore, useSettingsStore, useUIStore);
+			});
+
+			it.each<{
+				account: string;
+				env: Session['customEnvVars'];
+				model: string | undefined;
+				effort: string | undefined;
+				storedEffort: string | undefined;
+				remote: boolean;
+			}>([
+				{
+					account: 'a',
+					env: { GROK_HOME: '/synthetic/account-a', GROK_AUTH_PATH: '' },
+					model: 'grok-4.5',
+					effort: 'high',
+					storedEffort: 'high',
+					remote: false,
+				},
+				{
+					account: 'b',
+					env: { GROK_HOME: '/synthetic/account-b', GROK_AUTH_PATH: '' },
+					model: 'grok-composer-2.5-fast',
+					effort: ' low ',
+					storedEffort: 'low',
+					remote: true,
+				},
+				{
+					account: 'inherited',
+					env: undefined,
+					model: undefined,
+					effort: undefined,
+					storedEffort: undefined,
+					remote: false,
+				},
+				{
+					account: 'empty',
+					env: {},
+					model: undefined,
+					effort: '   ',
+					storedEffort: undefined,
+					remote: true,
+				},
+			])(
+				'creates account $account with the selected configuration and ordinary tab defaults',
+				async ({ account, env, model, effort, storedEffort, remote }) => {
+					mockMaestro.agents.get.mockResolvedValueOnce({
+						...getAgentDefinition('grok'),
+						capabilities: getAgentCapabilities('grok'),
+					});
+					useSettingsStore.setState({ defaultSaveToHistory: true, defaultShowThinking: 'on' });
+					const cwd = remote ? '/remote/project' : '/test/project';
+					const ssh = remote
+						? { enabled: true, remoteId: 'remote-1', workingDirOverride: '/remote/selected' }
+						: undefined;
+					const before = structuredClone({ env, ssh });
+					const deps = createDeps();
+					const { result } = renderHook(() => useSessionCrud(deps));
+					await act(async () => {
+						await result.current.createNewSession(
+							'grok',
+							cwd,
+							`Grok ${account}`,
+							'Project guidance',
+							'Start here',
+							'/synthetic/Grok CLI/grok',
+							'--max-turns 2',
+							env,
+							model,
+							undefined,
+							undefined,
+							ssh,
+							effort
+						);
+						vi.runAllTimers();
+					});
+
+					const { sessions, activeSessionId } = useSessionStore.getState();
+					expect(sessions).toHaveLength(1);
+					const created = sessions[0];
+					expect(mockMaestro.agents.get).toHaveBeenCalledExactlyOnceWith('grok');
+					expect(created).toMatchObject({
+						toolType: 'grok',
+						cwd,
+						fullPath: cwd,
+						projectRoot: cwd,
+						shellCwd: cwd,
+						customPath: '/synthetic/Grok CLI/grok',
+						customArgs: '--max-turns 2',
+						nudgeMessage: 'Project guidance',
+						newSessionMessage: 'Start here',
+						state: 'idle',
+						aiPid: 0,
+						aiLogs: [],
+						executionQueue: [],
+					});
+					expect(created.customEnvVars).toEqual(env);
+					expect(created.customModel).toBe(model);
+					expect(created.customEffort).toBe(storedEffort);
+					expect(created.sessionSshRemoteConfig).toEqual(ssh);
+					expect(created.sshRemoteId).toBeUndefined();
+					expect(created.agentSessionId).toBeUndefined();
+					expect(created.aiTabs).toHaveLength(1);
+					const tab = created.aiTabs[0];
+					expect(tab).toMatchObject({
+						agentSessionId: null,
+						state: 'idle',
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						saveToHistory: true,
+						showThinking: 'on',
+					});
+					expect(tab.nativeSessionBinding).toBeUndefined();
+					expect(tab.providerSessions).toBeUndefined();
+					expect(tab.permissionMode).toBeUndefined();
+					expect(tab.readOnlyMode).toBeUndefined();
+					expect(resolveTabPermissionMode(tab)).toBe('full');
+					expect(tab.id).not.toBe(created.id);
+					expect(activeSessionId).toBe(created.id);
+					expect(created.activeTabId).toBe(tab.id);
+					expect(created.unifiedTabOrder).toEqual([{ type: 'ai', id: tab.id }]);
+					expect(validateNewSession).toHaveBeenCalledExactlyOnceWith(
+						`Grok ${account}`,
+						cwd,
+						'grok',
+						[],
+						remote ? 'remote-1' : null
+					);
+					if (remote) expect(gitService.isRepo).not.toHaveBeenCalled();
+					else expect(gitService.isRepo).toHaveBeenCalledExactlyOnceWith(cwd);
+					expect(mockMaestro.stats.recordSessionCreated).toHaveBeenCalledExactlyOnceWith(
+						expect.objectContaining({
+							sessionId: created.id,
+							agentType: 'grok',
+							projectPath: cwd,
+							isRemote: remote,
+						})
+					);
+					expect(deps.flushSessionPersistence).toHaveBeenCalled();
+					expect(notifyToast).not.toHaveBeenCalled();
+					expect({ env, ssh }).toEqual(before);
+				}
+			);
+
+			it.each<{
+				account: string;
+				env: Session['customEnvVars'];
+				explicit: boolean;
+				selection: Partial<AITab>;
+				permission: 'full' | 'readonly';
+				remote: boolean;
+			}>([
+				{
+					account: 'a',
+					env: { GROK_HOME: '/synthetic/account-a' },
+					explicit: false,
+					selection: { readOnlyMode: true },
+					permission: 'readonly',
+					remote: false,
+				},
+				{
+					account: 'b',
+					env: { GROK_HOME: '/synthetic/account-b' },
+					explicit: true,
+					selection: { permissionMode: 'full', readOnlyMode: true },
+					permission: 'full',
+					remote: true,
+				},
+				{
+					account: 'empty',
+					env: {},
+					explicit: false,
+					selection: { permissionMode: 'readonly', readOnlyMode: false },
+					permission: 'readonly',
+					remote: true,
+				},
+				{
+					account: 'inherited',
+					env: undefined,
+					explicit: true,
+					selection: { readOnlyMode: false },
+					permission: 'full',
+					remote: false,
+				},
+			])(
+				'duplicates account $account with $permission permissions and fresh conversation identity',
+				async ({ account, env, explicit, selection, permission, remote }) => {
+					mockMaestro.agents.get.mockResolvedValueOnce({
+						...getAgentDefinition('grok'),
+						capabilities: getAgentCapabilities('grok'),
+					});
+					const source = createSession({
+						id: `source-${account}`,
+						toolType: 'grok',
+						agentSessionId: 'same-native-id',
+						customPath: '/synthetic/Grok CLI/grok',
+						customArgs: '--max-turns 2',
+						customEnvVars: env,
+						customModel: explicit ? 'grok-4.5' : undefined,
+						customEffort: explicit ? 'high' : undefined,
+						cwd: remote ? '/remote/project' : '/test/project',
+						sessionSshRemoteConfig: remote
+							? { enabled: true, remoteId: 'remote-1', workingDirOverride: '/remote/selected' }
+							: undefined,
+					});
+					source.aiTabs[0] = {
+						...source.aiTabs[0],
+						...selection,
+						agentSessionId: 'same-native-id',
+						nativeSessionBinding: { version: 1, state: 'unknown', reason: 'legacy' },
+						providerSessions: { codex: { agentSessionId: 'parked-native' } },
+						logs: [{ id: 'source-log', timestamp: 1, source: 'user', text: 'Source only' }],
+						inputValue: 'Unsent source draft',
+						stagedImages: ['source-image'],
+					};
+					const other = createSession({
+						id: 'other-account',
+						toolType: 'grok',
+						agentSessionId: 'same-native-id',
+						customEnvVars: {
+							GROK_HOME: account === 'a' ? '/synthetic/account-b' : '/synthetic/account-a',
+						},
+					});
+					const before = structuredClone([source, other]);
+					useSessionStore.setState({ sessions: [source, other], activeSessionId: source.id });
+					const deps = createDeps();
+					const { result } = renderHook(() => useSessionCrud(deps));
+					// The dialog suite proves the handoff; exercise its actual consumer here.
+					const args: Parameters<typeof result.current.createNewSession> = [
+						'grok',
+						source.cwd,
+						'Grok copy',
+						undefined,
+						undefined,
+						source.customPath,
+						source.customArgs,
+						source.customEnvVars,
+						source.customModel,
+						undefined,
+						undefined,
+						source.sessionSshRemoteConfig,
+						source.customEffort,
+					];
+					args[23] = resolveTabPermissionMode(source.aiTabs[0]);
+					await act(async () => {
+						await result.current.createNewSession(...args);
+						vi.runAllTimers();
+					});
+
+					const { sessions, activeSessionId } = useSessionStore.getState();
+					expect(sessions).toHaveLength(3);
+					expect(sessions.slice(0, 2)).toEqual(before);
+					expect([source, other]).toEqual(before);
+					const child = sessions[2];
+					expect(child).toMatchObject({
+						toolType: 'grok',
+						cwd: source.cwd,
+						state: 'idle',
+						aiPid: 0,
+						aiLogs: [],
+						executionQueue: [],
+					});
+					expect(child.customPath).toBe(source.customPath);
+					expect(child.customArgs).toBe(source.customArgs);
+					expect(child.customEnvVars).toEqual(env);
+					expect(child.customModel).toBe(source.customModel);
+					expect(child.customEffort).toBe(source.customEffort);
+					expect(child.sessionSshRemoteConfig).toEqual(source.sessionSshRemoteConfig);
+					expect(child.agentSessionId).toBeUndefined();
+					expect([source.id, other.id]).not.toContain(child.id);
+					expect(child.aiTabs).toHaveLength(1);
+					const tab = child.aiTabs[0];
+					expect(tab).toMatchObject({
+						permissionMode: permission,
+						readOnlyMode: permission === 'readonly',
+						agentSessionId: null,
+						state: 'idle',
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+					});
+					expect(tab.nativeSessionBinding).toBeUndefined();
+					expect(tab.providerSessions).toBeUndefined();
+					expect(tab.usageStats).toBeUndefined();
+					expect([source.activeTabId, other.activeTabId, child.id]).not.toContain(tab.id);
+					expect(child.activeTabId).toBe(tab.id);
+					expect(child.unifiedTabOrder).toEqual([{ type: 'ai', id: tab.id }]);
+					expect(activeSessionId).toBe(child.id);
+					expect(deps.flushSessionPersistence).toHaveBeenCalled();
+					expect(notifyToast).not.toHaveBeenCalled();
+				}
+			);
+
+			it.each([
+				{
+					mode: 'standard' as const,
+					readOnly: true,
+					capabilities: {
+						...getAgentCapabilities('grok'),
+						supportsStandardPermissionMode: false,
+					},
+					label: 'Standard',
+				},
+				{
+					mode: 'readonly' as const,
+					readOnly: false,
+					capabilities: { ...getAgentCapabilities('grok'), supportsReadOnlyMode: false },
+					label: 'Read-Only',
+				},
+				{ mode: undefined, readOnly: true, capabilities: undefined, label: 'Read-Only' },
+			])(
+				'refuses unsupported $mode / legacy read-only $readOnly without creating a full-access agent',
+				async ({ mode, readOnly, capabilities, label }) => {
+					mockMaestro.agents.get.mockResolvedValueOnce({
+						...getAgentDefinition('grok'),
+						capabilities,
+					});
+					const source = createSession({ toolType: 'grok', agentSessionId: 'original-native' });
+					source.aiTabs[0] = { ...source.aiTabs[0], permissionMode: mode, readOnlyMode: readOnly };
+					const before = structuredClone(source);
+					useSessionStore.setState({ sessions: [source], activeSessionId: source.id });
+					useUIStore.setState({ activeFocus: 'sidebar' });
+					const deps = createDeps();
+					const { result } = renderHook(() => useSessionCrud(deps));
+					const args: Parameters<typeof result.current.createNewSession> = [
+						'grok',
+						source.cwd,
+						'Refused copy',
+					];
+					args[23] = resolveTabPermissionMode(source.aiTabs[0]);
+					await act(async () => {
+						await result.current.createNewSession(...args);
+						vi.runAllTimers();
+					});
+
+					expect(useSessionStore.getState().sessions).toEqual([before]);
+					expect(source).toEqual(before);
+					expect(useSessionStore.getState().activeSessionId).toBe(source.id);
+					expect(useUIStore.getState().activeFocus).toBe('sidebar');
+					expect(mockMaestro.agents.get).toHaveBeenCalledExactlyOnceWith('grok');
+					expect(notifyToast).toHaveBeenCalledExactlyOnceWith({
+						type: 'error',
+						title: 'Agent Creation Failed',
+						message: `Grok CLI does not support ${label} permissions in Maestro. Choose a supported permission mode before creating this agent.`,
+					});
+					expect(validateNewSession).not.toHaveBeenCalled();
+					expect(gitService.isRepo).not.toHaveBeenCalled();
+					expect(gitService.getBranches).not.toHaveBeenCalled();
+					expect(gitService.getTags).not.toHaveBeenCalled();
+					expect(mockMaestro.stats.recordSessionCreated).not.toHaveBeenCalled();
+					expect(deps.flushSessionPersistence).not.toHaveBeenCalled();
+					expect(deps.inputRef.current?.focus).not.toHaveBeenCalled();
+					expect(idCounter).toBe(0);
+				}
+			);
+
+			it('accepts a Standard Grok agent now that the ACP route is declared', async () => {
+				mockMaestro.agents.get.mockResolvedValueOnce({
+					...getAgentDefinition('grok'),
+					capabilities: getAgentCapabilities('grok'),
+				});
+				const { result } = renderHook(() => useSessionCrud(createDeps()));
+				const args: Parameters<typeof result.current.createNewSession> = [
+					'grok',
+					'/test/project',
+					'Standard Grok',
+				];
+				args[23] = 'standard';
+				await act(async () => {
+					await result.current.createNewSession(...args);
+					vi.runAllTimers();
+				});
+				expect(notifyToast).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().sessions).toHaveLength(1);
+				expect(useSessionStore.getState().sessions[0].toolType).toBe('grok');
+				expect(useSessionStore.getState().sessions[0].aiTabs[0]).toMatchObject({
+					permissionMode: 'standard',
+					readOnlyMode: false,
+				});
+			});
+
+			it('retains Standard permissions for a capable comparator', async () => {
+				mockMaestro.agents.get.mockResolvedValueOnce({
+					...getAgentDefinition('claude-code'),
+					capabilities: getAgentCapabilities('claude-code'),
+				});
+				const { result } = renderHook(() => useSessionCrud(createDeps()));
+				const args: Parameters<typeof result.current.createNewSession> = [
+					'claude-code',
+					'/test/project',
+					'Standard Claude',
+				];
+				args[23] = 'standard';
+				await act(async () => {
+					await result.current.createNewSession(...args);
+					vi.runAllTimers();
+				});
+				expect(useSessionStore.getState().sessions).toHaveLength(1);
+				expect(useSessionStore.getState().sessions[0].aiTabs[0]).toMatchObject({
+					permissionMode: 'standard',
+					readOnlyMode: false,
+					agentSessionId: null,
+				});
+				expect(notifyToast).not.toHaveBeenCalled();
+			});
 		});
 
 		// `exec` is the default, so only the app-server opt-in is stored. Writing

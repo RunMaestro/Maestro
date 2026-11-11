@@ -14,6 +14,9 @@ import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { Theme, Session, AgentConfig } from '../../../../renderer/types';
+import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/definitions';
+import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/capabilities';
+import type { AgentDiscoveryResult } from '../../../../shared/types';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
 
@@ -861,6 +864,407 @@ describe('EditAgentModal', () => {
 		expect(args[5]).toBe('/opt/codex');
 		expect(args[6]).toBe('--search');
 		expect(args[7]).toBeUndefined();
+	});
+
+	describe('Grok draft discovery', () => {
+		const originalModels = window.maestro.agents.getModels;
+		const originalOptions = window.maestro.agents.getConfigOptions;
+		beforeEach(() => {
+			vi.useFakeTimers();
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				{
+					...getAgentDefinition('grok')!,
+					capabilities: getAgentCapabilities('grok'),
+					available: true,
+					path: '/bin/grok',
+				} as AgentConfig,
+			]);
+			const unavailable = { status: 'unavailable', options: [] };
+			window.maestro.agents.getModels = vi.fn().mockResolvedValue(unavailable);
+			window.maestro.agents.getConfigOptions = vi.fn().mockResolvedValue(unavailable);
+		});
+		afterEach(() => {
+			vi.useRealTimers();
+			window.maestro.agents.getModels = originalModels;
+			window.maestro.agents.getConfigOptions = originalOptions;
+		});
+
+		const modal = (session: Session, isOpen = true) => (
+			<EditAgentModal
+				isOpen={isOpen}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={session}
+				existingSessions={[]}
+			/>
+		);
+
+		it.each(
+			[undefined, {}, { GROK_HOME: ' ' }].flatMap((customEnvVars) =>
+				(['unavailable', 'configured-fallback'] as const).map((status) => ({
+					customEnvVars,
+					status,
+				}))
+			)
+		)(
+			'keeps stored/manual selections and environment $customEnvVars through $status and save',
+			async ({ customEnvVars, status }) => {
+				const fallback = {
+					status,
+					options: status === 'configured-fallback' ? ['fallback-value'] : [],
+				};
+				vi.mocked(window.maestro.agents.getModels).mockResolvedValue(fallback);
+				vi.mocked(window.maestro.agents.getConfigOptions).mockResolvedValue(fallback);
+				const session = createSession({
+					toolType: 'grok',
+					customPath: '/custom/grok',
+					customModel: 'stored-model',
+					customEffort: 'stored-effort',
+					customEnvVars,
+				});
+				render(modal(session));
+				await act(async () => {});
+				await act(() => vi.advanceTimersByTimeAsync(300));
+				const request = {
+					providerId: 'grok',
+					context: expect.objectContaining({
+						kind: 'draft',
+						cwd: session.projectRoot,
+						customPath: '/custom/grok',
+						customEnvVars,
+						model: 'stored-model',
+						effort: 'stored-effort',
+					}),
+				};
+				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(request);
+				expect(window.maestro.agents.getConfigOptions).toHaveBeenCalledWith(
+					request,
+					'reasoningEffort'
+				);
+				expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
+				expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
+				expect(screen.getByTestId('config-option-note-model')).toHaveTextContent('unavailable');
+				expect(screen.getByTestId('config-option-note-reasoningEffort')).toHaveTextContent(
+					'unavailable'
+				);
+				await act(async () => {
+					fireEvent.click(screen.getByText('Save Changes'));
+				});
+				expect(onSave.mock.calls[0].slice(7, 10)).toEqual([
+					customEnvVars,
+					'stored-model',
+					'stored-effort',
+				]);
+				onSave.mockClear();
+				fireEvent.change(screen.getByDisplayValue('stored-model'), {
+					target: { value: 'manual-model' },
+				});
+				fireEvent.blur(screen.getByDisplayValue('manual-model'));
+				await act(() => vi.advanceTimersByTimeAsync(150));
+				fireEvent.change(screen.getByDisplayValue('stored-effort'), {
+					target: { value: 'manual-effort' },
+				});
+				await act(() => vi.advanceTimersByTimeAsync(300));
+				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+					providerId: 'grok',
+					context: expect.objectContaining({
+						model: 'manual-model',
+						effort: 'manual-effort',
+						customEnvVars,
+					}),
+				});
+				fireEvent.click(screen.getByText('Save Changes'));
+				expect(onSave.mock.calls[0].slice(5, 10)).toEqual([
+					'/custom/grok',
+					'--verbose',
+					customEnvVars,
+					'manual-model',
+					'manual-effort',
+				]);
+			}
+		);
+
+		it.each(['local', 'ssh'])(
+			'rejects late account options and forced refresh after switching to a %s draft',
+			async (target) => {
+				let finishOld!: (value: AgentDiscoveryResult) => void;
+				const pending = new Promise<AgentDiscoveryResult>((resolve) => {
+					finishOld = resolve;
+				});
+				window.maestro.agents.getModels = vi
+					.fn()
+					.mockReturnValueOnce(pending)
+					.mockReturnValueOnce(pending)
+					.mockResolvedValue({ status: 'discovered', options: ['new-catalog'] });
+				window.maestro.agents.getConfigOptions = vi
+					.fn()
+					.mockReturnValueOnce(pending)
+					.mockReturnValueOnce(pending)
+					.mockResolvedValue({ status: 'unavailable', options: [] });
+				const first = createSession({
+					toolType: 'grok',
+					customEnvVars: { GROK_HOME: '/accounts/a' },
+					customModel: 'model-a',
+					customEffort: 'effort-a',
+				});
+				const view = render(modal(first));
+				await act(async () => {});
+				await act(() => vi.advanceTimersByTimeAsync(300));
+				fireEvent.click(screen.getByTitle('Refresh available models'));
+				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(
+					expect.objectContaining({ forceRefresh: true })
+				);
+				const next = createSession({
+					id: 'session-b',
+					toolType: 'grok',
+					projectRoot: '/draft/b',
+					customPath: '/bin/grok-b',
+					customEnvVars: { GROK_HOME: '/accounts/b' },
+					customModel: 'model-b',
+					customEffort: 'effort-b',
+					sshRemoteId: target === 'ssh' ? 'old-host' : undefined,
+					sessionSshRemoteConfig:
+						target === 'ssh' ? { enabled: true, remoteId: 'new-host' } : undefined,
+				});
+				view.rerender(modal(next));
+				await act(async () => {});
+				await act(() => vi.advanceTimersByTimeAsync(300));
+				const request = {
+					providerId: 'grok',
+					context: expect.objectContaining({
+						customEnvVars: { GROK_HOME: '/accounts/b' },
+						sshRemoteId: next.sshRemoteId,
+						sessionSshRemoteConfig: expect.objectContaining({
+							enabled: target === 'ssh',
+							remoteId: target === 'ssh' ? 'new-host' : null,
+						}),
+					}),
+				};
+				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(request);
+				expect(window.maestro.agents.getConfigOptions).toHaveBeenLastCalledWith(
+					request,
+					'reasoningEffort'
+				);
+				const calls = vi.mocked(window.maestro.agents.getModels).mock.calls.length;
+				await act(async () => {
+					finishOld({ status: 'discovered', options: ['old-catalog'] });
+				});
+				await act(() => vi.advanceTimersByTimeAsync(300));
+				expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(calls);
+				expect(screen.getByTestId('config-option-note-reasoningEffort')).toHaveTextContent(
+					'Effort discovery unavailable'
+				);
+				fireEvent.change(screen.getByDisplayValue('model-b'), { target: { value: 'catalog' } });
+				expect(screen.getByText('new-catalog')).toBeInTheDocument();
+				expect(screen.queryByText('old-catalog')).not.toBeInTheDocument();
+				expect(screen.getByDisplayValue('effort-b')).toBeInTheDocument();
+			}
+		);
+
+		it('gates discovery on the current open configuration and ignores a closed seed', async () => {
+			let finishSeed!: (value: Record<string, unknown>) => void;
+			vi.mocked(window.maestro.agents.getConfig)
+				.mockReturnValueOnce(
+					new Promise((resolve) => {
+						finishSeed = resolve;
+					})
+				)
+				.mockResolvedValue({ model: 'reopened-model', reasoningEffort: 'reopened-effort' });
+			const session = createSession({
+				toolType: 'grok',
+				customModel: undefined,
+				customEffort: undefined,
+			});
+			const view = render(modal(session));
+			await act(() => vi.advanceTimersByTimeAsync(300));
+			expect(window.maestro.agents.getModels).not.toHaveBeenCalled();
+			expect(window.maestro.agents.getConfigOptions).not.toHaveBeenCalled();
+			view.rerender(modal(session, false));
+			view.rerender(modal(session));
+			await act(async () => {});
+			await act(() => vi.advanceTimersByTimeAsync(300));
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+				providerId: 'grok',
+				context: expect.objectContaining({ model: 'reopened-model', effort: 'reopened-effort' }),
+			});
+			const calls = vi.mocked(window.maestro.agents.getModels).mock.calls.length;
+			await act(async () => {
+				finishSeed({ model: 'closed-model', reasoningEffort: 'closed-effort' });
+			});
+			await act(() => vi.advanceTimersByTimeAsync(300));
+			expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(calls);
+			expect(screen.getByDisplayValue('reopened-model')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('reopened-effort')).toBeInTheDocument();
+			expect(screen.queryByDisplayValue('closed-model')).not.toBeInTheDocument();
+		});
+
+		it.each(['close', 'provider', 'remote', 'missing-id'])(
+			'discards delayed model, effort and refresh results after %s changes the draft owner',
+			async (change) => {
+				let finishOld!: (value: AgentDiscoveryResult) => void;
+				const pending = new Promise<AgentDiscoveryResult>((resolve) => {
+					finishOld = resolve;
+				});
+				window.maestro.agents.getModels = vi
+					.fn()
+					.mockReturnValueOnce(pending)
+					.mockReturnValueOnce(pending)
+					.mockImplementation((request) =>
+						Promise.resolve(
+							typeof request === 'string'
+								? ['legacy-model']
+								: { status: 'unavailable', options: [] }
+						)
+					);
+				window.maestro.agents.getConfigOptions = vi
+					.fn()
+					.mockReturnValueOnce(pending)
+					.mockReturnValueOnce(pending)
+					.mockImplementation((request) =>
+						Promise.resolve(
+							typeof request === 'string'
+								? ['legacy-effort']
+								: { status: 'unavailable', options: [] }
+						)
+					);
+				vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+					success: true,
+					configs: [
+						{
+							id: 'new-host',
+							name: 'New host',
+							host: 'new.example.test',
+							privateKeyPath: '/keys/synthetic',
+							port: 22,
+							username: 'test',
+							enabled: true,
+						},
+					],
+				});
+				const session = createSession({
+					toolType: 'grok',
+					customModel: 'stored-model',
+					customEffort: 'stored-effort',
+				});
+				const view = render(modal(session));
+				await act(async () => {});
+				await act(() => vi.advanceTimersByTimeAsync(300));
+				fireEvent.click(screen.getByTitle('Refresh available models'));
+				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(
+					expect.objectContaining({ forceRefresh: true })
+				);
+				if (change === 'close') {
+					view.rerender(modal(session, false));
+				} else if (change === 'provider') {
+					vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+						{
+							...getAgentDefinition('claude-code')!,
+							capabilities: getAgentCapabilities('claude-code'),
+							available: true,
+						} as AgentConfig,
+					]);
+					fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+					// Grok -> Claude Code is a declared (unverified) carry-over direction.
+					fireEvent.click(screen.getByRole('option', { name: 'Claude Code Carry Over' }));
+				} else {
+					fireEvent.change(screen.getByDisplayValue('Local Execution'), {
+						target: { value: change === 'remote' ? 'new-host' : '' },
+					});
+				}
+				await act(async () => {});
+				await act(() => vi.advanceTimersByTimeAsync(300));
+				if (change === 'provider') {
+					expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith('claude-code');
+					expect(window.maestro.agents.getConfigOptions).toHaveBeenCalledWith(
+						'claude-code',
+						'effort'
+					);
+				} else if (change !== 'close') {
+					expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+						providerId: 'grok',
+						context: expect.objectContaining({
+							sessionSshRemoteConfig: expect.objectContaining({
+								enabled: true,
+								remoteId: change === 'remote' ? 'new-host' : '',
+							}),
+						}),
+					});
+				}
+				const calls = vi.mocked(window.maestro.agents.getModels).mock.calls.length;
+				await act(async () => {
+					finishOld({ status: 'discovered', options: ['obsolete-catalog'] });
+				});
+				await act(() => vi.advanceTimersByTimeAsync(300));
+				expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(calls);
+				if (change === 'close') {
+					expect(screen.queryByText('Save Changes')).not.toBeInTheDocument();
+					view.rerender(modal(session));
+					await act(async () => {});
+					await act(() => vi.advanceTimersByTimeAsync(300));
+				}
+				if (change === 'provider') {
+					expect(screen.getByRole('button', { name: 'Agent Provider' })).toHaveTextContent(
+						'Claude Code'
+					);
+					expect(screen.queryByTestId('config-option-note-model')).not.toBeInTheDocument();
+					fireEvent.change(screen.getByDisplayValue('claude-sonnet'), {
+						target: { value: 'model' },
+					});
+					expect(screen.getByText('legacy-model')).toBeInTheDocument();
+				} else {
+					expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
+					expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
+					expect(screen.getByTestId('config-option-note-model')).toHaveTextContent('unavailable');
+					expect(screen.getByTestId('config-option-note-reasoningEffort')).toHaveTextContent(
+						'unavailable'
+					);
+				}
+				expect(screen.queryByText('obsolete-catalog')).not.toBeInTheDocument();
+			}
+		);
+
+		it.each([null, ''])(
+			'preserves an enabled unresolved SSH ID %j through discovery and save',
+			async (remoteId) => {
+				const sessionSshRemoteConfig = {
+					enabled: true,
+					remoteId,
+					syncHistory: true,
+					shareHistoryToProjectDir: true,
+				};
+				render(modal(createSession({ toolType: 'grok', sessionSshRemoteConfig })));
+				await act(async () => {});
+				await act(() => vi.advanceTimersByTimeAsync(300));
+				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+					providerId: 'grok',
+					context: expect.objectContaining({
+						sessionSshRemoteConfig: expect.objectContaining(sessionSshRemoteConfig),
+					}),
+				});
+				fireEvent.click(screen.getByText('Save Changes'));
+				expect(onSave.mock.calls[0][11]).toEqual({
+					...sessionSshRemoteConfig,
+					workingDirOverride: '/home/user/project',
+				});
+				expect(onSave.mock.calls[0][20]).toBeUndefined();
+				await act(async () => {});
+				onSave.mockClear();
+				vi.mocked(window.maestro.fs.stat).mockClear();
+				vi.mocked(window.maestro.dialog.selectFolder).mockClear();
+				fireEvent.change(screen.getByDisplayValue('/home/user/project'), {
+					target: { value: '/remote/changed' },
+				});
+				await act(() => vi.advanceTimersByTimeAsync(600));
+				expect(window.maestro.fs.stat).not.toHaveBeenCalled();
+				const browse = screen.getByRole('button', { name: 'Browse folders' });
+				expect(browse).toBeDisabled();
+				fireEvent.click(browse);
+				expect(window.maestro.dialog.selectFolder).not.toHaveBeenCalled();
+				fireEvent.click(screen.getByText('Save Changes'));
+				expect(onSave).not.toHaveBeenCalled();
+			}
+		);
 	});
 
 	// Effort is per-session (like model), but the panel used to render it straight

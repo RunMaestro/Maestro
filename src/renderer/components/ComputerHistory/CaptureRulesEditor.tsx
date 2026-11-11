@@ -27,6 +27,7 @@ import { MiniBadge } from '../ui/MiniBadge';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { notifyToast } from '../../stores/notificationStore';
 import { formatDurationCompact } from '../../../shared/duration';
+import { isImeComposing } from '../../utils/ime';
 import { appRuleMatches } from '../../../shared/computer-history/rules';
 import type { AppActivity } from '../../../shared/computer-history/reader';
 import { BUILT_IN_EXCLUSION_CATEGORIES } from '../../../shared/computer-history/exclusions';
@@ -376,7 +377,7 @@ export function CaptureRulesEditor({
 						value={manualApp}
 						onChange={(e) => setManualApp(e.target.value)}
 						onKeyDown={(e) => {
-							if (e.key === 'Enter') addManualApp();
+							if (e.key === 'Enter' && !isImeComposing(e)) addManualApp();
 						}}
 						placeholder={
 							mode === 'include'
@@ -474,7 +475,7 @@ export function CaptureRulesEditor({
 						value={domainDraft}
 						onChange={(e) => setDomainDraft(e.target.value)}
 						onKeyDown={(e) => {
-							if (e.key === 'Enter') addDomain();
+							if (e.key === 'Enter' && !isImeComposing(e)) addDomain();
 						}}
 						placeholder="bank.example.com"
 						className="flex-1 px-2 py-1 rounded border text-sm outline-none"

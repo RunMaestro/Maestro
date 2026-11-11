@@ -137,10 +137,10 @@ describe('federation_command handler', () => {
 		});
 	});
 
-	it('answers the feature-off message while no service runs', async () => {
+	it('answers the not-running message while no service runs', async () => {
 		running.on = false;
 		const reply = await send(client(true), { action: 'peers' });
 		expect(reply).toMatchObject({ success: false });
-		expect(String(reply.error)).toContain('maestro-cli encore enable federation');
+		expect(String(reply.error)).toContain('Federation is not running yet');
 	});
 });

@@ -406,6 +406,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'includes',
 	},
 	{
+		id: '_autorun-delegation',
+		filename: '_autorun-delegation.md',
+		description:
+			'How an Auto Run task hands work to other agents and gets the result back (both modes)',
+		category: 'includes',
+	},
+	{
 		id: '_wizard-rich-replies',
 		filename: '_wizard-rich-replies.md',
 		description: 'Tells a wizard to draw mockups and diagrams inside its JSON `message`',

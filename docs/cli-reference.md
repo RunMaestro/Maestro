@@ -264,12 +264,12 @@ List all session groups
 
 List all agents
 
-| Option             | Description                                                                   | Default |
-| ------------------ | ----------------------------------------------------------------------------- | ------- |
-| `-g, --group <id>` | Filter by group ID                                                            | -       |
-| `--peer <name>`    | List the agents on one Federation peer (an SSH remote's name)                 | -       |
-| `--all-peers`      | List local agents, then the agents on every SSH remote opted in to Federation | -       |
-| `--json`           | Output as JSON lines (for scripting)                                          | -       |
+| Option             | Description                                                                        | Default |
+| ------------------ | ---------------------------------------------------------------------------------- | ------- |
+| `-g, --group <id>` | Filter by group ID                                                                 | -       |
+| `--peer <name>`    | List the agents on one Federation peer (an SSH remote's name)                      | -       |
+| `--all-peers`      | List local agents, then the agents on every SSH remote that runs a Federation host | -       |
+| `--json`           | Output as JSON lines (for scripting)                                               | -       |
 
 ## `maestro-cli list playbooks`
 
@@ -410,20 +410,20 @@ Remove playbooks for deleted sessions
 
 Send a message to an agent and get a JSON response
 
-| Option                             | Description                                                                                                                                             | Default |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `-s, --session <id>`               | Resume an existing agent session (for multi-turn conversations)                                                                                         | -       |
-| `-r, --read-only`                  | Run in read-only/plan mode (agent cannot modify files)                                                                                                  | -       |
-| `-t, --tab`                        | Open/focus the session tab in Maestro desktop                                                                                                           | -       |
-| `--require-plugin-tools`           | Fail if a desktop-backed run with plugin tools is unavailable                                                                                           | -       |
-| `--require-tool-receipt <tool-id>` | Require a host-observed delivery receipt from this plugin tool ID                                                                                       | -       |
-| `--no-system-prompt`               | Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app. | -       |
-| `--no-history`                     | Do not write a History entry for this turn (written by default, desktop app running or not)                                                             | -       |
-| `--no-synopsis`                    | Skip the synopsis turn; the History entry carries the response instead                                                                                  | -       |
+| Option                             | Description                                                                                                                                                                                                                  | Default |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-s, --session <id>`               | Resume a PROVIDER session id (the sessionId a previous send returned, or one from `list sessions`), not a Maestro tab id. Runs headless beside the desktop; to deliver into a live tab use `dispatch --tab <tab-id> --queue` | -       |
+| `-r, --read-only`                  | Run in read-only/plan mode (agent cannot modify files)                                                                                                                                                                       | -       |
+| `-t, --tab`                        | Open/focus the session tab in Maestro desktop                                                                                                                                                                                | -       |
+| `--require-plugin-tools`           | Fail if a desktop-backed run with plugin tools is unavailable                                                                                                                                                                | -       |
+| `--require-tool-receipt <tool-id>` | Require a host-observed delivery receipt from this plugin tool ID                                                                                                                                                            | -       |
+| `--no-system-prompt`               | Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app.                                                                      | -       |
+| `--no-history`                     | Do not write a History entry for this turn (written by default, desktop app running or not)                                                                                                                                  | -       |
+| `--no-synopsis`                    | Skip the synopsis turn; the History entry carries the response instead                                                                                                                                                       | -       |
 
 ## `maestro-cli dispatch <agent-id> <message>`
 
-Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID
+Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID. Inside an Auto Run task, a dispatch that names no tab goes to a new hidden tab, and the run waits for it and hands its result to the next turn (autoRunTracked in the reply).
 
 | Option                            | Description                                                                                                                                                                                                                                                                                                                                                                                    | Default |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
@@ -441,7 +441,7 @@ Dispatch a prompt to an agent in the Maestro desktop app and return its tab/sess
 | `--notify-on-complete <agent-id>` | Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.                                                                                                                                                    | -       |
 | `--callback-tab <id>`             | Specific tab of the --notify-on-complete agent to wake (default: the calling tab when an agent notifies itself, else a new tab)                                                                                                                                                                                                                                                                | -       |
 | `--callback-prompt <text>`        | Override the callback prompt body. \{\{DISPATCH_STATUS\}\}, \{\{DISPATCH_TAB_ID\}\}, \{\{DISPATCH_TARGET_ID\}\}, \{\{DISPATCH_OUTPUT\}\}, \{\{DISPATCH_DURATION\}\}, \{\{DISPATCH_TASKS_COMPLETED\}\}, \{\{DISPATCH_TASKS_TOTAL\}\}, \{\{DISPATCH_PROMPT\}\} and \{\{DISPATCH_CALLBACK_ID\}\} are substituted.                                                                                 | -       |
-| `--callback-timeout <seconds>`    | Give up and fire a timeout callback after this long (default 3600, max 86400)                                                                                                                                                                                                                                                                                                                  | -       |
+| `--callback-timeout <seconds>`    | Give up and fire a timeout callback after this long (default 3600, max 86400). Inside an Auto Run task it also bounds how long the run waits for this dispatch                                                                                                                                                                                                                                 | -       |
 
 ## `maestro-cli ask <agent-id> <question>`
 
@@ -682,9 +682,13 @@ Inspect open desktop tabs and their conversation history
 
 List open desktop AI tabs and their tab/session IDs
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                                                                            | Default |
+| ------------------ | ------------------------------------------------------------------------------------------------------ | ------- |
+| `--include-hidden` | Also list hidden tabs (consults) the tab bar does not show                                             | -       |
+| `--hidden`         | List only hidden tabs (consults and other tabs the tab bar does not show)                              | -       |
+| `--all`            | List every tab, visible, hidden, and orphaned (no tab-strip slot), with a visibility field             | -       |
+| `--type <kind>`    | Which tabs: ai (default), file, browser, terminal, or all. Non-AI tabs are listed under "tabs" in JSON | `ai`    |
+| `--json`           | Output as JSON (for scripting)                                                                         | -       |
 
 ## `maestro-cli session show <tab-id>`
 
@@ -794,6 +798,14 @@ Stop a group chat's moderator and participants
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat add <chat> <agent>`
+
+Add an agent (ID, ID prefix, or name) to a group chat without an @mention; linked by ID
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli group-chat archive <chat>`
 
 Archive a group chat (stops its moderator and participants); --restore brings it back
@@ -807,24 +819,24 @@ Archive a group chat (stops its moderator and participants); --restore brings it
 
 Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)
 
-| Option             | Description                                                                                   | Default |
-| ------------------ | --------------------------------------------------------------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)                            | -       |
-| `--background`     | Open the preview tab without changing anything currently rendered, on any agent               | -       |
-| `--focus`          | Switch to the file after opening it (default)                                                 | -       |
-| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                            | -       |
-| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback | -       |
-| `--json`           | Output as JSON (for scripting)                                                                | -       |
+| Option             | Description                                                                                               | Default |
+| ------------------ | --------------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent (defaults to the agent owning this shell or terminal tab, else the file path's owning agent) | -       |
+| `--background`     | Open the preview tab without changing anything currently rendered, on any agent                           | -       |
+| `--focus`          | Switch to the file after opening it (default)                                                             | -       |
+| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                                        | -       |
+| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback             | -       |
+| `--json`           | Output as JSON (for scripting)                                                                            | -       |
 
 ## `maestro-cli open-graph [paths...]`
 
 Open the Document Graph over specific markdown files or a directory
 
-| Option             | Description                                                      | Default |
-| ------------------ | ---------------------------------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by path's owning agent)    | -       |
-| `--focus <path>`   | Center the graph on this document (default: the most-linked one) | -       |
-| `--json`           | Output as JSON (for scripting)                                   | -       |
+| Option             | Description                                                                                          | Default |
+| ------------------ | ---------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent (defaults to the agent owning this shell or terminal tab, else the path's owning agent) | -       |
+| `--focus <path>`   | Center the graph on this document (default: the most-linked one)                                     | -       |
+| `--json`           | Output as JSON (for scripting)                                                                       | -       |
 
 ## `maestro-cli open-browser <url>`
 
@@ -1181,47 +1193,49 @@ Show recent Cue runs, newest first
 
 Create a scheduled task (or --list / --cancel / --reschedule / --pause)
 
-| Option                          | Description                                                                                                                         | Default |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--in <duration>`               | One-shot: fire after a relative delay (e.g. 30s, 20m, 2h, 1d)                                                                       | -       |
-| `--at <timestamp>`              | One-shot: fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local)                                                                  | -       |
-| `--daily-at <times>`            | Repeating: comma-separated HH:MM times (e.g. 09:00,17:30)                                                                           | -       |
-| `--days <days>`                 | Limit --daily-at to these days (e.g. mon,tue,wed,thu,fri)                                                                           | -       |
-| `--every <duration>`            | Repeating: fire on an interval (e.g. 30m, 2h, 1d)                                                                                   | -       |
-| `--list`                        | List scheduled tasks across agents                                                                                                  | -       |
-| `--kind <kind>`                 | Filter --list by kind: once, daily, interval, all (default: all)                                                                    | -       |
-| `--cancel <name>`               | Cancel a scheduled task by name                                                                                                     | -       |
-| `--reschedule <name>`           | Change when an existing task fires (pass the timing flag too)                                                                       | -       |
-| `--pause <name>`                | Disable a task without deleting it                                                                                                  | -       |
-| `--resume <name>`               | Re-enable a paused task                                                                                                             | -       |
-| `-a, --agent <id-or-name>`      | Target agent (required when creating; scopes other modes)                                                                           | -       |
-| `-p, --prompt <text>`           | Prompt to send when the task fires. With --auto-run: extra instructions for the run                                                 | -       |
-| `--auto-run <documents...>`     | Launch an Auto Run of these .md documents (inside the agent's Auto Run folder) instead of sending a prompt. Kept on a failed launch | -       |
-| `--reset-on-completion`         | With --auto-run: uncheck every task when the run finishes                                                                           | -       |
-| `--loop`                        | With --auto-run: re-run the documents once every task is checked off                                                                | -       |
-| `--max-loops <n>`               | With --auto-run: loop ceiling (implies --loop)                                                                                      | -       |
-| `--per-document`                | With --auto-run: one agent turn per document instead of one per task                                                                | -       |
-| `--ignore-model-hints`          | With --auto-run: ignore the documents' MAESTRO:MODEL hints                                                                          | -       |
-| `--no-auto-resume`              | With --auto-run: stay paused after an agent error                                                                                   | -       |
-| `--auto-resume-after <minutes>` | With --auto-run: minutes between auto-resume attempts                                                                               | -       |
-| `--max-auto-resumes <n>`        | With --auto-run: auto-resume attempt ceiling                                                                                        | -       |
-| `--worktree-branch <name>`      | With --auto-run: create a worktree on this branch when the run fires, and run there                                                 | -       |
-| `--worktree-agent <id-or-name>` | With --auto-run: run in this already-open worktree agent                                                                            | -       |
-| `--worktree-path <path>`        | With --auto-run: run in the worktree already on disk at this path                                                                   | -       |
-| `--base-branch <ref>`           | With a worktree flag: ref a new branch is cut from, and the pull request target                                                     | -       |
-| `--create-pr`                   | With a worktree flag: open a pull request when the run finishes                                                                     | -       |
-| `--notify`                      | Show a toast notification when the task fires                                                                                       | -       |
-| `--sticky`                      | Make the notify toast sticky (requires --notify)                                                                                    | -       |
-| `-m, --message <text>`          | Body for the notify toast (defaults to label/prompt)                                                                                | -       |
-| `-n, --name <name>`             | Custom subscription name (auto-generated when omitted)                                                                              | -       |
-| `-l, --label <text>`            | Human-readable label (defaults to truncated prompt)                                                                                 | -       |
-| `--pipeline <name>`             | Pipeline name (default: Tasks)                                                                                                      | -       |
-| `--grace-minutes <n>`           | Override the default 360-minute grace window                                                                                        | -       |
-| `--tier <level>`                | Model tier for the prompt run: low, medium, high (mapped per provider)                                                              | -       |
-| `--model <id>`                  | Exact model id for the prompt run (instead of --tier). With --auto-run: model for this run only                                     | -       |
-| `--effort <level>`              | Effort for the prompt run: low, medium, high (mapped per provider). With --auto-run: reasoning effort for this run only             | -       |
-| `--keep-on-failure`             | Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)                               | -       |
-| `--json`                        | Output as JSON (for scripting)                                                                                                      | -       |
+| Option                          | Description                                                                                                                                                                  | Default |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--in <duration>`               | One-shot: fire after a relative delay (e.g. 30s, 20m, 2h, 1d)                                                                                                                | -       |
+| `--at <timestamp>`              | One-shot: fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local)                                                                                                           | -       |
+| `--daily-at <times>`            | Repeating: comma-separated HH:MM times (e.g. 09:00,17:30)                                                                                                                    | -       |
+| `--days <days>`                 | Limit --daily-at to these days (e.g. mon,tue,wed,thu,fri)                                                                                                                    | -       |
+| `--every <duration>`            | Repeating: fire on an interval (e.g. 30m, 2h, 1d)                                                                                                                            | -       |
+| `--list`                        | List scheduled tasks across agents                                                                                                                                           | -       |
+| `--kind <kind>`                 | Filter --list by kind: once, daily, interval, all (default: all)                                                                                                             | -       |
+| `--cancel <name>`               | Cancel a scheduled task by name                                                                                                                                              | -       |
+| `--reschedule <name>`           | Change when an existing task fires (pass the timing flag too)                                                                                                                | -       |
+| `--pause <name>`                | Disable a task without deleting it                                                                                                                                           | -       |
+| `--resume <name>`               | Re-enable a paused task                                                                                                                                                      | -       |
+| `-a, --agent <id-or-name>`      | Target agent (required when creating; scopes other modes)                                                                                                                    | -       |
+| `-p, --prompt <text>`           | Prompt to send when the task fires. With --auto-run: extra instructions for the run                                                                                          | -       |
+| `--tab <tab-id>`                | Deliver the prompt into this existing AI tab of --agent (waits behind a busy turn, marks the tab unread, never moves the view; a closed tab falls back to a new tab + toast) | -       |
+| `--here`                        | Like --tab, for the AI tab this command runs from (an agent scheduling its own follow-up); --agent defaults to that agent                                                    | -       |
+| `--auto-run <documents...>`     | Launch an Auto Run of these .md documents (inside the agent's Auto Run folder) instead of sending a prompt. Kept on a failed launch                                          | -       |
+| `--reset-on-completion`         | With --auto-run: uncheck every task when the run finishes                                                                                                                    | -       |
+| `--loop`                        | With --auto-run: re-run the documents once every task is checked off                                                                                                         | -       |
+| `--max-loops <n>`               | With --auto-run: loop ceiling (implies --loop)                                                                                                                               | -       |
+| `--per-document`                | With --auto-run: one agent turn per document instead of one per task                                                                                                         | -       |
+| `--ignore-model-hints`          | With --auto-run: ignore the documents' MAESTRO:MODEL hints                                                                                                                   | -       |
+| `--no-auto-resume`              | With --auto-run: stay paused after an agent error                                                                                                                            | -       |
+| `--auto-resume-after <minutes>` | With --auto-run: minutes between auto-resume attempts                                                                                                                        | -       |
+| `--max-auto-resumes <n>`        | With --auto-run: auto-resume attempt ceiling                                                                                                                                 | -       |
+| `--worktree-branch <name>`      | With --auto-run: create a worktree on this branch when the run fires, and run there                                                                                          | -       |
+| `--worktree-agent <id-or-name>` | With --auto-run: run in this already-open worktree agent                                                                                                                     | -       |
+| `--worktree-path <path>`        | With --auto-run: run in the worktree already on disk at this path                                                                                                            | -       |
+| `--base-branch <ref>`           | With a worktree flag: ref a new branch is cut from, and the pull request target                                                                                              | -       |
+| `--create-pr`                   | With a worktree flag: open a pull request when the run finishes                                                                                                              | -       |
+| `--notify`                      | Show a toast notification when the task fires                                                                                                                                | -       |
+| `--sticky`                      | Make the notify toast sticky (requires --notify)                                                                                                                             | -       |
+| `-m, --message <text>`          | Body for the notify toast (defaults to label/prompt)                                                                                                                         | -       |
+| `-n, --name <name>`             | Custom subscription name (auto-generated when omitted)                                                                                                                       | -       |
+| `-l, --label <text>`            | Human-readable label (defaults to truncated prompt)                                                                                                                          | -       |
+| `--pipeline <name>`             | Pipeline name (default: Tasks)                                                                                                                                               | -       |
+| `--grace-minutes <n>`           | Override the default 360-minute grace window                                                                                                                                 | -       |
+| `--tier <level>`                | Model tier for the prompt run: low, medium, high (mapped per provider)                                                                                                       | -       |
+| `--model <id>`                  | Exact model id for the prompt run (instead of --tier). With --auto-run: model for this run only                                                                              | -       |
+| `--effort <level>`              | Effort for the prompt run: low, medium, high (mapped per provider). With --auto-run: reasoning effort for this run only                                                      | -       |
+| `--keep-on-failure`             | Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)                                                                        | -       |
+| `--json`                        | Output as JSON (for scripting)                                                                                                                                               | -       |
 
 ## `maestro-cli cue pipeline`
 
@@ -1962,7 +1976,7 @@ Stop the host (refuses while a turn, Auto Run or Cue run is in flight, unless --
 
 ## `maestro-cli remote-host`
 
-Check and start the maestro-cli host on an SSH remote that is opted in to Federation
+Install, check, and start the maestro-cli host on an SSH remote (Federation)
 
 ## `maestro-cli remote-host status <ssh-remote>`
 
@@ -1972,6 +1986,18 @@ Report whether Maestro is installed on the remote, whether its host runs, and th
 | --------------------- | ------------------------------------------------------------ | ------- |
 | `--timeout <seconds>` | Give up on the SSH call after this many seconds (default 60) | -       |
 | `--json`              | Output as JSON (for scripting)                               | -       |
+
+## `maestro-cli remote-host install <ssh-remote>`
+
+Copy this maestro-cli to the remote (with Node.js and SQLite for the remote's platform), or upgrade an older one
+
+| Option                | Description                                                         | Default |
+| --------------------- | ------------------------------------------------------------------- | ------- |
+| `--start`             | Start the host on the remote once the CLI is in place               | -       |
+| `--force`             | Install even over a maestro-cli that Maestro did not install there  | -       |
+| `--restart`           | Replace a running host on an older version: stop it, upgrade, start | -       |
+| `--timeout <seconds>` | Give up on the install after this many seconds (default 600)        | -       |
+| `--json`              | Output as JSON (for scripting)                                      | -       |
 
 ## `maestro-cli remote-host start <ssh-remote>`
 
@@ -2029,27 +2055,27 @@ Print the full command reference (Markdown, or --format json)
 
 Create a new agent in the Maestro desktop app
 
-| Option                            | Description                                                                                                 | Default         |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------- |
-| `-d, --cwd <path>`                | Working directory for the agent                                                                             | -               |
-| `-t, --type <type>`               | Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, antigravity, gemini-cli, qwen3-coder) | `"claude-code"` |
-| `-g, --group <id>`                | Group ID to assign the agent to                                                                             | -               |
-| `--nudge <message>`               | Nudge message appended to every user message                                                                | -               |
-| `--new-session-message <message>` | Message prefixed to first message in new sessions                                                           | -               |
-| `--custom-path <path>`            | Custom binary path for the agent                                                                            | -               |
-| `--custom-args <args>`            | Custom CLI arguments for the agent                                                                          | -               |
-| `--env <KEY=VALUE>`               | Environment variable (repeatable)                                                                           | `[]`            |
-| `--model <model>`                 | Model override (e.g., sonnet, opus)                                                                         | -               |
-| `--effort <level>`                | Effort/reasoning level override                                                                             | -               |
-| `--context-window <size>`         | Context window size in tokens                                                                               | -               |
-| `--provider-path <path>`          | Custom provider path                                                                                        | -               |
-| `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                          | -               |
-| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                                    | -               |
-| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)            | -               |
-| `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default &lt;cwd>/.maestro/playbooks)           | -               |
-| `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                                        | -               |
-| `--focus`                         | Select the new agent after creating it (default)                                                            | -               |
-| `--json`                          | Output as JSON (for scripting)                                                                              | -               |
+| Option                            | Description                                                                                                                        | Default         |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| `-d, --cwd <path>`                | Working directory for the agent                                                                                                    | -               |
+| `-t, --type <type>`               | Agent type (claude-code, codex, gemini-cli, antigravity, qwen3-coder, opencode, factory-droid, hermes, pi, copilot-cli, omp, grok) | `"claude-code"` |
+| `-g, --group <id>`                | Group ID to assign the agent to                                                                                                    | -               |
+| `--nudge <message>`               | Nudge message appended to every user message                                                                                       | -               |
+| `--new-session-message <message>` | Message prefixed to first message in new sessions                                                                                  | -               |
+| `--custom-path <path>`            | Custom binary path for the agent                                                                                                   | -               |
+| `--custom-args <args>`            | Custom CLI arguments for the agent                                                                                                 | -               |
+| `--env <KEY=VALUE>`               | Environment variable (repeatable)                                                                                                  | `[]`            |
+| `--model <model>`                 | Model override (e.g., sonnet, opus)                                                                                                | -               |
+| `--effort <level>`                | Effort/reasoning level override                                                                                                    | -               |
+| `--context-window <size>`         | Context window size in tokens                                                                                                      | -               |
+| `--provider-path <path>`          | Custom provider path                                                                                                               | -               |
+| `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                                                 | -               |
+| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                                                           | -               |
+| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)                                   | -               |
+| `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default &lt;cwd>/.maestro/playbooks)                                  | -               |
+| `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                                                               | -               |
+| `--focus`                         | Select the new agent after creating it (default)                                                                                   | -               |
+| `--json`                          | Output as JSON (for scripting)                                                                                                     | -               |
 
 ## `maestro-cli duplicate-agent <agent>`
 
@@ -2408,10 +2434,11 @@ Move a tab to a position in its agent's tab bar (0-based, or "first"/"last")
 
 List the closed tabs an agent can reopen, newest first (index 0 = Cmd+Shift+T)
 
-| Option             | Description                                                    | Default |
-| ------------------ | -------------------------------------------------------------- | ------- |
-| `-a, --agent <id>` | Whose closed tabs (default: the agent selected in the desktop) | -       |
-| `--json`           | Output as JSON (for scripting)                                 | -       |
+| Option             | Description                                                                 | Default |
+| ------------------ | --------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose closed tabs (default: the agent selected in the desktop)              | -       |
+| `--all`            | Every agent's closed tabs, grouped by agent (agents with none are left out) | -       |
+| `--json`           | Output as JSON (for scripting)                                              | -       |
 
 ## `maestro-cli tab reopen`
 
@@ -2531,7 +2558,7 @@ Create a new SSH remote configuration
 | `--ssh-option <KEY=VALUE>` | Extra ssh -o option, e.g. ProxyCommand=... or ConnectTimeout=45 (repeatable) | `[]`    |
 | `--ssh-config`             | Use ~/.ssh/config for connection settings (host becomes Host pattern)        | -       |
 | `--disabled`               | Create in disabled state                                                     | -       |
-| `--federation <on\|off>`   | Opt this remote in to Federation (on/off)                                    | -       |
+| `--federation <on\|off>`   | Look for a Maestro host on this remote (on, the default) or never (off)      | -       |
 | `--set-default`            | Set as the global default SSH remote                                         | -       |
 | `--json`                   | Output as JSON (for scripting)                                               | -       |
 
@@ -2548,30 +2575,30 @@ maestro-cli create-ssh-remote "Tunnelled box" \
 
 Update an existing SSH remote configuration
 
-| Option                       | Description                                                     | Default |
-| ---------------------------- | --------------------------------------------------------------- | ------- |
-| `-n, --name <name>`          | Display name                                                    | -       |
-| `-H, --host <host>`          | SSH hostname, IP, or SSH config Host pattern                    | -       |
-| `-p, --port <port>`          | SSH port                                                        | -       |
-| `-u, --username <user>`      | SSH username (empty string clears it)                           | -       |
-| `-k, --key <path>`           | Path to private key file (empty string clears it)               | -       |
-| `--env <KEY=VALUE>`          | Remote environment variable, merged with existing (repeatable)  | `[]`    |
-| `--clear-env`                | Remove all remote environment variables before applying --env   | -       |
-| `--disable-env <KEY>`        | Switch an env var off, keeping its value (repeatable)           | `[]`    |
-| `--enable-env <KEY>`         | Switch a previously disabled env var back on (repeatable)       | `[]`    |
-| `--ssh-option <KEY=VALUE>`   | Extra ssh -o option, merged with existing (repeatable)          | `[]`    |
-| `--clear-ssh-options`        | Remove all extra ssh -o options before applying --ssh-option    | -       |
-| `--disable-ssh-option <KEY>` | Switch an ssh -o option off, keeping its value (repeatable)     | `[]`    |
-| `--enable-ssh-option <KEY>`  | Switch a previously disabled ssh -o option back on (repeatable) | `[]`    |
-| `--ssh-config <bool>`        | Use ~/.ssh/config for connection settings (true/false)          | -       |
-| `--enabled <bool>`           | Enable or disable this remote (true/false)                      | -       |
-| `--federation <on\|off>`     | Opt this remote in to Federation (on/off)                       | -       |
-| `--set-default`              | Set as the global default SSH remote                            | -       |
-| `--json`                     | Output as JSON (for scripting)                                  | -       |
+| Option                       | Description                                                             | Default |
+| ---------------------------- | ----------------------------------------------------------------------- | ------- |
+| `-n, --name <name>`          | Display name                                                            | -       |
+| `-H, --host <host>`          | SSH hostname, IP, or SSH config Host pattern                            | -       |
+| `-p, --port <port>`          | SSH port                                                                | -       |
+| `-u, --username <user>`      | SSH username (empty string clears it)                                   | -       |
+| `-k, --key <path>`           | Path to private key file (empty string clears it)                       | -       |
+| `--env <KEY=VALUE>`          | Remote environment variable, merged with existing (repeatable)          | `[]`    |
+| `--clear-env`                | Remove all remote environment variables before applying --env           | -       |
+| `--disable-env <KEY>`        | Switch an env var off, keeping its value (repeatable)                   | `[]`    |
+| `--enable-env <KEY>`         | Switch a previously disabled env var back on (repeatable)               | `[]`    |
+| `--ssh-option <KEY=VALUE>`   | Extra ssh -o option, merged with existing (repeatable)                  | `[]`    |
+| `--clear-ssh-options`        | Remove all extra ssh -o options before applying --ssh-option            | -       |
+| `--disable-ssh-option <KEY>` | Switch an ssh -o option off, keeping its value (repeatable)             | `[]`    |
+| `--enable-ssh-option <KEY>`  | Switch a previously disabled ssh -o option back on (repeatable)         | `[]`    |
+| `--ssh-config <bool>`        | Use ~/.ssh/config for connection settings (true/false)                  | -       |
+| `--enabled <bool>`           | Enable or disable this remote (true/false)                              | -       |
+| `--federation <on\|off>`     | Look for a Maestro host on this remote (on, the default) or never (off) | -       |
+| `--set-default`              | Set as the global default SSH remote                                    | -       |
+| `--json`                     | Output as JSON (for scripting)                                          | -       |
 
 Only supplied fields change. `--env` and `--ssh-option` merge with existing values; use `--clear-env` or `--clear-ssh-options` to start from empty. `--disable-*` keeps a value but stops passing it to SSH; `--enable-*` restores it. Clearing also removes disabled entries. JSON output includes `sshOptions`, disabled entries, and `resolvedSshOptions` (the effective options including defaults).
 
-`--federation` belongs to the Federation Encore Feature: it is refused while that feature is off. A remote with Federation off is never probed for a `maestro-cli host`. While the feature is on, `list ssh-remotes --json` and `update-ssh-remote --json` report `federation`.
+Federation is opportunistic: every remote takes part unless `--federation off` opts it out, and only the opt-out is stored. A remote with Federation off is never probed for a `maestro-cli host`. `list ssh-remotes --json` and `update-ssh-remote --json` report `federation`.
 
 ## `maestro-cli remove-ssh-remote <remote-id>`
 
@@ -2861,12 +2888,13 @@ Apps used in a time range, by foreground time and event count
 
 List 15-minute digests and 6-hour roll-ups (agent-written, untrusted content)
 
-| Option           | Description                                             | Default |
-| ---------------- | ------------------------------------------------------- | ------- |
-| `--since <time>` | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d) | -       |
-| `--until <time>` | End (default now)                                       | -       |
-| `--kind <kind>`  | 15m \| 6h (default both)                                | -       |
-| `--json`         | Output as JSON (for scripting)                          | -       |
+| Option           | Description                                                            | Default |
+| ---------------- | ---------------------------------------------------------------------- | ------- |
+| `--since <time>` | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)                | -       |
+| `--until <time>` | End (default now)                                                      | -       |
+| `--kind <kind>`  | 15m \| 6h (default both)                                               | -       |
+| `--grep <regex>` | Case-insensitive regex over each digest summary (literal when invalid) | -       |
+| `--json`         | Output as JSON (for scripting)                                         | -       |
 
 ## `maestro-cli computer-history pause`
 
@@ -3026,18 +3054,18 @@ Add a Pianola rule (how the manager agent turns a conversation into a durable ru
 
 ## `maestro-cli pianola learn`
 
-Crawl installed CLI transcripts into a labeled decision corpus (Claude Code + Codex)
+Crawl installed CLI transcripts into a labeled decision corpus (Claude Code, Codex, Grok CLI)
 
-| Option               | Description                                                             | Default |
-| -------------------- | ----------------------------------------------------------------------- | ------- |
-| `--agent <list>`     | Comma list of agents to crawl: claude-code,codex (default both)         | -       |
-| `--limit <n>`        | Max sessions per agent, newest first (default 300)                      | -       |
-| `--since <date>`     | Only crawl transcripts modified on/after this date (e.g. 2026-06-01)    | -       |
-| `--project <substr>` | Only keep decisions from sessions whose path contains this substring    | -       |
-| `--exclude <substr>` | Drop decisions from sessions whose path contains this substring         | -       |
-| `--max-pairs <n>`    | Max decision pairs to print inline when --out is not used (default 200) | -       |
-| `--out <file>`       | Write the full corpus JSON to a file instead of stdout                  | -       |
-| `--json`             | Compact JSON output (for scripting)                                     | -       |
+| Option               | Description                                                                         | Default |
+| -------------------- | ----------------------------------------------------------------------------------- | ------- |
+| `--agent <list>`     | Comma list of agents to crawl: claude-code, codex, grok (default claude-code,codex) | -       |
+| `--limit <n>`        | Max sessions per agent, newest first (default 300)                                  | -       |
+| `--since <date>`     | Only crawl transcripts modified on/after this date (e.g. 2026-06-01)                | -       |
+| `--project <substr>` | Only keep decisions from sessions whose path contains this substring                | -       |
+| `--exclude <substr>` | Drop decisions from sessions whose path contains this substring                     | -       |
+| `--max-pairs <n>`    | Max decision pairs to print inline when --out is not used (default 200)             | -       |
+| `--out <file>`       | Write the full corpus JSON to a file instead of stdout                              | -       |
+| `--json`             | Compact JSON output (for scripting)                                                 | -       |
 
 ## `maestro-cli pianola profile`
 

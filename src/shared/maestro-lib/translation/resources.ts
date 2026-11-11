@@ -27,6 +27,58 @@ async function resolveResourceRoot(root: string): Promise<string> {
 	}
 }
 
+/**
+ * A Grok subagent definition is never carried: Grok's agent loader and its
+ * frontmatter schema are not in the pinned source (only the user guide names
+ * `.grok/agents/`), so a copied file is not a discoverable agent. Blocking when
+ * the user selected it, a warning when it merely sits in the project.
+ */
+export function grokSubagentUnpinned(
+	severity: TranslationLimitation['severity'],
+	resource: string,
+	artifactId?: string
+): TranslationLimitation {
+	return {
+		code: 'subagent-discovery-unpinned',
+		severity,
+		...(artifactId && { artifactId }),
+		message: `${resource}: Grok's subagent definition format and discovery are not pinned, so it is not carried to or from Grok. The source file stays where it is.`,
+	};
+}
+
+/** Count the `*.md` files under a directory; a missing directory has none. */
+async function countMarkdownFiles(directory: string): Promise<number> {
+	try {
+		return (await fs.readdir(directory, { recursive: true })).filter((name) =>
+			name.toLowerCase().endsWith('.md')
+		).length;
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === 'ENOENT' || code === 'ENOTDIR') return 0;
+		throw error;
+	}
+}
+
+/**
+ * Grok project roots whose loader contract is not pinned. Their files are
+ * named in a limitation and never collected: `.grok/rules` is a pinned scan
+ * root (compat.rs `rules_dirs`) but the rule file semantics are not, and
+ * `.grok/agents` has no pinned loader at all. Nothing is read beyond names.
+ */
+async function unpinnedGrokProjectResources(projectRoot: string): Promise<TranslationLimitation[]> {
+	const limitations: TranslationLimitation[] = [];
+	const rules = await countMarkdownFiles(path.join(projectRoot, '.grok', 'rules'));
+	if (rules > 0)
+		limitations.push({
+			code: 'grok-rules-unsupported',
+			severity: 'warning',
+			message: `${rules} rule file${rules === 1 ? '' : 's'} in .grok/rules ${rules === 1 ? 'is' : 'are'} not carried: Grok's rule loader semantics are not pinned, and no other provider reads that folder. The files stay in the project.`,
+		});
+	const agents = await countMarkdownFiles(path.join(projectRoot, '.grok', 'agents'));
+	if (agents > 0) limitations.push(grokSubagentUnpinned('warning', '.grok/agents'));
+	return limitations;
+}
+
 /** Capture only project knowledge and explicitly selected resources, never whole provider homes. */
 export async function collectTranslationResources(
 	identity: TranslationIdentity,
@@ -52,7 +104,9 @@ export async function collectTranslationResources(
 			scope: 'project' as const,
 			prefix: name,
 		})),
-		...['.claude/skills', '.agents/skills', '.codex/skills'].map((name) => ({
+		// `.grok/skills` is one of Grok's always-on skill roots (pinned compat.rs
+		// `skill_config_dirs`); `.agents/skills` is the other and is already here.
+		...['.claude/skills', '.agents/skills', '.codex/skills', '.grok/skills'].map((name) => ({
 			file: path.join(projectRoot, name),
 			kind: 'skill' as const,
 			scope: 'project' as const,
@@ -65,6 +119,7 @@ export async function collectTranslationResources(
 			prefix: name,
 		})),
 	];
+	if (!managedDirectory) limitations.push(...(await unpinnedGrokProjectResources(projectRoot)));
 	for (const name of ['.claude/agent-memory', '.claude/agent-memory-local'])
 		roots.push({
 			file: path.join(projectRoot, name),
@@ -137,6 +192,10 @@ export async function collectTranslationResources(
 				message:
 					'Select individual instruction, memory, skill, or subagent resources inside the source account or host-approved skill roots. Global summaries and account settings are excluded.',
 			});
+			continue;
+		}
+		if (identity.provider === 'grok' && kind === 'subagent') {
+			limitations.push(grokSubagentUnpinned('block', file));
 			continue;
 		}
 
@@ -299,6 +358,16 @@ export async function collectTranslationResources(
 	return { artifacts, limitations };
 }
 
+/**
+ * Definition metadata ends up in the plan fingerprint, which `canonicalJson`
+ * hashes, so it must hold JSON values only. A TOML datetime parses to a Date
+ * and YAML or TOML `nan` / `inf` to a non-finite number. The round trip writes
+ * a date as its text and a non-finite number as null.
+ */
+function toJsonMetadata(value: unknown): unknown {
+	return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
 /** Translate portable bodies; unsupported execution controls stay in the archive. */
 export function projectResourceDefinition(
 	artifact: TranslationArtifact,
@@ -316,7 +385,10 @@ export function projectResourceDefinition(
 	const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
 	if (frontmatter) {
 		try {
-			const value = yaml.load(frontmatter[1]);
+			// CORE_SCHEMA keeps an unquoted date (`updated: 2025-11-03`) as the
+			// text it was written as. The default schema makes it a Date, which
+			// the plan fingerprint (canonicalJson) refuses (#2018).
+			const value = toJsonMetadata(yaml.load(frontmatter[1], { schema: yaml.CORE_SCHEMA }));
 			if (value && typeof value === 'object' && !Array.isArray(value))
 				metadata = value as Record<string, unknown>;
 		} catch {
@@ -333,7 +405,7 @@ export function projectResourceDefinition(
 		artifact.metadata?.nativeFormat === 'toml'
 	) {
 		try {
-			metadata = parseToml(text);
+			metadata = toJsonMetadata(parseToml(text)) as Record<string, unknown>;
 			body =
 				typeof metadata.developer_instructions === 'string' ? metadata.developer_instructions : '';
 			if (!body)

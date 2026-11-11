@@ -16,6 +16,13 @@ import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
 import type { Theme, LogEntry, Session, AITab } from '../../renderer/types';
 
 import { createMockTheme } from '../helpers/mockTheme';
+import { GrokOutputParser } from '../../shared/maestro-lib/parsers/grok-output-parser';
+import {
+	GROK_SYNTHETIC_LINES_PER_ROUND,
+	GROK_SYNTHETIC_ROUNDS,
+	GROK_SYNTHETIC_SESSION_ID,
+	grokSyntheticStream,
+} from '../helpers/grokSyntheticStream';
 
 // ============================================================================
 // Test Utilities
@@ -688,6 +695,199 @@ describe('ThinkingStreamPerformance', () => {
 			}
 
 			cleanup();
+		});
+	});
+
+	describe('synthetic Grok stream (real parser, frame-batched updates)', () => {
+		/**
+		 * Drives a bounded synthetic Grok turn (src/__tests__/helpers/grokSyntheticStream.ts)
+		 * through the real GrokOutputParser and the frame batcher above, one frame
+		 * per round. Every assertion is a count (frames scheduled, commits, events,
+		 * bytes) over a workload of known size, so none of it depends on how fast
+		 * the machine is.
+		 */
+		const GROK_TAB = 'tab-grok';
+
+		interface GrokStreamHarness {
+			handler: ReturnType<typeof createThinkingChunkHandler>;
+			toolEvents: number;
+			openTools: Set<string>;
+			sessionId: string | null;
+			usage: ReturnType<GrokOutputParser['extractUsage']>;
+			feedRound: (lines: string[]) => void;
+		}
+
+		const createGrokHarness = (
+			onUpdate: (sessionId: string, tabId: string, content: string) => void
+		): GrokStreamHarness => {
+			const parser = new GrokOutputParser();
+			const handler = createThinkingChunkHandler(onUpdate);
+			const harness: GrokStreamHarness = {
+				handler,
+				toolEvents: 0,
+				openTools: new Set(),
+				sessionId: null,
+				usage: null,
+				feedRound: (lines) => {
+					for (const raw of lines) {
+						const event = parser.parseJsonLine(raw.trimEnd());
+						if (!event) continue;
+						if (event.type === 'text' && event.isPartial && event.text) {
+							// Reasoning and answer text go to separate buffer keys,
+							// as the renderer keeps them in separate log entries.
+							handler.handleChunk(event.isReasoning ? 'thinking' : 'answer', GROK_TAB, event.text);
+						} else if (event.type === 'tool_use' && event.toolCallId) {
+							harness.toolEvents++;
+							const status = (event.toolState as { status?: string } | undefined)?.status;
+							if (status === 'running') harness.openTools.add(event.toolCallId);
+							else harness.openTools.delete(event.toolCallId);
+						} else if (event.type === 'result') {
+							harness.sessionId = parser.extractSessionId(event);
+							harness.usage = parser.extractUsage(event);
+						}
+					}
+				},
+			};
+			return harness;
+		};
+
+		const roundsOf = (lines: string[], rounds: number): string[][] =>
+			Array.from({ length: rounds }, (_, i) =>
+				lines.slice(i * GROK_SYNTHETIC_LINES_PER_ROUND, (i + 1) * GROK_SYNTHETIC_LINES_PER_ROUND)
+			);
+
+		const GrokStreamView: React.FC<{
+			subscribe: (push: (key: string, content: string) => void) => void;
+			onCommit: () => void;
+		}> = ({ subscribe, onCommit }) => {
+			const [thinking, setThinking] = React.useState('');
+			const [answer, setAnswer] = React.useState('');
+			React.useEffect(() => {
+				subscribe((key, content) =>
+					key === 'thinking'
+						? setThinking((prev) => prev + content)
+						: setAnswer((prev) => prev + content)
+				);
+			}, [subscribe]);
+			return (
+				<React.Profiler id="grok-stream" onRender={onCommit}>
+					<div data-testid="grok-thinking">{thinking}</div>
+					<div data-testid="grok-answer">{answer}</div>
+				</React.Profiler>
+			);
+		};
+
+		it('commits once per frame however many deltas a frame carries, with stable final text', () => {
+			const stream = grokSyntheticStream(GROK_SYNTHETIC_ROUNDS);
+			let push: (key: string, content: string) => void = () => {};
+			let commits = 0;
+			render(
+				<GrokStreamView
+					subscribe={(fn) => {
+						push = fn;
+					}}
+					onCommit={() => {
+						commits++;
+					}}
+				/>
+			);
+			const commitsAtMount = commits;
+			const harness = createGrokHarness((key, _tab, content) => push(key, content));
+
+			const rounds = roundsOf(stream.lines, stream.rounds);
+			for (const round of rounds) {
+				harness.feedRound(round);
+				act(() => {
+					flushRafCallbacks();
+				});
+				expect(harness.handler.getBufferSize()).toBe(0); // bounded: nothing left buffered
+			}
+			harness.feedRound(stream.lines.slice(rounds.length * GROK_SYNTHETIC_LINES_PER_ROUND));
+
+			// One animation frame per round, though each round carried a thought
+			// delta, a text delta and four tool or usage lines.
+			expect(mockRaf).toHaveBeenCalledTimes(stream.rounds);
+			// One commit per frame: React batches the two state updates a frame
+			// makes, so commits grow with frames, not with deltas.
+			expect(commits - commitsAtMount).toBe(stream.rounds);
+
+			expect(screen.getByTestId('grok-answer').textContent).toBe(stream.answer);
+			expect(screen.getByTestId('grok-thinking').textContent?.length).toBe(stream.thoughtBytes);
+
+			// Every tool badge opened and settled; none is retained.
+			expect(harness.toolEvents).toBe(2 * stream.rounds);
+			expect(harness.openTools.size).toBe(0);
+
+			// Final usage and native identity come from the end event alone.
+			expect(harness.sessionId).toBe(GROK_SYNTHETIC_SESSION_ID);
+			expect(harness.usage).toMatchObject({
+				inputTokens: 100 * stream.rounds,
+				outputTokens: 20 * stream.rounds,
+				cacheReadTokens: 50 * stream.rounds,
+				reasoningTokens: 5 * stream.rounds,
+			});
+
+			harness.handler.cleanup();
+		});
+
+		it('doubling the stream doubles frames and buffered bytes, never squares them', () => {
+			const measure = (rounds: number) => {
+				const stream = grokSyntheticStream(rounds);
+				const updates: string[] = [];
+				const harness = createGrokHarness((_key, _tab, content) => updates.push(content));
+				const rafBefore = (mockRaf as ReturnType<typeof vi.fn>).mock.calls.length;
+				for (const round of roundsOf(stream.lines, stream.rounds)) {
+					harness.feedRound(round);
+					flushRafCallbacks();
+				}
+				harness.handler.cleanup();
+				return {
+					frames: (mockRaf as ReturnType<typeof vi.fn>).mock.calls.length - rafBefore,
+					updates: updates.length,
+					bytes: updates.reduce((sum, chunk) => sum + chunk.length, 0),
+					inputBytes: stream.answer.length + stream.thoughtBytes,
+				};
+			};
+			const small = measure(GROK_SYNTHETIC_ROUNDS / 2);
+			const large = measure(GROK_SYNTHETIC_ROUNDS);
+
+			// Each update carries only that frame's new bytes, so the delivered
+			// total equals the input exactly at both sizes.
+			expect(small.bytes).toBe(small.inputBytes);
+			expect(large.bytes).toBe(large.inputBytes);
+			expect(large.frames).toBe(2 * small.frames);
+			// Two keys (thinking, answer) per frame.
+			expect(large.updates).toBe(2 * large.frames);
+			expect(small.updates).toBe(2 * small.frames);
+		});
+
+		it('cancellation mid-stream drops the pending frame at once and delivers nothing after', () => {
+			const stream = grokSyntheticStream(GROK_SYNTHETIC_ROUNDS, { end: null });
+			const updates: string[] = [];
+			const harness = createGrokHarness((_key, _tab, content) => updates.push(content));
+			const rounds = roundsOf(stream.lines, stream.rounds);
+			const half = stream.rounds / 2;
+
+			for (const round of rounds.slice(0, half)) {
+				harness.feedRound(round);
+				flushRafCallbacks();
+			}
+			const deliveredBeforeStop = updates.length;
+			// The next round arrives, then the user presses Stop before it is drawn.
+			harness.feedRound(rounds[half]);
+			expect(harness.handler.getBufferSize()).toBeGreaterThan(0);
+			harness.handler.cleanup();
+
+			// Responsive: the pending frame is cancelled synchronously, the buffer
+			// is released, and a frame that fires late has nothing to deliver.
+			expect(mockCancelRaf).toHaveBeenCalledTimes(1);
+			expect(harness.handler.getBufferSize()).toBe(0);
+			flushRafCallbacks();
+			expect(updates).toHaveLength(deliveredBeforeStop);
+			expect(deliveredBeforeStop).toBe(2 * half);
+			// No end event was read, so no identity or usage was invented.
+			expect(harness.sessionId).toBeNull();
+			expect(harness.usage).toBeNull();
 		});
 	});
 });

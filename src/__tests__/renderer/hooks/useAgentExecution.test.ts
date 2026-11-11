@@ -5,8 +5,11 @@ import type { Session, AITab, UsageStats, QueuedItem } from '../../../renderer/t
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
-import { observeEffortRejection } from '../../../renderer/services/effortRejection';
-import { resetEffortRejections } from '../../../shared/effortRejection';
+import {
+	isEffortFallbackArmed,
+	observeEffortRejection,
+} from '../../../renderer/services/effortRejection';
+import { getEffortRejection, resetEffortRejections } from '../../../shared/effortRejection';
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -1215,6 +1218,127 @@ describe('useAgentExecution', () => {
 			const outcome = await spawnPromise;
 			expect(outcome.success).toBe(true);
 			expect(outcome.response).toBe('done');
+		});
+
+		it.each([
+			['Auto Run override, equal inherited effort', true, 'LOW', 'low', 1],
+			['Auto Run override, distinct but unqualified fallback', true, 'LOW', 'high', 1],
+			['explicit override', false, 'LOW', 'high', 1],
+			['unknown override provenance', true, 'LOW', undefined, 1],
+			['explicit session effort and zero exit', false, undefined, 'LOW', 0],
+			['provider effort unknown to renderer', true, undefined, undefined, 1],
+		] as const)(
+			'preserves Grok refusal without retry for %s',
+			async (_name, isAutoRun, effortOverride, customEffort, exitCode) => {
+				vi.mocked(window.maestro.agents.get).mockResolvedValue({
+					id: 'grok',
+					command: 'grok',
+					args: [],
+				} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+				const session = createMockSession({
+					toolType: 'grok',
+					customModel: 'grok-test-model',
+					customEffort,
+					customEnvVars: { GROK_HOME: 'synthetic-account' },
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'synthetic-host' },
+				});
+				const unsubscribeError = vi.fn();
+				mockProcess.onAgentError.mockImplementationOnce((handler) => {
+					onAgentErrorHandler = handler;
+					return unsubscribeError;
+				});
+				const { result } = renderExecution(session);
+				const spawnPromise = result.current.spawnAgentForSession(
+					session.id,
+					'Do the task',
+					undefined,
+					{ isAutoRun, effortOverride }
+				);
+				await waitFor(() => expect(mockProcess.spawn).toHaveBeenCalledTimes(1));
+				const first = mockProcess.spawn.mock.calls[0][0];
+				expect(first).toMatchObject({
+					toolType: 'grok',
+					command: 'grok',
+					cwd: session.cwd,
+					sessionCustomModel: session.customModel,
+					sessionCustomEffort: effortOverride ?? customEffort,
+					sessionCustomEnvVars: session.customEnvVars,
+					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					querySource: isAutoRun ? 'auto' : 'user',
+				});
+				// These origins share an API with no hint-provenance or validated-menu
+				// input. Even diagnostic supported values cannot authorize a retry.
+				const nativeError = {
+					agentId: 'grok',
+					message: "--effort/--reasoning-effort: unknown effort level 'LOW'; use one of: high",
+				};
+				expect(isEffortFallbackArmed(first.sessionId)).toBe(false);
+				expect(observeEffortRejection(first.sessionId, nativeError)?.value).toBe('LOW');
+				expect(getEffortRejection('grok', 'low')?.value).toBe('LOW');
+				await act(async () => {
+					onAgentErrorHandler?.('unrelated-process', { message: 'unrelated failure' });
+					onAgentErrorHandler?.(first.sessionId, nativeError);
+					onAgentErrorHandler?.(first.sessionId, { message: 'later generic exit error' });
+					(onExitHandler as (sid: string, code: number) => void)(first.sessionId, exitCode);
+				});
+				expect(await spawnPromise).toMatchObject({
+					success: false,
+					response: '',
+					error: nativeError.message,
+					errorKind: 'process-exit',
+				});
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+				expect(unsubscribeError).toHaveBeenCalledOnce();
+				expect(isEffortFallbackArmed(first.sessionId)).toBe(false);
+			}
+		);
+
+		it('preserves a resumed Grok synopsis refusal without dropping inherited effort', async () => {
+			vi.mocked(window.maestro.agents.get).mockResolvedValue({
+				id: 'grok',
+				command: 'grok',
+				args: [],
+			} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+			const session = createMockSession({ toolType: 'grok' });
+			const config = {
+				customModel: 'grok-test-model',
+				customEffort: 'LOW',
+				customEnvVars: { GROK_HOME: 'synthetic-account' },
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'synthetic-host' },
+			};
+			const { result } = renderExecution(session);
+			const spawnPromise = result.current.spawnBackgroundSynopsis(
+				session.id,
+				session.cwd,
+				'resume-grok',
+				'Summarize session',
+				'grok',
+				config
+			);
+			await waitFor(() => expect(mockProcess.spawn).toHaveBeenCalledTimes(1));
+			const first = mockProcess.spawn.mock.calls[0][0];
+			expect(first).toMatchObject({
+				toolType: 'grok',
+				agentSessionId: 'resume-grok',
+				cwd: session.cwd,
+				sessionCustomModel: config.customModel,
+				sessionCustomEffort: 'LOW',
+				sessionCustomEnvVars: config.customEnvVars,
+				sessionSshRemoteConfig: config.sessionSshRemoteConfig,
+			});
+			expect(isEffortFallbackArmed(first.sessionId)).toBe(false);
+			const nativeError = {
+				agentId: 'grok',
+				message: "--effort/--reasoning-effort: unknown effort level 'LOW'; use one of: high",
+			};
+			observeEffortRejection(first.sessionId, nativeError);
+			await act(async () => {
+				onAgentErrorHandler?.(first.sessionId, nativeError);
+				(onExitHandler as (sid: string, code: number) => void)(first.sessionId, 1);
+			});
+			expect(await spawnPromise).toMatchObject({ success: false, error: nativeError.message });
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			expect(isEffortFallbackArmed(first.sessionId)).toBe(false);
 		});
 
 		it('does not retry a task that sent no effort override', async () => {

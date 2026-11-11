@@ -7,6 +7,7 @@ import { useGroupChatStore } from '../../../stores/groupChatStore';
 
 interface BuildFeatureCommandsArgs {
 	activeSession: Session | undefined;
+	activeGroupChatId?: string | null;
 	/** Resolved active tab type; AI-context commands only apply when this is 'ai'. */
 	activeTabType?: ActiveTabInfo['activeTabType'];
 	canSummarizeActiveTab?: boolean;
@@ -82,6 +83,7 @@ function flash(
 
 export function buildFeatureCommands({
 	activeSession,
+	activeGroupChatId,
 	activeTabType,
 	canSummarizeActiveTab,
 	markdownEditMode,
@@ -206,7 +208,7 @@ export function buildFeatureCommands({
 		});
 	}
 
-	if (activeSession) {
+	if (activeSession && !activeGroupChatId) {
 		// Listed even with an empty queue, and deliberately not hidden: a command a
 		// user goes hunting for by name has to be findable, and the service says
 		// which empty it hit ("Nothing queued to edit" vs "Only commands are

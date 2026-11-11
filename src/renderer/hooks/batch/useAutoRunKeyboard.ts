@@ -1,5 +1,6 @@
 import type { RefObject, MutableRefObject } from 'react';
 import type { MarkdownEditorHandle } from '../../components/FilePreview/markdownEditor';
+import { isImeComposing } from '../../utils/ime';
 
 export interface UseAutoRunKeyboardParams {
 	localContent: string;
@@ -145,7 +146,7 @@ export function useAutoRunKeyboard(params: UseAutoRunKeyboardParams) {
 			return true;
 		}
 
-		if (key === 'Enter' && !e.shiftKey) {
+		if (key === 'Enter' && !e.shiftKey && !isImeComposing(e)) {
 			const cursorPos = editorRef.current?.getCaret() ?? 0;
 			const textBeforeCursor = localContent.substring(0, cursorPos);
 			const textAfterCursor = localContent.substring(cursorPos);

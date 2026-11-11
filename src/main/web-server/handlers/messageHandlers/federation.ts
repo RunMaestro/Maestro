@@ -4,8 +4,8 @@
  *
  * Routed to the ONE `PeerMirrorService` the `federation:*` IPC handlers and the Left Bar read, so
  * `peers` prints what the desktop shows and `reconnect` runs the same reload as the Left Bar's
- * Reconnect. While the Federation Encore Feature is off there is no service and every action is
- * refused with the feature's own message.
+ * Reconnect. Before boot starts the service there is none, and every action is refused with
+ * `FEDERATION_NOT_RUNNING_MESSAGE`.
  *
  * CLI ONLY: the socket must have presented this boot's CLI secret (`client.cli`). `reconnect` dials
  * SSH, and every `federation:` IPC channel is already kept off the web-desktop bridge.
@@ -13,11 +13,11 @@
 
 import { logger } from '../../../utils/logger';
 import { getPeerMirrorService } from '../../../federation';
-import { encoreDisabledMessage } from '../../../../shared/encoreFeatureDefaults';
 import { findMirrorPeer } from '../../../../shared/maestro-lib/client/peer-mirror';
 import {
 	FEDERATION_COMMAND_ACTIONS,
 	FEDERATION_COMMAND_RESULT,
+	FEDERATION_NOT_RUNNING_MESSAGE,
 	type FederationCommandAction,
 	type FederationCommandResult,
 } from '../../../../shared/federationCommands';
@@ -49,7 +49,7 @@ export async function handleFederationCommand(
 
 	const service = getPeerMirrorService();
 	if (!service) {
-		reply({ success: false, error: encoreDisabledMessage('federation') });
+		reply({ success: false, error: FEDERATION_NOT_RUNNING_MESSAGE });
 		return;
 	}
 

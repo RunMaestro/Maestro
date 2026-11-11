@@ -1,3 +1,4 @@
+import type { AgentDiscoveryRequest, AgentDiscoveryResult } from '../../../shared/types';
 import type { ModelsRefreshedPayload } from '../../../shared/agentModelsRefresh';
 import { act, render, renderHook, waitFor } from '@testing-library/react';
 import { createElement, startTransition, Suspense } from 'react';
@@ -58,6 +59,36 @@ describe('useAgentModelEffortOptions', () => {
 		}
 	);
 
+	it('preserves context-bound Grok discovery beside legacy host-scoped discovery', async () => {
+		const context = { kind: 'agent' as const, sessionId: 'owned-agent' };
+		const original = {
+			getModels: window.maestro.agents.getModels,
+			getConfigOptions: window.maestro.agents.getConfigOptions,
+		};
+		const getModels = vi
+			.fn<(request: AgentDiscoveryRequest) => Promise<AgentDiscoveryResult>>()
+			.mockResolvedValue({ status: 'discovered', options: ['owned-grok'] });
+		const getConfigOptions = vi
+			.fn<(request: AgentDiscoveryRequest, key: string) => Promise<AgentDiscoveryResult>>()
+			.mockResolvedValue({ status: 'configured-fallback', options: ['owned-effort'] });
+		Object.assign(window.maestro.agents, { getModels, getConfigOptions });
+		let unmount: (() => void) | undefined;
+		try {
+			const view = renderHook(() => useAgentModelEffortOptions('grok', context));
+			unmount = view.unmount;
+			const { result } = view;
+			await waitFor(() => expect(result.current.loaded).toBe(true));
+			expect(result.current.models).toEqual(['owned-grok']);
+			expect(result.current.efforts).toEqual(['owned-effort']);
+			expect(result.current.modelStatus).toBe('discovered');
+			expect(getModels).toHaveBeenCalledWith({ providerId: 'grok', context });
+			expect(getModels.mock.calls.every(([request]) => typeof request === 'object')).toBe(true);
+		} finally {
+			unmount?.();
+			Object.assign(window.maestro.agents, original);
+		}
+	});
+
 	it('clears a loaded scope when no provider is selected', async () => {
 		const { result, rerender } = renderHook(
 			({ provider }: { provider?: string }) => useAgentModelEffortOptions(provider),
@@ -67,6 +98,8 @@ describe('useAgentModelEffortOptions', () => {
 		rerender({ provider: undefined });
 		expect(result.current).toEqual({
 			models: [],
+			modelStatus: 'unavailable',
+			effortStatus: 'unavailable',
 			efforts: [],
 			defaultModel: '',
 			defaultEffort: '',

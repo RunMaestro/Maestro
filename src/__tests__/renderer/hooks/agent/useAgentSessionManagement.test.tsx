@@ -4,12 +4,16 @@ import {
 	useAgentSessionManagement,
 	isSynopsisRequest,
 } from '../../../../renderer/hooks/agent/useAgentSessionManagement';
-import type { UseAgentSessionManagementDeps } from '../../../../renderer/hooks/agent/useAgentSessionManagement';
+import type {
+	ResumeSessionOptions,
+	UseAgentSessionManagementDeps,
+} from '../../../../renderer/hooks/agent/useAgentSessionManagement';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { createMockAITab } from '../../../helpers/mockTab';
 import { createMockSession } from '../../../helpers/mockSession';
 import { prepareSessionForPersistence } from '../../../../renderer/hooks/utils/useDebouncedPersistence';
 import type { Session } from '../../../../renderer/types';
+import type { NativeSessionBinding } from '../../../../shared/maestro-lib/agents/providerSwap';
 
 const historyAdd = vi.fn().mockResolvedValue(true);
 
@@ -38,7 +42,7 @@ function seedActiveSession(session: Session | null) {
 
 function makeDeps(_activeSession?: Session | null): UseAgentSessionManagementDeps {
 	return {
-		setSessions: vi.fn(),
+		setSessions: vi.fn(useSessionStore.getState().setSessions),
 		setActiveAgentSessionId: vi.fn(),
 		setAgentSessionsOpen: vi.fn(),
 		rightPanelRef: { current: null },
@@ -231,9 +235,7 @@ describe('useAgentSessionManagement - naming a resumed session', () => {
 			);
 		});
 
-		const updater = (deps.setSessions as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
-		expect(typeof updater).toBe('function');
-		return (updater as (prev: Session[]) => Session[])([activeSession])[0].aiTabs;
+		return useSessionStore.getState().sessions[0].aiTabs;
 	}
 
 	it('focuses an already-loaded Relay conversation when Quick Resume supplies an empty message array and the transcript host is offline', async () => {
@@ -365,5 +367,226 @@ describe('useAgentSessionManagement - translated History ownership', () => {
 		expect(resumed).toBe(false);
 		expect(deps.showFlash).toHaveBeenCalledWith(expect.stringContaining('no native mapping'));
 		expect(deps.setSessions).not.toHaveBeenCalled();
+	});
+});
+
+describe('useAgentSessionManagement - scoped Grok commit races', () => {
+	const binding = {
+		version: 1,
+		state: 'bound',
+		provider: 'grok',
+		nativeSessionId: 'native',
+		accountRef: 'account-a',
+		host: { kind: 'local', identity: 'machine-a' },
+		cwd: '/test/project',
+	} satisfies NativeSessionBinding;
+	const retained = createMockAITab({
+		id: 'loaded',
+		agentSessionId: binding.nativeSessionId,
+		nativeSessionBinding: binding,
+		logs: [{ id: 'kept', timestamp: 1, source: 'user', text: 'retained' }],
+		name: 'Current name',
+		inputValue: 'draft',
+		usageStats: {
+			inputTokens: 10,
+			outputTokens: 2,
+			cacheReadInputTokens: 3,
+			cacheCreationInputTokens: 0,
+			totalCostUsd: 1,
+			contextWindow: 200000,
+		},
+	});
+	const receipt = {
+		messages: [{ type: 'user', content: 'native', timestamp: '2026-10-31', uuid: 'native' }],
+		total: 1,
+		hasMore: false,
+		source: { provider: 'grok', status: 'available' },
+		nativeSessionBinding: binding,
+	} satisfies Awaited<ReturnType<typeof window.maestro.agentSessions.read>>;
+
+	beforeEach(() => {
+		seedActiveSession(
+			createMockSession({
+				toolType: 'grok',
+				aiTabs: [retained],
+				activeTabId: 'other',
+				contextUsage: 42,
+			})
+		);
+		window.maestro.agentSessions = {
+			...window.maestro.agentSessions,
+			read: vi.fn().mockResolvedValue(receipt),
+		};
+	});
+
+	function pendingResume(deps = makeDeps()) {
+		let finish!: (value: typeof receipt) => void;
+		vi.mocked(window.maestro.agentSessions.read).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finish = resolve;
+				})
+		);
+		const { result } = renderHook(() => useAgentSessionManagement(deps));
+		const resume = (name?: string, options?: ResumeSessionOptions) =>
+			result.current.handleResumeSession(
+				'native',
+				[],
+				name,
+				false,
+				{ ...retained.usageStats!, inputTokens: 1 },
+				undefined,
+				{ nativeSessionBinding: binding, ...options }
+			);
+		return { deps, resume, finish: () => finish(receipt) };
+	}
+
+	it.each([
+		['selection changed', {}],
+		['owner removed', {}],
+		['provider', { toolType: 'codex' }],
+		['cwd', { cwd: '/changed' }],
+		['project root', { projectRoot: '/changed' }],
+		['remote cwd', { remoteCwd: '/changed' }],
+		['observed SSH', { sshRemoteId: 'remote-b' }],
+		['configured SSH', { sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-b' } }],
+		['account environment', { customEnvVars: { GROK_HOME: '/other-account' } }],
+		['other environment', { customEnvVars: { ROUTE: 'different' } }],
+		['executable', { customPath: '/changed/grok' }],
+		['arguments', { customArgs: '--other' }],
+		['tab removed', { aiTabs: [] }],
+		[
+			'tab rebound',
+			{ aiTabs: [{ ...retained, nativeSessionBinding: { ...binding, accountRef: 'account-b' } }] },
+		],
+	] satisfies [string, Partial<Session>][])(
+		'refuses a pending read after %s changes',
+		async (change, patch) => {
+			const { resume, finish, deps } = pendingResume();
+			const pending = resume();
+			if (change === 'owner removed') useSessionStore.setState({ sessions: [] });
+			else if (change === 'selection changed')
+				useSessionStore.setState({ activeSessionId: 'other' });
+			else
+				useSessionStore
+					.getState()
+					.setSessions((sessions) => sessions.map((session) => ({ ...session, ...patch })));
+			const before = useSessionStore.getState();
+			await act(async () => {
+				finish();
+				expect(await pending).toBe(false);
+			});
+			expect(useSessionStore.getState()).toEqual(before);
+			expect(deps.setActiveAgentSessionId).not.toHaveBeenCalled();
+		}
+	);
+
+	it('keeps the newest request and its committed tab when an older read resolves last', async () => {
+		useSessionStore
+			.getState()
+			.setSessions((sessions) => sessions.map((session) => ({ ...session, aiTabs: [] })));
+		const { resume, finish, deps } = pendingResume();
+		const older = resume('Old');
+		await act(async () => {
+			expect(await resume('New')).toBe(true);
+		});
+		const before = useSessionStore.getState().sessions;
+		await act(async () => {
+			finish();
+			expect(await older).toBe(false);
+		});
+		expect(useSessionStore.getState().sessions).toBe(before);
+		expect(before[0].aiTabs).toEqual([
+			expect.objectContaining({ name: 'New', nativeSessionBinding: binding }),
+		]);
+		expect(deps.setActiveAgentSessionId).toHaveBeenCalledExactlyOnceWith('native');
+	});
+
+	it('focuses a matching tab added during the read without duplicating or replacing metadata', async () => {
+		useSessionStore
+			.getState()
+			.setSessions((sessions) => sessions.map((session) => ({ ...session, aiTabs: [] })));
+		const { resume, finish } = pendingResume();
+		const pending = resume('Old name');
+		useSessionStore
+			.getState()
+			.setSessions((sessions) => sessions.map((session) => ({ ...session, aiTabs: [retained] })));
+		await act(async () => {
+			finish();
+			expect(await pending).toBe(true);
+		});
+		expect(useSessionStore.getState().sessions[0]).toMatchObject({
+			activeTabId: 'loaded',
+			aiTabs: [retained],
+			contextUsage: 42,
+		});
+		expect(useSessionStore.getState().sessions[0].aiTabs).toHaveLength(1);
+	});
+
+	it.each([
+		'inert updater',
+		'owner disappears at commit',
+		'caller rejects updater entry',
+		'caller rejects proposed tab',
+		'subscriber navigates',
+		'subscriber removes owner',
+	])('returns false instead of overwriting newer selection: %s', async (failure) => {
+		let admitted = true;
+		const deps = makeDeps();
+		if (failure === 'inert updater') deps.setSessions = vi.fn();
+		if (failure === 'owner disappears at commit')
+			deps.setSessions = vi.fn((updater) => {
+				useSessionStore.setState({ sessions: [] });
+				useSessionStore.getState().setSessions(updater);
+			});
+		if (failure === 'caller rejects updater entry')
+			deps.setSessions = vi.fn((updater) => {
+				admitted = false;
+				useSessionStore.getState().setSessions(updater);
+			});
+		const unsubscribe = useSessionStore.subscribe((state) => {
+			if (
+				failure.startsWith('subscriber') &&
+				state.sessions[0]?.activeTabId === 'loaded' &&
+				state.activeSessionId !== 'other'
+			)
+				useSessionStore.setState(
+					failure === 'subscriber navigates' ? { activeSessionId: 'other' } : { sessions: [] }
+				);
+		});
+		try {
+			const { resume, finish } = pendingResume(deps);
+			const pending = resume(undefined, {
+				canResume: (next) =>
+					admitted && (failure !== 'caller rejects proposed tab' || next === undefined),
+			});
+			await act(async () => {
+				finish();
+				expect(await pending).toBe(false);
+			});
+			expect(deps.setActiveAgentSessionId).not.toHaveBeenCalled();
+			if (failure === 'subscriber navigates') {
+				expect(useSessionStore.getState().activeSessionId).toBe('other');
+				expect(useSessionStore.getState().sessions[0].aiTabs).toEqual([retained]);
+			} else expect(useSessionStore.getState().sessions[0]?.activeTabId).not.toBe('loaded');
+		} finally {
+			unsubscribe();
+		}
+	});
+
+	it.each(['before read', 'after read'])('honors caller admission %s', async (boundary) => {
+		const { resume, finish, deps } = pendingResume();
+		let admitted = boundary !== 'before read';
+		const pending = resume(undefined, { canResume: () => admitted });
+		admitted = false;
+		await act(async () => {
+			if (boundary === 'after read') finish();
+			expect(await pending).toBe(false);
+		});
+		expect(window.maestro.agentSessions.read).toHaveBeenCalledTimes(
+			boundary === 'before read' ? 0 : 1
+		);
+		expect(deps.setSessions).not.toHaveBeenCalled();
+		expect(deps.setActiveAgentSessionId).not.toHaveBeenCalled();
 	});
 });

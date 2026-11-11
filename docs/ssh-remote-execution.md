@@ -260,9 +260,15 @@ When a session is running via SSH remote, you can easily identify it:
 
 - **REMOTE pill** - Appears in the Left Bar next to the session, indicating it's configured for remote execution
 - **Host name badge** - Displayed in the Main Panel header showing which SSH host the agent is running on (e.g., "PEDTOME")
-- **Agent type indicator** - Shows "claude-code (SSH)" to clarify the execution mode
+- **SSH badge** - An `SSH` badge under the agent's name. Hover it for how an SSH agent differs from a federated one, and what to do to federate it
 - Connection state reflects SSH connectivity
 - Errors are detected and displayed with SSH-specific context
+
+## Keep Working With the Laptop Closed (Federation)
+
+An SSH agent is owned by your local Maestro, so its turns stop when your laptop sleeps or loses the connection. [Federation](./federation) moves the agent onto a Maestro host on the remote instead, and the work keeps going there. It is built in and opportunistic: Maestro checks each SSH remote for a host, one at a time, and mirrors the agents of the ones that run one. A remote without a host stays an ordinary SSH remote.
+
+To federate an SSH agent, right-click it in the Left Bar and choose **Make Federated**. Maestro installs its own `maestro-cli` on the remote (Linux, macOS, or Windows through Git Bash or WSL), starts the host, and moves the agent onto it. To keep a remote out of Federation, switch **Federation** off for it under **Settings > SSH Hosts**.
 
 ## Full Remote Capabilities
 
