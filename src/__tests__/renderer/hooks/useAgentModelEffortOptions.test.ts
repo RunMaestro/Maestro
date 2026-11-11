@@ -21,16 +21,26 @@ describe('useAgentModelEffortOptions', () => {
 		});
 	});
 
-	it('discovers models on the selected host and uses provider defaults', async () => {
-		const { result } = renderHook(() => useAgentModelEffortOptions('codex', 'remote'));
-		await waitFor(() => expect(result.current.loaded).toBe(true));
-		expect(window.maestro.agents.getModels).toHaveBeenCalledWith('codex', false, 'remote');
-		expect(result.current.efforts).toEqual(['low', 'high']);
-		expect(resolveModelEffort(undefined, undefined, result.current)).toEqual({
-			model: 'gpt-model',
-			effort: 'high',
-		});
-	});
+	it.each(['legacy', 'draft'] as const)(
+		'discovers models on the selected %s host and uses provider defaults',
+		async (form) => {
+			const { result } = renderHook(() =>
+				useAgentModelEffortOptions(
+					'codex',
+					form === 'legacy'
+						? 'remote'
+						: { kind: 'draft', cwd: '/owned/worktree', sshRemoteId: 'remote' }
+				)
+			);
+			await waitFor(() => expect(result.current.loaded).toBe(true));
+			expect(window.maestro.agents.getModels).toHaveBeenCalledWith('codex', false, 'remote');
+			expect(result.current.efforts).toEqual(['low', 'high']);
+			expect(resolveModelEffort(undefined, undefined, result.current)).toEqual({
+				model: 'gpt-model',
+				effort: 'high',
+			});
+		}
+	);
 
 	it.each(['provider', 'host'])(
 		'hides previous options and discards late replies on a %s switch',

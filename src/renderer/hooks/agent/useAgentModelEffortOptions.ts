@@ -65,8 +65,13 @@ export function useAgentModelEffortOptions(
 	/** Memoized selected context. Grok never discovers from a provider ID alone. */
 	contextOrSshRemoteId?: AgentDiscoveryRequest['context'] | string
 ): AgentModelEffortOptions {
-	const sshRemoteId = typeof contextOrSshRemoteId === 'string' ? contextOrSshRemoteId : undefined;
 	const context = typeof contextOrSshRemoteId === 'object' ? contextOrSshRemoteId : undefined;
+	const sshRemoteId =
+		typeof contextOrSshRemoteId === 'string'
+			? contextOrSshRemoteId
+			: context && context.kind !== 'agent'
+				? context.sshRemoteId
+				: undefined;
 	const scopedContext = agentId === 'grok' ? context : undefined;
 	const scope = useMemo(
 		() => ({ agentId, sshRemoteId, context: scopedContext }),

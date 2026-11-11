@@ -745,7 +745,7 @@ describe('maestro-cli board', () => {
 		const git = (...args: string[]) =>
 			execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8' });
 		git('init', '--quiet');
-		fs.writeFileSync(path.join(projectRoot, '.gitignore'), 'board.sqlite*\n');
+		fs.writeFileSync(path.join(projectRoot, '.gitignore'), 'board.sqlite*\n.maestro/\n');
 		git('add', '.gitignore');
 		git(
 			'-c',
@@ -757,48 +757,53 @@ describe('maestro-cli board', () => {
 			'-m',
 			'fixture'
 		);
-		const artifact = {
-			worktreePath: projectRoot,
-			branch: git('symbolic-ref', '--short', 'HEAD').trim(),
-			commit: git('rev-parse', 'HEAD').trim(),
-		};
 		const board = createBoard(projectRoot, 'Reviews');
-		const run = {
-			attempt: 1,
-			startedAt: 'start',
-			endedAt: 'end',
-			outcome: 'done' as const,
-			summary: 'reported tests passed',
-			artifact,
-		};
-		seedCard(
-			db,
+		// This OWN fixture starts with a direct-scheduling collection, not a forged approval.
+		db.prepare(
+			"UPDATE collections SET payload_json=json_set(payload_json, '$.defaultStartMode', 'direct') WHERE collection_key=?"
+		).run(board.storage!.collectionKey);
+		const sessions = ['agent-1', 'agent-9'].map((id) => ({
+			id,
+			name: id === 'agent-1' ? 'Alpha' : 'Reviewer',
+			toolType: 'claude-code',
+			projectRoot,
+			cwd: projectRoot,
+		}));
+		mockReadSessions.mockReturnValue(sessions);
+		mockGetSessionById.mockImplementation((id) => sessions.find((session) => session.id === id));
+		mockResolveAgentId.mockImplementation((id) => (id === 'agent-9' ? id : 'agent-1'));
+		for (const session of sessions) {
+			registerBoardWorker(db, session.id);
+			setBoardWorkerAccess(db, session.id, [], ['repo']);
+		}
+		addCard(
 			projectRoot,
 			board.id,
 			card('work', {
-				status: 'review',
-				runs: [run],
+				assigneeProfileId: undefined,
+				assigneeAgentId: 'agent-1',
 				repositoryId: 'repo',
+				workingDirectory: projectRoot,
 				executionScope: { kind: 'agent', agentId: 'agent-1' },
 			})
 		);
-		const stored = loadBoards(projectRoot)[0];
-		db.prepare(
-			'UPDATE runs SET specification_json=?, outcome_json=? WHERE collection_key=? AND card_id=?'
-		).run(
-			JSON.stringify({
-				key: { sourceKey: stored.storage!.sourceKey },
-				card: { repositoryId: 'repo' },
-			}),
-			JSON.stringify({ cardOutcome: { run } }),
-			stored.storage!.collectionKey,
-			'work'
-		);
+		mockSpawnAgent.mockResolvedValue({
+			success: true,
+			response: '<!-- maestro:card-complete | reported tests passed -->',
+		});
+		installOwner(projectRoot);
+		await boardTick({ agent: 'Alpha', json: true });
+		await Promise.all(runTasks);
+		expect(exitSpy).not.toHaveBeenCalled();
+		const work = loadBoards(projectRoot)[0].cards.find((entry) => entry.id === 'work')!;
+		expect(work.status).toBe('review');
+		const artifact = work.runs!.at(-1)!.artifact!;
+		expect(artifact.diff?.sha256).toMatch(/^[a-f0-9]{64}$/);
 		await boardAddCard(board.id, {
 			agent: 'Alpha',
 			title: 'Review source',
-			scopeAgent: 'agent-1',
-			assigneeAgent: 'agent-1',
+			scopeAgent: 'agent-9',
+			assigneeAgent: 'agent-9',
 			reviewOf: 'work',
 			reviewAttempt: '1',
 			repository: 'repo',

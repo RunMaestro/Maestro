@@ -878,11 +878,22 @@ describe('attempt-owned native review preparation', () => {
 			sourceKey: roots[0],
 			collectionKey: 'collection0',
 		})!;
+		// Work and review retain separate registered native worker identities.
+		agents.push({ id: 'producer', groupId: 'group' });
+		registerBoardWorker(db, 'producer');
+		setBoardWorkerAccess(db, 'producer', [], ['repo0']);
+		host = {
+			...host,
+			agentStates: {
+				...host.agentStates,
+				producer: { live: true, busy: false, location: { kind: 'local' } },
+			},
+		};
 		const claimed = runtime.claim({
 			sourceKey: roots[0],
 			collectionKey: 'collection0',
 			cardId: 'same',
-			workerAgentId: 'worker',
+			workerAgentId: 'producer',
 			requestId: 'work',
 			readRevision: {
 				workspace: storage.workspace.readRevision(),
@@ -916,7 +927,7 @@ describe('attempt-owned native review preparation', () => {
 				updatedAt: 'now',
 				repositoryId: 'repo0',
 				workingDirectory: roots[0],
-				executionScope: { kind: 'group', groupId: 'group' },
+				executionScope: { kind: 'agent', agentId: 'worker' },
 				assigneeAgentId: 'worker',
 			},
 		});
