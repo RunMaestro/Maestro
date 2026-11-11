@@ -803,6 +803,8 @@ export const FilePreview = React.memo(
 			}
 			return null;
 		}, [fileTree]);
+		const fileTreeIndicesRef = useRef(fileTreeIndices);
+		fileTreeIndicesRef.current = fileTreeIndices;
 
 		// Resolve homeDir for tilde path expansion
 		const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
@@ -961,12 +963,14 @@ export const FilePreview = React.memo(
 			return {
 				...components,
 				img: ({ src, alt, ...props }: any) => {
-					// Check if this image came from file tree (set by remarkFileLinks)
-					const isFromTree = props['data-maestro-from-tree'] === 'true';
-					// Tree-resolved embeds are root-relative; ordinary relative
-					// images fall back to the root for Obsidian vault-root links.
-					const projectRoot = file ? deriveProjectRoot(file.path, cwd) : undefined;
-
+					// `![[name|300]]` embeds carry their width from remarkFileLinks.
+					const embedWidth = Number(props['data-maestro-width']) || undefined;
+					// Read through a ref: a file-tree refresh must not rebuild this map,
+					// which would remount the document and lose the reader's scroll.
+					const fileTreeIndices = fileTreeIndicesRef.current;
+					const embedProjectRoot = file
+						? deriveProjectRoot(file.path, cwd, fileTreeIndices)
+						: undefined;
 					return (
 						<MarkdownImage
 							src={src}
@@ -974,8 +978,11 @@ export const FilePreview = React.memo(
 							markdownFilePath={file?.path || ''}
 							theme={theme}
 							showRemoteImages={showRemoteImages}
-							isFromFileTree={isFromTree}
-							projectRoot={projectRoot}
+							projectRoot={embedProjectRoot}
+							homeDir={homeDir}
+							fileTreeIndices={fileTreeIndices}
+							width={embedWidth}
+							onOpenFile={onFileClick}
 							sshRemoteId={sshRemoteId}
 						/>
 					);
@@ -995,6 +1002,7 @@ export const FilePreview = React.memo(
 			file?.path,
 			showRemoteImages,
 			sshRemoteId,
+			homeDir,
 			onSave,
 			stableToggleTask,
 			effectiveBionifyReadingMode,

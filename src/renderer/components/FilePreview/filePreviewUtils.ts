@@ -2,6 +2,7 @@ import { formatSize } from '../../../shared/formatters';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
+import type { FileTreeIndices } from '../../utils/fileLinks';
 
 // ─── Image Cache ──────────────────────────────────────────────────────────────
 
@@ -464,88 +465,28 @@ export { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 export type { TaskToggleResult } from '../../utils/markdownTasks';
 
 /**
- * Normalize a POSIX-style path by resolving `.` and `..` segments.
- * Does not use Node's path module (runs in renderer).
- */
-function normalizePosixPath(p: string): string {
-	const parts = p.split('/');
-	const resolved: string[] = [];
-	for (const part of parts) {
-		if (part === '.' || part === '') continue;
-		if (part === '..') {
-			resolved.pop();
-		} else {
-			resolved.push(part);
-		}
-	}
-	return (p.startsWith('/') ? '/' : '') + resolved.join('/');
-}
-
-/** Resolve image path relative to markdown file directory */
-export const resolveImagePath = (src: string, markdownFilePath: string): string => {
-	if (src.startsWith('data:') || src.startsWith('http://') || src.startsWith('https://')) {
-		return src;
-	}
-
-	if (src.startsWith('/')) {
-		return src;
-	}
-
-	const markdownDir = markdownFilePath.substring(0, markdownFilePath.lastIndexOf('/'));
-	if (!markdownDir) return normalizePosixPath(src);
-	return normalizePosixPath(`${markdownDir}/${src}`);
-};
-
-/**
- * Every on-disk path a local image reference may point at, most likely first.
- *
- * Standard markdown resolves a relative image against the note's folder.
- * Obsidian also writes links as a path from the vault root
- * (`Body/_attachments/x.jpg` inside `Body/note.md`), which the note-relative
- * reading turns into `Body/Body/_attachments/x.jpg`. When the preview knows
- * the project root, that root-relative reading is offered as a fallback.
- * A `./` or `../` prefix is explicitly note-relative and gets no fallback.
- */
-export const resolveImagePathCandidates = (
-	src: string,
-	markdownFilePath: string,
-	projectRoot?: string
-): string[] => {
-	const primary = resolveImagePath(src, markdownFilePath);
-	const explicitBase = /^(?:\/|\.\.?\/|data:|https?:\/\/)/.test(src);
-	if (!projectRoot || explicitBase) return [primary];
-	const fromRoot = normalizePosixPath(`${projectRoot}/${src}`);
-	return fromRoot === primary ? [primary] : [primary, fromRoot];
-};
-
-/**
  * The project root a previewed file sits under, from its absolute path and
  * `cwd` (its folder relative to that root, as `useFilePreviewHandlers` derives
- * it). Undefined when `cwd` is empty: the file then sits at the root itself,
- * or outside the project, and its own folder is the only base there is.
+ * it). That `cwd` is `''` both for a file at the root and for one outside the
+ * project, so for an empty `cwd` the file tree decides: when the tree lists the
+ * file's own name at its top level, the file's folder is the root.
  */
-export const deriveProjectRoot = (filePath: string, cwd?: string): string | undefined => {
-	if (!cwd || !filePath) return undefined;
-	const tail = `/${cwd}/${filePath.slice(filePath.lastIndexOf('/') + 1)}`;
-	if (filePath.endsWith(tail)) return filePath.slice(0, -tail.length);
-	const cwdIndex = filePath.indexOf(`/${cwd}/`);
+export const deriveProjectRoot = (
+	filePath: string,
+	cwd?: string,
+	indices?: FileTreeIndices | null
+): string | undefined => {
+	if (!filePath) return undefined;
+	const slash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+	const name = filePath.slice(slash + 1);
+	if (!cwd) {
+		return slash > 0 && indices?.allPaths.has(name) ? filePath.slice(0, slash) : undefined;
+	}
+	const tail = `/${cwd}/${name}`;
+	const posixPath = filePath.replace(/\\/g, '/');
+	if (posixPath.endsWith(tail)) return filePath.slice(0, -tail.length);
+	const cwdIndex = posixPath.indexOf(`/${cwd}/`);
 	if (cwdIndex !== -1) return filePath.substring(0, cwdIndex);
-	const segmentIndex = filePath.indexOf(`/${cwd.split('/')[0]}/`);
+	const segmentIndex = posixPath.indexOf(`/${cwd.split('/')[0]}/`);
 	return segmentIndex !== -1 ? filePath.substring(0, segmentIndex) : undefined;
-};
-
-/**
- * Obsidian sizes a markdown image through its alt text: `![caption|220](x.png)`
- * or `![caption|220x140](x.png)`. Splits the size off so the caption reads clean.
- */
-export const parseImageAltSize = (
-	alt: string | undefined
-): { alt: string; width?: number; height?: number } => {
-	const match = alt?.match(/^(.*?)\s*\|\s*(\d+)(?:x(\d+))?\s*$/);
-	if (!match) return { alt: alt ?? '' };
-	return {
-		alt: match[1],
-		width: parseInt(match[2], 10),
-		height: match[3] ? parseInt(match[3], 10) : undefined,
-	};
 };

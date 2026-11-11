@@ -1,58 +1,104 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Image } from 'lucide-react';
+import { FileText, Image, Play } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
-import { imageCache, parseImageAltSize, resolveImagePathCandidates } from './filePreviewUtils';
+import { imageCache } from './filePreviewUtils';
 import { safeDecodeURIComponent } from '../../../shared/stringUtils';
+import { getBasename } from '../../../shared/formatters';
+import { getFileExtension, IMAGE_FILE_EXTENSIONS } from '../../../shared/fileCategories';
+import { getMediaKind } from '../../../shared/mediaTypes';
+import {
+	findFirstExistingPath,
+	parseEmbedAltSize,
+	resolveEmbedCandidates,
+	type FileTreeIndices,
+} from '../../utils/fileLinks';
 
-/**
- * Custom image component for markdown that loads images from file paths.
- * Uses a global cache to prevent re-fetching and flickering on re-renders.
- * Wrapped in React.memo to prevent re-renders when parent updates but image props haven't changed.
- */
-export const MarkdownImage = React.memo(function MarkdownImage({
-	src,
-	alt,
-	markdownFilePath,
-	theme,
-	showRemoteImages = false,
-	isFromFileTree = false,
-	projectRoot,
-	sshRemoteId,
-}: {
+interface MarkdownImageProps {
 	src?: string;
 	alt?: string;
 	markdownFilePath: string;
 	theme: any;
 	showRemoteImages?: boolean;
-	isFromFileTree?: boolean;
+	/** Root the file tree and vault-root paths are relative to, when known. */
 	projectRoot?: string;
+	/** The user's home folder, for `~/` references. */
+	homeDir?: string;
+	/** File tree indices relative to `projectRoot`, for the nearest-match lookup. */
+	fileTreeIndices?: FileTreeIndices | null;
+	/** Width in pixels from an `![[image|300]]` embed. An alt `|300` suffix also sets it. */
+	width?: number;
+	/** Opens a non-image embed (audio and video go to the media player). */
+	onOpenFile?: (absolutePath: string) => void;
 	sshRemoteId?: string;
-}) {
+}
+
+/** What a local embed renders as, from its extension. */
+type EmbedKind = 'image' | 'media' | 'file';
+
+function embedKind(src: string): EmbedKind {
+	if (getMediaKind(src)) return 'media';
+	const ext = getFileExtension(src);
+	// No extension keeps the old behavior: try it as an image.
+	return !ext || IMAGE_FILE_EXTENSIONS.has(ext) ? 'image' : 'file';
+}
+
+/**
+ * Renders a markdown embed (`![caption](path)`, or an `![[name]]` the file
+ * tree resolved) in the File Preview. The path is resolved by
+ * `resolveEmbedCandidates`, which tries every convention an author's tool may
+ * have used (note-relative, vault-root, nearest match in the file tree, `~/`),
+ * and the first candidate that exists wins. Images render inline through a
+ * global cache that prevents re-fetching and flicker; audio, video, and other
+ * files render as a chip that opens them.
+ */
+export const MarkdownImage = React.memo(function MarkdownImage(props: MarkdownImageProps) {
+	const { src, markdownFilePath, projectRoot, homeDir, fileTreeIndices } = props;
+	const isRemoteUrl = src?.startsWith('http://') || src?.startsWith('https://');
+
+	// Every on-disk reading of the source, most likely first, as clean absolute
+	// paths (no ssh: namespacing). These reach readFile / the remote shell, so
+	// they must NOT carry the cache-key prefix.
+	const candidatePaths = useMemo(() => {
+		if (!src) return [];
+		if (src.startsWith('data:') || isRemoteUrl) return [src];
+		// mdast-util-to-hast percent-encodes every destination, so a path with a
+		// space arrives as `%20` and must be decoded before it reaches disk.
+		return resolveEmbedCandidates(safeDecodeURIComponent(src), {
+			markdownFilePath,
+			projectRoot,
+			homeDir,
+			indices: fileTreeIndices,
+		});
+	}, [src, isRemoteUrl, markdownFilePath, projectRoot, homeDir, fileTreeIndices]);
+
+	const kind: EmbedKind =
+		!src || src.startsWith('data:') || isRemoteUrl
+			? 'image'
+			: embedKind(safeDecodeURIComponent(src));
+
+	if (kind === 'image') {
+		return <EmbeddedImage {...props} candidatePaths={candidatePaths} isRemoteUrl={!!isRemoteUrl} />;
+	}
+	return <EmbeddedFileChip {...props} kind={kind} candidatePaths={candidatePaths} />;
+});
+
+function EmbeddedImage({
+	src,
+	alt,
+	theme,
+	showRemoteImages = false,
+	width,
+	sshRemoteId,
+	candidatePaths,
+	isRemoteUrl,
+}: MarkdownImageProps & { candidatePaths: string[]; isRemoteUrl: boolean }) {
 	const [dataUrl, setDataUrl] = useState<string | null>(null);
 	const [dimensions, setDimensions] = useState<{ width?: number; height?: number }>({});
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
-	const isRemoteUrl = src?.startsWith('http://') || src?.startsWith('https://');
-	const { alt: caption, width: sizedWidth, height: sizedHeight } = parseImageAltSize(alt);
-
-	// Resolve the image's source to clean, absolute paths (no ssh: namespacing),
-	// most likely first. These are what actually get read from disk / fetched
-	// over SSH, so they must NOT carry the cache-key prefix - otherwise the
-	// literal `ssh:<id>:` string leaks into the remote `base64 < <path>` command.
-	const candidatePaths = useMemo(() => {
-		if (!src) return [];
-		if (src.startsWith('data:')) return [src]; // data URLs are self-contained
-		if (isRemoteUrl) return [src];
-
-		// mdast-util-to-hast percent-encodes every destination, so a path with a
-		// space arrives as `%20` and must be decoded before it reaches disk.
-		const decodedSrc = safeDecodeURIComponent(src);
-
-		if (isFromFileTree && projectRoot) {
-			return [`${projectRoot}/${decodedSrc}`];
-		}
-		return resolveImagePathCandidates(decodedSrc, markdownFilePath, projectRoot);
-	}, [src, markdownFilePath, isFromFileTree, projectRoot, isRemoteUrl]);
+	const parsedAlt = parseEmbedAltSize(alt);
+	const sizedWidth = parsedAlt.width ?? width;
+	const sizedHeight = parsedAlt.height;
 	const resolvedPath = candidatePaths[0] ?? null;
 
 	// Cache key namespaces the resolved path by sshRemoteId so the same path on
@@ -72,6 +118,7 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 		if (!src || !cacheKey) {
 			setDataUrl(null);
 			setLoading(false);
+			if (src && !cacheKey) setError(`Image not found: ${safeDecodeURIComponent(src)}`);
 			return;
 		}
 
@@ -104,34 +151,27 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 			return;
 		}
 
-		// For local files, load via IPC (supports SSH remote). Pass the clean
-		// resolved paths - the cache key's ssh: prefix must never reach the shell.
-		// readFile returns null for a missing file, so walk the candidates until
-		// one exists.
+		// Local files load via IPC (supports SSH remote). readFile returns null for
+		// a missing file, so the walk moves on to the next reading of the path.
 		let cancelled = false;
 		const missingLabel = safeDecodeURIComponent(src);
 		setLoading(true);
-		(async () => {
-			let sawContent = false;
-			for (const path of candidatePaths) {
-				const result = await window.maestro.fs.readFile(path, sshRemoteId);
-				if (result && result.startsWith('data:')) {
-					if (cancelled) return;
-					setDataUrl(result);
-					imageCache.set(cacheKey, { dataUrl: result, loadedAt: Date.now() });
-					setLoading(false);
-					return;
+		findFirstExistingPath(candidatePaths, (path) => window.maestro.fs.readFile(path, sshRemoteId))
+			.then((hit) => {
+				if (cancelled) return;
+				if (hit?.value.startsWith('data:')) {
+					setDataUrl(hit.value);
+					imageCache.set(cacheKey, { dataUrl: hit.value, loadedAt: Date.now() });
+				} else {
+					setError(hit ? 'Invalid image data' : `Image not found: ${missingLabel}`);
 				}
-				if (result) sawContent = true;
-			}
-			if (cancelled) return;
-			setError(sawContent ? 'Invalid image data' : `Image not found: ${missingLabel}`);
-			setLoading(false);
-		})().catch((err) => {
-			if (cancelled) return;
-			setError(`Failed to load image: ${err.message || 'Unknown error'}`);
-			setLoading(false);
-		});
+				setLoading(false);
+			})
+			.catch((err) => {
+				if (cancelled) return;
+				setError(`Failed to load image: ${err.message || 'Unknown error'}`);
+				setLoading(false);
+			});
 		return () => {
 			cancelled = true;
 		};
@@ -141,14 +181,14 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 	const handleImageLoad = useCallback(
 		(e: React.SyntheticEvent<HTMLImageElement>) => {
 			const img = e.currentTarget;
-			const width = img.naturalWidth;
-			const height = img.naturalHeight;
-			setDimensions({ width, height });
+			const naturalWidth = img.naturalWidth;
+			const naturalHeight = img.naturalHeight;
+			setDimensions({ width: naturalWidth, height: naturalHeight });
 
 			if (cacheKey && dataUrl) {
 				const cached = imageCache.get(cacheKey);
 				if (cached) {
-					imageCache.set(cacheKey, { ...cached, width, height });
+					imageCache.set(cacheKey, { ...cached, width: naturalWidth, height: naturalHeight });
 				}
 			}
 		},
@@ -181,6 +221,7 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 					backgroundColor: theme.colors.bgActivity,
 					border: `1px solid ${theme.colors.error}`,
 				}}
+				title={candidatePaths.length > 0 ? `Tried:\n${candidatePaths.join('\n')}` : undefined}
 			>
 				<Image className="w-4 h-4" style={{ color: theme.colors.error }} />
 				<span className="text-xs" style={{ color: theme.colors.error }}>
@@ -215,7 +256,7 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 	return (
 		<img
 			src={dataUrl}
-			alt={caption}
+			alt={parsedAlt.alt}
 			className="max-w-full rounded my-2 block"
 			style={{
 				border: `1px solid ${theme.colors.border}`,
@@ -228,4 +269,76 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 			onLoad={handleImageLoad}
 		/>
 	);
-});
+}
+
+/**
+ * A non-image embed: audio, video, or any other file. Resolved the same way as
+ * an image, then shown as a chip that opens the file. `onOpenFile` routes
+ * through the normal file-open path, which sends audio and video to the
+ * floating media player rather than a tab.
+ */
+function EmbeddedFileChip({
+	src,
+	alt,
+	theme,
+	sshRemoteId,
+	onOpenFile,
+	kind,
+	candidatePaths,
+}: MarkdownImageProps & { kind: Exclude<EmbedKind, 'image'>; candidatePaths: string[] }) {
+	// undefined = still probing, null = not found.
+	const [resolved, setResolved] = useState<string | null | undefined>(undefined);
+	const label = parseEmbedAltSize(alt).alt || getBasename(safeDecodeURIComponent(src ?? ''));
+
+	useEffect(() => {
+		let cancelled = false;
+		setResolved(undefined);
+		findFirstExistingPath(candidatePaths, (path) =>
+			window.maestro.fs.stat(path, sshRemoteId).then((stat) => stat ?? null)
+		)
+			.then((hit) => {
+				if (!cancelled) setResolved(hit?.path ?? null);
+			})
+			.catch(() => {
+				if (!cancelled) setResolved(null);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [candidatePaths, sshRemoteId]);
+
+	const missing = resolved === null;
+	const Icon = kind === 'media' ? Play : FileText;
+	const color = missing ? theme.colors.error : theme.colors.accent;
+	const openable = !!resolved && !!onOpenFile;
+
+	return (
+		<button
+			type="button"
+			disabled={!openable}
+			onClick={(e) => {
+				// An embed wrapped in a link: the chip's own action wins.
+				e.preventDefault();
+				e.stopPropagation();
+				if (resolved && onOpenFile) onOpenFile(resolved);
+			}}
+			className="inline-flex items-center gap-2 px-3 py-1.5 rounded my-1 text-xs align-middle"
+			style={{
+				backgroundColor: theme.colors.bgActivity,
+				border: `1px solid ${missing ? theme.colors.error : theme.colors.border}`,
+				color,
+				cursor: openable ? 'pointer' : 'default',
+			}}
+			title={
+				missing ? `Not found. Tried:\n${candidatePaths.join('\n')}` : (resolved ?? 'Locating...')
+			}
+		>
+			{resolved === undefined ? (
+				<Spinner size={12} color={theme.colors.textDim} />
+			) : (
+				<Icon className="w-3.5 h-3.5" />
+			)}
+			<span>{missing ? `Not found: ${label}` : label}</span>
+		</button>
+	);
+}
