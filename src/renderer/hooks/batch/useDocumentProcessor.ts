@@ -28,6 +28,10 @@ import {
 	formatSteeringNotesBlock,
 	type AutoRunSteeringNote,
 } from '../../../shared/autorunSteering';
+import {
+	formatDelegationResultsBlock,
+	type AutoRunDelegation,
+} from '../../../shared/autoRunDelegation';
 
 /**
  * Configuration for document processing
@@ -92,6 +96,13 @@ export interface DocumentProcessorConfig {
 	 * Already consumed by the caller - this hook only formats them.
 	 */
 	steeringNotes?: readonly AutoRunSteeringNote[];
+	/** The run this task belongs to; stamped on the spawn so its dispatches report back. */
+	autoRunId?: string;
+	/**
+	 * Results of work earlier tasks delegated to other agents, settled since the
+	 * last task. Prepended to this task's prompt. Already consumed by the caller.
+	 */
+	delegationResults?: readonly AutoRunDelegation[];
 }
 
 /**
@@ -208,6 +219,8 @@ export interface DocumentReadResult {
 export interface AutoRunTurnOverrides {
 	modelOverride?: string;
 	effortOverride?: string;
+	/** The run the task belongs to, so a dispatch it makes reports back to it. */
+	autoRunId?: string;
 }
 
 /**
@@ -364,6 +377,8 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				sshRemoteId,
 				runOverrides,
 				steeringNotes,
+				autoRunId,
+				delegationResults,
 			} = config;
 
 			const docFilePath = `${folderPath}/${filename}.md`;
@@ -470,9 +485,12 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			// substitution on purpose: a `{{...}}` the operator typed into a note is
 			// their literal text, not a variable for Maestro to expand.
 			const steeringBlock = formatSteeringNotesBlock(steeringNotes ?? []);
-			const steeredPrompt = steeringBlock
-				? `${steeringBlock}\n\n---\n\n${substitutedPrompt}`
-				: substitutedPrompt;
+			// Delegated results ride in front too, for the same reason: another
+			// agent's report is data, and a `{{...}}` inside it stays literal.
+			const delegationBlock = formatDelegationResultsBlock(delegationResults ?? []);
+			const steeredPrompt = [steeringBlock, delegationBlock, substitutedPrompt]
+				.filter(Boolean)
+				.join('\n\n---\n\n');
 			if (steeringBlock) {
 				logger.info(
 					`[DocumentProcessor] Delivering ${steeringNotes?.length ?? 0} steering note(s)`,
@@ -497,7 +515,11 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				session.id,
 				finalPrompt,
 				effectiveCwd !== session.cwd ? effectiveCwd : undefined,
-				{ modelOverride: turnSettings.model, effortOverride: turnSettings.effort }
+				{
+					modelOverride: turnSettings.model,
+					effortOverride: turnSettings.effort,
+					...(autoRunId ? { autoRunId } : {}),
+				}
 			);
 
 			// Capture elapsed time (machine sleep excluded)

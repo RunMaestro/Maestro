@@ -316,6 +316,28 @@ The response echoes the armed callback:
 
 Additional error cases: a callback agent that cannot be resolved (`AGENT_NOT_FOUND`), a callback that targets the dispatch tab itself, a tab that already has an armed callback (`CALLBACK_ALREADY_ARMED`), and callback flags passed without `--notify-on-complete` (all `INVALID_OPTIONS`).
 
+### Dispatching from Inside an Auto Run
+
+An Auto Run task (either mode) runs with `MAESTRO_CALLER_AUTORUN_ID` set, and `dispatch` reads it. There is no flag to pass:
+
+- A dispatch that names no destination (no `--tab`, `--new-tab`, `--queue`, `--force`, or `--notify-on-complete`) goes to a **new hidden tab**, as if `--new-tab` were passed.
+- A dispatch with `--new-tab` or `--tab` is **tracked by the run**: the run waits for it before its next task or iteration, and feeds the result into that turn's prompt. See [Delegating to Other Agents](autorun-playbooks.md#delegating-to-other-agents).
+- `--callback-timeout <seconds>` bounds that wait (default 3600, hard cap 86400). `--callback-tab` and `--callback-prompt` still require `--notify-on-complete`, which takes over: an explicit callback wakes its tab instead of reporting to the run.
+
+The reply says whether the run tracks the dispatch:
+
+```json
+{
+	"success": true,
+	"agentId": "worker-...",
+	"tabId": "tab-xyz",
+	"callbackId": "cb_01j...",
+	"autoRunTracked": true
+}
+```
+
+`"autoRunTracked": false` means the work was handed over but the run will not wait for it: it had no tab to correlate (`--queue` to the active tab), the tab already carried a callback, or the run had already ended. A note on stderr says the same. `auto-run-status -a <agent>` lists the delegations a run is waiting on.
+
 ### Listing Sessions
 
 Browse an agent's session history, sorted most recent to oldest. Supports pagination with limit/skip and keyword search.

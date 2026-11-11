@@ -72,6 +72,13 @@ export interface DispatchCallbackRegistration {
 	armFromRecentSpawn?: boolean;
 	/** Held queue admission; unrelated spawns cannot arm this callback. */
 	pendingAdmissionId?: string;
+	/**
+	 * Deliver to this Auto Run instead of waking a tab. Set when the dispatch ran
+	 * inside an Auto Run task (`MAESTRO_CALLER_AUTORUN_ID`): the run waits for the
+	 * result before its next turn, so there is no caller tab to wake and
+	 * `callerTabId` / `callbackPrompt` are unused.
+	 */
+	autoRunId?: string;
 }
 
 export interface DispatchCallbackEntry extends DispatchCallbackRegistration {

@@ -91,4 +91,7 @@ export interface SpawnProcessConfig {
 	// Stats tracking options
 	querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 	tabId?: string; // Tab ID for multi-tab tracking
+	// The Auto Run this spawn is a task of (MAESTRO_CALLER_AUTORUN_ID), so a
+	// `maestro-cli dispatch` it runs reports its result back to the run.
+	autoRunId?: string;
 }

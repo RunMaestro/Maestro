@@ -187,6 +187,7 @@ import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
 import { getHistoryManager } from './history-manager';
 import { initDispatchCallbacks } from './dispatch-callbacks';
+import { AUTORUN_DELEGATION_CHANNEL } from '../shared/autoRunDelegation';
 import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
 import {
@@ -1364,6 +1365,9 @@ app
 		// execution queue (or in a new tab when it has none), not as a fresh
 		// headless process.
 		initDispatchCallbacks({
+			// Every window and the web-desktop bridge hear it; only the client whose
+			// run loop owns `autoRunId` acts on it (broadcast + filter, see safeSend).
+			notifyAutoRun: (event) => safeSend(AUTORUN_DELEGATION_CHANNEL, event),
 			onDelivered: async ({ entry, status }) => {
 				if (!entry.admissionId || !['completed', 'failed'].includes(status)) return;
 				const { confirmDispatchCallback } = await import('./pianola/pianola-store-main');

@@ -21,6 +21,7 @@ import { getSettingDefault } from '../../shared/settingsMetadata';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import {
 	callerMessageFields,
+	readCallerAutoRunId,
 	readCallerIdentity,
 	type CallerIdentity,
 } from '../../shared/agentDelegation';
@@ -130,6 +131,12 @@ export interface DispatchResponse {
 	callbackId?: string;
 	/** Caller agent that will be woken when this dispatch finishes. */
 	notifyOnComplete?: string;
+	/**
+	 * Set when this ran inside an Auto Run task: true when the run tracks the
+	 * dispatch (it waits for the result and hands it to its next turn), false
+	 * when the work was handed over untracked.
+	 */
+	autoRunTracked?: boolean;
 	/** Federation: the peer whose host took the prompt. */
 	peer?: string;
 	/** Federation: the exit code a peer failure carries. Not printed. */
@@ -155,28 +162,44 @@ export interface DispatchResponse {
 function buildCallbackFields(
 	options: DispatchOptions,
 	targetAgentId: string,
-	caller: CallerIdentity | undefined
+	caller: CallerIdentity | undefined,
+	autoRunId?: string
 ):
-	| { ok: true; fields: Record<string, unknown>; callerAgentId?: string }
+	| { ok: true; fields: Record<string, unknown>; callerAgentId?: string; autoRunTracked?: boolean }
 	| { ok: false; response: DispatchResponse } {
-	const hasCallbackModifier =
-		options.callbackTab !== undefined ||
-		options.callbackPrompt !== undefined ||
-		options.callbackTimeout !== undefined;
-
 	if (!options.notifyOnComplete) {
-		if (hasCallbackModifier) {
+		// Inside an Auto Run task the run itself is the destination: it waits for
+		// the result before its next turn. Correlation needs a tab, so a dispatch
+		// without one (`--queue` to the active tab) is handed over untracked.
+		const autoRunTracked = !!autoRunId && !!caller && (options.newTab || !!options.tab);
+		const modifierProblem = autoRunTracked
+			? options.callbackTab !== undefined || options.callbackPrompt !== undefined
+			: options.callbackTab !== undefined ||
+				options.callbackPrompt !== undefined ||
+				options.callbackTimeout !== undefined;
+		if (modifierProblem) {
 			return {
 				ok: false,
 				response: {
 					success: false,
-					error:
-						'--callback-tab / --callback-prompt / --callback-timeout require --notify-on-complete',
+					error: autoRunTracked
+						? '--callback-tab / --callback-prompt require --notify-on-complete (inside an Auto Run the run receives the result; only --callback-timeout applies)'
+						: '--callback-tab / --callback-prompt / --callback-timeout require --notify-on-complete',
 					code: 'INVALID_OPTIONS',
 				},
 			};
 		}
-		return { ok: true, fields: {} };
+		if (!autoRunTracked) return { ok: true, fields: {} };
+		const timeout = parseCallbackTimeout(options);
+		if (!timeout.ok) return timeout;
+		return {
+			ok: true,
+			autoRunTracked: true,
+			fields: {
+				autoRunId,
+				...(timeout.seconds !== undefined ? { callbackTimeout: timeout.seconds } : {}),
+			},
+		};
 	}
 
 	if (!options.newTab && !options.tab) {
@@ -218,21 +241,9 @@ function buildCallbackFields(
 		};
 	}
 
-	let callbackTimeoutSeconds: number | undefined;
-	if (options.callbackTimeout !== undefined) {
-		const parsed = Number(options.callbackTimeout);
-		if (!Number.isFinite(parsed) || parsed <= 0) {
-			return {
-				ok: false,
-				response: {
-					success: false,
-					error: '--callback-timeout must be a positive number of seconds',
-					code: 'INVALID_OPTIONS',
-				},
-			};
-		}
-		callbackTimeoutSeconds = Math.min(Math.round(parsed), MAX_CALLBACK_TIMEOUT_SECONDS);
-	}
+	const timeout = parseCallbackTimeout(options);
+	if (!timeout.ok) return timeout;
+	const callbackTimeoutSeconds = timeout.seconds;
 
 	return {
 		ok: true,
@@ -244,6 +255,46 @@ function buildCallbackFields(
 			...(callbackTimeoutSeconds !== undefined ? { callbackTimeout: callbackTimeoutSeconds } : {}),
 		},
 	};
+}
+
+/** `--callback-timeout` in whole seconds (clamped), absent, or an error response. */
+function parseCallbackTimeout(
+	options: DispatchOptions
+): { ok: true; seconds?: number } | { ok: false; response: DispatchResponse } {
+	if (options.callbackTimeout === undefined) return { ok: true };
+	const parsed = Number(options.callbackTimeout);
+	if (!Number.isFinite(parsed) || parsed <= 0) {
+		return {
+			ok: false,
+			response: {
+				success: false,
+				error: '--callback-timeout must be a positive number of seconds',
+				code: 'INVALID_OPTIONS',
+			},
+		};
+	}
+	return { ok: true, seconds: Math.min(Math.round(parsed), MAX_CALLBACK_TIMEOUT_SECONDS) };
+}
+
+/**
+ * Inside an Auto Run task, a dispatch that names no destination goes to a NEW
+ * hidden tab on the target, as if `--new-tab` were passed. An unattended task
+ * has no conversation with the target, so writing into its active tab drops a
+ * prompt into whatever the human has open there; and only a known tab lets the
+ * run track the work to completion. Anything explicit (`--tab`, `--queue`,
+ * `--force`, `--notify-on-complete`) is left as typed, and so is a dispatch to a
+ * Federation peer, which the run cannot track. Pure; exported for tests.
+ */
+export function applyAutoRunDispatchDefaults(
+	agentIdArg: string,
+	options: DispatchOptions,
+	env: Record<string, string | undefined>
+): DispatchOptions {
+	if (!readCallerAutoRunId(env) || options.notifyOnComplete) return options;
+	if (routeAgentTarget(agentIdArg).kind === 'peer') return options;
+	const queue = options.queue === true || options.wait === true || options.held === true;
+	if (options.tab || options.newTab || queue || options.force) return options;
+	return { ...options, newTab: true };
 }
 
 /** A `command_result` refusal, carrying the desktop's reason and code. */
@@ -358,8 +409,9 @@ function mentionRoutingFields(routing: MentionRouting | undefined): Record<strin
 export async function runDispatch(
 	agentIdArg: string,
 	message: string,
-	options: DispatchOptions
+	typedOptions: DispatchOptions
 ): Promise<DispatchResponse> {
+	const options = applyAutoRunDispatchDefaults(agentIdArg, typedOptions, process.env);
 	if (options.dispatchId && !isPianolaScopeId(options.dispatchId))
 		return {
 			success: false,
@@ -482,29 +534,34 @@ export async function runDispatch(
 	const callerIdentity = readCallerIdentity(process.env);
 	const caller = callerMessageFields(callerIdentity);
 
-	const callback = buildCallbackFields(options, agentId, callerIdentity);
+	// The Auto Run this runs under, when it is a task of one. Its tracking is
+	// best-effort by design: the hand-off happens either way, and the reply says
+	// whether the run will wait for it.
+	const autoRunId = options.notifyOnComplete ? undefined : readCallerAutoRunId(process.env);
+	const callback = buildCallbackFields(options, agentId, callerIdentity, autoRunId);
 	if (!callback.ok) return callback.response;
 
 	// --queue routes through the renderer's authoritative execution queue.
-	if (queue) {
-		return runQueueDispatch(
-			withMaestroClient,
-			agentId,
-			message,
-			options,
-			background,
-			callback.fields,
-			routingFields,
-			caller
-		);
-	}
-	return deliverDispatch(withMaestroClient, agentId, message, options, {
-		background,
-		callbackFields: callback.fields,
-		callerAgentId: callback.callerAgentId,
-		routingFields,
-		caller,
-	});
+	const result = queue
+		? await runQueueDispatch(
+				withMaestroClient,
+				agentId,
+				message,
+				options,
+				background,
+				callback.fields,
+				routingFields,
+				caller
+			)
+		: await deliverDispatch(withMaestroClient, agentId, message, options, {
+				background,
+				callbackFields: callback.fields,
+				callerAgentId: callback.callerAgentId,
+				routingFields,
+				caller,
+			});
+	if (!autoRunId || !result.success) return result;
+	return { ...result, autoRunTracked: callback.autoRunTracked === true && !!result.callbackId };
 }
 
 /** What a resolved dispatch sends beside the prompt. */
@@ -959,10 +1016,16 @@ export async function dispatch(
 				...(result.itemId ? { itemId: result.itemId } : {}),
 				...(result.callbackId ? { callbackId: result.callbackId } : {}),
 				...(result.notifyOnComplete ? { notifyOnComplete: result.notifyOnComplete } : {}),
+				...(result.autoRunTracked !== undefined ? { autoRunTracked: result.autoRunTracked } : {}),
 				...(result.peer ? { peer: result.peer } : {}),
 			},
 			null,
 			2
 		)
 	);
+	if (result.autoRunTracked === false) {
+		console.error(
+			'Note: this Auto Run will not wait for this dispatch or receive its result. Dispatch with --new-tab or --tab for the run to track it.'
+		);
+	}
 }

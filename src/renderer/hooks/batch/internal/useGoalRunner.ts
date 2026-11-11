@@ -8,7 +8,7 @@ import type {
 	UsageStats,
 	Group,
 } from '../../../types';
-import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../../agent/useAgentExecution';
+import type { SpawnAgentRunOverrides } from '../../agent/useAgentExecution';
 import type {
 	GoalIterationRecord,
 	GoalExitReason,
@@ -43,6 +43,21 @@ import type { ErrorResolutionAction, ErrorResolutionEntry } from './useBatchCont
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import { getClientInstanceId } from '../../../utils/clientInstance';
 import type { BatchCompleteInfo } from '../useBatchProcessor';
+import type { AutoRunSpawnAgentFn } from '../useDocumentProcessor';
+import {
+	awaitDelegationsBeforeTurn,
+	beginAutoRunDelegations,
+	countPendingAutoRunDelegations,
+	endAutoRunDelegations,
+	pendingDelegationsUpdater,
+	settleDelegationsAtRunEnd,
+	type WaitForDelegationsOptions,
+} from '../../../services/autoRunDelegations';
+import {
+	formatDelegationHistory,
+	formatDelegationResultsBlock,
+	type AutoRunDelegation,
+} from '../../../../shared/autoRunDelegation';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
 
 type UpdateBatchStateFn = (
@@ -51,21 +66,8 @@ type UpdateBatchStateFn = (
 	immediate?: boolean
 ) => void;
 
-type SpawnAgentFn = (
-	sessionId: string,
-	prompt: string,
-	cwdOverride?: string,
-	/** Run-scoped model/effort override from the BatchRunConfig, when the run set one */
-	options?: SpawnAgentRunOverrides
-) => Promise<{
-	success: boolean;
-	response?: string;
-	agentSessionId?: string;
-	usageStats?: UsageStats;
-	contextUsage?: number;
-	error?: string;
-	errorKind?: AgentSpawnErrorKind;
-}>;
+/** The one Auto Run spawn signature, shared with the document runner. */
+type SpawnAgentFn = AutoRunSpawnAgentFn;
 
 /**
  * Resume an existing provider session and run a prompt against it (used to ask a
@@ -472,6 +474,24 @@ export function useGoalRunner({
 				kind: 'goal-driven',
 			};
 
+			// A manager-style goal hands work out with `maestro-cli dispatch`. No
+			// iteration starts while some of it is still running, and the next one
+			// gets what came back (services/autoRunDelegations).
+			const delegationRunId = beginAutoRunDelegations();
+			const delegationWait: WaitForDelegationsOptions = {
+				isStopRequested: () => stopRequestedRefs.current[sessionId] === true,
+				onPendingChange: (pending) =>
+					updateBatchStateAndBroadcastRef.current!(
+						sessionId,
+						pendingDelegationsUpdater(sessionId, pending),
+						true
+					),
+			};
+
+			// Results handed to an iteration that a limit pause then retries: the
+			// retry is the same iteration, so it gets them again.
+			let retryDelegationResults: AutoRunDelegation[] = [];
+
 			const history: GoalIterationRecord[] = [];
 			let exitReason: GoalExitReason = 'stopped-by-user';
 			let exitDetail = 'Stopped by user.';
@@ -497,6 +517,17 @@ export function useGoalRunner({
 					break;
 				}
 
+				// Work the previous iteration delegated must finish before this one:
+				// integrating it is usually what this iteration is for.
+				const delegated = await awaitDelegationsBeforeTurn(delegationRunId, delegationWait);
+				if (delegated.stopped) {
+					exitReason = 'stopped-by-user';
+					exitDetail = 'Stopped by user.';
+					break;
+				}
+				const delegationResults = [...retryDelegationResults, ...delegated.results];
+				retryDelegationResults = [];
+
 				iteration++;
 
 				// Build the per-iteration prompt by substituting the goal template.
@@ -514,8 +545,12 @@ export function useGoalRunner({
 				};
 				// Each goal iteration spawns a fresh provider session, so prefix the
 				// agent's New Session Message onto every spawn (matches interactive behavior).
+				// Delegated results ride in front, after substitution, so a `{{...}}` in
+				// another agent's report stays literal (same rule as steering notes).
+				const delegationBlock = formatDelegationResultsBlock(delegationResults);
+				const substitutedPrompt = substituteTemplateVariables(goalPromptTemplate, templateContext);
 				const prompt = prependNewSessionMessage(
-					substituteTemplateVariables(goalPromptTemplate, templateContext),
+					delegationBlock ? `${delegationBlock}\n\n---\n\n${substitutedPrompt}` : substitutedPrompt,
 					session.newSessionMessage
 				);
 
@@ -526,7 +561,7 @@ export function useGoalRunner({
 						sessionId,
 						prompt,
 						effectiveCwd !== session.cwd ? effectiveCwd : undefined,
-						runOverrides
+						{ ...runOverrides, autoRunId: delegationRunId }
 					);
 				} catch (error) {
 					logger.error('[GoalRunner] Agent spawn threw:', undefined, error);
@@ -593,6 +628,7 @@ export function useGoalRunner({
 						// Resume: retry the SAME iteration. Revert the counter so the limited
 						// attempt is not counted, then loop back to re-spawn the same prompt.
 						iteration--;
+						retryDelegationResults = delegationResults;
 						continue;
 					}
 				}
@@ -747,8 +783,12 @@ export function useGoalRunner({
 					}
 				}
 
-				// Feed the running history into the pure exit evaluator.
-				const decision = evaluateGoalExit(history, goalConfig);
+				// Feed the running history into the pure exit evaluator. Work this
+				// iteration delegated keeps a self-reported "complete" from ending the
+				// run: the next iteration waits for it and judges the goal again.
+				const decision = evaluateGoalExit(history, goalConfig, {
+					pendingDelegations: countPendingAutoRunDelegations(delegationRunId),
+				});
 				if (decision.action === 'stop') {
 					exitReason = decision.reason;
 					exitDetail = decision.detail;
@@ -805,6 +845,23 @@ export function useGoalRunner({
 						logger.warn('[GoalRunner] Handoff synopsis request failed', undefined, err);
 					}
 				}
+			}
+
+			// Delegated work still running after the last iteration is waited for
+			// (unless the run was stopped), and what no iteration received goes into
+			// History so the run records what its delegates did.
+			const lateDelegations = await settleDelegationsAtRunEnd(delegationRunId, delegationWait);
+			endAutoRunDelegations(delegationRunId);
+			if (lateDelegations.length > 0) {
+				void onAddHistoryEntry({
+					type: 'AUTO',
+					timestamp: Date.now(),
+					summary: `${lateDelegations.length} delegated ${lateDelegations.length === 1 ? 'task' : 'tasks'} finished after the last iteration`,
+					fullResponse: formatDelegationHistory(lateDelegations),
+					projectPath: effectiveCwd,
+					sessionId,
+					success: lateDelegations.every((d) => d.status === 'completed'),
+				});
 			}
 
 			// Record the exit reason in state (broadcast to web before the COMPLETE_BATCH reset).

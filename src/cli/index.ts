@@ -611,7 +611,7 @@ program
 		'For dispatch and --queue: reconcile the same dispatch after an unknown acknowledgment; never generate another send for it'
 	)
 	.description(
-		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
+		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID. Inside an Auto Run task, a dispatch that names no tab goes to a new hidden tab, and the run waits for it and hands its result to the next turn (autoRunTracked in the reply).'
 	)
 	.option(
 		'--new-tab',
@@ -664,7 +664,7 @@ program
 	)
 	.option(
 		'--callback-timeout <seconds>',
-		'Give up and fire a timeout callback after this long (default 3600, max 86400)'
+		'Give up and fire a timeout callback after this long (default 3600, max 86400). Inside an Auto Run task it also bounds how long the run waits for this dispatch'
 	)
 	.action(dispatch);
 

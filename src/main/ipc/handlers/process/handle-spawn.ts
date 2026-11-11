@@ -48,6 +48,7 @@ import {
 	redactSystemPromptArg,
 } from '../../../utils/system-prompt-delivery';
 import {
+	buildAutoRunCallerEnv,
 	buildCallerIdentityEnv,
 	withoutCallerIdentityEnv,
 	CALLER_RUN_PROOF_FILE_ENV_VAR,
@@ -781,6 +782,9 @@ async function handleProcessSpawnImpl(
 		effectiveCustomEnvVars = {
 			...(effectiveCustomEnvVars || {}),
 			...buildCallerIdentityEnv(baseSessionId, callerTabId),
+			// An Auto Run task also says which run it belongs to, so a dispatch it
+			// makes is tracked to completion and reported back to that run.
+			...(config.querySource === 'auto' ? buildAutoRunCallerEnv(config.autoRunId) : {}),
 		};
 
 		// Who asked for this turn, when the spawn came from a logged-in browser.

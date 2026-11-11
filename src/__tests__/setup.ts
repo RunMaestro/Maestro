@@ -3,6 +3,12 @@ import { afterEach, vi } from 'vitest';
 import React from 'react';
 import { clearCachedResources } from '../renderer/hooks/utils/useCachedResource';
 import { emptyTokenSpeedSummary } from '../shared/tokenSpeed';
+import { CALLER_AUTORUN_ID_ENV_VAR } from '../shared/agentDelegation';
+
+// A suite run from inside an Auto Run task inherits that task's run id, which
+// changes what `maestro-cli dispatch` does (a new tab by default, tracked by the
+// run). Tests that want it stub it themselves.
+delete process.env[CALLER_AUTORUN_ID_ENV_VAR];
 
 // Create a mock icon component factory
 const createMockIcon = (name: string) => {
