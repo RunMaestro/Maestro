@@ -9,6 +9,11 @@ import { resolveSyncDir } from '../../../shared/syncPath';
 import { createPianolaFsStore } from '../../../shared/pianola/fs-store';
 import type { PianolaDecisionRecord } from '../../../shared/pianola/storage';
 
+// A real fs.watch event can take well over vi.waitFor's 1 s default when the
+// whole suite runs in parallel (the pre-push hook). Stays under the 10 s
+// testTimeout so a real miss still fails as an assertion.
+const WATCH_EVENT_WAIT = { timeout: 8_000, interval: 25 };
+
 vi.mock('fs', async (importOriginal) => ({ ...(await importOriginal<typeof import('fs')>()) }));
 
 const root = process.cwd();
@@ -70,19 +75,19 @@ describe('scope file wakeups', () => {
 			path.join(directory, 'bootstrap.tmp'),
 			path.join(directory, 'maestro-bootstrap.json')
 		);
-		await vi.waitFor(() => expect(signal).toHaveBeenCalled());
+		await vi.waitFor(() => expect(signal).toHaveBeenCalled(), WATCH_EVENT_WAIT);
 		files.refresh();
 		signal.mockClear();
 		fs.writeFileSync(path.join(sync, 'settings.tmp'), '{"encoreFeatures":{}}');
 		fs.renameSync(path.join(sync, 'settings.tmp'), path.join(sync, 'maestro-settings.json'));
-		await vi.waitFor(() => expect(signal).toHaveBeenCalled());
+		await vi.waitFor(() => expect(signal).toHaveBeenCalled(), WATCH_EVENT_WAIT);
 		signal.mockClear();
 		fs.writeFileSync(path.join(directory, 'registry.tmp'), '{}');
 		fs.renameSync(
 			path.join(directory, 'registry.tmp'),
 			path.join(directory, 'maestro-pianola-supervisor.json')
 		);
-		await vi.waitFor(() => expect(signal).toHaveBeenCalled());
+		await vi.waitFor(() => expect(signal).toHaveBeenCalled(), WATCH_EVENT_WAIT);
 	});
 
 	it('suppresses exact own decision writes but wakes for foreign appends before or during one', async () => {
@@ -143,7 +148,7 @@ describe('scope file wakeups', () => {
 		await new Promise((resolve) => setTimeout(resolve, 50));
 		expect(signal).not.toHaveBeenCalled();
 		store.writeScopeCheckpoint({ ...checkpoint, status: 'suspended' });
-		await vi.waitFor(() => expect(signal).toHaveBeenCalled());
+		await vi.waitFor(() => expect(signal).toHaveBeenCalled(), WATCH_EVENT_WAIT);
 		expect(store.readScopeCheckpoint(scopeId)?.status).toBe('suspended');
 	});
 
@@ -176,7 +181,7 @@ describe('scope file wakeups', () => {
 		expect(signal).toHaveBeenCalled();
 		signal.mockClear();
 		fs.writeFileSync(path.join(directory, 'maestro-pianola-rules.json'), '{"rules":[]}');
-		await vi.waitFor(() => expect(signal).toHaveBeenCalled());
+		await vi.waitFor(() => expect(signal).toHaveBeenCalled(), WATCH_EVENT_WAIT);
 	});
 
 	it('suppresses receipt-proven own compaction while still detecting foreign writes', async () => {
