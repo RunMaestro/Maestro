@@ -1,4 +1,5 @@
 import { useCallback, type KeyboardEvent, type RefObject } from 'react';
+import { isImeComposing } from '../../../../../utils/ime';
 
 interface UseDirectoryKeyboardParams {
 	browseButtonRef: RefObject<HTMLButtonElement | null>;
@@ -30,6 +31,7 @@ export function useDirectoryKeyboard({
 						}
 						return;
 					}
+					if (isImeComposing(e)) return;
 					e.preventDefault();
 					if (canProceedToNext() && !isValidating) {
 						attemptNextStep();

@@ -5,10 +5,17 @@
  *
  * This stops premature submission or action on Enter during IME composition,
  * including Safari's keyCode 229 confirmation.
+ *
+ * Scope and boundary:
+ * The scan operates per-file: it verifies that every renderer file handling Enter
+ * either checks isImeComposing() (or canonical delegate handleComposerSendKey) on
+ * comment-stripped source, or is documented in ALLOWLIST. Intra-file early-return
+ * patterns (such as early-returning on isImeComposing at the top of a keydown
+ * handler) are recognized across the enclosing file.
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, relative, join } from 'node:path';
 
 const RENDERER_ROOT = resolve(__dirname, '../../renderer');
@@ -17,7 +24,7 @@ const RENDERER_ROOT = resolve(__dirname, '../../renderer');
  * Explicit, commented allowlist of renderer files that handle Enter without
  * isImeComposing(). Each entry documents why IME composition cannot occur there.
  */
-const ALLOWLIST: Record<string, string> = {
+export const ALLOWLIST: Record<string, string> = {
 	// Numeric-only input: restricted to port digits where IME composition cannot occur
 	'components/SessionList/LiveOverlayPanel.tsx':
 		'Numeric-only port input (inputMode="numeric" pattern="[0-9]*")',
@@ -48,6 +55,10 @@ const ALLOWLIST: Record<string, string> = {
 	'components/ImageAnnotator/ImageAnnotator.tsx':
 		'Crop tool: Enter applies crop rectangle when tool === "crop"',
 
+	// Document graph canvas: Enter previews document node (no text inputs)
+	'components/DocumentGraph/MindMap.tsx':
+		'Document graph canvas: Enter previews document node (no text inputs)',
+
 	// Modals and dialogs where Enter activates buttons or confirms actions (no text inputs)
 	'components/DeleteAgentConfirmModal.tsx':
 		'Confirmation dialog buttons: Enter activates Cancel or Delete button',
@@ -67,12 +78,15 @@ const ALLOWLIST: Record<string, string> = {
 		'Celebration overlay: Enter or Escape dismisses celebration',
 	'components/KeyboardMasteryCelebration.tsx':
 		'Celebration overlay: Enter or Escape dismisses celebration',
-	'components/UpdatesChoiceModal.tsx': 'Modal choice buttons: Enter selects update option',
 	'components/ContextWarningSash.tsx':
 		'Warning banner buttons: Enter activates summarize or dismiss button',
 	'components/HistoryDetailModal.tsx':
 		'Historical session viewer: Enter activates dialog buttons or resumes session',
 	'components/ui/Modal.tsx': 'Base modal frame: handles backdrop click and modal container events',
+
+	// Engine helper: receives raw key string from callers that guard isImeComposing
+	'hooks/input/useTemplateAutocompleteEngine.ts':
+		'Engine helper: receives raw key string from useTemplateAutocomplete and useEditorTemplateAutocomplete which both guard isImeComposing',
 };
 
 /** Recursively collect every .ts/.tsx file under `dir`. */
@@ -90,12 +104,12 @@ function collectSourceFiles(dir: string): string[] {
 }
 
 /** Strip block + line comments so prose mentions cannot trip the scan. */
-function stripComments(src: string): string {
+export function stripComments(src: string): string {
 	return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
 /** Strip standard button accessibility space-or-enter checks. */
-function stripButtonPatterns(src: string): string {
+export function stripButtonPatterns(src: string): string {
 	return src
 		.replace(
 			/(?:\b\w+\.key\s*===\s*['"]Enter['"]\s*\|\|\s*\b\w+\.key\s*===\s*['"] ['"]|\b\w+\.key\s*===\s*['"] ['"]\s*\|\|\s*\b\w+\.key\s*===\s*['"]Enter['"])/g,
@@ -104,7 +118,14 @@ function stripButtonPatterns(src: string): string {
 		.replace(
 			/(?:\b\w+\.key\s*!==\s*['"]Enter['"]\s*&&\s*\b\w+\.key\s*!==\s*['"] ['"]|\b\w+\.key\s*!==\s*['"] ['"]\s*&&\s*\b\w+\.key\s*!==\s*['"]Enter['"])/g,
 			''
-		);
+		)
+		.replace(/case\s+['"]Enter['"]:\s*case\s+['"] ['"]:/g, '')
+		.replace(/case\s+['"] ['"]:\s*case\s+['"]Enter['"]:/g, '');
+}
+
+/** Detect whether code handles Enter (property access, destructured key, or switch case). */
+export function handlesEnter(src: string): boolean {
+	return /(?:(?:\b\w+\.key|\bkey)\s*(?:===|!==)\s*['"]Enter['"]|case\s+['"]Enter['"])/.test(src);
 }
 
 describe('IME Enter regression guard', () => {
@@ -120,14 +141,13 @@ describe('IME Enter regression guard', () => {
 		for (const file of sourceFiles) {
 			const rel = relative(RENDERER_ROOT, file).replace(/\\/g, '/');
 			const raw = readFileSync(file, 'utf8');
-			const stripped = stripButtonPatterns(stripComments(raw));
+			const commentStripped = stripComments(raw);
+			const stripped = stripButtonPatterns(commentStripped);
 
-			const handlesEnter = /(?:\.key\s*===\s*['"]Enter['"]|\.key\s*!==\s*['"]Enter['"])/.test(
-				stripped
-			);
-
-			if (handlesEnter) {
-				const hasImeGuard = raw.includes('isImeComposing') || raw.includes('handleComposerSendKey');
+			if (handlesEnter(stripped)) {
+				const hasImeGuard =
+					commentStripped.includes('isImeComposing') ||
+					commentStripped.includes('handleComposerSendKey');
 
 				if (!hasImeGuard && !ALLOWLIST[rel]) {
 					offenders.push(rel);
@@ -141,6 +161,39 @@ describe('IME Enter regression guard', () => {
 				offenders.map((f) => `  ${f}`).join('\n') +
 				`\n\nAll text fields, textareas, and modal submit handlers must guard active IME compositions ` +
 				`via isImeComposing(e) so candidate confirmation is left to the input method.`
+		).toEqual([]);
+	});
+
+	it('fails on stale allowlist entries', () => {
+		const stale: string[] = [];
+
+		for (const [rel] of Object.entries(ALLOWLIST)) {
+			const full = join(RENDERER_ROOT, rel);
+			if (!existsSync(full)) {
+				stale.push(`${rel} (file does not exist on disk)`);
+				continue;
+			}
+
+			const raw = readFileSync(full, 'utf8');
+			const commentStripped = stripComments(raw);
+			const stripped = stripButtonPatterns(commentStripped);
+
+			if (!handlesEnter(stripped)) {
+				stale.push(`${rel} (no longer handles Enter)`);
+			}
+
+			if (
+				commentStripped.includes('isImeComposing') ||
+				commentStripped.includes('handleComposerSendKey')
+			) {
+				stale.push(`${rel} (now guards Enter with isImeComposing())`);
+			}
+		}
+
+		expect(
+			stale,
+			`The following ALLOWLIST entries are stale and should be removed:\n` +
+				stale.map((s) => `  ${s}`).join('\n')
 		).toEqual([]);
 	});
 });
