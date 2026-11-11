@@ -11,7 +11,6 @@ import {
 	AGENT_DEFINITIONS,
 	getAgentCapabilities,
 	parseOpenCodeConfig,
-	extractModelsFromConfig,
 	getOpenCodeConfigPaths,
 	getOpenCodeCommandDirs,
 	getCodexSkillDirs,
@@ -23,10 +22,19 @@ import type { AgentCapabilitiesSnapshotMap } from '../../../shared/agentCapabili
 import { probeRemoteMaestroP, ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { execFileNoThrow } from '../../utils/execFile';
 import { discoverCodexSkills } from '../../agents/codex-skills';
+import {
+	discoverGrokSlashCommands,
+	type GrokCommandDiscoveryResult,
+	type GrokCommandObservationReader,
+} from '../../agents/grok-skills';
+import type { AITabRecord } from '../../../shared/maestro-lib/store/records';
 import { checkCustomPath } from '../../agents/path-prober';
 import { CodexRpcRequestError, CodexRpcTransportError } from '../../codex-app-server/rpc-client';
 import { buildChildProcessEnv } from '../../process-manager/utils/envBuilder';
-import { effectiveAgentCustomEnvVars } from '../../../shared/providerProfiles';
+import {
+	effectiveAgentCustomEnvVars,
+	resolveAgentAccountKey,
+} from '../../../shared/providerProfiles';
 import { probeClaudeSlashCommands } from '../../agents/claude-slash-command-probe';
 import { logger } from '../../utils/logger';
 import { getWhichCommand } from '../../../shared/platformDetection';
@@ -37,23 +45,43 @@ import {
 } from '../../utils/ipcHandler';
 import { buildSshCommand, RemoteCommandOptions } from '../../utils/ssh-command-builder';
 import { stripAnsi } from '../../utils/stripAnsi';
+import {
+	discoverAgentModels,
+	discoverModelsRemote,
+	SSH_MODEL_TIMEOUT_MS,
+} from '../../agents/model-discovery';
 import { SshRemoteConfig } from '../../../shared/types';
-import type { AgentCapabilities } from '../../../shared/types';
+import type {
+	AgentCapabilities,
+	AgentDiscoveryRequest,
+	AgentDiscoveryResult,
+	AgentDiscoverySelection,
+} from '../../../shared/types';
+import type { ModelDiscoveryContext } from '../../agents/detector';
+import {
+	createSshRemoteStoreAdapter,
+	resolveSshLaunchTarget,
+} from '../../../shared/maestro-lib/launch/ssh-remote-resolver';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
-import { parseJsonWithBom } from '../../../shared/jsonUtils';
+import { canonicalJson } from '../../../shared/canonicalJson';
 import {
+	forgetSnapshots as forgetClaudeUsageSnapshots,
 	getAllSnapshots as getAllClaudeUsageSnapshots,
 	getRetainedSnapshots as getRetainedClaudeUsageSnapshots,
 	resolveConfigDirKey,
 } from '../../stores/claudeUsageStore';
 import { getLimitResetAt } from '../../agents/limitResetEstimator';
 import {
+	forgetCodexUsageSnapshots,
 	getAllCodexUsageSnapshots,
 	getRetainedCodexUsageSnapshots,
 	resolveCodexHomeKey,
 } from '../../stores/codexUsageStore';
-import { pruneMissingQuotaAccounts } from '../../stores/quotaAccountsStore';
+import {
+	dropSnapshotsForMissingAccounts,
+	pruneMissingQuotaAccounts,
+} from '../../stores/quotaAccountsStore';
 import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { UsageSnapshot } from '../../agents/claude-mode-selector';
 import type { CodexUsageSnapshot } from '../../stores/codexUsageStore';
@@ -84,7 +112,16 @@ const handlerOpts = (
 	operation,
 });
 
-type AuthPathResolver = (env: NodeJS.ProcessEnv) => string;
+/** Canonical key for a configured auth path, or `null` when the value names no path. */
+type AuthPathResolver = (env: NodeJS.ProcessEnv) => string | null;
+
+/**
+ * Grok's account key through the canonical provider-profile rule (the one the
+ * profile picker and `getProviderAccountDirs` use). No home dir is passed, so a
+ * blank `GROK_HOME` names nothing rather than the implicit `~/.grok` default.
+ */
+const resolveGrokHomeKey: AuthPathResolver = (env) =>
+	resolveAgentAccountKey('grok', { GROK_HOME: env.GROK_HOME ?? '' }, undefined);
 
 function getCustomEnvVars(value: unknown): Record<string, unknown> {
 	if (!value || typeof value !== 'object' || !('customEnvVars' in value)) {
@@ -121,7 +158,7 @@ function collectKnownAuthPaths(
 	agentEnvVars: Record<string, unknown>,
 	sessions: Array<Record<string, unknown>>,
 	toolType: string,
-	envVarName: 'CLAUDE_CONFIG_DIR' | 'CODEX_HOME',
+	envVarName: 'CLAUDE_CONFIG_DIR' | 'CODEX_HOME' | 'GROK_HOME',
 	resolveKey: AuthPathResolver
 ): string[] {
 	const pathsByKey = new Map<string, string>();
@@ -129,6 +166,7 @@ function collectKnownAuthPaths(
 		const value = envVars[envVarName];
 		if (typeof value !== 'string' || value.length === 0) return;
 		const canonicalPath = resolveKey({ [envVarName]: value });
+		if (canonicalPath === null) return;
 		if (!pathsByKey.has(canonicalPath)) {
 			pathsByKey.set(canonicalPath, canonicalPath);
 		}
@@ -472,7 +510,7 @@ async function discoverCodexSlashCommands(
  * Dependencies required for agents handler registration
  */
 export interface AgentsHandlerDependencies {
-	getProcessManager?: () => ProcessLivenessProbe | null;
+	getProcessManager?: () => ProcessManagerForAgents | null;
 	getAgentDetector: () => AgentDetector | null;
 	agentConfigsStore: Store<AgentConfigsData>;
 	/** The settings store (MaestroSettings) - required for SSH remote lookup */
@@ -485,6 +523,12 @@ export interface AgentsHandlerDependencies {
 	 */
 	sessionsStore?: Store<SessionsData>;
 }
+
+/** The slice of the process manager these handlers read: liveness and the Grok ACP command observation. */
+export type ProcessManagerForAgents = ProcessLivenessProbe & {
+	/** Current local ACP advertisements, validated by the admitted process owner. */
+	grokCommandObservation?: GrokCommandObservationReader;
+};
 
 /**
  * Get SSH remote configuration by ID from the settings store.
@@ -673,242 +717,6 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 	}
 
 	return agents;
-}
-
-// Remote model discovery cache
-const remoteModelCache = new Map<string, { models: string[]; timestamp: number }>();
-const REMOTE_MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
-const SSH_MODEL_TIMEOUT_MS = 10000;
-
-/**
- * Read OpenCode config files from a remote SSH host and extract model IDs.
- *
- * Probes the same config paths OpenCode uses on POSIX systems:
- *   ~/.opencode/opencode.json, ~/.opencode.json, ~/.config/opencode/opencode.json
- *
- * Uses a single SSH command with a shell script that cats each file, avoiding
- * multiple round-trips. Returns unique model IDs in provider/model format.
- */
-async function discoverModelsFromRemoteConfigs(sshRemote: SshRemoteConfig): Promise<string[]> {
-	// Shell script that probes each config path and prints its content with delimiters.
-	// We use a delimiter so we can split multiple config files from a single stdout.
-	const configPaths = [
-		'~/.opencode/opencode.json',
-		'~/.opencode.json',
-		'${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json',
-	];
-
-	// Build a script that cats each config file if it exists
-	const catScript = configPaths
-		.map(
-			(p) =>
-				`if [ -f ${p} ]; then echo "___OPENCODE_CONFIG_START___"; cat ${p}; echo "___OPENCODE_CONFIG_END___"; fi`
-		)
-		.join('; ');
-
-	const remoteOptions: RemoteCommandOptions = {
-		command: 'sh',
-		args: ['-c', catScript],
-		env: sshRemote.remoteEnv,
-	};
-
-	try {
-		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
-		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
-		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
-			(_, reject) => {
-				setTimeout(() => reject(new Error('SSH config read timed out')), SSH_MODEL_TIMEOUT_MS);
-			}
-		);
-
-		const result = await Promise.race([resultPromise, timeoutPromise]);
-
-		if (result.exitCode !== 0 || !result.stdout.includes('___OPENCODE_CONFIG_START___')) {
-			return [];
-		}
-
-		// Parse delimited config blocks from stdout
-		const seen = new Set<string>();
-		const models: string[] = [];
-		const blocks = result.stdout.split('___OPENCODE_CONFIG_START___').slice(1);
-
-		for (const block of blocks) {
-			const endIdx = block.indexOf('___OPENCODE_CONFIG_END___');
-			const jsonStr = endIdx >= 0 ? block.slice(0, endIdx).trim() : block.trim();
-			if (!jsonStr) continue;
-
-			const config = parseOpenCodeConfig(jsonStr);
-			if (!config) continue;
-
-			for (const modelId of extractModelsFromConfig(config)) {
-				if (!seen.has(modelId)) {
-					seen.add(modelId);
-					models.push(modelId);
-				}
-			}
-		}
-
-		if (models.length > 0) {
-			logger.info(
-				`Extracted ${models.length} models from remote OpenCode configs on ${sshRemote.host}`,
-				LOG_CONTEXT,
-				{ models }
-			);
-		}
-
-		return models;
-	} catch (error) {
-		if (error instanceof Error && error.message.includes('timed out')) {
-			logger.warn(`Timed out reading remote OpenCode configs on ${sshRemote.host}`, LOG_CONTEXT);
-			return [];
-		}
-		// Non-fatal: config reading failure shouldn't block CLI-based discovery
-		logger.warn(`Failed to read remote OpenCode configs on ${sshRemote.host}`, LOG_CONTEXT, {
-			error,
-		});
-		return [];
-	}
-}
-
-/**
- * Discover available models for an agent on a remote SSH host.
- * Uses the agent's `models` subcommand over SSH, supplemented by models
- * from remote opencode.json config files for OpenCode agents.
- * Returns an empty array on timeout, non-zero exit, or unknown agent.
- * Throws on unexpected errors (e.g., SSH config issues, parsing bugs).
- */
-async function discoverModelsRemote(
-	agentId: string,
-	sshRemote: SshRemoteConfig,
-	forceRefresh: boolean
-): Promise<string[]> {
-	const cacheKey = `${agentId}:${sshRemote.id}`;
-
-	// Check cache unless force refresh
-	if (!forceRefresh) {
-		const cached = remoteModelCache.get(cacheKey);
-		if (cached && Date.now() - cached.timestamp < REMOTE_MODEL_CACHE_TTL_MS) {
-			logger.info(`Using cached remote models for ${agentId} on ${sshRemote.host}`, LOG_CONTEXT);
-			return cached.models;
-		}
-	}
-
-	// Look up the agent's binary name
-	const agentDef = AGENT_DEFINITIONS.find((a) => a.id === agentId);
-	if (!agentDef) {
-		logger.warn(`Unknown agent for remote model discovery: ${agentId}`, LOG_CONTEXT);
-		return [];
-	}
-
-	const remoteOptions: RemoteCommandOptions = {
-		command: agentDef.binaryName,
-		args: agentId === 'omp' ? ['models', '--json'] : ['models'],
-		env: sshRemote.remoteEnv,
-	};
-
-	try {
-		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
-		logger.info(
-			`Discovering models for "${agentDef.name}" on remote ${sshRemote.host}`,
-			LOG_CONTEXT
-		);
-
-		// Execute with timeout matching detectAgentsRemote pattern
-		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
-		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
-			(_, reject) => {
-				setTimeout(
-					() =>
-						reject(
-							new Error(`SSH model discovery timed out after ${SSH_MODEL_TIMEOUT_MS / 1000}s`)
-						),
-					SSH_MODEL_TIMEOUT_MS
-				);
-			}
-		);
-
-		const result = await Promise.race([resultPromise, timeoutPromise]);
-
-		if (result.exitCode !== 0) {
-			logger.warn(
-				`Remote model discovery for "${agentDef.name}" exited with code ${result.exitCode}`,
-				LOG_CONTEXT,
-				{ stderr: result.stderr }
-			);
-			return [];
-		}
-
-		const seen = new Set<string>();
-		const models: string[] = [];
-		const sanitizedStdout = stripAnsi(result.stdout);
-
-		if (agentId === 'omp') {
-			// `omp models` prints a human table; the machine-readable form is
-			// `omp models --json` -> { models: [{ selector, id, ... }] }. Use the
-			// provider-qualified selector, mirroring the local discovery path so the
-			// remote picker is not filled with table headings/box rows.
-			try {
-				const parsed = parseJsonWithBom<{ models?: Array<{ id?: string; selector?: string }> }>(
-					sanitizedStdout
-				);
-				for (const entry of parsed.models ?? []) {
-					const modelId = entry.selector || entry.id;
-					if (modelId && !seen.has(modelId)) {
-						seen.add(modelId);
-						models.push(modelId);
-					}
-				}
-			} catch (parseError) {
-				logger.warn('Failed to parse remote omp models --json output', LOG_CONTEXT, {
-					error: parseError,
-				});
-			}
-		} else {
-			// Source 1: CLI-discovered models (one per line)
-			const cliModels = sanitizedStdout
-				.split('\n')
-				.map((l) => l.trim())
-				.filter((l) => l.length > 0);
-			for (const m of cliModels) {
-				if (!seen.has(m)) {
-					seen.add(m);
-					models.push(m);
-				}
-			}
-		}
-
-		// Source 2: Remote opencode.json config files (OpenCode only)
-		if (agentId === 'opencode') {
-			const configModels = await discoverModelsFromRemoteConfigs(sshRemote);
-			for (const m of configModels) {
-				if (!seen.has(m)) {
-					seen.add(m);
-					models.push(m);
-				}
-			}
-		}
-
-		logger.info(
-			`Discovered ${models.length} models for "${agentDef.name}" on remote ${sshRemote.host}`,
-			LOG_CONTEXT
-		);
-
-		// Cache the result
-		remoteModelCache.set(cacheKey, { models, timestamp: Date.now() });
-
-		return models;
-	} catch (error) {
-		// Timeout is an expected SSH failure - return empty gracefully
-		if (error instanceof Error && error.message.includes('SSH model discovery timed out')) {
-			logger.warn(
-				`Timed out discovering models for "${agentDef.name}" on ${sshRemote.host}`,
-				LOG_CONTEXT
-			);
-			return [];
-		}
-		// Unexpected errors should propagate to withIpcErrorLogging / Sentry
-		throw error;
-	}
 }
 
 /**
@@ -1645,6 +1453,13 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						'CODEX_HOME',
 						resolveCodexHomeKey
 					),
+					grokHomes: collectKnownAuthPaths(
+						getCustomEnvVars(allConfigs.grok),
+						sessions,
+						'grok',
+						'GROK_HOME',
+						resolveGrokHomeKey
+					),
 				};
 			}
 		)
@@ -1713,31 +1528,226 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		)
 	);
 
+	// Both APIs share one host-owned selection. Never accept renderer-supplied
+	// process env, managed authority, cache generations or resolved SSH targets.
+	const discoverSelectedOptions = async (
+		request: AgentDiscoveryRequest,
+		optionKey = 'model'
+	): Promise<AgentDiscoveryResult> => {
+		let configuredValue: string | undefined;
+		const unavailable = (reason: AgentDiscoveryResult['reason']): AgentDiscoveryResult => ({
+			status: configuredValue ? 'configured-fallback' : 'unavailable',
+			options: configuredValue ? [configuredValue] : [],
+			...(configuredValue ? { configuredValue } : {}),
+			reason,
+		});
+		try {
+			const source = request?.context;
+			if (!source || !settingsStore) return unavailable('missing-context');
+			const definition = AGENT_DEFINITIONS.find((agent) => agent.id === request.providerId);
+			if (
+				!definition ||
+				typeof optionKey !== 'string' ||
+				(request.forceRefresh !== undefined && typeof request.forceRefresh !== 'boolean') ||
+				!['agent', 'draft', 'provider-settings'].includes(source.kind)
+			) {
+				return unavailable('invalid-context');
+			}
+			const provider = agentConfigsStore.get('configs', {})[request.providerId] ?? {};
+			let selection: AgentDiscoverySelection;
+			if (source.kind === 'agent') {
+				const session = sessionsStore?.get('sessions', []).find((s) => s.id === source.sessionId);
+				if (!session || session.toolType !== request.providerId) {
+					return unavailable('missing-context');
+				}
+				selection = {
+					cwd: session.cwd,
+					customPath: session.customPath,
+					customEnvVars: session.customEnvVars,
+					model: source.model || session.customModel,
+					effort: source.effort || session.customEffort,
+					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					sshRemoteId: session.sshRemoteId,
+				};
+			} else {
+				selection = source;
+			}
+			// Stored settings and IPC drafts both need validation before the canonical
+			// environment builder sees them. Invalid records never select host defaults.
+			if (
+				['cwd', 'customPath', 'model', 'effort', 'sshRemoteId'].some((key) => {
+					const value = selection[key as keyof AgentDiscoverySelection];
+					return value !== undefined && typeof value !== 'string';
+				}) ||
+				[
+					selection.customEnvVars,
+					provider.customEnvVars,
+					settingsStore.get('shellEnvVars', {}),
+				].some(
+					(env) =>
+						env !== undefined &&
+						(!env ||
+							typeof env !== 'object' ||
+							Array.isArray(env) ||
+							![Object.prototype, null].includes(Object.getPrototypeOf(env)) ||
+							Object.values(env).some((value) => typeof value !== 'string'))
+				) ||
+				['customPath', 'model', 'reasoningEffort', 'effort'].some(
+					(key) => provider[key] !== undefined && typeof provider[key] !== 'string'
+				)
+			) {
+				return unavailable('invalid-context');
+			}
+			const providerSettings = source.kind === 'provider-settings';
+			const model = providerSettings
+				? (selection.model ?? provider.model)
+				: selection.model || provider.model;
+			const providerEffort = provider.reasoningEffort ?? provider.effort;
+			const effort = providerSettings
+				? (selection.effort ?? providerEffort)
+				: selection.effort || providerEffort;
+			configuredValue =
+				(optionKey === 'model'
+					? model
+					: ['effort', 'reasoningEffort'].includes(optionKey)
+						? effort
+						: undefined
+				)?.trim() || undefined;
+			const ssh = selection.sessionSshRemoteConfig;
+			if (
+				ssh !== undefined &&
+				(!ssh ||
+					typeof ssh !== 'object' ||
+					Array.isArray(ssh) ||
+					typeof ssh.enabled !== 'boolean' ||
+					(ssh.remoteId !== null && typeof ssh.remoteId !== 'string'))
+			) {
+				return unavailable('invalid-context');
+			}
+			// An observed remote also fences a legacy session without pre-spawn config.
+			// A conflicting old host must not become a local request during an edit.
+			if (
+				selection.sshRemoteId &&
+				ssh &&
+				(!ssh.enabled || ssh.remoteId !== selection.sshRemoteId)
+			) {
+				return unavailable('remote-unresolved');
+			}
+			const target = resolveSshLaunchTarget(
+				createSshRemoteStoreAdapter(settingsStore),
+				ssh ??
+					(selection.sshRemoteId ? { enabled: true, remoteId: selection.sshRemoteId } : undefined)
+			);
+			if (target.kind === 'unresolved') return unavailable('remote-unresolved');
+			if (target.kind === 'remote') {
+				// The old remote command has no account/cwd/env scope. Never use it for
+				// Grok, nor silently try the local detector when a remote is unavailable.
+				if (request.providerId === 'grok' || optionKey !== 'model') {
+					return unavailable('remote-unqualified');
+				}
+				const options = await discoverModelsRemote(
+					request.providerId,
+					target.remote,
+					request.forceRefresh ?? false
+				);
+				return options.length
+					? {
+							status: 'discovered',
+							options: [...new Set([...options, ...(configuredValue ? [configuredValue] : [])])],
+							configuredValue,
+						}
+					: unavailable('discovery-unavailable');
+			}
+			if (!selection.cwd || !path.isAbsolute(selection.cwd)) return unavailable('missing-context');
+			// A blank unsaved provider path cannot override the detector's stored
+			// custom path. Refuse that preview until the edited setting is saved.
+			if (
+				providerSettings &&
+				selection.customPath !== undefined &&
+				!selection.customPath.trim() &&
+				provider.customPath?.trim()
+			) {
+				return unavailable('executable-context-unavailable');
+			}
+			const context: ModelDiscoveryContext = {
+				target,
+				cwd: selection.cwd,
+				customPath: selection.customPath?.trim() || provider.customPath,
+				model,
+				effort,
+				environment: {
+					surface: 'desktop',
+					defaultEnvVars: definition.defaultEnvVars,
+					globalShellEnvVars: settingsStore.get('shellEnvVars', {}),
+					agentCustomEnvVars: provider.customEnvVars,
+					sessionCustomEnvVars: selection.customEnvVars,
+				},
+			};
+			// The detector's host port owns auth/config generations and observed native
+			// state. IPC carries selections only, including the selected effort model.
+			const detector = getAgentDetector();
+			if (!detector) return unavailable('discovery-unavailable');
+			if (request.providerId === 'grok') {
+				return await detector.discoverGrokOptions(
+					context,
+					optionKey,
+					request.forceRefresh ?? false
+				);
+			}
+			const options =
+				optionKey === 'model'
+					? await detector.discoverModels(
+							request.providerId,
+							request.forceRefresh ?? false,
+							context
+						)
+					: await detector.discoverConfigOptions(
+							request.providerId,
+							optionKey,
+							request.forceRefresh ?? false,
+							context
+						);
+			return options.some((value) => value !== '')
+				? {
+						status: 'discovered',
+						options: [...new Set([...options, ...(configuredValue ? [configuredValue] : [])])],
+						configuredValue,
+					}
+				: unavailable('discovery-unavailable');
+		} catch {
+			// Do not forward native diagnostics or serialize a selected environment.
+			void captureException(new Error('Selected agent discovery failed'), {
+				operation: 'agent:discovery',
+			});
+			return unavailable('discovery-unavailable');
+		}
+	};
+
 	// Discover available models for an agent that supports model selection
 	// Supports SSH remote discovery via optional sshRemoteId parameter
 	ipcMain.handle(
 		'agents:getModels',
 		withIpcErrorLogging(
 			handlerOpts('getModels'),
-			async (agentId: string, forceRefresh?: boolean, sshRemoteId?: string) => {
-				logger.info(`Discovering models for agent: ${agentId}`, LOG_CONTEXT, {
-					forceRefresh,
-					sshRemoteId,
-				});
-
-				// If SSH remote ID provided, discover models on remote host
-				if (sshRemoteId) {
-					const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
-					if (!sshConfig) {
-						throw new Error(`SSH remote not found: ${sshRemoteId}`);
-					}
-					return discoverModelsRemote(agentId, sshConfig, forceRefresh ?? false);
+			async (
+				agentId: string | AgentDiscoveryRequest,
+				forceRefresh?: boolean,
+				sshRemoteId?: string
+			) => {
+				if (typeof agentId !== 'string') return discoverSelectedOptions(agentId);
+				if (agentId === 'grok') {
+					throw new Error(
+						'Grok discovery requires selected agent, draft or provider-settings context'
+					);
 				}
-
-				// Local discovery
-				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
-				const models = await agentDetector.discoverModels(agentId, forceRefresh ?? false);
-				return models;
+				// A forced discovery also broadcasts the list to every open picker.
+				return discoverAgentModels(
+					{
+						getAgentDetector: () => requireDependency(getAgentDetector, 'Agent detector'),
+						getSshRemote: (id) => getSshRemoteById(settingsStore, id),
+					},
+					{ agentId, forceRefresh: forceRefresh ?? false, sshRemoteId }
+				);
 			}
 		)
 	);
@@ -1747,7 +1757,17 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		'agents:getConfigOptions',
 		withIpcErrorLogging(
 			handlerOpts('getConfigOptions'),
-			async (agentId: string, optionKey: string, forceRefresh?: boolean) => {
+			async (
+				agentId: string | AgentDiscoveryRequest,
+				optionKey: string,
+				forceRefresh?: boolean
+			) => {
+				if (typeof agentId !== 'string') return discoverSelectedOptions(agentId, optionKey);
+				if (agentId === 'grok') {
+					throw new Error(
+						'Grok discovery requires selected agent, draft or provider-settings context'
+					);
+				}
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 				return agentDetector.discoverConfigOptions(agentId, optionKey, forceRefresh ?? false);
 			}
@@ -1761,12 +1781,109 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('discoverSlashCommands'),
 			async (
-				agentId: string,
+				request: string | AgentDiscoveryRequest,
 				cwd: string,
 				customPath?: string,
 				sshRemoteId?: string,
 				customEnvVars?: Record<string, string>
 			) => {
+				const agentId = typeof request === 'string' ? request : request?.providerId;
+				if (agentId === 'grok') {
+					// The legacy shape cannot identify a native session or carry route binding.
+					// Never feed its consumers ACP-only commands as ordinary headless prompts.
+					if (typeof request === 'string') return null;
+					const unavailable = (): GrokCommandDiscoveryResult => ({
+						status: 'unavailable',
+						commands: [],
+						reason: 'missing-context',
+					});
+					try {
+						const source = request.context;
+						if (source?.kind !== 'agent' || !settingsStore || !sessionsStore) return unavailable();
+						// Read only selected fields, and re-read after the discovery promise settles.
+						// A tab/account/settings edit must invalidate the in-flight answer.
+						const selected = () => {
+							const session = sessionsStore
+								.get('sessions', [])
+								.find((s) => s.id === source.sessionId);
+							if (!session || session.toolType !== 'grok') return undefined;
+							const tab: AITabRecord | undefined = session.aiTabs?.find(
+								(t: AITabRecord) => t.id === session.activeTabId
+							);
+							const provider = agentConfigsStore.get('configs', {}).grok ?? {};
+							const ssh = session.sessionSshRemoteConfig;
+							if (
+								session.sshRemoteId &&
+								ssh &&
+								(!ssh.enabled || ssh.remoteId !== session.sshRemoteId)
+							)
+								return undefined;
+							const context: ModelDiscoveryContext = {
+								target: resolveSshLaunchTarget(
+									createSshRemoteStoreAdapter(settingsStore),
+									ssh ??
+										(session.sshRemoteId
+											? { enabled: true, remoteId: session.sshRemoteId }
+											: undefined)
+								),
+								cwd: session.cwd,
+								customPath: session.customPath || provider.customPath,
+								model: tab?.customModel || session.customModel || provider.model,
+								effort:
+									tab?.customEffort ||
+									session.customEffort ||
+									(provider.reasoningEffort ?? provider.effort),
+								environment: {
+									surface: 'desktop',
+									defaultEnvVars: AGENT_DEFINITIONS.find((agent) => agent.id === 'grok')
+										?.defaultEnvVars,
+									globalShellEnvVars: settingsStore.get('shellEnvVars', {}),
+									agentCustomEnvVars: provider.customEnvVars,
+									sessionCustomEnvVars: session.customEnvVars,
+								},
+							};
+							return { context, tabId: tab?.id, nativeSessionId: tab?.agentSessionId ?? undefined };
+						};
+						const selection = selected();
+						if (!selection || !selection.nativeSessionId) return unavailable();
+						const { context } = selection;
+						if (
+							[context.cwd, context.customPath, context.model, context.effort].some(
+								(value) => value !== undefined && typeof value !== 'string'
+							) ||
+							(source.model !== undefined && source.model !== context.model) ||
+							(source.effort !== undefined && source.effort !== context.effort) ||
+							[
+								context.environment.globalShellEnvVars,
+								context.environment.agentCustomEnvVars,
+								context.environment.sessionCustomEnvVars,
+							].some(
+								(env) =>
+									env !== undefined &&
+									(!env ||
+										typeof env !== 'object' ||
+										Array.isArray(env) ||
+										![Object.prototype, null].includes(Object.getPrototypeOf(env)) ||
+										Object.values(env).some((value) => typeof value !== 'string'))
+							)
+						)
+							return unavailable();
+						const before = canonicalJson(selection);
+						const result = await discoverGrokSlashCommands(
+							context,
+							selection.nativeSessionId,
+							(selection) => deps.getProcessManager?.()?.grokCommandObservation?.(selection)
+						);
+						const current = selected();
+						return current && canonicalJson(current) === before ? result : unavailable();
+					} catch {
+						void captureException(new Error('Selected Grok command discovery failed'), {
+							operation: 'agents:discoverSlashCommands',
+						});
+						return unavailable();
+					}
+				}
+				if (typeof request !== 'string') return null;
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 				logger.info(`Discovering slash commands for agent: ${agentId} in ${cwd}`, LOG_CONTEXT);
 
@@ -2000,13 +2117,18 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	// (mode selector, spawner) read the live map instead. The renderer's
 	// claudeUsageStore lazily fetches via this handler on first read and re-fetches
 	// whenever `process:claude-mode-resolved` arrives (the only signal that
-	// `sampleUsage()` may have refreshed the on-disk map).
+	// `sampleUsage()` may have refreshed the on-disk map). A snapshot whose
+	// config dir was deleted is forgotten here, or its row would outlive the
+	// account by the whole retention period.
 	ipcMain.handle(
 		'agents:getClaudeUsageSnapshots',
 		withIpcErrorLogging(
 			handlerOpts('getClaudeUsageSnapshots'),
 			async (): Promise<Record<string, UsageSnapshot>> => {
-				return getRetainedClaudeUsageSnapshots();
+				return dropSnapshotsForMissingAccounts(
+					getRetainedClaudeUsageSnapshots(),
+					forgetClaudeUsageSnapshots
+				);
 			}
 		)
 	);
@@ -2090,14 +2212,17 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 	// Snapshot mirror for the renderer: returns every RETAINED Codex quota usage
 	// snapshot keyed by canonical CODEX_HOME (expired included, same reasoning as
-	// the Claude mirror above). The auth-sensitive auth.json read and ChatGPT
+	// the Claude mirror above, deleted homes forgotten the same way). The auth-sensitive auth.json read and ChatGPT
 	// metadata request stay in the main process.
 	ipcMain.handle(
 		'agents:getCodexUsageSnapshots',
 		withIpcErrorLogging(
 			handlerOpts('getCodexUsageSnapshots'),
 			async (): Promise<Record<string, CodexUsageSnapshot>> => {
-				return getRetainedCodexUsageSnapshots();
+				return dropSnapshotsForMissingAccounts(
+					getRetainedCodexUsageSnapshots(),
+					forgetCodexUsageSnapshots
+				);
 			}
 		)
 	);

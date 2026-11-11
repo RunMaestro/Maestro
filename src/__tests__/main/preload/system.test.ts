@@ -67,6 +67,18 @@ describe('System Preload API', () => {
 			});
 		});
 
+		describe('selectFile', () => {
+			it('forwards archive filters and returns the selected file', async () => {
+				mockInvoke.mockResolvedValue('/releases/relay.tar.gz');
+				const options = {
+					title: 'Update Relay',
+					filters: [{ name: 'Plugin archives', extensions: ['tgz', 'tar.gz'] }],
+				};
+				expect(await api.selectFile(options)).toBe('/releases/relay.tar.gz');
+				expect(mockInvoke).toHaveBeenCalledWith('dialog:selectFile', options);
+			});
+		});
+
 		describe('saveFile', () => {
 			it('should invoke dialog:saveFile with options', async () => {
 				mockInvoke.mockResolvedValue('/saved/file.txt');

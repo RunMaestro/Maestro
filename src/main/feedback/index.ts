@@ -66,6 +66,7 @@ import {
 	GH_LOGIN_ARGS,
 } from '../../shared/feedback';
 import { formatAgentLoginCommand } from '../../shared/agentMetadata';
+import { mediaSubtype, parseBase64DataUrl } from '../../shared/dataUrl';
 
 const LOG_CONTEXT = '[Feedback]';
 // The repo feedback issues are filed on, and how long the up-front write
@@ -585,15 +586,16 @@ function parseAttachmentDataUrl(attachment: FeedbackAttachmentInput): {
 	base64: string;
 	filename: string;
 } {
-	const match = attachment.dataUrl.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/);
-	if (!match) {
+	const parsed = parseBase64DataUrl(attachment.dataUrl);
+	const subtype = parsed ? mediaSubtype(parsed.mediaType) : null;
+	if (!parsed || !subtype || !/^[a-zA-Z0-9.+-]+$/.test(subtype)) {
 		throw new Error(`Unsupported image data for ${attachment.name}.`);
 	}
 
-	const extension = match[1].replace('jpeg', 'jpg');
+	const extension = subtype.replace('jpeg', 'jpg');
 	const hasExtension = /\.[a-zA-Z0-9]+$/.test(attachment.name);
 	const filename = hasExtension ? attachment.name : `${attachment.name}.${extension}`;
-	return { base64: match[2], filename };
+	return { base64: parsed.base64, filename };
 }
 
 async function ensureAttachmentsRepo(owner: string): Promise<void> {

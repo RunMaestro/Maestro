@@ -444,18 +444,19 @@ export function extractReasoningSummaryText(summary: unknown): string {
 export class CodexOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'codex';
 
-	// Cached context window - read once from config
-	private contextWindow: number;
+	// Resolve config/cache once on the first parsed object, never during registration.
+	private configLoaded = false;
+	private contextWindow = MODEL_CONTEXT_WINDOWS.default;
 	/**
 	 * Provenance of `contextWindow`: true only once Codex itself reported a
-	 * `model_context_window` (turn_context or token_count). The constructor seed
-	 * below is a config value or a static-table lookup, never provider truth, so
+	 * `model_context_window` (turn_context or token_count). The lazy seed
+	 * is a config value or a model lookup, never provider truth, so
 	 * it deliberately leaves this false. Emitted as `usage.contextWindowReported`
 	 * so `StdoutHandler.buildUsageStats` can mark the window authoritative
 	 * (finding P1) without guessing from the number alone.
 	 */
 	private contextWindowReported = false;
-	private model: string;
+	private model = 'gpt-5.2-codex-max';
 	/**
 	 * What the session had already spent before this process's first API call,
 	 * subtracted from every `total_token_usage` this parser reports.
@@ -499,15 +500,6 @@ export class CodexOutputParser implements AgentOutputParser {
 	 */
 	private readonly toolNamesByCallId = new Map<string, string>();
 
-	constructor() {
-		// Read config once at initialization
-		const config = readCodexConfig();
-		this.model = config.model || 'gpt-5.2-codex-max';
-
-		// Priority: 1) explicit model_context_window in config, 2) lookup by model name
-		this.contextWindow = config.contextWindow || getModelContextWindow(this.model);
-	}
-
 	/**
 	 * Parse a single JSON line from Codex output.
 	 * Delegates to parseJsonObject after JSON.parse.
@@ -550,6 +542,16 @@ export class CodexOutputParser implements AgentOutputParser {
 	parseJsonObject(parsed: unknown): ParsedEvent | null {
 		if (!parsed || typeof parsed !== 'object') {
 			return null;
+		}
+
+		if (!this.configLoaded) {
+			const config = readCodexConfig();
+			this.model = config.model || this.model;
+			// Priority: 1) explicit model_context_window in config, 2) lookup by model name
+			this.contextWindow = config.contextWindow || getModelContextWindow(this.model);
+			// Initialize before transforming either entry point's first event so native
+			// windows cannot later be overwritten by a deferred config/cache seed.
+			this.configLoaded = true;
 		}
 
 		return this.transformMessage(parsed as CodexRawMessage);
@@ -748,7 +750,7 @@ export class CodexOutputParser implements AgentOutputParser {
 			// `model_context_window` in `token_count` but not in an earlier
 			// `turn_context`: this event reports the real window with the flag set
 			// (renderer rank 2), then `turn.completed` falls back through
-			// `extractUsageFromRaw` to the constructor's config or lookup-table seed
+			// `extractUsageFromRaw` to the config or lookup-table seed
 			// with the flag clear (rank 3, the stored override wins). The value-level
 			// flap predates the flag, but the flag makes it cross a precedence tier.
 			if (payload.info.model_context_window) {

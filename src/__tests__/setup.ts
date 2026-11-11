@@ -3,6 +3,12 @@ import { afterEach, vi } from 'vitest';
 import React from 'react';
 import { clearCachedResources } from '../renderer/hooks/utils/useCachedResource';
 import { emptyTokenSpeedSummary } from '../shared/tokenSpeed';
+import { CALLER_AUTORUN_ID_ENV_VAR } from '../shared/agentDelegation';
+
+// A suite run from inside an Auto Run task inherits that task's run id, which
+// changes what `maestro-cli dispatch` does (a new tab by default, tracked by the
+// run). Tests that want it stub it themselves.
+delete process.env[CALLER_AUTORUN_ID_ENV_VAR];
 
 // Create a mock icon component factory
 const createMockIcon = (name: string) => {
@@ -406,6 +412,8 @@ const mockMaestro = {
 		refresh: vi.fn().mockResolvedValue({ agents: [], debugInfo: null }),
 		// Model discovery for agents that support model selection
 		getModels: vi.fn().mockResolvedValue([]),
+		// Forced discoveries broadcast the fresh list to every open picker
+		onModelsRefreshed: vi.fn().mockReturnValue(() => {}),
 		// Config options discovery (effort levels, reasoning, etc.)
 		getConfigOptions: vi.fn().mockResolvedValue([]),
 		// Capabilities for gating UI features based on agent type
@@ -437,7 +445,9 @@ const mockMaestro = {
 		getClaudeUsageAccountKeys: vi.fn().mockResolvedValue([]),
 		getCodexUsageSnapshots: vi.fn().mockResolvedValue({}),
 		getCodexUsageAccountKeys: vi.fn().mockResolvedValue([]),
-		getKnownAuthDirs: vi.fn().mockResolvedValue({ claudeConfigDirs: [], codexHomes: [] }),
+		getKnownAuthDirs: vi
+			.fn()
+			.mockResolvedValue({ claudeConfigDirs: [], codexHomes: [], grokHomes: [] }),
 		refreshClaudeUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
 		refreshCodexUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
 	},
@@ -502,6 +512,8 @@ const mockMaestro = {
 		updateSessionName: vi.fn().mockResolvedValue(undefined),
 		updateSessionStarred: vi.fn().mockResolvedValue(undefined),
 		registerSessionOrigin: vi.fn().mockResolvedValue(undefined),
+		// Message pins mirrored onto the origin record
+		setSessionPins: vi.fn().mockResolvedValue(undefined),
 		// Transcript mirror (starred + snoozed retention)
 		snapshotStarredTranscript: vi.fn().mockResolvedValue(undefined),
 		releaseSnoozedTranscript: vi.fn().mockResolvedValue(undefined),
@@ -647,6 +659,7 @@ const mockMaestro = {
 	},
 	dialog: {
 		selectFolder: vi.fn().mockResolvedValue(null),
+		selectFile: vi.fn().mockResolvedValue(null),
 		saveFile: vi.fn().mockResolvedValue(null),
 	},
 	cueBundle: {
@@ -833,14 +846,6 @@ const mockMaestro = {
 		getActiveRuns: vi.fn().mockResolvedValue([]),
 		getActivityLog: vi.fn().mockResolvedValue([]),
 		getEventCount: vi.fn().mockResolvedValue(0),
-		checkReadiness: vi.fn().mockResolvedValue({
-			ready: true,
-			checkedAt: '2026-01-01T00:00:00.000Z',
-			agents: 0,
-			workspaces: 0,
-			subscriptions: 0,
-			gaps: [],
-		}),
 		enable: vi.fn().mockResolvedValue(undefined),
 		disable: vi.fn().mockResolvedValue(undefined),
 		setActive: vi.fn().mockResolvedValue(undefined),
@@ -854,9 +859,23 @@ const mockMaestro = {
 	},
 	// Pianola API (autonomous manager: rules + decision log)
 	pianola: {
+		memory: vi.fn().mockResolvedValue(undefined),
 		getRules: vi.fn().mockResolvedValue({ rules: [], malformed: false }),
 		saveRules: vi.fn().mockImplementation((rules: unknown) => Promise.resolve(rules)),
 		getDecisions: vi.fn().mockResolvedValue([]),
+		getPrograms: vi.fn().mockResolvedValue([]),
+		getAsks: vi.fn().mockResolvedValue([]),
+		resolveAsk: vi.fn().mockResolvedValue(undefined),
+		dismissAsk: vi.fn().mockResolvedValue(undefined),
+		getBrief: vi.fn().mockResolvedValue({
+			generatedAt: '',
+			needsMe: [],
+			inFlight: [],
+			verified: [],
+			programs: [],
+		}),
+		superviseProgram: vi.fn().mockResolvedValue(undefined),
+		setProgramStatus: vi.fn().mockResolvedValue(undefined),
 		getSuggestions: vi.fn().mockResolvedValue({
 			generatedAt: 0,
 			pairCount: 0,

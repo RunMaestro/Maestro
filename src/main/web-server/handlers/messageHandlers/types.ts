@@ -27,6 +27,7 @@ import type {
 	StartGroupChatOptions,
 	StartGroupChatResult,
 	SteerGroupChatRequest,
+	AddGroupChatParticipantResult,
 	CueSubscriptionInfo,
 	CueActivityEntry,
 	UsageDashboardData,
@@ -49,6 +50,7 @@ import type {
 	RenameTabResult,
 	SnoozeCommandCallback,
 	ClosedTabCommandCallback,
+	MessagePinCommandCallback,
 	TabContextOpCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
@@ -140,7 +142,8 @@ export interface MessageHandlerCallbacks {
 		images?: string[],
 		background?: boolean,
 		mentionRouting?: MentionRouting,
-		requireDeliveryReceipt?: boolean
+		requireDeliveryReceipt?: boolean,
+		pianolaDispatchId?: string
 	) => Promise<boolean>;
 	switchMode: (
 		sessionId: string,
@@ -161,6 +164,8 @@ export interface MessageHandlerCallbacks {
 	snoozeCommand: SnoozeCommandCallback;
 	/** `maestro-cli tab closed` / `tab reopen` - read and reopen the closed-tab stack. */
 	closedTabCommand: ClosedTabCommandCallback;
+	/** `maestro-cli tab pins` - list, add, remove, rename, and show a tab's message pins. */
+	messagePinCommand: MessagePinCommandCallback;
 	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
 	/** `maestro-cli window` - list windows, move an agent or a group between them. */
@@ -216,8 +221,9 @@ export interface MessageHandlerCallbacks {
 		prompt: string,
 		background?: boolean,
 		hidden?: boolean,
-		mentionRouting?: MentionRouting
-	) => Promise<{ success: boolean; tabId?: string; queued?: boolean; error?: string }>;
+		mentionRouting?: MentionRouting,
+		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
+	) => Promise<import('../../types').NewAITabWithPromptResult>;
 	/** Stop a running turn, the agent's or one tab's (`maestro-cli interrupt`). */
 	interruptSession: InterruptSessionCallback;
 	/** Consult another agent and return its answer (`maestro-cli ask`). */
@@ -232,8 +238,12 @@ export interface MessageHandlerCallbacks {
 		images?: string[],
 		background?: boolean,
 		held?: boolean,
-		mentionRouting?: MentionRouting
+		mentionRouting?: MentionRouting,
+		dispatchCallback?: boolean,
+		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaQueueControl
 	) => Promise<EnqueueCommandResult>;
+	confirmQueueItem?: import('../../../stores/queue-item-receipt').ConfirmQueueItem;
+	releaseQueueItem?: import('../../../stores/queue-item-receipt').ReleaseQueueItem;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;
 		queues: unknown[];
@@ -403,6 +413,10 @@ export interface MessageHandlerCallbacks {
 	getGroupChatState: (chatId: string) => Promise<GroupChatState | null>;
 	stopGroupChat: (chatId: string) => Promise<boolean>;
 	archiveGroupChat: (chatId: string, archived: boolean) => Promise<boolean>;
+	addGroupChatParticipant: (
+		chatId: string,
+		agentId: string
+	) => Promise<AddGroupChatParticipantResult>;
 	sendGroupChatMessage: (chatId: string, message: string) => Promise<boolean>;
 	steerGroupChat?: (
 		chatId: string,
@@ -433,9 +447,9 @@ export interface MessageHandlerCallbacks {
 	removeCuePipeline: (
 		identifier: string
 	) => Promise<{ ok: true } | { ok: false; code: string; message: string }>;
-	/** Same function as the Cue modal's Bundles tab. */
+	/** Same function as the Export Agent and Import Agent modals. */
 	exportCueBundle: (request: CueBundleExportRequest) => Promise<CueBundleExportOutcome>;
-	/** Same function as the Cue modal's Bundles tab; agents land in the running app. */
+	/** Same function as the Export Agent and Import Agent modals; agents land in the running app. */
 	importCueBundle: (request: CueBundleImportRequest) => Promise<CueBundleImportOutcome>;
 	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
 	getAchievements: () => Promise<AchievementData[]>;

@@ -11,15 +11,17 @@
  * rather than on the whole catalog being present.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useRef, useState } from 'react';
-import { render, screen, fireEvent, waitFor, createEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, createEvent, act } from '@testing-library/react';
 import { ModelEffortModal } from '../../../renderer/components/ModelEffortModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { useModalLayer } from '../../../renderer/hooks/ui/useModalLayer';
 import { useFocusAfterRender } from '../../../renderer/hooks/utils/useFocusAfterRender';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useTabStore } from '../../../renderer/stores/tabStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
+import type { ModelsRefreshedPayload } from '../../../shared/agentModelsRefresh';
 import { createMockSession, createMockAITab } from '../../helpers';
 import { mockTheme } from '../../helpers/mockTheme';
 import { restorePointer, setCoarsePointer } from '../../helpers/mockPointer';
@@ -27,13 +29,17 @@ import { restorePointer, setCoarsePointer } from '../../helpers/mockPointer';
 const MODELS = ['claude-sonnet-4.5', 'gpt-5', 'gemini-2.5-pro'];
 const EFFORTS = ['', 'low', 'medium', 'high'];
 
-function seedStore(tabOverrides: Record<string, unknown> = {}) {
+function seedStore(
+	tabOverrides: Record<string, unknown> = {},
+	sessionOverrides: Parameters<typeof createMockSession>[0] = {}
+) {
 	const tab = createMockAITab({ id: 'tab-1', name: 'Refactor', ...tabOverrides });
 	const session = createMockSession({
 		id: 'session-1',
 		toolType: 'claude-code',
 		aiTabs: [tab],
 		activeTabId: 'tab-1',
+		...sessionOverrides,
 	});
 	useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 	return session;
@@ -73,6 +79,174 @@ describe('ModelEffortModal', () => {
 		setTabEffort = vi.fn();
 		useTabStore.setState({ setTabModel, setTabEffort } as never);
 		seedStore();
+	});
+
+	describe('Grok selected-account options', () => {
+		beforeEach(() => {
+			vi.useFakeTimers();
+			(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockResolvedValue({
+				status: 'discovered',
+				options: ['account-a-model'],
+			});
+			(window.maestro.agents.getConfigOptions as ReturnType<typeof vi.fn>).mockResolvedValue({
+				status: 'discovered',
+				options: ['low'],
+			});
+		});
+		afterEach(() => vi.useRealTimers());
+
+		it.each([
+			{ customEnvVars: { GROK_HOME: '/accounts/b' } },
+			{ customPath: '/tools/grok-b' },
+			{ cwd: '/project-b' },
+			{ sshRemoteId: 'remote-b' },
+			{ sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-b' } },
+		])('invalidates suggestions immediately when context changes to %j', async (change) => {
+			const session = seedStore(
+				{ customModel: 'tab-model', customEffort: 'high' },
+				{
+					toolType: 'grok',
+					cwd: '/project-a',
+					customPath: '/tools/grok-a',
+					customEnvVars: { GROK_HOME: '/accounts/a' },
+					customModel: 'session-model',
+				}
+			);
+			renderModal();
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(screen.getByRole('option', { name: 'account-a-model' })).toBeInTheDocument();
+			expect(window.maestro.agents.getModels).toHaveBeenCalledWith({
+				providerId: 'grok',
+				context: expect.objectContaining({
+					kind: 'draft',
+					cwd: '/project-a',
+					customPath: '/tools/grok-a',
+					customEnvVars: { GROK_HOME: '/accounts/a' },
+					model: 'tab-model',
+					effort: 'high',
+				}),
+			});
+			(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockResolvedValue({
+				status: 'discovered',
+				options: ['account-b-model'],
+			});
+			act(() => useSessionStore.setState({ sessions: [{ ...session, ...change }] }));
+			expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+			expect(screen.getByLabelText('Model')).toHaveValue('tab-model');
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+				providerId: 'grok',
+				context: expect.objectContaining(change),
+			});
+			expect(screen.getByRole('option', { name: 'account-b-model' })).toBeInTheDocument();
+			expect(screen.queryByRole('option', { name: 'account-a-model' })).not.toBeInTheDocument();
+		});
+
+		it.each(['unavailable', 'configured-fallback'])(
+			'keeps manual model and effort editable when discovery is %s',
+			async (status) => {
+				(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockResolvedValue({
+					status,
+					options: status === 'unavailable' ? [] : ['configured-model'],
+				});
+				(window.maestro.agents.getConfigOptions as ReturnType<typeof vi.fn>).mockResolvedValue({
+					status,
+					options: status === 'unavailable' ? [] : ['configured-effort'],
+				});
+				seedStore(
+					{ customModel: 'tab-model', customEffort: 'tab-effort' },
+					{
+						toolType: 'grok',
+						cwd: '/project',
+						customModel: 'session-model',
+						customEffort: 'session-effort',
+					}
+				);
+				renderModal();
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(0);
+				});
+				expect(screen.getByLabelText('Model')).toHaveValue('tab-model');
+				expect(screen.getByLabelText('Effort')).toHaveValue('tab-effort');
+				expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+				expect(
+					screen.getByText(
+						status === 'unavailable'
+							? 'Model discovery unavailable. Keep or enter a model manually.'
+							: 'Only the configured model is known. Keep or enter a model manually.'
+					)
+				).toBeInTheDocument();
+				fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'manual-model' } });
+				fireEvent.change(screen.getByLabelText('Effort'), { target: { value: 'manual-effort' } });
+				fireEvent.keyDown(keyTarget(), { key: 'ArrowDown' });
+				fireEvent.keyDown(keyTarget(), { key: 'ArrowRight' });
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(window.maestro.agents.getConfigOptions).toHaveBeenLastCalledWith(
+					{
+						providerId: 'grok',
+						context: expect.objectContaining({ model: 'manual-model', effort: 'manual-effort' }),
+					},
+					'reasoningEffort'
+				);
+				fireEvent.keyDown(screen.getByLabelText('Model'), { key: 'Enter', isComposing: true });
+				expect(setTabModel).not.toHaveBeenCalled();
+				fireEvent.keyDown(screen.getByLabelText('Effort'), { key: 'Enter' });
+				expect(setTabModel).toHaveBeenCalledWith('tab-1', 'manual-model');
+				expect(setTabEffort).toHaveBeenCalledWith('tab-1', 'manual-effort');
+			}
+		);
+
+		it('discards late account defaults and catalogs after the target changes', async () => {
+			let releaseModels!: (value: { status: string; options: string[] }) => void;
+			let releaseDefaults!: (value: { model: string; reasoningEffort: string }) => void;
+			(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+				new Promise((resolve) => {
+					releaseModels = resolve;
+				})
+			);
+			(window.maestro.agents.getConfig as ReturnType<typeof vi.fn>)
+				.mockReturnValueOnce(
+					new Promise((resolve) => {
+						releaseDefaults = resolve;
+					})
+				)
+				.mockResolvedValue({ model: 'account-b-default', reasoningEffort: 'medium' });
+			seedStore({}, { toolType: 'grok', cwd: '/a', customEnvVars: { GROK_HOME: '/accounts/a' } });
+			renderModal();
+			fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'unsaved-a' } });
+			act(() => {
+				seedStore(
+					{},
+					{
+						id: 'session-b',
+						toolType: 'grok',
+						cwd: '/b',
+						customEnvVars: { GROK_HOME: '/accounts/b' },
+					}
+				);
+				useSessionStore.setState({ activeSessionId: 'session-b' });
+			});
+			expect(screen.getByLabelText('Model')).toHaveValue('');
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			expect(screen.getByLabelText('Model')).toHaveValue('account-b-default');
+			await act(async () => {
+				releaseModels({ status: 'discovered', options: ['obsolete-a-model'] });
+				releaseDefaults({ model: 'obsolete-a-default', reasoningEffort: 'obsolete-a-effort' });
+			});
+			expect(screen.queryByRole('option', { name: 'obsolete-a-model' })).not.toBeInTheDocument();
+			expect(screen.getByLabelText('Model')).toHaveValue('account-b-default');
+			expect(screen.getByLabelText('Effort')).toHaveValue('medium');
+			fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+			expect(setTabModel).toHaveBeenCalledWith('tab-1', 'account-b-default');
+		});
 	});
 
 	it('opens on the value the tab is currently running', async () => {
@@ -452,6 +626,92 @@ describe('ModelEffortModal', () => {
 			await waitFor(() => expect(document.activeElement).toBe(composer));
 			unmount();
 			composer.remove();
+		});
+	});
+
+	describe('refreshing the model list', () => {
+		const NEW_MODEL = 'ollama/qwen3-coder:30b';
+
+		beforeEach(() => {
+			useCenterFlashStore.setState({ active: null });
+		});
+
+		it('re-reads the list past the cache on Cmd+R and shows the new model without committing', async () => {
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+			(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockResolvedValue([
+				NEW_MODEL,
+				...MODELS,
+			]);
+
+			fireEvent.keyDown(keyTarget(), { key: 'r', metaKey: true });
+
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith('claude-code', true);
+			await screen.findByText(NEW_MODEL);
+			expect(useCenterFlashStore.getState().active).toMatchObject({
+				message: 'Models refreshed',
+				detail: '4 models, 1 new',
+			});
+			expect(setTabModel).not.toHaveBeenCalled();
+		});
+
+		// Every bare letter is a type-to-jump, so the refresh lives on a chord.
+		it('leaves a bare R to type-to-jump', async () => {
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+			vi.mocked(window.maestro.agents.getModels).mockClear();
+
+			fireEvent.keyDown(keyTarget(), { key: 'r' });
+
+			expect(window.maestro.agents.getModels).not.toHaveBeenCalled();
+		});
+
+		it('refreshes from the icon beside MODEL', async () => {
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+
+			fireEvent.click(screen.getByTestId('model-effort-refresh'));
+
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith('claude-code', true);
+		});
+
+		it('says so when the refresh fails and keeps the old list', async () => {
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+			(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('opencode models exited 1')
+			);
+
+			fireEvent.keyDown(keyTarget(), { key: 'r', ctrlKey: true });
+
+			await waitFor(() =>
+				expect(useCenterFlashStore.getState().active).toMatchObject({
+					message: 'Could not refresh models',
+					detail: 'opencode models exited 1',
+				})
+			);
+			expect(screen.getByText('claude-sonnet-4.5')).toBeInTheDocument();
+		});
+
+		// The Settings refresh button, another picker, or the CLI.
+		it('adopts a list refreshed somewhere else while it is open', async () => {
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+			const onModelsRefreshed = window.maestro.agents.onModelsRefreshed as ReturnType<typeof vi.fn>;
+			const listener = onModelsRefreshed.mock.calls.at(-1)?.[0] as (
+				payload: ModelsRefreshedPayload
+			) => void;
+
+			// Another provider's list, or this provider's list on a remote host, is not ours.
+			act(() => {
+				listener({ agentId: 'codex', sshRemoteId: null, models: ['gpt-9'] });
+				listener({ agentId: 'claude-code', sshRemoteId: 'remote-1', models: ['remote-only'] });
+				listener({ agentId: 'claude-code', sshRemoteId: null, models: [NEW_MODEL, ...MODELS] });
+			});
+
+			await screen.findByText(NEW_MODEL);
+			expect(screen.queryByText('gpt-9')).toBeNull();
+			expect(screen.queryByText('remote-only')).toBeNull();
 		});
 	});
 });

@@ -223,6 +223,28 @@ describe('Autorun Preload API', () => {
 			});
 		});
 
+		describe('onDelegation', () => {
+			it('forwards the delegation push and unsubscribes cleanly', () => {
+				const callback = vi.fn();
+				let registeredHandler: (event: unknown, data: unknown) => void;
+				mockOn.mockImplementation(
+					(_channel: string, handler: (event: unknown, data: unknown) => void) => {
+						registeredHandler = handler;
+					}
+				);
+
+				const cleanup = api.onDelegation(callback);
+				expect(mockOn).toHaveBeenCalledWith('autorun:delegation', expect.any(Function));
+
+				const data = { kind: 'started', autoRunId: 'autorun-1' };
+				registeredHandler!({}, data);
+				expect(callback).toHaveBeenCalledWith(data);
+
+				cleanup();
+				expect(mockRemoveListener).toHaveBeenCalledWith('autorun:delegation', expect.any(Function));
+			});
+		});
+
 		describe('createBackup', () => {
 			it('should invoke autorun:createBackup', async () => {
 				mockInvoke.mockResolvedValue({ success: true });

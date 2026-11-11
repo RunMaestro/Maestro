@@ -30,6 +30,7 @@ import { JsonEmitter, type EmitResultOptions } from './json-emitter';
 import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
 import { isSlashCommandPrompt, localCommandOutput } from './local-command-row';
 import { extractExitPlanText } from './plan-mode';
+import { extractAskUserQuestionText } from './ask-user-question';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
 import { isPreTurnRow } from './turn-start';
 import { collectAssistantText, ReplyText } from './reply-text';
@@ -860,6 +861,17 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				return;
 			}
 
+			// AskUserQuestion parks the TUI on a picker the same way, and nothing
+			// answers it here (the permission relay is an API-path feature). End
+			// the turn with the questions as the reply; the user answers in their
+			// next message. See ask-user-question.ts.
+			const questionText = extractAskUserQuestionText(message);
+			if (questionText !== null) {
+				reply.appendIfMissing(questionText);
+				finalize({ isError: false, exitCode: 0 });
+				return;
+			}
+
 			if (message.stop_reason === 'end_turn') armEndTurnGrace();
 			return;
 		}
@@ -1469,7 +1481,7 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		// and that is load-bearing rather than an oversight. Both accumulate, so a
 		// retry's panel lands appended to the previous one - which is exactly the
 		// shape parseUsage already expects: sliceToFinalPanel() anchors on the LAST
-		// `Current session` header and reads forward from there, so the newest panel
+		// opening section header and reads forward from there, so the newest panel
 		// wins and the stale one is ignored. Clearing would break claude's
 		// differential repaints, where only the changed cells arrive and no fresh
 		// section header is painted: a cleared buffer would hold anchorless

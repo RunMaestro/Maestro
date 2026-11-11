@@ -16,6 +16,7 @@ import type { RegisteredRepository, SymphonyIssue } from '../../../shared/sympho
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { readEffortFromConfig } from '../../utils/agentEffort';
 import { useSymphony } from '../../hooks/symphony';
 import { useContributorStats } from '../../hooks/symphony/useContributorStats';
 import { AgentCreationDialog, type AgentCreationConfig } from '../AgentCreationDialog';
@@ -229,6 +230,8 @@ export function SymphonyModal({
 					customPath: config.customPath,
 					customArgs: config.customArgs,
 					customEnvVars: config.customEnvVars,
+					customModel: config.agentConfig?.model?.trim() || undefined,
+					customEffort: readEffortFromConfig(config.agentConfig),
 				});
 				return { success: true };
 			}

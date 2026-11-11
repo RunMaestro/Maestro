@@ -72,6 +72,34 @@ describe('validateSubscription - structured CLI send tab placement', () => {
 			})
 		).toContain('sub: "command.cli.new_tab" must be a boolean when provided');
 	});
+
+	it('accepts an existing tab with new_tab absent or false', () => {
+		for (const extra of [{}, { new_tab: false }]) {
+			expect(
+				errs({
+					...base,
+					command: {
+						mode: 'cli',
+						cli: { command: 'send', target: 'agent-xyz', tab: 'tab-1', ...extra },
+					},
+				})
+			).toEqual([]);
+		}
+	});
+
+	it('refuses tab together with new_tab: true', () => {
+		expect(
+			errs({
+				...base,
+				command: {
+					mode: 'cli',
+					cli: { command: 'send', target: 'agent-xyz', tab: 'tab-1', new_tab: true },
+				},
+			})
+		).toContain(
+			'sub: "command.cli.tab" and "command.cli.new_tab" cannot both be set - pick an existing tab or a new one'
+		);
+	});
 });
 
 // ────────────────────────────────────────────────────────────────────────────

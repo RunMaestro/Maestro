@@ -1,7 +1,7 @@
 /**
  * Cue bundle export, inspection and import for the RUNNING desktop app.
  *
- * The Cue modal's Bundles tab reaches these through IPC
+ * The Left Bar's Export Agent and Import Agent modals reach these through IPC
  * (`ipc/handlers/cue-bundle.ts`), and `maestro-cli bundle export|import`
  * reaches the same functions through the WebSocket bridge while the app runs,
  * so the two paths cannot drift. With the app closed the CLI calls the

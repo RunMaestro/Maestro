@@ -18,6 +18,8 @@ The multi-provider refactoring has established the pluggable architecture for su
 | IPC API             | ✅ Complete | `window.maestro.agentSessions.*` replaces `claude.*`               |
 | UI Capability Gates | ✅ Complete | Features hidden/shown based on agent capabilities                  |
 
+For native steering, approval propagation, and interaction ownership, see [Native Harness Control](docs/agent-guides/NATIVE-HARNESS-CONTROL.md). ACP catalog membership alone is not a support or steering claim.
+
 ### Adding a New Agent
 
 To add support for a new agent, follow this checklist. The agent completeness test (`agent-completeness.test.ts`) will fail CI if any required step is missed.
@@ -42,6 +44,7 @@ To add support for a new agent, follow this checklist. The agent completeness te
 13. **If `supportsAdditionalDirectories: true`**: Add `additionalDirArgs` to the agent's definition in `src/main/agents/definitions.ts` - see [Step 3.5](#step-35-additional-directories)
 14. **If the agent needs binary probing beyond `$PATH`**: Add install locations to `src/main/agents/path-prober.ts` (both the Windows and the POSIX tables)
 15. **Declare translation support or explicit limitations**: follow the [Provider Translation Contract](#provider-translation-contract). Native History browsing, native resume, and cross-provider context translation are separate capabilities; do not infer one from another. This contract is an onboarding requirement, not an additional completeness-test check today.
+16. **If adding native protocol control**: register the provider in `src/shared/maestro-lib/providers/native-control.ts`, implement the adapter behind `HarnessControlHandle`, route interactions through `InteractionBroker`, and add protocol conformance plus owner/lifecycle coverage. Keep the current transport available per agent until live qualification passes.
 
 #### CI Enforcement
 
@@ -1208,62 +1211,74 @@ codex exec --json resume <thread_id> "continue"
 
 ---
 
-### Grok CLI ✅ Fully Implemented
+### Grok CLI (Beta, tier-1 qualification pending)
 
-**Status:** Beta (marked via `BETA_AGENTS` in `src/shared/agentMetadata.ts`). All facts below verified against grok v0.2.93.
+**Status:** Beta (`BETA_AGENTS` in `src/shared/agentMetadata.ts`). The integration is implemented and covered by deterministic suites, but no Grok binary is qualified: `GROK_CAPABILITY_EVIDENCE.qualifiedVersions` in `src/shared/maestro-lib/providers/capabilities.ts` is empty, and every live qualification case is `not-run`; promotion out of Beta waits on a qualification run of `scripts/grok-qualification/harness.ts` against a pinned Grok binary. Nothing below means every Grok flag or feature is enabled, and no route is a certified security boundary.
 
-| Aspect           | Value                                                                                                                         |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Binary           | `grok`                                                                                                                        |
-| JSON Output      | `--output-format streaming-json` (JSONL, one event per line)                                                                  |
-| Batch Mode       | `-p/--single <prompt>` headless mode (no subcommand prefix)                                                                   |
-| Resume           | `--resume <session-id>`                                                                                                       |
-| Read-only        | `--permission-mode plan` (CLI-enforced; blocks writes headlessly without hanging)                                             |
-| YOLO Mode        | `--always-approve` (also the batch-mode arg; boolean flag so arg dedup stays clean)                                           |
-| Session ID Field | `sessionId` (camelCase, UUIDv7) on the final `end` event only; no init event exists                                           |
-| Session Storage  | `$GROK_HOME/sessions/<percent-encoded-cwd>/<session-uuid>/` (default `GROK_HOME=~/.grok`)                                     |
-| Context Window   | 500K tokens (grok-4.5 default); 200K for grok-composer-2.5-fast                                                               |
-| Model Selection  | `-m <model>`; dynamic discovery from `$GROK_HOME/models_cache.json` (or `grok models`)                                        |
-| Reasoning Effort | `--reasoning-effort` accepts none, minimal, low, medium, high, xhigh, max (default high; grok-4.5 rejects `none` server-side) |
+| Aspect            | Value                                                                                                                                                                        |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Package / binary  | Official `@xai-official/grok` (repository `xai-org/grok-build`), executable `grok`. Not a community `grok-cli` package; there is no separate `grok-cli` provider ID          |
+| Candidate version | 1.0.70 (pinned candidate, not qualified). Older facts below were observed on 0.2.93, 1.0.5 and 1.0.41 and are labeled as such                                                |
+| Platforms         | Advertised candidates darwin-arm64, darwin-x64, linux-arm64, linux-x64, win32-x64, win32-arm64. All six are `not-run`; none is a supported-platform claim                    |
+| Headless route    | `grok --cwd <dir> --output-format streaming-json --prompt-file <owned .json> [--resume <id>] [-m <model>] [--reasoning-effort <level>]`, full-access or read-only turns only |
+| ACP route         | `grok agent stdio`, JSON-RPC over stdio (`src/shared/maestro-lib/grok/`), standard-permission turns, local target only                                                       |
+| Prompt delivery   | Owned ACP-JSON prompt file (`promptFile.format: 'acp-json'`); `-p`, `--single`, `--prompt-json` are exclusive with it. No stdin prompt (`supportsPromptViaStdin: false`)     |
+| Full access       | `--always-approve` (`batchModeArgs === yoloModeArgs`)                                                                                                                        |
+| Read-only         | `--permission-mode plan --deny Bash(*)` (observed on 1.0.5; containment unqualified, finding A11-F05)                                                                        |
+| Session ID        | `sessionId` (UUIDv7) on the final `end` event of the headless stream; ACP announces it at session allocation                                                                 |
+| Session storage   | `$GROK_HOME/sessions/<percent-encoded-cwd>/<session-uuid>/` (`summary.json`, `chat_history.jsonl`, `usage.json`), local and SSH-remote                                       |
+| Context window    | `0` (unknown) in `DEFAULT_CONTEXT_WINDOWS` until the selected model and account report a qualified window; the per-agent setting overrides it                                |
+| Models / effort   | `-m <model>`, `--reasoning-effort <level>`. Both default to empty (inherit the CLI default). Options come from an owned ACP observation, otherwise the configured value only |
 
-**Implementation Status:**
+**Where the implementation lives (canonical shared library first):**
 
-- ✅ Output Parser: `src/main/parsers/grok-output-parser.ts`
-- ✅ Session Storage: `src/main/storage/grok-session-storage.ts` (Copilot-style directory-per-session layout; parses `summary.json` + `chat_history.jsonl`, local and SSH-remote)
-- ✅ Error Patterns: `src/main/parsers/error-patterns.ts` (auth, rate limit, context exhaustion, network, invalid model)
-- ✅ Capabilities: resume, read-only, session storage, streaming, thinking display, result messages, model selection, batch mode, inline wizard (`supportsWizard`), usage stats and cost tracking (grok 1.x reports both; 0.x reported neither)
+- Definition and capabilities: `src/shared/maestro-lib/providers/definitions.ts`, `src/shared/maestro-lib/providers/capabilities.ts` (`AGENT_CAPABILITIES.grok`, `GROK_CAPABILITY_EVIDENCE`, `GROK_DIRECTORY_GRANT_SUPPORT`). `src/main/agents/definitions.ts` and `capabilities.ts` are re-exports.
+- Headless output parser: `src/shared/maestro-lib/parsers/grok-output-parser.ts` (`src/main/parsers/grok-output-parser.ts` is a re-export); error patterns in `src/shared/maestro-lib/parsers/error-patterns.ts`.
+- Route selector: `src/shared/maestro-lib/grok/route.ts` (`selectGrokRoute`, `beginGrokAcpNegotiation`, `completeGrokAcpNegotiation`, contract `grok-route-contract/v1`).
+- ACP transport: `src/shared/maestro-lib/grok/acp-protocol.ts`, `acp-client.ts`, `acp-session.ts`, `acp-requests.ts`, `acp-events.ts`, `acp-turn.ts` (`startGrokAcpTurn`).
+- Consumers: desktop `src/main/process-manager/spawners/GrokAcpSpawner.ts` (routed by `ProcessManager`), headless runtime/CLI/Cue through `src/shared/maestro-lib/turns/run-agent-turn.ts`. Spawn-selection staleness: `src/shared/grokSpawnSelection.ts`.
+- Native history: `src/main/storage/grok-session-storage.ts`. Model/effort discovery: `AgentDetector.discoverGrokOptions()` in `src/main/agents/detector.ts`. Account roots: `src/shared/providerProfiles.ts`, `src/shared/agentAccountDir.ts`.
+- Qualification harness (no live run without authorization): `scripts/grok-qualification.mjs`, `scripts/grok-qualification/harness.ts`.
 
-**JSON Event Types:**
+**Routes and what each refuses.** Every consumer asks the one selector; there is no fallback in either direction.
 
-These event types appear on stdout with `--output-format streaming-json`:
+- **Native headless** runs full-access and read-only turns. It answers native permission prompts by itself and has no reply channel, so it never carries a standard-permission turn, an ask-back question or a native slash command.
+- **ACP (`grok agent stdio`)** carries standard-permission turns. The process negotiates `initialize`, and the driver re-runs the selector over the negotiated protocol version, agent version, `loadSession`, image and command advertisement before any prompt is sent. On the desktop a standalone turn's permission requests reach the person through the permission relay prompt for that tab (only an explicit Allow answers `allow_once`; deny, timeout, Stop, exit and connection loss all deny). A headless runtime turn (CLI, Cue or Auto Run outside the desktop) has no consent port and is refused (`consent-port`).
+- **Structured refusals** (`GrokRouteGap`): `consent-port`, `question-port`, `permission-round-trip`, `ask-back`, `native-command`, `acp-unadvertised`, `acp-protocol-version`, `acp-version-unbound`, `acp-remote-route` (no SSH owner for ACP yet), `acp-images` (the ACP port takes no attachments), `acp-load-session`, `acp-custom-args`, `native-unqualified`. Each names its parity rows.
 
-- `thought` → reasoning delta (routed to the thinking panel via `isReasoning: true`)
-- `text` → assistant text delta (partial; deltas concatenate directly)
-- `tool_call` / `tool_call_update` (grok 1.x) → tool badge, correlated by `toolCallId`. The readable result is in the ACP `content` blocks (text, or a `diff` for edits); `rawOutput` is a per-tool object whose shell `output` is a byte array, so the parser never hands it to the badge as-is. A shell command that exits non-zero still settles `completed`; `rawOutput.exit_code` is the failure signal (verified on 1.0.41)
-- `end` → final result (`stopReason`, `sessionId`, `requestId`); the only place the session ID appears
-- `error` → failure (`message`); duplicated on stderr as `Error: <message>`, process exits 1
+**Account semantics.** `GROK_HOME` (default `~/.grok`) is the state and transcript root and the profile key Maestro groups by. `GROK_AUTH_PATH` and inline `GROK_AUTH` select credentials independently of that root, so a `GROK_HOME` is not a billing identity: billing-credential resolution returns null for Grok, and profiles whose credential comes from `GROK_AUTH_PATH` or a non-OAuth source are withheld rather than merged. Launches scope `GROK_HOME` through the agent environment. Grok splits its endpoint across three base-URL variables (`GROK_MODELS_BASE_URL`, `GROK_CLI_CHAT_PROXY_BASE_URL`, `GROK_XAI_API_BASE_URL`); auth identity reads them as gateway hints (`src/shared/providerAuthIdentity.ts`), and the env editor masks them and inline `GROK_AUTH` wholly (`isSecretEnvKey()` in `src/shared/agentEnvironment.ts`). A session is bound to `(grok, account ref, host, cwd, native id)`; the desktop ACP route refuses a turn whose account or host ownership is unknown.
 
-**Known Limitations:**
+**Native history.** `GrokSessionStorage` lists and reads sessions from the selected agent's `GROK_HOME`, filtering projects by the percent-encoded cwd folder before opening files, locally and over SSH. Transcripts carry no per-message timestamps. Token and cost totals come from `usage.json`, whose `inputTokens` includes cached reads (the stream's excludes them), so storage subtracts them. Transcripts are plain JSONL and are not redacted (same OS-user confidentiality model as Claude and Codex).
 
-- **Usage and cost (grok 1.x):** a `usage` line arrives per model call and `end` carries the turn's totals plus `total_cost_usd` (verified on 1.0.41; a resumed turn reports only itself). Every usage event Maestro sees is ADDED to the session totals, so only `end` reports usage, with the last call attached as `absoluteUsage` for the context gauge. Session History reads the same totals from the session's `usage.json`, whose `inputTokens` INCLUDES cached reads (the stream's excludes them), so storage subtracts them
-- **Interactive PTY mode is not wired:** Maestro drives Grok in batch mode only, like Codex
-- **Images ride in the prompt, not a flag:** there is no attachment flag, and `--prompt-json` takes base64 image blocks only as one argv string (a screenshot overruns ARG_MAX) and cannot be combined with `-p`. `imagePromptBuilder` names each temp image path in the prompt and grok opens it with `read_file` (verified on 1.0.41, fresh and resumed). Each image costs one tool call
-- **No `noToolsArgs` / all-tools-off flag:** verified on v0.2.93 - `--tools ""` is treated as unset, and a hard-coded `--disallowed-tools` list would rot. Tab naming uses plan mode (`readOnlyArgs`) only. Do not add `noToolsArgs` until Grok ships a verified all-off flag.
-- **Wizard discovery is always-approve (not plan):** discovery needs read/fetch (package.json, GitHub). Spawns use `--always-approve --max-turns 8 --no-subagents` via `GROK_WIZARD_DISCOVERY_ARGS` in `src/renderer/utils/grokWizard.ts`. Residual: the model can still write under cwd within the turn budget (no Claude-style tool allowlist on Grok CLI yet). Prefer a tool allowlist if/when the CLI supports one.
-- **History is not a scrubbed vault:** transcripts under `$GROK_HOME/sessions/` (default `~/.grok/sessions/`) are plain JSONL. Maestro reads them for History without redacting user-pasted secrets - same OS-user confidentiality model as Claude/Codex.
-- **Auth/rate error patterns are multi-token only:** bare `401`/`429` are intentionally not matched (false positives on recovery UX). Tighten further when live unauthenticated/rate-limit CLI strings are captured.
+**Capabilities (true means a builder and consumers exist and the behavior was observed on an older binary or pinned by deterministic suites, never certified):** resume, read-only (see A11-F05), JSON output, session ID, session storage, cost tracking and usage stats (observed on 1.0.41; unknown cost stays unknown, never zero), batch mode, streaming, result messages, model selection, thinking display, context export, inline wizard.
 
-**Command Line Pattern:**
+**Withheld or false:** image input on fresh and resumed turns (no host image-bounds producer, so the prompt-file plan refuses image turns rather than falling back to tool reads), context merge (deterministic only), slash commands and group chat moderation, append system prompt, project memory, additional directories (`--cwd` selects one workspace; explicit grants are refused), stream-JSON input, prompt via stdin, combined context window, steering (no in-progress input operation pinned), interactive PTY mode (Maestro drives Grok per turn only).
+
+**Headless stream events** (`--output-format streaming-json`): `thought` (reasoning delta), `text` (answer delta), `tool_call` / `tool_call_update` keyed by `toolCallId` (grok 1.x; readable output comes from the ACP `content` blocks, and a non-zero `rawOutput.exit_code` marks a `completed` shell call failed, observed on 1.0.41), `usage` per model call, `end` (`stopReason`, `sessionId`, `requestId`, turn totals and `total_cost_usd`), `error`. Only `end` reports usage to the session totals; records after a successful terminal are ignored.
+
+**Other known limitations:**
+
+- **No all-tools-off flag:** `--tools ""` is treated as unset and `--disallowed-tools` silently accepts unknown names (observed on 0.2.93), so there is no `noToolsArgs`; tab naming uses read-only args.
+- **Wizard discovery is full-access:** `GROK_WIZARD_DISCOVERY_ARGS` in `src/renderer/utils/grokWizard.ts` (`--always-approve --max-turns 8 --no-subagents`); the model can still write under cwd within that budget.
+- **Model/effort discovery is local only:** SSH remote contexts return the configured value (`remote-unqualified`). `none` effort needs verified support for the selected model.
+- **Auth and rate-limit error patterns are multi-token only:** bare `401` / `429` are not matched. On ACP, JSON-RPC `-32000` reads as `auth_expired`.
+
+**Test evidence.** Deterministic suites cover the parser, session storage, route selector, ACP client/session/turn, desktop spawner, runtime turns, Auto Run, Cue, group chat, capabilities and completeness, plus a Grok-seeded Playwright case (`e2e/grok-agent.spec.ts`). The qualification harness (`scripts/grok-qualification/harness.ts`, case families in `scripts/grok-qualification/case-families.json`) writes one receipt per run. Every native and live case is `not-run`: no disposable account, budget, endpoint authorization or selected binary hash was supplied, so fixtures prove Maestro's adapter behavior, not real provider compliance.
+
+**Command line patterns (as Maestro composes them; unqualified on 1.0.70):**
 
 ```bash
-# Basic batch execution (Maestro's default composition)
-grok --cwd /path/to/project --always-approve --output-format streaming-json -p "prompt"
+# Full-access headless turn
+grok --cwd /path/to/project --always-approve --output-format streaming-json --prompt-file /owned/prompt.json
 
-# Resume a session
-grok --cwd /path/to/project --always-approve --output-format streaming-json --resume <session-id> -p "continue"
+# Resume a session headlessly
+grok --cwd /path/to/project --always-approve --output-format streaming-json --resume <session-id> --prompt-file /owned/prompt.json
 
-# Read-only plan mode
-grok --cwd /path/to/project --output-format streaming-json --permission-mode plan -p "prompt"
+# Read-only headless turn
+grok --cwd /path/to/project --output-format streaming-json --permission-mode plan --deny 'Bash(*)' --prompt-file /owned/prompt.json
+
+# Standard-permission turn (ACP; the driver speaks JSON-RPC on stdio)
+grok agent stdio
 ```
 
 ---

@@ -55,7 +55,11 @@ import {
 import { logger } from '../utils/logger';
 import { capabilitySnapshots } from '../agents/capability-snapshot';
 import { getAgentDefinition } from '../agents/definitions';
-import { DEFAULT_CONTEXT_WINDOWS, FALLBACK_CONTEXT_WINDOW } from '../../shared/agentConstants';
+import {
+	DEFAULT_CONTEXT_WINDOWS,
+	FALLBACK_CONTEXT_WINDOW,
+	getContextWindowForAgent,
+} from '../../shared/agentConstants';
 import type { AgentId } from '../../shared/agentIds';
 
 export interface ProcessListenersWiringDependencies {
@@ -113,6 +117,11 @@ export function wireProcessListeners(deps: ProcessListenersWiringDependencies): 
 			return remotes.find((r) => r.name === name) ?? null;
 		},
 		getAgentContextWindow: (agentId: string) => {
+			// This provider-only callback cannot bind Grok metadata to the selected
+			// account/model/version. Keep its canonical unknown fallback; explicit
+			// user overrides are resolved separately by the launch/session callers.
+			if (agentId === 'grok') return getContextWindowForAgent(agentId);
+
 			// Prefer a runtime-discovered context window from the capability
 			// snapshot if one was probed. Falls back to the static table and
 			// finally to the agent definition's configOption default.

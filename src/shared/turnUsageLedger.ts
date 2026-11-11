@@ -27,6 +27,7 @@
  */
 
 import type { UsageStats } from './types';
+import { usageCostUsd } from './maestro-lib/streaming/usage-totals';
 
 /** Accumulated deltas for one in-flight turn. */
 export interface TurnUsage {
@@ -35,8 +36,20 @@ export interface TurnUsage {
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
 	costUsd: number;
+	/**
+	 * The latest accounting-bearing event said the turn's cost is not known (a recorder
+	 * that tracks it, today Grok's, emits each delta's cost with the knownness of the turn
+	 * total). `costUsd` is then only what was summed, never an authoritative amount, and
+	 * the drained row leaves cost empty. An exact zero keeps this false.
+	 */
+	costUnknown?: boolean;
 	/** Number of usage events folded in. Zero-token events still count. */
 	events: number;
+}
+
+/** Whether this event settles the turn's cost as unknown; undefined when it says nothing. */
+function reportsUnknownCost(usage: UsageStats): boolean | undefined {
+	return usage.accounting ? usageCostUsd(usage.accounting.cost) === undefined : undefined;
 }
 
 /**
@@ -67,6 +80,7 @@ export function recordTurnUsage(rawSessionId: string, usage: UsageStats): void {
 		existing.cacheReadTokens += usage.cacheReadInputTokens || 0;
 		existing.cacheCreationTokens += usage.cacheCreationInputTokens || 0;
 		existing.costUsd += usage.totalCostUsd || 0;
+		existing.costUnknown = reportsUnknownCost(usage) ?? existing.costUnknown;
 		existing.events += 1;
 		return;
 	}
@@ -82,6 +96,7 @@ export function recordTurnUsage(rawSessionId: string, usage: UsageStats): void {
 		cacheReadTokens: usage.cacheReadInputTokens || 0,
 		cacheCreationTokens: usage.cacheCreationInputTokens || 0,
 		costUsd: usage.totalCostUsd || 0,
+		...(reportsUnknownCost(usage) ? { costUnknown: true } : {}),
 		events: 1,
 	});
 }
@@ -119,7 +134,7 @@ export function turnUsageStatsFields(usage: TurnUsage | null): {
 		outputTokens: usage.outputTokens,
 		cacheReadTokens: usage.cacheReadTokens,
 		cacheCreationTokens: usage.cacheCreationTokens,
-		costUsd: usage.costUsd,
+		...(usage.costUnknown ? {} : { costUsd: usage.costUsd }),
 	};
 }
 
@@ -129,7 +144,8 @@ export function turnUsageStatsFields(usage: TurnUsage | null): {
  * The Auto Run path keeps its own per-task accumulator (it subscribes to
  * `onUsage` locally and resets between tasks), so it has the delta in hand and
  * does not need the ledger. This converts that value to the same field names
- * without a second accumulation path.
+ * without a second accumulation path. A value whose accounting says the cost is
+ * not known omits `costUsd`, so the row stores NULL rather than a fabricated $0.
  */
 export function usageStatsToTurnFields(usage: UsageStats | undefined): {
 	inputTokens?: number;
@@ -144,7 +160,9 @@ export function usageStatsToTurnFields(usage: UsageStats | undefined): {
 		outputTokens: usage.outputTokens || 0,
 		cacheReadTokens: usage.cacheReadInputTokens || 0,
 		cacheCreationTokens: usage.cacheCreationInputTokens || 0,
-		costUsd: usage.totalCostUsd || 0,
+		// An unknown (or partial-without-figure) charge leaves the column NULL, the same
+		// rule the ledger applies at drain; `totalCostUsd` is then only a display 0.
+		...(reportsUnknownCost(usage) ? {} : { costUsd: usage.totalCostUsd || 0 }),
 	};
 }
 

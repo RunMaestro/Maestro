@@ -79,6 +79,13 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 				projectRoot: string,
 				sessionId: string
 			): Promise<SessionMessagesResult | null> => {
+				// This legacy API has no owner/account/host arguments. Grok context
+				// export uses agentSessions:read's observed scope and native view.
+				if (agentId === 'grok') {
+					throw new Error(
+						'Grok context export requires a selected owner. Use agentSessions.read with ownerAgentId and includeNativeRecords.'
+					);
+				}
 				logger.debug('Getting stored session context', LOG_CONTEXT, {
 					agentId,
 					projectRoot,

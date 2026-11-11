@@ -87,15 +87,57 @@ export function extractOptions(content: string): string[] {
 function extractPrompt(content: string): string | undefined {
 	const trimmed = content.trim();
 	if (!trimmed) return undefined;
-	const questions = trimmed.match(/[^.?!\n]*\?/g);
+	const questionEnd = trimmed.lastIndexOf('?');
+	const questionStart =
+		questionEnd <= 0
+			? -1
+			: Math.max(
+					trimmed.lastIndexOf('.', questionEnd - 1),
+					trimmed.lastIndexOf('?', questionEnd - 1),
+					trimmed.lastIndexOf('!', questionEnd - 1),
+					trimmed.lastIndexOf('\n', questionEnd - 1)
+				);
 	const lastQuestion =
-		questions && questions.length > 0 ? questions[questions.length - 1].trim() : '';
+		questionEnd < 0 ? '' : trimmed.slice(questionStart + 1, questionEnd + 1).trim();
 	const firstLine = trimmed
 		.split('\n')
 		.map((l) => l.trim())
 		.find(Boolean);
 	const prompt = lastQuestion || firstLine || trimmed;
 	return prompt.length > 200 ? `${prompt.slice(0, 197)}...` : prompt;
+}
+
+/** Bounded question cores for native enrollment, never a general text revision.
+ * Reuse the detector's decision intent. Ambiguous or oversized asks cannot earn
+ * same-row streaming authority. Formatting, progress prose and metadata are not
+ * part of a question's identity; full unmodified text still determines risk.
+ */
+export function extractQuestionCores(content: string): string[] | null {
+	const normalized = content
+		.replace(/[`*_~>#]/g, '')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.toLowerCase();
+	const cores: string[] = [];
+	let sentenceStart = 0;
+	let questionCount = 0;
+	for (const delimiter of normalized.matchAll(/[.!?]/g)) {
+		const end = delimiter.index;
+		if (delimiter[0] !== '?') {
+			sentenceStart = end + 1;
+			continue;
+		}
+		if (++questionCount > 32) return null;
+		const question = normalized.slice(sentenceStart, end + 1);
+		sentenceStart = end + 1;
+		const start = question.search(QUESTION_INTENT_RE);
+		if (start < 0) return null;
+		const core = question.slice(start).trim();
+		if (core.length > 2048) return null;
+		cores.push(core);
+	}
+	if (!questionCount) return detectAwaitingInput(content) || looksLikeAsking(content) ? null : [];
+	return [...new Set(cores)];
 }
 
 /** Build a signal, omitting an empty options array. */

@@ -6,6 +6,7 @@ import { parseGitDiff, getFileName, getDiffStats } from '../utils/gitDiffParser'
 import { getBasename } from '../../shared/formatters';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
+import { revealActiveProps, useRevealActiveItem } from '../hooks/ui/useRevealActiveItem';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { ImageDiffViewer } from './ImageDiffViewer';
 import { GitFilePathHeader } from './GitFilePathHeader';
@@ -97,7 +98,8 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	const [viewType, setViewType] = useState<GitDiffViewType>(
 		() => readStoredViewType() ?? initialViewType
 	);
-	const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+	// The file tab strip scrolls; center the active file in it.
+	const tabStripRef = useRevealActiveItem<HTMLDivElement>(activeTab, { align: 'center' });
 	const dialogRef = useRef<HTMLDivElement>(null);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 
@@ -131,18 +133,6 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 			focusTrap: 'lenient',
 		}
 	);
-
-	// Auto-scroll to active tab when it changes
-	useEffect(() => {
-		const activeTabElement = tabRefs.current[activeTab];
-		if (activeTabElement) {
-			activeTabElement.scrollIntoView({
-				behavior: 'smooth',
-				block: 'nearest',
-				inline: 'center',
-			});
-		}
-	}, [activeTab]);
 
 	// Handle keyboard shortcuts (tab navigation + view toggle)
 	useEffect(() => {
@@ -345,6 +335,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 
 				{/* Tabs */}
 				<div
+					ref={tabStripRef}
 					className="flex gap-0 border-b overflow-x-auto scrollbar-thin"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 				>
@@ -353,7 +344,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 						return (
 							<button
 								key={file.newPath || file.oldPath || `file-${index}`}
-								ref={(el) => (tabRefs.current[index] = el)}
+								{...revealActiveProps(activeTab === index)}
 								onClick={() => setActiveTab(index)}
 								className={`px-4 py-3 text-sm whitespace-nowrap transition-colors ${
 									activeTab === index ? 'border-b-2' : 'hover:bg-white/5'

@@ -18,7 +18,9 @@
 import { stripBlankEnvVars } from '../../agentEnvironment';
 import { isValidAgentId } from '../../agentIds';
 import { isSameDirectory, rebasePathOntoRoot } from '../../agentWorkingDirectory';
+import { canonicalJson } from '../../canonicalJson';
 import { isCodexTransport } from '../../codexTransport';
+import { isHarnessControlMode } from '../providers/native-control';
 import { validateGroupAppearance } from '../../groupAppearance';
 import { canCreateGroupInside, removeGroupAndPromoteChildren } from '../../groupHierarchy';
 import { PLAYBOOKS_DIR } from '../../maestro-paths';
@@ -33,6 +35,8 @@ import { generateUUID } from '../../uuid';
 import { addUsageStats } from '../streaming/usage-totals';
 import type {
 	AgentCreateInput,
+	AgentImportInput,
+	AgentImportTab,
 	AgentPatch,
 	AgentPatchField,
 	AgentSshSettings,
@@ -51,6 +55,7 @@ import type { LogEntryRecord } from '../store/transcript';
 import {
 	switchAgentProvider,
 	updateProviderSlot,
+	type NativeSessionBinding,
 	type ProviderSwitchAgent,
 	type ProviderSwitchTab,
 } from './providerSwap';
@@ -552,6 +557,8 @@ export function renameTabRecord(tab: AITabRecord, name: string): AITabRecord {
 
 /** What starting a turn on a tab writes: the message, whose provider owns the turn, and a consumed merge. */
 export interface TurnBegin {
+	/** Runtime attempt identity, independent of the provider session ID. */
+	turnId?: string;
 	/** The person's message, as it will read in the transcript. Written before the provider runs. */
 	userEntry: LogEntryRecord;
 	/** The provider the turn was sent under (settings are codified at send). */
@@ -571,6 +578,7 @@ export function beginTurnRecord(tab: AITabRecord, begin: TurnBegin): AITabRecord
 	return {
 		...base,
 		turnProvider: begin.provider,
+		runtimeTurnId: begin.turnId,
 		logs: [...(Array.isArray(tab.logs) ? tab.logs : []), begin.userEntry],
 	};
 }
@@ -578,6 +586,14 @@ export function beginTurnRecord(tab: AITabRecord, begin: TurnBegin): AITabRecord
 /** What a provider told the runtime about a tab's conversation. Absent fields are left as they are. */
 export interface TabSessionUpdate {
 	agentSessionId?: string;
+	/** Observed provenance, written atomically with the ID through updateProviderSlot. */
+	nativeSessionBinding?: NativeSessionBinding;
+	/** Compare inside the repository mutation queue, including the parked provider slot. */
+	expected?: {
+		turnId: string;
+		agentSessionId: string | null;
+		nativeSessionBinding?: NativeSessionBinding;
+	};
 	/** One finished turn's usage, folded into the provider's running total on the tab. */
 	addUsage?: UsageStats;
 }
@@ -593,14 +609,25 @@ export function recordTabSession(
 	owningProvider: string,
 	update: TabSessionUpdate
 ): AITabRecord {
+	const slot = (
+		owningProvider === agent.toolType
+			? tab
+			: (tab.providerSessions as Record<string, unknown>)?.[owningProvider]
+	) as ProviderSwitchTab | undefined;
+	if (
+		update.expected &&
+		(tab.runtimeTurnId !== update.expected.turnId ||
+			(slot?.agentSessionId ?? null) !== update.expected.agentSessionId ||
+			canonicalJson(slot?.nativeSessionBinding ?? null) !==
+				canonicalJson(update.expected.nativeSessionBinding ?? null))
+	) {
+		throw new Error('The native session owner changed before the turn could be recorded.');
+	}
 	const fields: Record<string, unknown> = {};
 	if (update.agentSessionId !== undefined) fields.agentSessionId = update.agentSessionId;
+	if (update.nativeSessionBinding !== undefined)
+		fields.nativeSessionBinding = structuredClone(update.nativeSessionBinding);
 	if (update.addUsage !== undefined) {
-		const slot = (
-			owningProvider === agent.toolType
-				? tab
-				: (tab.providerSessions as Record<string, unknown>)?.[owningProvider]
-		) as { usageStats?: UsageStats } | undefined;
 		fields.usageStats = addUsageStats(slot?.usageStats, update.addUsage);
 	}
 	if (Object.keys(fields).length === 0) return tab;
@@ -779,6 +806,96 @@ export function buildAgentRecord(
 	return { agent, tab };
 }
 
+// ---------------------------------------------------------------------------
+// Imported agents (Federation lift)
+// ---------------------------------------------------------------------------
+
+/**
+ * The checks an import can make without the filesystem: the create checks on the agent, then tabs
+ * the record can hold and queued messages that name one of them. The WebSocket client runs them
+ * before it sends, the repository again before it writes.
+ */
+export function checkAgentImportInput(input: AgentImportInput): RuleResult<CheckedCreateInput> {
+	// The type leaves `ssh` out, but a wire message is not typed: an agent that runs on this host
+	// cannot also run its turns on an SSH remote.
+	if ((input.agent as AgentCreateInput).ssh?.enabled) {
+		return invalid(
+			'An imported agent runs on this host, so it cannot carry an SSH remote. Send it without one.'
+		);
+	}
+	const checked = checkAgentCreateInput(input.agent);
+	if (!checked.ok) return checked;
+	const tabs = Array.isArray(input.tabs) ? input.tabs : [];
+	if (tabs.length === 0) return invalid('An imported agent needs at least one tab.');
+	const ids = new Set<string>();
+	for (const tab of tabs) {
+		const id = typeof tab?.id === 'string' ? tab.id : '';
+		if (!id.trim()) return invalid('Every imported tab needs an id.');
+		if (ids.has(id)) return invalid(`Two imported tabs share the id ${id}.`);
+		ids.add(id);
+		if (!Array.isArray(tab.logs)) return invalid(`Imported tab ${id} has no transcript.`);
+	}
+	for (const item of input.queue ?? []) {
+		if (!ids.has(item?.tabId)) {
+			return invalid(`A queued message is for tab ${String(item?.tabId)}, which is not imported.`);
+		}
+		if (typeof item.text !== 'string' || !item.text.trim()) {
+			return invalid(`A queued message for tab ${item.tabId} has no text.`);
+		}
+	}
+	return checked;
+}
+
+/**
+ * An imported tab: the host's new-tab record under the tab's own id, name, chips, transcript, and
+ * provider session id. Never busy: a turn cannot move between machines.
+ */
+export function buildImportedTabRecord(
+	tab: AgentImportTab,
+	ctx: RuleContext,
+	defaults: TabDefaults
+): AITabRecord {
+	const base = buildTabRecord(ctx, defaults);
+	const record: AITabRecord = {
+		...base,
+		id: tab.id,
+		agentSessionId: tab.agentSessionId || null,
+		name: tab.name || null,
+		starred: tab.starred === true,
+		logs: [...tab.logs],
+		createdAt: typeof tab.createdAt === 'number' ? tab.createdAt : base.createdAt,
+	};
+	if (typeof tab.saveToHistory === 'boolean') record.saveToHistory = tab.saveToHistory;
+	const thinking = asThinkingMode(tab.showThinking);
+	if (thinking !== undefined) record.showThinking = thinking;
+	if (typeof tab.readOnlyMode === 'boolean') record.readOnlyMode = tab.readOnlyMode;
+	if (tab.model) record.customModel = tab.model;
+	if (tab.effort) record.customEffort = tab.effort;
+	if (tab.usageStats) record.usageStats = tab.usageStats;
+	return record;
+}
+
+/**
+ * The record an imported agent is stored as: the record `create` builds for the same agent input,
+ * with the imported tabs in place of its fresh one, in the order given.
+ */
+export function buildImportedAgentRecord(
+	input: AgentImportInput,
+	checked: CheckedCreateInput,
+	ctx: RuleContext,
+	defaults: TabDefaults
+): AgentRecord {
+	const { agent } = buildAgentRecord(input.agent, checked, ctx, defaults);
+	const tabs = input.tabs.map((tab) => buildImportedTabRecord(tab, ctx, defaults));
+	const active = tabs.find((tab) => tab.id === input.activeTabId) ?? tabs[0];
+	return {
+		...agent,
+		aiTabs: tabs,
+		activeTabId: active.id,
+		unifiedTabOrder: tabs.map((tab) => ({ type: 'ai', id: tab.id })),
+	};
+}
+
 /**
  * The agent-level fields a record-keyed config patch may write: the Edit Agent
  * fields, plus the UI state a person would otherwise toggle in the Left Bar.
@@ -801,6 +918,7 @@ export const AGENT_EDITABLE_KEYS: ReadonlySet<string> = new Set([
 	'maestroPPath',
 	// Validated in `applyAgentConfigPatch`: an unknown transport must never reach the spawner.
 	'codexTransport',
+	'harnessControlMode',
 	'bookmarked',
 ]);
 
@@ -844,6 +962,8 @@ export function buildAgentConfigPatch(patch: AgentPatch): {
 	if (patch.codexTransport !== undefined) {
 		put('codexTransport', 'codexTransport', patch.codexTransport);
 	}
+	if (patch.harnessControlMode !== undefined)
+		put('harnessControlMode', 'harnessControlMode', patch.harnessControlMode);
 	return { fields, patch: out };
 }
 
@@ -866,6 +986,10 @@ export function applyAgentConfigPatch(
 	if (transport !== undefined && transport !== null && !isCodexTransport(transport)) {
 		return invalid("Invalid value for field 'codexTransport'");
 	}
+	const controlMode = patch.harnessControlMode;
+	if (controlMode !== undefined && controlMode !== null && !isHarnessControlMode(controlMode)) {
+		return invalid("Invalid value for field 'harnessControlMode'");
+	}
 	const next: AgentRecord = { ...agent };
 	let touched = 0;
 	for (const key of Object.keys(patch)) {
@@ -874,6 +998,7 @@ export function applyAgentConfigPatch(
 		let value = patch[key];
 		if (key === 'customEffort' && typeof value === 'string') value = value.trim() || null;
 		if (key === 'codexTransport' && value === 'exec') value = null;
+		if (key === 'harnessControlMode' && value === 'current') value = null;
 		if (value === null) delete next[key];
 		else next[key] = value;
 	}

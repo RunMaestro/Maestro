@@ -29,14 +29,14 @@ const PROJECT = '/Users/jane/Code/my app';
 
 describe('OpenCode resume', () => {
 	describe('arguments', () => {
-		it('continues a batch turn with run --format json --session <id>', () => {
+		it('continues a batch turn with run --format json --thinking --session <id>', () => {
 			const args = buildAgentArgs(opencode, {
 				baseArgs: opencode.args,
 				prompt: 'continue',
 				cwd: PROJECT,
 				agentSessionId: SESSION_ID,
 			});
-			expect(args).toEqual(['run', '--format', 'json', '--session', SESSION_ID]);
+			expect(args).toEqual(['run', '--format', 'json', '--thinking', '--session', SESSION_ID]);
 		});
 
 		it('starts a fresh batch conversation (no --session) on the first turn', () => {
@@ -45,7 +45,7 @@ describe('OpenCode resume', () => {
 				prompt: 'hello',
 				cwd: PROJECT,
 			});
-			expect(args).toEqual(['run', '--format', 'json']);
+			expect(args).toEqual(['run', '--format', 'json', '--thinking']);
 		});
 
 		it('reopens the TUI on the same session without batch-only flags', () => {
@@ -72,6 +72,7 @@ describe('OpenCode resume', () => {
 				'run',
 				'--format',
 				'json',
+				'--thinking',
 				'--agent',
 				'plan',
 				'--model',

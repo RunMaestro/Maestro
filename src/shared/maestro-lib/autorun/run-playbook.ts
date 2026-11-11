@@ -20,9 +20,10 @@ import {
 	type FinalSummaryTotals,
 } from '../../autoRunHistoryReconciliation';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../autorunModelHints';
+import { resolveAutoRunPromptTemplate } from '../../autorunPromptTemplate';
 import { describeStall, evaluateStall, MAX_CONSECUTIVE_NO_CHANGES } from '../../autorunStall';
 import { resolveTurnSettings, describeTurnSettings } from '../../autorunTurnSettings';
-import { countMarkdownTasks } from '../../markdownTaskScan';
+import { countMarkdownTasks, restoreTasksCheckedByFailedTurn } from '../../markdownTaskScan';
 import { cheapResumeTurnSettings } from '../../modelTiers';
 import { prependNewSessionMessage } from '../../newSessionMessage';
 import { PROMPT_IDS } from '../../promptDefinitions';
@@ -649,8 +650,16 @@ export async function* runPlaybook(
 						playbook.taskSelectionMode,
 						hintSegment
 					);
+					// A playbook prompt that never names the document still gets the
+					// default's selection and document blocks, unless the policy pastes
+					// the document in below (resolveAutoRunPromptTemplate).
 					const basePrompt = substituteTemplateVariables(
-						rawBasePrompt.replace(/\{\{TASK_SELECTION_BLOCK\}\}/gi, selectionBlock),
+						resolveAutoRunPromptTemplate(rawBasePrompt, {
+							selectionBlock,
+							documentBlock: policy.inlineDocument
+								? null
+								: await deps.prompts.get(PROMPT_IDS.AUTORUN_DOCUMENT),
+						}),
 						templateContext
 					);
 
@@ -723,20 +732,50 @@ export async function* runPlaybook(
 					const elapsedMs = clock.now() - taskStartTime;
 
 					// Re-read document to get new task count and check for halt marker
+					let afterRead = await deps.documents.read(folderPath, docEntry.filename);
+
+					// A failed or interrupted Grok turn finished nothing, whatever it ticked
+					// on its way to the failure. Put those boxes back so the next pass runs
+					// the task again, the same rule as the desktop engine
+					// (useDocumentProcessor); the rest of the document stays as the turn
+					// left it, and the stall rule, history and stats read the restored state.
+					const isFailedGrokTurn = session.toolType === 'grok' && !result.success;
+					if (isFailedGrokTurn && afterRead.content) {
+						const restore = restoreTasksCheckedByFailedTurn(
+							expandedDocContent || docContent,
+							afterRead.content
+						);
+						if (restore.restored > 0) {
+							await deps.documents.write(folderPath, `${docEntry.filename}.md`, restore.content);
+							afterRead = await deps.documents.read(folderPath, docEntry.filename);
+						}
+						if (debug && (restore.restored > 0 || restore.unmatched > 0)) {
+							yield {
+								type: 'debug',
+								timestamp: clock.now(),
+								category: 'stall',
+								message: `${docEntry.filename}: failed Grok turn, restored ${restore.restored} task checkbox(es), ${restore.unmatched} could not be matched to a task at dispatch`,
+							};
+						}
+					}
+
 					const {
 						unchecked: newRemainingTasks,
 						checked: checkedAfter,
 						content: postContent,
-					} = await deps.documents.read(folderPath, docEntry.filename);
+					} = afterRead;
 					currentContent = postContent;
 					// Checked boxes gained, which survives an agent that adds tasks as it works. A port that
 					// does not count them falls back to the drop in unchecked tasks. Never negative (C2).
-					const tasksCompletedThisRun = Math.max(
-						0,
-						checkedBefore !== undefined && checkedAfter !== undefined
-							? checkedAfter - checkedBefore
-							: remainingTasks - newRemainingTasks
-					);
+					// A failed Grok turn completes nothing, even a tick that could not be undone.
+					const tasksCompletedThisRun = isFailedGrokTurn
+						? 0
+						: Math.max(
+								0,
+								checkedBefore !== undefined && checkedAfter !== undefined
+									? checkedAfter - checkedBefore
+									: remainingTasks - newRemainingTasks
+							);
 					const haltMarker = detectHaltMarker(postContent);
 
 					// Did anything actually move? Compared by CHECKBOX, never by document

@@ -23,7 +23,7 @@ import {
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { isSupersededGeneration } from '../generation';
-import { redactAnswerTail } from '../../../shared/agent-run/redact';
+import { redactAnswerTail, redactSecrets } from '../../../shared/agent-run/redact';
 import {
 	resolveTurnOutcome,
 	type TurnFacts,
@@ -122,6 +122,10 @@ export class ExitHandler {
 		// the final flush, exit), so a guard placed any lower silently lets some of
 		// this process's output land in the successor's turn.
 		if (this.isSuperseded(sessionId, managedProcess)) {
+			if (managedProcess.tempFiles) {
+				cleanupTempFiles(managedProcess.tempFiles);
+				managedProcess.tempFiles = undefined;
+			}
 			logger.warn(
 				'[ProcessManager] Session re-spawned during exit handling, suppressing all exit side effects',
 				'ProcessManager',
@@ -460,6 +464,7 @@ export class ExitHandler {
 		// Remove temporary CLI attachments, including Windows prompt files.
 		if (managedProcess.tempFiles && managedProcess.tempFiles.length > 0) {
 			cleanupTempFiles(managedProcess.tempFiles);
+			managedProcess.tempFiles = undefined;
 		}
 
 		// Emit query-complete for batch mode processes. Listeners flush buffered data
@@ -518,6 +523,10 @@ export class ExitHandler {
 			// that decide dependency readiness must see the final answer, never an
 			// earlier partial snapshot that happened to look stable for two polls.
 			settlement.answerTail = redactAnswerTail(managedProcess.streamedText);
+			Object.defineProperty(settlement, 'nativeAnswer', {
+				value: redactSecrets(managedProcess.streamedText),
+				enumerable: false,
+			});
 		}
 		this.emitter.emit('exit', sessionId, code, undefined, settlement);
 	}
@@ -555,6 +564,7 @@ export class ExitHandler {
 		managedProcess: ManagedProcess
 	): Promise<void> {
 		if (managedProcess.toolType !== 'copilot-cli') return;
+		if (managedProcess.skipCopilotShutdownWait) return;
 		const agentSessionId = managedProcess.agentSessionId;
 		if (!agentSessionId) return;
 
@@ -741,6 +751,7 @@ export class ExitHandler {
 		// Remove temporary CLI attachments on process errors as well.
 		if (managedProcess?.tempFiles && managedProcess.tempFiles.length > 0) {
 			cleanupTempFiles(managedProcess.tempFiles);
+			managedProcess.tempFiles = undefined;
 		}
 
 		this.emitter.emit('data', sessionId, `[error] ${error.message}`);

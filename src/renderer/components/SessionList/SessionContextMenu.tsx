@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { isImeComposing } from '../../utils/ime';
 import {
 	ArrowDown,
 	ArrowDownToLine,
@@ -25,6 +26,7 @@ import {
 	Pencil,
 	Check,
 	PackageOpen,
+	ServerCog,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useAnchoredMenuPosition, useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -39,6 +41,12 @@ import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import {
+	useAgentFederationStatus,
+	useLiftedMirrorTarget,
+} from '../../hooks/federation/useAgentLift';
+import { canMoveToHost } from '../../utils/peerMirrorView';
+import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
 
 interface SessionContextMenuProps {
 	x: number;
@@ -227,6 +235,10 @@ export function SessionContextMenu({
 	onRenameWindow,
 }: SessionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
+	// Federation (FED-SSH-06): Move to Host for an SSH agent whose remote takes part (it sets a host
+	// up first when there is none); a lifted agent offers the jump to where it moved instead.
+	const federationStatus = useAgentFederationStatus(session);
+	const liftedTarget = useLiftedMirrorTarget(session.liftedTo);
 
 	// Inline window-rename state. While a row is being renamed, the Move to Window
 	// flyout must NOT auto-close on mouse-leave (it would unmount the input
@@ -394,6 +406,43 @@ export function SessionContextMenu({
 				>
 					<PackageOpen className="w-3.5 h-3.5" />
 					Export Agent...
+				</button>
+			)}
+
+			{canMoveToHost(federationStatus) && (
+				<button
+					type="button"
+					onClick={() => {
+						requestMoveToHost(session.id);
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+					title={
+						federationStatus.hostReady
+							? `Run this agent on the Maestro host on ${federationStatus.peer.name}, so it keeps working while this machine sleeps`
+							: `Set up a Maestro host on ${federationStatus.peer.name}, then run this agent there so it keeps working while this machine sleeps`
+					}
+					data-testid="session-menu-move-to-host"
+				>
+					<ServerCog className="w-3.5 h-3.5" />
+					Move to Host ({federationStatus.peer.name})...
+				</button>
+			)}
+
+			{liftedTarget && (
+				<button
+					type="button"
+					onClick={() => {
+						openLiftedAgent(session);
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+					title={`This agent moved to ${liftedTarget.ref}`}
+				>
+					<ServerCog className="w-3.5 h-3.5" />
+					Open on Host ({liftedTarget.ref})
 				</button>
 			)}
 
@@ -595,10 +644,10 @@ export function SessionContextMenu({
 											onChange={(e) => setRenameValue(e.target.value)}
 											onKeyDown={(e) => {
 												e.stopPropagation();
-												if (e.key === 'Enter') {
+												if (e.key === 'Enter' && !isImeComposing(e)) {
 													e.preventDefault();
 													commitRenameWindow();
-												} else if (e.key === 'Escape') {
+												} else if (e.key === 'Escape' && !isImeComposing(e)) {
 													e.preventDefault();
 													cancelRenameWindow();
 												}

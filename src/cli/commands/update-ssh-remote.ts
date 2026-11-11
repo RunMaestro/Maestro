@@ -15,6 +15,7 @@ import {
 	resolveSshOptions,
 } from '../../shared/sshOptions';
 import { setKeysParked, type ParkedRecordPair } from '../../shared/parkedRecords';
+import { federationFieldFor, isFederationRemote } from '../../shared/federationRemote';
 
 interface UpdateSshRemoteOptions {
 	name?: string;
@@ -32,6 +33,8 @@ interface UpdateSshRemoteOptions {
 	enableSshOption?: string[];
 	sshConfig?: string;
 	enabled?: string;
+	/** `on` / `off`: Federation for this remote; `off` is the only value stored */
+	federation?: string;
 	setDefault?: boolean;
 	json?: boolean;
 }
@@ -149,6 +152,16 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 		}
 	}
 
+	if (options.federation !== undefined) {
+		try {
+			// Stored only when on, so switching it off leaves no trace on the record.
+			// Federation is opportunistic: only an opt-out is stored.
+			updated.federation = federationFieldFor(parseCliBool(options.federation, '--federation'));
+		} catch (error) {
+			fail(error instanceof Error ? error.message : String(error), options.json);
+		}
+	}
+
 	// Env and -o options MERGE by default so a single edit does not silently drop
 	// the rest of the set; --clear-* is the explicit way to start over.
 	// --clear-* wipes BOTH records: "remove all" that left parked entries behind
@@ -214,6 +227,7 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 				// override is usually to change one of those, so echoing only the
 				// overrides would not answer "did my ConnectTimeout take effect?"
 				resolvedSshOptions: resolveSshOptions(updated.sshOptions),
+				federation: isFederationRemote(updated),
 			})
 		);
 		return;
@@ -235,6 +249,9 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 	}
 	for (const key of Object.keys(updated.remoteEnvDisabled ?? {})) {
 		console.log(`  env   ${key} (off)`);
+	}
+	if (!isFederationRemote(updated)) {
+		console.log(`  Federation: off`);
 	}
 	if (options.setDefault) {
 		console.log(`  Set as default`);

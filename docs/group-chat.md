@@ -125,6 +125,8 @@ agent is still busy after 15 minutes, the chat says so and the turn moves on wit
 - **Let the moderator work** - It may take multiple rounds for complex questions
 - **Mix local and remote** - Combine agents across machines for maximum coverage
 - **Hyphenated names for spaces** - If your session name has spaces, use hyphens in @mentions (e.g., `@My-Project` for "My Project")
+- **Renaming is safe** - A participant stays linked to its agent by ID, so renaming the agent does not break the chat. Mention it by its old or new name, or by its full agent ID (`@8dac9050-cc32-4bfa-a0e3-33bd62d8a503`)
+- **Add without a mention** - `maestro-cli group-chat add <chat> <agent>` adds an agent by ID, ID prefix, or name
 
 ## Managing Group Chats
 

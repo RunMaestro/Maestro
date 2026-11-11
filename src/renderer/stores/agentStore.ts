@@ -1,3 +1,7 @@
+import {
+	flushSessionPersistenceNow,
+	flushSessionTranscriptNow,
+} from '../services/sessionPersistenceFlush';
 import { migrationHoldsTurns } from '../../shared/maestro-lib/translation/session';
 /**
  * agentStore - Zustand store for agent lifecycle orchestration
@@ -35,7 +39,7 @@ import { buildSnapshotKey } from '../../shared/agentCapabilities';
 import { resolveTabPermissionMode } from '../../shared/agentMetadata';
 import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
 import { isAgentAlreadyRunningError } from '../../shared/processErrors';
-import { createTab, getActiveTab } from '../utils/tabHelpers';
+import { createTab, getActiveTab, markTabRunningQueuedItem } from '../utils/tabHelpers';
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
@@ -56,6 +60,8 @@ import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
 import {
 	dispatchCrossAgentMentionsForMessage,
+	dispatchCrossAgentMentions,
+	planCrossAgentMentions,
 	withMentionTurnNotes,
 	type CrossAgentMentionDispatch,
 } from '../services/crossAgentMentions';
@@ -63,6 +69,7 @@ import { filterYoloArgs } from '../utils/agentArgs';
 import {
 	applyQueuedItemAbort,
 	applyQueuedItemDispatchFailure,
+	applyQueuedItemDispatch,
 	applyQueuedItemRelease,
 	clearSpawnCollision,
 	noteSpawnCollision,
@@ -71,6 +78,14 @@ import {
 } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
 import { requestTabAutoNameForMessage } from '../services/tabAutoNaming';
+import { admitGrokNativeCommand, getGrokSlashCommandRefusal } from '../slashCommands';
+import type { GrokAcpNativeCommandIntent } from '../../shared/maestro-lib/grok/acp-turn';
+import {
+	getQueuedCommandScopeRefusal,
+	getQueuedCommandSelectionRefusal,
+	getQueuedCommandSpawnSelection,
+} from '../services/queuedPrompt';
+import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 
 // ============================================================================
 // Store Types
@@ -184,6 +199,8 @@ export interface AgentStoreActions {
  * These are mutable values from hooks/refs that can't be imported directly.
  */
 export interface ProcessQueuedItemDeps {
+	/** Host-selected parallel reply step. Does not grant authority without live native proofs. */
+	managedStepId?: string;
 	conductorProfile: string;
 	customAICommands: CustomAICommand[];
 	speckitCommands: SpecKitCommand[];
@@ -229,6 +246,8 @@ function updateSession(sessionId: string, updater: (s: Session) => Session): voi
  * more than once (e.g. during hot reload).
  */
 let snapshotUnsubscribe: (() => void) | null = null;
+// Different drain callers may enter before the owner IPC acknowledges submission.
+const pendingPlainQueueDispatches = new Set<string>();
 
 export const useAgentStore = create<AgentStore>()((set, get) => ({
 	// --- State ---
@@ -391,12 +410,20 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 	},
 
 	processQueuedItem: async (sessionId, item, deps) => {
+		const managedQueue = !!item.pendingAdmissionId;
+		if (managedQueue && item.admissionRelease && !deps.managedStepId) return false; // native in-flight/Unknown barrier, never resend
 		const session = getSession(sessionId);
 		if (!session) {
 			logger.error('[processQueuedItem] Session not found:', undefined, sessionId);
 			return false;
 		}
 
+		if (
+			managedQueue &&
+			!deps.managedStepId &&
+			session.executionQueue.some((row) => row.id === item.id && row.admissionRelease)
+		)
+			return false;
 		if (migrationHoldsTurns(session.providerMigration)) return false;
 
 		// Find the TARGET tab for this queued item (NOT the active tab!)
@@ -421,7 +448,13 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				? (await probeSessionAiProcesses(sessionId, ownerTabId)).targetTabActive
 				: false;
 			updateSessionWith(sessionId, (s) =>
-				applyQueuedItemAbort(s, item, ownerRunning ? undefined : ownerTabId)
+				applyQueuedItemAbort(
+					item.type === 'command' && (session.toolType === 'grok' || item.commandScope)
+						? applyQueuedItemDispatchFailure(s, { ...item, paused: true }, { collision: true })
+						: s,
+					item,
+					ownerRunning ? undefined : ownerTabId
+				)
 			);
 			return false;
 		}
@@ -439,6 +472,83 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 		const targetSessionId = `${sessionId}-ai-${targetTab.id}`;
 
+		// External/remote producers can bypass the composer and queue raw slash
+		// text as a message. Refuse before naming, mentions, retries or spawning.
+		// A command item that is none of the user's prompts is a native Grok command: it runs
+		// only as the intent admitted here, against this tab's current catalog. Raw slash
+		// text in a message item has no intent and is refused as before.
+		let grokNativeCommand: GrokAcpNativeCommandIntent | undefined;
+		const slashInput =
+			item.type === 'command'
+				? [item.command, item.commandArgs].filter(Boolean).join(' ')
+				: item.text?.trim();
+		if (session.toolType === 'grok' && slashInput?.startsWith('/')) {
+			const isMaestroPrompt =
+				item.type === 'command' &&
+				[
+					...deps.customAICommands,
+					...deps.speckitCommands,
+					...deps.openspecCommands,
+					...(deps.bmadCommands ?? []),
+				].some((command) => command.command === item.command);
+			const admission = isMaestroPrompt
+				? undefined
+				: item.type === 'command'
+					? await admitGrokNativeCommand(session, targetTab, slashInput, {
+							imageCount: item.images?.length ?? 0,
+						})
+					: { refusal: await getGrokSlashCommandRefusal(session, targetTab, slashInput) };
+			grokNativeCommand = admission?.intent;
+			if (admission?.refusal) {
+				const refusal = admission.refusal;
+				const ownerRunning = (await probeSessionAiProcesses(sessionId, targetTab.id))
+					.targetTabActive;
+				updateSessionWith(sessionId, (s) =>
+					applyQueuedItemAbort(s, item, ownerRunning ? undefined : targetTab.id)
+				);
+				useSessionStore
+					.getState()
+					.addLogToTab(sessionId, { source: 'error', text: refusal }, targetTab.id);
+				return false;
+			}
+		}
+
+		// The receipt is also checked after a provider switch, before another
+		// provider could interpret this command. Held legacy items require requeue.
+		const scopedCommand =
+			item.type === 'command' && (session.toolType === 'grok' || !!item.commandScope);
+		const settleUnsentCommand = async (refusal?: string): Promise<void> => {
+			const live = getSession(sessionId);
+			const ownerTabId = live && queuedItemOwnerTabId(live, item);
+			const ownerRunning = ownerTabId
+				? (await probeSessionAiProcesses(sessionId, ownerTabId)).targetTabActive
+				: false;
+			updateSessionWith(sessionId, (current) =>
+				applyQueuedItemAbort(
+					refusal
+						? applyQueuedItemDispatchFailure(
+								current,
+								{ ...item, paused: true },
+								{ collision: true }
+							)
+						: current,
+					item,
+					ownerRunning ? undefined : ownerTabId
+				)
+			);
+			if (refusal)
+				useSessionStore
+					.getState()
+					.addLogToTab(sessionId, { source: 'error', text: refusal }, item.tabId);
+		};
+		const refuseChangedCommand = async (): Promise<boolean> => {
+			const refusal = await getQueuedCommandScopeRefusal(sessionId, item);
+			if (!refusal) return false;
+			await settleUnsentCommand(refusal);
+			return true;
+		};
+		if (scopedCommand && (await refuseChangedCommand())) return false;
+
 		// Name the tab from the message it is about to run. The composer names at
 		// submit time, but `dispatch --queue`, a busy `dispatch --new-tab`, a snooze
 		// wake prompt and other external producers only reach a tab through this
@@ -450,6 +560,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// skipped: its text is Maestro's own "X replied" note, not something the
 		// user asked for, and the message it continues was named when it was sent.
 		if (
+			!managedQueue &&
 			item.type === 'message' &&
 			item.text?.trim() &&
 			!item.agentContext &&
@@ -466,7 +577,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// the consult replies, or arms a hand-off of its answer; `mentionDispatch`
 		// is what the turn's prompt has to be told about either.
 		let mentionDispatch: CrossAgentMentionDispatch | undefined;
-		if (item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
+		if (!managedQueue && item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
 			mentionDispatch = dispatchCrossAgentMentionsForMessage(
 				item.text,
 				session,
@@ -504,9 +615,62 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// its tabId pinned to the resolved target - `item.tabId` may be undefined
 		// when the item fell back to the active tab. `crossAgentMention` is dropped:
 		// the consult just fired, and an auto-retry of this turn must not re-fire it.
-		noteDispatch(sessionId, { ...item, tabId: targetTab.id, crossAgentMention: undefined }, deps);
+		if (!managedQueue)
+			noteDispatch(sessionId, { ...item, tabId: targetTab.id, crossAgentMention: undefined }, deps);
 
+		let synopsisBeforeCommand: Session['pendingAICommandForSynopsis'];
+		let commandSynopsisWritten = false;
+		const plainQueueKey =
+			managedQueue && !item.crossAgentMention ? item.pendingAdmissionId : undefined;
+		if (plainQueueKey && pendingPlainQueueDispatches.has(plainQueueKey)) return false;
+		if (plainQueueKey) pendingPlainQueueDispatches.add(plainQueueKey);
 		try {
+			if (managedQueue && (item.type !== 'message' || item.agentContext))
+				throw new Error('DispatchQueueRoutingUnsupported');
+			if (managedQueue && item.crossAgentMention && !deps.managedStepId) {
+				if (deps.isCancelled?.()) return false;
+				await flushSessionPersistenceNow(useSessionStore.getState().sessions);
+				const prepared = await window.maestro.crossAgent.prepareQueue({
+					sourceSessionId: sessionId,
+					sourceTabId: targetTab.id,
+					dispatchId: item.pendingAdmissionId!,
+				});
+				updateSessionWith(sessionId, (s) => ({
+					...s,
+					executionQueue: s.executionQueue.map((row) =>
+						row.id === item.id
+							? { ...row, admissionRelease: { generation: prepared.generation } }
+							: row
+					),
+				}));
+				const plan = planCrossAgentMentions(item.text!, sessionId, item.mentionRouting);
+				if (
+					!plan ||
+					plan.routing !== prepared.routing ||
+					plan.targetSessionIds.length !== prepared.targetSessionIds.length ||
+					plan.targetSessionIds.some((id) => !prepared.targetSessionIds.includes(id))
+				)
+					throw new Error('DispatchRoutingRecipientChanged');
+				updateSessionWith(sessionId, (s) => {
+					const current = s.executionQueue.find((row) => row.id === item.id);
+					if (!current) return s;
+					return {
+						...applyQueuedItemRelease(applyQueuedItemDispatch(s, current), targetTab.id),
+						executionQueue: s.executionQueue,
+					};
+				});
+				const starts: Promise<void>[] = [];
+				mentionDispatch = dispatchCrossAgentMentions(
+					plan,
+					item.text!,
+					session,
+					targetTab.id,
+					item.images,
+					{ dispatchId: item.pendingAdmissionId!, generation: prepared.generation, starts }
+				);
+				await Promise.all(starts);
+				if (prepared.routing === 'only' || prepared.routing === 'consult-first') return true; // no local AgentRun, retry snapshot or spawn
+			}
 			// Get agent configuration for this session's tool type
 			const agent = await window.maestro.agents.get(session.toolType);
 			if (!agent) throw new Error(`Agent not found for toolType: ${session.toolType}`);
@@ -539,18 +703,26 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				// A queued message that is the tab's FIRST turn opens a new provider
 				// session, so it carries the New Session Message like a typed one does.
 				// A message queued behind a running turn resumes, and gets nothing.
-				const effectivePrompt = withMentionTurnNotes(
-					takePendingMergedContext(
-						sessionId,
-						targetTab.id,
-						prependNewSessionMessageOnFirstTurn(
-							item.agentContext ? `${item.agentContext}\n\n---\n\n${messagePrompt}` : messagePrompt,
+				const effectivePrompt = managedQueue
+					? prependNewSessionMessageOnFirstTurn(
+							messagePrompt,
 							session.newSessionMessage,
 							tabAgentSessionId
 						)
-					),
-					mentionDispatch
-				);
+					: withMentionTurnNotes(
+							takePendingMergedContext(
+								sessionId,
+								targetTab.id,
+								prependNewSessionMessageOnFirstTurn(
+									item.agentContext
+										? `${item.agentContext}\n\n---\n\n${messagePrompt}`
+										: messagePrompt,
+									session.newSessionMessage,
+									tabAgentSessionId
+								)
+							),
+							mentionDispatch
+						);
 
 				// NOTE: The user-visible log entry for this message is appended by the
 				// caller that dequeued the item (e.g. useAgentListeners onExit,
@@ -580,7 +752,46 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
 					return false;
 				}
-				await window.maestro.process.spawn({
+				if (managedQueue && !item.crossAgentMention) {
+					// Submit the canonical queue card without starting the turn or releasing
+					// its admission hold. Repeated drains reuse this exact boundary; only
+					// the host journal may reconcile an uncertain previous start.
+					updateSessionWith(sessionId, (s) => {
+						const current = s.executionQueue.find((row) => row.id === item.id);
+						if (!current || current.pendingAdmissionId !== item.pendingAdmissionId) return s;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((tab) =>
+								tab.id !== targetTab.id ||
+								tab.logs.some((log) => log.queuedItemId === item.id && log.source === 'user')
+									? tab
+									: { ...tab, logs: markTabRunningQueuedItem(tab, current, s).logs }
+							),
+						};
+					});
+				}
+				const transcriptBoundaryId = getSession(sessionId)
+					?.aiTabs.find((tab) => tab.id === targetTab.id)
+					?.logs.slice()
+					.reverse()
+					.find((log) => log.source === 'user' && log.queuedItemId === item.id)?.id;
+				if (managedQueue) {
+					await flushSessionPersistenceNow(useSessionStore.getState().sessions);
+					if (!item.crossAgentMention) {
+						if (!transcriptBoundaryId) throw new Error('DispatchTranscriptBoundaryUnavailable');
+						await flushSessionTranscriptNow(sessionId, targetTab.id, transcriptBoundaryId);
+					}
+					if (deps.isCancelled?.()) return false;
+				}
+				const spawnResult = await window.maestro.process.spawn({
+					transcriptBoundaryId,
+					...(managedQueue
+						? {
+								pianolaDispatchId: item.pendingAdmissionId,
+								pianolaQueueItemId: item.id,
+								...(deps.managedStepId ? { pianolaQueueStepId: deps.managedStepId } : {}),
+							}
+						: {}),
 					sessionId: targetSessionId,
 					querySource: item.querySource,
 					toolType: session.toolType,
@@ -602,12 +813,30 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
+				if (managedQueue) {
+					if (!spawnResult.success)
+						throw new Error(spawnResult.error ?? 'DispatchNativeStartFailed');
+					if (!spawnResult.pianolaRunId) throw new Error('DispatchCaptureUnknown');
+					updateSessionWith(sessionId, (s) => {
+						const current = s.executionQueue?.find((row) => row.id === item.id);
+						if (!current || current.pendingAdmissionId !== item.pendingAdmissionId) return s;
+						if (item.crossAgentMention)
+							return {
+								...applyQueuedItemDispatch(s, current, false),
+								executionQueue: s.executionQueue,
+							};
+						return spawnResult.pianolaQueueReconciled
+							? { ...s, executionQueue: s.executionQueue.filter((row) => row.id !== item.id) }
+							: applyQueuedItemDispatch(s, current, false);
+					});
+				}
 			} else if (item.type === 'command' && item.command) {
 				// Process a slash command - find matching command
 				// Check user-defined commands first, then agent-discovered commands with prompts
-				const matchingAgentCommand = session.agentCommands?.find(
-					(cmd) => cmd.command === item.command && cmd.prompt
-				);
+				const matchingAgentCommand =
+					session.toolType === 'grok'
+						? undefined
+						: session.agentCommands?.find((cmd) => cmd.command === item.command && cmd.prompt);
 				const matchingCommand =
 					deps.customAICommands.find((cmd) => cmd.command === item.command) ||
 					deps.speckitCommands.find((cmd) => cmd.command === item.command) ||
@@ -621,11 +850,78 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							}
 						: undefined);
 
-				if (matchingCommand) {
+				if (grokNativeCommand) {
+					// The exact `/name args` text, with no system prompt, New Session Message
+					// or template pass: main refuses any other prompt for the intent, and the
+					// new process must advertise the same entry before it is submitted.
+					const nativeText = slashInput!;
+					if (await refuseChangedCommand()) return false;
+					const expectedGrokSpawnSelection = await getQueuedCommandSpawnSelection(sessionId, item);
+					if (deps.isCancelled?.()) {
+						await settleUnsentCommand();
+						return false;
+					}
+					// No asynchronous gap between this selection check and the spawn.
+					const selectionRefusal = getQueuedCommandSelectionRefusal(sessionId, item);
+					if (selectionRefusal) {
+						await settleUnsentCommand(selectionRefusal);
+						return false;
+					}
+					useSessionStore.getState().addLogToTab(
+						sessionId,
+						{
+							source: 'user',
+							text: nativeText,
+							aiCommand: { command: item.command, description: 'Grok native command' },
+							queuedItemId: item.id,
+							...(item.forceParallel && { forceParallel: true }),
+						},
+						targetTab.id
+					);
+					const result = await window.maestro.process.spawn({
+						sessionId: targetSessionId,
+						toolType: session.toolType,
+						cwd: session.cwd,
+						command: commandToUse,
+						args: spawnArgs,
+						prompt: nativeText,
+						grokNativeCommand,
+						expectedGrokSpawnSelection,
+						agentSessionId: tabAgentSessionId ?? undefined,
+						readOnlyMode: isReadOnly,
+						permissionMode: effectivePermissionMode,
+						sessionCustomPath: session.customPath,
+						sessionCustomArgs: session.customArgs,
+						sessionAdditionalDirectories: session.additionalDirectories,
+						sessionCustomEnvVars: session.customEnvVars,
+						sessionCustomModel: turnModel,
+						sessionCustomEffort: turnEffort,
+						sessionCustomContextWindow: session.customContextWindow,
+						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					});
+					if (result?.success === false) {
+						throw new Error(
+							'error' in result && typeof result.error === 'string'
+								? result.error
+								: 'Native Grok command spawn was refused'
+						);
+					}
+				} else if (matchingCommand) {
+					if (scopedCommand && (await refuseChangedCommand())) return false;
+					if (deps.isCancelled?.()) {
+						await settleUnsentCommand();
+						return false;
+					}
+					const remote = session.sessionSshRemoteConfig?.enabled === true;
+					const sshRemoteId = remote
+						? getSessionSshRemoteId({ sessionSshRemoteConfig: session.sessionSshRemoteConfig })
+						: undefined;
+					if (remote && !sshRemoteId) throw new Error('Queued command SSH target is unresolved');
 					let gitBranch: string | undefined;
 					if (session.isGitRepo) {
 						try {
-							const status = await gitService.getStatus(session.cwd);
+							// AI turns launch in session.cwd; remoteCwd tracks the terminal's cd.
+							const status = await gitService.getStatus(session.cwd, sshRemoteId);
 							gitBranch = status.branch;
 						} catch {
 							// Ignore git errors
@@ -649,12 +945,32 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						activeTabId: targetTab.id,
 					});
 
+					// Preparation yields to settings/tab changes and Stop. Validate before
+					// recording a command that may never be admitted.
+					if (scopedCommand && (await refuseChangedCommand())) return false;
+					const expectedGrokSpawnSelection = scopedCommand
+						? await getQueuedCommandSpawnSelection(sessionId, item)
+						: undefined;
+					if (deps.isCancelled?.()) {
+						await settleUnsentCommand();
+						return false;
+					}
+
+					// No asynchronous gap between this selection check and the spawn.
+					const selectionRefusal =
+						scopedCommand && getQueuedCommandSelectionRefusal(sessionId, item);
+					if (selectionRefusal) {
+						await settleUnsentCommand(selectionRefusal);
+						return false;
+					}
+
 					// Add user log showing the command with its interpolated prompt
 					useSessionStore.getState().addLogToTab(
 						sessionId,
 						{
 							source: 'user',
 							text: substitutedPrompt,
+							images: hasImages ? item.images : undefined,
 							aiCommand: {
 								command: matchingCommand.command,
 								description: matchingCommand.description,
@@ -665,21 +981,19 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							queuedItemId: item.id,
 							...(item.forceParallel && { forceParallel: true }),
 						},
-						item.tabId
+						targetTab.id
 					);
 
 					// Track this command for automatic synopsis on completion
+					synopsisBeforeCommand = getSession(sessionId)?.pendingAICommandForSynopsis;
+					commandSynopsisWritten = true;
 					updateSession(sessionId, (s) => ({
 						...s,
 						pendingAICommandForSynopsis: matchingCommand.command,
 					}));
 
-					// Spawn agent with the prompt
-					if (deps.isCancelled?.()) {
-						updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
-						return false;
-					}
-					await window.maestro.process.spawn({
+					// Spawn agent with the prompt through the existing admission boundary.
+					const result = await window.maestro.process.spawn({
 						sessionId: targetSessionId,
 						querySource: item.querySource,
 						toolType: session.toolType,
@@ -693,7 +1007,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							session.newSessionMessage,
 							tabAgentSessionId
 						),
+						images: hasImages ? item.images : undefined,
 						appendSystemPrompt: appendSystemPromptForCommand,
+						// Main checks enqueue-time configuration before its own preparation.
+						...(scopedCommand && { expectedGrokSpawnSelection }),
 						agentSessionId: tabAgentSessionId ?? undefined,
 						readOnlyMode: isReadOnly,
 						permissionMode: effectivePermissionMode,
@@ -706,6 +1023,13 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					});
+					if (result?.success === false) {
+						throw new Error(
+							'error' in result && typeof result.error === 'string'
+								? result.error
+								: 'Queued command spawn was refused'
+						);
+					}
 				} else {
 					// Unknown command - add error log and reset to idle
 					useSessionStore.getState().addLogToTab(
@@ -727,6 +1051,21 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			return true;
 		} catch (error: any) {
 			logger.error('[processQueuedItem] Failed to process queued item:', undefined, error);
+			if (managedQueue) {
+				const id = `queue-admission:${item.id}`;
+				const tab = getSession(sessionId)?.aiTabs.find((t) => t.id === item.tabId);
+				if (tab && !tab.logs.some((log) => log.id === id))
+					useSessionStore.getState().addLogToTab(
+						sessionId,
+						{
+							id,
+							source: 'error',
+							text: `Managed queue held: ${error.message ?? String(error)}. Check admission status before retrying.`,
+						},
+						item.tabId
+					);
+				throw error; // host journal owns uncertainty; never recreate/resume this row
+			}
 
 			// This is the ONE owner of dispatch-failure recovery. It used to only do
 			// the bookkeeping half (idle the tab, write an error frame) and leave the
@@ -753,6 +1092,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			// failed, so collisions are counted: the drain backs off between them
 			// (see noteSpawnCollision), and past the cap the item is held with an
 			// error frame like any other failure rather than spinning forever.
+			// A refused command can arrive beside a live read-only/forced turn.
+			// Recovery must hold this item without releasing that process's tab.
+			const liveCommandOwner =
+				scopedCommand && (await probeSessionAiProcesses(sessionId, targetTab.id)).targetTabActive;
 			const isSpawnCollision = isAgentAlreadyRunningError(error);
 			const isTransientCollision =
 				isSpawnCollision && noteSpawnCollision(item.id) < SPAWN_COLLISION_MAX_ATTEMPTS;
@@ -766,9 +1109,17 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
-					const recovered = applyQueuedItemDispatchFailure(s, item, {
-						collision: isTransientCollision,
-					});
+					let recovered = applyQueuedItemDispatchFailure(
+						s,
+						isTransientCollision ? item : { ...item, paused: true },
+						{ collision: isTransientCollision || liveCommandOwner }
+					);
+					if (commandSynopsisWritten && recovered.pendingAICommandForSynopsis === item.command) {
+						recovered = {
+							...recovered,
+							pendingAICommandForSynopsis: synopsisBeforeCommand,
+						};
+					}
 					if (isTransientCollision) return recovered;
 
 					const resolvedTabId = item.tabId ?? s.activeTabId;
@@ -795,6 +1146,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			// rather than strand an outage entry in-flight, and callers that want to
 			// know a send failed (Force Send's toast, the batch loop) read it here.
 			throw error;
+		} finally {
+			if (plainQueueKey) pendingPlainQueueDispatches.delete(plainQueueKey);
 		}
 	},
 

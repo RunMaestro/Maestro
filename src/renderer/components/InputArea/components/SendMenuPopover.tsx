@@ -188,12 +188,20 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 			>
 				<span
 					className="inline-block w-1.5 h-1.5 rounded-full"
-					style={{ backgroundColor: theme.colors.warning }}
+					style={{
+						backgroundColor: model.agentWorking ? theme.colors.warning : theme.colors.success,
+					}}
 				/>
-				{model.activeTabWorking ? 'This tab is working' : 'Another tab is working'}
+				{model.activeTabWorking
+					? 'This tab is working'
+					: model.agentWorking
+						? 'Another tab is working'
+						: 'Agent is idle'}
 			</div>
 			{model.rows.map((row, index) => {
-				const { label, icon: Icon } = ROW_META[row.action];
+				const { label: rowLabel, icon: Icon } = ROW_META[row.action];
+				// With nothing running, the plain send starts at once: it is a Send, not a Queue.
+				const label = row.action === 'queue' && !model.agentWorking ? 'Send' : rowLabel;
 				const keys = shortcutFor[row.action];
 				const isDefault = row.action === 'queue';
 				const live = row.enabled || row.opensSetting;
@@ -340,9 +348,7 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 					/>
 				</div>
 				<p className="text-xs-plus leading-snug mt-1.5" style={{ color: theme.colors.textDim }}>
-					{sendButtonMenu
-						? 'Off: a click sends at once. Turn it back on in Settings > General, or ask your agent.'
-						: 'A click now sends at once. Turn this back on in Settings > General, or ask your agent.'}
+					Right-click always shows this menu.
 				</p>
 			</div>
 		</div>,

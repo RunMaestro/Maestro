@@ -22,7 +22,11 @@ import {
 	isStoredContextWindowOverridden,
 } from '../../utils/contextWindowPrecedence';
 import type { AdditionalDirectory, AgentConfig, ToolType } from '../../types';
-import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
+import type {
+	SshRemoteConfig,
+	AgentSshRemoteConfig,
+	AgentDiscoveryRequest,
+} from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateEditSession } from '../../utils/sessionValidation';
 import { FormInput } from '../ui/FormInput';
@@ -30,6 +34,7 @@ import { Modal, ModalFooter } from '../ui/Modal';
 import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSection';
 import { AgentConfigPanel } from '../shared/AgentConfigPanel';
 import { useHomeDir } from '../../hooks/utils/useHomeDir';
+import { useAgentModelEffortOptions } from '../../hooks/agent/useAgentModelEffortOptions';
 import { SshRemoteSelector } from '../shared/SshRemoteSelector';
 import { getEffortConfigKey } from '../../utils/agentEffort';
 import { safeClipboardWrite } from '../../utils/clipboard';
@@ -44,6 +49,7 @@ import { isAbsolutePath } from '../../../shared/formatters';
 import { isSameDirectory, workingDirectoryChangeBlocker } from '../../utils/agentWorkingDirectory';
 import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 
 /**
  * EditAgentModal - Modal for editing an existing agent's settings
@@ -67,6 +73,11 @@ export function EditAgentModal({
 	const homeDir = useHomeDir();
 	const [agent, setAgent] = useState<AgentConfig | null>(null);
 	const [agentConfig, setAgentConfig] = useState<Record<string, any>>({});
+	const [loadedConfigFor, setLoadedConfigFor] = useState<{
+		session: typeof session;
+		toolType: ToolType;
+	}>();
+	const [grokRefreshVersion, setGrokRefreshVersion] = useState(0);
 	/**
 	 * The context window the config panel was SEEDED with, so save can tell a
 	 * deliberate edit from an untouched round-trip (finding AD1). A ref, not
@@ -100,6 +111,7 @@ export function EditAgentModal({
 	const [codexAutoReset, setCodexAutoReset] = useState(false);
 	// Codex transport. `exec` is the default; app-server is an experimental opt-in.
 	const [codexTransport, setCodexTransport] = useState<CodexTransport>('exec');
+	const [harnessControlMode, setHarnessControlMode] = useState<HarnessControlMode>('current');
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
@@ -108,6 +120,8 @@ export function EditAgentModal({
 	const [selectedToolType, setSelectedToolType] = useState<ToolType>(
 		session?.toolType ?? 'claude-code'
 	);
+	const selectedToolTypeRef = useRef<ToolType | undefined>(selectedToolType);
+	selectedToolTypeRef.current = isOpen ? selectedToolType : undefined;
 	// SSH Remote configuration
 	const [sshRemotes, setSshRemotes] = useState<SshRemoteConfig[]>([]);
 	const [sshRemoteConfig, setSshRemoteConfig] = useState<AgentSshRemoteConfig | undefined>(
@@ -246,6 +260,8 @@ export function EditAgentModal({
 
 	// Load agent info, config, custom settings, and models when modal opens or provider changes
 	useEffect(() => {
+		setLoadedConfigFor(undefined);
+		setRefreshingAgent(false);
 		if (!isOpen || !session) return;
 
 		let stale = false;
@@ -272,7 +288,7 @@ export function EditAgentModal({
 				setAgent(foundAgent || null);
 
 				// Load models if agent supports model selection
-				if (foundAgent?.capabilities?.supportsModelSelection) {
+				if (activeToolType !== 'grok' && foundAgent?.capabilities?.supportsModelSelection) {
 					setLoadingModels(true);
 					window.maestro.agents
 						.getModels(activeToolType)
@@ -291,7 +307,7 @@ export function EditAgentModal({
 				const dynamicSelects = foundAgent?.configOptions?.filter(
 					(opt: any) => opt.type === 'select' && opt.dynamic
 				);
-				if (dynamicSelects && dynamicSelects.length > 0) {
+				if (activeToolType !== 'grok' && dynamicSelects && dynamicSelects.length > 0) {
 					setEditLoadingDynamicOptions(true);
 					Promise.all(
 						dynamicSelects.map(async (opt: any) => {
@@ -350,6 +366,7 @@ export function EditAgentModal({
 					contextWindow: contextWindowValue,
 					[effortKey]: effortValue,
 				});
+				setLoadedConfigFor({ session, toolType: activeToolType });
 			})
 			.catch((err) => {
 				logger.error('Failed to detect agents:', undefined, err);
@@ -365,7 +382,8 @@ export function EditAgentModal({
 		// disabled, so the checkbox can stay toggled on for locally-executed
 		// agents that are controlled by another Maestro instance over SSH.
 		const persisted = session.sessionSshRemoteConfig;
-		if (persisted?.enabled && persisted.remoteId) {
+		// An unresolved enabled target must stay remote, never fall back to a local account.
+		if (persisted?.enabled) {
 			setSshRemoteConfig({
 				enabled: true,
 				remoteId: persisted.remoteId,
@@ -414,6 +432,7 @@ export function EditAgentModal({
 		// for a non-Codex agent, and saving it back would erase the preference
 		// of an agent that was moved off Codex and may move back.
 		setCodexTransport(session.codexTransport === 'app-server' ? 'app-server' : 'exec');
+		setHarnessControlMode(session.harnessControlMode === 'native' ? 'native' : 'current');
 
 		return () => {
 			stale = true;
@@ -447,9 +466,10 @@ export function EditAgentModal({
 		return validateEditSession(name, session.id, existingSessions);
 	}, [instanceName, session, existingSessions]);
 
-	// Check if SSH remote is enabled
+	// A missing remote ID does not make an enabled SSH draft local. The existing
+	// path validator withholds checks until its remote is known.
 	const isSshEnabled = useMemo(() => {
-		return sshRemoteConfig?.enabled && !!sshRemoteConfig?.remoteId;
+		return sshRemoteConfig?.enabled;
 	}, [sshRemoteConfig]);
 
 	// Get SSH remote host for display
@@ -467,6 +487,65 @@ export function EditAgentModal({
 		!!session &&
 		trimmedWorkingDir !== '' &&
 		!isSameDirectory(trimmedWorkingDir, session.projectRoot);
+	// Match save semantics while retaining an existing explicit empty override.
+	const draftEnvVars =
+		Object.keys(customEnvVars).length > 0 ||
+		(selectedToolType === 'grok' && !providerChanged && session?.customEnvVars !== undefined)
+			? customEnvVars
+			: undefined;
+	const grokDiscoveryContext = useMemo<AgentDiscoveryRequest['context'] | undefined>(() => {
+		// A completed refresh invalidates this context so the shared hook reloads it.
+		void grokRefreshVersion;
+		return isOpen &&
+			selectedToolType === 'grok' &&
+			loadedConfigFor?.session === session &&
+			loadedConfigFor?.toolType === selectedToolType
+			? {
+					kind: 'draft',
+					cwd: trimmedWorkingDir,
+					customPath: customPath.trim() || undefined,
+					customEnvVars: draftEnvVars,
+					model: agentConfig.model?.trim(),
+					effort: agentConfig[getEffortConfigKey(agent)]?.trim(),
+					sshRemoteId: session?.sshRemoteId,
+					sessionSshRemoteConfig: sshRemoteConfig?.enabled
+						? {
+								...sshRemoteConfig,
+								workingDirOverride: workingDirChanged
+									? trimmedWorkingDir
+									: sshRemoteConfig.workingDirOverride || session?.projectRoot,
+							}
+						: { enabled: false, remoteId: null },
+				}
+			: undefined;
+	}, [
+		isOpen,
+		selectedToolType,
+		loadedConfigFor,
+		session,
+		trimmedWorkingDir,
+		customPath,
+		draftEnvVars,
+		agentConfig,
+		agent,
+		sshRemoteConfig,
+		workingDirChanged,
+		grokRefreshVersion,
+	]);
+	const grokOptions = useAgentModelEffortOptions(
+		grokDiscoveryContext ? 'grok' : undefined,
+		grokDiscoveryContext
+	);
+	const currentGrokContext = useRef(grokDiscoveryContext);
+	currentGrokContext.current = grokDiscoveryContext;
+	useEffect(() => {
+		currentGrokContext.current = grokDiscoveryContext;
+		selectedToolTypeRef.current = isOpen ? selectedToolType : undefined;
+		return () => {
+			currentGrokContext.current = undefined;
+			selectedToolTypeRef.current = undefined;
+		};
+	}, [grokDiscoveryContext, isOpen, selectedToolType]);
 	const workingDirBlocker = session ? workingDirectoryChangeBlocker(session) : null;
 	// A local path is typed as well as picked, so it is checked for shape here
 	// and for existence below. A remote path may start with `~`, which only the
@@ -610,32 +689,31 @@ export function EditAgentModal({
 		const effortValue = agentConfig[getEffortConfigKey(agent)]?.trim() ?? undefined;
 
 		// Build per-session SSH remote config: ALWAYS pass explicitly to override any agent-level config.
-		// When disabled or no remoteId, we explicitly pass enabled: false to ensure local execution.
+		// Only an explicitly disabled/unconfigured draft is local. Keep enabled targets
+		// without a remote ID unresolved so the host can refuse them instead of running locally.
 		// `shareHistoryToProjectDir` is preserved independently of SSH enablement so a
 		// locally-executed agent can still be flagged as remote-controlled.
-		const sessionSshRemoteConfig =
-			sshRemoteConfig?.enabled && sshRemoteConfig?.remoteId
-				? {
-						enabled: true,
-						remoteId: sshRemoteConfig.remoteId,
-						// Ensure workingDirOverride is set: a newly entered directory wins, then
-						// the explicit override, then session's projectRoot (which is the remote
-						// path the user originally configured).
-						workingDirOverride: workingDirChanged
-							? trimmedWorkingDir
-							: sshRemoteConfig.workingDirOverride || session?.projectRoot || undefined,
-						syncHistory: sshRemoteConfig.syncHistory,
-						shareHistoryToProjectDir: sshRemoteConfig.shareHistoryToProjectDir,
-					}
-				: {
-						enabled: false,
-						remoteId: null,
-						shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
-					};
+		const sessionSshRemoteConfig = sshRemoteConfig?.enabled
+			? {
+					enabled: true,
+					remoteId: sshRemoteConfig.remoteId,
+					// Ensure workingDirOverride is set: a newly entered directory wins, then
+					// the explicit override, then session's projectRoot (which is the remote
+					// path the user originally configured).
+					workingDirOverride: workingDirChanged
+						? trimmedWorkingDir
+						: sshRemoteConfig.workingDirOverride || session?.projectRoot || undefined,
+					syncHistory: sshRemoteConfig.syncHistory,
+					shareHistoryToProjectDir: sshRemoteConfig.shareHistoryToProjectDir,
+				}
+			: {
+					enabled: false,
+					remoteId: null,
+					shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
+				};
 
 		const formCustomPath = customPath.trim() || undefined;
 		const formCustomArgs = customArgs.trim() || undefined;
-		const formCustomEnvVars = Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined;
 		// A conversion owns the binary, arguments and account environment, so
 		// only a value the user actually changed from the parked seed is sent
 		// (and refused by the save, which asks for it in a separate edit).
@@ -656,7 +734,7 @@ export function EditAgentModal({
 				newSessionMessage.trim() || undefined,
 				editedFromParked(formCustomPath, parkedOverrides.customPath),
 				editedFromParked(formCustomArgs, parkedOverrides.customArgs),
-				editedFromParked(formCustomEnvVars, parkedOverrides.customEnvVars),
+				editedFromParked(draftEnvVars, parkedOverrides.customEnvVars),
 				modelValue,
 				effortValue,
 				contextWindowValue,
@@ -675,12 +753,13 @@ export function EditAgentModal({
 				codexAutoReset,
 				codexTransport,
 			];
+			if (harnessControlMode === 'native') saveArguments[23] = 'native';
 			if (converting) {
 				// Limitations are shown as a notice; opting in and saving accepts them.
-				saveArguments[23] = true;
-				saveArguments[24] = selectedUserResources.map((p) => p.trim()).filter(Boolean);
-				saveArguments[25] = migrationPlan?.id;
-				saveArguments[26] = true;
+				saveArguments[24] = true;
+				saveArguments[25] = selectedUserResources.map((p) => p.trim()).filter(Boolean);
+				saveArguments[26] = migrationPlan?.id;
+				saveArguments[27] = true;
 			}
 			const saved = onSave(...saveArguments);
 			if (saved) await saved;
@@ -710,7 +789,7 @@ export function EditAgentModal({
 		homeDir,
 		customPath,
 		customArgs,
-		customEnvVars,
+		draftEnvVars,
 		customEnvVarsDisabled,
 		enableMaestroP,
 		maestroPMode,
@@ -719,6 +798,7 @@ export function EditAgentModal({
 		retryOnTokenExhaustion,
 		codexAutoReset,
 		codexTransport,
+		harnessControlMode,
 		agent,
 		agentConfig,
 		sshRemoteConfig,
@@ -732,28 +812,44 @@ export function EditAgentModal({
 	// Refresh available models
 	const refreshModels = useCallback(async () => {
 		if (!agent?.capabilities?.supportsModelSelection) return;
+		if (selectedToolType === 'grok') {
+			if (!grokDiscoveryContext) return;
+			// Refresh the host cache; only the shared hook may publish scoped results.
+			await window.maestro.agents
+				.getModels({
+					providerId: 'grok',
+					context: grokDiscoveryContext,
+					forceRefresh: true,
+				})
+				.catch(() => undefined);
+			if (currentGrokContext.current === grokDiscoveryContext) {
+				setGrokRefreshVersion((value) => value + 1);
+			}
+			return;
+		}
 		setLoadingModels(true);
 		try {
 			const models = await window.maestro.agents.getModels(selectedToolType, true);
-			setAvailableModels(models);
+			if (selectedToolTypeRef.current === selectedToolType) setAvailableModels(models);
 		} catch (err) {
 			logger.error('Failed to refresh models:', undefined, err);
 		} finally {
-			setLoadingModels(false);
+			if (selectedToolTypeRef.current === selectedToolType) setLoadingModels(false);
 		}
-	}, [selectedToolType, agent]);
+	}, [selectedToolType, agent, grokDiscoveryContext]);
 
 	// Refresh agent detection
 	const handleRefreshAgent = useCallback(async () => {
 		setRefreshingAgent(true);
 		try {
 			const result = await window.maestro.agents.refresh(selectedToolType);
+			if (selectedToolTypeRef.current !== selectedToolType) return;
 			const foundAgent = result.agents.find((a: AgentConfig) => a.id === selectedToolType);
 			setAgent(foundAgent || null);
 		} catch (error) {
 			logger.error('Failed to refresh agent:', undefined, error);
 		} finally {
-			setRefreshingAgent(false);
+			if (selectedToolTypeRef.current === selectedToolType) setRefreshingAgent(false);
 		}
 	}, [selectedToolType]);
 
@@ -1111,7 +1207,21 @@ export function EditAgentModal({
 						<AgentConfigPanel
 							theme={theme}
 							agent={agent}
-							configOptionNotes={configOptionNotes}
+							configOptionNotes={
+								selectedToolType === 'grok'
+									? {
+											...configOptionNotes,
+											model:
+												grokOptions.modelStatus === 'discovered'
+													? undefined
+													: 'Model discovery unavailable. Keep or enter a model manually.',
+											[getEffortConfigKey(agent)]:
+												grokOptions.effortStatus === 'discovered'
+													? undefined
+													: 'Effort discovery unavailable. Keep or enter an effort manually.',
+										}
+									: configOptionNotes
+							}
 							customPath={customPath}
 							onCustomPathChange={setCustomPath}
 							onCustomPathBlur={() => {
@@ -1197,11 +1307,23 @@ export function EditAgentModal({
 										);
 									});
 							}}
-							availableModels={availableModels}
-							loadingModels={loadingModels}
+							availableModels={selectedToolType === 'grok' ? grokOptions.models : availableModels}
+							loadingModels={
+								selectedToolType === 'grok'
+									? !!grokDiscoveryContext && !grokOptions.loaded
+									: loadingModels
+							}
 							onRefreshModels={refreshModels}
-							dynamicOptions={editDynamicOptions}
-							loadingDynamicOptions={editLoadingDynamicOptions}
+							dynamicOptions={
+								selectedToolType === 'grok'
+									? { [getEffortConfigKey(agent)]: grokOptions.efforts }
+									: editDynamicOptions
+							}
+							loadingDynamicOptions={
+								selectedToolType === 'grok'
+									? !!grokDiscoveryContext && !grokOptions.loaded
+									: editLoadingDynamicOptions
+							}
 							onRefreshAgent={handleRefreshAgent}
 							refreshingAgent={refreshingAgent}
 							showBuiltInEnvVars
@@ -1221,6 +1343,8 @@ export function EditAgentModal({
 							onCodexAutoResetChange={setCodexAutoReset}
 							codexTransport={codexTransport}
 							onCodexTransportChange={setCodexTransport}
+							harnessControlMode={harnessControlMode}
+							onHarnessControlModeChange={setHarnessControlMode}
 						/>
 					</div>
 				)}

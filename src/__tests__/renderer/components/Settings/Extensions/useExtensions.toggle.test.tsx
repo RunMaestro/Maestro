@@ -280,15 +280,19 @@ describe('useExtensions.updatePlugin', () => {
 		});
 		window.maestro.plugins.update = update;
 		window.maestro.dialog = {
-			selectFolder: vi.fn().mockResolvedValue('/local/demo-v2'),
+			selectFile: vi.fn().mockResolvedValue('/local/demo-v2.tgz'),
 		} as unknown as typeof window.maestro.dialog;
-		window.maestro.fs.readFile = vi.fn().mockResolvedValue(JSON.stringify({ id: record.id }));
 		const { result } = renderHook(() => useExtensions());
 		await flushMountEffects();
 
 		await act(async () => result.current.updatePlugin(record));
 
-		expect(update).toHaveBeenCalledExactlyOnceWith('/local/demo-v2');
+		expect(update).toHaveBeenCalledExactlyOnceWith('/local/demo-v2.tgz', record.id);
+		expect(window.maestro.dialog.selectFile).toHaveBeenCalledWith({
+			title: 'Update Demo Plugin: archive or plugin.json',
+			filters: [{ name: 'Plugin archives or plugin.json', extensions: ['tgz', 'tar.gz', 'json'] }],
+		});
+		expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
 		expect(list).toHaveBeenCalledTimes(2);
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({ color: 'green', message: 'Updated Demo Plugin to v2.0.0' })
@@ -302,9 +306,8 @@ describe('useExtensions.updatePlugin', () => {
 			plugins: [{ ...record, enabled: false, manifest: { ...record.manifest, version: '2.0.0' } }],
 		});
 		window.maestro.dialog = {
-			selectFolder: vi.fn().mockResolvedValue('/local/demo-v2'),
+			selectFile: vi.fn().mockResolvedValue('/local/demo-v2.tgz'),
 		} as unknown as typeof window.maestro.dialog;
-		window.maestro.fs.readFile = vi.fn().mockResolvedValue(JSON.stringify({ id: record.id }));
 		const { result } = renderHook(() => useExtensions());
 		await flushMountEffects();
 
@@ -319,11 +322,11 @@ describe('useExtensions.updatePlugin', () => {
 		);
 	});
 
-	it('does nothing after folder selection is cancelled', async () => {
+	it('does nothing after archive selection is cancelled', async () => {
 		const update = vi.fn();
 		window.maestro.plugins.update = update;
 		window.maestro.dialog = {
-			selectFolder: vi.fn().mockResolvedValue(null),
+			selectFile: vi.fn().mockResolvedValue(null),
 		} as unknown as typeof window.maestro.dialog;
 		window.maestro.fs.readFile = vi.fn();
 		const { result } = renderHook(() => useExtensions());
@@ -343,9 +346,8 @@ describe('useExtensions.updatePlugin', () => {
 			.fn()
 			.mockRejectedValue(new Error('update version is not newer'));
 		window.maestro.dialog = {
-			selectFolder: vi.fn().mockResolvedValue('/local/demo-old'),
+			selectFile: vi.fn().mockResolvedValue('/local/demo-old'),
 		} as unknown as typeof window.maestro.dialog;
-		window.maestro.fs.readFile = vi.fn().mockResolvedValue(JSON.stringify({ id: record.id }));
 		const { result } = renderHook(() => useExtensions());
 		await flushMountEffects();
 
@@ -358,53 +360,62 @@ describe('useExtensions.updatePlugin', () => {
 		expect(result.current.busyId).toBeNull();
 	});
 
-	it('rejects a folder for a different installed plugin before invoking update', async () => {
-		const update = vi.fn();
+	it('updates an unpacked folder by selecting plugin.json through the same file picker', async () => {
+		const update = vi.fn().mockResolvedValue({ hostApiVersion: '1.0.0', plugins: [record] });
 		window.maestro.plugins.update = update;
 		window.maestro.dialog = {
-			selectFolder: vi.fn().mockResolvedValue('/local/other-plugin'),
+			selectFile: vi.fn().mockResolvedValue('/local/demo-v2/plugin.json'),
+			selectFolder: vi.fn(),
 		} as unknown as typeof window.maestro.dialog;
-		window.maestro.fs.readFile = vi.fn().mockResolvedValue(JSON.stringify({ id: 'other-plugin' }));
 		const { result } = renderHook(() => useExtensions());
 		await flushMountEffects();
 
 		await act(async () => result.current.updatePlugin(record));
 
-		expect(update).not.toHaveBeenCalled();
-		expect(notifyToast).toHaveBeenCalledWith(
-			expect.objectContaining({
-				color: 'red',
-				message: expect.stringContaining('not for demo-plugin'),
-			})
-		);
+		expect(update).toHaveBeenCalledExactlyOnceWith('/local/demo-v2/plugin.json', record.id);
+		expect(window.maestro.dialog.selectFolder).not.toHaveBeenCalled();
+		expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
 	});
 
+	it.each(['Selected plugin is not for demo-plugin', 'invalid plugin.json'])(
+		'reports authoritative host validation: %s',
+		async (message) => {
+			const update = vi.fn().mockRejectedValue(new Error(message));
+			window.maestro.plugins.update = update;
+			window.maestro.dialog = {
+				selectFile: vi.fn().mockResolvedValue('/local/bad-plugin.tar.gz'),
+			} as unknown as typeof window.maestro.dialog;
+			const { result } = renderHook(() => useExtensions());
+			await flushMountEffects();
+
+			await act(async () => result.current.updatePlugin(record));
+
+			expect(update).toHaveBeenCalledExactlyOnceWith('/local/bad-plugin.tar.gz', record.id);
+			expect(window.maestro.plugins.list).toHaveBeenCalledTimes(1);
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ color: 'red', message: expect.stringContaining(message) })
+			);
+		}
+	);
+});
+
+describe('useExtensions.installPlugin', () => {
 	it.each([
-		{
-			name: 'unreadable',
-			readFile: () => Promise.reject(new Error('IPC failure')),
-			message: 'Could not read plugin.json',
-		},
-		{
-			name: 'invalid JSON',
-			readFile: () => Promise.resolve('{invalid'),
-			message: 'invalid plugin.json',
-		},
-	])('explains an $name plugin.json before invoking update', async ({ readFile, message }) => {
-		const update = vi.fn();
-		window.maestro.plugins.update = update;
+		{ fromFolder: false, source: '/releases/demo.tgz' },
+		{ fromFolder: true, source: '/local/demo' },
+	])('installs from the selected source: $source', async ({ fromFolder, source }) => {
+		window.maestro.plugins.install = vi.fn().mockResolvedValue({ success: true });
 		window.maestro.dialog = {
-			selectFolder: vi.fn().mockResolvedValue('/local/bad-plugin'),
+			selectFile: vi.fn().mockResolvedValue(source),
+			selectFolder: vi.fn().mockResolvedValue(source),
 		} as unknown as typeof window.maestro.dialog;
-		window.maestro.fs.readFile = vi.fn(readFile);
 		const { result } = renderHook(() => useExtensions());
 		await flushMountEffects();
 
-		await act(async () => result.current.updatePlugin(record));
+		await act(async () => result.current.installPlugin(fromFolder));
 
-		expect(update).not.toHaveBeenCalled();
-		expect(notifyToast).toHaveBeenCalledWith(
-			expect.objectContaining({ color: 'red', message: expect.stringContaining(message) })
-		);
+		expect(window.maestro.plugins.install).toHaveBeenCalledExactlyOnceWith(source);
+		expect(window.maestro.dialog.selectFile).toHaveBeenCalledTimes(fromFolder ? 0 : 1);
+		expect(window.maestro.dialog.selectFolder).toHaveBeenCalledTimes(fromFolder ? 1 : 0);
 	});
 });

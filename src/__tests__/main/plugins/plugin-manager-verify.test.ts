@@ -437,11 +437,17 @@ describe('PluginManager identity verification', () => {
 				error: /link entries are not allowed/,
 			},
 		];
+		writePlugin('archive-survivor', 1);
 		const m = manager();
+		await m.refresh();
+		const survivor = path.join(pluginsDir(), 'archive-survivor', 'plugin.json');
+		const original = fs.readFileSync(survivor);
 
 		for (const c of cases) {
 			const archivePath = path.join(workDir, `${c.name}.tgz`);
 			writeTgzArchive(archivePath, c.entries);
+			await expect(m.update(archivePath)).rejects.toThrow(c.error);
+			expect(fs.readFileSync(survivor)).toEqual(original);
 			const result = await m.install(archivePath);
 			expect(result.success, c.name).toBe(false);
 			expect(result.error, c.name).toMatch(c.error);
@@ -451,4 +457,23 @@ describe('PluginManager identity verification', () => {
 			expect(stagingLeftovers, c.name).toEqual([]);
 		}
 	});
+	it.each(['checksum', 'end', 'padding'])(
+		'rejects corrupt tar %s through update without changing installed bytes',
+		async (fault) => {
+			writePlugin('archive-survivor', 1);
+			const m = manager();
+			await m.refresh();
+			const survivor = path.join(pluginsDir(), 'archive-survivor', 'plugin.json');
+			const original = fs.readFileSync(survivor);
+			const archive = path.join(workDir, 'bad-checksum.tgz');
+			writeTgzArchive(archive, [{ name: 'plugin.json', content: '{}' }]);
+			let tar = zlib.gunzipSync(fs.readFileSync(archive));
+			if (fault === 'checksum') tar[0] ^= 1;
+			if (fault === 'end') tar = tar.subarray(0, tar.length - 1024);
+			if (fault === 'padding') tar[514] = 1;
+			fs.writeFileSync(archive, zlib.gzipSync(tar));
+			await expect(m.update(archive)).rejects.toThrow(/tar checksum|truncated|padding/);
+			expect(fs.readFileSync(survivor)).toEqual(original);
+		}
+	);
 });

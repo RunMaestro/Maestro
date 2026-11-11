@@ -1,3 +1,4 @@
+import type { ManagedQueueRoutingProgress } from '../../../../shared/crossAgentTypes';
 /**
  * WebSocket Message Handlers for Web Server
  *
@@ -28,6 +29,7 @@
  * - computer_history_command: Computer History writes, CLI clients only (CLI: `computer-history`)
  * - throughput_gauge_command: Show, hide, configure, or read the Throughput Gauge (CLI: `throughput-gauge`)
  * - live_command: Read or switch Live mode and Remote Control, CLI clients only (CLI: `live`)
+ * - federation_command: List or reconnect the Federation peers the desktop mirrors, CLI clients only (CLI: `federation`)
  *
  * Auto Run message types (refresh_auto_run_docs, configure_auto_run, get_auto_run_docs,
  * get_auto_run_state, get_auto_run_document, save_auto_run_document, stop_auto_run, etc.)
@@ -35,6 +37,7 @@
  */
 
 import { app } from 'electron';
+import { newTabAdmission } from './tabs';
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
 import { getCommitHash } from '../../../utils/build-info';
@@ -100,6 +103,7 @@ import {
 	handleMarketplaceImportPlaybook,
 } from './marketplace';
 import { handlePluginsListTools, handlePluginsCallTool, handlePluginsSendAgent } from './plugins';
+import { handleListAgentModels } from './models';
 import {
 	handleRefreshAutoRunDocs,
 	handleConfigureAutoRun,
@@ -117,8 +121,10 @@ import {
 } from './autoRun';
 import { handleSnoozeCommand } from './snooze';
 import { handleClosedTabCommand } from './closedTabs';
+import { handleMessagePinCommand } from './messagePins';
 import { handleComputerHistoryCommand } from './computerHistory';
 import { handleLiveCommand } from './live';
+import { handleFederationCommand } from './federation';
 import { handleMaestroRunCommand } from './maestroRun';
 import { handleDataviewCommand } from './dataview';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
@@ -167,6 +173,7 @@ import {
 	handleSteerGroupChat,
 	handleStopGroupChat,
 	handleArchiveGroupChat,
+	handleAddGroupChatParticipant,
 } from './groupChat';
 import {
 	handleMergeContext,
@@ -235,7 +242,7 @@ export class WebSocketMessageHandler {
 		if (client.isAuthorized?.() === false) return;
 		const frame = JSON.stringify({ ...data, timestamp: Date.now() });
 		if (!onSent) {
-			sendBounded(client.socket, frame);
+			sendBounded(client.socket, frame, undefined, data.type === 'pong');
 			return;
 		}
 		client.socket.send(frame, (error?: Error) => {
@@ -276,6 +283,32 @@ export class WebSocketMessageHandler {
 	 * Bundles callbacks and the response-sending helpers for domain handler
 	 * modules extracted out of this class (e.g. `./autoRun`).
 	 */
+	startQueueHandoffFromMain(
+		...args: Parameters<
+			import('../../../pianola/pianola-new-tab-dispatch').PianolaNewTabDispatch['startQueueHandoff']
+		>
+	) {
+		return newTabAdmission(this.ctx).startQueueHandoff(...args);
+	}
+
+	prepareQueueSpawnFromMain(
+		agentId: string,
+		tabId: string,
+		itemId: string,
+		assertOwner: () => void,
+		routingConsumer?: { onSettled(progress: ManagedQueueRoutingProgress): void },
+		stepId?: string
+	) {
+		return newTabAdmission(this.ctx).prepareQueueSpawn(
+			agentId,
+			tabId,
+			itemId,
+			assertOwner,
+			routingConsumer,
+			stepId
+		);
+	}
+
 	private get ctx(): MessageHandlerContext {
 		return {
 			callbacks: this.callbacks,
@@ -371,12 +404,20 @@ export class WebSocketMessageHandler {
 				handleClosedTabCommand(this.ctx, client, message);
 				break;
 
+			case 'message_pin_command':
+				handleMessagePinCommand(this.ctx, client, message);
+				break;
+
 			case 'computer_history_command':
 				void handleComputerHistoryCommand(this.ctx, client, message);
 				break;
 
 			case 'live_command':
 				handleLiveCommand(this.ctx, client, message);
+				break;
+
+			case 'federation_command':
+				void handleFederationCommand(this.ctx, client, message);
 				break;
 
 			case 'maestro_run_command':
@@ -655,6 +696,10 @@ export class WebSocketMessageHandler {
 				handleArchiveGroupChat(this.ctx, client, message);
 				break;
 
+			case 'add_group_chat_participant':
+				handleAddGroupChatParticipant(this.ctx, client, message);
+				break;
+
 			case 'merge_context':
 				handleMergeContext(this.ctx, client, message);
 				break;
@@ -823,6 +868,10 @@ export class WebSocketMessageHandler {
 				void handleFeedbackDiagnose(this.ctx, client, message);
 				break;
 
+			case 'list_agent_models':
+				void handleListAgentModels(this.ctx, client, message);
+				break;
+
 			case 'marketplace_get_manifest':
 				handleMarketplaceGetManifest(this.ctx, client, message);
 				break;
@@ -879,7 +928,7 @@ export class WebSocketMessageHandler {
 			client,
 			message as unknown as Parameters<typeof handleBridgeInvoke>[1],
 			(c, payload) => {
-				sendBounded(c.socket, JSON.stringify(payload));
+				sendBounded(c.socket, JSON.stringify(payload), undefined, true);
 			}
 		);
 	}

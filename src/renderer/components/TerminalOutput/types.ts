@@ -90,6 +90,12 @@ export interface LogItemProps {
 	publishedGistUrl?: string;
 	// Fork conversation from this message (AI mode only, user messages and AI responses - source 'user' | 'ai' | 'stdout')
 	onForkConversation?: (logId: string) => void;
+	// Message pins (AI mode only, user messages and agent replies). `isPinned`
+	// is a primitive so LogItem memo equality stays cheap.
+	isPinned?: boolean;
+	onTogglePin?: (log: LogEntry) => void;
+	/** Open the pin panel (the pinned marker in the timestamp gutter). */
+	onShowPins?: () => void;
 	bionifyReadingMode: boolean;
 	bionifyIntensity: number;
 	bionifyAlgorithm: string;
@@ -145,8 +151,38 @@ export interface LogItemProps {
 	sessionRecoveryError?: string | null;
 }
 
+/**
+ * The fields of an agent the transcript view reads, and no others. A local agent
+ * passes its `Session`; a Federation peer's mirrored agent passes a view object
+ * built by `buildMirrorViewSession()`, which is never a `Session` and never in
+ * `sessionStore`. The optional fields only feed history backfill and the Claude
+ * mode pill: a mirror leaves them out, so backfill (a local provider read) has
+ * no project root to read from.
+ */
+export type TranscriptViewSession = Pick<
+	Session,
+	| 'id'
+	| 'activeTabId'
+	| 'aiTabs'
+	| 'inputMode'
+	| 'toolType'
+	| 'cwd'
+	| 'executionQueue'
+	| 'deferredContent'
+	| 'sessionSshRemoteConfig'
+> &
+	Partial<
+		Pick<Session, 'projectRoot' | 'remoteCwd' | 'sshRemoteId' | 'enableMaestroP' | 'maestroPMode'>
+	>;
+
 export interface TerminalOutputProps {
-	session: Session;
+	session: TranscriptViewSession;
+	/**
+	 * Show the transcript without any action that writes: no message pins, no
+	 * save to file, and no paging of older history from local provider files.
+	 * Set for a Federation peer's mirrored agent.
+	 */
+	readOnly?: boolean;
 	theme: Theme;
 	fontFamily: string;
 	activeFocus: FocusArea;

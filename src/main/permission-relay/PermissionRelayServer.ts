@@ -22,24 +22,86 @@ import * as os from 'os';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { logger } from '../utils/logger';
-import { createPending, lookupBinding } from './registry';
-import { parseQuestionRequest } from './question-request';
-import type { BridgeToServerMessage, PermissionRequest, ServerToBridgeMessage } from './types';
+import { createPending, lookupBinding, registerSpawn, resolvePending } from './registry';
+import { parseQuestionRequest, parseAutomatableQuestionRequest } from './question-request';
+import type {
+	BridgeToServerMessage,
+	PermissionDecision,
+	PermissionRequest,
+	RelaySpawnBinding,
+	ServerToBridgeMessage,
+} from './types';
+import { rateRisk } from '../../shared/pianola/pianola-risk';
+import { canonicalJson } from '../../shared/canonicalJson';
+import { nativeCurrentTurns } from '../pianola/current-turn';
 
 const LOG_CONTEXT = '[PermissionRelay]';
 
 /** Called for each validated request; must surface it to the user. */
 export type OnPermissionRequest = (request: PermissionRequest) => void;
 
+/**
+ * An in-process consent session for one spawn whose permission requests arrive on
+ * its own protocol (Grok ACP `session/request_permission`) instead of over the
+ * bridge socket. Each request takes the path a bridged one takes: the person,
+ * through the renderer prompt.
+ *
+ * Only an explicit person decision answers `allow`. A timeout, an aborted signal
+ * (the turn stopped, or its driver settled the request) and `close()` (the process
+ * exited) all answer deny; a request after `close()` is denied at once.
+ */
+export interface RelayConsentSession {
+	request(
+		toolName: string,
+		input: Record<string, unknown>,
+		signal?: AbortSignal
+	): Promise<PermissionDecision>;
+	close(): void;
+}
+
 export class PermissionRelayServer {
+	private readonly socketId = randomUUID();
 	private server: net.Server | null = null;
 	private socketPath: string | null = null;
 	private onRequest: OnPermissionRequest | null = null;
 	private starting: Promise<string> | null = null;
+	private questionAuthority?: () => string;
+
+	/** Native host policy/owner census; absence keeps question automation unsupported. */
+	setQuestionAuthority(read: () => string): void {
+		this.questionAuthority = read;
+	}
 
 	/** Set the callback that surfaces requests to the user (renderer). */
 	setOnRequest(cb: OnPermissionRequest): void {
 		this.onRequest = cb;
+	}
+
+	/** Whether a person can be asked at all: the renderer prompt surface is wired. */
+	hasConsentSurface(): boolean {
+		return this.onRequest !== null;
+	}
+
+	/**
+	 * Open an in-process consent session for one spawn, or null when no person can be
+	 * asked (no prompt surface). The binding names the agent session and tab the prompt
+	 * belongs to; the token it is registered under never leaves the main process.
+	 */
+	openConsentSession(binding: RelaySpawnBinding): RelayConsentSession | null {
+		if (!this.onRequest) return null;
+		const { token, cleanup } = registerSpawn({ ...binding });
+		let closed = false;
+		return {
+			request: (toolName, input, signal) =>
+				closed
+					? Promise.resolve({ behavior: 'deny', message: 'Agent process exited.' })
+					: this.decide(token, binding, toolName, input, signal),
+			close: () => {
+				if (closed) return;
+				closed = true;
+				cleanup();
+			},
+		};
 	}
 
 	/** True once the socket is listening. */
@@ -68,15 +130,15 @@ export class PermissionRelayServer {
 	private resolveSocketPath(userDataDir: string): string {
 		if (process.platform === 'win32') {
 			// Named pipes are per-user by default ACL; unique per app instance.
-			return `\\\\.\\pipe\\maestro-permission-relay-${process.pid}`;
+			return `\\\\.\\pipe\\maestro-permission-relay-${process.pid}-${this.socketId}`;
 		}
 		// Prefer userData, but macOS caps unix socket paths at ~104 bytes. Fall
 		// back to tmpdir when the userData-based path would be too long.
 		const preferred = path.join(userDataDir, 'permission-relay.sock');
-		if (preferred.length <= 100) {
+		if (Buffer.byteLength(preferred, 'utf8') <= 100) {
 			return preferred;
 		}
-		return path.join(os.tmpdir(), `maestro-relay-${process.pid}.sock`);
+		return path.join(os.tmpdir(), `mr-${process.pid}-${this.socketId.slice(0, 8)}.sock`);
 	}
 
 	private async start(userDataDir: string): Promise<string> {
@@ -199,42 +261,116 @@ export class PermissionRelayServer {
 			return;
 		}
 
-		if (!this.onRequest) {
-			// No UI wired: fail closed.
-			this.send(socket, {
-				type: 'permission-response',
-				requestId: bridgeRequestId,
-				decision: { behavior: 'deny', message: 'Permission UI unavailable.' },
-			});
-			return;
-		}
-
-		// Server-side globally-unique id used as the pending key + renderer id.
-		const requestId = randomUUID();
-		const input = msg.input ?? {};
-		// AskUserQuestion is surfaced as a question picker, not an allow/deny
-		// prompt. Ordinary tools return null here and stay byte-for-byte unchanged.
-		const questionFields = parseQuestionRequest(msg.toolName, input);
-		const request: PermissionRequest = {
-			requestId,
-			token: msg.token,
-			sessionId: binding.sessionId,
-			tabId: binding.tabId,
-			toolName: msg.toolName,
-			input,
-			createdAt: Date.now(),
-			...(questionFields ?? {}),
-		};
-
-		const decisionPromise = createPending(requestId, msg.token);
-		this.onRequest(request);
-		const decision = await decisionPromise;
-
+		const decision = await this.decide(
+			msg.token,
+			binding,
+			msg.toolName,
+			msg.input ?? {},
+			undefined,
+			socket
+		);
 		this.send(socket, {
 			type: 'permission-response',
 			requestId: bridgeRequestId,
 			decision,
 		});
+	}
+
+	/**
+	 * Decide one request of a registered spawn: ask the person. Shared by the bridge
+	 * socket and in-process consent sessions, so there is one consent path. An aborted signal denies a request still waiting on the person.
+	 */
+	private async decide(
+		token: string,
+		binding: RelaySpawnBinding,
+		toolName: string,
+		input: Record<string, unknown>,
+		signal?: AbortSignal,
+		socket?: net.Socket
+	): Promise<PermissionDecision> {
+		const onRequest = this.onRequest;
+		if (!onRequest) {
+			// No UI wired: fail closed.
+			return { behavior: 'deny', message: 'Permission UI unavailable.' };
+		}
+
+		// Server-side globally-unique id used as the pending key + renderer id.
+		const requestId = randomUUID();
+		// AskUserQuestion is surfaced as a question picker, not an allow/deny
+		// prompt. Ordinary tools return null here and stay byte-for-byte unchanged.
+		const questionFields = parseQuestionRequest(toolName, input);
+		const request: PermissionRequest = {
+			requestId,
+			token,
+			sessionId: binding.sessionId,
+			tabId: binding.tabId,
+			toolName,
+			input,
+			createdAt: Date.now(),
+			...(questionFields ?? {}),
+		};
+
+		const cancelled: PermissionDecision = {
+			behavior: 'deny',
+			message: 'The request was cancelled before a decision.',
+		};
+		if (signal?.aborted) return cancelled;
+		const native = socket
+			? nativeCurrentTurns.readProcessTurn(binding.sessionId, binding.tabId)
+			: undefined;
+		// Raw automation admission must not inherit the human picker's lossy coercions.
+		const question = parseAutomatableQuestionRequest(toolName, input);
+		let authority: string | undefined;
+		try {
+			authority = native && question ? this.questionAuthority?.() : undefined;
+		} catch {
+			/* Human relay remains available. */
+		}
+		let authorityCurrent = !!authority;
+		const decisionPromise = createPending(
+			requestId,
+			token,
+			undefined,
+			native && question
+				? {
+						requestId,
+						processId: binding.sessionId,
+						cursor: native.cursor,
+						createdAt: request.createdAt,
+						question: question.question,
+						observedRisk: rateRisk(canonicalJson(input)),
+						options: question.options.map((o) =>
+							o.description ? `${o.label}: ${o.description}` : o.label
+						),
+					}
+				: undefined,
+			(readAuthority = (read) => read()) => {
+				try {
+					authorityCurrent =
+						authorityCurrent &&
+						!!this.questionAuthority &&
+						readAuthority(this.questionAuthority) === authority;
+				} catch {
+					authorityCurrent = false;
+				}
+				return authorityCurrent && !!socket && !socket.destroyed && socket.writable;
+			}
+		);
+		const onClose = () =>
+			resolvePending(requestId, { behavior: 'deny', message: 'Question transport disconnected.' });
+		socket?.once('close', onClose);
+		const onAbort = () => resolvePending(requestId, cancelled);
+		signal?.addEventListener('abort', onAbort, { once: true });
+		let decision: PermissionDecision;
+		try {
+			onRequest(request);
+			decision = await decisionPromise;
+		} finally {
+			signal?.removeEventListener('abort', onAbort);
+			socket?.removeListener('close', onClose);
+		}
+
+		return decision;
 	}
 
 	private send(socket: net.Socket, msg: ServerToBridgeMessage): void {

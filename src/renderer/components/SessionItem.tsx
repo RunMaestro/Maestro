@@ -18,6 +18,8 @@ import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { WindowBadge } from './SessionList/WindowBadge';
+import { LiftedPointerChip } from './SessionList/LiftedPointerChip';
+import { SessionFederationBadge } from './SessionList/SessionFederationBadge';
 import { AutoRunErrorBadge } from './SessionList/AutoRunErrorBadge';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -28,6 +30,7 @@ import { useSessionIsBeingConsulted } from '../stores/crossAgentInFlightStore';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { getConnectingColor } from '../utils/theme';
+import { isImeComposing } from '../utils/ime';
 import { hasUnreadVisibleTab } from '../utils/tabHelpers';
 import { abbreviateGroupName } from '../../shared/formatters';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
@@ -388,7 +391,8 @@ export const SessionItem = memo(function SessionItem({
 							// Commit through onBlur only - calling onFinishRename here AND
 							// letting blur fire would double-fire the IPC. Forcing blur on
 							// Enter funnels both code paths through the single handler.
-							if (e.key === 'Enter') {
+							// An Enter that confirms an IME candidate is left to the input method.
+							if (e.key === 'Enter' && !isImeComposing(e)) {
 								e.preventDefault();
 								e.currentTarget.blur();
 							}
@@ -529,10 +533,9 @@ export const SessionItem = memo(function SessionItem({
 							</div>
 						)}
 						<Activity className="row-provider-icon w-3 h-3" />{' '}
-						<span className="row-provider">
-							{getAgentDisplayName(session.toolType)}
-							{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
-						</span>
+						<span className="row-provider">{getAgentDisplayName(session.toolType)}</span>
+						<SessionFederationBadge theme={theme} session={session} />
+						<LiftedPointerChip theme={theme} liftedTo={session.liftedTo} />
 					</div>
 				)}
 				{/* Host-owned secondary actions stay outside session identity and SSH/status indicators. */}

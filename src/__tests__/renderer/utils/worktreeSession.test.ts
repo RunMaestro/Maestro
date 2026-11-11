@@ -5,7 +5,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildWorktreeSession } from '../../../renderer/utils/worktreeSession';
-import type { Session } from '../../../renderer/types';
+import type { AITab, Session } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
 
 // Mock generateId for deterministic IDs
 let idCounter = 0;
@@ -186,4 +187,187 @@ describe('buildWorktreeSession', () => {
 		expect(session.unifiedTabOrder).toHaveLength(1);
 		expect(session.unifiedTabOrder[0].type).toBe('ai');
 	});
+
+	it.each<{
+		account: string;
+		selection: Partial<AITab>;
+		permission: 'full' | 'readonly' | 'standard';
+	}>([
+		{
+			account: 'a',
+			selection: { customModel: 'grok-4.5', customEffort: 'max', permissionMode: 'readonly' },
+			permission: 'readonly',
+		},
+		{ account: 'b', selection: { permissionMode: 'full' }, permission: 'full' },
+		{ account: 'a', selection: { readOnlyMode: true }, permission: 'readonly' },
+		{ account: 'b', selection: { permissionMode: 'standard' }, permission: 'standard' },
+	])(
+		'retains Grok account $account and $permission selections without sharing conversation state',
+		({ account, selection, permission }) => {
+			const selected = createMockAITab({
+				id: 'selected',
+				agentSessionId: `native-${account}`,
+				nativeSessionBinding: { version: 1, state: 'unknown', reason: 'legacy' },
+				providerSessions: { codex: { agentSessionId: 'parked-native' } },
+				usageStats: {
+					inputTokens: 10,
+					outputTokens: 5,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 1,
+					contextWindow: 500000,
+				},
+				logs: [{ id: 'old-log', timestamp: 1, source: 'user', text: 'Parent only' }],
+				inputValue: 'Unsent parent draft',
+				stagedImages: ['parent-image'],
+				...selection,
+			});
+			const parent = createMockParentSession({
+				toolType: 'grok',
+				customPath: '/opt/Grok CLI/grok',
+				customArgs: '--acp',
+				customModel: 'grok-composer-2.5-fast',
+				customEffort: 'low',
+				customEnvVars: { GROK_HOME: `/accounts/${account}`, GROK_AUTH_PATH: '' },
+				customEnvVarsDisabled: { GROK_HOME: '/accounts/parked' },
+				activeTabId: selected.id,
+				agentSessionId: 'legacy-parent-native',
+				aiTabs: [
+					createMockAITab({ id: 'other', customModel: 'wrong-model', customEffort: 'none' }),
+					selected,
+				],
+			});
+			const original = structuredClone(parent);
+			const child = buildWorktreeSession({
+				parentSession: parent,
+				path: '/worktrees/grok',
+				branch: 'grok',
+				name: 'grok',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(child).toMatchObject({
+				toolType: 'grok',
+				customPath: '/opt/Grok CLI/grok',
+				customArgs: '--acp',
+				customModel: 'grok-composer-2.5-fast',
+				customEffort: 'low',
+				customEnvVars: parent.customEnvVars,
+				customEnvVarsDisabled: parent.customEnvVarsDisabled,
+				cwd: '/worktrees/grok',
+				projectRoot: '/worktrees/grok',
+				parentSessionId: parent.id,
+			});
+			expect(child.id).not.toBe(parent.id);
+			expect(child.agentSessionId).toBeUndefined();
+			expect(child.aiTabs).toHaveLength(1);
+			expect(child.aiTabs[0]).toMatchObject({
+				customModel: selected.customModel,
+				customEffort: selected.customEffort,
+				permissionMode: permission,
+				readOnlyMode: permission === 'readonly',
+				agentSessionId: null,
+				logs: [],
+				stagedImages: [],
+				inputValue: '',
+			});
+			expect(child.activeTabId).toBe(child.aiTabs[0].id);
+			expect(parent.aiTabs.map((tab) => tab.id)).not.toContain(child.activeTabId);
+			expect(child.aiTabs[0].nativeSessionBinding).toBeUndefined();
+			expect(child.aiTabs[0].providerSessions).toBeUndefined();
+			expect(child.aiTabs[0].usageStats).toBeUndefined();
+			expect(child.customEnvVars).not.toBe(parent.customEnvVars);
+			expect(child.customEnvVarsDisabled).not.toBe(parent.customEnvVarsDisabled);
+			child.customEnvVars!.GROK_HOME = '/accounts/changed';
+			child.customEnvVarsDisabled!.GROK_HOME = '/accounts/changed-parked';
+			expect(parent).toEqual(original);
+		}
+	);
+
+	it.each([undefined, {}, { GROK_HOME: '', GROK_AUTH_PATH: ' ' }])(
+		'preserves absent, empty and blank Grok environment maps: %j',
+		(env) => {
+			const parent = createMockParentSession({
+				toolType: 'grok',
+				customEnvVars: env,
+				customEnvVarsDisabled: env,
+			});
+			const child = buildWorktreeSession({
+				parentSession: parent,
+				path: '/worktrees/grok',
+				name: 'grok',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(child.customEnvVars).toEqual(env);
+			expect(child.customEnvVarsDisabled).toEqual(env);
+			if (env) {
+				expect(child.customEnvVars).not.toBe(env);
+				expect(child.customEnvVarsDisabled).not.toBe(env);
+			}
+			// Legacy parents may not have any tab array.
+			expect(child.aiTabs[0]).toMatchObject({ permissionMode: 'full', readOnlyMode: false });
+		}
+	);
+
+	it.each<{
+		label: string;
+		config: Session['sessionSshRemoteConfig'];
+		runtime?: string;
+		expected: Session['sessionSshRemoteConfig'];
+	}>([
+		{ label: 'local', config: undefined, expected: undefined },
+		{
+			label: 'enabled override',
+			config: { enabled: true, remoteId: 'remote-a', workingDirOverride: '/remote/parent' },
+			expected: {
+				enabled: true,
+				remoteId: 'remote-a',
+				workingDirOverride: '/remote/worktrees/grok',
+			},
+		},
+		{
+			label: 'explicit disabled',
+			config: { enabled: false, remoteId: 'remote-a' },
+			runtime: 'stale-remote',
+			expected: { enabled: false, remoteId: 'remote-a' },
+		},
+		{
+			label: 'runtime only',
+			config: undefined,
+			runtime: 'remote-b',
+			expected: { enabled: true, remoteId: 'remote-b' },
+		},
+		{
+			label: 'invalid null target',
+			config: { enabled: true, remoteId: null },
+			runtime: 'stale-remote',
+			expected: { enabled: true, remoteId: null },
+		},
+	])(
+		'preserves Grok $label host ownership without mutating the parent',
+		({ config, runtime, expected }) => {
+			const parent = createMockParentSession({
+				toolType: 'grok',
+				sessionSshRemoteConfig: config,
+				sshRemoteId: runtime,
+			});
+			const original = structuredClone(parent);
+			const child = buildWorktreeSession({
+				parentSession: parent,
+				path: '/remote/worktrees/grok',
+				name: 'grok',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(child.sessionSshRemoteConfig).toEqual(expected);
+			expect(child.cwd).toBe('/remote/worktrees/grok');
+			expect(child.sshRemoteId).toBeUndefined();
+			if (child.sessionSshRemoteConfig) {
+				expect(child.sessionSshRemoteConfig).not.toBe(config);
+				child.sessionSshRemoteConfig.workingDirOverride = '/remote/changed';
+			}
+			expect(parent).toEqual(original);
+		}
+	);
 });

@@ -5,10 +5,11 @@
  * Shared by the AI composer and the Group Chat composer, so it knows nothing
  * about sessions, tabs or rooms. Each surface says what Send means through
  * props: the title, whether it is disabled, its tint, and (AI only) a menu that
- * a click opens instead of sending.
+ * a click opens instead of sending. A right-click opens that menu at any time,
+ * whatever `shouldOpen` says.
  */
 
-import { memo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { memo, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from 'react';
 import { ArrowUp, Bell } from 'lucide-react';
 import type { Theme } from '../../types';
 import { NotificationPopover } from '../NotificationPopover';
@@ -64,6 +65,14 @@ export const ComposerSendColumn = memo(function ComposerSendColumn({
 		onSend();
 	};
 
+	// Right-click is the explicit ask for the menu, so it skips `shouldOpen`
+	// (the Send Button Menu setting, an idle agent, an empty draft).
+	const handleSendContextMenu = (e: MouseEvent) => {
+		if (!sendMenu?.available || sendDisabled) return;
+		e.preventDefault();
+		setSendMenuOpen(true);
+	};
+
 	const menuAvailable = !!sendMenu?.available;
 
 	return (
@@ -93,6 +102,7 @@ export const ComposerSendColumn = memo(function ComposerSendColumn({
 				ref={sendBtnRef}
 				type="button"
 				onClick={handleSendClick}
+				onContextMenu={handleSendContextMenu}
 				disabled={sendDisabled}
 				className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer"
 				style={{

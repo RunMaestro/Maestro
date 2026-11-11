@@ -98,6 +98,27 @@ describe('DispatchCallbackRegistry', () => {
 		h = makeHarness();
 	});
 
+	it('never adopts predecessor or unrelated spawns while a queue admission is held', () => {
+		h.registry.noteSpawn(KEY);
+		const entry = register(h.registry, {
+			pendingAdmissionId: 'dispatch',
+			armFromRecentSpawn: true,
+		});
+		h.registry.noteSpawn(KEY);
+		h.registry.noteExit(KEY, 0);
+		h.runTimers();
+		expect(entry.state).toBe('pending');
+		expect(h.fires).toHaveLength(0);
+		expect(() => h.registry.releaseQueueAdmission(entry.callbackId, 'other')).toThrow(
+			'DispatchCallbackAdmissionMismatch'
+		);
+		h.registry.releaseQueueAdmission(entry.callbackId, 'dispatch');
+		h.registry.noteSpawn(KEY);
+		h.registry.noteExit(KEY, 0);
+		h.runTimers();
+		expect(h.fires).toHaveLength(1);
+	});
+
 	it('does not fire for an exit that happened before the dispatched process started', () => {
 		register(h.registry);
 		// A predecessor turn (queued dispatch) exits while we are still pending.
@@ -143,6 +164,102 @@ describe('DispatchCallbackRegistry', () => {
 		h.registry.noteExit(otherTab, 0);
 		h.runTimers();
 		expect(h.fires).toHaveLength(0);
+	});
+
+	// Agent Resilience holds a turn the provider refused for quota or availability
+	// and resends it later. Before this the caller heard `failed` two seconds into
+	// the outage, and nothing when the resend finished the work.
+	describe('Agent Resilience retry', () => {
+		it('parks a failed exit when the retry is scheduled during the grace window', () => {
+			register(h.registry);
+			h.registry.noteSpawn(KEY);
+			h.registry.noteExit(KEY, 1);
+			h.registry.noteRetryState(TARGET, TAB, true);
+			h.runTimers();
+			expect(h.fires).toHaveLength(0);
+		});
+
+		it('parks a failed exit when the retry was reported before the exit', () => {
+			register(h.registry);
+			h.registry.noteSpawn(KEY);
+			h.registry.noteRetryState(TARGET, TAB, true);
+			h.registry.noteExit(KEY, 1);
+			h.runTimers();
+			expect(h.fires).toHaveLength(0);
+		});
+
+		it('fires completed once the resend finishes, with the duration of the whole outage', () => {
+			register(h.registry);
+			h.registry.noteSpawn(KEY);
+			h.registry.noteExit(KEY, 1);
+			h.registry.noteRetryState(TARGET, TAB, true);
+			h.runTimers();
+
+			h.setNow(1_000_000 + 30 * 60_000);
+			h.registry.noteSpawn(KEY);
+			h.registry.noteExit(KEY, 0);
+			h.registry.noteRetryState(TARGET, TAB, false);
+			h.runTimers();
+
+			expect(h.fires).toHaveLength(1);
+			expect(h.fires[0].status).toBe('completed');
+			expect(h.fires[0].durationMs).toBe(30 * 60_000);
+		});
+
+		it('keeps waiting through a resend that is refused again', () => {
+			register(h.registry);
+			h.registry.noteSpawn(KEY);
+			h.registry.noteExit(KEY, 1);
+			h.registry.noteRetryState(TARGET, TAB, true);
+			// The resend spawns while the retry entry is still in flight, then fails.
+			h.registry.noteSpawn(KEY);
+			h.registry.noteRetryState(TARGET, TAB, true);
+			h.registry.noteExit(KEY, 1);
+			h.runTimers();
+			expect(h.fires).toHaveLength(0);
+		});
+
+		it('fires failed when the retry is dropped without a resend', () => {
+			register(h.registry);
+			h.registry.noteSpawn(KEY);
+			h.registry.noteExit(KEY, 1);
+			h.registry.noteRetryState(TARGET, TAB, true);
+			h.runTimers();
+			h.registry.noteRetryState(TARGET, TAB, false);
+			expect(h.fires).toHaveLength(1);
+			expect(h.fires[0].status).toBe('failed');
+			expect(h.fires[0].exitCode).toBe(1);
+		});
+
+		it('never parks a clean exit', () => {
+			register(h.registry);
+			h.registry.noteSpawn(KEY);
+			h.registry.noteRetryState(TARGET, TAB, true);
+			h.registry.noteExit(KEY, 0);
+			h.runTimers();
+			expect(h.fires).toHaveLength(1);
+			expect(h.fires[0].status).toBe('completed');
+		});
+
+		it('ignores retry state for another tab', () => {
+			register(h.registry);
+			h.registry.noteSpawn(KEY);
+			h.registry.noteExit(KEY, 1);
+			h.registry.noteRetryState(TARGET, 'tab-2', true);
+			h.runTimers();
+			expect(h.fires[0].status).toBe('failed');
+		});
+
+		it('still times out while parked on a retry', () => {
+			register(h.registry, { timeoutMs: 60_000 });
+			h.registry.noteSpawn(KEY);
+			h.registry.noteExit(KEY, 1);
+			h.registry.noteRetryState(TARGET, TAB, true);
+			h.setNow(1_000_000 + 61_000);
+			h.registry.sweepExpired();
+			expect(h.fires).toHaveLength(1);
+			expect(h.fires[0].status).toBe('timeout');
+		});
 	});
 
 	describe('Auto Run finality', () => {
@@ -355,5 +472,61 @@ describe('dispose', () => {
 		h.registry.dispose();
 		expect(h.registry.list()).toHaveLength(0);
 		vi.clearAllMocks();
+	});
+});
+
+describe('lifecycle hooks', () => {
+	const registration: DispatchCallbackRegistration = {
+		targetAgentId: TARGET,
+		targetTabId: TAB,
+		callerAgentId: 'caller',
+		timeoutMs: 60_000,
+		prompt: 'go',
+		autoRunId: 'autorun-1',
+	};
+
+	it('reports an armed entry to onRegister before a replayed exit can fire it', () => {
+		const order: string[] = [];
+		let now = 1_000;
+		const registry = new DispatchCallbackRegistry({
+			now: () => now,
+			onRegister: (entry) => order.push(`register:${entry.state}`),
+			onFire: () => order.push('fire'),
+			graceMs: 0,
+			setTimeoutFn: ((fn: () => void) => {
+				fn();
+				return 0 as unknown as ReturnType<typeof setTimeout>;
+			}) as never,
+		});
+		// A --new-tab turn that spawned and exited before the registration landed.
+		registry.noteSpawn(KEY);
+		now += 10;
+		registry.noteExit(KEY, 0);
+		registry.register({ ...registration, armFromRecentSpawn: true });
+		expect(order).toEqual(['register:armed', 'fire']);
+	});
+
+	it('reports a silent cancel() to onCancel, but not cancelForTab', () => {
+		const cancelled: string[] = [];
+		const registry = new DispatchCallbackRegistry({
+			onFire: () => {},
+			onCancel: (entry) => cancelled.push(entry.callbackId),
+		});
+		const first = registry.register(registration);
+		expect(registry.cancel(first.callbackId)).toBe(true);
+		expect(cancelled).toEqual([first.callbackId]);
+
+		registry.register({ ...registration, targetTabId: 'tab-2' });
+		registry.cancelForTab(TARGET, 'tab-2');
+		expect(cancelled).toEqual([first.callbackId]);
+	});
+
+	it('keeps autoRunId on the entry it fires', () => {
+		const fires: DispatchCallbackFire[] = [];
+		const registry = new DispatchCallbackRegistry({ onFire: (fire) => fires.push(fire) });
+		registry.register(registration);
+		registry.cancelForTab(TARGET, TAB);
+		expect(fires[0].entry.autoRunId).toBe('autorun-1');
+		expect(fires[0].status).toBe('cancelled');
 	});
 });

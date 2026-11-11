@@ -1,3 +1,4 @@
+import type { PianolaDispatchReceipt } from '../../pianola/pianola-dispatch';
 /**
  * The `MaestroClient` interface: the one surface the TUI programs against.
  *
@@ -16,11 +17,19 @@
 import type { AgentRecord, AITabRecord, GroupRecord } from '../store/records';
 import type { LogEntryRecord } from '../store/transcript';
 import type { TurnOutcome } from '../streaming/turn-outcome';
-import type { AgentError, SshRemoteConfig, ThinkingMode, UsageStats } from '../../types';
+import type {
+	AgentError,
+	HistoryEntry,
+	SshRemoteConfig,
+	ThinkingMode,
+	UsageStats,
+} from '../../types';
 import type { CodexTransport } from '../../codexTransport';
+import type { HarnessControlMode } from '../providers/native-control';
 import type { AutoRunLaunchInput, GoalRunLaunchInput } from '../autorun/launch';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
 import type { GroupChatCreateInput, GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
+import type { ExplicitHostEndpointSource } from './discovery';
 
 // ---------------------------------------------------------------------------
 // Results and errors
@@ -50,6 +59,9 @@ export type ClientErrorCode =
 	| 'failed';
 
 export interface ClientError {
+	dispatchId?: string;
+	admission?: PianolaDispatchReceipt;
+	unknown?: boolean;
 	code: ClientErrorCode;
 	/** Safe to show a person. Never holds a token or a secret. */
 	message: string;
@@ -66,6 +78,7 @@ export type ClientMethod =
 	| 'agents.list'
 	| 'agents.get'
 	| 'agents.create'
+	| 'agents.import'
 	| 'agents.update'
 	| 'agents.rename'
 	| 'agents.remove'
@@ -85,6 +98,8 @@ export type ClientMethod =
 	| 'turns.interrupt'
 	| 'turns.queue.list'
 	| 'turns.queue.remove'
+	| 'turns.queue.setPaused'
+	| 'history.list'
 	| 'autoRun.launch'
 	| 'autoRun.launchGoal'
 	| 'autoRun.stop'
@@ -187,6 +202,61 @@ export interface AgentCreateInput {
 }
 
 /**
+ * One tab an imported agent brings with it (Federation lift): its chips, its transcript, and the
+ * provider session its next turn resumes. Absent fields take the host's defaults for a new tab.
+ */
+export interface AgentImportTab {
+	/** Kept on the host, so a queued message, a pin, or a link that names the tab still finds it. */
+	id: string;
+	name?: string | null;
+	starred?: boolean;
+	/**
+	 * The provider session id. The SAME id on the host, so the next turn resumes the conversation
+	 * from the provider's own session files, which already sit on the host.
+	 */
+	agentSessionId?: string | null;
+	createdAt?: number;
+	saveToHistory?: boolean;
+	showThinking?: ThinkingMode;
+	readOnlyMode?: boolean;
+	model?: string;
+	effort?: string;
+	usageStats?: UsageStats;
+	/** The transcript, oldest first, as the source persisted it. */
+	logs: LogEntryRecord[];
+}
+
+/** A message that was waiting on the source agent. It runs on the host in the order given. */
+export interface AgentImportQueuedMessage {
+	/** The tab it waits for: an `id` from `AgentImportInput.tabs`. */
+	tabId: string;
+	text: string;
+	/** Images as data URLs. */
+	images?: string[];
+}
+
+/**
+ * An agent moved onto this host from another Maestro (Federation lift). The agent runs locally on
+ * the host, so `agent.ssh` is refused, and `agent.cwd` must exist here.
+ */
+export interface AgentImportInput {
+	agent: Omit<AgentCreateInput, 'ssh'>;
+	/** At least one tab, in strip order. */
+	tabs: AgentImportTab[];
+	/** The tab the person was looking at. Absent, or not one of `tabs`: the first tab. */
+	activeTabId?: string;
+	queue?: AgentImportQueuedMessage[];
+}
+
+export interface AgentImportReceipt {
+	agentId: string;
+	/** How many of the queued messages the host accepted. */
+	queued: number;
+	/** A queued message the host could not accept, one line each. The agent itself was imported. */
+	notices?: string[];
+}
+
+/**
  * AG-4. Absent means unchanged; `null` clears the field so it inherits again.
  * `env` replaces the whole map, because it is one field on the host.
  */
@@ -219,6 +289,8 @@ export interface AgentPatch {
 	maestroPPath?: string | null;
 	/** Codex only. `exec` is the default and is stored as an unset field, as is `null`. */
 	codexTransport?: CodexTransport | null;
+	/** Optional native protocol mode. `current` and `null` are stored as unset. */
+	harnessControlMode?: HarnessControlMode | null;
 }
 
 export type AgentPatchField = keyof AgentPatch;
@@ -236,6 +308,11 @@ export interface AgentsApi {
 	/** One agent, read fresh from the host. An edit form opens on this. */
 	get(agentId: string): Promise<ClientResult<AgentRecord>>;
 	create(input: AgentCreateInput): Promise<ClientResult<{ agentId: string }>>;
+	/**
+	 * Create an agent from one another Maestro hands over, with its tabs, transcripts, provider
+	 * session ids, and queued messages (Federation lift). Same checks as `create`.
+	 */
+	import(input: AgentImportInput): Promise<ClientResult<AgentImportReceipt>>;
 	update(agentId: string, patch: AgentPatch): Promise<ClientResult<AgentUpdateReceipt>>;
 	/** Same as `update(agentId, { name })`. */
 	rename(agentId: string, name: string): Promise<ClientResult<void>>;
@@ -312,6 +389,8 @@ export interface TabsApi {
 // ---------------------------------------------------------------------------
 
 export interface TurnInput {
+	/** Reconcile a prior send with the same ID; changed intent is refused. */
+	dispatchId?: string;
 	/**
 	 * What the person typed. The host adds the system prompt, conductor
 	 * profile, nudge, and template variables (CH-2).
@@ -319,13 +398,35 @@ export interface TurnInput {
 	text: string;
 	/** P2 (CH-8): images as data URLs. */
 	images?: string[];
+	/**
+	 * The hostname of the machine the person sent this from. A host stamps the turn's History
+	 * entry with it, so the shared History names whose work it was (`normalizeOriginHost()`).
+	 * A host that does not know the field ignores it.
+	 */
+	originHost?: string;
+}
+
+/** A hostname a client sent, as a History label: trimmed, printable, at most 253 characters. */
+export function normalizeOriginHost(value: unknown): string | undefined {
+	if (typeof value !== 'string') return undefined;
+	const trimmed = value.trim();
+	if (!trimmed || trimmed.length > 253 || /[\u0000-\u001f\u007f]/.test(trimmed)) return undefined;
+	return trimmed;
 }
 
 export type TurnSendReceipt =
 	/** The agent was idle; the turn is running now. */
 	| { status: 'started' }
 	/** The agent was busy; the message waits in the host's execution queue (CH-4). */
-	| { status: 'queued'; itemId: string; position: number; queueLength: number };
+	| {
+			status: 'queued';
+			itemId: string;
+			position: number;
+			queueLength: number;
+			dispatchId?: string;
+			admission?: PianolaDispatchReceipt;
+			durable?: boolean;
+	  };
 
 export interface QueuedTurn {
 	itemId: string;
@@ -387,6 +488,15 @@ export interface TurnsApi {
 	readonly queue: {
 		list(agentId: string): Promise<ClientResult<QueuedTurn[]>>;
 		remove(agentId: string, itemId: string): Promise<ClientResult<{ removed: boolean }>>;
+		/**
+		 * Hold a waiting message (it keeps its place, nothing starts it) or release it: the queued
+		 * card's Hold / Resume. `found: false` when no waiting message has that id.
+		 */
+		setPaused(
+			agentId: string,
+			itemId: string,
+			paused: boolean
+		): Promise<ClientResult<{ found: boolean; paused: boolean }>>;
 	};
 	/** The tab's turn events, live: the `turn` events of `events.subscribe`, filtered to one tab. */
 	subscribe(agentId: string, tabId: string, listener: (event: TurnEvent) => void): Unsubscribe;
@@ -541,6 +651,20 @@ export interface SettingsChange {
 	keys: string[] | 'unknown';
 }
 
+export interface HistoryListOptions {
+	/** The newest this many entries. Default: the agent's whole History. */
+	limit?: number;
+}
+
+export interface HistoryApi {
+	/**
+	 * The agent's History, newest first: the entries this host recorded, and the entries every
+	 * other Maestro wrote to the shared History of the agent's working directory
+	 * (`.maestro/history/`), each carrying the `hostname` of the machine it came from.
+	 */
+	list(agentId: string, options?: HistoryListOptions): Promise<ClientResult<HistoryEntry[]>>;
+}
+
 export interface SettingsApi {
 	/** ST-1. The values of `keys` as the host holds them. A key the host does not hold is absent. */
 	get(keys: readonly string[]): Promise<ClientResult<Record<string, unknown>>>;
@@ -604,6 +728,13 @@ export type MaestroEvent =
 	| { type: 'settings.changed'; keys: string[] | 'unknown' }
 	| { type: 'turn'; agentId: string; tabId: string; event: TurnEvent }
 	/**
+	 * The agent's execution queue changed (a message waits, starts, is removed, held, or released).
+	 * Carries every waiting item, in order, so a listener replaces what it held. Only a host whose
+	 * runtime owns the queue says this: the desktop's bridge does not, so a client attached to a
+	 * desktop reads the queue with `turns.queue.list` instead.
+	 */
+	| { type: 'queue.changed'; agentId: string; items: QueuedTurn[] }
+	/**
 	 * A run's progress, from the host's `autorun_state` and the run's own
 	 * process stream (its output and usage). Fold them with `reduceAutoRun`.
 	 */
@@ -643,6 +774,7 @@ export interface MaestroClient {
 	readonly autoRun: AutoRunApi;
 	readonly groupChats: GroupChatsApi;
 	readonly consults: ConsultsApi;
+	readonly history: HistoryApi;
 	readonly settings: SettingsApi;
 	readonly providers: ProvidersApi;
 	readonly events: EventsApi;
@@ -652,10 +784,30 @@ export interface MaestroClient {
 // The WebSocket factory's options
 // ---------------------------------------------------------------------------
 
-/** Transport options, kept off the interface (R1). */
-export interface WsMaestroClientOptions {
-	/** The data dir the caller resolved. Discovery reads `cli-server.json` here. */
-	userDataDir: string;
+/**
+ * Transport options, kept off the interface (R1). The host is found one of two ways: the local
+ * `cli-server.json` in `userDataDir` (the default), or an explicit `endpoint` (a Federation
+ * remote's SSH forward). Exactly one is given.
+ */
+export type WsMaestroClientOptions = WsMaestroClientTransportOptions &
+	(
+		| {
+				/** The data dir the caller resolved. Discovery reads `cli-server.json` here. */
+				userDataDir: string;
+				endpoint?: undefined;
+		  }
+		| {
+				/**
+				 * Dial this bridge on 127.0.0.1 instead of reading `cli-server.json`. A function is
+				 * called before every connection attempt, reconnects included, so a host that came
+				 * back on a new port is found again.
+				 */
+				endpoint: ExplicitHostEndpointSource;
+				userDataDir?: undefined;
+		  }
+	);
+
+export interface WsMaestroClientTransportOptions {
 	/** Per call. Default 10000. */
 	requestTimeoutMs?: number;
 	/** Default 500, doubling to 15000, with 20% jitter. */

@@ -36,6 +36,8 @@ const mockInputContext = {
 	setAtMentionStartIndex: vi.fn(),
 	selectedAtMentionIndex: 0,
 	setSelectedAtMentionIndex: vi.fn(),
+	atMentionCategory: 'all' as string,
+	setAtMentionCategory: vi.fn(),
 	commandHistoryOpen: false,
 	setCommandHistoryOpen: vi.fn(),
 	commandHistoryFilter: '',
@@ -452,7 +454,7 @@ describe('@ mention completion', () => {
 			result.current.handleInputKeyDown(e);
 		});
 
-		expect(deps.setInputValue).toHaveBeenCalledWith('hello @src/app.ts  world');
+		expect(deps.setInputValue).toHaveBeenCalledWith('hello @src/app.ts world');
 		expect(mockInputContext.setAtMentionOpen).toHaveBeenCalledWith(false);
 		expect(mockInputContext.setAtMentionFilter).toHaveBeenCalledWith('');
 		expect(mockInputContext.setAtMentionStartIndex).toHaveBeenCalledWith(-1);
@@ -968,6 +970,36 @@ describe('Forced parallel send shortcut', () => {
 
 		expect(e.preventDefault).toHaveBeenCalled();
 		expect(deps.processInput).toHaveBeenCalledWith(undefined, { forceParallel: true });
+	});
+
+	it('leaves the chord to the IME mid-composition (Safari keyCode 229)', () => {
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({
+			forcedParallelExecution: true,
+			shortcuts: {
+				...useSettingsStore.getState().shortcuts,
+				forcedParallelSend: {
+					id: 'forcedParallelSend',
+					label: 'Forced Parallel Send',
+					keys: ['Meta', 'Shift', 'Enter'],
+				},
+			},
+		} as any);
+		const deps = createMockDeps({ inputValue: 'hello' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('Enter', {
+			metaKey: true,
+			shiftKey: true,
+			keyCode: 229,
+			nativeEvent: { isComposing: false },
+		} as never);
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		expect(e.preventDefault).not.toHaveBeenCalled();
+		expect(deps.processInput).not.toHaveBeenCalled();
 	});
 
 	it('records forcedParallelSend shortcut usage when the shortcut fires', () => {
@@ -1589,7 +1621,7 @@ describe('@ mention completion - additional', () => {
 		});
 
 		// beforeAt = 'hello ', selected.value = 'src/app.ts', afterFilter = ' world'
-		expect(deps.setInputValue).toHaveBeenCalledWith('hello @src/app.ts  world');
+		expect(deps.setInputValue).toHaveBeenCalledWith('hello @src/app.ts world');
 	});
 
 	it('accept when atMentionStartIndex is at start of input (0)', () => {
@@ -1604,7 +1636,7 @@ describe('@ mention completion - additional', () => {
 		});
 
 		// beforeAt = '', afterFilter = ' rest'
-		expect(deps.setInputValue).toHaveBeenCalledWith('@src/app.ts  rest');
+		expect(deps.setInputValue).toHaveBeenCalledWith('@src/app.ts rest');
 	});
 });
 
@@ -1863,6 +1895,28 @@ describe('General edge cases - additional', () => {
 			expect(deps.setCommandMode).toHaveBeenCalledWith('off');
 			expect(e.preventDefault).toHaveBeenCalled();
 		});
+
+		it.each(['Escape', 'Backspace'])(
+			'does NOT exit on composing %s when the line is empty',
+			(key) => {
+				for (const ime of [
+					{ nativeEvent: { isComposing: true } as any, keyCode: 229 },
+					{ nativeEvent: { isComposing: false } as any, keyCode: 229 },
+				]) {
+					setActiveSession({ inputMode: 'ai' });
+					const deps = commandModeDeps({ inputValue: '' });
+					const { result } = renderHook(() => useInputKeyDown(deps));
+					const e = createKeyEvent(key, ime as any);
+
+					act(() => {
+						result.current.handleInputKeyDown(e);
+					});
+
+					expect(deps.setCommandMode).not.toHaveBeenCalled();
+					expect(e.preventDefault).not.toHaveBeenCalled();
+				}
+			}
+		);
 
 		it.each(['Escape', 'Backspace'])('does NOT exit on %s with a half-typed command', (key) => {
 			setActiveSession({ inputMode: 'ai' });
@@ -2151,6 +2205,725 @@ describe('useInputKeyDown - AI command mode', () => {
 			act(() => result.current.handleInputKeyDown(createKeyEvent('Escape')));
 
 			expect(deps.setCommandMode).toHaveBeenCalledWith('shell');
+		});
+	});
+});
+
+// ============================================================================
+// IME composition: the AI composer's own popovers and key branches
+// ============================================================================
+
+describe('IME composition leaves the AI composer branches alone', () => {
+	/** Chromium mid-composition, and Safari's confirming Enter after compositionend. */
+	const COMPOSING_SHAPES = [
+		['isComposing', { nativeEvent: { isComposing: true } }],
+		['keyCode 229', { keyCode: 229, nativeEvent: { isComposing: false } }],
+	] as const;
+
+	describe('command proposal card', () => {
+		const SESSION_ID = 'session-1';
+		const TAB_ID = 'tab-1';
+		const ENTRY_KEY = `${SESSION_ID}:${TAB_ID}`;
+
+		function seedCard(outcome: { command?: string; error?: string; choice?: 'cancel' }) {
+			useAiCommandStore.setState({ entries: {} });
+			const store = useAiCommandStore.getState();
+			store.beginAiCommand({
+				requestId: 'req-1',
+				sessionId: SESSION_ID,
+				tabId: TAB_ID,
+				request: 'what is eating disk space',
+			});
+			if (outcome.command) store.resolveAiCommand('req-1', outcome.command);
+			if (outcome.error) store.failAiCommand('req-1', outcome.error);
+			if (outcome.choice) store.setAiCommandChoice(ENTRY_KEY, outcome.choice);
+		}
+
+		function render() {
+			const deps = createMockDeps({ getCommandMode: () => 'ai' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+			return { deps, press: (e: React.KeyboardEvent) => result.current.handleInputKeyDown(e) };
+		}
+
+		beforeEach(() => {
+			useAiCommandStore.setState({ entries: {} });
+			setActiveSession({ activeTabId: TAB_ID });
+		});
+
+		it.each(COMPOSING_SHAPES)(
+			'a composing Enter (%s) does not run, then Enter runs',
+			(_, shape) => {
+				seedCard({ command: 'du -sh *' });
+				const { deps, press } = render();
+
+				const composing = createKeyEvent('Enter', shape);
+				act(() => press(composing));
+				expect(acceptAiCommand).not.toHaveBeenCalled();
+				expect(deps.setInputValue).not.toHaveBeenCalled();
+				expect(deps.processInput).not.toHaveBeenCalled();
+				expect(composing.preventDefault).not.toHaveBeenCalled();
+
+				const plain = createKeyEvent('Enter');
+				act(() => press(plain));
+				expect(acceptAiCommand).toHaveBeenCalledTimes(1);
+				expect(plain.preventDefault).toHaveBeenCalled();
+			}
+		);
+
+		it.each(COMPOSING_SHAPES)(
+			'a composing Enter (%s) on Cancel does not decline, then Enter declines',
+			(_, shape) => {
+				seedCard({ command: 'du -sh *', choice: 'cancel' });
+				const { deps, press } = render();
+
+				act(() => press(createKeyEvent('Enter', shape)));
+				expect(dismissAiCommand).not.toHaveBeenCalled();
+				expect(deps.setInputValue).not.toHaveBeenCalled();
+
+				act(() => press(createKeyEvent('Enter')));
+				expect(acceptAiCommand).not.toHaveBeenCalled();
+				expect(deps.setInputValue).toHaveBeenCalledWith('what is eating disk space');
+			}
+		);
+
+		it.each(COMPOSING_SHAPES)(
+			'a composing Enter (%s) on an error does not hand the request back, then Enter does',
+			(_, shape) => {
+				seedCard({ error: 'model unavailable' });
+				const { deps, press } = render();
+
+				act(() => press(createKeyEvent('Enter', shape)));
+				expect(dismissAiCommand).not.toHaveBeenCalled();
+
+				act(() => press(createKeyEvent('Enter')));
+				expect(deps.setInputValue).toHaveBeenCalledWith('what is eating disk space');
+			}
+		);
+
+		it('a composing arrow or Escape neither moves the choice nor declines', () => {
+			seedCard({ command: 'du -sh *' });
+			const { deps, press } = render();
+
+			act(() => press(createKeyEvent('ArrowRight', { nativeEvent: { isComposing: true } } as any)));
+			expect(useAiCommandStore.getState().entries[ENTRY_KEY].choice).toBe('run');
+
+			const escape = createKeyEvent('Escape', { keyCode: 229 });
+			act(() => press(escape));
+			expect(dismissAiCommand).not.toHaveBeenCalled();
+			expect(deps.setInputValue).not.toHaveBeenCalled();
+			expect(escape.preventDefault).not.toHaveBeenCalled();
+			expect(escape.stopPropagation).toHaveBeenCalled();
+		});
+	});
+
+	describe('shell tab completion', () => {
+		const suggestions = [
+			{ value: 'src/', type: 'folder' as const, label: 'src/' },
+			{ value: 'package.json', type: 'file' as const, label: 'package.json' },
+		] as any;
+
+		beforeEach(() => {
+			mockInputContext.tabCompletionOpen = true;
+			mockInputContext.selectedTabCompletionIndex = 0;
+			setActiveSession({ inputMode: 'terminal' });
+		});
+
+		it.each(COMPOSING_SHAPES)(
+			'a composing Enter (%s) does not accept, then Enter accepts',
+			(_, shape) => {
+				const deps = createMockDeps({ tabCompletionSuggestions: suggestions });
+				const { result } = renderHook(() => useInputKeyDown(deps));
+
+				const composing = createKeyEvent('Enter', shape);
+				act(() => result.current.handleInputKeyDown(composing));
+				expect(deps.setInputValue).not.toHaveBeenCalled();
+				expect(mockInputContext.setTabCompletionOpen).not.toHaveBeenCalled();
+				expect(deps.processInput).not.toHaveBeenCalled();
+				expect(composing.preventDefault).not.toHaveBeenCalled();
+
+				act(() => result.current.handleInputKeyDown(createKeyEvent('Enter')));
+				expect(deps.setInputValue).toHaveBeenCalledWith('src/');
+				expect(mockInputContext.setTabCompletionOpen).toHaveBeenCalledWith(false);
+			}
+		);
+
+		it('composing arrows, Tab and Escape leave the dropdown as it is', () => {
+			const deps = createMockDeps({ tabCompletionSuggestions: suggestions });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			for (const key of ['ArrowDown', 'ArrowUp', 'Tab', 'Escape']) {
+				const e = createKeyEvent(key, { keyCode: 229 });
+				act(() => result.current.handleInputKeyDown(e));
+				expect(e.preventDefault).not.toHaveBeenCalled();
+			}
+			expect(mockInputContext.setSelectedTabCompletionIndex).not.toHaveBeenCalled();
+			expect(mockInputContext.setTabCompletionFilter).not.toHaveBeenCalled();
+			expect(mockInputContext.setTabCompletionOpen).not.toHaveBeenCalled();
+			expect(deps.setInputValue).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('slash command popover', () => {
+		const commands = [
+			{ command: '/help', description: 'Show help' },
+			{ command: '/clear', description: 'Clear output' },
+		];
+
+		beforeEach(() => {
+			mockInputContext.slashCommandOpen = true;
+			mockInputContext.selectedSlashCommandIndex = 0;
+			setActiveSession({ inputMode: 'ai' });
+		});
+
+		it.each(COMPOSING_SHAPES)(
+			'a composing Enter (%s) does not accept, then Enter accepts',
+			(_, shape) => {
+				const deps = createMockDeps({ inputValue: '/h', allSlashCommands: commands });
+				const { result } = renderHook(() => useInputKeyDown(deps));
+
+				const composing = createKeyEvent('Enter', shape);
+				act(() => result.current.handleInputKeyDown(composing));
+				expect(deps.setInputValue).not.toHaveBeenCalled();
+				expect(mockInputContext.setSlashCommandOpen).not.toHaveBeenCalled();
+				expect(deps.processInput).not.toHaveBeenCalled();
+				expect(composing.preventDefault).not.toHaveBeenCalled();
+
+				act(() => result.current.handleInputKeyDown(createKeyEvent('Enter')));
+				expect(deps.setInputValue).toHaveBeenCalledWith('/help ');
+				expect(mockInputContext.setSlashCommandOpen).toHaveBeenCalledWith(false);
+			}
+		);
+
+		it('composing arrows, Tab and Escape leave the popover open and the selection put', () => {
+			const deps = createMockDeps({ inputValue: '/', allSlashCommands: commands });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const escape = createKeyEvent('Escape', { nativeEvent: { isComposing: true } } as any);
+			for (const e of [
+				createKeyEvent('ArrowDown', { keyCode: 229 }),
+				createKeyEvent('ArrowUp', { keyCode: 229 }),
+				createKeyEvent('Tab', { keyCode: 229 }),
+				escape,
+			]) {
+				act(() => result.current.handleInputKeyDown(e));
+				expect(e.preventDefault).not.toHaveBeenCalled();
+			}
+			expect(escape.stopPropagation).toHaveBeenCalled();
+			expect(mockInputContext.setSelectedSlashCommandIndex).not.toHaveBeenCalled();
+			expect(mockInputContext.setSlashCommandOpen).not.toHaveBeenCalled();
+			expect(deps.setInputValue).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('history recall and the Tab trigger', () => {
+		it.each(COMPOSING_SHAPES)(
+			'a composing ArrowUp (%s) in a terminal does not open history, then ArrowUp does',
+			(_, shape) => {
+				setActiveSession({ inputMode: 'terminal' });
+				const deps = createMockDeps({ inputValue: 'git' });
+				const { result } = renderHook(() => useInputKeyDown(deps));
+
+				act(() => result.current.handleInputKeyDown(createKeyEvent('ArrowUp', shape)));
+				expect(mockInputContext.setCommandHistoryOpen).not.toHaveBeenCalled();
+
+				act(() => result.current.handleInputKeyDown(createKeyEvent('ArrowUp')));
+				expect(mockInputContext.setCommandHistoryOpen).toHaveBeenCalledWith(true);
+			}
+		);
+
+		it.each(COMPOSING_SHAPES)(
+			'a composing Tab (%s) in AI chat reaches the IME, then Tab is prevented as before',
+			(_, shape) => {
+				setActiveSession({ inputMode: 'ai' });
+				const deps = createMockDeps({ inputValue: 'hello' });
+				const { result } = renderHook(() => useInputKeyDown(deps));
+
+				const composing = createKeyEvent('Tab', shape);
+				act(() => result.current.handleInputKeyDown(composing));
+				expect(composing.preventDefault).not.toHaveBeenCalled();
+
+				const plain = createKeyEvent('Tab');
+				act(() => result.current.handleInputKeyDown(plain));
+				expect(plain.preventDefault).toHaveBeenCalled();
+			}
+		);
+
+		it('a composing Tab in a terminal does not open completion, then Tab does', () => {
+			setActiveSession({ inputMode: 'terminal' });
+			const deps = createMockDeps({
+				inputValue: 'gi',
+				getTabCompletionSuggestions: vi.fn().mockReturnValue([
+					{ value: 'git', type: 'history', label: 'git' },
+					{ value: 'gist', type: 'history', label: 'gist' },
+				]),
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => result.current.handleInputKeyDown(createKeyEvent('Tab', { keyCode: 229 })));
+			expect(deps.getTabCompletionSuggestions).not.toHaveBeenCalled();
+			expect(mockInputContext.setTabCompletionOpen).not.toHaveBeenCalled();
+
+			act(() => result.current.handleInputKeyDown(createKeyEvent('Tab')));
+			expect(mockInputContext.setTabCompletionOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('completes a single matching agent when Tab is pressed on a partial @name', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-sess',
+						name: 'Codex',
+						toolType: 'codex',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({
+				inputValue: 'ask @co',
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('ask @Codex ');
+		});
+
+		it('opens the picker filtered to the partial term when multiple agents match', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-1',
+						name: 'Codex',
+						toolType: 'codex',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-2',
+						name: 'Copilot',
+						toolType: 'codex',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({
+				inputValue: 'ask @co',
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(mockInputContext.setAtMentionOpen).toHaveBeenCalledWith(true);
+			expect(mockInputContext.setAtMentionFilter).toHaveBeenCalledWith('co');
+			expect(mockInputContext.setAtMentionStartIndex).toHaveBeenCalledWith(4);
+			expect(mockInputContext.setSelectedAtMentionIndex).toHaveBeenCalledWith(0);
+			expect(mockInputContext.setAtMentionCategory).toHaveBeenCalledWith('agents');
+			expect(deps.setInputValue).not.toHaveBeenCalled();
+		});
+
+		it('does not complete or open picker for a group name target', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-1',
+						name: 'Peer Agent',
+						toolType: 'claude-code',
+						groupId: 'grp-core',
+						inputMode: 'ai',
+					} as any,
+				],
+				groups: [
+					{
+						id: 'grp-core',
+						name: 'Core-Team',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({
+				inputValue: 'ask @Core',
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).not.toHaveBeenCalled();
+			expect(mockInputContext.setAtMentionOpen).not.toHaveBeenCalled();
+		});
+
+		it('excludes the active agent itself from Tab completion matches', () => {
+			setActiveSession({ id: 'active-sess', name: 'Codex' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Codex',
+						toolType: 'codex',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({
+				inputValue: 'ask @co',
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).not.toHaveBeenCalled();
+			expect(mockInputContext.setAtMentionOpen).not.toHaveBeenCalled();
+		});
+
+		it('completes quoted partial mention on single match with caret at end', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-alice',
+						name: 'Alice Bob',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({
+				inputValue: 'ask @"Alice B',
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('ask @Alice-Bob ');
+		});
+
+		it('completes quoted partial mention on single match with caret mid-token', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-alice',
+						name: 'Alice Bob',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const textarea = document.createElement('textarea');
+			textarea.value = 'ask @"Alice B" and more';
+			textarea.selectionStart = textarea.selectionEnd = 11;
+			const inputRef = { current: textarea };
+
+			const deps = createMockDeps({
+				inputValue: 'ask @"Alice B" and more',
+				inputRef,
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('ask @Alice-Bob and more');
+		});
+
+		it('places the caret after the accepted token when the picker accepts mid-text', () => {
+			setActiveSession({ inputMode: 'ai' });
+			mockInputContext.atMentionOpen = true;
+			mockInputContext.selectedAtMentionIndex = 0;
+			mockInputContext.atMentionStartIndex = 6;
+			mockInputContext.atMentionFilter = 'app';
+
+			const pickerItems = [
+				{
+					kind: 'file' as const,
+					value: '@src/app.ts ',
+					displayText: 'app.ts',
+					fullPath: 'src/app.ts',
+					score: 1,
+				},
+			];
+			const textarea = document.createElement('textarea');
+			textarea.value = 'hello @app world';
+			const inputRef = { current: textarea };
+			const setInputValue = vi.fn((value: string) => {
+				textarea.value = value;
+			});
+			const deps = createMockDeps({
+				inputValue: 'hello @app world',
+				atMentionItems: pickerItems,
+				inputRef,
+				setInputValue,
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+			vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+				cb(0);
+				return 1;
+			});
+
+			try {
+				act(() => result.current.handleInputKeyDown(createKeyEvent('Enter')));
+			} finally {
+				vi.unstubAllGlobals();
+			}
+
+			expect(setInputValue).toHaveBeenCalledWith('hello @src/app.ts world');
+			expect(textarea.selectionStart).toBe('hello @src/app.ts '.length);
+			expect(textarea.selectionEnd).toBe(textarea.selectionStart);
+		});
+
+		it('places the caret after a Tab-completed agent with text after it', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-alice',
+						name: 'Alice Bob',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const textarea = document.createElement('textarea');
+			textarea.value = 'ask @"Alice B" and more';
+			textarea.selectionStart = textarea.selectionEnd = 11;
+			const inputRef = { current: textarea };
+			const setInputValue = vi.fn((value: string) => {
+				textarea.value = value;
+			});
+			const deps = createMockDeps({
+				inputValue: 'ask @"Alice B" and more',
+				inputRef,
+				setInputValue,
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+			vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+				cb(0);
+				return 1;
+			});
+
+			try {
+				act(() => result.current.handleInputKeyDown(createKeyEvent('Tab')));
+			} finally {
+				vi.unstubAllGlobals();
+			}
+
+			expect(setInputValue).toHaveBeenCalledWith('ask @Alice-Bob and more');
+			expect(textarea.selectionStart).toBe('ask @Alice-Bob '.length);
+		});
+
+		it('opens picker with raw filter on multiple matches for quoted partial mention', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-alice1',
+						name: 'Alice Bob',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-alice2',
+						name: 'Alice Brown',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({
+				inputValue: 'ask @"Alice B',
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(mockInputContext.setAtMentionOpen).toHaveBeenCalledWith(true);
+			expect(mockInputContext.setAtMentionFilter).toHaveBeenCalledWith('"Alice B');
+			expect(mockInputContext.setAtMentionStartIndex).toHaveBeenCalledWith(4);
+			expect(mockInputContext.setSelectedAtMentionIndex).toHaveBeenCalledWith(0);
+			expect(mockInputContext.setAtMentionCategory).toHaveBeenCalledWith('agents');
+			expect(deps.setInputValue).not.toHaveBeenCalled();
+		});
+
+		it('completes a dotted agent name with the caret mid-token', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-dot',
+						name: 'RunMaestro.ai',
+						toolType: 'codex',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const textarea = document.createElement('textarea');
+			textarea.value = 'ask @RunMaestr.ai';
+			textarea.selectionStart = textarea.selectionEnd = 14;
+
+			const deps = createMockDeps({
+				inputValue: 'ask @RunMaestr.ai',
+				inputRef: { current: textarea },
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('ask @RunMaestro.ai ');
+		});
+
+		it('keeps the sentence full stop when completing a dotted name', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-dot',
+						name: 'RunMaestro.ai',
+						toolType: 'codex',
+						inputMode: 'ai',
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({ inputValue: 'ask @RunMaestro.ai.' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('ask @RunMaestro.ai .');
+		});
+
+		it('never completes or counts a dormant Pianola agent', () => {
+			setActiveSession({ id: 'active-sess' });
+			useSettingsStore.setState({
+				encoreFeatures: {
+					...useSettingsStore.getState().encoreFeatures,
+					pianola: false,
+				},
+			} as any);
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'active-sess',
+						name: 'Active Agent',
+						toolType: 'claude-code',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-live',
+						name: 'Pia',
+						toolType: 'codex',
+						inputMode: 'ai',
+					} as any,
+					{
+						id: 'peer-dormant',
+						name: 'Pianola',
+						toolType: 'codex',
+						inputMode: 'ai',
+						isPianola: true,
+					} as any,
+				],
+				activeSessionId: 'active-sess',
+			} as any);
+
+			const deps = createMockDeps({ inputValue: 'ask @pia' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const tab = createKeyEvent('Tab');
+			act(() => result.current.handleInputKeyDown(tab));
+
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(deps.setInputValue).toHaveBeenCalledWith('ask @Pia ');
+			expect(mockInputContext.setAtMentionOpen).not.toHaveBeenCalled();
 		});
 	});
 });

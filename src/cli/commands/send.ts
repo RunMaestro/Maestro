@@ -1,9 +1,16 @@
 // Send command - send a message to an agent and get a JSON response
 // Requires a Maestro agent ID. Optionally resumes an existing agent session.
 
+import * as os from 'os';
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
 import { captureCliRun, settlementFromAgentResult } from '../services/agent-run-capture';
-import { resolveAgentId, getSessionById, addHistoryEntry } from '../services/storage';
+import {
+	resolveAgentId,
+	getSessionById,
+	addHistoryEntry,
+	readStoredAiTabs,
+} from '../services/storage';
+import { listDesktopTabs } from '../services/session-command';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
 import { requestCliSynopsis } from '../services/synopsis';
 import { estimateContextUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
@@ -24,7 +31,31 @@ import { readCallerIdentity } from '../../shared/agentDelegation';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { generateUUID } from '../../shared/uuid';
 import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
-import type { HistoryEntry, SessionInfo, ToolType } from '../../shared/types';
+import { AGENT_LIFTED_CODE, liftedSendRefusal } from '../../shared/maestro-lib/agents/lift-pointer';
+import type {
+	AgentError,
+	HistoryEntry,
+	SessionInfo,
+	ToolType,
+	UsageStats,
+} from '../../shared/types';
+import type { TurnEvent } from '../../shared/maestro-lib/client/types';
+import {
+	PeerResolveError,
+	hostCallError,
+	peerAgentRef,
+	peerErrorCode,
+	routeAgentTarget,
+	watchPeerConnection,
+	withPeerAgent,
+	type PeerTarget,
+	type ResolvedPeerAgent,
+} from '../services/peer-resolver';
+import {
+	runPeerAgentAction,
+	type PeerAgentActionResult,
+} from '../../shared/maestro-lib/client/peer-actions';
+import { ExitCode } from '../exit-codes';
 
 interface SendOptions {
 	session?: string;
@@ -250,6 +281,58 @@ function buildResponse(
 	};
 }
 
+/**
+ * Why a `--session` value must not be resumed, or `null` when it may.
+ *
+ * `send` runs a headless provider process beside the desktop; it never writes
+ * into a desktop tab. Two values used to slip through and come back as an
+ * opaque `crashed` turn:
+ *   - a Maestro TAB id, which the provider cannot resume (it is not one of its
+ *     session ids), and
+ *   - the provider session of a tab that is mid-turn, which puts a second
+ *     writer on one conversation.
+ * Both are refused with a reason that names the verb that does what the caller
+ * meant (`dispatch --tab --queue`). The desktop's live tab list is asked first
+ * because only it knows which tab is busy; with the app down, the persisted
+ * tabs still catch the tab-id mistake.
+ */
+async function sessionResumeRefusal(
+	agentId: string,
+	sessionArg: string
+): Promise<{ error: string; code: string } | null> {
+	let tabs: { tabId: string; agentSessionId: string | null; state: string }[];
+	try {
+		tabs = (await listDesktopTabs()).filter((tab) => tab.agentId === agentId);
+	} catch {
+		tabs = readStoredAiTabs(agentId).map((tab) => ({
+			tabId: tab.id,
+			agentSessionId: tab.agentSessionId ?? null,
+			state: 'unknown',
+		}));
+	}
+	const queueHint = (tabId: string) =>
+		`To deliver into that tab instead, run: maestro-cli dispatch ${agentId} "<message>" --tab ${tabId} --queue`;
+
+	const byTabId = tabs.find((tab) => tab.tabId === sessionArg);
+	if (byTabId) {
+		const providerNote = byTabId.agentSessionId
+			? ` (that tab's provider session is ${byTabId.agentSessionId})`
+			: '';
+		return {
+			code: 'SESSION_IS_TAB_ID',
+			error: `"${sessionArg}" is a Maestro tab id; --session takes a provider session id${providerNote}. ${queueHint(sessionArg)}`,
+		};
+	}
+	const busyTab = tabs.find((tab) => tab.agentSessionId === sessionArg && tab.state === 'busy');
+	if (busyTab) {
+		return {
+			code: 'TAB_BUSY',
+			error: `Provider session ${sessionArg} is mid-turn in desktop tab ${busyTab.tabId}; resuming it now would put a second writer on one conversation. Wait for the turn to finish. ${queueHint(busyTab.tabId)}`,
+		};
+	}
+	return null;
+}
+
 /** Run one prompt for the resolved stored agent and emit its provider result as JSON.
  * Prefer the authenticated desktop runner; required plugin tools/receipts prohibit
  * standalone fallback so success cannot silently omit the requested MCP boundary.
@@ -259,6 +342,9 @@ export async function send(
 	message: string,
 	options: SendOptions
 ): Promise<void> {
+	const route = routeAgentTarget(agentIdArg);
+	if (route.kind === 'peer') return sendToPeer(route.target, message, options);
+
 	// Resolve agent ID (supports partial IDs)
 	let agentId: string;
 	try {
@@ -272,6 +358,13 @@ export async function send(
 	const agent = getSessionById(agentId);
 	if (!agent) {
 		emitErrorJson(`Agent not found: ${agentIdArg}`, 'AGENT_NOT_FOUND');
+		process.exit(1);
+	}
+
+	// A lifted agent runs on its host now: a local turn would resume the session the host owns.
+	const liftedRefusal = liftedSendRefusal(agent);
+	if (liftedRefusal) {
+		emitErrorJson(liftedRefusal, AGENT_LIFTED_CODE);
 		process.exit(1);
 	}
 
@@ -316,6 +409,15 @@ export async function send(
 		);
 		process.exit(1);
 		return;
+	}
+	if (agentSessionId) {
+		const refusal = await sessionResumeRefusal(agentId, agentSessionId);
+		if (refusal) {
+			emitErrorJson(refusal.error, refusal.code);
+			console.error(`maestro-cli send refused: ${refusal.error}`);
+			process.exit(1);
+			return;
+		}
 	}
 
 	// A send without `--session` opens a new provider session, so it carries the
@@ -449,11 +551,13 @@ export async function send(
 						};
 					}
 				}
+				const nativeControl = agent.harnessControlMode === 'native';
 				const appendSystemPrompt =
 					options.systemPrompt !== false ? await prepareMaestroSystemPromptCli(agent) : undefined;
 				return spawnAgent(agent.toolType, agent.cwd, agentPrompt, agentSessionId, {
 					signal: interrupt.signal,
 					readOnlyMode: options.readOnly,
+					appendSystemPrompt,
 					// A send Cue started is still Cue's turn on this agent. Left
 					// unset otherwise, so the turn keeps the default origin.
 					...(origin.kind === 'cue' ? { querySource: 'cue' as const } : {}),
@@ -464,11 +568,13 @@ export async function send(
 					customEnvVars: agent.customEnvVars,
 					requiredSecrets: agent.requiredSecrets,
 					sshRemoteConfig: agent.sessionSshRemoteConfig,
-					appendSystemPrompt,
-					// Honor the agent's Claude token source for `maestro-cli send` turns.
+					// Honor the agent's Claude token source for every CLI transport.
 					enableMaestroP: agent.enableMaestroP,
 					maestroPMode: agent.maestroPMode,
 					maestroPPath: agent.maestroPPath,
+					...(nativeControl
+						? { harnessControlMode: 'native' as const, nativeSessionId: agent.id }
+						: {}),
 					// The turn runs in the agent's own cwd (#1872).
 					acceptWorkspaceTrust: true,
 				});
@@ -518,5 +624,271 @@ export async function send(
 				'Warning: Could not focus session tab in Maestro desktop (app may not be running)'
 			);
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Federation: `send peer:agent`
+// ---------------------------------------------------------------------------
+
+/**
+ * The flag a peer send cannot honor, if one was passed. Each changes how the turn runs or is
+ * recorded on THIS machine (a read-only spawn, the local system prompt, the local History, a
+ * desktop plugin run, the desktop's tab focus). The host runs and records the turn its own way,
+ * so the flag is refused rather than silently dropped.
+ */
+function peerUnsupportedSendFlag(options: SendOptions): string | undefined {
+	if (options.readOnly) return '--read-only';
+	if (options.tab) return '--tab';
+	if (options.requirePluginTools) return '--require-plugin-tools';
+	if (options.requireToolReceipt !== undefined) return '--require-tool-receipt';
+	if (options.systemPrompt === false) return '--no-system-prompt';
+	if (options.history === false) return '--no-history';
+	if (options.synopsis === false) return '--no-synopsis';
+	return undefined;
+}
+
+/** A peer send that stopped short of an outcome. `extra` goes into the JSON as is. */
+class PeerSendFailure extends Error {
+	constructor(
+		readonly code: string,
+		message: string,
+		readonly exitCode: ExitCode,
+		readonly extra: Record<string, unknown> = {}
+	) {
+		super(message);
+		this.name = 'PeerSendFailure';
+	}
+}
+
+/** How waiting on a host turn ended. */
+type PeerTurnEnd =
+	| { kind: 'outcome'; outcome: TurnOutcome; error?: AgentError }
+	| { kind: 'lost'; reason: string }
+	| { kind: 'timeout' };
+
+/** What the host's turn events said, folded. */
+interface PeerTurnFacts {
+	text: string;
+	sessionId?: string;
+	usage?: UsageStats;
+	error?: AgentError;
+}
+
+function foldTurnEvent(facts: PeerTurnFacts, event: TurnEvent): void {
+	switch (event.kind) {
+		case 'session':
+			facts.sessionId = event.providerSessionId;
+			break;
+		case 'text':
+			facts.text += event.text;
+			break;
+		case 'usage':
+			// One report each, the latest standing: never summed (see `TurnEvent`).
+			facts.usage = event.usage;
+			break;
+		case 'error':
+			facts.error = event.error;
+			break;
+	}
+}
+
+/**
+ * The host tab the turn runs in. Without `--session` a fresh tab, so the turn opens a new provider
+ * session, as a local send without `--session` does. With it, the host tab holding that provider
+ * session, which must be idle: a message queued behind another turn would be read as this one.
+ */
+async function pickPeerTab(resolved: ResolvedPeerAgent, session?: string): Promise<string> {
+	const { agent, client, peer } = resolved;
+	const ref = peerAgentRef(peer, agent.id);
+	if (session === undefined) {
+		const created = await runPeerAgentAction(client, agent, { kind: 'new-tab' });
+		if (!created.ok) throw hostCallError(peer, created.error);
+		return (created.value as Extract<PeerAgentActionResult, { kind: 'new-tab' }>).tabId;
+	}
+	const tab = (agent.aiTabs ?? []).find((t) => t.agentSessionId === session);
+	if (!tab) {
+		throw new PeerSendFailure(
+			'SESSION_NOT_FOUND',
+			`No tab of ${ref} holds session ${session}. List its tabs with: maestro-cli show agent ${ref}`,
+			ExitCode.GeneralError
+		);
+	}
+	if (tab.state === 'busy') {
+		throw new PeerSendFailure(
+			'TAB_BUSY',
+			`Tab ${tab.id} of ${ref} is mid-turn. Wait for it, or send without --session to start a new session.`,
+			ExitCode.GeneralError,
+			{ tabId: tab.id }
+		);
+	}
+	return tab.id;
+}
+
+/**
+ * Send to an agent on a peer's host and wait for the turn to end, as a local send waits for its
+ * spawn. The host runs the turn and records its History; this machine records nothing. A forward
+ * that drops mid-turn ends the wait, not the turn: the report says the turn is still running on
+ * the host and how to find it. Nothing is retried or queued.
+ */
+async function sendToPeer(
+	target: PeerTarget,
+	message: string,
+	options: SendOptions
+): Promise<void> {
+	const unsupported = peerUnsupportedSendFlag(options);
+	if (unsupported) {
+		emitErrorJson(
+			`${unsupported} is not available for a peer's agent: the host on peer "${target.peer}" runs and records the turn itself. Send without it.`,
+			'PEER_UNSUPPORTED_OPTION'
+		);
+		process.exit(ExitCode.InvalidUsage);
+		return;
+	}
+
+	let printed: { response: SendResponse & { peer: string; tabId: string }; ok: boolean } | null =
+		null;
+	try {
+		printed = await withPeerAgent(target, async (resolved) => {
+			const { agent, client, peer } = resolved;
+			const tabId = await pickPeerTab(resolved, options.session);
+			const ref = peerAgentRef(peer, agent.id);
+			const where = { agentId: agent.id, agentName: agent.name, peer, tabId };
+			const stillRunning = `The turn is still running on peer "${peer}" (tab ${tabId}). Check it with: maestro-cli show agent ${ref}`;
+
+			const facts: PeerTurnFacts = { text: '' };
+			let settle: (end: PeerTurnEnd) => void = () => undefined;
+			const ended = new Promise<PeerTurnEnd>((resolve) => (settle = resolve));
+			// Subscribed before the send, so no event of this turn is missed.
+			const offTurn = client.turns.subscribe(agent.id, tabId, (event) => {
+				foldTurnEvent(facts, event);
+				if (event.kind === 'outcome') {
+					settle({ kind: 'outcome', outcome: event.outcome, error: event.error ?? facts.error });
+				}
+			});
+			const offLost = watchPeerConnection(resolved, (reason) => settle({ kind: 'lost', reason }));
+			const timer = setTimeout(
+				() => settle({ kind: 'timeout' }),
+				HEADLESS_RUN_COMPLETION_TIMEOUT_MS
+			);
+			// Ctrl+C stops the host's turn; its `interrupted` outcome then ends the wait. A second
+			// Ctrl+C exits at once.
+			const interrupt = installInterruptHandler({
+				onFirst: () => void client.turns.interrupt(agent.id, tabId),
+			});
+			try {
+				const sent = await runPeerAgentAction(
+					client,
+					agent,
+					{ kind: 'send', tabId, text: message },
+					// The host stamps the turn's History entry with this machine.
+					{ originHost: os.hostname() }
+				);
+				if (!sent.ok) {
+					if (sent.error.unknown || sent.error.code === 'host-lost') {
+						throw new PeerSendFailure(
+							peerErrorCode('connection-lost'),
+							`The connection to peer "${peer}" dropped before the host confirmed the message. ${stillRunning}`,
+							ExitCode.NotRunning,
+							where
+						);
+					}
+					throw hostCallError(peer, sent.error);
+				}
+				const receipt = (sent.value as Extract<PeerAgentActionResult, { kind: 'send' }>).receipt;
+				if (receipt.status === 'queued') {
+					throw new PeerSendFailure(
+						'QUEUED_ON_PEER',
+						`Tab ${tabId} became busy, so the message waits in the host's queue (item ${receipt.itemId}) and runs there. Check it with: maestro-cli show agent ${ref}`,
+						ExitCode.GeneralError,
+						{ ...where, itemId: receipt.itemId }
+					);
+				}
+
+				const end = await ended;
+				if (end.kind === 'lost') {
+					throw new PeerSendFailure(
+						peerErrorCode('connection-lost'),
+						`The connection to peer "${peer}" dropped mid-turn (${end.reason}). ${stillRunning}`,
+						ExitCode.NotRunning,
+						{ ...where, sessionId: facts.sessionId ?? null }
+					);
+				}
+				if (end.kind === 'timeout') {
+					throw new PeerSendFailure(
+						'PEER_TURN_TIMEOUT',
+						`Stopped waiting for peer "${peer}" after ${Math.round(HEADLESS_RUN_COMPLETION_TIMEOUT_MS / 60000)} minutes. ${stillRunning}`,
+						ExitCode.Timeout,
+						{ ...where, sessionId: facts.sessionId ?? null }
+					);
+				}
+
+				const success = end.outcome === 'completed' || end.outcome === 'completed-with-warning';
+				const result: SendAgentResult = {
+					success,
+					response: facts.text || undefined,
+					agentSessionId: facts.sessionId,
+					usageStats: facts.usage,
+					outcome: end.outcome,
+					...(success
+						? {}
+						: {
+								error:
+									end.error?.message ??
+									(end.outcome === 'interrupted' ? 'Interrupted' : 'The turn crashed on the host'),
+							}),
+				};
+				return {
+					response: {
+						...buildResponse(agent.id, agent.name, result, agent.toolType as ToolType),
+						peer,
+						tabId,
+					},
+					ok: success,
+				};
+			} finally {
+				clearTimeout(timer);
+				offTurn();
+				offLost();
+				interrupt.dispose();
+			}
+		});
+	} catch (error) {
+		if (error instanceof PeerSendFailure) {
+			console.log(
+				JSON.stringify(
+					{ success: false, error: error.message, code: error.code, ...error.extra },
+					null,
+					2
+				)
+			);
+			console.error(`maestro-cli send failed: ${error.message}`);
+			process.exit(error.exitCode);
+			return;
+		}
+		if (error instanceof PeerResolveError) {
+			console.log(
+				JSON.stringify(
+					{
+						success: false,
+						error: error.message,
+						code: peerErrorCode(error.code),
+						...(error.peer ? { peer: error.peer } : {}),
+					},
+					null,
+					2
+				)
+			);
+			console.error(`maestro-cli send failed: ${error.message}`);
+			process.exit(error.exitCode);
+			return;
+		}
+		throw error;
+	}
+
+	console.log(JSON.stringify(printed.response, null, 2));
+	if (!printed.ok) {
+		console.error(`maestro-cli send failed: ${printed.response.error ?? 'unknown error'}`);
+		process.exit(printed.response.outcome === 'interrupted' ? 130 : 1);
 	}
 }

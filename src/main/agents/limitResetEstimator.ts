@@ -45,7 +45,7 @@ export function getLimitResetAt(agentId: string, claudeConfigDir?: string): numb
 	// `resetsAt` is optional: an account that has burned its weekly limit reports
 	// no reset row at all. Drop the missing ones before parsing rather than
 	// letting `new Date(undefined)` fall through as NaN.
-	const futureResets = [snapshot.session.resetsAt, snapshot.weekAllModels.resetsAt]
+	const futureResets = [snapshot.session?.resetsAt, snapshot.weekAllModels.resetsAt]
 		.filter((iso): iso is string => typeof iso === 'string')
 		.map((iso) => new Date(iso).getTime())
 		.filter((ms) => Number.isFinite(ms) && ms > now);

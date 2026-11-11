@@ -24,6 +24,10 @@ import { cheapResumeTurnSettings, cheapTurnSettings } from '../../../shared/mode
 import { isFailedSynopsisResponse } from '../../../shared/synopsis';
 import { stripAnsiCodes } from '../../../shared/stringUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
+import {
+	isAgentAwaitingConsult,
+	useCrossAgentInFlightStore,
+} from '../../stores/crossAgentInFlightStore';
 import { logger } from '../../utils/logger';
 import { armEffortFallback, settleEffortFallback } from '../../services/effortRejection';
 
@@ -69,6 +73,12 @@ export interface SpawnAgentOptions {
 	modelOverride?: string;
 	/** Overrides session.customEffort for this spawn only */
 	effortOverride?: string;
+	/**
+	 * The Auto Run this spawn is a task of. Stamped into the agent's env so a
+	 * `maestro-cli dispatch` it runs reports back to the run (see
+	 * `src/shared/autoRunDelegation.ts`).
+	 */
+	autoRunId?: string;
 }
 
 /**
@@ -277,6 +287,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				return new Promise((resolve) => {
 					let agentSessionId: string | undefined;
 					let responseText = '';
+					let taskAgentError: string | undefined;
 					let taskUsageStats: UsageStats | undefined;
 					let lastUsageEvent: UsageStats | undefined; // Last (non-accumulated) event for context estimation
 					const queryStartTime = Date.now(); // Track start time for stats
@@ -304,8 +315,22 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					// without notice. Arming tells the error listener to step aside for a
 					// refusal of it, and the exit handler below runs the task once more at
 					// the agent's own effort instead of parking the whole Auto Run.
-					if (options?.effortOverride) {
+					// Grok has no hint provenance or validated distinct fallback here.
+					// Leave its normal error path active, even for a familiar ladder value.
+					if (session.toolType !== 'grok' && options?.effortOverride) {
 						armEffortFallback(targetSessionId);
+					}
+
+					if (session.toolType === 'grok') {
+						// Keep the first provider failure in the task result as well as the
+						// global error listener, including refusals emitted only on stderr.
+						cleanupFns.push(
+							window.maestro.process.onAgentError((sid, error) => {
+								if (sid === targetSessionId && error?.message) {
+									taskAgentError ??= error.message;
+								}
+							})
+						);
 					}
 
 					const resolveOnce = (result: AgentSpawnResult) => {
@@ -328,8 +353,25 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					cleanupFns.push(
 						window.maestro.process.onSessionId((sid: string, capturedId: string) => {
 							if (sid === targetSessionId) {
+								lastOutputAt = Date.now();
 								agentSessionId = capturedId;
 							}
+						})
+					);
+
+					// Any agent event is activity for the inactivity watchdog, not only
+					// `data`. Stream-json providers (Claude Code) emit `data` only for the
+					// final result; mid-turn work arrives as tool executions, thinking
+					// chunks and usage updates. Counting only `data` turned the silence
+					// watchdog into a wall-clock limit that killed busy tasks (#1962).
+					cleanupFns.push(
+						window.maestro.process.onToolExecution((sid: string) => {
+							if (sid === targetSessionId) lastOutputAt = Date.now();
+						})
+					);
+					cleanupFns.push(
+						window.maestro.process.onThinkingChunk((sid: string) => {
+							if (sid === targetSessionId) lastOutputAt = Date.now();
 						})
 					);
 
@@ -337,6 +379,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					cleanupFns.push(
 						window.maestro.process.onUsage((sid: string, usageStats) => {
 							if (sid === targetSessionId) {
+								lastOutputAt = Date.now();
 								// Accumulate usage stats for this task (there may be multiple usage events per task)
 								taskUsageStats = accumulateUsageStats(taskUsageStats, usageStats);
 								// Keep the last event for context estimation (accumulated totals can exceed context window)
@@ -398,7 +441,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										);
 									});
 
-								const didExitCleanly = code === 0;
+								const didExitCleanly = code === 0 && !taskAgentError;
 								const exitErrorKind = didExitCleanly
 									? undefined
 									: code == null
@@ -406,9 +449,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										: ('process-exit' as const);
 								const exitError = didExitCleanly
 									? undefined
-									: code == null
-										? 'Agent task exited without a status code'
-										: `Agent task exited with code ${code}`;
+									: (taskAgentError ??
+										(code == null
+											? 'Agent task exited without a status code'
+											: `Agent task exited with code ${code}`));
 
 								// Estimate context usage from the last single-turn event (not accumulated totals)
 								const taskContextUsage = lastUsageEvent
@@ -597,8 +641,9 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 
 					// Watchdog for hung Auto Run batch tasks. Two independent triggers,
 					// each with a 0 = "unlimited" sentinel that disables it:
-					//   1. Inactivity: force-kill after a stretch of NO output. Catches a
-					//      truly silent/hung agent.
+					//   1. Inactivity: force-kill after a stretch with NO agent event
+					//      (output, tool execution, thinking, usage, session id). Catches
+					//      a truly silent/hung agent.
 					//   2. Max duration: force-kill once total wall-clock runtime exceeds a
 					//      cap, regardless of output. Catches a stuck-but-chatty agent that
 					//      keeps emitting (resetting lastOutputAt) yet never finishes the
@@ -632,6 +677,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										usageStats: taskUsageStats,
 									});
 									return;
+								}
+
+								// A task waiting on its own `maestro-cli ask` is silent but not
+								// stalled: the consult is the work. Count it as activity.
+								if (
+									isAgentAwaitingConsult(useCrossAgentInFlightStore.getState().requests, sessionId)
+								) {
+									lastOutputAt = now;
 								}
 
 								// Silence-based inactivity watchdog.
@@ -698,6 +751,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// this path without a human in the loop; everything else here is a
 							// slash command or another user action, so it stays 'user'.
 							querySource: isBatchProcess ? 'auto' : 'user',
+							...(isBatchProcess && options?.autoRunId ? { autoRunId: options.autoRunId } : {}),
 							// The agent's TUI setting resolves server-side from the
 							// `{sessionId}-batch-` process id. What main cannot know is the
 							// idle budget: maestro-p's own 300s default would kill a silent
@@ -834,7 +888,9 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					// the provider refuses it, the exit handler below runs the synopsis
 					// once more; by then the refusal is noted and `cheapTurnSettings`
 					// no longer hands the value out, so the retry inherits the tab's.
-					if (cheapEffort !== undefined) {
+					// Grok's inherited session/provider effort is not a validated
+					// different fallback, even when the first value was automatic.
+					if (toolType !== 'grok' && cheapEffort !== undefined) {
 						armEffortFallback(targetSessionId);
 					}
 

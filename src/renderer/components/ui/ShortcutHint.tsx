@@ -28,9 +28,15 @@
  * anywhere it is drawn as UI (menu rows, tooltips, the command palette), so a
  * user learns to spot a shortcut by its color. Reach for it directly wherever
  * a chord is shown without a ShortcutHint around it, e.g. HoverTooltip.
+ *
+ * A `row` can also carry a `trailing` control at its right end (the model
+ * dropdown's Refresh). The row is then drawn even without a chord, and only
+ * the chord carries `data-shortcut-hint`, so a phone hides the dead key but
+ * keeps the control.
  */
 
 import { Fragment } from 'react';
+import type { ReactNode } from 'react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
@@ -127,7 +133,7 @@ export function ShortcutKeys({
 										</span>
 									))}
 								<kbd
-									className={`inline-flex items-center justify-center font-sans font-semibold leading-none ${capSize}`}
+									className={`inline-flex shrink-0 items-center justify-center font-sans font-semibold leading-none ${capSize}`}
 									style={{
 										color: ink,
 										backgroundColor: `${ink}1a`,
@@ -157,6 +163,8 @@ export interface ShortcutHintProps {
 	variant?: 'chip' | 'row';
 	/** Extra classes merged onto the root. */
 	className?: string;
+	/** `row` only: a control pinned to the row's right end. */
+	trailing?: ReactNode;
 }
 
 export function ShortcutHint({
@@ -165,14 +173,37 @@ export function ShortcutHint({
 	label,
 	variant = 'chip',
 	className = '',
+	trailing,
 }: ShortcutHintProps) {
-	if (!keys || keys.length === 0) return null;
+	const hasKeys = !!keys && keys.length > 0;
 
 	const labelText = label ? (
 		<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 			{label}{' '}
 		</span>
 	) : null;
+
+	// A row with a trailing control (the model dropdown's Refresh) is drawn even
+	// without a chord. Only the chord carries `data-shortcut-hint`, so a phone
+	// hides the dead key but keeps the control.
+	if (variant === 'row' && trailing) {
+		return (
+			<div
+				className={`flex items-center gap-2 px-3 py-1 whitespace-nowrap border-b select-none ${className}`}
+				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
+			>
+				{hasKeys && (
+					<span className="inline-flex items-center gap-1.5" data-shortcut-hint="">
+						{labelText}
+						<ShortcutKeys theme={theme} keys={keys} />
+					</span>
+				)}
+				<span className="ml-auto flex items-center">{trailing}</span>
+			</div>
+		);
+	}
+
+	if (!hasKeys) return null;
 
 	if (variant === 'row') {
 		return (

@@ -20,7 +20,7 @@
  */
 
 import type { CueHistoryGroup, HistoryEntry } from '../../shared/types';
-import { sortEntriesByTimestamp } from '../../shared/history';
+import { mergeEntriesById } from '../../shared/history';
 import { logger } from './logger';
 import { captureException } from './sentry';
 import type {
@@ -428,19 +428,8 @@ function consumeNearest(bucket: JsonlCueRef[] | undefined, finishedAt: number): 
 }
 
 /**
- * Append `incoming` to `base`, skipping ids already present, and sort
- * newest-first. The same merge the shared-history overlay uses, shared so the
- * Cue rows join the list exactly the way foreign-host entries do.
+ * Append `incoming` to `base`, skipping ids already present, and sort newest-first. Defined with
+ * the other History list helpers in `src/shared/history.ts` (a headless host merges with it too),
+ * re-exported here so the Cue rows join the list exactly the way foreign-host entries do.
  */
-export function mergeEntriesById(base: HistoryEntry[], incoming: HistoryEntry[]): HistoryEntry[] {
-	if (incoming.length === 0) return base;
-
-	const seenIds = new Set(base.map((entry) => entry.id));
-	const merged = [...base];
-	for (const entry of incoming) {
-		if (seenIds.has(entry.id)) continue;
-		seenIds.add(entry.id);
-		merged.push(entry);
-	}
-	return sortEntriesByTimestamp(merged);
-}
+export { mergeEntriesById };

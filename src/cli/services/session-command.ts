@@ -5,7 +5,7 @@
 // non-zero on failure. Centralizing that here keeps the per-command files thin
 // and the behavior consistent across the whole CLI surface.
 
-import { withMaestroClient } from './maestro-client';
+import { UnsupportedCommandError, withMaestroClient } from './maestro-client';
 import { MaestroNotRunningError } from './maestro-not-running';
 import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
 import { resolveAgentId, readActiveAgentId } from './storage';
@@ -91,6 +91,26 @@ export function exitIfMaestroNotRunning(
 		console.error(error.hint);
 	}
 	exitWith(ExitCode.NotRunning);
+}
+
+/**
+ * Which peer, if any, left a bridge READ for the caller to answer from disk:
+ * `'app-not-running'` when nothing is serving the data directory, and
+ * `'headless-host'` when a `maestro-cli host` serves it but did not answer this
+ * message (an older host, or one whose Cue engine is not running).
+ *
+ * Everything else is `null` and must be reported, never masked by figures
+ * from disk: an old DESKTOP build that echoed (its fix is a restart), a
+ * timeout, a renderer that never answered, an error frame.
+ */
+export type DiskFallbackPeer = 'app-not-running' | 'headless-host';
+
+export function diskFallbackPeer(error: unknown): DiskFallbackPeer | null {
+	if (error instanceof MaestroNotRunningError) return 'app-not-running';
+	if (error instanceof UnsupportedCommandError && error.hostKind === 'headless') {
+		return 'headless-host';
+	}
+	return null;
 }
 
 /**
@@ -189,9 +209,18 @@ export async function resolveTabEntry(tabId: string, agentHint?: string): Promis
 		throw new Error(`Agent ${agentId} has no active AI tab`);
 	}
 
-	const exact = list.find((s) => s.tabId === tabId);
+	return matchTabId(list, tabId, (entry) => entry.tabId);
+}
+
+/**
+ * Pick one tab by an exact id or a unique id prefix. Throws `Ambiguous tab ID` or
+ * `Tab not found`. The id rules every tab verb shares, for any tab list: the desktop's open tabs,
+ * or a Federation host's.
+ */
+export function matchTabId<T>(tabs: readonly T[], tabId: string, idOf: (tab: T) => string): T {
+	const exact = tabs.find((tab) => idOf(tab) === tabId);
 	if (exact) return exact;
-	const matches = list.filter((s) => s.tabId.startsWith(tabId));
+	const matches = tabs.filter((tab) => idOf(tab).startsWith(tabId));
 	if (matches.length === 1) return matches[0];
 	if (matches.length > 1) {
 		throw new Error(`Ambiguous tab ID '${tabId}' (${matches.length} matches)`);

@@ -250,6 +250,11 @@ export interface TranslationStageContext {
 	/** Must journal ownership BEFORE any provider mutation. */
 	recordIntent(mapping: TranslationTabMapping): Promise<void>;
 	codex?: TranslationRpc;
+	/**
+	 * The destination agent's selected model. A Grok `summary.json` requires
+	 * `current_model_id`; the source model is never copied and none is invented.
+	 */
+	destinationModel?: string;
 }
 
 export interface TranslationRpc {

@@ -59,6 +59,22 @@ On failure it renders through the shared `index.html` error surface (`__maestroS
 
 ### The IPC Bridge
 
+The shim opts into `?bridgeChunks=1` on initial and reconnect sockets.
+`services/socket-send.ts` sends large packets as complete `bridge.chunk`
+envelopes (`data`, UTF-16 `offset`/`total`, `final`), with at most 256 KiB of
+unacknowledged envelope data in flight. Native WebSocket continuation frames only produce a browser
+message event after the whole packet arrives, so a progressing large transcript
+otherwise looks dead to the heartbeat. Cumulative `bridge.chunkAck` offsets must
+advance to a sent chunk boundary; duplicates, gaps within a chunk and future offsets
+do not grant credit. The ACK deadline tracks the oldest remaining unacknowledged
+chunk's original send time and retires a stalled connection after 30 seconds.
+Partial progress does not renew that age. The bounded window avoids a round trip
+per chunk while preserving the existing browser read deadline. Small IPC
+replies and pongs can pass between chunks, while events retain their sequence and
+order. The shim validates and reassembles the packet before applying its sequence,
+and drops partial assembly on disconnect. Existing browsers and CLI clients retain
+their native framing. Submitted mutations are never replayed.
+
 The web-desktop build aliases `electron` to `src/web-desktop/electron-shim.ts` in the Vite config. The renderer's preload factories run unchanged under the alias:
 
 - `contextBridge.exposeInMainWorld('maestro', ...)` writes to `window.maestro` in the browser.
@@ -436,7 +452,7 @@ It is viewport-driven on purpose, not pointer-driven: space is the constraint, a
 | Left Bar rows (`SessionItem`)                  | Name, provider line, location pills, bookmark, git count, Cue / startup glyphs                                                                                | Name and status dot; AUTO / ERR / unread / wizard state stays                                                                                                                                                                                                                                             |
 | Auto Run toolbar and editor bar, Files toolbar | Icon + label                                                                                                                                                  | Icon only; the label lives on as the tooltip / accessible name                                                                                                                                                                                                                                            |
 | Auto Run document row                          | Dropdown + new / refresh / folder buttons                                                                                                                     | Dropdown only ("Change Folder..." stays in its footer)                                                                                                                                                                                                                                                    |
-| Composer (`InputArea`)                         | Always shown                                                                                                                                                  | Folds behind `PhoneComposerHandle` (default folded, remembered in `phone.composer.collapsed`); tap or swipe reveals it                                                                                                                                                                                    |
+| Composer (`InputArea`, `GroupChatInput`)       | Always shown                                                                                                                                                  | Folds behind `PhoneComposerHandle` (default folded, remembered per surface in `phone.composer.collapsed` and `phone.groupChatComposer.collapsed`); tap or swipe reveals it                                                                                                                                |
 | Composer toolbar (`ToolbarControls`)           | Prompt composer, attach, mic, model + effort pills, History / Access / Thinking / Enter-to-send toggles, and a send + notification-bell column beside the box | Attach, mic, send (centre), and a "..." on one row. The pencil and the bell are dropped, everything else moves into `ComposerOptionsSheet` - a half-screen bottom sheet of expandable sections                                                                                                            |
 | Modals                                         | Escape / close pill                                                                                                                                           | Same, plus a swipe down from the top band closes the top layer (`useLayerSwipeDismiss`)                                                                                                                                                                                                                   |
 | Resizable modals (`data-modal-resize-key`)     | Remembered size, clamped inside a padded overlay, resize grips                                                                                                | Full screen, no grips, no overlay padding (one CSS rule in the "Phone layout" block)                                                                                                                                                                                                                      |

@@ -9,6 +9,7 @@ import { useRetryStore, type RetryEntry } from '../../../renderer/stores/retrySt
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { QueuedItem } from '../../../renderer/types';
+import { renderCallbackPrompt } from '../../../main/dispatch-callbacks/dispatch-callback-prompt';
 
 function item(overrides: Partial<QueuedItem> = {}): QueuedItem {
 	return {
@@ -667,5 +668,45 @@ describe('QueuedItemsList long-message collapse', () => {
 		expect(screen.getByText(text)).toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: /Show less/i }));
 		expect(screen.getByText(body(600) + '...')).toBeInTheDocument();
+	});
+});
+
+describe('QueuedItemsList dispatch callbacks', () => {
+	// A callback that reaches a busy tab waits in the queue. It must look like the
+	// result card the transcript draws, not a wall of raw callback prose.
+	const callbackText = renderCallbackPrompt({
+		fire: {
+			entry: {
+				callbackId: 'cb_1',
+				targetAgentId: 'agent-target',
+				targetTabId: 'tab-target',
+				targetName: 'Writer',
+				callerAgentId: 'agent-caller',
+				processSessionId: 'agent-target-ai-tab-target',
+				createdAt: 0,
+				expiresAt: 1000,
+				state: 'fired',
+				timeoutMs: 1000,
+				prompt: 'add video directive support '.repeat(40),
+			},
+			status: 'completed',
+			exitCode: 0,
+			durationMs: 455_000,
+		},
+		output: '',
+	});
+
+	it('renders a queued callback as the result card, with no raw text or Show all toggle', () => {
+		setup({ executionQueue: [item({ text: callbackText })] });
+		expect(screen.getByTestId('dispatch-callback-card')).toBeTruthy();
+		expect(screen.getByText('Writer')).toBeTruthy();
+		expect(screen.queryByText(/\[Maestro dispatch callback\]/)).toBeNull();
+		expect(screen.queryByText(/Show all/)).toBeNull();
+	});
+
+	it('keeps the queue controls on a callback card', () => {
+		setup({ executionQueue: [item({ text: callbackText })] });
+		expect(screen.getByTitle('Remove from queue')).toBeTruthy();
+		expect(screen.getByTitle(/Hold this message/i)).toBeTruthy();
 	});
 });

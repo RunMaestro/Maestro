@@ -23,32 +23,21 @@ export type PermissionDecision =
 	| { behavior: 'deny'; message: string };
 
 /**
- * The claude-code tool that presents multiple-choice questions. Routed through
- * the relay like any other non-allowed tool, but rendered as a question picker
- * instead of an allow/deny prompt. Answers are delivered back as a
- * `{ behavior: 'deny', message }` decision (empirically the only reply shape
- * claude-code reads as the user's answer on the headless path - see the
- * Findings in the Tool Display Phase 3 playbook doc).
+ * AskUserQuestion (the claude-code tool that presents multiple-choice
+ * questions) is routed through the relay like any other non-allowed tool, but
+ * rendered as a question picker instead of an allow/deny prompt. Answers are
+ * delivered back as a `{ behavior: 'deny', message }` decision (empirically the
+ * only reply shape claude-code reads as the user's answer on the headless path -
+ * see the Findings in the Tool Display Phase 3 playbook doc). The tool's input
+ * shape lives in `src/shared/askUserQuestion.ts`, which maestro-p reads too.
  */
-export const ASK_USER_QUESTION_TOOL = 'AskUserQuestion';
+import type { ParsedQuestion } from '../../shared/askUserQuestion';
 
-/** One selectable option within an AskUserQuestion question. */
-export interface QuestionOption {
-	label: string;
-	description?: string;
-}
-
-/** A single parsed question from an AskUserQuestion tool call. */
-export interface ParsedQuestion {
-	/** The question text shown to the user. */
-	question: string;
-	/** Short header/category label claude attaches to the question. */
-	header?: string;
-	/** The offered choices. */
-	options: QuestionOption[];
-	/** Whether more than one option may be selected. */
-	multiSelect: boolean;
-}
+export {
+	ASK_USER_QUESTION_TOOL,
+	type ParsedQuestion,
+	type QuestionOption,
+} from '../../shared/askUserQuestion';
 
 /**
  * A pending permission request, surfaced to the renderer for a user decision.

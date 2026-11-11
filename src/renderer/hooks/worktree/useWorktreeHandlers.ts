@@ -37,6 +37,7 @@ import {
 	isRecentlyCreatedWorktreePath,
 	normalizePath,
 	sessionMatchesWorktreeRoot,
+	sessionOwnedByParent,
 } from '../../utils/worktreeDedup';
 import { runWorktreeSetupScript } from '../../utils/worktreeSetupScript';
 import { logger } from '../../utils/logger';
@@ -115,6 +116,24 @@ function getSshRemoteId(session: Session, inheritParent = false): string | undef
 	// Generated children copy the parent's config. A child without one remains
 	// local when its parent is later configured for SSH; only legacy state inherits.
 	return parent && !parent.sessionSshRemoteConfig ? getSshRemoteId(parent) : undefined;
+}
+
+/** Reopen only this parent's child on the same host, even when another root path matches. */
+function findOwnedWorktreeSession(parentSession: Session, path: string): Session | undefined {
+	const sshRemoteId = getSshRemoteId(parentSession);
+	const normalizedRoot = normalizePath(path, !!sshRemoteId);
+	return useSessionStore
+		.getState()
+		.sessions.find(
+			(session) =>
+				sessionOwnedByParent(session, parentSession) &&
+				getSshRemoteId(session, true) === sshRemoteId &&
+				(sshRemoteId
+					? [session.projectRoot, session.cwd].some(
+							(root) => root && normalizePath(root, true) === normalizedRoot
+						)
+					: sessionMatchesWorktreeRoot(session, normalizedRoot))
+		);
 }
 
 /** Fetch git branches and tags for a path, with optional SSH remote support. */
@@ -824,8 +843,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 
 	const handleCreateWorktreeFromConfig = useCallback(
 		async (branchName: string, basePath: string) => {
-			const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
-			const activeSession = currentSessions.find((s) => s.id === activeSessionId);
+			const activeSession = resolveWorktreeConfigTarget();
 			if (!activeSession || !basePath) {
 				notifyToast({
 					type: 'error',
@@ -855,6 +873,9 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 			);
 
 			try {
+				if (activeSession.sessionSshRemoteConfig?.enabled && !sshRemoteId) {
+					throw new Error('Select an SSH remote before creating a worktree.');
+				}
 				// Create the worktree via git (pass SSH remote ID for remote sessions)
 				const result = await window.maestro.git.worktreeSetup(
 					activeSession.cwd,
@@ -893,10 +914,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				// and skip the duplicate creation. Done before fetchGitInfo so we don't
 				// pay for an unnecessary git round-trip when there's nothing to build.
 				if (reusedExisting) {
-					const normalizedActual = normalizePath(actualPath);
-					const existingSession = useSessionStore
-						.getState()
-						.sessions.find((s) => sessionMatchesWorktreeRoot(s, normalizedActual));
+					const existingSession = findOwnedWorktreeSession(activeSession, actualPath);
 					if (existingSession) {
 						useSessionStore.getState().setActiveSessionId(existingSession.id);
 						notifyToast({
@@ -948,7 +966,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				throw err; // Re-throw so the modal can show the error
 			}
 		},
-		[]
+		[resolveWorktreeConfigTarget]
 	);
 
 	const handleCloseCreateWorktreeModal = useCallback(() => {
@@ -957,7 +975,8 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 	}, []);
 
 	const handleCreateWorktree = useCallback(async (branchName: string, baseBranch?: string) => {
-		const createWtSession = useModalStore.getState().getData('createWorktree')?.session ?? null;
+		const targetId = useModalStore.getState().getData('createWorktree')?.session?.id;
+		const createWtSession = useSessionStore.getState().sessions.find((s) => s.id === targetId);
 		if (!createWtSession) return;
 		const { defaultSaveToHistory: savToHist, defaultShowThinking: showThink } =
 			useSettingsStore.getState();
@@ -982,6 +1001,9 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 		setTimeout(() => recentlyCreatedWorktreePathsRef.current.delete(normalizedCreatedPath), 10000);
 
 		try {
+			if (createWtSession.sessionSshRemoteConfig?.enabled && !sshRemoteId) {
+				throw new Error('Select an SSH remote before creating a worktree.');
+			}
 			// Create the worktree via git (pass SSH remote ID for remote sessions).
 			// baseBranch is honored only when the named branch doesn't already exist
 			// - see git.ts handler for the full semantics.
@@ -1019,10 +1041,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 			// If a session for the existing worktree path already exists, focus it
 			// and skip the duplicate creation.
 			if (reusedExisting) {
-				const normalizedActual = normalizePath(actualPath);
-				const existingSession = useSessionStore
-					.getState()
-					.sessions.find((s) => sessionMatchesWorktreeRoot(s, normalizedActual));
+				const existingSession = findOwnedWorktreeSession(createWtSession, actualPath);
 				if (existingSession) {
 					useSessionStore.getState().setActiveSessionId(existingSession.id);
 					notifyToast({

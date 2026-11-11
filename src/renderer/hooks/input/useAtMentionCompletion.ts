@@ -204,6 +204,13 @@ export function useAtMentionCompletion(session?: Session | null): UseAtMentionCo
 
 			const suggestions: AtMentionSuggestion[] = [];
 			const filterLower = filter.toLowerCase();
+			// Compare before materializing a suggestion: most broad-query matches
+			// cannot enter the full selection. Exact ties keep the earlier candidate.
+			const compare = (score: number, file: MentionCandidate, b: AtMentionSuggestion) => {
+				if (b.score !== score) return b.score - score;
+				if (file.type !== b.type) return file.type === 'file' ? -1 : 1;
+				return file.name.localeCompare(b.displayText);
+			};
 
 			for (const file of allFiles) {
 				// PERF: The name is a suffix of the path, so a path that does not contain
@@ -219,7 +226,22 @@ export function useAtMentionCompletion(session?: Session | null): UseAtMentionCo
 				const bestMatch = nameMatch.score > pathMatch.score ? nameMatch : pathMatch;
 
 				if (bestMatch.matches) {
-					suggestions.push({
+					if (
+						suggestions.length === MAX_SUGGESTION_RESULTS &&
+						compare(bestMatch.score, file, suggestions[MAX_SUGGESTION_RESULTS - 1]) >= 0
+					)
+						continue;
+
+					// Upper-bound insertion preserves stable input order for equal scores,
+					// types and locale names, including ties across project/Auto Run files.
+					let low = 0;
+					let high = suggestions.length;
+					while (low < high) {
+						const middle = (low + high) >>> 1;
+						if (compare(bestMatch.score, file, suggestions[middle]) < 0) high = middle;
+						else low = middle + 1;
+					}
+					suggestions.splice(low, 0, {
 						value: file.path,
 						type: file.type,
 						displayText: file.name,
@@ -227,23 +249,11 @@ export function useAtMentionCompletion(session?: Session | null): UseAtMentionCo
 						score: bestMatch.score,
 						source: file.source,
 					});
+					if (suggestions.length > MAX_SUGGESTION_RESULTS) suggestions.pop();
 				}
 			}
 
-			// Sort by score (highest first), then alphabetically
-			suggestions.sort((a, b) => {
-				if (b.score !== a.score) {
-					return b.score - a.score;
-				}
-				// Within same score, prefer files over folders, then alphabetical
-				if (a.type !== b.type) {
-					return a.type === 'file' ? -1 : 1;
-				}
-				return a.displayText.localeCompare(b.displayText);
-			});
-
-			// Limit to reasonable number
-			return suggestions.slice(0, MAX_SUGGESTION_RESULTS);
+			return suggestions;
 		},
 		[allFiles]
 	);

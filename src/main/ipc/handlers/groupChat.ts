@@ -53,6 +53,7 @@ import {
 	submitMessage,
 } from '../../group-chat/group-chat-queue';
 import type { GroupChatQueuedItem } from '../../../shared/group-chat-types';
+import { moderatorImagesRefusal } from '../../../shared/maestro-lib/groupchat/image-gate';
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
 
 // Group chat moderator imports
@@ -136,11 +137,9 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
  * spawning needs the full `{ enabled, remoteId }` config, so we read it off the
  * agent whose name matches the participant.
  *
- * The match deliberately uses the SAME predicate the router uses when it picks
- * the session for a participant's turn (`group-chat-router`, cwd / sshRemoteConfig
- * / tokenMode resolution). Name matching is the only association a participant
- * record carries, so grooming on a different rule than the turn dispatch would
- * be strictly worse: the summary would resume on a host the turns never ran on.
+ * A participant linked by `sourceSessionId` resolves by that GUID, as the
+ * router does. A participant from a chat saved before the link existed falls
+ * back to a name match.
  *
  * Persisted sessions store this as `sessionSshRemoteConfig`; the flat
  * `sshRemoteConfig` field only exists on the mapped view the router consumes
@@ -151,9 +150,9 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
  * than failing the reset).
  */
 export function resolveParticipantSshRemoteConfig(
-	participantName: string
+	participant: ParticipantRef
 ): { enabled: boolean; remoteId: string | null; workingDirOverride?: string } | undefined {
-	return findParticipantSourceSession(participantName)?.sessionSshRemoteConfig;
+	return findParticipantSourceSession(participant)?.sessionSshRemoteConfig;
 }
 
 /**
@@ -163,9 +162,9 @@ export function resolveParticipantSshRemoteConfig(
  * turns do. Undefined when the source agent is gone (the summary runs as API).
  */
 export function resolveParticipantClaudeTokenSource(
-	participantName: string
+	participant: ParticipantRef
 ): ClaudeTokenSourceFields | undefined {
-	const match = findParticipantSourceSession(participantName);
+	const match = findParticipantSourceSession(participant);
 	// StoredSession keeps these fields behind its index signature.
 	return match ? getClaudeTokenSourceFields(match as ClaudeTokenSourceFields) : undefined;
 }
@@ -176,12 +175,24 @@ export function resolveParticipantClaudeTokenSource(
  * same rule the router applies to the participant's turns. The summary can be
  * the first TUI spawn there, and the prompt defaults to "No, exit".
  */
-export function resolveParticipantWorkspaceTrust(participantName: string, cwd: string): boolean {
-	return isAgentOwnWorkingDirectory(cwd, findParticipantSourceSession(participantName));
+export function resolveParticipantWorkspaceTrust(
+	participant: ParticipantRef,
+	cwd: string
+): boolean {
+	return isAgentOwnWorkingDirectory(cwd, findParticipantSourceSession(participant));
 }
 
-function findParticipantSourceSession(participantName: string) {
+/** A participant's name, or its record (which may carry the source agent's GUID). */
+type ParticipantRef = string | Pick<GroupChatParticipant, 'name' | 'sourceSessionId'>;
+
+function findParticipantSourceSession(participant: ParticipantRef) {
 	const sessions = getSessionsStore().get('sessions', []);
+	// By GUID when the participant is linked, so a renamed agent is still found
+	// and a deleted one never resolves to a newer agent that took its name.
+	if (typeof participant !== 'string' && participant.sourceSessionId) {
+		return sessions.find((session) => session.id === participant.sourceSessionId);
+	}
+	const participantName = typeof participant === 'string' ? participant : participant.name;
 	return sessions.find(
 		(session) => mentionMatches(session.name, participantName) || session.name === participantName
 	);
@@ -634,6 +645,17 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		readOnly?: boolean
 	): Promise<void> => {
 		assertGroupChatProviderProcessesEnabled();
+
+		// A message queued under one moderator can drain after a switch to a
+		// provider that cannot read images. Decide from the room as it is at send
+		// time, before anything is logged or handed over.
+		let chatForSend: GroupChat | null | undefined;
+		if (images?.length) {
+			chatForSend = await loadGroupChat(id);
+			const refusal = moderatorImagesRefusal(chatForSend, images);
+			if (refusal) throw new Error(refusal);
+		}
+
 		logger.info(`[GroupChat:Debug] ========== USER MESSAGE RECEIVED ==========`);
 		logger.info(`[GroupChat:Debug] Group Chat ID: ${id}`);
 		logger.info(
@@ -651,7 +673,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		// Auto-restart moderator if it exited (e.g., after completing a turn)
 		if (!isModeratorActive(id) && processManager) {
 			logger.info(`[GroupChat:Debug] Moderator not active, auto-restarting...`);
-			const chat = await loadGroupChat(id);
+			const chat = chatForSend ?? (await loadGroupChat(id));
 			if (!chat) {
 				throw new Error(`Group chat not found: ${id}`);
 			}
@@ -1040,7 +1062,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 				// the same association the router uses when it dispatches a turn.
 				// Without this the summary would resume a remote agent session on the
 				// local machine, where that session does not exist (issue #1416).
-				const participantSshRemoteConfig = resolveParticipantSshRemoteConfig(participantName);
+				const participantSshRemoteConfig = resolveParticipantSshRemoteConfig(participant);
 
 				const cheapSummary = cheapTurnSettings(participant.agentId as ToolType);
 
@@ -1065,8 +1087,8 @@ Respond with ONLY the summary text, no additional commentary.`;
 							sessionCustomModel: cheapSummary.model,
 							sessionCustomEffort: cheapSummary.effort,
 							sessionSshRemoteConfig: participantSshRemoteConfig,
-							claudeTokenSource: resolveParticipantClaudeTokenSource(participantName),
-							acceptWorkspaceTrust: resolveParticipantWorkspaceTrust(participantName, effectiveCwd),
+							claudeTokenSource: resolveParticipantClaudeTokenSource(participant),
+							acceptWorkspaceTrust: resolveParticipantWorkspaceTrust(participant, effectiveCwd),
 							sshStore: participantSshRemoteConfig?.enabled
 								? createSshRemoteStoreAdapter(getSettingsStore())
 								: undefined,

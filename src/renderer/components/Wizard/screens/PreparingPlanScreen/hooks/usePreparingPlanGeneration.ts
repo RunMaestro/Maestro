@@ -32,6 +32,8 @@ export function usePreparingPlanGeneration({
 	const [announcementKey, setAnnouncementKey] = useState(0);
 
 	const generationStartedRef = useRef(false);
+	const requestIdRef = useRef(0);
+	const nextStepTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 	const seenFilesRef = useRef<Set<string>>(new Set());
 
 	const announce = useCallback((message: string) => {
@@ -47,14 +49,21 @@ export function usePreparingPlanGeneration({
 	}, []);
 
 	const handleGenerationSuccess = useCallback(
-		async (documents: GeneratedDocument[], documentsFromDisk?: boolean) => {
+		async (
+			documents: GeneratedDocument[],
+			documentsFromDisk: boolean | undefined,
+			requestId: number
+		) => {
+			if (requestIdRef.current !== requestId) return;
 			if (documentsFromDisk) {
 				logger.info('[PreparingPlanScreen] Documents already on disk, skipping save');
 				setGeneratedDocuments(documents);
 				setGeneratingDocuments(false);
 				const taskCount = documents[0]?.taskCount || 0;
 				announce(`Playbooks created successfully with ${taskCount} tasks. Proceeding to review.`);
-				setTimeout(() => nextStep(), 500);
+				nextStepTimeoutRef.current = setTimeout(() => {
+					if (requestIdRef.current === requestId) nextStep();
+				}, 500);
 				return;
 			}
 
@@ -63,17 +72,22 @@ export function usePreparingPlanGeneration({
 			const saveResult = await phaseGenerator.saveDocuments(
 				state.directoryPath,
 				documents,
-				addCreatedFile,
+				(file) => {
+					if (requestIdRef.current === requestId) addCreatedFile(file);
+				},
 				'Initiation',
 				sshRemoteId
 			);
+			if (requestIdRef.current !== requestId) return;
 
 			if (saveResult.success) {
 				setGeneratedDocuments(documents);
 				setGeneratingDocuments(false);
 				const taskCount = documents[0]?.taskCount || 0;
 				announce(`Playbooks created successfully with ${taskCount} tasks. Proceeding to review.`);
-				setTimeout(() => nextStep(), 500);
+				nextStepTimeoutRef.current = setTimeout(() => {
+					if (requestIdRef.current === requestId) nextStep();
+				}, 500);
 			} else {
 				setGenerationError(saveResult.error || 'Failed to save documents');
 				setGeneratingDocuments(false);
@@ -97,6 +111,10 @@ export function usePreparingPlanGeneration({
 			return;
 		}
 
+		const requestId = ++requestIdRef.current;
+		const isCurrentRequest = () => requestIdRef.current === requestId;
+		generationStartedRef.current = true;
+		clearTimeout(nextStepTimeoutRef.current);
 		setGeneratingDocuments(true);
 		setGenerationError(null);
 		setProgressMessage('Generating Auto Run Documents...');
@@ -112,27 +130,41 @@ export function usePreparingPlanGeneration({
 					directoryPath: state.directoryPath,
 					projectName: projectNameFromPath(state.directoryPath),
 					model: state.plannerModel,
+					sessionCustomPath: state.customPath,
+					sessionCustomArgs: state.customArgs,
+					sessionCustomEnvVars: state.customEnvVars,
 					conversationHistory: state.conversationHistory,
 					subfolder: 'Initiation',
 					sshRemoteConfig: state.sessionSshRemoteConfig,
 					claudeTokenSource: getClaudeTokenSourceFields(state),
+					harnessControlMode: state.harnessControlMode,
 				},
 				{
 					onStart: () => {
+						if (!isCurrentRequest()) return;
 						setProgressMessage('Starting document generation...');
 					},
 					onProgress: (message) => {
+						if (!isCurrentRequest()) return;
 						setProgressMessage(message);
 					},
 					onChunk: () => {},
-					onFileCreated: addCreatedFile,
+					onFileCreated: (file) => {
+						if (isCurrentRequest()) addCreatedFile(file);
+					},
 					onActivity: () => {},
 					onComplete: async (genResult) => {
+						if (!isCurrentRequest()) return;
 						if (genResult.success && genResult.documents) {
-							await handleGenerationSuccess(genResult.documents, genResult.documentsFromDisk);
+							await handleGenerationSuccess(
+								genResult.documents,
+								genResult.documentsFromDisk,
+								requestId
+							);
 						}
 					},
 					onError: (error) => {
+						if (!isCurrentRequest()) return;
 						setGenerationError(error);
 						setGeneratingDocuments(false);
 						announce(`Error generating Playbooks: ${error}. You can try again or go back.`);
@@ -140,11 +172,13 @@ export function usePreparingPlanGeneration({
 				}
 			);
 
+			if (!isCurrentRequest()) return;
 			if (!result.success && result.error) {
 				setGenerationError(result.error);
 				setGeneratingDocuments(false);
 			}
 		} catch (error) {
+			if (!isCurrentRequest()) return;
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
 			setGenerationError(errorMessage);
 			setGeneratingDocuments(false);
@@ -178,6 +212,13 @@ export function usePreparingPlanGeneration({
 		setGenerationError,
 		state.selectedAgent,
 		state.directoryPath,
+		state.plannerModel,
+		state.customPath,
+		state.customArgs,
+		state.customEnvVars,
+		state.enableMaestroP,
+		state.maestroPMode,
+		state.maestroPPath,
 		state.conversationHistory,
 		state.sessionSshRemoteConfig,
 	]);
@@ -189,9 +230,13 @@ export function usePreparingPlanGeneration({
 	}, [setGenerationError, startGeneration]);
 
 	const handleGoBack = useCallback(() => {
+		requestIdRef.current += 1;
+		clearTimeout(nextStepTimeoutRef.current);
+		phaseGenerator.abort();
+		setGeneratingDocuments(false);
 		setGenerationError(null);
 		previousStep();
-	}, [previousStep, setGenerationError]);
+	}, [previousStep, setGeneratingDocuments, setGenerationError]);
 
 	useEffect(() => {
 		if (!generationStartedRef.current && state.generatedDocuments.length === 0) {
@@ -204,6 +249,9 @@ export function usePreparingPlanGeneration({
 
 	useEffect(() => {
 		return () => {
+			generationStartedRef.current = false;
+			requestIdRef.current += 1;
+			clearTimeout(nextStepTimeoutRef.current);
 			phaseGenerator.abort();
 		};
 	}, []);

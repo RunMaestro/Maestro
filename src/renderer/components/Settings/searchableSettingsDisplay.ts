@@ -152,6 +152,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tab: 'display',
 		tabLabel: 'Display',
 		label: 'Group Chat Auto-Scroll',
+		toggle: 'groupChatAutoScroll',
 		description: 'Automatically scroll group chats to the newest message when new messages arrive.',
 		keywords: [
 			'group chat',
@@ -219,6 +220,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tab: 'display',
 		tabLabel: 'Display',
 		label: 'Color Blind Mode',
+		toggle: 'colorBlindMode',
 		description:
 			"Swap red/green/yellow semantics for Wong's colorblind-safe palette across agent status dots, diff add/remove, git status, the activity graph, Usage Dashboard charts, and file extension badges.",
 		keywords: [
@@ -275,29 +277,11 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		keywords: ['icon', 'theme', 'files', 'material', 'rich', 'flat', 'explorer'],
 	},
 	{
-		id: 'display-file-tree-connectors',
-		tab: 'display',
-		tabLabel: 'Display',
-		label: 'Files Pane Tree Lines',
-		description: "Elbow connectors that hang each row off its folder's guide line",
-		keywords: [
-			'tree',
-			'lines',
-			'connector',
-			'elbow',
-			'branch',
-			'guide',
-			'indent',
-			'hierarchy',
-			'files',
-			'explorer',
-		],
-	},
-	{
 		id: 'display-provider-mode-pill',
 		tab: 'display',
 		tabLabel: 'Display',
 		label: 'Provider Mode Pill',
+		toggle: 'showProviderModePill',
 		description:
 			'Show which Claude interface produced a turn ("claude -p" or "TUI Wrapper") as a pill under chat responses and on History entries',
 		keywords: [
@@ -366,6 +350,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tab: 'display',
 		tabLabel: 'Display',
 		label: 'Show Starred Sessions section',
+		toggle: 'showStarredSessionsSection',
 		description:
 			'Show a Starred Sessions section at the top of the left side bar listing every starred AI tab and named session across all agents',
 		keywords: [
@@ -395,6 +380,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tab: 'display',
 		tabLabel: 'Display',
 		label: 'Show agent initials when collapsed',
+		toggle: 'showLeftPanelCollapsedInitials',
 		description:
 			'Label each agent with two letters from its name when the left side bar is collapsed, instead of a plain status dot',
 		keywords: [

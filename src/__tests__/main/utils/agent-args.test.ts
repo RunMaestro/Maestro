@@ -4,17 +4,25 @@
  * Covers buildAgentArgs, applyAgentConfigOverrides, and getContextWindowValue.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import path from 'node:path';
 import {
 	buildAgentArgs,
+	buildAdditionalDirArgs,
 	applyAgentConfigOverrides,
 	getContextWindowValue,
 	placeResumeSelectorLast,
+	GrokModelEffortError,
+	grokLaunchArgsProblem,
+	type GrokEffortMenu,
 } from '../../../main/utils/agent-args';
+import { grokLaunchArgsProblem as processGrokLaunchArgsProblem } from '../../../main/process-manager/types';
+import { grokLaunchArgsProblem as sharedGrokLaunchArgsProblem } from '../../../shared/maestro-lib/launch/agent-args';
 import { AGENT_DEFINITIONS, getAgentDefinition } from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
 import { logger as mockLogger } from '../../../main/utils/logger';
 import { setMaestroLibLogger } from '../../../shared/maestro-lib/host';
+import { noteEffortRejection, resetEffortRejections } from '../../../shared/effortRejection';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -320,6 +328,31 @@ describe('buildAgentArgs', () => {
 		expect(result).not.toContain('--plan');
 	});
 
+	it('omits Codex batch bypass args in Standard mode', () => {
+		const codex = makeAgent({
+			batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
+			skipBatchModeArgsInStandardMode: true,
+		});
+		const result = buildAgentArgs(codex, {
+			baseArgs: ['--json'],
+			prompt: 'fix bug',
+			permissionMode: 'standard',
+		});
+		expect(result).toEqual(['--json']);
+	});
+
+	it('omits provider batch auto-approval args in Standard mode', () => {
+		for (const toolType of ['qwen3-coder', 'hermes', 'factory-droid', 'grok']) {
+			const agent = getAgentDefinition(toolType)!;
+			const result = buildAgentArgs(agent, {
+				baseArgs: [],
+				prompt: 'review this change',
+				permissionMode: 'standard',
+			});
+			for (const arg of agent.batchModeArgs ?? []) expect(result, toolType).not.toContain(arg);
+		}
+	});
+
 	it('adds readOnlyArgs when permissionMode is readonly', () => {
 		const agent = makeAgent({ readOnlyArgs: ['--permission-mode', 'plan'] });
 		const result = buildAgentArgs(agent, {
@@ -358,7 +391,7 @@ describe('buildAgentArgs', () => {
 	it("claude-code with permissionMode 'full' adds --dangerously-skip-permissions", () => {
 		const claude = AGENT_DEFINITIONS.find((agent) => agent.id === 'claude-code');
 		expect(claude).toBeDefined();
-		const result = buildAgentArgs(claude!, {
+		const result = buildAgentArgs(makeAgent(claude!), {
 			baseArgs: ['--print'],
 			prompt: 'do the thing',
 			permissionMode: 'full',
@@ -372,7 +405,7 @@ describe('buildAgentArgs', () => {
 		// treats a literal undefined as non-full, so callers MUST resolve first.
 		const claude = AGENT_DEFINITIONS.find((agent) => agent.id === 'claude-code');
 		expect(claude).toBeDefined();
-		const result = buildAgentArgs(claude!, {
+		const result = buildAgentArgs(makeAgent(claude!), {
 			baseArgs: ['--print'],
 			prompt: 'do the thing',
 			permissionMode: undefined,
@@ -518,7 +551,7 @@ describe('buildAgentArgs', () => {
 		expect(hermes).toBeDefined();
 		const prompt = 'Summarize the current branch status';
 
-		const baseArgs = buildAgentArgs(hermes!, {
+		const baseArgs = buildAgentArgs(makeAgent(hermes!), {
 			baseArgs: [],
 			prompt,
 			modelId: 'anthropic/claude-sonnet-4-20250514',
@@ -541,7 +574,7 @@ describe('buildAgentArgs', () => {
 		expect(pi).toBeDefined();
 		const prompt = 'Plan the next implementation step';
 
-		const baseArgs = buildAgentArgs(pi!, {
+		const baseArgs = buildAgentArgs(makeAgent(pi!), {
 			baseArgs: [],
 			prompt,
 			modelId: 'claude-sonnet-4.5',
@@ -558,7 +591,7 @@ describe('buildAgentArgs', () => {
 		]);
 		expect(pi!.imageArgs!('/tmp/screenshot.png')).toEqual(['@/tmp/screenshot.png']);
 		expect(
-			buildAgentArgs(pi!, {
+			buildAgentArgs(makeAgent(pi!), {
 				baseArgs: [],
 				prompt,
 				agentSessionId: 'pi-session-1',
@@ -573,15 +606,14 @@ describe('buildAgentArgs', () => {
 			'--session',
 			'pi-session-1',
 		]);
-		expect(
-			pi!.configOptions?.find((option) => option.key === 'model')?.argBuilder?.('gpt-5')
-		).toEqual(['--model', 'gpt-5']);
+		const model = pi!.configOptions?.find((option) => option.key === 'model');
+		expect(model?.type === 'text' && model.argBuilder?.('gpt-5')).toEqual(['--model', 'gpt-5']);
 	});
 
 	it('builds Qwen read-only args with --approval-mode plan and never -y', () => {
 		const qwen = AGENT_DEFINITIONS.find((agent) => agent.id === 'qwen3-coder');
 		expect(qwen).toBeDefined();
-		const result = buildAgentArgs(qwen!, {
+		const result = buildAgentArgs(makeAgent(qwen!), {
 			baseArgs: [],
 			prompt: 'review this code',
 			readOnlyMode: true,
@@ -595,7 +627,7 @@ describe('buildAgentArgs', () => {
 	it('builds omp read-only args restricting tools to read/search', () => {
 		const omp = AGENT_DEFINITIONS.find((agent) => agent.id === 'omp');
 		expect(omp).toBeDefined();
-		const result = buildAgentArgs(omp!, {
+		const result = buildAgentArgs(makeAgent(omp!), {
 			baseArgs: [],
 			prompt: 'review this code',
 			readOnlyMode: true,
@@ -923,6 +955,263 @@ describe('buildAgentArgs', () => {
 // applyAgentConfigOverrides
 // ---------------------------------------------------------------------------
 describe('applyAgentConfigOverrides', () => {
+	describe('Grok final model and effort composition', () => {
+		const grok = getAgentDefinition('grok')!;
+		beforeEach(resetEffortRejections);
+		afterEach(resetEffortRejections);
+
+		it.each(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const)(
+			'keeps the advertised explicit %s effort without substitution',
+			(reasoningEffort) => {
+				const { args } = applyAgentConfigOverrides(grok, [], {
+					agentConfigValues: { model: 'synthetic-model', reasoningEffort },
+					grokEffortMenu: {
+						status: 'discovered',
+						model: 'synthetic-model',
+						wireValues: [reasoningEffort],
+					},
+				});
+				expect(args).toEqual(['-m', 'synthetic-model', '--reasoning-effort', reasoningEffort]);
+			}
+		);
+
+		it.each<{ label: string; menu?: GrokEffortMenu }>([
+			{ label: 'absent' },
+			{
+				label: 'unavailable',
+				menu: { status: 'unavailable', model: 'synthetic-model', wireValues: ['none'] },
+			},
+			{
+				label: 'fallback',
+				menu: { status: 'configured-fallback', model: 'synthetic-model', wireValues: ['none'] },
+			},
+			{
+				label: 'stale model',
+				menu: { status: 'discovered', model: 'old-model', wireValues: ['none'] },
+			},
+			{
+				label: 'different model case',
+				menu: { status: 'discovered', model: 'SYNTHETIC-MODEL', wireValues: ['none'] },
+			},
+		])('refuses none but preserves explicit non-none with a $label menu', ({ menu }) => {
+			const overrides = { sessionCustomModel: 'synthetic-model', grokEffortMenu: menu };
+			expect(() =>
+				applyAgentConfigOverrides(grok, [], { ...overrides, sessionCustomEffort: ' NONE ' })
+			).toThrow('Grok effort "none" requires verified support for the selected model.');
+			expect(
+				applyAgentConfigOverrides(grok, [], { ...overrides, sessionCustomEffort: ' xhigh ' }).args
+			).toEqual(['-m', 'synthetic-model', '--reasoning-effort', 'xhigh']);
+		});
+
+		it.each(['none', 'minimal', 'native-menu-id', 'ｍａｘ'])(
+			'refuses unadvertised wire value %s without choosing a menu entry',
+			(sessionCustomEffort) => {
+				expect(() =>
+					applyAgentConfigOverrides(grok, [], {
+						sessionCustomModel: 'synthetic-model',
+						sessionCustomEffort,
+						grokEffortMenu: {
+							status: 'discovered',
+							model: 'synthetic-model',
+							wireValues: ['low', 'max'],
+						},
+					})
+				).toThrow('Grok effort is not advertised as a wire value for the selected model.');
+			}
+		);
+
+		it('does not treat an implicit CLI model as matching menu evidence', () => {
+			expect(() =>
+				applyAgentConfigOverrides(grok, [], {
+					sessionCustomEffort: 'none',
+					grokEffortMenu: { status: 'discovered', model: 'synthetic-model', wireValues: ['none'] },
+				})
+			).toThrow('Grok effort "none" requires verified support for the selected model.');
+		});
+
+		it.each([
+			[undefined, 'high'],
+			['', 'high'],
+			[' max ', 'max'],
+		])(
+			'resolves session effort %s over provider settings once',
+			(sessionCustomEffort, expected) => {
+				const result = applyAgentConfigOverrides(grok, [], {
+					agentConfigValues: { model: 'provider-model', reasoningEffort: 'high' },
+					sessionCustomModel: 'session-model',
+					sessionCustomEffort,
+					grokEffortMenu: {
+						status: 'discovered',
+						model: 'session-model',
+						wireValues: ['high', 'max'],
+					},
+				});
+				expect(result.args).toEqual(['-m', 'session-model', '--reasoning-effort', expected]);
+				expect(result.modelSource).toBe('session');
+			}
+		);
+
+		it('validates inherited provider effort against the final session model', () => {
+			const overrides = {
+				agentConfigValues: { model: 'provider-model', reasoningEffort: 'none' },
+				sessionCustomModel: 'session-model',
+				sessionCustomEffort: '',
+			};
+			expect(() =>
+				applyAgentConfigOverrides(grok, [], {
+					...overrides,
+					grokEffortMenu: { status: 'discovered', model: 'provider-model', wireValues: ['none'] },
+				})
+			).toThrow('Grok effort "none" requires verified support');
+			expect(
+				applyAgentConfigOverrides(grok, [], {
+					...overrides,
+					grokEffortMenu: { status: 'discovered', model: 'session-model', wireValues: ['none'] },
+				}).args
+			).toEqual(['-m', 'session-model', '--reasoning-effort', 'none']);
+		});
+
+		it.each([
+			'--effort HIGH --reasoning-effort=high --model=synthetic-model',
+			'--reasoning-effort=" high " --effort=HIGH -m=" synthetic-model "',
+			"--effort ' high ' --model ' synthetic-model '",
+			'\t--effort\tHIGH\n--model=synthetic-model  ',
+		])('consolidates equivalent settings and custom aliases: %s', (sessionCustomArgs) => {
+			const result = applyAgentConfigOverrides(grok, [], {
+				agentConfigValues: {
+					model: 'synthetic-model',
+					reasoningEffort: 'high',
+					customArgs: '--effort low',
+				},
+				sessionCustomArgs,
+			});
+			expect(result.args).toEqual(['-m', 'synthetic-model', '--reasoning-effort', 'high']);
+			expect(result.customArgsSource).toBe('session');
+		});
+
+		it('validates none supplied only through provider custom aliases', () => {
+			const result = applyAgentConfigOverrides(grok, [], {
+				agentConfigValues: {
+					customArgs: '--model=" synthetic-model " --effort=" NONE " --reasoning-effort=none',
+				},
+				grokEffortMenu: { status: 'discovered', model: 'synthetic-model', wireValues: ['none'] },
+			});
+			expect(result.args).toEqual(['-m', 'synthetic-model', '--reasoning-effort', 'NONE']);
+			expect(result.customArgsSource).toBe('agent');
+		});
+
+		it.each([
+			['--effort low', 'effort'],
+			['--reasoning-effort=low', 'effort'],
+			['--effort=" low "', 'effort'],
+			['--model=other-model', 'model'],
+			['-m other-model', 'model'],
+			['--model=SYNTHETIC-MODEL', 'model'],
+		])('refuses a conflicting custom selection: %s', (customArgs, selection) => {
+			expect(() =>
+				applyAgentConfigOverrides(grok, [], {
+					agentConfigValues: { model: 'synthetic-model', reasoningEffort: 'high', customArgs },
+				})
+			).toThrow(`Conflicting Grok ${selection} selections.`);
+		});
+
+		it.each(['--reasoning-effort', '--effort', '-m', '--model'])(
+			'preserves repeated %s pairs until conflicts can be refused',
+			(flag) => {
+				const input = [flag, 'high', flag, 'low'];
+				const built = buildAgentArgs(makeAgent(grok), { baseArgs: input });
+				expect(built).toEqual(input);
+				expect(() => applyAgentConfigOverrides(grok, built, {})).toThrow(GrokModelEffortError);
+				expect(input).toEqual([flag, 'high', flag, 'low']);
+				const repeated = buildAgentArgs(makeAgent(grok), {
+					baseArgs: [flag, 'high', flag, 'high'],
+				});
+				expect(applyAgentConfigOverrides(grok, repeated, {}).args).toEqual([
+					flag.includes('effort') ? '--reasoning-effort' : '-m',
+					'high',
+				]);
+			}
+		);
+
+		it.each([
+			'--effort',
+			'--reasoning-effort=',
+			'--effort=" \t "',
+			'--effort --model=synthetic-model',
+			'-m',
+			'--model=',
+			'--model " "',
+		])('refuses an empty or missing custom selection: %s', (sessionCustomArgs) => {
+			expect(() => applyAgentConfigOverrides(grok, [], { sessionCustomArgs })).toThrow(
+				/Grok (effort|model) selection requires a nonempty value/
+			);
+		});
+
+		it.each(['--effort="high', "--model 'synthetic-model"])(
+			'refuses unmatched custom quotes: %s',
+			(sessionCustomArgs) => {
+				expect(() => applyAgentConfigOverrides(grok, [], { sessionCustomArgs })).toThrow(
+					'Grok custom arguments contain an unmatched quote.'
+				);
+			}
+		);
+
+		it.each(['--', '-msynthetic-model'])(
+			'refuses custom syntax that could hide a later selection: %s',
+			(sessionCustomArgs) => {
+				expect(() => applyAgentConfigOverrides(grok, [], { sessionCustomArgs })).toThrow(
+					GrokModelEffortError
+				);
+			}
+		);
+
+		it.each(['none', 'high'] as const)(
+			'remembers native refusal of %s across model changes and mixed case',
+			(effort) => {
+				noteEffortRejection('grok', {
+					value: effort.toUpperCase(),
+					model: 'old-model',
+					supported: ['low'],
+				});
+				expect(() =>
+					applyAgentConfigOverrides(grok, [], {
+						agentConfigValues: { model: 'new-model', reasoningEffort: effort },
+						grokEffortMenu: {
+							status: 'discovered',
+							model: 'new-model',
+							wireValues: [effort, 'low'],
+						},
+					})
+				).toThrow(
+					`Grok CLI rejected effort "${effort.toUpperCase()}" for old-model. It accepts low.`
+				);
+			}
+		);
+
+		it('leaves ordinary provider effort and tokenizer behavior unchanged', () => {
+			noteEffortRejection('grok', { value: 'high', supported: ['low'] });
+			expect(
+				applyAgentConfigOverrides(getAgentDefinition('codex'), ['exec', '--json'], {
+					agentConfigValues: { reasoningEffort: 'high' },
+				}).args
+			).toEqual(['exec', '--json', '-c', 'model_reasoning_effort="high"']);
+			expect(
+				applyAgentConfigOverrides(getAgentDefinition('antigravity'), [], {
+					agentConfigValues: { model: 'ordinary-model', effort: 'high' },
+					sessionCustomArgs: '--effort="none"',
+				}).args
+			).toEqual([
+				'--model',
+				'ordinary-model',
+				'--effort',
+				'high',
+				'--print-timeout',
+				'30m',
+				'--effort="none"',
+			]);
+		});
+	});
+
 	describe('Codex reasoning config (#1744)', () => {
 		const baseArgs = ['exec', '--json'];
 		const codex = () => getAgentDefinition('codex');
@@ -957,7 +1246,7 @@ describe('applyAgentConfigOverrides', () => {
 
 		it('keeps the summary override when Codex runs in read-only mode', () => {
 			const agent = codex();
-			const readOnlyArgs = buildAgentArgs(agent, { baseArgs, readOnlyMode: true });
+			const readOnlyArgs = buildAgentArgs(makeAgent(agent), { baseArgs, readOnlyMode: true });
 			const { args } = applyAgentConfigOverrides(agent, readOnlyArgs, {
 				readOnlyMode: true,
 				agentConfigValues: { reasoningSummary: 'auto' },
@@ -1031,6 +1320,7 @@ describe('applyAgentConfigOverrides', () => {
 		const r1 = applyAgentConfigOverrides(agent, [], {});
 		expect(r1.args).toEqual(['--model', 'default-model']);
 		expect(r1.modelSource).toBe('default');
+		expect(r1.modelId).toBe('default-model');
 
 		// agent overrides default
 		const r2 = applyAgentConfigOverrides(agent, [], {
@@ -1038,6 +1328,7 @@ describe('applyAgentConfigOverrides', () => {
 		});
 		expect(r2.args).toEqual(['--model', 'agent-model']);
 		expect(r2.modelSource).toBe('agent');
+		expect(r2.modelId).toBe('agent-model');
 
 		// session overrides agent
 		const r3 = applyAgentConfigOverrides(agent, [], {
@@ -1046,6 +1337,7 @@ describe('applyAgentConfigOverrides', () => {
 		});
 		expect(r3.args).toEqual(['--model', 'session-model']);
 		expect(r3.modelSource).toBe('session');
+		expect(r3.modelId).toBe('session-model');
 	});
 
 	// -- effort precedence --
@@ -1072,6 +1364,7 @@ describe('applyAgentConfigOverrides', () => {
 			agentConfigValues: { effort: 'high' },
 		});
 		expect(r1.args).toEqual(['--effort', 'high']);
+		expect(r1.effort).toBe('high');
 
 		// session override wins
 		const r2 = applyAgentConfigOverrides(agent, [], {
@@ -1079,6 +1372,7 @@ describe('applyAgentConfigOverrides', () => {
 			sessionCustomEffort: 'max',
 		});
 		expect(r2.args).toEqual(['--effort', 'max']);
+		expect(r2.effort).toBe('max');
 
 		// cleared session override falls back to the agent config
 		const r3 = applyAgentConfigOverrides(agent, [], {
@@ -1086,6 +1380,7 @@ describe('applyAgentConfigOverrides', () => {
 			sessionCustomEffort: '',
 		});
 		expect(r3.args).toEqual(['--effort', 'high']);
+		expect(r3.effort).toBe('high');
 	});
 
 	it('reasoningEffort honors the session override (Codex-style agents)', () => {
@@ -1227,6 +1522,134 @@ describe('applyAgentConfigOverrides', () => {
 		const result = applyAgentConfigOverrides(agent, [], {});
 		expect(result.effectiveCustomEnvVars).toEqual({ FOO: 'bar' });
 		// No user-configured env vars, so source should be 'none'
+		expect(result.customEnvSource).toBe('none');
+	});
+
+	describe.each([
+		['grok', 'GROK_HOME'],
+		['codex', 'CODEX_HOME'],
+	])('%s account environment selection', (providerId, accountKey) => {
+		it.each<{
+			name: string;
+			providerValue?: string | null;
+			sessionValue?: string | null;
+			expectedValue?: string | null;
+			source: 'none' | 'agent' | 'session';
+		}>([
+			{ name: 'absent records inherit', source: 'none' },
+			{
+				name: 'absent session inherits provider account',
+				providerValue: 'provider-account',
+				expectedValue: 'provider-account',
+				source: 'agent',
+			},
+			{
+				name: 'empty provider record remains explicit',
+				providerValue: null,
+				expectedValue: null,
+				source: 'agent',
+			},
+			{
+				name: 'empty session removes the provider account',
+				providerValue: 'provider-account',
+				sessionValue: null,
+				expectedValue: null,
+				source: 'session',
+			},
+			{
+				name: 'blank provider value remains an unset',
+				providerValue: '',
+				expectedValue: '',
+				source: 'agent',
+			},
+			{
+				name: 'blank session value removes the provider account',
+				providerValue: 'provider-account',
+				sessionValue: ' \t ',
+				expectedValue: ' \t ',
+				source: 'session',
+			},
+			{
+				name: 'selected session account replaces the provider account',
+				providerValue: 'provider-account',
+				sessionValue: 'session-account',
+				expectedValue: 'session-account',
+				source: 'session',
+			},
+		])('$name', ({ providerValue, sessionValue, expectedValue, source }) => {
+			const agent = getAgentDefinition(providerId);
+			expect(agent).toBeDefined();
+			// Null is a table sentinel for {}, never a runtime null environment.
+			const providerEnv =
+				providerValue === undefined
+					? undefined
+					: Object.freeze(providerValue === null ? {} : { [accountKey]: providerValue });
+			const sessionEnv =
+				sessionValue === undefined
+					? undefined
+					: Object.freeze(sessionValue === null ? {} : { [accountKey]: sessionValue });
+			const result = applyAgentConfigOverrides(agent, [], {
+				agentConfigValues: providerEnv === undefined ? {} : { customEnvVars: providerEnv },
+				...(sessionEnv === undefined ? {} : { sessionCustomEnvVars: sessionEnv }),
+			});
+
+			const own =
+				expectedValue === undefined
+					? undefined
+					: expectedValue === null
+						? {}
+						: { [accountKey]: expectedValue };
+			// Grok's definition defaults (GROK_COMPAT_ISOLATION_ENV_VARS)
+			// sit beneath every user layer; Codex has none.
+			const defaults = agent?.defaultEnvVars;
+			expect(result.effectiveCustomEnvVars).toEqual(
+				defaults ? { ...defaults, ...(own ?? {}) } : own
+			);
+			expect(result.customEnvSource).toBe(source);
+		});
+	});
+
+	it.each(['agent', 'session'] as const)(
+		'keeps definition defaults beneath an explicit empty %s environment',
+		(source) => {
+			const defaults = Object.freeze({ DEFAULT_ONLY: 'definition-value' });
+			const result = applyAgentConfigOverrides(makeAgent({ defaultEnvVars: defaults }), [], {
+				agentConfigValues: {
+					customEnvVars: source === 'agent' ? {} : { GROK_HOME: 'removed-provider-account' },
+				},
+				...(source === 'session' ? { sessionCustomEnvVars: {} } : {}),
+			});
+			expect(result.effectiveCustomEnvVars).toEqual({ DEFAULT_ONLY: 'definition-value' });
+			expect(result.customEnvSource).toBe(source);
+		}
+	);
+
+	it.each(['agent', 'session'] as const)(
+		'preserves blank %s unsets over definition defaults without merging provider-only keys',
+		(source) => {
+			const defaults = Object.freeze({ GROK_HOME: 'definition-account', DEFAULT_ONLY: 'keep' });
+			const blanks = Object.freeze({ GROK_HOME: '', GROK_AUTH_PATH: ' \t ' });
+			const result = applyAgentConfigOverrides(makeAgent({ defaultEnvVars: defaults }), [], {
+				agentConfigValues: {
+					customEnvVars:
+						source === 'agent'
+							? blanks
+							: { GROK_HOME: 'removed-provider-account', PROVIDER_ONLY: 'removed' },
+				},
+				...(source === 'session' ? { sessionCustomEnvVars: blanks } : {}),
+			});
+			expect(result.effectiveCustomEnvVars).toEqual({
+				GROK_HOME: '',
+				GROK_AUTH_PATH: ' \t ',
+				DEFAULT_ONLY: 'keep',
+			});
+			expect(result.customEnvSource).toBe(source);
+		}
+	);
+
+	it('does not turn empty definition defaults into an explicit user environment', () => {
+		const result = applyAgentConfigOverrides(makeAgent({ defaultEnvVars: {} }), [], {});
+		expect(result.effectiveCustomEnvVars).toBeUndefined();
 		expect(result.customEnvSource).toBe('none');
 	});
 
@@ -1608,6 +2031,74 @@ describe('buildAgentArgs: additionalDirectories', () => {
 		]);
 	});
 
+	describe('Grok: unqualified native grants (real definition)', () => {
+		const grok = makeAgent(getAgentDefinition('grok'));
+		const cwd = path.join('selected workspace', '作業');
+		const grantPath = path.join('separate root', '資料');
+
+		it.each([undefined, 'grok-resume-session'])(
+			'preserves cwd and resume %s without emitting absent or empty grants',
+			(agentSessionId) => {
+				const options = { baseArgs: [], prompt: 'inspect', cwd, agentSessionId };
+				const expected = [
+					'--cwd',
+					cwd,
+					'--always-approve',
+					'--output-format',
+					'streaming-json',
+					...(agentSessionId ? ['--resume', agentSessionId] : []),
+				];
+				expect(buildAgentArgs(grok, options)).toEqual(expected);
+				expect(buildAgentArgs(grok, { ...options, additionalDirectories: [] })).toEqual(expected);
+				expect(buildAdditionalDirArgs(grok, undefined)).toEqual([]);
+				expect(buildAdditionalDirArgs(grok, [])).toEqual([]);
+			}
+		);
+
+		it.each([
+			{ label: 'read', dirs: [{ path: grantPath, read: true, write: false }] },
+			{ label: 'write', dirs: [{ path: grantPath, read: false, write: true }] },
+			{ label: 'read/write', dirs: [{ path: grantPath, read: true, write: true }] },
+			{ label: 'separate read/write roots', dirs: [RO, WO] },
+			{ label: 'duplicate roots', dirs: [RW, RW] },
+			{ label: 'inert', dirs: [INERT] },
+			{ label: 'last duplicate disabled', dirs: [RW, { ...RW, read: false, write: false }] },
+		])('does not invent native flags for $label requests', ({ dirs }) => {
+			// This builder cannot authorize Grok grants: the launch planner owns
+			// their refusal. Matching argv is not proof of filesystem enforcement.
+			for (const readOnlyMode of [false, true]) {
+				const options = {
+					baseArgs: [],
+					prompt: 'inspect',
+					cwd,
+					agentSessionId: 'grok-resume-session',
+					readOnlyMode,
+				};
+				const args = buildAgentArgs(grok, { ...options, additionalDirectories: dirs });
+				expect(buildAdditionalDirArgs(grok, dirs)).toEqual([]);
+				expect(args).toEqual(buildAgentArgs(grok, options));
+				expect(args.slice(0, 2)).toEqual(['--cwd', cwd]);
+				expect(args.slice(-2)).toEqual(['--resume', 'grok-resume-session']);
+				expect(args).not.toContain('--add-dir');
+				for (const directory of dirs) expect(args).not.toContain(directory.path);
+				if (readOnlyMode) {
+					expect(args).toEqual([
+						'--cwd',
+						cwd,
+						'--output-format',
+						'streaming-json',
+						'--permission-mode',
+						'plan',
+						'--deny',
+						'Bash(*)',
+						'--resume',
+						'grok-resume-session',
+					]);
+				}
+			}
+		});
+	});
+
 	it('Codex: --add-dir lands on `exec`, not on the `resume` subcommand', () => {
 		// `codex exec resume` has no `--add-dir`. Emitted after `resume <id>` it is
 		// parsed as that subcommand's flag, Codex answers "unexpected argument
@@ -1764,4 +2255,76 @@ describe('buildAgentArgs with the Antigravity definition', () => {
 			'30m',
 		]);
 	});
+});
+
+describe('shared Grok launch selector compatibility', () => {
+	const cwd = path.resolve('grok-selector-project');
+	const nativeId = 'native:opaque-42';
+
+	it('keeps both main compatibility exports on the shared validator', () => {
+		expect(grokLaunchArgsProblem).toBe(sharedGrokLaunchArgsProblem);
+		expect(processGrokLaunchArgsProblem).toBe(sharedGrokLaunchArgsProblem);
+	});
+
+	it.each<[string[], string | undefined, string | undefined]>([
+		[[], undefined, undefined],
+		[['--cwd', cwd], undefined, cwd],
+		[[`--cwd=${cwd}`], undefined, cwd],
+		[['--resume', nativeId], nativeId, cwd],
+		[[`--resume=${nativeId}`], nativeId, cwd],
+		[['--cwd', cwd, '--resume', nativeId], nativeId, cwd],
+		[['--resume', nativeId, `--cwd=${cwd}`, '--output-format', 'streaming-json'], nativeId, cwd],
+	])('accepts only the requested explicit selection: %j', (args, requestedId, requestedCwd) => {
+		const original = [...args];
+		expect(sharedGrokLaunchArgsProblem(args, requestedId, requestedCwd)).toBeUndefined();
+		expect(args).toEqual(original);
+	});
+
+	it.each<[string[], string | undefined, string | undefined]>([
+		[[], nativeId, cwd],
+		[['--resume', nativeId], undefined, cwd],
+		[['--resume', 'other-id'], nativeId, cwd],
+		[['--resume'], nativeId, cwd],
+		[['--resume='], nativeId, cwd],
+		[['--resume', nativeId, `--resume=${nativeId}`], nativeId, cwd],
+		[['--resume', ''], '', cwd],
+		[['--resume', '  '], '  ', cwd],
+		[['--resume', 'native\n42'], 'native\n42', cwd],
+		[['--resume', 'native\x0042'], 'native\x0042', cwd],
+		[['--resume', 'native\x7f42'], 'native\x7f42', cwd],
+		[['--cwd', path.join(cwd, 'other')], undefined, cwd],
+		[[`--cwd=${cwd}`, '--cwd', cwd], undefined, cwd],
+		[['--cwd'], undefined, cwd],
+		[['--cwd='], undefined, cwd],
+		[['--cwd', cwd], undefined, undefined],
+	])('refuses a mismatched retained request: %j', (args, requestedId, requestedCwd) => {
+		expect(sharedGrokLaunchArgsProblem(args, requestedId, requestedCwd)).toBe(
+			'Grok resume or working-directory arguments do not match the retained launch request.'
+		);
+	});
+
+	it.each([
+		'--continue',
+		'--continue=true',
+		'-c',
+		'-cother',
+		'--fork-session',
+		'--fork-session=other',
+		'--session-id',
+		'--session-id=other',
+		'--worktree',
+		'--worktree=other',
+		'-w',
+		'-wother',
+		'-r',
+		'-rother',
+		'--',
+	])(
+		'refuses implicit or alternate ownership selector %s even with an exact resume',
+		(selector) => {
+			expect(sharedGrokLaunchArgsProblem(['--resume', nativeId, selector], nativeId, cwd)).toBe(
+				'Grok implicit continuation, fork or workspace selectors cannot supply native launch ownership.'
+			);
+		}
+	);
 });

@@ -9,12 +9,17 @@
 // and `withMaestroClient` as aliases, so maestro-cli does not change.
 
 import WebSocket from 'ws';
+import { readFileSync } from 'fs';
+import { isIP } from 'net';
+import { CALLER_RUN_PROOF_FILE_ENV_VAR, CALLER_RUN_PROOF_HEADER } from '../../agentDelegation';
 import {
 	readCliServerInfo,
 	readCliServerInfoFrom,
 	isCliServerRunning,
 	isPidAlive,
+	isDialableEndpoint,
 	type CliServerInfo,
+	type ExplicitHostEndpoint,
 } from './discovery';
 import { CLI_SECRET_HEADER } from '../../webLogin';
 import { MaestroNotRunningError } from './not-running';
@@ -37,6 +42,12 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
  */
 export class UnsupportedCommandError extends Error {
 	readonly commandType: string;
+	/**
+	 * The peer that echoed. A caller that can answer from disk falls back only
+	 * for `'headless'`: an old desktop build is a different problem and keeps
+	 * its "rebuild and restart" hint.
+	 */
+	readonly hostKind: CliServerInfo['hostKind'];
 	constructor(commandType: string, hostKind?: CliServerInfo['hostKind']) {
 		super(
 			hostKind === 'headless'
@@ -47,6 +58,7 @@ export class UnsupportedCommandError extends Error {
 		);
 		this.name = 'UnsupportedCommandError';
 		this.commandType = commandType;
+		this.hostKind = hostKind;
 	}
 }
 
@@ -95,6 +107,12 @@ export class ConnectionClosedError extends Error {
 export interface BridgeConnectionOptions {
 	/** Read discovery from this data dir instead of the CLI's own derivation. */
 	userDataDir?: string;
+	/**
+	 * Dial this bridge on 127.0.0.1 instead of reading any discovery file. Wins over
+	 * `userDataDir` and `MAESTRO_CLI_HOST`. Its pid is not checked (it may name a process on
+	 * another machine), and no caller-run proof is sent: that proof is for the local desktop.
+	 */
+	endpoint?: ExplicitHostEndpoint;
 	/** Extra query parameters on the upgrade URL (`since`, `epoch` for resume). */
 	query?: Record<string, string | number>;
 	/**
@@ -141,27 +159,57 @@ export class BridgeConnection {
 	 * Throws `MaestroNotRunningError` when no host is running or reachable.
 	 */
 	async connect(): Promise<void> {
-		const info: CliServerInfo | null = this.options.userDataDir
-			? readCliServerInfoFrom(this.options.userDataDir)
-			: readCliServerInfo();
+		const explicit = this.options.endpoint;
+		if (explicit && !isDialableEndpoint(explicit)) {
+			// Never echo the endpoint: it holds the token.
+			throw new Error('Invalid host endpoint: expected a TCP port and a URL-safe path token');
+		}
+		const info: Pick<CliServerInfo, 'port' | 'token' | 'pid' | 'cliSecret' | 'hostKind'> | null =
+			explicit
+				? { ...explicit, pid: explicit.pid ?? 0 }
+				: this.options.userDataDir
+					? readCliServerInfoFrom(this.options.userDataDir)
+					: readCliServerInfo();
 		if (!info) {
 			throw new MaestroNotRunningError('no-discovery-file');
 		}
 		this.hostKind = info.hostKind;
 
-		// The authenticated WebSocket connection remains the authoritative
-		// reachability check; this only says the recorded process still exists.
-		const alive = this.options.userDataDir ? isPidAlive(info.pid) : isCliServerRunning();
-		if (!alive) {
-			throw new MaestroNotRunningError(
-				'stale-discovery-file',
-				`pid ${info.pid} is gone (app may have crashed)`
-			);
+		// An explicit endpoint is already a loopback port: the env override does not move it.
+		const remoteHost = explicit ? undefined : process.env.MAESTRO_CLI_HOST?.trim();
+		// The discovery PID belongs to the desktop host, not an SSH remote.
+		if (!remoteHost && !explicit) {
+			const alive = this.options.userDataDir ? isPidAlive(info.pid) : isCliServerRunning();
+			if (!alive) {
+				throw new MaestroNotRunningError(
+					'stale-discovery-file',
+					`pid ${info.pid} is gone (app may have crashed)`
+				);
+			}
 		}
 
-		// Use 127.0.0.1 instead of `localhost` - Node 18's default DNS resolution
-		// resolves `localhost` to IPv6 (::1) first, but the desktop app binds to
-		// 0.0.0.0 (IPv4 only), so `localhost` yields ECONNREFUSED on ::1.
+		// Validate before adding the token: ws includes invalid URLs in its errors.
+		let host = remoteHost || '127.0.0.1';
+		if (remoteHost) {
+			try {
+				if (/[\s/@?#\\%]/.test(host)) throw new Error('Not a bare host');
+				if (isIP(host) === 6) host = `[${host}]`;
+				const parsed = new URL(`ws://${host}`);
+				const hostname = parsed.hostname;
+				const isIpv6 = hostname.startsWith('[') && isIP(hostname.slice(1, -1)) === 6;
+				const isHostname =
+					/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.?$/i.test(
+						hostname
+					);
+				if ((!isIpv6 && !isHostname) || parsed.pathname !== '/' || host.endsWith(':')) {
+					throw new Error('Not a bare host');
+				}
+			} catch {
+				throw new Error(
+					'Invalid MAESTRO_CLI_HOST: expected a hostname or IP address, optionally with a port'
+				);
+			}
+		}
 		const query = this.options.query
 			? `?${new URLSearchParams(
 					Object.entries(this.options.query).map(([key, value]): [string, string] => [
@@ -170,18 +218,31 @@ export class BridgeConnection {
 					])
 				).toString()}`
 			: '';
-		const url = `ws://127.0.0.1:${info.port}/${info.token}/ws${query}`;
+		// Keep the original IPv4 loopback URL when no override is configured.
+		const hasPort = host.startsWith('[') ? host.includes(']:') : host.includes(':');
+		const authority = hasPort ? host : `${host}:${info.port}`;
+		const url = `ws://${authority}/${info.token}/ws${query}`;
 		const WebSocketCtor = this.options.WebSocketImpl ?? WebSocket;
+		const headers: Record<string, string> = {};
+		if (info.cliSecret) headers[CLI_SECRET_HEADER] = info.cliSecret;
+		const proofFile = process.env[CALLER_RUN_PROOF_FILE_ENV_VAR];
+		if (proofFile && info.cliSecret && !remoteHost && !explicit) {
+			try {
+				const proof = readFileSync(proofFile, 'utf8');
+				if (!/^[0-9a-f]{64}$/.test(proof)) throw new Error('Invalid proof');
+				headers[CALLER_RUN_PROOF_HEADER] = proof;
+			} catch {
+				// Never expose the delivery path, file contents or OS error.
+				throw new Error('CallerRunUnavailable');
+			}
+		}
 
 		return new Promise<void>((resolve, reject) => {
 			let settled = false;
 
 			// The per-boot secret is what admits the CLI when Web Login is on; the
 			// server never exempts a caller by address (the tunnel is loopback too).
-			const ws = new WebSocketCtor(
-				url,
-				info.cliSecret ? { headers: { [CLI_SECRET_HEADER]: info.cliSecret } } : undefined
-			);
+			const ws = new WebSocketCtor(url, Object.keys(headers).length ? { headers } : undefined);
 
 			const timeout = setTimeout(() => {
 				if (!settled) {

@@ -54,7 +54,6 @@ export const SSH_REDUCE_ENTRY_CAP_STEP = 0.05;
 export interface FileExplorerState {
 	showHiddenFiles: boolean;
 	fileExplorerIconTheme: FileExplorerIconTheme;
-	fileTreeBranchConnectors: boolean;
 	localIgnorePatterns: string[];
 	localHonorGitignore: boolean;
 	fileExplorerMaxDepth: number;
@@ -63,12 +62,13 @@ export interface FileExplorerState {
 	sshReduceEntryCapFraction: number;
 	sshRemoteIgnorePatterns: string[];
 	sshRemoteHonorGitignore: boolean;
+	/** Federation: move SSH agents onto their remote's host automatically. */
+	federationAutoMove: boolean;
 }
 
 export interface FileExplorerActions {
 	setShowHiddenFiles: (value: boolean) => void;
 	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
-	setFileTreeBranchConnectors: (value: boolean) => void;
 	setLocalIgnorePatterns: (value: string[]) => void;
 	setLocalHonorGitignore: (value: boolean) => void;
 	setFileExplorerMaxDepth: (value: number) => void;
@@ -77,6 +77,7 @@ export interface FileExplorerActions {
 	setSshReduceEntryCapFraction: (value: number) => void;
 	setSshRemoteIgnorePatterns: (value: string[]) => void;
 	setSshRemoteHonorGitignore: (value: boolean) => void;
+	setFederationAutoMove: (value: boolean) => void;
 }
 
 export type FileExplorerSlice = FileExplorerState & FileExplorerActions;
@@ -86,7 +87,6 @@ export const createFileExplorerSlice: StateCreator<SettingsStore, [], [], FileEx
 ) => ({
 	showHiddenFiles: true,
 	fileExplorerIconTheme: 'rich',
-	fileTreeBranchConnectors: false,
 	localIgnorePatterns: [...DEFAULT_LOCAL_IGNORE_PATTERNS],
 	localHonorGitignore: true,
 	fileExplorerMaxDepth: DEFAULT_FILE_EXPLORER_MAX_DEPTH,
@@ -95,6 +95,7 @@ export const createFileExplorerSlice: StateCreator<SettingsStore, [], [], FileEx
 	sshReduceEntryCapFraction: DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION,
 	sshRemoteIgnorePatterns: ['.git', '*cache*'],
 	sshRemoteHonorGitignore: true,
+	federationAutoMove: true,
 
 	setShowHiddenFiles: (value) => {
 		set({ showHiddenFiles: value });
@@ -104,11 +105,6 @@ export const createFileExplorerSlice: StateCreator<SettingsStore, [], [], FileEx
 	setFileExplorerIconTheme: (value) => {
 		set({ fileExplorerIconTheme: value });
 		window.maestro.settings.set('fileExplorerIconTheme', value);
-	},
-
-	setFileTreeBranchConnectors: (value) => {
-		set({ fileTreeBranchConnectors: value });
-		window.maestro.settings.set('fileTreeBranchConnectors', value);
 	},
 
 	setLocalIgnorePatterns: (value) => {
@@ -166,6 +162,11 @@ export const createFileExplorerSlice: StateCreator<SettingsStore, [], [], FileEx
 		set({ sshRemoteHonorGitignore: value });
 		window.maestro.settings.set('sshRemoteHonorGitignore', value);
 	},
+
+	setFederationAutoMove: (value) => {
+		set({ federationAutoMove: value });
+		window.maestro.settings.set('federationAutoMove', value);
+	},
 });
 
 /** Mutates `patch` in place with any persisted File Explorer fields found in `allSettings`. */
@@ -180,9 +181,6 @@ export function hydrateFileExplorerSettings(
 		patch.fileExplorerIconTheme =
 			normalizeFileExplorerIconTheme(allSettings['fileExplorerIconTheme']) ?? 'rich';
 	}
-
-	if (allSettings['fileTreeBranchConnectors'] !== undefined)
-		patch.fileTreeBranchConnectors = allSettings['fileTreeBranchConnectors'] as boolean;
 
 	// Local file indexing ignore patterns (with array validation)
 	if (
@@ -247,4 +245,7 @@ export function hydrateFileExplorerSettings(
 
 	if (allSettings['sshRemoteHonorGitignore'] !== undefined)
 		patch.sshRemoteHonorGitignore = allSettings['sshRemoteHonorGitignore'] as boolean;
+
+	if (typeof allSettings['federationAutoMove'] === 'boolean')
+		patch.federationAutoMove = allSettings['federationAutoMove'] as boolean;
 }

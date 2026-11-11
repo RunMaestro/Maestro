@@ -12,7 +12,9 @@
  *     provider itself otherwise
  */
 
+import path from 'path';
 import { describe, it, expect } from 'vitest';
+import { classifyCredentialKind } from '../../shared/providerAuthIdentity';
 import {
 	effectiveAgentCustomEnvVars,
 	getProviderProfileConfig,
@@ -281,5 +283,183 @@ describe('makeAccountKeyHelpers', () => {
 		expect(deriveShortName('/Users/me/.claude-gmail')).toBe('gmail');
 		expect(deriveShortName(undefined)).toBe('default');
 		expect(deriveDisplayName('/Users/me/.claude')).toBe('Default account');
+	});
+});
+
+describe('Grok account profiles', () => {
+	it.each(['XAI_API_KEY', 'GROK_CODE_XAI_API_KEY'])(
+		'does not turn configured fallback %s into billing or quota-exclusion evidence',
+		(key) => {
+			for (const value of ['synthetic-personal-same', 'synthetic-work-same']) {
+				const env = { GROK_HOME: path.posix.join(HOME, '.grok-work'), [key]: value };
+				expect(classifyCredentialKind('grok', env)).toMatchObject({
+					kind: 'api-key',
+					fallback: true,
+				});
+				// A configured key (even with a shared suffix) proves neither active billing
+				// nor a root login. Null billing must not fabricate either profile.
+				expect(resolveAgentBillingCredential('grok', env)).toBeNull();
+				expect(resolveAgentProfile('grok', env, HOME)).toBeNull();
+				expect(resolveAgentProfile('grok', env, HOME, { id: 'r1' })).toBeNull();
+				expect(resolveAgentAccountKey('grok', env, HOME)).toBe(env.GROK_HOME);
+			}
+		}
+	);
+
+	it.each([
+		'{"token":"synthetic-personal-token","account":"personal"}',
+		'{"token":"synthetic-work-token","account":"work"}',
+		'{malformed-synthetic-inline-credentials',
+	])('withholds opaque inline credentials %j across roots and hosts', (inline) => {
+		for (const root of ['.grok', '.grok-work']) {
+			const env = { GROK_HOME: path.posix.join(HOME, root), GROK_AUTH: inline };
+			for (const remote of [undefined, { id: 'r1' }, { id: 'r2' }]) {
+				// There must be no shared "inline" bucket, secret suffix or hashed ID.
+				expect(resolveAgentProfile('grok', env, HOME, remote)).toBeNull();
+			}
+			expect(resolveAgentBillingCredential('grok', env)).toBeNull();
+			expect(resolveAgentAccountKey('grok', env, HOME)).toBe(env.GROK_HOME);
+		}
+	});
+
+	it.each([
+		['GROK_MODELS_BASE_URL', 'https://user:synthetic-password@gateway.example/v1'],
+		['GROK_CLI_CHAT_PROXY_BASE_URL', 'https://gateway.example/synthetic-path-secret'],
+		['GROK_XAI_API_BASE_URL', 'https://gateway.example?token=synthetic-query-secret'],
+		['GROK_DEPLOYMENT_KEY', 'synthetic-deployment-key'],
+	])('withholds unobserved billing and account attribution for %s', (key, value) => {
+		const env = { GROK_HOME: path.posix.join(HOME, '.grok-work'), [key]: value };
+		expect(resolveAgentBillingCredential('grok', env)).toBeNull();
+		expect(resolveAgentProfile('grok', env, HOME)).toBeNull();
+		expect(resolveAgentProfile('grok', env, HOME, { id: 'r1' })).toBeNull();
+		expect(resolveAgentAccountKey('grok', env, HOME)).toBe(env.GROK_HOME);
+	});
+
+	it('does not equate a login-capable independent auth file with its state root', () => {
+		const env = {
+			GROK_HOME: path.posix.join(HOME, '.grok-work'),
+			GROK_AUTH_PATH: '/synthetic/other-account/auth.json',
+		};
+		expect(classifyCredentialKind('grok', env).kind).toBe('oauth');
+		expect(resolveAgentBillingCredential('grok', env)).toBeNull();
+		expect(resolveAgentAccountKey('grok', env, HOME)).toBe(env.GROK_HOME);
+		expect(resolveAgentProfile('grok', env, HOME)).toBeNull();
+		expect(resolveAgentProfile('grok', env, HOME, { id: 'r1' })).toBeNull();
+	});
+
+	it.each([
+		'XAI_API_KEY',
+		'GROK_CODE_XAI_API_KEY',
+		'GROK_AUTH',
+		'GROK_AUTH_PATH',
+		'GROK_DEPLOYMENT_KEY',
+		'GROK_MODELS_BASE_URL',
+		'GROK_CLI_CHAT_PROXY_BASE_URL',
+		'GROK_XAI_API_BASE_URL',
+	])('allows an explicitly unset %s to retain the owning state-root profile', (key) => {
+		const selected = { GROK_HOME: path.posix.join(HOME, '.grok-work') };
+		for (const blank of ['', ' \t\n']) {
+			for (const remote of [undefined, { id: 'r1', name: 'build' }]) {
+				expect(resolveAgentProfile('grok', { ...selected, [key]: blank }, HOME, remote)).toEqual(
+					resolveAgentProfile('grok', selected, HOME, remote)
+				);
+			}
+		}
+	});
+
+	it.each([
+		['GROK_DISABLE_API_KEY_AUTH', 'true'],
+		['GROK_FORCE_LOGIN_TEAM_ID', 'synthetic-team'],
+	])('retains state-root grouping when fallback API keys are disabled by %s', (key, value) => {
+		const selected = { GROK_HOME: path.posix.join(HOME, '.grok-work') };
+		const env = { ...selected, XAI_API_KEY: 'synthetic-unused-key', [key]: value };
+		expect(resolveAgentBillingCredential('grok', env)).toBeNull();
+		for (const remote of [undefined, { id: 'r1' }, { id: 'r2' }]) {
+			expect(resolveAgentProfile('grok', env, HOME, remote)).toEqual(
+				resolveAgentProfile('grok', selected, HOME, remote)
+			);
+		}
+	});
+
+	it('keeps established non-Grok billing attribution despite unrelated Grok overrides', () => {
+		const env = {
+			GROK_AUTH: '{malformed-synthetic-inline',
+			XAI_API_KEY: 'synthetic-fallback-key',
+			ANTHROPIC_API_KEY: 'synthetic-claude-abcd',
+			OPENAI_API_KEY: 'synthetic-codex-efgh',
+		};
+		expect(resolveAgentProfile('claude-code', env, HOME, { id: 'r1' })).toMatchObject({
+			key: 'claude-code::api-key:abcd',
+			credential: { kind: 'api-key', id: 'api-key:abcd' },
+			sshRemoteId: null,
+		});
+		expect(resolveAgentProfile('codex', env, HOME)).toMatchObject({
+			key: 'codex::api-key:efgh',
+			credential: { kind: 'api-key', id: 'api-key:efgh' },
+		});
+	});
+
+	it('attributes two accounts separately and normalizes alternate spellings of one root', () => {
+		const personalRoot = path.posix.join(HOME, '.grok');
+		const workRoot = path.posix.join(HOME, '.grok-work');
+		const personal = resolveAgentProfile('grok', {}, HOME);
+		const work = resolveAgentProfile('grok', { GROK_HOME: workRoot }, HOME);
+
+		expect(personal).toMatchObject({
+			key: `grok::${personalRoot}`,
+			accountKey: personalRoot,
+			shortLabel: 'Grok CLI default',
+		});
+		expect(work).toMatchObject({
+			key: `grok::${workRoot}`,
+			accountKey: workRoot,
+			label: 'Grok CLI - work',
+			shortLabel: 'work',
+		});
+		expect(work?.key).not.toBe(personal?.key);
+		expect(resolveAgentProfile('grok', { GROK_HOME: `${workRoot}//` }, HOME)).toEqual(work);
+		expect(parseProviderProfileKey(work!.key)).toEqual({ toolType: 'grok', accountKey: workRoot });
+	});
+
+	it('keeps the same Grok root distinct on the local host and each SSH host', () => {
+		const env = { GROK_HOME: path.posix.join(HOME, '.grok-work') };
+		const local = resolveAgentProfile('grok', env, HOME);
+		const first = resolveAgentProfile('grok', env, HOME, { id: 'r1', name: 'build' });
+		const second = resolveAgentProfile('grok', env, HOME, { id: 'r2', name: 'build' });
+
+		expect(local).toMatchObject({ accountKey: env.GROK_HOME, sshRemoteId: null });
+		expect(first).toMatchObject({
+			accountKey: env.GROK_HOME,
+			sshRemoteId: 'r1',
+			label: 'Grok CLI - work @ build',
+		});
+		expect(second?.sshRemoteId).toBe('r2');
+		expect(new Set([local?.key, first?.key, second?.key]).size).toBe(3);
+	});
+
+	it.each(['', ' \t\n', '\u00a0'])(
+		'treats blank GROK_HOME %j as the default, never an account',
+		(blank) => {
+			expect(resolveAgentAccountKey('grok', { GROK_HOME: blank }, HOME)).toBe(
+				path.posix.join(HOME, '.grok')
+			);
+			expect(resolveAgentProfile('grok', { GROK_HOME: blank }, HOME)).toEqual(
+				resolveAgentProfile('grok', {}, HOME)
+			);
+			expect(resolveAgentProfile('grok', { GROK_HOME: blank }, undefined)).toBeNull();
+		}
+	);
+
+	it('waits for the owning host home only when no Grok root was selected', () => {
+		const remote = { id: 'r1', name: 'build' };
+		expect(resolveAgentProfile('grok', {}, undefined, remote)).toBeNull();
+		expect(
+			resolveAgentProfile(
+				'grok',
+				{ GROK_HOME: path.posix.join('~', '.grok-work') },
+				undefined,
+				remote
+			)
+		).toMatchObject({ accountKey: path.posix.join('~', '.grok-work'), sshRemoteId: 'r1' });
 	});
 });

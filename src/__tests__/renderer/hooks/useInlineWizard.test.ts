@@ -8,6 +8,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useInlineWizard } from '../../../renderer/hooks/batch/useInlineWizard';
+import { hasCapabilityCached } from '../../../renderer/hooks/agent/useAgentCapabilities';
+import * as wizardStats from '../../../renderer/services/wizardStats';
+import { endInlineWizardConversation } from '../../../renderer/services/inlineWizardConversation';
 
 // Mock hasCapabilityCached for wizard support checks
 vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', async () => {
@@ -1088,6 +1091,244 @@ describe('useInlineWizard', () => {
 
 			consoleSpy.mockRestore();
 		});
+	});
+
+	describe('Grok generation ownership', () => {
+		const document = {
+			filename: 'Phase-01.md',
+			content: '# Plan\n\n- [ ] Build it',
+			taskCount: 1,
+			savedPath: '/test/project/.maestro/playbooks/Phase-01.md',
+		};
+
+		beforeEach(() => {
+			vi.spyOn(wizardStats, 'recordWizardDocuments');
+			vi.spyOn(wizardStats, 'setWizardAgentWorking');
+			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({ success: true, files: [] });
+		});
+
+		afterEach(() => vi.restoreAllMocks());
+
+		it.each([
+			['endWizard', 'pending spawn', 'resolve'],
+			['reset', 'pending spawn', 'reject'],
+			['endWizard', 'streaming', 'reject'],
+			['reset', 'streaming', 'resolve'],
+		] as const)('%s aborts only its tab during %s (%s)', async (action, phase, settlement) => {
+			const completions: Array<
+				(value: Awaited<ReturnType<typeof generateInlineDocuments>>) => void
+			> = [];
+			const failures: Array<(error: Error) => void> = [];
+			// An unresolved service models preparation/spawn or a running generation.
+			for (let i = 0; i < 2; i++) {
+				mockGenerateInlineDocuments.mockImplementationOnce(
+					() =>
+						new Promise((resolve, reject) => {
+							completions.push(resolve);
+							failures.push(reject);
+						})
+				);
+			}
+			const { result } = renderHook(() => useInlineWizard());
+			const ssh = { enabled: true, remoteId: 'host-b', workingDirOverride: '/remote/project' };
+			for (const tab of ['a', 'b']) {
+				// Caller-contract coverage only; native Grok wizard capability stays disabled.
+				vi.mocked(hasCapabilityCached).mockReturnValueOnce(true);
+				await act(async () => {
+					await result.current.startWizard(
+						'Build it',
+						undefined,
+						'/test/project',
+						'grok',
+						'Project',
+						`tab-${tab}`,
+						`agent-${tab}`,
+						undefined,
+						tab === 'b' ? ssh : undefined,
+						undefined,
+						{
+							customPath: `/tools/${tab}/grok`,
+							customArgs: '--verbose',
+							customModel: tab === 'a' ? 'grok-code-fast-1' : undefined,
+							customEffort: tab === 'a' ? 'high' : undefined,
+							customEnvVars: { GROK_HOME: `/accounts/${tab}` },
+						}
+					);
+				});
+			}
+			const callbacks = {
+				onStart: vi.fn(),
+				onProgress: vi.fn(),
+				onChunk: vi.fn(),
+				onDocumentComplete: vi.fn(),
+				onComplete: vi.fn(),
+				onError: vi.fn(),
+			};
+			let generationA!: Promise<void>;
+			let generationB!: Promise<void>;
+			act(() => {
+				generationA = result.current.generateDocuments(callbacks, 'tab-a');
+				generationB = result.current.generateDocuments(undefined, 'tab-b');
+			});
+			const [a, b] = mockGenerateInlineDocuments.mock.calls.map(([config]) => config);
+			for (const [config, tab] of [
+				[a, 'a'],
+				[b, 'b'],
+			] as const) {
+				expect(config).toMatchObject({
+					agentType: 'grok',
+					directoryPath: '/test/project',
+					sessionId: `agent-${tab}`,
+					sessionSshRemoteConfig: tab === 'b' ? ssh : undefined,
+					sessionCustomPath: `/tools/${tab}/grok`,
+					sessionCustomArgs: '--verbose',
+					sessionCustomModel: tab === 'a' ? 'grok-code-fast-1' : undefined,
+					sessionCustomEffort: tab === 'a' ? 'high' : undefined,
+					sessionCustomEnvVars: { GROK_HOME: `/accounts/${tab}` },
+				});
+				expect(config.signal).toBeInstanceOf(AbortSignal);
+				expect(config.signal!.aborted).toBe(false);
+			}
+			expect(a.signal).not.toBe(b.signal);
+			if (phase === 'streaming') {
+				act(() => {
+					a.callbacks?.onStart?.();
+					a.callbacks?.onChunk?.('Live preview');
+				});
+				expect(result.current.getStateForTab('tab-a')?.streamingContent).toBe('Live preview');
+			}
+			for (const callback of Object.values(callbacks)) callback.mockClear();
+			const otherTab = result.current.getStateForTab('tab-b');
+			let releaseCleanup!: () => void;
+			vi.mocked(endInlineWizardConversation).mockImplementationOnce(
+				() =>
+					new Promise<void>((resolve) => {
+						releaseCleanup = resolve;
+					})
+			);
+			let ending: Promise<unknown> | undefined;
+			if (action === 'reset') act(() => result.current.selectWizardTab('tab-a'));
+			act(() => {
+				if (action === 'endWizard') ending = result.current.endWizard('tab-a');
+				else result.current.reset();
+				// Abort must happen synchronously, before asynchronous conversation cleanup.
+				expect(a.signal!.aborted).toBe(true);
+			});
+			expect(result.current.getStateForTab('tab-a')).toBeUndefined();
+			expect(result.current.getStateForTab('tab-b')).toBe(otherTab);
+			expect(b.signal!.aborted).toBe(false);
+			const workingCalls = vi.mocked(wizardStats.setWizardAgentWorking).mock.calls.length;
+			await act(async () => {
+				a.callbacks?.onStart?.();
+				a.callbacks?.onProgress?.('1 of 2');
+				a.callbacks?.onChunk?.('Late');
+				a.callbacks?.onDocumentComplete?.(document);
+				a.callbacks?.onComplete?.([document]);
+				a.callbacks?.onError?.('Late provider failure');
+				if (settlement === 'resolve') completions[0]({ success: true, documents: [document] });
+				else failures[0](new Error('Late spawn failure'));
+				await generationA;
+				releaseCleanup();
+				await ending;
+			});
+			for (const callback of Object.values(callbacks)) expect(callback).not.toHaveBeenCalled();
+			expect(result.current.getStateForTab('tab-a')).toBeUndefined();
+			expect(result.current.getStateForTab('tab-b')).toBe(otherTab);
+			expect(wizardStats.recordWizardDocuments).not.toHaveBeenCalled();
+			expect(wizardStats.setWizardAgentWorking).toHaveBeenCalledTimes(workingCalls);
+			await act(async () => {
+				b.callbacks?.onChunk?.('Still running');
+				completions[1]({ success: true, documents: [document] });
+				await generationB;
+			});
+			expect(result.current.getStateForTab('tab-b')).toMatchObject({
+				isGeneratingDocs: false,
+				streamingContent: 'Still running',
+				generatedDocuments: [document],
+			});
+			expect(wizardStats.recordWizardDocuments).toHaveBeenCalledExactlyOnceWith('tab-b', {
+				documents: 1,
+				tasks: 1,
+			});
+			await act(async () => {
+				await result.current.endWizard('tab-b');
+			});
+			// A finished generation has released its controller; ending later cannot abort it.
+			expect(b.signal!.aborted).toBe(false);
+		});
+
+		it.each(['resolve', 'reject'] as const)(
+			'keeps a replacement generation owned when the old one %ss',
+			async (settlement) => {
+				let completeOld!: (value: Awaited<ReturnType<typeof generateInlineDocuments>>) => void;
+				let failOld!: (error: Error) => void;
+				let completeNew!: (value: Awaited<ReturnType<typeof generateInlineDocuments>>) => void;
+				mockGenerateInlineDocuments.mockImplementationOnce(
+					() =>
+						new Promise((resolve, reject) => {
+							completeOld = resolve;
+							failOld = reject;
+						})
+				);
+				mockGenerateInlineDocuments.mockImplementationOnce(
+					() =>
+						new Promise((resolve) => {
+							completeNew = resolve;
+						})
+				);
+				vi.mocked(hasCapabilityCached).mockReturnValueOnce(true);
+				const { result } = renderHook(() => useInlineWizard());
+				await act(async () => {
+					await result.current.startWizard(
+						'Build it',
+						undefined,
+						'/test/project',
+						'grok',
+						'Project',
+						'tab-a'
+					);
+				});
+				const onError = vi.fn();
+				let oldGeneration!: Promise<void>;
+				let newGeneration!: Promise<void>;
+				act(() => {
+					oldGeneration = result.current.generateDocuments({ onError }, 'tab-a');
+				});
+				act(() => {
+					newGeneration = result.current.generateDocuments({ onError }, 'tab-a');
+				});
+				const [old, current] = mockGenerateInlineDocuments.mock.calls.map(([config]) => config);
+				expect(old.signal!.aborted).toBe(true);
+				expect(current.signal!.aborted).toBe(false);
+				await act(async () => {
+					if (settlement === 'resolve') completeOld({ success: true, documents: [document] });
+					else failOld(new Error('Old generation rejected'));
+					await oldGeneration;
+					old.callbacks?.onComplete?.([document]);
+					current.callbacks?.onChunk?.('Replacement preview');
+				});
+				expect(result.current.getStateForTab('tab-a')).toMatchObject({
+					isGeneratingDocs: true,
+					generatedDocuments: [],
+					streamingContent: 'Replacement preview',
+					error: null,
+				});
+				expect(wizardStats.recordWizardDocuments).not.toHaveBeenCalled();
+				expect(wizardStats.setWizardAgentWorking).not.toHaveBeenCalledWith('tab-a', false);
+				await act(async () => {
+					await result.current.endWizard('tab-a');
+				});
+				// The old finally block must not remove the replacement's cancellation handle.
+				expect(current.signal!.aborted).toBe(true);
+				await act(async () => {
+					completeNew({ success: true, documents: [document] });
+					await newGeneration;
+				});
+				expect(result.current.getStateForTab('tab-a')).toBeUndefined();
+				expect(wizardStats.recordWizardDocuments).not.toHaveBeenCalled();
+				expect(onError).not.toHaveBeenCalled();
+			}
+		);
 	});
 
 	describe('generateDocuments', () => {

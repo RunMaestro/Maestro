@@ -26,6 +26,11 @@ interface ProviderUsageComponentProps {
 	onShowAccountAgents?: (accountKey: string) => void;
 }
 
+/**
+ * Only providers with a native plan-quota contract get a view. Grok (and every
+ * other provider) is deliberately absent: its quota is unavailable, which is
+ * shown by having no tab rather than a panel reading zero or unlimited.
+ */
 const PROVIDER_CONFIG: Record<
 	ProviderQuotaUsageViewProps['provider'],
 	{

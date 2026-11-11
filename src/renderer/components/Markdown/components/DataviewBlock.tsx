@@ -16,7 +16,9 @@
  * Auto Run lock) or a virtualized Fast-tier item remounts the block, and the cached
  * result repaints on the first frame instead of flashing the placeholder. A
  * `dataview:changed` event for the result's root re-runs the query (debounced) and
- * keeps the old result on screen until the new one arrives (DV-7).
+ * keeps the old result on screen until the new one arrives (DV-7). The loading
+ * look (ghost rows on a first run, a dimmed result on a refresh, each with a
+ * pill in the top-right corner) is `DataviewLoading`'s.
  *
  * A task checkbox toggles the task's own source line (DV-8): through the surface's
  * own toggle for the note on screen, and `toggleDataviewTaskInFile()` for any
@@ -33,6 +35,8 @@ import React, { useCallback, useMemo } from 'react';
 import type { Theme } from '../../../types';
 import {
 	DataviewSettings,
+	countTaskGroupRows,
+	dataviewTruncationNote,
 	isTaskGroup,
 	reviveDataviewResult,
 	type DataviewQueryResponse,
@@ -48,6 +52,7 @@ import { TaskCheckbox } from './TaskCheckbox';
 import { PrismHighlightedCode } from './PrismCodeBlock';
 import { useDataviewDocument, type DataviewDocumentScope } from './DataviewDocumentContext';
 import { DataviewMarkdown, DataviewValue, DataviewValueProvider } from './DataviewValue';
+import { DataviewRefreshing, DataviewSkeleton } from './DataviewLoading';
 
 export interface DataviewBlockProps {
 	code: string;
@@ -58,9 +63,6 @@ type DataviewBlockData = DataviewQueryResponse<RevivedDataviewResult>;
 
 /** A task as the wire carries it: the task's own serialized fields. */
 type TaskItem = Record<string, Literal>;
-
-/** Height of the loading placeholder, so the document does not jump while a query runs. */
-const PLACEHOLDER_HEIGHT = '2.5em';
 
 export function DataviewBlock({ code, theme }: DataviewBlockProps) {
 	const doc = useDataviewDocument();
@@ -95,7 +97,7 @@ function DataviewQueryView({
 			throw new Error(ipcErrorMessage(error));
 		}
 	}, [agentId, filePath, code]);
-	const { data, error, loading } = useLiveDataviewResult(key, fetchResult);
+	const { data, error, loading, refreshing } = useLiveDataviewResult(key, fetchResult);
 
 	// The Fast tier routes clicks on anchors from its container; result links are
 	// handled here already, so a second handler must not open them again.
@@ -106,26 +108,16 @@ function DataviewQueryView({
 	let body: React.ReactNode;
 	if (data) {
 		body = (
-			<DataviewValueProvider root={data.root} theme={theme}>
-				<DataviewResultView data={data} theme={theme} doc={doc} />
-			</DataviewValueProvider>
+			<DataviewRefreshing theme={theme} refreshing={refreshing}>
+				<DataviewValueProvider root={data.root} theme={theme}>
+					<DataviewResultView data={data} theme={theme} doc={doc} />
+				</DataviewValueProvider>
+			</DataviewRefreshing>
 		);
 	} else if (error && !loading) {
 		body = <DataviewErrorCallout theme={theme} message={error} />;
 	} else {
-		body = (
-			<div
-				data-dataview-placeholder=""
-				aria-busy="true"
-				aria-label="Running Dataview query"
-				style={{
-					height: PLACEHOLDER_HEIGHT,
-					borderRadius: '6px',
-					background: theme.colors.bgActivity,
-					opacity: 0.5,
-				}}
-			/>
-		);
+		body = <DataviewSkeleton theme={theme} ariaLabel="Running Dataview query" />;
 	}
 
 	return (
@@ -157,15 +149,6 @@ function DataviewErrorCallout({ theme, message }: { theme: Theme; message: strin
 	);
 }
 
-/** Leaf rows of a task grouping (tasks, not groups). */
-function countTasks(groups: unknown[]): number {
-	return groups.reduce<number>(
-		(total, entry) =>
-			total + (isTaskGroup<Literal>(entry) ? countTasks(entry.rows as unknown[]) : 1),
-		0
-	);
-}
-
 function DataviewResultView({
 	data,
 	theme,
@@ -191,6 +174,7 @@ function DataviewResultView({
 					theme={theme}
 					count={result.rows.length}
 					type="table"
+					total={result.total}
 					warnings={result.warnings}
 				>
 					<table>
@@ -221,6 +205,7 @@ function DataviewResultView({
 					theme={theme}
 					count={result.items.length}
 					type="list"
+					total={result.total}
 					warnings={result.warnings}
 				>
 					<ul className="dataview dataview-ul">
@@ -236,8 +221,9 @@ function DataviewResultView({
 			return (
 				<ResultFrame
 					theme={theme}
-					count={countTasks(result.groups as unknown[])}
+					count={countTaskGroupRows(result.groups as unknown[])}
 					type="task"
+					total={result.total}
 					warnings={result.warnings}
 				>
 					<TaskGroups groups={result.groups as unknown[]} theme={theme} data={data} doc={doc} />
@@ -246,21 +232,27 @@ function DataviewResultView({
 	}
 }
 
-/** Results with Dataview's empty-result notice, the result count, and any skipped-row warnings. */
+/**
+ * Results with Dataview's empty-result notice, the result count, a note when the result was cut at
+ * `DATAVIEW_MAX_RESULT_ROWS` (`total`), and any skipped-row warnings.
+ */
 function ResultFrame({
 	theme,
 	count,
 	type,
+	total,
 	warnings,
 	children,
 }: {
 	theme: Theme;
 	count: number;
 	type: 'table' | 'list' | 'task';
+	total?: number;
 	warnings: string[];
 	children: React.ReactNode;
 }) {
 	const dim: React.CSSProperties = { color: theme.colors.textDim, fontSize: '0.8em' };
+	const truncationNote = dataviewTruncationNote({ total }, count);
 	return (
 		<>
 			{count === 0 ? (
@@ -272,10 +264,16 @@ function ResultFrame({
 			) : (
 				<>
 					{children}
-					{DataviewSettings.showResultCount && (
-						<div data-dataview-count="" style={dim}>
-							{count} {count === 1 ? 'result' : 'results'}
+					{truncationNote ? (
+						<div data-dataview-truncated="" style={dim}>
+							{truncationNote}
 						</div>
+					) : (
+						DataviewSettings.showResultCount && (
+							<div data-dataview-count="" style={dim}>
+								{count} {count === 1 ? 'result' : 'results'}
+							</div>
+						)
 					)}
 				</>
 			)}
@@ -312,7 +310,7 @@ function TaskGroups({
 							<div style={{ fontWeight: 600, marginTop: '0.5em' }}>
 								<DataviewValue value={entry.key} />{' '}
 								<span style={{ color: theme.colors.textDim, fontSize: '0.8em', fontWeight: 400 }}>
-									{countTasks(rows)}
+									{countTaskGroupRows(rows)}
 								</span>
 							</div>
 							<TaskGroups groups={rows} theme={theme} data={data} doc={doc} />

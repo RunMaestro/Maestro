@@ -21,8 +21,17 @@ import {
 	isExpectedBridgeError,
 	WEB_BRIDGE_STATE_EVENT,
 } from '../../../shared/bridgeError';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
+import { shallow } from 'zustand/shallow';
+import type { GrokCommandDiscoveryResult } from '../../../main/agents/grok-skills';
+import {
+	getGrokCommandScope,
+	hasCurrentGrokCommandBinding,
+	readGrokCommandDiscovery,
+} from '../../slashCommands';
 import { useEventListener } from '../utils/useEventListener';
+import { resolveModelEffort } from '../agent/useAgentModelEffortOptions';
 import type {
 	ToolType,
 	LogEntry,
@@ -53,6 +62,7 @@ import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { getSessionSshRemoteId, isSessionRemote } from '../../utils/sessionHelpers';
 import { parseSynopsis } from '../../../shared/synopsis';
+import { supportsNativeControl } from '../../../shared/maestro-lib/providers/native-control';
 
 let cachedAutorunSynopsisPrompt: string | null = null;
 let wizardHandlersPromptsLoaded = false;
@@ -93,6 +103,8 @@ import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 // ============================================================================
 
 export interface UseWizardHandlersDeps {
+	/** Re-read main-owned provider defaults when completion opens or closes. */
+	slashCommandOpen?: boolean;
 	/** Inline wizard context - the full return value from useInlineWizard */
 	inlineWizardContext: UseInlineWizardReturn;
 	/** Onboarding wizard context - state, completeWizard, clearResumeState, openWizard, restoreState */
@@ -146,6 +158,8 @@ export interface UseWizardHandlersDeps {
 // ============================================================================
 
 export interface UseWizardHandlersReturn {
+	/** Ephemeral metadata for the selected Grok tab, never expandable prompt bodies. */
+	grokCommandDiscovery: GrokCommandDiscoveryResult | null;
 	/** Wrapper for sendInlineWizardMessage that routes thinking chunks to tab state */
 	sendWizardMessageWithThinking: (content: string, images?: string[]) => Promise<void>;
 	/** Handler for /history command - spawns synopsis and saves to history */
@@ -192,6 +206,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		handleAutoRunRefreshRef,
 		setInputValueRef,
 		inputRef,
+		slashCommandOpen,
 	} = deps;
 
 	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
@@ -239,6 +254,85 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 	// --- Onboarding wizard context ---
 	const { state: wizardState, completeWizard, clearResumeState } = wizardContext;
+
+	// Grok receipts belong to one selected conversation and configuration, not the
+	// persisted agentCommands list. Shallow selectors avoid waking App for log deltas.
+	const grokScope = useSessionStore(useShallow((s) => getGrokCommandScope(selectActiveSession(s))));
+	const grokShellEnv = useSettingsStore((s) => (grokScope ? s.shellEnvVars : undefined));
+	const grokConfigOpen = useModalStore((s) =>
+		grokScope ? s.isOpen('settings') || s.isOpen('editAgent') : false
+	);
+	const [grokRefresh, setGrokRefresh] = useState(0);
+	const refreshGrokDiscovery = useCallback(() => setGrokRefresh((revision) => revision + 1), []);
+	const isGrokSelected = !!grokScope;
+	useEventListener('focus', refreshGrokDiscovery, { enabled: isGrokSelected });
+	useEffect(() => {
+		if (!isGrokSelected) return;
+		return window.maestro.settings.onExternalChange(refreshGrokDiscovery);
+	}, [isGrokSelected, refreshGrokDiscovery]);
+	const grokSelection = useMemo(
+		() => ({ grokScope, grokShellEnv, grokConfigOpen, grokRefresh, slashCommandOpen }),
+		[grokScope, grokShellEnv, grokConfigOpen, grokRefresh, slashCommandOpen]
+	);
+	const [grokDiscovery, setGrokDiscovery] = useState<{
+		selection: typeof grokSelection;
+		result: GrokCommandDiscoveryResult;
+	} | null>(null);
+	useEffect(() => {
+		setGrokDiscovery(null);
+		if (!grokSelection.grokScope || grokSelection.grokConfigOpen) return;
+		const currentSession = selectActiveSession(useSessionStore.getState());
+		if (!currentSession) return;
+		const selectedTab = currentSession.aiTabs.find((tab) => tab.id === currentSession.activeTabId);
+		const controller = new AbortController();
+		let expiry: ReturnType<typeof setTimeout> | undefined;
+		const unavailable: GrokCommandDiscoveryResult = {
+			status: 'unavailable',
+			commands: [],
+			reason: 'observation-unavailable',
+		};
+		const stillSelected = () =>
+			!controller.signal.aborted &&
+			shallow(
+				grokSelection.grokScope,
+				getGrokCommandScope(selectActiveSession(useSessionStore.getState()))
+			) &&
+			grokSelection.grokShellEnv === useSettingsStore.getState().shellEnvVars &&
+			!useModalStore.getState().isOpen('settings') &&
+			!useModalStore.getState().isOpen('editAgent');
+		void readGrokCommandDiscovery(currentSession, selectedTab, controller.signal)
+			.then((discovered) => {
+				if (!stillSelected()) return;
+				let result = discovered ?? unavailable;
+				if (result.status === 'discovered') {
+					if (!hasCurrentGrokCommandBinding(result, selectedTab?.agentSessionId))
+						result = unavailable;
+				}
+				setGrokDiscovery({ selection: grokSelection, result });
+				if (result.status === 'discovered' && result.binding) {
+					// Expire once; do not poll a process that might no longer exist.
+					expiry = setTimeout(
+						() => {
+							if (stillSelected())
+								setGrokDiscovery({ selection: grokSelection, result: unavailable });
+						},
+						Math.max(0, result.binding.observedAt + 30_000 - Date.now())
+					);
+				}
+			})
+			.catch(() => {
+				if (!stillSelected()) return;
+				logger.error('[GrokSlashCommands] Selected command discovery failed');
+				setGrokDiscovery({ selection: grokSelection, result: unavailable });
+			});
+		return () => {
+			controller.abort();
+			clearTimeout(expiry);
+		};
+	}, [grokSelection]);
+	// Hide old metadata on the very render that changes scope, before effect cleanup.
+	const grokCommandDiscovery =
+		grokScope && grokDiscovery?.selection === grokSelection ? grokDiscovery.result : null;
 
 	// ========================================================================
 	// Slash command discovery effect
@@ -889,6 +983,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			};
 
 			const currentConductorProfile = useSettingsStore.getState().conductorProfile;
+			// Capture this tab's overrides; the shared launch path resolves provider defaults.
+			const { model, effort } = resolveModelEffort(activeTab, currentSession, {
+				defaultModel: '',
+				defaultEffort: '',
+			});
 
 			startInlineWizard(
 				args || undefined,
@@ -905,7 +1004,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					customPath: currentSession.customPath,
 					customArgs: currentSession.customArgs,
 					customEnvVars: currentSession.customEnvVars,
-					customModel: currentSession.customModel,
+					customModel: model || undefined,
+					customEffort: effort || undefined,
 					claudeTokenSource: getClaudeTokenSourceFields(currentSession),
 				}
 			);
@@ -981,6 +1081,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 		const currentConductorProfile = useSettingsStore.getState().conductorProfile;
 		const addLogToTab = useSessionStore.getState().addLogToTab;
+		// The new tab inherits the agent configuration, not the previous tab's overrides.
+		const { model, effort } = resolveModelEffort(newTab, currentSession, {
+			defaultModel: '',
+			defaultEffort: '',
+		});
 
 		setTimeout(() => {
 			startInlineWizard(
@@ -998,7 +1103,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					customPath: currentSession.customPath,
 					customArgs: currentSession.customArgs,
 					customEnvVars: currentSession.customEnvVars,
-					customModel: currentSession.customModel,
+					customModel: model || undefined,
+					customEffort: effort || undefined,
 					claudeTokenSource: getClaudeTokenSourceFields(currentSession),
 				}
 			);
@@ -1239,6 +1345,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				maestroPMode,
 				maestroPPath,
 				codexTransport,
+				harnessControlMode,
 				sessionSshRemoteConfig,
 				autoRunMode,
 			} = wizardState;
@@ -1383,6 +1490,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				// Only the opt-in is stored; `exec` is the default.
 				codexTransport:
 					selectedAgent === 'codex' && codexTransport === 'app-server' ? 'app-server' : undefined,
+				harnessControlMode:
+					supportsNativeControl(selectedAgent) && harnessControlMode === 'native'
+						? 'native'
+						: undefined,
 				claudeInteractive:
 					selectedAgent === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 			};
@@ -1526,6 +1637,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	}, []);
 
 	return {
+		grokCommandDiscovery,
 		sendWizardMessageWithThinking,
 		handleHistoryCommand,
 		handleSkillsCommand,

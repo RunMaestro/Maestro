@@ -81,7 +81,8 @@ export function prependMergedContext(prompt: string, context?: string): string {
 export function expandCommandArguments(prompt: string, args?: string): string {
 	if (args) {
 		if (/\$ARGUMENTS/.test(prompt)) {
-			return prompt.replace(/\$ARGUMENTS/g, args);
+			// A callback inserts literal text, including JavaScript replacement tokens such as $&.
+			return prompt.replace(/\$ARGUMENTS/g, () => args);
 		}
 		return `${prompt}\n\n${args}`;
 	}

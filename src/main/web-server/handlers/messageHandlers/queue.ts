@@ -9,11 +9,19 @@
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
 import { getDispatchCallbackRegistry } from '../../../dispatch-callbacks';
-import { armDispatchCallback } from './dispatchCallbacks';
+import {
+	armDispatchCallback,
+	readAutoRunCallbackRequest,
+	wantsDispatchCallback,
+} from './dispatchCallbacks';
 import { noteDispatchDelegation } from './agentDelegation';
 import { LOG_CONTEXT } from './shared';
 import { parseMentionRoutingField } from '../../../../shared/crossAgentContext';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+import { dispatchSupervision } from './dispatchSupervision';
+import { generateUUID } from '../../../../shared/uuid';
+import { newTabAdmission } from './tabs';
+import * as pianolaStore from '../../../pianola/pianola-store-main';
 
 /**
  * Handle enqueue_command message - hand a CLI prompt to the renderer's
@@ -60,6 +68,120 @@ export function handleEnqueueCommand(
 		return;
 	}
 
+	const dispatchId = typeof message.dispatchId === 'string' ? message.dispatchId : generateUUID();
+	const coverage = dispatchSupervision(ctx, client, sessionId, dispatchId, requestedTabId);
+	if (coverage.managed) {
+		const routing = parseMentionRoutingField(message.mentionRouting);
+		if (coverage.error || !routing.ok || clientInputMode === 'terminal') {
+			ctx.send(client, {
+				type: 'enqueue_command_result',
+				success: false,
+				sessionId,
+				dispatchId,
+				admission: coverage.receipt ? { ...coverage.receipt, outcome: 'rejected' } : undefined,
+				error:
+					coverage.error ??
+					(!routing.ok ? routing.error : 'Managed queue requires a local AI turn'),
+				requestId: message.requestId,
+			});
+			return;
+		}
+		// A retry without --tab must retain the original binding even after active-tab changes.
+		const targetTabId =
+			requestedTabId ??
+			pianolaStore.readDispatchAdmission(dispatchId)?.targetTabId ??
+			ctx.callbacks.getSessionDetail?.(sessionId)?.activeTabId;
+		if (!targetTabId) {
+			sendErrorResult('DispatchTargetUnavailable');
+			return;
+		}
+		void newTabAdmission(ctx)
+			.runQueue(
+				client,
+				{
+					dispatchId,
+					targetAgentId: sessionId,
+					targetTabId,
+					prompt: command,
+					background,
+					hidden: false,
+					held,
+					images,
+					mentionRouting: routing.routing,
+					callbackIntent: {
+						notifyOnComplete: message.notifyOnComplete,
+						callbackTab: message.callbackTab,
+						callbackTimeout: message.callbackTimeout,
+						callbackPrompt: message.callbackPrompt,
+					},
+				},
+				(tabId) => {
+					const armed = armDispatchCallback(ctx, message, {
+						agentId: sessionId,
+						tabId,
+						prompt: command,
+						isNewTab: false,
+						pendingAdmissionId: dispatchId,
+					});
+					if (armed.error) throw new Error(armed.error);
+					return armed.callbackId;
+				}
+			)
+			.then(({ receipt, callbackId, durable }) => {
+				ctx.send(client, {
+					type: 'enqueue_command_result',
+					success: durable,
+					durable,
+					queuedAccepted: durable,
+					queued: durable,
+					unknown: !durable,
+					sessionId,
+					tabId: receipt.targetTabId,
+					itemId: receipt.queueItemId,
+					dispatchId,
+					admission: receipt,
+					...(callbackId ? { callbackId } : {}),
+					...(!durable
+						? {
+								error:
+									'Queue admission unknown; reconcile with the same dispatchId. Do not resend.',
+							}
+						: {}),
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				ctx.send(client, {
+					type: 'enqueue_command_result',
+					success: false,
+					sessionId,
+					tabId: targetTabId,
+					itemId: dispatchId,
+					dispatchId,
+					unknown:
+						!/Dispatch(Intent|Caller|Target)Mismatch|CallerRunUnavailable|InvalidDispatchId|Pianola/.test(
+							String(error)
+						),
+					admission: coverage.receipt
+						? {
+								...coverage.receipt,
+								targetTabId,
+								queueItemId: dispatchId,
+								outcome:
+									/Dispatch(Intent|Caller|Target)Mismatch|CallerRunUnavailable|InvalidDispatchId|Pianola/.test(
+										String(error)
+									)
+										? 'rejected'
+										: 'unknown',
+							}
+						: undefined,
+					error: error instanceof Error ? error.message : String(error),
+					requestId: message.requestId,
+				});
+			});
+		return;
+	}
+
 	if (!ctx.callbacks.getSessionDetail?.(sessionId)) {
 		sendErrorResult('Session not found');
 		return;
@@ -82,7 +204,9 @@ export function handleEnqueueCommand(
 	// predecessor turn for minutes; the entry stays `pending` until OUR
 	// process spawns, so the predecessor's exit cannot fire it.
 	let enqueueCallbackId: string | undefined;
-	if (typeof message.notifyOnComplete === 'string' && message.notifyOnComplete) {
+	// An Auto Run task's dispatch is tracked the same way, but only with a tab
+	// to correlate on: without one it is handed over untracked, never refused.
+	if (wantsDispatchCallback(message) && (requestedTabId || !readAutoRunCallbackRequest(message))) {
 		if (!requestedTabId) {
 			sendErrorResult('--notify-on-complete requires an explicit target tab');
 			return;
@@ -120,6 +244,17 @@ export function handleEnqueueCommand(
 				type: 'enqueue_command_result',
 				success: result.success,
 				sessionId,
+				...(coverage.receipt
+					? {
+							dispatchId,
+							admission: {
+								...coverage.receipt,
+								targetTabId: result.tabId,
+								queueItemId: result.itemId,
+								outcome: result.success ? (result.queued ? 'queued' : 'accepted') : 'rejected',
+							},
+						}
+					: {}),
 				...(result.success && enqueueCallbackId ? { callbackId: enqueueCallbackId } : {}),
 				...(result.tabId ? { tabId: result.tabId } : {}),
 				...(result.queued !== undefined ? { queued: result.queued } : {}),

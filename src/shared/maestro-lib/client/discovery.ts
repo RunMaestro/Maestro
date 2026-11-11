@@ -48,6 +48,67 @@ export interface CliServerInfo {
 	 * bridge with no window. Read for the host label (`headless pid 812`).
 	 */
 	hostKind?: 'headless';
+	/**
+	 * The Cue lock owner token of the process that wrote this file
+	 * (`cueEngineLockOwnerToken()`). `maestro-cli host` writes it so the CLI
+	 * can tell whether the Cue lock is that host's own engine: a pid cannot,
+	 * since two containers sharing a data directory both run as pid 1. Absent
+	 * from the desktop app and from older hosts, which the CLI reads as "not
+	 * the host's engine".
+	 */
+	cueLockToken?: string;
+}
+
+/**
+ * The live bridge of a host, as `maestro-cli host endpoint --json` prints it. The wire shape of
+ * that verb: the CLI command builds its report from this type and Federation's remote discovery
+ * (`remote-discovery.ts`) parses into it, so the two cannot drift.
+ */
+export interface HostEndpoint {
+	port: number;
+	/** Path token of the bridge WebSocket. Grants full control of the host. */
+	token: string;
+	/** Sent as the `x-maestro-cli-secret` header. Absent from a host that predates it. */
+	cliSecret?: string;
+	/** Version of the host that wrote the discovery file. */
+	version?: string;
+	pid: number;
+}
+
+/**
+ * A bridge a client dials directly instead of reading `cli-server.json`: always on 127.0.0.1, so
+ * `port` is a local port (for a Federation remote, the laptop end of its SSH forward). A
+ * `HostEndpoint` or a `ForwardedHostEndpoint` is one as it stands. `pid` and `version` only label
+ * the host: the pid belongs to the far machine and is never checked here.
+ */
+export interface ExplicitHostEndpoint extends Pick<HostEndpoint, 'port' | 'token' | 'cliSecret'> {
+	pid?: number;
+	version?: string;
+	/** Who serves it, as the discovery file says it. Absent means the desktop app. */
+	hostKind?: CliServerInfo['hostKind'];
+}
+
+/**
+ * Where a client finds an explicit endpoint: the endpoint itself, or a function the client calls
+ * before every connection attempt (a reconnect included), so a host that restarted on a new port
+ * is found again. An SSH forward lease's `ready` is one.
+ */
+export type ExplicitHostEndpointSource =
+	| ExplicitHostEndpoint
+	| (() => ExplicitHostEndpoint | Promise<ExplicitHostEndpoint>);
+
+/**
+ * Whether `endpoint` can be dialed: a TCP port, and a path token of URL-safe characters only, so a
+ * token that came from another machine cannot change the URL it is spliced into.
+ */
+export function isDialableEndpoint(endpoint: ExplicitHostEndpoint): boolean {
+	return (
+		Number.isInteger(endpoint.port) &&
+		endpoint.port > 0 &&
+		endpoint.port <= 65535 &&
+		typeof endpoint.token === 'string' &&
+		/^[\w.~-]+$/.test(endpoint.token)
+	);
 }
 
 /** Maestro's data directory, as every other reader resolves it (`resolveUserDataDir()`). */

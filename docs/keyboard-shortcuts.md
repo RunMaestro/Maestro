@@ -160,6 +160,7 @@ These shortcuts work in AI Terminal mode and affect the current tab:
 | Toggle Read-Only Mode       | `Cmd+R`               | `Ctrl+R`              |
 | Toggle Show Thinking        | `Cmd+Shift+K`         | `Ctrl+Shift+K`        |
 | Toggle Tab Star             | `Cmd+Shift+S`         | `Ctrl+Shift+S`        |
+| Toggle Pinned Messages      | `Ctrl+Cmd+P`          | `Ctrl+Win+P`          |
 | Toggle Tab Unread           | `Cmd+Shift+U`         | `Ctrl+Shift+U`        |
 | Filter Unread Agents        | `Opt+U`               | `Alt+U`               |
 | Filter Unread Tabs          | `Cmd+U`               | `Ctrl+U`              |
@@ -215,6 +216,8 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
 Right Bar instead, switching between the Participants and History panels. The Right
 Bar opens if it was closed.
+
+Inside the **Change Model and Effort** console, `Cmd+R` / `Ctrl+R` re-reads the model list, so a model you just installed shows up without leaving the console. See [Changing a Tab's Model and Effort](./general-usage#changing-a-tabs-model-and-effort).
 
 **Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
 
@@ -351,18 +354,19 @@ When AI command mode proposes a command, the card owns the keyboard until you an
 | Move Run / Cancel  | `Left/Right Arrow` |
 | Take the selection | `Enter`            |
 
-## @ File Mentions (AI Terminal)
+## @ Mentions (AI Terminal & Group Chat)
 
-In AI mode, use `@` to reference files in your prompts:
+Use `@` in AI chat and Group Chat rooms to reference files or mention agents:
 
-| Action               | Key                                |
-| -------------------- | ---------------------------------- |
-| Open File Picker     | Type `@` followed by a search term |
-| Navigate Suggestions | `Up/Down Arrow`                    |
-| Select File          | `Tab` or `Enter`                   |
-| Close Dropdown       | `Esc`                              |
+| Action                    | Key                                                                           |
+| ------------------------- | ----------------------------------------------------------------------------- |
+| Open Mention Picker       | Type `@` followed by a search term                                            |
+| Navigate Suggestions      | `Up/Down Arrow`                                                               |
+| Select Suggestion         | `Tab` or `Enter`                                                              |
+| Complete @agent Reference | `Tab` (picker closed: completes single match, or reopens picker for multiple) |
+| Close Dropdown            | `Esc`                                                                         |
 
-**Example**: Type `@readme` to see matching files, then select to insert the file reference into your prompt. The AI will have context about the referenced file.
+**Example**: Type `@readme` to see matching files, or type `@backend` and press `Tab` to complete the agent mention into your prompt.
 
 ## Navigation & Search
 
@@ -551,6 +555,29 @@ so the selection slides sideways instead of jumping to another branch's tip.
 `Home`/`End` and the page keys also stay on the current branch. Clicking a commit
 message selects it, the same as clicking its dot. The graph is built from every
 branch, so all of this reaches commits the List view does not hold.
+
+## Settings Search
+
+Type in the search box at the top of Settings to find a setting on any tab. You
+can change most results without leaving the search: a single on/off setting
+shows its switch on the result row, and a larger setting opens its full section
+under the row.
+
+| Action                                   | macOS              | Windows/Linux      |
+| ---------------------------------------- | ------------------ | ------------------ |
+| Focus the search box                     | `Cmd+F`            | `Ctrl+F`           |
+| Move from the search box into results    | `Down Arrow`       | `Down Arrow`       |
+| Move between results                     | `Up/Down Arrow`    | `Up/Down Arrow`    |
+| Flip a switch, or open/close its section | `Space`            | `Space`            |
+| Open or close a section                  | `Right/Left Arrow` | `Right/Left Arrow` |
+| Go to the setting on its tab             | `Enter`            | `Enter`            |
+| Back to the search box                   | `Esc`              | `Esc`              |
+
+`Space` only acts on a result when the result has focus, so you can still type a
+space in a search of two or more words. `Enter` in the search box goes to the
+highlighted result. A result with nothing to change in place, such as the theme
+picker, goes to its tab with either key. Typing any letter while a result has
+focus returns you to the search box.
 
 ## Maestro Prompts (Settings)
 

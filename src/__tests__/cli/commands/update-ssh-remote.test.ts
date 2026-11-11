@@ -330,6 +330,42 @@ describe('update-ssh-remote command', () => {
 			});
 		});
 
+		it('stores the opt-out for --federation off, and clears it again for on', () => {
+			updateSshRemote('remote-1', { federation: 'off' });
+			expect(written().federation).toBe(false);
+
+			vi.mocked(writeSshRemotes).mockClear();
+			vi.mocked(readSshRemotes).mockReturnValue([mockRemote({ federation: false })]);
+			updateSshRemote('remote-1', { federation: 'on' });
+			expect(written().federation).toBeUndefined();
+		});
+
+		it('keeps an existing opt-out when --federation is not passed', () => {
+			vi.mocked(readSshRemotes).mockReturnValue([mockRemote({ federation: false })]);
+
+			updateSshRemote('remote-1', { name: 'Renamed' });
+
+			expect(written()).toMatchObject({ name: 'Renamed', federation: false });
+		});
+
+		it('rejects a --federation value that is not on or off', () => {
+			updateSshRemote('remote-1', { federation: 'sometimes' });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--federation'));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('reports federation in JSON: on unless the remote opted out', () => {
+			vi.mocked(readSshRemotes).mockReturnValue([mockRemote()]);
+			updateSshRemote('remote-1', { json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).federation).toBe(true);
+
+			vi.mocked(readSshRemotes).mockReturnValue([mockRemote({ federation: false })]);
+			consoleSpy.mockClear();
+			updateSshRemote('remote-1', { json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).federation).toBe(false);
+		});
+
 		it('reports a failure as JSON when --json is set', () => {
 			vi.mocked(readSshRemotes).mockReturnValue([]);
 

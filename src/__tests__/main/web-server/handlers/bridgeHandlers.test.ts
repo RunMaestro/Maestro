@@ -45,6 +45,8 @@ vi.mock('electron', () => ({
 
 import {
 	broadcastBridgeEvent,
+	broadcastBridgeEventToSessionSubscribers,
+	isBridgeSessionOwner,
 	handleBridgeInvoke,
 	installWebContentsBridgeHook,
 	uninstallWebContentsBridgeHook,
@@ -451,6 +453,38 @@ describe('broadcastBridgeEvent', () => {
 		uninstallWebContentsBridgeHook();
 	});
 
+	it('targets private interactions to session subscribers and checks the same owner scope', () => {
+		const broadcastToAll = vi.fn();
+		const broadcastToSubscribers = vi.fn(() => true);
+		const isClientSubscribed = vi.fn(() => true);
+		installWebContentsBridgeHook({
+			broadcastToAll,
+			broadcastToSubscribers,
+			isClientSubscribed,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+		expect(
+			broadcastBridgeEventToSessionSubscribers(
+				'process:harness-interaction-request',
+				[{ requestId: 'request-a' }],
+				'agent-a'
+			)
+		).toBe(true);
+		expect(broadcastToSubscribers).toHaveBeenCalledWith(
+			'agent-a',
+			expect.objectContaining({
+				type: 'bridge.event',
+				channel: 'process:harness-interaction-request',
+			})
+		);
+		expect(isBridgeSessionOwner('browser-a', 'agent-a')).toBe(true);
+		expect(isClientSubscribed).toHaveBeenCalledWith('browser-a', 'agent-a');
+		expect(broadcastToAll).not.toHaveBeenCalled();
+
+		uninstallWebContentsBridgeHook();
+		expect(isBridgeSessionOwner('browser-a', 'agent-a')).toBe(false);
+	});
+
 	it('never fans out a denied channel (Computer History status push)', () => {
 		const broadcastToAll = vi.fn();
 		installWebContentsBridgeHook({
@@ -459,6 +493,18 @@ describe('broadcastBridgeEvent', () => {
 
 		broadcastBridgeEvent('computerHistory:statusChanged', [{ state: 'recording' }]);
 		expect(broadcastToAll).not.toHaveBeenCalled();
+
+		uninstallWebContentsBridgeHook();
+	});
+
+	it('fans out notification:historyChanged so a browser inbox follows the host', () => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+		broadcastBridgeEvent('notification:historyChanged', [{ success: true, revision: 1 }]);
+		expect(broadcastToAll).toHaveBeenCalledTimes(1);
 
 		uninstallWebContentsBridgeHook();
 	});
@@ -670,6 +716,25 @@ describe('handleBridgeInvoke denied channels', () => {
 			result: '/opt/maestro-run',
 		});
 	});
+
+	// #1862: a browser claims and releases its own Auto Run starts, and marks its
+	// inbox read, through these. Refusing the claim aborted every browser start.
+	// Orphan reclaim stays desktop-owned (see the ownership test above).
+	it.each(['web:claimAutoRunStart', 'web:releaseAutoRunStartClaim', 'notification:changeHistory'])(
+		'answers %s, which a browser client calls on its own',
+		async (channel) => {
+			const handler = vi.fn(async () => 'ok');
+			invokeHandlers.set(channel, handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient(),
+				{ type: 'bridge.invoke', requestId: 13, channel, args: ['agent-1'] },
+				send
+			);
+			expect(handler).toHaveBeenCalledTimes(1);
+			expect(send.mock.calls[0][1]).toMatchObject({ requestId: 13, ok: true, result: 'ok' });
+		}
+	);
 
 	it('refuses a denied send-style channel too', async () => {
 		const listener = vi.fn();
@@ -939,5 +1004,42 @@ describe('Dataview over the bridge', () => {
 	it('refuses browser writes to the DataviewJS settings', () => {
 		expect(isRemoteSettingWritable('dataviewJsEnabled')).toBe(false);
 		expect(isRemoteSettingWritable('dataviewJsTrustedRoots')).toBe(false);
+	});
+});
+
+describe('Pianola memory over the bridge', () => {
+	it('allows CLI memory requests to reach the desktop IPC handler', async () => {
+		const status = { config: { enabled: false }, progress: {} };
+		const handler = vi.fn(async () => status);
+		invokeHandlers.set('pianola:memory', handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{
+				type: 'bridge.invoke',
+				requestId: 22,
+				channel: 'pianola:memory',
+				args: [{ action: 'status' }],
+			},
+			send
+		);
+		expect(handler).toHaveBeenCalledOnce();
+		expect(send.mock.calls[0][1]).toMatchObject({ requestId: 22, ok: true, result: status });
+	});
+
+	it('allows the portfolio read and recovery channels', () => {
+		for (const channel of [
+			'pianola:get-programs',
+			'pianola:get-asks',
+			'pianola:get-brief',
+			'pianola:supervise-program',
+			'pianola:set-program-status',
+			'pianola:resolve-ask',
+			'pianola:dismiss-ask',
+			'pianola:revise-plan-task',
+			'pianola:skip-plan-task',
+		]) {
+			expect(isRemoteMethodAllowed(channel)).toBe(true);
+		}
 	});
 });

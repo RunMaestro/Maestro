@@ -260,6 +260,35 @@ describe('restoreSession - Migration logic', () => {
 		expect(restored!.fileTreeAutoRefreshInterval).toBe(180);
 	});
 
+	it('drops persisted file-tree scan state so the Files panel reloads', async () => {
+		// Regression: older builds persisted fileTreeLoadedCap beside the stripped
+		// (empty) tree. The auto-loader read the cap as "already loaded" and the
+		// Files panel showed "No files found" until a manual refresh.
+		const session = createMockSession({
+			fileTree: [],
+			fileTreeLoadedCap: 250_000,
+			fileTreeTruncated: true,
+			fileTreeStats: { fileCount: 10, folderCount: 2, totalSize: 100 },
+			fileTreeLoading: true,
+			fileTreeError: 'stale',
+			fileTreeRetryAt: Date.now() + 20_000,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.fileTree).toEqual([]);
+		expect(restored!.fileTreeLoadedCap).toBeUndefined();
+		expect(restored!.fileTreeTruncated).toBeUndefined();
+		expect(restored!.fileTreeStats).toBeUndefined();
+		expect(restored!.fileTreeLoading).toBe(false);
+		expect(restored!.fileTreeError).toBeUndefined();
+		expect(restored!.fileTreeRetryAt).toBeUndefined();
+	});
+
 	it('backfills createdAt from the earliest tab/log/workLog timestamp when missing', async () => {
 		const oldestTab = 1_700_000_000_000;
 		const oldestLog = 1_690_000_000_000; // older than the tab
@@ -2012,6 +2041,153 @@ describe('Session & Group loading effect', () => {
 		const current = useSessionStore.getState().sessions[0];
 		expect(current.aiTabs[0].logs).toEqual(canonical);
 		expect(current.shellLogs).toEqual(canonical);
+	});
+
+	it('coalesces repeated process-probe recovery requests while the host read is stalled', async () => {
+		runtime.web = true;
+		const original = createMockSession({ id: 'stalled-host-agent' });
+		mockGetBootstrap.mockResolvedValue([original]);
+		const getActiveProcesses = vi.fn().mockResolvedValue([]);
+		(window.maestro as any).process = { getActiveProcesses };
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+		expect(getActiveProcesses).toHaveBeenCalledTimes(1);
+		getActiveProcesses.mockClear();
+		mockGetBootstrap.mockClear();
+		let resolveProcesses!: (processes: []) => void;
+		const stalled = new Promise<[]>((resolve) => {
+			resolveProcesses = resolve;
+		});
+		getActiveProcesses
+			.mockReturnValueOnce(stalled)
+			.mockResolvedValueOnce([
+				{ sessionId: 'stalled-host-agent-ai-tab-1', pid: 456, isTerminal: false, startTime: 20 },
+			]);
+		try {
+			await act(async () => {
+				// A failed submit probe raises this same event. Repeated sends must
+				// not multiply whole-host reads while an earlier one is still waiting.
+				for (let request = 0; request < 12; request++)
+					window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+			});
+			expect(getActiveProcesses).toHaveBeenCalledTimes(1);
+			expect(mockGetBootstrap).not.toHaveBeenCalled();
+		} finally {
+			await act(async () => resolveProcesses([]));
+		}
+		// A burst requests one follow-up after the first pass, including its
+		// runtime refresh, rather than losing the newest host process state.
+		expect(getActiveProcesses).toHaveBeenCalledTimes(2);
+		expect(mockGetBootstrap).toHaveBeenCalledTimes(2);
+		expect(useSessionStore.getState().sessions[0]).toMatchObject({ state: 'busy', aiPid: 456 });
+	});
+
+	it('recovers a request arriving between loop completion and promise cleanup', async () => {
+		runtime.web = true;
+		const original = createMockSession({ id: 'microtask-agent' });
+		mockGetBootstrap.mockResolvedValue([original]);
+		const getActiveProcesses = vi.fn().mockResolvedValue([]);
+		(window.maestro as any).process = { getActiveProcesses };
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+		getActiveProcesses.mockClear();
+		mockGetBootstrap.mockClear();
+		let resolveRuntime!: (sessions: Session[]) => void;
+		mockGetBootstrap.mockReturnValueOnce(
+			new Promise<Session[]>((resolve) => {
+				resolveRuntime = resolve;
+			})
+		);
+		getActiveProcesses
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce([
+				{ sessionId: 'microtask-agent-ai-tab-1', pid: 789, isTerminal: false, startTime: 30 },
+			]);
+		await act(async () => window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT)));
+		expect(mockGetBootstrap).toHaveBeenCalledTimes(1);
+		await act(async () => {
+			resolveRuntime([original]);
+			// The first tick completes refreshWebRuntime; the second follows the
+			// reconciliation loop's completion, before chained catch/finally run.
+			await Promise.resolve();
+			await Promise.resolve();
+			window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+		});
+		expect(getActiveProcesses).toHaveBeenCalledTimes(2);
+		expect(useSessionStore.getState().sessions[0]).toMatchObject({ state: 'busy', aiPid: 789 });
+	});
+
+	it('does not apply a stalled process reconciliation after the hook unmounts', async () => {
+		runtime.web = true;
+		const original = createMockSession({ id: 'unmounted-agent' });
+		mockGetBootstrap.mockResolvedValue([original]);
+		const getActiveProcesses = vi.fn().mockResolvedValue([]);
+		(window.maestro as any).process = { getActiveProcesses };
+		const { unmount } = renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+		let resolveProcesses!: (processes: unknown[]) => void;
+		getActiveProcesses.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveProcesses = resolve;
+				})
+		);
+		mockGetBootstrap.mockClear();
+		await act(async () => window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT)));
+		unmount();
+		await act(async () =>
+			resolveProcesses([
+				{ sessionId: 'unmounted-agent-ai-tab-1', pid: 123, isTerminal: false, startTime: 10 },
+			])
+		);
+		expect(useSessionStore.getState().sessions[0].state).toBe('idle');
+		expect(mockGetBootstrap).not.toHaveBeenCalled();
+	});
+
+	it('does not overwrite authoritative recovery with an older stalled process reconciliation', async () => {
+		runtime.web = true;
+		const original = createMockSession({ id: 'recovered-agent' });
+		mockGetBootstrap.mockResolvedValue([original]);
+		const getActiveProcesses = vi.fn().mockResolvedValue([]);
+		(window.maestro as any).process = { getActiveProcesses };
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+		let resolveProcesses!: (processes: unknown[]) => void;
+		getActiveProcesses.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveProcesses = resolve;
+				})
+		);
+		await act(async () => window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT)));
+		const host = { ...original, name: 'New host state', state: 'idle' as const };
+		mockGetBootstrap.mockResolvedValue([host]);
+		const work: Promise<void>[] = [];
+		try {
+			await act(async () => {
+				window.dispatchEvent(
+					new CustomEvent(WEB_BRIDGE_RECONCILE_EVENT, {
+						detail: {
+							authoritative: true,
+							signal: new AbortController().signal,
+							waitUntil: (promise: Promise<void>) => work.push(promise),
+						},
+					})
+				);
+				await Promise.all(work);
+			});
+			expect(useSessionStore.getState().sessions[0].name).toBe('New host state');
+			mockGetBootstrap.mockClear();
+			await act(async () =>
+				resolveProcesses([
+					{ sessionId: 'recovered-agent-ai-tab-1', pid: 123, isTerminal: false, startTime: 10 },
+				])
+			);
+			expect(useSessionStore.getState().sessions[0].state).toBe('idle');
+			expect(mockGetBootstrap).not.toHaveBeenCalled();
+		} finally {
+			resolveProcesses([]);
+		}
 	});
 
 	it('reconciles completed background conversations and agents without visiting them', async () => {

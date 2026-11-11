@@ -8,6 +8,7 @@ import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { isImeComposing } from '../../utils/ime';
 
 interface BranchSwitcherDropdownProps {
 	cwd: string;
@@ -160,6 +161,7 @@ export function BranchSwitcherDropdown({
 			e.preventDefault();
 			setHighlight((h) => Math.max(h - 1, 0));
 		} else if (e.key === 'Enter') {
+			if (isImeComposing(e)) return;
 			e.preventDefault();
 			const target = filtered[highlight];
 			if (target) doSwitch(target);

@@ -58,3 +58,20 @@ export function stripEmbeddedSystemPrompt(text: string): string {
 export function hasEmbeddedSystemPrompt(text: string): boolean {
 	return !!text && text.indexOf(EMBEDDED_SYSTEM_PROMPT_SEPARATOR) > 0;
 }
+
+// This stable phrase also identifies historical, user-customized Auto Run synopsis prompts.
+const SYNOPSIS_PROMPT_SOURCE = String.raw`\S+\s+a\s+brief\s+synopsis\s+of\s+what\s+you\s+just\s+accomplished`;
+const SYNOPSIS_PROMPT_PATTERN = new RegExp(`^\\s*${SYNOPSIS_PROMPT_SOURCE}`, 'i');
+const HOUSEKEEPING_PROMPT_PATTERN = new RegExp(
+	String.raw`^\s*(?:<file\b[^>]*\bname=["'][^"']*maestro-prompt-[^"']*["'][^>]*>\s*)?(?:${SYNOPSIS_PROMPT_SOURCE}|Generate\s+a\s+2-4\s+word\s+tab\s+name\s+for\s+this\s+coding\s+task)`,
+	'i'
+);
+
+export function isSynopsisPrompt(text: string): boolean {
+	return SYNOPSIS_PROMPT_PATTERN.test(text);
+}
+
+/** Host bookkeeping requests are not statements authored by the person using the agent. */
+export function isHousekeepingPrompt(text: string): boolean {
+	return HOUSEKEEPING_PROMPT_PATTERN.test(stripEmbeddedSystemPrompt(text));
+}

@@ -9,6 +9,7 @@
 
 import { ipcRenderer } from 'electron';
 import type { PlaybookStatus } from '../../shared/types';
+import { AUTORUN_DELEGATION_CHANNEL } from '../../shared/autoRunDelegation';
 
 /**
  * Playbook document configuration
@@ -157,6 +158,18 @@ export function createAutorunApi() {
 			) => handler(data);
 			ipcRenderer.on('autorun:statusChanged', wrappedHandler);
 			return () => ipcRenderer.removeListener('autorun:statusChanged', wrappedHandler);
+		},
+
+		/**
+		 * Lifecycle of work an Auto Run task handed to another agent with
+		 * `maestro-cli dispatch`. Broadcast to every client; the one whose run loop
+		 * owns the event's `autoRunId` acts on it. The payload is untrusted over
+		 * the bridge, so callers narrow it with `parseAutoRunDelegationEvent`.
+		 */
+		onDelegation: (handler: (event: unknown) => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: unknown) => handler(data);
+			ipcRenderer.on(AUTORUN_DELEGATION_CHANNEL, wrappedHandler);
+			return () => ipcRenderer.removeListener(AUTORUN_DELEGATION_CHANNEL, wrappedHandler);
 		},
 	};
 }

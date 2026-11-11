@@ -362,6 +362,19 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						// SynopsisData.sessionConfig has no effort field.
 						const runModelOverride =
 							deps.getBatchStateRef.current?.(actualSessionId)?.runModelOverride;
+						// Without a run override, resume on the model this tab's turn was
+						// codified with at send (`turnModel`, which is the tab override
+						// falling back to the agent's). The synopsis resumes the SAME
+						// provider session, so a different model writes a model switch into
+						// that thread: Codex then warns "This session was recorded with model
+						// X but is resuming with Y" on the next real turn, and both turns
+						// read the whole transcript cold. An undefined `turnModel` means the
+						// provider default ran, so it is passed through as-is. A turn from a
+						// provider the agent has since left keeps the agent's model.
+						const turnModel =
+							completedTab?.turnProvider === currentSession.toolType
+								? completedTab.turnModel
+								: currentSession.customModel;
 						synopsisData = {
 							sessionId: actualSessionId,
 							cwd: currentSession.cwd,
@@ -379,7 +392,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								customPath: currentSession.customPath,
 								customArgs: currentSession.customArgs,
 								customEnvVars: currentSession.customEnvVars,
-								customModel: runModelOverride ?? currentSession.customModel,
+								customModel: runModelOverride ?? turnModel,
 								customContextWindow: currentSession.customContextWindow,
 								// Carry the agent's Claude token source into the synopsis spawn so
 								// it resolves the same TUI/Dynamic/API mode as a normal turn.
@@ -476,7 +489,10 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						return {
 							...s,
 							orphanedThinkingTabs: updatedOrphans,
-							state: anyAiTabStillBusy ? s.state : ('idle' as SessionState),
+							state:
+								anyAiTabStillBusy || (s.state === 'error' && s.agentError)
+									? s.state
+									: ('idle' as SessionState),
 							busySource: anyAiTabStillBusy ? s.busySource : undefined,
 							thinkingStartTime: anyAiTabStillBusy ? s.thinkingStartTime : undefined,
 						};
@@ -535,12 +551,16 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 
 					// Nothing to dispatch - retire the orphan and recompute thinking state.
 					const anyAiTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
-					const stillThinking = anyAiTabStillBusy || orphansWithoutExited.length > 0;
+					const stillThinking =
+						anyAiTabStillBusy || orphansWithoutExited.some((tab) => tab.state === 'busy');
 					return {
 						...s,
 						orphanedThinkingTabs:
 							orphansWithoutExited.length > 0 ? orphansWithoutExited : undefined,
-						state: stillThinking ? s.state : ('idle' as SessionState),
+						state:
+							stillThinking || (s.state === 'error' && s.agentError)
+								? s.state
+								: ('idle' as SessionState),
 						busySource: stillThinking ? s.busySource : undefined,
 						thinkingStartTime: stillThinking ? s.thinkingStartTime : undefined,
 					};

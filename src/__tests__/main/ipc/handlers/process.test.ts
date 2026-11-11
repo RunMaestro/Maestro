@@ -1,3 +1,4 @@
+import type { ProcessManager } from '../../../../main/process-manager/ProcessManager';
 import { nodeSqliteBetterSqlite3Mock } from '../../../helpers/nodeSqlite';
 vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
 import { fakeAnchor } from '../../../helpers/mockAnchor';
@@ -7,6 +8,8 @@ import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { createInteractiveReplayController } from '../../../../main/agents/claude-interactive-replay';
 import type { ProcessConfig } from '../../../../main/process-manager/types';
+import { hostCallerRuns } from '../../../../main/agent-run/caller-identity';
+import { CALLER_RUN_PROOF_FILE_ENV_VAR } from '../../../../shared/agentDelegation';
 const writerGate = vi.hoisted(() => ({
 	enabled: false,
 	afterAcquire: undefined as ((processId: string) => void) | undefined,
@@ -63,8 +66,19 @@ import {
 
 import { trackHeadlessAgentActivity } from '../../../../main/utils/headless-agent-activity';
 import * as os from 'os';
+import * as fsp from 'fs/promises';
+import { observePathRemote, type RemoteGrokLaunchIdentity } from '../../../../main/utils/remote-fs';
+import { buildSshCommandWithStdin } from '../../../../main/utils/ssh-command-builder';
+import { applyAgentConfigOverrides } from '../../../../shared/maestro-lib/launch/agent-args';
+import { nativeAccountRef } from '../../../../shared/agentAccountDir';
+import { fingerprintGrokSpawnSelection } from '../../../../shared/grokSpawnSelection';
+import { sha256Hex } from '../../../../shared/maestro-lib/grok/host-seams';
+import type { SpawnProcessConfig } from '../../../../main/ipc/handlers/process/spawn-types';
+import type { SshRemoteConfig } from '../../../../shared/types';
+import type { ProviderSwitchTab } from '../../../../shared/maestro-lib/agents/providerSwap';
+import type { SpawnResult } from '../../../../main/process-manager/types';
 import * as path from 'path';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, assert, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
 import {
 	registerProcessHandlers,
@@ -111,18 +125,23 @@ vi.mock('../../../../shared/maestro-lib/launch/path-prober', () => ({
 	checkCustomPath: vi.fn(async (customPath: string) => ({ exists: true, path: customPath })),
 }));
 
-// Mock the agent-args utilities
-vi.mock('../../../../shared/maestro-lib/launch/agent-args', () => ({
-	buildAgentArgs: vi.fn((agent, opts) => opts.baseArgs || []),
-	applyAgentConfigOverrides: vi.fn((agent, args, opts) => ({
-		args,
-		modelSource: 'none' as const,
-		customArgsSource: 'none' as const,
-		customEnvSource: 'none' as const,
-		effectiveCustomEnvVars: undefined,
-	})),
-	getContextWindowValue: vi.fn(() => 0),
-}));
+// Keep real Grok launch validation while mocking the argument builders.
+vi.mock('../../../../shared/maestro-lib/launch/agent-args', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../shared/maestro-lib/launch/agent-args')>();
+	return {
+		...actual,
+		buildAgentArgs: vi.fn<typeof actual.buildAgentArgs>((_agent, opts) => opts.baseArgs || []),
+		applyAgentConfigOverrides: vi.fn<typeof actual.applyAgentConfigOverrides>((_agent, args) => ({
+			args,
+			modelSource: 'default',
+			customArgsSource: 'none',
+			customEnvSource: 'none',
+			effectiveCustomEnvVars: undefined,
+		})),
+		getContextWindowValue: vi.fn(() => 0),
+	};
+});
 
 // Mock node-pty (required for process-manager but not directly used in these tests)
 vi.mock('node-pty', () => ({
@@ -305,7 +324,15 @@ vi.mock('../../../../main/agents/omp-model-catalog', async () => {
 // Mock fs/promises so the new temp-file tests can assert on writeFile/unlink
 // without touching the real filesystem. Other tests in this file don't use
 // fs/promises, so the module-level mock is safe.
+vi.mock('../../../../main/utils/remote-fs', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/utils/remote-fs')>()),
+	observePathRemote: vi.fn(),
+}));
+
 vi.mock('fs/promises', () => ({
+	realpath: vi.fn(),
+	stat: vi.fn(),
+	readFile: vi.fn(),
 	writeFile: vi.fn().mockResolvedValue(undefined),
 	unlink: vi.fn().mockResolvedValue(undefined),
 }));
@@ -352,9 +379,9 @@ vi.mock('../../../../main/prompt-manager', () => ({
 }));
 
 describe('process IPC handlers', () => {
-	let handlers: Map<string, Function>;
+	let handlers: Map<string, (...args: any[]) => any>;
 	let mockProcessManager: {
-		spawn: ReturnType<typeof vi.fn>;
+		spawn: ReturnType<typeof vi.fn<(config: ProcessConfig) => SpawnResult>>;
 		write: ReturnType<typeof vi.fn>;
 		interrupt: ReturnType<typeof vi.fn>;
 		kill: ReturnType<typeof vi.fn>;
@@ -365,6 +392,7 @@ describe('process IPC handlers', () => {
 		off: ReturnType<typeof vi.fn>;
 		runCommand: ReturnType<typeof vi.fn>;
 		spawnTerminalTab: ReturnType<typeof vi.fn>;
+		spawnChecked: ReturnType<typeof vi.fn>;
 	};
 	let mockAgentDetector: {
 		getAgent: ReturnType<typeof vi.fn>;
@@ -395,7 +423,7 @@ describe('process IPC handlers', () => {
 
 		// Create mock process manager
 		mockProcessManager = {
-			spawn: vi.fn(),
+			spawn: vi.fn<(config: ProcessConfig) => SpawnResult>(),
 			write: vi.fn(),
 			interrupt: vi.fn(),
 			kill: vi.fn(),
@@ -406,6 +434,15 @@ describe('process IPC handlers', () => {
 			off: vi.fn(),
 			runCommand: vi.fn(),
 			spawnTerminalTab: vi.fn(),
+			// Grok spawns pass the handler's launch fence (see ProcessManager.spawnChecked).
+			spawnChecked: vi.fn(
+				async (config: ProcessConfig, options?: Parameters<ProcessManager['spawnChecked']>[1]) => {
+					const error = await options?.beforeSpawn?.();
+					if (error) return { success: false, pid: 0, error };
+					options?.assertSpawnAllowed?.();
+					return mockProcessManager.spawn(config);
+				}
+			),
 		};
 
 		// Create mock agent detector
@@ -474,6 +511,7 @@ describe('process IPC handlers', () => {
 				'process:steer',
 				'process:broadcast-user-input',
 				'process:interrupt',
+				'process:closeAgent',
 				'process:kill',
 				'process:resize',
 				'process:getActiveProcesses',
@@ -484,6 +522,8 @@ describe('process IPC handlers', () => {
 				'process:runCommand',
 				'permission:respond',
 				'process:cancelCommand',
+				'harnessControl:listPending',
+				'harnessControl:respond',
 			];
 
 			for (const channel of expectedChannels) {
@@ -495,15 +535,20 @@ describe('process IPC handlers', () => {
 	});
 
 	describe('process:getPendingPermissions', () => {
-		it('returns only authoritative pending process IDs and a version', async () => {
+		it('returns authoritative pending process and request IDs with a version', async () => {
 			const spawn = registerSpawn({ sessionId: 'agent-ai-tab', tabId: 'tab' });
 			try {
 				const pending = createPending('process-snapshot', spawn.token);
 				const snapshot = await handlers.get('process:getPendingPermissions')!({});
-				expect(snapshot).toEqual({ version: expect.any(Number), processIds: ['agent-ai-tab'] });
+				expect(snapshot).toEqual({
+					version: expect.any(Number),
+					processIds: ['agent-ai-tab'],
+					requestIds: ['process-snapshot'],
+				});
 				resolvePending('process-snapshot', { behavior: 'allow' });
 				await pending;
 				expect((await handlers.get('process:getPendingPermissions')!({})).processIds).toEqual([]);
+				expect((await handlers.get('process:getPendingPermissions')!({})).requestIds).toEqual([]);
 			} finally {
 				spawn.cleanup();
 			}
@@ -551,6 +596,104 @@ describe('process IPC handlers', () => {
 	});
 
 	describe('process:spawn', () => {
+		it.each([
+			'foreign-window',
+			'web-bridge',
+			'wrong-marker',
+			'payload',
+			'model',
+			'conversation',
+			'valid',
+		] as const)(
+			'checks owning desktop and exact queue intent before host release (%s)',
+			async (mode) => {
+				const item = {
+					id: 'dispatch',
+					tabId: 'tab',
+					type: 'message',
+					text: 'Pinned prompt',
+					pendingAdmissionId: 'dispatch',
+					turnSettings: { model: 'pinned-model', effort: 'high' },
+				};
+				const agent = {
+					id: 'queue-agent',
+					toolType: 'claude-code',
+					cwd: '/project',
+					aiTabs: [{ id: 'tab', agentSessionId: 'conversation', permissionMode: 'standard' }],
+					executionQueue: [item],
+				};
+				mockSessionsStore.get.mockImplementation((key, fallback) =>
+					key === 'sessions' ? [agent] : fallback
+				);
+				deps.getWindowForSession = () => ({ webContents: { id: 7 } }) as never;
+				const prepare = vi.fn().mockRejectedValue(new Error('ReachedHostRelease'));
+				deps.getWebServer = () => ({ prepareQueueSpawnFromMain: prepare }) as never;
+				const config = {
+					sessionId: 'queue-agent-ai-tab',
+					toolType: 'claude-code',
+					cwd: '/project',
+					command: 'claude',
+					args: [],
+					pianolaDispatchId: mode === 'wrong-marker' ? 'foreign' : 'dispatch',
+					pianolaQueueItemId: 'dispatch',
+					agentSessionId: mode === 'conversation' ? 'other' : 'conversation',
+					prompt: mode === 'payload' ? 'Changed prompt' : item.text,
+					sessionCustomModel: mode === 'model' ? 'other-model' : 'pinned-model',
+					sessionCustomEffort: 'high',
+					readOnlyMode: false,
+					permissionMode: 'standard',
+				};
+				const event =
+					mode === 'web-bridge'
+						? { clientId: 'web' }
+						: { sender: { id: mode === 'foreign-window' ? 8 : 7, isDestroyed: () => false } };
+				await expect(handlers.get('process:spawn')!(event, config)).rejects.toThrow(
+					mode === 'valid' ? 'ReachedHostRelease' : /Dispatch/
+				);
+				expect(prepare).toHaveBeenCalledTimes(mode === 'valid' ? 1 : 0);
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			}
+		);
+
+		it('refuses every agent turn of a lifted agent with its peer:agentId pointer, but not a shell', async () => {
+			const lifted = {
+				id: 'lifted-agent',
+				name: 'Lifted',
+				toolType: 'claude-code',
+				cwd: '/project',
+				aiTabs: [{ id: 'tab' }],
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			};
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? [lifted] : fallback
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				path: '/usr/bin/claude',
+				requiresPty: false,
+			});
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+			const spawn = (sessionId: string, toolType: string) =>
+				handlers.get('process:spawn')!(
+					{},
+					{ sessionId, toolType, cwd: '/project', command: 'claude', args: [] }
+				);
+
+			await expect(spawn('lifted-agent-ai-tab', 'claude-code')).rejects.toThrow(
+				'Send to build-box:host-1 instead.'
+			);
+			await expect(spawn('lifted-agent-batch-1', 'claude-code')).rejects.toThrow(
+				'build-box:host-1'
+			);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+
+			// A shell tab is not a turn: it is never refused for the lift.
+			const shell = await spawn('lifted-agent-terminal-1', 'terminal').catch(
+				(error: Error) => error
+			);
+			expect(shell instanceof Error ? shell.message : '').not.toContain('build-box');
+		});
+
 		it('binds an announced first desktop provider id before a CLI resume can start', async () => {
 			writerGate.enabled = true;
 			const events = new EventEmitter();
@@ -1359,7 +1502,12 @@ describe('process IPC handlers', () => {
 		 * username into the agent's environment.
 		 */
 		describe('Web Login turn attribution', () => {
+			beforeEach(() => {
+				vi.stubEnv('MAESTRO_QUERY_USER', undefined);
+			});
+
 			afterEach(() => {
+				vi.unstubAllEnvs();
 				resetTurnActors();
 			});
 
@@ -1913,6 +2061,14 @@ describe('process IPC handlers', () => {
 						},
 					});
 				deps.interactiveReplayController = replay;
+				const callerProof = vi
+					.spyOn(hostCallerRuns, 'issue')
+					.mockImplementation((_binding, authority) => ({
+						runTokenFile: '/private/replay-source-proof',
+						signal: authority.signal,
+						assertActive: authority.assertActive,
+						dispose: vi.fn(),
+					}));
 				const releases: Array<() => void> = [];
 				let pending: Promise<void> | undefined;
 				let rotated: Promise<void> | undefined;
@@ -1931,6 +2087,9 @@ describe('process IPC handlers', () => {
 						}
 					);
 					expect(replay.hasInteractiveReplay(processId)).toBe(true);
+					expect(
+						mockProcessManager.spawn.mock.calls[0][0].customEnvVars?.[CALLER_RUN_PROOF_FILE_ENV_VAR]
+					).toBe('/private/replay-source-proof');
 					owner.aiTabs[0].agentSessionId = 'replay-provider';
 					events.emit('session-id', processId, 'replay-provider');
 					let acquired = false;
@@ -1964,6 +2123,9 @@ describe('process IPC handlers', () => {
 					}
 					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
 					expect(mockProcessManager.spawn.mock.calls[1][0].args).toContain('--print');
+					expect(mockProcessManager.spawn.mock.calls[1][0].customEnvVars).not.toHaveProperty(
+						CALLER_RUN_PROOF_FILE_ENV_VAR
+					);
 					expect(managed.has(processId)).toBe(true);
 					expect(acquired).toBe(false);
 					if (outcome === 'duplicate') {
@@ -1999,6 +2161,7 @@ describe('process IPC handlers', () => {
 					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
 				} finally {
 					replay.clearInteractiveReplay(processId);
+					callerProof.mockRestore();
 					managed.delete(processId);
 					events.emit('exit', processId, 0);
 					await pending;
@@ -2290,7 +2453,7 @@ describe('process IPC handlers', () => {
 					if (originalResourcesDescriptor) {
 						Object.defineProperty(process, 'resourcesPath', originalResourcesDescriptor);
 					} else {
-						delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+						Reflect.deleteProperty(process, 'resourcesPath');
 					}
 				}
 			});
@@ -3192,10 +3355,8 @@ describe('process IPC handlers', () => {
 		it('should throw error when process manager is not available', async () => {
 			// Create deps with null process manager
 			const nullDeps: ProcessHandlerDependencies = {
+				...deps,
 				getProcessManager: () => null,
-				getAgentDetector: () => mockAgentDetector as any,
-				agentConfigsStore: mockAgentConfigsStore as any,
-				settingsStore: mockSettingsStore as any,
 			};
 
 			// Re-register handlers with null process manager
@@ -3210,10 +3371,11 @@ describe('process IPC handlers', () => {
 		it('should throw error when agent detector is not available for spawn', async () => {
 			// Create deps with null agent detector
 			const nullDeps: ProcessHandlerDependencies = {
-				getProcessManager: () => mockProcessManager as any,
+				...deps,
 				getAgentDetector: () => null,
 				agentConfigsStore: mockAgentConfigsStore as any,
 				settingsStore: mockSettingsStore as any,
+				sessionsStore: mockSessionsStore as any,
 			};
 
 			// Re-register handlers with null agent detector
@@ -3262,6 +3424,59 @@ describe('process IPC handlers', () => {
 			);
 			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 			expect(result).toEqual({ pid: 5000, success: true });
+		});
+
+		// node-pty on Windows reports pid 0 until ConPTY connects. Returning that 0
+		// made the renderer respawn the tab on every render (pid 0 = "never spawned").
+		describe('when the PTY reports pid 0 at spawn (Windows ConPTY)', () => {
+			const spawnArgs = { sessionId: 'session-1-terminal-tab-1', cwd: 'C:\\project' };
+
+			it('waits for the real PID and records it on the managed process', async () => {
+				const pty = { pid: 0 };
+				const proc = { pid: 0, ptyProcess: pty };
+				mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 0, success: true });
+				mockProcessManager.get.mockReturnValue(proc);
+				setTimeout(() => {
+					pty.pid = 4321;
+				}, 30);
+
+				const handler = handlers.get('process:spawnTerminalTab');
+				const result = await handler!({} as any, spawnArgs);
+
+				expect(result).toEqual({ pid: 4321, success: true });
+				expect(proc.pid).toBe(4321);
+				expect(mockProcessManager.kill).not.toHaveBeenCalled();
+			});
+
+			it('fails the spawn when the PTY exits before its PID arrives', async () => {
+				const proc = { pid: 0, ptyProcess: { pid: 0 } };
+				mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 0, success: true });
+				mockProcessManager.get.mockReturnValueOnce(proc).mockReturnValue(undefined);
+
+				const handler = handlers.get('process:spawnTerminalTab');
+				const result = await handler!({} as any, spawnArgs);
+
+				expect(result).toEqual({ pid: 0, success: false });
+				expect(mockProcessManager.kill).not.toHaveBeenCalled();
+			});
+
+			it('fails the spawn and kills the PTY when no PID arrives in time', async () => {
+				vi.useFakeTimers();
+				try {
+					const proc = { pid: 0, ptyProcess: { pid: 0 } };
+					mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 0, success: true });
+					mockProcessManager.get.mockReturnValue(proc);
+
+					const handler = handlers.get('process:spawnTerminalTab');
+					const pending = handler!({} as any, spawnArgs);
+					await vi.advanceTimersByTimeAsync(7000);
+
+					expect(await pending).toEqual({ pid: 0, success: false });
+					expect(mockProcessManager.kill).toHaveBeenCalledWith('session-1-terminal-tab-1');
+				} finally {
+					vi.useRealTimers();
+				}
+			});
 		});
 
 		it('should merge agent-level and session-level customEnvVars into terminal env', async () => {
@@ -3815,7 +4030,7 @@ describe('process IPC handlers', () => {
 			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
 			vi.mocked(applyAgentConfigOverrides).mockReturnValue({
 				args: ['--print'],
-				modelSource: 'none',
+				modelSource: 'default',
 				customArgsSource: 'none',
 				customEnvSource: 'session',
 				effectiveCustomEnvVars: { CUSTOM_API_KEY: 'secret123' },
@@ -4450,7 +4665,7 @@ describe('process IPC handlers', () => {
 			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
 			vi.mocked(applyAgentConfigOverrides).mockReturnValue({
 				args: ['--print'],
-				modelSource: 'none',
+				modelSource: 'default',
 				customArgsSource: 'none',
 				customEnvSource: 'session',
 				effectiveCustomEnvVars: {
@@ -5384,5 +5599,600 @@ describe('process IPC handlers', () => {
 			expect(spawnCall.sendPromptViaStdin).toBe(false);
 			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
 		});
+	});
+
+	/**
+	 * A Grok launch on an SSH remote. No host here attests a remote installation
+	 * identity, so the remote launch scope stays unknown and the remote is never
+	 * observed (an unknown scope refuses native resume in ProcessManager). The
+	 * queued selection fingerprint and the launch ownership are still checked at
+	 * entry, discovery, SSH preparation and the spawn fence (spawnChecked).
+	 */
+	describe('Grok remote launch observation', () => {
+		let remote: SshRemoteConfig;
+		let globalEnv: Record<string, string>;
+		let providerEnv: Record<string, string>;
+		let providerConfig: Record<string, unknown>;
+		let receipt: RemoteGrokLaunchIdentity;
+		let duringAdmission: () => void;
+		let previousOverrides: typeof applyAgentConfigOverrides | undefined;
+		const launch = (
+			cwd = '/remote/project',
+			sessionCustomEnvVars?: Record<string, string>,
+			overrides: Partial<SpawnProcessConfig> = {}
+		) =>
+			handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: 'session-1-ai-tab1',
+					toolType: 'grok',
+					command: 'grok',
+					cwd,
+					args: ['--cwd', cwd],
+					sessionCustomEnvVars,
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					permissionMode: 'full',
+					...overrides,
+				}
+			);
+		const enqueueFingerprint = () =>
+			fingerprintGrokSpawnSelection(
+				{ providerConfig, shellEnvVars: globalEnv, sshRemote: remote },
+				sha256Hex
+			);
+
+		beforeEach(() => {
+			remote = {
+				id: 'remote-1',
+				name: 'Fixture',
+				host: 'fixture.invalid',
+				port: 22,
+				username: 'fixture',
+				privateKeyPath: '',
+				enabled: true,
+				remoteEnv: {},
+			};
+			globalEnv = {};
+			providerEnv = {};
+			providerConfig = { customEnvVars: providerEnv };
+			duringAdmission = () => {};
+			const directory = {
+				canonicalPath: '/remote/project',
+				kind: 'directory' as const,
+				device: '1',
+				inode: '2',
+			};
+			receipt = {
+				launchCwd: { ...directory },
+				processCwd: { ...directory },
+				cwd: { ...directory },
+				account: { ...directory, canonicalPath: '/remote/account', inode: '3' },
+				inherited: { HOME: '/remote/home', GROK_HOME: '/remote/account' },
+				effective: { HOME: '/remote/home', GROK_HOME: '/remote/account' },
+			};
+			vi.mocked(observePathRemote)
+				.mockReset()
+				.mockImplementation(async () => ({ success: true, data: structuredClone(receipt) }));
+			mockSettingsStore.get.mockImplementation((key, fallback) =>
+				key === 'sshRemotes' ? [remote] : key === 'shellEnvVars' ? globalEnv : fallback
+			);
+			mockAgentConfigsStore.get.mockReturnValue({ grok: providerConfig });
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'grok',
+				binaryName: 'grok',
+				requiresPty: false,
+			});
+			previousOverrides = vi.mocked(applyAgentConfigOverrides).getMockImplementation();
+			vi.mocked(applyAgentConfigOverrides).mockImplementation((_agent, args) => ({
+				args,
+				modelSource: 'default',
+				customArgsSource: 'none',
+				customEnvSource: 'none',
+				effectiveCustomEnvVars: undefined,
+			}));
+			// Exercise the handler's spawn fence; ProcessManager's own matrix lives in its own suite.
+			mockProcessManager.spawnChecked.mockImplementation(
+				async (
+					config: ProcessConfig,
+					options: NonNullable<Parameters<ProcessManager['spawnChecked']>[1]>
+				) => {
+					duringAdmission();
+					const error = await options.beforeSpawn?.();
+					if (error) return { success: false, pid: 0, error };
+					options?.assertSpawnAllowed?.();
+					return mockProcessManager.spawn(config);
+				}
+			);
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 777 });
+		});
+
+		afterEach(() => {
+			if (previousOverrides)
+				vi.mocked(applyAgentConfigOverrides).mockImplementation(previousOverrides);
+			vi.mocked(observePathRemote).mockReset();
+			expect(fsp.realpath).not.toHaveBeenCalled();
+			expect(fsp.stat).not.toHaveBeenCalled();
+			expect(fsp.readFile).not.toHaveBeenCalled();
+			expect(fsp.writeFile).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['inherited', {}, {}, {}, undefined, {}],
+			['remote blank', { GROK_HOME: '' }, {}, {}, undefined, { GROK_HOME: '' }],
+			[
+				'global wins',
+				{ GROK_HOME: '/remote' },
+				{ GROK_HOME: '/global' },
+				{},
+				undefined,
+				{ GROK_HOME: '/global' },
+			],
+			[
+				'provider wins',
+				{ GROK_HOME: '/remote' },
+				{ GROK_HOME: '/global' },
+				{ GROK_HOME: '/provider' },
+				undefined,
+				{ GROK_HOME: '/provider' },
+			],
+			[
+				'session replaces provider',
+				{},
+				{},
+				{ GROK_HOME: '/provider' },
+				{ HOME: '/session' },
+				{ HOME: '/session' },
+			],
+			['empty session replaces provider', {}, {}, { GROK_HOME: '/provider' }, {}, {}],
+			[
+				'literal tilde and HOME',
+				{},
+				{},
+				{},
+				{ GROK_HOME: '~/account', HOME: '/exported' },
+				{ GROK_HOME: '~/account', HOME: '/exported' },
+			],
+			[
+				'relative and blank HOME',
+				{},
+				{},
+				{},
+				{ GROK_HOME: '../account', HOME: '' },
+				{ GROK_HOME: '../account', HOME: '' },
+			],
+			['whitespace remains literal', {}, {}, {}, { GROK_HOME: ' ' }, { GROK_HOME: ' ' }],
+		] as const)(
+			'launches with the actual %s environment and an unknown scope',
+			async (_label, ssh, global, provider, session, expected) => {
+				Object.assign(remote.remoteEnv!, ssh);
+				Object.assign(globalEnv, global);
+				Object.assign(providerEnv, provider);
+				expect(await launch('relative', session)).toEqual({
+					success: true,
+					pid: 777,
+					sshRemote: { id: 'remote-1', name: 'Fixture', host: 'fixture.invalid' },
+				});
+				expect(observePathRemote).not.toHaveBeenCalled();
+				expect(mockProcessManager.spawnChecked).toHaveBeenCalledTimes(1);
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						command: 'ssh',
+						sshRemoteId: remote.id,
+						nativeSessionScope: { version: 1, state: 'unknown', reason: 'unobserved' },
+					})
+				);
+				// The launch environment still reaches the remote shell as composed.
+				for (const [key, value] of Object.entries(expected)) {
+					expect(mockProcessManager.spawn.mock.lastCall![0].sshStdinScript).toContain(
+						`export ${key}='${value}'`
+					);
+				}
+			}
+		);
+
+		describe('queued selection at main entry', () => {
+			it.each(['claude-code', 'antigravity'])(
+				'keeps %s launches unchanged by unavailable Grok evidence',
+				async (toolType) => {
+					mockAgentDetector.getAgent.mockResolvedValue({ id: toolType, requiresPty: false });
+					expect(
+						await launch('/fixture/project', undefined, {
+							toolType,
+							command: toolType,
+							args: [],
+							sessionSshRemoteConfig: undefined,
+							expectedGrokSpawnSelection: null,
+						})
+					).toMatchObject({ success: true, pid: 777 });
+					expect(mockProcessManager.spawnChecked).not.toHaveBeenCalled();
+					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+					expect(mockProcessManager.spawn.mock.lastCall![0]).toMatchObject({
+						toolType,
+						command: toolType,
+					});
+					expect(mockProcessManager.spawn.mock.lastCall![0]).not.toHaveProperty(
+						'expectedGrokSpawnSelection'
+					);
+					expect(observePathRemote).not.toHaveBeenCalled();
+				}
+			);
+
+			describe.each(['entry', 'discovery', 'SSH preparation'] as const)(
+				'changed selection at %s',
+				(boundary) => {
+					it.each([
+						[
+							'inherited account',
+							() => {
+								providerEnv.GROK_HOME = '/remote/other';
+							},
+						],
+						[
+							'executable',
+							() => {
+								providerConfig.customPath = '/other/bin/grok';
+							},
+						],
+						[
+							'arguments',
+							() => {
+								providerConfig.customArgs = '--max-turns 2';
+							},
+						],
+						[
+							'global environment',
+							() => {
+								globalEnv.GROK_HOME = '/global/other';
+							},
+						],
+						[
+							'same-ID host',
+							() => {
+								remote.host = 'replacement.invalid';
+							},
+						],
+						[
+							'same-ID port',
+							() => {
+								remote.port = 2222;
+							},
+						],
+						[
+							'same-ID user',
+							() => {
+								remote.username = 'other-user';
+							},
+						],
+						[
+							'same-ID key path',
+							() => {
+								remote.privateKeyPath = '/fixture/other-key';
+							},
+						],
+						[
+							'same-ID SSH options',
+							() => {
+								remote.sshOptions = { ProxyJump: 'other.invalid' };
+							},
+						],
+						[
+							'same-ID remote environment',
+							() => {
+								remote.remoteEnv = { GROK_HOME: '/remote/other' };
+							},
+						],
+						[
+							'disabled remote',
+							() => {
+								remote.enabled = false;
+							},
+						],
+						[
+							'missing selected remote',
+							() => {
+								remote.id = 'removed-selected-remote';
+							},
+						],
+					] as const)('refuses changed %s before remote effects', async (_label, mutate) => {
+						// Keep the renderer's final fingerprint; never recapture the mutation.
+						const expectedGrokSpawnSelection = enqueueFingerprint();
+						if (boundary === 'entry') mutate();
+						else if (boundary === 'discovery')
+							mockAgentDetector.getAgent.mockImplementationOnce(async () => {
+								mutate();
+								return { id: 'grok', binaryName: 'grok', requiresPty: false };
+							});
+						else {
+							const build = vi.mocked(buildSshCommandWithStdin).getMockImplementation()!;
+							vi.mocked(buildSshCommandWithStdin).mockImplementationOnce(async (...args) => {
+								const result = await build(...args);
+								mutate();
+								return result;
+							});
+						}
+						expect(
+							await launch('/remote/project', undefined, { expectedGrokSpawnSelection })
+						).toEqual({
+							success: false,
+							pid: 0,
+							error:
+								'Queued Grok command configuration is unavailable or changed. Requeue it with the intended settings.',
+						});
+						expect(mockAgentDetector.getAgent).toHaveBeenCalledTimes(boundary === 'entry' ? 0 : 1);
+						expect(checkCustomPath).not.toHaveBeenCalled();
+						expect(observePathRemote).not.toHaveBeenCalled();
+						expect(applyAgentConfigOverrides).toHaveBeenCalledTimes(
+							boundary === 'SSH preparation' ? 1 : 0
+						);
+						expect(mockProcessManager.spawnChecked).not.toHaveBeenCalled();
+						expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+						expect(mockSessionsStore.set).not.toHaveBeenCalled();
+						// Upstream's provider-session writer gate removes its own exit and
+						// session-id listeners as a pair; count only the exit listener the
+						// handler registered after SSH preparation.
+						const offs = mockProcessManager.off.mock.calls.map(([event]) => event);
+						expect(
+							offs.filter((event) => event === 'exit').length -
+								offs.filter((event) => event === 'session-id').length
+						).toBe(boundary === 'SSH preparation' ? 1 : 0);
+						if (boundary === 'SSH preparation') {
+							expect(mockProcessManager.off).toHaveBeenCalledWith('exit', expect.any(Function));
+						}
+					});
+				}
+			);
+
+			it.each([
+				null,
+				undefined,
+				'',
+				'grok-spawn-selection-v2:' + 'a'.repeat(64),
+				'grok-spawn-selection-v1:bad',
+				'grok-spawn-selection-v1:' + 'g'.repeat(64),
+			])('refuses missing or malformed guarded evidence %s before discovery', async (expected) => {
+				expect(
+					await launch('/remote/project', undefined, {
+						expectedGrokSpawnSelection:
+							expected as SpawnProcessConfig['expectedGrokSpawnSelection'],
+					})
+				).toMatchObject({
+					success: false,
+					pid: 0,
+					error: expect.stringContaining('Queued Grok command configuration'),
+				});
+				expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
+				expect(observePathRemote).not.toHaveBeenCalled();
+				expect(mockProcessManager.spawnChecked).not.toHaveBeenCalled();
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			});
+
+			it('admits one fresh turn with the matching fingerprint and strips it from the sink', async () => {
+				providerEnv.GROK_HOME = '/remote/account';
+				const expectedGrokSpawnSelection = enqueueFingerprint();
+				// Frozen model/effort and display metadata are outside the projection.
+				Object.assign(providerConfig, { model: 'changed-default', effort: 'low' });
+				remote.name = 'Renamed fixture';
+				expect(
+					await launch('/remote/project', undefined, { expectedGrokSpawnSelection })
+				).toMatchObject({ success: true, pid: 777 });
+				expect(mockProcessManager.spawnChecked).toHaveBeenCalledTimes(1);
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				const spawned = mockProcessManager.spawn.mock.lastCall![0];
+				expect(spawned).toMatchObject({
+					command: 'ssh',
+					sshRemoteId: 'remote-1',
+					nativeSessionScope: { version: 1, state: 'unknown', reason: 'unobserved' },
+				});
+				expect(spawned).not.toHaveProperty('expectedGrokSpawnSelection');
+				expect(spawned.agentSessionId).toBeUndefined();
+				expect(spawned.sshStdinScript).toContain("export GROK_HOME='/remote/account'");
+				expect(observePathRemote).not.toHaveBeenCalled();
+			});
+
+			it('rechecks the enqueue fingerprint at the spawn fence', async () => {
+				const expectedGrokSpawnSelection = enqueueFingerprint();
+				duringAdmission = () => {
+					providerEnv.GROK_HOME = '/remote/other';
+				};
+				await expect(
+					launch('/remote/project', undefined, { expectedGrokSpawnSelection })
+				).rejects.toThrow(
+					'Queued Grok command configuration is unavailable or changed. Requeue it with the intended settings.'
+				);
+				expect(mockProcessManager.spawnChecked).toHaveBeenCalledTimes(1);
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				expect(mockSessionsStore.set).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('retained native resume ownership', () => {
+			let stored: Array<{
+				id: string;
+				toolType: string;
+				cwd: string;
+				aiTabs: Array<ProviderSwitchTab & { id: string; logs: string[] }>;
+			}>;
+			const resume = (
+				tabId = 'tab1',
+				account = '/remote/account',
+				overrides: Partial<SpawnProcessConfig> = {}
+			) =>
+				handlers.get('process:spawn')!(
+					{},
+					{
+						sessionId: `session-1-ai-${tabId}`,
+						toolType: 'grok',
+						command: 'grok',
+						cwd: '/remote/project',
+						args: ['--cwd', '/remote/project', '--resume', 'native-collision'],
+						agentSessionId: 'native-collision',
+						sessionCustomEnvVars: { GROK_HOME: account },
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+						permissionMode: 'full',
+						...overrides,
+					}
+				);
+
+			beforeEach(() => {
+				stored = [
+					{
+						id: 'session-1',
+						toolType: 'grok',
+						cwd: '/remote/project',
+						aiTabs: ['tab1', 'tab2'].map((id, index) => ({
+							id,
+							agentSessionId: 'native-collision',
+							turnProvider: 'grok',
+							logs: [`Retained conversation ${id}`],
+							nativeSessionBinding: {
+								version: 1,
+								state: 'bound',
+								provider: 'grok',
+								nativeSessionId: 'native-collision',
+								cwd: '/remote/project',
+								accountRef: nativeAccountRef(
+									'grok',
+									index === 0 ? '/remote/account' : '/remote/other'
+								),
+								host: { kind: 'ssh', identity: 'remote-installation' },
+							},
+						})),
+					},
+				];
+				mockSessionsStore.get.mockImplementation((key, fallback) =>
+					key === 'sessions' ? stored : fallback
+				);
+			});
+
+			it('forwards each rehydrated tab with its own account, native ID and retained binding', async () => {
+				stored = JSON.parse(JSON.stringify(stored));
+				handlers.clear();
+				registerProcessHandlers(deps);
+				const original = structuredClone(stored);
+				for (const [index, tab] of stored[0].aiTabs.entries()) {
+					const account = index === 0 ? '/remote/account' : '/remote/other';
+					receipt.account.canonicalPath = account;
+					receipt.inherited.GROK_HOME = receipt.effective.GROK_HOME = account;
+					expect(await resume(tab.id, account)).toMatchObject({ success: true, pid: 777 });
+					const spawned = mockProcessManager.spawn.mock.lastCall![0] as ProcessConfig;
+					expect(spawned).toMatchObject({
+						sessionId: `session-1-ai-${tab.id}`,
+						agentSessionId: 'native-collision',
+						sshRemoteId: 'remote-1',
+						nativeSessionBinding: tab.nativeSessionBinding,
+					});
+					// The remote scope is unknown here, so ProcessManager refuses the
+					// resume; the handler forwards the retained binding as is.
+					expect(spawned.nativeSessionScope).toEqual({
+						version: 1,
+						state: 'unknown',
+						reason: 'unobserved',
+					});
+					expect(spawned.sshStdinScript).toContain(`export GROK_HOME='${account}'`);
+					expect(spawned.customEnvVars).toBeUndefined();
+					expect(spawned.sshStdinScript).toContain("'--resume' 'native-collision'");
+				}
+				expect(stored).toEqual(original);
+				expect(mockSessionsStore.set).not.toHaveBeenCalled();
+			});
+
+			it('retains native ownership on a matching queued resume', async () => {
+				const original = structuredClone(stored);
+				const expectedGrokSpawnSelection = enqueueFingerprint();
+				expect(
+					await resume('tab1', '/remote/account', { expectedGrokSpawnSelection })
+				).toMatchObject({
+					success: true,
+					pid: 777,
+				});
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+				const spawned = mockProcessManager.spawn.mock.lastCall![0];
+				expect(spawned.nativeSessionBinding).toEqual(stored[0].aiTabs[0].nativeSessionBinding);
+				expect(spawned).not.toHaveProperty('expectedGrokSpawnSelection');
+				expect(stored).toEqual(original);
+				expect(mockSessionsStore.set).not.toHaveBeenCalled();
+			});
+
+			it.each(['entry', 'discovery'] as const)(
+				'refuses a queued resume when the inherited account changes at %s',
+				async (boundary) => {
+					const expectedGrokSpawnSelection = enqueueFingerprint();
+					const original = structuredClone(stored);
+					if (boundary === 'entry') providerEnv.GROK_HOME = '/remote/other';
+					else
+						mockAgentDetector.getAgent.mockImplementationOnce(async () => {
+							providerEnv.GROK_HOME = '/remote/other';
+							return { id: 'grok', binaryName: 'grok', requiresPty: false };
+						});
+					expect(
+						await resume('tab1', '/remote/account', { expectedGrokSpawnSelection })
+					).toMatchObject({
+						success: false,
+						pid: 0,
+						error: expect.stringContaining('Queued Grok command configuration'),
+					});
+					expect(observePathRemote).not.toHaveBeenCalled();
+					expect(mockProcessManager.spawnChecked).not.toHaveBeenCalled();
+					expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+					expect(stored).toEqual(original);
+					expect(mockSessionsStore.set).not.toHaveBeenCalled();
+				}
+			);
+
+			it.each(['missing binding', 'different provider', 'different native ID', 'missing tab'])(
+				'refuses %s without borrowing a colliding tab or erasing retained history',
+				async (change) => {
+					const tab = stored[0].aiTabs[0];
+					if (change === 'missing binding') delete tab.nativeSessionBinding;
+					if (change === 'different provider') tab.turnProvider = 'codex';
+					if (change === 'different native ID') tab.agentSessionId = 'other-native';
+					const original = structuredClone(stored);
+					expect(await resume(change === 'missing tab' ? 'absent' : 'tab1')).toMatchObject({
+						success: false,
+						error: expect.stringContaining('no retained native ownership'),
+					});
+					expect(mockProcessManager.spawnChecked).not.toHaveBeenCalled();
+					expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+					expect(stored).toEqual(original);
+					expect(mockSessionsStore.set).not.toHaveBeenCalled();
+				}
+			);
+		});
+
+		it('refuses a Standard turn on an SSH remote before any probe or spawn (acp-remote-route)', async () => {
+			// The ACP consent port has no remote transport.
+			expect(await launch('/remote/project', undefined, { permissionMode: 'standard' })).toEqual({
+				success: false,
+				pid: 0,
+			});
+			expect(observePathRemote).not.toHaveBeenCalled();
+			expect(mockProcessManager.spawnChecked).not.toHaveBeenCalled();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			const window = deps.getMainWindow() as unknown as {
+				webContents: { send: ReturnType<typeof vi.fn> };
+			};
+			expect(window.webContents.send).toHaveBeenCalledWith(
+				'process:data',
+				'session-1-ai-tab1',
+				expect.stringMatching(
+					/Standard permission mode is not available for Grok over SSH \(acp-remote-route\).*Nothing was started\./
+				)
+			);
+		});
+
+		it.each(['global env', 'provider env', 'remote env'])(
+			'refuses %s changing at the spawn fence',
+			async (change) => {
+				duringAdmission = () => {
+					if (change === 'global env') globalEnv.HOME = '/changed';
+					else if (change === 'provider env') providerEnv.GROK_HOME = '/changed';
+					else remote.remoteEnv = { ...remote.remoteEnv, HOME: '/changed' };
+				};
+				await expect(launch()).rejects.toThrow(
+					'Grok launch ownership changed during preparation. Retry with the intended account, host and tab.'
+				);
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			}
+		);
 	});
 });

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { InputArea } from '../../../renderer/components/InputArea';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../renderer/types';
@@ -262,6 +263,16 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			expect(screen.getByRole('textbox')).toBeInTheDocument();
+		});
+
+		// Structure guard for the shared ComposerTextarea (jsdom does no layout): its
+		// root must sit directly in the bordered column box, which stretches it to
+		// full width. A wrapper row in between shrinks it to its intrinsic width.
+		it("mounts the textarea's root directly in the bordered composer box", () => {
+			render(<InputArea {...createDefaultProps()} />);
+			const root = screen.getByRole('textbox').parentElement!;
+			expect(root).toHaveClass('relative', 'flex', 'items-start');
+			expect(root.parentElement).toHaveClass('border', 'rounded-lg', 'flex', 'flex-col');
 		});
 
 		it('uses native textarea text when the AI draft has no recognized mention', () => {
@@ -768,6 +779,93 @@ describe('InputArea', () => {
 
 			const toggle = screen.getByTitle(/Full Access/);
 			expect(toggle).toHaveStyle({ color: mockTheme.colors.accent });
+		});
+	});
+
+	describe('Standard approval channel selection', () => {
+		it('skips Standard on a current transport without approvals', () => {
+			const session = createMockSession({
+				inputMode: 'ai',
+				toolType: 'qwen3-coder',
+				harnessControlMode: 'current',
+			});
+			render(<InputArea {...createDefaultProps({ session })} />);
+
+			fireEvent.click(screen.getByTitle(/Full Access/));
+			const updater = mockUpdateSessionWith.mock.calls[0][1];
+			const updated = updater(session);
+			expect(updated.aiTabs[0].permissionMode).toBe('readonly');
+		});
+
+		it('offers Standard on the same provider in native mode', () => {
+			const session = createMockSession({
+				inputMode: 'ai',
+				toolType: 'qwen3-coder',
+				harnessControlMode: 'native',
+			});
+			render(<InputArea {...createDefaultProps({ session })} />);
+
+			fireEvent.click(screen.getByTitle(/Full Access/));
+			const updater = mockUpdateSessionWith.mock.calls[0][1];
+			const updated = updater(session);
+			expect(updated.aiTabs[0].permissionMode).toBe('standard');
+		});
+
+		it('offers Standard for the saved Codex app-server transport', () => {
+			const session = createMockSession({
+				inputMode: 'ai',
+				toolType: 'codex',
+				codexTransport: 'app-server',
+			});
+			render(<InputArea {...createDefaultProps({ session })} />);
+
+			fireEvent.click(screen.getByTitle(/Full Access/));
+			const updater = mockUpdateSessionWith.mock.calls[0][1];
+			const updated = updater(session);
+			expect(updated.aiTabs[0].permissionMode).toBe('standard');
+		});
+
+		it('offers Standard for local OpenCode server turns', () => {
+			const previous = useSettingsStore.getState().encoreFeatures;
+			useSettingsStore.setState({
+				encoreFeatures: { ...previous, opencodeServer: true },
+			});
+			try {
+				const session = createMockSession({ inputMode: 'ai', toolType: 'opencode' });
+				render(<InputArea {...createDefaultProps({ session })} />);
+
+				fireEvent.click(screen.getByTitle(/Full Access/));
+				const updater = mockUpdateSessionWith.mock.calls[0][1];
+				const updated = updater(session);
+				expect(updated.aiTabs[0].permissionMode).toBe('standard');
+			} finally {
+				useSettingsStore.setState({ encoreFeatures: previous });
+			}
+		});
+
+		it('skips Standard for OpenCode turns with staged images', () => {
+			const previous = useSettingsStore.getState().encoreFeatures;
+			useSettingsStore.setState({
+				encoreFeatures: { ...previous, opencodeServer: true },
+			});
+			try {
+				const session = createMockSession({ inputMode: 'ai', toolType: 'opencode' });
+				render(
+					<InputArea
+						{...createDefaultProps({
+							session,
+							stagedImages: ['data:image/png;base64,abc'],
+						})}
+					/>
+				);
+
+				fireEvent.click(screen.getByTitle(/Full Access/));
+				const updater = mockUpdateSessionWith.mock.calls[0][1];
+				const updated = updater(session);
+				expect(updated.aiTabs[0].permissionMode).toBe('readonly');
+			} finally {
+				useSettingsStore.setState({ encoreFeatures: previous });
+			}
 		});
 	});
 
@@ -1720,7 +1818,7 @@ describe('InputArea', () => {
 			fireEvent.click(screen.getByText('src/index.ts'));
 
 			// Should replace @src/ind with @src/index.ts
-			expect(setInputValue).toHaveBeenCalledWith('check @src/index.ts  file');
+			expect(setInputValue).toHaveBeenCalledWith('check @src/index.ts file');
 			expect(setAtMentionOpen).toHaveBeenCalledWith(false);
 			expect(setAtMentionFilter).toHaveBeenCalledWith('');
 			expect(setAtMentionStartIndex).toHaveBeenCalledWith(-1);
@@ -2716,6 +2814,67 @@ describe('InputArea on a phone', () => {
 
 		fireEvent.click(screen.getByTestId('phone-composer-handle'));
 		expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+	});
+
+	// Folding unmounts the textarea, and the one an unfold mounts holds the same
+	// draft, so it is only measured because the fold is part of the autosize
+	// reset key. 140px is under the 176px cap, so it is the measured height.
+	describe('re-measures the draft in the textarea an unfold mounts', () => {
+		const MULTI_LINE_DRAFT = 'line 1\nline 2\nline 3\nline 4';
+		let scrollHeightSpy: ReturnType<typeof vi.spyOn>;
+
+		beforeEach(() => {
+			scrollHeightSpy = vi
+				.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+				.mockReturnValue(140);
+		});
+
+		afterEach(() => {
+			scrollHeightSpy.mockRestore();
+		});
+
+		it('measures a multi-line draft opened folded on first unfold', () => {
+			render(<InputArea {...createDefaultProps({ inputValue: MULTI_LINE_DRAFT })} />);
+			expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByTestId('phone-composer-handle'));
+
+			expect((screen.getByRole('textbox') as HTMLTextAreaElement).style.height).toBe('140px');
+		});
+
+		it('re-measures a multi-line draft after folding and unfolding', () => {
+			window.localStorage?.setItem(PHONE_COMPOSER_COLLAPSED_KEY, 'false');
+			render(<InputArea {...createDefaultProps({ inputValue: MULTI_LINE_DRAFT })} />);
+			expect((screen.getByRole('textbox') as HTMLTextAreaElement).style.height).toBe('140px');
+
+			fireEvent.click(screen.getByTestId('phone-composer-handle'));
+			expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('phone-composer-handle'));
+
+			expect((screen.getByRole('textbox') as HTMLTextAreaElement).style.height).toBe('140px');
+		});
+
+		it('measures a tab opened folded with a multi-line draft on first unfold', () => {
+			const props = createDefaultProps();
+			const { rerender } = render(<InputArea {...props} />);
+			expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+			// Switch to another tab whose saved draft is multi-line, still folded.
+			const tab2 = { ...props.session.aiTabs[0], id: 'tab-2', draftInput: MULTI_LINE_DRAFT };
+			const session = createMockSession({
+				aiTabs: [props.session.aiTabs[0], tab2] as any,
+				activeTabId: 'tab-2',
+			});
+			act(() => {
+				useComposerInputStore.setState({ aiValue: MULTI_LINE_DRAFT });
+			});
+			rerender(<InputArea {...props} session={session} />);
+			expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByTestId('phone-composer-handle'));
+
+			expect((screen.getByRole('textbox') as HTMLTextAreaElement).style.height).toBe('140px');
+		});
 	});
 
 	it('marks a folded handle when an unsent draft is waiting behind it', () => {

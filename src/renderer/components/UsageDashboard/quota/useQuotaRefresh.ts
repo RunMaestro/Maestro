@@ -13,8 +13,10 @@
  * closed. This hook only surfaces the dropdown's current value and persists the
  * user's choice; the main scheduler is the sole driver.
  *
- * Provider specifics live in `doRefresh`, which should trigger the main-side
- * sampler and then re-pull the renderer store.
+ * Provider specifics live in `doRefresh`, which should be the provider
+ * store's `sample()`: the store, not this hook, owns the in-flight sample so it
+ * survives the panel unmounting. Pass the store's `sampling` flag in
+ * `refreshing` so a remounted panel still reads as busy.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -30,7 +32,7 @@ export interface UseQuotaRefreshOptions {
 	 * persisted auto-refresh interval so each provider has its own cadence.
 	 */
 	providerId: string;
-	/** Whether the provider store currently reports an in-flight refresh. */
+	/** Whether the provider store reports an in-flight pull or sample. */
 	refreshing: boolean;
 	/** Auto-sample once on first arrival with configured-but-empty accounts. */
 	autoRefresh: boolean;

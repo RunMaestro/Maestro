@@ -29,6 +29,7 @@ import {
 	steerQueuedItem,
 	steerQueuedItemOrExplain,
 } from '../../../renderer/services/chatSteering';
+import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
@@ -109,9 +110,34 @@ describe('steerQueuedItem', () => {
 		const result = await steerQueuedItem('sess-1', 'item-a');
 
 		expect(result).toMatchObject({ outcome: 'refused', refusal: 'blocking-dialog' });
-		expect(queue()).toEqual([item()]);
+		expect(queue()).toEqual([{ ...item(), paused: undefined, dispatchRecoveryGeneration: 1 }]);
 		expect(pendingSteerCount()).toBe(0);
 		expect(tabLogs()).toEqual([]);
+	});
+
+	it('retains repeated refused-steer recoveries against older dequeue writes', async () => {
+		const baseline = steerableSession([item()]);
+		useSessionStore.setState({ sessions: [baseline] });
+		steer.mockResolvedValue({
+			type: 'steering',
+			id: 'steer-1',
+			verdict: 'refused',
+			refusal: 'blocking-dialog',
+		});
+		for (let generation = 1; generation <= 2; generation++) {
+			await steerQueuedItem('sess-1', 'item-a');
+			expect(queue()[0].dispatchRecoveryGeneration).toBe(generation);
+			const current = useSessionStore.getState().sessions[0];
+			expect(
+				mergeSessionPersistenceChanges(
+					{ ...baseline, executionQueue: [] },
+					current,
+					baseline,
+					true,
+					true
+				).executionQueue
+			).toEqual(queue());
+		}
 	});
 
 	it('reports an unknown item as not-found without steering', async () => {
@@ -144,7 +170,7 @@ describe('steerQueuedItem', () => {
 		const result = await steerQueuedItem('sess-1', 'item-a');
 
 		expect(result.outcome).toBe('unconfirmed');
-		expect(queue()).toEqual([{ ...item(), paused: true }]);
+		expect(queue()).toEqual([{ ...item(), paused: true, dispatchRecoveryGeneration: 1 }]);
 	});
 
 	it('puts the steered message in the transcript and parks it on the agent', async () => {
@@ -213,7 +239,7 @@ describe('steerQueuedItem', () => {
 
 		await steerQueuedItem('sess-1', 'item-a');
 
-		expect(queue()).toEqual([{ ...item(), paused: true }]);
+		expect(queue()).toEqual([{ ...item(), paused: true, dispatchRecoveryGeneration: 1 }]);
 		expect(pendingSteerCount()).toBe(0);
 	});
 
@@ -256,7 +282,7 @@ describe('steerQueuedItem', () => {
 		const result = await steerQueuedItem('sess-1', 'item-a');
 
 		expect(result).toMatchObject({ outcome: 'unconfirmed', detail: 'ipc closed' });
-		expect(queue()).toEqual([{ ...item(), paused: true }]);
+		expect(queue()).toEqual([{ ...item(), paused: true, dispatchRecoveryGeneration: 1 }]);
 	});
 
 	it('names the provider that took the message, not always Claude', async () => {
@@ -409,6 +435,120 @@ describe('steerNewestQueuedMessage', () => {
 	});
 });
 
+describe('Grok steering', () => {
+	// Two Grok turns in flight, one queued message on each tab. Main refuses every Grok
+	// steer (no in-progress input operation on either route), so the renderer never asks.
+	const itemB = item({ id: 'item-b', tabId: 'tab-2', text: 'and the other tab' });
+	function grokSession(overrides: Partial<Session> = {}): Session {
+		return createMockSession({
+			id: 'sess-1',
+			toolType: 'grok',
+			aiTabs: [
+				createMockAITab({ id: 'tab-1', state: 'busy' }),
+				createMockAITab({ id: 'tab-2', state: 'busy' }),
+			],
+			activeTabId: 'tab-1',
+			executionQueue: [item(), itemB],
+			...overrides,
+		} as Partial<Session>);
+	}
+	function expectUntouched(): void {
+		expect(steer).not.toHaveBeenCalled();
+		expect(queue()).toEqual([item(), itemB]);
+		expect(pendingSteerCount()).toBe(0);
+		expect(useSessionStore.getState().sessions[0].pendingSteers ?? []).toEqual([]);
+		expect(useSessionStore.getState().sessions[0].aiTabs.every((t) => t.logs.length === 0)).toBe(
+			true
+		);
+	}
+
+	it.each([
+		['local', {}],
+		['SSH', { sshRemoteId: 'remote-1' }],
+	] as const)(
+		'refuses a %s Grok item without dialing main, parking or pausing it',
+		async (_label, overrides) => {
+			useSessionStore.setState({ sessions: [grokSession(overrides)] });
+
+			for (const id of ['item-a', 'item-b']) {
+				const result = await steerQueuedItem('sess-1', id);
+				expect(result).toMatchObject({
+					outcome: 'not-steerable',
+					blockedReason: 'grok-no-input-op',
+				});
+			}
+			expectUntouched();
+		}
+	);
+
+	it('answers each of two active turns by its own tab, and a repeat the same way', async () => {
+		useSessionStore.setState({ sessions: [grokSession()] });
+
+		for (const tabId of ['tab-1', 'tab-2', 'tab-1']) {
+			const result = await steerNewestQueuedMessage('sess-1', tabId);
+			expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'grok-no-input-op' });
+		}
+		expect(notifyCenterFlash).not.toHaveBeenCalled();
+		expect(notifyToast).toHaveBeenCalledTimes(3);
+		expect(vi.mocked(notifyToast).mock.calls.map(([toast]) => toast.tabId)).toEqual([
+			'tab-1',
+			'tab-2',
+			'tab-1',
+		]);
+		expectUntouched();
+	});
+
+	it('explains the gap on the chord path and leaves the message queued', async () => {
+		useSessionStore.setState({ sessions: [grokSession()] });
+
+		const result = await steerQueuedItemOrExplain('sess-1', 'item-b');
+
+		expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'grok-no-input-op' });
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				title: 'Could not steer this turn',
+				message: expect.stringMatching(/Grok.*The message stays queued\.$/),
+				sessionId: 'sess-1',
+				tabId: 'tab-2',
+			})
+		);
+		expectUntouched();
+	});
+
+	it('ignores stale, duplicate or wrong-process verdicts on a Grok key', () => {
+		useSessionStore.setState({ sessions: [grokSession()] });
+
+		for (const verdict of ['absorbed', 'dropped', 'dropped', 'queued'] as const) {
+			applySteeringVerdict(PROCESS_KEY, { type: 'steering', id: 'never-sent', verdict });
+			applySteeringVerdict('sess-1-ai-tab-2', { type: 'steering', id: 'steer-1', verdict });
+		}
+		expectUntouched();
+	});
+
+	it('restores nothing and restarts nothing when a Grok turn is cancelled or exits', async () => {
+		useSessionStore.setState({ sessions: [grokSession()] });
+		await steerQueuedItem('sess-1', 'item-a');
+
+		settlePendingSteersOnExit(PROCESS_KEY);
+		settlePendingSteersOnExit('sess-1-ai-tab-2');
+		// The tab goes idle after a Stop: the reason becomes the tab, never a steer.
+		useSessionStore.setState({
+			sessions: [
+				grokSession({
+					aiTabs: [
+						createMockAITab({ id: 'tab-1', state: 'idle' }),
+						createMockAITab({ id: 'tab-2', state: 'busy' }),
+					],
+				}),
+			],
+		});
+		const after = await steerQueuedItem('sess-1', 'item-a');
+
+		expect(after).toMatchObject({ outcome: 'not-steerable', blockedReason: 'tab-not-working' });
+		expectUntouched();
+	});
+});
+
 describe('requestSteerSend', () => {
 	it('asks the composer by event rather than steering itself', () => {
 		const heard = vi.fn();
@@ -527,7 +667,7 @@ describe('settlePendingSteersOnExit', () => {
 
 		settlePendingSteersOnExit(PROCESS_KEY);
 
-		expect(queue()).toEqual([{ ...item(), paused: true }]);
+		expect(queue()).toEqual([{ ...item(), paused: true, dispatchRecoveryGeneration: 1 }]);
 		expect(pendingSteerCount()).toBe(0);
 	});
 
@@ -557,7 +697,7 @@ describe('reconcilePendingSteers', () => {
 
 		await reconcilePendingSteers();
 
-		expect(queue()).toEqual([{ ...item(), paused: true }]);
+		expect(queue()).toEqual([{ ...item(), paused: true, dispatchRecoveryGeneration: 1 }]);
 		expect(pendingSteerCount()).toBe(0);
 	});
 

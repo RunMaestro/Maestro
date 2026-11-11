@@ -43,8 +43,10 @@ import { resolveActiveNavTab } from './useNavigationHistory';
 import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { flushGroupsToDisk } from '../../services/groupPersistence';
+import { resolveTurnProvider } from '../../../shared/maestro-lib/agents/providerSwap';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
 import { killAgentAiProcesses } from '../../services/process';
 import {
@@ -106,6 +108,7 @@ export interface SessionLifecycleReturn {
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
+		harnessControlMode?: HarnessControlMode,
 		acceptTranslationLimitations?: boolean,
 		selectedUserResources?: string[],
 		migrationPlanId?: string,
@@ -204,6 +207,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			codexAutoResetOnExhaustion?: boolean,
 			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 			codexTransport?: CodexTransport,
+			harnessControlMode?: HarnessControlMode,
 			acceptTranslationLimitations?: boolean,
 			selectedUserResources?: string[],
 			migrationPlanId?: string,
@@ -294,6 +298,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// Codex because `resolveCodexTransport` ignores it there. Only the
 					// opt-in is stored, so choosing Standard clears the field.
 					codexTransport: codexTransport === 'app-server' ? 'app-server' : undefined,
+					harnessControlMode: harnessControlMode === 'native' ? 'native' : undefined,
 				};
 
 				const next = { ...s, ...updatedFields };
@@ -372,6 +377,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				// Find the tab to get its agentSessionId for persistence
 				const tab = s.aiTabs.find((t) => t.id === renameTabId);
 				const oldName = tab?.name;
+				const isGrokTab = s.toolType === 'grok' || resolveTurnProvider(tab, s) === 'grok';
 
 				window.maestro.logger.log(
 					'info',
@@ -386,7 +392,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					}
 				);
 
-				if (tab?.agentSessionId) {
+				// Grok labels persist with the Maestro tab below. Origins and History
+				// naming lack account/host scope and cannot change a native title.
+				if (tab?.agentSessionId && !isGrokTab) {
 					// Persist name to agent session metadata (async, fire and forget)
 					// Use projectRoot (not cwd) for consistent session storage access
 					const agentId = s.toolType || 'claude-code';
@@ -427,7 +435,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 								},
 							});
 						});
-				} else {
+				} else if (!tab?.agentSessionId) {
 					window.maestro.logger.log(
 						'info',
 						'Tab renamed (no agentSessionId, skipping persistence)',
@@ -562,6 +570,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	}, []);
 
 	const toggleTabStar = useCallback(() => {
+		if (useGroupChatStore.getState().activeGroupChatId) {
+			return;
+		}
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 		// Star toggle only applies when an AI tab is the visible view - not when a

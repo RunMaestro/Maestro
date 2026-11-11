@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { QueuedItem } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { isMirrorShown } from '../../stores/peerMirrorStore';
 import {
 	FORCE_KILL_PROMPT,
 	interruptTurn,
@@ -64,6 +65,9 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 	}, []);
 
 	const handleInterrupt = useCallback(async () => {
+		// A Federation mirror on screen hides the local active agent: never stop a turn the user
+		// cannot see. (Its keyboard trigger is already gated; this is the backstop.)
+		if (isMirrorShown()) return;
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession) return;
 		await interruptTurn(activeSession.id, {

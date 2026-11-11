@@ -571,6 +571,22 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						</span>
 					)}
 
+				{/* Account attribution remains useful when the model's context window is unknown. */}
+				{activeSession.inputMode === 'ai' &&
+					!activeFileTabId &&
+					activeProfile &&
+					activeProfileLabel &&
+					!(activeTabContextWindow > 0) && (
+						<span
+							className="text-xs font-mono truncate min-w-0"
+							style={{ color: theme.colors.textDim }}
+							aria-label={`Provider profile: ${activeProfileLabel}`}
+							title={activeProfile.accountKey ?? activeProfile.label}
+						>
+							{activeProfileLabel}
+						</span>
+					)}
+
 				{/* Context Window Widget with Tooltip - only show when context window is configured and agent supports usage stats */}
 				{/* Hide when file preview tab is focused - context usage is only relevant for AI tabs */}
 				{activeSession.inputMode === 'ai' &&
@@ -887,6 +903,8 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 														) : (
 															(['session', 'weekAllModels'] as const).map((key) => {
 																const window = batchUsageSnapshot[key];
+																// No 5-hour bar when the panel painted no session window.
+																if (!window) return null;
 																const label = key === 'session' ? '5-hour' : 'Weekly';
 																const pct = Math.max(0, Math.min(100, window.percent));
 																const barColor =
@@ -952,6 +970,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 				{hasCapability('supportsProjectMemory') && (
 					<button
 						onClick={() => setMemoryViewerOpen(true)}
+						aria-label="Memory Viewer"
 						className="header-secondary-btn p-2 rounded hover:bg-white/5"
 						title={`Memory Viewer (${shortcuts.openMemoryViewer ? formatShortcutKeys(shortcuts.openMemoryViewer.keys) : formatShortcutKeys(['Meta', 'Shift', 'm'])})`}
 						data-tour="memory-viewer-button"
@@ -969,6 +988,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						}}
 						className="header-secondary-btn p-2 rounded hover:bg-white/5"
 						title={`Agent Sessions (${shortcuts.agentSessions ? formatShortcutKeys(shortcuts.agentSessions.keys) : formatShortcutKeys(['Meta', 'Shift', 'l'])})`}
+						aria-label="Agent Sessions"
 						data-tour="agent-sessions-button"
 					>
 						<List className="w-4 h-4" style={{ color: theme.colors.textDim }} />

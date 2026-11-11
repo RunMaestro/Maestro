@@ -48,6 +48,7 @@
  */
 
 import { useState, useCallback, useEffect, useMemo } from 'react';
+import { isImeComposing } from '../../utils/ime';
 
 export interface UseListNavigationOptions {
 	/**
@@ -416,6 +417,7 @@ export function useListNavigation(options: UseListNavigationOptions): UseListNav
 
 			// Enter to select, Cmd/Ctrl+Enter for the secondary action
 			if (key === 'Enter') {
+				if (isImeComposing(e)) return;
 				e.preventDefault();
 				if (isMetaOrCtrl) {
 					selectCurrentAlternate();

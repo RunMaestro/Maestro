@@ -15,6 +15,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+const hostState = vi.hoisted(() => ({
+	sessions: [] as Array<Record<string, any>>,
+	remotes: [] as Array<{ id: string; hostMountRoot?: string }>,
+}));
+vi.mock('../../../main/cue/cue-scheduled-tasks', () => ({
+	collectScheduledTasks: vi.fn(() => ({ tasks: [], warnings: [] })),
+	createScheduledTask: vi.fn(() => ({ names: ['scheduled'] })),
+	updateScheduledTask: vi.fn(() => ({ updated: true })),
+	cancelScheduledTask: vi.fn(() => ({ removed: true })),
+}));
 
 // Track registered IPC handlers
 const registeredHandlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -60,10 +70,14 @@ const storedReadiness = vi.hoisted(() => ({
 }));
 vi.mock('../../../main/stores', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../main/stores')>()),
-	getSessionsStore: () => ({ get: () => storedReadiness.sessions }),
+	getSessionsStore: () => ({
+		get: () =>
+			storedReadiness.sessions.length > 0 ? storedReadiness.sessions : hostState.sessions,
+	}),
+	getLiveSessions: () => hostState.sessions,
+	getSettingsStore: () => ({ get: () => hostState.remotes }),
 	getAgentConfigsStore: () => ({ get: () => storedReadiness.configs }),
 }));
-
 vi.mock('../../../main/cue/config/cue-config-repository', () => ({
 	readCueConfigFile: vi.fn(),
 	readCuePromptFile: vi.fn(),
@@ -102,8 +116,13 @@ import {
 } from '../../../main/cue/config/cue-config-repository';
 import { savePipelineLayout, loadPipelineLayout } from '../../../main/cue/pipeline-layout-store';
 import { renamePipelineOnDisk } from '../../../main/cue/cue-pipeline-rename';
-import { checkCueReadiness } from '../../../main/cue/cue-readiness';
 import * as yaml from 'js-yaml';
+import {
+	collectScheduledTasks,
+	createScheduledTask,
+	updateScheduledTask,
+	cancelScheduledTask,
+} from '../../../main/cue/cue-scheduled-tasks';
 
 // Create a mock CueEngine
 function createMockEngine() {
@@ -135,14 +154,14 @@ describe('Cue IPC Handlers', () => {
 	let mockEngine: ReturnType<typeof createMockEngine>;
 	// The stored Encore flags; unset resolves to the defaults (Cue on).
 	let encoreFeatures: Record<string, boolean> | undefined;
-	let sshRemotes: unknown;
 	const settingsStore = {
-		get: (key: string) =>
-			key === 'encoreFeatures' ? encoreFeatures : key === 'sshRemotes' ? sshRemotes : undefined,
+		get: (key: string) => (key === 'encoreFeatures' ? encoreFeatures : undefined),
 	};
 
 	beforeEach(() => {
 		registeredHandlers.clear();
+		hostState.sessions = [{ id: 's1', projectRoot: '/projects/test' }];
+		hostState.remotes = [];
 		vi.clearAllMocks();
 		// clearAllMocks wipes call history but NOT return values, so the
 		// change-detection reads in cue:writeYaml could otherwise inherit a
@@ -152,9 +171,6 @@ describe('Cue IPC Handlers', () => {
 		vi.mocked(readCuePromptFile).mockReturnValue(null);
 		mockEngine = createMockEngine();
 		encoreFeatures = undefined;
-		sshRemotes = undefined;
-		storedReadiness.sessions = [];
-		storedReadiness.configs = {};
 	});
 
 	afterEach(() => {
@@ -201,7 +217,6 @@ describe('Cue IPC Handlers', () => {
 				'cue:renamePipeline',
 				'cue:savePipelineLayout',
 				'cue:loadPipelineLayout',
-				'cue:checkReadiness',
 			];
 
 			for (const channel of expectedChannels) {
@@ -279,6 +294,30 @@ describe('Cue IPC Handlers', () => {
 			await handler(null);
 			expect(mockEngine.start).toHaveBeenCalledWith('system-boot');
 		});
+		it('does not acknowledge enable before async start settles and propagates its rejection', async () => {
+			let rejectStart!: (error: Error) => void;
+			mockEngine.start.mockReturnValueOnce(
+				new Promise<void>((_resolve, reject) => {
+					rejectStart = reject;
+				}) as any
+			);
+			const handler = registerAndGetHandler('cue:enable');
+			let settled = false;
+			const result = handler(null) as Promise<void>;
+			void result.then(
+				() => {
+					settled = true;
+				},
+				() => {
+					settled = true;
+				}
+			);
+			await Promise.resolve();
+			expect(settled).toBe(false);
+			const assertion = expect(result).rejects.toThrow('startup failed');
+			rejectStart(new Error('startup failed'));
+			await assertion;
+		});
 	});
 
 	describe('with Maestro Cue switched off', () => {
@@ -296,7 +335,6 @@ describe('Cue IPC Handlers', () => {
 			['cue:renamePipeline', [{ oldName: 'Old', newName: 'New' }]],
 			['cue:updateScheduledTask', [{ projectRoot: '/p', name: 'n', patch: {} }]],
 			['cue:cancelScheduledTask', [{ projectRoot: '/p', name: 'n' }]],
-			['cue:checkReadiness', []],
 		])('%s refuses with CueDisabled and touches nothing', async (channel, args) => {
 			const handler = registerAndGetHandler(channel);
 			await expect(handler(null, ...args)).rejects.toThrow('CueDisabled');
@@ -304,43 +342,12 @@ describe('Cue IPC Handlers', () => {
 			expect(mockEngine.triggerSubscription).not.toHaveBeenCalled();
 			expect(mockEngine.refreshSession).not.toHaveBeenCalled();
 			expect(writeCueConfigFile).not.toHaveBeenCalled();
-			expect(checkCueReadiness).not.toHaveBeenCalled();
 		});
 
 		it('still lets the engine be stopped', async () => {
 			const handler = registerAndGetHandler('cue:disable');
 			await handler(null);
 			expect(mockEngine.stop).toHaveBeenCalledOnce();
-		});
-	});
-
-	describe('cue:checkReadiness', () => {
-		const report = {
-			ready: false,
-			checkedAt: '2026-10-20T12:00:00.000Z',
-			agents: 1,
-			workspaces: 1,
-			subscriptions: 1,
-			gaps: [{ kind: 'binary-missing', agentId: 'a1', message: 'Agent "Coder": not found.' }],
-		};
-
-		it('returns the report built from the live stores, without needing the engine', async () => {
-			vi.mocked(checkCueReadiness).mockResolvedValue(report as never);
-			storedReadiness.sessions = [
-				{ id: 'a1', name: 'Coder', toolType: 'codex', projectRoot: '/p' },
-				{ id: 'pi', name: 'Pianola', toolType: 'claude-code', projectRoot: '/p', isPianola: true },
-			];
-			storedReadiness.configs = { codex: { customPath: '/opt/codex' } };
-			sshRemotes = [{ id: 'r1', name: 'Box' }, null];
-			registerCueHandlers({ getCueEngine: () => null, settingsStore });
-
-			await expect(registeredHandlers.get('cue:checkReadiness')!(null)).resolves.toEqual(report);
-			// Same assembly as `cue engine check`: dormant Pianola dropped, junk remotes skipped.
-			expect(checkCueReadiness).toHaveBeenCalledWith({
-				sessions: [{ id: 'a1', name: 'Coder', toolType: 'codex', projectRoot: '/p' }],
-				agentConfigs: { codex: { customPath: '/opt/codex' } },
-				sshRemotes: [{ id: 'r1', name: 'Box' }],
-			});
 		});
 	});
 
@@ -392,7 +399,96 @@ describe('Cue IPC Handlers', () => {
 			expect(mockEngine.refreshSession).toHaveBeenCalledWith('s1', '/projects/test');
 		});
 	});
-
+	describe('host-mounted remote files', () => {
+		const remoteRoot = '/home/dev/app';
+		const mountedRoot = '/mnt/box/home/dev/app';
+		beforeEach(() => {
+			hostState.sessions = [
+				{
+					id: 'remote',
+					name: 'Remote',
+					toolType: 'claude-code',
+					projectRoot: remoteRoot,
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+				},
+			];
+			hostState.remotes = [{ id: 'box', hostMountRoot: '/mnt/box' }];
+		});
+		it('reads by identity and refreshes using the host mount', async () => {
+			await registerAndGetHandler('cue:readYaml')(null, {
+				projectRoot: remoteRoot,
+				sessionId: 'remote',
+			});
+			expect(readCueConfigFile).toHaveBeenCalledWith(mountedRoot);
+			await registerAndGetHandler('cue:refreshSession')(null, {
+				projectRoot: remoteRoot,
+				sessionId: 'remote',
+			});
+			expect(mockEngine.refreshSession).toHaveBeenCalledWith('remote', mountedRoot);
+		});
+		it('writes YAML, prompt files and pruning only through the mount', async () => {
+			vi.mocked(yaml.load).mockReturnValue({ subscriptions: [] });
+			await registerAndGetHandler('cue:writeYaml')(null, {
+				projectRoot: remoteRoot,
+				sessionId: 'remote',
+				content: 'subscriptions: []',
+				promptFiles: { '.maestro/prompts/work.md': 'work' },
+			});
+			expect(writeCueConfigFile).toHaveBeenCalledWith(mountedRoot, 'subscriptions: []');
+			expect(writeCuePromptFile).toHaveBeenCalledWith(
+				mountedRoot,
+				'.maestro/prompts/work.md',
+				'work'
+			);
+			expect(pruneOrphanedPromptFiles).toHaveBeenCalledWith(mountedRoot, expect.any(Set));
+		});
+		it('deletes only the mounted project configuration', async () => {
+			await registerAndGetHandler('cue:deleteYaml')(null, {
+				projectRoot: remoteRoot,
+				sessionId: 'remote',
+			});
+			expect(deleteCueConfigFile).toHaveBeenCalledWith(mountedRoot);
+			expect(removeEmptyMaestroDir).toHaveBeenCalledWith(mountedRoot);
+		});
+		it('projects scheduled-task list/create/update/cancel boundaries', async () => {
+			await registerAndGetHandler('cue:listScheduledTasks')(null);
+			expect(collectScheduledTasks).toHaveBeenCalledWith([
+				{ id: 'remote', name: 'Remote', projectRoot: mountedRoot },
+			]);
+			await registerAndGetHandler('cue:createScheduledTask')(null, {
+				input: { agentId: 'remote' },
+			});
+			expect(createScheduledTask).toHaveBeenCalledWith(
+				expect.objectContaining({ projectRoot: mountedRoot }),
+				{ agentId: 'remote' }
+			);
+			await registerAndGetHandler('cue:updateScheduledTask')(null, {
+				projectRoot: mountedRoot,
+				name: 'task',
+				patch: {},
+			});
+			expect(updateScheduledTask).toHaveBeenCalledWith(mountedRoot, 'task', {});
+			await registerAndGetHandler('cue:cancelScheduledTask')(null, {
+				projectRoot: mountedRoot,
+				name: 'task',
+			});
+			expect(cancelScheduledTask).toHaveBeenCalledWith(mountedRoot, 'task');
+		});
+		it('rejects ambiguous raw roots but accepts identity or a projected mount', async () => {
+			hostState.sessions.push({
+				...hostState.sessions[0],
+				id: 'second',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'other' },
+			});
+			hostState.remotes.push({ id: 'other', hostMountRoot: '/mnt/other' });
+			const read = registerAndGetHandler('cue:readYaml');
+			await expect(read(null, { projectRoot: remoteRoot })).rejects.toThrow('Ambiguous');
+			await read(null, { projectRoot: remoteRoot, sessionId: 'second' });
+			expect(readCueConfigFile).toHaveBeenLastCalledWith('/mnt/other/home/dev/app');
+			await read(null, { projectRoot: mountedRoot });
+			expect(readCueConfigFile).toHaveBeenLastCalledWith(mountedRoot);
+		});
+	});
 	describe('cue:readYaml', () => {
 		it('should return file content when file exists', async () => {
 			vi.mocked(readCueConfigFile).mockReturnValue({

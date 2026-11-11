@@ -71,6 +71,7 @@ export interface InlineWizardSessionOverrides {
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
 	customModel?: string;
+	customEffort?: string;
 	claudeTokenSource?: ClaudeTokenSourceFields;
 }
 
@@ -149,6 +150,8 @@ export interface InlineWizardState {
 	sessionCustomEnvVars?: Record<string, string>;
 	/** Custom model ID */
 	sessionCustomModel?: string;
+	/** Explicit tab/agent effort; undefined inherits the provider default */
+	sessionCustomEffort?: string;
 	/** The agent's Claude token source, so a TUI agent's wizard runs through maestro-p */
 	sessionClaudeTokenSource?: ClaudeTokenSourceFields;
 	/** Conductor profile (user's About Me from settings) */

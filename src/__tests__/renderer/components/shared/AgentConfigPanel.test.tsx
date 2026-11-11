@@ -7,12 +7,15 @@
 
 import { useState, useCallback } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { AgentConfigPanel } from '../../../../renderer/components/shared/AgentConfigPanel';
 import type { AgentConfig, AgentCapabilities } from '../../../../renderer/types';
 
 import { createMockTheme } from '../../../helpers/mockTheme';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
+import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/definitions';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { resetStore } from '../../../helpers/resetStores';
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -406,6 +409,190 @@ describe('AgentConfigPanel', () => {
 		});
 	});
 
+	describe('Grok manual model and effort controls', () => {
+		const agent = createMockAgent({
+			...getAgentDefinition('grok'),
+			capabilities: { supportsModelSelection: true } as AgentCapabilities,
+		});
+		beforeEach(() => {
+			vi.useFakeTimers();
+			resetStore(useSettingsStore);
+		});
+		afterEach(() => {
+			vi.useRealTimers();
+			resetStore(useSettingsStore);
+		});
+
+		it('uses the selected account environment and supplied model/effort menu through existing handlers', () => {
+			const props = createDefaultProps({
+				agent,
+				customEnvVars: { GROK_HOME: '/profiles/grok-a' },
+				availableModels: ['account-a-model'],
+				dynamicOptions: { reasoningEffort: ['minimal'] },
+			});
+			const { rerender } = render(<AgentConfigPanel {...props} />);
+			const account = screen.getByDisplayValue('/profiles/grok-a');
+			fireEvent.change(account, { target: { value: '/profiles/grok-b' } });
+			fireEvent.blur(account);
+			expect(props.onEnvVarValueChange).toHaveBeenCalledExactlyOnceWith(
+				'GROK_HOME',
+				'/profiles/grok-b',
+				true
+			);
+			expect(props.onEnvVarsBlur).toHaveBeenCalledOnce();
+			rerender(
+				<AgentConfigPanel
+					{...props}
+					customEnvVars={{ GROK_HOME: '/profiles/grok-b' }}
+					availableModels={['grok-4.5']}
+					dynamicOptions={{ reasoningEffort: ['low', 'high'] }}
+				/>
+			);
+			expect(screen.queryByDisplayValue('/profiles/grok-a')).not.toBeInTheDocument();
+			expect(screen.getByRole('textbox', { name: 'Model' })).toHaveValue('');
+			expect(screen.getByRole('textbox', { name: 'Reasoning Effort' })).toHaveValue('');
+			fireEvent.click(screen.getByRole('button', { name: 'Show model options' }));
+			expect(screen.getByRole('textbox', { name: 'Model' })).toHaveFocus();
+			expect(screen.queryByRole('button', { name: 'account-a-model' })).not.toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: 'grok-4.5' }));
+			expect(props.onConfigChange).toHaveBeenLastCalledWith('model', 'grok-4.5');
+			expect(props.onConfigBlur).toHaveBeenLastCalledWith('model', 'grok-4.5');
+			fireEvent.click(screen.getByRole('button', { name: 'Show reasoning effort options' }));
+			expect(screen.queryByRole('button', { name: 'none' })).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'minimal' })).not.toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: 'high' }));
+			expect(props.onConfigChange).toHaveBeenLastCalledWith('reasoningEffort', 'high');
+			expect(props.onConfigBlur).toHaveBeenLastCalledWith('reasoningEffort', 'high');
+			rerender(
+				<AgentConfigPanel {...props} agentConfig={{ model: 'grok-4.5', reasoningEffort: 'high' }} />
+			);
+			for (const [name, key] of [
+				['model', 'model'],
+				['reasoning effort', 'reasoningEffort'],
+			]) {
+				fireEvent.click(screen.getByRole('button', { name: `Clear ${name} override` }));
+				expect(props.onConfigChange).toHaveBeenLastCalledWith(key, '');
+				expect(props.onConfigBlur).toHaveBeenLastCalledWith(key, '');
+			}
+		});
+
+		it('explains the local ACP approval route and disables model selection with the capability off', () => {
+			const props = createDefaultProps({
+				agent: {
+					...agent,
+					capabilities: { ...agent.capabilities!, supportsModelSelection: false },
+				},
+				agentConfig: { model: 'grok-4.5' },
+				availableModels: ['grok-4.5'],
+				onRefreshModels: vi.fn(),
+				onCodexTransportChange: vi.fn(),
+				onEnableMaestroPChange: vi.fn(),
+			});
+			render(<AgentConfigPanel {...props} />);
+			const note = screen.getByText(/Full Access uses headless streaming/);
+			expect(note).toHaveTextContent(/Standard: Grok runs over its local ACP route/);
+			expect(note).toHaveTextContent(/Not available on SSH remotes/);
+			expect(note).toHaveTextContent(/Read-Only/);
+			expect(note).not.toHaveTextContent(/unavailable for Grok/);
+			expect(
+				screen.getByText('Model selection is unavailable for this provider.')
+			).toBeInTheDocument();
+			expect(screen.getByRole('textbox', { name: 'Model' })).toBeDisabled();
+			const clear = screen.getByRole('button', { name: 'Clear model override' });
+			expect(clear).toBeDisabled();
+			clear.click();
+			expect(screen.queryByRole('button', { name: 'Show model options' })).not.toBeInTheDocument();
+			expect(screen.queryByTitle('Refresh available models')).not.toBeInTheDocument();
+			expect(
+				screen.queryByRole('button', { name: /ACP|Standard|TUI Wrapper|codex app-server/ })
+			).not.toBeInTheDocument();
+			for (const handler of [
+				props.onConfigChange,
+				props.onConfigBlur,
+				props.onRefreshModels,
+				props.onCodexTransportChange,
+				props.onEnableMaestroPChange,
+			])
+				expect(handler).not.toHaveBeenCalled();
+		});
+
+		it.each([{ availableModels: [] }, { availableModels: ['catalog-only'] }])(
+			'keeps stored selections while options change to %j and refresh is requested',
+			({ availableModels }) => {
+				const props = createDefaultProps({
+					agent,
+					agentConfig: { model: 'stored-model', reasoningEffort: 'stored-effort' },
+					onRefreshModels: vi.fn(),
+				});
+				const { rerender } = render(<AgentConfigPanel {...props} loadingModels />);
+				rerender(
+					<AgentConfigPanel
+						{...props}
+						availableModels={availableModels}
+						dynamicOptions={{ reasoningEffort: [] }}
+						configOptionNotes={{ model: 'Model discovery unavailable.' }}
+					/>
+				);
+				expect(screen.getByDisplayValue('stored-model')).toHaveValue('stored-model');
+				expect(screen.getByDisplayValue('stored-effort')).toHaveValue('stored-effort');
+				expect(screen.getByTestId('config-option-note-model')).toHaveTextContent(
+					'Model discovery unavailable.'
+				);
+				fireEvent.click(screen.getByTitle('Refresh available models'));
+				expect(props.onRefreshModels).toHaveBeenCalledOnce();
+				expect(props.onConfigChange).not.toHaveBeenCalled();
+				expect(props.onConfigBlur).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each([{ availableModels: [] }, { availableModels: ['catalog-only'] }])(
+			'commits manual values and inheritance with catalog %j',
+			async ({ availableModels }) => {
+				const onConfigBlur = vi.fn();
+				function StatefulWrapper() {
+					const [agentConfig, setAgentConfig] = useState({
+						model: 'stored-model',
+						reasoningEffort: 'stored-effort',
+					});
+					return (
+						<AgentConfigPanel
+							{...createDefaultProps({
+								agent,
+								agentConfig,
+								availableModels,
+								onConfigBlur,
+								onConfigChange: (key, value) =>
+									setAgentConfig((previous) => ({ ...previous, [key]: value })),
+							})}
+						/>
+					);
+				}
+				render(<StatefulWrapper />);
+				for (const [key, stored, manual] of [
+					['model', 'stored-model', 'manual-model'],
+					['reasoningEffort', 'stored-effort', 'manual-effort'],
+				]) {
+					const input = screen.getByDisplayValue(stored);
+					fireEvent.focus(input);
+					fireEvent.change(input, { target: { value: manual } });
+					fireEvent.blur(input);
+					await act(async () => vi.advanceTimersByTimeAsync(150));
+					expect(onConfigBlur).toHaveBeenCalledWith(key, manual);
+					expect(input).toHaveValue(manual);
+				}
+				fireEvent.click(screen.getByTitle('Reset to default model'));
+				expect(onConfigBlur).toHaveBeenCalledWith('model', '');
+				expect(screen.queryByDisplayValue('manual-model')).not.toBeInTheDocument();
+				const effort = screen.getByDisplayValue('manual-effort');
+				fireEvent.change(effort, { target: { value: '' } });
+				fireEvent.blur(effort);
+				await act(async () => vi.advanceTimersByTimeAsync(150));
+				expect(onConfigBlur).toHaveBeenCalledWith('reasoningEffort', '');
+				expect(effort).toHaveValue('');
+			}
+		);
+	});
+
 	describe('Agent configuration sections', () => {
 		it('should render path input pre-filled with detected path', () => {
 			render(<AgentConfigPanel {...createDefaultProps()} />);
@@ -724,6 +911,66 @@ describe('AgentConfigPanel - Codex Transport selector', () => {
 		expect(
 			screen.getByText(/This agent runs over SSH, so its turns use codex exec/)
 		).toBeInTheDocument();
+	});
+});
+
+describe('AgentConfigPanel - native control selector', () => {
+	const qwenAgent = () =>
+		createMockAgent({
+			id: 'qwen3-coder',
+			name: 'Qwen3 Coder',
+			path: '/usr/local/bin/qwen',
+			binaryName: 'qwen',
+		});
+
+	it('defaults to current and reports a native selection', () => {
+		const onHarnessControlModeChange = vi.fn();
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({ agent: qwenAgent(), onHarnessControlModeChange })}
+			/>
+		);
+
+		expect(screen.getByText('Control Mode')).toBeInTheDocument();
+		expect(screen.getByText('current (default)').closest('button')?.className).toContain('ring-2');
+		fireEvent.click(screen.getByText('native control'));
+		expect(onHarnessControlModeChange).toHaveBeenCalledWith('native');
+	});
+
+	it.each(['claude-code', 'copilot-cli'])('offers native SDK control for %s', (agentId) => {
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({
+					agent: createMockAgent({ id: agentId, name: agentId, binaryName: agentId }),
+					onHarnessControlModeChange: vi.fn(),
+				})}
+			/>
+		);
+		expect(screen.getByText('Control Mode')).toBeInTheDocument();
+		expect(screen.getByText('native control')).toBeInTheDocument();
+	});
+
+	it('shows a stored native choice and hides the selector for unsupported providers', () => {
+		const { rerender } = render(
+			<AgentConfigPanel
+				{...createDefaultProps({
+					agent: qwenAgent(),
+					harnessControlMode: 'native',
+					onHarnessControlModeChange: vi.fn(),
+				})}
+			/>
+		);
+		expect(screen.getByText('native control').closest('button')?.className).toContain('ring-2');
+
+		rerender(
+			<AgentConfigPanel
+				{...createDefaultProps({
+					agent: createMockAgent({ id: 'codex', name: 'Codex', binaryName: 'codex' }),
+					onHarnessControlModeChange: vi.fn(),
+				})}
+			/>
+		);
+		expect(screen.queryByTestId('harness-control-mode-option')).not.toBeInTheDocument();
 	});
 });
 

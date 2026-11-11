@@ -8,6 +8,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ComposerOptionsSheet } from '../../../../renderer/components/InputArea/components/ComposerOptionsSheet';
+import { AGENT_CAPABILITIES } from '../../../../shared/maestro-lib/providers/capabilities';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 function renderSheet(overrides: Partial<React.ComponentProps<typeof ComposerOptionsSheet>> = {}) {
@@ -135,6 +136,57 @@ describe('ComposerOptionsSheet', () => {
 		expect(screen.getByRole('button', { name: 'Full Access' })).toBeInTheDocument();
 	});
 
+	it.each(['full', 'standard', 'readonly'] as const)(
+		'offers Grok full/standard/read-only choices from %s and dispatches the selected mode',
+		(permissionMode) => {
+			// Standard runs on the local ACP route, so the sheet offers it.
+			expect(AGENT_CAPABILITIES.grok.supportsStandardPermissionMode).toBe(true);
+			const { onPermissionModeChange } = renderSheet({
+				agentId: 'grok',
+				permissionMode,
+				hasReadOnlyCapability: AGENT_CAPABILITIES.grok.supportsReadOnlyMode,
+				hasStandardCapability: AGENT_CAPABILITIES.grok.supportsStandardPermissionMode ?? false,
+			});
+			fireEvent.click(screen.getByTestId('composer-options-access'));
+
+			const full = screen.getByRole('button', { name: 'Full Access' });
+			const standard = screen.getByRole('button', { name: 'Standard' });
+			const readonly = screen.getByRole('button', { name: 'Read-Only' });
+			expect(full).toHaveAttribute('aria-pressed', String(permissionMode === 'full'));
+			expect(standard).toHaveAttribute('aria-pressed', String(permissionMode === 'standard'));
+			expect(readonly).toHaveAttribute('aria-pressed', String(permissionMode === 'readonly'));
+			expect(screen.queryByRole('button', { name: /ACP|Plan/i })).not.toBeInTheDocument();
+			expect(onPermissionModeChange).not.toHaveBeenCalled();
+
+			fireEvent.click(standard);
+			fireEvent.click(readonly);
+			fireEvent.click(full);
+			expect(onPermissionModeChange).toHaveBeenCalledTimes(3);
+			expect(onPermissionModeChange).toHaveBeenNthCalledWith(1, 'standard');
+			expect(onPermissionModeChange).toHaveBeenNthCalledWith(2, 'readonly');
+			expect(onPermissionModeChange).toHaveBeenNthCalledWith(3, 'full');
+		}
+	);
+
+	it.each(['full', 'readonly'] as const)(
+		'hides unavailable Grok access controls even with stored %s mode',
+		(permissionMode) => {
+			const { onPermissionModeChange } = renderSheet({
+				agentId: 'grok',
+				permissionMode,
+				hasReadOnlyCapability: false,
+				hasStandardCapability: AGENT_CAPABILITIES.grok.supportsStandardPermissionMode ?? false,
+			});
+
+			expect(screen.queryByTestId('composer-options-access')).not.toBeInTheDocument();
+			expect(
+				screen.queryByRole('button', { name: /Full Access|Read-Only|Standard|ACP|Plan/i })
+			).not.toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('composer-options-history'));
+			expect(onPermissionModeChange).not.toHaveBeenCalled();
+		}
+	);
+
 	it('omits sections the agent does not support', () => {
 		renderSheet({
 			hasReadOnlyCapability: false,
@@ -146,5 +198,13 @@ describe('ComposerOptionsSheet', () => {
 		expect(screen.queryByTestId('composer-options-thinking')).not.toBeInTheDocument();
 		expect(screen.queryByTestId('composer-options-effort')).not.toBeInTheDocument();
 		expect(screen.queryByTestId('composer-options-model')).not.toBeInTheDocument();
+	});
+
+	it('draws the surface rows after the built-in sections', () => {
+		renderSheet({ extraRows: <div data-testid="extra-row">Extra</div> });
+
+		const extra = screen.getByTestId('extra-row');
+		const model = screen.getByTestId('composer-options-model');
+		expect(model.compareDocumentPosition(extra) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 });

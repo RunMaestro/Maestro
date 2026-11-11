@@ -35,6 +35,14 @@ const renderControl = (value: Mode, onChange = vi.fn()) => {
 };
 
 describe('SegmentedControl', () => {
+	it('marks only the chosen segment for the bar to scroll into view', () => {
+		renderControl('queries');
+
+		expect(screen.getByTestId('sort-queries')).toHaveAttribute('data-reveal-active', 'true');
+		expect(screen.getByTestId('sort-name')).not.toHaveAttribute('data-reveal-active');
+		expect(screen.getByTestId('sort-created')).not.toHaveAttribute('data-reveal-active');
+	});
+
 	it('renders one segment per option inside a labelled radiogroup', () => {
 		renderControl('name');
 

@@ -336,6 +336,12 @@ export const FileTab = memo(function FileTab({
 		[tab.extension, theme, colorBlindMode]
 	);
 
+	// An Untitled tab (New File, not saved yet) has an empty path. Every action
+	// that hands the path to the OS has nothing to act on there: Open in Default
+	// App sent '' to `shell:openPath`, which rejects it (MAESTRO-17Q). Same rule
+	// as the File Preview toolbar (MAESTRO-YS); the actions return once saved.
+	const hasDiskPath = !!tab.path;
+
 	// A gist body is plain text, so the action is offered only for files whose
 	// contents can survive the trip (see isGistPublishableFile).
 	const canPublishGist = useMemo(
@@ -524,15 +530,17 @@ export const FileTab = memo(function FileTab({
 						)}
 
 						{/* Copy File Path */}
-						<button
-							onClick={handleCopyFilePath}
-							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-							style={{ color: theme.colors.textMain }}
-							title={tab.path}
-						>
-							<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-							{showCopied === 'path' ? 'Copied!' : 'Copy File Path'}
-						</button>
+						{hasDiskPath && (
+							<button
+								onClick={handleCopyFilePath}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+								title={tab.path}
+							>
+								<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								{showCopied === 'path' ? 'Copied!' : 'Copy File Path'}
+							</button>
+						)}
 
 						{/* Copy File Name */}
 						<button
@@ -545,17 +553,19 @@ export const FileTab = memo(function FileTab({
 						</button>
 
 						{/* Open in Default App */}
-						<button
-							onClick={handleOpenInDefaultApp}
-							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-							style={{ color: theme.colors.textMain }}
-						>
-							<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-							Open in Default App
-						</button>
+						{hasDiskPath && (
+							<button
+								onClick={handleOpenInDefaultApp}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								Open in Default App
+							</button>
+						)}
 
 						{/* Reveal in Finder / Explorer - local-only, hidden over SSH */}
-						{!sshRemote && (
+						{hasDiskPath && !sshRemote && (
 							<button
 								onClick={handleRevealInFinder}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"

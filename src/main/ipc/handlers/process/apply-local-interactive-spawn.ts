@@ -7,6 +7,7 @@ import { steeringSocketPathFor } from '../../../process-manager/steering-client'
 import { logger } from '../../../utils/logger';
 import type { ClaudeSpawnContext } from './resolve-claude-spawn-context';
 import type { SpawnProcessConfig } from './spawn-types';
+import type { HarnessControlMode } from '../../../../shared/maestro-lib/providers/native-control';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -17,6 +18,7 @@ export interface LocalInteractiveSpawnInput {
 	commandToSpawn: string;
 	argsToSpawn: string[];
 	customEnvVarsToPass: Record<string, string> | undefined;
+	harnessControlMode?: HarnessControlMode;
 }
 
 export interface LocalInteractiveSpawnResult {
@@ -34,7 +36,15 @@ export interface LocalInteractiveSpawnResult {
 export function applyLocalInteractiveSpawnDecision(
 	input: LocalInteractiveSpawnInput
 ): LocalInteractiveSpawnResult {
-	const { config, agent, claudeContext, commandToSpawn, argsToSpawn, customEnvVarsToPass } = input;
+	const {
+		config,
+		agent,
+		claudeContext,
+		commandToSpawn,
+		argsToSpawn,
+		customEnvVarsToPass,
+		harnessControlMode,
+	} = input;
 	const {
 		claudeResolvedMode,
 		claudeResolvedReason,
@@ -67,6 +77,14 @@ export function applyLocalInteractiveSpawnDecision(
 		decisionClaudePath ??
 		config.sessionCustomPath ??
 		config.command;
+	if (harnessControlMode === 'native') {
+		return {
+			commandToSpawn: claudeCommandForInteractive,
+			argsToSpawn,
+			customEnvVarsToPass,
+			claudeBinPath: claudeCommandForInteractive,
+		};
+	}
 
 	const applied = applyClaudeSpawnDecision({
 		decision: {

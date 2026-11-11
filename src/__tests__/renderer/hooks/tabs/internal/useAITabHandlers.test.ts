@@ -7,6 +7,7 @@ import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { getLiveDraft, setLiveDraft } from '../../../../../renderer/utils/liveDraftStore';
 import {
 	clearDesktopAiTabSelections,
+	startDesktopAiTabSelectionSync,
 	consumeDesktopAiTabSelection,
 } from '../../../../../renderer/utils/desktopTabSelectionSync';
 import { createMockAITab, getSession, resetTabHandlerStores, setupSession } from './testUtils';
@@ -28,14 +29,18 @@ vi.mock('../../../../../renderer/contexts/InlineWizardContext', () => ({
 vi.mock('../../../../../renderer/utils/runtimeContext', () => runtimeMocks);
 
 describe('useAITabHandlers', () => {
+	let stopSelectionSync: () => void;
+
 	beforeEach(() => {
 		resetTabHandlerStores();
 		clearDesktopAiTabSelections();
+		stopSelectionSync = startDesktopAiTabSelectionSync();
 		inlineWizardMocks.endWizard.mockClear();
 		runtimeMocks.isWebDesktop.mockReturnValue(false);
 	});
 
 	afterEach(() => {
+		stopSelectionSync();
 		cleanup();
 	});
 
@@ -171,6 +176,21 @@ describe('useAITabHandlers', () => {
 		});
 		expect(document.activeElement).toBe(textarea);
 		textarea.remove();
+	});
+
+	it('does not kill a running turn when its tab closes', async () => {
+		setupSession({
+			id: 'session-1',
+			aiTabs: [createMockAITab({ id: 'ai-1', state: 'busy' }), createMockAITab({ id: 'ai-2' })],
+			activeTabId: 'ai-1',
+		});
+		window.maestro.process.kill = vi.fn();
+		const { result } = renderHook(() => useAITabHandlers());
+
+		await act(async () => result.current.performTabClose('ai-1'));
+
+		expect(window.maestro.process.kill).not.toHaveBeenCalled();
+		expect(getSession().orphanedThinkingTabs?.some((tab) => tab.id === 'ai-1')).toBe(true);
 	});
 
 	it('routes browser closes to the desktop without minting a local replacement', async () => {

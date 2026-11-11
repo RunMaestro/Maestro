@@ -41,6 +41,9 @@ import {
 import { validateSshOption } from '../../../shared/sshOptions';
 import { useSaveShortcut } from '../../hooks';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { ToggleSwitch } from '../ui/ToggleSwitch';
+import { federationFieldFor, isFederationRemote } from '../../../shared/federationRemote';
+import { isImeComposing } from '../../utils/ime';
 
 /**
  * SSH config host entry from ~/.ssh/config
@@ -123,6 +126,8 @@ export function SshRemoteModal({
 	const [nextSshOptionId, setNextSshOptionId] = useState(0);
 	const [useSshConfig, setUseSshConfig] = useState(false);
 	const [sshConfigHost, setSshConfigHost] = useState<string | undefined>(undefined);
+	// Federation is opportunistic: on unless the remote opted out.
+	const [federation, setFederation] = useState(true);
 
 	// SSH config state
 	const [sshConfigHosts, setSshConfigHosts] = useState<SshConfigHost[]>([]);
@@ -210,7 +215,7 @@ export function SshRemoteModal({
 
 	// Handle keyboard navigation in dropdown
 	const handleDropdownKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Escape') {
+		if (e.key === 'Escape' && !isImeComposing(e)) {
 			e.preventDefault();
 			e.stopPropagation();
 			setShowSshConfigDropdown(false);
@@ -222,7 +227,7 @@ export function SshRemoteModal({
 		} else if (e.key === 'ArrowUp') {
 			e.preventDefault();
 			setSshConfigHighlightIndex((prev) => (prev > 0 ? prev - 1 : 0));
-		} else if (e.key === 'Enter') {
+		} else if (e.key === 'Enter' && !isImeComposing(e)) {
 			e.preventDefault();
 			if (filteredSshConfigHosts.length > 0 && filteredSshConfigHosts[sshConfigHighlightIndex]) {
 				handleSelectSshConfigHost(filteredSshConfigHosts[sshConfigHighlightIndex]);
@@ -256,6 +261,7 @@ export function SshRemoteModal({
 				setShowSshOptions(optionRows.length > 0);
 				setUseSshConfig(initialConfig.useSshConfig || false);
 				setSshConfigHost(initialConfig.sshConfigHost);
+				setFederation(isFederationRemote(initialConfig));
 			} else {
 				// Reset to defaults for new config
 				setName('');
@@ -272,6 +278,7 @@ export function SshRemoteModal({
 				setShowSshOptions(false);
 				setUseSshConfig(false);
 				setSshConfigHost(undefined);
+				setFederation(true);
 			}
 			setError(null);
 			setTestResult(null);
@@ -326,6 +333,8 @@ export function SshRemoteModal({
 			enabled,
 			useSshConfig,
 			sshConfigHost,
+			// Only an opt-out is stored.
+			federation: federationFieldFor(federation),
 		};
 	}, [
 		initialConfig,
@@ -339,6 +348,7 @@ export function SshRemoteModal({
 		enabled,
 		useSshConfig,
 		sshConfigHost,
+		federation,
 	]);
 
 	// Handle selecting an SSH config host
@@ -806,40 +816,62 @@ export function SshRemoteModal({
 					}
 				/>
 
-				{/* Enabled Toggle */}
-				<div
-					className="flex items-center justify-between p-3 rounded border"
-					style={{
-						borderColor: theme.colors.border,
-						backgroundColor: theme.colors.bgMain,
-					}}
-				>
-					<div>
-						<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
-							Enable this remote
-						</div>
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							Disabled remotes won&apos;t be available for selection
-						</div>
-					</div>
-					<button
-						type="button"
-						onClick={() => setEnabled(!enabled)}
-						className="w-12 h-6 rounded-full transition-colors relative"
-						style={{
-							backgroundColor: enabled ? theme.colors.accent : theme.colors.bgActivity,
-						}}
-					>
-						<div
-							className="absolute top-1 w-4 h-4 rounded-full bg-white transition-transform"
-							style={{
-								transform: enabled ? 'translateX(26px)' : 'translateX(4px)',
-							}}
-						/>
-					</button>
-				</div>
+				<SwitchRow
+					theme={theme}
+					label="Enable this remote"
+					description="Disabled remotes won't be available for selection"
+					checked={enabled}
+					onChange={setEnabled}
+				/>
+
+				<SwitchRow
+					theme={theme}
+					label="Federation"
+					description="Look for a Maestro host on this remote and mirror its agents, so they keep working while this machine sleeps. Off: Maestro never probes this remote for a host."
+					checked={federation}
+					onChange={setFederation}
+					testId="ssh-remote-federation-toggle"
+				/>
 			</div>
 		</Modal>
+	);
+}
+
+/** A labeled on/off row in the remote editor. */
+function SwitchRow({
+	theme,
+	label,
+	description,
+	checked,
+	onChange,
+	testId,
+}: {
+	theme: Theme;
+	label: string;
+	description: string;
+	checked: boolean;
+	onChange: (checked: boolean) => void;
+	testId?: string;
+}) {
+	return (
+		<div
+			className="flex items-center justify-between gap-3 p-3 rounded border"
+			style={{
+				borderColor: theme.colors.border,
+				backgroundColor: theme.colors.bgMain,
+			}}
+			data-testid={testId}
+		>
+			<div>
+				<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
+					{label}
+				</div>
+				<div className="text-xs" style={{ color: theme.colors.textDim }}>
+					{description}
+				</div>
+			</div>
+			<ToggleSwitch checked={checked} onChange={onChange} theme={theme} ariaLabel={label} />
+		</div>
 	);
 }
 

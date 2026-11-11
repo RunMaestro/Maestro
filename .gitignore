@@ -73,3 +73,10 @@ examples/plugins/*/signature.json
 
 # Superseded local-only Lite prototype and visual verification artifacts
 src/main/lite/discovery-pairing-prototype/
+# Local scratch files and Python test caches
+.tmp-*
+__pycache__/
+.pytest_cache/
+
+# Local SlopTimize command output cache
+.sloptimize/

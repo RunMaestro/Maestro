@@ -1,19 +1,28 @@
-import React, { memo, useMemo } from 'react';
-import type { Session, Group, Theme } from '../../../types';
+/**
+ * InputTextarea - the AI composer's adapter over the shared ComposerTextarea.
+ *
+ * Owns what only the AI composer has: the mention roster read from the
+ * session store (gated on the draft holding an `@`, and excluding this agent),
+ * the mode-aware placeholder, and command mode's `$` prefix and fixed-pitch
+ * font. It takes the agent's id, name and provider rather than the whole
+ * Session, so this agent's own streaming flushes, which replace the Session
+ * object, do not re-render it.
+ */
+
+import React, { memo, useCallback, useMemo } from 'react';
+import type { Session, Group, Theme, ToolType } from '../../../types';
 import { getProviderDisplayName } from '../../../utils/sessionValidation';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { buildKnownMentionNameSet } from '../../../hooks/input/useAgentMentionCompletion';
-import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../../../utils/textareaSizing';
 import { useFixedPitchFont } from '../../../hooks/ui/useFixedPitchFont';
-import {
-	MENTION_OVERLAY_TYPOGRAPHY,
-	MentionChipOverlay,
-	useMentionChipOverlay,
-} from '../../MentionChipOverlay';
+import { ComposerTextarea } from '../../ChatComposer';
 
 interface InputTextareaProps {
-	session: Session;
+	/** This agent's id, left out of its own mention roster. */
+	agentId: string;
+	agentName: string;
+	toolType: ToolType;
 	theme: Theme;
 	isTerminalMode: boolean;
 	/**
@@ -42,14 +51,6 @@ interface InputTextareaProps {
 	handleDrop: (e: React.DragEvent<HTMLElement>) => void;
 }
 
-/**
- * Overlay padding. Must stay identical to the textarea's `pt-3 pr-3 pb-1 pl-3`,
- * or the chip overlay drifts off the caret. The 12px top + 4px bottom padding is
- * deliberate: it leaves exactly 160px of text inside the 176px cap, i.e. 8 whole
- * 20px rows, so bottom-snapping can never leave a partially sliced row.
- */
-const OVERLAY_PADDING = '0.75rem 0.75rem 0.25rem 0.75rem';
-
 // Stable empty references so the gated sessions/groups selectors return the same
 // value on every render while the composer has no `@` - no re-render churn from
 // unrelated streaming flushes.
@@ -57,7 +58,9 @@ const EMPTY_SESSIONS: Session[] = [];
 const EMPTY_GROUPS: Group[] = [];
 
 export const InputTextarea = memo(function InputTextarea({
-	session,
+	agentId,
+	agentName,
+	toolType,
 	theme,
 	isTerminalMode,
 	isCommandModeDraft,
@@ -91,18 +94,9 @@ export const InputTextarea = memo(function InputTextarea({
 	);
 	const groups = useSessionStore((state) => (hasMentionCandidate ? state.groups : EMPTY_GROUPS));
 	const knownMentionNames = useMemo(
-		() =>
-			hasMentionCandidate ? buildKnownMentionNameSet(sessions, groups, session.id) : undefined,
-		[hasMentionCandidate, sessions, groups, session.id]
+		() => (hasMentionCandidate ? buildKnownMentionNameSet(sessions, groups, agentId) : undefined),
+		[hasMentionCandidate, sessions, groups, agentId]
 	);
-
-	const mentionOverlay = useMentionChipOverlay({
-		inputRef,
-		value: inputValue,
-		enabled: overlayEnabled,
-		knownMentionNames,
-	});
-	const { overlayRendered } = mentionOverlay;
 
 	// Command mode borrows the terminal composer's `$` affordance so the switch
 	// is visible before you hit Enter. AI command mode deliberately does not: its
@@ -117,81 +111,59 @@ export const InputTextarea = memo(function InputTextarea({
 	const fontFamily = useSettingsStore((state) => state.fontFamily);
 	const shellFontFamily = useFixedPitchFont(fontFamily);
 
+	const handleTextareaDrop = useCallback(
+		(e: React.DragEvent<HTMLTextAreaElement>) => {
+			e.stopPropagation();
+			handleDrop(e);
+		},
+		[handleDrop]
+	);
+
 	return (
-		<div className="relative flex items-start">
-			{showShellPrefix && (
-				<span
-					className="text-sm font-bold select-none pl-3 pt-3"
-					style={{ color: theme.colors.accent, fontFamily: shellFontFamily }}
-					title={isCommandModeDraft ? 'Command mode: runs in the shell, not the agent' : undefined}
-				>
-					$
-				</span>
-			)}
-			<MentionChipOverlay
-				overlay={mentionOverlay}
-				theme={theme}
-				padding={OVERLAY_PADDING}
-				// Track the textarea's command-mode font override exactly. The overlay
-				// is enabled for everything but terminal mode, so a command-mode draft
-				// containing an `@mention` puts this decoration under monospace glyphs.
-				fontFamily={showShellPrefix ? shellFontFamily : undefined}
-			/>
-			<textarea
-				ref={inputRef}
-				className={`relative flex-1 bg-transparent text-sm outline-none ${showShellPrefix ? 'pl-1.5' : 'pl-3'} pt-3 pr-3 pb-1 resize-none min-h-[3.5rem] scrollbar-thin`}
-				style={{
-					...MENTION_OVERLAY_TYPOGRAPHY,
-					// Native text is always visible. The overlay underneath contributes only
-					// the mention chip decoration, never a second copy of the glyphs.
-					color: theme.colors.textMain,
-					caretColor: theme.colors.textMain,
-					// Single source of truth with the resize logic: the CSS cap and
-					// resizeTextareaToContent's clamp can never disagree.
-					maxHeight: `${KEYSTROKE_TEXTAREA_MAX_HEIGHT}px`,
-					// Sit above the decorative overlay so the caret + native selection win.
-					zIndex: overlayRendered ? 1 : undefined,
-					// Shell text is a grid, so command mode overrides the composer font
-					// with a measured fixed-pitch stack. Set after MENTION_OVERLAY_TYPOGRAPHY so it
-					// wins, and left undefined in agent mode so the shared value stands.
-					fontFamily: showShellPrefix ? shellFontFamily : undefined,
-				}}
-				placeholder={
-					isTerminalMode
-						? 'Run shell command...'
-						: awaitingAiCommand
-							? 'Enter runs it - arrows choose - Esc cancels'
-							: isAiCommandDraft
-								? 'Describe what you want to accomplish... (Esc for Command Mode)'
-								: isCommandModeDraft
-									? 'Run shell command... (! for AI Command, Esc for the agent)'
-									: `Talking to ${session.name} powered by ${getProviderDisplayName(session.toolType)}`
-				}
-				value={inputValue}
-				// Read-only, not disabled: a disabled textarea cannot hold focus, and
-				// every key that answers the proposal is read from this element.
-				readOnly={awaitingAiCommand}
-				spellCheck={spellCheckEnabled}
-				onFocus={onInputFocus}
-				onBlur={() => {
-					mentionOverlay.onBlur();
-					onInputBlur?.();
-				}}
-				onChange={(e) => {
-					mentionOverlay.onSelectionChange(e.currentTarget);
-					onChange(e);
-				}}
-				onSelect={(e) => mentionOverlay.onSelectionChange(e.currentTarget)}
-				onScroll={mentionOverlay.onScroll}
-				onKeyDown={handleInputKeyDown}
-				onPaste={handlePaste}
-				onDrop={(e) => {
-					e.stopPropagation();
-					handleDrop(e);
-				}}
-				onDragOver={(e) => e.preventDefault()}
-				rows={2}
-			/>
-		</div>
+		<ComposerTextarea
+			theme={theme}
+			value={inputValue}
+			inputRef={inputRef}
+			placeholder={
+				isTerminalMode
+					? 'Run shell command...'
+					: awaitingAiCommand
+						? 'Enter runs it - arrows choose - Esc cancels'
+						: isAiCommandDraft
+							? 'Describe what you want to accomplish... (Esc for Command Mode)'
+							: isCommandModeDraft
+								? 'Run shell command... (! for AI Command, Esc for the agent)'
+								: `Talking to ${agentName} powered by ${getProviderDisplayName(toolType)}`
+			}
+			spellCheck={spellCheckEnabled}
+			knownMentionNames={knownMentionNames}
+			mentionChips={overlayEnabled}
+			prefix={
+				showShellPrefix ? (
+					<span
+						className="text-sm font-bold select-none pl-3 pt-3"
+						style={{ color: theme.colors.accent, fontFamily: shellFontFamily }}
+						title={
+							isCommandModeDraft ? 'Command mode: runs in the shell, not the agent' : undefined
+						}
+					>
+						$
+					</span>
+				) : undefined
+			}
+			// Shell text is a grid, so command mode types (and measures the chips)
+			// in a fixed-pitch stack. A command-mode draft can hold an `@mention`,
+			// which puts the chips under monospace glyphs.
+			fontFamily={showShellPrefix ? shellFontFamily : undefined}
+			// Read-only, not disabled: a disabled textarea cannot hold focus, and
+			// every key that answers the proposal is read from this element.
+			readOnly={awaitingAiCommand}
+			onFocus={onInputFocus}
+			onBlur={onInputBlur}
+			onChange={onChange}
+			onKeyDown={handleInputKeyDown}
+			onPaste={handlePaste}
+			onDrop={handleTextareaDrop}
+		/>
 	);
 });

@@ -3,7 +3,7 @@
  * `<sessionId>/subagents/agent-*.jsonl` and must be priced into it.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
@@ -11,6 +11,9 @@ import {
 	claudeSubagentDir,
 	computeClaudeSessionUsage,
 	computeClaudeUsageWithSubagents,
+	isAbsentTranscriptError,
+	iterateClaudeSubagentTranscripts,
+	listClaudeSubagentTranscriptPaths,
 	readClaudeSubagentTranscripts,
 	readClaudeSubagentTranscriptsSync,
 } from '../../shared/claudeSessionUsage';
@@ -40,6 +43,25 @@ describe('claudeSessionUsage', () => {
 		expect(claudeSubagentDir(sessionFile)).toBe(path.join(dir, 'abc', 'subagents'));
 	});
 
+	it('lists subagent transcript paths in a stable order, skipping non-transcripts', async () => {
+		expect(await listClaudeSubagentTranscriptPaths(sessionFile)).toEqual([]);
+		const subagents = claudeSubagentDir(sessionFile);
+		await fs.mkdir(subagents, { recursive: true });
+		await fs.writeFile(path.join(subagents, 'agent-b.jsonl'), '');
+		await fs.writeFile(path.join(subagents, 'agent-a.jsonl'), '');
+		await fs.writeFile(path.join(subagents, 'notes.txt'), '');
+		expect(await listClaudeSubagentTranscriptPaths(sessionFile)).toEqual([
+			path.join(subagents, 'agent-a.jsonl'),
+			path.join(subagents, 'agent-b.jsonl'),
+		]);
+	});
+
+	it('treats a missing or unreadable transcript as absent, and anything else as an error', () => {
+		expect(isAbsentTranscriptError(Object.assign(new Error('x'), { code: 'ENOENT' }))).toBe(true);
+		expect(isAbsentTranscriptError(Object.assign(new Error('x'), { code: 'EIO' }))).toBe(false);
+		expect(isAbsentTranscriptError(new Error('x'))).toBe(false);
+	});
+
 	it('reads nothing when the session spawned no subagents', async () => {
 		expect(await readClaudeSubagentTranscripts(sessionFile)).toEqual([]);
 		expect(readClaudeSubagentTranscriptsSync(sessionFile)).toEqual([]);
@@ -64,5 +86,33 @@ describe('claudeSessionUsage', () => {
 	it('counts a response once even if it appears in both the parent and a subagent', () => {
 		const shared = usageLine('msg_same', 1_000_000);
 		expect(computeClaudeUsageWithSubagents(shared, [shared]).inputTokens).toBe(1_000_000);
+	});
+
+	it('never joins the parent and subagent transcripts into one string (MAESTRO-17M)', () => {
+		// A joined copy of a long session plus its subagents can pass V8's maximum
+		// string length, so pricing must walk each document on its own.
+		const join = vi.spyOn(Array.prototype, 'join');
+		try {
+			const usage = computeClaudeUsageWithSubagents(usageLine('msg_parent', 1_000_000), [
+				usageLine('msg_a', 2_000_000),
+				usageLine('msg_b', 3_000_000),
+			]);
+			expect(usage.inputTokens).toBe(6_000_000);
+			expect(join).not.toHaveBeenCalled();
+		} finally {
+			join.mockRestore();
+		}
+	});
+
+	it('yields subagent transcripts one file at a time, in name order', async () => {
+		const subagents = claudeSubagentDir(sessionFile);
+		await fs.mkdir(subagents, { recursive: true });
+		await fs.writeFile(path.join(subagents, 'agent-b.jsonl'), 'b');
+		await fs.writeFile(path.join(subagents, 'agent-a.jsonl'), 'a');
+
+		const seen: string[] = [];
+		for await (const content of iterateClaudeSubagentTranscripts(sessionFile)) seen.push(content);
+		expect(seen).toEqual(['a', 'b']);
+		expect(await readClaudeSubagentTranscripts(sessionFile)).toEqual(['a', 'b']);
 	});
 });

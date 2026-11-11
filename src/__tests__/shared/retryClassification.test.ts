@@ -505,3 +505,221 @@ describe('classifying off the provider raw line', () => {
 		expect(tokenExhaustionResetAt(error, now)).toBeUndefined();
 	});
 });
+
+// Synthetic native/ACP envelopes pinned to the phase01 contract, not live captures.
+describe('Grok retry requires host-owned proof of no dispatch', () => {
+	const now = 1_700_000_000_000;
+	const safe: ClassifiableError = err({
+		agentId: 'grok',
+		message: 'Rate limit exceeded',
+		terminal: { status: 'failed', kind: 'provider', dispatchState: 'not-dispatched' },
+	});
+
+	it.each([
+		undefined,
+		{ status: 'success' },
+		{ status: 'refused', origin: 'provider' },
+		{ status: 'refused', origin: 'effect' },
+		{ status: 'cancelled', origin: 'user' },
+		{ status: 'cancelled', origin: 'provider' },
+		{ status: 'timeout', kind: 'idle' },
+		{ status: 'timeout', kind: 'deadline' },
+		{ status: 'incomplete', kind: 'limit' },
+		{ status: 'incomplete', kind: 'missing-terminal' },
+		{ status: 'incomplete', kind: 'unknown-stop-reason' },
+		{ status: 'failed', kind: 'protocol' },
+		{ status: 'failed', kind: 'process' },
+		{ status: 'failed', kind: 'transport' },
+		{ status: 'failed', kind: 'prompt-delivery' },
+	] satisfies ClassifiableError['terminal'][])('refuses replay for terminal %j', (terminal) => {
+		expect(
+			classifyRetryableError({
+				...safe,
+				terminal: terminal && { ...terminal, dispatchState: 'not-dispatched' },
+			})
+		).toBeNull();
+	});
+
+	it.each([undefined, 'unknown', 'dispatched'] as const)(
+		'cannot replay a network failure with dispatch state %s',
+		(dispatchState) => {
+			expect(
+				classifyRetryableError({
+					...safe,
+					type: 'network_error',
+					message: 'Connection reset after a tool wrote a file',
+					terminal: { status: 'failed', kind: 'provider', dispatchState },
+				})
+			).toBeNull();
+		}
+	);
+
+	describe.each(['native', 'acp'] as const)('%s errors', (route) => {
+		it.each([
+			['Rate limit exceeded', 'availability'],
+			['HTTP 503 Service unavailable', 'availability'],
+			['Usage limit reached', 'token-exhaustion'],
+			['Session has expired; rate limit exceeded', null],
+			['Invalid API key; try again later', null],
+			['Gateway authentication failed; HTTP 503', null],
+			['API key auth is disabled; rate limit exceeded', null],
+			['Model blocked by policy; try again later', null],
+			['PermissionRejected; rate limit exceeded', null],
+			['PermissionCancelled; try again later', null],
+			['Turn was cancelled; rate limit exceeded', null],
+			['context_length_exceeded; quota exceeded', null],
+			['Grok ACP transport: connection closed; HTTP 503', null],
+			["Couldn't set model: unknown model id; try again later", null],
+		] as const)('classifies %s without inventing reset metadata', (message, expected) => {
+			const parsedJson =
+				route === 'native'
+					? { type: 'error', message }
+					: { jsonrpc: '2.0', id: 7, error: { code: -32603, message } };
+			const error = { ...safe, message: 'Provider request failed', parsedJson };
+			expect(classifyRetryableError(error)).toBe(expected);
+			expect(
+				classifyRetryableError({ ...safe, raw: { errorLine: JSON.stringify(parsedJson) } })
+			).toBe(expected);
+			expect(tokenExhaustionResetAt(error, now)).toBeUndefined();
+			// The wire itself cannot assert host-owned no-dispatch evidence.
+			expect(
+				classifyRetryableError({
+					...error,
+					terminal: undefined,
+					parsedJson: { ...parsedJson, dispatchState: 'not-dispatched', terminal: safe.terminal },
+				})
+			).toBeNull();
+		});
+
+		it('preserves explicit retry hints from actual error text', () => {
+			const message = 'Usage limit reached; retry after 30 seconds';
+			const parsedJson =
+				route === 'native'
+					? { type: 'error', message }
+					: { jsonrpc: '2.0', id: 'prompt-1', error: { code: -32603, message } };
+			expect(tokenExhaustionResetAt({ ...safe, parsedJson }, now)).toBe(
+				now + 30_000 + RESET_TIME_BUFFER_MS
+			);
+		});
+	});
+
+	it.each([-32700, -32600, -32601, -32602, -32000, -32002, -32800])(
+		'refuses ACP permanent/cancellation code %s even with throttle prose',
+		(code) => {
+			const payload = { jsonrpc: '2.0', id: 1, error: { code, message: 'Rate limit exceeded' } };
+			for (const metadata of [
+				{ parsedJson: payload },
+				{ raw: { errorLine: JSON.stringify(payload) } },
+			]) {
+				expect(classifyRetryableError({ ...safe, ...metadata })).toBeNull();
+			}
+		}
+	);
+
+	it.each([
+		{ status: 401 },
+		{ status: 403 },
+		{ status: 400 },
+		{ type: 'authentication_error' },
+		{ type: 'permission_error' },
+		{ error: { data: { status: 422 } } },
+		'Permission denied; retry after 30 seconds',
+	])('honors nested ACP permanent error data %j', (data) => {
+		const payload = {
+			jsonrpc: '2.0',
+			id: 'prompt-2',
+			error: { code: -32603, message: 'Usage limit reached', data },
+		};
+		expect(classifyRetryableError({ ...safe, parsedJson: payload })).toBeNull();
+		expect(
+			classifyRetryableError({ ...safe, raw: { errorLine: JSON.stringify(payload) } })
+		).toBeNull();
+	});
+
+	const quoted = 'Invalid API key; quota exceeded; retry after 30 seconds';
+	it.each([
+		{ type: 'text', data: quoted },
+		{ type: 'thought', data: quoted },
+		{ type: 'tool_call', toolCallId: 'tool-1', toolName: 'shell', rawInput: { command: quoted } },
+		{ type: 'tool_call_update', toolCallId: 'tool-1', status: 'completed', rawOutput: quoted },
+		{ type: 'end', stopReason: 'EndTurn', message: quoted },
+		{ jsonrpc: '2.0', id: 8, result: { stopReason: 'end_turn', message: quoted } },
+		{
+			jsonrpc: '2.0',
+			method: 'session/update',
+			params: {
+				sessionId: 'session-1',
+				update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', data: quoted } },
+			},
+		},
+		{
+			jsonrpc: '2.0',
+			id: 'permission',
+			method: 'session/request_permission',
+			params: { message: quoted },
+		},
+		{ jsonrpc: '2.0', method: 'unknown/extension', params: { message: quoted } },
+		{ jsonrpc: '2.0', id: 8, result: {}, error: { message: quoted } },
+		{ detail: quoted, retryAfter: 30 },
+	])('does not derive retry/reset from non-error payload %j', (payload) => {
+		for (const metadata of [
+			{ parsedJson: payload },
+			{ raw: { errorLine: JSON.stringify(payload) } },
+		]) {
+			const error = { ...safe, ...metadata };
+			expect(classifyRetryableError(error)).toBeNull();
+			expect(tokenExhaustionResetAt(error, now)).toBeUndefined();
+		}
+	});
+
+	it.each(['{"type":"error","message":"Rate limit exceeded', '["quota exceeded",', 'null', '[]'])(
+		'does not turn malformed or non-record JSON %s into retry evidence',
+		(errorLine) => {
+			const error = { ...safe, message: '', raw: { errorLine } };
+			expect(classifyRetryableError(error)).toBeNull();
+			expect(tokenExhaustionResetAt(error, now)).toBeUndefined();
+		}
+	);
+
+	it.each(['', 'Usage limit reached'])(
+		'preserves reset-only metadata with message %j',
+		(message) => {
+			const error = { ...safe, message, parsedJson: { retryAfter: 30 } };
+			expect(tokenExhaustionResetAt(error, now)).toBe(now + 30_000 + RESET_TIME_BUFFER_MS);
+			expect(classifyRetryableError(error)).toBe(message ? 'token-exhaustion' : null);
+		}
+	);
+
+	it('keeps plain diagnostics while dropping mixed JSONL answer and malformed prose', () => {
+		const error = {
+			...safe,
+			message: '',
+			raw: {
+				errorLine: [
+					'HTTP 503 Service unavailable',
+					JSON.stringify({ type: 'text', data: quoted }),
+					'{"broken": "quota exceeded',
+				].join('\n'),
+			},
+		};
+		expect(classifyRetryableError(error)).toBe('availability');
+		expect(tokenExhaustionResetAt(error, now)).toBeUndefined();
+	});
+
+	it.each(['claude-code', 'codex', 'antigravity'])(
+		'preserves legacy %s retry behavior without terminal metadata',
+		(agentId) => {
+			expect(classifyRetryableError(err({ agentId, message: '', type: 'network_error' }))).toBe(
+				'availability'
+			);
+			const error = err({
+				agentId,
+				message: 'Usage limit reached',
+				parsedJson: { retryAfter: 30 },
+			});
+			expect(classifyRetryableError(error)).toBe('token-exhaustion');
+			expect(tokenExhaustionResetAt(error, now)).toBe(now + 30_000 + RESET_TIME_BUFFER_MS);
+			expect(classifyRetryableError({ ...error, type: 'permission_denied' })).toBeNull();
+		}
+	);
+});

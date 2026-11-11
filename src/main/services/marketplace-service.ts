@@ -26,7 +26,7 @@ import type {
 } from '../../shared/marketplace-types';
 import { MarketplaceFetchError, MarketplaceImportError } from '../../shared/marketplace-types';
 import { isCompatible } from '../../shared/marketplace-compatibility';
-import { SshRemoteConfig } from '../../shared/types';
+import { isTaskSelectionMode, SshRemoteConfig, type TaskSelectionMode } from '../../shared/types';
 import { writeFileRemote, mkdirRemote } from '../utils/remote-fs';
 import { captureException } from '../utils/sentry';
 
@@ -74,6 +74,24 @@ function resolveTildePath(pathStr: string): string {
  * Rejects path separators and traversal sequences so the folder cannot
  * escape `autoRunFolderPath`. Throws `MarketplaceImportError` on bad input.
  */
+/**
+ * Points a playbook's asset references at the folder it was imported into.
+ *
+ * Exchange playbooks reference bundled files as `{{AUTORUN_FOLDER}}/assets/...`
+ * (the documented convention), but the import writes them to
+ * `<autoRunFolderPath>/<targetFolderName>/assets/`, and `{{AUTORUN_FOLDER}}`
+ * expands to the Auto Run root, so the reference never resolved. Rewriting the
+ * reference at import keeps `{{AUTORUN_FOLDER}}` meaning the root everywhere
+ * else and keeps each playbook's assets in its own folder.
+ */
+export function rebaseAssetReferences(text: string, targetFolderName: string): string {
+	if (!targetFolderName.trim()) return text;
+	return text.replace(
+		/\{\{AUTORUN_FOLDER\}\}\/assets(?![\w.-])/gi,
+		() => `{{AUTORUN_FOLDER}}/${targetFolderName}/assets`
+	);
+}
+
 export function assertSafeTargetFolderName(targetFolderName: string): void {
 	if (!targetFolderName || targetFolderName.trim() === '') {
 		throw new MarketplaceImportError('targetFolderName is required');
@@ -121,6 +139,26 @@ async function readLocalManifest(app: App): Promise<MarketplaceManifest | null> 
 	}
 }
 
+/**
+ * `documents[].filename` names a document WITHOUT its `.md` extension, and
+ * every consumer appends one: the fetch URL, the file the import writes, the
+ * saved playbook entry, and the label in the Marketplace modal. Some official
+ * manifest entries carry the extension anyway (`Agent-Prompt.md`), so the
+ * fetch asked GitHub for `Agent-Prompt.md.md`, got a 404, and the whole import
+ * failed (MAESTRO-QB). Strip it once, here, so every consumer agrees.
+ */
+function withExtensionlessDocuments(playbook: MarketplacePlaybook): MarketplacePlaybook {
+	if (!Array.isArray(playbook.documents)) return playbook;
+	return {
+		...playbook,
+		documents: playbook.documents.map((doc) =>
+			typeof doc?.filename === 'string'
+				? { ...doc, filename: doc.filename.replace(/\.md$/i, '') }
+				: doc
+		),
+	};
+}
+
 function mergeManifests(
 	official: MarketplaceManifest | null,
 	local: MarketplaceManifest | null
@@ -131,13 +169,19 @@ function mergeManifests(
 	if (official && !local) {
 		return {
 			...official,
-			playbooks: official.playbooks.map((p) => ({ ...p, source: 'official' as const })),
+			playbooks: official.playbooks.map((p) => ({
+				...withExtensionlessDocuments(p),
+				source: 'official' as const,
+			})),
 		};
 	}
 	if (!official && local) {
 		return {
 			...local,
-			playbooks: local.playbooks.map((p) => ({ ...p, source: 'local' as const })),
+			playbooks: local.playbooks.map((p) => ({
+				...withExtensionlessDocuments(p),
+				source: 'local' as const,
+			})),
 		};
 	}
 	const officialPlaybooks = official!.playbooks;
@@ -154,7 +198,7 @@ function mergeManifests(
 			logger.warn(`Local playbook "${playbook.id}" missing required fields, skipping`, LOG_CONTEXT);
 			continue;
 		}
-		localMap.set(playbook.id, { ...playbook, source: 'local' });
+		localMap.set(playbook.id, { ...withExtensionlessDocuments(playbook), source: 'local' });
 	}
 	const mergedPlaybooks = officialPlaybooks.map((official) => {
 		const localOverride = localMap.get(official.id);
@@ -162,7 +206,7 @@ function mergeManifests(
 			logger.info(`Local playbook "${official.id}" overrides official version`, LOG_CONTEXT);
 			return localOverride;
 		}
-		return { ...official, source: 'official' as const };
+		return { ...withExtensionlessDocuments(official), source: 'official' as const };
 	});
 	const officialIds = new Set(officialPlaybooks.map((p) => p.id));
 	const localOnlyPlaybooks = Array.from(localMap.values()).filter(
@@ -435,6 +479,7 @@ export interface ImportPlaybookServiceResult {
 		loopEnabled: boolean;
 		maxLoops?: number | null;
 		prompt: string;
+		taskSelectionMode?: TaskSelectionMode;
 	};
 	importedDocs: string[];
 	importedAssets: string[];
@@ -526,7 +571,10 @@ export async function importMarketplacePlaybook(
 	const importedDocs: string[] = [];
 	for (const doc of marketplacePlaybook.documents) {
 		try {
-			const content = await fetchDocument(marketplacePlaybook.path, doc.filename);
+			const content = rebaseAssetReferences(
+				await fetchDocument(marketplacePlaybook.path, doc.filename),
+				targetFolderName
+			);
 			const docPath = isRemote
 				? `${targetPath}/${doc.filename}.md`
 				: path.join(targetPath, `${doc.filename}.md`);
@@ -636,7 +684,12 @@ export async function importMarketplacePlaybook(
 			})),
 		loopEnabled: marketplacePlaybook.loopEnabled,
 		maxLoops: marketplacePlaybook.maxLoops,
-		prompt: marketplacePlaybook.prompt ?? '',
+		prompt: rebaseAssetReferences(marketplacePlaybook.prompt ?? '', targetFolderName),
+		// The manifest is someone else's JSON: only a value Auto Run knows is kept. Absent means
+		// per task, so a playbook that never declared one imports exactly as it always has.
+		...(isTaskSelectionMode(marketplacePlaybook.taskSelectionMode) && {
+			taskSelectionMode: marketplacePlaybook.taskSelectionMode,
+		}),
 	};
 
 	const playbooksDir = path.join(app.getPath('userData'), 'playbooks');

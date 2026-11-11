@@ -1236,15 +1236,21 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		}
 
 		// Find the session file by sessionId locally
-		const sessionFilePath = await this.findSessionFile(sessionId);
+		const sessionFilePath = options?.filePath ?? (await this.findSessionFile(sessionId));
 
 		if (!sessionFilePath) {
 			logger.warn(`Codex session file not found: ${sessionId}`, LOG_CONTEXT);
 			return { messages: [], total: 0, hasMore: false };
 		}
 
-		// Streamed, never read whole: a rollout can be hundreds of MB (#1862).
-		await forEachJsonlLine(sessionFilePath, collect);
+		if (options?.content !== undefined) {
+			for (const line of options.content.split('\n')) {
+				if (line.trim()) collect(line);
+			}
+		} else {
+			// Streamed, never read whole: a rollout can be hundreds of MB (#1862).
+			await forEachJsonlLine(sessionFilePath, collect);
+		}
 		return page.result();
 	}
 

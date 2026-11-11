@@ -446,6 +446,8 @@ describe('ExtensionDetails - plugin settings panels', () => {
 
 		fireEvent.click(screen.getByTestId('extension-update'));
 		expect(onUpdate).toHaveBeenCalledExactlyOnceWith(plugin.record);
+		expect(screen.getAllByRole('button', { name: 'Update from File…' })).toHaveLength(1);
+		expect(screen.queryByTestId('extension-update-folder')).not.toBeInTheDocument();
 		expect(screen.getByTestId('extension-uninstall')).toBeInTheDocument();
 	});
 

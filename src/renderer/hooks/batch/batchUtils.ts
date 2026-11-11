@@ -5,6 +5,7 @@
 
 import { describeSegmentLimit } from '../../../shared/autorunModelHints';
 import type { TaskSelectionMode } from '../../types';
+import { resolveAutoRunPromptTemplate } from '../../../shared/autorunPromptTemplate';
 import {
 	CHECKED_TASK_REGEX,
 	UNCHECKED_TASK_REGEX,
@@ -25,15 +26,17 @@ export { findPendingHitlGate, type HitlGate } from '../../../shared/autorunMarke
 let cachedAutorunDefaultPrompt: string = '';
 let cachedAutorunPerTaskBlock: string = '';
 let cachedAutorunPerDocumentBlock: string = '';
+let cachedAutorunDocumentBlock: string = '';
 let batchUtilsPromptsLoaded = false;
 
 export async function loadBatchUtilsPrompts(force = false): Promise<void> {
 	if (batchUtilsPromptsLoaded && !force) return;
 
-	const [defaultResult, perTaskResult, perDocResult] = await Promise.all([
+	const [defaultResult, perTaskResult, perDocResult, documentResult] = await Promise.all([
 		window.maestro.prompts.get('autorun-default'),
 		window.maestro.prompts.get('autorun-per-task'),
 		window.maestro.prompts.get('autorun-per-document'),
+		window.maestro.prompts.get('autorun-document'),
 	]);
 	if (!defaultResult.success) {
 		throw new Error(`Failed to load autorun-default prompt: ${defaultResult.error}`);
@@ -44,9 +47,13 @@ export async function loadBatchUtilsPrompts(force = false): Promise<void> {
 	if (!perDocResult.success) {
 		throw new Error(`Failed to load autorun-per-document prompt: ${perDocResult.error}`);
 	}
+	if (!documentResult.success) {
+		throw new Error(`Failed to load autorun-document prompt: ${documentResult.error}`);
+	}
 	cachedAutorunDefaultPrompt = defaultResult.content!;
 	cachedAutorunPerTaskBlock = perTaskResult.content!;
 	cachedAutorunPerDocumentBlock = perDocResult.content!;
+	cachedAutorunDocumentBlock = documentResult.content!;
 	batchUtilsPromptsLoaded = true;
 	// Update the exported binding so consumers see the loaded value
 	DEFAULT_BATCH_PROMPT = cachedAutorunDefaultPrompt;
@@ -77,6 +84,52 @@ export function getTaskSelectionBlock(
 	// once.
 	if (mode !== 'document') return block;
 	return `${block}${describeSegmentLimit(segment)}`;
+}
+
+/**
+ * The prompt a desktop Auto Run task starts from, before template variables: the selection block
+ * for `mode` spliced in, and, for a template that never names `{{DOCUMENT_PATH}}`, the selection
+ * and `autorun-document` blocks appended (`resolveAutoRunPromptTemplate`). The desktop never
+ * pastes the document into the prompt, so the document block is always offered.
+ *
+ * Synchronous, from the cached prompts, so the Auto Run modal can validate what will actually be
+ * sent. A task must go through {@link prepareDesktopAutoRunPrompt}, which refuses to build from
+ * prompts that never loaded.
+ */
+export function buildDesktopAutoRunPrompt(
+	template: string,
+	mode: TaskSelectionMode | undefined,
+	segment?: { count: number; total: number }
+): string {
+	return resolveAutoRunPromptTemplate(template, {
+		selectionBlock: getTaskSelectionBlock(mode, segment),
+		documentBlock: cachedAutorunDocumentBlock,
+	});
+}
+
+/**
+ * {@link buildDesktopAutoRunPrompt} for a task about to be dispatched. When the startup load of the
+ * Auto Run prompts failed or has not finished, the cache is empty, and a custom prompt would go out
+ * with no task document. So the prompts are loaded again first, and a second failure throws: the
+ * batch runner records the task as failed and no agent is spawned with a prompt that cannot work.
+ */
+export async function prepareDesktopAutoRunPrompt(
+	template: string,
+	mode: TaskSelectionMode | undefined,
+	segment?: { count: number; total: number }
+): Promise<string> {
+	if (!batchUtilsPromptsLoaded) {
+		try {
+			await loadBatchUtilsPrompts(true);
+		} catch (error) {
+			throw new Error(
+				`Auto Run could not load its task prompts, so the task was not sent: ${
+					error instanceof Error ? error.message : String(error)
+				}`
+			);
+		}
+	}
+	return buildDesktopAutoRunPrompt(template, mode, segment);
 }
 
 // Default batch processing prompt (exported for use by BatchRunnerModal and playbook management)

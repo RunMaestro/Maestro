@@ -13,6 +13,7 @@ interface UseInlineWizardLifecycleActionsParams {
 	setTabStates: Dispatch<SetStateAction<Map<string, InlineWizardState>>>;
 	previousUIStateRefsMap: MutableRefObject<Map<string, PreviousUIState | null>>;
 	conversationSessionsMap: MutableRefObject<Map<string, InlineWizardConversationSession>>;
+	generationControllersMap: MutableRefObject<Map<string, AbortController>>;
 }
 
 export function useInlineWizardLifecycleActions({
@@ -20,6 +21,7 @@ export function useInlineWizardLifecycleActions({
 	setTabStates,
 	previousUIStateRefsMap,
 	conversationSessionsMap,
+	generationControllersMap,
 }: UseInlineWizardLifecycleActionsParams) {
 	const endWizard = useCallback(
 		async (explicitTabId?: string): Promise<PreviousUIState | null> => {
@@ -31,6 +33,11 @@ export function useInlineWizardLifecycleActions({
 			// wizard is left registered forever - a wand on an agent whose wizard tab is gone.
 			const requestedTabId = typeof explicitTabId === 'string' ? explicitTabId : undefined;
 			const tabId = requestedTabId || currentTabId || 'default';
+
+			// Invalidate callbacks before abort can settle the service or state is removed.
+			const controller = generationControllersMap.current.get(tabId);
+			generationControllersMap.current.delete(tabId);
+			controller?.abort();
 
 			// Settle the analytics row before the state below is dropped.
 			finishWizardRun(tabId);
@@ -69,11 +76,21 @@ export function useInlineWizardLifecycleActions({
 
 			return previousState;
 		},
-		[currentTabId, conversationSessionsMap, previousUIStateRefsMap, setTabStates]
+		[
+			currentTabId,
+			conversationSessionsMap,
+			generationControllersMap,
+			previousUIStateRefsMap,
+			setTabStates,
+		]
 	);
 
 	const reset = useCallback(() => {
 		const tabId = currentTabId || 'default';
+
+		const controller = generationControllersMap.current.get(tabId);
+		generationControllersMap.current.delete(tabId);
+		controller?.abort();
 
 		// Settle the analytics row - reset is a close, same as endWizard.
 		finishWizardRun(tabId);
@@ -100,7 +117,13 @@ export function useInlineWizardLifecycleActions({
 			newMap.delete(tabId);
 			return newMap;
 		});
-	}, [conversationSessionsMap, currentTabId, previousUIStateRefsMap, setTabStates]);
+	}, [
+		conversationSessionsMap,
+		currentTabId,
+		generationControllersMap,
+		previousUIStateRefsMap,
+		setTabStates,
+	]);
 
 	return {
 		endWizard,

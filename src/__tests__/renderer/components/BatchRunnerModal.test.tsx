@@ -8,10 +8,17 @@ vi.mock('../../../renderer/hooks/batch/batchUtils', async () => {
 	const actual = await vi.importActual('../../../renderer/hooks/batch/batchUtils');
 	const fs = await import('fs');
 	const path = await import('path');
-	const content = fs.readFileSync(
-		path.resolve(__dirname, '..', '..', '..', '..', 'src', 'prompts', 'autorun-default.md'),
-		'utf-8'
-	);
+	const { resolvePromptIncludes } = await import('../../../shared/promptIncludes');
+	const promptFile = (name: string) =>
+		path.resolve(__dirname, '..', '..', '..', '..', 'src', 'prompts', `${name}.md`);
+	// The prompt manager expands `{{INCLUDE:name}}` before the renderer sees the
+	// prompt (the default ends with `{{INCLUDE:autorun-document}}`), so the
+	// fixture does too.
+	const content = resolvePromptIncludes(fs.readFileSync(promptFile('autorun-default'), 'utf-8'), {
+		load: (name) =>
+			fs.existsSync(promptFile(name)) ? fs.readFileSync(promptFile(name), 'utf-8') : null,
+		rootId: 'autorun-default',
+	});
 	return {
 		...actual,
 		// Normalize CRLF -> LF: a Windows git checkout may give the fixture CRLF
@@ -26,7 +33,9 @@ import {
 	DEFAULT_BATCH_PROMPT,
 	validateAgentPromptHasTaskReference,
 } from '../../../renderer/components/BatchRunnerModal';
+import { loadBatchUtilsPrompts } from '../../../renderer/hooks/batch/batchUtils';
 import type { Theme, Playbook } from '../../../renderer/types';
+import type { AgentDiscoveryResult } from '../../../shared/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 // Mock LayerStackContext
@@ -1728,7 +1737,8 @@ describe('Agent Prompt Validation in UI', () => {
 
 		// Set prompt to something without task references
 		const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
-		fireEvent.change(textarea, { target: { value: 'Just do some coding please.' } });
+		// Names the document, so no task plumbing is appended: the text alone must reference tasks.
+		fireEvent.change(textarea, { target: { value: 'Just code in {{DOCUMENT_PATH}} please.' } });
 
 		await waitFor(() => {
 			const goButton = screen.getByRole('button', { name: 'Go' });
@@ -1753,7 +1763,8 @@ describe('Agent Prompt Validation in UI', () => {
 		render(<BatchRunnerModal {...props} />);
 
 		const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
-		fireEvent.change(textarea, { target: { value: 'Just do some coding please.' } });
+		// Names the document, so no task plumbing is appended: the text alone must reference tasks.
+		fireEvent.change(textarea, { target: { value: 'Just code in {{DOCUMENT_PATH}} please.' } });
 
 		await waitFor(() => {
 			expect(screen.getByText(/Agent prompt must reference Markdown tasks/)).toBeInTheDocument();
@@ -1772,6 +1783,63 @@ describe('Agent Prompt Validation in UI', () => {
 		// Default prompt should be valid - Go should be enabled
 		const goButton = screen.getByRole('button', { name: 'Go' });
 		expect(goButton).not.toBeDisabled();
+	});
+});
+
+describe('Agent Prompt Validation with a custom playbook prompt', () => {
+	// The real Auto Run blocks, loaded the way the app loads them at startup.
+	const loadRealAutoRunPrompts = async () => {
+		const fs = await import('fs');
+		const path = await import('path');
+		const read = (id: string) =>
+			fs
+				.readFileSync(
+					path.resolve(__dirname, '..', '..', '..', '..', 'src', 'prompts', `${id}.md`),
+					'utf-8'
+				)
+				.replace(/\r\n/g, '\n');
+		vi.mocked(window.maestro.prompts.get).mockImplementation(async (id: string) => ({
+			success: true,
+			content: id === 'autorun-default' ? DEFAULT_BATCH_PROMPT : read(id),
+		}));
+		await loadBatchUtilsPrompts(true);
+	};
+
+	afterEach(async () => {
+		// Back to the empty prompts every other test in this file runs with.
+		vi.mocked(window.maestro.prompts.get).mockResolvedValue({ success: true, content: '' });
+		await loadBatchUtilsPrompts(true);
+	});
+
+	it('enables Go for a prompt with no task words that never names the document', async () => {
+		await loadRealAutoRunPrompts();
+		render(<BatchRunnerModal {...createDefaultProps()} />);
+		await waitFor(() => {
+			expect(screen.getByText('5')).toBeInTheDocument();
+		});
+
+		const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
+		// An Exchange-style prompt: Maestro appends the selection and document blocks at dispatch.
+		fireEvent.change(textarea, { target: { value: 'You curate agent memory.' } });
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: 'Go' })).not.toBeDisabled();
+		});
+		expect(
+			screen.queryByText(/Agent prompt must reference Markdown tasks/)
+		).not.toBeInTheDocument();
+	});
+
+	it('still disables Go for a prompt that names the document but never mentions tasks', async () => {
+		await loadRealAutoRunPrompts();
+		render(<BatchRunnerModal {...createDefaultProps()} />);
+
+		const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
+		fireEvent.change(textarea, { target: { value: 'Tidy {{DOCUMENT_PATH}}.' } });
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: 'Go' })).toBeDisabled();
+		});
 	});
 });
 
@@ -3344,6 +3412,480 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 		const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
 		useSessionStore.setState({ sessions: [], activeSessionId: '' });
 		vi.restoreAllMocks();
+	});
+
+	describe('Grok selected discovery context', () => {
+		beforeEach(async () => {
+			vi.useFakeTimers();
+			await setupSession('grok');
+			window.maestro.agents.getConfig = vi.fn().mockResolvedValue({});
+			window.maestro.agents.getConfigOptions = vi.fn().mockResolvedValue({
+				status: 'unavailable',
+				options: [],
+			});
+		});
+		afterEach(() => vi.useRealTimers());
+
+		it.each(['unavailable', 'configured-fallback', 'discovered'] as const)(
+			'preserves typed run overrides after a %s catalog omits them',
+			async (status) => {
+				window.maestro.agents.getModels = vi.fn().mockResolvedValue({
+					status,
+					options: status === 'unavailable' ? [] : ['catalog-model'],
+				});
+				window.maestro.agents.getConfigOptions = vi.fn().mockResolvedValue({
+					status,
+					options: status === 'unavailable' ? [] : ['catalog-effort'],
+				});
+				const props = createDefaultProps();
+				render(<BatchRunnerModal {...props} />);
+				fireEvent.change(screen.getByLabelText('Model for this run'), {
+					target: { value: 'manual-model' },
+				});
+				fireEvent.change(screen.getByLabelText('Reasoning effort for this run'), {
+					target: { value: 'manual-effort' },
+				});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+					providerId: 'grok',
+					context: expect.objectContaining({
+						kind: 'draft',
+						cwd: '/project',
+						model: 'manual-model',
+						effort: 'manual-effort',
+					}),
+				});
+				expect(!!screen.queryByText(/Model or effort options are unavailable/)).toBe(
+					status !== 'discovered'
+				);
+				expect(screen.getByLabelText('Model for this run')).toHaveValue('manual-model');
+				expect(screen.getByLabelText('Reasoning effort for this run')).toHaveValue('manual-effort');
+				fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+				expect(props.onGo).toHaveBeenCalledWith(
+					expect.objectContaining({ model: 'manual-model', effort: 'manual-effort' })
+				);
+			}
+		);
+
+		it.each(['grok', 'codex'] as const)(
+			'uses the open %s worktree account and rejects late parent options',
+			async (toolType) => {
+				const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+				const parent = useSessionStore.getState().sessions[0];
+				const child = {
+					...parent,
+					id: 'child',
+					name: 'Child',
+					parentSessionId: parent.id,
+					toolType,
+					cwd: '/remote/child',
+					customPath: '/remote/bin/agent',
+					customEnvVars: { GROK_HOME: '/remote/account-b' },
+					customModel: 'child-model',
+					customEffort: 'high',
+					sshRemoteId: 'remote-b',
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-b' },
+				};
+				useSessionStore.setState({ sessions: [parent, child] });
+				window.maestro.git.branches = vi.fn().mockResolvedValue({ branches: ['main'] });
+				window.maestro.git.branch = vi.fn().mockResolvedValue({ stdout: 'main' });
+				let resolveParent!: (value: AgentDiscoveryResult) => void;
+				const pending = new Promise<AgentDiscoveryResult>((resolve) => {
+					resolveParent = resolve;
+				});
+				const models = vi
+					.fn()
+					.mockReturnValueOnce(pending)
+					.mockResolvedValue(
+						toolType === 'grok'
+							? { status: 'discovered', options: ['child-model'] }
+							: ['child-model']
+					);
+				window.maestro.agents.getModels = models;
+				window.maestro.agents.getConfigOptions = vi
+					.fn()
+					.mockResolvedValueOnce({ status: 'discovered', options: ['high'] })
+					.mockResolvedValueOnce({ status: 'discovered', options: ['high'] })
+					.mockResolvedValue(
+						toolType === 'grok' ? { status: 'discovered', options: ['high'] } : ['high']
+					);
+				render(<BatchRunnerModal {...createDefaultProps()} />);
+				expect(models).toHaveBeenCalledTimes(1);
+				fireEvent.click(screen.getByText('Dispatch to a separate worktree'));
+				fireEvent.change(screen.getByRole('option', { name: /Child/ }).closest('select')!, {
+					target: { value: 'child' },
+				});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(models).toHaveBeenLastCalledWith(
+					toolType === 'grok'
+						? {
+								providerId: 'grok',
+								context: {
+									kind: 'draft',
+									cwd: child.cwd,
+									customPath: child.customPath,
+									customEnvVars: child.customEnvVars,
+									model: 'child-model',
+									effort: 'high',
+									sshRemoteId: child.sshRemoteId,
+									sessionSshRemoteConfig: child.sessionSshRemoteConfig,
+								},
+							}
+						: 'codex'
+				);
+				await act(async () => {
+					resolveParent({ status: 'discovered', options: ['parent-only'] });
+				});
+				expect(screen.queryByRole('option', { name: 'parent-only' })).not.toBeInTheDocument();
+				expect(screen.getByRole('option', { name: 'child-model' })).toBeInTheDocument();
+			}
+		);
+	});
+
+	describe('Unresolved worktree discovery', () => {
+		const models = vi.fn();
+		const efforts = vi.fn();
+
+		beforeEach(async () => {
+			vi.useFakeTimers();
+			await setupSession('grok');
+			const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+			const parent = {
+				...useSessionStore.getState().sessions[0],
+				customModel: 'parent-default',
+				customEffort: 'parent-effort',
+				worktreeConfig: { basePath: '/project/worktrees', watchEnabled: false },
+			};
+			const child = {
+				...parent,
+				id: 'child',
+				name: 'Child',
+				parentSessionId: parent.id,
+				cwd: '/project/worktrees/child',
+				customModel: 'child-default',
+				customEffort: 'child-effort',
+			};
+			// Keep another candidate so removing the selected child cannot auto-select create-new.
+			useSessionStore.setState({
+				sessions: [parent, child, { ...child, id: 'sibling', name: 'Sibling', cwd: '/sibling' }],
+			});
+			window.maestro.git.branches = vi.fn().mockResolvedValue({ branches: ['main'] });
+			window.maestro.git.branch = vi.fn().mockResolvedValue({ stdout: 'main' });
+			window.maestro.git.scanWorktreeDirectory = vi.fn().mockResolvedValue({
+				gitSubdirs: [
+					{ path: '/project/worktrees/closed', name: 'Closed', branch: 'closed-branch' },
+				],
+			});
+			window.maestro.agents.getConfig = vi.fn().mockResolvedValue({});
+			window.maestro.agents.getModels = models.mockReset().mockResolvedValue({
+				status: 'discovered',
+				options: ['known-model'],
+			});
+			window.maestro.agents.getConfigOptions = efforts.mockReset().mockResolvedValue({
+				status: 'discovered',
+				options: ['known-effort'],
+			});
+		});
+		afterEach(() => vi.useRealTimers());
+
+		it.each(
+			(['create-new', 'existing-closed', 'removed-open'] as const).flatMap((target) =>
+				(['settled', 'pending'] as const).map((catalog) => ({ target, catalog }))
+			)
+		)(
+			'withholds Grok discovery for $target after a $catalog known catalog',
+			async ({ target, catalog }) => {
+				const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+				const props = createDefaultProps();
+				render(<BatchRunnerModal {...props} />);
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				if (target !== 'create-new') {
+					fireEvent.click(screen.getByText('Dispatch to a separate worktree'));
+					fireEvent.change(screen.getByRole('option', { name: /Child/ }).closest('select')!, {
+						target: { value: 'child' },
+					});
+					await act(async () => {
+						await vi.advanceTimersByTimeAsync(300);
+					});
+				}
+				expect(screen.getByRole('option', { name: 'known-model' })).toBeInTheDocument();
+				let resolveModels!: (value: AgentDiscoveryResult) => void;
+				let resolveEfforts!: (value: AgentDiscoveryResult) => void;
+				if (catalog === 'pending') {
+					models.mockReturnValue(
+						new Promise<AgentDiscoveryResult>((resolve) => {
+							resolveModels = resolve;
+						})
+					);
+					efforts.mockReturnValue(
+						new Promise<AgentDiscoveryResult>((resolve) => {
+							resolveEfforts = resolve;
+						})
+					);
+				}
+				fireEvent.change(screen.getByLabelText('Model for this run'), {
+					target: { value: 'typed-model' },
+				});
+				fireEvent.change(screen.getByLabelText('Reasoning effort for this run'), {
+					target: { value: 'typed-effort' },
+				});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				const request = {
+					providerId: 'grok',
+					context: expect.objectContaining({
+						cwd: target === 'create-new' ? '/project' : '/project/worktrees/child',
+						model: 'typed-model',
+						effort: 'typed-effort',
+					}),
+				};
+				expect(models).toHaveBeenLastCalledWith(request);
+				expect(efforts).toHaveBeenNthCalledWith(efforts.mock.calls.length - 1, request, 'effort');
+				expect(efforts).toHaveBeenLastCalledWith(request, 'reasoningEffort');
+				if (catalog === 'settled') {
+					expect(screen.getByRole('option', { name: 'known-model' })).toBeInTheDocument();
+				}
+				models.mockClear();
+				efforts.mockClear();
+				if (target === 'removed-open') {
+					act(() =>
+						useSessionStore.setState({
+							sessions: useSessionStore
+								.getState()
+								.sessions.filter((session) => session.id !== 'child'),
+						})
+					);
+					expect(screen.queryByTestId('agent-state-indicator')).not.toBeInTheDocument();
+				} else if (target === 'existing-closed') {
+					fireEvent.change(
+						screen.getByRole('option', { name: 'closed-branch' }).closest('select')!,
+						{ target: { value: '__closed__:/project/worktrees/closed' } }
+					);
+				} else {
+					fireEvent.click(screen.getByText('Dispatch to a separate worktree'));
+				}
+				// The old owner's options disappear before the discovery debounce expires.
+				expect(screen.queryByLabelText('Suggested models for this run')).not.toBeInTheDocument();
+				expect(models).not.toHaveBeenCalled();
+				expect(efforts).not.toHaveBeenCalled();
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				await act(async () => {
+					if (catalog === 'pending') {
+						resolveModels({ status: 'discovered', options: ['late-model'] });
+						resolveEfforts({ status: 'discovered', options: ['late-effort'] });
+					}
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(models).not.toHaveBeenCalled();
+				expect(efforts).not.toHaveBeenCalled();
+				expect(screen.queryByLabelText('Suggested models for this run')).not.toBeInTheDocument();
+				expect(screen.queryByRole('option', { name: 'late-model' })).not.toBeInTheDocument();
+				expect(screen.getByText(/Model or effort options are unavailable/)).toBeInTheDocument();
+				expect(screen.getByLabelText('Model for this run')).toHaveValue('typed-model');
+				expect(screen.getByLabelText('Reasoning effort for this run')).toHaveValue('typed-effort');
+				await act(async () => {
+					fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+				});
+				expect(props.onGo).toHaveBeenCalledTimes(1);
+				expect(props.onGo).toHaveBeenCalledWith(
+					expect.objectContaining({
+						model: 'typed-model',
+						effort: 'typed-effort',
+						worktreeTarget: expect.objectContaining(
+							target === 'removed-open'
+								? { mode: 'existing-open', sessionId: 'child' }
+								: target === 'existing-closed'
+									? { mode: target, worktreePath: '/project/worktrees/closed' }
+									: { mode: target }
+						),
+					})
+				);
+			}
+		);
+
+		it('preserves typed overrides on an open child, then clears both to the child defaults', async () => {
+			const props = createDefaultProps();
+			render(<BatchRunnerModal {...props} />);
+			fireEvent.change(screen.getByLabelText('Model for this run'), {
+				target: { value: 'typed-model' },
+			});
+			fireEvent.change(screen.getByLabelText('Reasoning effort for this run'), {
+				target: { value: 'typed-effort' },
+			});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			fireEvent.click(screen.getByText('Dispatch to a separate worktree'));
+			fireEvent.change(screen.getByRole('option', { name: /Child/ }).closest('select')!, {
+				target: { value: 'child' },
+			});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith({
+				providerId: 'grok',
+				context: expect.objectContaining({
+					cwd: '/project/worktrees/child',
+					model: 'typed-model',
+					effort: 'typed-effort',
+				}),
+			});
+			expect(screen.getByLabelText('Model for this run')).toHaveValue('typed-model');
+			expect(screen.getByLabelText('Reasoning effort for this run')).toHaveValue('typed-effort');
+			fireEvent.change(screen.getByLabelText('Model for this run'), { target: { value: '' } });
+			fireEvent.change(screen.getByLabelText('Reasoning effort for this run'), {
+				target: { value: '' },
+			});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			const request = {
+				providerId: 'grok',
+				context: expect.objectContaining({
+					cwd: '/project/worktrees/child',
+					model: 'child-default',
+					effort: 'child-effort',
+				}),
+			};
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(request);
+			expect(window.maestro.agents.getConfigOptions).toHaveBeenCalledWith(request, 'effort');
+			expect(window.maestro.agents.getConfigOptions).toHaveBeenLastCalledWith(
+				request,
+				'reasoningEffort'
+			);
+			expect(screen.getByLabelText('Model for this run')).toHaveValue('');
+			expect(screen.getByLabelText('Reasoning effort for this run')).toHaveValue('');
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+			});
+			expect(props.onGo).toHaveBeenCalledTimes(1);
+			const config = props.onGo.mock.calls[0][0];
+			expect(config.worktreeTarget).toMatchObject({ mode: 'existing-open', sessionId: 'child' });
+			expect(config).not.toHaveProperty('model');
+			expect(config).not.toHaveProperty('effort');
+		});
+
+		it.each(
+			(['claude-code', 'codex'] as const).flatMap((provider) =>
+				(['create-new', 'existing-closed'] as const).flatMap((target) =>
+					[true, false].map((valid) => ({ provider, target, valid }))
+				)
+			)
+		)(
+			'retains $provider discovery and validates selections for $target (valid=$valid)',
+			async ({ provider, target, valid }) => {
+				const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+				useSessionStore.setState({
+					sessions: useSessionStore
+						.getState()
+						.sessions.map((session) =>
+							session.id === 'session-123' ? { ...session, toolType: provider } : session
+						),
+				});
+				window.maestro.agents.getModels = vi
+					.fn()
+					.mockImplementation(async (request) =>
+						typeof request === 'string'
+							? ['shared-model']
+							: { status: 'discovered', options: ['child-model'] }
+					);
+				window.maestro.agents.getConfigOptions = vi
+					.fn()
+					.mockImplementation(async (request) =>
+						typeof request === 'string'
+							? ['shared-effort']
+							: { status: 'discovered', options: ['child-effort'] }
+					);
+				const props = createDefaultProps();
+				render(<BatchRunnerModal {...props} />);
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				fireEvent.click(screen.getByText('Dispatch to a separate worktree'));
+				fireEvent.change(screen.getByRole('option', { name: /Child/ }).closest('select')!, {
+					target: { value: 'child' },
+				});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				const model = valid ? 'shared-model' : 'child-model';
+				const effort = valid ? 'shared-effort' : 'child-effort';
+				fireEvent.change(screen.getByLabelText('Model for this run'), { target: { value: model } });
+				fireEvent.change(screen.getByLabelText('Reasoning effort for this run'), {
+					target: { value: effort },
+				});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				let resolveModels!: (value: string[]) => void;
+				let resolveEfforts!: (value: string[]) => void;
+				const models = vi.fn().mockReturnValue(
+					new Promise<string[]>((resolve) => {
+						resolveModels = resolve;
+					})
+				);
+				const efforts = vi.fn().mockReturnValue(
+					new Promise<string[]>((resolve) => {
+						resolveEfforts = resolve;
+					})
+				);
+				window.maestro.agents.getModels = models;
+				window.maestro.agents.getConfigOptions = efforts;
+				fireEvent.change(
+					screen.getByRole('option', { name: 'Create New Worktree' }).closest('select')!,
+					{
+						target: {
+							value:
+								target === 'create-new' ? '__create_new__' : '__closed__:/project/worktrees/closed',
+						},
+					}
+				);
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(300);
+				});
+				expect(models).toHaveBeenCalled();
+				expect(models).toHaveBeenCalledWith(provider);
+				for (const args of models.mock.calls) expect(args).toEqual([provider]);
+				expect(efforts).toHaveBeenCalledWith(provider, 'effort');
+				expect(efforts).toHaveBeenCalledWith(provider, 'reasoningEffort');
+				for (const args of efforts.mock.calls) {
+					expect([
+						[provider, 'effort'],
+						[provider, 'reasoningEffort'],
+					]).toContainEqual(args);
+				}
+				await act(async () => {
+					resolveModels(['shared-model']);
+					resolveEfforts(['shared-effort']);
+				});
+				expect(screen.getByLabelText('Model for this run')).toHaveValue(valid ? model : '');
+				expect(screen.getByLabelText('Reasoning effort for this run')).toHaveValue(
+					valid ? effort : ''
+				);
+				expect(screen.getByRole('option', { name: 'shared-model' })).toBeInTheDocument();
+				expect(screen.getByRole('option', { name: 'shared-effort' })).toBeInTheDocument();
+				await act(async () => {
+					fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+				});
+				expect(props.onGo).toHaveBeenCalledTimes(1);
+				const config = props.onGo.mock.calls[0][0];
+				expect(config.worktreeTarget).toMatchObject({ mode: target });
+				if (valid) expect(config).toMatchObject({ model, effort });
+				else {
+					expect(config).not.toHaveProperty('model');
+					expect(config).not.toHaveProperty('effort');
+				}
+			}
+		);
 	});
 
 	it('omits model and effort from the launched config when both pickers are untouched', async () => {
