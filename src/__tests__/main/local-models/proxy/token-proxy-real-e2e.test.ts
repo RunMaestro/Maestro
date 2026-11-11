@@ -46,18 +46,37 @@
  *   MAESTRO_TOKEN_PROXY_E2E_MAESTRO_P=<path to a built maestro-p.js>
  * is set (`npm run build:maestro-p` writes `dist/cli/maestro-p.js`).
  *
+ * Retrieval is a fourth question: does a model that reads a lossy block call
+ * `retrieve_compressed_original` for what was left out? It runs one session
+ * through the product's proxy service in `compress-early` with retrieval on,
+ * the launch bound to the proxy as `handle-spawn.ts` binds it, and the real
+ * bridge (`maestro-cli mcp serve`, built by `npm run build:cli`, or the path in
+ *   MAESTRO_TOKEN_PROXY_E2E_MAESTRO_CLI=<path to maestro-cli.js>)
+ * dialing a loopback stand-in for the app's WebSocket that answers with the
+ * app's own `plugins_list_tools` / `plugins_call_tool` handlers. A second
+ * session with retrieval off is the comparison. Two sessions, about eight
+ * Haiku requests. Set MAESTRO_TOKEN_PROXY_E2E_RETRIEVAL=0 to leave it out.
+ *
  * Costs are compared, not asserted: one session per mode is one sample, and
  * the provider's cache state differs between runs. The numbers are written to
  * `token-proxy-e2e-results.json` in the scratch directory and printed.
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { randomBytes } from 'crypto';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import type { AddressInfo } from 'net';
 import * as os from 'os';
 import * as path from 'path';
+import { WebSocketServer } from 'ws';
 
 const RUN = process.env.MAESTRO_TOKEN_PROXY_E2E === '1';
 const RUN_CODEX = RUN && process.env.MAESTRO_TOKEN_PROXY_E2E_CODEX !== '0';
+const RUN_RETRIEVAL = RUN && process.env.MAESTRO_TOKEN_PROXY_E2E_RETRIEVAL !== '0';
+/** The built CLI whose `mcp serve` is the bridge the retrieval session's model reaches. */
+const MAESTRO_CLI = path.resolve(
+	(process.env.MAESTRO_TOKEN_PROXY_E2E_MAESTRO_CLI ?? '').trim() || 'dist/cli/maestro-cli.js'
+);
 const BACKGROUND_MODEL = (process.env.MAESTRO_TOKEN_PROXY_E2E_BACKGROUND_MODEL ?? '').trim();
 const RUN_BACKGROUND = RUN && BACKGROUND_MODEL !== '';
 /** A built `maestro-p.js`, to run the background session through the TUI as well. */
@@ -69,6 +88,12 @@ const MODELS_DIR =
 vi.mock('electron', () => ({
 	app: { getPath: () => MODELS_DIR },
 	safeStorage: { isEncryptionAvailable: () => false },
+}));
+// Plugins off: the retrieval session's bridge must offer the core tool alone.
+vi.mock('../../../../main/plugins/plugin-manager-singleton', () => ({
+	getActivePluginManager: () => null,
+	isPluginsFeatureEnabled: () => false,
+	getHeadlessAgentRunner: () => null,
 }));
 
 import { isInstalled } from '../../../../main/local-models/model-store';
@@ -84,11 +109,37 @@ import {
 	type TokenProxyServer,
 } from '../../../../main/local-models/proxy/server';
 import {
+	agentHasTokenProxyRetrieval,
 	applyAgentGatewayToSpawn,
 	configureTokenProxy,
+	ensureTokenProxyForGateway,
 	ensureTokenProxyPort,
+	registerTokenProxyRecoveryLaunch,
 	resetTokenProxyForTests,
+	tokenProxyLaunchGatewayUrl,
 } from '../../../../main/local-models/proxy/service';
+import {
+	createPluginRunProofFile,
+	pluginToolRunIdentity,
+	removePluginRunProofFile,
+} from '../../../../main/plugins/plugin-tool-run-identity';
+import {
+	handlePluginsCallTool,
+	handlePluginsListTools,
+} from '../../../../main/web-server/handlers/messageHandlers/plugins';
+import type {
+	MessageHandlerContext,
+	WebClient,
+	WebClientMessage,
+} from '../../../../main/web-server/handlers/messageHandlers/types';
+import { writeCliServerInfoTo } from '../../../../shared/maestro-lib/client/discovery';
+import {
+	buildMcpInjection,
+	MCP_CONFIG_BY_AGENT,
+	MCP_SERVER_NAME,
+	mergeMcpInjectionArgs,
+} from '../../../../shared/plugins/mcp-agent-config';
+import { TOKEN_PROXY_RETRIEVE_TOOL_NAME } from '../../../../shared/local-models/token-proxy-retrieve-tool';
 import { configureAgentRunOn, resetAgentRunOnForTests } from '../../../../main/local-models/run-on';
 import { modelServerForHarness } from '../../../../main/local-models/server/server-endpoint';
 import { getModelServerReport } from '../../../../main/local-models/server/service';
@@ -182,6 +233,9 @@ interface StreamLine {
 	is_error?: boolean;
 	/** The turn's answer, on the `result` line. */
 	result?: string;
+	/** On the `system` `init` line: every tool the model is given, and the MCP servers. */
+	tools?: string[];
+	mcp_servers?: Array<{ name?: string; status?: string }>;
 	message?: {
 		id?: string;
 		usage?: {
@@ -190,8 +244,25 @@ interface StreamLine {
 			cache_creation_input_tokens?: number;
 			cache_read_input_tokens?: number;
 		};
-		content?: Array<{ type?: string; name?: string; input?: { command?: string } }>;
+		content?: Array<{
+			type?: string;
+			id?: string;
+			name?: string;
+			input?: { command?: string } & Record<string, unknown>;
+			/** On a `tool_result` block, in a `user` line. */
+			tool_use_id?: string;
+			content?: unknown;
+			is_error?: boolean;
+		}>;
 	};
+}
+
+/** One tool call the model made, and what came back to it. */
+interface ToolCall {
+	id: string;
+	name: string;
+	input: Record<string, unknown>;
+	result?: { text: string; isError: boolean };
 }
 
 /** One finished turn: its session, each request it made, and its answer. */
@@ -199,6 +270,11 @@ interface ClaudeTurn {
 	sessionId: string;
 	requests: RequestUsage[];
 	reply: string;
+	/** Every tool call of the turn, in order. */
+	toolCalls: ToolCall[];
+	/** From the `init` line: the tools offered and each MCP server as `<name>:<status>`. */
+	tools: string[];
+	mcpServers: string[];
 }
 
 /**
@@ -212,12 +288,26 @@ function parseTurn(stdout: string): ClaudeTurn {
 	let sessionId = '';
 	let failed = false;
 	let reply = '';
+	const toolCalls = new Map<string, ToolCall>();
+	let tools: string[] = [];
+	let mcpServers: string[] = [];
 	for (const raw of stdout.split('\n')) {
 		if (!raw.trim().startsWith('{')) continue;
 		const line = JSON.parse(raw) as StreamLine;
 		if (line.session_id) sessionId = line.session_id;
 		if (line.type === 'result' && line.is_error) failed = true;
 		if (line.type === 'result' && typeof line.result === 'string') reply = line.result;
+		if (line.type === 'system' && line.subtype === 'init') {
+			tools = line.tools ?? [];
+			mcpServers = (line.mcp_servers ?? []).map((server) => `${server.name}:${server.status}`);
+		}
+		if (line.type === 'user') {
+			for (const block of line.message?.content ?? []) {
+				const call = block.tool_use_id ? toolCalls.get(block.tool_use_id) : undefined;
+				if (block.type !== 'tool_result' || !call) continue;
+				call.result = { text: blockText(block.content), isError: block.is_error === true };
+			}
+		}
 		if (line.type !== 'assistant' || !line.message?.id) continue;
 		const usage = line.message.usage;
 		const request = byMessage.get(line.message.id) ?? {
@@ -233,11 +323,21 @@ function parseTurn(stdout: string): ClaudeTurn {
 			if (block.type === 'tool_use' && block.input?.command) {
 				request.commands.push(block.input.command);
 			}
+			if (block.type === 'tool_use' && block.id && block.name && !toolCalls.has(block.id)) {
+				toolCalls.set(block.id, { id: block.id, name: block.name, input: block.input ?? {} });
+			}
 		}
 		byMessage.set(line.message.id, request);
 	}
 	if (failed || !sessionId) throw new Error(`claude reported an error: ${stdout.slice(-2000)}`);
-	return { sessionId, requests: [...byMessage.values()], reply };
+	return {
+		sessionId,
+		requests: [...byMessage.values()],
+		reply,
+		toolCalls: [...toolCalls.values()],
+		tools,
+		mcpServers,
+	};
 }
 
 async function claudeTurn(
@@ -247,11 +347,18 @@ async function claudeTurn(
 		baseUrl: string;
 		resume?: string;
 		allowedTools?: string[];
+		/** Tools the turn may not use, even ones an earlier turn of the session allowed. */
+		disallowedTools?: string[];
 		/** Run the turn in Claude Code's TUI, through this `maestro-p.js`. */
 		maestroP?: string;
+		/** The MCP bridge arguments a launch was given (`buildMcpInjection`). */
+		mcpArgs?: string[];
 	}
 ): Promise<ClaudeTurn> {
-	const args = [
+	const base = [
+		// Only the MCP servers this turn names: the user's own would add tools
+		// and requests that differ between machines.
+		...(options.mcpArgs ? ['--strict-mcp-config'] : []),
 		'--print',
 		'--verbose',
 		'--model',
@@ -264,8 +371,15 @@ async function claudeTurn(
 		// One argument: maestro-p gives an option it does not know one value.
 		'--allowedTools',
 		(options.allowedTools ?? ['Bash(cat:*)']).join(','),
+		...(options.disallowedTools ? ['--disallowedTools', options.disallowedTools.join(',')] : []),
 		...(options.resume ? ['--resume', options.resume] : []),
 	];
+	// Where the spawn puts them: `--mcp-config` takes several values, so it goes first.
+	const args = mergeMcpInjectionArgs(
+		MCP_CONFIG_BY_AGENT['claude-code'],
+		base,
+		options.mcpArgs ?? []
+	);
 	// The prompt goes on stdin: `--allowedTools` takes a list, so a prompt placed
 	// after it is read as one more tool name.
 	const tui = options.maestroP;
@@ -325,6 +439,183 @@ const BACKGROUND_TURNS = [
 	TURNS[2],
 ];
 const BACKGROUND_ALLOWED_TOOLS = ['Bash(cat:*)', 'WebFetch(domain:example.com)'];
+
+/**
+ * Sixty words, one per item: nothing a model could guess from the items it
+ * still sees. Item 30's is the one asked for.
+ */
+const RETRIEVAL_WORDS = [
+	'anchor',
+	'basalt',
+	'cobalt',
+	'dahlia',
+	'ember',
+	'fjord',
+	'garnet',
+	'harbor',
+	'indigo',
+	'juniper',
+	'kestrel',
+	'lantern',
+	'meadow',
+	'nectar',
+	'obsidian',
+	'pewter',
+	'quartz',
+	'russet',
+	'saffron',
+	'tundra',
+	'umber',
+	'velvet',
+	'willow',
+	'xenon',
+	'yarrow',
+	'zephyr',
+	'alder',
+	'bramble',
+	'cinder',
+	'marigold',
+	'driftwood',
+	'elmwood',
+	'flint',
+	'gossamer',
+	'heather',
+	'ironwood',
+	'jasper',
+	'kelp',
+	'lichen',
+	'mossrock',
+	'nimbus',
+	'oriole',
+	'pinecone',
+	'quill',
+	'rookery',
+	'sorrel',
+	'thistle',
+	'upland',
+	'vervain',
+	'wren',
+	'yew',
+	'zinnia',
+	'aster',
+	'birch',
+	'clover',
+	'dune',
+	'egret',
+	'fennel',
+	'glacier',
+	'hollow',
+];
+const RETRIEVAL_ASKED_ID = 30;
+const RETRIEVAL_ASKED_WORD = RETRIEVAL_WORDS[RETRIEVAL_ASKED_ID - 1];
+
+/**
+ * A JSON array of 60 objects, one per line, about 6 KB. The nested `tags` and
+ * `detail` keep it out of the lossless json-table form, so the `full` profile
+ * samples it (items 1-10 and 56-60 stay) and the `complete` profile leaves it whole.
+ */
+function retrievalItems(): string {
+	const rows = RETRIEVAL_WORDS.map((word, index) =>
+		JSON.stringify({
+			id: index + 1,
+			word,
+			tags: [`shelf-${(index % 4) + 1}`],
+			detail: { note: 'inventory record kept for the quarterly audit' },
+		})
+	);
+	return `[\n${rows.join(',\n')}\n]\n`;
+}
+
+const RETRIEVAL_TURNS = [
+	'Run exactly `cat items.json` with the Bash tool (no pipe, no other command), then tell me in one sentence how many items the file lists.',
+	`What is the word of the item with id ${RETRIEVAL_ASKED_ID} in that file? Reply with the word only.`,
+];
+
+/** The retrieve tool as Claude Code names a tool of the bridge's server. */
+const RETRIEVE_TOOL = `mcp__${MCP_SERVER_NAME}__${TOKEN_PROXY_RETRIEVE_TOOL_NAME}`;
+
+/**
+ * A stand-in for the app's CLI WebSocket: the discovery file and the socket
+ * `maestro-cli mcp serve` dials, answering its two messages with the app's own
+ * handlers. Anything else the client sends is recorded and left unanswered.
+ */
+async function startBridgeHost(dataDir: string): Promise<{
+	seen: string[];
+	close: () => Promise<void>;
+}> {
+	const token = randomBytes(16).toString('hex');
+	const seen: string[] = [];
+	const wss = new WebSocketServer({ host: '127.0.0.1', port: 0, path: `/${token}/ws` });
+	await new Promise<void>((resolve, reject) => {
+		wss.once('listening', resolve);
+		wss.once('error', reject);
+	});
+	wss.on('connection', (socket) => {
+		const client = { socket } as unknown as WebClient;
+		const ctx = {
+			send: (_client: WebClient, data: Record<string, unknown>) =>
+				socket.send(JSON.stringify(data)),
+		} as unknown as MessageHandlerContext;
+		socket.on('message', (raw) => {
+			const message = JSON.parse(String(raw)) as WebClientMessage;
+			seen.push(message.type);
+			if (message.type === 'plugins_list_tools') void handlePluginsListTools(ctx, client, message);
+			if (message.type === 'plugins_call_tool') void handlePluginsCallTool(ctx, client, message);
+		});
+	});
+	const { port } = wss.address() as AddressInfo;
+	writeCliServerInfoTo(dataDir, { port, token, pid: process.pid, startedAt: Date.now() });
+	return {
+		seen,
+		close: () =>
+			new Promise<void>((resolve) => {
+				for (const socket of wss.clients) socket.terminate();
+				wss.close(() => resolve());
+			}),
+	};
+}
+
+/** The text of the tool result answering one tool call, in a Messages request body. */
+function toolResultText(requestBody: string, toolUseId: string): string | null {
+	const body = JSON.parse(requestBody) as {
+		messages?: Array<{ content?: unknown }>;
+	};
+	for (const message of body.messages ?? []) {
+		if (!Array.isArray(message.content)) continue;
+		for (const block of message.content as Array<{
+			type?: string;
+			tool_use_id?: string;
+			content?: unknown;
+		}>) {
+			if (block?.type === 'tool_result' && block.tool_use_id === toolUseId) {
+				return blockText(block.content);
+			}
+		}
+	}
+	return null;
+}
+
+/** One retrieval session, with the tool or without it. */
+interface RetrievalSessionResult {
+	/** The tools and MCP servers the model was given, from the first turn's init line. */
+	mcpServers: string[];
+	offeredRetrieveTool: boolean;
+	/** Each turn's tool calls by name, and its answer. */
+	toolCalls: string[][];
+	replies: string[];
+	answeredRight: boolean;
+	/** Messages requests the proxy carried, and those whose body held a sampled array. */
+	carried: number;
+	sampledRequests: number;
+	blocksCompressed: number;
+	/** Tool results the proxy left alone because they answer the retrieve tool. */
+	retrievalVetoes: number;
+	/** What the bridge host was asked, by message type. */
+	bridgeMessages: Record<string, number>;
+	turns: RequestUsage[][];
+	total: { write: number; read: number; input: number; output: number };
+	promptCostUnits: number;
+}
 
 /** The key seal the model server is given here: the real one needs Electron. */
 const seal = scratchKeySeal();
@@ -476,6 +767,11 @@ const results: {
 		/** The pair of sessions, by how Claude Code was started. */
 		print?: BackgroundSessionPair;
 		tui?: BackgroundSessionPair;
+	};
+	/** The same two turns in `compress-early`, with the retrieve tool and without it. */
+	retrieval?: {
+		withTool?: RetrievalSessionResult;
+		withoutTool?: RetrievalSessionResult;
 	};
 	codex?: {
 		requests: number;
@@ -795,6 +1091,216 @@ describe.skipIf(!RUN)('token proxy against real providers (MAESTRO_TOKEN_PROXY_E
 			}
 		},
 		SESSION_TIMEOUT_MS * 2
+	);
+
+	it.skipIf(!RUN_RETRIEVAL)(
+		'gives a compress-early model the retrieve tool, and the model reads back what was left out',
+		async () => {
+			expect(existsSync(MAESTRO_CLI), `${MAESTRO_CLI} is missing: npm run build:cli`).toBe(true);
+			// A proxy another case left running would carry its own deps.
+			await resetTokenProxyForTests();
+			const providerRelay = await startRecordingRelay(defaultTokenProxyUpstreams().anthropic);
+			relays.push(providerRelay);
+			const bridgeDataDir = path.join(scratch, 'retrieval-bridge-data');
+			const bridgeHost = await startBridgeHost(bridgeDataDir);
+
+			// The stored agent: Compress early, read per request by the product's service.
+			const agentId = 'token-proxy-e2e-retrieval';
+			const agent: Record<string, unknown> = {
+				id: agentId,
+				name: 'Token proxy e2e retrieval',
+				toolType: 'claude-code',
+				tokenProxyMode: 'compress-early',
+			};
+			const log: TokenProxyRequestLog[] = [];
+			configureTokenProxy({
+				sessions: () => [agent],
+				dataDir: () => scratch,
+				createServer: (options) =>
+					createTokenProxyServer({
+						...options,
+						upstreams: { ...defaultTokenProxyUpstreams(), anthropic: providerRelay.url },
+						onRequest: (entry) => log.push(entry),
+					}),
+			});
+			const gatewayUrl = tokenProxyGatewayUrl(await ensureTokenProxyPort(), 'anthropic');
+			agent.gatewayUrl = gatewayUrl;
+
+			/**
+			 * One session as a launch of the stored agent. With retrieval the launch is
+			 * bound and given the bridge the way `handle-spawn.ts` does it; without, it
+			 * gets the agent's plain proxy URL and no MCP server at all.
+			 */
+			const runSession = async (name: string, retrieval: boolean) => {
+				agent.tokenProxyRetrieval = retrieval;
+				const launchUrl = await tokenProxyLaunchGatewayUrl(agentId, gatewayUrl);
+				if (!launchUrl) throw new Error('The agent was given no gateway.');
+				expect((await ensureTokenProxyForGateway(launchUrl)).ok).toBe(true);
+				expect(await agentHasTokenProxyRetrieval(agentId)).toBe(retrieval);
+				const cwd = path.join(scratch, `claude-retrieval-${name}`);
+				mkdirSync(cwd, { recursive: true });
+				writeFileSync(path.join(cwd, 'items.json'), retrievalItems());
+				const from = {
+					log: log.length,
+					provider: providerRelay.exchanges.length,
+					bridge: bridgeHost.seen.length,
+				};
+
+				let baseUrl = launchUrl;
+				let release = (): void => {};
+				let runToken: string | undefined;
+				let proofFile: string | undefined;
+				// Never the user's own MCP servers: an empty list is `--strict-mcp-config` alone.
+				let mcpArgs: string[] = [];
+				const turns: ClaudeTurn[] = [];
+				try {
+					if (retrieval) {
+						const bound = await registerTokenProxyRecoveryLaunch(agentId, launchUrl, {
+							kind: 'mcp-retrieve-tool',
+						});
+						if (!bound) throw new Error('The launch could not be bound to the proxy.');
+						baseUrl = bound.gatewayUrl;
+						release = bound.release;
+						runToken = pluginToolRunIdentity.issue(agentId);
+						proofFile = createPluginRunProofFile(runToken);
+						mcpArgs = buildMcpInjection(
+							MCP_CONFIG_BY_AGENT['claude-code'],
+							{
+								command: process.execPath,
+								args: [MAESTRO_CLI, 'mcp', 'serve', '--tab', agentId],
+								env: { MAESTRO_PLUGIN_RUN_TOKEN_FILE: proofFile, MAESTRO_USER_DATA: bridgeDataDir },
+							},
+							{ tmpDir: os.tmpdir(), join: path.join }
+						).globalArgs;
+					}
+					let resume: string | undefined;
+					for (const [index, prompt] of RETRIEVAL_TURNS.entries()) {
+						// The second turn with the tool may not run the command again: the
+						// question is whether the model asks the tool, not whether it can
+						// re-read. A resumed session keeps the first turn's Bash grant, so
+						// it is taken away by name.
+						const retrieving = index === 1 && retrieval;
+						const turn = await claudeTurn(prompt, {
+							cwd,
+							baseUrl,
+							resume,
+							allowedTools: retrieving ? [RETRIEVE_TOOL] : ['Bash(cat:*)'],
+							...(retrieving ? { disallowedTools: ['Bash'] } : {}),
+							mcpArgs,
+						});
+						resume = turn.sessionId;
+						turns.push(turn);
+					}
+				} finally {
+					release();
+					if (runToken) pluginToolRunIdentity.revoke(runToken);
+					if (proofFile) removePluginRunProofFile(proofFile);
+				}
+				// A request the CLI left when it exited is recorded as its socket closes.
+				await new Promise((resolve) => setTimeout(resolve, 500));
+
+				const carried = log.slice(from.log).filter((entry) => entry.kind === 'anthropic-messages');
+				const provider = providerRelay.exchanges
+					.slice(from.provider)
+					.filter(
+						(exchange) => exchange.method === 'POST' && /\/v1\/messages(\?|$)/.test(exchange.path)
+					);
+				const bridgeMessages: Record<string, number> = {};
+				for (const type of bridgeHost.seen.slice(from.bridge)) {
+					bridgeMessages[type] = (bridgeMessages[type] ?? 0) + 1;
+				}
+				const requests = turns.flatMap((turn) => turn.requests);
+				const result: RetrievalSessionResult = {
+					mcpServers: turns[0]?.mcpServers ?? [],
+					offeredRetrieveTool: turns[0]?.tools.includes(RETRIEVE_TOOL) ?? false,
+					toolCalls: turns.map((turn) => turn.toolCalls.map((call) => call.name)),
+					replies: turns.map((turn) => head(turn.reply, 240)),
+					answeredRight: (turns[1]?.reply ?? '').toLowerCase().includes(RETRIEVAL_ASKED_WORD),
+					carried: carried.length,
+					sampledRequests: provider.filter((exchange) =>
+						exchange.requestBody.includes('items omitted]')
+					).length,
+					blocksCompressed: carried.reduce(
+						(sum, entry) => sum + (entry.compression?.blocks?.length ?? 0),
+						0
+					),
+					retrievalVetoes: carried.reduce(
+						(sum, entry) => sum + (entry.compression?.stats?.eligibilityVetoes?.retrieval ?? 0),
+						0
+					),
+					bridgeMessages,
+					turns: turns.map((turn) => turn.requests),
+					total: {
+						write: requests.reduce((sum, request) => sum + request.write, 0),
+						read: requests.reduce((sum, request) => sum + request.read, 0),
+						input: requests.reduce((sum, request) => sum + request.input, 0),
+						output: requests.reduce((sum, request) => sum + request.output, 0),
+					},
+					promptCostUnits: promptCostUnits(requests),
+				};
+				// Every request reached the provider through the proxy and came back whole.
+				for (const entry of carried) expect(entry.status).toBe(200);
+				expect(carried.filter((entry) => entry.compression?.skipped)).toEqual([]);
+				return { result, turns, carried, provider };
+			};
+
+			results.retrieval = {};
+			try {
+				const withTool = await runSession('with-tool', true);
+				results.retrieval.withTool = withTool.result;
+
+				// The bridge was the one MCP server, it offered the core tool with
+				// plugins off, and the proxy sampled the array for this launch.
+				expect(withTool.result.mcpServers).toEqual([`${MCP_SERVER_NAME}:connected`]);
+				expect(withTool.result.offeredRetrieveTool).toBe(true);
+				expect(withTool.result.sampledRequests).toBeGreaterThan(0);
+				const blockHashes = new Set(
+					withTool.carried.flatMap(
+						(entry) => entry.compression?.blocks?.map((block) => block.hash) ?? []
+					)
+				);
+
+				// The model asked for the original by the marker's hash, and got it.
+				const calls = withTool.turns[1].toolCalls.filter((call) => call.name === RETRIEVE_TOOL);
+				expect(calls.length, JSON.stringify(withTool.result.toolCalls)).toBeGreaterThan(0);
+				expect(blockHashes.has(String(calls[0].input.hash))).toBe(true);
+				expect(withTool.result.bridgeMessages.plugins_call_tool).toBeGreaterThan(0);
+				const answered = calls.filter((call) => call.result && !call.result.isError);
+				expect(answered.length).toBeGreaterThan(0);
+				const wordField = `"word":"${RETRIEVAL_ASKED_WORD}"`;
+				expect(answered.some((call) => call.result!.text.includes(wordField))).toBe(true);
+
+				// What the tool returned went to the provider as it was returned.
+				for (const call of answered) {
+					const sent = withTool.provider
+						.map((exchange) => toolResultText(exchange.requestBody, call.id))
+						.filter((text): text is string => text !== null);
+					expect(sent.length).toBeGreaterThan(0);
+					for (const text of sent) {
+						expect(text.startsWith(`[original sha256=${String(call.input.hash)} lines `)).toBe(
+							true
+						);
+						expect(text).toContain(wordField);
+						expect(text).not.toContain('[maestro-compressed');
+					}
+				}
+				expect(withTool.result.retrievalVetoes).toBeGreaterThan(0);
+				expect(withTool.result.answeredRight).toBe(true);
+
+				// The same conversation without the tool: no bridge, and nothing lossy
+				// sent to a model that could not ask for it.
+				const withoutTool = await runSession('without-tool', false);
+				results.retrieval.withoutTool = withoutTool.result;
+				expect(withoutTool.result.mcpServers).toEqual([]);
+				expect(withoutTool.result.offeredRetrieveTool).toBe(false);
+				expect(withoutTool.result.bridgeMessages).toEqual({});
+				expect(withoutTool.result.sampledRequests).toBe(0);
+			} finally {
+				await bridgeHost.close();
+				await resetTokenProxyForTests();
+			}
+		},
+		SESSION_TIMEOUT_MS
 	);
 
 	it.skipIf(!RUN_CODEX)(

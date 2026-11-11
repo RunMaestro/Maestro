@@ -3518,6 +3518,46 @@ Claude Code 2.1.322, Codex CLI 0.167.1, darwin-arm64, no model call.
   run proof only the app can issue, it is covered by the bridge tests of R02.3 and is unproven in
   a real Codex launch.
 
+**A real model uses it (2026-11-11, one sample).** The opt-in case "retrieval" of
+`token-proxy-real-e2e.test.ts`: Claude Code 2.1.322 `--print` on Haiku (`claude-haiku-5-5`),
+darwin-arm64, through the product's proxy service in `compress-early`, a launch bound as
+`handle-spawn.ts` binds it, and the built `maestro-cli mcp serve` dialing a loopback stand-in for
+the app's WebSocket that answers with the app's own `plugins_list_tools` / `plugins_call_tool`
+handlers (Plugins off). Turn one runs `cat items.json`, a JSON array of 60 objects (about 6 KB);
+turn two asks for the word of item 30. The prompts never name the tool: no nudge was needed.
+
+- The proxy sampled the array on the request that first carried it (items 1-10 and 56-60 kept,
+  `[maestro: 45 of 60 items omitted]`), and the model said the file held 60 items, of which it saw 15.
+- In turn two the model called `ToolSearch` first (Claude Code defers MCP tools, so the schema
+  is loaded on demand), then `mcp__maestro__retrieve_compressed_original` with the marker's
+  hash, and answered `marigold`, the right word. One call; the bridge listed tools
+  four times and was called once.
+- The tool's answer went to the provider as it came back (header line, then the exact text,
+  no marker), and the proxy counted one retrieval veto for it.
+- The same two turns with retrieval off got no MCP server and no lossy block: early mode kept
+  the array whole for that launch (decision 5), and the model read the answer from it.
+
+| Session       | Messages requests | Cache writes | Cache reads | Prompt cost units |
+| ------------- | ----------------: | -----------: | ----------: | ----------------: |
+| Retrieval on  |                 5 |       31,474 |      68,136 |            46,168 |
+| Retrieval off |                 3 |       10,380 |      49,653 |            17,948 |
+
+Prompt cost units are uncached input plus 1.25 per cache write and 0.1 per cache read. Read the
+cost row with care. Most of the difference is the first request of turn two (19,365 tokens
+written, none read): the test takes Bash away for that turn (`--disallowedTools Bash`, because a
+resumed session keeps turn one's grant and the question is whether the model asks the tool),
+which changes the tool list and so the cached prefix. The rest is the retrieval itself: the
+`ToolSearch` request, the call, the original written back to the cache (3,296 tokens), and the
+tool's definition and instructions (about 160 tokens on the first request). A 6 KB block is too
+small to save more than it costs to fetch back; the case shows that retrieval works, not what it
+saves. What it saves comes from large blocks that are shortened and never asked for.
+
+An earlier attempt of the same run found a harness gap, not a product gap: `maestro-cli` parses
+no command when `VITEST` is set, and Claude Code passes its environment to the MCP servers it
+starts, so the bridge exited silently and Claude reported it `failed`. `providerCliEnv()` now
+drops `VITEST*`. In that attempt the model, with only Bash, ran `cat` again, got the same sampled
+text, and said it could not tell: it did not guess.
+
 **Spawns that stay on `complete`.** Cue (`buildSpawnSpec()` in `cue-spawn-builder.ts`), Group Chat
 participants and cross-agent consults (`applyAgentGatewayToSpawn()`), and `maestro-cli send` inject
 no MCP bridge, so their requests carry no binding and early mode keeps every line for them. That is
