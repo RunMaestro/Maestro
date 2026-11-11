@@ -16,12 +16,13 @@ import { useCallback } from 'react';
 import type { Session, TaskSelectionMode, UsageStats } from '../../types';
 import { substituteTemplateVariables, TemplateContext } from '../../utils/templateVariables';
 import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
-import { countMarkdownTasks, getTaskSelectionBlock } from './batchUtils';
+import { countMarkdownTasks, getAutorunDocumentBlock, getTaskSelectionBlock } from './batchUtils';
 import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
 import { extractTaskSynopsis } from '../../../shared/maestro-lib/autorun/synopsis';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../../shared/autorunModelHints';
+import { resolveAutoRunPromptTemplate } from '../../../shared/autorunPromptTemplate';
 import { resolveTurnSettings } from '../../../shared/autorunTurnSettings';
 import { restoreTasksCheckedByFailedTurn } from '../../../shared/markdownTaskScan';
 import {
@@ -451,7 +452,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 
 			// Resolve the task-selection block placeholder before the generic template
 			// substitution pass so any variables inside the swapped-in block are also
-			// expanded. No-op if the user has removed the placeholder from their prompt.
+			// expanded.
 			// In document mode, tell the agent to stop at the point where the
 			// document asks for DIFFERENT settings: it is already running under
 			// the settings resolved above, so it cannot honour a change it reads
@@ -470,10 +471,13 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 						baselineModel,
 						baselineEffort
 					);
-			const promptWithSelectionBlock = customPrompt.replace(
-				/\{\{TASK_SELECTION_BLOCK\}\}/gi,
-				getTaskSelectionBlock(taskSelectionMode, hintSegment)
-			);
+			// The desktop never pastes the document into the prompt, so a playbook
+			// prompt that does not name {{DOCUMENT_PATH}} gets the default's
+			// selection and document blocks appended (resolveAutoRunPromptTemplate).
+			const promptWithSelectionBlock = resolveAutoRunPromptTemplate(customPrompt, {
+				selectionBlock: getTaskSelectionBlock(taskSelectionMode, hintSegment),
+				documentBlock: getAutorunDocumentBlock(),
+			});
 
 			// Substitute template variables in the prompt
 			const substitutedPrompt = substituteTemplateVariables(

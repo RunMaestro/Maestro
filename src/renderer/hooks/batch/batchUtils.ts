@@ -25,15 +25,17 @@ export { findPendingHitlGate, type HitlGate } from '../../../shared/autorunMarke
 let cachedAutorunDefaultPrompt: string = '';
 let cachedAutorunPerTaskBlock: string = '';
 let cachedAutorunPerDocumentBlock: string = '';
+let cachedAutorunDocumentBlock: string = '';
 let batchUtilsPromptsLoaded = false;
 
 export async function loadBatchUtilsPrompts(force = false): Promise<void> {
 	if (batchUtilsPromptsLoaded && !force) return;
 
-	const [defaultResult, perTaskResult, perDocResult] = await Promise.all([
+	const [defaultResult, perTaskResult, perDocResult, documentResult] = await Promise.all([
 		window.maestro.prompts.get('autorun-default'),
 		window.maestro.prompts.get('autorun-per-task'),
 		window.maestro.prompts.get('autorun-per-document'),
+		window.maestro.prompts.get('autorun-document'),
 	]);
 	if (!defaultResult.success) {
 		throw new Error(`Failed to load autorun-default prompt: ${defaultResult.error}`);
@@ -44,9 +46,13 @@ export async function loadBatchUtilsPrompts(force = false): Promise<void> {
 	if (!perDocResult.success) {
 		throw new Error(`Failed to load autorun-per-document prompt: ${perDocResult.error}`);
 	}
+	if (!documentResult.success) {
+		throw new Error(`Failed to load autorun-document prompt: ${documentResult.error}`);
+	}
 	cachedAutorunDefaultPrompt = defaultResult.content!;
 	cachedAutorunPerTaskBlock = perTaskResult.content!;
 	cachedAutorunPerDocumentBlock = perDocResult.content!;
+	cachedAutorunDocumentBlock = documentResult.content!;
 	batchUtilsPromptsLoaded = true;
 	// Update the exported binding so consumers see the loaded value
 	DEFAULT_BATCH_PROMPT = cachedAutorunDefaultPrompt;
@@ -77,6 +83,15 @@ export function getTaskSelectionBlock(
 	// once.
 	if (mode !== 'document') return block;
 	return `${block}${describeSegmentLimit(segment)}`;
+}
+
+/**
+ * The cached `autorun-document` block: the default prompt's closing section that names
+ * `{{DOCUMENT_PATH}}`. Appended to a playbook prompt that never names the document
+ * (`resolveAutoRunPromptTemplate`).
+ */
+export function getAutorunDocumentBlock(): string {
+	return cachedAutorunDocumentBlock;
 }
 
 // Default batch processing prompt (exported for use by BatchRunnerModal and playbook management)

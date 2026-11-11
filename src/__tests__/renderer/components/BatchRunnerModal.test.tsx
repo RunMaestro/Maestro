@@ -8,10 +8,17 @@ vi.mock('../../../renderer/hooks/batch/batchUtils', async () => {
 	const actual = await vi.importActual('../../../renderer/hooks/batch/batchUtils');
 	const fs = await import('fs');
 	const path = await import('path');
-	const content = fs.readFileSync(
-		path.resolve(__dirname, '..', '..', '..', '..', 'src', 'prompts', 'autorun-default.md'),
-		'utf-8'
-	);
+	const { resolvePromptIncludes } = await import('../../../shared/promptIncludes');
+	const promptFile = (name: string) =>
+		path.resolve(__dirname, '..', '..', '..', '..', 'src', 'prompts', `${name}.md`);
+	// The prompt manager expands `{{INCLUDE:name}}` before the renderer sees the
+	// prompt (the default ends with `{{INCLUDE:autorun-document}}`), so the
+	// fixture does too.
+	const content = resolvePromptIncludes(fs.readFileSync(promptFile('autorun-default'), 'utf-8'), {
+		load: (name) =>
+			fs.existsSync(promptFile(name)) ? fs.readFileSync(promptFile(name), 'utf-8') : null,
+		rootId: 'autorun-default',
+	});
 	return {
 		...actual,
 		// Normalize CRLF -> LF: a Windows git checkout may give the fixture CRLF
