@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import path from 'path';
 
 // Mock crypto.randomUUID
 vi.mock('crypto', () => ({
@@ -366,8 +367,9 @@ describe('cue-file-watcher', () => {
 				latestHandler('add')('.maestro/slack-monitor/events/evt_1.json');
 				vi.advanceTimersByTime(100);
 				expect(onEvent).toHaveBeenCalledTimes(1);
+				// The watcher resolves with path.resolve, which adds a drive on Windows.
 				expect((onEvent.mock.calls[0][0] as CueEvent).payload.path).toBe(
-					'/config/agent/.maestro/slack-monitor/events/evt_1.json'
+					path.resolve('/config/agent', '.maestro/slack-monitor/events/evt_1.json')
 				);
 			}
 		);
