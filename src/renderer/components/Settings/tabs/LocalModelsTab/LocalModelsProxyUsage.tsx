@@ -285,7 +285,7 @@ function CompressionRow({ theme, entry, agentName }: CompressionRowProps) {
 				(state.block.original === null ? (
 					<p className="text-xs opacity-70" data-testid="token-proxy-compression-no-original">
 						The original text is no longer in the cache. The text that was sent in its place is
-						still stored under this hash.
+						still stored under this cache key.
 					</p>
 				) : (
 					<div

@@ -664,4 +664,74 @@ describe('createCompressionCache: usage and pruning', () => {
 		await expect(fs.access(entryFile(tempRoot.dir, orphanHash, '.original.txt'))).rejects.toThrow();
 		await fs.access(entryFile(tempRoot.dir, youngHash, '.original.txt'));
 	});
+
+	it('frees orphan texts before the size pass, so it does not remove an entry it need not', async () => {
+		const now = Date.now();
+		const entry = await entryUsed(tempRoot.dir, 'kept\n'.repeat(500), 3 * DAY, now);
+		const entryBytes = (await cacheIn(tempRoot.dir).usage()).bytes;
+		const orphanHash = contentHash('orphan');
+		const orphan = entryFile(tempRoot.dir, orphanHash, '.original.txt');
+		await fs.mkdir(path.dirname(orphan), { recursive: true });
+		await fs.writeFile(orphan, 'x'.repeat(50_000));
+		const old = new Date(now - 2 * DAY);
+		await fs.utimes(orphan, old, old);
+
+		// Only the orphan puts the directory over the cap.
+		const result = await cacheIn(tempRoot.dir).prune({ now, maxBytes: entryBytes });
+		expect(result).toMatchObject({ removedEntries: 0, removedOrphans: 1 });
+		expect(await cacheIn(tempRoot.dir).read(entry)).toMatchObject({ outcome: 'compressed' });
+	});
+
+	it('waits for a request holding the hash, and spares the entry that request used', async () => {
+		const now = Date.now();
+		const original = 'held\n'.repeat(500);
+		const hash = await entryUsed(tempRoot.dir, original, 40 * DAY, now);
+		const cache = cacheIn(tempRoot.dir);
+		let release: () => void = () => {};
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		let pruneSettled = false;
+		// A request is resolving this hash: it holds the line, then reads it.
+		const request = cache.withEntry(hash, async () => {
+			await gate;
+			return cache.read(hash);
+		});
+		const prune = cache.prune({ now }).finally(() => (pruneSettled = true));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		// The scan saw an idle entry, but the removal waits behind the request.
+		expect(pruneSettled).toBe(false);
+		release();
+		expect(await request).toMatchObject({ outcome: 'compressed' });
+		expect((await prune).removedEntries).toBe(0);
+		expect(await cache.readOriginal(hash)).toBe(original);
+	});
+
+	it('remembers a bounded number of uses, and writes a forgotten use to its record', async () => {
+		const now = Date.now();
+		const first = await entryUsed(tempRoot.dir, 'first\n'.repeat(500), 40 * DAY, now);
+		const cache = createCompressionCache({ dir: () => tempRoot.dir, useEntries: 2 });
+		// The read stamps `first` now; set it back so only the in-memory use is recent.
+		await cache.read(first);
+		await vi.waitFor(async () => {
+			const { mtimeMs } = await fs.stat(entryFile(tempRoot.dir, first, '.json'));
+			expect(mtimeMs).toBeGreaterThan(now - DAY);
+		});
+		const back = new Date(now - 40 * DAY);
+		await fs.utimes(entryFile(tempRoot.dir, first, '.json'), back, back);
+		// Its next read is within the stamp interval (and a later millisecond): memory only.
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		await cache.read(first);
+		expect((await fs.stat(entryFile(tempRoot.dir, first, '.json'))).mtimeMs).toBeLessThan(
+			now - 30 * DAY
+		);
+
+		// Two more hashes push `first` out of the bounded map; its use goes to disk.
+		for (const text of ['second\n'.repeat(500), 'third\n'.repeat(500)]) {
+			await cache.write(compressedVerdict({ hash: contentHash(text) }), text);
+		}
+		await vi.waitFor(async () => {
+			const { mtimeMs } = await fs.stat(entryFile(tempRoot.dir, first, '.json'));
+			expect(mtimeMs).toBeGreaterThan(now - DAY);
+		});
+		expect((await cache.prune({ now })).removedEntries).toBe(0);
+	});
 });

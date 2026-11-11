@@ -9,11 +9,15 @@
  * input, cache reads and cache writes. A cache write that grows on a request
  * where nothing new arrived is the sign of a broken cached prefix.
  *
- * The response is read, never changed: {@link createProviderUsageReader} keeps a
- * bounded copy of the bytes as they are piped to the client and parses it once
- * the response has ended. A body past {@link USAGE_READ_MAX_BYTES}, an encoding
- * with no decoder, or a body that names no usage gives `null`, which the stats
- * row stores as unknown, never as zero.
+ * The response is read, never changed. {@link createProviderUsageReader} sees
+ * the bytes as they are piped to the client. An event stream with no
+ * `Content-Encoding` is scanned line by line as it arrives, and only the
+ * running usage is kept (and the one line not yet ended). A JSON body, or an
+ * encoded answer, needs the whole body to decode, so the reader keeps a bounded
+ * copy of it and parses it once the response has ended. A body (or one stream
+ * line) past {@link USAGE_READ_MAX_BYTES}, an encoding with no decoder, or a
+ * body that names no usage gives `null`, which the stats row stores as
+ * unknown, never as zero.
  */
 
 import * as zlib from 'zlib';
@@ -22,7 +26,10 @@ import type {
 	TokenProxyRequestKind,
 } from '../../../shared/local-models/token-proxy';
 
-/** A response body past this is not kept for its usage. An event stream is far smaller. */
+/**
+ * A kept body (or one stream line) past this is not read for its usage. An
+ * event stream's usage lines are far smaller.
+ */
 export const USAGE_READ_MAX_BYTES = 16 * 1024 * 1024;
 
 export interface ProviderUsageReader {
@@ -147,43 +154,135 @@ export function parseProviderUsage(
 		}
 		return complete(total);
 	}
-	for (const line of text.split('\n')) {
-		if (!line.startsWith('data:') || !line.includes('"usage"')) continue;
-		try {
-			const usage = usageObjectOf(JSON.parse(line.slice(5).trim()));
-			if (usage) foldUsage(kind, usage, total);
-		} catch (error) {
-			if (!(error instanceof SyntaxError)) throw error;
-		}
-	}
+	for (const line of text.split('\n')) foldEventLine(kind, line, total);
 	return complete(total);
+}
+
+/** Fold one event-stream line into the running total, when it is a `data:` line with a usage. */
+function foldEventLine(
+	kind: TokenProxyRequestKind,
+	line: string,
+	into: Partial<TokenProxyProviderUsage>
+): void {
+	if (!line.startsWith('data:') || !line.includes('"usage"')) return;
+	try {
+		const usage = usageObjectOf(JSON.parse(line.slice(5).trim()));
+		if (usage) foldUsage(kind, usage, into);
+	} catch (error) {
+		if (!(error instanceof SyntaxError)) throw error;
+	}
+}
+
+const NEWLINE = 0x0a;
+
+/** Whether a byte is JSON or event-stream whitespace (space, tab, CR, LF). */
+function isBlankByte(byte: number): boolean {
+	return byte === 0x20 || byte === 0x09 || byte === 0x0d || byte === NEWLINE;
 }
 
 /**
  * A reader for one response. `contentEncoding` is the response's own header
- * (lowercase), or null. The copy it keeps is bounded; past the bound it stops
- * keeping and answers null.
+ * (lowercase), or null.
+ *
+ * With no encoding, the first byte that is not whitespace decides: `{` is one
+ * JSON value, kept (bounded) and parsed at the end; anything else is an event
+ * stream, read one complete line at a time as it arrives, so the memory it
+ * holds is the running usage and the line not yet ended. An encoded answer is
+ * kept (bounded) and decoded at the end. Past the bound it answers null.
  */
 export function createProviderUsageReader(
 	kind: TokenProxyRequestKind,
 	contentEncoding: string | null
 ): ProviderUsageReader {
+	const plain = contentEncoding === null || contentEncoding === 'identity';
+	// 'sniff' until the first byte that is not whitespace, on a plain answer.
+	let mode: 'sniff' | 'lines' | 'body' = plain ? 'sniff' : 'body';
 	const chunks: Buffer[] = [];
 	let bytes = 0;
 	let overflowed = kind === 'other';
-	return {
-		push(chunk) {
-			if (overflowed) return;
-			bytes += chunk.length;
-			if (bytes > USAGE_READ_MAX_BYTES) {
-				overflowed = true;
-				chunks.length = 0;
+
+	// The event-stream path: the running usage, and the line not yet ended.
+	const total: Partial<TokenProxyProviderUsage> = {};
+	let pending: Buffer[] = [];
+	let pendingBytes = 0;
+	// A line past the bound is skipped up to its newline, not read.
+	let skippingLine = false;
+
+	const keep = (chunk: Buffer): void => {
+		bytes += chunk.length;
+		if (bytes > USAGE_READ_MAX_BYTES) {
+			overflowed = true;
+			chunks.length = 0;
+			return;
+		}
+		chunks.push(chunk);
+	};
+
+	const endLine = (tail: Buffer): void => {
+		if (skippingLine) {
+			skippingLine = false;
+		} else {
+			const line = Buffer.concat([...pending, tail], pendingBytes + tail.length);
+			foldEventLine(kind, line.toString('utf-8').replace(/\r$/, ''), total);
+		}
+		pending = [];
+		pendingBytes = 0;
+	};
+
+	const scanLines = (chunk: Buffer): void => {
+		let offset = 0;
+		while (offset < chunk.length) {
+			const newline = chunk.indexOf(NEWLINE, offset);
+			if (newline < 0) {
+				const rest = chunk.subarray(offset);
+				if (skippingLine) return;
+				pendingBytes += rest.length;
+				if (pendingBytes > USAGE_READ_MAX_BYTES) {
+					skippingLine = true;
+					pending = [];
+					pendingBytes = 0;
+					return;
+				}
+				// A copy, so the unended line does not hold the whole chunk alive.
+				pending.push(Buffer.from(rest));
 				return;
 			}
-			chunks.push(chunk);
+			endLine(chunk.subarray(offset, newline));
+			offset = newline + 1;
+		}
+	};
+
+	return {
+		push(chunk) {
+			if (overflowed || chunk.length === 0) return;
+			if (mode === 'sniff') {
+				let first = 0;
+				while (first < chunk.length && isBlankByte(chunk[first])) first++;
+				if (first < chunk.length) mode = chunk[first] === 0x7b ? 'body' : 'lines';
+				else {
+					// All whitespace so far: kept either way, and decided by a later chunk.
+					keep(chunk);
+					return;
+				}
+				if (mode === 'lines') {
+					const head = Buffer.concat([...chunks, chunk]);
+					chunks.length = 0;
+					bytes = 0;
+					scanLines(head);
+					return;
+				}
+			}
+			if (mode === 'lines') scanLines(chunk);
+			else keep(chunk);
 		},
 		finish() {
-			if (overflowed || bytes === 0) return null;
+			if (overflowed) return null;
+			if (mode === 'lines') {
+				// A stream cut short may end mid line; a whole `data:` line still counts.
+				if (pendingBytes > 0) endLine(Buffer.alloc(0));
+				return complete(total);
+			}
+			if (bytes === 0) return null;
 			let body: Buffer | null;
 			try {
 				body = decodeBody(Buffer.concat(chunks, bytes), contentEncoding);

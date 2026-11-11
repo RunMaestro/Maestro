@@ -3039,14 +3039,17 @@ Stats migration v16 adds one table. `proxyRequestFromLog()` in
    appears in every later request. `new_blocks` holds only the blocks with `cached: false`, and
    the cache makes the first verdict the only one, so "Recent compressions" needs no dedupe.
 
-5. **The provider's own count rides along, for every mode.** `response-usage.ts` keeps a bounded
-   copy (16 MB) of each successful answer to a message request as it is piped to the client,
-   unchanged, and once the response has ended reads the `usage` it names: Anthropic's
+5. **The provider's own count rides along, for every mode.** `response-usage.ts` reads each
+   successful answer to a message request as it is piped to the client, unchanged. An event stream
+   with no `Content-Encoding` is scanned one complete line at a time as it arrives, so the reader
+   holds only the running usage and the line not yet ended. A JSON body or an encoded answer needs
+   the whole body, so for those it keeps a bounded copy (16 MB) and decodes it once the response
+   has ended. Either way it reads the `usage` the answer names: Anthropic's
    `message_start` and cumulative `message_delta`, an OpenAI chat completion's final chunk, and a
    Responses `response.completed`, in an event stream or a whole JSON body, decoding gzip, deflate,
    br and zstd. OpenAI's cached tokens are moved out of its prompt total, so `input` is uncached
    input on every route, and OpenAI reports no cache writes (0). An answer that names no usage, an
-   error status, a body past the bound, an encoding with no decoder, and an answer from a
+   error status, a kept body past the bound, an encoding with no decoder, and an answer from a
    background target all leave the four columns NULL, never zero. These are exact where the proxy's
    own figures are characters / 4, and they cover passthrough requests the proxy never reads, so a
    passthrough week is the baseline a compress week is compared against. A cache write that grows
@@ -3154,7 +3157,7 @@ flowchart TD
 	S --> F["findToolResultSpans(kind)<br/>tool results outside the protected regions"]
 	F --> T{"at least 1000 tokens?"}
 	T -->|no| KEEP["left as sent"]
-	T -->|yes| H["SHA-256 of the original"]
+	T -->|yes| H["cache key: SHA-256 of the original<br/>(verdictKey() in early mode)"]
 	H --> C{"verdict in the cache?"}
 	C -->|yes| USE["use it: same bytes as every earlier turn"]
 	C -->|no| HEUR["heuristics<br/>JSON, or logs then long lines"]
@@ -3244,10 +3247,13 @@ Token counts are `estimateTokenCount()` (characters / 4) everywhere, including t
 A compressed block is the shortened text, a newline, and one line:
 
 ```
-[maestro-compressed sha256=<hash of the original> original_tokens=<n>]
+[maestro-compressed sha256=<cache key> original_tokens=<n>]
 ```
 
-`formatCompressionMarker()` writes it and `parseCompressionMarker()` reads it.
+`formatCompressionMarker()` writes it and `parseCompressionMarker()` reads it. The `sha256=` value
+names the cache entry that holds the original. In `compress` it is the SHA-256 of the original
+text; in `compress-early` it is `verdictKey(text, 'complete')`, which is not the hash of the
+content (rule 6).
 
 The cache is content-addressed, under `userData/proxy-cache/`:
 
@@ -3267,8 +3273,11 @@ Rules:
 2. **The verdict is stored BEFORE the replacement is used.** When the cache cannot be read or
    written (disk full, permissions) the block is sent as it was and `stats.storeFailures` counts
    it. A compression that is not recorded cannot be reproduced or audited.
-3. **One block is decided once at a time.** A process-wide `createKeyedWriteQueue()` keyed by hash
-   makes a second request that carries the same new block wait and read the first one's verdict.
+3. **One block is decided once at a time.** `cache.withEntry(hash, fn)`, over a process-wide
+   `createKeyedWriteQueue()` keyed by hash, makes a second request that carries the same new block
+   wait and read the first one's verdict. A prune removes each entry under the same queue and asks
+   again there whether it was used since the scan, so it never deletes an entry (and the original
+   its marker points to) while a request is resolving it.
 4. **A record that cannot be read is absent.** Bad JSON, another record version, another hash, or
    a missing replacement file is logged and decided again.
 5. **Pruning is by last use.** An entry that vanished mid conversation would be decided again,
@@ -3276,11 +3285,14 @@ Rules:
    bytes: the provider's cached prefix breaks and the model sees another version of an earlier
    result. That risk lasts only while the conversation is live, and a provider keeps a cached
    prefix for an hour at most. So every use stamps the record's mtime (at most every 6 hours, with
-   the process's own record of the use in between), and `cache.prune()` removes entries unused for
+   the process's own record of the use in between; that record is bounded to the 16384 most
+   recently used hashes, and a hash it forgets has its last use written to the record first), and
+   `cache.prune()` removes text files with no record that are over a day old, then entries unused for
    30 days (`DEFAULT_PRUNE_IDLE_MS`), then the least recently used while the directory is over
    512 MB (`DEFAULT_PRUNE_MAX_BYTES`). Nothing used within a day (`MIN_PRUNE_IDLE_MS`) is removed,
    by any prune. The record is deleted before its texts, so a crash leaves orphan texts, never a
-   record whose text is gone; an orphan older than a day is removed too. The service prunes a
+   record whose text is gone. Orphans go first, so the size pass does not count bytes that are about
+   to be freed. The service prunes a
    minute after the listener starts and daily while it listens; `maestro-cli models proxy cache`
    reads the size and `models proxy cache prune [--older-than 7d]` prunes now
    (`local_models_proxy_cache`). Before this rule the directory was never pruned, which kept raw

@@ -62,8 +62,9 @@
  *      replacement is used. A block whose verdict cannot be stored is sent as
  *      it was: an unrecorded compression could not be reproduced or audited.
  *
- * A compressed block ends with `[maestro-compressed sha256=<hash>
- * original_tokens=<n>]` on its own line.
+ * A compressed block ends with `[maestro-compressed sha256=<key>
+ * original_tokens=<n>]` on its own line. The key names the cache entry: the
+ * SHA-256 of the original in `compress`, {@link verdictKey} in early mode.
  */
 
 import { canonicalJson } from '../../../shared/canonicalJson';
@@ -71,7 +72,6 @@ import { estimateTokenCount, getBasename, isAbsolutePath } from '../../../shared
 import { serializedJsonByteLength } from '../../../shared/jsonUtils';
 import type { TokenProxyRequestKind } from '../../../shared/local-models/token-proxy';
 import { getPrompt } from '../../prompt-manager';
-import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { logger } from '../../utils/logger';
 import { shellEscape } from '../../utils/shell-escape';
 import { runLocalTask, type LocalTaskUnavailable } from '../task-router';
@@ -134,7 +134,11 @@ export const MODEL_TIMEOUT_MS = 60 * 1000;
 
 const MARKER_PATTERN = /\[maestro-compressed sha256=([0-9a-f]{64}) original_tokens=(\d+)\]\s*$/;
 
-/** The line that ends every compressed block. */
+/**
+ * The line that ends every compressed block. `hash` is the cache key of the
+ * entry that holds the original ({@link verdictKey}), which in early mode is
+ * not the plain SHA-256 of the content.
+ */
 export function formatCompressionMarker(hash: string, originalTokens: number): string {
 	return `[maestro-compressed sha256=${hash} original_tokens=${originalTokens}]`;
 }
@@ -898,14 +902,6 @@ type BlockResolution =
 	| { status: 'store-failed' }
 	| { status: 'resolved'; verdict: CompressionVerdict; cached: boolean };
 
-/**
- * One line per content hash, shared by every request in the process. Two
- * requests that carry the same new block must not both decide it: with a model
- * in the path they could decide differently, and the second has only to wait
- * to read the first one's verdict.
- */
-const blockQueue = createKeyedWriteQueue();
-
 /** Decide a block that has no verdict yet. */
 async function decideBlock(
 	text: string,
@@ -981,7 +977,12 @@ async function resolveBlock(text: string, context: BlockContext): Promise<BlockR
 	const originalTokens = estimateTokenCount(text);
 	if (originalTokens < context.minTokens) return { status: 'below-threshold' };
 	const hash = verdictKey(text, context.profile);
-	return blockQueue.enqueue(hash, async (): Promise<BlockResolution> => {
+	// One line per cache key, held by the cache itself (`withEntry`). Two
+	// requests that carry the same new block must not both decide it: with a
+	// model in the path they could decide differently, and the second has only
+	// to wait to read the first one's verdict. A prune takes the same line, so it
+	// never removes an entry (and its original) while a request resolves it.
+	return context.cache.withEntry(hash, async (): Promise<BlockResolution> => {
 		let cached: CompressionVerdict | null;
 		try {
 			cached = await context.cache.read(hash);

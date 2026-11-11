@@ -2197,6 +2197,7 @@ describe('compressRequestBody: a cache that cannot be used', () => {
 			read: on === 'read' ? async () => Promise.reject(error) : real.read,
 			write: on === 'write' ? async () => Promise.reject(error) : real.write,
 			readOriginal: real.readOriginal,
+			withEntry: real.withEntry,
 			usage: real.usage,
 			prune: real.prune,
 		};
