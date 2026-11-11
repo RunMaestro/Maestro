@@ -386,6 +386,22 @@ The web interface is the full Maestro app, served by the desktop app to any brow
 
 Everything else is the desktop app: the same agents, tabs, transcripts (including pasted screenshots), Auto Run, and settings, live-synced with the desktop window.
 
+### What stays in the desktop app
+
+A few things act on the computer running Maestro itself, or manage its secrets, so they work only in the desktop app. In the web interface they are missing or say so:
+
+| Feature                                                                        | In the web interface                                                                                                                        |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A Cappella** (voice sessions, wake word, voice setup)                        | Not available. Use the desktop app, or pair a phone as the desktop's microphone.                                                            |
+| **System Log Viewer**                                                          | Not available. Read the logs in the desktop app.                                                                                            |
+| **Cue bundle import and export**                                               | Not available. Import and export bundles in the desktop app.                                                                                |
+| **API keys** (System One engine keys, the model server key, agent credentials) | Shown as set or not set, never entered or read. Set them in the desktop app or with `maestro-cli`.                                          |
+| **Reveal in Finder**, **Open in Finder**                                       | Not shown: there is no Finder on your device to show the host's folder in.                                                                  |
+| **Open in Default App**                                                        | Downloads the file to your device instead.                                                                                                  |
+| **Dictation**                                                                  | Records on your device's microphone. Needs HTTPS (Remote Control); over a plain `http://` address the microphone stays dimmed and says why. |
+| **Plugin install and permissions**, **DataviewJS trust**, **Computer History** | Desktop app only.                                                                                                                           |
+| **Quit, updates, windows, the web server and Remote Control switches**         | Desktop app only. Turning the web server off from a browser would disconnect that browser.                                                  |
+
 ## Local Access (Same Network)
 
 1. Click the **OFFLINE** button in the Left Bar header to enable the web interface
