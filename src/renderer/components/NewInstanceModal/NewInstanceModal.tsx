@@ -19,6 +19,7 @@ import { SshRemoteSelector } from '../shared/SshRemoteSelector';
 import { ThemedSelect } from '../shared/ThemedSelect';
 import { useSessionStore } from '../../stores/sessionStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { isImeComposing } from '../../utils/ime';
 import type { AgentDebugInfo, NewInstanceModalProps } from './types';
 import { SUPPORTED_AGENTS, NEW_SESSION_MESSAGE_MAX_LENGTH } from './types';
 import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidation';
@@ -900,6 +901,7 @@ export function NewInstanceModal({
 			}
 			// Handle Cmd+Enter or Cmd+S for creating agent
 			if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === 's') && !e.shiftKey) {
+				if (isImeComposing(e)) return;
 				e.preventDefault();
 				if (isFormValid) {
 					handleCreate();

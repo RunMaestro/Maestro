@@ -3,6 +3,7 @@ import type { AgentSelectionKeyDown, AgentSelectionKeyboardArgs } from '../types
 import { PROVIDER_BAR_NAV_EXEMPT_ATTR } from '../../../../ui/ProviderAvailabilityBar';
 import { getNextAgentTileIndex } from '../utils/agentGrid';
 import { findDetectedAgent } from '../utils/agentAvailability';
+import { isImeComposing } from '../../../../../utils/ime';
 
 export function useAgentSelectionKeyboard({
 	tiles,
@@ -41,6 +42,7 @@ export function useAgentSelectionKeyboard({
 						}
 					}
 				} else if (event.key === 'Enter' && canProceedToNext()) {
+					if (isImeComposing(event)) return;
 					event.preventDefault();
 					nextStep();
 				}

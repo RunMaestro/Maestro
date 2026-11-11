@@ -48,6 +48,7 @@ import { logger } from '../../utils/logger';
 import { isAbsolutePath } from '../../../shared/formatters';
 import { isSameDirectory, workingDirectoryChangeBlocker } from '../../utils/agentWorkingDirectory';
 import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
+import { isImeComposing } from '../../utils/ime';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 
@@ -870,6 +871,7 @@ export function EditAgentModal({
 		if (!isOpen) return;
 		const handler = (e: KeyboardEvent) => {
 			if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === 's') && !e.shiftKey) {
+				if (isImeComposing(e)) return;
 				e.preventDefault();
 				if (isFormValid) {
 					handleSave();

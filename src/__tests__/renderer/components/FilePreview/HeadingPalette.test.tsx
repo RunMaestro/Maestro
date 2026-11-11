@@ -96,6 +96,19 @@ describe('HeadingPalette', () => {
 			expect(onJump).toHaveBeenCalledWith(ENTRIES[3], 'smooth');
 		});
 
+		it('leaves Enter to the input method during an active IME composition', () => {
+			const { input, onJump, onClose } = renderPalette();
+			for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+				fireEvent.keyDown(input, { key: 'Enter', ...ime });
+				expect(onJump).not.toHaveBeenCalled();
+				expect(onClose).not.toHaveBeenCalled();
+			}
+			// A normal Enter still jumps.
+			fireEvent.keyDown(input, { key: 'Enter' });
+			expect(onJump).toHaveBeenCalledWith(ENTRIES[0], 'smooth');
+			expect(onClose).toHaveBeenCalled();
+		});
+
 		it('does nothing on Enter when nothing matches', () => {
 			const { input, onJump, onClose } = renderPalette();
 			fireEvent.change(input, { target: { value: 'zzzz' } });
