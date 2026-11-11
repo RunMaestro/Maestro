@@ -84,6 +84,8 @@ describe('the service files', () => {
 		expect(wrapper).toContain('$HOME/.maestro/bin');
 		expect(wrapper).toContain('_nvm_dir');
 		expect(wrapper).toContain('host start --foreground');
+		// The person's own settings live in a file Maestro never rewrites.
+		expect(wrapper).toContain('[ -f "$HOME/.maestro/host.env" ] && . "$HOME/.maestro/host.env"');
 	});
 
 	it('restarts on failure only, and gives the host time to drain on stop', () => {

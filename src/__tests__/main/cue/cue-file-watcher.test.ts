@@ -9,6 +9,7 @@
  * - Error handling
  */
 
+import * as path from 'path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock crypto.randomUUID
@@ -376,8 +377,9 @@ describe('cue-file-watcher', () => {
 				latestHandler('add')('.maestro/slack-monitor/events/evt_1.json');
 				vi.advanceTimersByTime(100);
 				expect(onEvent).toHaveBeenCalledTimes(1);
+				// Resolved the platform's way: a drive letter and backslashes on Windows.
 				expect((onEvent.mock.calls[0][0] as CueEvent).payload.path).toBe(
-					'/config/agent/.maestro/slack-monitor/events/evt_1.json'
+					path.resolve('/config/agent', '.maestro/slack-monitor/events/evt_1.json')
 				);
 			}
 		);

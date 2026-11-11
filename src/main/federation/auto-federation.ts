@@ -109,6 +109,16 @@ function remoteFingerprint(remote: SshRemoteConfig): string {
 	});
 }
 
+/**
+ * Service skips with only a manual workaround (no service manager there at all): shown as a note,
+ * never as something that needs a person.
+ */
+const INFORMATIONAL_SERVICE_REASONS: ReadonlySet<string> = new Set([
+	'unsupported-os',
+	'no-systemd-user',
+	'desktop-app',
+]);
+
 /** A lift refusal the next pass can clear by itself (nothing for a person to do). */
 const TRANSIENT_LIFT_CODES = new Set([
 	'LIFT_BUSY',
@@ -138,6 +148,10 @@ export class AutoFederationCoordinator {
 	/** A nudge came in while a pass ran: run once more after it. */
 	private again = false;
 	private lastPassAt: number | undefined;
+	/** The next pass ignores the retry backoffs (Run Now). Cleared when a pass starts. */
+	private force = false;
+	/** The pass running now ignores the retry backoffs. */
+	private forcing = false;
 	private stopped = false;
 
 	constructor(deps: AutoFederationDeps) {
@@ -186,10 +200,15 @@ export class AutoFederationCoordinator {
 		this.debounce = this.setTimer(() => this.fire(), AUTO_FEDERATION_DEBOUNCE_MS);
 	}
 
-	/** Run a pass now and resolve with what it left behind (`maestro-cli federation auto run`). */
-	async runNow(): Promise<AutoFederationSnapshot> {
+	/**
+	 * Run a pass now and resolve with what it left behind (`maestro-cli federation auto run`, Run
+	 * Now). A person asked, so whatever they fixed is tried now, past the retry backoffs, unless
+	 * `force: false`.
+	 */
+	async runNow(options: { force?: boolean } = {}): Promise<AutoFederationSnapshot> {
 		this.clearTimer(this.debounce);
 		this.debounce = null;
+		if (options.force !== false) this.force = true;
 		await this.pass();
 		this.scheduleNext();
 		return this.snapshot();
@@ -275,6 +294,8 @@ export class AutoFederationCoordinator {
 		try {
 			do {
 				this.again = false;
+				this.forcing = this.force;
+				this.force = false;
 				await this.passOnce();
 			} while (this.again && !this.stopped);
 		} catch (error) {
@@ -410,6 +431,7 @@ export class AutoFederationCoordinator {
 
 	/** A setup of this remote failed recently, against the same remote record. */
 	private setupBackingOff(remote: SshRemoteConfig): boolean {
+		if (this.forcing) return false;
 		const failed = this.setupFailures.get(remote.id);
 		return (
 			failed !== undefined &&
@@ -474,11 +496,18 @@ export class AutoFederationCoordinator {
 				? `Run \`${service.lingerFix}\` on the remote so the host survives logout and reboots.`
 				: service && service.kind !== 'none' && service.state === 'start-failed'
 					? 'The service did not start the host. Check it on the remote (`systemctl --user status maestro-host`, or `launchctl print gui/$(id -u)/sh.maestro.host`).'
-					: service?.kind === 'none'
+					: service?.kind === 'none' && !INFORMATIONAL_SERVICE_REASONS.has(service.reason)
 						? service.fix
 						: serviceError
 							? 'Run maestro-cli remote-host install <ssh-remote> --start to register the service again and see the error.'
 							: undefined;
+		// A remote that can never have a service (Windows, no user bus, a Mac with Maestro.app) keeps
+		// its workaround as a note: the person cannot "fix" it, so it must not read as needing them
+		// on every run (and fail `federation auto` forever).
+		const serviceNote =
+			service?.kind === 'none' && INFORMATIONAL_SERVICE_REASONS.has(service.reason)
+				? service.fix
+				: undefined;
 		if (serviceFix) this.serviceFixes.set(remote.id, serviceFix);
 		else this.serviceFixes.delete(remote.id);
 		const connected = this.isConnected(remote.id);
@@ -487,7 +516,9 @@ export class AutoFederationCoordinator {
 			...(connected
 				? serviceFix
 					? { fix: serviceFix, needsYou: true }
-					: {}
+					: serviceNote
+						? { fix: serviceNote }
+						: {}
 				: {
 						reason:
 							answer.reconnectError ??
@@ -509,6 +540,7 @@ export class AutoFederationCoordinator {
 		const blocked = this.agentBlocks.get(agent.id);
 		if (
 			blocked &&
+			!this.forcing &&
 			blocked.fingerprint === fingerprint &&
 			this.now() - blocked.at < BLOCKED_RETRY_MS
 		) {
@@ -557,7 +589,7 @@ export class AutoFederationCoordinator {
 				const name = getAgentDisplayName(agent.toolType);
 				block(
 					`${name} is not available to the host on "${remote.name}"${provider?.unavailableReason ? ` (${provider.unavailableReason})` : ''}.`,
-					`Install ${name} on "${remote.name}" and log in to it as the SSH user. If it is installed outside ~/.local/bin or a Node version manager, add its folder to the PATH line in ~/.maestro/bin/maestro-host-service, then use Start Host.`
+					`Install ${name} on "${remote.name}" and log in to it as the SSH user. If it is installed outside ~/.local/bin or a Node version manager, add \`export PATH="<its folder>:$PATH"\` to ~/.maestro/host.env on the remote, then use Start Host.`
 				);
 				return;
 			}

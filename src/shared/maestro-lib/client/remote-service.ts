@@ -80,13 +80,13 @@ export function remoteServiceSkipFix(reason: RemoteServiceSkipReason): string {
 		case 'write-failed':
 			return 'Maestro could not write under ~/.maestro or the service folder. Check the home directory is writable by the SSH user.';
 		case 'no-systemd-user':
-			return 'This Linux remote has no systemd user session (a container, or WSL without systemd). Start the host from your own init (run `~/.maestro/bin/maestro-host-service`), or restart it with Start Host after each reboot.';
+			return 'This Linux remote has no systemd user session (a container, or WSL without systemd). Start the host from your own init (run `~/.maestro/bin/maestro-host-service`), or let Maestro start it again after a reboot (it does when it finds the host stopped).';
 		case 'enable-failed':
 			return 'systemd refused to enable the user unit. Run `systemctl --user enable --now maestro-host` on the remote to see why.';
 		case 'desktop-app':
 			return 'Maestro.app is installed on this Mac, and it is the host while it runs. Keep the app open (add it to Login Items) for its agents to keep working.';
 		case 'unsupported-os':
-			return 'Windows has no service Maestro can register without admin rights. Run `~/.maestro/bin/maestro-host-service` from a Task Scheduler task "At log on", or use Start Host after each reboot.';
+			return 'Windows has no service Maestro can register without admin rights. Add a Task Scheduler task "At log on" that runs `"C:\\Program Files\\Git\\bin\\bash.exe" -lc "~/.maestro/bin/maestro-cli host start --foreground"`, or let Maestro start the host again after a reboot (it does when it finds the host stopped).';
 	}
 }
 
@@ -108,6 +108,8 @@ export function buildHostServiceWrapper(): string {
 	return [
 		'#!/bin/sh',
 		'# Written by Maestro (Federation): runs the host in the foreground for the service manager.',
+		'# Maestro rewrites this file. Put your own settings (an extra PATH entry, say) in ~/.maestro/host.env.',
+		'[ -f "$HOME/.maestro/host.env" ] && . "$HOME/.maestro/host.env"',
 		`exec ${wrapRemoteCommandWithPath('exec "$HOME/.maestro/bin/maestro-cli" host start --foreground')}`,
 		'',
 	].join('\n');
@@ -169,11 +171,12 @@ export function buildRemoteServiceScript(): string {
 		`say() { printf '%s%s\\n' "$M" "$1"; }`,
 		'skip() { say kind=none; say "reason=$1"; exit 0; }',
 		'bin="$HOME/.maestro/bin"; launcher="$bin/maestro-cli"; wrapper="$bin/maestro-host-service"',
-		'[ -x "$launcher" ] || skip no-launcher',
 		'case "$(uname -s)" in Linux*) os=linux;; Darwin*) os=darwin;; *) os=other;; esac',
-		'[ "$os" = other ] && skip unsupported-os',
-		// The desktop app is the host on a Mac that has it: a headless host would lock it out.
+		// The desktop app is the host on a Mac that has it: a headless host would lock it out. Checked
+		// before the launcher, since such a Mac may use the app's own CLI and have no ~/.maestro.
 		'[ "$os" = darwin ] && { [ -d /Applications/Maestro.app ] || [ -d "$HOME/Applications/Maestro.app" ]; } && skip desktop-app',
+		'[ "$os" = other ] && skip unsupported-os',
+		'[ -x "$launcher" ] || skip no-launcher',
 		'mkdir -p "$bin" || skip write-failed',
 		`cat > "$wrapper.new" <<'MAESTRO_HOST_SERVICE' || skip write-failed`,
 		wrapper.trimEnd(),

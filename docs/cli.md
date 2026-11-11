@@ -2453,7 +2453,7 @@ maestro-cli federation auto run        # run a pass now (Run Now in Settings > S
 maestro-cli settings set federationAutoMove false   # turn automatic moves off
 ```
 
-Both print each remote's state (`ready`, `setting-up`, `waiting`, `blocked`) with its service, and each SSH agent's state (`moved`, `pending`, `waiting`, `blocked`, `manual`) with its reason. Anything `blocked` carries a `To fix:` line. Both exit `1` when something is blocked, so a script can check for work that needs a person. `--json` prints the same snapshot. They need the desktop app: a headless host mirrors no peers.
+Both print each remote's state (`ready`, `setting-up`, `waiting`, `blocked`) with its service, and each SSH agent's state (`moved`, `pending`, `waiting`, `blocked`, `manual`) with its reason. Anything `blocked` carries a `To fix:` line. Both exit `1` when something needs a person: a `blocked` remote or agent, or a running host whose service still needs one step (lingering off, or a service that failed to register). A remote that can never have a service (Windows, Linux without a user session, a Mac with Maestro.app) shows its workaround as a note and does not make them exit `1`. `--json` prints the same snapshot. They need the desktop app: a headless host mirrors no peers.
 
 ## Run the Host as a Service
 
