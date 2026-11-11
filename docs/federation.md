@@ -50,7 +50,7 @@ sequenceDiagram
 
 - **SSH is the authentication.** On every connect the laptop reads the host's own port, token, and CLI secret over SSH. It keeps them in memory and never writes them to disk.
 - **The host stays on loopback.** The laptop reaches it through an SSH local forward. No port is opened on the remote's network.
-- **Opportunistic, with an opt-out per remote.** Maestro probes every enabled SSH remote once at startup, with one SSH call, to see whether it runs a host. A remote with no host stays a plain SSH remote and is not shown as a peer. Maestro probes it again after the laptop wakes, when you edit your SSH remotes, after **Make Federated** or **Start Host**, and every 15 minutes. Turn **Federation** off on a remote and Maestro never probes it.
+- **Opportunistic, with an opt-out per remote.** Maestro probes every enabled SSH remote once at startup, with one SSH call, to see whether it runs a host. A remote with no host stays a plain SSH remote and is not shown as a peer. Maestro probes it again after the laptop wakes, when you edit your SSH remotes, after **Move to Host** sets up a host, or **Start Host**, and every 15 minutes. Turn **Federation** off on a remote and Maestro never probes it.
 - **One at a time.** Maestro connects to the remotes one after another, never at the same time, so a laptop with many remotes does not start an SSH storm.
 - **The host is the only record.** Mirrored agents live in memory only. They are never written to your local agent store, so a disconnect or a removed remote cannot damage local data.
 
