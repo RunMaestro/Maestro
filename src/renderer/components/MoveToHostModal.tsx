@@ -58,7 +58,7 @@ const SETUP_RETRY: Record<
 	'broken-cli': {
 		label: 'Reinstall maestro-cli',
 		options: { force: true },
-		hint: "Replaces Maestro's copy on the remote, whose launcher no longer runs.",
+		hint: "The maestro-cli on the remote no longer runs. Installs Maestro's own copy in ~/.maestro, which takes precedence; a copy Maestro did not install is left on disk.",
 	},
 	'foreign-cli': {
 		label: "Install Maestro's Own Copy",

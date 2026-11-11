@@ -19,7 +19,7 @@
  * shell an SSH agent already needs there), each on x64 or arm64.
  *
  * Safety:
- * - Nothing runs as root and nothing outside `~/.maestro` is written.
+ * - Nothing asks for sudo: it runs as the SSH user only, and nothing outside `~/.maestro` is written.
  * - A `maestro-cli` already on the remote's PATH that Maestro did not install (Maestro.app, the
  *   server bundle) is left alone unless the caller forces it.
  * - The new install is staged beside the old one and swapped in only once it loads SQLite and
@@ -285,13 +285,14 @@ export function buildRemoteInstallScript(options: RemoteInstallScriptOptions = {
 		'[ -n "$ver" ] || fail cli-broken',
 		// The launcher is written BEFORE anything is swapped, beside the live one, so a failed write
 		// can never leave a truncated launcher in front of a deleted install. It finds Node when it
-		// runs, not only where it was at install time: Maestro's own copy, then the install-time
-		// Node, then whatever `node` is on PATH, so a Node a version manager later removes does not
-		// strand the install.
+		// runs: the install-time Node first (the ABI better-sqlite3 was built for), then Maestro's
+		// own copy, then whatever `node` is on PATH, so a Node a version manager later removes does
+		// not strand the install. A fallback with another ABI still runs the CLI, and the SQLite
+		// error it hits names the fix: install again.
 		'mkdir -p "$bin" || fail launcher',
 		'cat > "$bin/maestro-cli.new" <<MAESTRO_LAUNCHER || fail launcher',
 		'#!/bin/sh',
-		'for n in "\\$HOME/.maestro/node/bin/node" "\\$HOME/.maestro/node/node.exe" "$node"; do',
+		'for n in "$node" "\\$HOME/.maestro/node/bin/node" "\\$HOME/.maestro/node/node.exe"; do',
 		'  [ -x "\\$n" ] && exec "\\$n" "$cli/maestro-cli.js" "\\$@"',
 		'done',
 		'n=\\$(command -v node) && exec "\\$n" "$cli/maestro-cli.js" "\\$@"',

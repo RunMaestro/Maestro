@@ -219,6 +219,8 @@ describe('buildRemoteInstallScript', () => {
 		);
 		// Escaped so they expand when the launcher runs, not at install time.
 		expect(launcher).toContain('"\\$HOME/.maestro/node/bin/node"');
+		// The install-time Node, which better-sqlite3 was built for, is tried first.
+		expect(launcher).toMatch(/for n in "\$node" "\\\$HOME/);
 		expect(launcher).toContain('n=\\$(command -v node)');
 		expect(launcher).toContain('"\\$@"');
 		expect(script).toContain('npm_config_cache="$root/npm-cache"');
