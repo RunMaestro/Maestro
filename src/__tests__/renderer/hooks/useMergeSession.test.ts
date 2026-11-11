@@ -127,7 +127,7 @@ function createMockSession(
 
 describe('useMergeSession', () => {
 	it.each([false, true])(
-		'grooms for the destination provider (new agent: %s)',
+		'grooms on the source agent, whatever the target tab runs (new agent: %s)',
 		async (createNewSession) => {
 			const sourceSession = createMockSession('source', 'claude-code');
 			sourceSession.aiTabs[0].tabProvider = 'opencode';
@@ -144,7 +144,7 @@ describe('useMergeSession', () => {
 				});
 			});
 			expect(contextGroomer.contextGroomingService.groomContexts).toHaveBeenCalledWith(
-				expect.objectContaining({ targetAgent: createNewSession ? 'claude-code' : 'codex' }),
+				expect.objectContaining({ targetAgent: 'claude-code' }),
 				expect.any(Function)
 			);
 			if (createNewSession) {

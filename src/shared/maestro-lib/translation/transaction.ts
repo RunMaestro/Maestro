@@ -2,7 +2,6 @@ import { assertTranslationTarget } from './resource-projections';
 import { translationKnowledgePrompt, resourceBindingHash } from './resources';
 import type { TranslationFs } from './fs-port';
 import { localTranslationFs } from './local-fs';
-import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createKeyedWriteQueue } from '../../keyedWriteQueue';
 import { canonicalJson } from '../../canonicalJson';
@@ -528,8 +527,8 @@ async function removeStagedGrokSessionDirectory(
 		journal.plan.destination.nativeSessionRoot ?? journal.plan.destination.accountRoot,
 		nativeFs
 	);
-	if (nativeFs !== localTranslationFs) return;
-	await fs.rmdir(directory).catch((error) => {
+	if (!nativeFs.rmdir) return;
+	await nativeFs.rmdir(directory).catch((error) => {
 		const code = (error as NodeJS.ErrnoException).code;
 		if (code !== 'ENOENT' && code !== 'ENOTEMPTY' && code !== 'EEXIST') throw error;
 	});

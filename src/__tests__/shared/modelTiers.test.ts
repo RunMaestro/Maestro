@@ -681,7 +681,7 @@ describe('Grok cheap turns require advertised wire-value evidence', () => {
 				).toEqual({ model: 'another-grok-model', effort });
 			}
 			expect(resolveEffortLevel('grok', 'medium', menu)).toBe('medium');
-			expect(cheapTurnSettings('codex', menu)).toEqual({ model: undefined, effort: 'low' });
+			expect(cheapTurnSettings('codex', menu)).toEqual({ model: 'gpt-6-luna', effort: 'low' });
 		});
 	});
 });
@@ -689,12 +689,15 @@ describe('Grok cheap turns require advertised wire-value evidence', () => {
 describe('optional effort menus leave ordinary cheap turns unchanged', () => {
 	it.each([
 		{ provider: 'claude-code', model: 'haiku', effort: 'low' },
-		{ provider: 'codex', model: undefined, effort: 'low' },
+		// acappella's built-in Codex tier table names the cheap model; a resumed
+		// Codex thread keeps its own model.
+		{ provider: 'codex', model: 'gpt-6-luna', effort: 'low', resumeModel: 'configured-model' },
 		{ provider: 'factory-droid', model: 'claude-haiku-4-5-20251001', effort: 'low' },
 		{ provider: 'opencode', model: undefined, effort: undefined },
 	] as const)(
 		'preserves $provider defaults with unrelated menus',
-		({ provider, model, effort }) => {
+		({ provider, model, effort, ...row }) => {
+			const resumeModel = 'resumeModel' in row ? row.resumeModel : undefined;
 			for (const menu of [[], ['none', 'minimal', 'max']]) {
 				expect(cheapTurnSettings(provider, menu)).toEqual({ model, effort });
 				expect(
@@ -704,7 +707,7 @@ describe('optional effort menus leave ordinary cheap turns unchanged', () => {
 						menu
 					)
 				).toEqual({
-					model: model ?? 'configured-model',
+					model: resumeModel ?? model ?? 'configured-model',
 					effort: effort ?? 'configured-effort',
 				});
 			}

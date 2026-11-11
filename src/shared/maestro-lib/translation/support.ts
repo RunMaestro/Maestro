@@ -9,8 +9,8 @@ import type {
 export const TRANSLATION_PROVIDER_VERSIONS = {
 	'claude-code': { minVersion: '2.1.296', testedVersions: ['2.1.296', '2.1.302'] },
 	codex: { minVersion: '0.162.1', testedVersions: ['0.162.1', '0.163.0'] },
-	/** Schema pinned at public source 2bdd1d6. */
-	grok: { minVersion: '1.0.70', testedVersions: ['1.0.70'] },
+	/** Schema pinned at public source 2bdd1d6: an unqualified version has no mapping. */
+	grok: { minVersion: '1.0.70', testedVersions: ['1.0.70'], exactVersionsOnly: true },
 } as const satisfies Record<string, TranslationVersionSupport>;
 
 /** Share strict schema compatibility and test coverage rules across every entry point. */
@@ -19,6 +19,17 @@ export function translationVersionLimitation(
 	version: string,
 	support: TranslationVersionSupport
 ): TranslationLimitation | undefined {
+	// A pinned provider's rule holds on every check, including a direction's own range.
+	const exactOnly =
+		support.exactVersionsOnly ||
+		(TRANSLATION_PROVIDER_VERSIONS as Record<string, TranslationVersionSupport>)[provider]
+			?.exactVersionsOnly === true;
+	if (exactOnly && !support.testedVersions.includes(version))
+		return {
+			code: 'unknown-version',
+			severity: 'block',
+			message: `${provider} ${version || 'unknown'} has no declared schema mapping; only ${support.testedVersions.join(', ')} ${support.testedVersions.length === 1 ? 'is' : 'are'} qualified.`,
+		};
 	if (!semver.valid(version) || !semver.gte(version, support.minVersion))
 		return {
 			code: 'unknown-version',

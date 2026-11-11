@@ -423,7 +423,8 @@ describe('spawnGroupChatAgent', () => {
 			expect(mockApplyRunOn).toHaveBeenCalledWith({
 				agentId: 'agent-7',
 				toolType: 'claude-code',
-				agent,
+				// The spawn snapshots the agent config before any await.
+				agent: expect.objectContaining(agent),
 				args: ['--print', '--model', 'opus'],
 				customEnvVars: { FOO: '1' },
 				remote: null,

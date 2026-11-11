@@ -767,13 +767,24 @@ describe('useAgentExitListener', () => {
 		expect(model).toBe('run-opus');
 	});
 
-	it('ignores a turn model stamped under a provider the agent has since left', async () => {
-		const model = await synopsisModelFor({
+	// Settings are codified at send: a turn stamped under another provider than
+	// the agent's default ran there, so the synopsis resumes that provider's
+	// session with the model it was codified with. Provider and model travel
+	// together, so a model is never sent to a provider it does not belong to.
+	it('resumes a turn stamped under another provider on that provider and its model', async () => {
+		const { deps, spawn } = setupSynopsisRun({
 			sessionCustomModel: 'gpt-6.1-sol',
 			turnProvider: 'claude-code',
 			turnModel: 'opus',
 		});
-		expect(model).toBe('gpt-6.1-sol');
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 0);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+		expect(spawn).toHaveBeenCalledTimes(1);
+		expect(spawn.mock.calls[0]).toContain('claude-code');
+		expect(spawn.mock.calls[0][5].customModel).toBe('opus');
 	});
 
 	// Agent Resilience: the exiting turn failed and a resend is counting down.

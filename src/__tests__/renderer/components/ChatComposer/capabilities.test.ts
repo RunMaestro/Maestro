@@ -90,7 +90,7 @@ describe('deriveAiComposerCapabilities', () => {
 		});
 	});
 
-	it('offers nothing in terminal mode', () => {
+	it('offers only the Enter toggle in terminal mode', () => {
 		expect(deriveAiComposerCapabilities(input({ inputMode: 'terminal' }))).toEqual({
 			imageAttach: false,
 			upload: false,
@@ -99,7 +99,7 @@ describe('deriveAiComposerCapabilities', () => {
 			permission: false,
 			thinking: false,
 			modelEffort: false,
-			enterToSendToggle: false,
+			enterToSendToggle: true,
 		});
 	});
 

@@ -487,7 +487,12 @@ describe('prepareMaestroSystemPrompt', () => {
 			});
 
 			it('is never given to an SSH remote agent, and main is not asked', async () => {
-				for (const ssh of [{ sessionSshRemoteConfig: { enabled: true } }, { sshRemoteId: 'r1' }]) {
+				// The configuration decides an SSH launch; an observed sshRemoteId alone may be
+				// left over from an earlier connection (see the isSsh comment in spawnHelpers).
+				for (const ssh of [
+					{ sessionSshRemoteConfig: { enabled: true } },
+					{ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' }, sshRemoteId: 'r1' },
+				]) {
 					const result = await prepareMaestroSystemPrompt({ session: { ...baseSession, ...ssh } });
 					expect(result).toBe('BASE');
 				}

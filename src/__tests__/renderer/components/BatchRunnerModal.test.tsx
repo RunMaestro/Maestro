@@ -3453,22 +3453,26 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
-				expect(models).toHaveBeenLastCalledWith(
+				// A Grok draft asks with its discovery context; any other provider with
+				// acappella's (provider, forceRefresh, sshRemoteId) form.
+				expect(models.mock.lastCall).toEqual(
 					toolType === 'grok'
-						? {
-								providerId: 'grok',
-								context: {
-									kind: 'draft',
-									cwd: child.cwd,
-									customPath: child.customPath,
-									customEnvVars: child.customEnvVars,
-									model: 'child-model',
-									effort: 'high',
-									sshRemoteId: child.sshRemoteId,
-									sessionSshRemoteConfig: child.sessionSshRemoteConfig,
+						? [
+								{
+									providerId: 'grok',
+									context: {
+										kind: 'draft',
+										cwd: child.cwd,
+										customPath: child.customPath,
+										customEnvVars: child.customEnvVars,
+										model: 'child-model',
+										effort: 'high',
+										sshRemoteId: child.sshRemoteId,
+										sessionSshRemoteConfig: child.sessionSshRemoteConfig,
+									},
 								},
-							}
-						: 'codex'
+							]
+						: ['codex', false, undefined]
 				);
 				await act(async () => {
 					resolveParent({ status: 'discovered', options: ['parent-only'] });
@@ -3786,8 +3790,9 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
 				expect(models).toHaveBeenCalled();
-				expect(models).toHaveBeenCalledWith(provider);
-				for (const args of models.mock.calls) expect(args).toEqual([provider]);
+				// acappella's discovery call: (provider, forceRefresh, sshRemoteId).
+				expect(models).toHaveBeenCalledWith(provider, false, undefined);
+				for (const args of models.mock.calls) expect(args).toEqual([provider, false, undefined]);
 				expect(efforts).toHaveBeenCalledWith(provider, 'effort');
 				expect(efforts).toHaveBeenCalledWith(provider, 'reasoningEffort');
 				for (const args of efforts.mock.calls) {

@@ -127,7 +127,9 @@ describe('CreatePRModal', () => {
 			WORKTREE,
 			'main',
 			'Polish the tab strip',
-			'Tightens spacing.\n\n- Align the close button\n- Fix the active ring'
+			'Tightens spacing.\n\n- Align the close button\n- Fix the active ring',
+			undefined,
+			undefined
 		);
 	});
 

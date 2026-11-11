@@ -225,7 +225,8 @@ describe('settings agent Grok', () => {
 			'process.exit(1)'
 		);
 		expect(writeAgentConfigValue).not.toHaveBeenCalled();
-		expect(JSON.parse(String(errorSpy.mock.calls[0][0])).error).toContain(
+		// failCommand writes a --json failure to stdout.
+		expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0])).error).toContain(
 			`update-agent ${grokAgent.id}`
 		);
 	});

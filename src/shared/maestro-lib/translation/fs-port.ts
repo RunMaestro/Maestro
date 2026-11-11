@@ -7,6 +7,8 @@ export interface TranslationFsStat {
 	mode: number;
 	isDirectory(): boolean;
 	isSymbolicLink(): boolean;
+	/** A regular file. Optional: a transport that cannot tell reports directory and link only. */
+	isFile?(): boolean;
 }
 
 export interface TranslationFsWriteOptions {
@@ -23,7 +25,10 @@ export interface TranslationFs {
 	stat(file: string): Promise<TranslationFsStat>;
 	lstat(file: string): Promise<TranslationFsStat>;
 	realpath(file: string): Promise<string>;
-	mkdir(directory: string, options: { recursive: true; mode?: number }): Promise<void>;
+	/** `recursive: false` creates exactly one directory and fails with EEXIST if it exists. */
+	mkdir(directory: string, options: { recursive: boolean; mode?: number }): Promise<void>;
+	/** Remove one empty directory. Optional: a transport without it leaves the directory. */
+	rmdir?(directory: string): Promise<void>;
 	/**
 	 * EEXIST never changes the target or calls onCreated. Notify only after exclusive ownership
 	 * is proved; local writes journal it before writing bytes. Failures may leave partial files.

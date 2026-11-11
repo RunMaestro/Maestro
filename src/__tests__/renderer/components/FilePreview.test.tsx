@@ -410,27 +410,29 @@ describe('FilePreview', () => {
 			expect(screen.queryByTestId('external-link-icon')).not.toBeInTheDocument();
 		});
 
-		it('hides the header Open in Default App button in the web-desktop build', () => {
+		it('offers the header Open in Default App as a download in the web-desktop build', () => {
 			// openPath hands the file to the HOST OS opener, which is not the browser
-			// user's device, so the affordance must be gone in web-desktop.
+			// user's device, so in web-desktop the same control downloads the file to
+			// this device instead (services/hostShell.ts) and never asks the host.
 			vi.mocked(isWebDesktop).mockReturnValue(true);
 			render(<FilePreview {...defaultProps} />);
 
-			expect(screen.queryByTestId('external-link-icon')).not.toBeInTheDocument();
+			const button = screen.getByTestId('external-link-icon').closest('button')!;
+			fireEvent.click(button);
+			expect(window.maestro?.shell?.openPath).not.toHaveBeenCalled();
 		});
 
-		it('disables the binary-file Open in Default App button in the web-desktop build', () => {
+		it('turns the binary-file Open in Default App button into a download in the web-desktop build', () => {
 			vi.mocked(isWebDesktop).mockReturnValue(true);
 			render(
 				<FilePreview
 					{...defaultProps}
-					file={{ name: 'lib.dll', content: 'MZ binary', path: '/test/lib.dll' }}
+					file={{ name: 'lib.dll', content: 'MZ binary', path: '/test/lib.dll' }}
 				/>
 			);
 
-			const button = screen.getByRole('button', { name: 'Open in Default App' });
-			expect(button).toBeDisabled();
-			expect(button).toHaveAttribute('title', 'Available in the desktop app');
+			const button = screen.getByRole('button', { name: 'Download to This Client' });
+			expect(button).toBeEnabled();
 			fireEvent.click(button);
 			expect(window.maestro?.shell?.openPath).not.toHaveBeenCalled();
 		});

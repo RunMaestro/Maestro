@@ -1025,6 +1025,8 @@ describe('Grok native extraction', () => {
 				result('orphan'),
 				{ type: 'assistant', content: '', tool_calls: [{ id: 'nameless', arguments: '{}' }] },
 				result('nameless'),
+				// Later conversation: the dangling call is pending mid-history, not a stopped tail.
+				{ type: 'assistant', content: 'later reply' },
 			])
 		);
 		expect(blocking(broken)).toEqual(

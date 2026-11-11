@@ -69,7 +69,7 @@ export function createSshTranslationFs(
 		lstat,
 		realpath,
 		mkdir: async (directory, options) => {
-			unwrap(await mkdirRemote(directory, remote, true, deps, options));
+			unwrap(await mkdirRemote(directory, remote, options.recursive, deps, options));
 		},
 		createExclusive: async (file, bytes, options) => {
 			unwrap(

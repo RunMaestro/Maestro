@@ -247,8 +247,8 @@ describe('AgentSessionsBrowser', () => {
 			undefined,
 			false,
 			expect.any(Object),
-			undefined,
-			{ provider: 'claude-code', targetSessionId: 'session-1' }
+			'/path/to/project',
+			expect.objectContaining({ provider: 'claude-code', targetSessionId: 'session-1' })
 		);
 	});
 
@@ -3559,7 +3559,8 @@ describe('AgentSessionsBrowser', () => {
 					false,
 					expect.any(Object),
 					'/remote/project',
-					{ targetSessionId: owner.id, nativeSessionBinding: binding }
+					// The explicit native owner rides along with rc's verified binding.
+					{ targetSessionId: owner.id, nativeSessionBinding: binding, provider: binding.provider }
 				);
 				const forwarded = onResumeSession.mock.calls[0][6].nativeSessionBinding;
 				expect(forwarded).not.toBe(binding);
@@ -3809,9 +3810,13 @@ describe('AgentSessionsBrowser', () => {
 						row.sessionId,
 						'Retained native name'
 					);
-					expect(props.onUpdateTab).toHaveBeenCalledWith(row.sessionId, {
-						name: 'Retained native name',
-					});
+					// The rename names the provider and agent whose tab holds the session.
+					expect(props.onUpdateTab).toHaveBeenCalledWith(
+						row.sessionId,
+						{ name: 'Retained native name' },
+						'codex',
+						renameOwner.id
+					);
 				}
 				expect(screen.getByText(expectedName)).toBeInTheDocument();
 				expect(screen.getByTestId('icon-loader')).toBeInTheDocument();
@@ -3838,7 +3843,11 @@ describe('AgentSessionsBrowser', () => {
 					false,
 					expect.any(Object),
 					'/remote/project',
-					{ targetSessionId: renameOwner.id, nativeSessionBinding: renameBinding },
+					{
+						targetSessionId: renameOwner.id,
+						nativeSessionBinding: renameBinding,
+						provider: renameBinding.provider,
+					},
 				]);
 				expect(props.onClose).not.toHaveBeenCalled();
 				await act(async () => {
@@ -3957,6 +3966,7 @@ describe('AgentSessionsBrowser', () => {
 						expect(onResumeSession.mock.calls[0][6]).toEqual({
 							targetSessionId: owner.id,
 							nativeSessionBinding: nextBinding,
+							provider: nextBinding.provider,
 						});
 					} else {
 						expect(

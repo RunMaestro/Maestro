@@ -48,7 +48,8 @@ const TERMINAL_CAPABILITIES: ComposerCapabilities = {
 	permission: false,
 	thinking: false,
 	modelEffort: false,
-	enterToSendToggle: false,
+	// Terminal mode draws no pills, so its row keeps the Enter toggle.
+	enterToSendToggle: true,
 };
 
 vi.mock('../../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({

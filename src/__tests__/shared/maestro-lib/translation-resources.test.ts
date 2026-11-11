@@ -492,7 +492,13 @@ describe('Grok project resource translation', () => {
 					'selected-user'
 				),
 			];
-			const { projections, limitations } = await planResourceProjections(resources, destination);
+			// Projection into the repository is opt-in.
+			const { projections, limitations } = await planResourceProjections(
+				resources,
+				destination,
+				undefined,
+				true
+			);
 			expect(
 				projections.map((p) => path.relative(projectRoot, p.path).replace(/\\/g, '/')).sort()
 			).toEqual(['.agents/skills/lint/SKILL.md', '.agents/skills/lint/run.sh', 'CLAUDE.md']);
@@ -516,7 +522,9 @@ describe('Grok project resource translation', () => {
 			const outside = path.join(root, 'outside');
 			await fs.mkdir(outside);
 			await fs.symlink(outside, path.join(projectRoot, '.agents'), 'dir');
-			await expect(planResourceProjections(resources, destination)).rejects.toThrow('symlink');
+			await expect(
+				planResourceProjections(resources, destination, undefined, true)
+			).rejects.toThrow('symlink');
 			expect(await fs.readdir(outside)).toEqual([]);
 		} finally {
 			await fs.rm(root, { recursive: true, force: true });

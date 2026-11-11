@@ -181,7 +181,9 @@ describe('group-chat commands', () => {
 			).rejects.toThrow('process.exit');
 
 			expect(errorSpy).toHaveBeenCalledWith(
-				'Error: Invalid moderator agent ID: grok. Agent does not support group chat moderation.'
+				formatError(
+					'Invalid moderator agent ID: grok. Agent does not support group chat moderation.'
+				)
 			);
 			expect(exitSpy).toHaveBeenCalledWith(1);
 			// The chat is created and its agents spawned only through the bridge.
@@ -583,7 +585,7 @@ describe('group-chat commands', () => {
 			const { sent } = mockBridge({});
 
 			await expect(groupChatAdd('Release', 'missing', {})).rejects.toThrow('process.exit');
-			expect(errorSpy).toHaveBeenCalledWith('Error: Agent not found: missing');
+			expect(errorSpy).toHaveBeenCalledWith(formatError('Agent not found: missing'));
 			expect(sent).toEqual([]);
 		});
 	});

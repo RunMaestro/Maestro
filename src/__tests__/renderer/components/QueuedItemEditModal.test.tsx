@@ -445,9 +445,12 @@ describe('QueuedItemEditModal model + effort override', () => {
 					'reasoningEffort'
 				);
 				fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-				expect(onSave).toHaveBeenCalledWith(
-					expect.objectContaining({ turnSettings: { model, effort } })
-				);
+				expect(onSave).toHaveBeenCalledTimes(1);
+				// The capture also stamps the provider, routing and Run on, so compare
+				// only the model and effort the discovery was asked about.
+				const saved = onSave.mock.calls[0][0];
+				expect(saved.turnSettings?.model).toBe(model);
+				expect(saved.turnSettings?.effort).toBe(effort);
 			}
 		);
 

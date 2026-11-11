@@ -312,7 +312,14 @@ describe('routeQuickChatMessage', () => {
 			{ toolType: 'grok' }
 		);
 		const target = await routeQuickChatMessage(session, 'home office deduction', noChat);
-		expect(target).toEqual({ kind: 'closed', agentSessionId: 's-tax', name: null, ...scope });
+		// The closed conversation also names its native owner (the Grok agent here).
+		expect(target).toEqual({
+			kind: 'closed',
+			agentSessionId: 's-tax',
+			name: null,
+			provider: 'grok',
+			...scope,
+		});
 		if (target.kind === 'closed' && target.nativeSessionBinding) {
 			expect(target.nativeSessionBinding).not.toBe(scope.nativeSessionBinding);
 		}

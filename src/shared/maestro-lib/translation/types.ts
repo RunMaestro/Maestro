@@ -164,6 +164,11 @@ export interface TranslationVersionSupport {
 	minVersion: string;
 	/** Schema versions exercised by synthetic cases, not native resume certification. */
 	testedVersions: readonly string[];
+	/**
+	 * Only the tested versions have a schema mapping: any other version blocks instead of
+	 * warning as untested. For a provider whose native schema is pinned, not versioned.
+	 */
+	exactVersionsOnly?: boolean;
 }
 
 export interface TranslationDirection {

@@ -106,7 +106,8 @@ describe('useAgentSessionManagement', () => {
 				activeTabId: tab.id,
 			});
 			seedActiveSession(session);
-			const setSessions = vi.fn();
+			// The resume confirms its commit landed in the store, so the updater must apply.
+			const setSessions = vi.fn((updater) => useSessionStore.getState().setSessions(updater));
 			const { result } = renderHook(() =>
 				useAgentSessionManagement({
 					setSessions,

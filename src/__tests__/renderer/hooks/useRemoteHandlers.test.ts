@@ -2866,7 +2866,8 @@ describe('useRemoteHandlers', () => {
 						tabId: 'target',
 						tabName: 'Target',
 						readOnlyMode: true,
-						turnSettings: { model: 'grok-4.5', effort: 'high' },
+						// The queued item codifies the whole turn; the tab's model and effort lead it.
+						turnSettings: expect.objectContaining({ model: 'grok-4.5', effort: 'high' }),
 						commandScope: { provider: 'grok' },
 					}),
 				]);

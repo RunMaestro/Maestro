@@ -448,15 +448,12 @@ export function useMergeSession(activeTabId?: string): UseMergeSessionResult {
 					},
 				});
 
-				// The provider the context is going to runs the turn, on that
-				// agent's account, binary and host: the source agent for a new
-				// merged agent, else the target tab's own provider (its projection
-				// of the target agent). A merge into an existing tab grooms the
-				// source alone: the target already holds its own history, and
-				// grooming it too would paste it back (duplicate context).
-				const groomingAgent = options.createNewSession
-					? sourceSession
-					: projectTabProvider(targetSession, targetTab).agent;
+				// The source agent runs the grooming turn, on its own account, binary
+				// and host: the content being groomed is the source's, and the target
+				// account or host never sees the raw source. A merge into an existing
+				// tab grooms the source alone: the target already holds its own
+				// history, and grooming it too would paste it back (duplicate context).
+				const groomingAgent = sourceSession;
 				const groomingRequest: MergeRequest = {
 					sources: options.createNewSession ? [sourceContext, targetContext] : [sourceContext],
 					targetAgent: groomingAgent.toolType,

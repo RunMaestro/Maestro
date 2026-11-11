@@ -929,10 +929,18 @@ describe('live tab state and the host queue', () => {
 			sessions: Array<Record<string, unknown>>;
 		};
 		expect(reply.sessions[0]).toMatchObject({ id: 'a1', state: 'busy' });
+		// Each tab also carries its provider projection (provider, model, Run on).
 		expect(reply.sessions[0].aiTabs).toEqual([
-			{ id: 't1', agentSessionId: null, name: null, state: 'busy', thinkingStartTime: 500 },
-			{ id: 't2', agentSessionId: null, name: null, state: 'idle' },
+			expect.objectContaining({
+				id: 't1',
+				agentSessionId: null,
+				name: null,
+				state: 'busy',
+				thinkingStartTime: 500,
+			}),
+			expect.objectContaining({ id: 't2', agentSessionId: null, name: null, state: 'idle' }),
 		]);
+		expect((reply.sessions[0].aiTabs as unknown[])[1]).not.toHaveProperty('thinkingStartTime');
 	});
 
 	it('holds and releases a waiting message with set_queue_item_paused', async () => {

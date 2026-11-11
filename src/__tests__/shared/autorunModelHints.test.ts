@@ -1001,7 +1001,8 @@ describe('Grok hints with selected-model effort evidence', () => {
 
 	it.each([
 		{ provider: 'claude-code' as const, model: 'opus', effort: 'max', count: 1 },
-		{ provider: 'codex' as const, model: 'chosen-model', effort: 'xhigh', count: 1 },
+		// acappella's built-in Codex tier table resolves `high` to its own model.
+		{ provider: 'codex' as const, model: 'gpt-6-astra', effort: 'xhigh', count: 1 },
 		{ provider: 'opencode' as const, model: 'chosen-model', effort: 'high', count: 2 },
 	])(
 		'leaves $provider dispatch and inspection unchanged when supplied a Grok menu',

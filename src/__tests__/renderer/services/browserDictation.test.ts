@@ -15,7 +15,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { decodeWavPcm16 } from '../../../shared/audio/pcm';
+import { decodeWavPcm16, float32ToInt16, int16ToFloat32 } from '../../../shared/audio/pcm';
 import type { AudioHostStatus } from '../../../shared/acappella/audio-host';
 import {
 	browserDictationBlocker,
@@ -147,7 +147,11 @@ describe('createBrowserDictation', () => {
 			Uint8Array.from(atob(request.audio.split(',')[1]), (c) => c.charCodeAt(0))
 		);
 		expect(wav.sampleRate).toBe(16000);
-		expect(Array.from(wav.pcm)).toEqual([0, 16384, -16384]);
+		// The clip is kept as float samples, so the WAV carries the int16 to float
+		// to int16 round trip, which moves -16384 by its half LSB.
+		expect(Array.from(wav.pcm)).toEqual(
+			Array.from(float32ToInt16(int16ToFloat32(Int16Array.from([0, 16384, -16384]))))
+		);
 	});
 
 	it('answers an empty clip itself, without a trip to the host', async () => {

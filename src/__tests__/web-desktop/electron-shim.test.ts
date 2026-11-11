@@ -946,6 +946,9 @@ describe('links from the browser', () => {
 		const open = vi.spyOn(window, 'open').mockReturnValue(null);
 		const socket = InertWebSocket.instances.at(-1)!;
 		const before = socket.sent.length;
+		// An earlier test's lost submission leaves its notice up; only a notice this
+		// link raises counts here.
+		document.getElementById('maestro-submission-notice')?.remove();
 		try {
 			await ipcRenderer.invoke('shell:openExternal', 'mailto:someone@example.com');
 			expect(open).toHaveBeenCalledWith(

@@ -649,6 +649,9 @@ describe('useSessionCrud', () => {
 		});
 
 		describe('Grok creation consumer', () => {
+			// permissionMode is the last (28th) positional argument, after the
+			// gateway, Run on, peer grants, group seed and harness control mode.
+			const PERMISSION_MODE_ARG = 27;
 			beforeEach(() => {
 				resetStores(useSessionStore, useSettingsStore, useUIStore);
 				vi.useFakeTimers();
@@ -901,7 +904,7 @@ describe('useSessionCrud', () => {
 						source.sessionSshRemoteConfig,
 						source.customEffort,
 					];
-					args[23] = resolveTabPermissionMode(source.aiTabs[0]);
+					args[PERMISSION_MODE_ARG] = resolveTabPermissionMode(source.aiTabs[0]);
 					await act(async () => {
 						await result.current.createNewSession(...args);
 						vi.runAllTimers();
@@ -987,7 +990,7 @@ describe('useSessionCrud', () => {
 						source.cwd,
 						'Refused copy',
 					];
-					args[23] = resolveTabPermissionMode(source.aiTabs[0]);
+					args[PERMISSION_MODE_ARG] = resolveTabPermissionMode(source.aiTabs[0]);
 					await act(async () => {
 						await result.current.createNewSession(...args);
 						vi.runAllTimers();
@@ -1025,7 +1028,7 @@ describe('useSessionCrud', () => {
 					'/test/project',
 					'Standard Grok',
 				];
-				args[23] = 'standard';
+				args[PERMISSION_MODE_ARG] = 'standard';
 				await act(async () => {
 					await result.current.createNewSession(...args);
 					vi.runAllTimers();
@@ -1050,7 +1053,7 @@ describe('useSessionCrud', () => {
 					'/test/project',
 					'Standard Claude',
 				];
-				args[23] = 'standard';
+				args[PERMISSION_MODE_ARG] = 'standard';
 				await act(async () => {
 					await result.current.createNewSession(...args);
 					vi.runAllTimers();

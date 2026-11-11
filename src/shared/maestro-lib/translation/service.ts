@@ -283,7 +283,7 @@ export class NativeTranslationService {
 			// through the local filesystem, so a remote Grok source has no reader here.
 			if (this.nativeFs !== localTranslationFs)
 				throw new Error('Grok translation is not available for SSH agents yet');
-			const snapshot = await readGrokSessionSnapshot(identity, sessionId);
+			const snapshot = await readGrokSessionSnapshot(identity, sessionId, this.nativeFs);
 			const bundle = adapter.extract(identity, tabId, sessionId, snapshot.bytes);
 			bundle.artifacts[0].sourcePath = snapshot.transcriptPath;
 			return bundle;

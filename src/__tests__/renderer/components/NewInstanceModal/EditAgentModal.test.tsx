@@ -1194,6 +1194,8 @@ describe('EditAgentModal', () => {
 				render(modal(session));
 				await act(async () => {});
 				await act(() => vi.advanceTimersByTimeAsync(300));
+				// Model and effort live on the Provider tab.
+				openTab('Provider');
 				const request = {
 					providerId: 'grok',
 					context: expect.objectContaining({
@@ -1279,6 +1281,8 @@ describe('EditAgentModal', () => {
 				const view = render(modal(first));
 				await act(async () => {});
 				await act(() => vi.advanceTimersByTimeAsync(300));
+				// Model and effort live on the Provider tab.
+				openTab('Provider');
 				fireEvent.click(screen.getByTitle('Refresh available models'));
 				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(
 					expect.objectContaining({ forceRefresh: true })
@@ -1362,6 +1366,8 @@ describe('EditAgentModal', () => {
 			});
 			await act(() => vi.advanceTimersByTimeAsync(300));
 			expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(calls);
+			// Model and effort live on the Provider tab.
+			openTab('Provider');
 			expect(screen.getByDisplayValue('reopened-model')).toBeInTheDocument();
 			expect(screen.getByDisplayValue('reopened-effort')).toBeInTheDocument();
 			expect(screen.queryByDisplayValue('closed-model')).not.toBeInTheDocument();
@@ -1418,6 +1424,8 @@ describe('EditAgentModal', () => {
 				const view = render(modal(session));
 				await act(async () => {});
 				await act(() => vi.advanceTimersByTimeAsync(300));
+				// Model and effort live on the Provider tab.
+				openTab('Provider');
 				fireEvent.click(screen.getByTitle('Refresh available models'));
 				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(
 					expect.objectContaining({ forceRefresh: true })
@@ -1436,9 +1444,12 @@ describe('EditAgentModal', () => {
 					// Grok -> Claude Code is a declared (unverified) carry-over direction.
 					fireEvent.click(screen.getByRole('option', { name: 'Claude Code Carry Over' }));
 				} else {
+					// Execution location lives on the SSH tab.
+					openTab('SSH');
 					fireEvent.change(screen.getByDisplayValue('Local Execution'), {
 						target: { value: change === 'remote' ? 'new-host' : '' },
 					});
+					openTab('Provider');
 				}
 				await act(async () => {});
 				await act(() => vi.advanceTimersByTimeAsync(300));

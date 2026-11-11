@@ -23,7 +23,6 @@ vi.mock('../../../renderer/services/voiceListening', () => ({
 import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
-import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';

@@ -411,7 +411,10 @@ describe('useAgentSessionIdListener', () => {
 			});
 			expect(useSessionStore.getState().sessions[0]).toEqual({
 				...captured,
-				aiTabs: [{ ...captured.aiTabs[0], awaitingSessionId: false }],
+				// The turn's codified session id follows the observed one.
+				aiTabs: [
+					{ ...captured.aiTabs[0], awaitingSessionId: false, turnSessionId: 'native-observed' },
+				],
 			});
 			expect(window.maestro.agentSessions.registerSessionOrigin).not.toHaveBeenCalled();
 			expect(batched.updateContextUsage).not.toHaveBeenCalled();
@@ -457,6 +460,10 @@ describe('useAgentSessionIdListener', () => {
 					aiTabs: [
 						{
 							...captured.aiTabs[0],
+							// A parked slot that gains a conversation marks the tab for
+							// translation, and the turn's codified session id follows it.
+							pendingTranslation: 'grok',
+							turnSessionId: 'native-observed',
 							providerSessions: {
 								grok: {
 									agentSessionId: 'native-observed',
@@ -772,6 +779,8 @@ describe('useAgentSessionIdListener', () => {
 				...parked,
 				aiTabs: parked.aiTabs.map((tab, i) => ({
 					...tab,
+					pendingTranslation: 'grok',
+					turnSessionId: 'native-observed',
 					providerSessions: {
 						grok: {
 							...tab.providerSessions!.grok,

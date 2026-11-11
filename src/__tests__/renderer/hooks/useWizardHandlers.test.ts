@@ -442,12 +442,14 @@ describe('useWizardHandlers', () => {
 									next.cwd,
 									next.customPath,
 									undefined,
-									...(toolType === 'codex' ? [next.customEnvVars] : []),
+									// Discovery runs on the selected account for every provider.
+									next.customEnvVars,
 								],
 							];
 				expect(discover.mock.calls).toEqual(expectedCalls);
 				expect(vi.mocked(window.maestro.claude.getCommands).mock.calls).toEqual(
-					toolType === 'claude-code' ? [[next.projectRoot]] : []
+					// A local agent: no SSH remote id rides along.
+					toolType === 'claude-code' ? [[next.projectRoot, undefined]] : []
 				);
 				expect(useSessionStore.getState().sessions).toEqual([
 					session,
@@ -455,6 +457,8 @@ describe('useWizardHandlers', () => {
 						? next
 						: {
 								...next,
+								// The commands are stamped with the provider, account and host they came from.
+								agentCommandsScope: expect.any(String),
 								agentCommands: [
 									{
 										command: '/legacy-skill',

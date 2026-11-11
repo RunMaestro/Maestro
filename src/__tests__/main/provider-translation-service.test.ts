@@ -2628,12 +2628,10 @@ describe('provider translation Grok boundary', () => {
 			});
 			expect(report.success).toBe(false);
 			expect(report.error).toBe('Preflight changed. Review the new plan before apply.');
-			// The edited agent reads as Grok on its default account, not the selected one,
-			// so the fresh plan is the undeclared Grok to Grok move and reads no native records.
-			expect(report.plan?.status).toBe('blocked');
-			expect(report.plan?.limitations).toContainEqual(
-				expect.objectContaining({ code: 'unsupported-direction', severity: 'block' })
-			);
+			// The edited agent launches on Grok's provider account, the same account the
+			// destination resolves to, so the fresh plan moves nothing and reads no native
+			// records (acappella resolves a source account the way a launch does).
+			expect(report.plan?.status).toBe('noop');
 			expect(report.plan?.counts.records).toBe(0);
 			expect(applyTranslation).not.toHaveBeenCalled();
 			// The reviewed journal itself refuses to stage against the edited agent.

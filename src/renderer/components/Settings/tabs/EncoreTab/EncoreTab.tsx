@@ -1,8 +1,6 @@
 import type { ReactNode } from 'react';
 import type { EncoreFeatureFlags } from '../../../../types';
 import { ExtensionsView } from '../../Extensions/ExtensionsView';
-import { ACappellaSettingsBody } from '../../ACappella';
-import { useSettingsStore } from '../../../../stores/settingsStore';
 import { ENCORE_SECTIONS } from './sections';
 import type { EncoreTabProps } from './types';
 
@@ -21,11 +19,6 @@ export function EncoreTab({ theme, isOpen, tileRequest }: EncoreTabProps) {
 	for (const { flag, Component } of ENCORE_SECTIONS) {
 		settingsBodies[flag] = <Component theme={theme} isOpen={isOpen} />;
 	}
-	// Rendered whether or not the flag is on: the Models page's reclaim-disk
-	// offer exists precisely for the moment after A Cappella is switched off, so
-	// it is not an ENCORE_SECTIONS entry (those count only while their flag is on).
-	const aCappellaEnabled = useSettingsStore((s) => s.encoreFeatures.aCappella === true);
-	settingsBodies.aCappella = <ACappellaSettingsBody theme={theme} enabled={aCappellaEnabled} />;
 
 	return (
 		<div className="space-y-5">

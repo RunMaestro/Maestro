@@ -676,7 +676,11 @@ describe('useAgentSessionManagement - scoped Grok commit races', () => {
 			expect(deps.setActiveAgentSessionId).not.toHaveBeenCalled();
 			if (failure === 'subscriber navigates') {
 				expect(useSessionStore.getState().activeSessionId).toBe('other');
-				expect(useSessionStore.getState().sessions[0].aiTabs).toEqual([retained]);
+				// The committed focus stays (never rolled back): the one tab, pinned to
+				// the native owner the resume named.
+				expect(useSessionStore.getState().sessions[0].aiTabs).toEqual([
+					{ ...retained, tabProvider: 'grok' },
+				]);
 			} else expect(useSessionStore.getState().sessions[0]?.activeTabId).not.toBe('loaded');
 		} finally {
 			unsubscribe();

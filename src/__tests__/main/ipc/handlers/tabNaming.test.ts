@@ -2292,9 +2292,10 @@ describe('Tab Naming IPC Handlers', () => {
 				await vi.waitFor(() => {
 					expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
 				});
-				// The effort was the requested provider's ladder value, not a Grok hint.
+				// The cheap ladder is the utility provider's own: Grok has none, so no
+				// effort from the requested provider's ladder reaches it.
 				expect((applyAgentConfigOverrides as Mock).mock.calls[0][2]).toMatchObject({
-					sessionCustomEffort: 'low',
+					sessionCustomEffort: undefined,
 				});
 				const spawned = mockProcessManager.spawn.mock.calls[0][0] as ProcessConfig;
 				expect(spawned.toolType).toBe('grok');

@@ -2076,7 +2076,9 @@ describe('useTabHandlers', () => {
 				'/project',
 				'agent-1',
 				'log-1',
-				'test command'
+				'test command',
+				// A local agent: no SSH remote id rides along.
+				undefined
 			);
 		});
 

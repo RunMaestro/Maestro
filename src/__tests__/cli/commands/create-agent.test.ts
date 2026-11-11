@@ -978,6 +978,7 @@ describe('create-agent Grok', () => {
 			agentId: 'grok-agent-1',
 			name: 'Grok Worker',
 			type: 'grok',
+			seededFromGroup: null,
 			background: true,
 		});
 	});

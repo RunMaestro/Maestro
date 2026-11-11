@@ -2399,6 +2399,11 @@ describe('NewInstanceModal', () => {
 					fireEvent.change(input, { target: { value } });
 					fireEvent.blur(input);
 				}
+				// The model field lists Auto, so it is a filter box that commits a typed
+				// model on its delayed blur.
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(150);
+				});
 				fireEvent.click(screen.getByTitle('Remove variable'));
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(300);
@@ -2606,8 +2611,13 @@ describe('NewInstanceModal', () => {
 				screen.getByText(/Model discovery unavailable for this configuration/)
 			).toBeInTheDocument();
 			if (!remote) {
-				fireEvent.change(screen.getByDisplayValue('stored-model'), {
-					target: { value: 'manual-model' },
+				const modelInput = screen.getByDisplayValue('stored-model');
+				fireEvent.change(modelInput, { target: { value: 'manual-model' } });
+				// The model field lists Auto, so it is a filter box that commits a typed
+				// model on its delayed blur.
+				fireEvent.blur(modelInput);
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(150);
 				});
 				fireEvent.change(screen.getByDisplayValue('stored-effort'), {
 					target: { value: 'manual-effort' },

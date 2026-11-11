@@ -14,7 +14,8 @@
 	// main-process module which imports an untyped package needs them too.
 	"include": ["scripts/**/*.ts", "src/types/**/*.d.ts"],
 	// The Grok qualification harness came from rc, which never type-checked it.
-	// It reaches into renderer modules (no DOM lib here) and still targets the
-	// pre-acappella translation host API, so it is excluded until it is ported.
+	// It imports renderer modules (contextExtractor reaches the renderer stores,
+	// WizardContext.tsx, tokenCounter's import.meta), which this Node config
+	// cannot check without DOM, JSX and ESM settings. With those it is clean.
 	"exclude": ["node_modules", "dist", "release", "scripts/grok-qualification/**"]
 }

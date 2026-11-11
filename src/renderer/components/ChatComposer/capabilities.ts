@@ -78,7 +78,8 @@ export interface ComposerCapabilities {
 	modelEffort: boolean;
 	/**
 	 * The Enter-to-send toggle in the toolbar row. The AI composer leaves it to
-	 * Settings > General to keep its row short; a room keeps it inline.
+	 * Settings > General to keep its pill row short; its terminal mode, which
+	 * draws no pills, and a room keep it inline.
 	 */
 	enterToSendToggle: boolean;
 }
@@ -167,6 +168,6 @@ export function deriveAiComposerCapabilities(
 		permission: isAiMode && input.hasCapability('supportsReadOnlyMode'),
 		thinking: isAiMode && input.supportsThinking,
 		modelEffort: isAiMode,
-		enterToSendToggle: false,
+		enterToSendToggle: !isAiMode,
 	};
 }

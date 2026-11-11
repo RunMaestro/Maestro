@@ -25,6 +25,7 @@ export const localTranslationFs: TranslationFs = {
 	},
 	atomicWrite: (file, bytes, options) => atomicWriteFile(file, bytes, options),
 	unlink: (file) => fs.unlink(file),
+	rmdir: (directory) => fs.rmdir(directory),
 	symlink: (target, file) => fs.symlink(target, file),
 	readlink: (file) => fs.readlink(file),
 	exists: async (file) => {

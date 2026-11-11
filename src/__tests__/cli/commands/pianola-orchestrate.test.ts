@@ -1640,9 +1640,11 @@ describe('pianolaOrchestrate with Grok tasks', () => {
 		// Pianola task): no account, model, effort or remote is forced over what
 		// the Grok agent itself is configured with.
 		expect(runDispatch).toHaveBeenCalledTimes(1);
+		// The supervisor loop dispatches outside the per-message consult budget.
 		expect(runDispatch).toHaveBeenCalledWith('grok-agent-1', 'refactor the parser', {
 			newTab: true,
 			background: true,
+			skipConsultBudget: true,
 		});
 		expect(sentOfType('create_session')).toHaveLength(0);
 		// Upstream lists sessions only to find the bound agent's tab; the agent

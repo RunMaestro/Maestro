@@ -1340,6 +1340,10 @@ describe('Grok carry-over transactions (deterministic fixtures, not native quali
 		};
 		const committed = new Set<string>();
 		const host = {
+			knowledgeRoot: path.join(root, 'data', 'provider-knowledge'),
+			resolveProjectGit: vi.fn(
+				async (): Promise<{ root: string; commonDirectory: string } | undefined> => undefined
+			),
 			assertSourceUnchanged: vi.fn(async (_journal: TranslationJournal) => {}),
 			setMigration: vi.fn(async () => {}),
 			commit: vi.fn(async (journal: TranslationJournal) => {
@@ -1423,13 +1427,16 @@ describe('Grok carry-over transactions (deterministic fixtures, not native quali
 						.join('\n')
 				)
 			);
-		const journalFor = (
+		// A plan carries the agent's checkpoint as it read it, as a real preflight does: a
+		// commit refuses when the archive's checkpoint moved since.
+		const journalFor = async (
 			source: TranslationIdentity,
 			destination: TranslationIdentity,
 			conversations: PortableConversation[],
 			newRecords?: Record<string, number>
-		): TranslationJournal => ({
+		): Promise<TranslationJournal> => ({
 			schemaVersion: 1,
+			checkpoint: structuredClone(await archive.checkpoint('agent')),
 			plan: planTranslation({
 				agentId: 'agent',
 				source,
@@ -1485,7 +1492,7 @@ describe('Grok carry-over transactions (deterministic fixtures, not native quali
 		const w = await grokWorld();
 		try {
 			const destination = w.grok('grok-b');
-			const journal = w.journalFor(w.claude, destination, w.twoTabs());
+			const journal = await w.journalFor(w.claude, destination, w.twoTabs());
 			expect(journal.plan.status).toBe('ready');
 			expect(journal.plan.verification).toBe('unverified');
 			const result = await applyTranslation(w.archive, w.registry, journal, w.host, true);
@@ -1522,7 +1529,9 @@ describe('Grok carry-over transactions (deterministic fixtures, not native quali
 		const w = await grokWorld();
 		try {
 			const destination = w.grok('grok-b');
-			const journal = w.journalFor(w.claude, destination, [w.claudeConversation('one', 'ALPHA')]);
+			const journal = await w.journalFor(w.claude, destination, [
+				w.claudeConversation('one', 'ALPHA'),
+			]);
 			w.host.commit.mockRejectedValueOnce(new Error('store unavailable'));
 			const failed = await applyTranslation(w.archive, w.registry, journal, w.host, true);
 			expect(failed.state).toBe('failed');
@@ -1541,7 +1550,9 @@ describe('Grok carry-over transactions (deterministic fixtures, not native quali
 
 			// A second operation whose staged transcript gained native work before recovery.
 			stage.mockRestore();
-			const second = w.journalFor(w.claude, destination, [w.claudeConversation('one', 'GAMMA')]);
+			const second = await w.journalFor(w.claude, destination, [
+				w.claudeConversation('one', 'GAMMA'),
+			]);
 			w.host.commit.mockRejectedValueOnce(new Error('store unavailable'));
 			const pending = await applyTranslation(w.archive, w.registry, second, w.host, true);
 			expect(pending.state).toBe('failed');
@@ -1563,7 +1574,7 @@ describe('Grok carry-over transactions (deterministic fixtures, not native quali
 			const destination = w.grok('grok-b');
 			const persist = w.archive.write.bind(w.archive);
 			// Crash: the durable journal holds tab one staged and tab two's intent when the process dies.
-			const crash = w.journalFor(w.claude, destination, w.twoTabs());
+			const crash = await w.journalFor(w.claude, destination, w.twoTabs());
 			let snapshot: TranslationJournal | undefined;
 			const crashWrite = vi.spyOn(w.archive, 'write').mockImplementation(async (journal) => {
 				await persist(journal);
@@ -1591,7 +1602,7 @@ describe('Grok carry-over transactions (deterministic fixtures, not native quali
 			expect(w.host.commit).not.toHaveBeenCalled();
 
 			// Conflict: another writer creates tab two's session directory after its intent is journaled.
-			const conflict = w.journalFor(w.claude, destination, w.twoTabs());
+			const conflict = await w.journalFor(w.claude, destination, w.twoTabs());
 			let foreign: string | undefined;
 			const conflictWrite = vi.spyOn(w.archive, 'write').mockImplementation(async (journal) => {
 				await persist(journal);
@@ -1618,7 +1629,7 @@ describe('Grok carry-over transactions (deterministic fixtures, not native quali
 
 			// Later work: one tab's transcript changed, so nothing in the operation is deleted.
 			await rm(foreign!, { recursive: true });
-			const later = w.journalFor(w.claude, destination, w.twoTabs());
+			const later = await w.journalFor(w.claude, destination, w.twoTabs());
 			w.host.commit.mockRejectedValueOnce(new Error('store unavailable'));
 			const pending = await applyTranslation(w.archive, w.registry, later, w.host, true);
 			const [first, second] = pending.mappings;
@@ -1678,9 +1689,14 @@ describe('Grok carry-over transactions (deterministic fixtures, not native quali
 						// Only the very first read is new; every echo maps back to its origin.
 						expect(reconciled.newRecords).toBe(checkpoint ? 0 : original.records.length);
 						expect(reconciled.conversation.records.map((r) => r.origin)).toEqual(origins);
-						const journal = w.journalFor(current.identity, destination, [reconciled.conversation], {
-							one: reconciled.newRecords,
-						});
+						const journal = await w.journalFor(
+							current.identity,
+							destination,
+							[reconciled.conversation],
+							{
+								one: reconciled.newRecords,
+							}
+						);
 						expect(journal.plan.status).toBe('ready');
 						expect(journal.plan.verification).toBe('unverified');
 						const result = await applyTranslation(w.archive, w.registry, journal, w.host, true);

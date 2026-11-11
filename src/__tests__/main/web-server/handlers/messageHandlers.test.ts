@@ -9223,6 +9223,8 @@ describe('Grok through the web message routes', () => {
 			false,
 			images,
 			false,
+			// consultChain: a web send is the user's own message.
+			undefined,
 			undefined,
 		]);
 		expect(JSON.stringify(call)).not.toContain('forged');
@@ -9292,6 +9294,8 @@ describe('Grok through the web message routes', () => {
 			images,
 			true,
 			false,
+			// consultChain: a web send is the user's own message.
+			undefined,
 			undefined,
 		]);
 		expect(JSON.stringify(call)).not.toContain('codex');
