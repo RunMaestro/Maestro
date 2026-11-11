@@ -21,7 +21,7 @@
  *    A failed check is `blocked` with the reason and the one thing a person has to do. A blocked
  *    agent is not tried again until its record or its remote changes, or `BLOCKED_RETRY_MS` passes.
  *
- * Setup and lift run through the same functions as Make Federated and Move to Host
+ * Setup and lift run through the same functions as the desktop's Move to Host
  * (`setupHostFromDesktop()`, `liftAgentFromDesktop()`), so automation and the person's own click
  * do exactly the same thing. A remote that opted out of Federation is never touched.
  */
@@ -65,7 +65,7 @@ export interface AutoFederationDeps {
 	isAutoMoveEnabled(): boolean;
 	/** The mirror's view of every probed remote. Empty before the mirror runs. */
 	peers(): MirrorPeerSummary[];
-	/** Make Federated / Start Host: install when needed, register the service, start the host. */
+	/** Move to Host's setup step / Start Host: install when needed, register the service, start the host. */
 	setupHost(remoteId: string): Promise<DesktopSetupHostAnswer>;
 	/** Move to Host, with or without `dryRun`. */
 	lift(agentId: string, options: { dryRun: boolean }): Promise<DesktopLiftAnswer>;
@@ -471,7 +471,7 @@ export class AutoFederationCoordinator {
 				this.setRemote(remote, {
 					state: 'ready',
 					reason: 'The host runs an older version than this app.',
-					fix: 'Make Federated on one of its agents offers Upgrade and Restart Host, or run maestro-cli remote-host install <ssh-remote> --restart.',
+					fix: 'Move to Host on one of its agents offers Upgrade and Restart Host, or run maestro-cli remote-host install <ssh-remote> --restart.',
 				});
 				return true;
 			}
@@ -646,10 +646,10 @@ function setupFix(code: string): string {
 	switch (code) {
 		case 'foreign-cli':
 		case 'broken-cli':
-			return 'Right-click an agent on this remote > Make Federated and use the button the window offers, or run maestro-cli remote-host install <ssh-remote> --force --start.';
+			return 'Right-click an agent on this remote > Move to Host and use the button the window offers, or run maestro-cli remote-host install <ssh-remote> --force --start.';
 		case 'node-download':
 		case 'sqlite-install':
-			return 'Let the remote reach nodejs.org and the npm registry (or install Node.js 22+ there), then Make Federated or wait for the next try.';
+			return 'Let the remote reach nodejs.org and the npm registry (or install Node.js 22+ there), then Move to Host or wait for the next try.';
 		case 'unsupported-os':
 		case 'unsupported-arch':
 			return 'This remote cannot run a Maestro host. Turn Federation off for it in Settings > SSH Hosts to stop the attempts.';
@@ -657,6 +657,6 @@ function setupFix(code: string): string {
 		case 'timeout':
 			return 'Check the remote is reachable with Test Connection in Settings > SSH Hosts. Maestro tries again later.';
 		default:
-			return 'Run maestro-cli remote-host install <ssh-remote> --start to see the full error, or use Make Federated on one of its agents.';
+			return 'Run maestro-cli remote-host install <ssh-remote> --start to see the full error, or use Move to Host on one of its agents.';
 	}
 }

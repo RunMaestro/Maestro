@@ -114,7 +114,7 @@ const NOT_FOUND = 'none';
 const NO_NODE = 'no-node';
 
 const INSTALL_FIX =
-	'Install it from this machine: right-click an agent on this remote and choose Make Federated, ' +
+	'Install it from this machine: right-click an agent on this remote and choose Move to Host, ' +
 	'or run `maestro-cli remote-host install <ssh-remote> --start`.';
 const NO_NODE_FIX =
 	`The remote has ${MAC_APP_CLI_PATH} but no \`node\` on its PATH to run it. ` +

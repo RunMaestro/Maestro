@@ -24,7 +24,7 @@ import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
 
 /**
  * Open the Move to Host modal for one agent (Left Bar right-click, command palette). The same
- * modal is Make Federated: when the agent's remote runs no host yet, it offers to set one up first.
+ * modal sets a host up first when the agent's remote runs none yet.
  */
 export function requestMoveToHost(sessionId: string): void {
 	useModalStore.getState().openModal('moveToHost', { sessionId });
@@ -47,7 +47,7 @@ async function callLift(
 
 /**
  * Install this app's maestro-cli on an SSH remote (or upgrade it), start the host there, and
- * reload the peer: Make Federated's first step, and the peer menu's Start Host. Main runs the
+ * reload the peer: Move to Host's setup step, and the peer menu's Start Host. Main runs the
  * same `setupRemoteHost()` as `maestro-cli remote-host install --start`. A failure is a red toast
  * as well as the answer, so a caller that only fires it still tells the person.
  */

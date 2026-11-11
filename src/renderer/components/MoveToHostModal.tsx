@@ -1,12 +1,12 @@
 /**
- * Make Federated / Move to Host (Federation lift, FED-SSH-06): lift a local SSH remote agent onto
- * the `maestro-cli host` on its remote, so its work keeps running with the laptop closed.
+ * Move to Host (Federation lift, FED-SSH-06): lift a local SSH remote agent onto the
+ * `maestro-cli host` on its remote, so its work keeps running with the laptop closed.
  *
  * Opened from the Left Bar's right-click menu or the command palette for an SSH agent whose remote
  * takes part in Federation. Two stages, one modal:
- * 1. Set up (Make Federated), while the remote runs no host: install this app's maestro-cli there
+ * 1. Set up, while the remote runs no host: install this app's maestro-cli there
  *    and start the host, the same `setupRemoteHost()` as `maestro-cli remote-host install --start`.
- * 2. Move (Move to Host), once the peer is connected: show the plan `maestro-cli lift --dry-run`
+ * 2. Move, once the peer is connected: show the plan `maestro-cli lift --dry-run`
  *    prints (what moves, which env vars stay), then run the same lift the CLI runs. Afterwards the
  *    local agent keeps every tab and transcript and shows where it moved.
  */
@@ -150,7 +150,7 @@ export function MoveToHostModal({
 	return (
 		<Modal
 			theme={theme}
-			title={hostReady ? 'Move to Host' : 'Make Federated'}
+			title="Move to Host"
 			subtitle={agentName}
 			priority={MODAL_PRIORITIES.MOVE_TO_HOST}
 			onClose={onClose}

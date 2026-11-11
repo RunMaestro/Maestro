@@ -44,9 +44,8 @@ import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 import {
 	useAgentFederationStatus,
 	useLiftedMirrorTarget,
-	useMoveToHostPeer,
 } from '../../hooks/federation/useAgentLift';
-import { canMakeFederated } from '../../utils/peerMirrorView';
+import { canMoveToHost } from '../../utils/peerMirrorView';
 import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
 
 interface SessionContextMenuProps {
@@ -236,11 +235,9 @@ export function SessionContextMenu({
 	onRenameWindow,
 }: SessionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
-	// Federation (FED-SSH-06): offered only while the feature is on and the agent's remote is a
-	// connected peer; a lifted agent offers the jump to where it moved instead.
-	const moveToHostPeer = useMoveToHostPeer(session);
+	// Federation (FED-SSH-06): Move to Host for an SSH agent whose remote takes part (it sets a host
+	// up first when there is none); a lifted agent offers the jump to where it moved instead.
 	const federationStatus = useAgentFederationStatus(session);
-	const offerMakeFederated = canMakeFederated(federationStatus);
 	const liftedTarget = useLiftedMirrorTarget(session.liftedTo);
 
 	// Inline window-rename state. While a row is being renamed, the Move to Window
@@ -412,7 +409,7 @@ export function SessionContextMenu({
 				</button>
 			)}
 
-			{moveToHostPeer && (
+			{canMoveToHost(federationStatus) && (
 				<button
 					type="button"
 					onClick={() => {
@@ -421,27 +418,15 @@ export function SessionContextMenu({
 					}}
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
-					title={`Lift this agent onto the maestro-cli host on ${moveToHostPeer.name}`}
+					title={
+						federationStatus.hostReady
+							? `Run this agent on the Maestro host on ${federationStatus.peer.name}, so it keeps working while this machine sleeps`
+							: `Set up a Maestro host on ${federationStatus.peer.name}, then run this agent there so it keeps working while this machine sleeps`
+					}
+					data-testid="session-menu-move-to-host"
 				>
 					<ServerCog className="w-3.5 h-3.5" />
-					Move to Host ({moveToHostPeer.name})...
-				</button>
-			)}
-
-			{offerMakeFederated && federationStatus.kind === 'ssh' && (
-				<button
-					type="button"
-					onClick={() => {
-						requestMoveToHost(session.id);
-						onDismiss();
-					}}
-					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-					style={{ color: theme.colors.textMain }}
-					title="Install a Maestro host on this agent's SSH remote, then move the agent onto it so it keeps working while this machine sleeps"
-					data-testid="session-menu-make-federated"
-				>
-					<ServerCog className="w-3.5 h-3.5" />
-					Make Federated{federationStatus.peer ? ` (${federationStatus.peer.name})` : ''}...
+					Move to Host ({federationStatus.peer.name})...
 				</button>
 			)}
 

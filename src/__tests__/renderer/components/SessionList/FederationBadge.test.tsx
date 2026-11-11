@@ -12,11 +12,12 @@ import {
 import { mockTheme } from '../../../helpers/mockTheme';
 
 describe('federationBadgeCopy', () => {
-	it('explains a federated agent: owned by the host, keeps working with this machine off', () => {
-		const copy = federationBadgeCopy({ kind: 'federated', peerName: 'build' });
-		expect(copy.label).toBe('Federated');
-		expect(copy.title).toBe('Federated agent on build');
-		expect(copy.lines.join(' ')).toMatch(/keeps going while this machine sleeps/);
+	it('explains a hosted agent: leads with the benefit, then who owns it', () => {
+		const copy = federationBadgeCopy({ kind: 'hosted', peerName: 'build' });
+		expect(copy.label).toBe('Hosted');
+		expect(copy.title).toBe('Hosted on build');
+		expect(copy.lines[0]).toBe('Keeps running while this machine sleeps or is off.');
+		expect(copy.lines[1]).toMatch(/Maestro host on build owns this agent/);
 	});
 
 	it('explains an SSH agent and names the next step', () => {
@@ -24,8 +25,8 @@ describe('federationBadgeCopy', () => {
 		const install = federationBadgeCopy({ ...base, hostReady: false, canFederate: true });
 		expect(install.label).toBe('SSH');
 		expect(install.title).toBe('SSH agent on build');
-		expect(install.lines[0]).toMatch(/stops when this machine sleeps/);
-		expect(install.lines.at(-1)).toMatch(/Make Federated/);
+		expect(install.lines[0]).toMatch(/^Stops when this machine sleeps/);
+		expect(install.lines.at(-1)).toMatch(/Move to Host: Maestro sets up a host/);
 
 		const ready = federationBadgeCopy({ ...base, hostReady: true, canFederate: true });
 		expect(ready.lines.at(-1)).toMatch(/Move to Host/);

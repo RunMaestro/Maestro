@@ -260,7 +260,7 @@ When a session is running via SSH remote, you can easily identify it:
 
 - **REMOTE pill** - Appears in the Left Bar next to the session, indicating it's configured for remote execution
 - **Host name badge** - Displayed in the Main Panel header showing which SSH host the agent is running on (e.g., "PEDTOME")
-- **SSH badge** - An `SSH` badge under the agent's name. Hover it for how an SSH agent differs from a federated one, and what to do to federate it
+- **SSH badge** - An `SSH` badge under the agent's name. Hover it for how an SSH agent differs from a hosted one, and how to move it to its host
 - Connection state reflects SSH connectivity
 - Errors are detected and displayed with SSH-specific context
 
@@ -268,7 +268,7 @@ When a session is running via SSH remote, you can easily identify it:
 
 An SSH agent is owned by your local Maestro, so its turns stop when your laptop sleeps or loses the connection. [Federation](./federation) moves the agent onto a Maestro host on the remote instead, and the work keeps going there. It is built in and opportunistic: Maestro checks each SSH remote for a host, one at a time, and mirrors the agents of the ones that run one. A remote without a host stays an ordinary SSH remote.
 
-By default Maestro does this for you: it installs its own `maestro-cli` on a remote that has SSH agents (Linux, macOS, or Windows through Git Bash or WSL), registers the host as a service so it survives reboots where the remote has a service manager (a systemd user session on Linux; on macOS a launch agent, which starts at login; Windows and Linux without systemd have none, and Maestro says how to start the host there), and moves each SSH agent onto it once every sanity check passes. When it cannot, the agent's `SSH` badge turns red and its hover card says what to do; **Settings > SSH Hosts > Federation automation** lists everything that needs you. To do it by hand, right-click an agent and choose **Make Federated**. To keep a remote out of Federation, switch **Federation** off for it under **Settings > SSH Hosts**; to stop the automatic moves everywhere, turn off **Move SSH agents to their host automatically** there.
+By default Maestro does this for you: it installs its own `maestro-cli` on a remote that has SSH agents (Linux, macOS, or Windows through Git Bash or WSL), registers the host as a service so it survives reboots where the remote has a service manager (a systemd user session on Linux; on macOS a launch agent, which starts at login; Windows and Linux without systemd have none, and Maestro says how to start the host there), and moves each SSH agent onto it once every sanity check passes. When it cannot, the agent's `SSH` badge turns red and its hover card says what to do; **Settings > SSH Hosts > Federation automation** lists everything that needs you. To do it by hand, right-click an agent and choose **Move to Host**. To keep a remote out of Federation, switch **Federation** off for it under **Settings > SSH Hosts**; to stop the automatic moves everywhere, turn off **Move SSH agents to their host automatically** there.
 
 ## Full Remote Capabilities
 
