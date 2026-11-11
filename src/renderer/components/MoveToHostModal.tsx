@@ -55,6 +55,11 @@ const SETUP_RETRY: Record<
 		options: { restart: true },
 		hint: 'Stops the host once its work in flight finishes, upgrades it, and starts it again.',
 	},
+	'broken-cli': {
+		label: 'Reinstall maestro-cli',
+		options: { force: true },
+		hint: "Replaces Maestro's copy on the remote, whose launcher no longer runs.",
+	},
 	'foreign-cli': {
 		label: "Install Maestro's Own Copy",
 		options: { force: true },

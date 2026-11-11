@@ -196,6 +196,21 @@ describe('buildRemoteInstallScript', () => {
 		expect(stop).toBeLessThan(script.indexOf('mv "$stage" "$cli"'));
 	});
 
+	it('writes the launcher before the swap and rolls the old install back if it cannot land', () => {
+		const script = buildRemoteInstallScript();
+		const written = script.indexOf('cat > "$bin/maestro-cli.new"');
+		const oldMoved = script.indexOf('mv "$cli" "$root/cli.old"');
+		expect(written).toBeGreaterThan(-1);
+		expect(written).toBeLessThan(oldMoved);
+		expect(script).toContain(
+			'mv -f "$bin/maestro-cli.new" "$bin/maestro-cli" || { rollback; fail launcher; }'
+		);
+		// The old install is removed only after both the new install and its launcher are in place.
+		expect(script.indexOf('rm -rf "$root/cli.old" "$cli/npm.log"')).toBeGreaterThan(
+			script.indexOf('mv -f "$bin/maestro-cli.new"')
+		);
+	});
+
 	it('writes a launcher that finds Node when it runs, and keeps npm caches under ~/.maestro', () => {
 		const script = buildRemoteInstallScript();
 		const launcher = script.slice(
@@ -458,10 +473,18 @@ describe('setupRemoteHost', () => {
 		expect(result.start).toEqual(started);
 	});
 
-	it('replaces an install whose launcher no longer runs', async () => {
-		const broken = seams(new RemoteDiscoveryError('malformed', 'not a host endpoint'));
-		expect((await setupRemoteHost(remote, bundle, broken)).cli).toBe('upgraded');
-		expect(broken.install).toHaveBeenCalled();
+	it('replaces an install whose launcher no longer runs only with force', async () => {
+		const refused = seams(new RemoteDiscoveryError('malformed', 'not a host endpoint'));
+		const error = await rejection(setupRemoteHost(remote, bundle, refused));
+		expect(error.code).toBe('broken-cli');
+		expect(error.message).toContain('--force');
+		expect(refused.install).not.toHaveBeenCalled();
+
+		const forced = seams(new RemoteDiscoveryError('malformed', 'not a host endpoint'));
+		expect((await setupRemoteHost(remote, bundle, { ...forced, force: true })).cli).toBe(
+			'upgraded'
+		);
+		expect(forced.install).toHaveBeenCalled();
 	});
 
 	it('lets a discovery failure that is not about the CLI through', async () => {

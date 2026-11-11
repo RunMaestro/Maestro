@@ -170,6 +170,7 @@ export function packLocalCliBundle(bundle: LocalCliBundle): Promise<Buffer> {
 /** Why an install did not finish. */
 export type RemoteInstallErrorCode =
 	| 'local-bundle'
+	| 'broken-cli'
 	| 'ssh-failed'
 	| 'timeout'
 	| 'host-running'
@@ -231,7 +232,7 @@ export function buildRemoteInstallScript(options: RemoteInstallScriptOptions = {
 		'stage="$root/cli.stage.$$"',
 		'dl="$root/node.dl.$$"',
 		`say() { printf '%s%s\\n' "$M" "$1"; }`,
-		'fail() { say "error=$1"; rm -rf "$stage" "$dl"; exit 3; }',
+		'fail() { say "error=$1"; rm -rf "$stage" "$dl" "$bin/maestro-cli.new"; exit 3; }',
 		// Read the whole bundle before anything can exit.
 		'mkdir -p "$stage" || { cat >/dev/null; fail upload; }',
 		'cat > "$stage/bundle.tgz" || fail upload',
@@ -282,7 +283,22 @@ export function buildRemoteInstallScript(options: RemoteInstallScriptOptions = {
 		`(cd "$stage" && "$node" -e "new (require(process.argv[1]))(':memory:').close()" ${SQLITE_PACKAGE}) 2> "$stage/sqlite.log" || { tail -n 5 "$stage/sqlite.log" >&2; fail sqlite-load; }`,
 		'ver=$("$node" "$stage/maestro-cli.js" --version 2>/dev/null | head -n 1)',
 		'[ -n "$ver" ] || fail cli-broken',
-		// Swap in the new install, keeping the old one until the new one is in place.
+		// The launcher is written BEFORE anything is swapped, beside the live one, so a failed write
+		// can never leave a truncated launcher in front of a deleted install. It finds Node when it
+		// runs, not only where it was at install time: Maestro's own copy, then the install-time
+		// Node, then whatever `node` is on PATH, so a Node a version manager later removes does not
+		// strand the install.
+		'mkdir -p "$bin" || fail launcher',
+		'cat > "$bin/maestro-cli.new" <<MAESTRO_LAUNCHER || fail launcher',
+		'#!/bin/sh',
+		'for n in "\\$HOME/.maestro/node/bin/node" "\\$HOME/.maestro/node/node.exe" "$node"; do',
+		'  [ -x "\\$n" ] && exec "\\$n" "$cli/maestro-cli.js" "\\$@"',
+		'done',
+		'n=\\$(command -v node) && exec "\\$n" "$cli/maestro-cli.js" "\\$@"',
+		'echo "maestro-cli: no Node.js to run $cli/maestro-cli.js" >&2',
+		'exit 127',
+		'MAESTRO_LAUNCHER',
+		'chmod 755 "$bin/maestro-cli.new" || fail launcher',
 		// The running host may come from another install (a forced replacement): stop it with the CLI
 		// that is on PATH now, else with Maestro's own launcher, else with the staged bundle.
 		'if [ "$RESTART" = 1 ]; then',
@@ -292,24 +308,14 @@ export function buildRemoteInstallScript(options: RemoteInstallScriptOptions = {
 		// From here a failure leaves the host stopped: the caller says so with the fix.
 		'  say host-stopped',
 		'fi',
+		// Swap: the old install stays as cli.old until the new install AND its launcher are in place,
+		// and comes back if either step fails.
+		'rollback() { rm -rf "$cli"; [ -d "$root/cli.old" ] && mv "$root/cli.old" "$cli"; }',
 		'rm -rf "$root/cli.old"',
 		'if [ -d "$cli" ]; then mv "$cli" "$root/cli.old" || fail swap; fi',
-		'mv "$stage" "$cli" || { [ -d "$root/cli.old" ] && mv "$root/cli.old" "$cli"; fail swap; }',
+		'mv "$stage" "$cli" || { rollback; fail swap; }',
+		'mv -f "$bin/maestro-cli.new" "$bin/maestro-cli" || { rollback; fail launcher; }',
 		'rm -rf "$root/cli.old" "$cli/npm.log" "$cli/sqlite.log"',
-		'mkdir -p "$bin" || fail launcher',
-		// The launcher finds Node when it runs, not only where it was at install time: Maestro's own
-		// copy, then the install-time Node, then whatever `node` is on PATH. A Node the user later
-		// upgrades or removes (a version manager) then does not strand the install.
-		'cat > "$bin/maestro-cli" <<MAESTRO_LAUNCHER || fail launcher',
-		'#!/bin/sh',
-		'for n in "\\$HOME/.maestro/node/bin/node" "\\$HOME/.maestro/node/node.exe" "$node"; do',
-		'  [ -x "\\$n" ] && exec "\\$n" "$cli/maestro-cli.js" "\\$@"',
-		'done',
-		'n=\\$(command -v node) && exec "\\$n" "$cli/maestro-cli.js" "\\$@"',
-		'echo "maestro-cli: no Node.js to run $cli/maestro-cli.js" >&2',
-		'exit 127',
-		'MAESTRO_LAUNCHER',
-		'chmod 755 "$bin/maestro-cli" || fail launcher',
 		'say "cli-version=$ver"',
 		'say done',
 	];
@@ -606,11 +612,18 @@ export async function setupRemoteHost(
 		// A CLI too old to know `host endpoint`, or one that no longer runs (its launcher answers
 		// with something that is not a report, such as a Node that was removed), is an install to
 		// replace, not a failure. The script still refuses to replace a CLI Maestro did not install.
+		// A broken one is only replaced with `force`: a host may still run from it, and only the
+		// person can say the install is safe to replace.
 		if (
 			error instanceof RemoteDiscoveryError &&
-			(error.code === 'unsupported' || error.code === 'malformed')
+			(error.code === 'unsupported' || (error.code === 'malformed' && options.force))
 		) {
 			found = 'too-old';
+		} else if (error instanceof RemoteDiscoveryError && error.code === 'malformed') {
+			throw new RemoteInstallError(
+				'broken-cli',
+				`${error.message} The maestro-cli there may be broken. Install again with --force to replace Maestro's copy.`
+			);
 		} else throw error;
 	}
 
