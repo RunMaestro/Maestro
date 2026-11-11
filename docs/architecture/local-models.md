@@ -3460,8 +3460,9 @@ The nine decisions, with their reasons:
 **How a launch gets the tool (`handle-spawn.ts`).** The desktop spawn decides before it builds the
 launch plan, because the binding has to be in the base URL the plan hands the process:
 
-1. The bridge is reachable: the provider's MCP strategy is verified, the agent is local (no SSH),
-   and Claude does not run through `maestro-p` (see R02.5).
+1. The bridge is reachable: the provider's MCP strategy is verified and the agent is local (no
+   SSH). Claude through `maestro-p` is reachable too (see "The interactive Claude path and Codex"
+   below).
 2. The gateway agent is the agent the bridge's run proof names (`baseSessionId`). An Auto Run
    task (`{id}-batch-{ts}`) or a History synopsis (`{id}-synopsis-{ts}`) spawns under another id,
    gets no bridge, and stays on `complete`.
@@ -3479,6 +3480,43 @@ The proxy's `recoveryFor` returns the retrieve capability only while the stored 
 because the bridge refuses the next call once it is off: a switch turned off mid-launch drops that
 launch back to `complete` on the next request. The tool itself is offered by the bridge from the
 stored setting at `tools/list` time; the binding is what lets compression be lossy.
+
+**The interactive Claude path and Codex, checked against the real binaries (2026-11-11).**
+Claude Code 2.1.322, Codex CLI 0.167.1, darwin-arm64, no model call.
+
+- **Claude through `maestro-p`.** The bridge was skipped for this path because an old ordering
+  prepended `--mcp-config` ahead of the `maestro-p` script path, where Node would read it as its
+  own flag. The ordering changed: `handle-spawn.ts` merges the bridge flags into the agent args
+  first, and `applyLocalInteractiveSpawnDecision()` (through `applyClaudeSpawnDecision()`) then
+  builds `[maestro-p script, ...interactiveModeArgs, ...args]`, so the script path stays first.
+  `maestro-p` lists `--mcp-config` as a variadic pass-through flag (`src/maestro-p/args.ts`); the
+  inline JSON value does not look like a flag, so it is taken whole and forwarded. The skip is
+  removed, so an interactive launch gets the bridge, its binding, and the `full` profile like a
+  `--print` launch. Three checks:
+  1. The real built `dist/cli/maestro-p.js`, given the desktop's exact line (`--mcp-config
+<json>` with a path that holds a space and a `--tab` argument inside the JSON, then
+     `--print --verbose --output-format stream-json --dangerously-skip-permissions -- <prompt>`)
+     and a stub `MAESTRO_CLAUDE_BIN` that records its argv, handed claude
+     `--mcp-config <the same JSON, byte for byte> --dangerously-skip-permissions --session-id
+<uuid>`. The prompt went to the TUI, not to the argv.
+  2. The real `claude` TUI in a PTY, started with `--mcp-config <bridge JSON>
+--strict-mcp-config`, answered `/mcp` (a local command, no model call) with the server
+     `maestro`, `connected`. It showed `no tools`, which is correct: the bridge was started by
+     hand with no run proof, and a caller with no valid proof is offered no core tool.
+     (`claude mcp list` cannot be used for this check: it does not read `--mcp-config`.)
+  3. `src/__tests__/maestro-p/args.test.ts` parses the output of `buildMcpInjection()` and
+     `mergeMcpInjectionArgs()` for Claude and expects it forwarded intact;
+     `process.test.ts` expects an interactive retrieval launch to bind, keep the script path
+     first, and carry `--mcp-config` after it.
+
+  Side effect: plugin MCP tools now reach a TUI Claude launch as well, which was the same gap.
+
+- **Codex.** `codex mcp list` and `codex mcp get maestro`, run with the spawn's own overrides
+  (`-c mcp_servers.maestro.command=...`, `.args=[...]`, `.env={ ELECTRON_RUN_AS_NODE = "1" }`),
+  list the injected server `maestro`: enabled, stdio, the bridge command and arguments. Codex
+  0.167.1 does not start a server for `mcp list`, so the TOOL listing was not seen there; with a
+  run proof only the app can issue, it is covered by the bridge tests of R02.3 and is unproven in
+  a real Codex launch.
 
 **Spawns that stay on `complete`.** Cue (`buildSpawnSpec()` in `cue-spawn-builder.ts`), Group Chat
 participants and cross-agent consults (`applyAgentGatewayToSpawn()`), and `maestro-cli send` inject

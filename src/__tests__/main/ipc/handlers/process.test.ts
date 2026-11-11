@@ -1616,6 +1616,55 @@ describe('process IPC handlers', () => {
 					expect(release).toHaveBeenCalledTimes(1);
 				});
 
+				it('gives an interactive (maestro-p) launch the bridge after the script path', async () => {
+					const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+					storeAgent({
+						id: 'agent-gw',
+						gatewayUrl: `${gatewayUrl}/anthropic`,
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+						maestroPPath,
+					});
+					const apiArgs = ['--print', '--verbose', '--output-format', 'stream-json'];
+					mockAgentDetector.getAgent.mockResolvedValue({
+						id: 'claude-code',
+						name: 'Claude Code',
+						command: 'claude',
+						args: apiArgs,
+						apiCommand: 'claude',
+						interactiveCommand: 'maestro-p',
+						interactiveModeArgs: [],
+						requiresPty: true,
+					});
+					mockProcessManager.spawn.mockReturnValue({ pid: 3101, success: true });
+					await handlers.get('process:spawn')!({} as any, {
+						sessionId: 'agent-gw-ai-tab-1',
+						toolType: 'claude-code',
+						cwd: '/test',
+						command: '/usr/local/bin/claude',
+						args: apiArgs,
+						prompt: 'hi',
+					});
+
+					expect(mockRegisterTokenProxyRecoveryLaunch).toHaveBeenCalledWith(
+						'agent-gw',
+						proxyGateway,
+						{ kind: 'mcp-retrieve-tool' }
+					);
+					const spawned = mockProcessManager.spawn.mock.calls[0][0];
+					expect(spawned.command).toBe(process.execPath);
+					// Node reads the script path first; maestro-p forwards the rest to claude.
+					expect(spawned.args[0]).toBe(maestroPPath);
+					expect(spawned.args.indexOf('--mcp-config')).toBeGreaterThan(0);
+					expect(JSON.parse(bridgeArgs(spawned.args)!).mcpServers.maestro.args).toEqual(
+						expect.arrayContaining(['mcp', 'serve', '--tab', 'agent-gw'])
+					);
+					expect(spawned.customEnvVars).toMatchObject({
+						ANTHROPIC_BASE_URL: bound,
+						MAESTRO_CLAUDE_BIN: '/usr/local/bin/claude',
+					});
+				});
+
 				it('gives a Codex launch the bridge through its config overrides', async () => {
 					mockAgentDetector.getAgent.mockResolvedValue({ id: 'codex', requiresPty: false });
 					mockProcessManager.spawn.mockReturnValue({ pid: 3102, success: true });

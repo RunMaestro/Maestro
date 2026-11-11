@@ -599,15 +599,14 @@ async function handleProcessSpawnImpl(
 	const gatewayAgent = providerAgent;
 
 	// Only verified local provider configs can reach the localhost MCP bridge.
-	// SSH is skipped, and so is the electron-as-node interactive path (claude
-	// maestro-p): there argv[0] is a script path, so prepending global flags
-	// ahead of it would make Node reject the launch. API-mode/codex spawn the
-	// agent binary directly, where leading flags are valid.
+	// SSH is skipped. The interactive Claude path (maestro-p) is reachable: the
+	// bridge flags are merged into `finalArgs` here, and
+	// `applyLocalInteractiveSpawnDecision()` later puts the maestro-p script path
+	// ahead of all of them, so Node still reads the script first. maestro-p
+	// forwards `--mcp-config <json>` to claude verbatim (a variadic pass-through
+	// flag in `src/maestro-p/args.ts`), checked against the real binaries.
 	const mcpCap = MCP_CONFIG_BY_AGENT[config.toolType];
-	const mcpBridgeReachable =
-		mcpCap?.verified === true &&
-		!config.sessionSshRemoteConfig?.enabled &&
-		!(claudeResolvedMode === 'interactive' && resolvedMaestroPBinPath);
+	const mcpBridgeReachable = mcpCap?.verified === true && !config.sessionSshRemoteConfig?.enabled;
 	// The token proxy launch binding that says this launch was given the
 	// `retrieve_compressed_original` tool, so its `compress-early` requests may
 	// be decided with the lossy `full` profile. Registered only for a launch
