@@ -5,7 +5,8 @@ import { FileTreeContextMenu } from '../../../../../renderer/components/FileExpl
 import type { ContextMenuState } from '../../../../../renderer/components/FileExplorerPanel/types';
 import type { FileNode } from '../../../../../renderer/types/fileTree';
 
-vi.mock('../../../../../renderer/utils/platformUtils', () => ({
+vi.mock('../../../../../renderer/utils/platformUtils', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../../renderer/utils/platformUtils')>()),
 	getRevealLabel: () => 'Reveal in Finder',
 	getOpenInLabel: () => 'Open in Finder',
 }));
