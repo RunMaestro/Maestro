@@ -226,6 +226,23 @@ export function isPeerDisconnected(peer: Pick<MirroredPeer, 'connection'>): bool
 	return peer.connection !== 'connected' && peer.connection !== 'connecting';
 }
 
+/**
+ * Whether a peer has a Maestro host to show. Federation probes every SSH remote that has not opted
+ * out, so most probes find no host (`not-installed`, `host-down`): those remotes stay plain SSH
+ * remotes and out of the Left Bar. A peer that is connected, reconnecting, or was synced once
+ * (shown dimmed while it is away) counts.
+ */
+export function isPeerFederated(
+	peer: Pick<MirroredPeer, 'connection' | 'agents' | 'lastSyncAt'>
+): boolean {
+	return (
+		peer.connection === 'connected' ||
+		peer.connection === 'reconnecting' ||
+		peer.lastSyncAt !== undefined ||
+		peer.agents.length > 0
+	);
+}
+
 /** A tooltip line for a peer's connection. */
 export function peerConnectionLabel(peer: Pick<MirroredPeer, 'connection' | 'error'>): string {
 	switch (peer.connection) {
@@ -289,6 +306,41 @@ export function moveToHostPeer(
 	const ssh = agent.sessionSshRemoteConfig;
 	if (!ssh?.enabled || !ssh.remoteId) return undefined;
 	return peers.find((peer) => peer.remoteId === ssh.remoteId && peer.connection === 'connected');
+}
+
+/**
+ * How a local agent stands with Federation, for its Left Bar badge and its Make Federated / Move to
+ * Host actions:
+ * - `local`: not an SSH agent.
+ * - `moved`: lifted onto a host already; the row is a pointer.
+ * - `ssh`: an SSH agent this Maestro drives over SSH. `peer` is its remote's mirror entry (absent
+ *   when the remote opted out or is disabled, so it cannot federate); `hostReady` when that peer is
+ *   connected right now, so Move to Host can run without setting anything up.
+ */
+export type AgentFederationStatus =
+	| { kind: 'local' }
+	| { kind: 'moved' }
+	| { kind: 'ssh'; remoteId: string; peer?: MirroredPeer; hostReady: boolean };
+
+export function agentFederationStatus(
+	agent: LiftableAgent,
+	peers: readonly MirroredPeer[]
+): AgentFederationStatus {
+	if (readLiftedTo(agent.liftedTo)) return { kind: 'moved' };
+	const ssh = agent.sessionSshRemoteConfig;
+	if (!ssh?.enabled || !ssh.remoteId) return { kind: 'local' };
+	const peer = peers.find((candidate) => candidate.remoteId === ssh.remoteId);
+	return {
+		kind: 'ssh',
+		remoteId: ssh.remoteId,
+		...(peer ? { peer } : {}),
+		hostReady: peer?.connection === 'connected',
+	};
+}
+
+/** Whether Make Federated is offered: an SSH agent whose remote takes part but runs no host now. */
+export function canMakeFederated(status: AgentFederationStatus): boolean {
+	return status.kind === 'ssh' && status.peer !== undefined && !status.hostReady;
 }
 
 /** Where a lifted agent's pointer leads, and whether the mirror holds that agent right now. */

@@ -264,12 +264,12 @@ List all session groups
 
 List all agents
 
-| Option             | Description                                                                   | Default |
-| ------------------ | ----------------------------------------------------------------------------- | ------- |
-| `-g, --group <id>` | Filter by group ID                                                            | -       |
-| `--peer <name>`    | List the agents on one Federation peer (an SSH remote's name)                 | -       |
-| `--all-peers`      | List local agents, then the agents on every SSH remote opted in to Federation | -       |
-| `--json`           | Output as JSON lines (for scripting)                                          | -       |
+| Option             | Description                                                                        | Default |
+| ------------------ | ---------------------------------------------------------------------------------- | ------- |
+| `-g, --group <id>` | Filter by group ID                                                                 | -       |
+| `--peer <name>`    | List the agents on one Federation peer (an SSH remote's name)                      | -       |
+| `--all-peers`      | List local agents, then the agents on every SSH remote that runs a Federation host | -       |
+| `--json`           | Output as JSON lines (for scripting)                                               | -       |
 
 ## `maestro-cli list playbooks`
 
@@ -1500,7 +1500,7 @@ Stop the host (refuses while a turn, Auto Run or Cue run is in flight, unless --
 
 ## `maestro-cli remote-host`
 
-Check and start the maestro-cli host on an SSH remote that is opted in to Federation
+Install, check, and start the maestro-cli host on an SSH remote (Federation)
 
 ## `maestro-cli remote-host status <ssh-remote>`
 
@@ -1510,6 +1510,18 @@ Report whether Maestro is installed on the remote, whether its host runs, and th
 | --------------------- | ------------------------------------------------------------ | ------- |
 | `--timeout <seconds>` | Give up on the SSH call after this many seconds (default 60) | -       |
 | `--json`              | Output as JSON (for scripting)                               | -       |
+
+## `maestro-cli remote-host install <ssh-remote>`
+
+Copy this maestro-cli to the remote (with Node.js and SQLite for the remote's platform), or upgrade an older one
+
+| Option                | Description                                                         | Default |
+| --------------------- | ------------------------------------------------------------------- | ------- |
+| `--start`             | Start the host on the remote once the CLI is in place               | -       |
+| `--force`             | Install even over a maestro-cli that Maestro did not install there  | -       |
+| `--restart`           | Replace a running host on an older version: stop it, upgrade, start | -       |
+| `--timeout <seconds>` | Give up on the install after this many seconds (default 600)        | -       |
+| `--json`              | Output as JSON (for scripting)                                      | -       |
 
 ## `maestro-cli remote-host start <ssh-remote>`
 
@@ -2069,7 +2081,7 @@ Create a new SSH remote configuration
 | `--ssh-option <KEY=VALUE>` | Extra ssh -o option, e.g. ProxyCommand=... or ConnectTimeout=45 (repeatable) | `[]`    |
 | `--ssh-config`             | Use ~/.ssh/config for connection settings (host becomes Host pattern)        | -       |
 | `--disabled`               | Create in disabled state                                                     | -       |
-| `--federation <on\|off>`   | Opt this remote in to Federation (on/off)                                    | -       |
+| `--federation <on\|off>`   | Look for a Maestro host on this remote (on, the default) or never (off)      | -       |
 | `--set-default`            | Set as the global default SSH remote                                         | -       |
 | `--json`                   | Output as JSON (for scripting)                                               | -       |
 
@@ -2086,30 +2098,30 @@ maestro-cli create-ssh-remote "Tunnelled box" \
 
 Update an existing SSH remote configuration
 
-| Option                       | Description                                                     | Default |
-| ---------------------------- | --------------------------------------------------------------- | ------- |
-| `-n, --name <name>`          | Display name                                                    | -       |
-| `-H, --host <host>`          | SSH hostname, IP, or SSH config Host pattern                    | -       |
-| `-p, --port <port>`          | SSH port                                                        | -       |
-| `-u, --username <user>`      | SSH username (empty string clears it)                           | -       |
-| `-k, --key <path>`           | Path to private key file (empty string clears it)               | -       |
-| `--env <KEY=VALUE>`          | Remote environment variable, merged with existing (repeatable)  | `[]`    |
-| `--clear-env`                | Remove all remote environment variables before applying --env   | -       |
-| `--disable-env <KEY>`        | Switch an env var off, keeping its value (repeatable)           | `[]`    |
-| `--enable-env <KEY>`         | Switch a previously disabled env var back on (repeatable)       | `[]`    |
-| `--ssh-option <KEY=VALUE>`   | Extra ssh -o option, merged with existing (repeatable)          | `[]`    |
-| `--clear-ssh-options`        | Remove all extra ssh -o options before applying --ssh-option    | -       |
-| `--disable-ssh-option <KEY>` | Switch an ssh -o option off, keeping its value (repeatable)     | `[]`    |
-| `--enable-ssh-option <KEY>`  | Switch a previously disabled ssh -o option back on (repeatable) | `[]`    |
-| `--ssh-config <bool>`        | Use ~/.ssh/config for connection settings (true/false)          | -       |
-| `--enabled <bool>`           | Enable or disable this remote (true/false)                      | -       |
-| `--federation <on\|off>`     | Opt this remote in to Federation (on/off)                       | -       |
-| `--set-default`              | Set as the global default SSH remote                            | -       |
-| `--json`                     | Output as JSON (for scripting)                                  | -       |
+| Option                       | Description                                                             | Default |
+| ---------------------------- | ----------------------------------------------------------------------- | ------- |
+| `-n, --name <name>`          | Display name                                                            | -       |
+| `-H, --host <host>`          | SSH hostname, IP, or SSH config Host pattern                            | -       |
+| `-p, --port <port>`          | SSH port                                                                | -       |
+| `-u, --username <user>`      | SSH username (empty string clears it)                                   | -       |
+| `-k, --key <path>`           | Path to private key file (empty string clears it)                       | -       |
+| `--env <KEY=VALUE>`          | Remote environment variable, merged with existing (repeatable)          | `[]`    |
+| `--clear-env`                | Remove all remote environment variables before applying --env           | -       |
+| `--disable-env <KEY>`        | Switch an env var off, keeping its value (repeatable)                   | `[]`    |
+| `--enable-env <KEY>`         | Switch a previously disabled env var back on (repeatable)               | `[]`    |
+| `--ssh-option <KEY=VALUE>`   | Extra ssh -o option, merged with existing (repeatable)                  | `[]`    |
+| `--clear-ssh-options`        | Remove all extra ssh -o options before applying --ssh-option            | -       |
+| `--disable-ssh-option <KEY>` | Switch an ssh -o option off, keeping its value (repeatable)             | `[]`    |
+| `--enable-ssh-option <KEY>`  | Switch a previously disabled ssh -o option back on (repeatable)         | `[]`    |
+| `--ssh-config <bool>`        | Use ~/.ssh/config for connection settings (true/false)                  | -       |
+| `--enabled <bool>`           | Enable or disable this remote (true/false)                              | -       |
+| `--federation <on\|off>`     | Look for a Maestro host on this remote (on, the default) or never (off) | -       |
+| `--set-default`              | Set as the global default SSH remote                                    | -       |
+| `--json`                     | Output as JSON (for scripting)                                          | -       |
 
 Only supplied fields change. `--env` and `--ssh-option` merge with existing values; use `--clear-env` or `--clear-ssh-options` to start from empty. `--disable-*` keeps a value but stops passing it to SSH; `--enable-*` restores it. Clearing also removes disabled entries. JSON output includes `sshOptions`, disabled entries, and `resolvedSshOptions` (the effective options including defaults).
 
-`--federation` belongs to the Federation Encore Feature: it is refused while that feature is off. A remote with Federation off is never probed for a `maestro-cli host`. While the feature is on, `list ssh-remotes --json` and `update-ssh-remote --json` report `federation`.
+Federation is opportunistic: every remote takes part unless `--federation off` opts it out, and only the opt-out is stored. A remote with Federation off is never probed for a `maestro-cli host`. `list ssh-remotes --json` and `update-ssh-remote --json` report `federation`.
 
 ## `maestro-cli remove-ssh-remote <remote-id>`
 

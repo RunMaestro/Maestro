@@ -1930,10 +1930,6 @@ export interface EncoreFeatureFlags {
 	// Run preview. Off by default. Optional so older fixtures and persisted
 	// settings remain valid.
 	dataview?: boolean;
-	// Federation - reach a `maestro-cli host` on an SSH remote and drive its
-	// agents from this machine. Off by default. Optional so older fixtures and
-	// persisted settings remain valid.
-	federation?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

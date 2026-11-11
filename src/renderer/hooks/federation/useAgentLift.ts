@@ -1,14 +1,16 @@
 /**
- * Move to Host and the lifted-agent pointer, as a Left Bar row, its context menu, and the command
- * palette read them (FED-SSH-06). Both answer nothing while the Federation Encore Feature is off:
- * the mirror store is empty then, so no menu item, chip, or palette entry appears.
+ * Move to Host, Make Federated, and the lifted-agent pointer, as a Left Bar row, its context menu,
+ * and the command palette read them (FED-SSH-06). Each answers nothing until the peer mirror has
+ * loaded (the store is empty before that, and in the browser build).
  */
 
 import { useMemo } from 'react';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import {
+	agentFederationStatus,
 	liftedMirrorTarget,
 	moveToHostPeer,
+	type AgentFederationStatus,
 	type LiftableAgent,
 	type LiftedMirrorTarget,
 } from '../../utils/peerMirrorView';
@@ -41,4 +43,23 @@ export function useLiftedMirrorTarget(liftedTo: unknown): LiftedMirrorTarget | u
 		() => (enabled && liftedTo ? liftedMirrorTarget({ liftedTo }, peers) : undefined),
 		[enabled, liftedTo, peers]
 	);
+}
+
+/** How `agent` stands with Federation (`agentFederationStatus()`), kept in step with the mirror. */
+export function useAgentFederationStatus(
+	agent: LiftableAgent | null | undefined
+): AgentFederationStatus {
+	const order = usePeerMirrorStore((s) => s.order);
+	const peers = usePeerMirrorStore((s) => s.peers);
+	const liftedTo = agent?.liftedTo;
+	const ssh = agent?.sessionSshRemoteConfig;
+	const sshEnabled = ssh?.enabled === true;
+	const remoteId = ssh?.remoteId ?? null;
+	return useMemo(() => {
+		if (!liftedTo && (!sshEnabled || !remoteId)) return { kind: 'local' };
+		return agentFederationStatus(
+			{ liftedTo, sessionSshRemoteConfig: { enabled: sshEnabled, remoteId } },
+			order.flatMap((peerId) => (peers[peerId] ? [peers[peerId]] : []))
+		);
+	}, [liftedTo, sshEnabled, remoteId, order, peers]);
 }

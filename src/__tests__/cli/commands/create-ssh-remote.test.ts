@@ -211,29 +211,30 @@ describe('create-ssh-remote command', () => {
 		});
 	});
 
-	describe('federation opt-in', () => {
-		it('stores federation: true for --federation on and echoes it in JSON', () => {
+	describe('federation (opportunistic, opt-out)', () => {
+		it('stores nothing for --federation on and reports it on in JSON', () => {
 			createSshRemote('Host Box', { host: 'box', federation: 'on', json: true });
 
-			expect(writeSshRemotes).toHaveBeenCalledWith([
-				expect.objectContaining({ name: 'Host Box', federation: true }),
-			]);
+			expect(vi.mocked(writeSshRemotes).mock.calls[0][0][0].federation).toBeUndefined();
 			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
 			expect(parsed).toMatchObject({ success: true, federation: true });
 		});
 
-		it('leaves no federation field for --federation off', () => {
+		it('stores the opt-out for --federation off and prints it', () => {
 			createSshRemote('Host Box', { host: 'box', federation: 'off' });
 
 			const written = vi.mocked(writeSshRemotes).mock.calls[0][0][0];
-			expect(written.federation).toBeUndefined();
+			expect(written.federation).toBe(false);
+			expect(consoleSpy.mock.calls.map((call) => String(call[0])).join('\n')).toContain(
+				'Federation: off'
+			);
 		});
 
-		it('leaves the field out of the record and the JSON when the flag is not passed', () => {
+		it('takes part by default: no field in the record, on in the JSON', () => {
 			createSshRemote('Plain', { host: 'box', json: true });
 
 			expect(vi.mocked(writeSshRemotes).mock.calls[0][0][0].federation).toBeUndefined();
-			expect(JSON.parse(consoleSpy.mock.calls[0][0])).not.toHaveProperty('federation');
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({ federation: true });
 		});
 	});
 });

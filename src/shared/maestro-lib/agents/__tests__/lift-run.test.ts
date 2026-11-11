@@ -115,7 +115,16 @@ describe('runLift refusals', () => {
 		expect(deps.connect).not.toHaveBeenCalled();
 	});
 
-	it('refuses a remote that is not opted in, with the fix', async () => {
+	it('refuses a disabled remote, which the mirror would never show the pointer for', async () => {
+		const { deps } = depsWith(sshAgent(), {
+			readRemotes: () => [{ ...remote, enabled: false }],
+		});
+		const error = await refusalOf(runLift('agent-1', {}, deps));
+		expect(error.code).toBe('LIFT_REMOTE_DISABLED');
+		expect(deps.connect).not.toHaveBeenCalled();
+	});
+
+	it('refuses a remote that opted out, with the fix', async () => {
 		const { deps } = depsWith(sshAgent(), {
 			readRemotes: () => [{ ...remote, federation: false }],
 		});

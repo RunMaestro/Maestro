@@ -12,6 +12,7 @@ vi.mock('../../../cli/services/storage', () => ({
 
 import {
 	formatRemoteHostStatus,
+	remoteHostInstall,
 	remoteHostStart,
 	remoteHostStatus,
 	type RemoteHostDeps,
@@ -23,6 +24,11 @@ import {
 	type RemoteHostDiscovery,
 	type RemoteHostStartResult,
 } from '../../../shared/maestro-lib/client/remote-discovery';
+import {
+	RemoteInstallError,
+	type LocalCliBundle,
+	type RemoteHostSetupResult,
+} from '../../../shared/maestro-lib/client/remote-install';
 import type { SshRemoteConfig } from '../../../shared/types';
 
 const TOKEN = 'tok-6f1d0c2a-secret-path-token';
@@ -142,8 +148,15 @@ describe('maestro-cli remote-host', () => {
 			expect(process.exitCode).toBe(ExitCode.NotRunning);
 		});
 
-		it('refuses a remote that is not opted in, names the fix, and never dials it', async () => {
+		it('dials a remote with no federation field: Federation is opportunistic', async () => {
 			const deps = depsWith([running()], undefined, [remoteOf({ federation: undefined })]);
+			await remoteHostStatus('r1', { json: true }, LOCAL, deps);
+			expect(deps.discover).toHaveBeenCalledTimes(1);
+			expect(json()).toMatchObject({ running: true });
+		});
+
+		it('refuses a remote that opted out, names the fix, and never dials it', async () => {
+			const deps = depsWith([running()], undefined, [remoteOf({ federation: false })]);
 			await remoteHostStatus('r1', { json: true }, LOCAL, deps);
 			expect(deps.discover).not.toHaveBeenCalled();
 			expect(String(json().error)).toContain(
@@ -263,7 +276,7 @@ describe('maestro-cli remote-host', () => {
 			expect(process.exitCode).toBe(ExitCode.GeneralError);
 		});
 
-		it('refuses a remote that is not opted in, and never dials it', async () => {
+		it('refuses a remote that opted out, and never dials it', async () => {
 			const deps = depsWith([], undefined, [remoteOf({ federation: false })]);
 			await remoteHostStart('Build box', {}, LOCAL, deps);
 			expect(deps.discover).not.toHaveBeenCalled();
@@ -313,6 +326,113 @@ describe('maestro-cli remote-host', () => {
 			expect(text).toContain('Maestro.app bundle');
 			expect(text).toContain('maestro-cli remote-host start r1-abcdef');
 			expect(text).toContain('Version skew: unknown');
+		});
+	});
+
+	describe('install', () => {
+		const bundle: LocalCliBundle = {
+			cliFile: '/app/maestro-cli.js',
+			promptsDir: '/app/prompts/core',
+			version: LOCAL,
+		};
+
+		function installDeps(
+			outcome: RemoteHostSetupResult | Error,
+			remotes: SshRemoteConfig[] = [remoteOf()]
+		) {
+			const setup = vi.fn<RemoteHostDeps['setup']>();
+			if (outcome instanceof Error) setup.mockRejectedValue(outcome);
+			else setup.mockResolvedValue(outcome);
+			const nudgeDesktop = vi.fn(async () => true);
+			return {
+				...depsWith([], undefined, remotes),
+				setup,
+				localBundle: vi.fn(() => bundle),
+				nudgeDesktop,
+			};
+		}
+
+		const installed: RemoteHostSetupResult = {
+			cli: 'installed',
+			cliVersion: LOCAL,
+			install: {
+				platform: 'linux-x64',
+				nodeVersion: 'v24.11.0',
+				nodeSource: 'downloaded',
+				cliVersion: LOCAL,
+			},
+			start: { installed: true, started: true, alreadyRunning: false, pid: 4010, port: 46147 },
+		};
+
+		it('installs this CLI, starts the host, tells the desktop, and reports it', async () => {
+			const deps = installDeps(installed);
+			await remoteHostInstall('Build box', { start: true }, LOCAL, deps);
+			expect(deps.localBundle).toHaveBeenCalledWith(LOCAL);
+			expect(deps.setup).toHaveBeenCalledWith(
+				remoteOf(),
+				bundle,
+				expect.objectContaining({ start: true, force: false, restart: false })
+			);
+			expect(deps.nudgeDesktop).toHaveBeenCalledWith('Build box');
+			const text = everything();
+			expect(text).toContain('maestro-cli: installed (0.17.2)');
+			expect(text).toContain('Platform: linux-x64');
+			expect(text).toContain('Node.js: v24.11.0 (downloaded from nodejs.org)');
+			expect(text).toContain('Host: started (pid 4010, port 46147)');
+			expect(process.exitCode).toBeUndefined();
+		});
+
+		it('passes --force, --restart, and --timeout through, and prints JSON', async () => {
+			const deps = installDeps({ cli: 'current', cliVersion: LOCAL });
+			await remoteHostInstall(
+				'r1',
+				{ force: true, restart: true, timeout: '30', json: true },
+				LOCAL,
+				deps
+			);
+			expect(deps.setup).toHaveBeenCalledWith(
+				remoteOf(),
+				bundle,
+				expect.objectContaining({ force: true, restart: true, start: false, timeoutMs: 30_000 })
+			);
+			expect(deps.nudgeDesktop).not.toHaveBeenCalled();
+			expect(json()).toMatchObject({ remote: { id: 'r1-abcdef' }, cli: 'current' });
+		});
+
+		it('reports an installer refusal with its code and the fix', async () => {
+			const deps = installDeps(
+				new RemoteInstallError('host-running', 'A host is running on Build box. Pass --restart.')
+			);
+			await remoteHostInstall('r1', { json: true }, LOCAL, deps);
+			expect(json()).toEqual({
+				error: 'A host is running on Build box. Pass --restart.',
+				code: 'host-running',
+			});
+			expect(process.exitCode).toBe(ExitCode.GeneralError);
+		});
+
+		it('exits non-zero when --start could not start a host', async () => {
+			const deps = installDeps({
+				cli: 'installed',
+				start: { installed: false, fix: 'Install Maestro.' },
+			});
+			await remoteHostInstall('r1', { start: true }, LOCAL, deps);
+			expect(everything()).toContain('not started');
+			expect(process.exitCode).toBe(ExitCode.GeneralError);
+		});
+
+		it('refuses a remote that opted out without dialing it', async () => {
+			const deps = installDeps(installed, [remoteOf({ federation: false })]);
+			await remoteHostInstall('r1', { start: true }, LOCAL, deps);
+			expect(deps.setup).not.toHaveBeenCalled();
+			expect(everything()).toContain('--federation on');
+		});
+
+		it('refuses a bad --timeout as usage', async () => {
+			const deps = installDeps(installed);
+			await remoteHostInstall('r1', { timeout: 'soon' }, LOCAL, deps);
+			expect(deps.setup).not.toHaveBeenCalled();
+			expect(process.exitCode).toBe(ExitCode.InvalidUsage);
 		});
 	});
 });

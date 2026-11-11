@@ -18,10 +18,15 @@
  * - One remote at a time. Connects, reloads, and reconnects run through ONE queue, strictly in
  *   sequence, so no two discovery or forward ssh processes start at once (decision D8: tailcat
  *   remotes fail under concurrent dials). A remote without `federation` is never dialed.
- * - No retry loop of its own. Once attached, the client heartbeats, reconnects, and resyncs, and
- *   the lease restarts the forward; the service only records what they report.
+ * - No tight retry loop of its own. Once attached, the client heartbeats, reconnects, and resyncs,
+ *   and the lease restarts the forward; the service only records what they report. A remote that
+ *   answered with no host (`not-installed`, `host-down`) or could not be reached is probed once,
+ *   then again only after a wake, a change to the stored remotes, a reconnect, a host setup
+ *   (`setupHostFromDesktop`), or the slow re-probe (`MIRROR_REPROBE_INTERVAL_MS`).
  *
- * Constructed only while the Federation Encore Feature is on (`createFederationSupervisorHooks`).
+ * Federation is opportunistic: every enabled SSH remote that has not opted out is probed, and the
+ * Left Bar shows only the ones that run a host (`isPeerFederated()`). Constructed once at boot
+ * (`createFederationRuntime`).
  */
 
 import * as os from 'os';
@@ -71,6 +76,11 @@ export const MIRROR_TURN_COALESCE_MS = 50;
 export const MIRROR_TRANSCRIPT_CACHE_SIZE = 20;
 /** Entries a transcript read returns when the caller does not say. */
 export const MIRROR_TRANSCRIPT_DEFAULT_TAIL = 500;
+/**
+ * How often a remote that answered with no host is probed again, so a host started there some
+ * other way (a service manager, `remote-host start`, a reboot) shows up without a click.
+ */
+export const MIRROR_REPROBE_INTERVAL_MS = 15 * 60_000;
 
 export interface PeerMirrorServiceDeps {
 	/** The stored SSH remotes. Read on every reconcile; nothing is cached. */
@@ -92,6 +102,8 @@ export interface PeerMirrorServiceDeps {
 	/** Test seam for the turn coalescing timer. */
 	setTimer?(callback: () => void, ms: number): unknown;
 	clearTimer?(handle: unknown): void;
+	/** Re-probe interval for remotes with no host. Default `MIRROR_REPROBE_INTERVAL_MS`; 0 turns it off. */
+	reprobeIntervalMs?: number;
 }
 
 /** What `snapshot()` answers: every peer with its agents and live turns. */
@@ -151,6 +163,7 @@ export class PeerMirrorService {
 	 */
 	private readonly historyCache = new Map<string, Promise<HistoryEntry[]>>();
 	private unwatchRemotes: (() => void) | null = null;
+	private reprobeTimer: ReturnType<typeof setTimeout> | null = null;
 	private started = false;
 	private stopped = false;
 
@@ -165,6 +178,7 @@ export class PeerMirrorService {
 		this.started = true;
 		this.unwatchRemotes = this.deps.watchRemotes?.(() => this.reconcile()) ?? null;
 		this.reconcile();
+		this.scheduleReprobe();
 	}
 
 	/**
@@ -382,10 +396,36 @@ export class PeerMirrorService {
 		}
 	}
 
+	/**
+	 * Run `task` in the one SSH queue, after every dial queued before it and before any queued after
+	 * it, so a call that opens its own ssh (installing or starting a host) never dials beside a probe.
+	 */
+	exclusive<T>(task: () => Promise<T>): Promise<T> {
+		const run = this.queue.then(task);
+		this.queue = run.then(
+			() => undefined,
+			() => undefined
+		);
+		return run;
+	}
+
+	/** `reconnect()` by SSH remote id: the peer on that remote, probed again now. */
+	async reconnectRemote(remoteId: string): Promise<PeerReconnectResult> {
+		const entry = this.entries.get(remoteId);
+		if (!entry) {
+			return { ok: false, error: `SSH remote ${remoteId} is not a Federation peer.` };
+		}
+		return this.reconnect(entry.state.peerId);
+	}
+
 	/** Close every client, drop every forward, forget everything, and tell every window. */
 	async stop(): Promise<void> {
 		if (this.stopped) return;
 		this.stopped = true;
+		if (this.reprobeTimer !== null) {
+			clearTimeout(this.reprobeTimer);
+			this.reprobeTimer = null;
+		}
 		this.unwatchRemotes?.();
 		this.unwatchRemotes = null;
 		if (this.turnTimer !== null) {
@@ -405,6 +445,28 @@ export class PeerMirrorService {
 	}
 
 	// -------------------------------------------------------------------------
+
+	/** Probe again, in the one queue, every remote that answered with no host or was unreachable. */
+	private reprobeIdle(): void {
+		if (!this.started || this.stopped) return;
+		for (const entry of this.entries.values()) {
+			const { connection } = entry.state;
+			if (entry.connection) continue;
+			if (connection === 'connecting' || connection === 'connected') continue;
+			void this.enqueue(entry.remote.id, () => this.reload(entry));
+		}
+	}
+
+	private scheduleReprobe(): void {
+		const interval = this.deps.reprobeIntervalMs ?? MIRROR_REPROBE_INTERVAL_MS;
+		if (interval <= 0 || this.stopped) return;
+		this.reprobeTimer = setTimeout(() => {
+			this.reprobeTimer = null;
+			this.reprobeIdle();
+			this.scheduleReprobe();
+		}, interval);
+		this.reprobeTimer.unref?.();
+	}
 
 	private entryForPeer(peerId: string): PeerEntry {
 		for (const entry of this.entries.values()) {

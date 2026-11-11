@@ -14,11 +14,6 @@ vi.mock('../../../cli/services/storage', () => ({
 	resolveSshRemoteId: vi.fn((id: string) => id),
 }));
 
-// The Federation Encore Feature flag
-vi.mock('../../../cli/utils/encore-gate', () => ({
-	isEncoreEnabled: vi.fn(() => false),
-}));
-
 // Mock formatter
 vi.mock('../../../cli/output/formatter', () => ({
 	formatError: vi.fn((msg) => `Error: ${msg}`),
@@ -33,7 +28,6 @@ import {
 	resolveSshRemoteId,
 } from '../../../cli/services/storage';
 import { formatError } from '../../../cli/output/formatter';
-import { isEncoreEnabled } from '../../../cli/utils/encore-gate';
 
 const mockRemote = (overrides: Partial<SshRemoteConfig> = {}): SshRemoteConfig => ({
 	id: 'remote-1',
@@ -63,7 +57,6 @@ describe('update-ssh-remote command', () => {
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 		vi.mocked(readSshRemotes).mockReturnValue([mockRemote()]);
 		vi.mocked(resolveSshRemoteId).mockImplementation((id: string) => id);
-		vi.mocked(isEncoreEnabled).mockReturnValue(false);
 	});
 
 	describe('field updates', () => {
@@ -337,23 +330,22 @@ describe('update-ssh-remote command', () => {
 			});
 		});
 
-		it('turns federation on, and off again without leaving a field behind', () => {
-			updateSshRemote('remote-1', { federation: 'on' });
-			expect(written().federation).toBe(true);
+		it('stores the opt-out for --federation off, and clears it again for on', () => {
+			updateSshRemote('remote-1', { federation: 'off' });
+			expect(written().federation).toBe(false);
 
 			vi.mocked(writeSshRemotes).mockClear();
-			vi.mocked(readSshRemotes).mockReturnValue([mockRemote({ federation: true })]);
-			updateSshRemote('remote-1', { federation: 'off' });
+			vi.mocked(readSshRemotes).mockReturnValue([mockRemote({ federation: false })]);
+			updateSshRemote('remote-1', { federation: 'on' });
 			expect(written().federation).toBeUndefined();
-			expect(written()).not.toHaveProperty('federation', false);
 		});
 
-		it('keeps an existing federation opt-in when --federation is not passed', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([mockRemote({ federation: true })]);
+		it('keeps an existing opt-out when --federation is not passed', () => {
+			vi.mocked(readSshRemotes).mockReturnValue([mockRemote({ federation: false })]);
 
 			updateSshRemote('remote-1', { name: 'Renamed' });
 
-			expect(written()).toMatchObject({ name: 'Renamed', federation: true });
+			expect(written()).toMatchObject({ name: 'Renamed', federation: false });
 		});
 
 		it('rejects a --federation value that is not on or off', () => {
@@ -363,15 +355,15 @@ describe('update-ssh-remote command', () => {
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 
-		it('reports federation in JSON only while the Encore Feature is on', () => {
-			vi.mocked(readSshRemotes).mockReturnValue([mockRemote({ federation: true })]);
-			updateSshRemote('remote-1', { json: true });
-			expect(JSON.parse(consoleSpy.mock.calls[0][0])).not.toHaveProperty('federation');
-
-			vi.mocked(isEncoreEnabled).mockReturnValue(true);
-			consoleSpy.mockClear();
+		it('reports federation in JSON: on unless the remote opted out', () => {
+			vi.mocked(readSshRemotes).mockReturnValue([mockRemote()]);
 			updateSshRemote('remote-1', { json: true });
 			expect(JSON.parse(consoleSpy.mock.calls[0][0]).federation).toBe(true);
+
+			vi.mocked(readSshRemotes).mockReturnValue([mockRemote({ federation: false })]);
+			consoleSpy.mockClear();
+			updateSshRemote('remote-1', { json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).federation).toBe(false);
 		});
 
 		it('reports a failure as JSON when --json is set', () => {

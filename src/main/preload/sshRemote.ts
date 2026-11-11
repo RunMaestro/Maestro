@@ -31,7 +31,7 @@ export interface SshRemoteConfig {
 	useSshConfig?: boolean;
 	/** Original SSH config Host pattern if imported from ~/.ssh/config */
 	sshConfigHost?: string;
-	/** Opted in to Federation; see `SshRemoteConfig.federation` in `src/shared/types.ts` */
+	/** `false` opts the remote out of Federation; see `SshRemoteConfig.federation` in `src/shared/types.ts` */
 	federation?: boolean;
 }
 

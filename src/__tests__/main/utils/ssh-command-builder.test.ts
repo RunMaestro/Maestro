@@ -1111,6 +1111,10 @@ describe('ssh-command-builder', () => {
 			expect(result.stdinScript).toContain('export PATH=');
 			// Common install locations (regression coverage for issue #878)
 			expect(result.stdinScript).toContain('$HOME/.local/bin');
+			// The Federation-installed maestro-cli leads PATH, after the version managers.
+			const lines = result.stdinScript?.split('\n') ?? [];
+			const install = lines.indexOf('export PATH="$HOME/.maestro/bin:$PATH"');
+			expect(install).toBeGreaterThan(lines.findIndex((line) => line.includes('_nvm_dir')));
 			expect(result.stdinScript).toContain('$HOME/.opencode/bin');
 			expect(result.stdinScript).toContain('$HOME/.claude/local');
 			expect(result.stdinScript).toContain('$HOME/go/bin');
@@ -1686,6 +1690,11 @@ describe('ssh-command-builder', () => {
 			const wrapped = wrapRemoteCommandWithPath('maestro-cli --version');
 			expect(wrapped.startsWith("/bin/bash --norc --noprofile -c '")).toBe(true);
 			expect(wrapped).toContain('$HOME/.local/bin');
+			// The maestro-cli `remote-host install` puts there is prepended after the version managers,
+			// so it stays first, ahead of an older copy any of them adds.
+			expect(wrapped.indexOf('export PATH="$HOME/.maestro/bin:$PATH"')).toBeGreaterThan(
+				wrapped.indexOf('_nvm_dir')
+			);
 			expect(wrapped).toContain('_nvm_dir');
 			expect(wrapped.endsWith("; maestro-cli --version'")).toBe(true);
 		});

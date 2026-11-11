@@ -165,7 +165,11 @@ function fakeHost(remoteId: string, options: { manualReady?: boolean } = {}): Fa
 	};
 }
 
-function harness(remotes: SshRemoteConfig[], hosts: Record<string, FakeHost>) {
+function harness(
+	remotes: SshRemoteConfig[],
+	hosts: Record<string, FakeHost>,
+	extra: Partial<PeerMirrorServiceDeps> = {}
+) {
 	const pushes: MirrorPush[] = [];
 	const timers: Array<() => void> = [];
 	let remotesNow = remotes;
@@ -195,6 +199,7 @@ function harness(remotes: SshRemoteConfig[], hosts: Record<string, FakeHost>) {
 			return timers.length;
 		},
 		clearTimer: () => undefined,
+		...extra,
 	};
 	const service = new PeerMirrorService(deps);
 	return {
@@ -212,15 +217,22 @@ function harness(remotes: SshRemoteConfig[], hosts: Record<string, FakeHost>) {
 }
 
 describe('PeerMirrorService', () => {
-	it('mirrors only opted-in remotes and connects them strictly one after another', async () => {
+	it('probes every remote except one that opted out, strictly one after another', async () => {
 		const a = fakeHost('a', { manualReady: true });
 		const b = fakeHost('b', { manualReady: true });
 		const off = fakeHost('off');
-		const h = harness([remoteOf('a'), remoteOf('off', { federation: false }), remoteOf('b')], {
-			a,
-			b,
-			off,
-		});
+		const h = harness(
+			[
+				remoteOf('a'),
+				remoteOf('off', { federation: false }),
+				remoteOf('b', { federation: undefined }),
+			],
+			{
+				a,
+				b,
+				off,
+			}
+		);
 		h.service.start();
 		await settle();
 		// a is dialing; b has not been touched yet.
@@ -733,6 +745,69 @@ describe('PeerMirrorService', () => {
 			const lost = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'x' });
 			expect(lost).toMatchObject({ ok: false, unknown: true });
 			expect(lost.ok ? '' : lost.error).toContain('The connection to peer "a" dropped');
+		});
+	});
+
+	describe('opportunistic probing', () => {
+		it('probes a remote with no host again on the slow re-probe, and leaves a connected one alone', async () => {
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			try {
+				const a = fakeHost('a', { manualReady: true });
+				const b = fakeHost('b');
+				const h = harness([remoteOf('a'), remoteOf('b')], { a, b }, { reprobeIntervalMs: 1000 });
+				h.service.start();
+				await settle();
+				a.fail(new SshForwardError('not-installed', 'Install maestro-cli.'));
+				await settle();
+				expect(h.service.peers().map((p) => p.connection)).toEqual(['not-installed', 'connected']);
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(2);
+
+				vi.advanceTimersByTime(1000);
+				await settle();
+				// Only the remote with no host was dialed again.
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(3);
+				expect(vi.mocked(h.deps.acquireForward).mock.calls[2][0].id).toBe('a');
+
+				await h.service.stop();
+				vi.advanceTimersByTime(5000);
+				await settle();
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(3);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('runs an exclusive task after the dials queued before it, never beside one', async () => {
+			const a = fakeHost('a', { manualReady: true });
+			const h = harness([remoteOf('a')], { a }, { reprobeIntervalMs: 0 });
+			h.service.start();
+			const order: string[] = [];
+			const task = h.service.exclusive(async () => {
+				order.push(`task while ${h.service.peers()[0].connection}`);
+				return 42;
+			});
+			await settle();
+			expect(order).toEqual([]);
+			a.open();
+			expect(await task).toBe(42);
+			expect(order).toEqual(['task while connected']);
+			// A failing task does not wedge the queue.
+			await expect(
+				h.service.exclusive(async () => Promise.reject(new Error('boom')))
+			).rejects.toThrow('boom');
+			expect(await h.service.exclusive(async () => 'next')).toBe('next');
+		});
+
+		it('reconnects by SSH remote id, and names a remote it does not mirror', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a }, { reprobeIntervalMs: 0 });
+			h.service.start();
+			await settle();
+			expect(await h.service.reconnectRemote('a')).toMatchObject({ ok: true });
+			expect(await h.service.reconnectRemote('nope')).toEqual({
+				ok: false,
+				error: 'SSH remote nope is not a Federation peer.',
+			});
 		});
 	});
 

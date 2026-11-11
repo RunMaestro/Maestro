@@ -79,7 +79,7 @@ import { createComputerHistoryForApp } from './computer-history/bootstrap';
 import { getMaestroRunService } from './maestro-run';
 import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { createDataviewSupervisorHooks } from './dataview/dataview-service';
-import { createFederationSupervisorHooks, getPeerMirrorService } from './federation';
+import { createFederationRuntime, getPeerMirrorService } from './federation';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { PluginToolRunProofFiles } from './plugins/plugin-tool-run-proof-file';
@@ -1981,14 +1981,6 @@ app
 				reconcile: () => void startCoworkingService(() => processManager),
 				stopAll: () => void stopCoworkingService(),
 			},
-			// Federation: the read-only peer mirror (FED-SSH-05). One SSH forward and
-			// one host client per opted-in remote, dialed one after another, held in
-			// memory only. Off = no service, no store listener, no ssh.
-			federation: createFederationSupervisorHooks({
-				readRemotes: () => (store.get('sshRemotes', []) ?? []) as SshRemoteConfig[],
-				watchRemotes: (onChange) => store.onDidChange('sshRemotes', () => onChange()),
-				safeSend,
-			}),
 			// OpenCode serve: the shared server spawns lazily on the first OpenCode
 			// turn, so there is nothing to start. Off tears down every server.
 			opencodeServer: {
@@ -3864,8 +3856,15 @@ app
 		const bootEncoreFeatures = store.get('encoreFeatures');
 		encoreLifecycle.startIfEnabled('pianola', bootEncoreFeatures);
 		encoreLifecycle.startIfEnabled('plugins', bootEncoreFeatures);
-		// Federation's peer mirror dials only remotes with their own `federation` flag on.
-		encoreLifecycle.startIfEnabled('federation', bootEncoreFeatures);
+		// Federation is opportunistic and always on: the peer mirror probes each enabled SSH
+		// remote that has not opted out, one at a time, and mirrors the ones that run a host.
+		const federation = createFederationRuntime({
+			readRemotes: () => (store.get('sshRemotes', []) ?? []) as SshRemoteConfig[],
+			watchRemotes: (onChange) => store.onDidChange('sshRemotes', () => onChange()),
+			safeSend,
+		});
+		federation.start();
+		app.on('will-quit', () => federation.stop());
 
 		// Install the application menu (File / Edit / View / Window on macOS,
 		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the

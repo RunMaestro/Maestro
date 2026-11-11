@@ -1,6 +1,6 @@
 /**
  * Tests for the Federation peer mirror IPC (`federation:*`): what each channel answers while the
- * Federation Encore Feature is off (no service), and the pass-throughs and argument checks while
+ * peer mirror is not running yet (no service), and the pass-throughs and argument checks while
  * it is on, including `federation:act`, the input path to a mirrored agent, and `federation:lift`,
  * Move to Host (FED-SSH-06).
  */
@@ -10,6 +10,10 @@ import { ipcMain } from 'electron';
 
 vi.mock('electron', () => ({
 	ipcMain: { handle: vi.fn() },
+	app: { getVersion: () => '1.0.0' },
+}));
+vi.mock('../../../../main/maestro-cli-manager', () => ({
+	resolveBundledCliPathSync: () => null,
 }));
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -30,7 +34,7 @@ vi.mock('../../../../main/utils/agent-busy', () => ({
 
 import { registerFederationHandlers } from '../../../../main/ipc/handlers/federation';
 import { setPeerMirrorServiceForTests, type PeerMirrorService } from '../../../../main/federation';
-import { encoreDisabledMessage } from '../../../../shared/encoreFeatureDefaults';
+import { FEDERATION_NOT_RUNNING_MESSAGE } from '../../../../shared/federationCommands';
 import type { AgentRecord } from '../../../../shared/maestro-lib/store/records';
 
 const liftableAgent: AgentRecord = {
@@ -112,7 +116,7 @@ describe('federation IPC handlers', () => {
 		});
 	});
 
-	it('registers the ten federation channels', () => {
+	it('registers the eleven federation channels', () => {
 		expect([...handlers.keys()].sort()).toEqual([
 			'federation:act',
 			'federation:historyGraph',
@@ -121,15 +125,16 @@ describe('federation IPC handlers', () => {
 			'federation:lift',
 			'federation:peers',
 			'federation:reconnect',
+			'federation:setupHost',
 			'federation:snapshot',
 			'federation:status',
 			'federation:transcript',
 		]);
 	});
 
-	describe('while the Federation Encore Feature is off', () => {
+	describe('while the peer mirror is not running', () => {
 		it('answers disabled and empty, and refuses the calls that need a peer', async () => {
-			const off = encoreDisabledMessage('federation');
+			const off = FEDERATION_NOT_RUNNING_MESSAGE;
 			expect(await call('federation:status')).toEqual({ enabled: false });
 			expect(await call('federation:peers')).toEqual([]);
 			expect(await call('federation:snapshot')).toEqual({ peers: [] });
@@ -141,7 +146,12 @@ describe('federation IPC handlers', () => {
 			});
 			expect(await call('federation:lift', 'agent-1', { dryRun: true })).toEqual({
 				ok: false,
-				code: 'PEER_ENCORE_OFF',
+				code: 'FEDERATION_NOT_RUNNING',
+				error: off,
+			});
+			expect(await call('federation:setupHost', 'remote-1', {})).toEqual({
+				ok: false,
+				code: 'FEDERATION_NOT_RUNNING',
 				error: off,
 			});
 			await expect(call('federation:historyPage', 'a', 'x', {})).rejects.toThrow(off);

@@ -63,7 +63,7 @@ export interface MirrorTranscriptSlot {
 }
 
 export interface PeerMirrorData {
-	/** The Federation Encore Feature is on and this window follows the mirror. */
+	/** This window loaded the mirror snapshot and follows its pushes. */
 	enabled: boolean;
 	/** Peer ids in stored order. */
 	order: string[];

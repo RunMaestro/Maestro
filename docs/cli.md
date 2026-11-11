@@ -2280,7 +2280,7 @@ Reports the host's pid, uptime, version, the holder of the data directory's lock
 
 ### `host endpoint`
 
-Prints the endpoint of the host serving the data directory, for [Federation](/federation) over SSH: a laptop runs `maestro-cli host endpoint --json` on the remote through the SSH remote it already has, and SSH is the authentication. With `--json` it prints `{running, port, token, cliSecret, version, pid}`, or `{running: false}` with exit code `3` when no host is running. Without `--json` it prints the pid, port and version only: the token and the CLI secret never reach a terminal or a log. On macOS and Linux it refuses, and prints neither, when the discovery file (`cli-server.json`) can be read by any user but its owner. The verb is listed in `--help` only while Federation is on.
+Prints the endpoint of the host serving the data directory, for [Federation](/federation) over SSH: a laptop runs `maestro-cli host endpoint --json` on the remote through the SSH remote it already has, and SSH is the authentication. With `--json` it prints `{running, port, token, cliSecret, version, pid}`, or `{running: false}` with exit code `3` when no host is running. Without `--json` it prints the pid, port and version only: the token and the CLI secret never reach a terminal or a log. On macOS and Linux it refuses, and prints neither, when the discovery file (`cli-server.json`) can be read by any user but its owner.
 
 | Flag                | Description                                       | Default                       |
 | ------------------- | ------------------------------------------------- | ----------------------------- |
@@ -2300,14 +2300,39 @@ Asks the host to stop and waits for its process to exit. With work in flight (a 
 | `--force`           | Stop even with work in flight. A running Auto Run records how it ended first                                                                                       | -                             |
 | `--json`            | Output as JSON (for scripting)                                                                                                                                     | -                             |
 
-### `remote-host status` and `remote-host start`
+### `remote-host install`, `remote-host status`, and `remote-host start`
 
-Check, and start, the `maestro-cli host` on an SSH remote, for [Federation](/federation) over SSH. Both verbs belong to the Federation Encore Feature and are refused while it is off. Both refuse an SSH remote that is not opted in (`update-ssh-remote <id> --federation on`): Maestro never dials a remote without that flag. The `<ssh-remote>` argument is the remote's name or its ID (a unique prefix works).
+Install, check, and start the `maestro-cli host` on an SSH remote, for [Federation](/federation) over SSH. Federation is opportunistic: every SSH remote takes part unless it opted out with `update-ssh-remote <id> --federation off`, and these verbs refuse a remote that opted out. The `<ssh-remote>` argument is the remote's name or its ID (a unique prefix works).
+
+`remote-host install` copies this machine's `maestro-cli` to the remote over one SSH call, as the SSH user, and installs it under `~/.maestro`. The same version runs on both sides, so there is no version skew. The bundle is plain JavaScript; what differs per platform is Node.js and the SQLite module, and the remote picks both for its own OS and CPU:
+
+| On the remote             | What it uses                                                                                                                             |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Operating system          | Linux, macOS, or Windows through Git Bash or WSL (the same POSIX shell an SSH agent needs there)                                         |
+| CPU                       | x64 or arm64                                                                                                                             |
+| Node.js                   | Its own Node.js 22 or newer when it has one, else Node.js 24 from nodejs.org, checked against its SHA-256 list                           |
+| SQLite (`better-sqlite3`) | Installed with npm for that Node.js. A prebuilt binary when one exists, else built from source (needs python3, make, and a C++ compiler) |
+
+The new install is staged next to the old one and swapped in only once SQLite loads and the CLI runs, so a failed install leaves the old one working. A second run with the same version does nothing; an older install is upgraded; a newer one is left alone. `~/.maestro/bin` comes first on the PATH every SSH spawn gets, so the installed CLI wins over an older copy.
+
+| Flag                  | Description                                                                                                                                                                               | Default |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--start`             | Start the host once the CLI is in place. A desktop app that runs on the remote tells it, too                                                                                              | -       |
+| `--force`             | Install even when the remote has a `maestro-cli` Maestro did not install (Maestro.app, the server bundle). Maestro's copy then takes precedence; the other one is not touched             | -       |
+| `--restart`           | Replace a running host on an older version: stop it with `host stop --wait` (work in flight finishes first), upgrade, start it again. Without it, the install refuses with `host-running` | -       |
+| `--timeout <seconds>` | Give up on the install after this many seconds                                                                                                                                            | `600`   |
+| `--json`              | Output as JSON (for scripting), with the `cli` action (`installed`, `upgraded`, `current`, `newer`), the platform, the Node.js version and where it came from, and the start result       | -       |
+
+```bash
+maestro-cli remote-host install build-box --start
+maestro-cli remote-host install build-box --restart   # upgrade a running host
+```
+
+A refusal names its cause and the fix, with a `code` in `--json`: `unsupported-os`, `unsupported-arch`, `foreign-cli`, `host-running`, `node-download` (the remote cannot reach nodejs.org and has no Node.js 22+), `sqlite-install`, and so on. It never asks for sudo and runs only as the SSH user, and nothing outside `~/.maestro` is written: npm's cache goes to `~/.maestro/npm-cache` too. The launcher finds Node.js each time it runs (Maestro's own copy, then the one used at install time, then `node` on PATH), and an install whose launcher no longer runs is replaced by `remote-host install --force` (the desktop offers **Reinstall maestro-cli**). The new launcher is written before the swap, and the old install comes back if either step fails.
 
 `remote-host status` makes one SSH call and reports whether Maestro is installed on the remote (with the fix when it is not), whether a host is running there (its pid, its port on the remote's loopback and its version), and the version skew against this CLI: `none`, `remote-older`, `remote-newer` or `unknown`. It exits `0` with a running host and `3` when no host runs or Maestro is not installed. `remote-host start` runs `maestro-cli host start` on the remote, as the SSH user, when no host is running there, then reports status the same way. It does nothing when a host already runs. The SSH calls run one after the other, never at the same time. Neither verb prints the host's token or CLI secret, with or without `--json`. A timeout exits `5`, and a remote CLI too old to know `host endpoint` exits `4`.
 
 ```bash
-maestro-cli update-ssh-remote 3f2a --federation on   # takes the remote's ID
 maestro-cli remote-host status build-box
 maestro-cli remote-host start build-box --json
 ```
@@ -2319,9 +2344,9 @@ maestro-cli remote-host start build-box --json
 
 ### Agents on a Peer
 
-A peer is an SSH remote that is opted in to Federation and runs a `maestro-cli host`. Its peer name is the remote's name, or the remote's ID when two remotes share a name. `list agents --peer <name>` reads the agents from that host over the SSH forward and prints them with the peer name beside each row. Each ID line reads `peer:agent-id`, the form other verbs take as a target. `list agents --all-peers` prints the local agents, then the agents on every enabled SSH remote opted in to Federation. It visits the peers one after another, never at the same time. With `--json` each row has a `peer` field: the peer name, or `null` for a local agent in an `--all-peers` list.
+A peer is an SSH remote that runs a `maestro-cli host` (and has not opted out of Federation). Its peer name is the remote's name, or the remote's ID when two remotes share a name. `list agents --peer <name>` reads the agents from that host over the SSH forward and prints them with the peer name beside each row. Each ID line reads `peer:agent-id`, the form other verbs take as a target. `list agents --all-peers` prints the local agents, then the agents on every enabled SSH remote that has not opted out of Federation. It visits the peers one after another, never at the same time. With `--json` each row has a `peer` field: the peer name, or `null` for a local agent in an `--all-peers` list.
 
-The host is the only record of its agents: Maestro reads them fresh every time and never writes them to the local agent store. A peer that cannot be reached is an error that names the fix (`maestro-cli remote-host start <peer>` when no host runs). `--all-peers` lists the peers it reaches first, then reports each peer it could not reach on stderr and exits with that failure's code (`3` when a host is down). Both flags belong to the Federation Encore Feature, are left out of `--help` while it is off, and are refused if passed then. Neither combines with `--group`, which filters local agents.
+The host is the only record of its agents: Maestro reads them fresh every time and never writes them to the local agent store. A peer that cannot be reached is an error that names the fix (`maestro-cli remote-host start <peer>` when no host runs). `--all-peers` lists the peers it reaches first, then reports each peer it could not reach on stderr and exits with that failure's code (`3` when a host is down). Neither flag combines with `--group`, which filters local agents.
 
 These verbs take a `peer:agent` target (an agent ID, ID prefix, or name after the first colon) and act on the host's agent. Each prints what it prints for a local agent, plus a `peer` field in its JSON:
 
@@ -2348,7 +2373,7 @@ maestro-cli queue remove <item-id> --agent build-box:docs
 | `tab new`, `tab rename`, `tab star`, `tab unstar`          | With `--agent <peer:agent>`, open, rename, star or unstar a tab of the host's agent. `<tab-id>` is an ID, a unique prefix, or `active`, matched against the host's tabs. `tab new --prompt` is refused: open the tab, then `send`, or use `dispatch`.                                                                                               |
 | `queue list`, `queue remove`, `queue hold`, `queue resume` | With `--agent <peer:agent>`, read or change the messages waiting in the host's queue for that agent. `queue list` prints the local shape plus `peer`, with `sessionId` set to the `peer:agent` target. A message that already started is `ITEM_NOT_FOUND`, as it is locally. `queue merge` and `queue steer` are refused (`PEER_UNSUPPORTED_VERB`). |
 
-`send`, `interrupt`, the tab verbs, and the queue verbs run the same shared action as the desktop's mirrored agent (its composer, Stop, the tab controls beside its tab strip, and its queued cards), so a script and the desktop reach the host the same way. Nothing is queued or retried on this machine. A peer that is down, or a forward that is dead, exits non-zero with a `PEER_*` code (`PEER_HOST_DOWN` exits `3`). If the forward drops while `send` waits, the turn keeps running on the host: `send` exits `3` with `PEER_CONNECTION_LOST`, the tab ID, and the command that shows the tab (`maestro-cli show agent <peer>:<agent>`). With Federation off, a target with a colon is an ordinary local agent ID or name.
+`send`, `interrupt`, the tab verbs, and the queue verbs run the same shared action as the desktop's mirrored agent (its composer, Stop, the tab controls beside its tab strip, and its queued cards), so a script and the desktop reach the host the same way. Nothing is queued or retried on this machine. A peer that is down, or a forward that is dead, exits non-zero with a `PEER_*` code (`PEER_HOST_DOWN` exits `3`). If the forward drops while `send` waits, the turn keeps running on the host: `send` exits `3` with `PEER_CONNECTION_LOST`, the tab ID, and the command that shows the tab (`maestro-cli show agent <peer>:<agent>`). A colon target that names a local agent (a name like `Maestro: rc`) stays local.
 
 ### Lift an SSH Agent Onto Its Host
 
@@ -2362,12 +2387,13 @@ Before it acts, `lift` prints what moves and what stays. `--json` gives the same
 | ----------------------------------------------------- | ------------------------- |
 | The agent was already lifted                          | `LIFT_ALREADY_LIFTED`     |
 | The agent is not an SSH remote agent                  | `LIFT_NOT_SSH`            |
-| Its SSH remote is not opted in to Federation          | `PEER_FEDERATION_OFF`     |
+| Its SSH remote opted out of Federation                | `PEER_FEDERATION_OFF`     |
+| Its SSH remote is disabled                            | `LIFT_REMOTE_DISABLED`    |
 | A tab is running a turn                               | `LIFT_BUSY`               |
 | No host is running on the remote                      | `PEER_HOST_DOWN` (exit 3) |
 | A local `maestro-cli host` owns this machine's agents | `LIFT_LOCAL_HOST`         |
 
-The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. Hidden consult tabs, queued slash commands, and images in this machine's image store stay here. The verb belongs to the Federation Encore Feature.
+The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. Hidden consult tabs, queued slash commands, and images in this machine's image store stay here.
 
 ```bash
 maestro-cli lift docs --dry-run
@@ -2375,7 +2401,7 @@ maestro-cli lift docs --with-env --json
 maestro-cli send build-box:<new-agent-id> "Carry on"
 ```
 
-The desktop app runs the same lift. Right-click the agent in the Left Bar and choose **Move to Host**, or run **Move to Host** from the command palette. The action shows only while the agent's remote is a connected Federation peer. It shows the plan `--dry-run` prints, with a choice to send secret env vars, before anything moves. Afterwards the agent's row shows `on <peer>`: click it to open the agent on its host.
+The desktop app runs the same lift. Right-click the agent in the Left Bar and choose **Move to Host**, or run **Move to Host** from the command palette. The action shows while the agent's remote is a connected Federation peer. When the remote runs no host yet, the same menu offers **Make Federated**, which first runs `remote-host install --start` and then shows the lift plan. Either way the plan `--dry-run` prints, with a choice to send secret env vars, shows before anything moves. Afterwards the agent's row shows `on <peer>`: click it to open the agent on its host.
 
 ### One Host Per Data Directory
 
@@ -2405,7 +2431,7 @@ Commands that drive the desktop's window, such as opening a file or a browser ta
 
 ### Installing on a Machine With No Desktop
 
-The host is the CLI bundle, run with Node.js. On a machine without the Maestro app:
+The host is the CLI bundle, run with Node.js. For a machine you reach over SSH, `maestro-cli remote-host install <ssh-remote>` (above) does all of this from your laptop. By hand, on a machine without the Maestro app:
 
 - **Node.js 22 or newer.**
 - **The CLI bundle with its prompts**: copy `maestro-cli.js` together with the `prompts/core` directory beside it. Without the prompts the host refuses to start, because a turn would have no Maestro system prompt and an Auto Run could not run.

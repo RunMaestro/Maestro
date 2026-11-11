@@ -6,14 +6,15 @@
  * (categories, ordering, virtual grouping, window filtering, jump slots, cycling) never sees a
  * mirrored agent. Rows are deliberately NOT `SessionItem`: that row wires rename, drag to group,
  * bookmark, the agent context menu, and batch and retry state, all local-only. The shared pieces
- * are the status dot colors (`getStatusColor`) and the `MiniBadge`. A row's right-click opens a
- * two-item menu (Copy `peer:agent`, Reconnect peer); `SessionContextMenu` is never mounted for one.
+ * are the status dot colors (`getStatusColor`) and the `FederationBadge`. A row's right-click opens a
+ * short menu (Copy `peer:agent`, Reconnect peer, and Start Host while the peer is down); `SessionContextMenu` is never mounted for one.
  *
- * Renders nothing while the Federation Encore Feature is off or no peer is mirrored.
+ * Renders nothing while no peer runs a host. A remote Federation probed without finding a host
+ * (`isPeerFederated()` false) is a plain SSH remote and gets no group here.
  */
 
 import { memo, useCallback, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, Copy, Network, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy, Network, Play, RefreshCw } from 'lucide-react';
 import { mirrorKey, type MirroredPeer } from '../../../shared/maestro-lib/client/peer-mirror';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
@@ -23,15 +24,17 @@ import { useEventListener } from '../../hooks/utils/useEventListener';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { copyPeerAgentRef, reconnectPeer } from '../../services/peerMirror';
+import { startPeerHost } from '../../services/agentLift';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 import {
 	isPeerDisconnected,
+	isPeerFederated,
 	mirroredAgentState,
 	peerConnectionDotState,
 	peerConnectionLabel,
 } from '../../utils/peerMirrorView';
 import { getStatusColor } from '../../utils/theme';
-import { MiniBadge } from '../ui/MiniBadge';
+import { FederationBadge } from './FederationBadge';
 
 interface MenuTarget {
 	x: number;
@@ -60,6 +63,8 @@ function PeerMenu({
 	);
 	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, target.x, target.y);
 	const { peerId, agentId } = target;
+	const peer = usePeerMirrorStore((s) => s.peers[peerId]);
+	const canStartHost = peer !== undefined && isPeerDisconnected(peer);
 	const itemClass =
 		'w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2';
 	return (
@@ -103,6 +108,21 @@ function PeerMenu({
 				<RefreshCw className="w-3.5 h-3.5" />
 				Reconnect {peerId}
 			</button>
+			{canStartHost && (
+				<button
+					type="button"
+					className={itemClass}
+					style={{ color: theme.colors.textMain }}
+					title="Install or upgrade maestro-cli on the remote if needed, then start its host (maestro-cli remote-host install --start)"
+					onClick={() => {
+						void startPeerHost(peer.remoteId, peerId);
+						onDismiss();
+					}}
+				>
+					<Play className="w-3.5 h-3.5" />
+					Start Host on {peerId}
+				</button>
+			)}
 		</div>
 	);
 }
@@ -152,7 +172,7 @@ const MirroredAgentRow = memo(function MirroredAgentRow({
 					{getAgentDisplayName(agent.toolType)}
 				</span>
 			</span>
-			<MiniBadge label="Peer" theme={theme} title={`Runs on ${peerId}`} />
+			<FederationBadge theme={theme} mode={{ kind: 'federated', peerName: peerId }} />
 		</button>
 	);
 });
@@ -244,11 +264,15 @@ export function PeerMirrorSection({ theme }: { theme: Theme }) {
 	const [menu, setMenu] = useState<MenuTarget | null>(null);
 	const closeMenu = useCallback(() => setMenu(null), []);
 
-	if (!enabled || order.length === 0) return null;
+	const shown = order.filter((peerId) => {
+		const peer = peers[peerId];
+		return peer !== undefined && isPeerFederated(peer);
+	});
+	if (!enabled || shown.length === 0) return null;
 
 	return (
 		<div className="mt-2" data-testid="peer-mirror-section">
-			{order.map((peerId) => {
+			{shown.map((peerId) => {
 				const peer = peers[peerId];
 				if (!peer) return null;
 				return (
