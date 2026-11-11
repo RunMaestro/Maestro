@@ -172,6 +172,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => {
 		typographySnapshot: null,
 		saveTypographySnapshot: mockSaveTypographySnapshot,
 		restoreTypographySnapshot: mockRestoreTypographySnapshot,
+		// The Left Side Panel section reads the Cue flag through useSettingsValues.
+		encoreFeatures: { maestroCue: false },
 		...mockUseSettingsOverrides,
 	});
 	return { useSettings, useSettingsValues: useSettings };
