@@ -240,12 +240,12 @@ Remove playbooks for deleted sessions
 
 Send a message to an agent and get a JSON response
 
-| Option               | Description                                                                                                                                             | Default |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `-s, --session <id>` | Resume an existing agent session (for multi-turn conversations)                                                                                         | -       |
-| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)                                                                                                  | -       |
-| `-t, --tab`          | Open/focus the session tab in Maestro desktop                                                                                                           | -       |
-| `--no-system-prompt` | Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app. | -       |
+| Option               | Description                                                                                                                                                                                                                  | Default |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-s, --session <id>` | Resume a PROVIDER session id (the sessionId a previous send returned, or one from `list sessions`), not a Maestro tab id. Runs headless beside the desktop; to deliver into a live tab use `dispatch --tab <tab-id> --queue` | -       |
+| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)                                                                                                                                                                       | -       |
+| `-t, --tab`          | Open/focus the session tab in Maestro desktop                                                                                                                                                                                | -       |
+| `--no-system-prompt` | Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app.                                                                      | -       |
 
 ## `maestro-cli ask <agent-id> <question>`
 
@@ -883,33 +883,35 @@ Show recent Cue runs, newest first
 
 Create a scheduled task (or --list / --cancel / --reschedule / --pause)
 
-| Option                     | Description                                                                                           | Default |
-| -------------------------- | ----------------------------------------------------------------------------------------------------- | ------- |
-| `--in <duration>`          | One-shot: fire after a relative delay (e.g. 30s, 20m, 2h, 1d)                                         | -       |
-| `--at <timestamp>`         | One-shot: fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local)                                    | -       |
-| `--daily-at <times>`       | Repeating: comma-separated HH:MM times (e.g. 09:00,17:30)                                             | -       |
-| `--days <days>`            | Limit --daily-at to these days (e.g. mon,tue,wed,thu,fri)                                             | -       |
-| `--every <duration>`       | Repeating: fire on an interval (e.g. 30m, 2h, 1d)                                                     | -       |
-| `--list`                   | List scheduled tasks across agents                                                                    | -       |
-| `--kind <kind>`            | Filter --list by kind: once, daily, interval, all (default: all)                                      | -       |
-| `--cancel <name>`          | Cancel a scheduled task by name                                                                       | -       |
-| `--reschedule <name>`      | Change when an existing task fires (pass the timing flag too)                                         | -       |
-| `--pause <name>`           | Disable a task without deleting it                                                                    | -       |
-| `--resume <name>`          | Re-enable a paused task                                                                               | -       |
-| `-a, --agent <id-or-name>` | Target agent (required when creating; scopes other modes)                                             | -       |
-| `-p, --prompt <text>`      | Prompt to send when the task fires                                                                    | -       |
-| `--notify`                 | Show a toast notification when the task fires                                                         | -       |
-| `--sticky`                 | Make the notify toast sticky (requires --notify)                                                      | -       |
-| `-m, --message <text>`     | Body for the notify toast (defaults to label/prompt)                                                  | -       |
-| `-n, --name <name>`        | Custom subscription name (auto-generated when omitted)                                                | -       |
-| `-l, --label <text>`       | Human-readable label (defaults to truncated prompt)                                                   | -       |
-| `--pipeline <name>`        | Pipeline name (default: Tasks)                                                                        | -       |
-| `--grace-minutes <n>`      | Override the default 360-minute grace window                                                          | -       |
-| `--tier <level>`           | Model tier for the prompt run: low, medium, high (mapped per provider)                                | -       |
-| `--model <id>`             | Exact model id for the prompt run (instead of --tier)                                                 | -       |
-| `--effort <level>`         | Effort for the prompt run: low, medium, high (mapped per provider)                                    | -       |
-| `--keep-on-failure`        | Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure) | -       |
-| `--json`                   | Output as JSON (for scripting)                                                                        | -       |
+| Option                     | Description                                                                                                                                                                  | Default |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--in <duration>`          | One-shot: fire after a relative delay (e.g. 30s, 20m, 2h, 1d)                                                                                                                | -       |
+| `--at <timestamp>`         | One-shot: fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local)                                                                                                           | -       |
+| `--daily-at <times>`       | Repeating: comma-separated HH:MM times (e.g. 09:00,17:30)                                                                                                                    | -       |
+| `--days <days>`            | Limit --daily-at to these days (e.g. mon,tue,wed,thu,fri)                                                                                                                    | -       |
+| `--every <duration>`       | Repeating: fire on an interval (e.g. 30m, 2h, 1d)                                                                                                                            | -       |
+| `--list`                   | List scheduled tasks across agents                                                                                                                                           | -       |
+| `--kind <kind>`            | Filter --list by kind: once, daily, interval, all (default: all)                                                                                                             | -       |
+| `--cancel <name>`          | Cancel a scheduled task by name                                                                                                                                              | -       |
+| `--reschedule <name>`      | Change when an existing task fires (pass the timing flag too)                                                                                                                | -       |
+| `--pause <name>`           | Disable a task without deleting it                                                                                                                                           | -       |
+| `--resume <name>`          | Re-enable a paused task                                                                                                                                                      | -       |
+| `-a, --agent <id-or-name>` | Target agent (required when creating; scopes other modes)                                                                                                                    | -       |
+| `-p, --prompt <text>`      | Prompt to send when the task fires                                                                                                                                           | -       |
+| `--tab <tab-id>`           | Deliver the prompt into this existing AI tab of --agent (waits behind a busy turn, marks the tab unread, never moves the view; a closed tab falls back to a new tab + toast) | -       |
+| `--here`                   | Like --tab, for the AI tab this command runs from (an agent scheduling its own follow-up); --agent defaults to that agent                                                    | -       |
+| `--notify`                 | Show a toast notification when the task fires                                                                                                                                | -       |
+| `--sticky`                 | Make the notify toast sticky (requires --notify)                                                                                                                             | -       |
+| `-m, --message <text>`     | Body for the notify toast (defaults to label/prompt)                                                                                                                         | -       |
+| `-n, --name <name>`        | Custom subscription name (auto-generated when omitted)                                                                                                                       | -       |
+| `-l, --label <text>`       | Human-readable label (defaults to truncated prompt)                                                                                                                          | -       |
+| `--pipeline <name>`        | Pipeline name (default: Tasks)                                                                                                                                               | -       |
+| `--grace-minutes <n>`      | Override the default 360-minute grace window                                                                                                                                 | -       |
+| `--tier <level>`           | Model tier for the prompt run: low, medium, high (mapped per provider)                                                                                                       | -       |
+| `--model <id>`             | Exact model id for the prompt run (instead of --tier)                                                                                                                        | -       |
+| `--effort <level>`         | Effort for the prompt run: low, medium, high (mapped per provider)                                                                                                           | -       |
+| `--keep-on-failure`        | Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)                                                                        | -       |
+| `--json`                   | Output as JSON (for scripting)                                                                                                                                               | -       |
 
 ## `maestro-cli cue pipeline`
 

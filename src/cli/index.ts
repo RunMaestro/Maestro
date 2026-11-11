@@ -461,7 +461,10 @@ clean
 program
 	.command('send <agent-id> <message>')
 	.description('Send a message to an agent and get a JSON response')
-	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
+	.option(
+		'-s, --session <id>',
+		'Resume a PROVIDER session id (the sessionId a previous send returned, or one from `list sessions`), not a Maestro tab id. Runs headless beside the desktop; to deliver into a live tab use `dispatch --tab <tab-id> --queue`'
+	)
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
 	.option(
@@ -1187,6 +1190,14 @@ cue
 	.option('--resume <name>', 'Re-enable a paused task')
 	.option('-a, --agent <id-or-name>', 'Target agent (required when creating; scopes other modes)')
 	.option('-p, --prompt <text>', 'Prompt to send when the task fires')
+	.option(
+		'--tab <tab-id>',
+		'Deliver the prompt into this existing AI tab of --agent (waits behind a busy turn, marks the tab unread, never moves the view; a closed tab falls back to a new tab + toast)'
+	)
+	.option(
+		'--here',
+		'Like --tab, for the AI tab this command runs from (an agent scheduling its own follow-up); --agent defaults to that agent'
+	)
 	.option('--notify', 'Show a toast notification when the task fires')
 	.option('--sticky', 'Make the notify toast sticky (requires --notify)')
 	.option('-m, --message <text>', 'Body for the notify toast (defaults to label/prompt)')

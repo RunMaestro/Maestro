@@ -121,6 +121,7 @@ Targeting: with no `--tab`, `send-terminal` hits the agent's **active** terminal
 - Repeating on a clock: `cue schedule --daily-at 09:00,17:30 [--days mon,tue,wed,thu,fri]`.
 - Repeating on an interval: `cue schedule --every 30m`.
 - Always pass `--agent <id-or-name>` (the agent that will run it) and `--prompt`, `--notify`, or both.
+- Follow-up that belongs in a conversation you are in: add `--here` (or `--tab <tab-id>` for another tab of `--agent`). The prompt is delivered into that tab when it fires - it waits behind a busy turn, marks the tab unread, and never moves the user's view; a tab closed by then gets a new tab and a toast. Without it, the prompt runs as a detached Cue turn whose output lands in History, not in any tab. `--tier` / `--model` / `--effort` do not apply: the tab keeps its own model.
 - Inspect and edit: `--list [--kind once|daily|interval]`, `--reschedule <name>` plus the timing flag matching that task's kind, `--pause` / `--resume` (keeps the task, stops it firing), `--cancel <name>` (deletes it).
 
 The user sees and edits the same tasks in the app under **Maestro Cue → Scheduled Tasks** - offer `open cue --tab scheduled` after scheduling something so they know where it lives. A `--pause` is almost always the right answer to "stop doing that for now"; reach for `--cancel` only when they want it gone.

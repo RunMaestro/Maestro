@@ -132,15 +132,17 @@ On failure, `success` is `false` and an `error` field is included:
 }
 ```
 
-| Flag                 | Description                                                   |
-| -------------------- | ------------------------------------------------------------- |
-| `-s, --session <id>` | Resume an existing session instead of creating a new one      |
-| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)        |
-| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app |
+| Flag                 | Description                                                                                                                       |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `-s, --session <id>` | Resume a provider session (the `sessionId` a previous `send` returned, or one from `list sessions`) instead of creating a new one |
+| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)                                                                            |
+| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app                                                                     |
+
+`send` runs headless, beside the desktop: it never writes into a desktop tab. `--session` takes a **provider** session id, not a Maestro tab id. A tab id is refused with `SESSION_IS_TAB_ID`, and the provider session of a tab that is mid-turn is refused with `TAB_BUSY` (resuming it would put a second writer on one conversation). Both errors name the command that does what you meant: to deliver a message into a live tab, waiting behind a busy turn, use `maestro-cli dispatch <agent-id> "<message>" --tab <tab-id> --queue`.
 
 For desktop-handoff workflows (route the message through a desktop tab, return an addressable tab id, etc.) use [`maestro-cli dispatch`](#dispatching-to-a-desktop-tab) instead.
 
-Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `<AGENT>_NOT_FOUND` (e.g. `CLAUDE_CODE_NOT_FOUND`, `CODEX_NOT_FOUND`), `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`.
+Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `<AGENT>_NOT_FOUND` (e.g. `CLAUDE_CODE_NOT_FOUND`, `CODEX_NOT_FOUND`), `SESSION_IS_TAB_ID`, `TAB_BUSY`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`.
 
 Supported agent types: any installed provider - `claude-code`, `codex`, `opencode`, `factory-droid`, `copilot-cli`, `hermes`, `pi`, `qwen3-coder`, `omp`.
 
@@ -2010,7 +2012,15 @@ maestro-cli cue schedule --daily-at 09:00,17:30 --agent Neema --prompt "Sweep th
 
 # Every 30 minutes
 maestro-cli cue schedule --every 30m --agent "ODIN Market" --prompt "Poll the market feed."
+
+# Into an existing conversation: an agent scheduling its own follow-up from its tab
+maestro-cli cue schedule --at "2026-11-11 15:00" --here --prompt "Find more candidates."
+
+# Into a named tab of an agent
+maestro-cli cue schedule --in 1d --agent Pedsidian --tab 810dda7e --prompt "Check the draft again."
 ```
+
+By default a scheduled prompt runs as its own detached Cue turn, and its output lands in History and `cue activity`, not in any tab. `--tab` (or `--here`, for the tab the command runs from) delivers it into that tab instead, the same as `dispatch --tab --queue`: it waits behind a busy turn, the reply marks the tab unread, and the view never moves. If the tab was closed by the time the task fires, the prompt goes to a new tab of the agent and a toast says so. The tab keeps its own model, so `--tier`, `--model`, and `--effort` are refused with it.
 
 Inspect and edit what is scheduled:
 
@@ -2046,6 +2056,8 @@ maestro-cli cue schedule --cancel standup
 | `--cancel <name>`          | Delete a task                                                            |
 | `-a, --agent <id-or-name>` | Target agent (required when creating; scopes the other modes)            |
 | `-p, --prompt <text>`      | Prompt to send when the task fires                                       |
+| `--tab <tab-id>`           | Deliver the prompt into this AI tab of `--agent` (id or unique prefix)   |
+| `--here`                   | Deliver into the AI tab this command runs from; `--agent` defaults to it |
 | `--notify` / `--sticky`    | Also raise a toast; `--sticky` keeps it up until dismissed               |
 | `-m, --message <text>`     | Toast body (defaults to the label, then the prompt)                      |
 | `-n, --name <name>`        | Custom subscription name (auto-generated when omitted)                   |

@@ -52,6 +52,8 @@ import {
 	resolveAgentId,
 	resolveGroupId,
 	getSessionById,
+	readStoredAiTabs,
+	resolveStoredAiTabId,
 	getSessionsByGroup,
 	getConfigDirectory,
 	getSyncDir,
@@ -819,6 +821,39 @@ describe('storage service', () => {
 				expect((error as Error).message).toContain('Unknown');
 				expect((error as Error).message).toContain('Named Group');
 			}
+		});
+	});
+
+	describe('readStoredAiTabs / resolveStoredAiTabId', () => {
+		const withTabs = (tabs: Array<{ id: string; agentSessionId?: string }>) =>
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					sessions: [
+						{ ...mockSession({ id: 'agent-1' }), aiTabs: tabs },
+						{ ...mockSession({ id: 'agent-2' }), aiTabs: [{ id: 'tab-other' }] },
+					],
+				})
+			);
+
+		it("returns only the named agent's tabs, and none for an unknown agent", () => {
+			withTabs([{ id: 'tab-aaa', agentSessionId: 'prov-1' }]);
+
+			expect(readStoredAiTabs('agent-1')).toEqual([{ id: 'tab-aaa', agentSessionId: 'prov-1' }]);
+			expect(readStoredAiTabs('missing')).toEqual([]);
+		});
+
+		it('resolves an exact id, then a unique prefix, else null', () => {
+			withTabs([{ id: 'tab-aaa' }, { id: 'tab-bbb' }]);
+
+			expect(resolveStoredAiTabId('agent-1', 'tab-aaa')).toBe('tab-aaa');
+			expect(resolveStoredAiTabId('agent-1', 'tab-b')).toBe('tab-bbb');
+			expect(resolveStoredAiTabId('agent-1', 'tab-other')).toBeNull();
+		});
+
+		it('throws on an ambiguous prefix', () => {
+			withTabs([{ id: 'tab-aaa' }, { id: 'tab-abb' }]);
+
+			expect(() => resolveStoredAiTabId('agent-1', 'tab-a')).toThrow(/Ambiguous tab/);
 		});
 	});
 

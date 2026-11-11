@@ -1447,6 +1447,23 @@ app
 									templateContext,
 									timeoutMs,
 									onLog: cmdLog,
+									// The tab this message was scheduled into is gone, so it
+									// went to a new tab. Say where, so the move is not silent.
+									onTabFallback: ({ agentId, newTabId }) => {
+										emitCueNotifyToast(mainWindow, {
+											agentId,
+											title: subscriptionName,
+											color: newTabId ? 'yellow' : 'red',
+											message: newTabId
+												? 'The tab this task was scheduled into was closed, so it ran in a new tab.'
+												: 'The tab this task was scheduled into was closed, and a new tab could not be opened.',
+											clickAction: {
+												kind: 'jump-session',
+												sessionId: agentId,
+												...(newTabId ? { tabId: newTabId } : {}),
+											},
+										});
+									},
 									// CLI mode intentionally stays local: `maestro-cli send`
 									// targets the local Maestro daemon (routing messages to
 									// sessions managed by this app), so SSH wrapping would
