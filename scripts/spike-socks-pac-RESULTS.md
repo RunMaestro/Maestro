@@ -135,6 +135,14 @@ Case G adds the leading wildcard bypass and keeps that public host DIRECT, at th
 cost of also bypassing the RFC1918 samples. Cases C/D still fail to proxy localhost
 under the prescribed PAC configuration.
 
+## Current-base revalidation (2026-11-10)
+
+After rebasing onto `rc` at `2c79a9666` and installing its locked dependencies
+with `npm ci`, the installed Electron remained 41.10.7 / Chromium 146.0.7680.216
+on macOS. All 63 proxy-resolution records and all 14 fetch outcomes reproduced
+the October 11 run exactly, including the destination CONNECT logs. No timeout
+or network error occurred; the verdict and full-contract limitations are unchanged.
+
 ## Interpretation and limits
 
 The experiment now supports hostname/numeric-loopback separation. It does not
