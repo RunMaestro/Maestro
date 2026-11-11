@@ -2932,9 +2932,10 @@ Maestro has not verified a route, and the "Candidates" column is what a later ch
 against `http://127.0.0.1:1`, with a temporary `HOME` so the user's config is never touched. A
 candidate is only reported, not proven: it is not mapped until a closed port refuses the turn.
 
-| Provider | Binary | Candidates (reported, unverified)                                                                                                                                                   |
-| -------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Grok CLI | `grok` | xAI's settings reference names `GROK_XAI_API_BASE_URL` for API-key auth. Community Grok CLIs read `GROK_BASE_URL` and `--base-url`; which one the installed build reads is unknown. |
+| Provider | Binary | Candidates (reported, unverified)                                                                                                                                                                                                                                      |
+| -------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Grok CLI | `grok` | xAI's settings reference names `GROK_XAI_API_BASE_URL` for API-key auth. Community Grok CLIs read `GROK_BASE_URL` and `--base-url`; which one the installed build reads is unknown.                                                                                    |
+| Oh My Pi | `omp`  | A provider's `baseUrl` in `~/.omp/agent/models.yml` (older `models.json` is migrated to it), applied over a built-in provider. One install is reported to read `~/.oh-omp/agent/` instead. A file under `HOME` needs a per-launch config path before it can be mapped. |
 
 ## Token conservation proxy
 

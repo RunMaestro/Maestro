@@ -143,7 +143,15 @@ const GATEWAY_SUPPORT: Record<AgentId, AgentGatewaySupport> = {
 	'qwen3-coder': unknownVariable('qwen3-coder'),
 	hermes: unknownVariable('hermes'),
 	pi: unknownVariable('pi'),
-	omp: unknownVariable('omp'),
+	// Not verified (G03.3, 2026-11-11): no `omp` binary was installed where the
+	// closed-port test runs. Its docs set a provider's `baseUrl` in
+	// `~/.omp/agent/models.yml` (migrated from `models.json`), applied over the
+	// built-in providers. A file under HOME is not a per-launch setting, so a
+	// verified route there needs a per-launch config path before it can be mapped.
+	omp: notVerified(
+		'omp',
+		"It sets a provider's base URL in ~/.omp/agent/models.yml: point a provider at the gateway there."
+	),
 	// Not verified (G03.3, 2026-11-11): no `grok` binary was installed where the
 	// closed-port test runs. xAI's settings reference names
 	// `GROK_XAI_API_BASE_URL` (API-key auth); community Grok CLIs read

@@ -54,16 +54,16 @@ describe('agentGatewaySupport', () => {
 		expect(support.reason).toContain('~/.factory/settings.json');
 	});
 
-	it.each([['grok', 'Grok CLI']])(
-		'refuses %s as unverified, naming it',
-		(toolType, displayName) => {
-			const support = agentGatewaySupport(toolType);
+	it.each([
+		['grok', 'Grok CLI'],
+		['omp', 'Oh My Pi'],
+	])('refuses %s as unverified, naming it', (toolType, displayName) => {
+		const support = agentGatewaySupport(toolType);
 
-			expect(support.supported).toBe(false);
-			if (support.supported) throw new Error('expected unsupported');
-			expect(support.reason).toContain(`has not verified a gateway route for ${displayName}`);
-		}
-	);
+		expect(support.supported).toBe(false);
+		if (support.supported) throw new Error('expected unsupported');
+		expect(support.reason).toContain(`has not verified a gateway route for ${displayName}`);
+	});
 
 	it('answers for every agent id, with a reason wherever it refuses', () => {
 		for (const id of AGENT_IDS) {
