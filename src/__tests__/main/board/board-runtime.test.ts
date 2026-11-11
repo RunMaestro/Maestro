@@ -2523,28 +2523,68 @@ describe('work, linked review and explicit final human decision', () => {
 			expect(reservations()).toHaveLength(0);
 		}
 	);
-	it('refuses reassignment while the bound independent review owns a reservation', async () => {
+	it.each(['replacement', 'removal'] as const)(
+		'refuses reviewer %s while the bound independent review owns a reservation',
+		async (change) => {
+			setupWorkflow();
+			nativeService();
+			await runWork();
+			let board = storage.read(roots[0], 'board');
+			const review = board.cards[1];
+			host.reviewArtifact = await prepareBoardReviewHandoff(storage, review.reviewHandoff!);
+			const claim = claimFor(review.id, 'reviewer');
+			if (!claim.ok) throw Error(claim.reason);
+			board = storage.read(roots[0], 'board');
+			const before = persisted();
+			expect(() =>
+				storage.capture({
+					projectRoot: roots[0],
+					boardId: 'board',
+					expectedRevision: board.storage!.expectedRevision!,
+					card: {
+						...board.cards[0],
+						reviewerAgentId: change === 'replacement' ? 'foreign' : undefined,
+					},
+				})
+			).toThrow(
+				expect.objectContaining({
+					code: 'protected-field',
+					message: expect.stringContaining('Settle the active review'),
+				})
+			);
+			expect(persisted()).toBe(before);
+			expect(card().reviewerAgentId).toBe('reviewer');
+			expect(reservations()).toHaveLength(1);
+		}
+	);
+	it('allows clearing and assigning a reviewer before the queued review is reserved', async () => {
 		setupWorkflow();
 		nativeService();
 		await runWork();
 		let board = storage.read(roots[0], 'board');
-		const review = board.cards[1];
-		host.reviewArtifact = await prepareBoardReviewHandoff(storage, review.reviewHandoff!);
-		const claim = claimFor(review.id, 'reviewer');
-		if (!claim.ok) throw Error(claim.reason);
+		const original = board.cards[0];
+		const workRun = canonicalJson(db.prepare('SELECT * FROM runs').all());
+		expect(reservations()).toHaveLength(0);
+		storage.capture({
+			projectRoot: roots[0],
+			boardId: 'board',
+			expectedRevision: board.storage!.expectedRevision!,
+			card: { ...original, reviewerAgentId: undefined },
+		});
+		expect(card().reviewerAgentId).toBeUndefined();
 		board = storage.read(roots[0], 'board');
-		const before = persisted();
-		expect(() =>
-			storage.capture({
-				projectRoot: roots[0],
-				boardId: 'board',
-				expectedRevision: board.storage!.expectedRevision!,
-				card: { ...board.cards[0], reviewerAgentId: 'foreign' },
-			})
-		).toThrow('Settle the active review');
-		expect(persisted()).toBe(before);
+		storage.capture({
+			projectRoot: roots[0],
+			boardId: 'board',
+			expectedRevision: board.storage!.expectedRevision!,
+			card: { ...board.cards[0], reviewerAgentId: 'reviewer' },
+		});
 		expect(card().reviewerAgentId).toBe('reviewer');
-		expect(reservations()).toHaveLength(1);
+		expect(card().executionScope).toEqual(original.executionScope);
+		expect(card().capturePolicy).toEqual(original.capturePolicy);
+		expect(card().body).toBe(original.body);
+		expect(canonicalJson(db.prepare('SELECT * FROM runs').all())).toBe(workRun);
+		expect(reservations()).toHaveLength(0);
 	});
 	it('rechecks exact source output at the final native start after a successful review claim', async () => {
 		setupWorkflow();

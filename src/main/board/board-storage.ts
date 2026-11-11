@@ -1198,7 +1198,6 @@ export class BoardStorageFacade {
 			if (
 				original?.payload.status === 'review' &&
 				card.kind !== 'review' &&
-				card.reviewerAgentId &&
 				card.reviewerAgentId !== original.payload.reviewerAgentId
 			) {
 				const work = original.payload as unknown as BoardCard;
@@ -1210,32 +1209,34 @@ export class BoardStorageFacade {
 				)
 					throw new BoardWorkspaceStorageError(
 						'protected-field',
-						'Settle the active review before assigning another reviewer'
+						'Settle the active review before changing its reviewer'
 					);
-				const runId = work.workflow?.workRunId;
-				const attempt = this.db
-					.prepare('SELECT attempt FROM runs WHERE run_id=? AND collection_key=? AND card_id=?')
-					.get(runId ?? '', ref.collectionKey, card.id) as { attempt: number } | undefined;
-				if (
-					!runId ||
-					!attempt ||
-					!work.repositoryId ||
-					!boardReviewSourceDigest(
-						this.db,
-						{
-							...ref,
-							cardId: card.id,
-							runId,
-							attempt: attempt.attempt,
-							repositoryId: work.repositoryId,
-						},
-						card.reviewerAgentId
+				if (card.reviewerAgentId) {
+					const runId = work.workflow?.workRunId;
+					const attempt = this.db
+						.prepare('SELECT attempt FROM runs WHERE run_id=? AND collection_key=? AND card_id=?')
+						.get(runId ?? '', ref.collectionKey, card.id) as { attempt: number } | undefined;
+					if (
+						!runId ||
+						!attempt ||
+						!work.repositoryId ||
+						!boardReviewSourceDigest(
+							this.db,
+							{
+								...ref,
+								cardId: card.id,
+								runId,
+								attempt: attempt.attempt,
+								repositoryId: work.repositoryId,
+							},
+							card.reviewerAgentId
+						)
 					)
-				)
-					throw new BoardWorkspaceStorageError(
-						'protected-field',
-						'Independent review requires a different reviewer and finished native work evidence'
-					);
+						throw new BoardWorkspaceStorageError(
+							'protected-field',
+							'Independent review requires a different reviewer and finished native work evidence'
+						);
+				}
 			}
 			if (original?.archived)
 				throw new BoardWorkspaceStorageError('protected-field', 'Cannot reuse an archived card ID');
