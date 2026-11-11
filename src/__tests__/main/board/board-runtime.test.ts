@@ -2108,7 +2108,8 @@ describe('work, linked review and explicit final human decision', () => {
 	function nativeService(
 		reviewOutput = '<!-- maestro:card-complete | Diff checked; fixture checks passed -->',
 		workOutput = '<!-- maestro:card-complete | Work committed; fixture check passed -->',
-		dirtyWork = false
+		dirtyWork = false,
+		analysisOnly = false
 	) {
 		vi.mocked(service.spawn).mockImplementation(async (spec, callbacks) => {
 			if (!callbacks.canPrepare()) return { output: '', exitCode: null, executionStarted: false };
@@ -2124,7 +2125,9 @@ describe('work, linked review and explicit final human decision', () => {
 				| undefined;
 			const script = isReview
 				? `require('node:child_process').execFileSync('git', ['diff', '--check', ${JSON.stringify(handoff?.artifact.diff?.baseCommit)}, 'HEAD']); process.stdout.write(${JSON.stringify(reviewOutput)})`
-				: `
+				: analysisOnly
+					? `process.stdout.write(${JSON.stringify(workOutput)})`
+					: `
 				const fs = require('node:fs'); const cp = require('node:child_process');
 				fs.writeFileSync('work.txt', ${JSON.stringify('corrected work: ')} + ${spec.attempt});
 				require('node:assert/strict').equal(fs.readFileSync('work.txt', 'utf8'), ${JSON.stringify('corrected work: ')} + ${spec.attempt});
@@ -2321,7 +2324,11 @@ describe('work, linked review and explicit final human decision', () => {
 					reviewerAgentId: undefined,
 				},
 			});
-			nativeService();
+			const workOutput =
+				kind === 'documentation'
+					? '# Analysis\nEvidence and proposed follow-up only.\n<!-- maestro:card-review: Analysis ready for independent review -->'
+					: '<!-- maestro:card-complete | Work committed; fixture check passed -->';
+			nativeService(undefined, workOutput, false, kind === 'documentation');
 			const work = await runWork();
 			board = storage.read(roots[0], 'board');
 			const original = board.cards[0];
@@ -2342,7 +2349,12 @@ describe('work, linked review and explicit final human decision', () => {
 			expect(review.executionScope).toEqual({ kind: 'agent', agentId: 'reviewer' });
 			expect(review.capturePolicy?.grant).toBeUndefined();
 			expect(review.body).toContain(original.body);
-			expect(review.body).toContain('Work committed; fixture check passed');
+			expect(review.body).toContain(workOutput);
+			if (kind === 'documentation')
+				expect(review.reviewHandoff?.artifact.diff).toMatchObject({
+					baseCommit: review.reviewHandoff!.artifact.commit,
+					sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+				});
 			expect(review.reviewHandoff).toMatchObject({
 				runId: work.runId,
 				reviewerAgentId: 'reviewer',
