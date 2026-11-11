@@ -28,7 +28,7 @@ import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 import type { AddParticipantByAgentIdResult } from '../../shared/maestro-lib/groupchat/router';
 import { generateUUID } from '../../shared/uuid';
 import { appendToLog } from './group-chat-log';
-import { loadGroupChat } from './group-chat-storage';
+import { addGroupChatHistoryEntry, loadGroupChat } from './group-chat-storage';
 import { groupChatEmitters } from './emitters';
 import {
 	extractStageDirective,
@@ -51,6 +51,17 @@ import {
 import { createRun } from './workflow-state-machine';
 import { classifyHandoff } from './workflow-handoff';
 import { writeStageArtifact } from './workflow-artifacts';
+import { normalizeMentionName } from '../../shared/group-chat-types';
+
+const workflowStageNudges = new Map<string, { runId: string; stageId: string; count: number }>();
+const MAX_WORKFLOW_STAGE_NUDGES = 2;
+
+function nextWorkflowStageNudge(groupChatId: string, runId: string, stageId: string): number {
+	const current = workflowStageNudges.get(groupChatId);
+	const count = current?.runId === runId && current.stageId === stageId ? current.count + 1 : 1;
+	workflowStageNudges.set(groupChatId, { runId, stageId, count });
+	return count;
+}
 
 export {
 	extractMentions,
@@ -112,7 +123,7 @@ export async function abortActiveWorkflowRun(
 	reason: string
 ): Promise<ReturnType<typeof abortWorkflowRun>> {
 	const run = getWorkflowRun(groupChatId);
-	if (!run || run.status !== 'running') return undefined;
+	if (!run || (run.status !== 'running' && run.status !== 'awaiting-approval')) return undefined;
 	const aborted = abortWorkflowRun(groupChatId, reason);
 	clearPendingParticipants(groupChatId);
 	clearModeratorResponseTimeout(groupChatId);
@@ -219,6 +230,33 @@ export async function routeUserMessage(
 	routingRetry?: Parameters<typeof engine.routeUserMessage>[5]
 ): Promise<void> {
 	const currentRun = getWorkflowRun(groupChatId);
+	const planBlock = extractWorkflowPlanBlock(message);
+	if (planBlock) {
+		const chat = await loadGroupChat(groupChatId);
+		if (!chat) throw new Error(`Group chat not found: ${groupChatId}`);
+		const parsed = parseWorkflowPlan(planBlock, generateUUID());
+		if ('error' in parsed) {
+			await announceToChat(groupChatId, chat.logPath, `Workflow plan rejected: ${parsed.error}`);
+			return;
+		}
+		if (currentRun?.status === 'running') clearPendingParticipants(groupChatId);
+		workflowStageNudges.delete(groupChatId);
+		setWorkflowRun(groupChatId, createRun(parsed.plan));
+		if (currentRun?.status === 'running') {
+			await announceToChat(
+				groupChatId,
+				chat.logPath,
+				'Previous workflow superseded by a new plan; approval is required before execution resumes.'
+			);
+		}
+		await announceToChat(
+			groupChatId,
+			chat.logPath,
+			`${renderWorkflowPlanSummary(parsed.plan)}\n\nReply \`go\` to start, or tell me what to change.`
+		);
+		if (currentRun) await cleanupWorkflowRunArtifacts(groupChatId, currentRun);
+		return;
+	}
 	if (currentRun?.status === 'awaiting-approval') {
 		if (/^(?:!cancel|cancel|never mind)[.!?]*$/i.test(message.trim())) {
 			await clearWorkflowRun(groupChatId);
@@ -286,13 +324,22 @@ export async function routeModeratorResponse(
 			return;
 		}
 		const prior = getWorkflowRun(groupChatId);
-		if (prior) await cleanupWorkflowRunArtifacts(groupChatId, prior);
+		if (prior?.status === 'running') clearPendingParticipants(groupChatId);
+		workflowStageNudges.delete(groupChatId);
 		setWorkflowRun(groupChatId, createRun(parsed.plan));
+		if (prior?.status === 'running') {
+			await announceToChat(
+				groupChatId,
+				chat.logPath,
+				'Previous workflow superseded by a new plan; approval is required before execution resumes.'
+			);
+		}
 		await announceToChat(
 			groupChatId,
 			chat.logPath,
-			`${renderWorkflowPlanSummary(parsed.plan)}\n\nReply \`!go\` to approve and start this workflow, or \`!cancel\` to discard it.`
+			`${renderWorkflowPlanSummary(parsed.plan)}\n\nReply \`go\` to start, or tell me what to change.`
 		);
+		if (prior) await cleanupWorkflowRunArtifacts(groupChatId, prior);
 		return;
 	}
 
@@ -306,7 +353,14 @@ export async function routeModeratorResponse(
 				groupChatId,
 				directive.body || 'The moderator marked this stage as failed.'
 			);
-			await announceToChat(groupChatId, chat.logPath, 'Workflow stage failed.');
+			clearPendingParticipants(groupChatId);
+			await announceToChat(
+				groupChatId,
+				chat.logPath,
+				`Stage ${run.currentStageIndex + 1} of ${run.plan.stages.length} failed: ${run.plan.stages[run.currentStageIndex].name}. ${directive.body}`
+			);
+			const failed = getWorkflowRun(groupChatId);
+			if (failed) await cleanupWorkflowRunArtifacts(groupChatId, failed);
 			settleGroupChatToIdle(groupChatId);
 			return;
 		}
@@ -316,14 +370,80 @@ export async function routeModeratorResponse(
 			summary: directive.body,
 		});
 		if (advanced?.status === 'complete') {
-			await announceToChat(groupChatId, chat.logPath, 'Workflow complete.');
+			await announceToChat(
+				groupChatId,
+				chat.logPath,
+				`Workflow complete: all ${run.plan.stages.length} stages finished.`
+			);
+			await cleanupWorkflowRunArtifacts(groupChatId, advanced);
 			settleGroupChatToIdle(groupChatId);
 			return;
 		}
+		await announceToChat(
+			groupChatId,
+			chat.logPath,
+			`Stage ${run.currentStageIndex + 1} of ${run.plan.stages.length} complete: ${run.plan.stages[run.currentStageIndex].name}. Starting stage ${run.currentStageIndex + 2}: ${advanced?.plan.stages[advanced.currentStageIndex]?.name}.`
+		);
+		await addGroupChatHistoryEntry(groupChatId, {
+			timestamp: Date.now(),
+			summary: `Stage ${run.currentStageIndex + 1} of ${run.plan.stages.length} complete: ${run.plan.stages[run.currentStageIndex].name}. Starting stage ${run.currentStageIndex + 2}: ${advanced?.plan.stages[advanced.currentStageIndex]?.name}.`,
+			participantName: 'Moderator',
+			participantColor: '#808080',
+			type: 'synthesis',
+			fullResponse: directive.body,
+		});
 		if (processManager && agentDetector) {
 			await spawnModeratorSynthesis(groupChatId, processManager, agentDetector);
 		}
 		return;
+	}
+	if (run?.status === 'running') {
+		const currentStage = run.plan.stages[run.currentStageIndex];
+		const chat = await loadGroupChat(groupChatId);
+		const engaged =
+			chat?.participants
+				.filter((participant) => message.includes(`@${normalizeMentionName(participant.name)}`))
+				.map((participant) => participant.name) ?? [];
+		if (chat && engaged.length > 0) {
+			const offRoster = engaged.filter((agent) => !currentStage.agents.includes(agent));
+			if (offRoster.length > 0) {
+				await announceToChat(
+					groupChatId,
+					chat.logPath,
+					`Note: stage ${run.currentStageIndex + 1} lists ${currentStage.agents.map((agent) => `@${normalizeMentionName(agent)}`).join(', ')}, but ${offRoster.map((agent) => `@${normalizeMentionName(agent)}`).join(', ')} was engaged.`
+				);
+			}
+		}
+		if (engaged.length === 0 && !currentStage.autoRun) {
+			const retry = nextWorkflowStageNudge(groupChatId, run.plan.runId, currentStage.id);
+			if (retry <= MAX_WORKFLOW_STAGE_NUDGES && processManager && agentDetector && chat) {
+				await announceToChat(
+					groupChatId,
+					chat.logPath,
+					`Workflow stage ${run.currentStageIndex + 1} needs a moderator action. Retrying (${retry} of ${MAX_WORKFLOW_STAGE_NUDGES}): mention ${currentStage.agents.map((agent) => `@${normalizeMentionName(agent)}`).join(', ')} or emit a stage directive.`
+				);
+				await spawnModeratorSynthesis(
+					groupChatId,
+					processManager,
+					agentDetector,
+					`## Immediate Workflow Correction\nEither mention ${currentStage.agents.map((agent) => `@${normalizeMentionName(agent)}`).join(', ')} now or emit !stage-complete or !stage-failed.`
+				);
+				return;
+			}
+			if (retry > MAX_WORKFLOW_STAGE_NUDGES && chat) {
+				const reason = 'moderator-stage-guidance-exhausted';
+				abortWorkflowRun(groupChatId, reason);
+				await announceToChat(
+					groupChatId,
+					chat.logPath,
+					`Workflow aborted: the moderator produced no participant mentions or stage directive after ${MAX_WORKFLOW_STAGE_NUDGES} retries during stage ${run.currentStageIndex + 1}, ${currentStage.name}.`
+				);
+				const aborted = getWorkflowRun(groupChatId);
+				if (aborted) await cleanupWorkflowRunArtifacts(groupChatId, aborted);
+				settleGroupChatToIdle(groupChatId);
+				return;
+			}
+		}
 	}
 	await engine.routeModeratorResponse(
 		groupChatId,
@@ -375,11 +495,12 @@ export async function routeAgentResponse(
 export async function spawnModeratorSynthesis(
 	groupChatId: string,
 	processManager: IProcessManager,
-	agentDetector: AgentDetector
+	agentDetector: AgentDetector,
+	workflowCorrection?: string
 ): Promise<void> {
 	const launcher = desktopLauncherFor(processManager, agentDetector);
 	if (!launcher) throw new Error('Cannot spawn synthesis without a process manager and detector');
-	await engine.spawnModeratorSynthesis(groupChatId, launcher);
+	await engine.spawnModeratorSynthesis(groupChatId, launcher, workflowCorrection);
 }
 
 /**

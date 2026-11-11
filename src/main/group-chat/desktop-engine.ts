@@ -45,7 +45,11 @@ import {
 	buildMaestroSystemPromptForSession,
 	buildPluginSystemPromptSections,
 } from '../utils/maestro-system-prompt';
-import { getWorkflowRun } from './workflow-run-registry';
+import {
+	cleanupWorkflowRunArtifacts,
+	failWorkflowStage,
+	getWorkflowRun,
+} from './workflow-run-registry';
 import { buildCurrentStageContext, buildPlanContextBlock } from './workflow-prompt-context';
 
 // ---------------------------------------------------------------------------
@@ -169,9 +173,42 @@ export const desktopGroupChatEngine = createGroupChatEngine({
 	},
 	promptSupplement: (groupChatId) => {
 		const run = getWorkflowRun(groupChatId);
-		return run
-			? `${run.status === 'running' ? '## Approved Workflow Stage\n\n' : ''}${buildPlanContextBlock(run)}\n\n${buildCurrentStageContext(run)}`
-			: undefined;
+		if (!run) return undefined;
+		if (run.status === 'running') {
+			return `${getPrompt('group-chat-workflow-stage')}\n\n## Approved Workflow Stage\n\n${buildPlanContextBlock(run)}\n\n${buildCurrentStageContext(run)}`;
+		}
+		if (run.status === 'awaiting-approval') {
+			return `${getPrompt('group-chat-workflow-planning')}\n\n## Workflow Plan Revision\nThe user is giving feedback on the pending plan below. Do not dispatch participants. Revise the plan in response, then emit a replacement \`maestro-plan\` block and end the turn as required by the planning instructions.\n\n${buildPlanContextBlock(run)}\n\nCurrent workflow plan JSON:\n\`\`\`json\n${JSON.stringify(run.plan, null, 2)}\n\`\`\``;
+		}
+		return undefined;
+	},
+	projectHistory: (groupChatId, history) => {
+		const run = getWorkflowRun(groupChatId);
+		const workflowParticipants = new Set(
+			run?.status === 'running'
+				? run.handoffs.flatMap((handoff) =>
+						(handoff.participantHandoffs ?? []).map((response) => response.participantName)
+					)
+				: []
+		);
+		return history
+			.filter((message) => !workflowParticipants.has(message.from))
+			.slice(-30)
+			.map((message) => `[${message.from}]: ${message.content}`)
+			.join('\n');
+	},
+	onTurnTimeout: async ({ groupChatId, participantName, reason, timeoutMs }) => {
+		const run = getWorkflowRun(groupChatId);
+		if (run?.status !== 'running') return false;
+		const actor = participantName ? `Participant @${participantName}` : 'Moderator';
+		const failed = failWorkflowStage(
+			groupChatId,
+			`${actor} ${reason} after ${timeoutMs / 60000} minutes.`
+		);
+		if (failed) await cleanupWorkflowRunArtifacts(groupChatId, failed);
+		desktopGroupChatEngine.clearPendingParticipants(groupChatId);
+		desktopGroupChatEngine.settleGroupChatToIdle(groupChatId);
+		return true;
 	},
 });
 
