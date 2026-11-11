@@ -65,7 +65,7 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **Format profiling spans (ms):** `formatDuration()` in `src/shared/performance-metrics.ts` (NOT formatters.ts - common mistake).
 - **Format relative time:** `formatRelativeTime()` in `src/shared/formatters.ts`
 - **Format a calendar day:** `formatCalendarDay()` in `src/shared/formatters.ts` renders a `YYYY-MM-DD` string as `"Jul 10, 2026"`.
-- **Local calendar day keys:** `toLocalYmd()`, `parseLocalYmd()`, `addLocalDays()` in `src/shared/localDay.ts`.
+- **Local calendar day keys:** `toLocalYmd()`, `parseLocalYmd()`, `addLocalDays()`, `startOfLocalDay()` in `src/shared/localDay.ts`.
 - **Format an hour of day:** `formatHourOfDay()` in `src/shared/formatters.ts` (`13` -> `"1 PM"`).
 - **Format cost:** `formatCost()` in `src/shared/formatters.ts`
 - **Token pricing and Codex token totals:** `resolveModelPricing()` / `calculateModelCost()` in `src/shared/modelPricing.ts`, and `CodexTokenCounts` in `src/shared/codexTokenUsage.ts`.
