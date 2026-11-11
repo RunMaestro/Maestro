@@ -6568,10 +6568,14 @@ describe('useBatchProcessor hook', () => {
 			});
 		};
 
+		// Every task spawn carries its run's id so a dispatch it makes reports back.
+		const AUTO_RUN_ID = expect.stringMatching(/^autorun-/);
+
 		it('forwards config.model and config.effort to onSpawnAgent', async () => {
 			await startRun({ model: 'opus', effort: 'high' });
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				autoRunId: AUTO_RUN_ID,
 				modelOverride: 'opus',
 				effortOverride: 'high',
 			});
@@ -6581,6 +6585,7 @@ describe('useBatchProcessor hook', () => {
 			await startRun({ model: 'opus' });
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				autoRunId: AUTO_RUN_ID,
 				modelOverride: 'opus',
 			});
 		});
@@ -6589,6 +6594,7 @@ describe('useBatchProcessor hook', () => {
 			await startRun({ model: 'sonnet' }, '<!-- MAESTRO:MODEL tier="high" -->\n\n- [ ] Task');
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				autoRunId: AUTO_RUN_ID,
 				modelOverride: 'opus',
 				effortOverride: undefined,
 			});
@@ -6601,6 +6607,7 @@ describe('useBatchProcessor hook', () => {
 			);
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				autoRunId: AUTO_RUN_ID,
 				modelOverride: 'sonnet',
 				effortOverride: undefined,
 			});
@@ -6613,6 +6620,7 @@ describe('useBatchProcessor hook', () => {
 			);
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				autoRunId: AUTO_RUN_ID,
 				modelOverride: undefined,
 				effortOverride: undefined,
 			});
@@ -6626,6 +6634,7 @@ describe('useBatchProcessor hook', () => {
 			// present but empty on both axes. That is what "no override" looks like:
 			// the spawn falls through to the agent's own configured values.
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				autoRunId: AUTO_RUN_ID,
 				modelOverride: undefined,
 				effortOverride: undefined,
 			});

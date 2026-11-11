@@ -47,6 +47,18 @@ import {
 	recordSteeringResponse,
 	takeSteeringNotesForDispatch,
 } from '../../../services/autoRunSteering';
+import {
+	awaitDelegationsBeforeTurn,
+	beginAutoRunDelegations,
+	endAutoRunDelegations,
+	pendingDelegationsUpdater,
+	settleDelegationsAtRunEnd,
+	type WaitForDelegationsOptions,
+} from '../../../services/autoRunDelegations';
+import {
+	formatDelegationHistory,
+	type AutoRunDelegation,
+} from '../../../../shared/autoRunDelegation';
 import type { ErrorResolutionEntry } from './useBatchControlActions';
 import type { BatchCompleteInfo, PRResultInfo } from '../useBatchProcessor';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
@@ -589,6 +601,23 @@ export function useBatchRunner({
 				logger.warn('[BatchProcessor] Failed to start stats tracking:', undefined, statsError);
 			}
 
+			// Work tasks hand to other agents with `maestro-cli dispatch` reports back
+			// to this run: no task starts while some of it is still running, and the
+			// next task's prompt carries what came back (services/autoRunDelegations).
+			const delegationRunId = beginAutoRunDelegations();
+			// Results handed to a task that then failed (a limit pause retries it,
+			// an error moves on): the next task gets them again rather than never.
+			let carriedDelegationResults: AutoRunDelegation[] = [];
+			const delegationWait: WaitForDelegationsOptions = {
+				isStopRequested: () => stopRequestedRefs.current[sessionId] === true,
+				onPendingChange: (pending) =>
+					updateBatchStateAndBroadcastRef.current!(
+						sessionId,
+						pendingDelegationsUpdater(sessionId, pending),
+						true
+					),
+			};
+
 			// Collect Claude session IDs and track completion
 			const agentSessionIds: string[] = [];
 			let totalCompletedTasks = 0;
@@ -933,6 +962,13 @@ export function useBatchRunner({
 						// gate on a different line is treated as a fresh notification.
 						activeHitlGateLine = null;
 
+						// Work an earlier task delegated must finish before this one
+						// starts: this task may be the one that integrates it.
+						const delegated = await awaitDelegationsBeforeTurn(delegationRunId, delegationWait);
+						if (delegated.stopped) break;
+						const delegationResults = [...carriedDelegationResults, ...delegated.results];
+						carriedDelegationResults = [];
+
 						// Use extracted document processor hook for task processing
 						// This handles: template substitution, document expansion, agent spawning,
 						// session registration, re-reading document, and synopsis generation
@@ -978,6 +1014,8 @@ export function useBatchRunner({
 									sshRemoteId,
 									runOverrides,
 									steeringNotes,
+									autoRunId: delegationRunId,
+									delegationResults,
 								},
 								effectiveFilename, // Use working copy path for reset-on-completion docs
 								docCheckedCount,
@@ -989,6 +1027,7 @@ export function useBatchRunner({
 							);
 
 							progressPoll.stop();
+							if (!taskResult.success) carriedDelegationResults = delegationResults;
 
 							// Bring the task's reply back to the notes it was steered by.
 							recordSteeringResponse(sessionId, steeringNotes, {
@@ -1356,6 +1395,7 @@ export function useBatchRunner({
 							}
 						} catch (error) {
 							progressPoll.stop();
+							carriedDelegationResults = delegationResults;
 							logger.error(
 								`[BatchProcessor] Error running task in ${docEntry.filename} for session ${sessionId}:`,
 								undefined,
@@ -1600,6 +1640,23 @@ export function useBatchRunner({
 						totalTasks: newTotalTasks + prev[sessionId].completedTasks,
 					},
 				}));
+			}
+
+			// Delegated work still running after the last task is waited for, and
+			// whatever no task received is recorded, so the run's History says what
+			// its delegates did.
+			const lateDelegations = await settleDelegationsAtRunEnd(delegationRunId, delegationWait);
+			endAutoRunDelegations(delegationRunId);
+			if (lateDelegations.length > 0) {
+				void onAddHistoryEntry({
+					type: 'AUTO',
+					timestamp: Date.now(),
+					summary: `${lateDelegations.length} delegated ${lateDelegations.length === 1 ? 'task' : 'tasks'} finished after the last task`,
+					fullResponse: formatDelegationHistory(lateDelegations),
+					projectPath: effectiveCwd,
+					sessionId,
+					success: lateDelegations.every((d) => d.status === 'completed'),
+				});
 			}
 
 			// Working copy approach: no cleanup needed

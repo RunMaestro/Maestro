@@ -125,6 +125,9 @@ interface ProcessConfig {
 	 *  the spawned process env as MAESTRO_QUERY_SOURCE. Cue runs never come through
 	 *  this IPC path - they spawn in the main process and mark themselves 'cue'. */
 	querySource?: 'user' | 'auto';
+	/** The Auto Run this spawn is a task of. Stamped as MAESTRO_CALLER_AUTORUN_ID so a
+	 *  `maestro-cli dispatch` it runs reports its result back to the run. */
+	autoRunId?: string;
 	// Claude token-source selection. Normally resolved server-side from the
 	// persisted session by sessionId, but spawns using a synthetic sessionId
 	// (e.g. background synopsis) forward these inline so the handler can resolve.
@@ -3157,6 +3160,8 @@ interface MaestroAPI {
 				status: import('../shared/types').PlaybookStatus | null;
 			}) => void
 		) => () => void;
+		/** Auto Run delegation lifecycle; narrow with `parseAutoRunDelegationEvent`. */
+		onDelegation: (handler: (event: unknown) => void) => () => void;
 	};
 	// Playbooks API (saved batch run configurations)
 	playbooks: {

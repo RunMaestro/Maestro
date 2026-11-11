@@ -12,7 +12,7 @@
  */
 
 import { logger } from '../../../utils/logger';
-import { getPeerMirrorService } from '../../../federation';
+import { getAutoFederation, getPeerMirrorService } from '../../../federation';
 import { findMirrorPeer } from '../../../../shared/maestro-lib/client/peer-mirror';
 import {
 	FEDERATION_COMMAND_ACTIONS,
@@ -58,6 +58,18 @@ export async function handleFederationCommand(
 	try {
 		if (action === 'peers') {
 			reply({ success: true, peers: service.peers() });
+			return;
+		}
+		if (action === 'auto-status' || action === 'auto-run') {
+			const auto = getAutoFederation();
+			if (!auto) {
+				reply({ success: false, error: FEDERATION_NOT_RUNNING_MESSAGE });
+				return;
+			}
+			reply({
+				success: true,
+				auto: action === 'auto-run' ? await auto.runNow() : auto.snapshot(),
+			});
 			return;
 		}
 		const ref = message.peer;

@@ -8,7 +8,11 @@
 import { logger } from '../../../utils/logger';
 import { readBackgroundField } from '../../../../shared/focusPlacement';
 import { getDispatchCallbackRegistry } from '../../../dispatch-callbacks';
-import { armDispatchCallback } from './dispatchCallbacks';
+import {
+	armDispatchCallback,
+	readAutoRunCallbackRequest,
+	wantsDispatchCallback,
+} from './dispatchCallbacks';
 import { noteDispatchDelegation } from './agentDelegation';
 import { LOG_CONTEXT } from './shared';
 import { interruptTurnFailure } from '../../../../shared/turnInterrupt';
@@ -364,7 +368,9 @@ export function handleSendCommand(
 	// promise resolves, and an entry registered after that spawn would sit
 	// unarmed until it timed out. Cancelled below if the dispatch is rejected.
 	let sendCallbackId: string | undefined;
-	if (typeof message.notifyOnComplete === 'string' && message.notifyOnComplete) {
+	// An Auto Run task's dispatch is tracked the same way, but only with a tab
+	// to correlate on: without one it is handed over untracked, never refused.
+	if (wantsDispatchCallback(message) && (requestedTabId || !readAutoRunCallbackRequest(message))) {
 		if (!requestedTabId) {
 			reject('--notify-on-complete requires an explicit target tab', 'INVALID_OPTIONS');
 			return;
