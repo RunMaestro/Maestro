@@ -595,6 +595,18 @@ describe('findPartialMentionAtCursor', () => {
 		// Caret past closing quote (completed mention, not a partial trigger)
 		expect(findPartialMentionAtCursor('ask @"Alice B"', 14)).toBeNull();
 	});
+
+	it('returns null inside a Windows drive path, including at the drive letter', () => {
+		const value = '@C:/Users/x/a.md';
+		for (const caret of [2, 3, 8, value.length]) {
+			expect(findPartialMentionAtCursor(value, caret)).toBeNull();
+		}
+	});
+
+	it('still completes a bare drive-letter agent name and its colon form', () => {
+		expect(findPartialMentionAtCursor('@C', 2)).toEqual({ startIndex: 0, filter: 'C' });
+		expect(findPartialMentionAtCursor('@C:plan.md', 2)).toEqual({ startIndex: 0, filter: 'C' });
+	});
 });
 
 describe('handleComposerAgentTabKey', () => {
@@ -716,6 +728,37 @@ describe('handleComposerAgentTabKey', () => {
 
 		expect(handled).toBe(false);
 		expect(preventDefault).not.toHaveBeenCalled();
+	});
+
+	it('leaves Tab alone inside a Windows drive path at the drive letter', () => {
+		const value = '@C:/Users/x/a.md';
+		const inputRef = textareaRef();
+		inputRef.current!.value = value;
+		inputRef.current!.selectionStart = inputRef.current!.selectionEnd = 2;
+
+		const agentC: AgentMentionSuggestion = {
+			kind: 'agent',
+			displayText: 'C',
+			value: '@C ',
+			targetSessionId: 'sess-c',
+			score: 10,
+		};
+		const { event, preventDefault } = keyEvent({ key: 'Tab' });
+		const accept = vi.fn();
+		const openPicker = vi.fn();
+
+		const handled = handleComposerAgentTabKey(event, {
+			inputRef,
+			getInputValue: () => value,
+			getAgentSuggestions: () => [agentC],
+			accept,
+			openPicker,
+		});
+
+		expect(handled).toBe(false);
+		expect(preventDefault).not.toHaveBeenCalled();
+		expect(accept).not.toHaveBeenCalled();
+		expect(openPicker).not.toHaveBeenCalled();
 	});
 
 	it('completes when exactly one agent matches', () => {

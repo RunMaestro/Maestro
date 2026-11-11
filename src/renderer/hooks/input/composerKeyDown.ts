@@ -39,6 +39,7 @@ import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
 import { isImeComposing } from '../../utils/ime';
 import { getAtMentionTrigger } from '../../../shared/maestro-lib/mentions/trigger';
 import {
+	isWindowsDrivePath,
 	mentionBodyEndAt,
 	mentionQuoteChar,
 	stripMentionQuotes,
@@ -179,6 +180,13 @@ export function findPartialMentionAtCursor(
 ): PartialMentionTrigger | null {
 	const trigger = getAtMentionTrigger(value, cursorPosition);
 	if (!trigger) return null;
+
+	// A bare Windows drive path is a file mention, never an agent reference. The
+	// drive colon is not a mention-body character, so a caret right after `@C`
+	// would otherwise offer agent completion that replaces only the drive letter
+	// and leaves `:/Users/...` behind. Read the whole token, not just the text
+	// before the caret.
+	if (isWindowsDrivePath(value.slice(trigger.startIndex + 1))) return null;
 
 	const openQuote = mentionQuoteChar(trigger.filter);
 	if (openQuote) {

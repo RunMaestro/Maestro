@@ -59,6 +59,10 @@ describe('parseAgentMentions', () => {
 		expect(parseAgentMentions('open @notes.md now')).toEqual([]);
 	});
 
+	it('skips a Windows drive-letter path even when an agent shares the drive letter', () => {
+		expect(parseAgentMentions('see @C:/Users/x/a.md', new Set(['c']))).toEqual([]);
+	});
+
 	it('parses a dotted agent name when it is in the roster (the @RunMaestro.ai regression)', () => {
 		const roster = new Set(['runmaestro.ai']);
 		const result = parseAgentMentions('ping @RunMaestro.ai now', roster);
