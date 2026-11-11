@@ -123,11 +123,12 @@ const QUOTED_MENTION_SOURCE = `@"[^"\\n]+"|@'[^'\\n]+'`;
 /**
  * An absolute Windows drive path (`C:/Users/x/a.md`) written bare. This is the
  * shape a file dropped from a Windows drive reaches a mention in: `toMentionPath`
- * turns backslashes into forward slashes and keeps the drive letter, and a
- * space-free path is inserted without quotes. Only a SINGLE letter followed by
- * `:/` opts into it, so `@Agent:plan.md` still reads as the agent `Agent`, and a
- * bare `@C` is still an agent name. The rest of the body is the ordinary
- * {@link BODY_CHAR} set, so a colon anywhere after the prefix ends the token.
+ * turns backslashes into forward slashes and keeps the drive letter. A path the
+ * bare grammar can carry is inserted without quotes. Only a SINGLE letter
+ * followed by `:/` opts into it, so `@Agent:plan.md` still reads as the agent
+ * `Agent`, and a bare `@C` is still an agent name. The rest of the body is the
+ * ordinary {@link BODY_CHAR} set, so a colon anywhere after the prefix ends the
+ * token.
  *
  * Typed or pasted BACKSLASH paths are out of scope: this recognises the
  * forward-slash form every drop produces, which also repairs `@C:/...` mentions
@@ -194,13 +195,23 @@ export function mentionQuoteChar(text: string): MentionQuote | null {
 }
 
 /**
+ * Whether a whole path can be written as a bare mention body: every character is
+ * a {@link BODY_CHAR}, with an optional Windows drive prefix. A path that fails
+ * this (parentheses, `+`, `&`, a space, and so on) cannot scan back out as one
+ * token, so {@link formatFileMention} quotes it instead.
+ */
+// eslint-disable-next-line no-misleading-character-class
+const BARE_MENTION_PATH_RE = new RegExp(`^(?:${DRIVE_PATH_PREFIX_SOURCE})?[${BODY_CHAR}]+$`, 'u');
+
+/**
  * Build the raw `@…` token for a file/directory path, quoting it when the path
- * carries whitespace. Single source of truth for every insertion site (the `@`
- * picker, the Files-panel drag-drop, the prompt composer), so what gets inserted
- * always scans back out as one mention.
+ * carries whitespace or any character the bare grammar cannot carry (a
+ * parenthesised `notes(1).md`, a `+`). Single source of truth for every
+ * insertion site (the `@` picker, the Files-panel drag-drop, the prompt
+ * composer), so what gets inserted always scans back out as one mention.
  */
 export function formatFileMention(path: string): string {
-	if (!/\s/.test(path)) return `@${path}`;
+	if (BARE_MENTION_PATH_RE.test(path)) return `@${path}`;
 	// Prefer `"`; fall back to `'` when the filename itself carries a double
 	// quote. A path holding BOTH quote characters cannot be delimited, so it goes
 	// in bare rather than as a token that scans back as something else.

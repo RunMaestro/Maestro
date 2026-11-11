@@ -133,6 +133,16 @@ describe('Windows drive-letter mentions', () => {
 			{ kind: 'text', value: '.' },
 		]);
 	});
+
+	it('round-trips a drive path the bare grammar cannot carry', () => {
+		for (const path of ['C:/Users/x/notes(1).md', 'C:/Users/x/a+b.md']) {
+			const token = formatFileMention(path);
+			expect(token).toBe(`@"${path}"`);
+			expect(tokenizeMentions(token)).toEqual([
+				{ kind: 'file', value: `@"${path}"`, path, extension: 'md' },
+			]);
+		}
+	});
 });
 
 describe('formatFileMention', () => {
@@ -165,6 +175,14 @@ describe('formatFileMention', () => {
 				path,
 				extension: 'md',
 			},
+		]);
+	});
+
+	it('quotes a path the bare grammar cannot carry', () => {
+		const path = 'src/notes(1).md';
+		expect(formatFileMention(path)).toBe(`@"${path}"`);
+		expect(tokenizeMentions(formatFileMention(path))).toEqual([
+			{ kind: 'file', value: `@"${path}"`, path, extension: 'md' },
 		]);
 	});
 });
