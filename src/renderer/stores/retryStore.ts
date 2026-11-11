@@ -1506,14 +1506,20 @@ export function cancelRetry(sessionId: string, tabId: string): void {
 		updateSessionWith(sessionId, (s) => settleTabThinkingState(s, tabId));
 	}
 
-	// Stopping the auto-retry hands the failure back to the user, and their
-	// prompt is now sitting at the head of the queue waiting for it. Removing the
+	// Stop means "do not send that again". The failed prompt was parked at the
+	// head of the queue only so the retry could resend it from there; with the
+	// retry gone, a queued copy reads as a send still owed and would go out on
+	// the next drain. It stays in the transcript, where the user can resend it
+	// on purpose.
+	if (entry.heldItemId) releaseHeldItemFromQueue(sessionId, entry.heldItemId);
+
+	// Stopping the auto-retry hands the failure back to the user. Removing the
 	// entry releases the hold, so without this the queue would immediately drain
-	// that prompt - and everything behind it - straight into the wall the user
-	// just stopped retrying against. Raising the blocking error state is the
-	// existing "a human owns this now" signal, and every dispatch path already
-	// refuses to run while a session is in it. The tab's `agentError` is kept
-	// through an outage precisely so it is available here.
+	// everything still waiting behind the failed prompt straight into the wall
+	// the user just stopped retrying against. Raising the blocking error state is
+	// the existing "a human owns this now" signal, and every dispatch path
+	// already refuses to run while a session is in it. The tab's `agentError` is
+	// kept through an outage precisely so it is available here.
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const failedTabError = session?.aiTabs?.find((t) => t.id === tabId)?.agentError;
 	if (failedTabError) {

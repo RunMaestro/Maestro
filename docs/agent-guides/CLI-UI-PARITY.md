@@ -415,6 +415,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Export a pipeline (CLI only; the Cue modal has no Bundles tab)                                                                                  | `bundle export --pipeline <name>` [`--no-claude-skills` `--no-claude-mcp` `--no-claude-memory`]                                                                    |
 | Usage-data scan progress (modal / corner card)                                                                                                  | `stats-indexing [--wait] [--timeout <s>] [--json]` (Hide / background are view-only)                                                                               |
 | Left Bar: Archive / Unarchive a group chat                                                                                                      | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)                                                                                 |
+| Group chat: add an agent by @mention in a message                                                                                               | `group-chat add <chat> <agent>` (ID, ID prefix or name; read back with `group-chat status`)                                                                        |
 
 `maestro-cli lite` addresses a **running Lite client**, not the full host's CLI
 server (the third case in [CLI-HEADLESS.md](CLI-HEADLESS.md#need-a-running-lite-client):
@@ -562,7 +563,7 @@ still missing. Grouped, highest value first:
   `closeTabGroup()` / `breakApartGroup()` so the CLI and the chip share one
   implementation.
 - **Playbooks:** update an existing one, export/import `.maestro-playbook.zip`.
-- **Group chat:** delete, rename, archive, edit moderator/participants, export.
+- **Group chat:** delete, rename, archive, edit moderator, remove a participant, export.
 - **History:** delete an entry, toggle validated, generate a synopsis now, search.
 - **Diagnostics:** Process Monitor kill (`process list/kill`), read/clear system
   logs (`logs`), reset stuck busy state, restart agent, retry.

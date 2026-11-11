@@ -4,6 +4,7 @@ import { formatMetaKey } from '../../../utils/shortcutFormatter';
 import { resolveSnoozeTarget } from '../../../utils/snoozeHelpers';
 import { useModalStore } from '../../../stores/modalStore';
 import { useUIStore } from '../../../stores/uiStore';
+import { useTabStore } from '../../../stores/tabStore';
 import { resolveModelEffortTabId } from '../../../utils/panelLayout';
 import { visibleAiTabs } from '../../../utils/tabHelpers';
 
@@ -331,6 +332,25 @@ export function buildTabCommands({
 			shortcut: tabShortcuts?.closeTab,
 			action: () => {
 				onCloseCurrentTab();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	// Same store action the Cmd+Shift+T chord reaches (tiling-aware). Listed only
+	// while there is something to reopen; the legacy AI-only stack still counts
+	// because the restore falls back to it when the unified history is empty.
+	if (
+		activeSession &&
+		(activeSession.unifiedClosedTabHistory?.length || activeSession.closedTabHistory?.length)
+	) {
+		commands.push({
+			id: 'reopenClosedTab',
+			label: 'Reopen Closed Tab',
+			subtext: 'Restore the most recently closed tab',
+			shortcut: tabShortcuts?.reopenClosedTab,
+			action: () => {
+				useTabStore.getState().reopenClosedTab();
 				setQuickActionOpen(false);
 			},
 		});

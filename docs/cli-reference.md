@@ -798,6 +798,14 @@ Stop a group chat's moderator and participants
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat add <chat> <agent>`
+
+Add an agent (ID, ID prefix, or name) to a group chat without an @mention; linked by ID
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli group-chat archive <chat>`
 
 Archive a group chat (stops its moderator and participants); --restore brings it back
@@ -811,24 +819,24 @@ Archive a group chat (stops its moderator and participants); --restore brings it
 
 Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)
 
-| Option             | Description                                                                                   | Default |
-| ------------------ | --------------------------------------------------------------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)                            | -       |
-| `--background`     | Open the preview tab without changing anything currently rendered, on any agent               | -       |
-| `--focus`          | Switch to the file after opening it (default)                                                 | -       |
-| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                            | -       |
-| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback | -       |
-| `--json`           | Output as JSON (for scripting)                                                                | -       |
+| Option             | Description                                                                                               | Default |
+| ------------------ | --------------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent (defaults to the agent owning this shell or terminal tab, else the file path's owning agent) | -       |
+| `--background`     | Open the preview tab without changing anything currently rendered, on any agent                           | -       |
+| `--focus`          | Switch to the file after opening it (default)                                                             | -       |
+| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                                        | -       |
+| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback             | -       |
+| `--json`           | Output as JSON (for scripting)                                                                            | -       |
 
 ## `maestro-cli open-graph [paths...]`
 
 Open the Document Graph over specific markdown files or a directory
 
-| Option             | Description                                                      | Default |
-| ------------------ | ---------------------------------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by path's owning agent)    | -       |
-| `--focus <path>`   | Center the graph on this document (default: the most-linked one) | -       |
-| `--json`           | Output as JSON (for scripting)                                   | -       |
+| Option             | Description                                                                                          | Default |
+| ------------------ | ---------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent (defaults to the agent owning this shell or terminal tab, else the path's owning agent) | -       |
+| `--focus <path>`   | Center the graph on this document (default: the most-linked one)                                     | -       |
+| `--json`           | Output as JSON (for scripting)                                                                       | -       |
 
 ## `maestro-cli open-browser <url>`
 
@@ -1949,10 +1957,11 @@ Move a tab to a position in its agent's tab bar (0-based, or "first"/"last")
 
 List the closed tabs an agent can reopen, newest first (index 0 = Cmd+Shift+T)
 
-| Option             | Description                                                    | Default |
-| ------------------ | -------------------------------------------------------------- | ------- |
-| `-a, --agent <id>` | Whose closed tabs (default: the agent selected in the desktop) | -       |
-| `--json`           | Output as JSON (for scripting)                                 | -       |
+| Option             | Description                                                                 | Default |
+| ------------------ | --------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose closed tabs (default: the agent selected in the desktop)              | -       |
+| `--all`            | Every agent's closed tabs, grouped by agent (agents with none are left out) | -       |
+| `--json`           | Output as JSON (for scripting)                                              | -       |
 
 ## `maestro-cli tab reopen`
 

@@ -13,7 +13,9 @@
 // that asks the user something (AskUserQuestion).
 
 // Tools that park the TUI on a question to the user. ExitPlanMode is not here:
-// run mode finalizes on it directly (see plan-mode.ts).
+// run mode finalizes on it directly (see plan-mode.ts). Run mode finalizes on a
+// well-formed AskUserQuestion too (see ask-user-question.ts); it stays here so
+// one that slips past that check still never holds the watchdog off.
 const USER_BLOCKING_TOOLS = new Set(['AskUserQuestion']);
 
 export class OpenToolCalls {

@@ -928,6 +928,7 @@ maestro-cli tab move <tab-id> 2
 # Reopen a closed tab, as Cmd+Shift+T does. "tab closed" lists the stack,
 # newest first; reopen takes the newest, or one entry by --index or --tab.
 maestro-cli tab closed -a <agent-id>
+maestro-cli tab closed --all                          # every agent's stack, grouped by agent
 maestro-cli tab reopen -a <agent-id>
 maestro-cli tab reopen -a <agent-id> --index 2
 maestro-cli tab reopen -a <agent-id> --tab <closed-tab-id> --background
@@ -1720,19 +1721,19 @@ Surfaces behind an Encore Feature that you have switched off (Cue, Symphony, Dir
 
 #### Open a File
 
-Open a file as a preview tab in the Maestro desktop app. Without `--agent`, the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties), and a path outside every agent's directory is an error. Pass `--agent <id>` to name the agent yourself, which is also how you open a file that lives nowhere near a project.
+Open a file as a preview tab in the Maestro desktop app. Without `--agent`, a shell inside Maestro (an agent's own turn, or a terminal tab) opens the file in the agent it belongs to, so `maestro-cli open-file ~/.bashrc` typed in a terminal tab lands in that tab's agent. Elsewhere the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties), and a path outside every agent's directory is an error. Pass `--agent <id>` to name the agent yourself.
 
 ```bash
 maestro-cli open-file <file-path> [-a <id>] [--background | --no-switch] [--queue]
 ```
 
-| Flag               | Description                                                                                   |
-| ------------------ | --------------------------------------------------------------------------------------------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)                            |
-| `--background`     | Open the preview tab without changing anything currently rendered, on any agent               |
-| `--focus`          | Switch to the file after opening it (default)                                                 |
-| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                            |
-| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback |
+| Flag               | Description                                                                                               |
+| ------------------ | --------------------------------------------------------------------------------------------------------- |
+| `-a, --agent <id>` | Target agent (defaults to the agent owning this shell or terminal tab, else the file path's owning agent) |
+| `--background`     | Open the preview tab without changing anything currently rendered, on any agent                           |
+| `--focus`          | Switch to the file after opening it (default)                                                             |
+| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                                        |
+| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback             |
 
 A folder has no preview, so `open-file <folder>` reveals it in the agent's Files panel instead: the Right Bar opens on the Files tab, every ancestor and the folder itself expand, and its row is selected. Clicking a folder link in the chat does the same. `--background` and `--no-switch` expand and select without moving the view. A folder outside the agent's file tree cannot be revealed there.
 
