@@ -77,6 +77,10 @@ export type AgentGatewaySupport =
 			reason: string;
 	  };
 
+/** The advice for a provider whose base-URL setting is not known at all. */
+const IF_IT_READS_A_VARIABLE =
+	"If it reads a base-URL variable, set it in this agent's environment variables.";
+
 /**
  * Keyed by `AgentId`, so a new provider fails to compile until it is given a
  * variable or a reason. Only variables the provider's CLI is known to read are
@@ -130,20 +134,36 @@ const GATEWAY_SUPPORT: Record<AgentId, AgentGatewaySupport> = {
 	// `config.json`: `base_url`), and third-party gateway guides report that
 	// `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` override it. Neither is mapped
 	// until a closed port proves the CLI reads it.
-	'factory-droid': {
-		supported: false,
-		reason:
-			'Maestro has not verified a gateway route for Factory Droid. It sets a base URL per custom model in ~/.factory/settings.json: point a custom model at the gateway there.',
-	},
+	'factory-droid': notVerified(
+		'factory-droid',
+		'It sets a base URL per custom model in ~/.factory/settings.json: point a custom model at the gateway there.'
+	),
 	antigravity: unknownVariable('antigravity'),
 	'gemini-cli': unknownVariable('gemini-cli'),
 	'qwen3-coder': unknownVariable('qwen3-coder'),
 	hermes: unknownVariable('hermes'),
 	pi: unknownVariable('pi'),
 	omp: unknownVariable('omp'),
-	grok: unknownVariable('grok'),
+	// Not verified (G03.3, 2026-11-11): no `grok` binary was installed where the
+	// closed-port test runs. xAI's settings reference names
+	// `GROK_XAI_API_BASE_URL` (API-key auth); community Grok CLIs read
+	// `GROK_BASE_URL` / `--base-url`. Neither is mapped until a closed port
+	// proves the build Maestro runs reads it.
+	grok: notVerified('grok', IF_IT_READS_A_VARIABLE),
 	terminal: { supported: false, reason: 'A terminal is a shell, not an agent.' },
 };
+
+/**
+ * A provider whose route was looked for and not proven by the closed-port test
+ * (the binary was absent, or the setting was ignored). `hint` is one sentence
+ * on where the user can point it at a gateway themselves.
+ */
+function notVerified(agentId: AgentId, hint: string): AgentGatewaySupport {
+	return {
+		supported: false,
+		reason: `Maestro has not verified a gateway route for ${getAgentDisplayName(agentId)}. ${hint}`,
+	};
+}
 
 function unknownVariable(agentId: AgentId): AgentGatewaySupport {
 	return {

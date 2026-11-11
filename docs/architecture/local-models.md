@@ -2804,7 +2804,8 @@ The rules, and why each is a rule:
    its inline config document, `OPENCODE_CONFIG_CONTENT` (see
    [OpenCode: the gateway in its inline config](#opencode-the-gateway-in-its-inline-config)).
    Copilot CLI ignores base-URL variables. Factory Droid is not verified (see
-   [Factory Droid: not verified](#factory-droid-not-verified)), so it stays refused. A guessed name fails silently: the CLI ignores it and the agent runs direct while the UI
+   [Factory Droid: not verified](#factory-droid-not-verified)), so it stays refused, and so do the
+   providers in [Other providers: not verified](#other-providers-not-verified). A guessed name fails silently: the CLI ignores it and the agent runs direct while the UI
    says it is proxied. **The Codex mapping shipped as exactly that failure**, with the variable
    alone: Codex CLI 0.162.1 on a ChatGPT login does not read `OPENAI_BASE_URL`. See
    [Real run](#real-run-2026-10-11-darwin-arm64), finding 2, for the measurement and the fix.
@@ -2921,6 +2922,19 @@ What a later check should test, in this order, each against `http://127.0.0.1:1`
 
 Whatever is verified covers BYOK custom models only: the documented `baseUrl` belongs to a custom
 model entry, and nothing documented points Factory's own subscription models at another URL.
+
+### Other providers: not verified
+
+Checked 2026-11-11 (G03.3). For each provider below, no binary was installed on the machine that
+runs the closed-port test (`which`, a login shell's `command -v`, and Spotlight all came back
+empty), so no command was run and nothing was measured. Each keeps a refusal whose reason says
+Maestro has not verified a route, and the "Candidates" column is what a later check should test
+against `http://127.0.0.1:1`, with a temporary `HOME` so the user's config is never touched. A
+candidate is only reported, not proven: it is not mapped until a closed port refuses the turn.
+
+| Provider | Binary | Candidates (reported, unverified)                                                                                                                                                   |
+| -------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Grok CLI | `grok` | xAI's settings reference names `GROK_XAI_API_BASE_URL` for API-key auth. Community Grok CLIs read `GROK_BASE_URL` and `--base-url`; which one the installed build reads is unknown. |
 
 ## Token conservation proxy
 
