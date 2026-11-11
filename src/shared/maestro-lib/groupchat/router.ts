@@ -431,6 +431,8 @@ export interface GroupChatEngineOptions {
 		 */
 		forModerator(input: { isSsh: boolean }): string | undefined;
 	};
+	/** Host-owned, transient context appended to every moderator and synthesis prompt. */
+	promptSupplement?: (groupChatId: string) => string | undefined;
 }
 
 /**
@@ -458,7 +460,8 @@ export interface AddParticipantByAgentIdResult {
  * its own.
  */
 export function createGroupChatEngine(options: GroupChatEngineOptions) {
-	const { store, events, agents, prompts, power, metrics, systemPrompts } = options;
+	const { store, events, agents, prompts, power, metrics, systemPrompts, promptSupplement } =
+		options;
 	const { loadGroupChat, updateParticipant, addGroupChatHistoryEntry, getGroupChatDir } = store;
 
 	const moderators = createGroupChatModerators({ store, prompts, power });
@@ -1398,7 +1401,7 @@ Rejected response:
 ${routingRetry.previousResponse}`
 					: message;
 
-				const fullPrompt = `${baseSystemPrompt}
+				const fullPrompt = `${baseSystemPrompt}${promptSupplement?.(groupChatId) ? `\n\n${promptSupplement(groupChatId)}` : ''}
 
 ## Current Participants:
 ${participantContext}${availableSessionsContext}
@@ -2796,7 +2799,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 			synthModeratorSettings.conductorProfile || '(No conductor profile set)'
 		);
 
-		const synthesisPrompt = `${synthBasePrompt}
+		const synthesisPrompt = `${synthBasePrompt}${promptSupplement?.(groupChatId) ? `\n\n${promptSupplement(groupChatId)}` : ''}
 
 ${getModeratorSynthesisPrompt()}
 

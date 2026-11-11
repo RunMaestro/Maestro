@@ -81,6 +81,7 @@ import {
 // Group chat router imports
 import {
 	routeUserMessage,
+	abortActiveWorkflowRun,
 	clearPendingParticipants,
 	routeAgentResponse,
 	markParticipantResponded,
@@ -88,6 +89,11 @@ import {
 	spawnModeratorSynthesis,
 	steerRunningRound,
 } from '../../group-chat/group-chat-router';
+import {
+	clearWorkflowRun,
+	getWorkflowRun,
+	setWorkflowRunChangedEmitter,
+} from '../../group-chat/workflow-run-registry';
 
 // Agent detector import
 import { AgentDetector } from '../../agents';
@@ -319,6 +325,9 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 	const { getMainWindow, getProcessManager, getAgentDetector, getCustomEnvVars, getAgentConfig } =
 		deps;
 	const safeSend = createSafeSend(getMainWindow);
+	groupChatEmitters.emitWorkflowRunChanged = (id, run) =>
+		safeSend('groupChat:workflowRunChanged', id, run);
+	setWorkflowRunChangedEmitter(groupChatEmitters.emitWorkflowRunChanged);
 
 	// ========== Storage Handlers ==========
 
@@ -403,6 +412,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			await killModerator(id, processManager ?? undefined);
 			await clearAllParticipantSessions(id, processManager ?? undefined);
 			clearPendingParticipants(id);
+			await clearWorkflowRun(id);
 
 			// Delete the group chat data
 			await deleteGroupChat(id);
@@ -424,6 +434,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					const processManager = getProcessManager();
 					await killModerator(id, processManager ?? undefined);
 					await clearAllParticipantSessions(id, processManager ?? undefined);
+					await clearWorkflowRun(id);
 				}
 
 				const updated = await updateGroupChat(id, { archived });
@@ -431,6 +442,35 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				return updated;
 			}
 		)
+	);
+
+	ipcMain.handle(
+		'groupChat:getWorkflowRun',
+		withIpcErrorLogging(
+			handlerOpts('getWorkflowRun'),
+			async (id: string) => getWorkflowRun(id) ?? null
+		)
+	);
+	ipcMain.handle(
+		'groupChat:approveWorkflowPlan',
+		withIpcErrorLogging(handlerOpts('approveWorkflowPlan'), async (id: string): Promise<void> => {
+			const processManager = getProcessManager();
+			const agentDetector = getAgentDetector();
+			if (!processManager || !agentDetector)
+				throw new Error('Group Chat is not ready to start a workflow');
+			await routeUserMessage(id, '!go', processManager, agentDetector);
+		})
+	);
+	ipcMain.handle(
+		'groupChat:cancelWorkflowRun',
+		withIpcErrorLogging(handlerOpts('cancelWorkflowRun'), async (id: string) => {
+			const awaiting = getWorkflowRun(id)?.status === 'awaiting-approval';
+			if (awaiting) {
+				await clearWorkflowRun(id);
+				return null;
+			}
+			return await abortActiveWorkflowRun(id, 'user-cancelled');
+		})
 	);
 
 	// Rename a group chat
@@ -788,6 +828,9 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 	ipcMain.handle(
 		'groupChat:stopModerator',
 		withIpcErrorLogging(handlerOpts('stopModerator'), async (id: string): Promise<void> => {
+			if (getWorkflowRun(id)?.status === 'running') {
+				await abortActiveWorkflowRun(id, 'moderator-stopped');
+			}
 			const processManager = getProcessManager();
 			await killModerator(id, processManager ?? undefined);
 			logger.info(`Stopped moderator for group chat: ${id}`, LOG_CONTEXT);
@@ -800,6 +843,9 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(handlerOpts('stopAll'), async (id: string): Promise<void> => {
 			const processManager = getProcessManager();
 			logger.info(`Stopping all activity in group chat: ${id}`, LOG_CONTEXT);
+			if (getWorkflowRun(id)?.status === 'running') {
+				await abortActiveWorkflowRun(id, 'moderator-stopped');
+			}
 
 			// Kill moderator and all participant sessions
 			await killModerator(id, processManager ?? undefined);

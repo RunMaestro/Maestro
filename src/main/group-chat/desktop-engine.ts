@@ -45,6 +45,8 @@ import {
 	buildMaestroSystemPromptForSession,
 	buildPluginSystemPromptSections,
 } from '../utils/maestro-system-prompt';
+import { getWorkflowRun } from './workflow-run-registry';
+import { buildCurrentStageContext, buildPlanContextBlock } from './workflow-prompt-context';
 
 // ---------------------------------------------------------------------------
 // The agent directory: six callbacks the main process registers at startup
@@ -164,6 +166,12 @@ export const desktopGroupChatEngine = createGroupChatEngine({
 			});
 		},
 		forModerator: ({ isSsh }) => buildPluginSystemPromptSections({ isSsh }),
+	},
+	promptSupplement: (groupChatId) => {
+		const run = getWorkflowRun(groupChatId);
+		return run
+			? `${run.status === 'running' ? '## Approved Workflow Stage\n\n' : ''}${buildPlanContextBlock(run)}\n\n${buildCurrentStageContext(run)}`
+			: undefined;
 	},
 });
 

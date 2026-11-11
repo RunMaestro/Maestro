@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
+import { createHash } from 'crypto';
 
 let mockUserDataPath: string;
 vi.mock('electron', () => ({
@@ -56,6 +57,9 @@ describe('workflow-artifacts', () => {
 		vi.clearAllMocks();
 	});
 
+	const artifactName = (participantName: string) =>
+		`${participantName.replace(/[\x00-\x1f<>:"/\\|?*]/g, '-').trim()}-${createHash('sha256').update(participantName).digest('hex').slice(0, 12)}.md`;
+
 	it('creates and returns the run directory', async () => {
 		const runDir = await ensureWorkflowRunDir('chat-1', 'run-1');
 
@@ -65,9 +69,9 @@ describe('workflow-artifacts', () => {
 
 	it('writes artifacts under the run and stage using filesystem-safe participant names', async () => {
 		const cases = [
-			{ participantName: 'Review Agent', fileName: 'Review Agent.md' },
-			{ participantName: 'frontend/reviewer', fileName: 'frontend-reviewer.md' },
-			{ participantName: 'レビュー担当 🎼', fileName: 'レビュー担当 🎼.md' },
+			{ participantName: 'Review Agent', fileName: artifactName('Review Agent') },
+			{ participantName: 'frontend/reviewer', fileName: artifactName('frontend/reviewer') },
+			{ participantName: 'レビュー担当 🎼', fileName: artifactName('レビュー担当 🎼') },
 		];
 
 		for (const testCase of cases) {
@@ -86,6 +90,27 @@ describe('workflow-artifacts', () => {
 				`Output from ${testCase.participantName}`
 			);
 		}
+	});
+
+	it('keeps distinct participant names that sanitize alike in separate artifacts', async () => {
+		const first = await writeStageArtifact({
+			groupChatId: 'chat-1',
+			runId: 'run-1',
+			stageId: 'stage-1',
+			participantName: 'frontend/reviewer',
+			content: 'first',
+		});
+		const second = await writeStageArtifact({
+			groupChatId: 'chat-1',
+			runId: 'run-1',
+			stageId: 'stage-1',
+			participantName: 'frontend-reviewer',
+			content: 'second',
+		});
+
+		expect(second).not.toBe(first);
+		expect(await fs.readFile(first, 'utf-8')).toBe('first');
+		expect(await fs.readFile(second, 'utf-8')).toBe('second');
 	});
 
 	it('overwrites a repeat write from the same participant in the same stage', async () => {

@@ -150,9 +150,18 @@ function parseStage(
 	if (parsedAgents.agents.length === 0 && !parsedAutoRun.autoRun) {
 		return { error: `Stage ${stageNumber} must have at least one agent or an autoRun target.` };
 	}
+	if (parsedAgents.agents.length > 0 && parsedAutoRun.autoRun) {
+		return { error: `Stage ${stageNumber} cannot combine agents with an autoRun target.` };
+	}
 
 	const id = value.id === undefined ? `stage-${stageNumber}` : nonEmptyString(value.id);
 	if (!id) return { error: `Stage ${stageNumber} field "id" must be a non-empty string.` };
+	if (id === '.' || id === '..' || /[\\/]/.test(id)) {
+		return { error: `Stage ${stageNumber} field "id" must be a safe path component.` };
+	}
+	if (value.mode !== undefined && value.mode !== 'serial' && value.mode !== 'parallel') {
+		return { error: `Stage ${stageNumber} field "mode" must be "serial" or "parallel".` };
+	}
 
 	const expects = value.expects === undefined ? undefined : nonEmptyString(value.expects);
 	if (value.expects !== undefined && !expects) {
@@ -198,9 +207,14 @@ export function parseWorkflowPlan(body: string, runId: string): ParseWorkflowPla
 	}
 
 	const stages: GroupChatWorkflowStage[] = [];
+	const stageIds = new Set<string>();
 	for (let index = 0; index < value.stages.length; index++) {
 		const parsedStage = parseStage(value.stages[index], index);
 		if ('error' in parsedStage) return parsedStage;
+		if (stageIds.has(parsedStage.stage.id)) {
+			return { error: `Workflow plan contains duplicate stage ID "${parsedStage.stage.id}".` };
+		}
+		stageIds.add(parsedStage.stage.id);
 		stages.push(parsedStage.stage);
 	}
 

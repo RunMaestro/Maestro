@@ -5,6 +5,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import type { Dirent } from 'fs';
 import { getGroupChatDir, getGroupChatsDir, sanitizeGroupChatFileName } from './group-chat-storage';
 
@@ -42,7 +43,11 @@ export async function writeStageArtifact({
 	const stageDir = path.join(runDir, stageId);
 	await fs.mkdir(stageDir, { recursive: true });
 
-	const artifactPath = path.join(stageDir, `${sanitizeGroupChatFileName(participantName)}.md`);
+	const participantSuffix = createHash('sha256').update(participantName).digest('hex').slice(0, 12);
+	const artifactPath = path.join(
+		stageDir,
+		`${sanitizeGroupChatFileName(participantName)}-${participantSuffix}.md`
+	);
 	await fs.writeFile(artifactPath, content, 'utf-8');
 	return artifactPath;
 }

@@ -26,6 +26,31 @@ import type { IProcessManager } from './group-chat-moderator';
 import type { SteeringResultFrame } from '../../shared/chatSteering';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 import type { AddParticipantByAgentIdResult } from '../../shared/maestro-lib/groupchat/router';
+import { generateUUID } from '../../shared/uuid';
+import { appendToLog } from './group-chat-log';
+import { loadGroupChat } from './group-chat-storage';
+import { groupChatEmitters } from './emitters';
+import {
+	extractStageDirective,
+	extractWorkflowPlanBlock,
+	isWorkflowApproval,
+	parseWorkflowPlan,
+	renderWorkflowPlanSummary,
+} from './workflow-plan-parser';
+import {
+	abortWorkflowRun,
+	approveWorkflowRun,
+	cleanupWorkflowRunArtifacts,
+	clearWorkflowRun,
+	completeWorkflowStage,
+	failWorkflowStage,
+	getWorkflowRun,
+	recordWorkflowStageResponse,
+	setWorkflowRun,
+} from './workflow-run-registry';
+import { createRun } from './workflow-state-machine';
+import { classifyHandoff } from './workflow-handoff';
+import { writeStageArtifact } from './workflow-artifacts';
 
 export {
 	extractMentions,
@@ -65,6 +90,35 @@ export function noteGroupChatActivity(sessionId: string): void {
 /** Puts a room back to rest: clears the running state and releases its power block. */
 export function settleGroupChatToIdle(groupChatId: string): void {
 	engine.settleGroupChatToIdle(groupChatId);
+}
+
+/** Append a system note to the chat log and immediately deliver it to the renderer. */
+export async function announceToChat(
+	groupChatId: string,
+	logPath: string,
+	content: string
+): Promise<void> {
+	await appendToLog(logPath, 'system', content);
+	groupChatEmitters.emitMessage?.(groupChatId, {
+		timestamp: new Date().toISOString(),
+		from: 'system',
+		content,
+	});
+}
+
+/** Abort only a running workflow, clear its turn state, and dispose of its handoff artifacts. */
+export async function abortActiveWorkflowRun(
+	groupChatId: string,
+	reason: string
+): Promise<ReturnType<typeof abortWorkflowRun>> {
+	const run = getWorkflowRun(groupChatId);
+	if (!run || run.status !== 'running') return undefined;
+	const aborted = abortWorkflowRun(groupChatId, reason);
+	clearPendingParticipants(groupChatId);
+	clearModeratorResponseTimeout(groupChatId);
+	if (aborted) await cleanupWorkflowRunArtifacts(groupChatId, aborted);
+	settleGroupChatToIdle(groupChatId);
+	return aborted;
 }
 
 /**
@@ -164,6 +218,35 @@ export async function routeUserMessage(
 	images?: string[],
 	routingRetry?: Parameters<typeof engine.routeUserMessage>[5]
 ): Promise<void> {
+	const currentRun = getWorkflowRun(groupChatId);
+	if (currentRun?.status === 'awaiting-approval') {
+		if (/^(?:!cancel|cancel|never mind)[.!?]*$/i.test(message.trim())) {
+			await clearWorkflowRun(groupChatId);
+			const chat = await loadGroupChat(groupChatId);
+			if (chat) await announceToChat(groupChatId, chat.logPath, 'Workflow cancelled.');
+			return;
+		}
+		if (isWorkflowApproval(message)) {
+			const approved = approveWorkflowRun(groupChatId);
+			const chat = await loadGroupChat(groupChatId);
+			const stage = approved?.plan.stages[approved.currentStageIndex];
+			if (chat && stage) {
+				await announceToChat(
+					groupChatId,
+					chat.logPath,
+					`Workflow started: stage ${approved.currentStageIndex + 1} of ${approved.plan.stages.length}, ${stage.name}`
+				);
+			}
+		}
+	} else if (
+		currentRun?.status === 'running' &&
+		/^(?:!cancel|cancel|never mind)[.!?]*$/i.test(message.trim())
+	) {
+		await abortActiveWorkflowRun(groupChatId, 'user-cancelled');
+		const chat = await loadGroupChat(groupChatId);
+		if (chat) await announceToChat(groupChatId, chat.logPath, 'Workflow cancelled.');
+		return;
+	}
 	await engine.routeUserMessage(
 		groupChatId,
 		message,
@@ -193,6 +276,55 @@ export async function routeModeratorResponse(
 	agentDetector?: AgentDetector,
 	readOnly?: boolean
 ): Promise<void> {
+	const planBlock = extractWorkflowPlanBlock(message);
+	if (planBlock) {
+		const parsed = parseWorkflowPlan(planBlock, generateUUID());
+		const chat = await loadGroupChat(groupChatId);
+		if (!chat) throw new Error(`Group chat not found: ${groupChatId}`);
+		if ('error' in parsed) {
+			await announceToChat(groupChatId, chat.logPath, `Workflow plan rejected: ${parsed.error}`);
+			return;
+		}
+		const prior = getWorkflowRun(groupChatId);
+		if (prior) await cleanupWorkflowRunArtifacts(groupChatId, prior);
+		setWorkflowRun(groupChatId, createRun(parsed.plan));
+		await announceToChat(
+			groupChatId,
+			chat.logPath,
+			`${renderWorkflowPlanSummary(parsed.plan)}\n\nReply \`!go\` to approve and start this workflow, or \`!cancel\` to discard it.`
+		);
+		return;
+	}
+
+	const run = getWorkflowRun(groupChatId);
+	const directive = run?.status === 'running' ? extractStageDirective(message) : null;
+	if (run && directive) {
+		const chat = await loadGroupChat(groupChatId);
+		if (!chat) throw new Error(`Group chat not found: ${groupChatId}`);
+		if (directive.kind === 'failed') {
+			failWorkflowStage(
+				groupChatId,
+				directive.body || 'The moderator marked this stage as failed.'
+			);
+			await announceToChat(groupChatId, chat.logPath, 'Workflow stage failed.');
+			settleGroupChatToIdle(groupChatId);
+			return;
+		}
+		const advanced = completeWorkflowStage(groupChatId, {
+			stageId: run.plan.stages[run.currentStageIndex].id,
+			stageName: run.plan.stages[run.currentStageIndex].name,
+			summary: directive.body,
+		});
+		if (advanced?.status === 'complete') {
+			await announceToChat(groupChatId, chat.logPath, 'Workflow complete.');
+			settleGroupChatToIdle(groupChatId);
+			return;
+		}
+		if (processManager && agentDetector) {
+			await spawnModeratorSynthesis(groupChatId, processManager, agentDetector);
+		}
+		return;
+	}
 	await engine.routeModeratorResponse(
 		groupChatId,
 		message,
@@ -212,6 +344,27 @@ export async function routeAgentResponse(
 	message: string,
 	_processManager?: IProcessManager
 ): Promise<void> {
+	const run = getWorkflowRun(groupChatId);
+	const stage = run?.status === 'running' ? run.plan.stages[run.currentStageIndex] : undefined;
+	if (run && stage) {
+		const classification = classifyHandoff(message);
+		const response =
+			classification.mode === 'inline'
+				? { participantName, mode: 'inline' as const, content: message }
+				: {
+						participantName,
+						mode: 'artifact' as const,
+						digest: classification.digest,
+						artifactPath: await writeStageArtifact({
+							groupChatId,
+							runId: run.plan.runId,
+							stageId: stage.id,
+							participantName,
+							content: message,
+						}),
+					};
+		recordWorkflowStageResponse(groupChatId, response);
+	}
 	await engine.routeAgentResponse(groupChatId, participantName, message);
 }
 
