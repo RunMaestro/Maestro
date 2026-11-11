@@ -3253,7 +3253,7 @@ A compressed block is the shortened text, a newline, and one line:
 `formatCompressionMarker()` writes it and `parseCompressionMarker()` reads it. The `sha256=` value
 names the cache entry that holds the original. In `compress` it is the SHA-256 of the original
 text; in `compress-early` it is `verdictKey(text, 'complete')`, which is not the hash of the
-content (rule 6).
+content (rule 6), except for a launch that carries the retrieve tool, where it is the plain SHA-256.
 
 The cache is content-addressed, under `userData/proxy-cache/`:
 
@@ -3303,7 +3303,10 @@ Rules:
    and keys it by `verdictKey(text, 'complete')`, the SHA-256 of a profile prefix plus the text. The
    marker carries that key, so `models proxy block` finds either. Without separate keys the shared
    cache would hand a sampled `compress` verdict to an early request, where the model never read
-   the original and has no way to ask for what was left out.
+   the original. So early mode never drops content, unless the launch carries the retrieve tool:
+   a request from such a launch is decided with the `full` profile under the plain SHA-256, the
+   key `compress` uses, because that model can ask for what was left out
+   ([Retrieval](#retrieval-the-model-asks-for-an-original)).
 
 `createCompressionCache()` keeps the newest 1024 verdicts in memory, so a request does not read the
 disk for each block. `readOriginal(hash)` is the read for an audit view; `isContentHash()` is its
@@ -3365,6 +3368,106 @@ Limits of this phase:
   request for up to 60 seconds, once per block.
 - Parallel tool results in a Responses request that the client interleaves with their calls
   (`call A, output A, call B, output B`) are read as answered up to the last call.
+
+### Retrieval: the model asks for an original
+
+`compress-early` is the only proxy mode that saves money under prompt caching, because it shortens
+a tool result before the provider writes it to its cache. A model in early mode never reads the
+original, so without a way to ask for it early mode may use only reductions that leave nothing
+out (the `complete` profile, cache rule 6). Retrieval gives the model that way: a tool the agent
+itself calls, `retrieve_compressed_original`, that returns the original lines of a compressed
+block by its hash. A launch that carries the tool is then decided with the `full` profile again.
+
+```mermaid
+sequenceDiagram
+	participant M as Model (provider)
+	participant A as Agent CLI
+	participant P as Token proxy
+	participant B as maestro-cli mcp serve
+	participant D as Desktop (bridge handler)
+	A->>P: request, launch binding in base URL
+	P->>P: compressRequestBody(): full profile,<br/>marker [maestro-compressed sha256=H original_tokens=N]
+	P->>M: shortened request
+	M->>A: tool call retrieve_compressed_original { hash: H, start_line, end_line }
+	A->>B: MCP tools/call
+	B->>D: plugins_call_tool + run-token proof
+	D->>D: readTokenProxyBlock(H, range)
+	D->>B: header line + exact original lines
+	B->>A: tool result
+	A->>P: next request carries the retrieve result
+	P->>P: isOriginalRecovery() veto: result left as sent
+	P->>M: request, retrieve result uncompressed
+```
+
+The nine decisions, with their reasons:
+
+1. **Transport: the per-launch MCP bridge.** The tool rides `maestro-cli mcp serve`
+   (`src/cli/commands/mcp.ts`, `src/cli/services/mcp-bridge.ts`), injected per agent by
+   `src/shared/plugins/mcp-agent-config.ts` (`MCP_CONFIG_BY_AGENT`: Claude Code through
+   `--mcp-config`, Codex through `-c mcp_servers.*`, both verified against the real binaries)
+   from `src/main/ipc/handlers/process/handle-spawn.ts`. Reason: the bridge already exists, is
+   scoped to one launch, and edits no global config. A model that has an MCP tool calls it like
+   any other tool, with no change to the request the client sends.
+2. **Tool: `retrieve_compressed_original`, input `{ hash, start_line?, end_line? }`.** It answers
+   through `readTokenProxyBlock(hash, range)` in `proxy/service.ts`: lines 1 to 200 by default,
+   the existing limits (`TOKEN_PROXY_ORIGINAL_RANGE_MAX_LINES`, 1000 lines;
+   `TOKEN_PROXY_ORIGINAL_RANGE_MAX_BYTES`, 256 KiB), a first line that says which lines came back
+   and whether more exist, then the exact text. An unknown hash or a missing original is a tool
+   error that says so. Lookup is by exact hash only, with no search and no listing. Reason: the
+   same read the audit view and `models proxy block` use, so there is one implementation of the
+   range rules; an exact hash discloses only a block the model was already shown a marker for.
+3. **A core tool, not a plugin tool.** It works with the Plugins Encore Feature off. The bridge
+   was injected only when plugins are on and at least one plugin tool exists; the condition
+   becomes that, OR the agent has retrieval on. With retrieval alone, `tools/list` answers that
+   one tool. Reason: retrieval belongs to the token proxy, which is core, and a user who never
+   turned plugins on must still be able to use it.
+4. **Setting: `tokenProxyRetrieval`, a per-agent boolean** beside `tokenProxyMode` on the agent
+   record (`src/shared/types.ts`, `src/renderer/types/index.ts`). Default off. It has effect when
+   the mode is `compress` or `compress-early`. Reason: it changes what the model can call and
+   what it reads, so it is the user's decision, per agent, like the mode itself.
+5. **What it changes in compression.** In early mode, a request from a launch that carries the
+   tool is decided with the `full` profile under `verdictKey(text, 'full')` (the plain SHA-256,
+   shared with `compress` mode). A request from a launch without it keeps the `complete` profile
+   and its own key, exactly as before. Reason: the profile follows what THIS launch can do, so a
+   lossy block is never sent to a model that cannot retrieve it, whatever an earlier launch of
+   the same conversation had. Two keys also mean the two kinds of launch never share a verdict.
+6. **The launch says it has the tool, through the host-issued launch binding.**
+   `registerTokenProxyRecoveryLaunch()` and `recoveryFor` in `proxy/service.ts`, `launchBinding`
+   on `TokenProxyTarget`, and `LocalRecoveryCapability` in `proxy/compress.ts` already carry a
+   capability per launch. A second capability kind says "this launch was given the MCP retrieve
+   tool". It is never inferred from the request body, the agent id, or the stored setting alone.
+   Reason: the setting can change after a launch, and a request body can be shaped by anything
+   that reaches the port; only the spawn that injected the bridge knows the tool is there.
+7. **The model learns from the tool.** The tool's description and the MCP server's
+   `instructions` (in the `initialize` result) say that a tool result ending in
+   `[maestro-compressed sha256=<hash> original_tokens=<n>]` was shortened, and that this tool
+   returns its original lines for that hash. The marker text does not change. Reason: a stored
+   verdict's bytes, and so every cached prefix that holds them, stay the same; the instructions
+   reach the model only in launches that have the tool.
+8. **No loop.** A result of this tool is never compressed. The recovery veto in
+   `proxy/compress.ts` (`isOriginalRecovery()`, which recognized the shell recovery command)
+   extends to a tool result linked to a tool call whose name is the retrieve tool under any client
+   prefix (Claude Code names it `mcp__<server>__retrieve_compressed_original`). Reason: a
+   retrieved original compressed again would give the model the same shortened text it asked to
+   see past, and it would ask again.
+9. **The shell-command recovery hint stays unemitted.** Tasks 03.4b3b and 03.4b3c of the
+   token optimization playbook are superseded. Reason: the hint depended on proof of how the
+   actual provider launch runs shell commands, which was never complete
+   (`docs/research/token-optimization-progress.md`, 03.4b3b), and a tool the model calls by name
+   needs no such proof.
+
+**Rejected: a tool spliced into the request by the proxy and answered inside the stream.** The
+proxy would add the tool definition to each request, watch the response for a call to it, answer
+it itself, and send a second upstream request inside the one client request. It was rejected
+because:
+
+- It rewrites a live response stream: thinking-block signatures, content block indexes, and
+  stop reasons would all have to be forged or re-numbered, and a signature cannot be forged.
+- It sends a second upstream request inside one client request, which the client never sees
+  and cannot count, retry, or cancel.
+- It changes what a subscription login's client sends: tools the client did not define reach the
+  provider under the user's account.
+- It breaks the proxy's rule that a response is never touched.
 
 ### Real run: 2026-10-11, darwin-arm64
 
@@ -3498,9 +3601,10 @@ Gateway table, `--proxy-mode compress-early`). The server passes `{ early: true 
 the model has not answered yet, and the block carrying the `cache_control` breakpoint, are both
 shortened (the breakpoint itself is left where the client put it). Everything else holds: only tool
 results, only over the threshold, the same bytes for the same content. Since 2026-11-11 early mode
-also keeps every line of content: it uses the `complete` heuristic profile under its own cache key
-(cache rule 6), because a model that never read the original cannot recover what a sample or a cut
-left out. The measurement below predates that change; on its log (folded repeats) the output is the
+never drops content, unless the launch carries the retrieve tool: without the tool it uses the
+`complete` heuristic profile under its own cache key (cache rule 6), because a model that never
+read the original cannot recover what a sample or a cut left out. A launch that carries the tool
+gets the `full` profile ([Retrieval](#retrieval-the-model-asks-for-an-original)). The measurement below predates that change; on its log (folded repeats) the output is the
 same. `proxy_requests.mode` records
 an early request as `compress`, since that column says whether the body was shortened; the agent's
 mode is read from its record.
