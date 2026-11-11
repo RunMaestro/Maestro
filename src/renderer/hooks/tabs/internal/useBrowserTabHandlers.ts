@@ -1,6 +1,11 @@
 import { useCallback } from 'react';
 import { openBrowserTab, openBrowserTabAt } from '../../../services/browserTabs';
-import { selectActiveSession, updateBrowserTab, updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
+import {
+	selectActiveSession,
+	updateBrowserTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../../../stores/sessionStore';
 
 import {
 	closeBrowserTab as closeBrowserTabHelper,
