@@ -17,6 +17,7 @@ export type CueLogPayload =
 	| { type: 'engineStopped' }
 	| { type: 'configReloaded'; sessionId: string }
 	| { type: 'configRemoved'; sessionId: string }
+	| { type: 'triggerHealthWarning'; sessionId: string; message: string }
 	| {
 			type: 'runStarted';
 			runId: string;
@@ -65,11 +66,17 @@ export type CueLogPayload =
 	  }
 	| {
 			/**
-			 * Autonomous AI time to credit toward the Conductor level (badge
-			 * progression + leaderboard). Emitted once per naturally-completed
-			 * Cue run that represents agent work. `creditMs` is already floored
-			 * to whole minutes by the engine; command nodes and sub-minute runs
-			 * never emit this event. See cue-engine's onRunCompleted.
+			 * Unattended AI time to credit toward the Conductor level (badge
+			 * progression + leaderboard). Emitted once per terminal Cue run that
+			 * represents agent work, whatever its status - a failed, timed-out,
+			 * or stopped run still consumed unattended machine time. Command
+			 * nodes never emit this event.
+			 *
+			 * `creditMs` is always a whole number of minutes, but the engine
+			 * carries the sub-minute remainder across runs, so a run shorter
+			 * than a minute contributes rather than being floored away (it just
+			 * may not emit until a later run pushes the total over a minute).
+			 * See cue-engine's creditConductorTime().
 			 */
 			type: 'conductorTimeCredit';
 			creditMs: number;

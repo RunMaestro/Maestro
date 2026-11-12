@@ -1,52 +1,58 @@
 /**
- * Maestro Mobile Web Service Worker
+ * Maestro Web Service Worker
  *
- * Provides offline capability for the mobile web interface.
- * When offline, displays a disconnected state to inform the user
- * that they cannot communicate with the Maestro desktop app.
+ * Provides light offline resilience for the web-desktop bundle served through
+ * the embedded web server. The bundle's JS/CSS assets are content-hashed and
+ * change every build, so this worker does NOT precache a fixed asset list
+ * (which would go stale). Instead it caches conservatively at runtime:
  *
- * Strategy:
- * - Cache essential app shell (HTML, CSS, JS, icons) on install
- * - Network-first for API calls (they require live connection)
- * - Cache-first for static assets
- * - Show offline fallback when network unavailable
+ * - cache-first for content-hashed bundle files (`/<token>/desktop/assets/
+ *   <name>-<hash>.<ext>`) - the name changes whenever the bytes do, so a cached
+ *   copy can never be stale, and serving it locally keeps a reload off the
+ *   network entirely (see "Cloudflare quick tunnels" below).
+ * - network-first for navigations (the HTML document) and for the remaining
+ *   desktop bundle assets (the unhashed `assets/fonts/*`) - online always serves
+ *   fresh content, identical to having no service worker; the cache is only a
+ *   fallback when the network is down.
+ * - cache-first for `/<token>/icons/*` and `manifest.json` - effectively
+ *   immutable, so serving them from cache keeps the home-screen icon and PWA
+ *   metadata available offline without changing the bytes.
+ * - network-only for `/<token>/api/*` and `/<token>/ws/*` - these require a
+ *   live connection; offline they return a structured JSON error.
+ * - everything else is left to the browser's default handling.
+ *
+ * Cloudflare quick tunnels cap how many requests can be in flight at once and
+ * answer the overflow with an empty 429 (`cf-int-tunnel-request-limit-hit`).
+ * Booting the bundle costs about a hundred module requests, and the bridge
+ * reloads every open tab when its WebSocket reconnects (iOS drops sockets on
+ * wake), so a phone with a few Maestro tabs overflows the tunnel and a module
+ * import fails mid-boot. The asset strategies below therefore retry a 429 with
+ * a short backoff - the burst drains in a second or two - instead of handing
+ * the failure to the page.
  */
 
-const CACHE_NAME = 'maestro-mobile-v1';
+const CACHE_NAME = 'maestro-webdesktop-v1';
 
-// Assets to cache on install (app shell)
-const PRECACHE_ASSETS = [
-	'./',
-	'./manifest.json',
-	'./icons/icon-72x72.png',
-	'./icons/icon-96x96.png',
-	'./icons/icon-192x192.png',
-];
+// Content-hashed bundle files: Vite's `[name]-[hash].[ext]` directly under
+// assets/ (assets/fonts/ is copied in under stable names). Mirrors
+// isContentHashedAsset in src/main/web-server/asset-cache-policy.ts, which this
+// raw-served file cannot import; keep the two patterns in step.
+const HASHED_ASSET_PATH = /\/desktop\/assets\/[^/]+-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+(?:\.map)?$/;
 
-// Install event - cache essential assets
+// Backoff between retries of a 429 from the tunnel. Bounded so a limit that
+// does not clear still reaches the page as a failure it can report.
+const RATE_LIMIT_RETRY_DELAYS_MS = [250, 750, 1500, 3000];
+
+// Install: no precache. The runtime strategy below populates the cache as the
+// app is used, so there is no fixed asset list to go stale on rebuild.
 self.addEventListener('install', (event) => {
 	console.log('[SW] Installing service worker...');
-
-	event.waitUntil(
-		caches
-			.open(CACHE_NAME)
-			.then((cache) => {
-				console.log('[SW] Caching app shell...');
-				// Use addAll for precaching, but don't fail install if some assets are missing
-				return cache.addAll(PRECACHE_ASSETS).catch((err) => {
-					console.warn('[SW] Some precache assets failed to cache:', err);
-					// Still succeed install - we'll cache on fetch
-				});
-			})
-			.then(() => {
-				console.log('[SW] Installation complete');
-				// Skip waiting to activate immediately
-				return self.skipWaiting();
-			})
-	);
+	// Activate immediately instead of waiting for existing tabs to close.
+	event.waitUntil(self.skipWaiting());
 });
 
-// Activate event - clean up old caches
+// Activate: drop caches from older worker versions (including the legacy
+// mobile precache), then take control of open pages immediately.
 self.addEventListener('activate', (event) => {
 	console.log('[SW] Activating service worker...');
 
@@ -65,144 +71,149 @@ self.addEventListener('activate', (event) => {
 			})
 			.then(() => {
 				console.log('[SW] Activation complete');
-				// Take control of all pages immediately
 				return self.clients.claim();
 			})
 	);
 });
 
-// Fetch event - handle requests with appropriate caching strategy
+// Fetch: route each request to the appropriate strategy.
 self.addEventListener('fetch', (event) => {
 	const { request } = event;
-	const url = new URL(request.url);
 
-	// Skip non-GET requests
+	// Only GET requests are cacheable; everything else passes through untouched.
 	if (request.method !== 'GET') {
 		return;
 	}
 
-	// Skip WebSocket connections
+	const url = new URL(request.url);
+
+	// Never intercept WebSocket upgrades.
 	if (url.protocol === 'ws:' || url.protocol === 'wss:') {
 		return;
 	}
 
-	// API requests - network only, no caching (requires live connection)
-	// Note: URLs include security token in path, e.g., /{TOKEN}/api/... or /{TOKEN}/ws/...
+	// API / WS paths require a live connection - network only, with a JSON
+	// offline fallback so callers get a structured error instead of a throw.
 	if (url.pathname.includes('/api/') || url.pathname.includes('/ws/')) {
 		event.respondWith(
-			fetch(request).catch(() => {
-				// Return a JSON error response for API requests when offline
-				return new Response(
-					JSON.stringify({
-						error: 'offline',
-						message: 'You are offline. Please reconnect to use Maestro.',
-					}),
-					{
-						status: 503,
-						statusText: 'Service Unavailable',
-						headers: {
-							'Content-Type': 'application/json',
-						},
-					}
-				);
-			})
+			fetch(request).catch(
+				() =>
+					new Response(
+						JSON.stringify({
+							error: 'offline',
+							message: 'You are offline. Please reconnect to use Maestro.',
+						}),
+						{
+							status: 503,
+							statusText: 'Service Unavailable',
+							headers: { 'Content-Type': 'application/json' },
+						}
+					)
+			)
 		);
 		return;
 	}
 
-	// Static assets - cache-first with network fallback
-	if (isStaticAsset(url.pathname)) {
-		event.respondWith(
-			caches.match(request).then((cachedResponse) => {
-				if (cachedResponse) {
-					// Return cached version and update cache in background
-					fetchAndCache(request);
-					return cachedResponse;
-				}
-				// Not in cache, fetch from network and cache
-				return fetchAndCache(request);
-			})
-		);
+	// Icons and the manifest are effectively immutable - cache-first keeps them
+	// available offline. Online, the first request still misses the cache and
+	// hits the network, so the bytes are identical.
+	if (url.pathname.includes('/icons/') || url.pathname.endsWith('/manifest.json')) {
+		event.respondWith(cacheFirst(request));
 		return;
 	}
 
-	// HTML/main document - network-first with cache fallback
-	event.respondWith(
-		fetch(request)
-			.then((response) => {
-				// Clone response before caching
-				if (response.ok) {
-					const responseClone = response.clone();
-					caches.open(CACHE_NAME).then((cache) => {
-						cache.put(request, responseClone);
-					});
-				}
-				return response;
-			})
-			.catch(async () => {
-				// Network failed, try cache
-				const cachedResponse = await caches.match(request);
-				if (cachedResponse) {
-					return cachedResponse;
-				}
-				// If no cached HTML, return offline fallback
-				return caches.match('./');
-			})
-	);
+	// Hashed bundle files never change under their name, so the cache is
+	// authoritative for them.
+	if (HASHED_ASSET_PATH.test(url.pathname)) {
+		event.respondWith(cacheFirst(request));
+		return;
+	}
+
+	// Navigations (the HTML document) and the remaining desktop bundle assets
+	// are network-first: online serves fresh content (identical to no service
+	// worker), and the cached copy is only used when the network fails.
+	if (request.mode === 'navigate' || url.pathname.includes('/desktop/assets/')) {
+		event.respondWith(networkFirst(request));
+		return;
+	}
+
+	// Anything else: leave it to the browser's default handling. Not calling
+	// respondWith() is the most conservative choice - indistinguishable from
+	// having no service worker at all.
 });
 
 /**
- * Check if URL is a static asset that should be cached
+ * fetch(), retrying a 429 with a short backoff. Only used for GET asset and
+ * document requests, which are safe to repeat.
  */
-function isStaticAsset(pathname) {
-	return (
-		pathname.endsWith('.js') ||
-		pathname.endsWith('.css') ||
-		pathname.endsWith('.png') ||
-		pathname.endsWith('.jpg') ||
-		pathname.endsWith('.jpeg') ||
-		pathname.endsWith('.svg') ||
-		pathname.endsWith('.ico') ||
-		pathname.endsWith('.woff') ||
-		pathname.endsWith('.woff2') ||
-		pathname.endsWith('.json')
-	);
+async function fetchRetryingRateLimit(request) {
+	for (let attempt = 0; ; attempt++) {
+		const response = await fetch(request);
+		if (response.status !== 429 || attempt >= RATE_LIMIT_RETRY_DELAYS_MS.length) {
+			return response;
+		}
+		await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_RETRY_DELAYS_MS[attempt]));
+	}
 }
 
 /**
- * Fetch from network and update cache
+ * Cache-first: serve from cache when present, otherwise fetch and cache.
  */
-async function fetchAndCache(request) {
+async function cacheFirst(request) {
+	const cached = await caches.match(request);
+	if (cached) {
+		return cached;
+	}
+	const response = await fetchRetryingRateLimit(request);
+	if (response && response.ok) {
+		const cache = await caches.open(CACHE_NAME);
+		cache.put(request, response.clone());
+	}
+	return response;
+}
+
+/**
+ * Network-first: fetch and cache on success; fall back to cache (and, for
+ * navigations, the cached app root) when the network is unavailable.
+ */
+async function networkFirst(request) {
 	try {
-		const response = await fetch(request);
-		if (response.ok) {
+		const response = await fetchRetryingRateLimit(request);
+		if (response && response.ok) {
 			const cache = await caches.open(CACHE_NAME);
 			cache.put(request, response.clone());
 		}
 		return response;
 	} catch (error) {
-		// Network failed, try cache as last resort
 		const cached = await caches.match(request);
 		if (cached) {
 			return cached;
+		}
+		// Last resort for a navigation with no cached copy: the app root.
+		if (request.mode === 'navigate') {
+			const root = await caches.match(self.registration.scope);
+			if (root) {
+				return root;
+			}
 		}
 		throw error;
 	}
 }
 
-// Handle messages from the main app
+// Handle messages from the main app.
 self.addEventListener('message', (event) => {
 	if (event.data === 'skipWaiting') {
 		self.skipWaiting();
 	}
 
-	// Allow main app to check if SW is active
+	// Allow the main app to check if the SW is active (see pingServiceWorker).
 	if (event.data === 'ping') {
 		event.ports[0]?.postMessage('pong');
 	}
 });
 
-// Broadcast connection status changes to all clients
+// Broadcast connection status changes to all clients so the UI can reflect
+// offline state (consumed by serviceWorker.ts's onOfflineChange handler).
 async function broadcastToClients(message) {
 	const clients = await self.clients.matchAll({ type: 'window' });
 	clients.forEach((client) => {
@@ -210,7 +221,6 @@ async function broadcastToClients(message) {
 	});
 }
 
-// Listen for online/offline events and notify clients
 self.addEventListener('online', () => {
 	console.log('[SW] Online');
 	broadcastToClients({ type: 'connection-change', online: true });

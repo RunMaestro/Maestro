@@ -17,7 +17,70 @@
  * ~1 KB, and a torn write costs exactly ONE line, which the reader skips.
  */
 
-import type { HistoryEntry } from './types';
+import type { HistoryEntry, HistoryEntryType } from './types';
+
+/**
+ * Every history entry type, in the order filter UIs display them.
+ *
+ * This is the ONE list. Filter toggles, persistence validators, IPC payload
+ * guards, and the CLI's `--filter` validation all iterate it rather than
+ * re-declaring `['USER', 'AUTO', ...]` locally, so adding a member can't leave
+ * a surface silently dropping entries it doesn't recognize.
+ */
+export const ALL_HISTORY_ENTRY_TYPES: readonly HistoryEntryType[] = [
+	'USER',
+	'AGENT',
+	'AUTO',
+	'CUE',
+] as const;
+
+/** Type guard: is `value` a known history entry type? */
+export function isHistoryEntryType(value: unknown): value is HistoryEntryType {
+	return typeof value === 'string' && ALL_HISTORY_ENTRY_TYPES.includes(value as HistoryEntryType);
+}
+
+/**
+ * The entry types a history view should offer as filters. `CUE` only exists as
+ * a concept when the Cue Encore Feature is on, so it's dropped otherwise.
+ */
+export function visibleHistoryEntryTypes(maestroCueEnabled: boolean): HistoryEntryType[] {
+	return ALL_HISTORY_ENTRY_TYPES.filter((t) => maestroCueEnabled || t !== 'CUE');
+}
+
+/**
+ * Resolve an entry's effective type, re-mapping legacy cross-agent consults.
+ *
+ * Consults (cross-agent `@mention` proxied messages) were originally written
+ * with `type: 'AUTO'` because no better member existed, which made them render
+ * as Auto Run tasks and inflated every Auto Run count. They are now written as
+ * `AGENT`; this coerces the entries already on disk so no history file has to be
+ * rewritten.
+ *
+ * `sourceAgentName` is the discriminator: it is set ONLY by the consult writer
+ * (`recordConsultHistory`), so an `AUTO` entry carrying one is unambiguously a
+ * consult. Applied at both read chokepoints - `HistoryManager.getEntries` (app)
+ * and `readSessionHistory` (CLI) - so every consumer sees the corrected type.
+ */
+export function normalizeHistoryEntryType(entry: HistoryEntry): HistoryEntryType {
+	if (entry.type === 'AUTO' && entry.sourceAgentName) return 'AGENT';
+	return entry.type;
+}
+
+/**
+ * Apply {@link normalizeHistoryEntryType} across a freshly-read entry list.
+ * Returns the SAME array when nothing needed re-mapping so the common path
+ * allocates nothing.
+ */
+export function normalizeHistoryEntries(entries: HistoryEntry[]): HistoryEntry[] {
+	let changed = false;
+	const next = entries.map((entry) => {
+		const type = normalizeHistoryEntryType(entry);
+		if (type === entry.type) return entry;
+		changed = true;
+		return { ...entry, type };
+	});
+	return changed ? next : entries;
+}
 
 /**
  * Current history file format version. Increment when making breaking changes
@@ -29,8 +92,12 @@ export const HISTORY_VERSION = 1;
  * Default maximum number of history entries stored per session.
  * Used as fallback when maxLogBuffer setting is not available.
  * The actual limit is controlled by the maxLogBuffer user setting.
+ *
+ * This is also the `maxLogBuffer` default itself: the renderer store and the
+ * settings metadata both read it, so the value a fresh install shows in
+ * Settings is the value every writer falls back to.
  */
-export const MAX_ENTRIES_PER_SESSION = 5000;
+export const MAX_ENTRIES_PER_SESSION = 10000;
 
 /**
  * Session ID used for history entries that don't have an associated session.
@@ -44,9 +111,9 @@ export const ORPHANED_SESSION_ID = '_orphaned';
  * Every writer (main process, Cue, CLI) MUST run the setting through this so a
  * single writer can't quietly trim a file the others are allowed to grow: the
  * trim is destructive, so the smallest cap in play wins on disk. A busy Auto
- * Run agent hit exactly this - its Cue writes used the 5,000 fallback and
- * truncated a history the user had raised to 25,000, leaving only the last
- * few days visible.
+ * Run agent hit exactly this - its Cue writes used the built-in fallback (then
+ * 5,000) and truncated a history the user had raised to 25,000, leaving only
+ * the last few days visible.
  *
  * @param value - Raw setting value (may be undefined, a string, or garbage)
  * @returns A positive integer cap, or MAX_ENTRIES_PER_SESSION when unusable
@@ -57,6 +124,24 @@ export function resolveHistoryEntryLimit(value: unknown): number {
 		return MAX_ENTRIES_PER_SESSION;
 	}
 	return Math.floor(parsed);
+}
+
+/**
+ * Single bucket of the activity graph: counts of each entry type within the
+ * bucket's time slice. This is the freshly-computed shape - `agent` is
+ * always populated by every producer (director-notes handlers, the history
+ * bucket cache, which discards pre-agent-series cache entries via
+ * HISTORY_BUCKET_CACHE_VERSION). The renderer's read-side type
+ * (`PrecomputedGraphBucket` in ActivityGraph.tsx) relaxes `agent` to
+ * optional to defend against older cached data - do not weaken this
+ * canonical shape to match that; extend it instead, the way
+ * PrecomputedGraphBucket does.
+ */
+export interface GraphBucket {
+	auto: number;
+	user: number;
+	cue: number;
+	agent: number;
 }
 
 /**

@@ -6,14 +6,12 @@
  * whose creation time is at or after the recorded spawn timestamp.
  *
  * Strategy: drive against real temp directories with `fs.mkdtempSync`
- * for isolation and a small poll interval for snappy assertions. No
- * fake timers - the watcher's contract is fundamentally about real
- * filesystem behavior (birthtime, readdir, ENOENT recovery), and these
- * tests should fail if cross-platform fs semantics change in an
- * incompatible way.
+ * for isolation and a small poll interval for snappy assertions. Terminal
+ * timeout cases fake only scheduler time; positive filesystem behavior keeps
+ * native timers so birthtime, readdir, and ENOENT recovery stay exercised.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -23,13 +21,34 @@ import {
 	DEFAULT_DISCOVERY_TIMEOUT_MS,
 	cwdSlug,
 	discoverSessionId,
+	findLatestSessionId,
+	noConversationFoundMessage,
+	sessionTranscriptPath,
 } from '../../maestro-p/session-watcher';
+import { getErrorPatterns, matchErrorPattern } from '../../shared/agentErrorPatterns';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
 
 const FAST_POLL_MS = 10;
 
 async function sleep(ms: number): Promise<void> {
 	await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function expectDiscoveryRejection(
+	promise: Promise<unknown>,
+	message: RegExp | string
+): Promise<void> {
+	return promise.then(
+		() => {
+			throw new Error('Expected session discovery to reject');
+		},
+		(error: unknown) => {
+			expect(error).toBeInstanceOf(Error);
+			if (error instanceof Error) {
+				expect(error.message).toMatch(message);
+			}
+		}
+	);
 }
 
 describe('session-watcher', () => {
@@ -133,6 +152,25 @@ describe('session-watcher', () => {
 					`cwdSlug drifted from encodeClaudeProjectPath for ${JSON.stringify(input)}`
 				).toBe(encodeClaudeProjectPath(input));
 			}
+		});
+	});
+
+	describe('sessionTranscriptPath()', () => {
+		it('points at <configDir>/projects/<slug>/<id>.jsonl, where claude writes it', () => {
+			const written = writeJsonl('abc-123');
+			expect(sessionTranscriptPath(configDir, cwd, 'abc-123')).toBe(written);
+		});
+	});
+
+	describe('noConversationFoundMessage()', () => {
+		// The desktop recovers a dead resume only when the failure classifies as
+		// session_not_found. A TUI turn must read exactly like a print turn.
+		it('classifies as session_not_found for claude-code', () => {
+			const match = matchErrorPattern(
+				getErrorPatterns('claude-code'),
+				noConversationFoundMessage('607fee3e-cf47-4ef8-a7d9-e6bb4931cca7')
+			);
+			expect(match?.type).toBe('session_not_found');
 		});
 	});
 
@@ -251,19 +289,28 @@ describe('session-watcher', () => {
 			const spawnTimestamp = Date.now();
 			// A different session shows up, but never the expected one.
 			writeJsonl('some-other-id');
-			await expect(
-				discoverSessionId({
+			vi.useFakeTimers();
+			try {
+				const discoveryPromise = discoverSessionId({
 					configDir,
 					cwd,
 					spawnTimestamp,
 					expectSessionId: 'never-written-id',
 					timeoutMs: 250,
 					pollIntervalMs: FAST_POLL_MS,
-				})
-			).rejects.toThrow(/never-written-id\.jsonl did not appear/);
+				});
+				const rejection = expectDiscoveryRejection(
+					discoveryPromise,
+					/never-written-id\.jsonl did not appear/
+				);
+				await vi.advanceTimersByTimeAsync(250);
+				await rejection;
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
-		it('tolerates the projects dir not existing yet — picks up the file once it appears', async () => {
+		it('tolerates the projects dir not existing yet - picks up the file once it appears', async () => {
 			const spawnTimestamp = Date.now();
 			// Kick off discovery before the directory exists. Claude lazily
 			// creates `projects/<slug>/` on the first session for a cwd.
@@ -326,15 +373,21 @@ describe('session-watcher', () => {
 
 		it('rejects with a descriptive error when no file appears within the timeout', async () => {
 			const spawnTimestamp = Date.now();
-			await expect(
-				discoverSessionId({
+			vi.useFakeTimers();
+			try {
+				const discoveryPromise = discoverSessionId({
 					configDir,
 					cwd,
 					spawnTimestamp,
 					timeoutMs: 100,
 					pollIntervalMs: FAST_POLL_MS,
-				})
-			).rejects.toThrow(/no new \.jsonl appeared/);
+				});
+				const rejection = expectDiscoveryRejection(discoveryPromise, /no new \.jsonl appeared/);
+				await vi.advanceTimersByTimeAsync(100);
+				await rejection;
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		it('rejects when only pre-spawn files exist (i.e., none satisfy the timestamp filter)', async () => {
@@ -342,15 +395,21 @@ describe('session-watcher', () => {
 			writeJsonl('stale-session');
 			await sleep(20);
 			const spawnTimestamp = Date.now();
-			await expect(
-				discoverSessionId({
+			vi.useFakeTimers();
+			try {
+				const discoveryPromise = discoverSessionId({
 					configDir,
 					cwd,
 					spawnTimestamp,
 					timeoutMs: 100,
 					pollIntervalMs: FAST_POLL_MS,
-				})
-			).rejects.toThrow(/no new \.jsonl appeared/);
+				});
+				const rejection = expectDiscoveryRejection(discoveryPromise, /no new \.jsonl appeared/);
+				await vi.advanceTimersByTimeAsync(100);
+				await rejection;
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		it('builds the watch path from configDir + projects/ + cwdSlug(cwd)', async () => {
@@ -361,31 +420,105 @@ describe('session-watcher', () => {
 			await sleep(5);
 			fs.writeFileSync(path.join(otherSlugDir, 'wrong-session.jsonl'), '');
 
-			await expect(
-				discoverSessionId({
+			vi.useFakeTimers();
+			try {
+				const wrongPathPromise = discoverSessionId({
 					configDir,
 					cwd,
 					spawnTimestamp,
 					timeoutMs: 100,
 					pollIntervalMs: FAST_POLL_MS,
-				})
-			).rejects.toThrow(/no new \.jsonl appeared/);
+				});
+				const wrongPathRejection = expectDiscoveryRejection(
+					wrongPathPromise,
+					/no new \.jsonl appeared/
+				);
+				await vi.advanceTimersByTimeAsync(100);
+				await wrongPathRejection;
 
-			// And the error mentions the correct (expected) directory.
-			let caught: Error | null = null;
-			try {
-				await discoverSessionId({
+				// And the error mentions the correct (expected) directory.
+				const expectedPathPromise = discoverSessionId({
 					configDir,
 					cwd,
 					spawnTimestamp,
 					timeoutMs: 50,
 					pollIntervalMs: FAST_POLL_MS,
 				});
-			} catch (err) {
-				caught = err as Error;
+				const expectedPathRejection = expectDiscoveryRejection(expectedPathPromise, expectedSlug);
+				await vi.advanceTimersByTimeAsync(50);
+				await expectedPathRejection;
+			} finally {
+				vi.useRealTimers();
 			}
-			expect(caught).not.toBeNull();
-			expect(caught!.message).toContain(expectedSlug);
+		});
+
+		// `/clear` rotates claude onto a new session while the old transcript is
+		// still being tailed; the rotation watch must never hand back the session
+		// it is already following.
+		it('skips excludeSessionIds in the earliest-new scan', async () => {
+			const spawnTimestamp = Date.now() - 1000;
+			writeJsonl('aaaa-current');
+			await sleep(20);
+			writeJsonl('bbbb-rotated');
+			const result = await discoverSessionId({
+				configDir,
+				cwd,
+				spawnTimestamp,
+				excludeSessionIds: new Set(['aaaa-current']),
+				timeoutMs: 500,
+				pollIntervalMs: FAST_POLL_MS,
+			});
+			expect(result.sessionId).toBe('bbbb-rotated');
+		});
+
+		it('keeps waiting when only an excluded session exists', async () => {
+			writeJsonl('aaaa-current');
+			await expectDiscoveryRejection(
+				discoverSessionId({
+					configDir,
+					cwd,
+					spawnTimestamp: Date.now() - 1000,
+					excludeSessionIds: new Set(['aaaa-current']),
+					timeoutMs: 60,
+					pollIntervalMs: FAST_POLL_MS,
+				}),
+				/no new \.jsonl appeared/
+			);
+		});
+	});
+
+	// claude refuses `--continue` together with the `--session-id` maestro-p
+	// pre-assigns, so run mode resolves the session `--continue` would pick.
+	describe('findLatestSessionId()', () => {
+		const A = '11111111-2222-4333-8444-555555555555';
+		const B = '66666666-7777-4888-9999-aaaaaaaaaaaa';
+
+		function setMtime(file: string, secondsAgo: number): void {
+			const t = new Date(Date.now() - secondsAgo * 1000);
+			fs.utimesSync(file, t, t);
+		}
+
+		it('returns null when the project folder does not exist', async () => {
+			expect(await findLatestSessionId(configDir, cwd)).toBeNull();
+		});
+
+		it('returns null when the folder holds no session transcripts', async () => {
+			ensureProjectsDir();
+			fs.writeFileSync(path.join(projectsDir(), 'notes.txt'), 'x');
+			expect(await findLatestSessionId(configDir, cwd)).toBeNull();
+		});
+
+		it('picks the most recently written transcript, not the newest file name', async () => {
+			setMtime(writeJsonl(B), 300);
+			setMtime(writeJsonl(A), 10);
+			expect(await findLatestSessionId(configDir, cwd)).toBe(A);
+		});
+
+		it('ignores files that are not `<uuid>.jsonl` and folders named like one', async () => {
+			setMtime(writeJsonl(A), 300);
+			setMtime(writeJsonl('agent-1234'), 1);
+			fs.mkdirSync(path.join(projectsDir(), `${B}.jsonl`));
+			expect(await findLatestSessionId(configDir, cwd)).toBe(A);
 		});
 	});
 });

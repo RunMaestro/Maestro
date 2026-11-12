@@ -15,7 +15,15 @@ import { THEMES } from '../../shared/themes';
 
 describe('isValidThemeId', () => {
 	// Sample of valid theme IDs (not exhaustive - that would couple tests to implementation)
-	const sampleValidIds = ['dracula', 'monokai', 'github-light', 'nord', 'olive-nights', 'pedurple'];
+	const sampleValidIds = [
+		'dracula',
+		'monokai',
+		'github-light',
+		'nord',
+		'olive-nights',
+		'indigo-blue',
+		'pedurple',
+	];
 
 	it('should return true for valid theme IDs', () => {
 		for (const id of sampleValidIds) {

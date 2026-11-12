@@ -117,9 +117,11 @@ import { saveImageDataUrlToDisk } from '../../utils/imageExport';
 import { notifyToast } from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { fileTimestampSlug, getBasename } from '../../../shared/formatters';
-import type { FileNode } from '../../types/fileTree';
+import { buildFileTreeFromPaths } from '../../utils/fileTree';
+import { countMarkdownTasks } from '../FilePreview/filePreviewUtils';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 /** Debounce delay for graph rebuilds when settings change (ms) */
 const GRAPH_REBUILD_DEBOUNCE_DELAY = 300;
@@ -131,70 +133,10 @@ const GRAPH_REBUILD_DEBOUNCE_DELAY = 300;
  * both icon gutters. It was 180, which clipped the hint mid-word.
  */
 export const SEARCH_BOX_WIDTH = 230;
-
-/**
- * Build a file tree structure from graph node file paths.
- * This enables wiki-link resolution in the preview panel.
- */
-function buildFileTreeFromPaths(filePaths: string[]): FileNode[] {
-	const root: FileNode[] = [];
-	const folderMap = new Map<string, FileNode>();
-
-	for (const filePath of filePaths) {
-		if (!filePath) continue;
-
-		const parts = filePath.split('/');
-		let currentLevel = root;
-		let currentPath = '';
-
-		for (let i = 0; i < parts.length; i++) {
-			const part = parts[i];
-			const isLastPart = i === parts.length - 1;
-			currentPath = currentPath ? `${currentPath}/${part}` : part;
-
-			if (isLastPart) {
-				// It's a file
-				currentLevel.push({
-					name: part,
-					type: 'file',
-					fullPath: filePath,
-				});
-			} else {
-				// It's a folder - check if it already exists
-				let folder = folderMap.get(currentPath);
-				if (!folder) {
-					folder = {
-						name: part,
-						type: 'folder',
-						isFolder: true,
-						children: [],
-					};
-					folderMap.set(currentPath, folder);
-					currentLevel.push(folder);
-				}
-				currentLevel = folder.children!;
-			}
-		}
-	}
-
-	return root;
-}
 /** Default maximum number of nodes to load initially */
 const DEFAULT_MAX_NODES = 200;
 /** Number of additional nodes to load when clicking "Load more" */
 const LOAD_MORE_INCREMENT = 25;
-
-/**
- * Count markdown tasks (checkboxes) in content
- * Reuses pattern from FilePreview.tsx
- */
-const countMarkdownTasks = (content: string): { completed: number; total: number } => {
-	const openMatches = content.match(/^[\s]*[-*]\s*\[\s*\]/gm);
-	const closedMatches = content.match(/^[\s]*[-*]\s*\[[xX]\]/gm);
-	const open = openMatches?.length || 0;
-	const closed = closedMatches?.length || 0;
-	return { completed: closed, total: open + closed };
-};
 
 /**
  * Format date for display in footer
@@ -1046,8 +988,9 @@ export function DocumentGraphView({
 			.readFile(fullPath, sshRemoteId)
 			.then((content) => {
 				if (!content) return;
-				const tasks = countMarkdownTasks(content);
-				setSelectedNodeTasks(tasks.total > 0 ? tasks : null);
+				const { open, closed } = countMarkdownTasks(content);
+				const total = open + closed;
+				setSelectedNodeTasks(total > 0 ? { completed: closed, total } : null);
 			})
 			.catch(() => {
 				setSelectedNodeTasks(null);
@@ -1888,10 +1831,9 @@ export function DocumentGraphView({
 
 							{showLayoutDropdown && (
 								<div
-									className="absolute top-full left-0 mt-2 py-1 rounded-lg shadow-lg z-50"
+									className="absolute top-full left-0 mt-2 py-1 rounded-lg z-50"
 									style={{
-										backgroundColor: theme.colors.bgActivity,
-										border: `1px solid ${theme.colors.border}`,
+										...elevatedSurfaceStyle(theme),
 										minWidth: 200,
 									}}
 								>
@@ -1955,10 +1897,9 @@ export function DocumentGraphView({
 
 							{showDepthSlider && (
 								<div
-									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-[60]"
+									className="absolute top-full right-0 mt-2 p-3 rounded-lg z-[60]"
 									style={{
-										backgroundColor: theme.colors.bgActivity,
-										border: `1px solid ${theme.colors.border}`,
+										...elevatedSurfaceStyle(theme),
 										minWidth: 200,
 									}}
 								>
@@ -2030,10 +1971,9 @@ export function DocumentGraphView({
 
 							{showPreviewSlider && (
 								<div
-									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-[60]"
+									className="absolute top-full right-0 mt-2 p-3 rounded-lg z-[60]"
 									style={{
-										backgroundColor: theme.colors.bgActivity,
-										border: `1px solid ${theme.colors.border}`,
+										...elevatedSurfaceStyle(theme),
 										minWidth: 220,
 									}}
 								>
@@ -2414,7 +2354,7 @@ export function DocumentGraphView({
 									isPreviewResizing ? '' : 'transition-colors'
 								}`}
 								style={{ borderLeftColor: isPreviewResizing ? theme.colors.accent : undefined }}
-								onMouseDown={onPreviewResizeStart}
+								onPointerDown={onPreviewResizeStart}
 								onDoubleClick={resetPreviewWidth}
 								onMouseEnter={(e) => (e.currentTarget.style.borderLeftColor = theme.colors.accent)}
 								onMouseLeave={(e) =>

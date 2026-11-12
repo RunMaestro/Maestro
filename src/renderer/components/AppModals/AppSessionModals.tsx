@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { Theme, Session, ToolType } from '../../types';
+import type { AdditionalDirectory, Theme, Session, ToolType } from '../../types';
 
 // Session Management Modal Components
 import { NewInstanceModal, EditAgentModal } from '../NewInstanceModal';
@@ -48,11 +48,15 @@ export interface AppSessionModalsProps {
 		maestroPPath?: string,
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
-		retryOnTokenExhaustion?: boolean
+		retryOnTokenExhaustion?: boolean,
+		additionalDirectories?: AdditionalDirectory[],
+		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
+		codexAutoResetOnExhaustion?: boolean
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication
 	newInstancePresetGroupId?: string | null; // Group to place the new agent in
+	newInstancePresetWorkingDir?: string | null; // Working directory to seed the new agent with
 
 	// EditAgentModal
 	editAgentModalOpen: boolean;
@@ -67,6 +71,7 @@ export interface AppSessionModalsProps {
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
 		customModel?: string,
+		customEffort?: string,
 		customContextWindow?: number,
 		sessionSshRemoteConfig?: {
 			enabled: boolean;
@@ -78,8 +83,14 @@ export interface AppSessionModalsProps {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
+		additionalDirectories?: AdditionalDirectory[],
+		/** Provenance of `customContextWindow` (finding AD1). */
+		contextWindowSource?: 'user-edited',
+		/** Env vars parked with the eye button: kept, but never handed to a spawn. */
 		customEnvVarsDisabled?: Record<string, string>,
-		workingDirectory?: string
+		workingDirectory?: string,
+		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
+		codexAutoResetOnExhaustion?: boolean
 	) => void;
 	editAgentSession: Session | null;
 
@@ -127,6 +138,7 @@ export const AppSessionModals = memo(function AppSessionModals({
 	existingSessions,
 	sourceSession,
 	newInstancePresetGroupId,
+	newInstancePresetWorkingDir,
 	// EditAgentModal
 	editAgentModalOpen,
 	onCloseEditAgentModal,
@@ -158,6 +170,10 @@ export const AppSessionModals = memo(function AppSessionModals({
 	const renamingTerminalTabIndex = renamingTerminalTab
 		? terminalTabs.findIndex((t) => t.id === renameTabId)
 		: -1;
+	// A rename targeting a tiled group id reuses the same modal with a group-aware title.
+	const renamingGroup = renameTabId
+		? activeSession?.tabGroups?.find((g) => g.id === renameTabId)
+		: undefined;
 
 	const newAgentChoiceOpen = useModalStore(selectModalOpen('newAgentChoice'));
 	const closeNewAgentChoice = () => useModalStore.getState().closeModal('newAgentChoice');
@@ -191,6 +207,7 @@ export const AppSessionModals = memo(function AppSessionModals({
 					existingSessions={existingSessions}
 					sourceSession={sourceSession}
 					presetGroupId={newInstancePresetGroupId}
+					presetWorkingDir={newInstancePresetWorkingDir}
 				/>
 			)}
 
@@ -226,10 +243,11 @@ export const AppSessionModals = memo(function AppSessionModals({
 				<RenameTabModal
 					theme={theme}
 					initialName={renameTabInitialName}
+					title={renamingGroup ? 'Rename Tab Group' : 'Rename Tab'}
 					agentSessionId={activeSession?.aiTabs?.find((t) => t.id === renameTabId)?.agentSessionId}
 					onClose={onCloseRenameTabModal}
 					onRename={onRenameTab}
-					onAutoName={onAutoNameTab}
+					onAutoName={renamingGroup ? undefined : onAutoNameTab}
 					hasLogs={
 						(activeSession?.aiTabs?.find((t) => t.id === renameTabId)?.logs?.length ?? 0) > 0
 					}

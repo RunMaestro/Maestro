@@ -25,6 +25,9 @@ vi.mock('lucide-react', () => ({
 	X: () => <span data-testid="x-icon" />,
 	ChevronLeft: () => <span data-testid="chevron-left" />,
 	ChevronRight: () => <span data-testid="chevron-right" />,
+	// The tab breakdown's sortable column headers draw a direction caret.
+	ChevronDown: () => <span data-testid="chevron-down" />,
+	ChevronUp: () => <span data-testid="chevron-up" />,
 	LogIn: () => <span data-testid="log-in-icon" />,
 	Settings: () => <span data-testid="settings-icon" />,
 }));
@@ -62,11 +65,12 @@ const session = createMockSession({
 const onClose = vi.fn();
 const onCloseDashboard = vi.fn();
 
-const renderModal = () =>
+const renderModal = (overrides: { session?: typeof session; data?: StatsAggregation } = {}) =>
 	render(
 		<AgentDetailModal
-			session={session}
-			data={buildData()}
+			session={overrides.session ?? session}
+			data={overrides.data ?? buildData()}
+			timeRange="month"
 			theme={mockTheme}
 			allSessions={[session]}
 			onClose={onClose}
@@ -149,6 +153,32 @@ describe('AgentDetailModal frame', () => {
 		renderModal();
 		await waitFor(() => expect(screen.getByTestId('tab-breakdown')).toBeInTheDocument());
 	});
+
+	it('puts the fixed summaries above the open-ended tab list', async () => {
+		// A worktree child so the Worktree section actually renders; without one
+		// the section is absent and the ordering assertion would pass vacuously.
+		const child = createMockSession({ id: 'session-2', parentSessionId: 'session-1' });
+		render(
+			<AgentDetailModal
+				session={session}
+				data={buildData()}
+				timeRange="month"
+				theme={mockTheme}
+				allSessions={[session, child]}
+				onClose={vi.fn()}
+			/>,
+			{ wrapper: TestWrapper }
+		);
+		await waitFor(() => expect(screen.getByTestId('tab-breakdown')).toBeInTheDocument());
+
+		// The tab list paginates and carries its own filter and sort controls, so
+		// it goes last: above it, the Auto Run and Worktree summaries are a fixed
+		// height and stay reachable without scrolling past a hundred rows.
+		const headings = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
+		expect(headings).toContain('Worktree');
+		expect(headings.indexOf('Auto Run')).toBeLessThan(headings.indexOf('Tabs'));
+		expect(headings.indexOf('Worktree')).toBeLessThan(headings.indexOf('Tabs'));
+	});
 });
 
 // The two header actions deliberately differ. A jump has nowhere to land while
@@ -189,5 +219,74 @@ describe('AgentDetailModal header actions', () => {
 		// the layer stack, so Escape dismisses it and uncovers the stats again.
 		expect(onClose).not.toHaveBeenCalled();
 		expect(onCloseDashboard).not.toHaveBeenCalled();
+	});
+});
+
+// Every figure in the modal covers the dashboard's selected range. The agent's
+// running lifetime total used to sit in the KPI row, so a whole history read as
+// the range's spend beside a 30-day query count.
+describe('AgentDetailModal tokens and cost', () => {
+	const withTokens = (pricedQueries: number): StatsAggregation =>
+		({
+			...buildData(),
+			bySessionTokens: {
+				'session-1': {
+					inputTokens: 100,
+					outputTokens: 200,
+					cacheReadTokens: 1_000,
+					cacheCreationTokens: 0,
+					costUsd: 12.5,
+					pricedQueries,
+				},
+			},
+		}) as unknown as StatsAggregation;
+
+	const lifetimeSession = createMockSession({
+		id: 'session-1',
+		name: 'Test Agent',
+		createdAt: new Date('2025-12-17T12:00:00').getTime(),
+		aiTabs: [createMockAITab({ id: 'tab-a', name: 'Alpha' })],
+		usageStats: {
+			inputTokens: 1,
+			outputTokens: 1,
+			cacheReadInputTokens: 1,
+			cacheCreationInputTokens: 0,
+			totalCostUsd: 17_040,
+			contextWindow: 0,
+		},
+	});
+
+	it("fetches the query events for the dashboard's range, not all time", async () => {
+		renderModal();
+		await waitFor(() =>
+			expect(window.maestro.stats.getStats).toHaveBeenCalledWith('month', {
+				sessionId: 'session-1',
+			})
+		);
+	});
+
+	it('shows the range cost in the KPI row and the lifetime total on its own line', async () => {
+		renderModal({ session: lifetimeSession, data: withTokens(4) });
+
+		expect(screen.getByTestId('agent-detail-range-cost')).toHaveTextContent('$12.50');
+		const lifetime = screen.getByTestId('agent-detail-lifetime-usage');
+		expect(lifetime).toHaveTextContent(/Lifetime since/);
+		expect(lifetime).toHaveTextContent('$17,040.00');
+		// Every query in the range is priced, so no coverage caveat.
+		expect(screen.queryByRole('note')).not.toBeInTheDocument();
+	});
+
+	it('says how much of the range the cost covers when older rows carry no usage', async () => {
+		renderModal({ session: lifetimeSession, data: withTokens(1) });
+
+		expect(screen.getByRole('note')).toHaveTextContent('Covers 1 of 4 queries');
+	});
+
+	it('omits the range KPIs when no query in the range reported usage', async () => {
+		renderModal({ session: lifetimeSession });
+
+		expect(screen.queryByTestId('agent-detail-range-cost')).not.toBeInTheDocument();
+		expect(screen.getByRole('note')).toHaveTextContent(/No token usage recorded yet/);
+		expect(screen.getByTestId('agent-detail-lifetime-usage')).toBeInTheDocument();
 	});
 });

@@ -100,6 +100,23 @@ export const DEMO_DATA_PATH =
 	process.env.MAESTRO_DEMO_DIR || path.join(os.tmpdir(), 'maestro-demo');
 
 /**
+ * Directory of the stores every build on this machine shares (provider configs
+ * and detected capabilities), so a development build reuses the binary paths
+ * and env vars already set up in the installed app.
+ *
+ * A demo profile is the exception. It is a sealed, throwaway directory, and
+ * through the shared path a demo instance both read the user's real provider
+ * config and wrote back into it: a custom binary path set while testing in a
+ * demo became the binary the installed app spawned.
+ */
+export function resolveSharedDataPath(
+	userDataPath: string,
+	demo: { enabled: boolean; path: string } = { enabled: DEMO_MODE, path: DEMO_DATA_PATH }
+): string {
+	return demo.enabled ? demo.path : userDataPath;
+}
+
+/**
  * Token divisor for converting to millions (used in cost calculations)
  */
 export const TOKENS_PER_MILLION = 1_000_000;

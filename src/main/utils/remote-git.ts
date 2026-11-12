@@ -13,6 +13,7 @@ import { execFileNoThrow, ExecResult } from './execFile';
 import { buildSshCommand, RemoteCommandOptions } from './ssh-command-builder';
 import { logger } from './logger';
 import { isWorktreeAlreadyUsedError, parseWorktreePathForBranch } from '../../shared/gitUtils';
+import { shellEscapeRemotePath } from './shell-escape';
 
 const LOG_CONTEXT = '[RemoteGit]';
 
@@ -24,6 +25,10 @@ export interface RemoteGitOptions {
 	sshRemote: SshRemoteConfig;
 	/** Working directory on the remote host */
 	remoteCwd?: string;
+	/** Kill the SSH invocation after this many milliseconds */
+	timeout?: number;
+	/** Extra environment for the remote git, merged over the remote's `remoteEnv` */
+	env?: Record<string, string>;
 }
 
 /**
@@ -50,7 +55,7 @@ export async function execGitRemote(
 	args: string[],
 	options: RemoteGitOptions
 ): Promise<ExecResult> {
-	const { sshRemote, remoteCwd } = options;
+	const { sshRemote, remoteCwd, timeout, env } = options;
 
 	if (!remoteCwd) {
 		logger.warn('No remote working directory specified for git command', LOG_CONTEXT);
@@ -62,7 +67,7 @@ export async function execGitRemote(
 		args,
 		cwd: remoteCwd,
 		// Pass any remote environment variables from the SSH config
-		env: sshRemote.remoteEnv,
+		env: env ? { ...(sshRemote.remoteEnv ?? {}), ...env } : sshRemote.remoteEnv,
 	};
 
 	// Build the SSH command
@@ -74,7 +79,9 @@ export async function execGitRemote(
 	});
 
 	// Execute the SSH command
-	const result = await execFileNoThrow(sshCommand.command, sshCommand.args);
+	const result = timeout
+		? await execFileNoThrow(sshCommand.command, sshCommand.args, undefined, { timeout })
+		: await execFileNoThrow(sshCommand.command, sshCommand.args);
 
 	if (result.exitCode !== 0) {
 		logger.debug(`Remote git command failed: ${result.stderr}`, LOG_CONTEXT, {
@@ -101,17 +108,104 @@ export async function execGit(
 	args: string[],
 	localCwd: string,
 	sshRemote?: SshRemoteConfig | null,
-	remoteCwd?: string
+	remoteCwd?: string,
+	options: { timeout?: number; env?: Record<string, string> } = {}
 ): Promise<ExecResult> {
+	const { timeout, env } = options;
 	if (sshRemote) {
 		return execGitRemote(args, {
 			sshRemote,
 			remoteCwd,
+			...(timeout ? { timeout } : {}),
+			...(env ? { env } : {}),
 		});
 	}
 
-	// Local execution
-	return execFileNoThrow('git', args, localCwd);
+	// Local execution. `env` replaces the child's environment wholesale, so
+	// extra variables are layered over this process's own.
+	if (!timeout && !env) return execFileNoThrow('git', args, localCwd);
+	return execFileNoThrow('git', args, localCwd, {
+		...(timeout ? { timeout } : {}),
+		...(env ? { env: { ...process.env, ...env } } : {}),
+	});
+}
+
+/**
+ * How long a background read-only git query (the git indicator's status,
+ * branch and numstat polls) may run before the caller gets a timeout instead
+ * of an answer. A repo in an iCloud Drive / file-provider folder blocks every
+ * `git status` on the OS downloading offloaded files, which can take minutes.
+ */
+export const READ_ONLY_GIT_TIMEOUT_MS = 20_000;
+
+/** Same text `execFileNoThrow` appends to stderr when it kills a timed-out child. */
+const timeoutResult = (timeoutMs: number): ExecResult => ({
+	stdout: '',
+	stderr: `ETIMEDOUT: process timed out after ${timeoutMs}ms`,
+	exitCode: 'ETIMEDOUT',
+});
+
+/** True when a git result is a timeout rather than an answer from git. */
+export function isGitTimeout(result: ExecResult): boolean {
+	return result.exitCode === 'ETIMEDOUT';
+}
+
+// One live process per (host, folder, command). Entries are removed when the
+// git process actually exits, not when a caller gives up on it, so a process
+// that ignores its kill signal still blocks new spawns for that folder.
+const readOnlyGitInFlight = new Map<string, Promise<ExecResult>>();
+
+/**
+ * Disables git's optional locks (the index refresh `git status` writes back).
+ * Equivalent to `git --no-optional-locks`, but set through the environment
+ * because the flag is a hard "unknown option" error before git 2.15, which an
+ * older SSH host would turn into an empty status (a false "clean"), while the
+ * variable is simply ignored there.
+ */
+const NO_OPTIONAL_LOCKS_ENV = { GIT_OPTIONAL_LOCKS: '0' } as const;
+
+/**
+ * Run a read-only git query that the UI polls in the background.
+ *
+ * Three things `execGit` does not do, each of which a slow folder needs:
+ * - No optional locks (`GIT_OPTIONAL_LOCKS=0`), so the query never takes
+ *   `.git/index.lock` and cannot fight the agent's own git commands for it.
+ * - A timeout: the child is killed and the caller gets an `ETIMEDOUT` result.
+ * - Single-flight per folder: a caller that arrives while the same query is
+ *   still running joins it instead of spawning another. Without this, every
+ *   poll tick on a folder where git hangs adds one more stuck process.
+ *
+ * Callers always settle within `timeoutMs`, even if the child has not exited
+ * yet; later callers keep joining that child until it does.
+ */
+export async function execGitReadOnly(
+	args: string[],
+	localCwd: string,
+	sshRemote?: SshRemoteConfig | null,
+	remoteCwd?: string,
+	timeoutMs: number = READ_ONLY_GIT_TIMEOUT_MS
+): Promise<ExecResult> {
+	const key = [sshRemote?.id ?? '', sshRemote ? (remoteCwd ?? '') : localCwd, ...args].join('\0');
+	let run = readOnlyGitInFlight.get(key);
+	if (!run) {
+		run = execGit(args, localCwd, sshRemote, remoteCwd, {
+			timeout: timeoutMs,
+			env: NO_OPTIONAL_LOCKS_ENV,
+		}).finally(() => {
+			readOnlyGitInFlight.delete(key);
+		});
+		readOnlyGitInFlight.set(key, run);
+	}
+
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const deadline = new Promise<ExecResult>((resolve) => {
+		timer = setTimeout(() => resolve(timeoutResult(timeoutMs)), timeoutMs);
+	});
+	try {
+		return await Promise.race([run, deadline]);
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 /**
@@ -671,6 +765,144 @@ export interface RemoteWorktreeEntry extends Record<string, unknown> {
 	head: string;
 	branch: string | null;
 	isBare: boolean;
+	/** Retained registry entries whose worktree directory is no longer reachable. */
+	isPrunable?: boolean;
+}
+
+/** Resolve configured worktree directories on the remote host before comparing Git paths. */
+export async function resolveWorktreePathsRemote(
+	cwd: string,
+	basePath: string,
+	sshRemote: SshRemoteConfig,
+	sessionPaths: string[] = []
+): Promise<
+	RemoteGitResult<{
+		resolvedCwd: string;
+		resolvedBasePath: string;
+		resolvedSessionPaths?: Record<string, string>;
+		missingSessionPaths?: string[];
+		unresolvedSessionPaths?: string[];
+	}>
+> {
+	if (!cwd || !basePath) {
+		return { success: false, error: 'Missing remote worktree directory' };
+	}
+	// The line-based protocol cannot preserve these characters. Command
+	// substitution also strips trailing line feeds from physical path output.
+	if ([cwd, basePath].some((p) => /[\r\n\0]/.test(p))) {
+		return { success: false, error: 'Invalid remote worktree path characters' };
+	}
+	// Subshells keep relative paths relative to the same SSH login directory.
+	// pwd -P follows symlinks without depending on GNU realpath flags.
+	const result = await execShellRemote(
+		`(cd -P -- ${shellEscapeRemotePath(cwd)} && pwd -P) && (cd -P -- ${shellEscapeRemotePath(basePath)} && pwd -P)`,
+		sshRemote
+	);
+	if (result.exitCode !== 0) {
+		return {
+			success: false,
+			error: result.stderr?.trim() || 'Could not resolve remote worktree paths',
+		};
+	}
+	const paths = result.stdout.replace(/\n$/, '').split('\n');
+	if (paths.length !== 2 || paths.some((p) => !p.startsWith('/') || /[\r\0]/.test(p))) {
+		return { success: false, error: 'Invalid resolved remote worktree paths' };
+	}
+	const aliases = await resolveWorktreeAliasesRemote(sessionPaths, sshRemote);
+	if (!aliases.success || !aliases.data) {
+		return { success: false, error: aliases.error || 'Could not resolve remote worktree aliases' };
+	}
+	return {
+		success: true,
+		data: { resolvedCwd: paths[0], resolvedBasePath: paths[1], ...aliases.data },
+	};
+}
+
+/** Resolve saved or registered worktree aliases independently, preserving individual probe failures. */
+export async function resolveWorktreeAliasesRemote(
+	sessionPaths: string[],
+	sshRemote: SshRemoteConfig
+): Promise<
+	RemoteGitResult<{
+		resolvedSessionPaths?: Record<string, string>;
+		missingSessionPaths?: string[];
+		unresolvedSessionPaths?: string[];
+	}>
+> {
+	// A matching lexical base prefix does not establish physical identity:
+	// leaf or group symlinks can point elsewhere, including registry paths.
+	const uniqueSessionPaths = [...new Set(sessionPaths)];
+	const unresolvedSessionPaths = new Set(
+		uniqueSessionPaths.filter((p) => !p || /[\r\n\0]/.test(p))
+	);
+	const aliases = uniqueSessionPaths.filter((candidate) => !unresolvedSessionPaths.has(candidate));
+	let resolvedSessionPaths: Record<string, string> | undefined;
+	const missingSessionPaths: string[] = [];
+	if (aliases.length > 0) {
+		// A failed cd alone does not prove deletion: it may be a permission
+		// failure, an inaccessible alias ancestor, or a dangling symlink. Only
+		// derive a missing leaf's physical candidate from a reachable parent.
+		// Each path produces its own status, including unresolved errors. NUL
+		// framing keeps an invalid physical filename from corrupting sibling
+		// records. The marker retains filename-final line feeds across shell
+		// command substitution; those paths are preserved as unresolved below.
+		const probe = `for p in ${aliases.map(shellEscapeRemotePath).join(' ')}; do
+if physical=$(cd -P -- "$p" >/dev/null 2>&1 && pwd -P && printf '.'); then
+	physical=\${physical%.}; physical=\${physical%?}
+	printf 'resolved\\000%s\\000' "$physical"
+else
+	trimmed=$p
+	while [ "\${trimmed%/}" != "$trimmed" ]; do trimmed=\${trimmed%/}; done
+	leaf=\${trimmed##*/}
+	case "$leaf" in ''|.|..) printf 'unresolved\\000-\\000'; continue ;; esac
+	parent=\${trimmed%/*}
+	if [ "$parent" = "$trimmed" ]; then parent=.; fi
+	if [ -z "$parent" ]; then parent=/; fi
+	if physical=$(cd -P -- "$parent" >/dev/null 2>&1 || exit 1
+		if [ -e "./$leaf" ] || [ -L "./$leaf" ]; then exit 1; fi
+		pwd -P && printf '.'); then
+		physical=\${physical%.}; physical=\${physical%?}
+		printf 'missing\\000%s/%s\\000' "\${physical%/}" "$leaf"
+	else
+		printf 'unresolved\\000-\\000'
+	fi
+fi
+done`;
+		const resolved = await execShellRemote(probe, sshRemote);
+		const resolvedAliases = resolved.stdout.split('\0').slice(0, -1);
+		if (
+			resolved.exitCode !== 0 ||
+			!resolved.stdout.endsWith('\0') ||
+			resolvedAliases.length !== aliases.length * 2
+		) {
+			return {
+				success: false,
+				error: resolved.stderr?.trim() || 'Could not resolve existing remote worktree paths',
+			};
+		}
+		const resolvedEntries: [string, string][] = [];
+		aliases.forEach((alias, index) => {
+			const status = resolvedAliases[index * 2];
+			const path = resolvedAliases[index * 2 + 1];
+			if (!['resolved', 'missing'].includes(status) || !/^\/[^\r\n\0]*$/.test(path)) {
+				unresolvedSessionPaths.add(alias);
+				return;
+			}
+			if (status === 'missing') missingSessionPaths.push(alias);
+			resolvedEntries.push([alias, path]);
+		});
+		if (resolvedEntries.length > 0) resolvedSessionPaths = Object.fromEntries(resolvedEntries);
+	}
+	return {
+		success: true,
+		data: {
+			...(resolvedSessionPaths ? { resolvedSessionPaths } : {}),
+			...(missingSessionPaths.length > 0 ? { missingSessionPaths } : {}),
+			...(unresolvedSessionPaths.size > 0
+				? { unresolvedSessionPaths: [...unresolvedSessionPaths] }
+				: {}),
+		},
+	};
 }
 
 /**
@@ -690,17 +922,25 @@ export async function listWorktreesRemote(
 	});
 
 	if (result.exitCode !== 0) {
-		// Not a git repo or no worktree support
 		return {
-			success: true,
-			data: [],
+			success: false,
+			error: result.stderr?.trim() || `git worktree list failed: ${result.exitCode}`,
 		};
+	}
+	if (!result.stdout.trim()) {
+		return { success: false, error: 'git worktree list returned no worktrees' };
 	}
 
 	// Parse porcelain output
 	const worktrees: RemoteWorktreeEntry[] = [];
 	const lines = result.stdout.split('\n');
-	let current: { path?: string; head?: string; branch?: string | null; isBare?: boolean } = {};
+	let current: {
+		path?: string;
+		head?: string;
+		branch?: string | null;
+		isBare?: boolean;
+		isPrunable?: boolean;
+	} = {};
 
 	for (const line of lines) {
 		if (line.startsWith('worktree ')) {
@@ -714,12 +954,15 @@ export async function listWorktreesRemote(
 			current.isBare = true;
 		} else if (line === 'detached') {
 			current.branch = null;
+		} else if (line === 'prunable' || line.startsWith('prunable ')) {
+			current.isPrunable = true;
 		} else if (line === '' && current.path) {
 			worktrees.push({
 				path: current.path,
 				head: current.head || '',
 				branch: current.branch ?? null,
 				isBare: current.isBare || false,
+				...(current.isPrunable ? { isPrunable: true } : {}),
 			});
 			current = {};
 		}
@@ -732,7 +975,11 @@ export async function listWorktreesRemote(
 			head: current.head || '',
 			branch: current.branch ?? null,
 			isBare: current.isBare || false,
+			...(current.isPrunable ? { isPrunable: true } : {}),
 		});
+	}
+	if (worktrees.length === 0) {
+		return { success: false, error: 'git worktree list returned no valid worktrees' };
 	}
 
 	return {

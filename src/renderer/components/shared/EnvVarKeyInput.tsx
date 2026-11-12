@@ -19,6 +19,7 @@ import {
 	type KnownEnvVarKeys,
 } from '../../../shared/envVarCatalog';
 import type { Theme } from '../../types';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 export interface EnvVarKeyInputProps {
 	theme: Theme;
@@ -172,10 +173,9 @@ export function EnvVarKeyInput({
 				<div
 					id={`${testId}-list`}
 					role="listbox"
-					className="absolute left-0 right-0 top-full mt-1 z-50 rounded border shadow-lg overflow-y-auto"
+					className="absolute left-0 right-0 top-full mt-1 z-50 rounded overflow-y-auto"
 					style={{
-						backgroundColor: theme.colors.bgMain,
-						borderColor: theme.colors.border,
+						...elevatedSurfaceStyle(theme),
 						maxHeight: '13rem',
 					}}
 					data-testid={`${testId}-suggestions`}

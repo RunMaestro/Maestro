@@ -215,7 +215,7 @@ describe('Cross-platform Fonts and Sizing', () => {
 				.filter(Boolean);
 
 		/**
-		 * Typography drives the app font through CSS variables (`--maestro-font-mono`,
+		 * rc drives the app font through CSS variables (`--maestro-font-mono`,
 		 * `--maestro-font-interface`) so a surface can be re-themed at runtime.
 		 * The var's FALLBACK is the shared stack, and that fallback is what has to
 		 * agree with `MAESTRO_FONT_STACK` - it is what paints before the renderer
@@ -273,11 +273,22 @@ describe('Cross-platform Fonts and Sizing', () => {
 			// keep the CSP tight enough that a regression fails loudly.
 			expect(markup).not.toContain('fonts.googleapis.com');
 			expect(markup).not.toContain('fonts.gstatic.com');
+			// rc declares the faces in generated-fonts.css (written by
+			// scripts/fetch-webfonts.mjs and imported by index.css) rather than a
+			// hand-written per-family sheet, so the local-bundle proof is the
+			// preloaded woff2 here plus that import.
 			expect(markup).toMatch(/href="\.\/fonts\/[^"]+\.woff2"/);
 			expect(readRepoFile('src/renderer/index.css')).toContain("@import './generated-fonts.css';");
 		});
 
 		it('should block, never swap, on every bundled @font-face', () => {
+			// `swap` paints the fallback first and restyles when the woff2 decodes.
+			// On a cold start the splash paints before that, so the MAESTRO
+			// wordmark flashed Courier New -> JetBrains Mono. This shipped once
+			// already: main fixed it in a hand-written sheet, rc merged it but kept
+			// its own generator (which emitted `swap`), and the old test read the
+			// orphaned sheet nothing loaded - so it passed while the real CSS
+			// swapped. Assert against the stylesheet index.css actually imports.
 			const css = readRepoFile('src/renderer/generated-fonts.css');
 			const faces = css.match(/@font-face\s*\{[^}]*\}/g) ?? [];
 			expect(faces.length).toBeGreaterThan(0);
@@ -286,12 +297,15 @@ describe('Cross-platform Fonts and Sizing', () => {
 				expect(face).toMatch(/font-display:\s*block;/);
 			}
 
+			// And the generator, so the next `npm run fonts:fetch` cannot undo it.
 			const script = readRepoFile('scripts/fetch-webfonts.mjs');
 			expect(script).toContain("'\\tfont-display: block;'");
 			expect(script).not.toMatch(/'\\tfont-display: (?!block;)/);
 		});
 
 		it('should preload a woff2 the bundled stylesheet actually declares', () => {
+			// A preload for a file no @font-face uses buys nothing: the face the
+			// splash needs is still discovered late, and the fetch is wasted.
 			const markup = readRepoFile('src/renderer/index.html').replace(/<!--[\s\S]*?-->/g, '');
 			const preload = /href="\.\/fonts\/([^"]+\.woff2)"/.exec(markup);
 			expect(preload).not.toBeNull();
@@ -301,6 +315,9 @@ describe('Cross-platform Fonts and Sizing', () => {
 		});
 
 		it('should not ship font files the bundled stylesheet does not declare', () => {
+			// An undeclared file is dead weight in both bundles, and an undeclared
+			// STYLESHEET is worse: it is where the `block` fix sat unused while a
+			// test read it and passed.
 			const css = readRepoFile('src/renderer/generated-fonts.css');
 			const fontDir = path.join(__dirname, '../../..', 'src/renderer/public/fonts');
 
@@ -314,8 +331,15 @@ describe('Cross-platform Fonts and Sizing', () => {
 			// The wordmark is a logo. It carries an explicit family so it cannot
 			// inherit the root element's inline fontFamily, which is the user's
 			// Settings choice - otherwise picking a terminal font redraws the brand.
-			const sessionList = readRepoFile('src/renderer/components/SessionList/SessionList.tsx');
-			expect(sessionList).toContain('WORDMARK_FONT_STACK');
+			// rc pins it in the <Wordmark> component rather than at the SessionList
+			// call site, and more strictly than an inline style could: the component
+			// type-EXCLUDES fontFamily from its style prop, so no caller can
+			// override the brand even by accident.
+			const wordmark = readRepoFile('src/renderer/components/ui/Wordmark.tsx');
+			expect(wordmark).toContain('WORDMARK_FONT_STACK');
+			expect(readRepoFile('src/renderer/components/SessionList/SessionList.tsx')).toContain(
+				'<Wordmark'
+			);
 
 			expect(familyNames(WORDMARK_FONT_STACK)[0]).toBe('JetBrains Mono');
 		});

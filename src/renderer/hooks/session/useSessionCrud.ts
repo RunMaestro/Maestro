@@ -15,11 +15,12 @@
  */
 
 import { useCallback, useState } from 'react';
-import type { ToolType, Session, AITab } from '../../types';
+import type { AdditionalDirectory, ToolType, Session, AITab } from '../../types';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
-import { getModalActions, useModalStore } from '../../stores/modalStore';
+import { useModalStore } from '../../stores/modalStore';
+import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { validateNewSession } from '../../utils/sessionValidation';
@@ -27,6 +28,7 @@ import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
+import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
 
 // ============================================================================
 // Dependencies interface
@@ -76,7 +78,10 @@ export interface UseSessionCrudReturn {
 		maestroPPath?: string,
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
-		retryOnTokenExhaustion?: boolean
+		retryOnTokenExhaustion?: boolean,
+		additionalDirectories?: AdditionalDirectory[],
+		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
+		codexAutoResetOnExhaustion?: boolean
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -94,6 +99,8 @@ export interface UseSessionCrudReturn {
 	handleDragOver: (e: React.DragEvent) => void;
 	/** Opens create group modal with pending session to move */
 	handleCreateGroupAndMove: (sessionId: string) => void;
+	/** Clears a pending move when the create-group modal is cancelled. */
+	clearPendingMoveToGroup: () => void;
 	/** Callback when a group is created - moves pending session to it */
 	handleGroupCreated: (groupId: string) => void;
 	/** The session ID pending move to a newly created group */
@@ -116,7 +123,16 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	// --- Store actions (stable via getState) ---
 	const { setSessions, setActiveSessionId, setGroups } = useSessionStore.getState();
 	const { setEditingSessionId, setDraggingSessionId, setActiveFocus } = useUIStore.getState();
-	const { setDeleteAgentSession } = getModalActions();
+	// PERF: Do not call getModalActions() at render time for deleteSession deps -
+	// it returns fresh wrapper functions every call and would bust SessionList memo.
+
+	// Multi-window: claim a newly-created agent for the window that created it so
+	// it never momentarily surfaces in the primary's catch-all (spawn flicker).
+	// Optional - undefined outside a WindowProvider (web build / isolation tests),
+	// where creation is unscoped and this is a no-op. Pulled out as a stable ref
+	// (memoized on isMainWindow inside the context) so it can sit in createNewSession's
+	// deps without re-creating the callback on every window-scope change.
+	const registerNewSession = useWindowContextOptional()?.registerNewSession;
 
 	// --- Local state ---
 	const [pendingMoveToGroupSessionId, setPendingMoveToGroupSessionId] = useState<string | null>(
@@ -157,7 +173,10 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			maestroPPath?: string,
 			maestroPMode?: 'interactive' | 'dynamic',
 			retryOnAvailabilityErrors?: boolean,
-			retryOnTokenExhaustion?: boolean
+			retryOnTokenExhaustion?: boolean,
+			additionalDirectories?: AdditionalDirectory[],
+			/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
+			codexAutoResetOnExhaustion?: boolean
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -229,6 +248,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					cwd: workingDir,
 					fullPath: workingDir,
 					projectRoot: workingDir,
+					additionalDirectories,
 					createdAt: Date.now(),
 					isGitRepo,
 					gitBranches,
@@ -271,6 +291,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					activeTerminalTabId: null,
 					unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
 					unifiedClosedTabHistory: [],
+					tabGroups: [],
+					activeGroupId: null,
 					nudgeMessage,
 					newSessionMessage,
 					customPath,
@@ -291,12 +313,20 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					// behavior needs no stored value.
 					retryOnAvailabilityErrors,
 					retryOnTokenExhaustion,
+					// Only persist an explicit opt-IN. The default is off, so an absent
+					// value already means off and storing `false` on every non-Codex
+					// agent would be noise in every session record.
+					codexAutoResetOnExhaustion: codexAutoResetOnExhaustion === true ? true : undefined,
 					claudeInteractive:
 						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};
 
 				setSessions((prev) => [...prev, newSession]);
 				setActiveSessionId(newId);
+				// Claim the agent for THIS window before any process spawns, so a
+				// secondary window surfaces it immediately and the primary's catch-all
+				// never flashes it. No-op in the primary window / outside a WindowProvider.
+				void registerNewSession?.(newId);
 				(window as any).maestro.stats.recordSessionCreated({
 					sessionId: newId,
 					agentType: agentId,
@@ -312,20 +342,18 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				logger.error('Failed to create session:', undefined, error);
 			}
 		},
-		[setSessions, setActiveSessionId, setActiveFocus, inputRef]
+		[setSessions, setActiveSessionId, setActiveFocus, inputRef, registerNewSession]
 	);
 
 	// ========================================================================
 	// deleteSession - opens the delete agent confirmation modal
 	// ========================================================================
-	const deleteSession = useCallback(
-		(id: string) => {
-			const session = selectSessionById(id)(useSessionStore.getState());
-			if (!session) return;
-			setDeleteAgentSession(session);
-		},
-		[setDeleteAgentSession]
-	);
+	const deleteSession = useCallback((id: string) => {
+		const session = selectSessionById(id)(useSessionStore.getState());
+		if (!session) return;
+		// Event-time modal open - stable callback identity for SessionList memo.
+		useModalStore.getState().openModal('deleteAgent', { session });
+	}, []);
 
 	// ========================================================================
 	// deleteWorktreeGroup - removes group + all agents
@@ -385,7 +413,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					const latestSessions = useSessionStore.getState().sessions;
 					const newSessions = latestSessions.filter((s) => !sessionIdsToRemove.has(s.id));
 					setSessions(newSessions);
-					setGroups((prev) => prev.filter((g) => g.id !== groupId));
+					setGroups((prev) => removeGroupAndPromoteChildren(prev, groupId));
 
 					setTimeout(() => flushSessionPersistence(), 0);
 
@@ -496,6 +524,10 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 		[setCreateGroupModalOpen]
 	);
 
+	const clearPendingMoveToGroup = useCallback(() => {
+		setPendingMoveToGroupSessionId(null);
+	}, []);
+
 	const handleGroupCreated = useCallback(
 		(groupId: string) => {
 			if (pendingMoveToGroupSessionId) {
@@ -524,6 +556,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 		handleDragStart,
 		handleDragOver,
 		handleCreateGroupAndMove,
+		clearPendingMoveToGroup,
 		handleGroupCreated,
 		pendingMoveToGroupSessionId,
 	};

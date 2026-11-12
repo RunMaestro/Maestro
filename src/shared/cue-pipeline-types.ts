@@ -14,6 +14,7 @@ import type {
 	CueGraphSession as SharedCueGraphSession,
 } from './cue';
 export type { CueCommand, CueCommandMode, CueEventType, CueNotifyConfig } from './cue';
+import type { EffortLevel, ModelTier } from './modelTiers';
 
 /** Cue brand color - single source of truth for all Cue UI */
 export const CUE_COLOR = '#06b6d4';
@@ -77,6 +78,16 @@ export interface TriggerNodeData {
 		/** Per-item re-trigger cap. See `CueSubscription.max_notifications`.
 		 *  `0` in the wire format = unlimited; the UI renders this as "∞". */
 		max_notifications?: number;
+		/** Listener config for `webhook.received` triggers. See `CueWebhookConfig`. */
+		webhook_path?: string;
+		webhook_secret_env?: string;
+		webhook_signature_header?: string;
+		/** Literal secret carried through from hand-written YAML. The config
+		 *  panel renders it read-only and never offers a way to type one in -
+		 *  the editor always writes `secret_env` for new triggers. It is still
+		 *  hydrated and re-emitted so that opening and saving a pipeline in the
+		 *  editor doesn't silently strip a working secret off disk. */
+		webhook_secret?: string;
 		/** `time.once` only: ISO-8601 instant the one-shot fires at. See
 		 *  `CueSubscription.fire_at`. The editor does not offer a date picker
 		 *  yet, but this MUST round-trip: `maestro-cli cue schedule --at` and
@@ -115,6 +126,13 @@ export interface AgentNodeData {
 	fanInTimeoutMinutes?: number;
 	/** Per-node fan-in timeout-on-fail override. 'break' waits for all, 'continue' fires with partial data. */
 	fanInTimeoutOnFail?: 'break' | 'continue';
+	/** Model tier this node runs at (`low | medium | high`). Serialized onto
+	 *  the subscription that runs the node as `tier`. Exclusive with `model`. */
+	tier?: ModelTier;
+	/** Exact model id this node runs on. Serialized as `model`. */
+	model?: string;
+	/** Effort level this node runs at. Serialized as `effort`. */
+	effort?: EffortLevel;
 	/** Stable per-instance identifier (UUID), generated when the node is
 	 *  created in the editor. Persisted in YAML via `target_node_key` /
 	 *  `fan_out_node_keys` on the owning subscription so two visual nodes

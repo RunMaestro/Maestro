@@ -30,7 +30,7 @@ Maestro ships with a variety of themes that fall under three categories: Dark, L
 
 ## Light
 
-### Github
+### GitHub
 
 <img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/b09e466a-5dbf-4510-80b9-a84815c52d14" />
 
@@ -70,3 +70,45 @@ We asked Maestro to make a theme for itself, this is what it came up with.
 
 It's a vibe.
 <img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/fc20b716-b959-47b9-b2f0-f78df2a63329" />
+
+---
+
+## Showcase Mode
+
+Every screenshot above is shot against **curated demo data**, never a real
+workspace. Showcase Mode seeds a throwaway data directory with a fictional
+twelve-agent fleet and launches the dev app pointed at it, so nothing published
+here carries a real project path, client name, or spend figure.
+
+```bash
+# Dracula, default window size
+npm run dev:showcase
+
+# A specific theme
+npm run dev:showcase -- --theme pedurple
+
+# Theme plus the exact window size these screenshots use
+# (2304x1360 logical pixels, 4608x2720 at 2x retina)
+npm run dev:showcase -- --theme catppuccin-latte --size 2304x1360
+```
+
+`--theme` takes any id from `THEMES` in `src/shared/themes.ts`. The seed data is
+regenerated from `scripts/showcase/seed/data/` on every launch, so edits made
+while the showcase is running are discarded the next time you start it.
+
+### Capturing the whole set
+
+`npm run capture:showcase` drives the running app over Chrome DevTools Protocol
+and shoots every surface in the shot list, in each theme, without a human
+clicking through them. See
+[docs/agent-guides/SCREENSHOT-CAPTURE.md](docs/agent-guides/SCREENSHOT-CAPTURE.md).
+
+### Adding a screenshot
+
+To get a hosted image URL for a new theme screenshot:
+
+1. Capture it at `--size 2304x1360` so it matches the set.
+2. Open any issue or pull request in this repo.
+3. Drag the file into the comment box. GitHub uploads it and gives you a
+   `https://github.com/user-attachments/assets/...` URL.
+4. Use that URL in the `<img>` tag when adding the theme section above.

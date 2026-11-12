@@ -40,6 +40,7 @@ vi.mock('electron', () => ({
 	},
 	BrowserWindow: {
 		getFocusedWindow: vi.fn(),
+		getAllWindows: vi.fn(() => []),
 	},
 	app: {
 		getVersion: vi.fn(),
@@ -88,6 +89,12 @@ vi.mock('../../../../main/utils/cliDetection', () => ({
 }));
 
 // Mock execFile utility
+vi.mock('../../../../main/runtime/getShellPath', () => ({
+	peekShellPath: vi.fn(() => '/opt/homebrew/bin:/usr/bin:/bin'),
+}));
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
 vi.mock('../../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
 }));
@@ -139,16 +146,27 @@ vi.mock('fs', () => ({
 	copyFileSync: vi.fn(),
 }));
 
+// shell.openPath never settles on Linux (MAESTRO-QH), so the handlers branch on
+// the platform. Default to "not Linux" so the rest of the suite is platform-neutral
+// on every CI leg; the Linux cases flip it explicitly.
+const { mockIsLinux } = vi.hoisted(() => ({ mockIsLinux: vi.fn(() => false) }));
+vi.mock('../../../../shared/platformDetection', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../shared/platformDetection')>()),
+	isLinux: mockIsLinux,
+}));
+
 // Import mocked modules for test control
 import { logger } from '../../../../main/utils/logger';
 import { detectShells } from '../../../../main/utils/shellDetector';
 import { isCloudflaredInstalled } from '../../../../main/utils/cliDetection';
 import { execFileNoThrow } from '../../../../main/utils/execFile';
+import { captureException } from '../../../../main/utils/sentry';
 import { checkForUpdates } from '../../../../main/update-checker';
 import { setAllowPrerelease } from '../../../../main/auto-updater';
 import { tunnelManager } from '../../../../main/tunnel-manager';
 import { powerManager } from '../../../../main/power-manager';
 import * as fsSync from 'fs';
+import { INSTALL_DIR_SYNC_PATH_ERROR } from '../../../../shared/syncPath';
 
 describe('system IPC handlers', () => {
 	let handlers: Map<string, Function>;
@@ -162,6 +180,7 @@ describe('system IPC handlers', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockIsLinux.mockReturnValue(false);
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -200,13 +219,24 @@ describe('system IPC handlers', () => {
 			delete: vi.fn(),
 		};
 
+		vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([]);
+
 		// Setup mock web server
 		mockWebServer = {
 			getSecureUrl: vi.fn().mockReturnValue('http://localhost:3000/token-path'),
+			// Live Mode on: the LAN server is up. The tunnel refuses anything else.
+			isActive: vi.fn().mockReturnValue(true),
+			isLanAccessible: vi.fn().mockReturnValue(true),
 		};
 
-		// Setup mock tunnel manager (use the imported mock)
+		// Setup mock tunnel manager (use the imported mock). Starting and
+		// stopping read the status back for the live:stateChanged push.
 		mockTunnelManager = tunnelManager;
+		vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
+			isRunning: false,
+			url: null,
+			error: null,
+		});
 
 		// Create dependencies
 		deps = {
@@ -278,6 +308,7 @@ describe('system IPC handlers', () => {
 				'power:addReason',
 				'power:removeReason',
 				// Clipboard handlers
+				'clipboard:writeText',
 				'clipboard:writeImage',
 				'clipboard:readImage',
 				// Page capture
@@ -570,7 +601,20 @@ describe('system IPC handlers', () => {
 	});
 
 	describe('fonts:detect', () => {
-		it('should return array of system fonts using fc-list', async () => {
+		// The handler returns a RESULT rather than a bare array now: the caller
+		// has to be able to tell "here is what is installed" from "we could not
+		// look", or it annotates real fonts "(Not Found)".
+		const FALLBACK = [
+			'Monaco',
+			'Menlo',
+			'Courier New',
+			'Consolas',
+			'Roboto Mono',
+			'Fira Code',
+			'JetBrains Mono',
+		];
+
+		it('should return the installed fonts, flagged reliable', async () => {
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: 'Arial\nHelvetica\nMonaco\nCourier New',
 				stderr: '',
@@ -580,8 +624,51 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(execFileNoThrow).toHaveBeenCalledWith('fc-list', [':', 'family']);
-			expect(result).toEqual(['Arial', 'Helvetica', 'Monaco', 'Courier New']);
+			expect(result).toEqual({
+				fonts: ['Arial', 'Helvetica', 'Monaco', 'Courier New'],
+				source: 'fc-list',
+				reliable: true,
+			});
+		});
+
+		it('should run fc-list with the login-shell PATH', async () => {
+			// The GUI process PATH excludes /opt/homebrew/bin, so a packaged app
+			// could not find fc-list even where it was installed.
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout: 'Arial',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('fonts:detect');
+			await handler!({} as any);
+
+			expect(execFileNoThrow).toHaveBeenCalledWith(
+				'fc-list',
+				[':', 'family'],
+				undefined,
+				expect.objectContaining({ env: expect.anything() })
+			);
+		});
+
+		it('should split comma-separated family aliases', async () => {
+			// fc-list prints "DejaVu Sans,DejaVu Sans Book" for one family. The
+			// previous parse kept the whole line, so an aliased family could
+			// never match a picker entry by name.
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout: 'DejaVu Sans,DejaVu Sans Book\nArial',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('fonts:detect');
+			const result = await handler!({} as any);
+
+			expect((result as { fonts: string[] }).fonts).toEqual([
+				'DejaVu Sans',
+				'DejaVu Sans Book',
+				'Arial',
+			]);
 		});
 
 		it('should deduplicate fonts', async () => {
@@ -594,7 +681,7 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual(['Arial', 'Helvetica']);
+			expect((result as { fonts: string[] }).fonts).toEqual(['Arial', 'Helvetica']);
 		});
 
 		it('should filter empty lines', async () => {
@@ -607,10 +694,13 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual(['Arial', 'Helvetica', 'Monaco']);
+			expect((result as { fonts: string[] }).fonts).toEqual(['Arial', 'Helvetica', 'Monaco']);
 		});
 
-		it('should return fallback fonts when fc-list fails', async () => {
+		it('should flag the fallback list unreliable when fc-list is absent', async () => {
+			// This is the majority case: fontconfig ships with neither macOS nor
+			// Windows. The seven names are a placeholder so the picker has
+			// something to show, NOT a claim about what is installed.
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: '',
 				stderr: 'command not found',
@@ -620,32 +710,36 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual([
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			]);
+			expect(result).toMatchObject({
+				fonts: FALLBACK,
+				source: 'fallback',
+				reliable: false,
+			});
+			expect((result as { reason?: string }).reason).toBeTruthy();
 		});
 
-		it('should return fallback fonts on error', async () => {
+		it('should flag the fallback list unreliable on error', async () => {
 			vi.mocked(execFileNoThrow).mockRejectedValue(new Error('Command failed'));
 
 			const handler = handlers.get('fonts:detect');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual([
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			]);
+			expect(result).toMatchObject({
+				fonts: FALLBACK,
+				source: 'fallback',
+				reliable: false,
+			});
+		});
+
+		it('should not report a missing fc-list to Sentry', async () => {
+			// It is the EXPECTED path off Linux, so reporting it would bury real
+			// crashes under noise from the majority platform.
+			vi.mocked(execFileNoThrow).mockRejectedValue(new Error('ENOENT'));
+
+			const handler = handlers.get('fonts:detect');
+			await handler!({} as any);
+
+			expect(captureException).not.toHaveBeenCalled();
 		});
 	});
 
@@ -921,6 +1015,28 @@ describe('system IPC handlers', () => {
 			// Should not throw - logs warning instead
 			await expect(handler!({} as any, '/path/to/file.xyz')).resolves.toBeUndefined();
 		});
+
+		// MAESTRO-QH: Electron's Linux openPath never runs its completion callback,
+		// so awaiting it left the invoke unanswered ("reply was never sent").
+		it('replies on Linux even though shell.openPath never settles there', async () => {
+			mockIsLinux.mockReturnValue(true);
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.openPath).mockReturnValue(new Promise<string>(() => {}));
+
+			const handler = handlers.get('shell:openPath');
+			await expect(handler!({} as any, '/path/to/file.txt')).resolves.toBeUndefined();
+			expect(shell.openPath).toHaveBeenCalledWith(path.resolve('/path/to/file.txt'));
+		});
+
+		it('openExternal with a file:// URL also replies on Linux', async () => {
+			mockIsLinux.mockReturnValue(true);
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.openPath).mockReturnValue(new Promise<string>(() => {}));
+
+			const handler = handlers.get('shell:openExternal');
+			await expect(handler!({} as any, 'file:///tmp/report.pdf')).resolves.toBeUndefined();
+			expect(shell.openPath).toHaveBeenCalledWith('/tmp/report.pdf');
+		});
 	});
 
 	describe('tunnel:isCloudflaredInstalled', () => {
@@ -971,19 +1087,52 @@ describe('system IPC handlers', () => {
 
 			expect(result).toEqual({
 				success: false,
-				error: 'Web server not running',
+				error: 'Live mode is off. Turn on the web interface before starting the tunnel.',
 			});
+			expect(mockTunnelManager.start).not.toHaveBeenCalled();
 		});
 
-		it('should return error when web server URL not available', async () => {
-			mockWebServer.getSecureUrl.mockReturnValue(null);
+		it('should refuse to tunnel the loopback CLI server while Live mode is off', async () => {
+			// Only the CLI server is running: tunneling it would publish the CLI's
+			// control channel to the internet.
+			mockWebServer.isLanAccessible.mockReturnValue(false);
 
 			const handler = handlers.get('tunnel:start');
 			const result = await handler!({} as any);
 
 			expect(result).toEqual({
 				success: false,
-				error: 'Web server not running',
+				error: 'Live mode is off. Turn on the web interface before starting the tunnel.',
+			});
+			expect(mockTunnelManager.start).not.toHaveBeenCalled();
+		});
+
+		it('should push the new state to every window after starting', async () => {
+			const send = vi.fn();
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([
+				{ isDestroyed: () => false, webContents: { isDestroyed: () => false, send } },
+			] as any);
+			vi.mocked(mockTunnelManager.start).mockResolvedValue({
+				success: true,
+				url: 'https://abc.trycloudflare.com',
+			});
+			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
+				isRunning: true,
+				url: 'https://abc.trycloudflare.com',
+				error: null,
+			});
+
+			const handler = handlers.get('tunnel:start');
+			await handler!({} as any);
+
+			expect(send).toHaveBeenCalledWith('live:stateChanged', {
+				live: true,
+				url: 'http://localhost:3000/token-path',
+				tunnel: {
+					isRunning: true,
+					url: 'https://abc.trycloudflare.com/token-path',
+					error: null,
+				},
 			});
 		});
 
@@ -1703,6 +1852,22 @@ describe('system IPC handlers', () => {
 				success: false,
 				error: 'Cannot create directory: /protected/path',
 			});
+		});
+
+		it('should reject a path inside the install directory (#1875)', async () => {
+			mockBootstrapStore.get.mockReturnValue(null);
+			const exe = path.join(path.resolve('/apps/Maestro'), 'Maestro.exe');
+			mockApp.getPath.mockImplementation((name: string) =>
+				name === 'exe' ? exe : '/default/path'
+			);
+
+			const handler = handlers.get('sync:setCustomPath');
+			const result = await handler!({} as any, path.join(path.dirname(exe), 'storage'));
+
+			expect(result).toEqual({ success: false, error: INSTALL_DIR_SYNC_PATH_ERROR });
+			expect(fsSync.mkdirSync).not.toHaveBeenCalled();
+			expect(fsSync.copyFileSync).not.toHaveBeenCalled();
+			expect(mockBootstrapStore.set).not.toHaveBeenCalled();
 		});
 
 		it('should migrate settings files to new location', async () => {

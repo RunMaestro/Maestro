@@ -3,6 +3,7 @@ import { render, screen, fireEvent, act, within, waitFor } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { InputArea } from '../../../renderer/components/InputArea';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../renderer/types';
@@ -26,12 +27,25 @@ function seedAiCommand(sessionId: string, tabId: string, command?: string) {
 // Mock scrollIntoView since jsdom doesn't support it
 Element.prototype.scrollIntoView = vi.fn();
 
+const mockUpdateSessionWith = vi.fn();
+vi.mock('../../../renderer/stores/sessionStore', async (importActual) => {
+	// Preserve real exports (e.g. useSessionStore, which child components like
+	// InputTextarea subscribe to) and override only updateSessionWith so the
+	// permission-mode toggle assertions can observe it.
+	const actual = await importActual<typeof import('../../../renderer/stores/sessionStore')>();
+	return {
+		...actual,
+		updateSessionWith: (...args: unknown[]) => mockUpdateSessionWith(...args),
+	};
+});
+
 // Mock useAgentCapabilities hook - return claude-code capabilities by default
 vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', () => ({
 	useAgentCapabilities: vi.fn(() => ({
 		capabilities: {
 			supportsResume: true,
 			supportsReadOnlyMode: true,
+			supportsStandardPermissionMode: true,
 			supportsJsonOutput: true,
 			supportsSessionId: true,
 			supportsImageInput: true,
@@ -55,6 +69,7 @@ vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', () => ({
 			const capabilities: Record<string, boolean> = {
 				supportsResume: true,
 				supportsReadOnlyMode: true,
+				supportsStandardPermissionMode: true,
 				supportsJsonOutput: true,
 				supportsSessionId: true,
 				supportsImageInput: true,
@@ -83,6 +98,18 @@ vi.mock('../../../renderer/components/ThinkingStatusPill', () => ({
 			<div data-testid="thinking-status-pill">ThinkingStatusPill</div>
 		) : null
 	),
+}));
+
+// Captures the `onInterrupt` prop, which is the whole decision under test: the
+// indicator only carries Stop when the thinking pill is NOT already offering it.
+vi.mock('../../../renderer/components/CrossAgentResponseIndicator', () => ({
+	CrossAgentResponseIndicator: vi.fn(({ onInterrupt }) => (
+		<div
+			data-testid="cross-agent-indicator"
+			data-has-stop={onInterrupt ? 'yes' : 'no'}
+			onClick={onInterrupt}
+		/>
+	)),
 }));
 
 vi.mock('../../../renderer/components/ExecutionQueueIndicator', () => ({
@@ -221,10 +248,12 @@ const createDefaultProps = (
 describe('InputArea', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		useSessionStore.setState({ sessions: [], groups: [] });
 	});
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+		mockUpdateSessionWith.mockClear();
 	});
 
 	describe('Basic Rendering', () => {
@@ -233,6 +262,113 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			expect(screen.getByRole('textbox')).toBeInTheDocument();
+		});
+
+		it('uses native textarea text when the AI draft has no recognized mention', () => {
+			const props = createDefaultProps({ inputValue: 'plain text with unknown @todo token' });
+			const { container } = render(<InputArea {...props} />);
+			const textarea = screen.getByRole('textbox');
+
+			expect(container.querySelector('.maestro-input-text-overlay')).not.toBeInTheDocument();
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
+		});
+
+		it('renders decoration only for a recognized mention while keeping native text', () => {
+			const session = createMockSession({ id: 'session-1', inputMode: 'ai' });
+			const peer = createMockSession({ id: 'session-2', name: 'reviewer' });
+			useSessionStore.setState({ sessions: [session, peer], groups: [] });
+			const props = createDefaultProps({ session, inputValue: 'ask @reviewer to check' });
+			const { container } = render(<InputArea {...props} />);
+			const textarea = screen.getByRole('textbox');
+
+			const overlay = container.querySelector('.maestro-input-text-overlay');
+			const mentionDecoration = Array.from(overlay?.querySelectorAll('span') ?? []).find(
+				(element) => element.textContent === '@reviewer'
+			);
+
+			expect(overlay).toBeInTheDocument();
+			expect((overlay as HTMLElement).style.color).toBe('transparent');
+			expect((mentionDecoration as HTMLElement).style.color).toBe('transparent');
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
+		});
+
+		it('keeps long wrapped text and an agent mention on the native textarea glyph run', () => {
+			const session = createMockSession({ id: 'session-1', inputMode: 'ai' });
+			const peer = createMockSession({ id: 'session-2', name: 'maestro-omp' });
+			const longDraft = [
+				'Olhasó',
+				'',
+				'oakoekfapoekfpaokef',
+				'apokfpaoefpokaepofkapokfopkaopkefoakepfokapoekfpoakeopfkaopk',
+				'kAPOKFPAKEOPFKAPOKFOKA',
+				'',
+				'@maestro-omp ',
+				'amoma',
+				'oakkkkkkkefae',
+			].join('\n');
+			useSessionStore.setState({ sessions: [session, peer], groups: [] });
+
+			const { container } = render(
+				<InputArea {...createDefaultProps({ session, inputValue: longDraft })} />
+			);
+			const textarea = screen.getByRole('textbox');
+			const overlay = container.querySelector('.maestro-input-text-overlay') as HTMLDivElement;
+			const mentionDecoration = Array.from(overlay.querySelectorAll('span')).find(
+				(element) => element.textContent === '@maestro-omp'
+			);
+
+			expect(textarea).toHaveValue(longDraft);
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
+			expect((textarea as HTMLTextAreaElement).style.wordBreak).toBe('break-word');
+			expect(overlay.textContent).toBe(longDraft);
+			expect(overlay.style.color).toBe('transparent');
+			expect(overlay.style.wordBreak).toBe('break-word');
+			expect((mentionDecoration as HTMLElement).style.color).toBe('transparent');
+		});
+
+		it('preserves a trailing empty caret line in the mention overlay', () => {
+			const session = createMockSession({ id: 'session-1', inputMode: 'ai' });
+			const peer = createMockSession({ id: 'session-2', name: 'Maestro' });
+			const draft = [
+				'Mas agora, foi corrigido.',
+				'',
+				'Acho que é só s',
+				'',
+				'@Maestro  o que acha?',
+				'',
+			].join('\n');
+			useSessionStore.setState({ sessions: [session, peer], groups: [] });
+
+			const { container } = render(
+				<InputArea {...createDefaultProps({ session, inputValue: draft })} />
+			);
+			const overlay = container.querySelector('.maestro-input-text-overlay') as HTMLDivElement;
+			const trailingLine = screen.getByTestId('maestro-input-overlay-trailing-line');
+
+			expect(overlay.textContent).toBe(`${draft}\u200b`);
+			expect(trailingLine).toHaveTextContent('\u200b');
+		});
+
+		it('shows native text and hides the mention overlay during selection changes', () => {
+			const props = createDefaultProps({ inputValue: 'check @src/index.ts now' });
+			const { container } = render(<InputArea {...props} />);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			const overlay = container.querySelector('.maestro-input-text-overlay');
+
+			expect(overlay).toBeInTheDocument();
+
+			textarea.focus();
+			textarea.setSelectionRange(0, 5);
+			fireEvent(document, new Event('selectionchange'));
+
+			expect(overlay).toHaveStyle({ visibility: 'hidden' });
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
+
+			textarea.setSelectionRange(5, 5);
+			fireEvent(document, new Event('selectionchange'));
+
+			expect(overlay).toHaveStyle({ visibility: 'visible' });
+			expect(textarea).toHaveStyle({ color: mockTheme.colors.textMain });
 		});
 
 		it('renders the notification settings button', () => {
@@ -365,9 +501,9 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle(/Toggle plan mode/);
+			const toggle = screen.getByTitle(/Full Access/);
 			expect(toggle).toBeInTheDocument();
-			expect(toggle).toHaveTextContent('Plan-Mode');
+			expect(toggle).toHaveTextContent('Full Access');
 		});
 
 		it('hides read-only toggle when agent does not support read-only mode', async () => {
@@ -424,16 +560,16 @@ describe('InputArea', () => {
 		});
 
 		it('renders ThinkingStatusPill when items are thinking', () => {
-			// ThinkingStatusPill only renders when there are thinking items
-			// PERF: InputArea now expects pre-filtered thinkingItems prop
+			// ThinkingStatusPill only renders when there are thinking items.
+			// InputArea self-sources via useThinkingItems from the session store.
 			const thinkingSession = createMockSession({
 				inputMode: 'ai',
 				state: 'busy',
 				busySource: 'ai',
 			});
+			useSessionStore.setState({ sessions: [thinkingSession] });
 			const props = createDefaultProps({
 				session: thinkingSession,
-				thinkingItems: [{ session: thinkingSession, tab: null }],
 			});
 			render(<InputArea {...props} />);
 
@@ -584,20 +720,24 @@ describe('InputArea', () => {
 
 		it('keeps read-only toggle enabled when AutoRun is active', () => {
 			const onToggleTabReadOnlyMode = vi.fn();
+			const session = createMockSession({ inputMode: 'ai' });
 			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
+				session,
 				isAutoModeActive: true,
 				onToggleTabReadOnlyMode,
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle(
-				/^Toggle plan mode \(agent will plan but not modify files\)/
-			);
+			const toggle = screen.getByTitle(/Full Access/);
 			expect(toggle).not.toBeDisabled();
 
 			fireEvent.click(toggle);
-			expect(onToggleTabReadOnlyMode).toHaveBeenCalled();
+			expect(mockUpdateSessionWith).toHaveBeenCalled();
+			const updater = mockUpdateSessionWith.mock.calls[0][1];
+			const updatedSession = updater(session);
+			const updatedTab = updatedSession.aiTabs.find((t: { id: string }) => t.id === 'tab-1');
+			expect(updatedTab.permissionMode).toBe('standard');
+			expect(updatedTab.readOnlyMode).toBe(false);
 		});
 
 		it('shows the standard tooltip when AutoRun is active', () => {
@@ -609,7 +749,11 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			expect(
-				screen.getByTitle(/^Toggle plan mode \(agent will plan but not modify files\)/)
+				// Prefix match: the tooltip now carries the toggle's chord as a
+				// suffix, so an exact-string lookup would break on every rebind.
+				screen.getByTitle(
+					/^Full Access: All permission prompts bypassed\. Agent can read, write, and execute without confirmation\. Ask-back questions \(AskUserQuestion\) are not surfaced in this mode\./
+				)
 			).toBeInTheDocument();
 		});
 
@@ -622,10 +766,8 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle(
-				/^Toggle plan mode \(agent will plan but not modify files\)/
-			);
-			expect(toggle).toHaveStyle({ color: mockTheme.colors.textDim });
+			const toggle = screen.getByTitle(/Full Access/);
+			expect(toggle).toHaveStyle({ color: mockTheme.colors.accent });
 		});
 	});
 
@@ -768,7 +910,11 @@ describe('InputArea', () => {
 			expect(setSelectedSlashCommandIndex).toHaveBeenCalledWith(1);
 		});
 
-		it('fills input on double-click', () => {
+		it('accepts the command on a single click, through the full composer', () => {
+			// A single click must accept. This popover used to reserve acceptance for
+			// a double-click, which a touch screen cannot produce and a phone has no
+			// Enter key to substitute for: the menu opened and every tap did nothing.
+			// The trailing space matches what Tab/Enter write in useInputKeyDown.
 			const setInputValue = vi.fn();
 			const setSlashCommandOpen = vi.fn();
 			const inputRef = { current: { focus: vi.fn() } } as any;
@@ -782,10 +928,12 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			const clearCmd = screen.getByText('/clear').closest('button');
-			fireEvent.doubleClick(clearCmd!);
+			fireEvent.click(clearCmd!);
 
-			expect(setInputValue).toHaveBeenCalledWith('/clear');
+			expect(setInputValue).toHaveBeenCalledWith('/clear ');
 			expect(setSlashCommandOpen).toHaveBeenCalledWith(false);
+			// Focus is asserted at the overlay level (SlashCommandPopover.test): the
+			// full composer mounts a real textarea onto this ref, replacing the spy.
 		});
 
 		it('shows slash command autocomplete for all agents (built-in commands always available)', async () => {
@@ -852,27 +1000,20 @@ describe('InputArea', () => {
 			expect(screen.queryByText('/help')).not.toBeInTheDocument();
 		});
 
-		it('single click updates selection without closing dropdown', () => {
+		it('a single click also records the row as selected', () => {
+			// The highlight follows the accepted row so a reopened menu lands where
+			// the user left it; acceptance itself is covered above.
 			const setSelectedSlashCommandIndex = vi.fn();
-			const setSlashCommandOpen = vi.fn();
-			const setInputValue = vi.fn();
 			const props = createDefaultProps({
 				slashCommandOpen: true,
 				inputValue: '/',
 				setSelectedSlashCommandIndex,
-				setSlashCommandOpen,
-				setInputValue,
 			});
 			render(<InputArea {...props} />);
 
-			const helpCmd = screen.getByText('/help').closest('button');
-			fireEvent.click(helpCmd!);
+			fireEvent.click(screen.getByText('/help').closest('button')!);
 
-			// Single click should update selection
 			expect(setSelectedSlashCommandIndex).toHaveBeenCalledWith(1);
-			// But should NOT close dropdown or fill input
-			expect(setSlashCommandOpen).not.toHaveBeenCalled();
-			expect(setInputValue).not.toHaveBeenCalled();
 		});
 
 		it('renders command description text', () => {
@@ -1484,20 +1625,23 @@ describe('InputArea', () => {
 				session: createMockSession({ inputMode: 'ai' }),
 				atMentionOpen: true,
 				atMentionFilter: 'src',
-				atMentionSuggestions: [
+				atMentionItems: [
 					{
-						value: 'src/index.ts',
-						type: 'file' as const,
+						kind: 'file' as const,
+						value: '@src/index.ts ',
 						displayText: 'index.ts',
 						fullPath: 'src/index.ts',
+						score: 0,
 					},
 					{
-						value: 'src/utils',
-						type: 'folder' as const,
+						kind: 'directory' as const,
+						value: '@src/utils/',
 						displayText: 'utils',
 						fullPath: 'src/utils',
+						score: 0,
 					},
 				],
+				atMentionCounts: { all: 2, files: 1, directories: 1, agents: 0 },
 			});
 			render(<InputArea {...props} />);
 
@@ -1555,14 +1699,16 @@ describe('InputArea', () => {
 				atMentionOpen: true,
 				atMentionFilter: 'src/ind',
 				atMentionStartIndex: 6,
-				atMentionSuggestions: [
+				atMentionItems: [
 					{
-						value: 'src/index.ts',
-						type: 'file' as const,
+						kind: 'file' as const,
+						value: '@src/index.ts ',
 						displayText: 'index.ts',
 						fullPath: 'src/index.ts',
+						score: 0,
 					},
 				],
+				atMentionCounts: { all: 1, files: 1, directories: 0, agents: 0 },
 				setInputValue,
 				setAtMentionOpen,
 				setAtMentionFilter,
@@ -1755,17 +1901,22 @@ describe('InputArea', () => {
 			expect(setEnterToSend).toHaveBeenCalledWith(false);
 		});
 
-		it('calls onToggleTabReadOnlyMode when clicking read-only toggle', () => {
-			const onToggleTabReadOnlyMode = vi.fn();
+		it('cycles permission mode when clicking the toggle', () => {
+			const session = createMockSession({ inputMode: 'ai' });
 			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
-				onToggleTabReadOnlyMode,
+				session,
+				onToggleTabReadOnlyMode: vi.fn(),
 			});
 			render(<InputArea {...props} />);
 
-			fireEvent.click(screen.getByTitle(/Toggle plan mode/));
+			fireEvent.click(screen.getByTitle(/Full Access/));
 
-			expect(onToggleTabReadOnlyMode).toHaveBeenCalled();
+			expect(mockUpdateSessionWith).toHaveBeenCalled();
+			const updater = mockUpdateSessionWith.mock.calls[0][1];
+			const updatedSession = updater(session);
+			const updatedTab = updatedSession.aiTabs.find((t: { id: string }) => t.id === 'tab-1');
+			expect(updatedTab.permissionMode).toBe('standard');
+			expect(updatedTab.readOnlyMode).toBe(false);
 		});
 
 		it('calls onToggleTabSaveToHistory when clicking history toggle', () => {
@@ -1996,13 +2147,37 @@ describe('InputArea', () => {
 	describe('Toggle Button Styling', () => {
 		it('applies active styling to read-only toggle when enabled', () => {
 			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
+				// ToolbarControls derives its mode from activeTab.permissionMode /
+				// activeTab.readOnlyMode directly, not from the disconnected
+				// tabReadOnlyMode prop, so the tab itself must be marked readonly.
+				session: createMockSession({
+					inputMode: 'ai',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							logs: [],
+							agentSessionId: null,
+							lastActivityAt: 0,
+							scrollTop: 0,
+							busyStartTime: null,
+							statusMessage: null,
+							contextUsage: null,
+							isStarred: false,
+							name: null,
+							readOnlyMode: true,
+							permissionMode: 'readonly',
+							draftInput: '',
+							saveToHistory: false,
+						},
+					] as any,
+					activeTabId: 'tab-1',
+				}),
 				tabReadOnlyMode: true,
 				onToggleTabReadOnlyMode: vi.fn(),
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle(/Toggle plan mode/);
+			const toggle = screen.getByTitle(/Plan-Mode|plan mode/i);
 			// Should have warning color and background
 			expect(toggle).toHaveStyle({ color: mockTheme.colors.warning });
 		});
@@ -2073,12 +2248,15 @@ describe('InputArea', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai', fileTree: [] }),
 				atMentionOpen: true,
-				atMentionSuggestions: [],
+				atMentionItems: [],
+				atMentionCounts: { all: 0, files: 0, directories: 0, agents: 0 },
 			});
 			render(<InputArea {...props} />);
 
-			// Should not render @ mention dropdown if no suggestions
-			expect(screen.queryByText('Files')).not.toBeInTheDocument();
+			// The unified picker stays mounted while open even with zero rows: it
+			// shows the category bar + an empty-state row rather than collapsing.
+			expect(screen.getByText('Files')).toBeInTheDocument();
+			expect(screen.getByText('No matches')).toBeInTheDocument();
 		});
 
 		it('handles special characters in command history', () => {
@@ -2439,5 +2617,116 @@ describe('InputArea', () => {
 
 			expect(screen.queryByTestId('context-warning-sash')).not.toBeInTheDocument();
 		});
+	});
+});
+
+/**
+ * Stop is one agent-level action, so exactly one Stop may be on screen. The
+ * thinking pill owns it whenever it renders; the cross-agent pill picks it up
+ * only when the thinking pill is absent, which is what happens to a message
+ * addressed solely to other agents (this agent never goes busy). The two render
+ * conditions have to stay each other's inverse or the user gets two Stops or
+ * none.
+ */
+describe('InputArea cross-agent Stop placement', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useSessionStore.setState({ sessions: [], groups: [] });
+	});
+
+	const indicator = () => screen.getByTestId('cross-agent-indicator');
+
+	it('carries Stop when nothing else is offering one', () => {
+		const props = createDefaultProps();
+		render(<InputArea {...props} />);
+
+		expect(indicator()).toHaveAttribute('data-has-stop', 'yes');
+		expect(screen.queryByTestId('thinking-status-pill')).not.toBeInTheDocument();
+	});
+
+	it('runs the same agent-level interrupt the thinking pill would', () => {
+		const handleInterrupt = vi.fn();
+		const props = createDefaultProps({ handleInterrupt });
+		render(<InputArea {...props} />);
+
+		fireEvent.click(indicator());
+		expect(handleInterrupt).toHaveBeenCalledTimes(1);
+	});
+
+	it('yields Stop to the pill while Auto Run is running', () => {
+		const props = createDefaultProps({ autoRunState: { isRunning: true } as never });
+		render(<InputArea {...props} />);
+
+		expect(indicator()).toHaveAttribute('data-has-stop', 'no');
+	});
+
+	it('draws no indicator at all outside AI mode', () => {
+		const props = createDefaultProps({
+			session: createMockSession({ inputMode: 'terminal' }),
+		});
+		render(<InputArea {...props} />);
+
+		expect(screen.queryByTestId('cross-agent-indicator')).not.toBeInTheDocument();
+	});
+});
+
+// Phone layout: the whole composer folds away behind a slim handle so the
+// transcript gets the screen. Default is folded; a tap on the handle reveals it.
+vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
+import { PHONE_COMPOSER_COLLAPSED_KEY } from '../../../renderer/components/InputArea/InputArea';
+
+describe('InputArea on a phone', () => {
+	const mockedUsePhoneLayout = vi.mocked(usePhoneLayout);
+
+	beforeEach(() => {
+		mockedUsePhoneLayout.mockReturnValue(true);
+		useSessionStore.setState({ sessions: [], groups: [] });
+		try {
+			window.localStorage?.removeItem(PHONE_COMPOSER_COLLAPSED_KEY);
+		} catch {
+			/* storage may be absent */
+		}
+	});
+
+	afterEach(() => {
+		mockedUsePhoneLayout.mockReturnValue(false);
+		try {
+			window.localStorage?.removeItem(PHONE_COMPOSER_COLLAPSED_KEY);
+		} catch {
+			/* storage may be absent */
+		}
+	});
+
+	it('starts folded: only the handle, no textarea', () => {
+		render(<InputArea {...createDefaultProps()} />);
+		const handle = screen.getByTestId('phone-composer-handle');
+		expect(handle).toHaveAttribute('aria-expanded', 'false');
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+	});
+
+	it('unfolds on a tap and keeps the handle on top for folding back', () => {
+		render(<InputArea {...createDefaultProps()} />);
+		fireEvent.click(screen.getByTestId('phone-composer-handle'));
+		expect(screen.getByRole('textbox')).toBeInTheDocument();
+		expect(screen.getByTestId('phone-composer-handle')).toHaveAttribute('aria-expanded', 'true');
+
+		fireEvent.click(screen.getByTestId('phone-composer-handle'));
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+	});
+
+	it('marks a folded handle when an unsent draft is waiting behind it', () => {
+		render(<InputArea {...createDefaultProps({ inputValue: 'half a thought' })} />);
+		expect(screen.getByTestId('phone-composer-handle-draft')).toBeInTheDocument();
+	});
+
+	it('draws no handle at all on desktop', () => {
+		mockedUsePhoneLayout.mockReturnValue(false);
+		render(<InputArea {...createDefaultProps()} />);
+		expect(screen.queryByTestId('phone-composer-handle')).not.toBeInTheDocument();
+		expect(screen.getByRole('textbox')).toBeInTheDocument();
 	});
 });

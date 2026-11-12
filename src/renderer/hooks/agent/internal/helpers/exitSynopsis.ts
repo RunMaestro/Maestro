@@ -20,6 +20,7 @@ import { notifyToast } from '../../../../stores/notificationStore';
 import { formatRelativeTime } from '../../../../../shared/formatters';
 import { parseSynopsis } from '../../../../../shared/synopsis';
 import { hasRunnableQueueItem } from '../../../../utils/executionQueue';
+import { isSessionIdLabel } from '../../../../utils/tabHelpers';
 import type { ToolType, Session, LogEntry } from '../../../../types';
 import type { UseAgentListenersDeps } from '../types';
 import type { RightPanelHandle } from '../../../../components/RightPanel';
@@ -109,8 +110,27 @@ export async function runExitSynopsis(
 						sessionId: synopsisData.sessionId,
 						agentSessionId: synopsisData.agentSessionId,
 						hasResponse: !!result.response,
+						error: result.error,
 					}
 				);
+				// Say so rather than going quiet. The usual cause is a transcript
+				// too long to resume, which repeats on every turn until the user
+				// starts a fresh tab - and the History entry they are waiting for
+				// never arrives. `lastSynopsisTime` is deliberately NOT stamped
+				// here, so the next successful synopsis still covers this turn.
+				if (result.error) {
+					notifyToast({
+						color: 'yellow',
+						title: 'Synopsis failed',
+						message: result.error,
+						group: synopsisData.groupName,
+						project: synopsisData.projectName,
+						sessionId: synopsisData.sessionId,
+						tabId: synopsisData.tabId,
+						tabName: synopsisData.tabName,
+						skipCustomNotification: true,
+					});
+				}
 			}
 			return;
 		}
@@ -140,6 +160,10 @@ export async function runExitSynopsis(
 			usageStats: result.usageStats,
 			contextUsage: result.contextUsage,
 			sessionId: synopsisData.sessionId,
+			// Carried so main can attribute the entry to the Web Login account
+			// that started the turn - it noted the account at spawn, keyed by
+			// agent + tab, because no acting user is in scope out here.
+			tabId: synopsisData.tabId,
 			projectPath: synopsisData.cwd,
 			sessionName: synopsisData.tabName,
 			elapsedTimeMs: synopsisData.taskDuration,
@@ -173,14 +197,14 @@ export async function runExitSynopsis(
 /**
  * Persist the tab name to the agent's session origins store so the session
  * remains searchable in TabSwitcherModal's "All Named" view after it closes.
- * Skip UUID-prefix fallback names (8 hex chars) - those aren't real
- * user-facing names.
+ * Skips the id-label fallback an unnamed tab displays - that is not a
+ * user-facing name, and storing it would hand a placeholder back to whatever
+ * restores the session later.
  */
 function persistTabNameAfterSynopsis(synopsisData: SynopsisData): void {
 	const persistName = synopsisData.tabName;
 	if (!persistName) return;
-	const isUuidPrefix = /^[0-9A-F]{8}$/.test(persistName);
-	if (isUuidPrefix) return;
+	if (isSessionIdLabel(persistName, synopsisData.agentSessionId)) return;
 	if (!synopsisData.agentSessionId || !synopsisData.projectRoot) return;
 
 	const persistAgentId = synopsisData.toolType || 'claude-code';
@@ -205,9 +229,15 @@ function persistTabNameAfterSynopsis(synopsisData: SynopsisData): void {
 /**
  * Pure eligibility check used by callers BEFORE invoking `runExitSynopsis`.
  *
- * The session must have an empty execution queue, an `agentSessionId`
- * (either on the completed tab or on the session), AND either the tab opted
- * in via `saveToHistory` OR a `pendingAICommandForSynopsis` is set.
+ * The completed tab must have no queued work of its own, there must be an
+ * `agentSessionId` (either on the completed tab or on the session), AND either
+ * the tab opted in via `saveToHistory` OR a `pendingAICommandForSynopsis` is set.
+ *
+ * Only the completed tab's queue items defer the synopsis. The queue is
+ * agent-wide, and a synopsis resumes ONE provider session, so work queued for
+ * another tab is no conflict. Checking the whole queue silently dropped the
+ * History entry of every turn that finished while any other tab had a message
+ * waiting, and nothing retries a skipped synopsis.
  */
 export function shouldRunSynopsisOnExit(
 	session: {
@@ -217,14 +247,26 @@ export function shouldRunSynopsisOnExit(
 	},
 	completedTab:
 		| {
+				id?: string;
 				agentSessionId?: NonNullable<Session['aiTabs']>[number]['agentSessionId'];
 				saveToHistory?: NonNullable<Session['aiTabs']>[number]['saveToHistory'];
 		  }
 		| undefined
 ): boolean {
+	// Without a tab id there is no way to tell whose work is queued, so the
+	// whole queue counts.
+	const tabId = completedTab?.id;
+	const tabQueue = tabId
+		? session.executionQueue.filter((item) => item.tabId === tabId)
+		: session.executionQueue;
 	// Paused items won't auto-run, so a queue with only held items still counts
 	// as "done" for synopsis purposes.
-	if (hasRunnableQueueItem(session.executionQueue)) return false;
+	if (hasRunnableQueueItem(tabQueue)) return false;
+	// A consult hold is NOT paused work: its continuation is coming as soon as
+	// the consulted agent replies, and it resumes this same provider session. A
+	// synopsis started now would be a second writer on that session when it
+	// lands. The synopsis runs after the continuation's turn instead.
+	if (tabQueue.some((item) => item.awaitingConsult)) return false;
 	const hasAgentSessionId = !!(completedTab?.agentSessionId || session.agentSessionId);
 	if (!hasAgentSessionId) return false;
 	const optedIn = !!(completedTab?.saveToHistory || session.pendingAICommandForSynopsis);

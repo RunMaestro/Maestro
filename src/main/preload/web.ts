@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { LiveModeState } from '../../shared/liveMode';
 
 /**
  * Auto Run state for broadcasting
@@ -28,6 +29,11 @@ export interface AutoRunState {
 	errorRecoverable?: boolean;
 	errorDocumentIndex?: number;
 	errorTaskDescription?: string;
+	// Goal-Driven mode fields
+	goalMode?: boolean;
+	goalProgress?: number;
+	goalRationale?: string;
+	goalIteration?: number;
 }
 
 /**
@@ -50,6 +56,21 @@ export interface AiTabState {
  */
 export function createWebApi() {
 	return {
+		// Atomically reserve one agent before a renderer starts an Auto Run. Main
+		// owns the claim so simultaneous desktop/browser starts cannot both win.
+		claimAutoRunStart: (sessionId: string) =>
+			ipcRenderer.invoke('web:claimAutoRunStart', sessionId) as Promise<boolean>,
+		releaseAutoRunStartClaim: (sessionId: string) =>
+			ipcRenderer.invoke('web:releaseAutoRunStartClaim', sessionId) as Promise<boolean>,
+
+		// Create a tab in the Electron renderer, which owns canonical tab state.
+		requestNewTab: (sessionId: string, background = false) =>
+			ipcRenderer.invoke('web:requestNewTab', sessionId, background) as Promise<{
+				tabId: string;
+			} | null>,
+		requestCloseTab: (sessionId: string, tabId: string) =>
+			ipcRenderer.invoke('web:requestCloseTab', sessionId, tabId) as Promise<boolean>,
+
 		// Broadcast user input to web clients (for keeping web interface in sync)
 		broadcastUserInput: (sessionId: string, command: string, inputMode: 'ai' | 'terminal') =>
 			ipcRenderer.invoke('web:broadcastUserInput', sessionId, command, inputMode),
@@ -59,8 +80,19 @@ export function createWebApi() {
 			ipcRenderer.invoke('web:broadcastAutoRunState', sessionId, state),
 
 		// Broadcast tab changes to web clients (for tab sync)
-		broadcastTabsChange: (sessionId: string, aiTabs: AiTabState[], activeTabId: string) =>
-			ipcRenderer.invoke('web:broadcastTabsChange', sessionId, aiTabs, activeTabId),
+		broadcastTabsChange: (
+			sessionId: string,
+			aiTabs: AiTabState[],
+			activeTabId: string,
+			activeTabChanged = false
+		) =>
+			ipcRenderer.invoke(
+				'web:broadcastTabsChange',
+				sessionId,
+				aiTabs,
+				activeTabId,
+				activeTabChanged
+			),
 
 		// Broadcast session state change to web clients (for real-time busy/idle updates)
 		broadcastSessionState: (
@@ -113,6 +145,16 @@ export function createLiveApi() {
 			return () => ipcRenderer.removeListener('live:urlChanged', wrappedHandler);
 		},
 		clearPersistentToken: () => ipcRenderer.invoke('live:clearPersistentToken'),
+
+		// Fires whenever main starts or stops the web interface or the tunnel,
+		// whoever asked (the LIVE panel or `maestro-cli live`), so every window's
+		// panel follows the real state.
+		onStateChanged: (handler: (state: LiveModeState) => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, state: LiveModeState) =>
+				handler(state);
+			ipcRenderer.on('live:stateChanged', wrappedHandler);
+			return () => ipcRenderer.removeListener('live:stateChanged', wrappedHandler);
+		},
 	};
 }
 

@@ -39,14 +39,23 @@ const mockSpawn = vi.fn((..._args: unknown[]) => {
 	return mockChild as unknown as ChildProcess;
 });
 
+const { mockIsWindows, mockExecFile } = vi.hoisted(() => ({
+	mockIsWindows: vi.fn(() => false),
+	mockExecFile: vi.fn((_cmd: unknown, _args: unknown, cb?: unknown) => {
+		if (typeof cb === 'function') (cb as (e: Error | null) => void)(null);
+	}),
+}));
+
 vi.mock('child_process', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('child_process')>();
 	return {
 		...actual,
 		spawn: (...args: unknown[]) => mockSpawn(...args),
+		execFile: (...args: unknown[]) => mockExecFile(...(args as [unknown, unknown, unknown?])),
 		default: {
 			...actual,
 			spawn: (...args: unknown[]) => mockSpawn(...args),
+			execFile: (...args: unknown[]) => mockExecFile(...(args as [unknown, unknown, unknown?])),
 		},
 	};
 });
@@ -55,6 +64,19 @@ const mockCaptureException = vi.fn();
 vi.mock('../../../main/utils/sentry', () => ({
 	captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
+
+// Platform is mockable per-test; default is the POSIX kill path
+// (child.kill('SIGTERM')) so signal-based assertions hold regardless of host
+// OS - mirroring what CI exercises on Unix. The Windows test flips it to true
+// to exercise the taskkill branch. (Note: the module-level output-size cap is
+// evaluated at import time under the default, i.e. the POSIX cap.)
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return {
+		...actual,
+		isWindows: () => mockIsWindows(),
+	};
+});
 
 import { executeCueCli } from '../../../main/cue/cue-cli-executor';
 import { getProcessList, stopProcess } from '../../../main/cue/cue-process-lifecycle';
@@ -121,6 +143,8 @@ function createConfig(overrides: Record<string, unknown> = {}) {
 describe('cue-cli-executor', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Default to the POSIX branch; the Windows test opts in via mockReturnValue(true).
+		mockIsWindows.mockReturnValue(false);
 	});
 
 	it('substitutes {{CUE_FROM_AGENT}} in target before invoking maestro-cli dispatch', async () => {
@@ -312,7 +336,135 @@ describe('cue-cli-executor', () => {
 		await promise;
 	});
 
+	it('stopProcess uses taskkill /t /f on Windows instead of POSIX signals', async () => {
+		mockIsWindows.mockReturnValue(true);
+		const config = createConfig();
+		const promise = executeCueCli(config as any);
+		await Promise.resolve();
+
+		const stopped = stopProcess('run-1');
+		expect(stopped).toBe(true);
+		expect(mockExecFile).toHaveBeenCalledWith(
+			'taskkill',
+			['/pid', String(mockChild.pid), '/t', '/f'],
+			expect.any(Function)
+		);
+		// POSIX signals are a no-op for shell-spawned trees on Windows.
+		expect(mockChild.killed).toBe(false);
+
+		mockChild.emit('close', null);
+		await promise;
+	});
+
 	it('stopProcess returns false for unknown runId', () => {
 		expect(stopProcess('does-not-exist')).toBe(false);
+	});
+
+	describe('tab delivery (cli.tab)', () => {
+		it('dispatches into the named tab with --queue so a busy turn is waited for', async () => {
+			const config = createConfig({
+				cli: { command: 'send' as const, target: 'agent-A', tab: 'tab-1', message: 'follow up' },
+			});
+			const promise = executeCueCli(config as any);
+			await Promise.resolve();
+			mockChild.emit('close', 0);
+			const result = await promise;
+
+			expect(mockSpawn.mock.calls[0][1]).toEqual([
+				expect.stringContaining('maestro-cli.js'),
+				'dispatch',
+				'agent-A',
+				'follow up',
+				'--tab',
+				'tab-1',
+				'--queue',
+			]);
+			expect(result.status).toBe('completed');
+		});
+
+		it('fails without spawning when the tab template resolves to nothing', async () => {
+			const config = createConfig({
+				cli: { command: 'send' as const, target: 'agent-A', tab: '{{CUE_FROM_AGENT}}' },
+				event: createEvent({ sourceSessionId: '', sourceAgentId: '' }),
+			});
+			const result = await executeCueCli(config as any);
+
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(result.status).toBe('failed');
+			expect(result.stderr).toMatch(/cli tab resolved to empty string/);
+		});
+
+		it('falls back to a new tab and reports it when the tab is gone', async () => {
+			const onTabFallback = vi.fn();
+			const config = createConfig({
+				cli: { command: 'send' as const, target: 'agent-A', tab: 'tab-gone', message: 'hi' },
+				onTabFallback,
+			});
+			const promise = executeCueCli(config as any);
+			await Promise.resolve();
+			mockChild.stdout.emit(
+				'data',
+				JSON.stringify({ success: false, error: 'Tab not found: tab-gone', code: 'TAB_NOT_FOUND' })
+			);
+			mockChild.emit('close', 1);
+			await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalledTimes(2));
+			mockChild.stdout.emit(
+				'data',
+				JSON.stringify({ success: true, agentId: 'agent-A-full', tabId: 'tab-new' })
+			);
+			mockChild.emit('close', 0);
+			const result = await promise;
+
+			const retryArgs = mockSpawn.mock.calls[1][1] as string[];
+			expect(retryArgs.slice(1)).toEqual(['dispatch', 'agent-A', 'hi', '--new-tab']);
+			expect(onTabFallback).toHaveBeenCalledWith({
+				agentId: 'agent-A-full',
+				requestedTab: 'tab-gone',
+				newTabId: 'tab-new',
+			});
+			expect(result.status).toBe('completed');
+		});
+
+		it('reports the failed fallback with no new tab id', async () => {
+			const onTabFallback = vi.fn();
+			const config = createConfig({
+				cli: { command: 'send' as const, target: 'agent-A', tab: 'tab-gone', message: 'hi' },
+				onTabFallback,
+			});
+			const promise = executeCueCli(config as any);
+			await Promise.resolve();
+			mockChild.stdout.emit('data', JSON.stringify({ success: false, code: 'TAB_NOT_FOUND' }));
+			mockChild.emit('close', 1);
+			await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalledTimes(2));
+			mockChild.emit('close', 1);
+			const result = await promise;
+
+			expect(onTabFallback).toHaveBeenCalledWith({
+				agentId: 'agent-A',
+				requestedTab: 'tab-gone',
+				newTabId: null,
+			});
+			expect(result.status).toBe('failed');
+		});
+
+		it('does not fall back on any other refusal', async () => {
+			const onTabFallback = vi.fn();
+			const config = createConfig({
+				cli: { command: 'send' as const, target: 'agent-A', tab: 'tab-1', message: 'hi' },
+				onTabFallback,
+			});
+			const promise = executeCueCli(config as any);
+			await Promise.resolve();
+			mockChild.stdout.emit(
+				'data',
+				JSON.stringify({ success: false, code: 'MAESTRO_NOT_RUNNING' })
+			);
+			mockChild.emit('close', 1);
+			const result = await promise;
+
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			expect(onTabFallback).not.toHaveBeenCalled();
+			expect(result.status).toBe('failed');
+		});
 	});
 });

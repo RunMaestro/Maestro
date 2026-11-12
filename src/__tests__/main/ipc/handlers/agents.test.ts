@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import path from 'path';
 import { ipcMain } from 'electron';
 import {
 	registerAgentsHandlers,
@@ -30,6 +31,7 @@ vi.mock('../../../../main/agents', async () => {
 			{ id: 'claude-code', name: 'Claude Code', binaryName: 'claude', configOptions: [] },
 			{ id: 'codex', name: 'Codex', binaryName: 'codex', configOptions: [] },
 			{ id: 'opencode', name: 'OpenCode', binaryName: 'opencode', configOptions: [] },
+			{ id: 'omp', name: 'Oh My Pi', binaryName: 'omp', configOptions: [] },
 			{ id: 'terminal', name: 'Terminal', binaryName: 'bash', configOptions: [] },
 		],
 		DEFAULT_CAPABILITIES: {
@@ -80,8 +82,9 @@ vi.mock('fs', () => ({
 	existsSync: vi.fn(),
 	readdirSync: vi.fn(),
 	accessSync: vi.fn(),
-	constants: { R_OK: 4 },
+	constants: { F_OK: 0, R_OK: 4 },
 	promises: {
+		access: vi.fn(),
 		readdir: vi.fn(),
 		readFile: vi.fn(),
 	},
@@ -100,12 +103,13 @@ vi.mock('../../../../main/utils/stripAnsi', () => ({
 
 import { execFileNoThrow } from '../../../../main/utils/execFile';
 import { buildSshCommand } from '../../../../main/utils/ssh-command-builder';
+import { setModelsRefreshedBroadcaster } from '../../../../main/agents/model-discovery';
+import { MODELS_REFRESHED_CHANNEL } from '../../../../shared/agentModelsRefresh';
 import * as fs from 'fs';
-import * as path from 'path';
 import { getCodexSkillDirs, getCodexPromptDirs } from '../../../../main/agents/codex-config';
 
 describe('agents IPC handlers', () => {
-	let handlers: Map<string, Function>;
+	let handlers: Map<string, (...args: never[]) => unknown>;
 	let mockAgentDetector: {
 		detectAgents: ReturnType<typeof vi.fn>;
 		getAgent: ReturnType<typeof vi.fn>;
@@ -167,6 +171,7 @@ describe('agents IPC handlers', () => {
 				'agents:refresh',
 				'agents:get',
 				'agents:getCapabilities',
+				'agents:getAllCapabilities',
 				'agents:getConfig',
 				'agents:setConfig',
 				'agents:getConfigValue',
@@ -192,9 +197,14 @@ describe('agents IPC handlers', () => {
 				'agents:getRemoteMaestroPAvailable',
 				'agents:getClaudeUsageSnapshots',
 				'agents:getClaudeUsageAccountKeys',
+				'agents:getKnownAuthDirs',
+				'agents:getLimitResetAt',
 				'claude:usage:refresh-all',
 				'agents:getCodexUsageSnapshots',
 				'agents:getCodexUsageAccountKeys',
+				// Codex rate-limit reset credits: READ the list, WRITE one back.
+				'agents:getCodexResetCredits',
+				'agents:consumeCodexResetCredit',
 				'codex:usage:refresh-all',
 			];
 
@@ -202,6 +212,154 @@ describe('agents IPC handlers', () => {
 				expect(handlers.has(channel)).toBe(true);
 			}
 			expect(handlers.size).toBe(expectedChannels.length);
+		});
+	});
+
+	describe('agents:getKnownAuthDirs', () => {
+		it('returns canonical local auth paths from agent and session env vars', async () => {
+			mockAgentConfigsStore.get.mockImplementation((key: string, fallback?: unknown) => {
+				if (key !== 'configs') return fallback;
+				return {
+					'claude-code': {
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-agent' },
+					},
+					codex: {
+						customEnvVars: { CODEX_HOME: '/Users/me/.codex-agent' },
+					},
+				};
+			});
+			const sessionsStore = {
+				get: vi.fn().mockReturnValue([
+					{
+						toolType: 'claude-code',
+						cwd: '/Users/me/project',
+						customEnvVars: {
+							CLAUDE_CONFIG_DIR: '/Users/me/work/../.claude-session',
+						},
+					},
+					{
+						toolType: 'codex',
+						cwd: '/Users/me/project',
+						customEnvVars: { CODEX_HOME: '/Users/me/.codex-session' },
+					},
+					{
+						toolType: 'claude-code',
+						cwd: 'ssh://host/project',
+						sshRemoteId: 'remote-1',
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/remote/.claude' },
+					},
+					{
+						toolType: 'codex',
+						cwd: '/Users/me/project',
+						sessionSshRemoteConfig: { enabled: true },
+						customEnvVars: { CODEX_HOME: '/remote/.codex' },
+					},
+				]),
+			};
+			// The handler accepts electron-store's full Store shape, but reads only get().
+			registerAgentsHandlers({
+				...deps,
+				sessionsStore: sessionsStore as unknown as NonNullable<
+					AgentsHandlerDependencies['sessionsStore']
+				>,
+			});
+
+			const handler = handlers.get('agents:getKnownAuthDirs');
+			expect(handler).toBeDefined();
+			const result = await handler?.({});
+
+			expect(result).toEqual({
+				claudeConfigDirs: [
+					path.resolve('/Users/me/.claude-agent'),
+					path.resolve('/Users/me/.claude-session'),
+				],
+				codexHomes: [
+					path.resolve('/Users/me/.codex-agent'),
+					path.resolve('/Users/me/.codex-session'),
+				],
+			});
+		});
+
+		it('excludes sessions whose migrated SSH enabled value explicitly enables SSH', async () => {
+			mockAgentConfigsStore.get.mockReturnValue({
+				'claude-code': {
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-agent' },
+				},
+				codex: {
+					customEnvVars: { CODEX_HOME: '/Users/me/.codex-agent' },
+				},
+			});
+			const sessionsStore = {
+				get: vi.fn().mockReturnValue([
+					{
+						toolType: 'claude-code',
+						cwd: '/Users/me/project',
+						sessionSshRemoteConfig: { enabled: 'true' },
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/remote/.claude-migrated' },
+					},
+					{
+						toolType: 'claude-code',
+						cwd: '/Users/me/project',
+						sessionSshRemoteConfig: { enabled: 'TRUE' },
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/remote/.claude-uppercase' },
+					},
+					{
+						toolType: 'codex',
+						cwd: '/Users/me/project',
+						sessionSshRemoteConfig: { enabled: 1 },
+						customEnvVars: { CODEX_HOME: '/remote/.codex-migrated' },
+					},
+				]),
+			};
+			registerAgentsHandlers({
+				...deps,
+				sessionsStore: sessionsStore as unknown as NonNullable<
+					AgentsHandlerDependencies['sessionsStore']
+				>,
+			});
+
+			const handler = handlers.get('agents:getKnownAuthDirs');
+			const result = await handler?.({});
+
+			expect(result).toEqual({
+				claudeConfigDirs: [path.resolve('/Users/me/.claude-agent')],
+				codexHomes: [path.resolve('/Users/me/.codex-agent')],
+			});
+		});
+
+		it('includes session auth paths when a migrated SSH enabled value explicitly disables SSH', async () => {
+			mockAgentConfigsStore.get.mockReturnValue({
+				'claude-code': {
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-agent' },
+				},
+			});
+			const sessionsStore = {
+				get: vi.fn().mockReturnValue([
+					{
+						toolType: 'claude-code',
+						cwd: '/Users/me/project',
+						sessionSshRemoteConfig: { enabled: 'false' },
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-migrated' },
+					},
+				]),
+			};
+			registerAgentsHandlers({
+				...deps,
+				sessionsStore: sessionsStore as unknown as NonNullable<
+					AgentsHandlerDependencies['sessionsStore']
+				>,
+			});
+
+			const handler = handlers.get('agents:getKnownAuthDirs');
+			const result = await handler?.({});
+
+			expect(result).toEqual({
+				claudeConfigDirs: [
+					path.resolve('/Users/me/.claude-agent'),
+					path.resolve('/Users/me/.claude-migrated'),
+				],
+				codexHomes: [],
+			});
 		});
 	});
 
@@ -246,6 +404,29 @@ describe('agents IPC handlers', () => {
 			const result = await handler!({} as any);
 
 			expect(result).toEqual([]);
+		});
+
+		it('should strip every arg-builder function so the payload survives IPC', async () => {
+			// A definition carries arg builders (including ones added after this test was
+			// written). Leaving even one behind makes the whole response fail to structured
+			// clone, which strands the agent pickers on "Loading agents..." forever.
+			mockAgentDetector.detectAgents.mockResolvedValue([
+				{
+					id: 'claude-code',
+					name: 'Claude Code',
+					binaryName: 'claude',
+					available: true,
+					resumeArgs: (id: string) => ['--resume', id],
+					additionalDirArgs: (dirs: unknown[]) => dirs.map(() => '--add-dir'),
+					configOptions: [{ id: 'model', argBuilder: (v: string) => ['--model', v] }],
+				},
+			]);
+
+			const handler = handlers.get('agents:detect');
+			const result = await handler!({} as any);
+
+			expect(() => structuredClone(result)).not.toThrow();
+			expect(result[0].id).toBe('claude-code');
 		});
 
 		it('should include agent id and path for each detected agent', async () => {
@@ -591,6 +772,42 @@ describe('agents IPC handlers', () => {
 			expect(result).toHaveProperty('supportsResultMessages');
 			expect(result).toHaveProperty('supportsModelSelection');
 			expect(result).toHaveProperty('supportsStreamJsonInput');
+		});
+	});
+
+	describe('agents:getAllCapabilities', () => {
+		it('should return an entry for every known agent definition', async () => {
+			// Delegate to the REAL capability table so the assertions below are
+			// about shipped values, not values this test invented.
+			const real = await import('../../../../main/agents/capabilities');
+			vi.mocked(agentCapabilities.getAgentCapabilities).mockImplementation(
+				real.getAgentCapabilities
+			);
+
+			const handler = handlers.get('agents:getAllCapabilities');
+			const result = (await handler!({} as any)) as Record<string, { supportsBatchMode: boolean }>;
+
+			const expectedIds = agentCapabilities.AGENT_DEFINITIONS.map((def) => def.id);
+			expect(Object.keys(result).sort()).toEqual([...expectedIds].sort());
+			for (const id of expectedIds) {
+				expect(result[id]).toBeDefined();
+			}
+		});
+
+		it('should report the two poles of the dispatch capability bug', async () => {
+			// opencode IS batch-capable and terminal is NOT. A background CLI
+			// dispatch to opencode used to be dropped purely because nothing had
+			// ever primed the renderer cache for it (finding V1).
+			const real = await import('../../../../main/agents/capabilities');
+			vi.mocked(agentCapabilities.getAgentCapabilities).mockImplementation(
+				real.getAgentCapabilities
+			);
+
+			const handler = handlers.get('agents:getAllCapabilities');
+			const result = (await handler!({} as any)) as Record<string, { supportsBatchMode: boolean }>;
+
+			expect(result['opencode'].supportsBatchMode).toBe(true);
+			expect(result['terminal'].supportsBatchMode).toBe(false);
 		});
 	});
 
@@ -1130,6 +1347,47 @@ describe('agents IPC handlers', () => {
 			expect(mockAgentDetector.discoverModels).toHaveBeenCalledWith('opencode', true);
 		});
 
+		describe('refreshed-models broadcast', () => {
+			const broadcast = vi.fn();
+			beforeEach(() => {
+				broadcast.mockReset();
+				setModelsRefreshedBroadcaster(broadcast);
+			});
+			afterEach(() => setModelsRefreshedBroadcaster(undefined));
+
+			it('pushes the fresh list to every open picker on a forced refresh', async () => {
+				mockAgentDetector.discoverModels.mockResolvedValue(['ollama/qwen3:8b', 'ollama/new']);
+
+				const handler = handlers.get('agents:getModels');
+				await handler!({} as any, 'opencode', true);
+
+				expect(broadcast).toHaveBeenCalledWith(MODELS_REFRESHED_CHANNEL, {
+					agentId: 'opencode',
+					sshRemoteId: null,
+					models: ['ollama/qwen3:8b', 'ollama/new'],
+				});
+			});
+
+			it('stays quiet on a cached read', async () => {
+				mockAgentDetector.discoverModels.mockResolvedValue(['ollama/qwen3:8b']);
+
+				const handler = handlers.get('agents:getModels');
+				await handler!({} as any, 'opencode', false);
+
+				expect(broadcast).not.toHaveBeenCalled();
+			});
+
+			it('still returns the list when the broadcast throws', async () => {
+				broadcast.mockImplementation(() => {
+					throw new Error('window gone');
+				});
+				mockAgentDetector.discoverModels.mockResolvedValue(['ollama/qwen3:8b']);
+
+				const handler = handlers.get('agents:getModels');
+				await expect(handler!({} as any, 'opencode', true)).resolves.toEqual(['ollama/qwen3:8b']);
+			});
+		});
+
 		it('should return empty array when agent does not support model selection', async () => {
 			mockAgentDetector.discoverModels.mockResolvedValue([]);
 
@@ -1189,6 +1447,42 @@ describe('agents IPC handlers', () => {
 				);
 				expect(result).toEqual(['opencode/gpt-5-nano', 'ollama/qwen3:8b']);
 				expect(mockAgentDetector.discoverModels).not.toHaveBeenCalled();
+			});
+
+			it('should discover omp models over SSH via models --json', async () => {
+				mockSettingsStore.get.mockReturnValue([
+					{
+						id: 'remote-1',
+						host: 'dev.example.com',
+						user: 'dev',
+						enabled: true,
+					},
+				]);
+
+				vi.mocked(buildSshCommand).mockResolvedValue({
+					command: 'ssh',
+					args: ['-o', 'BatchMode=yes', 'dev@dev.example.com', 'omp models --json'],
+				});
+
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 0,
+					stdout: JSON.stringify({
+						models: [
+							{ id: 'claude-opus-4-8', selector: 'anthropic/claude-opus-4-8' },
+							{ id: 'gpt-5.2', selector: 'openai-codex/gpt-5.2' },
+						],
+					}),
+					stderr: '',
+				});
+
+				const handler = handlers.get('agents:getModels');
+				const result = await handler!({} as any, 'omp', false, 'remote-1');
+
+				expect(buildSshCommand).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'remote-1', host: 'dev.example.com' }),
+					expect.objectContaining({ command: 'omp', args: ['models', '--json'] })
+				);
+				expect(result).toEqual(['anthropic/claude-opus-4-8', 'openai-codex/gpt-5.2']);
 			});
 
 			it('should throw when SSH remote not found', async () => {
@@ -1254,6 +1548,7 @@ describe('agents IPC handlers', () => {
 					'--output-format',
 					'stream-json',
 					'--dangerously-skip-permissions',
+					'--no-session-persistence',
 					'--',
 					'/help',
 				],
@@ -1286,14 +1581,14 @@ describe('agents IPC handlers', () => {
 
 			// Project-level skill directory lists Research; user-level has nothing.
 			vi.mocked(fs.promises.readdir).mockImplementation(async (dir: any) => {
-				if (String(dir) === '/test/project/.claude/skills') {
+				if (String(dir).replace(/\\/g, '/') === '/test/project/.claude/skills') {
 					return [{ name: 'Research', isDirectory: () => true }] as any;
 				}
 				const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 				throw enoent;
 			});
 			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath: any) => {
-				const p = String(filePath);
+				const p = String(filePath).replace(/\\/g, '/');
 				// Canonical uppercase SKILL.md is what Claude Code actually writes.
 				if (p === '/test/project/.claude/skills/Research/SKILL.md') {
 					return '---\nname: Research\ndescription: Deep literature review\n---\n\nBody';
@@ -1465,7 +1760,7 @@ describe('agents IPC handlers', () => {
 			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 			// Project commands dir has custom .md files
 			vi.mocked(fs.promises.readdir).mockImplementation(async (dir) => {
-				if (String(dir).includes('/test/.opencode/commands')) {
+				if (String(dir).replace(/\\/g, '/').includes('/test/.opencode/commands')) {
 					return ['deploy.md', 'lint.md', 'README.txt'] as any;
 				}
 				throw enoent;
@@ -1502,7 +1797,10 @@ describe('agents IPC handlers', () => {
 			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 			const homeDir = require('os').homedir();
 			vi.mocked(fs.promises.readdir).mockImplementation(async (dir) => {
-				if (String(dir) === `${homeDir}/.opencode/commands`) {
+				if (
+					String(dir).replace(/\\/g, '/') ===
+					`${String(homeDir).replace(/\\/g, '/')}/.opencode/commands`
+				) {
 					return ['octest.md'] as any;
 				}
 				throw enoent;
@@ -1533,7 +1831,7 @@ describe('agents IPC handlers', () => {
 
 			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 			vi.mocked(fs.promises.readdir).mockImplementation(async (dir) => {
-				if (String(dir).includes('/test/.opencode/commands')) {
+				if (String(dir).replace(/\\/g, '/').includes('/test/.opencode/commands')) {
 					return ['deploy.md'] as any;
 				}
 				throw enoent;
@@ -1564,7 +1862,7 @@ describe('agents IPC handlers', () => {
 			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 			vi.mocked(fs.promises.readdir).mockRejectedValue(enoent);
 			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath) => {
-				if (String(filePath).includes('/test/opencode.json')) {
+				if (String(filePath).replace(/\\/g, '/').includes('/test/opencode.json')) {
 					return JSON.stringify({ command: { 'my-cmd': { prompt: 'Do the thing' } } });
 				}
 				throw enoent;
@@ -1947,7 +2245,7 @@ describe('agents IPC handlers', () => {
 
 			expect(getAllSpy).toHaveBeenCalled();
 			expect(result).toHaveProperty('/Users/me/.claude');
-			expect(result['/Users/me/.claude'].session.percent).toBe(42);
+			expect(result['/Users/me/.claude'].session?.percent).toBe(42);
 			getAllSpy.mockRestore();
 		});
 
@@ -1961,6 +2259,78 @@ describe('agents IPC handlers', () => {
 			expect(result).toEqual({});
 			getAllSpy.mockRestore();
 		});
+
+		// Snapshots are retained for weeks, and the dashboard draws a row for
+		// every snapshot key, so a deleted config dir kept its row long after the
+		// account list had forgotten it. Its snapshot is dropped and forgotten here.
+		it('drops and forgets the snapshot of an account whose dir was deleted', async () => {
+			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
+			const snapshot = (configDirKey: string) => ({
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey,
+				weekAllModels: { percent: 7 },
+				weekSonnetOnly: { percent: 3 },
+			});
+			const retainedSpy = vi.spyOn(claudeUsageStore, 'getRetainedSnapshots').mockReturnValue({
+				'/Users/me/.claude-smash': snapshot('/Users/me/.claude-smash'),
+				'/Users/me/.claude-adrian': snapshot('/Users/me/.claude-adrian'),
+			});
+			const forgetSpy = vi.spyOn(claudeUsageStore, 'forgetSnapshots').mockImplementation(() => {});
+			vi.mocked(fs.promises.access).mockImplementation(async (target) => {
+				if (String(target).endsWith('.claude-adrian')) {
+					throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+				}
+			});
+
+			try {
+				const handler = handlers.get('agents:getClaudeUsageSnapshots')!;
+				const result = await handler({} as any);
+
+				expect(Object.keys(result)).toEqual(['/Users/me/.claude-smash']);
+				expect(forgetSpy).toHaveBeenCalledWith(new Set(['/Users/me/.claude-adrian']));
+			} finally {
+				vi.mocked(fs.promises.access).mockReset();
+				retainedSpy.mockRestore();
+				forgetSpy.mockRestore();
+			}
+		});
+	});
+
+	describe('agents:getCodexUsageSnapshots', () => {
+		it('drops and forgets the snapshot of a Codex home that was deleted', async () => {
+			const codexUsageStore = await import('../../../../main/stores/codexUsageStore');
+			const snapshot = (codexHomeKey: string) => ({
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey,
+				authState: 'authenticated' as const,
+			});
+			const retainedSpy = vi
+				.spyOn(codexUsageStore, 'getRetainedCodexUsageSnapshots')
+				.mockReturnValue({
+					'/Users/me/.codex': snapshot('/Users/me/.codex'),
+					'/Users/me/.codex-old': snapshot('/Users/me/.codex-old'),
+				} as any);
+			const forgetSpy = vi
+				.spyOn(codexUsageStore, 'forgetCodexUsageSnapshots')
+				.mockImplementation(() => {});
+			vi.mocked(fs.promises.access).mockImplementation(async (target) => {
+				if (String(target).endsWith('.codex-old')) {
+					throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+				}
+			});
+
+			try {
+				const handler = handlers.get('agents:getCodexUsageSnapshots')!;
+				const result = await handler({} as any);
+
+				expect(Object.keys(result)).toEqual(['/Users/me/.codex']);
+				expect(forgetSpy).toHaveBeenCalledWith(new Set(['/Users/me/.codex-old']));
+			} finally {
+				vi.mocked(fs.promises.access).mockReset();
+				retainedSpy.mockRestore();
+				forgetSpy.mockRestore();
+			}
+		});
 	});
 
 	describe('agents:getClaudeUsageAccountKeys', () => {
@@ -1970,18 +2340,24 @@ describe('agents IPC handlers', () => {
 			// name filtered) but its row has to stay on the dashboard.
 			const claudeUsageStartup = await import('../../../../main/agents/claude-usage-startup');
 			const quotaAccountsStore = await import('../../../../main/stores/quotaAccountsStore');
+			// A remembered key was itself written through `resolveConfigDirKey`, so
+			// it arrives already resolved - spell both sides that way or the union
+			// stops deduping on Windows, where the discovered dir gains a drive
+			// letter the POSIX literal does not have.
+			const discoveredKey = path.resolve('/Users/me/.claude');
+			const cappedKey = path.resolve('/Volumes/keys/claude-capped');
 			const discoverSpy = vi
 				.spyOn(claudeUsageStartup, 'discoverClaudeConfigDirs')
 				.mockResolvedValue(['/Users/me/.claude']);
 			const pruneSpy = vi
 				.spyOn(quotaAccountsStore, 'pruneMissingQuotaAccounts')
-				.mockResolvedValue(['/Users/me/.claude', '/Volumes/keys/claude-capped']);
+				.mockResolvedValue([discoveredKey, cappedKey]);
 
 			const handler = handlers.get('agents:getClaudeUsageAccountKeys')!;
 			const result = await handler({} as any);
 
 			expect(pruneSpy).toHaveBeenCalledWith('claude-code');
-			expect(result).toEqual(['/Users/me/.claude', '/Volumes/keys/claude-capped']);
+			expect(result).toEqual([discoveredKey, cappedKey]);
 			discoverSpy.mockRestore();
 			pruneSpy.mockRestore();
 		});

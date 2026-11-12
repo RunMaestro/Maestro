@@ -250,6 +250,18 @@ describe('remote-fs', () => {
 			expect(result.data?.truncated).toBe(false);
 		});
 
+		it('returns the files of a root with no subdirectories (separator on the first line)', async () => {
+			// An empty dir section means stdout starts with the separator itself.
+			const stdout = `${SEP}\n./Phase-01-Initial-Setup.md\n./Phase-02-Build.md\n`;
+			const deps = createMockDeps({ stdout, stderr: '', exitCode: 0 });
+
+			const result = await listTreeRemote('/playbooks/run', { maxDepth: 5 }, baseConfig, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data?.directories).toEqual([]);
+			expect(result.data?.files).toEqual(['Phase-01-Initial-Setup.md', 'Phase-02-Build.md']);
+		});
+
 		it('detects truncation when file count exceeds maxFiles', async () => {
 			// head returned cap+1 entries - the helper should slice off the marker
 			// entry and flag truncated=true.

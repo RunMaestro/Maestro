@@ -25,5 +25,19 @@ const markdown = execFileSync('node', [cliBundle, 'reference'], {
 	maxBuffer: 16 * 1024 * 1024,
 });
 
-writeFileSync(outFile, markdown.endsWith('\n') ? markdown : markdown + '\n', 'utf8');
+// Mintlify reads the page title and sidebar icon out of frontmatter; without it
+// the nav falls back to the filename and renders "Cli reference" with no icon.
+// `maestro-cli reference` stays docs-agnostic, so the frontmatter is added here.
+const frontmatter = [
+	'---',
+	'title: CLI Reference',
+	'description: Every maestro-cli command, argument, and option, generated from the live command tree.',
+	'icon: book',
+	'---',
+	'',
+	'',
+].join('\n');
+
+const body = markdown.endsWith('\n') ? markdown : markdown + '\n';
+writeFileSync(outFile, frontmatter + body, 'utf8');
 console.log(`Wrote ${outFile}`);

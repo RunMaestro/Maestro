@@ -7,6 +7,7 @@
  * - formatNumber: Large numbers with k/M/B suffixes
  * - formatTokens: Token counts with K/M/B suffixes (~prefix)
  * - formatTokensCompact: Token counts without ~prefix
+ * - formatTokensPerSecond: Token throughput rates (dash when unmeasured)
  * - formatRelativeTime: Relative timestamps ("5m ago", "2h ago")
  * - formatCacheAge: Cache age labels ("just now", "5m ago", "2h ago")
  * - formatAgeShort: Compact age badge ("new", "5m", "3h", "5d", "3w", "6mo", "3.5y")
@@ -17,6 +18,7 @@
  * - formatDurationCompact: Compact duration without seconds in minute range (5m, 2h 30m)
  * - formatDurationVerbose: Verbose duration with full words (5 minutes 30 seconds)
  * - formatDurationParts: Multi-part duration with days support (2d 5h 30m)
+ * - formatDurationLong: Two-unit duration laddering seconds -> years (6d 7h, 3w 2d, 1y 7w)
  * - formatDurationDecimal: Decimal duration for CLI output (5.2m, 1.3h)
  * - formatCost: USD currency display ($1.23, <$0.01)
  * - estimateTokenCount: Estimate token count from text (~4 chars/token)
@@ -185,6 +187,18 @@ export function formatTokensCompact(tokens: number): string {
 }
 
 /**
+ * Format a tokens-per-second rate: one decimal below 100 (`42.7`), whole
+ * numbers below 1,000 (`412`), then compact (`38.4K`). A rate of zero means
+ * "not measured" on every surface that shows one, so it renders as a dash.
+ */
+export function formatTokensPerSecond(tps: number): string {
+	if (!Number.isFinite(tps) || tps <= 0) return '-';
+	if (tps < 100) return tps.toFixed(1);
+	if (tps < 1000) return Math.round(tps).toString();
+	return formatTokensCompact(tps);
+}
+
+/**
  * Format a date/timestamp as relative time (e.g., "just now", "5m ago", "2h ago").
  * Accepts either a timestamp (number of milliseconds) or a date string.
  *
@@ -292,6 +306,36 @@ export function formatAgeShort(dateOrTimestamp: Date | number | string): string 
 		return Number.isInteger(rounded) ? `${rounded}y` : `${rounded.toFixed(1)}y`;
 	}
 	return `${Math.floor(years)}y`;
+}
+
+/**
+ * Format an hour of day (0-23) as a clock label: 0 -> "12 AM", 13 -> "1 PM".
+ * The Usage Dashboard's peak-hour cards and `maestro-cli stats` both print it.
+ * (`PeakHoursChart` keeps its own lowercase "8pm" variant for axis labels - a
+ * different style, not a duplicate of this one.)
+ */
+export function formatHourOfDay(hour: number): string {
+	const suffix = hour >= 12 ? 'PM' : 'AM';
+	const displayHour = hour % 12 || 12;
+	return `${displayHour} ${suffix}`;
+}
+
+/**
+ * Format a calendar day (`YYYY-MM-DD`) for display, e.g. "Jul 10, 2026".
+ *
+ * The parts are read out of the string and fed to a LOCAL `Date` rather than
+ * letting `new Date('2026-07-10')` do it: that form is parsed as UTC midnight,
+ * so every timezone west of Greenwich renders the day before. Returns the input
+ * unchanged when it is not a well-formed day, since the caller's alternative is
+ * showing nothing at all.
+ */
+export function formatCalendarDay(isoDay: string): string {
+	const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDay.trim());
+	if (!match) return isoDay;
+	const [, year, month, day] = match;
+	const date = new Date(Number(year), Number(month) - 1, Number(day));
+	if (Number.isNaN(date.getTime())) return isoDay;
+	return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 /**
@@ -513,6 +557,42 @@ export function truncateCommand(command: string, maxLength: number = 40): string
 }
 
 /**
+ * Truncate arbitrary display text to a maximum length with a trailing ellipsis.
+ * Unlike {@link truncateCommand} it does not collapse newlines - use it for
+ * short single-token labels (agent names, titles) where the caller surfaces the
+ * full value elsewhere (e.g. a tooltip).
+ *
+ * @param text - The text to truncate
+ * @param maxLength - Maximum length of the returned string (default: 24)
+ * @returns Truncated string (e.g., "a-very-long-agent-nam…")
+ */
+export function truncateText(text: string, maxLength: number = 24): string {
+	if (text.length <= maxLength) return text;
+	return text.slice(0, maxLength - 1) + '…';
+}
+
+/**
+ * Truncate prose to a maximum length, cutting at the last space that fits so a
+ * word is never split. Falls back to a hard cut when the text has no usable
+ * space. The ellipsis counts toward `maxLength`.
+ *
+ * @param text - The text to truncate
+ * @param maxLength - Maximum length of the returned string
+ * @param ellipsis - Marker appended when the text is cut (default: `…`)
+ * @returns Truncated string (e.g., "Donation Appeal Pages Japanese...")
+ */
+export function truncateAtWordBoundary(
+	text: string,
+	maxLength: number,
+	ellipsis: string = '…'
+): string {
+	if (text.length <= maxLength) return text;
+	const limit = Math.max(1, maxLength - ellipsis.length);
+	const boundary = text.lastIndexOf(' ', limit);
+	return text.substring(0, boundary > 0 ? boundary : limit).trimEnd() + ellipsis;
+}
+
+/**
  * Estimate token count from an array of log entries.
  * Uses the same ~4 characters per token heuristic as estimateTokenCount.
  *
@@ -616,6 +696,13 @@ export function formatTimestamp(
 	style: 'time' | 'datetime' | 'smart' | 'full' = 'smart'
 ): string {
 	const date = new Date(timestamp);
+	// `Intl.DateTimeFormat.format()` THROWS on an invalid date, where the
+	// `toLocale*String()` calls the cached formatters replaced returned the string
+	// "Invalid Date". Callers pass whatever a transcript, a group chat, or a
+	// history row carries - a numeric string that `Date` cannot parse reaches here
+	// in practice - so keep the old, non-throwing answer rather than letting a
+	// single bad row take a render down.
+	if (Number.isNaN(date.getTime())) return 'Invalid Date';
 
 	switch (style) {
 		case 'time':
@@ -674,6 +761,8 @@ export {
 	formatDurationWords,
 	formatActiveTime,
 	formatElapsedTime,
+	formatElapsedTicker,
+	formatElapsedTickerCompact,
 	formatTurnDuration,
 	DURATION_MS,
 	DURATION_LADDER_FULL,

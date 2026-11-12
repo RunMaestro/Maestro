@@ -6,6 +6,7 @@ import type { ConductorBadge } from '../constants/conductorBadges';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { AnimatedMaestro } from './MaestroSilhouette';
+import { EscCloseButton } from './ui/EscCloseButton';
 import {
 	formatCumulativeTime,
 	formatTimeRemaining,
@@ -29,6 +30,9 @@ interface StandingOvationOverlayProps {
 	/** Whether confetti animations are disabled by user preference */
 	disableConfetti?: boolean;
 }
+
+/** Silhouette height in px. Sized so the whole card fits a 720px-tall window. */
+const MAESTRO_SIZE = 96;
 
 /**
  * Full-screen celebration overlay for badge unlocks and new records
@@ -365,9 +369,11 @@ export function StandingOvationOverlay({
 				aria-label="Standing Ovation Achievement"
 				tabIndex={-1}
 			>
-				{/* Main content card */}
+				{/* Main content card. A column, not one scroll box: the body scrolls and
+				    the actions stay pinned, so the way out is on screen at any window
+				    height or font zoom. */}
 				<div
-					className={`relative max-w-lg w-full rounded-2xl shadow-2xl overflow-y-auto transition-all duration-500 pointer-events-auto ${
+					className={`relative max-w-lg w-full flex flex-col rounded-2xl shadow-2xl overflow-hidden transition-all duration-500 pointer-events-auto ${
 						isClosing ? 'opacity-0 scale-95' : 'animate-in zoom-in-95'
 					}`}
 					onClick={(e) => e.stopPropagation()}
@@ -378,170 +384,187 @@ export function StandingOvationOverlay({
 						maxHeight: 'calc(100vh - 2rem)',
 					}}
 				>
-					{/* Header with glow */}
+					<EscCloseButton
+						theme={theme}
+						onClose={handleTakeABow}
+						className="absolute top-3 right-3 z-10"
+						testId="standing-ovation-close"
+					/>
+
+					{/* Scrolling body */}
 					<div
-						className="relative px-8 pt-8 pb-4 text-center"
-						style={{
-							background: `linear-gradient(180deg, ${purpleAccent}20 0%, transparent 100%)`,
-						}}
+						className="flex-1 min-h-0 overflow-y-auto scrollbar-thin"
+						data-testid="standing-ovation-body"
 					>
-						{/* Trophy icon */}
-						<div className="flex justify-center mb-4">
-							<div
-								className="relative p-4 rounded-full animate-bounce"
+						{/* Header with glow */}
+						<div
+							className="relative px-6 pt-5 pb-2 text-center"
+							style={{
+								background: `linear-gradient(180deg, ${purpleAccent}20 0%, transparent 100%)`,
+							}}
+						>
+							{/* Trophy icon */}
+							<div className="flex justify-center mb-2">
+								<div
+									className="relative p-2.5 rounded-full animate-bounce"
+									style={{
+										background: `linear-gradient(135deg, ${goldColor} 0%, #FFA500 100%)`,
+										boxShadow: `0 0 30px ${goldColor}60`,
+									}}
+								>
+									<Trophy className="w-6 h-6 text-white" />
+								</div>
+							</div>
+
+							{/* Title */}
+							<h1
+								className="text-2xl font-bold tracking-wider mb-1"
 								style={{
-									background: `linear-gradient(135deg, ${goldColor} 0%, #FFA500 100%)`,
-									boxShadow: `0 0 30px ${goldColor}60`,
+									color: goldColor,
+									textShadow: `0 0 20px ${goldColor}60`,
 								}}
 							>
-								<Trophy className="w-10 h-10 text-white" />
-							</div>
+								STANDING OVATION
+							</h1>
+
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								{isNewRecord ? 'New Personal Record!' : 'Achievement Unlocked!'}
+							</p>
 						</div>
 
-						{/* Title */}
-						<h1
-							className="text-3xl font-bold tracking-wider mb-2"
-							style={{
-								color: goldColor,
-								textShadow: `0 0 20px ${goldColor}60`,
-							}}
-						>
-							STANDING OVATION
-						</h1>
-
-						<p className="text-lg" style={{ color: theme.colors.textMain }}>
-							{isNewRecord ? 'New Personal Record!' : 'Achievement Unlocked!'}
-						</p>
-					</div>
-
-					{/* Maestro silhouette */}
-					<div className="flex justify-center py-4">
-						<div
-							className="relative"
-							style={{
-								filter: `drop-shadow(0 0 20px ${purpleAccent}60)`,
-							}}
-						>
-							<AnimatedMaestro variant={maestroVariant} size={160} />
-						</div>
-					</div>
-
-					{/* Badge info */}
-					<div className="px-8 pb-6 text-center">
-						{/* Badge name */}
-						<div className="flex items-center justify-center gap-2 mb-2">
-							<Star className="w-5 h-5" style={{ color: goldColor }} />
-							<span className="text-xl font-bold" style={{ color: theme.colors.textMain }}>
-								Level {badge.level}
-							</span>
-							<Star className="w-5 h-5" style={{ color: goldColor }} />
-						</div>
-
-						<h2 className="text-2xl font-bold mb-3" style={{ color: purpleAccent }}>
-							{badge.name}
-						</h2>
-
-						<p className="text-sm mb-4 leading-relaxed" style={{ color: theme.colors.textDim }}>
-							{badge.description}
-						</p>
-
-						{/* Flavor text */}
-						<p
-							className="text-sm italic mb-4"
-							style={{ color: theme.colors.textMain, opacity: 0.8 }}
-						>
-							"{badge.flavorText}"
-						</p>
-
-						{/* Example conductor */}
-						<div
-							className="p-3 rounded-lg mb-4"
-							style={{
-								backgroundColor: theme.colors.bgActivity,
-								border: `1px solid ${theme.colors.border}`,
-							}}
-						>
-							<p className="text-xs mb-1" style={{ color: theme.colors.textDim }}>
-								Example Maestro
-							</p>
-							<p className="font-medium" style={{ color: theme.colors.textMain }}>
-								{badge.exampleConductor.name}
-							</p>
-							<p className="text-xs" style={{ color: theme.colors.textDim }}>
-								{badge.exampleConductor.era}
-							</p>
-							<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
-								{badge.exampleConductor.achievement}
-							</p>
-							<button
-								onClick={() => openUrl(badge.exampleConductor.wikipediaUrl)}
-								className="inline-flex items-center gap-1 text-xs mt-2 hover:underline"
-								style={{ color: purpleAccent }}
+						{/* Maestro silhouette */}
+						<div className="flex justify-center py-2">
+							<div
+								className="relative"
+								style={{
+									filter: `drop-shadow(0 0 20px ${purpleAccent}60)`,
+								}}
 							>
-								<ExternalLink className="w-3 h-3" />
-								Learn more on Wikipedia
-							</button>
+								<AnimatedMaestro variant={maestroVariant} size={MAESTRO_SIZE} />
+							</div>
 						</div>
 
-						{/* Stats */}
-						<div
-							className="grid grid-cols-2 gap-4 p-3 rounded-lg mb-4"
-							style={{
-								backgroundColor: theme.colors.bgActivity,
-								border: `1px solid ${theme.colors.border}`,
-							}}
-						>
-							<div>
-								<div className="flex items-center justify-center gap-1 mb-1">
-									<Clock className="w-3 h-3" style={{ color: theme.colors.textDim }} />
-									<span className="text-xs" style={{ color: theme.colors.textDim }}>
-										Total AutoRun
-									</span>
-								</div>
-								<span className="font-mono font-bold" style={{ color: theme.colors.textMain }}>
-									{formatCumulativeTime(cumulativeTimeMs)}
+						{/* Badge info */}
+						<div className="px-6 pb-4 text-center">
+							{/* Badge name */}
+							<div className="flex items-center justify-center gap-2 mb-1">
+								<Star className="w-4 h-4" style={{ color: goldColor }} />
+								<span className="text-base font-bold" style={{ color: theme.colors.textMain }}>
+									Level {badge.level}
 								</span>
+								<Star className="w-4 h-4" style={{ color: goldColor }} />
 							</div>
-							{recordTimeMs && (
+
+							<h2 className="text-xl font-bold mb-2" style={{ color: purpleAccent }}>
+								{badge.name}
+							</h2>
+
+							<p className="text-sm mb-2" style={{ color: theme.colors.textDim }}>
+								{badge.description}
+							</p>
+
+							{/* Flavor text */}
+							<p
+								className="text-xs italic mb-3"
+								style={{ color: theme.colors.textMain, opacity: 0.8 }}
+							>
+								"{badge.flavorText}"
+							</p>
+
+							{/* Example conductor */}
+							<div
+								className="p-2.5 rounded-lg mb-3"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+							>
+								<p className="text-xs mb-1" style={{ color: theme.colors.textDim }}>
+									Example Maestro
+								</p>
+								<p className="font-medium" style={{ color: theme.colors.textMain }}>
+									{badge.exampleConductor.name}
+								</p>
+								<p className="text-xs" style={{ color: theme.colors.textDim }}>
+									{badge.exampleConductor.era}
+								</p>
+								<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
+									{badge.exampleConductor.achievement}
+								</p>
+								<button
+									onClick={() => openUrl(badge.exampleConductor.wikipediaUrl)}
+									className="inline-flex items-center gap-1 text-xs mt-1 hover:underline"
+									style={{ color: purpleAccent }}
+								>
+									<ExternalLink className="w-3 h-3" />
+									Learn more on Wikipedia
+								</button>
+							</div>
+
+							{/* Stats */}
+							<div
+								className="grid grid-cols-2 gap-4 p-2.5 rounded-lg mb-3"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+							>
 								<div>
 									<div className="flex items-center justify-center gap-1 mb-1">
-										<Trophy className="w-3 h-3" style={{ color: goldColor }} />
+										<Clock className="w-3 h-3" style={{ color: theme.colors.textDim }} />
 										<span className="text-xs" style={{ color: theme.colors.textDim }}>
-											{isNewRecord ? 'New Record' : 'Longest Run'}
+											Total AutoRun
 										</span>
 									</div>
-									<span
-										className="font-mono font-bold"
-										style={{ color: isNewRecord ? goldColor : theme.colors.textMain }}
-									>
-										{formatCumulativeTime(recordTimeMs)}
+									<span className="font-mono font-bold" style={{ color: theme.colors.textMain }}>
+										{formatCumulativeTime(cumulativeTimeMs)}
 									</span>
+								</div>
+								{recordTimeMs && (
+									<div>
+										<div className="flex items-center justify-center gap-1 mb-1">
+											<Trophy className="w-3 h-3" style={{ color: goldColor }} />
+											<span className="text-xs" style={{ color: theme.colors.textDim }}>
+												{isNewRecord ? 'New Record' : 'Longest Run'}
+											</span>
+										</div>
+										<span
+											className="font-mono font-bold"
+											style={{ color: isNewRecord ? goldColor : theme.colors.textMain }}
+										>
+											{formatCumulativeTime(recordTimeMs)}
+										</span>
+									</div>
+								)}
+							</div>
+
+							{/* Next level info */}
+							{nextBadge && (
+								<div className="text-xs" style={{ color: theme.colors.textDim }}>
+									<span>Next: </span>
+									<span style={{ color: purpleAccent }}>{nextBadge.name}</span>
+									<span> • {formatTimeRemaining(cumulativeTimeMs, nextBadge)}</span>
+								</div>
+							)}
+
+							{!nextBadge && (
+								<div className="text-xs" style={{ color: goldColor }}>
+									You have achieved the highest rank! A true Titan of the Baton.
 								</div>
 							)}
 						</div>
-
-						{/* Next level info */}
-						{nextBadge && (
-							<div className="text-xs" style={{ color: theme.colors.textDim }}>
-								<span>Next: </span>
-								<span style={{ color: purpleAccent }}>{nextBadge.name}</span>
-								<span> • {formatTimeRemaining(cumulativeTimeMs, nextBadge)}</span>
-							</div>
-						)}
-
-						{!nextBadge && (
-							<div className="text-xs" style={{ color: goldColor }}>
-								You have achieved the highest rank! A true Titan of the Baton.
-							</div>
-						)}
 					</div>
 
-					{/* Buttons */}
-					<div className="px-8 pb-8 space-y-3">
+					{/* Actions - pinned below the scrolling body, never scrolled away */}
+					<div
+						className="shrink-0 px-6 py-4 space-y-2"
+						data-testid="standing-ovation-actions"
+						style={{ borderTop: `1px solid ${theme.colors.border}` }}
+					>
 						<button
 							onClick={handleTakeABow}
 							disabled={isClosing}
-							className="w-full py-3 rounded-lg font-medium transition-all hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed"
+							className="w-full py-2.5 rounded-lg font-medium transition-all hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed"
 							style={{
 								background: `linear-gradient(135deg, ${purpleAccent} 0%, ${goldColor} 100%)`,
 								color: '#FFFFFF',
@@ -551,77 +574,80 @@ export function StandingOvationOverlay({
 							{isClosing ? '🎉 Bravo! 🎉' : 'Take a Bow'}
 						</button>
 
-						{/* Share options */}
-						<div className="relative">
-							<button
-								onClick={() => setShareMenuOpen(!shareMenuOpen)}
-								className="w-full py-2.5 rounded-lg font-medium transition-all flex items-center justify-center gap-2 hover:opacity-90"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									color: theme.colors.textMain,
-									border: `1px solid ${theme.colors.border}`,
-								}}
-							>
-								<Share2 className="w-4 h-4" />
-								Share Achievement
-							</button>
-
-							{shareMenuOpen && (
-								<div
-									className="absolute bottom-full left-0 right-0 mb-2 p-2 rounded-lg shadow-xl"
+						{/* Secondary actions share one row */}
+						<div className="flex gap-2">
+							{/* Share options */}
+							<div className="relative flex-1 min-w-0">
+								<button
+									onClick={() => setShareMenuOpen(!shareMenuOpen)}
+									className="w-full py-2 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 hover:opacity-90"
 									style={{
-										backgroundColor: theme.colors.bgSidebar,
+										backgroundColor: theme.colors.bgActivity,
+										color: theme.colors.textMain,
 										border: `1px solid ${theme.colors.border}`,
 									}}
 								>
-									<button
-										onClick={async () => {
-											await copyToClipboard();
-											setTimeout(() => setShareMenuOpen(false), 1000);
+									<Share2 className="w-4 h-4" />
+									Share Achievement
+								</button>
+
+								{shareMenuOpen && (
+									<div
+										className="absolute bottom-full left-0 right-0 mb-2 p-2 rounded-lg shadow-xl"
+										style={{
+											backgroundColor: theme.colors.bgSidebar,
+											border: `1px solid ${theme.colors.border}`,
 										}}
-										className="w-full flex items-center gap-3 px-3 py-2 rounded hover:bg-white/10 transition-colors"
 									>
-										{copySuccess ? (
-											<Check className="w-4 h-4" style={{ color: theme.colors.success }} />
-										) : (
-											<Copy className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-										)}
-										<span style={{ color: theme.colors.textMain }}>
-											{copySuccess ? 'Copied!' : 'Copy to Clipboard'}
-										</span>
-									</button>
-									<button
-										onClick={() => {
-											downloadImage();
-											setShareMenuOpen(false);
-										}}
-										className="w-full flex items-center gap-3 px-3 py-2 rounded hover:bg-white/10 transition-colors"
-									>
-										<Download className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-										<span style={{ color: theme.colors.textMain }}>Save as Image</span>
-									</button>
-								</div>
+										<button
+											onClick={async () => {
+												await copyToClipboard();
+												setTimeout(() => setShareMenuOpen(false), 1000);
+											}}
+											className="w-full flex items-center gap-3 px-3 py-2 rounded hover:bg-white/10 transition-colors"
+										>
+											{copySuccess ? (
+												<Check className="w-4 h-4" style={{ color: theme.colors.success }} />
+											) : (
+												<Copy className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+											)}
+											<span style={{ color: theme.colors.textMain }}>
+												{copySuccess ? 'Copied!' : 'Copy to Clipboard'}
+											</span>
+										</button>
+										<button
+											onClick={() => {
+												downloadImage();
+												setShareMenuOpen(false);
+											}}
+											className="w-full flex items-center gap-3 px-3 py-2 rounded hover:bg-white/10 transition-colors"
+										>
+											<Download className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+											<span style={{ color: theme.colors.textMain }}>Save as Image</span>
+										</button>
+									</div>
+								)}
+							</div>
+
+							{/* Leaderboard Registration */}
+							{onOpenLeaderboardRegistration && !isLeaderboardRegistered && (
+								<button
+									onClick={() => {
+										onClose();
+										onOpenLeaderboardRegistration();
+									}}
+									className="flex-1 min-w-0 py-2 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 hover:opacity-90"
+									style={{
+										backgroundColor: `${goldColor}20`,
+										color: goldColor,
+										border: `1px solid ${goldColor}60`,
+									}}
+								>
+									<Trophy className="w-4 h-4" />
+									Join Global Leaderboard
+								</button>
 							)}
 						</div>
-
-						{/* Leaderboard Registration */}
-						{onOpenLeaderboardRegistration && !isLeaderboardRegistered && (
-							<button
-								onClick={() => {
-									onClose();
-									onOpenLeaderboardRegistration();
-								}}
-								className="w-full py-2.5 rounded-lg font-medium transition-all flex items-center justify-center gap-2 hover:opacity-90"
-								style={{
-									backgroundColor: `${goldColor}20`,
-									color: goldColor,
-									border: `1px solid ${goldColor}60`,
-								}}
-							>
-								<Trophy className="w-4 h-4" />
-								Join Global Leaderboard
-							</button>
-						)}
 					</div>
 				</div>
 			</div>

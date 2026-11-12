@@ -30,61 +30,63 @@ Three layers:
 
 These namespaces are exposed on `window.maestro` via the preload bridge:
 
-| Namespace       | Preload Factory            | Handler File        | Purpose                                                 |
-| --------------- | -------------------------- | ------------------- | ------------------------------------------------------- |
-| `settings`      | `createSettingsApi()`      | `persistence.ts`    | App settings CRUD                                       |
-| `sessions`      | `createSessionsApi()`      | `persistence.ts`    | Session persistence (save/load)                         |
-| `groups`        | `createGroupsApi()`        | `persistence.ts`    | Group persistence                                       |
-| `process`       | `createProcessApi()`       | `process.ts`        | Agent process lifecycle (spawn, kill, write, interrupt) |
-| `agentError`    | `createAgentErrorApi()`    | `agent-error.ts`    | Agent error state management                            |
-| `context`       | `createContextApi()`       | `context.ts`        | Context merging and grooming                            |
-| `web`           | `createWebApi()`           | `web.ts`            | Web interface state sync                                |
-| `webserver`     | `createWebserverApi()`     | `web.ts`            | Web server lifecycle                                    |
-| `live`          | `createLiveApi()`          | `web.ts`            | Live session sharing                                    |
-| `git`           | `createGitApi()`           | `git.ts`            | Git operations (status, diff, branch, worktree)         |
-| `fs`            | `createFsApi()`            | `filesystem.ts`     | File system operations (read, write, list, stat)        |
-| `agents`        | `createAgentsApi()`        | `agents.ts`         | Agent detection, config, capabilities                   |
-| `dialog`        | `createDialogApi()`        | `system.ts`         | Native file/folder dialogs                              |
-| `fonts`         | `createFontsApi()`         | `system.ts`         | System font enumeration                                 |
-| `shells`        | `createShellsApi()`        | `system.ts`         | Available shell detection                               |
-| `shell`         | `createShellApi()`         | `system.ts`         | OS shell operations (openExternal, revealInExplorer)    |
-| `tunnel`        | `createTunnelApi()`        | `system.ts`         | Cloudflare tunnel management                            |
-| `sshRemote`     | `createSshRemoteApi()`     | `ssh-remote.ts`     | SSH remote configuration and testing                    |
-| `sync`          | `createSyncApi()`          | `system.ts`         | State sync between desktop and web                      |
-| `devtools`      | `createDevtoolsApi()`      | `system.ts`         | DevTools toggle                                         |
-| `power`         | `createPowerApi()`         | `system.ts`         | Sleep prevention management                             |
-| `updates`       | `createUpdatesApi()`       | `system.ts`         | App update checking                                     |
-| `logger`        | `createLoggerApi()`        | `system.ts`         | Log forwarding (renderer -> main)                       |
-| `claude`        | `createClaudeApi()`        | `claude.ts`         | Claude Code session storage (DEPRECATED)                |
-| `agentSessions` | `createAgentSessionsApi()` | `agentSessions.ts`  | Multi-agent session storage (preferred)                 |
-| `tempfile`      | `createTempfileApi()`      | `persistence.ts`    | Temp file creation                                      |
-| `history`       | `createHistoryApi()`       | `history.ts`        | History entry CRUD                                      |
-| `cli`           | `createCliApi()`           | `persistence.ts`    | CLI activity tracking                                   |
-| `speckit`       | `createSpeckitApi()`       | `speckit.ts`        | Spec-Kit command management                             |
-| `openspec`      | `createOpenspecApi()`      | `openspec.ts`       | OpenSpec command management                             |
-| `notification`  | `createNotificationApi()`  | `notifications.ts`  | OS notifications and TTS                                |
-| `attachments`   | `createAttachmentsApi()`   | `attachments.ts`    | Image attachment management                             |
-| `autorun`       | `createAutorunApi()`       | `autorun.ts`        | Auto Run document management                            |
-| `playbooks`     | `createPlaybooksApi()`     | `playbooks.ts`      | Playbook CRUD and import/export                         |
-| `marketplace`   | `createMarketplaceApi()`   | `marketplace.ts`    | Playbook marketplace                                    |
-| `debug`         | `createDebugApi()`         | `debug.ts`          | Debug package generation                                |
-| `documentGraph` | `createDocumentGraphApi()` | `documentGraph.ts`  | Document graph file watching                            |
-| `groupChat`     | `createGroupChatApi()`     | `groupChat.ts`      | Group chat orchestration                                |
-| `app`           | `createAppApi()`           | `system.ts`         | App lifecycle (quit, version, paths)                    |
-| `platform`      | Direct value               | N/A                 | `process.platform` string (synchronous)                 |
-| `stats`         | `createStatsApi()`         | `stats.ts`          | Usage statistics DB                                     |
-| `leaderboard`   | `createLeaderboardApi()`   | `leaderboard.ts`    | Leaderboard submission                                  |
-| `symphony`      | `createSymphonyApi()`      | `symphony.ts`       | Open-source contribution system                         |
-| `tabNaming`     | `createTabNamingApi()`     | `tabNaming.ts`      | Automatic tab name generation                           |
-| `directorNotes` | `createDirectorNotesApi()` | `director-notes.ts` | Unified history + synopsis                              |
-| `wakatime`      | `createWakatimeApi()`      | `wakatime.ts`       | WakaTime integration                                    |
-| `cue`           | `createCueApi()`           | `cue.ts`            | Maestro Cue event-driven automation                     |
+| Namespace       | Preload Factory            | Handler File                                                                                                                                             | Purpose                                                                                            |
+| --------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `settings`      | `createSettingsApi()`      | `persistence.ts`                                                                                                                                         | App settings CRUD                                                                                  |
+| `sessions`      | `createSessionsApi()`      | `persistence.ts`                                                                                                                                         | Session persistence (save/load)                                                                    |
+| `groups`        | `createGroupsApi()`        | `persistence.ts`                                                                                                                                         | Group persistence                                                                                  |
+| `process`       | `createProcessApi()`       | `process.ts` (thin composer) + `process/*.ts` (17 per-domain factories)                                                                                  | Agent process lifecycle (spawn, kill, write, interrupt) plus all `remote:*` web-interface channels |
+| `agentError`    | `createAgentErrorApi()`    | `agent-error.ts`                                                                                                                                         | Agent error state management                                                                       |
+| `context`       | `createContextApi()`       | `context.ts`                                                                                                                                             | Context merging and grooming                                                                       |
+| `web`           | `createWebApi()`           | `web.ts`                                                                                                                                                 | Web interface state sync                                                                           |
+| `webserver`     | `createWebserverApi()`     | `web.ts`                                                                                                                                                 | Web server lifecycle                                                                               |
+| `live`          | `createLiveApi()`          | `web.ts`                                                                                                                                                 | Live session sharing                                                                               |
+| `git`           | `createGitApi()`           | `git/index.ts` (thin composer) + `git/*.ts` (6 per-domain files: read, branch, streaming, worktree, worktreeWatch, github)                               | Git operations (status, diff, branch, worktree)                                                    |
+| `fs`            | `createFsApi()`            | `filesystem.ts`                                                                                                                                          | File system operations (read, write, list, stat)                                                   |
+| `agents`        | `createAgentsApi()`        | `agents.ts`                                                                                                                                              | Agent detection, config, capabilities                                                              |
+| `dialog`        | `createDialogApi()`        | `system.ts`                                                                                                                                              | Native file/folder dialogs                                                                         |
+| `fonts`         | `createFontsApi()`         | `system.ts`                                                                                                                                              | System font enumeration                                                                            |
+| `shells`        | `createShellsApi()`        | `system.ts`                                                                                                                                              | Available shell detection                                                                          |
+| `shell`         | `createShellApi()`         | `system.ts`                                                                                                                                              | OS shell operations (openExternal, revealInExplorer)                                               |
+| `tunnel`        | `createTunnelApi()`        | `system.ts`                                                                                                                                              | Cloudflare tunnel management                                                                       |
+| `sshRemote`     | `createSshRemoteApi()`     | `ssh-remote.ts`                                                                                                                                          | SSH remote configuration and testing                                                               |
+| `sync`          | `createSyncApi()`          | `system.ts`                                                                                                                                              | State sync between desktop and web                                                                 |
+| `devtools`      | `createDevtoolsApi()`      | `system.ts`                                                                                                                                              | DevTools toggle                                                                                    |
+| `power`         | `createPowerApi()`         | `system.ts`                                                                                                                                              | Sleep prevention management                                                                        |
+| `updates`       | `createUpdatesApi()`       | `system.ts`                                                                                                                                              | App update checking                                                                                |
+| `logger`        | `createLoggerApi()`        | `system.ts`                                                                                                                                              | Log forwarding (renderer -> main)                                                                  |
+| `claude`        | `createClaudeApi()`        | `claude.ts`                                                                                                                                              | Claude Code session storage (DEPRECATED)                                                           |
+| `agentSessions` | `createAgentSessionsApi()` | `agentSessions.ts`                                                                                                                                       | Multi-agent session storage (preferred)                                                            |
+| `tempfile`      | `createTempfileApi()`      | `persistence.ts`                                                                                                                                         | Temp file creation                                                                                 |
+| `history`       | `createHistoryApi()`       | `history.ts`                                                                                                                                             | History entry CRUD                                                                                 |
+| `cli`           | `createCliApi()`           | `persistence.ts`                                                                                                                                         | CLI activity tracking                                                                              |
+| `speckit`       | `createSpeckitApi()`       | `speckit.ts`                                                                                                                                             | Spec-Kit command management                                                                        |
+| `openspec`      | `createOpenspecApi()`      | `openspec.ts`                                                                                                                                            | OpenSpec command management                                                                        |
+| `notification`  | `createNotificationApi()`  | `notifications.ts`                                                                                                                                       | OS notifications and TTS                                                                           |
+| `attachments`   | `createAttachmentsApi()`   | `attachments.ts`                                                                                                                                         | Image attachment management                                                                        |
+| `autorun`       | `createAutorunApi()`       | `autorun.ts`                                                                                                                                             | Auto Run document management                                                                       |
+| `playbooks`     | `createPlaybooksApi()`     | `playbooks.ts`                                                                                                                                           | Playbook CRUD and import/export                                                                    |
+| `marketplace`   | `createMarketplaceApi()`   | `marketplace.ts`                                                                                                                                         | Playbook marketplace                                                                               |
+| `debug`         | `createDebugApi()`         | `debug.ts`                                                                                                                                               | Debug package generation                                                                           |
+| `documentGraph` | `createDocumentGraphApi()` | `documentGraph.ts`                                                                                                                                       | Document graph file watching                                                                       |
+| `groupChat`     | `createGroupChatApi()`     | `groupChat.ts`                                                                                                                                           | Group chat orchestration                                                                           |
+| `app`           | `createAppApi()`           | `system.ts`                                                                                                                                              | App lifecycle (quit, version, paths)                                                               |
+| `platform`      | Direct value               | N/A                                                                                                                                                      | `process.platform` string (synchronous)                                                            |
+| `stats`         | `createStatsApi()`         | `stats.ts`                                                                                                                                               | Usage statistics DB                                                                                |
+| `leaderboard`   | `createLeaderboardApi()`   | `leaderboard.ts`                                                                                                                                         | Leaderboard submission                                                                             |
+| `symphony`      | `createSymphonyApi()`      | `symphony/index.ts` (thin composer) + `symphony/*.ts` (6 per-domain files: discovery, dashboard, lifecycle, contributionStart, contributionFinish, sync) | Open-source contribution system                                                                    |
+| `tabNaming`     | `createTabNamingApi()`     | `tabNaming.ts`                                                                                                                                           | Automatic tab name generation                                                                      |
+| `directorNotes` | `createDirectorNotesApi()` | `director-notes.ts`                                                                                                                                      | Unified history + synopsis                                                                         |
+| `wakatime`      | `createWakatimeApi()`      | `wakatime.ts`                                                                                                                                            | WakaTime integration                                                                               |
+| `cue`           | `createCueApi()`           | `cue.ts`                                                                                                                                                 | Maestro Cue event-driven automation                                                                |
 
 ---
 
 ## How to Add a New IPC Handler
 
 ### Step 1: Create the handler file
+
+<!-- doc-refs-ignore -->
 
 Create `src/main/ipc/handlers/myFeature.ts`:
 
@@ -134,20 +136,24 @@ export function registerMyFeatureHandlers(deps: MyFeatureHandlerDependencies): v
 }
 ```
 
-### Step 2: Register in the handler index
+### Step 2: Register in the live bootstrap
 
-Edit `src/main/ipc/handlers/index.ts`:
+Edit `src/main/ipc/bootstrap/index.ts` and call the registrar from `setupIpcHandlers()`, which `main/index.ts` invokes at app-ready. This is the ONLY registration that runs:
 
 ```typescript
-import { registerMyFeatureHandlers, MyFeatureHandlerDependencies } from './myFeature';
+import { registerMyFeatureHandlers } from '../handlers/myFeature';
 
-// Add to registerAllHandlers():
+// Inside setupIpcHandlers(deps: IpcBootstrapDependencies):
 registerMyFeatureHandlers({
 	getMainWindow: deps.getMainWindow,
 });
 ```
 
+`src/main/ipc/handlers/index.ts` also exports `registerAllHandlers()`, which reads like the registration list but is dead: nothing calls it. It is kept as a manifest, and `src/__tests__/main/ipc/bootstrap/handler-wiring.test.ts` fails if a registrar invoked there is missing from `setupIpcHandlers()`. A registrar added to the dead list alone is never registered in a shipped build (that is how `contextTimeline:*` shipped unhandled), so add it to the bootstrap first and to the manifest second, or to the bootstrap only. If the registrar needs a dependency the bootstrap does not have yet, add it to `IpcBootstrapDependencies` in `src/main/ipc/bootstrap/types.ts` and pass it from `main/index.ts`.
+
 ### Step 3: Create the preload bridge
+
+<!-- doc-refs-ignore -->
 
 Create `src/main/preload/myFeature.ts`:
 
@@ -306,28 +312,11 @@ if (session.sshRemoteConfig?.enabled) {
 
 ## Handler Registration Architecture
 
-All handlers are registered in `registerAllHandlers()` in `src/main/ipc/handlers/index.ts`. Dependencies are injected via the `HandlerDependencies` interface:
-
-```typescript
-interface HandlerDependencies {
-	mainWindow: BrowserWindow | null;
-	getMainWindow: () => BrowserWindow | null;
-	app: App;
-	getAgentDetector: () => AgentDetector | null;
-	agentConfigsStore: Store<AgentConfigsData>;
-	getProcessManager: () => ProcessManager | null;
-	settingsStore: Store<MaestroSettings>;
-	sessionsStore: Store<SessionsData>;
-	groupsStore: Store<GroupsData>;
-	getWebServer: () => WebServer | null;
-	tunnelManager: TunnelManagerType;
-	claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
-}
-```
+All handlers are registered by `setupIpcHandlers()` in `src/main/ipc/bootstrap/index.ts`, called once from `main/index.ts` at app-ready. Dependencies are injected via `IpcBootstrapDependencies` (`src/main/ipc/bootstrap/types.ts`): getters for the mutable singletons that stay declared in `main/index.ts` (`getMainWindow`, `getProcessManager`, `getWebServer`, `getAgentDetector`, `getCueEngine`, ...) plus the stores and managers each registrar needs. The bootstrap also holds a handful of inline wiring blocks (group-chat mention and session callbacks, the coworking bridge startup, window-registry persistence) that are not registrars.
 
 Each handler module exports a `register*Handlers(deps)` function and a `*HandlerDependencies` interface specifying which subset of dependencies it needs.
 
-**Note:** `registerWebHandlers` is NOT called from `registerAllHandlers()` because it requires module-level webServer state management. It's registered separately in `src/main/index.ts`.
+`registerAllHandlers()` in `src/main/ipc/handlers/index.ts` is a dead manifest, not a second registration path: nothing invokes it, and `handler-wiring.test.ts` only uses it to assert that every registrar named there is also invoked by `setupIpcHandlers()`. Do not "fix" a missing handler by adding it there.
 
 ---
 
@@ -436,7 +425,7 @@ This ensures the webview only captures keyboard input after an explicit user cli
 
 ### Tab Navigation Pitfall
 
-The `showUnreadOnly` filter in `tabHelpers.ts` (`navigateToNextUnifiedTab` / `navigateToPrevUnifiedTab`) handles tab types with explicit branches. Browser tabs must be listed alongside terminal tabs as "always navigable" - if omitted, they fall through to the AI tab lookup, return undefined, and are silently skipped.
+The `showUnreadOnly` filter in `tabHelpers` (`navigateToNextUnifiedTab` / `navigateToPrevUnifiedTab`) handles tab types with explicit branches. Browser tabs must be listed alongside terminal tabs as "always navigable" - if omitted, they fall through to the AI tab lookup, return undefined, and are silently skipped.
 
 ### Key Files
 
@@ -446,4 +435,4 @@ The `showUnreadOnly` filter in `tabHelpers.ts` (`navigateToNextUnifiedTab` / `na
 | `src/main/preload/system.ts`                            | `onBrowserTabShortcutKey` IPC bridge                                           |
 | `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts` | IPC → blur + dispatch KeyboardEvent                                            |
 | `src/renderer/components/MainPanel/BrowserTabView.tsx`  | Focus-steal guard, scroll injection                                            |
-| `src/renderer/utils/tabHelpers.ts`                      | Tab navigation with browser tab handling                                       |
+| `src/renderer/utils/tabHelpers`                         | Tab navigation with browser tab handling                                       |

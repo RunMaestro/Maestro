@@ -3,49 +3,122 @@
  * Handles cases where the renderer has been disposed.
  */
 
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, type WebContents } from 'electron';
 import { logger } from './logger';
-
-/** Function type for getting the main window reference */
-export type GetMainWindow = () => BrowserWindow | null;
+import { broadcastBridgeEvent } from '../web-server/handlers/bridgeHandlers';
 
 /**
- * Creates a safeSend function with the provided window getter.
- * This allows dependency injection of the window reference.
+ * Function type for enumerating the window(s) a broadcast should reach.
  *
- * @param getMainWindow - Function that returns the current main window or null
- * @returns A function that safely sends IPC messages to the renderer
+ * Prefer returning EVERY open app window (`BrowserWindow.getAllWindows()`) so the
+ * broadcast is multi-window correct - each renderer filters agent-scoped events to
+ * the agents it owns. A single `BrowserWindow | null | undefined` is also accepted
+ * for the handful of channels that intentionally target just one window (or supply
+ * a `() => null` placeholder before a real window exists); it is normalized to a
+ * one-element list internally. Injected so the helper stays free of any direct
+ * `electron` value usage and remains trivially unit-testable.
  */
-export function createSafeSend(getMainWindow: GetMainWindow) {
+export type GetBroadcastWindows = () =>
+	| BrowserWindow
+	| null
+	| undefined
+	| ReadonlyArray<BrowserWindow | null | undefined>;
+
+/**
+ * Creates a safeSend function with the provided window enumerator.
+ * This allows dependency injection of the window references.
+ *
+ * @param getWindows - Function that returns every window the broadcast should reach
+ * @returns A function that safely sends IPC messages to every renderer
+ */
+export function createSafeSend(getWindows: GetBroadcastWindows) {
 	/**
-	 * Safely send IPC message to renderer.
-	 * Handles cases where the renderer has been disposed (e.g., GPU crash, window closing).
+	 * Safely send an IPC message to every renderer.
+	 * Handles cases where a renderer has been disposed (e.g., GPU crash, window closing).
 	 * This prevents "Render frame was disposed before WebFrameMain could be accessed" errors.
+	 *
+	 * MULTI-WINDOW INVARIANT - do NOT "optimize" this into per-window targeting.
+	 * Every `process:*` event (data, exit, status, ...) and every other
+	 * main→renderer push is BROADCAST to all open windows; each renderer then
+	 * filters agent-scoped events to the agents it owns via
+	 * `WindowContext.sessionIds` (see `useOwnedSessionGate` in the renderer).
+	 * Resolving the single owning window here and sending only to it would
+	 * couple the main process to the renderer's ownership map, break the
+	 * web-desktop bridge (which has no window), and complicate moving an agent
+	 * between windows. Broadcasting to all + filtering in the renderer keeps the
+	 * architecture simple and uniform with the bridge below.
+	 *
+	 * Always fans out to web-desktop bridge clients first (no-op when the Encore
+	 * Feature is off or no clients are connected). The bridge broadcast runs
+	 * independently of the Electron renderers' liveness so web-desktop users
+	 * receive events even when every desktop window is closed, destroyed, or
+	 * mid-launch - without that, every main→renderer push would silently
+	 * skip the bridge whenever no window was immediately available.
 	 */
 	return function safeSend(channel: string, ...args: unknown[]): void {
-		try {
-			const mainWindow = getMainWindow();
-			if (
-				mainWindow &&
-				!mainWindow.isDestroyed() &&
-				mainWindow.webContents &&
-				!mainWindow.webContents.isDestroyed()
-			) {
-				mainWindow.webContents.send(channel, ...args);
+		broadcastBridgeEvent(channel, args);
+
+		// Accept either a single window (or null/undefined) or a list of them,
+		// normalizing to a list so the send loop is uniform.
+		const target = getWindows();
+		const windows: ReadonlyArray<BrowserWindow | null | undefined> = Array.isArray(target)
+			? target
+			: [target];
+
+		for (const win of windows) {
+			try {
+				if (isWebContentsAvailable(win)) {
+					win.webContents.send(channel, ...args);
+				}
+			} catch (error) {
+				// Silently ignore - this renderer is not available
+				// This fires on every clean app shutdown, GPU crash, or mid-window-close;
+				// reporting it to Sentry would generate high-volume noise, not signal.
+				// Keep iterating so a single dead window never blocks the others.
+				logger.debug(`Failed to send IPC message to renderer: ${channel}`, 'IPC', {
+					error: String(error),
+				});
 			}
-		} catch (error) {
-			// Silently ignore - renderer is not available
-			// This fires on every clean app shutdown, GPU crash, or mid-window-close;
-			// reporting it to Sentry would generate high-volume noise, not signal.
-			logger.debug(`Failed to send IPC message to renderer: ${channel}`, 'IPC', {
-				error: String(error),
-			});
 		}
 	};
 }
 
 /** Type for the safeSend function */
 export type SafeSendFn = ReturnType<typeof createSafeSend>;
+
+/**
+ * The part of an `ipcMain.handle` event that `sendToInvoker` reads. `sender` is
+ * optional on purpose: the web-desktop bridge (`handleBridgeInvoke` in
+ * `web-server/handlers/bridgeHandlers.ts`) calls the same handlers with a
+ * synthetic event that has no WebContents at all.
+ */
+export interface InvokerEvent {
+	sender?: Pick<WebContents, 'isDestroyed' | 'send'> | null;
+}
+
+/**
+ * Push a progress message back to whoever invoked an `ipcMain.handle` channel.
+ *
+ * A desktop window gets it on its own WebContents, so two windows never see each
+ * other's progress. A web-desktop browser client has no WebContents - the bridge
+ * invokes the handler with a synthetic event - so the push goes out as a
+ * `bridge.event` instead, the same route `safeSend` uses for every other push.
+ *
+ * Reading `event.sender.isDestroyed()` directly is what threw
+ * `Cannot read properties of undefined (reading 'isDestroyed')` from inside a git
+ * child's stdout handler for every pull or push started from a browser
+ * (MAESTRO-14Y): an uncaught exception in the main process, and a live console
+ * that never showed a line of output.
+ */
+export function sendToInvoker(event: InvokerEvent, channel: string, ...args: unknown[]): void {
+	const sender = event.sender;
+	if (!sender) {
+		broadcastBridgeEvent(channel, args);
+		return;
+	}
+	if (sender.isDestroyed()) return;
+	sender.send(channel, ...args);
+}
 
 /**
  * Check if a BrowserWindow's webContents is available for IPC.

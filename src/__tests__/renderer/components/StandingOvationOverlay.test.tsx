@@ -369,7 +369,7 @@ describe('StandingOvationOverlay', () => {
 			);
 
 			const maestro = screen.getByTestId('animated-maestro');
-			expect(maestro).toHaveAttribute('data-size', '160');
+			expect(maestro).toHaveAttribute('data-size', '96');
 		});
 	});
 
@@ -564,6 +564,53 @@ describe('StandingOvationOverlay', () => {
 			});
 
 			expect(mockOnClose).toHaveBeenCalled();
+		});
+
+		it('closes from the ESC pill the same way Escape does', () => {
+			render(
+				<StandingOvationOverlay
+					theme={createTheme()}
+					themeMode="dark"
+					badge={createBadge()}
+					cumulativeTimeMs={3600000}
+					onClose={mockOnClose}
+				/>
+			);
+
+			fireEvent.click(screen.getByTestId('standing-ovation-close'));
+
+			expect(mockConfetti).toHaveBeenCalledTimes(6); // 3 initial + 3 for close
+
+			act(() => {
+				vi.advanceTimersByTime(1500);
+			});
+
+			expect(mockOnClose).toHaveBeenCalled();
+		});
+
+		it('keeps the dismiss controls outside the scrolling body', () => {
+			render(
+				<StandingOvationOverlay
+					theme={createTheme()}
+					themeMode="dark"
+					badge={createBadge()}
+					cumulativeTimeMs={3600000}
+					onClose={mockOnClose}
+					onOpenLeaderboardRegistration={vi.fn()}
+				/>
+			);
+
+			// A card taller than the window scrolls its body; the actions and the
+			// ESC pill must not scroll away with it.
+			const body = screen.getByTestId('standing-ovation-body');
+			const actions = screen.getByTestId('standing-ovation-actions');
+			expect(body.className).toContain('overflow-y-auto');
+			expect(actions.className).toContain('shrink-0');
+			expect(body).not.toContainElement(actions);
+			expect(body).not.toContainElement(screen.getByTestId('standing-ovation-close'));
+			expect(actions).toContainElement(screen.getByText('Take a Bow'));
+			expect(actions).toContainElement(screen.getByText('Share Achievement'));
+			expect(actions).toContainElement(screen.getByText('Join Global Leaderboard'));
 		});
 
 		it('prevents multiple close actions when isClosing is true', async () => {

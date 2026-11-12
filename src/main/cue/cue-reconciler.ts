@@ -27,6 +27,12 @@ export interface ReconcileConfig {
 	sessions: Map<string, ReconcileSessionInfo>;
 	onDispatch: (sessionId: string, subscription: CueSubscription, event: CueEvent) => void;
 	onLog: (level: string, message: string) => void;
+	/**
+	 * Leave `time.heartbeat` subscriptions alone. Set when reconciling at
+	 * engine START: every heartbeat already fires once as the engine starts,
+	 * so a catch-up on top of it runs the same subscription twice in a row.
+	 */
+	skipHeartbeats?: boolean;
 }
 
 const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
@@ -43,7 +49,7 @@ const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
  * one being acted on) so prompts can branch on backlog size if they care.
  */
 export function reconcileMissedTimeEvents(config: ReconcileConfig): void {
-	const { sleepStartMs, wakeTimeMs, sessions, onDispatch, onLog } = config;
+	const { sleepStartMs, wakeTimeMs, sessions, onDispatch, onLog, skipHeartbeats } = config;
 	const gapMs = wakeTimeMs - sleepStartMs;
 
 	if (gapMs <= 0) return;
@@ -53,6 +59,7 @@ export function reconcileMissedTimeEvents(config: ReconcileConfig): void {
 			if (sub.enabled === false) continue;
 
 			if (sub.event === 'time.heartbeat') {
+				if (skipHeartbeats) continue;
 				reconcileHeartbeat(sessionId, sub, sleepStartMs, wakeTimeMs, onDispatch, onLog);
 			} else if (sub.event === 'time.scheduled') {
 				reconcileScheduled(sessionId, sub, sleepStartMs, wakeTimeMs, onDispatch, onLog);

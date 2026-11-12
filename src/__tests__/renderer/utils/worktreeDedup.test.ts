@@ -137,6 +137,15 @@ describe('normalizePath', () => {
 		expect(normalizePath('/a//b///c')).toBe('/a/b/c');
 	});
 
+	it('preserves UNC identity while keeping root-relative paths distinct', () => {
+		const uncPath = normalizePath('\\\\server\\share\\repo');
+		const rootRelativePath = normalizePath('\\server\\share\\repo');
+
+		expect(uncPath).toBe('//server/share/repo');
+		expect(rootRelativePath).toBe('/server/share/repo');
+		expect(uncPath).not.toBe(rootRelativePath);
+	});
+
 	it('strips trailing slash', () => {
 		expect(normalizePath('/projects/worktrees/feature/')).toBe('/projects/worktrees/feature');
 	});
@@ -147,6 +156,17 @@ describe('normalizePath', () => {
 
 	it('returns empty string unchanged', () => {
 		expect(normalizePath('')).toBe('');
+	});
+
+	it.each([
+		['/', false, '/'],
+		['C:\\', false, 'C:/'],
+		['\\\\server\\share\\repo\\', false, '//server/share/repo'],
+		['//server//share/repo/', true, '/server/share/repo'],
+		['/trees/feature\\name/', true, '/trees/feature\\name'],
+		['/', true, '/'],
+	] as const)('normalizes %s with POSIX mode %s', (input, posix, expected) => {
+		expect(normalizePath(input, posix)).toBe(expected);
 	});
 });
 

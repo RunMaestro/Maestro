@@ -426,3 +426,37 @@ describe('normalizer - github.label field passthrough', () => {
 		).toBeUndefined();
 	});
 });
+
+describe('normalizer - tier / model / effort passthrough', () => {
+	function normalizeSub(sub: Record<string, unknown>) {
+		const raw = yaml.dump({ subscriptions: [sub] });
+		const doc = parseCueConfigDocument(raw, projectRoot);
+		return materializeCueConfig(doc!).config.subscriptions[0];
+	}
+
+	const base = {
+		name: 'review',
+		event: 'time.heartbeat',
+		interval_minutes: 30,
+		prompt: 'Review the latest changes',
+		enabled: true,
+	};
+
+	it('keeps tier and effort so the run uses the model the YAML asks for', () => {
+		const sub = normalizeSub({ ...base, tier: 'high', effort: 'low' });
+		expect(sub.tier).toBe('high');
+		expect(sub.effort).toBe('low');
+		expect(sub.model).toBeUndefined();
+	});
+
+	it('keeps an exact model, trimmed', () => {
+		expect(normalizeSub({ ...base, model: '  gpt-5.5-codex ' }).model).toBe('gpt-5.5-codex');
+	});
+
+	it('drops values outside the low | medium | high vocabulary', () => {
+		const sub = normalizeSub({ ...base, tier: 'max', effort: 7, model: '' });
+		expect(sub.tier).toBeUndefined();
+		expect(sub.effort).toBeUndefined();
+		expect(sub.model).toBeUndefined();
+	});
+});

@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { describe, it, expect } from 'vitest';
 import {
 	resolveClaudeSpawnMode,
@@ -6,6 +7,7 @@ import {
 	REMOTE_MAESTRO_P_COMMAND,
 	type ResolveClaudeSpawnModeDeps,
 } from '../../../main/agents/resolveClaudeSpawnMode';
+import { asarNodePath } from '../../helpers/pathExpect';
 import type { UsageSnapshot } from '../../../main/agents/claude-mode-selector';
 
 const claudeAgent = {
@@ -431,6 +433,12 @@ describe('applyClaudeSpawnDecision (batch surfaces)', () => {
 
 	it('adds NODE_PATH to the unpacked modules dir when running packaged (resourcesPath set)', () => {
 		const original = process.resourcesPath;
+		// The source prepends the asar path to any EXISTING NODE_PATH, so this
+		// assertion is only deterministic on a clean slate. A developer's shell may
+		// export NODE_PATH (e.g. pointing at a packaged Maestro), which would
+		// otherwise leak in and double the value - isolate it for the duration.
+		const originalNodePath = process.env.NODE_PATH;
+		delete process.env.NODE_PATH;
 		try {
 			// Simulate a packaged app: resourcesPath points at the app Resources dir.
 			Object.defineProperty(process, 'resourcesPath', {
@@ -455,13 +463,47 @@ describe('applyClaudeSpawnDecision (batch surfaces)', () => {
 			// spawn-helper, so handing it the unpacked path double-applies and the
 			// helper exec fails (posix_spawn ENOENT).
 			expect(result.customEnvVars?.NODE_PATH).toBe(
-				'/Applications/Maestro.app/Contents/Resources/app.asar/node_modules'
+				asarNodePath('/Applications/Maestro.app/Contents/Resources')
 			);
 		} finally {
 			Object.defineProperty(process, 'resourcesPath', {
 				value: original,
 				configurable: true,
 			});
+			if (originalNodePath === undefined) {
+				delete process.env.NODE_PATH;
+			} else {
+				process.env.NODE_PATH = originalNodePath;
+			}
+		}
+	});
+
+	it('honors an explicit resourcesPath when the caller runs outside the app (#1770)', () => {
+		const original = process.resourcesPath;
+		try {
+			// A system `node` leaves resourcesPath unset; the CLI passes the
+			// packaged app it found instead, along with that app's binary.
+			Object.defineProperty(process, 'resourcesPath', { value: undefined, configurable: true });
+			const result = applyClaudeSpawnDecision({
+				decision: {
+					mode: 'interactive',
+					reason: 'auto',
+					maestroPBinPath: '/res/maestro-p.js',
+					claudeRealBinPath: '/bin/claude',
+				},
+				interactiveModeArgs: [],
+				command: 'claude',
+				args: ['--print', '--', 'hi'],
+				execPath: '/Applications/Maestro.app/Contents/MacOS/Maestro',
+				resourcesPath: '/Applications/Maestro.app/Contents/Resources',
+			});
+			expect(result.command).toBe('/Applications/Maestro.app/Contents/MacOS/Maestro');
+			expect(result.customEnvVars?.ELECTRON_RUN_AS_NODE).toBe('1');
+			expect(result.customEnvVars?.NODE_PATH?.split(path.delimiter)[0]).toBe(
+				path.join('/Applications/Maestro.app/Contents/Resources', 'app.asar', 'node_modules')
+			);
+		} finally {
+			Object.defineProperty(process, 'resourcesPath', { value: original, configurable: true });
 		}
 	});
 

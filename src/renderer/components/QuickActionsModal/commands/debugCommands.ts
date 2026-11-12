@@ -2,6 +2,7 @@ import type React from 'react';
 import type { Session } from '../../../types';
 import type { NotifyToastInput } from '../../../stores/notificationStore';
 import { captureException } from '../../../utils/sentry';
+import { useModalStore } from '../../../stores/modalStore';
 import { replayOnboardingSeries } from '../../../stores/onboardingSeriesStore';
 import type { QuickAction } from '../types';
 
@@ -121,6 +122,15 @@ export function buildDebugCommands({
 			subtext: 'Same four steps, with the copy an upgrading user sees',
 			action: () => {
 				replayOnboardingSeries('returning');
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'debugWidgetGallery',
+			label: 'Debug: Widget Gallery',
+			subtext: 'Preview the shared output/input widget library (theme-aware, no Encore flag)',
+			action: () => {
+				useModalStore.getState().openModal('widgetGallery');
 				setQuickActionOpen(false);
 			},
 		},

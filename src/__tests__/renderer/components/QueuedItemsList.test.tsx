@@ -5,6 +5,7 @@ import { QueuedItemsList } from '../../../renderer/components/QueuedItemsList';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useRetryStore, type RetryEntry } from '../../../renderer/stores/retryStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { QueuedItem } from '../../../renderer/types';
@@ -28,7 +29,8 @@ function setup(overrides: Record<string, unknown> = {}) {
 		onTogglePauseQueuedItem: vi.fn(),
 		...overrides,
 	};
-	// The Force Send explainer is a layered Modal, so the list needs the provider.
+	// The confirmation modals register with the layer stack, so the provider has to
+	// be in the tree for any test that opens one.
 	const utils = render(
 		<LayerStackProvider>
 			<QueuedItemsList {...(props as any)} />
@@ -51,10 +53,103 @@ describe('QueuedItemsList pause/hold', () => {
 		expect(props.onTogglePauseQueuedItem).toHaveBeenCalledWith('q1');
 	});
 
+	it('explains when an item is waiting for the connection', () => {
+		setup({ executionQueue: [item({ waitingForConnection: true })] });
+		expect(screen.getByText('WAITING FOR CONNECTION')).toHaveAttribute(
+			'title',
+			'This message will run after Maestro reconnects'
+		);
+	});
+
 	it('omits the hold control when no toggle handler is provided', () => {
 		setup({ onTogglePauseQueuedItem: undefined });
 		expect(screen.queryByTitle(/Hold this message/i)).toBeNull();
 		expect(screen.queryByText('HELD')).toBeNull();
+	});
+});
+
+describe('QueuedItemsList held-for-retry badge', () => {
+	afterEach(() => {
+		act(() => useRetryStore.setState({ retries: {} }));
+	});
+
+	function holdForRetry(heldItemId: string) {
+		const entry = {
+			sessionId: 's1',
+			tabId: 'tab-1',
+			key: 's1:tab-1',
+			outageId: 'o1',
+			strategy: 'token-exhaustion',
+			mode: 'resend',
+			status: 'scheduled',
+			attempt: 0,
+			startedAt: 0,
+			nextRetryAt: 1,
+			lastMessage: 'limit',
+			heldItemId,
+		} as RetryEntry;
+		act(() => useRetryStore.setState({ retries: { [entry.key]: entry } }));
+	}
+
+	it('labels the parked failed turn, and only that item', () => {
+		setup({ executionQueue: [item({ id: 'failed' }), item({ id: 'next', text: 'follow-up' })] });
+		expect(screen.queryByTestId('held-for-retry-badge')).toBeNull();
+
+		holdForRetry('failed');
+		const badges = screen.getAllByTestId('held-for-retry-badge');
+		expect(badges).toHaveLength(1);
+		expect(badges[0]).toHaveAttribute('title', expect.stringMatching(/not a second copy/));
+	});
+
+	it('drops the label once the outage entry is gone', () => {
+		setup({ executionQueue: [item({ id: 'failed' })] });
+		holdForRetry('failed');
+		expect(screen.getByTestId('held-for-retry-badge')).toBeTruthy();
+		act(() => useRetryStore.setState({ retries: {} }));
+		expect(screen.queryByTestId('held-for-retry-badge')).toBeNull();
+	});
+});
+
+describe('QueuedItemsList force-send shortcut gate', () => {
+	// Shape the Force Send button/shortcut needs: this tab idle, another tab busy.
+	const forceSendProps = {
+		forcedParallelEnabled: true,
+		onForceSendQueuedItem: vi.fn(),
+		// Full eligibility, not the narrowed busy-context this used to pass. The
+		// inline card no longer re-derives "can I force this?" - main's fix made
+		// both surfaces read one decision, so the fixture has to supply it.
+		getForceSendContext: () => ({
+			targetTabBusy: false,
+			otherBusyTabs: [{ id: 'tab-2', displayName: 'Tab 2' }],
+			requiresParallel: true,
+			canForce: true,
+			blockedReason: undefined,
+		}),
+		activeTabId: 'tab-1',
+	};
+
+	function fireShortcut() {
+		act(() => {
+			window.dispatchEvent(new CustomEvent('maestro:triggerForceSendQueued'));
+		});
+	}
+
+	it('opens the confirmation when the list answers the shortcut (single-view default)', () => {
+		setup(forceSendProps);
+		expect(screen.queryByText('Force Send Message?')).toBeNull();
+		fireShortcut();
+		expect(screen.getByText('Force Send Message?')).toBeInTheDocument();
+	});
+
+	it('ignores the shortcut when disabled, so only one tiled pane can respond', () => {
+		setup({ ...forceSendProps, shortcutEnabled: false });
+		fireShortcut();
+		// The per-item button is still there; the confirmation modal is not.
+		// The tooltip copy now comes from getForceSendTitle and varies with the
+		// eligibility, so match on the parallel-send wording this fixture produces
+		// rather than the old fixed "Force send this message now".
+		expect(screen.getByTitle(/Send now, running in parallel/i)).toBeInTheDocument();
+		expect(screen.queryByText('Force Send Message?')).toBeNull();
 	});
 });
 

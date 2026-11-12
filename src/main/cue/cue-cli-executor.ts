@@ -57,6 +57,17 @@ export interface CueCliExecutionConfig {
 	templateContext: TemplateContext;
 	timeoutMs: number;
 	onLog: (level: string, message: string) => void;
+	/**
+	 * Called when `cli.tab` named a tab that no longer exists and the message
+	 * went to a new tab instead. The caller raises the toast; `newTabId` is null
+	 * when the fallback itself failed (the run then reports `failed`).
+	 */
+	onTabFallback?: (info: {
+		/** Agent the message went to (resolved id when dispatch reported one). */
+		agentId: string;
+		requestedTab: string;
+		newTabId: string | null;
+	}) => void;
 }
 
 export interface CliSendResult {
@@ -71,17 +82,57 @@ export interface CliSendResult {
 }
 
 /**
+ * Where in the target agent a dispatch lands. Omitted: the agent's active tab
+ * (plain `dispatch`). `tab`: that existing tab, waiting behind a busy turn
+ * (`--tab <id> --queue`). `newTab`: a fresh tab (`--new-tab`).
+ */
+export type CliSendDelivery = { tab: string } | { newTab: true };
+
+/** The dispatch flags a {@link CliSendDelivery} adds after `<target> <message>`. */
+function deliveryArgs(delivery: CliSendDelivery | undefined): string[] {
+	if (!delivery) return [];
+	if ('tab' in delivery) return ['--tab', delivery.tab, '--queue'];
+	return ['--new-tab'];
+}
+
+/**
+ * The `{ code, agentId, tabId }` a `maestro-cli dispatch` run printed. Dispatch writes
+ * one JSON object to stdout on success and on failure alike, so this is how a
+ * caller tells "tab gone" from any other refusal. `null` when stdout is not
+ * that JSON (spawn failure, a crash before output).
+ */
+export function parseDispatchOutput(
+	stdout: string
+): { code?: string; agentId?: string; tabId?: string } | null {
+	try {
+		const parsed: unknown = JSON.parse(stdout.trim());
+		if (!parsed || typeof parsed !== 'object') return null;
+		const record = parsed as Record<string, unknown>;
+		return {
+			...(typeof record.code === 'string' ? { code: record.code } : {}),
+			...(typeof record.agentId === 'string' ? { agentId: record.agentId } : {}),
+			...(typeof record.tabId === 'string' ? { tabId: record.tabId } : {}),
+		};
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Resolve the bundled `maestro-cli.js` script path. Mirrors the candidate list
  * in `maestro-cli-manager.ts` so dev/test environments (where
  * `process.resourcesPath` is undefined or points at electron's built-in
  * resources) still find the compiled script at `dist/cli/maestro-cli.js`.
  */
-function resolveMaestroCliScriptPath(): string {
+export function resolveMaestroCliScriptPath(): string {
 	const candidates: string[] = [];
 	if (process.resourcesPath) {
 		candidates.push(path.join(process.resourcesPath, 'maestro-cli.js'));
 	}
-	// Compiled dev layout: main/cue/cue-cli-executor.js lives next to cli/.
+	// Dev/preserved-layout: this file compiles to dist/main/cue/cue-cli-executor.js,
+	// while the CLI is built to dist/cli/maestro-cli.js - two levels up, then `cli`.
+	candidates.push(path.resolve(__dirname, '..', '..', 'cli', 'maestro-cli.js'));
+	// Legacy single-level fallback (kept for any flattened/bundled layout).
 	candidates.push(path.resolve(__dirname, '..', 'cli', 'maestro-cli.js'));
 
 	for (const candidate of candidates) {
@@ -98,9 +149,9 @@ function resolveMaestroCliScriptPath(): string {
 }
 
 /**
- * Spawn `node maestro-cli.js dispatch <target> <message>`. Used by both the
- * primary cli executor and the legacy cli_output Phase 3 path. When `runId`
- * is provided, the child joins the shared Cue registry
+ * Spawn `node maestro-cli.js dispatch <target> <message> [delivery flags]`.
+ * Used by both the primary cli executor and the legacy cli_output Phase 3
+ * path. When `runId` is provided, the child joins the shared Cue registry
  * ({@link trackCueProcess}) so the Process Monitor lists it and Stop reaches
  * it. The legacy cli_output Phase 3 path passes no runId: it is a side effect of
  * an already-completed run, so it stays untracked.
@@ -109,26 +160,32 @@ export async function runMaestroCliSend(
 	target: string,
 	message: string,
 	timeoutMs: number = CLI_SEND_TIMEOUT_MS,
-	runId?: string
+	runId?: string,
+	delivery?: CliSendDelivery
 ): Promise<CliSendResult> {
 	const cliScriptPath = resolveMaestroCliScriptPath();
 	const truncated = message.substring(0, CLI_SEND_OUTPUT_MAX_CHARS);
 	const effectiveTimeout = timeoutMs > 0 ? timeoutMs : CLI_SEND_TIMEOUT_MS;
+	const extraArgs = deliveryArgs(delivery);
 
 	return new Promise<CliSendResult>((resolve) => {
 		let child: ChildProcess;
 		try {
-			child = spawn(process.execPath, [cliScriptPath, 'dispatch', target, truncated], {
-				stdio: ['ignore', 'pipe', 'pipe'],
-				// In packaged Electron, `process.execPath` is the app binary, not
-				// Node - without this flag the spawn would launch the app instead
-				// of running maestro-cli.js. Mirrors the shims emitted by
-				// maestro-cli-manager.ts for user-facing invocations.
-				env: {
-					...process.env,
-					ELECTRON_RUN_AS_NODE: '1',
-				},
-			});
+			child = spawn(
+				process.execPath,
+				[cliScriptPath, 'dispatch', target, truncated, ...extraArgs],
+				{
+					stdio: ['ignore', 'pipe', 'pipe'],
+					// In packaged Electron, `process.execPath` is the app binary, not
+					// Node - without this flag the spawn would launch the app instead
+					// of running maestro-cli.js. Mirrors the shims emitted by
+					// maestro-cli-manager.ts for user-facing invocations.
+					env: {
+						...process.env,
+						ELECTRON_RUN_AS_NODE: '1',
+					},
+				}
+			);
 		} catch (err) {
 			// Synchronous spawn throw is an unexpected process-launch failure
 			// (permissions, bad ELECTRON_RUN_AS_NODE interaction, etc.). Report
@@ -160,7 +217,7 @@ export async function runMaestroCliSend(
 			? trackCueProcess(runId, {
 					child,
 					command: process.execPath,
-					args: [cliScriptPath, 'dispatch', target],
+					args: [cliScriptPath, 'dispatch', target, ...extraArgs],
 					cwd: process.cwd(),
 					toolType: 'terminal',
 					startTime: Date.now(),
@@ -265,6 +322,19 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 	const messageTemplate = cli.message ?? DEFAULT_CLI_MESSAGE_TEMPLATE;
 	const resolvedMessage = substituteTemplateVariables(messageTemplate, templateContext);
 
+	// A `tab` that substitutes to nothing (an unset template variable) is a
+	// misconfiguration, not "use the active tab": delivering into whatever the
+	// user is looking at would be the wrong conversation.
+	let resolvedTab: string | undefined;
+	if (cli.tab !== undefined) {
+		resolvedTab = substituteTemplateVariables(cli.tab, templateContext).trim();
+		if (!resolvedTab) {
+			const message = `Cue subscription "${subscription.name}" cli tab resolved to empty string (raw="${cli.tab}")`;
+			onLog('warn', message);
+			return failedResult(message);
+		}
+	}
+
 	// Surface argv truncation so users notice when output is cut - on
 	// Windows this cap is much tighter (30K vs 100K on POSIX) to stay
 	// under the 32K CreateProcessW command-line ceiling.
@@ -275,9 +345,10 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 		);
 	}
 
+	const tabNote = resolvedTab ? ` --tab ${resolvedTab} --queue` : '';
 	onLog(
 		'cue',
-		`[CUE] Executing cli run ${runId}: "${subscription.name}" → maestro-cli dispatch ${resolvedTarget} (message length=${resolvedMessage.length})`
+		`[CUE] Executing cli run ${runId}: "${subscription.name}" → maestro-cli dispatch ${resolvedTarget}${tabNote} (message length=${resolvedMessage.length})`
 	);
 
 	try {
@@ -293,12 +364,41 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 		}
 		const clampedTimeout =
 			timeoutMs > 0 ? Math.min(timeoutMs, CLI_SEND_TIMEOUT_MS) : CLI_SEND_TIMEOUT_MS;
-		const result = await runMaestroCliSend(resolvedTarget, resolvedMessage, clampedTimeout, runId);
+		let result = await runMaestroCliSend(
+			resolvedTarget,
+			resolvedMessage,
+			clampedTimeout,
+			runId,
+			resolvedTab ? { tab: resolvedTab } : undefined
+		);
+		// The tab was closed between scheduling and firing. The prompt still has
+		// to land somewhere the user will see it: a new tab of the same agent,
+		// announced by a toast so the move is not silent.
+		if (
+			resolvedTab &&
+			!result.ok &&
+			!result.timedOut &&
+			parseDispatchOutput(result.stdout)?.code === 'TAB_NOT_FOUND'
+		) {
+			onLog(
+				'warn',
+				`[CUE] "${subscription.name}" tab ${resolvedTab} no longer exists - delivering to a new tab`
+			);
+			result = await runMaestroCliSend(resolvedTarget, resolvedMessage, clampedTimeout, runId, {
+				newTab: true,
+			});
+			const fallback = result.ok ? parseDispatchOutput(result.stdout) : null;
+			config.onTabFallback?.({
+				agentId: fallback?.agentId ?? resolvedTarget,
+				requestedTab: resolvedTab,
+				newTabId: fallback?.tabId ?? null,
+			});
+		}
 		const status = result.timedOut ? 'timeout' : result.ok ? 'completed' : 'failed';
 		if (result.timedOut) {
 			onLog(
 				'warn',
-				`[CUE] "${subscription.name}" cli dispatch timed out after ${clampedTimeout}ms — process killed`
+				`[CUE] "${subscription.name}" cli dispatch timed out after ${clampedTimeout}ms - process killed`
 			);
 		} else if (!result.ok) {
 			onLog(

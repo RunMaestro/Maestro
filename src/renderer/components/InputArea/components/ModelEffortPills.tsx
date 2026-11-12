@@ -1,8 +1,9 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import type React from 'react';
-import { Gauge, Sparkles } from 'lucide-react';
+import { Gauge, RefreshCw, Sparkles } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { ShortcutHint, shortcutSuffix } from '../../ui/ShortcutHint';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface ModelEffortPillsProps {
 	isVisible: boolean;
@@ -24,6 +25,14 @@ interface ModelEffortPillsProps {
 	availableEfforts: string[];
 	onModelChange?: (model: string) => void;
 	onEffortChange?: (effort: string) => void;
+	/**
+	 * Re-run model discovery past the cache, for a model added since the list
+	 * loaded (a fresh `ollama pull`). Drawn at the right end of the model
+	 * dropdown's header row; omit it and no Refresh is offered.
+	 */
+	onRefreshModels?: () => void;
+	/** Spins the Refresh icon and blocks a second click while one is running. */
+	refreshingModels?: boolean;
 	modelMenuOpen: boolean;
 	setModelMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
 	modelMenuRef: React.RefObject<HTMLDivElement>;
@@ -42,6 +51,8 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 	availableEfforts,
 	onModelChange,
 	onEffortChange,
+	onRefreshModels,
+	refreshingModels = false,
 	modelMenuOpen,
 	setModelMenuOpen,
 	modelMenuRef,
@@ -49,6 +60,8 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 	setEffortMenuOpen,
 	effortMenuRef,
 }: ModelEffortPillsProps) {
+	const [typedModel, setTypedModel] = useState('');
+
 	if (!isVisible) {
 		return null;
 	}
@@ -75,13 +88,34 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 					</button>
 					{modelMenuOpen && (
 						<div
-							className="absolute bottom-full left-0 mb-1 rounded border shadow-lg z-50"
+							className="absolute bottom-full left-0 mb-1 rounded z-50"
 							style={{
-								backgroundColor: theme.colors.bgMain,
-								borderColor: theme.colors.border,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
-							<ShortcutHint theme={theme} keys={shortcutKeys ?? []} label="Try:" variant="row" />
+							<ShortcutHint
+								theme={theme}
+								keys={shortcutKeys ?? []}
+								label="Try:"
+								variant="row"
+								trailing={
+									onRefreshModels && (
+										<button
+											type="button"
+											onClick={onRefreshModels}
+											disabled={refreshingModels}
+											className="flex items-center gap-1 font-sans rounded px-1 transition-opacity opacity-80 hover:opacity-100 disabled:cursor-default"
+											style={{ color: theme.colors.accent }}
+											title="Re-read the model list (picks up newly installed models)"
+											aria-label="Refresh model list"
+											aria-busy={refreshingModels}
+										>
+											<RefreshCw className={`w-3 h-3 ${refreshingModels ? 'animate-spin' : ''}`} />
+											<span>Refresh</span>
+										</button>
+									)
+								}
+							/>
 							<div className="max-h-48 overflow-y-auto scrollbar-thin">
 								{(availableModels.includes('') ? availableModels : ['', ...availableModels]).map(
 									(model) => (
@@ -102,6 +136,56 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 										</button>
 									)
 								)}
+							</div>
+							{/*
+							 * Escape hatch for a model discovery cannot know about: a preview or
+							 * limited-access model that the CLI's published catalog does not list
+							 * and that this machine has never run. The typed ID is applied like
+							 * any other selection, so it persists as the tab's model.
+							 *
+							 * It reaches this dropdown only once the CLI records a run of it in
+							 * `lastModelUsage`, which the interactive (maestro-p) spawn path does
+							 * and `claude --print` does not - so on an API-mode tab this field
+							 * stays the way in.
+							 */}
+							<div className="border-t px-3 py-1.5" style={{ borderColor: theme.colors.border }}>
+								<input
+									type="text"
+									value={typedModel}
+									onChange={(e) => setTypedModel(e.target.value)}
+									onKeyDown={(e) => {
+										// The composer and the global shortcuts both listen for plain
+										// keys; typing a model ID must not reach them. That includes
+										// Escape, which elsewhere interrupts the turn - but swallowing
+										// it outright left the field with no way out, so it closes the
+										// menu here instead of doing nothing.
+										e.stopPropagation();
+										if (e.key === 'Escape') {
+											setTypedModel('');
+											setModelMenuOpen(false);
+											return;
+										}
+										if (e.key !== 'Enter') {
+											return;
+										}
+										// Enter confirms an IME candidate mid-composition; committing
+										// there would apply half a model ID and close the menu.
+										if (e.nativeEvent.isComposing) {
+											return;
+										}
+										const next = typedModel.trim();
+										if (!next) {
+											return;
+										}
+										onModelChange(next);
+										setTypedModel('');
+										setModelMenuOpen(false);
+									}}
+									placeholder="Or type a model ID"
+									aria-label="Use a model ID that is not listed"
+									className="w-full bg-transparent text-xs font-mono outline-none placeholder:opacity-50"
+									style={{ color: theme.colors.textMain }}
+								/>
 							</div>
 						</div>
 					)}
@@ -127,10 +211,9 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 					</button>
 					{effortMenuOpen && (
 						<div
-							className="absolute bottom-full left-0 mb-1 rounded border shadow-lg z-50"
+							className="absolute bottom-full left-0 mb-1 rounded z-50"
 							style={{
-								backgroundColor: theme.colors.bgMain,
-								borderColor: theme.colors.border,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							<ShortcutHint theme={theme} keys={shortcutKeys ?? []} label="Try:" variant="row" />

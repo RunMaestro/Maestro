@@ -10,9 +10,41 @@
  * API" instead of "claude-code".
  */
 
-import type { Session } from '../../types';
+import type { CSSProperties } from 'react';
+import type { Session, Theme } from '../../types';
 import { AGENT_DISPLAY_NAMES } from '../../../shared/agentMetadata';
-import { widestLabelWidth } from '../../utils/labelWidth';
+import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
+
+// `clampTooltipToViewport` was relocated into the shared widget library (so the
+// library's ChartTooltip primitive owns its geometry without depending back on
+// UsageDashboard). Re-export it here to keep the historical chartUtils API
+// stable for any existing importer.
+export { clampTooltipToViewport } from '../widgets/output/tooltipGeometry';
+
+/** Colors for series after the first, which takes the theme accent. */
+const SERIES_COLORS = [
+	'#10b981',
+	'#8b5cf6',
+	'#ef4444',
+	'#06b6d4',
+	'#ec4899',
+	'#f59e0b',
+	'#84cc16',
+	'#6366f1',
+];
+
+/**
+ * Color for the Nth series of a chart (a provider, an agent, a model). One
+ * mapping for every dashboard chart, so the same index reads as the same color
+ * when two charts sit side by side.
+ */
+export function getSeriesColor(index: number, theme: Theme, colorBlindMode?: boolean): string {
+	if (colorBlindMode) {
+		return COLORBLIND_AGENT_PALETTE[index % COLORBLIND_AGENT_PALETTE.length];
+	}
+	if (index === 0) return theme.colors.accent;
+	return SERIES_COLORS[(index - 1) % SERIES_COLORS.length];
+}
 
 /**
  * Returns true if the session is a worktree child (was spawned from a parent agent).
@@ -137,62 +169,6 @@ export function resolveAgentDisplayName(
 }
 
 /**
- * Clamp an absolute tooltip position so its bounding rect stays inside the
- * viewport. Pass `transform` to describe which corner of the tooltip the
- * anchor point represents - the function returns top-left coordinates the
- * caller can drop directly into `style.left` / `style.top` (and stop using
- * a CSS transform).
- *
- * **Why:** anchoring a tooltip at the right edge of a chart with
- * `transform: translate(-50%, -100%)` lets the tooltip extend off-screen.
- * `clampTooltipToViewport` keeps the rect inside the viewport.
- */
-export function clampTooltipToViewport(args: {
-	anchorX: number;
-	anchorY: number;
-	width: number;
-	height: number;
-	transform?: 'top-center' | 'bottom-center' | 'top-left' | 'left-center';
-	margin?: number;
-}): { left: number; top: number } {
-	const { anchorX, anchorY, width, height, transform = 'top-left', margin = 8 } = args;
-
-	let left: number;
-	let top: number;
-	switch (transform) {
-		case 'top-center':
-			left = anchorX - width / 2;
-			top = anchorY - height;
-			break;
-		case 'bottom-center':
-			left = anchorX - width / 2;
-			top = anchorY;
-			break;
-		case 'left-center':
-			left = anchorX;
-			top = anchorY - height / 2;
-			break;
-		case 'top-left':
-		default:
-			left = anchorX;
-			top = anchorY;
-			break;
-	}
-
-	const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 0;
-	const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 0;
-
-	if (viewportWidth > 0) {
-		left = Math.max(margin, Math.min(left, viewportWidth - width - margin));
-	}
-	if (viewportHeight > 0) {
-		top = Math.max(margin, Math.min(top, viewportHeight - height - margin));
-	}
-
-	return { left, top };
-}
-
-/**
  * Batch-resolve multiple chart keys to display names, disambiguating any
  * duplicate names by appending ` (2)`, ` (3)`, etc. in input order.
  *
@@ -219,26 +195,105 @@ export function buildNameMap(
 }
 
 /**
- * Width, in px, of the name column in the dashboard's horizontal bar charts
- * (Agent Efficiency, Agent Comparison, By Agent Type). Sized to the longest
- * label so "Claude Code (Worktree)" reads in full instead of clipping at a
- * fixed 112px while the bar beside it has room to spare. Labels render at
- * `text-sm`; `withSwatch` counts the color square and its gap. The ceiling
- * keeps one long user-assigned agent name from eating the bars; past it the
- * label ellipsizes and the row's `title` carries the full name.
+ * Axis-label budget for a phone-width chart.
+ *
+ * The default seven labels assume a desktop axis: seven `Aug 20`-sized dates
+ * need roughly 300px, and a phone gives a chart about 340px total, so they
+ * printed on top of each other and every date read as a smear. Four fit.
  */
-export function barChartLabelWidth(
-	labels: Iterable<string>,
-	{ withSwatch = false }: { withSwatch?: boolean } = {}
-): number {
-	return widestLabelWidth(labels, {
-		fontSizePx: 14,
-		// w-2.5 swatch (10px) + gap-2 (8px)
-		chromePx: withSwatch ? 18 : 0,
-		minPx: 112,
-		maxPx: 320,
-	});
+export const PHONE_AXIS_LABELS = 4;
+
+/**
+ * Pick which x-axis tick indices should carry a label.
+ *
+ * Every time-series chart on the dashboard wants roughly seven labels and always
+ * wants the final one, so the axis ends on the real end date. Naively forcing
+ * that last label is what caused overlapping text at the right edge: when the
+ * series length isn't a multiple of the interval, the forced label lands one or
+ * two slots after the previous one and the two strings collide (e.g. "Jul 25"
+ * printed on top of "Jul 26").
+ *
+ * Here the last label still always wins, but the preceding label is dropped when
+ * it would sit closer than a full interval - so labels are never spaced tighter
+ * than the interval the chart already deemed readable.
+ *
+ * @param count - number of ticks on the axis
+ * @returns the set of indices to label
+ */
+export function computeAxisLabelIndices(count: number, maxLabels = 7): Set<number> {
+	if (count <= 0) return new Set();
+
+	// Same density heuristic the charts used individually: ~7 labels max.
+	// `maxLabels` is how a caller says its axis is narrower than that assumes -
+	// seven "Aug 20"-sized labels need about 300px, so on a phone they printed
+	// on top of each other and every date read as a four-digit smear.
+	const budget = Math.max(2, maxLabels);
+	const interval = count > 2 * budget ? Math.ceil(count / budget) : count > budget ? 2 : 1;
+
+	const indices: number[] = [];
+	for (let i = 0; i < count; i += interval) indices.push(i);
+
+	const last = count - 1;
+	const previous = indices[indices.length - 1];
+	if (previous !== last) {
+		if (last - previous < interval) indices.pop();
+		indices.push(last);
+	}
+
+	return new Set(indices);
 }
+
+/**
+ * Split a dense per-day series into at most `maxGroups` runs of equal length
+ * (the last run may be shorter), for a long range that would otherwise draw
+ * more bars than the chart has pixels for. Returns one single-item group per
+ * day when the series already fits.
+ *
+ * Grouping is by a fixed number of consecutive days rather than by calendar
+ * week: the buckets stay equal width, which is what makes neighbouring bars
+ * comparable, and a partial week at either end can't render as a dip that never
+ * happened.
+ */
+export function chunkIntoEqualGroups<T>(items: readonly T[], maxGroups: number): T[][] {
+	const limit = Math.max(1, maxGroups);
+	if (items.length <= limit) return items.map((item) => [item]);
+	const groupSize = Math.ceil(items.length / limit);
+	const groups: T[][] = [];
+	for (let i = 0; i < items.length; i += groupSize) groups.push(items.slice(i, i + groupSize));
+	return groups;
+}
+
+/**
+ * Layout for the dashboard's horizontal bar charts (Agent Efficiency, Agent
+ * Comparison, By Agent Type, the token cost breakdowns): one CSS grid whose
+ * first column is the name, second the bar, third the trailing value.
+ *
+ * The name column is sized by the browser to the widest label it actually
+ * renders (`fit-content`), so every label reads in full and every bar starts
+ * at the same x. The bar column takes what is left. This replaced a per-chart
+ * width ESTIMATED from character count, which came out short of the real text
+ * ("Claude Co..." beside a bar with hundreds of spare pixels) and could never
+ * account for the user's font or zoom. The 50% ceiling keeps one pathological
+ * user-assigned agent name from erasing the bars; past it the label ellipsizes
+ * and the row's `title` carries the full name.
+ *
+ * Each row spreads `BAR_CHART_ROW_STYLE` so it stays one box (hover, click,
+ * focus, role all still live on the row) while its three children sit in the
+ * parent's shared columns via subgrid. The trailing column is shared too, so
+ * a row with a longer value does not shorten its own bar.
+ */
+export const BAR_CHART_GRID_CLASS = 'grid gap-x-3 gap-y-2';
+
+export const BAR_CHART_GRID_STYLE: CSSProperties = {
+	gridTemplateColumns: 'fit-content(50%) minmax(0, 1fr) auto',
+};
+
+export const BAR_CHART_ROW_STYLE: CSSProperties = {
+	display: 'grid',
+	gridTemplateColumns: 'subgrid',
+	gridColumn: '1 / -1',
+	alignItems: 'center',
+};
 
 /**
  * Geometry shared by the dashboard's donut charts (Activity Source, Session

@@ -17,6 +17,9 @@ export type {
 export { useInputSync } from './useInputSync';
 export type { UseInputSyncReturn, UseInputSyncDeps } from './useInputSync';
 
+// Debounced, key-switch-safe draft write-back (shared by AI Chat and Group Chat)
+export { useDraftPersistence } from './useDraftPersistence';
+
 // File/path tab completion
 export { useTabCompletion } from './useTabCompletion';
 export type {
@@ -25,8 +28,27 @@ export type {
 	UseTabCompletionReturn,
 } from './useTabCompletion';
 
-// @-mention autocomplete
+// @-mention autocomplete (files/directories)
 export { useAtMentionCompletion } from './useAtMentionCompletion';
+export type { AtMentionSuggestion } from './useAtMentionCompletion';
+
+// @-mention autocomplete (agents/groups) - the Agents data source for the picker
+export { useAgentMentionCompletion } from './useAgentMentionCompletion';
+export type {
+	AgentMentionSuggestion,
+	UseAgentMentionCompletionReturn,
+} from './useAgentMentionCompletion';
+
+// Unified `@` mention picker (files + directories + agents + groups)
+export { useMentionPicker, buildMentionAccept, MENTION_CATEGORY_CYCLE } from './useMentionPicker';
+export type {
+	MentionCategory,
+	MentionPickerItem,
+	FileMentionItem,
+	MentionAcceptResult,
+	UseMentionPickerParams,
+	UseMentionPickerReturn,
+} from './useMentionPicker';
 
 // Template variable autocomplete: shared state machine plus one binding per
 // text surface (textarea, CodeMirror).

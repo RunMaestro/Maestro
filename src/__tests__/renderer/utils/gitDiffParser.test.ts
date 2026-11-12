@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import {
 	parseGitDiff,
+	buildSyntheticGitDiff,
 	getFileName,
 	getDiffStats,
 	ParsedFileDiff,
@@ -791,5 +792,15 @@ ${section2}`;
 			expect(result.additions).toBe(1000);
 			expect(result.deletions).toBe(0);
 		});
+	});
+});
+
+describe('buildSyntheticGitDiff', () => {
+	it('prefixes a git header parseGitDiff can split on, followed by the unified patch', () => {
+		const diff = buildSyntheticGitDiff('prompt.md', 'a\nold\n', 'a\nnew\n');
+		expect(diff.startsWith('diff --git a/prompt.md b/prompt.md\n')).toBe(true);
+		expect(diff).toContain('-old');
+		expect(diff).toContain('+new');
+		expect(diff).toContain('@@');
 	});
 });

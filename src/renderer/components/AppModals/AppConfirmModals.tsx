@@ -35,7 +35,6 @@ export interface AppConfirmModalsProps {
 	/** Number of active (non-idle) group chats */
 	activeGroupChatCount?: number;
 	/** True when the Feedback modal has an unsent draft */
-	hasFeedbackDraft?: boolean;
 }
 
 /**
@@ -64,7 +63,6 @@ export const AppConfirmModals = memo(function AppConfirmModals({
 	activeTerminalTasks = [],
 	activeCueRunCount = 0,
 	activeGroupChatCount = 0,
-	hasFeedbackDraft = false,
 }: AppConfirmModalsProps) {
 	// Compute busy agents for QuitConfirmModal
 	const busyAgents = sessions.filter(
@@ -107,7 +105,6 @@ export const AppConfirmModals = memo(function AppConfirmModals({
 					activeTerminalTasks={activeTerminalTasks}
 					activeCueRunCount={activeCueRunCount}
 					activeGroupChatCount={activeGroupChatCount}
-					hasFeedbackDraft={hasFeedbackDraft}
 					onConfirmQuit={onConfirmQuit}
 					onQuitWhenIdle={onQuitWhenIdle}
 					onCancel={onCancelQuit}

@@ -14,17 +14,21 @@ Nothing type-checks a prompt and the damage is invisible in review - it just qui
 
 ### Load Pipeline
 
-Prompt templates are stored as `.md` files in `src/prompts/`. They are NOT compiled into TypeScript. The packaging step copies them verbatim to `Resources/prompts/core/`, and `src/main/prompt-manager.ts` reads them from disk once at startup, layering user customizations from `userData/core-prompts-customizations.json` on top. `src/prompts/index.ts` re-exports the prompt registry (`CORE_PROMPTS`, `PROMPT_IDS`) from `src/shared/promptDefinitions.ts`; it does not carry prompt text.
+Prompt templates are stored as `.md` files in `src/prompts/` and stay `.md` all the way to the running app. There is no build-time compilation step: `package.json`'s `extraResources` copies `src/prompts/` to `Resources/prompts/core/`, and `src/main/prompt-manager.ts` reads them from disk once at startup.
+
+The source of truth for which prompts exist is `src/shared/promptDefinitions.ts` (`CORE_PROMPTS`, `PROMPT_IDS`); `src/prompts/index.ts` is a thin re-export of it, not a bundle of prompt text.
 
 ```text
 src/prompts/*.md
     |
-    v  (packaged as extraResources)
+    v  (package.json extraResources)
 Resources/prompts/core/*.md
     |
-    v  (read at startup, customizations applied)
+    v  (read at startup, user customizations layered on top)
 src/main/prompt-manager.ts
 ```
+
+<!-- doc-refs-ignore -->
 
 An earlier build step compiled these templates into `src/generated/prompts.ts`. Both that generator and the generated file are gone; the `Export` column below names the constant each prompt used to produce and is retained only as a cross-reference for older code and docs.
 
@@ -112,6 +116,7 @@ Defined in `src/shared/templateVariables.ts`. Variables use `{{VARIABLE_NAME}}` 
 | `{{AGENT_GROUP}}`        | Agent's group name (if grouped)                                  |
 | `{{AGENT_SESSION_ID}}`   | Agent session ID (for conversation continuity)                   |
 | `{{AGENT_HISTORY_PATH}}` | Path to agent's history JSON file                                |
+| `{{TAB_ID}}`             | This conversation's AI tab ID (empty on headless CLI/Cue spawns) |
 | `{{TAB_NAME}}`           | Custom tab name (alias: `SESSION_NAME`)                          |
 | `{{TOOL_TYPE}}`          | Agent type (`claude-code`, `codex`, `opencode`, `factory-droid`) |
 
@@ -420,16 +425,16 @@ Registered in `src/main/ipc/handlers/openspec.ts`:
 
 ### At Package Time
 
-1. The `extraResources` entries in `package.json` copy `src/prompts/` to `Resources/prompts/core/`
+1. `package.json`'s `extraResources` copies `src/prompts/` to `Resources/prompts/core/` for every platform
 2. `src/prompts/speckit/` and `src/prompts/openspec/` are copied alongside it
-3. No transformation happens - the `.md` files ship as written
+3. Nothing is compiled; the `.md` files ship as-is
 
 ### At Runtime (Standard Prompts)
 
-1. `initializePrompts()` in `src/main/prompt-manager.ts` reads every prompt in `CORE_PROMPTS` from `Resources/prompts/core/` at startup
-2. User customizations from `userData/core-prompts-customizations.json` override the bundled text per prompt ID
-3. `{{INCLUDE:name}}` and `{{REF:name}}` directives are resolved during load
-4. Callers fetch text by ID (`window.maestro.prompts.get(...)` from the renderer, `getPrompt(...)` in main), replace template variables (`{{...}}`), and pass the resolved prompt to the agent spawn configuration
+1. `src/main/prompt-manager.ts` reads every `.md` under `Resources/prompts/core/` once at startup
+2. A user customization from `userData/core-prompts-customizations.json` wins over the bundled text when `isModified` is set
+3. `{{INCLUDE:name}}` inlines another prompt (recursive, max depth 3, cycle-detected) and `{{REF:name}}` expands to the bundled file's absolute path
+4. Template variables (`{{...}}`) are replaced at call sites, and the fully resolved prompt is passed to the agent spawn configuration
 
 ### At Runtime (SpecKit/OpenSpec)
 
@@ -451,12 +456,12 @@ Registered in `src/main/ipc/handlers/openspec.ts`:
 
 | File                                                | Purpose                                             |
 | --------------------------------------------------- | --------------------------------------------------- |
-| `src/prompts/index.ts`                              | Prompt barrel file (re-exports the prompt registry) |
+| `src/prompts/index.ts`                              | Re-export of `promptDefinitions.ts`                 |
 | `src/prompts/*.md`                                  | Raw prompt templates                                |
 | `src/prompts/speckit/*.md`                          | Bundled SpecKit prompts                             |
 | `src/prompts/openspec/*.md`                         | Bundled OpenSpec prompts                            |
-| `src/shared/promptDefinitions.ts`                   | Prompt registry (`CORE_PROMPTS`, `PROMPT_IDS`)      |
-| `src/main/prompt-manager.ts`                        | Reads prompts from disk, applies customizations     |
+| `src/shared/promptDefinitions.ts`                   | `CORE_PROMPTS` / `PROMPT_IDS` - the prompt registry |
+| `src/main/prompt-manager.ts`                        | Reads bundled prompts, layers user customizations   |
 | `src/shared/templateVariables.ts`                   | Template variable definitions and types             |
 | `src/renderer/utils/templateVariables.ts`           | Runtime template substitution                       |
 | `src/main/speckit-manager.ts`                       | SpecKit prompt loading, updates, and customization  |

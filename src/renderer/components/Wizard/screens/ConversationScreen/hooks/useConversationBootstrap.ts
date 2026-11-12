@@ -6,6 +6,7 @@ import { captureException } from '../../../../../utils/sentry';
 import { fetchExistingDocsForWizard } from '../utils/existingDocs';
 import type { WizardConversationState } from '../types';
 import { projectNameFromPath } from '../../../shared/projectIdentity';
+import { getClaudeTokenSourceFields } from '../../../../../../shared/claudeTokenMode';
 
 export function useConversationBootstrap({
 	state,
@@ -43,6 +44,7 @@ export function useConversationBootstrap({
 					model: state.plannerModel,
 					existingDocs: existingDocs.length > 0 ? existingDocs : undefined,
 					sshRemoteConfig: state.sessionSshRemoteConfig,
+					claudeTokenSource: getClaudeTokenSourceFields(state),
 				});
 
 				if (mounted) {

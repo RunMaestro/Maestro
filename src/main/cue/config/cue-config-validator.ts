@@ -7,7 +7,9 @@ import {
 	type CueGitHubLabelTarget,
 	type CueGitHubState,
 	type CueScheduleDay,
+	normalizeWebhookPath,
 } from '../../../shared/cue';
+import { TIER_LEVELS, asTierLevel } from '../../../shared/modelTiers';
 
 function validateGlobPattern(pattern: string, prefix: string, errors: string[]): void {
 	// Path-traversal guard: the watcher resolves `watchGlob` against `projectRoot`
@@ -50,7 +52,7 @@ function validateGlobPattern(pattern: string, prefix: string, errors: string[]):
 /**
  * Validate a `command` field, required when `action === 'command'`. Accepts:
  *   { mode: 'shell', shell: <non-empty string> }
- *   { mode: 'cli', cli: { command: 'send', target: <non-empty string>, message?: string } }
+ *   { mode: 'cli', cli: { command: 'send', target: <non-empty string>, message?: string, tab?: <non-empty string> } }
  */
 function validateCommandField(value: unknown, prefix: string, errors: string[]): void {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -84,6 +86,12 @@ function validateCommandField(value: unknown, prefix: string, errors: string[]):
 		}
 		if (cliRecord.message !== undefined && typeof cliRecord.message !== 'string') {
 			errors.push(`${prefix}: "command.cli.message" must be a string when provided`);
+		}
+		if (
+			cliRecord.tab !== undefined &&
+			(typeof cliRecord.tab !== 'string' || cliRecord.tab.trim().length === 0)
+		) {
+			errors.push(`${prefix}: "command.cli.tab" must be a non-empty string when provided`);
 		}
 	} else {
 		errors.push(`${prefix}: "command.mode" must be "shell" or "cli"`);
@@ -231,6 +239,7 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 	}
 
 	validateEventSpecificFields(subRecord, prefix, errors);
+	validateTurnSettings(subRecord, prefix, errors);
 
 	if (subRecord.fan_in_timeout_minutes !== undefined) {
 		// Same bounds as `settings.timeout_minutes`. A value of `0` makes
@@ -274,6 +283,41 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 	}
 
 	return errors;
+}
+
+/**
+ * `tier` / `model` / `effort` pick the model an agent run uses. A typo here is
+ * an error rather than a silent fallback: the run would otherwise happen on
+ * the agent's default model while the YAML claims the top tier.
+ */
+function validateTurnSettings(
+	subRecord: Record<string, unknown>,
+	prefix: string,
+	errors: string[]
+): void {
+	const levels = TIER_LEVELS.join(', ');
+	if (subRecord.tier !== undefined && !asTierLevel(subRecord.tier)) {
+		errors.push(`${prefix}: "tier" must be one of: ${levels}`);
+	}
+	if (subRecord.effort !== undefined && !asTierLevel(subRecord.effort)) {
+		errors.push(`${prefix}: "effort" must be one of: ${levels}`);
+	}
+	if (
+		subRecord.model !== undefined &&
+		(typeof subRecord.model !== 'string' || subRecord.model.trim().length === 0)
+	) {
+		errors.push(`${prefix}: "model" must be a non-empty string when provided`);
+	}
+	if (subRecord.tier !== undefined && subRecord.model !== undefined) {
+		errors.push(`${prefix}: set "tier" or "model", not both`);
+	}
+	const hasAny =
+		subRecord.tier !== undefined || subRecord.model !== undefined || subRecord.effort !== undefined;
+	if (hasAny && (subRecord.action === 'command' || subRecord.action === 'notify')) {
+		errors.push(
+			`${prefix}: "tier", "model", and "effort" apply to agent runs and are not supported when action is "${subRecord.action}"`
+		);
+	}
 }
 
 function validateEventSpecificFields(
@@ -585,6 +629,13 @@ function validateEventSpecificFields(
 		// No additional required fields for the startup trigger.
 	} else if (event === 'cli.trigger') {
 		// No additional required fields - triggered manually via maestro-cli.
+	} else if (event === 'webhook.received') {
+		validateWebhookConfig(
+			sub.webhook,
+			typeof sub.name === 'string' ? sub.name : '',
+			prefix,
+			errors
+		);
 	} else if (
 		sub.event &&
 		typeof sub.event === 'string' &&
@@ -592,6 +643,60 @@ function validateEventSpecificFields(
 	) {
 		errors.push(
 			`${prefix}: unknown event type "${event}". Valid types: ${CUE_EVENT_TYPES.join(', ')}`
+		);
+	}
+}
+
+/**
+ * Validate the `webhook` block of a `webhook.received` subscription.
+ *
+ * A secret is mandatory, not optional-with-a-warning: an unauthenticated
+ * webhook path is a remote trigger for an AI agent with the user's
+ * credentials, so a config that omits one must fail loudly at load rather than
+ * quietly start listening. `secret` and `secret_env` are mutually exclusive so
+ * there is never ambiguity about which value is live.
+ */
+function validateWebhookConfig(
+	rawWebhook: unknown,
+	subName: string,
+	prefix: string,
+	errors: string[]
+): void {
+	if (rawWebhook === undefined || rawWebhook === null) {
+		errors.push(`${prefix}: "webhook" is required for webhook.received events`);
+		return;
+	}
+	if (typeof rawWebhook !== 'object' || Array.isArray(rawWebhook)) {
+		errors.push(`${prefix}: "webhook" must be an object for webhook.received events`);
+		return;
+	}
+
+	const webhook = rawWebhook as Record<string, unknown>;
+	for (const key of ['path', 'secret', 'secret_env', 'signature_header']) {
+		if (webhook[key] !== undefined && typeof webhook[key] !== 'string') {
+			errors.push(`${prefix}: "webhook.${key}" must be a string`);
+		}
+	}
+
+	const hasSecret = typeof webhook.secret === 'string' && webhook.secret.trim().length > 0;
+	const hasSecretEnv =
+		typeof webhook.secret_env === 'string' && webhook.secret_env.trim().length > 0;
+	if (!hasSecret && !hasSecretEnv) {
+		errors.push(
+			`${prefix}: "webhook.secret" or "webhook.secret_env" is required for webhook.received events - an unauthenticated webhook would let any local process trigger this agent`
+		);
+	} else if (hasSecret && hasSecretEnv) {
+		errors.push(
+			`${prefix}: "webhook.secret" and "webhook.secret_env" are mutually exclusive - keep the value out of cue.yaml and use "webhook.secret_env"`
+		);
+	}
+
+	// The path defaults to a slug of the subscription name, so a name made
+	// entirely of punctuation with no explicit path yields no route at all.
+	const rawPath = typeof webhook.path === 'string' ? webhook.path : subName;
+	if (normalizeWebhookPath(rawPath) === '') {
+		errors.push(
+			`${prefix}: "webhook.path" must contain at least one letter or digit (it becomes the URL segment under /cue/)`
 		);
 	}
 }

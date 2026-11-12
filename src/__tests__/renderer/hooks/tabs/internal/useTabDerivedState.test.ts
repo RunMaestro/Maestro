@@ -1,6 +1,9 @@
 import { renderHook, act, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { useTabDerivedState } from '../../../../../renderer/hooks/tabs/internal/useTabDerivedState';
+import {
+	getTabDerivedState,
+	useTabDerivedState,
+} from '../../../../../renderer/hooks/tabs/internal/useTabDerivedState';
 import {
 	createMockAITab,
 	createMockBrowserTab,
@@ -9,6 +12,16 @@ import {
 	resetTabHandlerStores,
 	setupSession,
 } from './testUtils';
+
+describe('getTabDerivedState', () => {
+	it('returns empty derived state for null session', () => {
+		const result = getTabDerivedState(null);
+		expect(result.activeTab).toBeUndefined();
+		expect(result.unifiedTabs).toEqual([]);
+		expect(result.activeFileTab).toBeNull();
+		expect(result.isResumingSession).toBe(false);
+	});
+});
 
 describe('useTabDerivedState', () => {
 	beforeEach(() => {

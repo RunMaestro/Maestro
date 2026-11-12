@@ -20,7 +20,9 @@ Each agent has a project root. Cue looks for `.maestro/cue.yaml` (preferred) or 
                        ┌────────────┴───────────────────────────────┐
    triggers/*  ───►    │ Trigger sources                            │
                        │  file.changed, github.*, time.*,           │
-                       │  task.pending, app.startup, agent.completed│
+                       │  task.pending, webhook.received; plus      │
+                       │  app.startup, agent.completed, cli.trigger │
+                       │  (runtime-handled, no source)              │
                        └────────────┬───────────────────────────────┘
                                     │  CueEvent (filtered via cue-filter.ts)
                                     ▼
@@ -38,16 +40,18 @@ Each agent has a project root. Cue looks for `.maestro/cue.yaml` (preferred) or 
                        │  staleness drop, drain, retry   │
                        └────────────┬────────────────────┘
                                     │
-              ┌─────────────────────┼─────────────────────┐
-              ▼                     ▼                     ▼
-       cue-executor          cue-shell-executor    cue-cli-executor
-       (action: prompt)      (action: command,     (action: command,
-                              command.mode: shell)  command.mode: cli)
+         ┌──────────────────┬─────────┴─────────┬────────────────────┐
+         ▼                  ▼                   ▼                    ▼
+  cue-executor      cue-shell-executor   cue-cli-executor   cue-notify-executor
+  (action: prompt)  (action: command,    (action: command,  (action: notify)
+                     command.mode: shell) command.mode: cli)
                                     │
-                                    ▼  CueRunResult → recordCueHistoryEntry
+                                    ▼  CueRunResult → updateCueEventStatus (cue_events)
                        ┌─────────────────────────────────┐
                        │ cue_events / cue_event_queue    │  cue-db.ts (better-sqlite3, WAL)
                        │ cue_heartbeat / cue_github_seen │
+                       │ cue_telemetry_outbox /          │
+                       │ cue_susfactor_blocks            │
                        └─────────────────────────────────┘
 ```
 
@@ -55,44 +59,46 @@ Each agent has a project root. Cue looks for `.maestro/cue.yaml` (preferred) or 
 
 A `github.pull_request` event for a chained subscription, traced from trigger to history row:
 
-1. **Trigger fires.** `cue-github-poller.ts:73` records new items in `cue_github_seen` and emits a `CueEvent` via the trigger source adapter (`triggers/cue-github-poller-trigger-source.ts:45`).
-2. **Filter check.** `passesFilter(subscription, event)` runs the subscription's `filter` block against `event.payload` (`cue-filter.ts:41`). All conditions AND'd.
-3. **Dispatch.** `CueDispatchService.dispatchSubscription` (`cue-dispatch-service.ts:42`) decides single vs fan-out. Fan-out resolves each `fan_out` target through `fan_out_ids[i]` (preferred, stable across rename) or by name match (legacy). For each target it builds a `fanOutEvent` carrying `payload.fanOutSource` + `payload.fanOutIndex` and calls `executeRun(...)`.
-4. **Run manager intercepts.** `CueRunManager.execute` (`cue-run-manager.ts:559`) consults `max_concurrent`. If a slot is open, it calls `doExecuteCueRun` immediately (`cue-run-manager.ts:243`). Otherwise it pushes a `QueuedEvent` into the in-memory queue AND persists it to `cue_event_queue` via `safePersistQueuedEvent` (`cue-run-manager.ts:622-655`).
-5. **Spawn.** `executeCuePrompt` (`cue-executor.ts:116`) builds template context (`buildCueTemplateContext`), substitutes variables, builds spawn args (`cue-spawn-builder.ts:58`), wraps with SSH if `sshRemoteConfig.enabled`, then launches via `cue-process-lifecycle.ts:runProcess`. **`forceBatchMode: true`** is set so the agent never falls into TUI mode without a stdin (`cue-spawn-builder.ts`).
+1. **Trigger fires.** `cue-github-poller.ts` records new items in `cue_github_seen` (`markGitHubItemSeen`) and emits a `CueEvent` via the trigger source adapter (`onEvent` in `triggers/cue-github-poller-trigger-source.ts`).
+2. **Filter check.** `passesFilter(subscription, event, onLog)` (`triggers/cue-trigger-filter.ts`) runs the subscription's `filter` block against `event.payload` through `matchesFilter(payload, filter)` (`cue-filter.ts`). All conditions AND'd.
+3. **Dispatch.** `dispatchSubscription` in `cue-dispatch-service.ts` decides single vs fan-out. Fan-out resolves each `fan_out` target through `fan_out_ids[i]` (preferred, stable across rename) or by name match (legacy). For each target it builds a `fanOutEvent` carrying `payload.fanOutSource` + `payload.fanOutIndex` and calls `executeRun(...)`.
+4. **Run manager intercepts.** `CueRunManager.execute` (`cue-run-manager.ts`) consults `max_concurrent`. If a slot is open, it calls `doExecuteCueRun` immediately. Otherwise it pushes a `QueuedEvent` into the in-memory queue AND persists it through `deps.queuePersistence.persist(...)`, which wraps `safePersistQueuedEvent` (`cue-queue-persistence.ts`).
+5. **Spawn.** `executeCuePrompt` (`cue-executor.ts`) builds template context (`buildCueTemplateContext`), substitutes variables, builds the spawn spec (`buildSpawnSpec` in `cue-spawn-builder.ts`), wraps with SSH if `sshRemoteConfig.enabled`, then launches via `cue-process-lifecycle.ts:runProcess`. **`forceBatchMode: true`** is set so the agent never falls into TUI mode without a stdin (`cue-spawn-builder.ts`).
 6. **Output capture.** Stdout is parsed by the per-agent output parser (`getOutputParser`) - Claude Code → result-event extraction from stream-json, others → raw stdout. Truncation cap is 5000 chars for chain-source output (`SOURCE_OUTPUT_MAX_CHARS`).
-7. **Result + history.** `executeCuePrompt` returns a `CueRunResult` with `pipelineName: subscription.pipeline_name` populated. `recordCueHistoryEntry` (`cue-executor.ts:253`) builds a `HistoryEntry` whose `summary` is rendered by `buildCueRunSummary` (`src/shared/cue/cue-summary.ts`).
-8. **Chain propagation.** When the agent process exits, the run manager calls `onRunCompleted` which flips through to `notifyAgentCompleted` (`cue-completion-service.ts:122`). Each enabled `agent.completed` subscription whose `source_session` includes the completing agent fires - single-source via `dispatchService`, multi-source via `CueFanInTracker.handleCompletion`. Chain depth is incremented and **aborted at 10** (`MAX_CHAIN_DEPTH`, `cue-engine.ts:63`).
+7. **Result + completion stamp.** `executeCuePrompt` returns a `CueRunResult` with `pipelineName: subscription.pipeline_name` populated. `CueRunManager` stamps the `cue_events` row with `updateCueEventStatus(runId, status, completionInfoFromResult(result))`, which writes `output_excerpt` and `full_output` (`buildCuePersistedOutput` in `cue-text-utils.ts`). **Nothing writes a JSONL history entry.** History and Director's Notes read Cue runs back from `cue_events`: `getCueHistoryEntries()` -> `cueEventToHistoryEntry()` (`stats/cue-stats-query.ts`) builds a `HistoryEntry` on read, calling `buildCueRunSummary` (`src/shared/cue/cue-summary.ts`) only when the row has no excerpt, and `src/main/utils/cue-history-merge.ts` merges those rows into the agent's history (CUE-HISTORY-02).
+8. **Chain propagation.** When the agent process exits, the run manager calls `onRunCompleted` which flips through to `notifyAgentCompleted` (`cue-completion-service.ts`). Each enabled `agent.completed` subscription whose `source_session` includes the completing agent fires - single-source via `dispatchService`, multi-source via `CueFanInTracker.handleCompletion`. Chain depth is incremented and **aborted at 10** (`MAX_CHAIN_DEPTH`, `cue-engine.ts`).
 
-## Engine lifecycle (`CueEngine`, `cue-engine.ts:397`)
+## Engine lifecycle (`CueEngine`, `cue-engine.ts`)
 
 `start(reason)` runs in this order - order matters:
 
-1. `recoveryService.init()` - opens the SQLite DB, prunes events older than 7 days (`EVENT_PRUNE_AGE_MS`, `cue-recovery-service.ts:24`). Returns early if init fails.
-2. Set `enabled = true`, reset metrics so uptime reflects this start.
-3. Emit `engineStarted` log payload - renderer uses this to clear stale UI.
-4. For each session, `sessionRuntimeService.initSession(session, { reason })`. **`app.startup` subscriptions only fire when `reason === 'system-boot'`** (Electron launch, not user toggle).
-5. `queuePersistence.restoreAll()` - re-execute every persisted-queue entry through `runManager.execute`, **preserving its original `queuedAt`** so the staleness check measures real wait time, not restart time. Restored entries do NOT carry `pipelineName` (no schema column); summaries fall back to `-chain-N` stripping.
-6. `recoveryService.detectSleepAndReconcile()` - see [Sleep/wake](#sleepwake-reconciliation).
-7. `heartbeat.start()` - 30s interval writes `cue_heartbeat.last_seen` (`HEARTBEAT_INTERVAL_MS`, `cue-heartbeat.ts:14`).
+1. `recoveryService.init()` - opens the SQLite DB, prunes `cue_events` rows older than the user's `cueHistoryRetentionDays` setting (read fresh on every init; default 14 days, options 7/14/30/60/90/365 in `src/shared/cue/retention.ts`; `EVENT_PRUNE_AGE_MS` in `cue-recovery-service.ts` is only the fallback when the setting is unusable). Returns early if init fails.
+2. `hydrateActivityLogFromDb()` - rehydrates the in-memory activity log from `cue_events` so the Cue Modal shows recent runs after a restart. Must run after the DB is open and before live runs push to the log.
+3. Set `enabled = true`, reset metrics so uptime reflects this start.
+4. Emit `engineStarted` log payload - renderer uses this to clear stale UI.
+5. For each session, `sessionRuntimeService.initSession(session, { reason })`. **`app.startup` subscriptions only fire when `reason === 'system-boot'`** (Electron launch, not user toggle).
+6. `queuePersistence.restoreAll()` - re-execute every persisted-queue entry through `runManager.execute`, **preserving its original `queuedAt`** so the staleness check measures real wait time, not restart time. Restored entries do NOT carry `pipelineName` (no schema column); summaries fall back to `-chain-N` stripping.
+7. `recoveryService.detectSleepAndReconcile()` - see [Sleep/wake](#sleepwake-reconciliation).
+8. `heartbeat.start()` - 30s interval writes `cue_heartbeat.last_seen` (`HEARTBEAT_INTERVAL_MS`, `cue-heartbeat.ts`).
 
 `stop()` reverses everything: clears heartbeat timer, tears down trigger sources, stops active runs, but **does not clear the persisted queue** - it survives across stops so the next `start()` can replay.
 
 ## Session lifecycle and ownership
 
-`initSession` (`cue-session-runtime-service.ts:107-200`) is the choke point:
+`initSession` (`cue-session-runtime-service.ts`) is the choke point:
 
 - **YAML discovery.** Calls `loadCueConfigDetailed(projectRoot)` and uses ONLY the file at `<projectRoot>/.maestro/cue.yaml`. There is no parent-directory walk and no ancestor fallback - each session reads its own cue.yaml and nothing else. Cross-agent pipelines are stitched at runtime via `agent_id` references in `source_session_ids` / `fan_out_ids`, not via parent-directory inheritance. The matching writer side is `pipelinesToYamlByOwnerCwd` (`pipelineToYaml.ts`), which emits one yaml per participating agent's cwd.
 - **Ownership.** When two sessions resolve to the same effective `cue.yaml` (shared `projectRoot`), `computeOwnershipWarning` (`cue-session-state.ts`) tags the non-owner. Subscriptions without an explicit `agent_id` are **suppressed** for the non-owner - both at trigger-source registration AND in `notifyAgentCompleted` (`cue-completion-service.ts:110, 143`). Without this gate, the same chain would dispatch twice. Tie-breaker is configurable via `settings.owner_agent_id` (UUID or display name) - falls back to first-by-session-list when unset. The Cue dashboard hides ownership-flagged sessions by default (toggle in the header reveals them) so cross-agent shared-cwd noise doesn't crowd the table.
-- **Teardown.** `removeSession` stops trigger sources and unregisters from the registry. Queued events are kept unless `clearQueue(sessionId)` is called explicitly. `refreshSession` is teardown + re-init (used on YAML save and on agent rename).
+- **Teardown.** `removeSession` stops trigger sources and unregisters from the registry. Queued events are kept unless `clearQueue(sessionId)` is called explicitly. `refreshSession` stops/re-initializes trigger state (used on YAML save and on agent rename), while retaining its config watcher through reloads and transient read failures. Watchers are owned by the runtime service independently of the session registry; removal/engine shutdown closes them.
 
 ## Subscription model
 
-Subscriptions live in `CueSubscription` (`src/shared/cue/contracts.ts`). Required: `name` (unique per file), `event`. Common optional: `agent_id`, `prompt`/`prompt_file`, `filter`, `enabled`, `source_session`, `source_sub`, `fan_out`/`fan_out_ids`/`fan_out_prompts`, `output_prompt`, `pipeline_name`, `pipeline_color`, `target_node_key`/`fan_out_node_keys`, `interval_minutes`, `schedule_times`/`schedule_days`, `watch`, `repo`/`gh_state`/`poll_minutes`, `action` (`prompt`|`command`), `command` (`{ mode: 'shell'|'cli', ... }`), `include_output_from`, `forward_output_from`.
+Subscriptions live in `CueSubscription` (`src/shared/cue/contracts.ts`). Required: `name` (unique per file), `event`. Common optional: `agent_id`, `prompt`/`prompt_file`, `filter`, `enabled`, `source_session`, `source_sub`, `fan_out`/`fan_out_ids`/`fan_out_prompts`, `output_prompt`, `pipeline_name`, `pipeline_color`, `target_node_key`/`fan_out_node_keys`, `interval_minutes`, `schedule_times`/`schedule_days`, `watch`, `repo`/`gh_state`/`poll_minutes`, `action` (`prompt`|`command`|`notify`, the `CueAction` union), `command` (`{ mode: 'shell'|'cli', ... }`), `include_output_from`, `forward_output_from`, `tier`/`model`/`effort`.
 
-Two facts that aren't obvious:
+Three facts that aren't obvious:
 
 - **`prompt_file` is resolved at config load time, not run time.** `materializeCueConfig` reads the file and replaces it with inline `prompt`. A missing `prompt_file` is a **warning, not an error** - the subscription is kept with `prompt = ''` and fails loudly only when it tries to run (`cue-executor.ts` ⇒ `failedResult('...has no prompt content')`). This is the most common "my sub silently doesn't work" cause.
+- **`tier` / `model` / `effort` ride the run, not the subscription lookup.** The dispatcher lifts them with `cueTurnSettingsOf(sub)` and threads them through `executeRun` -> `CueRunManager.execute` -> the persisted queue row (`turn_settings_json`) -> `onCueRun`, where `src/main/index.ts` resolves them against the TARGET agent's provider with `resolveCueTurnSettings` (`src/shared/cue/turn-settings.ts`, built on Auto Run's `resolveTurnSettings`). Resolution happens at spawn because a fan-out sub's targets can be different providers. The `:output` phase reuses them. The Pipeline Graph keeps them on `AgentNodeData`; fan-out targets that disagree are emitted per-branch, since one `fan_out` sub carries one setting. To change them on an existing subscription, call `setSubscriptionTurnSettings()` (`cue-subscription-edit.ts`), which `maestro-cli cue model` and the Scheduled Tasks form share.
 - **`pipeline_name` and visual node keys (`target_node_key`, `fan_out_node_keys`) are renderer concerns** that the engine ignores - but the normalizer must allowlist them or the editor's visual round-trip breaks (multiple separate canvas nodes silently collapse into one). See `cue-config-normalizer.ts:normalizeSubscription`.
 
 ## Scheduled Tasks (`cue-scheduled-tasks.ts`)
@@ -106,6 +112,7 @@ Rules worth knowing before editing it:
 
 - **Wire shapes live in `src/shared/cue/scheduled-tasks.ts`** so the renderer can type against them without importing `main/`. Pure helpers (duration/time parsing, label truncation, schedule description) live there too and are shared with the CLI.
 - **Writes never trigger a reload.** They land in `.maestro/cue.yaml` atomically and the engine's YAML watcher picks them up. Forcing a refresh races the watcher.
+- **YAML watch health has a fallback.** `watchCueConfigFile` compares YAML bytes at Chokidar `ready` and every 30 seconds against the exact bytes consumed by the runtime loader. A late native notification for already-loaded YAML does not reload it again. This closes the `ignoreInitial` registration race and recovers lost filesystem notifications without relying on mtime/size. Missed config changes, watcher/read/reload errors, and delayed heartbeat intervals emit `triggerHealthWarning` through the existing sticky Cue toast bridge even with the Cue modal closed. Sticky notices are limited to one per agent per five minutes; all warnings remain in the activity/log stream. Failed reloads retain their watcher and retry. Reconciliation uses the ordinary reload path; enabled heartbeats retain their existing immediate-on-start semantics, so completion relays still need a task-specific receipt/attempt gate. Paused subscriptions never register timers. Interval `next_fire_at` in the disk-only CLI projection remains `null`.
 - **`updateScheduledTask` refuses cross-kind timing patches.** Setting `fire_at` on a `time.scheduled` sub would leave both a `fire_at` and `schedule_times` in the file, which the validator rejects; changing HOW a task repeats means cancel + recreate, which is what the UI offers.
 - **Next-fire projection is one-way.** `time.once` reads `fire_at`; `time.scheduled` calls `calculateNextScheduledTime` (the same helper the trigger source uses); `time.heartbeat` returns `null`, because an interval's phase lives in engine run state, not YAML. Don't fake a projection for it.
 - **Agent lists come from the sessions store, not `getStatus()`.** Creating a task must work for an agent that has no `cue.yaml` yet, and `getStatus()` only knows agents that already have one.
@@ -118,38 +125,38 @@ Rules worth knowing before editing it:
 - **Self-overlap guard (root triggers never overlap themselves).** `max_concurrent` caps how many _distinct_ subscriptions run at once, NOT how many copies of the _same_ one. `activeRootKeys: Set<"${sessionId} ${subscriptionName}">` holds every in-flight root trigger (chainDepth 0); a root whose key is already active is queued even when a slot is free, then drains when its sibling finishes (`drainQueue` skips past blocked entries to serve a different subscription). Chained runs (chainDepth > 0) are never guarded - they're part of an already-serialized chain. Before this existed, `max_concurrent: 1` accidentally serialized everything; raising it let the same trigger fire concurrently and double its side effects (e.g. a posting pipeline replying twice). If you add a code path that admits or drains runs, honor `activeRootKeys` or you reintroduce the double-fire.
 - **`queue_size` enforces a bounded buffer.** When full, the oldest entry is dropped, and `onQueueOverflow` fires so the renderer can surface a toast. `queue_size <= 0` means "no buffering at all" - incoming events are dropped immediately.
 - **Staleness.** On drain, an entry older than `timeout_minutes * 60_000` is dropped and recorded in `cue_events` with `status: 'timeout'` and `payload.droppedFromQueue: true` (so the activity log explains _why_ a queued run never fired). Same check runs at `restoreAll()` time before re-enqueueing.
-- **Two-phase output_prompt runs.** When `output_prompt` is set, after the main run succeeds the manager kicks off a second spawn whose subscriptionName is `${subscriptionName}:output` - **load-bearing** for activity-log rendering and stop-run targeting (`cue-run-manager.ts:381, 401`). If you need to filter chains by sub name elsewhere, normalize the `:output` suffix.
-- **Manual stop bookkeeping.** `manuallyStoppedRuns` set guards against double-decrementing the concurrency slot when a stop races with natural completion.
+- **Two-phase output_prompt runs.** When `output_prompt` is set, after the main run succeeds the manager kicks off a second spawn whose subscriptionName is `${subscriptionName}:output` - **load-bearing** for activity-log rendering and stop-run targeting (the `:output` sites in `doExecuteCueRun`). If you need to filter chains by sub name elsewhere, normalize the `:output` suffix.
+- **Manual stop bookkeeping.** Each `ActiveRun` carries a `phase: RunPhase` (`'running' | 'stopping' | 'finished'`), advanced only through `transitionRun()`. A stop racing a natural completion is resolved by that transition, so the concurrency slot is released exactly once.
 - **Queue persistence is fail-open.** Every `persist`/`remove` uses safe-wrapper variants; a DB failure degrades to "live only" rather than breaking the live queue. The `persistId` field on `QueuedEvent` is the DB row id.
 
 `pipelineName` flows alongside the queue in memory but is **not persisted** (no schema column). Restored runs degrade to legacy `-chain-N` stripping in summaries - acceptable since the user-facing label is recoverable from the subscription's current YAML, just not from the queue row.
 
 ## Chain propagation and fan-in
 
-When an agent process exits, `notifyAgentCompleted(sessionId, completionData)` is called (`cue-completion-service.ts:122`):
+When an agent process exits, `notifyAgentCompleted(sessionId, completionData)` is called (`cue-completion-service.ts`):
 
 1. **Depth guard.** `chainDepth >= MAX_CHAIN_DEPTH (10)` aborts with an error log. Bumping this limit is dangerous - fan-out × chain depth grows multiplicatively.
 2. **Per-config scan.** For each session's config, every `agent.completed` subscription is checked:
    - `agent_id` mismatch → skip.
    - Ownership conflict + no explicit `agent_id` → skip (matches trigger-source gate).
    - `source_session` (string or array) is matched against the completing session's id OR display name.
-   - **`source_sub` narrows further**: when set, the upstream sub's `triggeredBy` must be in the allowed list. This is the self-loop / cross-fire guard for shared-session fan-out chains (`cue-completion-service.ts:70-92`). An undefined `triggeredBy` is rejected when `source_sub` is set - non-Cue completions (user typing, exit-listener) cannot accidentally re-fire chain steps.
+   - **`source_sub` narrows further**: when set, the upstream sub's `triggeredBy` must be in the allowed list. This is the self-loop / cross-fire guard for shared-session fan-out chains (`cue-completion-service.ts`). An undefined `triggeredBy` is rejected when `source_sub` is set - non-Cue completions (user typing, exit-listener) cannot accidentally re-fire chain steps.
 3. **Single source** → `dispatchService` directly. **Multi-source** → `fanInTracker.handleCompletion`.
 
-`CueFanInTracker` (`cue-fan-in-tracker.ts`) keeps a `Map<key, Map<sourceId, FanInSourceCompletion>>` keyed by `${ownerSessionId}:${subscriptionName}`. **Subscription names containing `:` will mis-key health lookups** (`cue-engine.ts:583` splits on first `:`) - validation should reject them; for now, just don't.
+`CueFanInTracker` (`cue-fan-in-tracker.ts`) keeps a `Map<key, Map<sourceId, FanInSourceCompletion>>` keyed by `${ownerSessionId}:${subscriptionName}`. **Subscription names containing `:` will mis-key health lookups** (`getFanInHealth` in `cue-engine.ts` splits on the first `:`) - validation should reject them; for now, just don't.
 
-Timeout behavior is governed by the per-config `timeout_on_fail` setting:
+Timeout behavior is governed by the per-config `timeout_on_fail` setting, which a subscription can override with its own `fan_in_timeout_on_fail` (`cue-fan-in-tracker.ts`):
 
 - **`break`** - drop the fan-in silently when not all sources have arrived in time (no chain step fires).
 - **`continue`** - fire the chain step with whichever sources DID arrive. Output is filtered through `buildFilteredOutputs` and merged via `mergeUpstreamForwarded`. Per-source caps at `SOURCE_OUTPUT_MAX_CHARS` (5000).
 
-The `FanInHealthEntry` projection (`cue-fan-in-tracker.ts:46`) lets the dashboard surface stalls before they actually time out (>50% of timeout elapsed).
+The `FanInHealthEntry` projection (`cue-fan-in-tracker.ts`) lets the dashboard surface stalls before they actually time out (>50% of timeout elapsed).
 
 ## Sleep/wake reconciliation
 
 System sleep / app suspension can leave the engine paused mid-day. Handled in four layers:
 
-- **`cue-heartbeat.ts:79`** - writes `cue_heartbeat.last_seen` every 30s. Three consecutive failures emit `'heartbeatFailure'` for metrics; SQLite-busy errors below threshold are suppressed.
+- **`cue-heartbeat.ts`** - writes `cue_heartbeat.last_seen` every 30s. Three consecutive failures emit `'heartbeatFailure'` for metrics; SQLite-busy errors below threshold are suppressed.
 - **`cue-recovery-service.ts:detectSleepAndReconcile`** - at engine start AND on `powerMonitor.on('resume')`, computes `Date.now() - last_seen`. If gap > `SLEEP_THRESHOLD_MS` (120s), calls `reconcileMissedTimeEvents`.
 - **`cue-reconciler.ts`** - fires **one** catch-up event per enabled subscription whose missed cadence fell inside the gap:
   - `time.heartbeat`: `{ reconciled: true, missedCount, sleepDurationMs }` based on `Math.floor(gap / interval)`.
@@ -175,11 +182,15 @@ Every source implements the interface in `triggers/cue-trigger-source.ts`. They 
 | `app.startup`         | (runtime service, not a source)        | once per boot       | n/a                    | no                                              |
 | `time.heartbeat`      | `cue-heartbeat-trigger-source.ts`      | `interval_minutes`  | n/a                    | **yes** (one catch-up, `missedCount`)           |
 | `time.scheduled`      | `cue-scheduled-trigger-source.ts`      | wall-clock          | n/a                    | **yes** (one catch-up, most recent slot)        |
+| `time.once`           | `cue-once-trigger-source.ts`           | `fire_at`, once     | n/a                    | no (fixed epoch point)                          |
 | `file.changed`        | `cue-file-watcher-trigger-source.ts`   | chokidar + debounce | no                     | no                                              |
 | `agent.completed`     | `cue-completion-service.ts` (reactive) | on completion       | n/a                    | n/a                                             |
 | `github.pull_request` | `cue-github-poller-trigger-source.ts`  | `poll_minutes`      | **yes**                | **yes** (`pollNow()` on resume; SQLite-deduped) |
 | `github.issue`        | same                                   | same                | **yes**                | **yes** (`pollNow()` on resume; SQLite-deduped) |
+| `github.label`        | same                                   | same                | **yes**                | **yes** (`pollNow()` on resume; SQLite-deduped) |
 | `task.pending`        | `cue-task-scanner-trigger-source.ts`   | 1m default          | **yes** (content hash) | no                                              |
+| `webhook.received`    | `cue-webhook-trigger-source.ts`        | inbound HTTP        | n/a                    | no                                              |
+| `cli.trigger`         | (not a source; `maestro-cli` fires it) | on command          | n/a                    | no                                              |
 
 "Seeds on first run" means the source records existing items as already-seen on its first poll so users don't get a flood when adding a new subscription.
 
@@ -201,28 +212,31 @@ Filters apply per trigger before emit - a filtered-out event is invisible to the
 
 Single SQLite database, WAL mode. Tables:
 
-| Table             | Purpose                                              | Notes                                                           |
-| ----------------- | ---------------------------------------------------- | --------------------------------------------------------------- |
-| `cue_events`      | Run journal (running / completed / failed / timeout) | 7-day retention. Indexed on `created_at`, `session_id`.         |
-| `cue_event_queue` | Phase 12A persisted queue                            | Indexed on `session_id`, `queued_at`. Replayed at engine start. |
-| `cue_heartbeat`   | Single-row `(id=1, last_seen)`                       | Drives sleep detection.                                         |
-| `cue_github_seen` | Per-subscription seen-item dedupe                    | 30-day retention; pruned every 24h.                             |
+| Table                  | Purpose                                                | Notes                                                                                                                                                  |
+| ---------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cue_events`           | Run journal (running / completed / failed / timeout)   | Retention = `cueHistoryRetentionDays` (default 14). Indexed on `created_at`, `session_id`, `pipeline_id`, `chain_root_id`. Also the History read path. |
+| `cue_event_queue`      | Phase 12A persisted queue                              | Indexed on `session_id`, `queued_at`. Replayed at engine start.                                                                                        |
+| `cue_heartbeat`        | Single-row `(id=1, last_seen)`                         | Drives sleep detection.                                                                                                                                |
+| `cue_github_seen`      | Per-subscription seen-item dedupe                      | 30-day retention; pruned every 24h.                                                                                                                    |
+| `cue_telemetry_outbox` | Pending telemetry events (see [Telemetry](#telemetry)) | Indexed on `created_at`. Flushed on autorun completion, threshold, or app quit.                                                                        |
+| `cue_susfactor_blocks` | Runs blocked by the 0DIN.ai SusFactor pre-check        | Indexed on `blocked_at`. Written by `cue-susfactor.ts`.                                                                                                |
 
 `cue_event_queue` does NOT carry `pipelineName` - restored runs degrade to legacy labels.
 
 ## Process spawning
 
 - **`cue-spawn-builder.ts`** builds the spawn spec: applies agent capabilities (`buildAgentArgs`), agent-config overrides (`applyAgentConfigOverrides`), forces batch mode, threads `customEnvVars` and `customArgs`. SSH wrapping happens here via `wrapSpawnWithSsh`.
-- **`cue-process-lifecycle.ts`** owns the actual `spawn()` with `stdio: ['ignore', 'pipe', 'pipe']`, output capture, and shutdown. **SIGTERM → 5s grace → SIGKILL** (`SIGKILL_DELAY_MS`, both `cue-process-lifecycle.ts:20` and `cue-shell-executor.ts:22` and `cue-cli-executor.ts:95` - keep these in sync if you change the constant).
+- **`cue-process-lifecycle.ts`** owns the actual `spawn()` with `stdio: ['ignore', 'pipe', 'pipe']`, output capture, and shutdown. **SIGTERM → 5s grace → SIGKILL** (`SIGKILL_DELAY_MS`, defined once there). The shell and CLI executors call the shared `killCueProcess()` rather than carrying their own copy.
 - **`cue-env-sanitizer.ts`** drops env vars whose name doesn't match `[a-zA-Z_][a-zA-Z0-9_]*` OR whose uppercase form is in a blocklist (`PATH, HOME, USER, SHELL, LD_PRELOAD, LD_LIBRARY_PATH, DYLD_INSERT_LIBRARIES, NODE_OPTIONS`). Case-insensitive - Windows `Path` is the same as `PATH`.
 - **`cue-output-filter.ts`** truncates per-source chain output to `SOURCE_OUTPUT_MAX_CHARS` (5000) and applies the optional `include_output_from` / `forward_output_from` filters before injecting into downstream prompts.
-- **Shell executor** uses local `bash -c <cmd>` (or remote-shell wrapping under SSH); CLI executor invokes `maestro-cli send` with a 5000ms timeout cap.
+- **Shell executor** uses local `bash -c <cmd>` (or remote-shell wrapping under SSH); CLI executor invokes `maestro-cli dispatch <target> <message>` with the timeout clamped to `CLI_SEND_TIMEOUT_MS` (30s).
+- **Notify executor** (`cue-notify-executor.ts`) handles `action: notify`: no process is spawned; the toast rides `remote:notifyToast` through `cue-notify-bridge.ts` to the renderer's `notifyToast()`.
 
 ## Auth expiry detection (`cue-auth-detector.ts`)
 
 Because Cue spawns its own agents (above) instead of going through the ProcessManager, none of the streaming error classification that produces `agent:error` ever sees a pipeline run. An expired provider token therefore used to take every pipeline down silently: runs kept failing in the background and the user only found out when they typed a message by hand.
 
-`reportCueAuthFailure(mainWindow, result, toolType, sshRemoteId?)` runs on the completion path in `src/main/index.ts`, just before `recordCueHistoryEntry`. It re-uses the SAME pattern bank as the interactive path (`getErrorPatterns` / `matchErrorPattern` in `src/shared/agentErrorPatterns.ts`, reached via the main-process wrapper `src/main/parsers/error-patterns.ts`) over the head of stderr and both ends of stdout, capped at 4000 chars each.
+`reportCueAuthFailure(mainWindow, result, toolType, sshRemoteId?)` runs on the completion path in `src/main/index.ts` (the `onCueRun` callback), which then returns the result; History reads the run from `cue_events`, so nothing else is written there. It re-uses the SAME pattern bank as the interactive path (`getErrorPatterns` / `matchErrorPattern` in `src/shared/agentErrorPatterns.ts`, reached via the main-process wrapper `src/main/parsers/error-patterns.ts`) over the head of stderr and both ends of stdout, capped at 4000 chars each.
 
 - On a match it calls `capabilitySnapshots.markAuthRequired(...)` (so the Settings -> Agents pill flips for a pipeline-only failure too) and sends `agent:authExpired` to the renderer, which opens the re-authentication modal.
 - **It prompts once per provider**, keyed by `toolType` plus SSH remote id. Expired credentials fail every run, and a busy board can fire several a minute. The key is dropped as soon as a run for that provider completes, which is the only reliable signal that new credentials took. `resetReportedAuthFailures()` is the test seam.
@@ -269,34 +283,49 @@ Hot-path callers (`recordTriggerFired`, `recordRunCompleted`) MUST be non-throwi
 1. **Ownership tie-breaking is silent.** When two agents share a `projectRoot`, the second-registered one's unowned subs vanish from triggers AND completions with no UI. If you add a session and its automation suddenly stops, check ownership. Fix is `agent_id` on every sub OR `settings.owner_agent_id` to pin.
 2. **`prompt_file` failures are warnings, not errors.** A typo'd path produces an empty-prompt sub that fails at run time with `'failed'` and a warning log. Always grep for `[CUE] "<sub>" prompt_file` warnings when debugging "my sub doesn't work."
 3. **The `:output` suffix on two-phase runs is load-bearing.** `${subscriptionName}:output` shows up as a separate row in `cue_events` and `activity log`. Anything that name-matches subs (filters, chain routing, manual triggers) must handle or normalize it.
-4. **Fan-in keys are colon-joined.** Subscription names with `:` will mis-key the fan-in tracker AND the health-check lookup (`cue-engine.ts:583` does a naive first-`:` split). Don't allow them in subs.
+4. **Fan-in keys are colon-joined.** Subscription names with `:` will mis-key the fan-in tracker AND the health-check lookup (`getFanInHealth` in `cue-engine.ts` does a naive first-`:` split). Don't allow them in subs.
 5. **`pipeline_name` and `target_node_key`/`fan_out_node_keys` must round-trip through the normalizer.** They're renderer-only data, but if `cue-config-normalizer.ts:normalizeSubscription` drops them on save, the visual editor silently merges separate canvas nodes into one. The engine itself ignores them - the round-trip is the whole point.
 6. **Don't change `MAX_CHAIN_DEPTH` (10) without thinking about fan-out.** Worst-case dispatches grow as `fanout^depth`. A pipeline with 3-way fan-out at depth 10 is `3^10 = 59049` parallel agents.
 7. **`ChainDepth` is unique to chain step, not run.** Two parallel fan-out runs at depth 3 each show depth 3, not 3 and 4. The depth guard counts steps from the originating trigger, not total runs in flight.
-8. **`HEARTBEAT_INTERVAL_MS` is the floor for `time.heartbeat` reconciliation granularity.** A subscription with `interval_minutes: 0.1` (6s) WILL accumulate "missed" intervals that get fired as a single catch-up event after sleep - because the reconciler does `Math.floor(gapMs / intervalMs)`. Sub-minute intervals + sleep events == mass dispatch. Either reject sub-minute intervals in validation or cap reconciled `missedCount` at 1.
+8. **Sleep catch-up is ONE event, never a burst.** The reconciler computes `missedCount = Math.floor(gapMs / intervalMs)` and fires a single `time.heartbeat` catch-up carrying it (`cue-reconciler.ts`); it never dispatches once per missed interval. Validation accepts any positive `interval_minutes` up to 10080 (`config/cue-config-validator.ts`), so a sub-minute interval simply reports a large `missedCount`. A prompt that loops over `missedCount` is the only way to turn that into mass work.
 9. **Sentry `operation` tags are part of the alerting contract.** `cue:heartbeat`, `cue:finalizeOutputRunStatus`, `cue:shell:sshWrap`, `cue:cliExecutor` are referenced by oncall paging rules. Don't refactor away the per-call-site tags.
 10. **A timezone change can repeat or skip one `time.scheduled` slot.** Local-time semantics: fly west and the wall clock rewinds past a slot that already fired today, so it fires again; fly east and a slot can be stepped over. This is deliberate - `handleTimeZoneChange` never synthesizes a catch-up for a slot that occurred in neither zone. Sleep-gap catch-ups are unaffected (the zone is applied before the reconciler runs).
 11. **Restored queue entries lose `pipelineName`.** This is by design (no schema column). If we ever care to preserve labels across crashes, add a column to `cue_event_queue` and thread it through `PersistableQueueEntry`.
 
 ## Common change recipes
 
-| Task                          | Files to touch                                                                                                                                                                                                                                                                                                                                   |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Add a new event type          | `src/shared/cue/contracts.ts` (`CueEventType` union, `CUE_EVENT_TYPES`), `src/main/cue/triggers/<new>-trigger-source.ts`, register in `cue-trigger-source-registry.ts`, payload extraction in `cue-template-context-builder.ts`, validation in `config/cue-config-validator.ts`.                                                                 |
-| Add a subscription field      | `src/shared/cue/contracts.ts` (`CueSubscription`), allowlist in `cue-config-normalizer.ts`, validate in `cue-config-validator.ts`, propagate to result via dispatch → run-manager → executor if it influences runtime.                                                                                                                           |
-| Change a runtime constant     | All copies must be updated (e.g. `SIGKILL_DELAY_MS` is duplicated across executors). Grep before you change.                                                                                                                                                                                                                                     |
-| Add a new run-level field     | `CueRunResult` (`src/shared/cue/contracts.ts`), populate in all three executors (`cue-executor.ts`, `cue-shell-executor.ts`, `cue-cli-executor.ts`), thread through run-manager's result init at `cue-run-manager.ts:258`, surface in `recordCueHistoryEntry`/`buildCueRunSummary`. The recent `pipelineName` plumbing is the canonical example. |
-| Change history summary format | `src/shared/cue/cue-summary.ts` (shared with Cue Modal Activity Log).                                                                                                                                                                                                                                                                            |
-| Add a template variable       | `src/shared/templateVariables.ts` (renderer + main shared), `src/main/cue/cue-template-context-builder.ts` (per-event extraction), document in `src/prompts/_maestro-cue.md`.                                                                                                                                                                    |
-| Add a new IPC handler         | `src/main/ipc/handlers/cue.ts`, expose in `src/main/preload.ts`, type in `src/renderer/global.d.ts`, hook in `src/renderer/hooks/useCue.ts`.                                                                                                                                                                                                     |
+| Task                          | Files to touch                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Add a new event type          | `src/shared/cue/contracts.ts` (`CueEventType` union, `CUE_EVENT_TYPES`), `src/main/cue/triggers/<new>-trigger-source.ts`, register in `cue-trigger-source-registry.ts`, payload extraction in `cue-template-context-builder.ts`, validation in `config/cue-config-validator.ts`.                                                                                                                                                                  |
+| Add a subscription field      | `src/shared/cue/contracts.ts` (`CueSubscription`), allowlist in `cue-config-normalizer.ts`, validate in `cue-config-validator.ts`, propagate to result via dispatch → run-manager → executor if it influences runtime.                                                                                                                                                                                                                            |
+| Change a runtime constant     | Grep before you change: most are defined once (`SIGKILL_DELAY_MS` lives only in `cue-process-lifecycle.ts`), but check for a second copy anyway.                                                                                                                                                                                                                                                                                                  |
+| Add a new run-level field     | `CueRunResult` (`src/shared/cue/contracts.ts`), populate in all four executors (`cue-executor.ts`, `cue-shell-executor.ts`, `cue-cli-executor.ts`, `cue-notify-executor.ts`), thread through the result init in `doExecuteCueRun` (`cue-run-manager.ts`), persist via `completionInfoFromResult` -> `updateCueEventStatus`, and surface in `cueEventToHistoryEntry` / `buildCueRunSummary`. The `pipelineName` plumbing is the canonical example. |
+| Change history summary format | `src/shared/cue/cue-summary.ts` (shared with Cue Modal Activity Log).                                                                                                                                                                                                                                                                                                                                                                             |
+| Add a template variable       | `src/shared/templateVariables.ts` (renderer + main shared), `src/main/cue/cue-template-context-builder.ts` (per-event extraction), document in `src/prompts/_maestro-cue.md`.                                                                                                                                                                                                                                                                     |
+| Add a new IPC handler         | `src/main/ipc/handlers/cue.ts`, expose in `src/main/preload/cue.ts`, type in `src/renderer/global.d.ts`, hook in `src/renderer/hooks/useCue.ts`.                                                                                                                                                                                                                                                                                                  |
+
+## Other subsystems (one line each)
+
+- `cue-webhook-server.ts` - one process-wide local HTTP listener serving every `webhook.received` subscription; no port is opened when none exist.
+- `cue-susfactor.ts` - 0DIN.ai SusFactor prompt-injection pre-check on attacker-controllable GitHub text; blocked runs land in `cue_susfactor_blocks`.
+- `cue-notify-executor.ts` + `cue-notify-bridge.ts` - `action: notify` toasts over `remote:notifyToast`.
+- `cue-self-destruct.ts` - removes a finished `time.once` subscription from `cue.yaml` (`removeSubscriptionFromYaml`, called from `onRunCompleted`).
+- `stats/cue-stats-query.ts`, `stats/cue-token-accessor.ts` - dashboard stats, agent-agnostic token attribution, and the History read path (`getCueHistoryEntries`).
+- `backup/cue-backup-manager.ts` - zip snapshots and restore of every workspace's `cue.yaml` plus `.maestro/prompts/*.md`.
+- `cue-pipeline-rename.ts` - renames a pipeline across every participating `cue.yaml`.
+- `cue-cleanup-service.ts` - heartbeat-driven sweep of stale fan-in trackers and `time.scheduled` dedup keys.
+- `cue-active-state.ts` - pauses scanners while the renderer is hidden (`cue:setActive` IPC).
+- `cue-first-party.ts` - first-party plugin supervisor hooks; the engine emits `cue.runStarted` / `cue.runFinished` plugin events.
+- `cue-agent-binary.ts` - which binary a prompt run executes (same precedence as a tab spawn).
+- `cue-metrics.ts`, `cue-query-service.ts`, `cue-yaml-write.ts`, `pipeline-layout-store.ts`, `pipeline-layout-mutations.ts` - in-process counters, read-side query projections, shared `cue.yaml` writers, and the editor's persisted canvas layout plus its CLI mutations.
 
 ## Test landmarks
 
-`src/__tests__/main/cue/` has ~50 specs (1200+ assertions). The high-coverage entry points:
+`src/__tests__/main/cue/` has ~85 spec files (including `config/`). The high-coverage entry points:
 
 - `cue-engine.test.ts` - engine boot, session add/remove, dispatch, status projections.
 - `cue-run-manager.test.ts` - concurrency, queue, drain, staleness, output_prompt phase, queue persistence, race conditions.
-- `cue-executor.test.ts` - spawn, template substitution, SSH wrapping, history-entry construction.
+- `cue-executor.test.ts` - spawn, template substitution, SSH wrapping, timeout enforcement, stop, output-parser extraction.
 - `cue-completion-chains.test.ts` + `cue-multi-hop-chains.test.ts` - chain propagation, depth guard, source_sub filtering.
 - `cue-fan-in-tracker.test.ts` + `cue-fan-in-edge-cases.test.ts` - multi-source completion, partial sources, timeouts.
 - `cue-startup.test.ts` - `app.startup` firing rules per `reason`.

@@ -24,7 +24,11 @@ import {
 	type WizardError,
 } from './wizardErrorDetection';
 import { wizardDebugLogger } from './phaseGenerator';
-import { getStdinFlags } from '../../../utils/spawnHelpers';
+import { extractGrokTextFromJsonl, GROK_WIZARD_DISCOVERY_ARGS } from '../../../utils/grokWizard';
+import {
+	getClaudeTokenSourceFields,
+	type ClaudeTokenSourceFields,
+} from '../../../../shared/claudeTokenMode';
 
 /**
  * Configuration for starting a conversation
@@ -49,6 +53,8 @@ export interface ConversationConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** The Claude token source picked for the new agent, so a TUI pick plans through maestro-p */
+	claudeTokenSource?: ClaudeTokenSourceFields;
 }
 
 /**
@@ -112,6 +118,12 @@ interface ConversationSession {
 	systemPrompt: string;
 	/** Accumulated output buffer for parsing */
 	outputBuffer: string;
+	/**
+	 * Accumulated stderr for the current turn. A CLI that rejects its argv
+	 * (or fails before it emits any JSON) explains why only here, so the
+	 * failure message and the debug log must read it (#1983).
+	 */
+	stderrBuffer: string;
 	/** Resolve function for pending message */
 	pendingResolve?: (result: SendMessageResult) => void;
 	/** Callbacks for the conversation */
@@ -120,6 +132,8 @@ interface ConversationSession {
 	dataListenerCleanup?: () => void;
 	/** Cleanup function for exit listener */
 	exitListenerCleanup?: () => void;
+	/** Cleanup function for stderr listener */
+	stderrListenerCleanup?: () => void;
 	/** Cleanup function for thinking chunk listener */
 	thinkingListenerCleanup?: () => void;
 	/** Cleanup function for tool execution listener */
@@ -134,6 +148,8 @@ interface ConversationSession {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** The Claude token source picked for the new agent, so a TUI pick plans through maestro-p */
+	claudeTokenSource?: ClaudeTokenSourceFields;
 }
 
 /**
@@ -185,7 +201,9 @@ class ConversationManager {
 			isActive: true,
 			systemPrompt,
 			outputBuffer: '',
+			stderrBuffer: '',
 			sshRemoteConfig: config.sshRemoteConfig,
+			claudeTokenSource: config.claudeTokenSource,
 		};
 
 		// Log conversation start
@@ -232,6 +250,7 @@ class ConversationManager {
 		// Update callbacks
 		this.session.callbacks = callbacks;
 		this.session.outputBuffer = '';
+		this.session.stderrBuffer = '';
 
 		// Log message send
 		wizardDebugLogger.log('info', 'Sending message to agent', {
@@ -440,6 +459,17 @@ class ConversationManager {
 				}
 			);
 
+			// Set up stderr listener. Not fed to the response parser; it is the
+			// only place a CLI that fails on startup says why.
+			this.session!.stderrListenerCleanup = window.maestro.process.onStderr(
+				(sessionId: string, data: string) => {
+					if (sessionId === this.session?.sessionId) {
+						this.session.stderrBuffer += data;
+						this.session.resetResponseTimeout?.();
+					}
+				}
+			);
+
 			// Set up thinking chunk listener - uses the dedicated event from process-manager
 			// This receives parsed thinking content (isPartial text) that's already extracted
 			if (this.session!.callbacks?.onThinkingChunk) {
@@ -505,8 +535,11 @@ class ConversationManager {
 						} else {
 							// Check for provider errors in the output
 							const rawOutput = this.session?.outputBuffer || '';
+							const stderrOutput = this.session?.stderrBuffer || '';
+							// stdout first, so a JSON error event still wins over a stderr line.
+							const errorText = stderrOutput ? `${rawOutput}\n${stderrOutput}` : rawOutput;
 							const detectedError = this.session
-								? detectWizardError(rawOutput, this.session.agentType)
+								? detectWizardError(errorText, this.session.agentType)
 								: null;
 
 							if (detectedError) {
@@ -523,6 +556,8 @@ class ConversationManager {
 									errorMessage: detectedError.message,
 									rawOutputLength: rawOutput.length,
 									rawOutputPreview: rawOutput.slice(-500),
+									stderrLength: stderrOutput.length,
+									stderrPreview: stderrOutput.slice(-1000),
 								});
 								resolve({
 									success: false,
@@ -555,13 +590,15 @@ class ConversationManager {
 									});
 								} else {
 									// No specific error detected, create generic message
-									const errorMessage = createGenericErrorMessage(rawOutput, code);
+									const errorMessage = createGenericErrorMessage(errorText, code);
 									wizardDebugLogger.log('exit', `Agent exited with error (code ${code})`, {
 										sessionId,
 										exitCode: code,
 										errorMessage,
 										rawOutputLength: rawOutput.length,
 										rawOutputPreview: rawOutput.slice(-500),
+										stderrLength: stderrOutput.length,
+										stderrPreview: stderrOutput.slice(-1000),
 									});
 									resolve({
 										success: false,
@@ -587,18 +624,6 @@ class ConversationManager {
 			// Each agent has different CLI structure for batch mode
 			const argsForSpawn = this.buildArgsForAgent(agent);
 
-			// Determine whether to send the prompt via stdin on Windows to avoid
-			// exceeding the command line length limit. Uses agent capabilities and
-			// SSH session flag to avoid interfering with remote execution paths.
-			const isSshSession = Boolean(
-				this.session!.sshRemoteConfig?.enabled && this.session!.sshRemoteConfig?.remoteId
-			);
-			const { sendPromptViaStdin: sendViaStdin, sendPromptViaStdinRaw: sendViaStdinRaw } =
-				getStdinFlags({
-					isSshSession,
-					supportsStreamJsonInput: agent?.capabilities?.supportsStreamJsonInput ?? false,
-					hasImages: false, // Wizard never sends images
-				});
 			// Use the agent's resolved path if available, falling back to command name
 			// This is critical for packaged Electron apps where PATH may not include agent locations
 			const commandToUse = agent.path || agent.command;
@@ -622,20 +647,14 @@ class ConversationManager {
 				agentPath: agent.path,
 				agentCommand: agent.command,
 				args: argsForSpawn,
+				// These are NOT the final argv. The main process adds the batch-mode
+				// subcommand (Codex `exec`, OpenCode `run`) and `-C <dir>` before it
+				// spawns, so running this list by hand is not the same command (#1983).
+				argsNote: 'pre-build args; main adds batchModePrefix and workingDirArgs',
 				cwd: this.session!.directoryPath,
 				hasRemoteSsh: !!this.session!.sshRemoteConfig?.enabled,
 				remoteId: this.session!.sshRemoteConfig?.remoteId || null,
 			});
-
-			if (sendViaStdin || sendViaStdinRaw) {
-				wizardDebugLogger.log('spawn', 'Using stdin for Windows', {
-					sessionId: this.session!.sessionId,
-					platform: navigator.platform,
-					promptLength: prompt.length,
-					sendViaStdin,
-					sendViaStdinRaw,
-				});
-			}
 
 			window.maestro.process
 				.spawn({
@@ -651,10 +670,10 @@ class ConversationManager {
 					// When true, the main process will send the prompt via stdin instead of
 					// passing it as a command-line argument. This avoids Windows command
 					// line length limits for large prompts.
-					sendPromptViaStdin: sendViaStdin,
-					sendPromptViaStdinRaw: sendViaStdinRaw,
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: this.session!.sshRemoteConfig,
+					// The wizard's process id names no agent, so the TUI pick travels inline.
+					...getClaudeTokenSourceFields(this.session!.claudeTokenSource),
 				})
 				.then(() => {
 					wizardDebugLogger.log('spawn', 'Agent process spawned successfully', {
@@ -754,6 +773,13 @@ class ConversationManager {
 					args.push(...agent.readOnlyArgs);
 				}
 
+				return args;
+			}
+
+			case 'grok': {
+				// Shared discovery caps with inline wizard (see grokWizard.ts).
+				const args = [...(agent.args || [])];
+				args.push(...GROK_WIZARD_DISCOVERY_ARGS);
 				return args;
 			}
 
@@ -867,6 +893,12 @@ class ConversationManager {
 				}
 			}
 
+			// For Grok: join text deltas only (skip thought); end has no body
+			if (agentType === 'grok') {
+				const grokText = extractGrokTextFromJsonl(lines);
+				if (grokText) return grokText;
+			}
+
 			// For Copilot: look for the final assistant message
 			if (agentType === 'copilot-cli') {
 				for (const line of lines) {
@@ -911,6 +943,10 @@ class ConversationManager {
 		if (this.session?.exitListenerCleanup) {
 			this.session.exitListenerCleanup();
 			this.session.exitListenerCleanup = undefined;
+		}
+		if (this.session?.stderrListenerCleanup) {
+			this.session.stderrListenerCleanup();
+			this.session.stderrListenerCleanup = undefined;
 		}
 		if (this.session?.thinkingListenerCleanup) {
 			this.session.thinkingListenerCleanup();

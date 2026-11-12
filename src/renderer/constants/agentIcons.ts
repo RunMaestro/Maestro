@@ -34,6 +34,8 @@ export const AGENT_ICONS: Record<string, string> = {
 	// Google family
 	'gemini-cli': '🔷',
 	gemini: '🔷',
+	antigravity: '🪐',
+	agy: '🪐',
 
 	// Alibaba family
 	'qwen3-coder': '⬡',
@@ -41,6 +43,16 @@ export const AGENT_ICONS: Record<string, string> = {
 
 	// Open-source alternatives
 	opencode: '📟',
+	hermes: '⚕',
+	pi: 'π',
+
+	// Oh My Pi
+	omp: '🦉',
+
+	// xAI family - monochrome ✕ (U+2715), not ✖️ (U+2716+VS16) which forces
+	// red emoji presentation and collides with the "error / no connection"
+	// agent state color in the Left Bar.
+	grok: '✕',
 
 	// Enterprise
 	'factory-droid': '🏭',

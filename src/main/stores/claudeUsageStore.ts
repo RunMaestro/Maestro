@@ -23,11 +23,10 @@
  * `vi.mock('electron-store')` before the module is touched.
  */
 
-import os from 'os';
-import path from 'path';
 import Store from 'electron-store';
 
 import type { UsageSnapshot } from '../agents/claude-mode-selector';
+import { resolveConfigDirKeyFromEnv } from '../agents/claudeSpawnCore';
 import { partitionSnapshotsByAge, SNAPSHOT_RETENTION_MS } from './usageSnapshotRetention';
 
 // Re-export so consumers can grab the type from either module.
@@ -116,6 +115,19 @@ export function getRetainedSnapshots(): Record<string, UsageSnapshot> {
 	return readPartitioned(Date.now()).retained;
 }
 
+/** Drop the snapshots stored under `keys` (no-op for keys with no snapshot). */
+export function forgetSnapshots(keys: Iterable<string>): void {
+	const drop = new Set(keys);
+	if (drop.size === 0) return;
+	const { retained } = readPartitioned(Date.now());
+	if (!Object.keys(retained).some((key) => drop.has(key))) return;
+	const next: Record<string, UsageSnapshot> = {};
+	for (const [key, snapshot] of Object.entries(retained)) {
+		if (!drop.has(key)) next[key] = snapshot;
+	}
+	getStore().set('snapshots', next);
+}
+
 /**
  * Drop every snapshot. Intended for tests; production code should rely on
  * TTL-based pruning.
@@ -126,8 +138,9 @@ export function clear(): void {
 
 /**
  * Canonical key for a `CLAUDE_CONFIG_DIR` account. Falls back to `~/.claude`
- * when the env var isn't set, and `path.resolve()`s the result so two
- * spellings of the same path collapse to one key.
+ * when the env var is unset or blank, expands a leading `~/`, and
+ * `path.resolve()`s the result so two spellings of the same path collapse to
+ * one key.
  *
  * `env` is a REQUIRED arg (not defaulted to `process.env`) so callers are
  * forced to pass the env they actually injected into the spawn. This guards
@@ -135,8 +148,9 @@ export function clear(): void {
  * used a divergent env.
  */
 export function resolveConfigDirKey(env: NodeJS.ProcessEnv): string {
-	const raw = env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
-	return path.resolve(raw);
+	// One rule for the desktop and the CLI; see resolveConfigDirKeyFromEnv for
+	// why a blank or `~/` value needs normalizing before it can be a key.
+	return resolveConfigDirKeyFromEnv(env);
 }
 
 /**

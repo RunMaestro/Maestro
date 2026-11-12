@@ -88,13 +88,30 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 
 	// Copy flash state
 	const [copyFlash, setCopyFlashState] = useState<string | null>(null);
+	const copyFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	// Wrapper for setCopyFlash that auto-clears after 2 seconds
 	const setCopyFlash = useCallback((message: string | null) => {
+		if (copyFlashTimeoutRef.current) {
+			clearTimeout(copyFlashTimeoutRef.current);
+			copyFlashTimeoutRef.current = null;
+		}
 		setCopyFlashState(message);
 		if (message) {
-			setTimeout(() => setCopyFlashState(null), 2000);
+			copyFlashTimeoutRef.current = setTimeout(() => {
+				copyFlashTimeoutRef.current = null;
+				setCopyFlashState(null);
+			}, 2000);
 		}
+	}, []);
+
+	useEffect(() => {
+		return () => {
+			if (copyFlashTimeoutRef.current) {
+				clearTimeout(copyFlashTimeoutRef.current);
+				copyFlashTimeoutRef.current = null;
+			}
+		};
 	}, []);
 
 	// Close live overlay when clicking outside
@@ -197,6 +214,32 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 			window.clearInterval(intervalId);
 		};
 	}, [isLiveMode, tunnelStatus]);
+
+	// Follow tunnel changes main pushes, so a tunnel started or stopped by
+	// `maestro-cli live tunnel` shows here. The polling above only runs once the
+	// panel already believes a tunnel exists, so it cannot discover one alone.
+	// A push never demotes 'starting': that transition belongs to the
+	// tunnel.start() promise, and restartTunnel's own stop pushes "not running".
+	const tunnelStatusRef = useRef(tunnelStatus);
+	tunnelStatusRef.current = tunnelStatus;
+	useEffect(() => {
+		const unsubscribe = window.maestro?.live?.onStateChanged?.(({ live, tunnel }) => {
+			// Live going off is handled by the isLiveMode reset above.
+			if (!live) return;
+			if (tunnel.isRunning && tunnel.url) {
+				setTunnelStatus('connected');
+				setTunnelUrl(tunnel.url);
+				setTunnelError(null);
+				return;
+			}
+			if (tunnelStatusRef.current === 'starting') return;
+			setTunnelStatus(tunnel.error ? 'error' : 'off');
+			setTunnelError(tunnel.error);
+			setTunnelUrl(null);
+			setActiveUrlTab('local');
+		});
+		return () => unsubscribe?.();
+	}, []);
 
 	// Restart the tunnel by tearing down any existing (or half-dead) cloudflared
 	// process and starting fresh. Used both when the underlying web server changes

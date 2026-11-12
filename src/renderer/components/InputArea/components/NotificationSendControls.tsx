@@ -18,7 +18,7 @@ export const NotificationSendControls = memo(function NotificationSendControls({
 	const notificationBtnRef = useRef<HTMLButtonElement>(null);
 
 	return (
-		<div className="flex flex-col gap-2">
+		<div className="flex flex-shrink-0 flex-col gap-2">
 			<button
 				ref={notificationBtnRef}
 				type="button"

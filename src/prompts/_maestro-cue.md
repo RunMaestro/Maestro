@@ -235,11 +235,12 @@ A **Command node** is a subscription that runs a shell command or invokes `maest
       command: send # required; only 'send' is supported today
       target: <session-id-or-name> # required, supports template vars
       message: '{{CUE_SOURCE_OUTPUT}}' # optional; default is exactly this
+      tab: <ai-tab-id> # optional, supports template vars; deliver into this tab of target
   # standard subscription fields all still apply (pipeline_name, target_node_key,
   # source_session, source_sub, event-specific fields like interval_minutes, etc.)
 ```
 
-**Validator rules:** `command.mode` must be `'shell'` or `'cli'`; `command.shell` must be non-empty; `command.cli.command` must be `'send'`; `command.cli.target` must be non-empty; `command.cli.message` must be a string when present. **`fan_out` is rejected** on `action: command` subs - Command nodes do not fan out. `output_prompt` and the legacy `cli_output` field are silently skipped at runtime for command actions.
+**Validator rules:** `command.mode` must be `'shell'` or `'cli'`; `command.shell` must be non-empty; `command.cli.command` must be `'send'`; `command.cli.target` must be non-empty; `command.cli.message` must be a string when present; `command.cli.tab` must be non-empty when present. Without `tab` the message goes to the target's active tab. With `tab` it goes into that tab, waiting behind a busy turn (`dispatch --tab --queue`), never moving the user's view, and the reply marks the tab unread; a tab that no longer exists falls back to a new tab plus a toast. A scheduled prompt meant for an existing conversation is authored with `cue schedule --tab <id>` / `--here`, which writes exactly this shape. **`fan_out` is rejected** on `action: command` subs - Command nodes do not fan out. `output_prompt` and the legacy `cli_output` field are silently skipped at runtime for command actions.
 
 **Fields that are NOT configurable per node** (and what they actually use):
 
@@ -371,6 +372,7 @@ When a user asks you to add, modify, or debug a Cue subscription:
 6. For full schema, field reference, and worked examples, fetch the official Cue docs: https://docs.runmaestro.ai/maestro-cue-configuration.md, https://docs.runmaestro.ai/maestro-cue-events.md, https://docs.runmaestro.ai/maestro-cue-advanced.md, https://docs.runmaestro.ai/maestro-cue-examples.md. Don't guess field names.
 7. After writing, validate with `{{MAESTRO_CLI_PATH}} cue list` - the engine reloads automatically when the file changes.
 8. For anything clock-driven - one-off ("do X at 4pm") or repeating ("every weekday at 9am", "every 30 minutes") - use `{{MAESTRO_CLI_PATH}} cue schedule` - see the **Scheduled Tasks** section. Never hand-write `time.once`, `time.scheduled`, or `time.heartbeat` subscriptions; let the CLI generate them, and point the user at Maestro Cue → Scheduled Tasks to manage them.
+9. **Per-step model and effort.** A subscription that runs an agent may set `tier: low|medium|high` OR an exact `model: <id>`, plus `effort: low|medium|high`. They override the agent's own model for that run only. Tier and effort map per provider (Claude: tier `high` = opus, effort `high` = max). Codex, Copilot-CLI, and OpenCode have no tier table, so use `model` there. Never set both `tier` and `model`, and never set them on `action: command` or `action: notify`; the validator rejects all three cases. Typical use: `tier: low` on a high-volume triage step, `tier: high` on the one synthesis step that needs it. To change it on a subscription that already exists, run `{{MAESTRO_CLI_PATH}} cue model <subscription> --tier high --effort low` (or `--model <id>`, `--clear-model`, `--clear-effort`) instead of hand-editing the YAML; with no setting flag it prints the current choice and what it resolves to. When creating a scheduled task, pass `--tier` / `--model` / `--effort` to `cue schedule`.
 
 ### Multi-Root Pipelines (agents in different project roots)
 

@@ -16,6 +16,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	effectiveAgentCustomEnvVars,
 	getProviderProfileConfig,
+	isAccountDirName,
 	makeAccountKeyHelpers,
 	parseProviderProfileKey,
 	providerProfileKey,
@@ -63,8 +64,42 @@ describe('resolveAgentAccountKey', () => {
 	});
 
 	it('returns null for a provider with no account concept, even with $HOME', () => {
+		// Deliberate omissions, re-verified 2026-09-14: OpenCode's data dir follows
+		// the OS-wide XDG_DATA_HOME rather than an OpenCode account selector, and
+		// Factory Droid ships no config-dir override at all.
 		expect(getProviderProfileConfig('opencode')).toBeUndefined();
+		expect(getProviderProfileConfig('factory-droid')).toBeUndefined();
 		expect(resolveAgentAccountKey('opencode', {}, HOME)).toBeNull();
+		expect(resolveAgentAccountKey('factory-droid', {}, HOME)).toBeNull();
+	});
+
+	it('splits Copilot accounts on COPILOT_HOME', () => {
+		// COPILOT_HOME, not COPILOT_CONFIG_DIR: GitHub's CLI docs are explicit
+		// that COPILOT_HOME replaces the whole ~/.copilot path, and no release
+		// has ever read COPILOT_CONFIG_DIR.
+		expect(getProviderProfileConfig('copilot-cli')).toEqual({
+			envVar: 'COPILOT_HOME',
+			defaultSubdir: '.copilot',
+			sessionsSubdir: 'session-state',
+		});
+		expect(
+			resolveAgentAccountKey('copilot-cli', { COPILOT_HOME: '/Users/me/.copilot-work' }, HOME)
+		).toBe('/Users/me/.copilot-work');
+		expect(resolveAgentAccountKey('copilot-cli', {}, HOME)).toBe('/Users/me/.copilot');
+	});
+});
+
+describe('account dir names', () => {
+	it('accepts the default dir and its per-account siblings', () => {
+		expect(isAccountDirName('.claude', '.claude')).toBe(true);
+		expect(isAccountDirName('.claude-work', '.claude')).toBe(true);
+		expect(isAccountDirName('.codex-project-acc-1', '.codex')).toBe(true);
+	});
+
+	it('rejects an unrelated folder and a backup copy', () => {
+		expect(isAccountDirName('.claudette', '.claude')).toBe(false);
+		expect(isAccountDirName('.claude-backup', '.claude')).toBe(false);
+		expect(isAccountDirName('.codex-old', '.codex')).toBe(false);
 	});
 });
 
@@ -113,6 +148,9 @@ describe('profile labels', () => {
 		);
 		// The full label already carries the provider, so it is unchanged.
 		expect(providerProfileLabel('codex', '/Users/me/.codex')).toBe('Codex - Default account');
+		expect(providerProfileLabel('copilot-cli', '/Users/me/.copilot')).toBe(
+			'Copilot-CLI - Default account'
+		);
 	});
 
 	it('falls back to the provider name when there is no account', () => {

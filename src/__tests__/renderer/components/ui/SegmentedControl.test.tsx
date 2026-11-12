@@ -35,6 +35,14 @@ const renderControl = (value: Mode, onChange = vi.fn()) => {
 };
 
 describe('SegmentedControl', () => {
+	it('marks only the chosen segment for the bar to scroll into view', () => {
+		renderControl('queries');
+
+		expect(screen.getByTestId('sort-queries')).toHaveAttribute('data-reveal-active', 'true');
+		expect(screen.getByTestId('sort-name')).not.toHaveAttribute('data-reveal-active');
+		expect(screen.getByTestId('sort-created')).not.toHaveAttribute('data-reveal-active');
+	});
+
 	it('renders one segment per option inside a labelled radiogroup', () => {
 		renderControl('name');
 
@@ -97,6 +105,21 @@ describe('SegmentedControl', () => {
 		fireEvent.keyDown(group, { key: 'a' });
 
 		expect(onChange).not.toHaveBeenCalled();
+	});
+
+	// A bar wider than its row used to lose its last segments outright:
+	// `overflow-hidden` clipped them, so they were invisible AND unclickable
+	// with no scrollbar to hint they were there. On a phone the five-way sort
+	// bar lost two options.
+	it('scrolls sideways rather than clipping the segments it cannot fit', () => {
+		renderControl('name');
+
+		const group = screen.getByRole('radiogroup');
+		expect(group).toHaveClass('overflow-x-auto', 'overflow-y-hidden', 'max-w-full', 'min-w-0');
+		expect(group).not.toHaveClass('overflow-hidden');
+		// Every segment keeps its width inside that scroller - a squeezed
+		// segment reads as a different label, not a narrower one.
+		expect(screen.getByTestId('sort-name')).toHaveClass('shrink-0');
 	});
 
 	it('surfaces the optional per-segment tooltip', () => {

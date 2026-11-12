@@ -30,6 +30,7 @@ import fsSync from 'fs';
 import path from 'path';
 import { logger } from './utils/logger';
 import { CORE_PROMPTS } from '../shared/promptDefinitions';
+import { resolvePromptIncludes } from '../shared/promptIncludes';
 
 const LOG_CONTEXT = '[PromptManager]';
 
@@ -235,7 +236,16 @@ export function getPrompt(id: string): string {
 	}
 
 	const withRefs = resolveRefs(cached.content);
-	return resolveIncludes(withRefs, new Set([id]), 0);
+	return resolvePromptIncludes(withRefs, {
+		load: resolveIncludeContent,
+		rootId: id,
+		onMissing: (name) => logger.warn(`Include not found: ${name}`, LOG_CONTEXT),
+		onCycle: (name, chain) =>
+			logger.warn(
+				`Circular include detected: ${name} (visited: ${chain.join(' → ')})`,
+				LOG_CONTEXT
+			),
+	});
 }
 
 /**
@@ -402,9 +412,7 @@ export async function listPromptFiles(): Promise<
 // Directive Resolution
 // ============================================================================
 
-const INCLUDE_PATTERN = /\{\{INCLUDE:([a-zA-Z0-9_-]+)\}\}/g;
 const REF_PATTERN = /\{\{REF:([a-zA-Z0-9_-]+)\}\}/g;
-const MAX_INCLUDE_DEPTH = 3;
 
 /**
  * Expand {{REF:name}} into the absolute on-disk path of the bundled `.md`.
@@ -427,33 +435,6 @@ function resolveRefs(content: string): string {
 			return match;
 		}
 		return path.resolve(promptsPath, def.filename);
-	});
-}
-
-function resolveIncludes(content: string, visited: Set<string>, depth: number): string {
-	if (depth >= MAX_INCLUDE_DEPTH) return content;
-	if (!INCLUDE_PATTERN.test(content)) return content;
-
-	INCLUDE_PATTERN.lastIndex = 0;
-
-	return content.replace(INCLUDE_PATTERN, (match, name: string) => {
-		if (visited.has(name)) {
-			logger.warn(
-				`Circular include detected: ${name} (visited: ${[...visited].join(' → ')})`,
-				LOG_CONTEXT
-			);
-			return match;
-		}
-
-		const resolved = resolveIncludeContent(name);
-		if (resolved === null) {
-			logger.warn(`Include not found: ${name}`, LOG_CONTEXT);
-			return match;
-		}
-
-		const nextVisited = new Set(visited);
-		nextVisited.add(name);
-		return resolveIncludes(resolved, nextVisited, depth + 1);
 	});
 }
 

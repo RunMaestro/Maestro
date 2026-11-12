@@ -136,6 +136,23 @@ export function isMediaStreamUrl(value: string | null | undefined): boolean {
 }
 
 /**
+ * The HTTP address the web-desktop bundle loads a stream URL from.
+ *
+ * A browser has no handler for the custom scheme, so the embedded web server
+ * exposes the same handler at `/<securityToken>/media/stream/<token>/<hex>`
+ * (see `src/main/web-server/routes/mediaRoutes.ts`). The per-boot media token
+ * still rides in the path, so the route grants exactly what the scheme does.
+ *
+ * @returns The route path, or `null` when `streamUrl` is not a stream URL.
+ */
+export function buildMediaStreamHttpPath(securityToken: string, streamUrl: string): string | null {
+	if (!securityToken || !isMediaStreamUrl(streamUrl)) return null;
+	const segments = streamUrl.slice(`${MEDIA_SCHEME}://${MEDIA_STREAM_HOST}/`.length).split('/');
+	if (segments.length !== 2 || !segments[0] || !segments[1]) return null;
+	return `/${securityToken}/media/stream/${segments[0]}/${segments[1]}`;
+}
+
+/**
  * Validate a stream URL and recover the file path it points at.
  *
  * @returns The absolute path, or `null` when the URL is malformed, targets the
@@ -159,6 +176,53 @@ export function parseMediaStreamUrl(url: string, expectedToken: string): string 
 	const filePath = fromHex(hex);
 	if (!filePath || !isMediaFile(filePath)) return null;
 	return filePath;
+}
+
+/**
+ * Whether a media item's `path` is a remote http(s) URL rather than a local file.
+ *
+ * Remote media skips the `maestro-media://` protocol entirely: the element
+ * loads the URL itself, and Chromium range-requests a progressive MP4
+ * (H.264/AAC) over HTTP the same way it seeks a local file. Adaptive formats
+ * (HLS, DASH) and live transports (RTSP, RTMP) are NOT covered - they need a
+ * Media Source Extensions demuxer this player does not ship.
+ */
+export function isRemoteMediaUrl(value: string | null | undefined): boolean {
+	return typeof value === 'string' && /^https?:\/\//i.test(value);
+}
+
+/**
+ * Audio or video for a remote URL, read off the extension of its path (never
+ * the query string, so a signed `clip.mp4?sig=...` still counts as video).
+ *
+ * Falls back to `video` when the path names no known extension: a `<video>`
+ * element plays an audio-only stream too, while an `<audio>` element given a
+ * video discards the picture.
+ */
+export function getRemoteMediaKind(url: string): MediaKind {
+	try {
+		return getMediaKind(new URL(url).pathname) ?? 'video';
+	} catch {
+		return 'video';
+	}
+}
+
+/** Title for a remote media item: the last path segment, else the host. */
+export function getRemoteMediaName(url: string): string {
+	try {
+		const parsed = new URL(url);
+		const segment = parsed.pathname.split('/').filter(Boolean).pop();
+		if (segment) {
+			try {
+				return decodeURIComponent(segment);
+			} catch {
+				return segment;
+			}
+		}
+		return parsed.host || url;
+	} catch {
+		return url;
+	}
 }
 
 /** Playback speeds offered by the media transport, slowest first. */

@@ -20,6 +20,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useMemo, ReactNode } from 'react';
 import type { TabCompletionFilter } from '../hooks';
+import type { MentionCategory } from '../hooks/input/useMentionPicker';
 
 /**
  * Input context value - completion and command history states and their setters
@@ -53,6 +54,9 @@ export interface InputContextValue {
 	setAtMentionStartIndex: React.Dispatch<React.SetStateAction<number>>;
 	selectedAtMentionIndex: number;
 	setSelectedAtMentionIndex: React.Dispatch<React.SetStateAction<number>>;
+	/** Active filter scope of the unified `@` picker (defaults to 'all' on open). */
+	atMentionCategory: MentionCategory;
+	setAtMentionCategory: React.Dispatch<React.SetStateAction<MentionCategory>>;
 	resetAtMention: () => void;
 
 	// Command History Browser
@@ -107,6 +111,7 @@ export function InputProvider({ children }: InputProviderProps) {
 	const [atMentionFilter, setAtMentionFilter] = useState('');
 	const [atMentionStartIndex, setAtMentionStartIndex] = useState(-1);
 	const [selectedAtMentionIndex, setSelectedAtMentionIndex] = useState(0);
+	const [atMentionCategory, setAtMentionCategory] = useState<MentionCategory>('all');
 
 	// Command History Browser
 	const [commandHistoryOpen, setCommandHistoryOpen] = useState(false);
@@ -130,6 +135,7 @@ export function InputProvider({ children }: InputProviderProps) {
 		setAtMentionFilter('');
 		setAtMentionStartIndex(-1);
 		setSelectedAtMentionIndex(0);
+		setAtMentionCategory('all');
 	}, []);
 
 	const resetCommandHistory = useCallback(() => {
@@ -175,6 +181,8 @@ export function InputProvider({ children }: InputProviderProps) {
 			setAtMentionStartIndex,
 			selectedAtMentionIndex,
 			setSelectedAtMentionIndex,
+			atMentionCategory,
+			setAtMentionCategory,
 			resetAtMention,
 
 			// Command History Browser
@@ -204,6 +212,7 @@ export function InputProvider({ children }: InputProviderProps) {
 			atMentionFilter,
 			atMentionStartIndex,
 			selectedAtMentionIndex,
+			atMentionCategory,
 			resetAtMention,
 			// Command History Browser - only changes when modal opens/navigates
 			commandHistoryOpen,

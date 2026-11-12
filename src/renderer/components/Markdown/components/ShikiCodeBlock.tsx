@@ -3,7 +3,7 @@
  * emits block code as `<pre><code>...</code></pre>`; this extracts the inner
  * code element and renders it through CodeFence (Shiki highlighting + copy
  * button + language picker). Falls back to a plain `<pre>` when the structure
- * is unexpected.
+ * is unexpected. With an `onRun`, shell fences also get a Run button.
  */
 
 import React from 'react';
@@ -12,7 +12,11 @@ import type { Theme } from '../../../types';
 import { CodeFence } from '../../CodeFence/CodeFence';
 import { MermaidCodeBlock } from './MermaidCodeBlock';
 
-export function createShikiCodeBlock(theme: Theme, onCopy: (text: string) => void) {
+export function createShikiCodeBlock(
+	theme: Theme,
+	onCopy: (text: string) => void,
+	onRun?: (command: string, mode: 'run' | 'prefill') => void
+) {
 	return function ShikiCodeBlock({ children }: JSX.IntrinsicElements['pre'] & ExtraProps) {
 		const codeElement = React.Children.toArray(children).find(
 			(child) =>
@@ -32,7 +36,15 @@ export function createShikiCodeBlock(theme: Theme, onCopy: (text: string) => voi
 				return <MermaidCodeBlock code={codeContent} theme={theme} onCopy={onCopy} />;
 			}
 
-			return <CodeFence language={language} code={codeContent} theme={theme} onCopy={onCopy} />;
+			return (
+				<CodeFence
+					language={language}
+					code={codeContent}
+					theme={theme}
+					onCopy={onCopy}
+					onRun={onRun}
+				/>
+			);
 		}
 
 		// Fallback: render as-is

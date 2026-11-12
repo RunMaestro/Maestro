@@ -2,6 +2,7 @@ import React, { RefObject } from 'react';
 import { Search, User, Bot, MessageSquare, ChevronDown } from 'lucide-react';
 import type { Theme } from '../../../types';
 import type { SearchMode } from '../types';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface SearchModeDropdownProps {
 	searchMode: SearchMode;
@@ -56,8 +57,8 @@ export const SearchModeDropdown = React.memo(function SearchModeDropdown({
 			</button>
 			{isOpen && (
 				<div
-					className="absolute right-0 top-full mt-1 w-48 rounded-lg shadow-lg border overflow-hidden z-50"
-					style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+					className="absolute right-0 top-full mt-1 w-48 rounded-lg overflow-hidden z-50"
+					style={elevatedSurfaceStyle(theme)}
 				>
 					{MODES.map(({ mode, icon: Icon, label, desc }) => (
 						<button

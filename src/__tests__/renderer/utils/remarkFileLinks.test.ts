@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
@@ -11,11 +11,12 @@ async function processMarkdown(
 	fileTree: FileNode[],
 	cwd: string,
 	projectRoot?: string,
-	homeDir?: string
+	homeDir?: string,
+	pathExists?: (absolutePath: string) => boolean | undefined
 ): Promise<string> {
 	const result = await unified()
 		.use(remarkParse)
-		.use(remarkFileLinks, { fileTree, cwd, projectRoot, homeDir })
+		.use(remarkFileLinks, { fileTree, cwd, projectRoot, homeDir, pathExists })
 		.use(remarkStringify)
 		.process(content);
 	return String(result);
@@ -346,15 +347,16 @@ describe('remarkFileLinks', () => {
 			);
 		});
 
-		it('does not convert absolute paths outside projectRoot', async () => {
+		it('converts absolute paths outside projectRoot to file:// links', async () => {
 			const result = await processMarkdown(
 				'See /other/path/README.md for details.',
 				sampleFileTree,
 				'',
 				'/Users/pedram/Project'
 			);
-			// Should not be converted since it's outside projectRoot
-			expect(result).toContain('/other/path/README.md');
+			// Outside projectRoot, so it gets the same file:// treatment as a tilde
+			// path - openFileUrl routes it to the preview tab, player, or the OS.
+			expect(result).toContain('[/other/path/README.md](file:///other/path/README.md)');
 			expect(result).not.toContain('maestro-file://');
 		});
 
@@ -423,6 +425,213 @@ describe('remarkFileLinks', () => {
 				'[/Users/pedram/Project/SomeOther/NonExistent File.md](<maestro-file://SomeOther/NonExistent File.md>)'
 			);
 		});
+
+		// MAESTRO-176 / MAESTRO-175: an agent brief written as prose, with a bare
+		// alias `P=` for a project folder and `P/...` references. The old pattern
+		// matched from the first `/` to the last `name.md` in the paragraph, and
+		// clicking the link sent the whole paragraph to fs:stat (ENAMETOOLONG).
+		it('does not turn a paragraph of prose into one absolute path', async () => {
+			const brief =
+				'Status /handoff checked; no output found. You are the worker, do not delegate. ' +
+				'P=/Users/someone/Documents/Drafts (long form notes)/.collab. ' +
+				'Read P/drafts/one/abc-PREP.md and manifest P/requests/abc-rewrite.md. ' +
+				'Read /Users/someone/.tools/skills/voice/SKILL.md INCLUDING references/style.md. ' +
+				'Write the report to P/drafts/two/task-PROPOSAL.md';
+			const result = await processMarkdown(brief, sampleFileTree, '', '/Users/pedram/Project');
+			expect(result).not.toContain('handoff checked](');
+			expect(result).not.toMatch(/\]\(<?file:\/\/\/handoff/);
+			expect(result).not.toMatch(/\]\(<?file:\/\/\/(drafts|requests|one|two)\//);
+			// The one genuine absolute path in the paragraph still links.
+			expect(result).toContain(
+				'[/Users/someone/.tools/skills/voice/SKILL.md](file:///Users/someone/.tools/skills/voice/SKILL.md)'
+			);
+		});
+
+		// MAESTRO-16F / MAESTRO-16G: a run report in a non-Latin script, where `/`
+		// is used as "or" between words. Nothing in it is an absolute path.
+		it('does not link slash-separated prose that ends in a file name', async () => {
+			for (const lead of ['Итог: ok', 'Итог: ok ']) {
+				const report =
+					`${lead}/[INF]/пустых/повторов), pass 2 (100% новых, 0 совпадений; 5/6 частей - ` +
+					'часть 3 rc=143@600s; s3=995/st=148). Список: docs/analysis/issues.md - ' +
+					'11 пунктов (3 high / 4 medium / 4 low). Разница: compare-v1/run-notes.md';
+				const result = await processMarkdown(report, sampleFileTree, '', '/Users/pedram/Project');
+				expect(result).not.toContain('file://');
+			}
+		});
+
+		it('does not start an absolute path inside a word', async () => {
+			const result = await processMarkdown(
+				'Read C/bozze/codex/notes.md and and/or/other.md next.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).not.toContain('file://');
+		});
+
+		it('still links an absolute path right after an opening bracket or quote', async () => {
+			const result = await processMarkdown(
+				'Saved ("/other/place/report.md") and [/other/place/two.md].',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('(file:///other/place/report.md)');
+			expect(result).toContain('(file:///other/place/two.md)');
+		});
+
+		it('keeps a multi-dot file name whole', async () => {
+			const result = await processMarkdown(
+				'Backup at /other/place/archive.tar.gz is ready.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('[/other/place/archive.tar.gz](file:///other/place/archive.tar.gz)');
+		});
+
+		it.each([
+			['Open /other/place/first.md and second.md now.', 'first.md and second'],
+			['See /other/place/first.md, then second.md.', 'first.md, then second'],
+		])(
+			'stops the file name at the first extension that ends a path: %j',
+			async (text, swallowed) => {
+				const result = await processMarkdown(text, sampleFileTree, '', '/Users/pedram/Project');
+				expect(result).toContain('[/other/place/first.md](file:///other/place/first.md)');
+				expect(result).not.toContain(swallowed);
+			}
+		);
+
+		it('keeps prose that runs into a later absolute path out of the link', async () => {
+			const result = await processMarkdown(
+				'Read /handoff notes in /other/place/report.md first.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('[/other/place/report.md](file:///other/place/report.md)');
+			expect(result).not.toContain('file:///handoff');
+		});
+
+		// A slash command in prose followed, much later, by a URL ending in a
+		// file name read as one path whose root directory was the whole sentence.
+		it('does not link a slash command that runs into a URL ending in a file name', async () => {
+			const result = await processMarkdown(
+				"let's modify the /maestro-build command so that we upload it to example.com/dropbox/maestro.zip then offer it",
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).not.toContain('file://');
+			expect(result).not.toContain('maestro-build command](');
+		});
+
+		it('still links spaces below the root directory', async () => {
+			const result = await processMarkdown(
+				'Synced to /Volumes/My Drive/notes/plan.md today.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('(<file:///Volumes/My Drive/notes/plan.md>)');
+		});
+
+		describe('with a pathExists check', () => {
+			const spaced = 'Synced to /Volumes/My Drive/notes/plan.md today.';
+
+			it('links a path with whitespace once it is known to exist', async () => {
+				const pathExists = vi.fn(() => true);
+				const result = await processMarkdown(
+					spaced,
+					sampleFileTree,
+					'',
+					'/Users/pedram/Project',
+					undefined,
+					pathExists
+				);
+				expect(pathExists).toHaveBeenCalledWith('/Volumes/My Drive/notes/plan.md');
+				expect(result).toContain('(<file:///Volumes/My Drive/notes/plan.md>)');
+			});
+
+			it.each([
+				['missing', false],
+				['still being checked', undefined],
+			])('leaves a path with whitespace as text while it is %s', async (_label, answer) => {
+				const result = await processMarkdown(
+					spaced,
+					sampleFileTree,
+					'',
+					'/Users/pedram/Project',
+					undefined,
+					() => answer
+				);
+				expect(result).not.toContain('file://');
+			});
+
+			it('trusts the file tree for a path with whitespace inside the project', async () => {
+				const pathExists = vi.fn(() => false);
+				const result = await processMarkdown(
+					'See /Users/pedram/Project/Notes/Meeting Notes.md for details.',
+					sampleFileTree,
+					'',
+					'/Users/pedram/Project',
+					undefined,
+					pathExists
+				);
+				expect(pathExists).not.toHaveBeenCalled();
+				expect(result).toContain('(<maestro-file://Notes/Meeting Notes.md>)');
+			});
+
+			it('does not check a path without whitespace', async () => {
+				const pathExists = vi.fn(() => false);
+				const result = await processMarkdown(
+					'Backup at /other/place/archive.tar.gz is ready.',
+					sampleFileTree,
+					'',
+					'/Users/pedram/Project',
+					undefined,
+					pathExists
+				);
+				expect(pathExists).not.toHaveBeenCalled();
+				expect(result).toContain('(file:///other/place/archive.tar.gz)');
+			});
+		});
+
+		// Chinese and Japanese put no space between words, so a path written
+		// straight after one is still a path, not the middle of a word.
+		it('links an absolute path written straight after CJK text', async () => {
+			const result = await processMarkdown(
+				'ファイルは/other/place/report.md',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('[/other/place/report.md](file:///other/place/report.md)');
+		});
+
+		it('does not link CJK prose that uses slashes and full stops', async () => {
+			const result = await processMarkdown(
+				'読む/書く。完了しました。結果は docs/notes.md',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).not.toContain('file://');
+		});
+
+		// Deliberate: a folder whose name holds a file name and a space reads the
+		// same as prose after a path (`/a/SKILL.md and refs/b.md`), and the match
+		// stops at the first file name rather than risk swallowing a sentence.
+		it('stops at the first file name even when a folder name contains one', async () => {
+			const result = await processMarkdown(
+				'Open /other/node.js backup/report.md now.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('[/other/node.js](file:///other/node.js)');
+		});
 	});
 
 	describe('markdown links with absolute path hrefs', () => {
@@ -462,14 +671,14 @@ describe('remarkFileLinks', () => {
 			expect(result).toContain('[App.tsx](maestro-file://src/App.tsx)');
 		});
 
-		it('does not convert markdown link with absolute path outside projectRoot', async () => {
+		it('converts markdown link with absolute path outside projectRoot to file:// URL', async () => {
 			const result = await processMarkdown(
 				'See [file.tsx](/other/path/file.tsx) for details.',
 				sampleFileTree,
 				'',
 				'/Users/pedram/Project'
 			);
-			// Should remain unconverted
+			expect(result).toContain('[file.tsx](file:///other/path/file.tsx)');
 			expect(result).not.toContain('maestro-file://');
 		});
 
@@ -508,6 +717,17 @@ describe('remarkFileLinks', () => {
 			expect(result).toContain('[README.md](maestro-file://OPSWAT/README.md)');
 			// Should NOT contain backticks around the path anymore
 			expect(result).not.toContain('`/Users/pedram/Project/OPSWAT/README.md`');
+		});
+
+		it('converts absolute path in backticks outside projectRoot to file:// link', async () => {
+			const result = await processMarkdown(
+				'Check `/Volumes/Audio/takes/recording.wav` for the take.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('[recording.wav](file:///Volumes/Audio/takes/recording.wav)');
+			expect(result).not.toContain('maestro-file://');
 		});
 
 		it('converts relative path in backticks to link when file exists', async () => {
@@ -725,6 +945,20 @@ describe('remarkFileLinks', () => {
 				'[/Users/pedram/Project/output/recording.wav](maestro-file://output/recording.wav)'
 			);
 		});
+
+		it('converts absolute media paths outside projectRoot to file:// links', async () => {
+			// The floating player is reached through openFileUrl, which only ever
+			// sees a file:// href - a bare absolute path is a dead link.
+			const result = await processMarkdown(
+				'File at /Volumes/Audio/takes/recording.wav here.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain(
+				'[/Volumes/Audio/takes/recording.wav](file:///Volumes/Audio/takes/recording.wav)'
+			);
+		});
 	});
 
 	describe('tilde path references', () => {
@@ -865,6 +1099,37 @@ describe('remarkFileLinks', () => {
 			expect(String(result)).toContain(
 				'[Meeting Notes](<maestro-file://Archive/Meeting Notes.md>)'
 			);
+		});
+	});
+
+	describe('malformed percent-encoding in link targets (MAESTRO-XS)', () => {
+		// decodeURIComponent throws URIError on a stray '%'. This plugin runs
+		// inside the unified transform, so the throw escaped react-markdown's
+		// render and blanked the entire message body in chat.
+		const cases = [
+			['a bare percent', '[see](100% done.md)'],
+			['a truncated escape', '[see](report%E0%A4%A.md)'],
+			['an invalid hex pair', '[see](weird%ZZ.md)'],
+			['a trailing percent', '[see](draft%)'],
+		];
+
+		for (const [label, markdown] of cases) {
+			it(`does not throw on ${label}`, async () => {
+				await expect(
+					processMarkdown(markdown, sampleFileTree, '', '/project')
+				).resolves.toBeTruthy();
+			});
+		}
+
+		it('leaves an unresolvable malformed target as-is', async () => {
+			const result = await processMarkdown('[see](100% done.md)', sampleFileTree, '');
+			expect(result).not.toContain('maestro-file://');
+		});
+
+		it('still resolves valid escapes to maestro-file:// links', async () => {
+			const tree: FileNode[] = [{ name: 'My Notes.md', type: 'file', path: 'My Notes.md' }];
+			const result = await processMarkdown('[notes](My%20Notes.md)', tree, '');
+			expect(result).toContain('maestro-file://My Notes.md');
 		});
 	});
 });

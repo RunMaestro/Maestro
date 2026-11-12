@@ -6,10 +6,14 @@
  *   - recoverable account failures do not cancel sampling for the rest of the batch
  *   - unexpected account failures are reported after the rest of the batch runs
  *   - discovery only swallows expected missing/unreadable auth.json errors
+ *   - SSH-remote sessions are never sampled against local disk
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { canonKey } from '../../helpers/pathExpect';
 
 const { sampleCodexUsageMock, loggerWarnMock, loggerInfoMock, captureExceptionMock } = vi.hoisted(
 	() => ({
@@ -75,6 +79,7 @@ import {
 	clearCodexUsageSnapshots,
 	getAllCodexUsageSnapshots,
 	resolveCodexHomeKey,
+	setCodexUsageSnapshot,
 	__resetForTests as resetCodexUsageStore,
 	type CodexUsageSnapshot,
 } from '../../../main/stores/codexUsageStore';
@@ -183,8 +188,9 @@ describe('codex-usage-startup → discoverCodexHomes', () => {
 		const accessSpy = vi.spyOn(fs.promises, 'access').mockResolvedValue(undefined);
 
 		try {
+			// The sweep joins onto the home dir, so the separator is the platform's.
 			await expect(discoverCodexHomes('/Users/test')).resolves.toEqual([
-				'/Users/test/.codex-linked',
+				path.join('/Users/test', '.codex-linked'),
 			]);
 		} finally {
 			readdirSpy.mockRestore();
@@ -213,7 +219,9 @@ describe('codex-usage-startup → discoverCodexHomes', () => {
 			});
 
 		try {
-			await expect(discoverCodexHomes('/Users/test')).resolves.toEqual(['/Users/test/.codex-good']);
+			await expect(discoverCodexHomes('/Users/test')).resolves.toEqual([
+				path.join('/Users/test', '.codex-good'),
+			]);
 			expect(captureExceptionMock).not.toHaveBeenCalled();
 		} finally {
 			readdirSpy.mockRestore();
@@ -232,8 +240,8 @@ describe('codex-usage-startup → discoverCodexHomes', () => {
 			await expect(discoverCodexHomes('/Users/test')).rejects.toThrow('disk failure');
 			expect(captureExceptionMock).toHaveBeenCalledWith(unexpected, {
 				operation: 'codexUsage:discoverCodexHomes.access',
-				codexHome: '/Users/test/.codex-broken',
-				authPath: '/Users/test/.codex-broken/auth.json',
+				codexHome: path.join('/Users/test', '.codex-broken'),
+				authPath: path.join('/Users/test', '.codex-broken', 'auth.json'),
 			});
 		} finally {
 			readdirSpy.mockRestore();
@@ -244,7 +252,9 @@ describe('codex-usage-startup → discoverCodexHomes', () => {
 
 describe('codexUsageStore → resolveCodexHomeKey', () => {
 	it('falls back to the default CODEX_HOME for an empty env value', () => {
-		expect(resolveCodexHomeKey({ CODEX_HOME: '' })).toBe('/Users/test/.codex');
+		expect(resolveCodexHomeKey({ CODEX_HOME: '' })).toBe(
+			canonKey(path.join(os.homedir(), '.codex'))
+		);
 	});
 });
 
@@ -278,7 +288,9 @@ describe('codex-usage-startup → runCodexUsageSampling', () => {
 			agentDetector: makeDetector(FAKE_AGENT) as never,
 		});
 
-		expect(sampleCodexUsageMock).toHaveBeenCalledWith({ codexHome: '/Users/test/.codex' });
+		expect(sampleCodexUsageMock).toHaveBeenCalledWith({
+			codexHome: path.join(os.homedir(), '.codex'),
+		});
 		expect(getAllCodexUsageSnapshots()).toHaveProperty('/Users/test/.codex');
 	});
 
@@ -321,7 +333,7 @@ describe('codex-usage-startup → runCodexUsageSampling', () => {
 			expect.stringContaining('Failed to sample Codex usage snapshot'),
 			expect.any(String),
 			expect.objectContaining({
-				codexHomeKey: '/Users/test/.codex-broken',
+				codexHomeKey: canonKey('/Users/test/.codex-broken'),
 				error: 'timed out',
 			})
 		);
@@ -366,13 +378,13 @@ describe('codex-usage-startup → runCodexUsageSampling', () => {
 		expect(captureExceptionMock).toHaveBeenCalledWith(unexpected, {
 			operation: 'codexUsage:runCodexUsageSampling.sample',
 			codexHome: '/Users/test/.codex-broken',
-			codexHomeKey: '/Users/test/.codex-broken',
+			codexHomeKey: canonKey('/Users/test/.codex-broken'),
 		});
 		expect(loggerWarnMock).toHaveBeenCalledWith(
 			expect.stringContaining('Unexpected failure while sampling Codex usage snapshot'),
 			expect.any(String),
 			expect.objectContaining({
-				codexHomeKey: '/Users/test/.codex-broken',
+				codexHomeKey: canonKey('/Users/test/.codex-broken'),
 				error: 'boom',
 			})
 		);
@@ -395,7 +407,11 @@ describe('codex-usage-startup → runCodexUsageSampling', () => {
 			agentDetector: makeDetector(FAKE_AGENT) as never,
 		});
 
-		expect(getRememberedQuotaAccountKeys('codex')).toContain('/Users/test/.codex-work');
+		// `resolveCodexHomeKey` ends in `path.resolve`, so the remembered key
+		// carries a drive letter on Windows.
+		expect(getRememberedQuotaAccountKeys('codex')).toContain(
+			path.resolve('/Users/test/.codex-work')
+		);
 	});
 
 	it('samples a remembered home the discovery sweep cannot see', async () => {
@@ -420,6 +436,58 @@ describe('codex-usage-startup → runCodexUsageSampling', () => {
 
 		expect(sampleCodexUsageMock).toHaveBeenCalledWith({
 			codexHome: '/Users/test/.codex-symlinked',
+		});
+	});
+
+	it('skips SSH-remote sessions and drops the row an earlier build stored for them', async () => {
+		// The remote's CODEX_HOME is a path on that host. Reading it locally
+		// produced a "No auth.json" row beside the real local account of the
+		// same name, with zero agents attributed to it.
+		const remoteKey = resolveCodexHomeKey({ CODEX_HOME: '/config/.codex-banaco' });
+		setCodexUsageSnapshot({ ...makeSnapshot(remoteKey), authState: 'missing_auth' });
+		sampleCodexUsageMock.mockResolvedValue(makeSnapshot(path.resolve('/Users/test/.codex')));
+
+		await runCodexUsageSampling({
+			sessionsStore: makeStore({
+				sessions: [
+					{
+						id: 'codex-remote',
+						toolType: 'codex',
+						cwd: '/config/agent',
+						customEnvVars: { CODEX_HOME: '/config/.codex-banaco' },
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					},
+				],
+			}) as never,
+			agentConfigsStore: makeStore({ configs: {} }) as never,
+			agentDetector: makeDetector(FAKE_AGENT) as never,
+		});
+
+		expect(sampleCodexUsageMock).not.toHaveBeenCalledWith({ codexHome: '/config/.codex-banaco' });
+		expect(getAllCodexUsageSnapshots()).not.toHaveProperty([remoteKey]);
+		expect(getRememberedQuotaAccountKeys('codex')).not.toContain(remoteKey);
+	});
+
+	it('uses the agent-level CODEX_HOME only when the session has no env vars of its own', async () => {
+		// Session env vars REPLACE the provider-level set at spawn, so a session
+		// with its own vars never receives the provider's CODEX_HOME.
+		sampleCodexUsageMock.mockResolvedValue(makeSnapshot(path.resolve('/Users/test/.codex')));
+
+		await runCodexUsageSampling({
+			sessionsStore: makeStore({
+				sessions: [{ id: 'codex-1', toolType: 'codex', cwd: '/tmp', customEnvVars: { FOO: '1' } }],
+			}) as never,
+			agentConfigsStore: makeStore({
+				configs: { codex: { customEnvVars: { CODEX_HOME: '/Users/test/.codex-team' } } },
+			}) as never,
+			agentDetector: makeDetector(FAKE_AGENT) as never,
+		});
+
+		expect(sampleCodexUsageMock).toHaveBeenCalledWith({
+			codexHome: path.join(os.homedir(), '.codex'),
+		});
+		expect(sampleCodexUsageMock).not.toHaveBeenCalledWith({
+			codexHome: '/Users/test/.codex-team',
 		});
 	});
 });

@@ -70,6 +70,29 @@ describe('cue-queue-persistence', () => {
 		});
 	}
 
+	describe('restoring only what a previous run left behind', () => {
+		// The engine snapshots persistedIds() before sessions initialize. A row
+		// persisted after that (this boot's own app.startup queued behind a
+		// busy slot) is still live in memory, so restoring it would run it twice.
+		it('restores only the ids in the snapshot and leaves later rows alone', () => {
+			const p = makePersistence();
+			p.persist('s-1', 'from-last-run', makeEntry({ subscriptionName: 'old' }));
+			const before = p.persistedIds();
+			p.persist('s-1', 'queued-this-boot', makeEntry({ subscriptionName: 'startup' }));
+
+			const restored = p.restoreAll(before).get('s-1')!;
+			expect(restored.map((e) => e.persistId)).toEqual(['from-last-run']);
+			expect(p.persistedIds()).toEqual(new Set(['from-last-run', 'queued-this-boot']));
+		});
+
+		it('restores every row when no snapshot is given', () => {
+			const p = makePersistence();
+			p.persist('s-1', 'a', makeEntry());
+			p.persist('s-1', 'b', makeEntry());
+			expect(p.restoreAll().get('s-1')).toHaveLength(2);
+		});
+	});
+
 	describe('persist + restore round-trip', () => {
 		it('round-trips all scalar + nested fields', () => {
 			const p = makePersistence();
@@ -96,6 +119,43 @@ describe('cue-queue-persistence', () => {
 			expect(entries[0].command).toEqual({ mode: 'shell', shell: 'echo hi' });
 			expect(entries[0].chainDepth).toBe(2);
 			expect(entries[0].event.type).toBe('time.heartbeat');
+		});
+
+		it('round-trips the model choice so a restored run keeps its tier / model / effort', () => {
+			const p = makePersistence();
+			p.persist('s-1', 'pid-tier', makeEntry({ turnSettings: { tier: 'high', effort: 'low' } }));
+			p.persist('s-1', 'pid-model', makeEntry({ turnSettings: { model: 'gpt-5.5-codex' } }));
+			p.persist('s-1', 'pid-none', makeEntry());
+
+			const entries = p.restoreAll().get('s-1')!;
+			const byId = new Map(entries.map((e) => [e.persistId, e]));
+			expect(byId.get('pid-tier')!.turnSettings).toEqual({ tier: 'high', effort: 'low' });
+			expect(byId.get('pid-model')!.turnSettings).toEqual({ model: 'gpt-5.5-codex' });
+			expect(byId.get('pid-none')!.turnSettings).toBeUndefined();
+		});
+
+		it('restores a row persisted before turn_settings_json existed', () => {
+			const p = makePersistence();
+			// Pre-column row: the field is absent rather than null.
+			getSharedDb().persistQueuedEvent({
+				id: 'legacy',
+				sessionId: 's-1',
+				subscriptionName: 'sub',
+				eventJson: JSON.stringify(makeEvent()),
+				prompt: 'p',
+				outputPrompt: null,
+				cliOutputJson: null,
+				action: null,
+				commandJson: null,
+				chainDepth: 0,
+				queuedAt: NOW - 1000,
+				chainRootId: null,
+				parentEventId: null,
+			});
+
+			const entries = p.restoreAll().get('s-1')!;
+			expect(entries).toHaveLength(1);
+			expect(entries[0].turnSettings).toBeUndefined();
 		});
 
 		it('round-trips chain lineage (chainRootId + parentEventId) through the queue table', () => {

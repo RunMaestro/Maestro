@@ -9,7 +9,6 @@ import {
 	AGENT_DEFINITIONS,
 	getAgentCapabilities,
 	parseOpenCodeConfig,
-	extractModelsFromConfig,
 	getOpenCodeConfigPaths,
 	getOpenCodeCommandDirs,
 	getCodexSkillDirs,
@@ -20,6 +19,7 @@ import { capabilitySnapshots } from '../../agents/capability-snapshot';
 import type { AgentCapabilitiesSnapshotMap } from '../../../shared/agentCapabilities';
 import { probeRemoteMaestroP, ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { execFileNoThrow } from '../../utils/execFile';
+import { probeClaudeSlashCommands } from '../../agents/claude-slash-command-probe';
 import { logger } from '../../utils/logger';
 import { getWhichCommand } from '../../../shared/platformDetection';
 import {
@@ -29,20 +29,28 @@ import {
 } from '../../utils/ipcHandler';
 import { buildSshCommand, RemoteCommandOptions } from '../../utils/ssh-command-builder';
 import { stripAnsi } from '../../utils/stripAnsi';
+import { discoverAgentModels, SSH_MODEL_TIMEOUT_MS } from '../../agents/model-discovery';
 import { SshRemoteConfig } from '../../../shared/types';
+import type { AgentCapabilities } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
 import {
+	forgetSnapshots as forgetClaudeUsageSnapshots,
 	getAllSnapshots as getAllClaudeUsageSnapshots,
 	getRetainedSnapshots as getRetainedClaudeUsageSnapshots,
 	resolveConfigDirKey,
 } from '../../stores/claudeUsageStore';
+import { getLimitResetAt } from '../../agents/limitResetEstimator';
 import {
+	forgetCodexUsageSnapshots,
 	getAllCodexUsageSnapshots,
 	getRetainedCodexUsageSnapshots,
 	resolveCodexHomeKey,
 } from '../../stores/codexUsageStore';
-import { pruneMissingQuotaAccounts } from '../../stores/quotaAccountsStore';
+import {
+	dropSnapshotsForMissingAccounts,
+	pruneMissingQuotaAccounts,
+} from '../../stores/quotaAccountsStore';
 import type { UsageSnapshot } from '../../agents/claude-mode-selector';
 import type { CodexUsageSnapshot } from '../../stores/codexUsageStore';
 import {
@@ -51,6 +59,13 @@ import {
 	discoverClaudeConfigDirs,
 } from '../../agents/claude-usage-startup';
 import { runCodexUsageSampling, discoverCodexHomes } from '../../agents/codex-usage-startup';
+import {
+	consumeCodexResetCredit,
+	fetchCodexResetCredits,
+	type CodexResetCreditsReadResult,
+} from '../../agents/codex-reset-credits';
+import type { CodexResetCreditConsumeResult } from '../../../shared/codexResetCredits';
+import type { KnownAuthDirs } from '../../../shared/authPaths';
 import { rememberableEnvVarKeys, type KnownEnvVarKeys } from '../../../shared/envVarCatalog';
 
 const LOG_CONTEXT = '[AgentDetector]';
@@ -65,6 +80,64 @@ const handlerOpts = (
 	operation,
 });
 
+type AuthPathResolver = (env: NodeJS.ProcessEnv) => string;
+
+function getCustomEnvVars(value: unknown): Record<string, unknown> {
+	if (!value || typeof value !== 'object' || !('customEnvVars' in value)) {
+		return {};
+	}
+	const customEnvVars = value.customEnvVars;
+	return customEnvVars && typeof customEnvVars === 'object'
+		? (customEnvVars as Record<string, unknown>)
+		: {};
+}
+
+function isSshEnabled(value: unknown): boolean {
+	if (value === true || value === 1) return true;
+	return typeof value === 'string' && (value === '1' || value.toLowerCase() === 'true');
+}
+
+function isLocalSession(session: Record<string, unknown>): boolean {
+	if (typeof session.sshRemoteId === 'string' && session.sshRemoteId.length > 0) {
+		return false;
+	}
+	const sshRemoteConfig = session.sessionSshRemoteConfig;
+	if (
+		sshRemoteConfig &&
+		typeof sshRemoteConfig === 'object' &&
+		'enabled' in sshRemoteConfig &&
+		isSshEnabled(sshRemoteConfig.enabled)
+	) {
+		return false;
+	}
+	return typeof session.cwd !== 'string' || !session.cwd.includes('://');
+}
+
+function collectKnownAuthPaths(
+	agentEnvVars: Record<string, unknown>,
+	sessions: Array<Record<string, unknown>>,
+	toolType: string,
+	envVarName: 'CLAUDE_CONFIG_DIR' | 'CODEX_HOME',
+	resolveKey: AuthPathResolver
+): string[] {
+	const pathsByKey = new Map<string, string>();
+	const addPath = (envVars: Record<string, unknown>) => {
+		const value = envVars[envVarName];
+		if (typeof value !== 'string' || value.length === 0) return;
+		const canonicalPath = resolveKey({ [envVarName]: value });
+		if (!pathsByKey.has(canonicalPath)) {
+			pathsByKey.set(canonicalPath, canonicalPath);
+		}
+	};
+
+	addPath(agentEnvVars);
+	for (const session of sessions) {
+		if (session.toolType !== toolType || !isLocalSession(session)) continue;
+		addPath({ ...agentEnvVars, ...getCustomEnvVars(session) });
+	}
+
+	return Array.from(pathsByKey.values()).sort((a, b) => a.localeCompare(b));
+}
 /** One env-var record off a config or session, active or parked. */
 function envVarRecord(value: unknown, field: string): Record<string, unknown> {
 	if (!value || typeof value !== 'object' || !(field in value)) return {};
@@ -419,11 +492,17 @@ function getSshRemoteById(
 	return config;
 }
 
+/** Drop every function-valued property so the object survives structured clone. */
+function withoutFunctionProps(obj: any) {
+	return Object.fromEntries(Object.entries(obj).filter(([, value]) => typeof value !== 'function'));
+}
+
 /**
  * Helper to strip non-serializable functions from agent configs.
- * Agent configs can have function properties that cannot be sent over IPC:
- * - argBuilder in configOptions
- * - resumeArgs, modelArgs, workingDirArgs, imageArgs, imagePromptBuilder, promptArgs on the agent config
+ * Agent definitions carry arg builders (resumeArgs, modelArgs, additionalDirArgs,
+ * argBuilder in configOptions, ...) that cannot be sent over IPC - a single one left
+ * behind makes the whole detect response fail to clone, so this drops them by type
+ * rather than by name.
  *
  * Also attaches the current capability snapshot (if any) for the requested
  * environment so renderer code can render status pills directly from the
@@ -432,25 +511,11 @@ function getSshRemoteById(
 function stripAgentFunctions(agent: any, sshRemoteId?: string) {
 	if (!agent) return null;
 
-	// Destructure to remove function properties from agent config
-	const {
-		resumeArgs: _resumeArgs,
-		modelArgs: _modelArgs,
-		workingDirArgs: _workingDirArgs,
-		imageArgs: _imageArgs,
-		imagePromptBuilder: _imagePromptBuilder,
-		promptArgs: _promptArgs,
-		...serializableAgent
-	} = agent;
-
 	const snapshot = agent.id ? capabilitySnapshots.get(agent.id, sshRemoteId) : undefined;
 
 	return {
-		...serializableAgent,
-		configOptions: agent.configOptions?.map((opt: any) => {
-			const { argBuilder: _argBuilder, ...serializableOpt } = opt;
-			return serializableOpt;
-		}),
+		...withoutFunctionProps(agent),
+		configOptions: agent.configOptions?.map(withoutFunctionProps),
 		...(snapshot ? { snapshot } : {}),
 	};
 }
@@ -589,218 +654,6 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 	}
 
 	return agents;
-}
-
-// Remote model discovery cache
-const remoteModelCache = new Map<string, { models: string[]; timestamp: number }>();
-const REMOTE_MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
-const SSH_MODEL_TIMEOUT_MS = 10000;
-
-/**
- * Read OpenCode config files from a remote SSH host and extract model IDs.
- *
- * Probes the same config paths OpenCode uses on POSIX systems:
- *   ~/.opencode/opencode.json, ~/.opencode.json, ~/.config/opencode/opencode.json
- *
- * Uses a single SSH command with a shell script that cats each file, avoiding
- * multiple round-trips. Returns unique model IDs in provider/model format.
- */
-async function discoverModelsFromRemoteConfigs(sshRemote: SshRemoteConfig): Promise<string[]> {
-	// Shell script that probes each config path and prints its content with delimiters.
-	// We use a delimiter so we can split multiple config files from a single stdout.
-	const configPaths = [
-		'~/.opencode/opencode.json',
-		'~/.opencode.json',
-		'${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json',
-	];
-
-	// Build a script that cats each config file if it exists
-	const catScript = configPaths
-		.map(
-			(p) =>
-				`if [ -f ${p} ]; then echo "___OPENCODE_CONFIG_START___"; cat ${p}; echo "___OPENCODE_CONFIG_END___"; fi`
-		)
-		.join('; ');
-
-	const remoteOptions: RemoteCommandOptions = {
-		command: 'sh',
-		args: ['-c', catScript],
-		env: sshRemote.remoteEnv,
-	};
-
-	try {
-		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
-		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
-		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
-			(_, reject) => {
-				setTimeout(() => reject(new Error('SSH config read timed out')), SSH_MODEL_TIMEOUT_MS);
-			}
-		);
-
-		const result = await Promise.race([resultPromise, timeoutPromise]);
-
-		if (result.exitCode !== 0 || !result.stdout.includes('___OPENCODE_CONFIG_START___')) {
-			return [];
-		}
-
-		// Parse delimited config blocks from stdout
-		const seen = new Set<string>();
-		const models: string[] = [];
-		const blocks = result.stdout.split('___OPENCODE_CONFIG_START___').slice(1);
-
-		for (const block of blocks) {
-			const endIdx = block.indexOf('___OPENCODE_CONFIG_END___');
-			const jsonStr = endIdx >= 0 ? block.slice(0, endIdx).trim() : block.trim();
-			if (!jsonStr) continue;
-
-			const config = parseOpenCodeConfig(jsonStr);
-			if (!config) continue;
-
-			for (const modelId of extractModelsFromConfig(config)) {
-				if (!seen.has(modelId)) {
-					seen.add(modelId);
-					models.push(modelId);
-				}
-			}
-		}
-
-		if (models.length > 0) {
-			logger.info(
-				`Extracted ${models.length} models from remote OpenCode configs on ${sshRemote.host}`,
-				LOG_CONTEXT,
-				{ models }
-			);
-		}
-
-		return models;
-	} catch (error) {
-		if (error instanceof Error && error.message.includes('timed out')) {
-			logger.warn(`Timed out reading remote OpenCode configs on ${sshRemote.host}`, LOG_CONTEXT);
-			return [];
-		}
-		// Non-fatal: config reading failure shouldn't block CLI-based discovery
-		logger.warn(`Failed to read remote OpenCode configs on ${sshRemote.host}`, LOG_CONTEXT, {
-			error,
-		});
-		return [];
-	}
-}
-
-/**
- * Discover available models for an agent on a remote SSH host.
- * Uses the agent's `models` subcommand over SSH, supplemented by models
- * from remote opencode.json config files for OpenCode agents.
- * Returns an empty array on timeout, non-zero exit, or unknown agent.
- * Throws on unexpected errors (e.g., SSH config issues, parsing bugs).
- */
-async function discoverModelsRemote(
-	agentId: string,
-	sshRemote: SshRemoteConfig,
-	forceRefresh: boolean
-): Promise<string[]> {
-	const cacheKey = `${agentId}:${sshRemote.id}`;
-
-	// Check cache unless force refresh
-	if (!forceRefresh) {
-		const cached = remoteModelCache.get(cacheKey);
-		if (cached && Date.now() - cached.timestamp < REMOTE_MODEL_CACHE_TTL_MS) {
-			logger.info(`Using cached remote models for ${agentId} on ${sshRemote.host}`, LOG_CONTEXT);
-			return cached.models;
-		}
-	}
-
-	// Look up the agent's binary name
-	const agentDef = AGENT_DEFINITIONS.find((a) => a.id === agentId);
-	if (!agentDef) {
-		logger.warn(`Unknown agent for remote model discovery: ${agentId}`, LOG_CONTEXT);
-		return [];
-	}
-
-	const remoteOptions: RemoteCommandOptions = {
-		command: agentDef.binaryName,
-		args: ['models'],
-		env: sshRemote.remoteEnv,
-	};
-
-	try {
-		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
-		logger.info(
-			`Discovering models for "${agentDef.name}" on remote ${sshRemote.host}`,
-			LOG_CONTEXT
-		);
-
-		// Execute with timeout matching detectAgentsRemote pattern
-		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
-		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
-			(_, reject) => {
-				setTimeout(
-					() =>
-						reject(
-							new Error(`SSH model discovery timed out after ${SSH_MODEL_TIMEOUT_MS / 1000}s`)
-						),
-					SSH_MODEL_TIMEOUT_MS
-				);
-			}
-		);
-
-		const result = await Promise.race([resultPromise, timeoutPromise]);
-
-		if (result.exitCode !== 0) {
-			logger.warn(
-				`Remote model discovery for "${agentDef.name}" exited with code ${result.exitCode}`,
-				LOG_CONTEXT,
-				{ stderr: result.stderr }
-			);
-			return [];
-		}
-
-		const seen = new Set<string>();
-		const models: string[] = [];
-
-		// Source 1: CLI-discovered models
-		const cliModels = stripAnsi(result.stdout)
-			.split('\n')
-			.map((l) => l.trim())
-			.filter((l) => l.length > 0);
-		for (const m of cliModels) {
-			if (!seen.has(m)) {
-				seen.add(m);
-				models.push(m);
-			}
-		}
-
-		// Source 2: Remote opencode.json config files (OpenCode only)
-		if (agentId === 'opencode') {
-			const configModels = await discoverModelsFromRemoteConfigs(sshRemote);
-			for (const m of configModels) {
-				if (!seen.has(m)) {
-					seen.add(m);
-					models.push(m);
-				}
-			}
-		}
-
-		logger.info(
-			`Discovered ${models.length} models for "${agentDef.name}" on remote ${sshRemote.host}`,
-			LOG_CONTEXT
-		);
-
-		// Cache the result
-		remoteModelCache.set(cacheKey, { models, timestamp: Date.now() });
-
-		return models;
-	} catch (error) {
-		// Timeout is an expected SSH failure - return empty gracefully
-		if (error instanceof Error && error.message.includes('SSH model discovery timed out')) {
-			logger.warn(
-				`Timed out discovering models for "${agentDef.name}" on ${sshRemote.host}`,
-				LOG_CONTEXT
-			);
-			return [];
-		}
-		// Unexpected errors should propagate to withIpcErrorLogging / Sentry
-		throw error;
-	}
 }
 
 /**
@@ -1215,6 +1068,26 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		})
 	);
 
+	// Get capabilities for EVERY known agent type in one round trip.
+	// The renderer capability cache is otherwise only populated for the agent
+	// types the user has actually opened, which makes "never looked it up"
+	// indistinguishable from "unsupported" for background work such as CLI
+	// dispatch. The lookup is a synchronous static map, so this is cheap.
+	ipcMain.handle(
+		'agents:getAllCapabilities',
+		withIpcErrorLogging(
+			handlerOpts('getAllCapabilities'),
+			async (): Promise<Record<string, AgentCapabilities>> => {
+				const all: Record<string, AgentCapabilities> = {};
+				for (const agentDef of AGENT_DEFINITIONS) {
+					all[agentDef.id] = getAgentCapabilities(agentDef.id);
+				}
+				logger.debug(`Getting capabilities for all ${Object.keys(all).length} agents`, LOG_CONTEXT);
+				return all;
+			}
+		)
+	);
+
 	// Get all configuration for an agent
 	// Merges stored config with defaults from agent's configOptions
 	ipcMain.handle(
@@ -1470,6 +1343,36 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		})
 	);
 
+	// Return only account paths explicitly configured on local sessions or
+	// agent settings. This deliberately does not inspect the filesystem: stale
+	// config directories can trigger provider OAuth flows when sampled.
+	ipcMain.handle(
+		'agents:getKnownAuthDirs',
+		withIpcErrorLogging(
+			handlerOpts('getKnownAuthDirs', CONFIG_LOG_CONTEXT),
+			async (): Promise<KnownAuthDirs> => {
+				const allConfigs = agentConfigsStore.get('configs', {});
+				const sessions = sessionsStore?.get('sessions', []) ?? [];
+				return {
+					claudeConfigDirs: collectKnownAuthPaths(
+						getCustomEnvVars(allConfigs['claude-code']),
+						sessions,
+						'claude-code',
+						'CLAUDE_CONFIG_DIR',
+						resolveConfigDirKey
+					),
+					codexHomes: collectKnownAuthPaths(
+						getCustomEnvVars(allConfigs.codex),
+						sessions,
+						'codex',
+						'CODEX_HOME',
+						resolveCodexHomeKey
+					),
+				};
+			}
+		)
+	);
+
 	// Names the user has already set, so the env-var editors can offer them back
 	// instead of asking everyone to retype a variable they configured once. Only
 	// names travel; values stay where they were set, because a remembered value
@@ -1536,24 +1439,14 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('getModels'),
 			async (agentId: string, forceRefresh?: boolean, sshRemoteId?: string) => {
-				logger.info(`Discovering models for agent: ${agentId}`, LOG_CONTEXT, {
-					forceRefresh,
-					sshRemoteId,
-				});
-
-				// If SSH remote ID provided, discover models on remote host
-				if (sshRemoteId) {
-					const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
-					if (!sshConfig) {
-						throw new Error(`SSH remote not found: ${sshRemoteId}`);
-					}
-					return discoverModelsRemote(agentId, sshConfig, forceRefresh ?? false);
-				}
-
-				// Local discovery
-				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
-				const models = await agentDetector.discoverModels(agentId, forceRefresh ?? false);
-				return models;
+				// A forced discovery also broadcasts the list to every open picker.
+				return discoverAgentModels(
+					{
+						getAgentDetector: () => requireDependency(getAgentDetector, 'Agent detector'),
+						getSshRemote: (id) => getSshRemoteById(settingsStore, id),
+					},
+					{ agentId, forceRefresh: forceRefresh ?? false, sshRemoteId }
+				);
 			}
 		)
 	);
@@ -1642,75 +1535,31 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						return null;
 					}
 
-					// Spawn Claude with /help which immediately exits and costs no tokens
-					// The init message contains all available slash commands
-					const args = [
-						'--print',
-						'--verbose',
-						'--output-format',
-						'stream-json',
-						'--dangerously-skip-permissions',
-						'--',
-						'/help',
-					];
-
-					logger.debug(
-						`Spawning for slash command discovery: ${commandPath} ${args.join(' ')}`,
-						LOG_CONTEXT
-					);
-
-					const result = await execFileNoThrow(commandPath, args, cwd);
-
-					if (result.exitCode !== 0 && !result.stdout) {
+					// The init message of a `/help` probe names every command; see
+					// claude-slash-command-probe.ts.
+					const names = await probeClaudeSlashCommands(commandPath, cwd);
+					if (!names) return null;
+					logger.info(`Discovered ${names.length} slash commands for ${agentId}`, LOG_CONTEXT);
+					// Description enrichment is best-effort: a permission/IO
+					// error on the skills dir shouldn't lose the user's
+					// entire slash-command list. Capture the exception for
+					// Sentry and fall back to names-only.
+					let skillDescriptions = new Map<string, string>();
+					try {
+						skillDescriptions = await readClaudeSkillDescriptions(cwd);
+					} catch (err) {
+						void captureException(err);
 						logger.warn(
-							`Slash command discovery failed with exit code ${result.exitCode}`,
+							`Skill description enrichment failed; returning slash commands without descriptions`,
 							LOG_CONTEXT,
-							{
-								stderr: result.stderr?.substring(0, 500),
-							}
+							{ error: String(err) }
 						);
-						return null;
 					}
-
-					// Parse the first JSON line to get the init message
-					const lines = result.stdout.split('\n');
-					for (const line of lines) {
-						if (!line.trim()) continue;
-						try {
-							const msg = JSON.parse(line);
-							if (msg.type === 'system' && msg.subtype === 'init' && msg.slash_commands) {
-								logger.info(
-									`Discovered ${msg.slash_commands.length} slash commands for ${agentId}`,
-									LOG_CONTEXT
-								);
-								// Description enrichment is best-effort: a permission/IO
-								// error on the skills dir shouldn't lose the user's
-								// entire slash-command list. Capture the exception for
-								// Sentry and fall back to names-only.
-								let skillDescriptions = new Map<string, string>();
-								try {
-									skillDescriptions = await readClaudeSkillDescriptions(cwd);
-								} catch (err) {
-									void captureException(err);
-									logger.warn(
-										`Skill description enrichment failed; returning slash commands without descriptions`,
-										LOG_CONTEXT,
-										{ error: String(err) }
-									);
-								}
-								return (msg.slash_commands as string[]).map((name: string) => {
-									const lookupKey = name.startsWith('/') ? name.slice(1) : name;
-									const description = skillDescriptions.get(lookupKey);
-									return description ? { name, description } : { name };
-								});
-							}
-						} catch {
-							// Not valid JSON, skip
-						}
-					}
-
-					logger.warn(`No init message found in slash command discovery output`, LOG_CONTEXT);
-					return null;
+					return names.map((name: string) => {
+						const lookupKey = name.startsWith('/') ? name.slice(1) : name;
+						const description = skillDescriptions.get(lookupKey);
+						return description ? { name, description } : { name };
+					});
 				} catch (error) {
 					void captureException(error);
 					logger.error(`Error discovering slash commands for ${agentId}`, LOG_CONTEXT, {
@@ -1840,13 +1689,18 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	// (mode selector, spawner) read the live map instead. The renderer's
 	// claudeUsageStore lazily fetches via this handler on first read and re-fetches
 	// whenever `process:claude-mode-resolved` arrives (the only signal that
-	// `sampleUsage()` may have refreshed the on-disk map).
+	// `sampleUsage()` may have refreshed the on-disk map). A snapshot whose
+	// config dir was deleted is forgotten here, or its row would outlive the
+	// account by the whole retention period.
 	ipcMain.handle(
 		'agents:getClaudeUsageSnapshots',
 		withIpcErrorLogging(
 			handlerOpts('getClaudeUsageSnapshots'),
 			async (): Promise<Record<string, UsageSnapshot>> => {
-				return getRetainedClaudeUsageSnapshots();
+				return dropSnapshotsForMissingAccounts(
+					getRetainedClaudeUsageSnapshots(),
+					forgetClaudeUsageSnapshots
+				);
 			}
 		)
 	);
@@ -1870,6 +1724,20 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		})
 	);
 
+	// Best-effort estimate of when a paused agent's provider limit window reopens,
+	// used by auto-resume (Phase 3) to schedule its next probe. Claude reads its
+	// cached usage snapshot; other providers return undefined (fixed-interval
+	// fallback). Never throws - the renderer treats the result as advisory.
+	ipcMain.handle(
+		'agents:getLimitResetAt',
+		withIpcErrorLogging(
+			handlerOpts('getLimitResetAt'),
+			async (agentId: string, claudeConfigDir?: string): Promise<number | undefined> => {
+				return getLimitResetAt(agentId, claudeConfigDir);
+			}
+		)
+	);
+
 	// On-demand re-sampler. Delegates to the same `runStartupUsageSampling()`
 	// the boot path calls, so the dashboard / settings refresh button takes the
 	// exact same code path that populated the store on launch. Returns a count
@@ -1888,7 +1756,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				const agentDetector = getAgentDetector();
 				if (!agentDetector || !sessionsStore || !settingsStore) {
 					logger.warn(
-						'Skipping claude:usage:refresh-all — agents handler missing required deps',
+						'Skipping claude:usage:refresh-all - agents handler missing required deps',
 						LOG_CONTEXT,
 						{
 							hasDetector: !!agentDetector,
@@ -1916,14 +1784,65 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 	// Snapshot mirror for the renderer: returns every RETAINED Codex quota usage
 	// snapshot keyed by canonical CODEX_HOME (expired included, same reasoning as
-	// the Claude mirror above). The auth-sensitive auth.json read and ChatGPT
+	// the Claude mirror above, deleted homes forgotten the same way). The auth-sensitive auth.json read and ChatGPT
 	// metadata request stay in the main process.
 	ipcMain.handle(
 		'agents:getCodexUsageSnapshots',
 		withIpcErrorLogging(
 			handlerOpts('getCodexUsageSnapshots'),
 			async (): Promise<Record<string, CodexUsageSnapshot>> => {
-				return getRetainedCodexUsageSnapshots();
+				return dropSnapshotsForMissingAccounts(
+					getRetainedCodexUsageSnapshots(),
+					forgetCodexUsageSnapshots
+				);
+			}
+		)
+	);
+
+	// READ primitive for Codex reset credits: the full per-credit list (ids,
+	// titles, expiry) for one account. The count alone rides the usage snapshot,
+	// so this is only called when a surface actually renders the list.
+	ipcMain.handle(
+		'agents:getCodexResetCredits',
+		withIpcErrorLogging(
+			handlerOpts('getCodexResetCredits'),
+			async (codexHome: string): Promise<CodexResetCreditsReadResult> => {
+				return fetchCodexResetCredits({ codexHome });
+			}
+		)
+	);
+
+	// WRITE primitive: redeem one credit. Irreversible and finite, so it is only
+	// ever reached from an explicit user click or an explicitly enabled
+	// per-agent automation - never from a refresh, sweep, or retry default.
+	// Re-samples afterwards so the bars the user is looking at reflect the reset
+	// they just paid for rather than the pre-reset numbers.
+	ipcMain.handle(
+		'agents:consumeCodexResetCredit',
+		withIpcErrorLogging(
+			handlerOpts('consumeCodexResetCredit'),
+			async (
+				codexHome: string,
+				creditId: string,
+				idempotencyKey?: string
+			): Promise<CodexResetCreditConsumeResult> => {
+				const result = await consumeCodexResetCredit({ codexHome, creditId, idempotencyKey });
+				if (result.ok) {
+					const agentDetector = getAgentDetector();
+					if (agentDetector && sessionsStore) {
+						// Best-effort: a stale bar after a successful reset is confusing but
+						// not a failed redemption, so never let this turn a good spend into
+						// a reported error.
+						await runCodexUsageSampling({
+							sessionsStore,
+							agentConfigsStore,
+							agentDetector,
+						}).catch((error) => {
+							logger.warn('Post-reset Codex usage re-sample failed', LOG_CONTEXT, { error });
+						});
+					}
+				}
+				return result;
 			}
 		)
 	);
@@ -1952,7 +1871,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				const agentDetector = getAgentDetector();
 				if (!agentDetector || !sessionsStore) {
 					logger.warn(
-						'Skipping codex:usage:refresh-all — agents handler missing required deps',
+						'Skipping codex:usage:refresh-all - agents handler missing required deps',
 						LOG_CONTEXT,
 						{
 							hasDetector: !!agentDetector,

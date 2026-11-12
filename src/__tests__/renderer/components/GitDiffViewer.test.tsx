@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { GitDiffViewer } from '../../../renderer/components/GitDiffViewer';
+import { createMockSession } from '../../helpers/mockSession';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { ParsedFileDiff } from '../../../renderer/utils/gitDiffParser';
 
 import { mockTheme } from '../../helpers/mockTheme';
@@ -158,6 +160,39 @@ describe('GitDiffViewer', () => {
 		vi.clearAllMocks();
 	});
 
+	// Same reasoning as GitLogViewer: the cwd pill does not identify the agent.
+	describe('agent name in the header', () => {
+		it('names the agent whose diff is shown', () => {
+			mockParseGitDiff.mockReturnValue([]);
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'session-1', name: 'Sonoma-Fix' })],
+			} as never);
+
+			render(
+				<GitDiffViewer
+					diffText=""
+					cwd="/test/project"
+					theme={mockTheme}
+					onClose={vi.fn()}
+					sessionId="session-1"
+				/>
+			);
+
+			expect(screen.getByTestId('modal-subtitle')).toHaveTextContent('Sonoma-Fix');
+			// The heading stays the bare action.
+			expect(screen.getByText('Git Diff')).toBeInTheDocument();
+		});
+
+		it('renders no name when opened without a target agent', () => {
+			mockParseGitDiff.mockReturnValue([]);
+			useSessionStore.setState({ sessions: [] } as never);
+
+			render(<GitDiffViewer diffText="" cwd="/test/project" theme={mockTheme} onClose={vi.fn()} />);
+
+			expect(screen.queryByTestId('modal-subtitle')).not.toBeInTheDocument();
+		});
+	});
+
 	describe('Initial render', () => {
 		it('renders empty state when parseGitDiff returns empty array', () => {
 			const onClose = vi.fn();
@@ -167,7 +202,9 @@ describe('GitDiffViewer', () => {
 
 			expect(screen.getByText('No changes to display')).toBeInTheDocument();
 			expect(screen.getByText('Git Diff')).toBeInTheDocument();
-			expect(screen.getByText('Close (Esc)')).toBeInTheDocument();
+			// Close button renders as either "Close (Esc)" (md+) or "×" (narrow);
+			// accessible name from aria-label catches both.
+			expect(screen.getByRole('button', { name: /close diff viewer/i })).toBeInTheDocument();
 		});
 
 		it('renders with dialog role and aria attributes', () => {
@@ -273,15 +310,18 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			expect(mockRegisterLayer).toHaveBeenCalledWith({
-				type: 'modal',
-				priority: expect.any(Number),
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'lenient',
-				ariaLabel: 'Git Diff Preview',
-				onEscape: expect.any(Function),
-			});
+			expect(mockRegisterLayer).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'modal',
+					priority: expect.any(Number),
+					blocksLowerLayers: true,
+					capturesFocus: true,
+					blocksAppShortcuts: true,
+					focusTrap: 'lenient',
+					ariaLabel: 'Git Diff Preview',
+					onEscape: expect.any(Function),
+				})
+			);
 		});
 
 		it('unregisters layer on unmount', () => {
@@ -352,7 +392,7 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			fireEvent.click(screen.getByRole('button', { name: 'Close (Esc)' }));
+			fireEvent.click(screen.getByRole('button', { name: /close diff viewer/i }));
 			expect(onClose).toHaveBeenCalled();
 		});
 
@@ -398,7 +438,7 @@ describe('GitDiffViewer', () => {
 
 			render(<GitDiffViewer diffText="" cwd="/test/project" theme={mockTheme} onClose={onClose} />);
 
-			fireEvent.click(screen.getByRole('button', { name: 'Close (Esc)' }));
+			fireEvent.click(screen.getByRole('button', { name: /close diff viewer/i }));
 			expect(onClose).toHaveBeenCalled();
 		});
 	});
@@ -1188,17 +1228,12 @@ describe('GitDiffViewer', () => {
 	});
 
 	describe('Tab scroll behavior', () => {
-		it('scrolls to active tab when changed', async () => {
+		it('marks the active file tab for the strip to reveal', () => {
 			const onClose = vi.fn();
-			const scrollIntoViewMock = vi.fn();
 			mockParseGitDiff.mockReturnValue([
 				createMockParsedFile({ oldPath: 'src/file1.ts', newPath: 'src/file1.ts' }),
 				createMockParsedFile({ oldPath: 'src/file2.ts', newPath: 'src/file2.ts' }),
 			]);
-
-			// Mock scrollIntoView on button elements
-			const originalScrollIntoView = Element.prototype.scrollIntoView;
-			Element.prototype.scrollIntoView = scrollIntoViewMock;
 
 			render(
 				<GitDiffViewer
@@ -1209,14 +1244,15 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			// Change tab
-			fireEvent.click(screen.getByText('file2.ts'));
+			// Exactly one tab carries the marker, and it follows the selection.
+			const activeTabs = () => document.querySelectorAll('[data-reveal-active="true"]');
+			expect(activeTabs()).toHaveLength(1);
+			expect(activeTabs()[0]).toHaveTextContent('file1.ts');
 
-			await waitFor(() => {
-				expect(scrollIntoViewMock).toHaveBeenCalled();
-			});
+			fireEvent.click(screen.getAllByText('file2.ts')[0]);
 
-			Element.prototype.scrollIntoView = originalScrollIntoView;
+			expect(activeTabs()).toHaveLength(1);
+			expect(activeTabs()[0]).toHaveTextContent('file2.ts');
 		});
 	});
 
@@ -1353,7 +1389,7 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			const closeButton = screen.getByText('Close (Esc)');
+			const closeButton = screen.getByRole('button', { name: /close diff viewer/i });
 			expect(closeButton.tagName).toBe('BUTTON');
 		});
 
@@ -1640,7 +1676,7 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			const closeButton = screen.getByRole('button', { name: 'Close (Esc)' });
+			const closeButton = screen.getByRole('button', { name: /close diff viewer/i });
 
 			act(() => {
 				closeButton.focus();

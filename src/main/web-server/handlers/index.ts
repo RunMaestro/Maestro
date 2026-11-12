@@ -4,8 +4,8 @@
  * Re-exports all handler modules for the web server.
  */
 
-export {
-	WebSocketMessageHandler,
+export { WebSocketMessageHandler } from './messageHandlers';
+export type {
 	WebClientMessage,
 	WebClient,
 	SessionDetailForHandler,

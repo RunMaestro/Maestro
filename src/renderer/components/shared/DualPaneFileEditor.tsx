@@ -24,6 +24,7 @@ import type { Theme } from '../../constants/themes';
 import { getOpenInLabel } from '../../utils/platformUtils';
 import { formatTokensCompact } from '../../../shared/formatters';
 import { highlightMatches } from '../../utils/highlightMatches';
+import { safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
 import './DualPaneFileEditor.css';
 
 export interface DualPaneFileEditorItem {
@@ -62,8 +63,12 @@ export interface DualPaneFileEditorProps {
 	/** Select handler - consumer should guard unsaved changes before accepting. */
 	onSelect: (id: string) => void;
 
-	/** Display name lookup by category key. If omitted the list renders flat. */
-	categories?: Record<string, { label: string }>;
+	/**
+	 * Display name lookup by category key. If omitted the list renders flat.
+	 * Groups sort by `order` (lowest first) and then by label; a group without
+	 * an `order` sorts after every group that has one.
+	 */
+	categories?: Record<string, { label: string; order?: number }>;
 
 	/** Optional collapsed-categories state (Set of category keys). */
 	collapsedCategories?: Set<string>;
@@ -94,6 +99,16 @@ export interface DualPaneFileEditorProps {
 
 	/** Whether to show a "Modified" badge below the title. */
 	showModifiedBadge?: boolean;
+
+	/**
+	 * Makes the "Modified" badge a button (e.g. to show what was modified).
+	 * Without it the badge is a plain label, since a badge that looks pressable
+	 * and does nothing reads as broken.
+	 */
+	onModifiedBadgeClick?: () => void;
+
+	/** Tooltip for the clickable "Modified" badge. */
+	modifiedBadgeTitle?: string;
 
 	/**
 	 * Whether to show a "Default Updated" badge below the title (alongside the
@@ -180,8 +195,8 @@ const MIN_LIST_WIDTH = 120;
 const MAX_LIST_WIDTH = 600;
 
 function readStoredWidth(key: string | undefined): number {
-	if (!key || typeof window === 'undefined') return DEFAULT_LIST_WIDTH;
-	const raw = window.localStorage.getItem(key);
+	if (!key) return DEFAULT_LIST_WIDTH;
+	const raw = safeStorageGet(key);
 	if (!raw) return DEFAULT_LIST_WIDTH;
 	const parsed = Number.parseInt(raw, 10);
 	if (!Number.isFinite(parsed)) return DEFAULT_LIST_WIDTH;
@@ -204,6 +219,8 @@ export function DualPaneFileEditor({
 	editorTokenCount,
 	editorHeaderActions,
 	showModifiedBadge,
+	onModifiedBadgeClick,
+	modifiedBadgeTitle,
 	showDefaultDriftedBadge,
 	primaryAction,
 	secondaryAction,
@@ -229,8 +246,8 @@ export function DualPaneFileEditor({
 
 	// Persist width whenever it settles.
 	useEffect(() => {
-		if (!listWidthStorageKey || typeof window === 'undefined' || isResizing) return;
-		window.localStorage.setItem(listWidthStorageKey, String(listWidth));
+		if (!listWidthStorageKey || isResizing) return;
+		safeStorageSet(listWidthStorageKey, String(listWidth));
 	}, [listWidth, listWidthStorageKey, isResizing]);
 
 	const handleResizeStart = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -284,6 +301,9 @@ export function DualPaneFileEditor({
 			groups[cat].push(item);
 		}
 		return Object.entries(groups).sort(([a], [b]) => {
+			const orderA = categories[a]?.order ?? Number.POSITIVE_INFINITY;
+			const orderB = categories[b]?.order ?? Number.POSITIVE_INFINITY;
+			if (orderA !== orderB) return orderA < orderB ? -1 : 1;
 			const labelA = categories[a]?.label ?? a;
 			const labelB = categories[b]?.label ?? b;
 			return labelA.localeCompare(labelB);
@@ -525,14 +545,26 @@ export function DualPaneFileEditor({
 									</div>
 									{!isExpanded && (showModifiedBadge || showDefaultDriftedBadge) && (
 										<div className="dual-pane-badge-row">
-											{showModifiedBadge && (
-												<span
-													className="dual-pane-modified-badge"
-													style={{ backgroundColor: theme.colors.accent }}
-												>
-													Modified
-												</span>
-											)}
+											{showModifiedBadge &&
+												(onModifiedBadgeClick ? (
+													<button
+														type="button"
+														className="dual-pane-modified-badge dual-pane-modified-badge-button"
+														style={{ backgroundColor: theme.colors.accent }}
+														onClick={onModifiedBadgeClick}
+														title={modifiedBadgeTitle}
+														data-testid="dual-pane-modified-badge"
+													>
+														Modified
+													</button>
+												) : (
+													<span
+														className="dual-pane-modified-badge"
+														style={{ backgroundColor: theme.colors.accent }}
+													>
+														Modified
+													</span>
+												))}
 											{showDefaultDriftedBadge && (
 												<span
 													className="dual-pane-modified-badge"

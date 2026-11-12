@@ -507,6 +507,75 @@ describe('useAutoRunDocumentLoader', () => {
 
 			expect(useBatchStore.getState().documentTree).toEqual([]);
 		});
+
+		it('still loads the list when the selected file changes while the list is loading', async () => {
+			// Switching to an agent mid-run: auto-follow selects the active document
+			// while the first list load is still in flight, which cancels that load.
+			// The next pass must reload the list rather than fetch only the file.
+			let resolveFirstList: (v: any) => void;
+			mockListDocs
+				.mockReturnValueOnce(
+					new Promise((res) => {
+						resolveFirstList = res;
+					})
+				)
+				.mockResolvedValue({ success: true, files: ['doc-a', 'doc-b'], tree: [] });
+
+			const session = createMockSession({
+				id: 'session-1',
+				autoRunFolderPath: '/docs',
+				autoRunSelectedFile: 'doc-a',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			renderHook(() => useAutoRunDocumentLoader());
+			await waitFor(() => expect(mockListDocs).toHaveBeenCalledTimes(1));
+
+			act(() => {
+				useSessionStore.setState({
+					sessions: [{ ...session, autoRunSelectedFile: 'doc-b' }],
+				});
+			});
+
+			await act(async () => {
+				resolveFirstList!({ success: true, files: ['doc-a', 'doc-b'], tree: [] });
+			});
+
+			await waitFor(() => {
+				expect(useBatchStore.getState().documentList).toEqual(['doc-a', 'doc-b']);
+			});
+			expect(mockListDocs).toHaveBeenCalledTimes(2);
+			expect(useBatchStore.getState().isLoadingDocuments).toBe(false);
+		});
+
+		it('fetches only the file when the selection changes after the list has loaded', async () => {
+			mockListDocs.mockResolvedValue({ success: true, files: ['doc-a', 'doc-b'], tree: [] });
+
+			const session = createMockSession({
+				id: 'session-1',
+				autoRunFolderPath: '/docs',
+				autoRunSelectedFile: 'doc-a',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			renderHook(() => useAutoRunDocumentLoader());
+			await waitFor(() => {
+				expect(useBatchStore.getState().documentList).toEqual(['doc-a', 'doc-b']);
+			});
+
+			const readsBefore = mockReadDoc.mock.calls.length;
+			act(() => {
+				useSessionStore.setState({
+					sessions: [{ ...useSessionStore.getState().sessions[0], autoRunSelectedFile: 'doc-b' }],
+				});
+			});
+
+			await waitFor(() => {
+				expect(mockReadDoc.mock.calls.length).toBe(readsBefore + 1);
+			});
+			expect(mockReadDoc.mock.calls[readsBefore]).toEqual(['/docs', 'doc-b.md', undefined]);
+			expect(mockListDocs).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	// ========================================================================

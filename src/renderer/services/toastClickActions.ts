@@ -17,7 +17,7 @@
 import type { ToastClickAction } from '../../shared/toastClickAction';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
-import { notifyToast } from '../stores/notificationStore';
+import { notifyToast, type Toast } from '../stores/notificationStore';
 import { resolveTerminalTab } from '../utils/terminalTabHelpers';
 import { browserTabFocusFields, terminalTabFocusFields } from '../utils/tabFocusFields';
 import { openUrl } from '../utils/openUrl';
@@ -29,7 +29,7 @@ export interface ToastClickActionHandlers {
 	 * `jump-session` kind so the jump keeps whatever extra behavior App attaches
 	 * to it. Omitted in contexts that have no such callback (tests, headless).
 	 */
-	onSessionClick?: (sessionId: string, tabId?: string) => void;
+	onSessionClick?: (sessionId: string, tabId?: string) => boolean | void;
 }
 
 /**
@@ -58,17 +58,35 @@ function reportMiss(title: string, message: string): void {
  * was closed, the agent was deleted) the user still gets taken as close as we
  * can get, plus a toast saying what was missing. A click that does nothing at
  * all reads as a broken app.
+ * @returns False for a missing destination; fallback navigation and feedback still run.
  */
 export function dispatchToastClickAction(
 	action: ToastClickAction,
 	handlers: ToastClickActionHandlers = {}
-): void {
+): boolean {
 	switch (action.kind) {
-		case 'jump-session':
-			handlers.onSessionClick?.(action.sessionId, action.tabId);
-			return;
+		case 'jump-session': {
+			if (!handlers.onSessionClick) return false;
+			const jumped = handlers.onSessionClick(action.sessionId, action.tabId);
+			if (jumped === false) return false;
+			if (
+				action.tabId &&
+				!useSessionStore
+					.getState()
+					.sessions.find((s) => s.id === action.sessionId)
+					?.aiTabs?.some((t) => t.id === action.tabId)
+			) {
+				reportMiss('AI tab not found', 'That tab has been closed. Switched to the agent instead.');
+				return false;
+			}
+			return true;
+		}
 
 		case 'open-file':
+			if (!useSessionStore.getState().sessions.some((s) => s.id === action.sessionId)) {
+				reportMiss('Agent not found', 'The agent this notification points at is gone.');
+				return false;
+			}
 			// Reuse the existing CLI/remote file-open path. The listener
 			// (useAppRemoteEventListeners) switches to the target agent, reads the
 			// file, and opens it in a preview tab.
@@ -77,7 +95,7 @@ export function dispatchToastClickAction(
 					detail: { sessionId: action.sessionId, filePath: action.path },
 				})
 			);
-			return;
+			return true;
 
 		case 'open-terminal': {
 			const sessions = useSessionStore.getState().sessions;
@@ -96,14 +114,14 @@ export function dispatchToastClickAction(
 				} else {
 					reportMiss('Agent not found', 'The agent this notification points at is gone.');
 				}
-				return;
+				return false;
 			}
 			switchToSession(resolved.session.id);
 			updateSessionWith(resolved.session.id, (s) => ({
 				...s,
 				...terminalTabFocusFields(resolved.tab.id),
 			}));
-			return;
+			return true;
 		}
 
 		case 'open-browser': {
@@ -111,7 +129,7 @@ export function dispatchToastClickAction(
 			const session = sessions.find((s) => s.id === action.sessionId);
 			if (!session) {
 				reportMiss('Agent not found', 'The agent this notification points at is gone.');
-				return;
+				return false;
 			}
 			const existing = action.tabId
 				? (session.browserTabs || []).find((t) => t.id === action.tabId)
@@ -119,7 +137,7 @@ export function dispatchToastClickAction(
 			if (existing) {
 				switchToSession(session.id);
 				updateSessionWith(session.id, (s) => ({ ...s, ...browserTabFocusFields(existing.id) }));
-				return;
+				return true;
 			}
 			if (action.url) {
 				// No `background` flag: a click is the user asking to be taken there.
@@ -129,25 +147,54 @@ export function dispatchToastClickAction(
 						detail: { sessionId: session.id, url: action.url },
 					})
 				);
-				return;
+				return true;
 			}
 			switchToSession(session.id);
 			reportMiss(
 				'Browser tab not found',
 				'That browser tab has been closed. Switched to the agent instead.'
 			);
-			return;
+			return false;
 		}
 
 		case 'open-url':
 			openUrl(action.url);
-			return;
+			return true;
 
 		default: {
 			// Exhaustiveness guard: a new kind added to the shared type without a
 			// case here would otherwise be a silent no-op click.
 			const unhandled: never = action;
 			logger.warn('Unhandled toast click action', 'Toast', { action: unhandled });
+			return false;
 		}
 	}
+}
+
+/**
+ * Do whatever clicking this toast does. One precedence for the floating toast
+ * and for its entry in the notification center: `onClick` (renderer-only
+ * callback), then `clickAction` (data-driven, survives the IPC bridge and a
+ * reload), then the legacy `sessionId` jump.
+ *
+ * @returns `false` when no action exists or the requested destination is missing.
+ */
+export function runToastClick(
+	toast: Pick<Toast, 'onClick' | 'clickAction' | 'sessionId' | 'tabId'>,
+	handlers: ToastClickActionHandlers = {}
+): boolean {
+	if (toast.onClick) {
+		toast.onClick();
+		return true;
+	}
+	if (toast.clickAction) {
+		return dispatchToastClickAction(toast.clickAction, handlers);
+	}
+	if (toast.sessionId && handlers.onSessionClick) {
+		return dispatchToastClickAction(
+			{ kind: 'jump-session', sessionId: toast.sessionId, tabId: toast.tabId },
+			handlers
+		);
+	}
+	return false;
 }

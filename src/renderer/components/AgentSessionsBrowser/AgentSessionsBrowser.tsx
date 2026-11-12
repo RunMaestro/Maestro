@@ -78,6 +78,7 @@ export function AgentSessionsBrowser({
 		agentId,
 		onStarredSessionsLoaded: setStarredSessions,
 		sshRemoteId,
+		ownerAgentId: activeSession?.id,
 	});
 
 	const [search, setSearch] = useState('');

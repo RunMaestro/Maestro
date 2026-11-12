@@ -1,98 +1,61 @@
 /**
- * Preload API for per-project memory (Claude Code).
+ * Preload API for agent memory (Claude Code per project, Codex per account).
  *
  * Exposes the window.maestro.memory namespace. Backed by IPC handlers
  * registered in src/main/ipc/handlers/memory.ts.
  */
 
 import { ipcRenderer } from 'electron';
-
-export interface MemoryEntry {
-	name: string;
-	size: number;
-	createdAt: string;
-	modifiedAt: string;
-}
-
-export interface MemoryStats {
-	fileCount: number;
-	firstCreatedAt: string | null;
-	lastModifiedAt: string | null;
-	totalBytes: number;
-}
-
-export interface MemoryListResponse {
-	success: boolean;
-	directoryPath?: string;
-	exists?: boolean;
-	entries?: MemoryEntry[];
-	stats?: MemoryStats;
-	error?: string;
-}
-
-export interface MemorySearchMatch {
-	name: string;
-	matchedName: boolean;
-	snippet?: string;
-}
+import type { MemoryListResponse, MemorySearchMatch, MemoryTarget } from '../../shared/agentMemory';
 
 export function createMemoryApi() {
 	return {
-		list: (projectPath: string, agentId: string = 'claude-code'): Promise<MemoryListResponse> =>
-			ipcRenderer.invoke('memory:list', projectPath, agentId),
+		list: (target: MemoryTarget): Promise<MemoryListResponse> =>
+			ipcRenderer.invoke('memory:list', target),
 
 		read: (
-			projectPath: string,
-			filename: string,
-			agentId: string = 'claude-code'
+			target: MemoryTarget,
+			filename: string
 		): Promise<{ success: boolean; content?: string; error?: string }> =>
-			ipcRenderer.invoke('memory:read', projectPath, filename, agentId),
+			ipcRenderer.invoke('memory:read', target, filename),
 
 		write: (
-			projectPath: string,
+			target: MemoryTarget,
 			filename: string,
-			content: string,
-			agentId: string = 'claude-code'
+			content: string
 		): Promise<{ success: boolean; error?: string }> =>
-			ipcRenderer.invoke('memory:write', projectPath, filename, content, agentId),
+			ipcRenderer.invoke('memory:write', target, filename, content),
 
 		create: (
-			projectPath: string,
+			target: MemoryTarget,
 			filename: string,
-			content: string,
-			agentId: string = 'claude-code'
+			content: string
 		): Promise<{ success: boolean; error?: string }> =>
-			ipcRenderer.invoke('memory:create', projectPath, filename, content, agentId),
+			ipcRenderer.invoke('memory:create', target, filename, content),
 
 		delete: (
-			projectPath: string,
-			filename: string,
-			agentId: string = 'claude-code'
+			target: MemoryTarget,
+			filename: string
 		): Promise<{ success: boolean; error?: string }> =>
-			ipcRenderer.invoke('memory:delete', projectPath, filename, agentId),
+			ipcRenderer.invoke('memory:delete', target, filename),
 
 		search: (
-			projectPath: string,
-			query: string,
-			agentId: string = 'claude-code'
+			target: MemoryTarget,
+			query: string
 		): Promise<{ success: boolean; matches?: MemorySearchMatch[]; error?: string }> =>
-			ipcRenderer.invoke('memory:search', projectPath, query, agentId),
+			ipcRenderer.invoke('memory:search', target, query),
 
 		orphans: (
-			projectPath: string,
-			agentId: string = 'claude-code'
+			target: MemoryTarget
 		): Promise<{
 			success: boolean;
 			orphans?: string[];
 			brokenLinks?: { source: string; target: string }[];
 			error?: string;
-		}> => ipcRenderer.invoke('memory:orphans', projectPath, agentId),
+		}> => ipcRenderer.invoke('memory:orphans', target),
 
-		getPath: (
-			projectPath: string,
-			agentId: string = 'claude-code'
-		): Promise<{ success: boolean; path?: string; error?: string }> =>
-			ipcRenderer.invoke('memory:getPath', projectPath, agentId),
+		getPath: (target: MemoryTarget): Promise<{ success: boolean; path?: string; error?: string }> =>
+			ipcRenderer.invoke('memory:getPath', target),
 	};
 }
 

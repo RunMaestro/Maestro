@@ -98,6 +98,7 @@ import {
 	__resetForTests as resetUsageStore,
 	type UsageSnapshot,
 } from '../../../main/stores/claudeUsageStore';
+import { canonKey } from '../../helpers/pathExpect';
 import {
 	clearRememberedQuotaAccounts,
 	getRememberedQuotaAccountKeys,
@@ -719,7 +720,7 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			expect(loggerWarnMock).toHaveBeenCalledWith(
 				expect.stringContaining('maestro-p --status sample failed'),
 				expect.any(String),
-				expect.objectContaining({ configDirKey: '/Users/test/.claude-broken' })
+				expect.objectContaining({ configDirKey: canonKey('/Users/test/.claude-broken') })
 			);
 		});
 	});
@@ -1122,9 +1123,11 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 				agentDetector: makeDetector(FAKE_AGENT) as never,
 			});
 
+			// Remembered keys are written through `resolveConfigDirKey`, which ends
+			// in `path.resolve`, so a POSIX literal gains a drive letter on Windows.
 			expect(getRememberedQuotaAccountKeys('claude-code')).toEqual([
-				'/Users/test/.claude-a',
-				'/Users/test/.claude-b',
+				path.resolve('/Users/test/.claude-a'),
+				path.resolve('/Users/test/.claude-b'),
 			]);
 		});
 
@@ -1144,8 +1147,8 @@ describe('claude-usage-startup → runStartupUsageSampling', () => {
 			await runStartupUsageSampling(deps('/Users/test/.claude-spare'));
 
 			expect(getRememberedQuotaAccountKeys('claude-code')).toEqual([
-				'/Users/test/.claude-capped',
-				'/Users/test/.claude-spare',
+				path.resolve('/Users/test/.claude-capped'),
+				path.resolve('/Users/test/.claude-spare'),
 			]);
 		});
 	});

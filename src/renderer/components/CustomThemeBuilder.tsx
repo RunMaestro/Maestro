@@ -6,6 +6,7 @@ import { ConfirmModal } from './ConfirmModal';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { isValidCssColor } from '../../shared/cssColor';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 interface CustomThemeBuilderProps {
 	theme: Theme; // Current active theme for styling the builder
@@ -36,6 +37,8 @@ const COLOR_CONFIG: { key: keyof ThemeColors; label: string; description: string
 	{ key: 'warning', label: 'Warning', description: 'Yellow/orange states' },
 	{ key: 'error', label: 'Error', description: 'Red states' },
 ];
+
+const OPTIONAL_IMPORT_COLOR_KEYS = new Set<string>(['bgTitleBar']);
 
 // Mini UI Preview component
 function MiniUIPreview({ colors }: { colors: ThemeColors }) {
@@ -365,11 +368,12 @@ export function CustomThemeBuilder({
 				try {
 					const data = JSON.parse(e.target?.result as string);
 					if (data.colors && typeof data.colors === 'object') {
-						// Validate all required color keys exist. bgTitleBar is
-						// optional (older/partial theme exports may omit it; the UI
-						// falls back to bgMain), so it must not be required here.
-						const requiredKeys = COLOR_CONFIG.map((c) => c.key).filter(
-							(key) => key !== 'bgTitleBar'
+						// Validate all required color keys exist. Optional keys (e.g.
+						// bgTitleBar, which older/partial exports may omit; the UI falls
+						// back to bgMain) are excluded so their absence isn't an error.
+						const colorKeys = COLOR_CONFIG.map((c) => c.key);
+						const requiredKeys = colorKeys.filter(
+							(key) => !OPTIONAL_IMPORT_COLOR_KEYS.has(String(key))
 						);
 						const hasAllKeys = requiredKeys.every((key) => key in data.colors);
 
@@ -381,8 +385,8 @@ export function CustomThemeBuilder({
 						}
 
 						// Validate color values for every key that is present (including
-						// the optional bgTitleBar when supplied).
-						const presentKeys = COLOR_CONFIG.map((c) => c.key).filter((key) => key in data.colors);
+						// optional keys like bgTitleBar when supplied).
+						const presentKeys = colorKeys.filter((key) => key in data.colors);
 						const invalidColors = presentKeys.filter((key) => !isValidCssColor(data.colors[key]));
 						if (invalidColors.length > 0) {
 							const errorMsg = `Invalid theme file: invalid color values for ${invalidColors.slice(0, 3).join(', ')}${invalidColors.length > 3 ? '...' : ''}`;
@@ -491,10 +495,9 @@ export function CustomThemeBuilder({
 
 							{showBaseSelector && (
 								<div
-									className="absolute top-full left-0 right-0 mt-1 rounded-lg border shadow-lg z-10 max-h-48 overflow-y-auto"
+									className="absolute top-full left-0 right-0 mt-1 rounded-lg z-10 max-h-48 overflow-y-auto"
 									style={{
-										backgroundColor: theme.colors.bgSidebar,
-										borderColor: theme.colors.border,
+										...elevatedSurfaceStyle(theme),
 									}}
 								>
 									{baseThemes.map((t) => (

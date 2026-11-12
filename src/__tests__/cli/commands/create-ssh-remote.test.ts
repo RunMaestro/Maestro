@@ -57,6 +57,45 @@ describe('create-ssh-remote command', () => {
 			expect(formatSuccess).toHaveBeenCalledWith('Created SSH remote "Dev Server"');
 		});
 
+		it('should store extra ssh -o options', () => {
+			createSshRemote('Tunnelled', {
+				host: 'tailcat-devbox',
+				sshOption: ['ProxyCommand=/opt/homebrew/bin/tailcat tcABC 22', 'ConnectTimeout=45'],
+			});
+
+			expect(writeSshRemotes).toHaveBeenCalledWith([
+				expect.objectContaining({
+					sshOptions: {
+						ProxyCommand: '/opt/homebrew/bin/tailcat tcABC 22',
+						ConnectTimeout: '45',
+					},
+				}),
+			]);
+		});
+
+		it('should leave sshOptions unset when none are passed', () => {
+			createSshRemote('Plain', { host: 'example.com' });
+
+			const written = vi.mocked(writeSshRemotes).mock.calls[0][0];
+			expect(written[0].sshOptions).toBeUndefined();
+		});
+
+		it('should reject a malformed --ssh-option and not write', () => {
+			createSshRemote('Bad', { host: 'example.com', sshOption: ['ProxyCommand'] });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('Expected KEY=VALUE'));
+			// process.exit is stubbed to a no-op here, so this only asserts the exit
+			// was requested; in production it terminates before the write.
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('should reject an attempt to override the reserved RequestTTY option', () => {
+			createSshRemote('Bad', { host: 'example.com', sshOption: ['RequestTTY=force'] });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('cannot be overridden'));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
 		it('should create a remote with all options', () => {
 			createSshRemote('Full Remote', {
 				host: 'server.example.com',

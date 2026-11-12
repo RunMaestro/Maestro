@@ -5,11 +5,18 @@ import { spawn, SpawnOptions, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import type { AgentSshRemoteConfig, ToolType, UsageStats } from '../../shared/types';
+import type {
+	AdditionalDirectory,
+	AgentSshRemoteConfig,
+	ToolType,
+	UsageStats,
+} from '../../shared/types';
 import { createOutputParser } from '../../main/parsers/parser-factory';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
+import { claudeTurnCost, readClaudeTurnBaseline } from '../../shared/claudeCostTracker';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
+import { checkCustomPath } from '../../main/agents/path-prober';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import {
@@ -21,7 +28,12 @@ import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
-import { applyAgentConfigOverrides } from '../../main/utils/agent-args';
+import {
+	describeEffortRejection,
+	noteEffortRejection,
+	parseEffortRejection,
+} from '../../shared/effortRejection';
+import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
 import { buildCliWakaTimeHeartbeat } from './wakatime';
 import {
 	getClaudeTokenMode,
@@ -32,10 +44,12 @@ import {
 	resolveClaudeSpawnModeCore,
 	applyClaudeSpawnDecision,
 	buildRemoteInteractiveSpawn,
+	findPackagedAppHost,
 	isMaestroPBinaryPath,
 	resolveConfigDirKeyFromEnv,
 	defaultSelectMode,
 	type ClaudeSpawnCoreDeps,
+	type PackagedAppHost,
 } from '../../main/agents/claudeSpawnCore';
 
 // Types from the SSH wrapper are imported type-only so no runtime module load
@@ -60,6 +74,17 @@ function getCliMaestroPBinPath(): string | null {
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * The packaged app to run maestro-p under when this CLI was started by a plain
+ * `node` rather than the app binary (#1770). Under the app binary (the shim
+ * MaestroCliManager installs) `process.resourcesPath` is already set and the
+ * spawn core handles it, so this only fills the gap for a system `node`.
+ */
+function getCliPackagedAppHost(): PackagedAppHost | null {
+	if (typeof process.resourcesPath === 'string' && process.resourcesPath.length > 0) return null;
+	return findPackagedAppHost(__dirname);
 }
 
 /**
@@ -124,7 +149,10 @@ type SpawnOverrides = Pick<
 	| 'customArgs'
 	| 'customEnvVars'
 	| 'appendSystemPrompt'
+	| 'additionalDirectories'
 	| 'querySource'
+	| 'maestroPMaxWaitSeconds'
+	| 'acceptWorkspaceTrust'
 >;
 
 /**
@@ -294,25 +322,11 @@ function getExpandedPath(): string {
 }
 
 /**
- * Check if a file exists and is executable
+ * Resolve a configured executable path, including known rotating install locations.
  */
-async function isExecutable(filePath: string): Promise<boolean> {
-	try {
-		const stats = await fs.promises.stat(filePath);
-		if (!stats.isFile()) return false;
-
-		// On Unix, check executable permission
-		if (!isWindows()) {
-			try {
-				await fs.promises.access(filePath, fs.constants.X_OK);
-			} catch {
-				return false;
-			}
-		}
-		return true;
-	} catch {
-		return false;
-	}
+async function resolveExecutablePath(filePath: string): Promise<string | undefined> {
+	const detection = await checkCustomPath(filePath);
+	return detection.exists ? detection.path : undefined;
 }
 
 /**
@@ -360,9 +374,10 @@ export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
 	// 1. Check for custom path in settings
 	const customPath = getAgentCustomPath(toolType);
 	if (customPath) {
-		if (await isExecutable(customPath)) {
-			cachedPaths.set(toolType, customPath);
-			return { available: true, path: customPath, source: 'settings' };
+		const resolvedCustomPath = await resolveExecutablePath(customPath);
+		if (resolvedCustomPath) {
+			cachedPaths.set(toolType, resolvedCustomPath);
+			return { available: true, path: resolvedCustomPath, source: 'settings' };
 		}
 		console.error(
 			`Warning: Custom ${def?.name || toolType} path "${customPath}" is not executable, falling back to PATH detection`
@@ -584,6 +599,8 @@ async function spawnClaudeAgent(
 			decision: spawnDecision,
 			interactiveModeArgs: def?.interactiveModeArgs,
 			remoteClaudeBin: spawnDecision.claudeRealBinPath,
+			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
+			acceptWorkspaceTrust: overrides.acceptWorkspaceTrust,
 		});
 		const remoteEnv = buildSshEnvForRemote(def, readOnlyMode, userCustomEnvVars);
 		const wrapped = await maybeWrapSpawnWithSsh(
@@ -607,12 +624,17 @@ async function spawnClaudeAgent(
 		// injecting MAESTRO_CLAUDE_BIN. maestro-p strips the headless-only flags,
 		// drives the real claude TUI on the Max plan, and reads the prompt after
 		// `--`. API / direct-binary decisions leave the local spawn untouched.
+		const packagedHost = getCliPackagedAppHost();
 		const applied = applyClaudeSpawnDecision({
 			decision: spawnDecision,
 			interactiveModeArgs: def?.interactiveModeArgs,
 			command: claudeCommand,
 			args: [...baseArgs, '--', prompt],
 			customEnvVars: userCustomEnvVars,
+			execPath: packagedHost?.execPath,
+			resourcesPath: packagedHost?.resourcesPath,
+			maxWaitSeconds: overrides.maestroPMaxWaitSeconds,
+			acceptWorkspaceTrust: overrides.acceptWorkspaceTrust,
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
@@ -621,6 +643,19 @@ async function spawnClaudeAgent(
 		Object.assign(env, applied.customEnvVars);
 		spawnEnv = env;
 	}
+
+	// Claude reports its cost and per-model usage as running SESSION totals; the
+	// session's total as this turn starts turns them into this turn's (see
+	// src/shared/claudeCostTracker.ts). A fresh session starts from nothing.
+	const costBaseline = agentSessionId
+		? readClaudeTurnBaseline({
+				resumeSessionId: agentSessionId,
+				cwd,
+				env: spawnEnv,
+				homeDir: os.homedir(),
+				remote: !!sshRemoteConfig?.enabled,
+			})
+		: null;
 
 	return new Promise((resolve) => {
 		const options: SpawnOptions = {
@@ -636,6 +671,8 @@ async function spawnClaudeAgent(
 		let assistantText = ''; // Accumulate text from assistant messages as fallback
 		let sessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
+		// The model the main thread last ran on; prices a turn whose baseline is unknown.
+		let lastMainModel: string | undefined;
 		let resultEmitted = false;
 		let sessionIdEmitted = false;
 
@@ -671,9 +708,22 @@ async function spawnClaudeAgent(
 				sessionId = msg.session_id;
 			}
 
+			if (
+				msg.type === 'assistant' &&
+				!msg.parent_tool_use_id &&
+				typeof msg.message?.model === 'string' &&
+				msg.message.model !== '<synthetic>'
+			) {
+				lastMainModel = msg.message.model;
+			}
+
 			// Extract usage statistics using shared aggregator
 			if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
-				usageStats = aggregateModelUsage(msg.modelUsage, msg.usage || {}, msg.total_cost_usd || 0);
+				const turn =
+					msg.type === 'result'
+						? claudeTurnCost(msg, costBaseline, lastMainModel)
+						: { modelUsage: msg.modelUsage, totalCostUsd: msg.total_cost_usd || 0 };
+				usageStats = aggregateModelUsage(turn.modelUsage, msg.usage || {}, turn.totalCostUsd);
 			}
 		};
 
@@ -861,6 +911,18 @@ async function spawnJsonLineAgent(
 	// Build args from agent definition (without the prompt or model/customArgs -
 	// those come from applyAgentConfigOverrides via configOptions).
 	const preOverrideArgs: string[] = [];
+
+	// Codex requires `-C <dir>` as a ROOT-level global flag that MUST precede the
+	// `exec` subcommand (and therefore everything after it, including
+	// `resume <id>`). Placed later, Codex silently ignores it on fresh runs (#959)
+	// and HARD-FAILS on resume with "unexpected argument '-C' found", which broke
+	// Maestro Relay follow-up messages to Codex agents. Mirror the desktop path
+	// (`src/main/utils/agent-args.ts`), which prepends workingDirArgs before the
+	// batchModePrefix. See #960.
+	if (toolType === 'codex' && def?.workingDirArgs) {
+		preOverrideArgs.push(...def.workingDirArgs(cwd));
+	}
+
 	if (def?.batchModePrefix) preOverrideArgs.push(...def.batchModePrefix);
 
 	// In read-only mode, filter out YOLO/bypass args from batchModeArgs
@@ -879,13 +941,16 @@ async function spawnJsonLineAgent(
 	if (def?.jsonOutputArgs) preOverrideArgs.push(...def.jsonOutputArgs);
 	if (readOnlyMode && def?.readOnlyArgs) preOverrideArgs.push(...def.readOnlyArgs);
 
+	// Native Additional Directories grants (e.g. `--add-dir`). Shares the exact
+	// mapping the desktop uses via `buildAgentArgs`, so a CLI/playbook spawn and
+	// an interactive turn hand the provider identical flags. Providers with no
+	// native mechanism emit nothing here and rely on the prompt block instead.
+	// Emitted BEFORE the resume selector, same as the desktop: Codex resumes with
+	// a subcommand, and `codex exec resume` rejects `--add-dir` with exit 2.
+	preOverrideArgs.push(...buildAdditionalDirArgs(def, overrides.additionalDirectories));
+
 	if (agentSessionId && def?.resumeArgs) {
 		preOverrideArgs.push(...def.resumeArgs(agentSessionId));
-	}
-
-	// Codex requires explicit working directory arg (other agents use process cwd)
-	if (toolType === 'codex' && def?.workingDirArgs) {
-		preOverrideArgs.push(...def.workingDirArgs(cwd));
 	}
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)
@@ -1011,6 +1076,12 @@ async function spawnJsonLineAgent(
 
 		let jsonBuffer = '';
 		let result: string | undefined;
+		// Accumulated partial text deltas, used as a fallback when no result
+		// event carries text. Grok streams its answer solely as token-sized
+		// `text` deltas (whitespace embedded, so direct concatenation) and its
+		// terminal `end` event has no text. Mirrors spawnClaudeAgent's
+		// assistantText fallback. Reasoning deltas are excluded.
+		let streamedText = '';
 		let sessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
 		let stderr = '';
@@ -1036,8 +1107,16 @@ async function spawnJsonLineAgent(
 				result = result ? `${result}\n${event.text}` : event.text;
 			}
 
+			if (event.type === 'text' && event.isPartial && !event.isReasoning && event.text) {
+				streamedText += event.text;
+			}
+
 			if (event.type === 'error' && event.text && !errorText) {
 				errorText = event.text;
+			}
+
+			if (event.type === 'warning' && event.text) {
+				console.error(event.text);
 			}
 
 			const usage = parser.extractUsage(event);
@@ -1079,8 +1158,18 @@ async function spawnJsonLineAgent(
 				processEvent(parser.parseJsonLine(jsonBuffer));
 			}
 
-			if (code === 0 && !errorText) {
-				resolve({ success: true, response: result, agentSessionId: sessionId, usageStats });
+			// Soft success: agents like Grok may exit non-zero after a full
+			// answer (e.g. --max-turns) with no structured error event. Prefer
+			// the streamed answer over raw stderr when there is no errorText.
+			const responseText = result || streamedText || undefined;
+			const hasAnswer = Boolean(responseText?.trim());
+			if (!errorText && (code === 0 || hasAnswer)) {
+				resolve({
+					success: true,
+					response: responseText,
+					agentSessionId: sessionId,
+					usageStats,
+				});
 			} else {
 				resolve({
 					success: false,
@@ -1118,6 +1207,15 @@ export interface SpawnAgentOptions {
 	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
 	customEnvVars?: Record<string, string>;
 	/**
+	 * Per-session Additional Directories. Providers that declare
+	 * `supportsAdditionalDirectories` translate these into native grant flags via
+	 * the definition's `additionalDirArgs` (e.g. `--add-dir`); every agent also
+	 * receives them in the `{{ADDITIONAL_DIRECTORIES}}` system-prompt block built
+	 * by `prepareMaestroSystemPromptCli()`. Mirrors the desktop `process:spawn`
+	 * handler's `sessionAdditionalDirectories`.
+	 */
+	additionalDirectories?: AdditionalDirectory[];
+	/**
 	 * Per-session SSH remote config. When `enabled`, the spawn is wrapped with
 	 * ssh so the agent runs on the remote host. Required for parity with the
 	 * desktop app when sessions are configured for SSH remote execution.
@@ -1142,6 +1240,18 @@ export interface SpawnAgentOptions {
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
 	/**
+	 * maestro-p idle cap (`--max-wait`) when the turn runs through the TUI.
+	 * Unset keeps maestro-p's 300s default; Auto Run passes its own inactivity
+	 * budget (see autoRunMaestroPMaxWaitSeconds) so a silent test run survives.
+	 */
+	maestroPMaxWaitSeconds?: number;
+	/**
+	 * `cwd` is the agent's own working directory, so a TUI turn may accept
+	 * claude's folder-trust prompt there (#1872). Leave unset for any other
+	 * folder.
+	 */
+	acceptWorkspaceTrust?: boolean;
+	/**
 	 * Who asked for this turn. Stamped into the agent's env as
 	 * MAESTRO_QUERY_SOURCE so tooling downstream of the spawn can tell a
 	 * playbook or Auto Run task apart from a `maestro send` the user typed -
@@ -1151,9 +1261,40 @@ export interface SpawnAgentOptions {
 }
 
 /**
- * Spawn an agent with a prompt and return the result
+ * Spawn an agent with a prompt and return the result.
+ *
+ * When the provider refuses the effort level the turn asked for, the turn is
+ * run once more with the effort left to the agent's own configuration. The
+ * effort a CLI run sends usually came off Maestro's static ladder (a document
+ * hint, the synopsis pin), and a provider can retire a rung without notice;
+ * failing every task of a playbook on a value nobody typed is the wrong
+ * outcome. The refusal is noted, so later `resolveTurnSettings` calls in this
+ * run stop asking for the value and report why (see shared/effortRejection.ts).
  */
 export async function spawnAgent(
+	toolType: ToolType,
+	cwd: string,
+	prompt: string,
+	agentSessionId?: string,
+	options?: SpawnAgentOptions
+): Promise<AgentResult> {
+	const result = await spawnAgentOnce(toolType, cwd, prompt, agentSessionId, options);
+	if (result.success || !options?.customEffort) return result;
+
+	const rejection = parseEffortRejection(`${result.error ?? ''}\n${result.response ?? ''}`);
+	if (!rejection) return result;
+
+	noteEffortRejection(toolType, rejection);
+	console.error(
+		`[maestro] ${describeEffortRejection(toolType, rejection)} Retrying at the agent's configured effort.`
+	);
+	return spawnAgentOnce(toolType, cwd, prompt, agentSessionId, {
+		...options,
+		customEffort: undefined,
+	});
+}
+
+async function spawnAgentOnce(
 	toolType: ToolType,
 	cwd: string,
 	prompt: string,
@@ -1168,7 +1309,10 @@ export async function spawnAgent(
 		customArgs: options?.customArgs,
 		customEnvVars: options?.customEnvVars,
 		appendSystemPrompt: options?.appendSystemPrompt,
+		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
+		maestroPMaxWaitSeconds: options?.maestroPMaxWaitSeconds,
+		acceptWorkspaceTrust: options?.acceptWorkspaceTrust,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);
@@ -1204,12 +1348,14 @@ export async function spawnAgent(
 }
 
 /**
- * Read a markdown document and count unchecked tasks
+ * Read a markdown document and count unchecked tasks.
+ * `missingPath` is set when the file does not exist, so a caller can name the
+ * document instead of reporting it as one with no tasks.
  */
 export function readDocAndCountTasks(
 	folderPath: string,
 	filename: string
-): { content: string; taskCount: number } {
+): { content: string; taskCount: number; missingPath?: string } {
 	const filePath = `${folderPath}/${filename}.md`;
 
 	try {
@@ -1219,7 +1365,10 @@ export function readDocAndCountTasks(
 			content,
 			taskCount: matches ? matches.length : 0,
 		};
-	} catch {
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+			return { content: '', taskCount: 0, missingPath: filePath };
+		}
 		return { content: '', taskCount: 0 };
 	}
 }

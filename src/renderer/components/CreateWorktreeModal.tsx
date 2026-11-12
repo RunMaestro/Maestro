@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, GitBranch, AlertTriangle } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { ModalSubtitle } from './ui/Modal';
 import { Spinner } from './ui/Spinner';
 import type { Theme, Session, GhCliStatus } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
@@ -166,11 +167,16 @@ export function CreateWorktreeModal({
 					className="flex items-center justify-between px-4 py-3 border-b"
 					style={{ borderColor: theme.colors.border }}
 				>
-					<div className="flex items-center gap-2">
-						<GitBranch className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h2 className="font-bold" style={{ color: theme.colors.textMain }}>
+					<div className="flex items-center gap-2 min-w-0">
+						<GitBranch className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
+						<h2 className="font-bold shrink-0" style={{ color: theme.colors.textMain }}>
 							Create New Worktree
 						</h2>
+						{/* Which agent the worktree is being branched from. Reachable by
+						    right-clicking any Left Bar row, so it is often not the
+						    highlighted one. Bespoke header, so ModalSubtitle rather than
+						    <Modal subtitle>. */}
+						<ModalSubtitle theme={theme} subtitle={session.name} />
 					</div>
 					<GhostIconButton onClick={onClose} ariaLabel="Close">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />

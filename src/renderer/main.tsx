@@ -4,7 +4,9 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/electron/renderer';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
+import { sentryUserForInstallation } from '../shared/sentryContext';
 import MaestroConsole from './App';
+import { CadenzaHudRoot } from './cadenzaHud';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LayerStackProvider } from './contexts/LayerStackContext';
 // ToastProvider removed - notification state now managed by notificationStore (Zustand)
@@ -29,9 +31,21 @@ const initSentry = async () => {
 		// un-provisioned build already has nowhere to send events - this check just makes
 		// that explicit instead of relying on the IPC channel being absent.
 		if (crashReportingEnabled && !isDevelopment && __CRASH_REPORTING_BUILD__) {
+			// The install GUID main generates on first run. It becomes `user.id` so
+			// Sentry counts affected installs (its Users column was always 0); main
+			// sets the same id, this keeps the renderer's own scope in agreement. A
+			// failed read only costs the id, never crash reporting itself.
+			const installationId = await Promise.resolve(
+				window.maestro?.settings?.get('installationId')
+			).catch(() => undefined);
 			Sentry.init({
 				// Set release version for filtering errors by app version
 				release: __APP_VERSION__,
+				initialScope: {
+					user: sentryUserForInstallation(
+						typeof installationId === 'string' ? installationId : undefined
+					),
+				},
 				// Only send errors, not performance data
 				tracesSampleRate: 0,
 				// PERF: drop console breadcrumbs. Sentry's default Breadcrumbs
@@ -106,14 +120,34 @@ window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => 
 	event.preventDefault();
 });
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-	<React.StrictMode>
-		<ErrorBoundary>
-			<LayerStackProvider>
-				<WizardProvider>
-					<MaestroConsole />
-				</WizardProvider>
-			</LayerStackProvider>
-		</ErrorBoundary>
-	</React.StrictMode>
-);
+// HUD mode: the main process loads this same bundle into a transparent,
+// always-on-top child window with `?cadenzaHud`. Render just the floating
+// cadenza cards - no app chrome, no providers the cards don't need.
+const isCadenzaHud = new URLSearchParams(window.location.search).has('cadenzaHud');
+
+if (isCadenzaHud) {
+	document.documentElement.classList.add('cadenza-hud');
+	document.body.classList.add('cadenza-hud');
+	// The static loading splash (index.html) is hidden by the full App on ready,
+	// which never mounts in HUD mode - remove it so the window is transparent.
+	document.getElementById('initial-splash')?.remove();
+	ReactDOM.createRoot(document.getElementById('root')!).render(
+		<React.StrictMode>
+			<ErrorBoundary>
+				<CadenzaHudRoot />
+			</ErrorBoundary>
+		</React.StrictMode>
+	);
+} else {
+	ReactDOM.createRoot(document.getElementById('root')!).render(
+		<React.StrictMode>
+			<ErrorBoundary>
+				<LayerStackProvider>
+					<WizardProvider>
+						<MaestroConsole />
+					</WizardProvider>
+				</LayerStackProvider>
+			</ErrorBoundary>
+		</React.StrictMode>
+	);
+}

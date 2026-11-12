@@ -95,9 +95,12 @@ import os from 'os';
 import path from 'path';
 import {
 	ensureUsageProbeDir,
+	FAILURE_REREPORT_INTERVAL_MS,
+	resetFailureReportingForTests,
 	sampleUsage,
 	USAGE_PROBE_DIR_NAME,
 } from '../../../main/agents/claude-usage-sampler';
+import { asarNodePath, canonKey } from '../../helpers/pathExpect';
 
 const FROZEN_NOW = new Date('2026-05-15T12:00:00.000Z').getTime();
 const ORIGINAL_ENV = { ...process.env };
@@ -155,6 +158,10 @@ describe('claude-usage-sampler', () => {
 		mockExecFile.mockReset();
 		captureMessageMock.mockReset();
 		captureMessageMock.mockResolvedValue(undefined);
+		// The failure memo behind MAESTRO-Q2 is module-level process state, so it
+		// outlives a single case. Without this, the second test to hit the same
+		// (configDir, stage, reason) would see its report suppressed.
+		resetFailureReportingForTests();
 		// Default: no identity available, which is the shape every pre-existing
 		// assertion in this file was written against.
 		readAccountIdentityMock.mockReset();
@@ -280,7 +287,10 @@ describe('claude-usage-sampler', () => {
 				configDir: '/Users/test/.claude-smash',
 			});
 
-			expect(readAccountIdentityMock).toHaveBeenCalledWith('/Users/test/.claude-smash');
+			// The identity is read with the RESOLVED key, so the expectation has to go
+			// through the same primitive - a bare POSIX literal fails on Windows, where
+			// `path.resolve` drive-anchors it. Every sibling assertion already does this.
+			expect(readAccountIdentityMock).toHaveBeenCalledWith(canonKey('/Users/test/.claude-smash'));
 		});
 
 		it('omits the identity fields entirely when the account is unknown', async () => {
@@ -316,7 +326,7 @@ describe('claude-usage-sampler', () => {
 			});
 			expect(snap).toEqual({
 				sampledAt: new Date(FROZEN_NOW).toISOString(),
-				configDirKey: '/Users/test/.claude',
+				configDirKey: canonKey(path.join(os.homedir(), '.claude')),
 				authState: 'authenticated',
 				session: { percent: 42, resetsAt: '2026-05-15T17:00:00.000Z' },
 				weekAllModels: { percent: 73, resetsAt: '2026-05-22T12:00:00.000Z' },
@@ -425,7 +435,7 @@ describe('claude-usage-sampler', () => {
 				const inspect = primeSuccess(wireEnvelope());
 				await sampleUsage({ binPath: '/bin/maestro-p.js' });
 				const env = inspect()?.options.env as NodeJS.ProcessEnv;
-				const asar = '/Apps/Maestro.app/Contents/Resources/app.asar/node_modules';
+				const asar = asarNodePath('/Apps/Maestro.app/Contents/Resources');
 				expect(env.NODE_PATH).toBe(`${asar}${path.delimiter}/pre/existing`);
 			} finally {
 				Object.defineProperty(process, 'resourcesPath', {
@@ -475,7 +485,7 @@ describe('claude-usage-sampler', () => {
 				binPath: '/bin/maestro-p.js',
 				configDir: '/Users/test/.claude-gmail',
 			});
-			expect(snap?.configDirKey).toBe('/Users/test/.claude-gmail');
+			expect(snap?.configDirKey).toBe(canonKey('/Users/test/.claude-gmail'));
 		});
 
 		it('canonicalizes a configDir with redundant separators in the key', async () => {
@@ -484,14 +494,14 @@ describe('claude-usage-sampler', () => {
 				binPath: '/bin/maestro-p.js',
 				configDir: '/Users/test/./.claude-smash/',
 			});
-			expect(snap?.configDirKey).toBe('/Users/test/.claude-smash');
+			expect(snap?.configDirKey).toBe(canonKey('/Users/test/.claude-smash'));
 		});
 
 		it('falls back to ~/.claude when no configDir and no env var', async () => {
 			delete process.env.CLAUDE_CONFIG_DIR;
 			primeSuccess(wireEnvelope());
 			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
-			expect(snap?.configDirKey).toBe('/Users/test/.claude');
+			expect(snap?.configDirKey).toBe(canonKey(path.join(os.homedir(), '.claude')));
 		});
 
 		it('lets customEnvVars.CLAUDE_CONFIG_DIR drive the key when configDir is omitted', async () => {
@@ -500,7 +510,7 @@ describe('claude-usage-sampler', () => {
 				binPath: '/bin/maestro-p.js',
 				customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-via-env' },
 			});
-			expect(snap?.configDirKey).toBe('/Users/test/.claude-via-env');
+			expect(snap?.configDirKey).toBe(canonKey('/Users/test/.claude-via-env'));
 		});
 	});
 
@@ -512,7 +522,7 @@ describe('claude-usage-sampler', () => {
 				wireEnvelope();
 			primeSuccess(noisy);
 			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
-			expect(snap?.session.percent).toBe(42);
+			expect(snap?.session?.percent).toBe(42);
 		});
 
 		it('tolerates whitespace before the JSON line', async () => {
@@ -528,7 +538,7 @@ describe('claude-usage-sampler', () => {
 		});
 	});
 
-	describe('failure modes — never throw, always return null', () => {
+	describe('failure modes - never throw, always return null', () => {
 		it('returns null on ENOENT (binary missing)', async () => {
 			primeFailure(Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
 			const snap = await sampleUsage({ binPath: '/nope.js' });
@@ -616,8 +626,19 @@ describe('claude-usage-sampler', () => {
 			expect(snap).toBeNull();
 		});
 
-		it('returns null when session window is missing', async () => {
+		// claude 2.1.317 stopped painting the 5-hour window on /usage, so an
+		// envelope with no `session` is a complete reading, not a malformed one.
+		// Rejecting it froze every account's dashboard row at its last sample.
+		it('keeps the snapshot when the session window is absent, omitting `session`', async () => {
 			primeSuccess(wireEnvelope({ session: undefined }));
+			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
+			expect(snap).not.toBeNull();
+			expect(snap).not.toHaveProperty('session');
+			expect(snap?.weekAllModels.percent).toEqual(expect.any(Number));
+		});
+
+		it('returns null when a present session window is malformed', async () => {
+			primeSuccess(wireEnvelope({ session: { resets_at: '2026-05-15T17:00:00.000Z' } }));
 			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap).toBeNull();
 		});
@@ -641,7 +662,7 @@ describe('claude-usage-sampler', () => {
 			primeSuccess(wireEnvelope({ week_all_models: { percent: 50 } }));
 			const snap = await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			expect(snap?.weekAllModels).toEqual({ percent: 50 });
-			expect(snap?.session.resetsAt).toBeTruthy();
+			expect(snap?.session?.resetsAt).toBeTruthy();
 		});
 
 		it('returns null when a resets_at field is present but not a string', async () => {
@@ -669,6 +690,119 @@ describe('claude-usage-sampler', () => {
 		});
 	});
 
+	describe('repeat-failure suppression (MAESTRO-Q2)', () => {
+		const OPTS = { binPath: '/bin/maestro-p.js', configDir: '/home/u/.claude' };
+
+		it('reports the first failure but not identical repeats', async () => {
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+
+			for (let i = 0; i < 5; i++) {
+				expect(await sampleUsage(OPTS)).toBeNull();
+			}
+
+			// Every tick still returns null and still logs; only the report is deduped.
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+			expect(captureMessageMock.mock.calls[0][2]).toMatchObject({
+				stage: 'spawn',
+				reason: 'exit: 1',
+			});
+		});
+
+		it('reports again when the failure signature changes', async () => {
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+			await sampleUsage(OPTS);
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+
+			// Same config dir, different reason - this is new information.
+			primeFailure(Object.assign(new Error('nope'), { code: 'ENOENT' }));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+			expect(captureMessageMock.mock.calls[1][2]).toMatchObject({ reason: 'ENOENT' });
+		});
+
+		it('keeps config dirs independent so one broken account cannot mute another', async () => {
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+
+			await sampleUsage({ ...OPTS, configDir: '/home/u/.claude-a' });
+			await sampleUsage({ ...OPTS, configDir: '/home/u/.claude-a' });
+			await sampleUsage({ ...OPTS, configDir: '/home/u/.claude-b' });
+
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+			expect(
+				captureMessageMock.mock.calls.map((c) => (c[2] as { configDir: string }).configDir)
+			).toEqual([canonKey('/home/u/.claude-a'), canonKey('/home/u/.claude-b')]);
+		});
+
+		it('keys off customEnvVars.CLAUDE_CONFIG_DIR too, not just opts.configDir', async () => {
+			// `CLAUDE_CONFIG_DIR` can arrive through customEnvVars instead of the
+			// explicit option, and the sampler honors it for the snapshot key. A memo
+			// keyed on opts.configDir alone would collapse both of these onto
+			// ~/.claude: the first account would mute the second, and both
+			// breadcrumbs would name the wrong directory.
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+
+			await sampleUsage({
+				binPath: '/bin/maestro-p.js',
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/home/u/.claude-env-a' },
+			});
+			await sampleUsage({
+				binPath: '/bin/maestro-p.js',
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/home/u/.claude-env-b' },
+			});
+
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+			expect(
+				captureMessageMock.mock.calls.map((c) => (c[2] as { configDir: string }).configDir)
+			).toEqual([canonKey('/home/u/.claude-env-a'), canonKey('/home/u/.claude-env-b')]);
+		});
+
+		it('re-reports an unchanged failure once the interval elapses', async () => {
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+
+			vi.setSystemTime(new Date(FROZEN_NOW + FAILURE_REREPORT_INTERVAL_MS - 1));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+
+			vi.setSystemTime(new Date(FROZEN_NOW + FAILURE_REREPORT_INTERVAL_MS));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+		});
+
+		it('does not re-report a failure that alternates with another on the same dir', async () => {
+			// Field shape behind the post-fix MAESTRO-Q2 volume: one account flipping
+			// between two exit codes reported on every flip.
+			for (let i = 0; i < 6; i++) {
+				const code = i % 2 === 0 ? 1 : 143;
+				primeFailure(Object.assign(new Error('boom'), { code }));
+				await sampleUsage(OPTS);
+			}
+
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+			expect(captureMessageMock.mock.calls.map((c) => (c[2] as { reason: string }).reason)).toEqual(
+				['exit: 1', 'exit: 143']
+			);
+		});
+
+		it('does not let a success between failures reset the re-report interval', async () => {
+			for (let i = 0; i < 3; i++) {
+				primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+				await sampleUsage(OPTS);
+				primeSuccess(wireEnvelope());
+				expect(await sampleUsage(OPTS)).not.toBeNull();
+			}
+			expect(captureMessageMock).toHaveBeenCalledTimes(1);
+
+			// The interval still bounds the silence for a flapping account.
+			vi.setSystemTime(new Date(FROZEN_NOW + FAILURE_REREPORT_INTERVAL_MS));
+			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+			await sampleUsage(OPTS);
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+		});
+	});
+
 	describe('Sentry payload safety', () => {
 		it('does not include the full env or full stdout in the Sentry breadcrumb', async () => {
 			primeSuccess('totally not json that mentions secret_token=abc123\n');
@@ -693,14 +827,16 @@ describe('claude-usage-sampler', () => {
 				configDir: '/Users/test/.claude-explicit',
 			});
 			const extras = captureMessageMock.mock.calls[0][2] as Record<string, unknown>;
-			expect(extras.configDir).toBe('/Users/test/.claude-explicit');
+			// Resolved, like the snapshot key it now mirrors - a bare POSIX literal
+			// fails on Windows where `path.resolve` drive-anchors it.
+			expect(extras.configDir).toBe(canonKey('/Users/test/.claude-explicit'));
 		});
 
 		it('falls back to ~/.claude in the breadcrumb when configDir is omitted', async () => {
 			primeSuccess('garbage\n');
 			await sampleUsage({ binPath: '/bin/maestro-p.js' });
 			const extras = captureMessageMock.mock.calls[0][2] as Record<string, unknown>;
-			expect(extras.configDir).toBe('/Users/test/.claude');
+			expect(extras.configDir).toBe(canonKey(path.join(os.homedir(), '.claude')));
 		});
 	});
 });

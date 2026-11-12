@@ -8,15 +8,8 @@
  */
 
 import { ipcRenderer } from 'electron';
-
-/**
- * Single bucket in the activity-graph aggregate.
- */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-}
+import type { HistoryEntryType } from '../../shared/types';
+import type { GraphBucket } from '../../shared/history';
 
 /**
  * All-time graph data returned by `history:getGraphData` and
@@ -41,7 +34,7 @@ export interface HistoryGraphData {
  */
 export interface HistoryEntry {
 	id: string;
-	type: 'AUTO' | 'USER' | 'CUE';
+	type: HistoryEntryType;
 	timestamp: number;
 	summary: string;
 	fullResponse?: string;
@@ -62,6 +55,8 @@ export interface HistoryEntry {
 	elapsedTimeMs?: number;
 	validated?: boolean;
 	hostname?: string;
+	/** Cross-agent attribution: the agent that consulted this one via `@mention`. */
+	sourceAgentName?: string;
 	/** Claude-only, per-turn: `interactive` = maestro-p TUI, `api` = `claude --print`. */
 	tokenSource?: 'interactive' | 'api';
 	/** Claude-only, per-turn: `auto` = user/usage selected, `limit` = forced API fallback. */
@@ -97,7 +92,7 @@ export function createHistoryApi() {
 			pagination?: { limit?: number; offset?: number };
 			lookbackHours?: number | null;
 			sharedContext?: { sshRemoteId: string; remoteCwd: string };
-			types?: ('AUTO' | 'USER' | 'CUE')[];
+			types?: HistoryEntryType[];
 			hostKey?: string | null;
 			/** Collapse Cue runs to one row per trigger (`groupCueEntries`). */
 			groupCue?: boolean;
@@ -124,7 +119,7 @@ export function createHistoryApi() {
 		delete: (entryId: string, sessionId?: string) =>
 			ipcRenderer.invoke('history:delete', entryId, sessionId),
 
-		update: (entryId: string, updates: { validated?: boolean }, sessionId?: string) =>
+		update: (entryId: string, updates: Partial<HistoryEntry>, sessionId?: string) =>
 			ipcRenderer.invoke('history:update', entryId, updates, sessionId),
 
 		updateSessionName: (agentSessionId: string, sessionName: string) =>
@@ -162,7 +157,7 @@ export function createHistoryApi() {
 			sessionId: string,
 			timestamp: number,
 			lookbackHours?: number | null,
-			types?: ('AUTO' | 'USER' | 'CUE')[]
+			types?: HistoryEntryType[]
 		): Promise<number> =>
 			ipcRenderer.invoke(
 				'history:getOffsetForTimestamp',

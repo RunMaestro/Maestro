@@ -1,4 +1,5 @@
 import { useRef, useCallback } from 'react';
+import { Wordmark } from './ui/Wordmark';
 import {
 	X,
 	Wand2,
@@ -136,12 +137,7 @@ export function AboutModal({
 					<Wand2 className="w-12 h-12" style={{ color: theme.colors.accent }} />
 					<div>
 						<div className="flex items-baseline gap-2">
-							<h1
-								className="text-2xl font-bold tracking-widest"
-								style={{ color: theme.colors.textMain }}
-							>
-								MAESTRO
-							</h1>
+							<Wordmark as="h1" className="text-2xl" style={{ color: theme.colors.textMain }} />
 							<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
 								v{__APP_VERSION__}
 								{__COMMIT_HASH__ && ` (${__COMMIT_HASH__})`}

@@ -5,8 +5,18 @@
  * stay pixel-identical without copy-pasting markup.
  */
 
-import { memo } from 'react';
-import { ChevronDown, Clock, Eye, EyeOff, Link2, Loader2, RefreshCw, Users } from 'lucide-react';
+import { memo, type ReactNode } from 'react';
+import {
+	ChevronDown,
+	Clock,
+	Eye,
+	EyeOff,
+	KeyRound,
+	Link2,
+	Loader2,
+	RefreshCw,
+	Users,
+} from 'lucide-react';
 import type { Theme } from '../../../types';
 import { formatFutureTime, formatTimestamp } from '../../../../shared/formatters';
 import {
@@ -41,15 +51,21 @@ export const QuotaBarRow = memo(function QuotaBarRow({
 	const displayPercent = Math.round(clampedPercent);
 
 	return (
-		<div className="flex items-center gap-4">
+		// Narrow (a phone): the label and the reset caption share the first line
+		// and the bar takes the whole of a second one. The row used to be one
+		// unbreakable line - a 176px label, a 192px `whitespace-nowrap` reset
+		// caption, and 32px of gaps - which is 400px of fixed width before the
+		// bar gets any, so on a 390px phone the bar was squeezed to nothing and
+		// the one number this panel exists to show was invisible.
+		<div className="flex flex-wrap items-center gap-x-4 gap-y-1 sm:flex-nowrap">
 			<div
-				className="w-44 text-sm whitespace-nowrap flex-shrink-0"
+				className="min-w-0 truncate text-sm sm:w-44 sm:flex-shrink-0 sm:whitespace-nowrap"
 				style={{ color: theme.colors.textMain }}
 			>
 				{label}
 			</div>
 			<div
-				className="flex-1 h-7 rounded overflow-hidden relative"
+				className="order-last h-7 w-full rounded overflow-hidden relative sm:order-none sm:w-auto sm:flex-1"
 				style={{ backgroundColor: theme.colors.border }}
 				role="progressbar"
 				aria-label={`${label}: ${displayPercent}%`}
@@ -93,8 +109,8 @@ export const QuotaBarRow = memo(function QuotaBarRow({
 				)}
 			</div>
 			<div
-				className="text-xs text-left whitespace-nowrap flex-shrink-0 ml-auto"
-				style={{ color: theme.colors.textDim, minWidth: '12rem' }}
+				className="text-xs text-left whitespace-nowrap flex-shrink-0 ml-auto sm:min-w-[12rem]"
+				style={{ color: theme.colors.textDim }}
 				title={
 					resetsAt
 						? `Resets at ${new Date(resetsAt).toLocaleString()}`
@@ -417,7 +433,7 @@ export const QuotaRefreshControls = memo(function QuotaRefreshControls({
 	showHotkeyHint?: boolean;
 }) {
 	return (
-		<div className="flex flex-wrap items-center justify-end gap-2">
+		<div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
 			<label className="relative flex items-center">
 				<Clock
 					className="w-3.5 h-3.5 absolute left-2.5 pointer-events-none"
@@ -573,6 +589,57 @@ export const QuotaShowAllToggle = memo(function QuotaShowAllToggle({
 			)}
 			<span>{revealing ? 'Hide hidden' : `Show all (${hiddenCount})`}</span>
 		</button>
+	);
+});
+
+/**
+ * Warning strip shown in place of an account's bars when it cannot be sampled.
+ * Given `onLogin`, it carries a "Log in" button that opens the provider login
+ * for this account (see `useQuotaAccountLogin`), so a logged-out row is fixed
+ * where it is reported instead of by hunting for a terminal.
+ */
+export const QuotaAuthNotice = memo(function QuotaAuthNotice({
+	theme,
+	message,
+	testId,
+	onLogin,
+}: {
+	theme: Theme;
+	message: ReactNode;
+	testId: string;
+	onLogin?: () => void;
+}) {
+	const tone = theme.colors.warning ?? theme.colors.accent;
+	return (
+		<div
+			className="flex items-center gap-2 px-3 py-2 rounded text-xs"
+			style={{
+				backgroundColor: `${tone}15`,
+				color: theme.colors.textMain,
+				border: `1px solid ${tone}40`,
+			}}
+			data-testid={testId}
+		>
+			<span style={{ color: tone }}>●</span>
+			<span className="flex-1 min-w-0">{message}</span>
+			{onLogin && (
+				<button
+					type="button"
+					onClick={onLogin}
+					className="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors hover:opacity-80 shrink-0"
+					style={{
+						backgroundColor: `${theme.colors.accent}22`,
+						color: theme.colors.accent,
+						border: `1px solid ${theme.colors.accent}40`,
+					}}
+					data-testid={`${testId}-login`}
+					title="Run the provider login for this account, then re-sample it"
+				>
+					<KeyRound className="w-3 h-3" aria-hidden="true" />
+					Log in
+				</button>
+			)}
+		</div>
 	);
 });
 

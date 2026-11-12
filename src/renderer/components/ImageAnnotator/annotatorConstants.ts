@@ -18,6 +18,17 @@ export const ANNOTATOR_PALETTE: readonly string[] = [
 ];
 
 /**
+ * Palette index for a bare digit key: `1` picks the first swatch, `8` the last.
+ * Null for anything else, including digits past the palette and `0`, which the
+ * canvas already owns for resetting zoom.
+ */
+export function paletteHotkeyIndex(key: string): number | null {
+	if (key.length !== 1 || key < '1' || key > '9') return null;
+	const index = Number(key) - 1;
+	return index < ANNOTATOR_PALETTE.length ? index : null;
+}
+
+/**
  * Pen / shape stroke size bounds. Shared by the drawer's Size slider and the
  * `+` / `-` hotkeys so the two can never disagree on the clamp.
  */

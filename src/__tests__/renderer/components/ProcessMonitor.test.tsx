@@ -2103,7 +2103,7 @@ describe('ProcessMonitor', () => {
 			});
 
 			// Click kill button on the cue process
-			const killButtons = screen.getAllByTitle('Kill process');
+			const killButtons = await screen.findAllByTitle('Kill process');
 			expect(killButtons.length).toBeGreaterThanOrEqual(1);
 			fireEvent.click(killButtons[0]);
 

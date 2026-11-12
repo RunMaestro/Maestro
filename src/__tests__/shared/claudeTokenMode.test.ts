@@ -10,6 +10,7 @@ import {
 	getClaudeTokenMode,
 	toClaudeTokenModeSource,
 	getClaudeTokenSourceFields,
+	autoRunMaestroPMaxWaitSeconds,
 	type ClaudeTokenMode,
 } from '../../shared/claudeTokenMode';
 
@@ -193,5 +194,42 @@ describe('getClaudeTokenSourceFields', () => {
 			cwd: '/tmp',
 		});
 		expect(Object.keys(out).sort()).toEqual([...KEYS].sort());
+	});
+});
+
+describe('autoRunMaestroPMaxWaitSeconds', () => {
+	it("uses the Auto Run inactivity budget, not maestro-p's 300s", () => {
+		expect(autoRunMaestroPMaxWaitSeconds({ autoRunInactivityTimeoutMin: 30 })).toBe(1800);
+	});
+
+	it('treats an unset setting as its documented default (240 min)', () => {
+		expect(autoRunMaestroPMaxWaitSeconds({})).toBe(240 * 60);
+	});
+
+	it('falls back to the task duration cap when the inactivity watchdog is off', () => {
+		expect(
+			autoRunMaestroPMaxWaitSeconds({
+				autoRunInactivityTimeoutMin: 0,
+				autoRunMaxTaskDurationMin: 90,
+			})
+		).toBe(5400);
+	});
+
+	it('gives a day when both watchdogs are off', () => {
+		expect(
+			autoRunMaestroPMaxWaitSeconds({
+				autoRunInactivityTimeoutMin: 0,
+				autoRunMaxTaskDurationMin: 0,
+			})
+		).toBe(86400);
+	});
+
+	it('ignores non-numeric raw settings values', () => {
+		expect(
+			autoRunMaestroPMaxWaitSeconds({
+				autoRunInactivityTimeoutMin: '30',
+				autoRunMaxTaskDurationMin: 0,
+			})
+		).toBe(86400);
 	});
 });

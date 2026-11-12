@@ -1,0 +1,31 @@
+import type { UseSettingsReturn } from '../../../../hooks/settings/useSettings';
+import type { Theme } from '../../../../types';
+
+export interface DisplayTabProps {
+	theme: Theme;
+	isOpen: boolean;
+}
+
+export type DisplayTabSettings = UseSettingsReturn;
+
+export interface FontConfigurationState {
+	systemFonts: string[];
+	customFonts: string[];
+	fontLoading: boolean;
+	fontsLoaded: boolean;
+	/** Whether `systemFonts` reflects the real machine. See fontDetection.ts. */
+	fontsReliable: boolean;
+	handleFontInteraction: () => void;
+	addCustomFont: (font: string) => void;
+	removeCustomFont: (font: string) => void;
+}
+
+export interface BionifyAlgorithmState {
+	algorithmDraft: string;
+	setAlgorithmDraft: (value: string) => void;
+	isAlgorithmValid: boolean;
+	commitAlgorithmDraft: () => void;
+	showInfoModal: boolean;
+	openInfoModal: () => void;
+	closeInfoModal: () => void;
+}

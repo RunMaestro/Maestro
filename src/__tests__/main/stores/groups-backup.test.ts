@@ -55,8 +55,8 @@ describe('backupGroupsBeforeWipe', () => {
 		expect(mockWrite).toHaveBeenCalledTimes(1);
 		const [writtenPath, payload] = mockWrite.mock.calls[0];
 		expect(writtenPath).toContain(GROUPS_BACKUP_FILENAME);
-		expect((payload as { groups: Group[] }).groups).toEqual(stored);
-		expect((payload as { reason: string }).reason).toBe('group-registry-emptied');
+		expect((payload as { entries: Group[] }).entries).toEqual(stored);
+		expect((payload as { reason: string }).reason).toBe('registry-emptied');
 	});
 
 	it('does not back up when the incoming registry still has groups', async () => {

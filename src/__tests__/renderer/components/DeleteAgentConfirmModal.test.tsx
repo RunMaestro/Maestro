@@ -62,6 +62,28 @@ describe('DeleteAgentConfirmModal', () => {
 	});
 
 	describe('rendering', () => {
+		// Reachable by right-clicking any Left Bar row, so the agent being deleted
+		// is often not the highlighted one.
+		it('names the targeted agent in the header', () => {
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={vi.fn()}
+					onConfirmAndErase={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByTestId('modal-subtitle')).toHaveTextContent('TestAgent');
+			// The name must NOT land in the title: it is the aria-label and seeds
+			// the fallback resize key, so a per-agent title means a per-agent
+			// remembered window size.
+			expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
+			expect(screen.queryByText(/Confirm Delete . TestAgent/)).not.toBeInTheDocument();
+		});
+
 		it('renders with agent name and three action buttons', () => {
 			renderWithLayerStack(
 				<DeleteAgentConfirmModal
@@ -74,7 +96,7 @@ describe('DeleteAgentConfirmModal', () => {
 				/>
 			);
 
-			expect(screen.getByText(/TestAgent/)).toBeInTheDocument();
+			expect(screen.getAllByText(/TestAgent/).length).toBeGreaterThan(0);
 			expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Agent Only' })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Agent + Working Directory' })).toBeInTheDocument();

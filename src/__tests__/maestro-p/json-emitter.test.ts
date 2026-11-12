@@ -150,7 +150,26 @@ describe('JsonEmitter', () => {
 
 			const events = parseEmissions();
 			expect(events).toHaveLength(2);
-			expect(events[1]).toEqual({ type: 'assistant', message: rawMessage });
+			expect(events[1]).toEqual({
+				type: 'assistant',
+				message: rawMessage,
+				parent_tool_use_id: null,
+				session_id: 'abc',
+			});
+		});
+
+		// `claude -p` tags a subagent's messages with the Task call that started
+		// it; Maestro groups the subagent's tool cards under that call by it.
+		it('tags a subagent message with the Task call it belongs to', () => {
+			const emitter = new JsonEmitter();
+			emitter.emitInit({ sessionId: 'abc', model: null, cwd: '/cwd' });
+
+			emitter.emitAssistantMessage({ role: 'assistant', content: [] }, 'toolu_task');
+			emitter.emitUserMessage({ role: 'user', content: [{ type: 'tool_result' }] }, 'toolu_task');
+
+			const events = parseEmissions();
+			expect(events[1]).toMatchObject({ parent_tool_use_id: 'toolu_task', session_id: 'abc' });
+			expect(events[2]).toMatchObject({ parent_tool_use_id: 'toolu_task', session_id: 'abc' });
 		});
 
 		it('does not mutate, clone, or filter the supplied message object', () => {
@@ -215,7 +234,12 @@ describe('JsonEmitter', () => {
 			emitter.emitUserMessage(rawMessage);
 
 			const events = parseEmissions();
-			expect(events[1]).toEqual({ type: 'user', message: rawMessage });
+			expect(events[1]).toEqual({
+				type: 'user',
+				message: rawMessage,
+				parent_tool_use_id: null,
+				session_id: 'abc',
+			});
 		});
 
 		it('throws if called after emitResult', () => {

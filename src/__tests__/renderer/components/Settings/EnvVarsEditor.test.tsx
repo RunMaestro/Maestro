@@ -7,14 +7,16 @@
  * - Value validation (special characters)
  * - Display of valid entry count
  * - External sync from parent
+ * - Advanced (.env text) mode over the same records
  */
 
-import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import React, { useState } from 'react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { EnvVarsEditor } from '../../../../renderer/components/Settings/EnvVarsEditor';
 
 import { mockTheme } from '../../../helpers/mockTheme';
+import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 describe('EnvVarsEditor', () => {
 	let mockSetEnvVars: ReturnType<typeof vi.fn>;
 
@@ -415,6 +417,103 @@ describe('EnvVarsEditor', () => {
 		expect(lastCall['CLAUDE_CONFIG_DIR']).toBe('/Users/me/.claude-smash');
 	});
 
+	it('renders known account selects for auth path keys only', () => {
+		render(
+			<EnvVarsEditor
+				envVars={{
+					CLAUDE_CONFIG_DIR: '/Users/me/.claude-work',
+					CODEX_HOME: '/Users/me/.codex-work',
+					OTHER_PATH: '/usr/local/bin',
+				}}
+				setEnvVars={mockSetEnvVars}
+				theme={mockTheme}
+				knownAuthDirs={{
+					claudeConfigDirs: ['/Users/me/.claude-work'],
+					codexHomes: ['/Users/me/.codex-work'],
+				}}
+			/>
+		);
+
+		expect(screen.getByLabelText('Known CLAUDE_CONFIG_DIR paths')).toHaveValue(
+			'/Users/me/.claude-work'
+		);
+		expect(screen.getByLabelText('Known CODEX_HOME paths')).toHaveValue('/Users/me/.codex-work');
+		expect(screen.getAllByPlaceholderText('value')).toHaveLength(1);
+	});
+
+	it('reveals the validated text input for a custom auth path', () => {
+		render(
+			<EnvVarsEditor
+				envVars={{ CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' }}
+				setEnvVars={mockSetEnvVars}
+				theme={mockTheme}
+				knownAuthDirs={{ claudeConfigDirs: ['/Users/me/.claude-work'], codexHomes: [] }}
+			/>
+		);
+
+		fireEvent.change(screen.getByLabelText('Known CLAUDE_CONFIG_DIR paths'), {
+			target: { value: '__custom__' },
+		});
+		const valueInput = screen.getByPlaceholderText('value');
+		expect(valueInput).toHaveValue('/Users/me/.claude-work');
+
+		fireEvent.change(valueInput, { target: { value: 'relative/.claude' } });
+		expect(screen.getByText(/CLAUDE_CONFIG_DIR must be an absolute path/)).toBeInTheDocument();
+	});
+
+	it('falls back to a text input when no known auth paths exist', () => {
+		render(
+			<EnvVarsEditor
+				envVars={{ CODEX_HOME: '/Users/me/.codex-work' }}
+				setEnvVars={mockSetEnvVars}
+				theme={mockTheme}
+				knownAuthDirs={{ claudeConfigDirs: [], codexHomes: [] }}
+			/>
+		);
+
+		// Scoped to the VALUE field on purpose: the NAME field beside it is a
+		// combobox of its own (`EnvVarKeyInput`), so a bare `queryByRole` here
+		// asks about the wrong input.
+		expect(screen.queryByLabelText('Known CODEX_HOME paths')).not.toBeInTheDocument();
+		expect(screen.getByPlaceholderText('value')).toHaveValue('/Users/me/.codex-work');
+	});
+
+	it('commits a selected known auth path through the existing change callback', () => {
+		render(
+			<EnvVarsEditor
+				envVars={{ CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' }}
+				setEnvVars={mockSetEnvVars}
+				theme={mockTheme}
+				knownAuthDirs={{
+					claudeConfigDirs: ['/Users/me/.claude-work', '/Users/me/.claude-personal'],
+					codexHomes: [],
+				}}
+			/>
+		);
+
+		fireEvent.change(screen.getByLabelText('Known CLAUDE_CONFIG_DIR paths'), {
+			target: { value: '/Users/me/.claude-personal' },
+		});
+
+		expect(mockSetEnvVars).toHaveBeenLastCalledWith({
+			CLAUDE_CONFIG_DIR: '/Users/me/.claude-personal',
+		});
+	});
+
+	it('validates custom CODEX_HOME values as absolute paths', () => {
+		render(<EnvVarsEditor envVars={{}} setEnvVars={mockSetEnvVars} theme={mockTheme} />);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Add Variable' }));
+		fireEvent.change(screen.getByPlaceholderText('VARIABLE_NAME'), {
+			target: { value: 'CODEX_HOME' },
+		});
+		fireEvent.change(screen.getByPlaceholderText('value'), {
+			target: { value: 'relative/.codex' },
+		});
+
+		expect(screen.getByText(/CODEX_HOME must be an absolute path/)).toBeInTheDocument();
+	});
+
 	it('should show = separator between key and value', () => {
 		render(
 			<EnvVarsEditor envVars={{ MY_VAR: 'hello' }} setEnvVars={mockSetEnvVars} theme={mockTheme} />
@@ -552,6 +651,217 @@ describe('EnvVarsEditor', () => {
 			expect(keyInputs[0]).toHaveValue('FIRST');
 			expect(keyInputs[1]).toHaveValue('SECOND');
 			expect(screen.getByTitle(/^Enable FIRST/)).toBeInTheDocument();
+		});
+	});
+
+	describe('Advanced (.env) mode', () => {
+		let mockSetDisabled: ReturnType<typeof vi.fn>;
+
+		beforeEach(() => {
+			// jsdom here ships no working Storage, so the remembered mode needs
+			// the shared in-memory stand-in. A fresh install is also the reset.
+			installLocalStorageMock();
+			mockSetDisabled = vi.fn();
+		});
+
+		// The choice is remembered, so leaving it set would flip every later
+		// test in this file onto the textarea.
+		afterEach(() => {
+			installLocalStorageMock();
+		});
+
+		const openAdvanced = () => fireEvent.click(screen.getByRole('radio', { name: 'Advanced' }));
+		const textarea = () => screen.getByTestId('env-vars-dotenv-textarea') as HTMLTextAreaElement;
+
+		/** Holds both records the way a real parent does, so edits echo back. */
+		function Harness({
+			initial = {},
+			initialDisabled = {},
+		}: {
+			initial?: Record<string, string>;
+			initialDisabled?: Record<string, string>;
+		}) {
+			const [vars, setVars] = useState(initial);
+			const [disabled, setDisabled] = useState(initialDisabled);
+			return (
+				<>
+					<EnvVarsEditor
+						envVars={vars}
+						setEnvVars={setVars}
+						disabledEnvVars={disabled}
+						setDisabledEnvVars={setDisabled}
+						theme={mockTheme}
+					/>
+					<output data-testid="live">{JSON.stringify(vars)}</output>
+					<output data-testid="parked">{JSON.stringify(disabled)}</output>
+				</>
+			);
+		}
+
+		it('starts in Basic mode with the toggle on screen', () => {
+			render(<EnvVarsEditor envVars={{}} setEnvVars={mockSetEnvVars} theme={mockTheme} />);
+
+			expect(screen.getByRole('radio', { name: 'Basic' })).toHaveAttribute('aria-checked', 'true');
+			expect(screen.queryByTestId('env-vars-dotenv-textarea')).not.toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Add Variable' })).toBeInTheDocument();
+		});
+
+		it('shows the current variables as KEY=value lines, parked ones commented', () => {
+			render(
+				<EnvVarsEditor
+					envVars={{ FOO: 'bar', BAZ: 'a=b' }}
+					setEnvVars={mockSetEnvVars}
+					disabledEnvVars={{ OFF: 'x' }}
+					setDisabledEnvVars={mockSetDisabled}
+					theme={mockTheme}
+				/>
+			);
+
+			openAdvanced();
+
+			expect(textarea()).toHaveValue('FOO=bar\nBAZ=a=b\n# OFF=x');
+			expect(screen.queryByPlaceholderText('VARIABLE_NAME')).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Add Variable' })).not.toBeInTheDocument();
+		});
+
+		it('commits nothing just for switching modes', () => {
+			render(
+				<EnvVarsEditor
+					envVars={{ FOO: 'bar' }}
+					setEnvVars={mockSetEnvVars}
+					disabledEnvVars={{ OFF: 'x' }}
+					setDisabledEnvVars={mockSetDisabled}
+					theme={mockTheme}
+				/>
+			);
+
+			openAdvanced();
+			fireEvent.click(screen.getByRole('radio', { name: 'Basic' }));
+
+			expect(mockSetEnvVars).not.toHaveBeenCalled();
+			expect(mockSetDisabled).not.toHaveBeenCalled();
+		});
+
+		it('commits a pasted block to both records', () => {
+			render(
+				<EnvVarsEditor
+					envVars={{}}
+					setEnvVars={mockSetEnvVars}
+					disabledEnvVars={{}}
+					setDisabledEnvVars={mockSetDisabled}
+					theme={mockTheme}
+				/>
+			);
+			openAdvanced();
+
+			fireEvent.change(textarea(), {
+				target: {
+					value:
+						'# my provider\nexport API_URL=https://example.com/v1\nTOKEN="a b"\n# PARKED=later',
+				},
+			});
+
+			expect(mockSetEnvVars).toHaveBeenLastCalledWith({
+				API_URL: 'https://example.com/v1',
+				TOKEN: '"a b"',
+			});
+			expect(mockSetDisabled).toHaveBeenLastCalledWith({ PARKED: 'later' });
+		});
+
+		it('reports an invalid line by number and commits only the valid ones', () => {
+			render(<EnvVarsEditor envVars={{}} setEnvVars={mockSetEnvVars} theme={mockTheme} />);
+			openAdvanced();
+
+			fireEvent.change(textarea(), {
+				target: { value: 'GOOD=1\n1BAD=2\nUNSAFE=$(whoami)\nCLAUDE_CONFIG_DIR=relative' },
+			});
+
+			expect(mockSetEnvVars).toHaveBeenLastCalledWith({ GOOD: '1' });
+			const errors = screen.getByTestId('env-vars-dotenv-errors');
+			expect(errors).toHaveTextContent('Line 2 not saved: Invalid variable name');
+			expect(errors).toHaveTextContent('Line 3 not saved: Invalid value');
+			expect(errors).toHaveTextContent(
+				'Line 4 not saved: CLAUDE_CONFIG_DIR must be an absolute path'
+			);
+		});
+
+		it('warns about a duplicate and lets the last one win', () => {
+			render(<EnvVarsEditor envVars={{}} setEnvVars={mockSetEnvVars} theme={mockTheme} />);
+			openAdvanced();
+
+			fireEvent.change(textarea(), { target: { value: 'FOO=1\nFOO=2' } });
+
+			expect(mockSetEnvVars).toHaveBeenLastCalledWith({ FOO: '2' });
+			expect(screen.getByTestId('env-vars-dotenv-warnings')).toHaveTextContent(
+				'Line 2: FOO is already set on line 1'
+			);
+		});
+
+		it('treats a commented assignment as a plain comment when the editor cannot park', () => {
+			render(<EnvVarsEditor envVars={{}} setEnvVars={mockSetEnvVars} theme={mockTheme} />);
+			openAdvanced();
+
+			fireEvent.change(textarea(), { target: { value: 'FOO=1\n# OFF=2' } });
+
+			expect(mockSetEnvVars).toHaveBeenLastCalledWith({ FOO: '1' });
+			expect(screen.queryByTestId('env-vars-dotenv-errors')).not.toBeInTheDocument();
+		});
+
+		it('keeps comments and half-typed lines in the textarea while the edit echoes back', () => {
+			render(<Harness initial={{ FOO: 'bar' }} />);
+			openAdvanced();
+
+			const draft = '# keep me\nFOO=bar\n\nHALF';
+			fireEvent.change(textarea(), { target: { value: draft } });
+
+			expect(textarea()).toHaveValue(draft);
+			expect(screen.getByTestId('live')).toHaveTextContent('{"FOO":"bar"}');
+		});
+
+		it('round-trips through Basic: a pasted block becomes rows, parked state intact', () => {
+			render(<Harness />);
+			openAdvanced();
+			fireEvent.change(textarea(), { target: { value: 'ONE=1\n# TWO=2' } });
+
+			fireEvent.click(screen.getByRole('radio', { name: 'Basic' }));
+
+			const keyInputs = screen.getAllByPlaceholderText('VARIABLE_NAME');
+			expect(keyInputs.map((input) => (input as HTMLInputElement).value)).toEqual(['ONE', 'TWO']);
+			expect(screen.getByTitle(/^Disable ONE/)).toBeInTheDocument();
+			expect(screen.getByTitle(/^Enable TWO/)).toBeInTheDocument();
+
+			// And a row edit made in Basic shows up when switching back.
+			fireEvent.click(screen.getByTitle(/^Enable TWO/));
+			openAdvanced();
+			expect(textarea()).toHaveValue('ONE=1\nTWO=2');
+		});
+
+		it('rebuilds the text when the records change from outside', () => {
+			const { rerender } = render(
+				<EnvVarsEditor envVars={{ OLD: '1' }} setEnvVars={mockSetEnvVars} theme={mockTheme} />
+			);
+			openAdvanced();
+			expect(textarea()).toHaveValue('OLD=1');
+
+			rerender(
+				<EnvVarsEditor envVars={{ NEW: '2' }} setEnvVars={mockSetEnvVars} theme={mockTheme} />
+			);
+
+			expect(textarea()).toHaveValue('NEW=2');
+		});
+
+		it('remembers the chosen mode for the next editor', () => {
+			const first = render(
+				<EnvVarsEditor envVars={{ FOO: 'bar' }} setEnvVars={mockSetEnvVars} theme={mockTheme} />
+			);
+			openAdvanced();
+			first.unmount();
+
+			render(
+				<EnvVarsEditor envVars={{ FOO: 'bar' }} setEnvVars={mockSetEnvVars} theme={mockTheme} />
+			);
+
+			expect(textarea()).toHaveValue('FOO=bar');
 		});
 	});
 });

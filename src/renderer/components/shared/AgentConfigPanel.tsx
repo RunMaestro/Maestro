@@ -27,9 +27,18 @@ import { readOpenCodeAgentArg, writeOpenCodeAgentArg } from '../../../shared/ope
 import { useRemoteMaestroPAvailable } from '../../hooks/agent/useRemoteMaestroPAvailable';
 import { openUrl } from '../../utils/openUrl';
 import { logger } from '../../utils/logger';
+import { useKnownAuthDirs } from '../../hooks/agent/useKnownAuthDirs';
+import { AuthPathValueInput } from './AuthPathValueInput';
 import { EnvVarKeyInput } from './EnvVarKeyInput';
+import {
+	ENV_VARS_ADVANCED_MODE_STORAGE_KEY,
+	EnvVarsDotEnvInput,
+	EnvVarsModeToggle,
+} from './EnvVarsDotEnvInput';
+import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { BLANK_ENV_VAR_KEY } from '../../../shared/envVarCatalog';
 import { useKnownEnvVarKeys } from '../../hooks/agent/useKnownEnvVarKeys';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 const MAESTRO_P_INSTALL_URL = 'https://runmaestro.ai/maestro-p/';
 
@@ -49,9 +58,11 @@ const CLAUDE_TOKEN_MODE_OPTIONS: { value: ClaudeTokenMode; label: string }[] = [
 ];
 
 const CLAUDE_TOKEN_MODE_HINTS: Record<ClaudeTokenMode, string> = {
-	api: 'Always use claude --print (per-token API credit).',
-	interactive: 'Always drive the maestro-p TUI against your Max plan quota.',
-	dynamic: 'Start on the Max plan TUI, then auto-switch to API when the quota is near exhaustion.',
+	api: 'Run every turn through claude --print. Signed in with a Claude plan, it draws from your plan limits; with an API key set, it bills that key.',
+	interactive:
+		'Run every turn through the Claude TUI via maestro-p. Signed in with a Claude plan, it draws from your plan limits.',
+	dynamic:
+		'Start on the TUI, switch to claude --print near a plan limit. The switch only helps with an API key set: signed in with a plan alone, both draw from the same limits.',
 };
 
 // Built-in environment variables that Maestro sets automatically
@@ -212,10 +223,9 @@ function ModelTextInput({
 					{/* Custom dropdown */}
 					{isModelField && showDropdown && filteredModels.length > 0 && (
 						<div
-							className="absolute z-50 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded border shadow-lg"
+							className="absolute z-50 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded"
 							style={{
-								backgroundColor: theme.colors.bgMain,
-								borderColor: theme.colors.border,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							{filteredModels.map((model) => (
@@ -335,8 +345,28 @@ export interface AgentConfigPanelProps {
 	onEnvVarRemove: (key: string, enabled?: boolean) => void;
 	onEnvVarAdd: () => void;
 	onEnvVarsBlur: () => void;
+	/**
+	 * Replace both records whole. Pass it to get the Basic / Advanced toggle,
+	 * where Advanced edits every variable as `.env` text; omit it and the panel
+	 * is rows only. It exists because the row callbacks above cannot express a
+	 * paste: several of them fired in one tick each rebuild the record from the
+	 * same stale copy, so only the last would survive. `disabledVars` is always
+	 * `{}` for a consumer that does not pass `customEnvVarsDisabled`.
+	 */
+	onEnvVarsReplace?: (vars: Record<string, string>, disabledVars: Record<string, string>) => void;
 	// Agent-specific config options
 	agentConfig: Record<string, any>;
+	/**
+	 * Per-option advisory notes, keyed by `AgentConfigOption.key`, rendered under
+	 * the matching control above its description.
+	 *
+	 * Opt-in on purpose (#1370): only the Edit Agent surface can populate this,
+	 * because deciding whether a stored value is currently overridden needs the
+	 * session AND its live usage stats, neither of which this panel receives. The
+	 * create surfaces (New Agent, the Wizard, AgentCreationDialog) have no session
+	 * to override and write a materialization by design, so they pass nothing.
+	 */
+	configOptionNotes?: Record<string, React.ReactNode>;
 	onConfigChange: (key: string, value: any) => void;
 	/** Called when a config field blurs. For text fields, `committedValue` is the value that was just saved. */
 	onConfigBlur: (key: string, committedValue: any) => void | Promise<void>;
@@ -375,13 +405,15 @@ export interface AgentConfigPanelProps {
 	onMaestroPPathBlur?: () => void;
 	/** Auto-detected maestro-p path shown as helper text when `maestroPPath` is empty. */
 	detectedMaestroPPath?: string;
-	/** Last resolved Claude headless-mode state for this session. When provided and Adaptive Mode is on,
-	 *  the panel renders a small pill next to the toggle so the user can see whether the spawner is
-	 *  currently on Time Limits (Max plan) or has fallen back to API Limits. */
-	claudeInteractive?: {
-		mode: 'interactive' | 'api';
-		modeReason: 'auto' | 'limit';
-	};
+	// === Codex usage resets (codex agent only) ===
+	/**
+	 * Spend a rate-limit reset credit automatically when this agent hits a
+	 * plan-quota wall. Off by default. Rendered directly under Reasoning Effort,
+	 * because that is where the Codex-specific settings end and this is the last
+	 * of them.
+	 */
+	codexAutoResetOnExhaustion?: boolean;
+	onCodexAutoResetChange?: (value: boolean) => void;
 }
 
 export function AgentConfigPanel({
@@ -401,7 +433,9 @@ export function AgentConfigPanel({
 	onEnvVarRemove,
 	onEnvVarAdd,
 	onEnvVarsBlur,
+	onEnvVarsReplace,
 	agentConfig,
+	configOptionNotes,
 	onConfigChange,
 	onConfigBlur,
 	availableModels = [],
@@ -426,7 +460,8 @@ export function AgentConfigPanel({
 	onMaestroPPathChange,
 	onMaestroPPathBlur,
 	detectedMaestroPPath,
-	claudeInteractive,
+	codexAutoResetOnExhaustion = false,
+	onCodexAutoResetChange,
 }: AgentConfigPanelProps): JSX.Element {
 	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
 		const maybePromise = onConfigBlur(key, committedValue);
@@ -448,6 +483,7 @@ export function AgentConfigPanel({
 		refresh: refreshRemoteMaestroP,
 	} = useRemoteMaestroPAvailable(isSshEnabled ? sshRemoteId : undefined);
 	const remoteMaestroPMissing = isSshEnabled && remoteMaestroPAvailable === false;
+	const knownAuthDirs = useKnownAuthDirs(!isSshEnabled);
 	// Collapse the stored (enableMaestroP, maestroPMode) pair into the tri-state the
 	// segmented "Claude Token Source" selector renders. Source not API => show the
 	// maestro-p path input and the live Time/API-limits pill.
@@ -482,6 +518,12 @@ export function AgentConfigPanel({
 	// has taken the caret. Not derived from "is this row blank": a blank row can
 	// also arrive from disk, and that one must not steal focus on modal open.
 	const [focusNewEnvVarRow, setFocusNewEnvVarRow] = useState(false);
+	const { value: envVarsAdvancedPreferred, setValue: setEnvVarsAdvanced } = usePersistedToggle(
+		ENV_VARS_ADVANCED_MODE_STORAGE_KEY
+	);
+	// A consumer that cannot take a whole-record replace stays on rows, whatever
+	// the remembered preference says.
+	const envVarsAdvanced = envVarsAdvancedPreferred && Boolean(onEnvVarsReplace);
 	const [showingTooltip, setShowingTooltip] = useState<string | null>(null);
 
 	// Track stable IDs for env var entries to prevent focus loss when keys change
@@ -676,10 +718,11 @@ export function AgentConfigPanel({
 			</div>
 
 			{/* Claude Token Source selector - Claude Code only. Picks how this agent
-			    spends Claude quota: API (claude --print, per-token), TUI (maestro-p
-			    driving the Claude TUI against the Max plan), or Dynamic (start on the
-			    TUI, fall back to API when the 5-hour or weekly window is near
-			    exhaustion, then snap back once both windows reset). Over SSH only
+			    runs a turn: claude --print, the Claude TUI via maestro-p, or Dynamic
+			    (start on the TUI, switch to claude --print when the 5-hour or weekly
+			    window is near its limit, then snap back once both windows reset).
+			    The mode does not pick the bill: signed in with a plan, both draw
+			    from the same plan limits; an API key in the env bills that key. Over SSH only
 			    API / TUI are offered (Dynamic needs a local quota snapshot that
 			    doesn't reflect the remote account) and maestro-p runs on the remote
 			    host's PATH, so the local Maestro-P Path override is hidden. */}
@@ -707,25 +750,6 @@ export function AgentConfigPanel({
 								<RefreshCw className={`w-3 h-3 ${remoteMaestroPProbing ? 'animate-spin' : ''}`} />
 								Re-check
 							</button>
-						)}
-						{showMaestroPDetails && claudeInteractive && (
-							<span
-								className="text-2xs font-mono px-1.5 py-0.5 rounded whitespace-nowrap"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									color:
-										claudeInteractive.mode === 'interactive'
-											? theme.colors.accent
-											: (theme.colors.warning ?? theme.colors.accent),
-								}}
-								title={
-									claudeInteractive.modeReason === 'limit'
-										? 'Forced fallback: Max plan 5-hour or weekly quota is exhausted.'
-										: 'Selected automatically based on current usage.'
-								}
-							>
-								{claudeInteractive.mode === 'interactive' ? 'Time Limits' : 'API Limits'}
-							</span>
 						)}
 					</div>
 					<ToggleButtonGroup
@@ -778,7 +802,7 @@ export function AgentConfigPanel({
 								type="text"
 								value={maestroPPath}
 								onChange={(e) => onMaestroPPathChange?.(e.target.value)}
-								onBlur={onMaestroPPathBlur}
+								onBlur={() => onMaestroPPathBlur?.()}
 								onClick={(e) => e.stopPropagation()}
 								placeholder={detectedMaestroPPath ?? '/path/to/maestro-p'}
 								className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
@@ -815,7 +839,7 @@ export function AgentConfigPanel({
 						type="text"
 						value={readOpenCodeAgentArg(customArgs)}
 						onChange={(e) => onCustomArgsChange(writeOpenCodeAgentArg(customArgs, e.target.value))}
-						onBlur={onCustomArgsBlur}
+						onBlur={() => onCustomArgsBlur()}
 						onClick={(e) => e.stopPropagation()}
 						placeholder="build"
 						className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
@@ -845,7 +869,10 @@ export function AgentConfigPanel({
 						type="text"
 						value={customArgs}
 						onChange={(e) => onCustomArgsChange(e.target.value)}
-						onBlur={onCustomArgsBlur}
+						// Called with no arguments, never handed the FocusEvent: a parent that
+						// shares one persist function across these blur props (Director's Notes)
+						// would store the event and fail the settings IPC write (MAESTRO-11C).
+						onBlur={() => onCustomArgsBlur()}
 						onClick={(e) => e.stopPropagation()}
 						placeholder="--flag value --another-flag"
 						className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
@@ -862,9 +889,20 @@ export function AgentConfigPanel({
 				className={`${padding} rounded border`}
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 			>
-				<label className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
-					Environment Variables (optional)
-				</label>
+				<div className="flex items-center justify-between gap-2 mb-2">
+					<label className="block text-xs font-medium" style={{ color: theme.colors.textDim }}>
+						Environment Variables (optional)
+					</label>
+					{onEnvVarsReplace && (
+						<div onClick={(e) => e.stopPropagation()}>
+							<EnvVarsModeToggle
+								advanced={envVarsAdvanced}
+								onChange={setEnvVarsAdvanced}
+								theme={theme}
+							/>
+						</div>
+					)}
+				</div>
 				<div className="space-y-2">
 					{/* Built-in env vars (read-only, shown when showBuiltInEnvVars is true) */}
 					{showBuiltInEnvVars &&
@@ -895,10 +933,9 @@ export function AgentConfigPanel({
 										{/* Tooltip */}
 										{showingTooltip === envVar.key && (
 											<div
-												className="absolute left-1/2 bottom-full mb-1 z-50 p-3 rounded shadow-lg text-xs whitespace-normal leading-relaxed"
+												className="absolute left-1/2 bottom-full mb-1 z-50 p-3 rounded text-xs whitespace-normal leading-relaxed"
 												style={{
-													backgroundColor: theme.colors.bgMain,
-													border: `1px solid ${theme.colors.border}`,
+													...elevatedSurfaceStyle(theme),
 													color: theme.colors.textMain,
 													width: '320px',
 													transform: 'translateX(-50%)',
@@ -920,91 +957,109 @@ export function AgentConfigPanel({
 								</div>
 							</div>
 						))}
-					{/* User-defined env vars */}
-					{envVarRows.map(({ key, value, enabled, id }) => {
-						const off = !enabled;
-						return (
-							<div key={`env-var-${id}`} className="flex gap-2">
-								{canToggleEnvVars && (
+					{/* User-defined env vars, as `.env` text */}
+					{envVarsAdvanced && onEnvVarsReplace && (
+						<div onClick={(e) => e.stopPropagation()}>
+							<EnvVarsDotEnvInput
+								theme={theme}
+								envVars={customEnvVars}
+								disabledEnvVars={canToggleEnvVars ? customEnvVarsDisabled : undefined}
+								onChange={onEnvVarsReplace}
+								onBlur={onEnvVarsBlur}
+							/>
+						</div>
+					)}
+					{/* User-defined env vars, a row each */}
+					{!envVarsAdvanced &&
+						envVarRows.map(({ key, value, enabled, id }) => {
+							const off = !enabled;
+							return (
+								<div key={`env-var-${id}`} className="flex gap-2 items-center">
+									{canToggleEnvVars && (
+										<GhostIconButton
+											onClick={(e) => {
+												e.stopPropagation();
+												onEnvVarToggle?.(key, off);
+											}}
+											padding="p-2"
+											title={
+												off
+													? `Enable ${key || 'variable'} (currently not passed to this agent)`
+													: `Disable ${key || 'variable'} (keeps the value, stops passing it to this agent)`
+											}
+											color={off ? theme.colors.textDim : theme.colors.accent}
+										>
+											{off ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+										</GhostIconButton>
+									)}
+									<EnvVarKeyInput
+										theme={theme}
+										value={getKeyDisplayValue(key)}
+										onChange={(nextKey) => handleKeyInputChange(key, nextKey)}
+										onBlur={() => handleKeyBlur(key, value, enabled)}
+										toolType={agent.id}
+										knownEnvVarKeys={knownEnvVarKeys}
+										usedKeys={envVarKeys}
+										autoFocus={focusNewEnvVarRow && key === BLANK_ENV_VAR_KEY}
+										onAutoFocused={() => setFocusNewEnvVarRow(false)}
+										className="p-2 rounded border bg-transparent outline-none text-xs font-mono"
+										style={{
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+											opacity: off ? 0.45 : 1,
+											textDecoration: off ? 'line-through' : undefined,
+										}}
+									/>
+									<span
+										className="flex items-center text-xs"
+										style={{ color: theme.colors.textDim }}
+									>
+										=
+									</span>
+									<AuthPathValueInput
+										envVarKey={key}
+										value={value}
+										knownAuthDirs={knownAuthDirs}
+										onChange={(updatedValue) => onEnvVarValueChange(key, updatedValue, enabled)}
+										onBlur={() => onEnvVarsBlur()}
+										className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
+										containerClassName="flex-[2] min-w-0"
+										style={{
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+											opacity: off ? 0.45 : 1,
+											textDecoration: off ? 'line-through' : undefined,
+										}}
+									/>
 									<GhostIconButton
 										onClick={(e) => {
 											e.stopPropagation();
-											onEnvVarToggle?.(key, off);
+											onEnvVarRemove(key, enabled);
 										}}
 										padding="p-2"
-										title={
-											off
-												? `Enable ${key || 'variable'} (currently not passed to this agent)`
-												: `Disable ${key || 'variable'} (keeps the value, stops passing it to this agent)`
-										}
-										color={off ? theme.colors.textDim : theme.colors.accent}
+										title="Remove variable"
+										color={theme.colors.textDim}
 									>
-										{off ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+										<Trash2 className="w-3 h-3" />
 									</GhostIconButton>
-								)}
-								<EnvVarKeyInput
-									theme={theme}
-									value={getKeyDisplayValue(key)}
-									onChange={(nextKey) => handleKeyInputChange(key, nextKey)}
-									onBlur={() => handleKeyBlur(key, value, enabled)}
-									toolType={agent.id}
-									knownEnvVarKeys={knownEnvVarKeys}
-									usedKeys={envVarKeys}
-									autoFocus={focusNewEnvVarRow && key === BLANK_ENV_VAR_KEY}
-									onAutoFocused={() => setFocusNewEnvVarRow(false)}
-									className="p-2 rounded border bg-transparent outline-none text-xs font-mono"
-									style={{
-										borderColor: theme.colors.border,
-										color: theme.colors.textMain,
-										opacity: off ? 0.45 : 1,
-										textDecoration: off ? 'line-through' : undefined,
-									}}
-								/>
-								<span className="flex items-center text-xs" style={{ color: theme.colors.textDim }}>
-									=
-								</span>
-								<input
-									type="text"
-									value={value}
-									onChange={(e) => onEnvVarValueChange(key, e.target.value, enabled)}
-									onBlur={onEnvVarsBlur}
-									onClick={(e) => e.stopPropagation()}
-									placeholder="value"
-									className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
-									style={{
-										borderColor: theme.colors.border,
-										color: theme.colors.textMain,
-										opacity: off ? 0.45 : 1,
-										textDecoration: off ? 'line-through' : undefined,
-									}}
-								/>
-								<GhostIconButton
-									onClick={(e) => {
-										e.stopPropagation();
-										onEnvVarRemove(key, enabled);
-									}}
-									padding="p-2"
-									title="Remove variable"
-									color={theme.colors.textDim}
-								>
-									<Trash2 className="w-3 h-3" />
-								</GhostIconButton>
-							</div>
-						);
-					})}
+								</div>
+							);
+						})}
 					{/* Add new env var button */}
-					<button
-						onClick={(e) => {
-							e.stopPropagation();
-							setFocusNewEnvVarRow(true);
-							onEnvVarAdd();
-						}}
-						className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-					>
-						<Plus className="w-3 h-3" />
-						Add Variable
-					</button>
+					{!envVarsAdvanced && (
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								setFocusNewEnvVarRow(true);
+								onEnvVarAdd();
+							}}
+							className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textDim }}
+						>
+							<Plus className="w-3 h-3" />
+							Add Variable
+						</button>
+					)}
 				</div>
 				<p className="text-xs opacity-50 mt-2">
 					Agent-specific environment variables (overrides global environment variables from
@@ -1127,9 +1182,57 @@ export function AgentConfigPanel({
 									</select>
 								);
 							})()}
+						{configOptionNotes?.[option.key] && (
+							<p
+								className="text-xs mt-2"
+								style={{ color: theme.colors.warning }}
+								data-testid={`config-option-note-${option.key}`}
+							>
+								{configOptionNotes[option.key]}
+							</p>
+						)}
 						<p className="text-xs opacity-50 mt-2">{option.description}</p>
 					</div>
 				))}
+
+			{/* Automatic usage resets - Codex only, and last, so it sits directly
+			    under Reasoning Effort where the Codex settings end.
+
+			    Gated on the handler as well as the provider: the panel is shared
+			    with surfaces that do not persist this flag, and a checkbox whose
+			    change goes nowhere is worse than no checkbox. */}
+			{agent.id === 'codex' && onCodexAutoResetChange && (
+				<div
+					className={`${padding} rounded border`}
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+					data-testid="codex-auto-reset-option"
+				>
+					<label className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
+						Automatic Usage Resets
+					</label>
+					<label
+						className="flex items-center gap-2 cursor-pointer"
+						onClick={(e) => e.stopPropagation()}
+					>
+						<input
+							type="checkbox"
+							checked={codexAutoResetOnExhaustion}
+							onChange={(e) => onCodexAutoResetChange(e.target.checked)}
+							className="w-4 h-4"
+							style={{ accentColor: theme.colors.accent }}
+							aria-label="Automatically redeem a reset credit when usage limits are hit"
+						/>
+						<span className="text-xs" style={{ color: theme.colors.textMain }}>
+							Redeem a reset credit when this agent hits its usage limit
+						</span>
+					</label>
+					<p className="text-xs opacity-50 mt-2">
+						Off by default. Reset credits are granted by OpenAI, are limited, expire, and cannot be
+						refunded - so Maestro only spends one when the account is actually blocked and the reset
+						would take effect. Manage them under Usage Dashboard - OpenAI Usage.
+					</p>
+				</div>
+			)}
 		</div>
 	);
 }

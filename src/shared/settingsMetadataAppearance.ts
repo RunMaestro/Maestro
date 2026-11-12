@@ -15,6 +15,25 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'dracula',
 		category: 'appearance',
 	},
+	themeFollowSystem: {
+		description:
+			"Follow the device's light/dark appearance (prefers-color-scheme) instead of activeThemeId. Each client resolves it on its own, so a phone on the web interface follows the phone and the desktop follows the computer.",
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	lightThemeId: {
+		description: 'Theme shown when themeFollowSystem is on and the device is in light appearance.',
+		type: 'string',
+		default: 'github-light',
+		category: 'appearance',
+	},
+	darkThemeId: {
+		description: 'Theme shown when themeFollowSystem is on and the device is in dark appearance.',
+		type: 'string',
+		default: 'dracula',
+		category: 'appearance',
+	},
 	themeGloss: {
 		description:
 			"How much light the app chrome catches: 'off' (flat, the shipped look), 'sheen', 'strong', or 'max'. Adds highlights and shadows only; it changes no theme color, and it has no effect on light themes.",
@@ -177,6 +196,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: null,
 		category: 'appearance',
 	},
+	feedbackAccountKey: {
+		description:
+			'Provider account (profile key) that last carried a Send Feedback conversation. The next conversation tries it first. Null until one succeeds. Set by hand with `maestro-cli feedback accounts --use <key>`.',
+		type: 'string',
+		default: null,
+		category: 'internal',
+	},
 	mediaPlaybackRate: {
 		description:
 			'Playback speed for audio and video files opened in the file preview. Persists across files and restarts. Range 0.25 to 4.',
@@ -200,6 +226,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Use the OS-native title bar instead of the custom frameless title bar.',
 		type: 'boolean',
 		default: false,
+		category: 'appearance',
+	},
+	tabBarWheelScroll: {
+		description:
+			'Pan an overflowing tab strip horizontally with the mouse wheel while hovering over the tab bar.',
+		type: 'boolean',
+		default: true,
 		category: 'appearance',
 	},
 	autoHideMenuBar: {
@@ -258,6 +291,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			'Show a member count in parentheses after each group name in the left side bar (e.g. "UNGROUPED AGENTS (24)").',
 		type: 'boolean',
 		default: false,
+		category: 'appearance',
+	},
+	showLeftPanelCollapsedInitials: {
+		description:
+			'When the left side bar is collapsed, label each agent with two letters from its name (e.g. "MR" for "Maestro RC"), tinted with its status color. Turn off to show a plain status dot instead.',
+		type: 'boolean',
+		default: true,
 		category: 'appearance',
 	},
 	leftPanelCollapsedPillsPerRow: {
@@ -350,6 +390,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			'Icon theme for the file explorer sidebar. Options: rich (default, Material Icon Theme style) or flat.',
 		type: 'string',
 		default: 'rich',
+		category: 'appearance',
+	},
+	fileTreeBranchConnectors: {
+		description:
+			"Draw elbow connectors from a folder's guide line into each of its children in the Files pane, and stop the guide at the folder's last child. Off by default, which draws plain full-height indent guides.",
+		type: 'boolean',
+		default: false,
 		category: 'appearance',
 	},
 	toastWidth: {

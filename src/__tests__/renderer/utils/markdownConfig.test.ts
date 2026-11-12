@@ -31,7 +31,6 @@ import {
 	generateTerminalProseStyles,
 	generateInlineWizardPreviewProseStyles,
 	generateDiffViewStyles,
-	createWizardBubbleMarkdownComponents,
 	createReleaseNotesMarkdownComponents,
 	createMarkdownComponents,
 	REMARK_GFM_PLUGINS,
@@ -707,21 +706,6 @@ describe('shared markdown presets', () => {
 		expect(REMARK_GFM_PLUGINS.length).toBeGreaterThan(0);
 	});
 
-	it('should create wizard bubble markdown components', () => {
-		const components = createWizardBubbleMarkdownComponents(mockTheme);
-		expect(components.p).toBeDefined();
-		expect(components.ul).toBeDefined();
-		expect(components.ol).toBeDefined();
-		expect(components.li).toBeDefined();
-		expect(components.code).toBeDefined();
-		expect(components.pre).toBeDefined();
-		expect(components.a).toBeDefined();
-		expect(components.h1).toBeDefined();
-		expect(components.h2).toBeDefined();
-		expect(components.h3).toBeDefined();
-		expect(components.blockquote).toBeDefined();
-	});
-
 	it('should create release notes markdown components', () => {
 		const components = createReleaseNotesMarkdownComponents(mockTheme);
 		expect(components.h1).toBeDefined();
@@ -862,38 +846,6 @@ describe('createMarkdownComponents link handling', () => {
 });
 
 // ---------------------------------------------------------------------------
-// createWizardBubbleMarkdownComponents - link handling (#1060)
-// ---------------------------------------------------------------------------
-
-describe('createWizardBubbleMarkdownComponents link handling', () => {
-	beforeEach(() => {
-		mockOpenUrl.mockClear();
-	});
-
-	// Under the old `{ ctrlKey: e.ctrlKey }` code a metaKey-only click yielded
-	// ctrlKey:false, so this guard would fail. See bug #1060.
-	it('should translate Cmd-click (metaKey) into ctrlKey:true for openUrl', () => {
-		const components = createWizardBubbleMarkdownComponents(mockTheme);
-		const aComponent = components.a as any;
-
-		const element = aComponent({ href: 'https://example.com', children: 'link' });
-		const clickEvent = { preventDefault: vi.fn(), metaKey: true, ctrlKey: false } as any;
-		element.props.onClick(clickEvent);
-		expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: true });
-	});
-
-	it('should pass ctrlKey:false to openUrl on a plain click', () => {
-		const components = createWizardBubbleMarkdownComponents(mockTheme);
-		const aComponent = components.a as any;
-
-		const element = aComponent({ href: 'https://example.com', children: 'link' });
-		const clickEvent = { preventDefault: vi.fn(), metaKey: false, ctrlKey: false } as any;
-		element.props.onClick(clickEvent);
-		expect(mockOpenUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: false });
-	});
-});
-
-// ---------------------------------------------------------------------------
 // createReleaseNotesMarkdownComponents - link handling (#1060)
 // ---------------------------------------------------------------------------
 
@@ -951,19 +903,6 @@ describe('hex color swatch in inline code', () => {
 		const code = container.querySelector('code');
 		expect(code!.querySelector('span')).toBeNull();
 		expect(code!.textContent).toBe('console.log');
-	});
-
-	it('should render swatch in wizard bubble inline code', () => {
-		const components = createWizardBubbleMarkdownComponents(mockTheme);
-		const codeComponent = components.code as any;
-		const element = codeComponent({ children: '#8B3FFC' });
-		const children = React.Children.toArray(element.props.children);
-		// swatch (or null filtered) + text
-		const swatch = children.find(
-			(c: any) => c?.type === 'span' && c?.props?.style?.backgroundColor
-		) as React.ReactElement | undefined;
-		expect(swatch).toBeDefined();
-		expect(swatch!.props.style.backgroundColor).toBe('#8B3FFC');
 	});
 
 	it('should render swatch in release notes inline code', () => {

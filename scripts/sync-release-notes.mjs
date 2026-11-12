@@ -124,6 +124,7 @@ function generateMarkdown(releases) {
 	let md = `---
 title: Release Notes
 description: Version history and changelog for Maestro releases
+icon: tag
 ---
 
 # Release Notes

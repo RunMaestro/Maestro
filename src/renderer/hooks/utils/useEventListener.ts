@@ -26,6 +26,13 @@ export interface UseEventListenerOptions {
 	 */
 	enabled?: boolean;
 	/**
+	 * Passed through as `AddEventListenerOptions.passive`. Set to `false` for
+	 * handlers that must call `preventDefault()` on events browsers treat as
+	 * passive by default (wheel, touchstart, touchmove). Left undefined, the
+	 * browser default applies.
+	 */
+	passive?: boolean;
+	/**
 	 * Listen in the capture phase. Use when the listener must see an event
 	 * before a handler lower in the tree can stop it, or before React's own
 	 * root listener runs. Defaults to `false`.
@@ -59,6 +66,7 @@ export function useEventListener(
 	const {
 		target = typeof window !== 'undefined' ? window : null,
 		enabled = true,
+		passive,
 		capture = false,
 	} = options ?? {};
 
@@ -71,9 +79,11 @@ export function useEventListener(
 	useEffect(() => {
 		if (!enabled || !target) return;
 		const listener = (event: Event) => handlerRef.current(event);
-		target.addEventListener(eventType, listener, capture);
+		const listenerOptions: AddEventListenerOptions =
+			passive === undefined ? { capture } : { capture, passive };
+		target.addEventListener(eventType, listener, listenerOptions);
 		return () => {
 			target.removeEventListener(eventType, listener, capture);
 		};
-	}, [eventType, target, enabled, capture]);
+	}, [eventType, target, enabled, passive, capture]);
 }

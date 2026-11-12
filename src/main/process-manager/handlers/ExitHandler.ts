@@ -6,7 +6,9 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
 import { settleProvisionalAgentError } from '../utils/provisionalAgentError';
+import { emitAgentErrorAfterOutput } from '../utils/agentErrorEmit';
 import type { ManagedProcess, AgentError } from '../types';
+import type { ParsedEvent } from '../../parsers/agent-output-parser';
 import type { DataBufferManager } from './DataBufferManager';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { captureException } from '../../utils/sentry';
@@ -49,8 +51,12 @@ export class ExitHandler {
 	 * done (currently: Copilot CLI - see `awaitCopilotShutdown`).
 	 * Callers fire-and-forget, so errors are caught internally.
 	 */
-	async handleExit(sessionId: string, code: number): Promise<void> {
-		const managedProcess = this.processes.get(sessionId);
+	async handleExit(
+		sessionId: string,
+		code: number,
+		exitingProcess?: ManagedProcess
+	): Promise<void> {
+		const managedProcess = exitingProcess ?? this.processes.get(sessionId);
 		if (!managedProcess) {
 			this.emitter.emit('exit', sessionId, code);
 			return;
@@ -59,7 +65,7 @@ export class ExitHandler {
 		const { isBatchMode, isStreamJsonMode, outputParser, toolType } = managedProcess;
 
 		// Flush any remaining buffered data before exit
-		this.bufferManager.flushDataBuffer(sessionId);
+		this.bufferManager.flushDataBuffer(sessionId, managedProcess);
 
 		logger.debug('[ProcessManager] Child process exit event', 'ProcessManager', {
 			sessionId,
@@ -118,7 +124,15 @@ export class ExitHandler {
 		// An in-turn error notice still held at exit had nothing after it, so the
 		// turn ended on it. Emit it first: ahead of the exit event it explains, and
 		// ahead of detectErrorFromExit below, which would report a vaguer failure.
-		settleProvisionalAgentError(this.emitter, sessionId, managedProcess);
+		// A notice still undecided when the user pressed Stop is dropped instead:
+		// the turn ended on the stop, not on the notice, and raising it would show a
+		// red error for a turn the user deliberately abandoned (see `interrupted`).
+		if (managedProcess.interrupted) {
+			managedProcess.provisionalError = undefined;
+		}
+		settleProvisionalAgentError(this.emitter, this.bufferManager, sessionId, managedProcess, {
+			flushStreamedText: isStreamJsonMode,
+		});
 
 		// Handle regular batch mode (not stream-json)
 		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {
@@ -137,18 +151,77 @@ export class ExitHandler {
 				remainingLineLength: remainingLine.length,
 				remainingLinePreview: remainingLine.substring(0, 200),
 			});
+			// Scoped to the parse alone. A malformed last line is an expected,
+			// recoverable condition with a defined fallback (emit it raw), but
+			// classifying and dispatching the event below is not - widening this
+			// catch around that work would swallow a real defect AND emit the failed
+			// envelope's JSON to the user as if it were the answer.
+			let event: ParsedEvent | null = null;
 			try {
-				const event = outputParser.parseJsonLine(remainingLine);
-				if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
-					managedProcess.resultEmitted = true;
-					const resultText = event.text || managedProcess.streamedText || '';
-					if (resultText) {
-						this.bufferManager.emitDataBuffered(sessionId, resultText);
+				event = outputParser.parseJsonLine(remainingLine);
+			} catch {
+				this.bufferManager.emitDataBuffered(sessionId, remainingLine, managedProcess);
+			}
+
+			// Capture the provider's session id BEFORE dispatching, and for a failed
+			// envelope as much as a successful one. When the flushed line is the first
+			// event to carry one - a short-lived run whose whole output is this single
+			// trailing envelope - this is the only chance to record it. Without it the
+			// tab has no id to resume from, so recovery from a *recoverable* error
+			// silently opens a fresh conversation and drops the context the retry was
+			// supposed to continue. StdoutHandler does this for mid-stream lines; the
+			// flush is the same event arriving without a trailing newline.
+			if (event) {
+				const eventSessionId = outputParser.extractSessionId(event);
+				if (eventSessionId) {
+					managedProcess.agentSessionId = eventSessionId;
+					if (!managedProcess.sessionIdEmitted) {
+						managedProcess.sessionIdEmitted = true;
+						this.emitter.emit('session-id', sessionId, eventSessionId);
 					}
 				}
-			} catch {
-				// If parsing fails, emit the raw line as data
-				this.bufferManager.emitDataBuffered(sessionId, remainingLine);
+			}
+
+			// A terminal envelope that reports a FAILURE has to leave through the
+			// error path, not the result path. Emitting its text as data would render
+			// a provider failure as the agent's answer, and dropping it silently is
+			// worse still: `detectErrorFromExit` below returns null on exit code 0, so
+			// a CLI that reports the failure in-band and then exits clean would settle
+			// the turn with no answer and no error at all - the tab just stops, and no
+			// retry or recovery handling ever fires.
+			// `interrupted` (the user pressed Stop) suppresses this the same way it
+			// does in StdoutHandler: a terminal envelope flushed on the way out of a
+			// deliberate stop is not a turn failure.
+			if (event?.type === 'warning') {
+				// Match StdoutHandler when the last diagnostic has no trailing newline.
+				// This is display-only: do not add it to stderrBuffer or the answer.
+				if (event.text) this.emitter.emit('stderr', sessionId, `${event.text}\n`);
+			} else if (
+				event?.type === 'error' &&
+				!managedProcess.errorEmitted &&
+				!managedProcess.interrupted
+			) {
+				const agentError = outputParser.detectErrorFromParsed((event.raw as unknown) ?? event);
+				if (agentError) {
+					agentError.sessionId = sessionId;
+					if (managedProcess.sshRemoteId) {
+						agentError.sshRemoteId = managedProcess.sshRemoteId;
+					}
+					emitAgentErrorAfterOutput(
+						this.emitter,
+						this.bufferManager,
+						sessionId,
+						managedProcess,
+						agentError,
+						{ flushStreamedText: true }
+					);
+				}
+			} else if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
+				managedProcess.resultEmitted = true;
+				const resultText = event.text || managedProcess.streamedText || '';
+				if (resultText) {
+					this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
+				}
 			}
 		}
 
@@ -164,7 +237,7 @@ export class ExitHandler {
 					streamedTextLength: managedProcess.streamedText.length,
 				}
 			);
-			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText);
+			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText, managedProcess);
 		}
 
 		// Check for errors using the parser (if not already emitted)
@@ -175,7 +248,6 @@ export class ExitHandler {
 				managedProcess.stdoutBuffer || managedProcess.streamedText || ''
 			);
 			if (agentError) {
-				managedProcess.errorEmitted = true;
 				agentError.sessionId = sessionId;
 				if (managedProcess.sshRemoteId) {
 					agentError.sshRemoteId = managedProcess.sshRemoteId;
@@ -186,7 +258,13 @@ export class ExitHandler {
 					errorType: agentError.type,
 					errorMessage: agentError.message,
 				});
-				this.emitter.emit('agent-error', sessionId, agentError);
+				emitAgentErrorAfterOutput(
+					this.emitter,
+					this.bufferManager,
+					sessionId,
+					managedProcess,
+					agentError
+				);
 			}
 		}
 
@@ -214,7 +292,6 @@ export class ExitHandler {
 
 			const sshError = matchSshErrorPattern(stderrToCheck);
 			if (sshError) {
-				managedProcess.errorEmitted = true;
 				const agentError: AgentError = {
 					type: sshError.type,
 					message: sshError.message,
@@ -236,7 +313,13 @@ export class ExitHandler {
 					errorMessage: sshError.message,
 					stderrPreview: stderrToCheck.substring(0, 500),
 				});
-				this.emitter.emit('agent-error', sessionId, agentError);
+				emitAgentErrorAfterOutput(
+					this.emitter,
+					this.bufferManager,
+					sessionId,
+					managedProcess,
+					agentError
+				);
 			} else if (code !== 0) {
 				// Log SSH failures even if no pattern matched, to help debug
 				logger.warn(
@@ -250,6 +333,55 @@ export class ExitHandler {
 					}
 				);
 			}
+		}
+
+		// omp silent-exit hardening. Oh My Pi can exit cleanly (code 0) right after
+		// startup / TTSR-rule registration having emitted NO `agent_end`, no result,
+		// and no streamed text (observed: the main-turn process went silent while
+		// the paired tab-namer turn completed normally). Every branch above then
+		// no-ops - `detectErrorFromExit` returns null on code 0, and the streamed-
+		// text fallback has nothing to flush - so the tab clears its busy pill to an
+		// empty "done" state with no answer and no error, indistinguishable from
+		// success. That is the reported "started, never went busy, appeared done,
+		// no answer" turn. Surface a recoverable, non-auto-retrying `agent_crashed`
+		// (see NON_RETRYABLE_TYPES) so the turn visibly fails and the user can
+		// resend. Scoped to omp to avoid tripping legitimate empty helper turns of
+		// other agents. User stops are excluded: `kill()` removes the process before
+		// `close` (early return above), and `interrupt()` sets `interrupted`.
+		if (
+			toolType === 'omp' &&
+			isStreamJsonMode &&
+			!managedProcess.resultEmitted &&
+			!managedProcess.errorEmitted &&
+			!managedProcess.interrupted &&
+			!managedProcess.streamedText?.trim() &&
+			!sessionId.endsWith('-terminal') &&
+			!sessionId.includes('-synopsis-') &&
+			!sessionId.startsWith('tab-naming-')
+		) {
+			const agentError: AgentError = {
+				type: 'agent_crashed',
+				message:
+					'Oh My Pi exited without producing a response. The agent process ended early (for example right after startup) before sending any output. Please send your message again.',
+				recoverable: true,
+				agentId: toolType,
+				sessionId,
+				sshRemoteId: managedProcess.sshRemoteId,
+				timestamp: Date.now(),
+				raw: { exitCode: code },
+			};
+			logger.warn(
+				'[ProcessManager] omp exited with no result, error, or output - surfacing recoverable error',
+				'ProcessManager',
+				{ sessionId, exitCode: code }
+			);
+			emitAgentErrorAfterOutput(
+				this.emitter,
+				this.bufferManager,
+				sessionId,
+				managedProcess,
+				agentError
+			);
 		}
 
 		// Clean up temp image files if any
@@ -282,7 +414,7 @@ export class ExitHandler {
 		// Final flush: ensure any data buffered during exit processing
 		// (e.g., from jsonBuffer remainder or streamedText fallback) is emitted
 		// before the exit event, so listeners see all data before exit fires.
-		this.bufferManager.flushDataBuffer(sessionId);
+		this.bufferManager.flushDataBuffer(sessionId, managedProcess);
 
 		// Re-checked immediately before settling the turn: `flushDataBuffer` above
 		// is async-adjacent enough that a replacement can still land between the
@@ -296,12 +428,15 @@ export class ExitHandler {
 			return;
 		}
 
-		this.emitter.emit('exit', sessionId, code);
-		// Only delete OUR entry. Deleting unconditionally would untrack a live
-		// successor that claimed the key, leaving a process the user cannot stop.
+		// Release ownership BEFORE notifying listeners. A replay handler can spawn
+		// the next process synchronously from `exit`, and it must find the key free
+		// rather than racing this one's teardown. Only OUR entry is deleted:
+		// deleting unconditionally would untrack a successor that already claimed
+		// the key, leaving a process the user cannot stop.
 		if (this.processes.get(sessionId) === managedProcess) {
 			this.processes.delete(sessionId);
 		}
+		this.emitter.emit('exit', sessionId, code);
 	}
 
 	/**
@@ -470,8 +605,17 @@ export class ExitHandler {
 				this.emitter.emit('usage', sessionId, usageStats);
 			}
 		} catch (error) {
-			void captureException(error);
-			logger.error('[ProcessManager] Failed to parse JSON response', 'ProcessManager', {
+			// A SyntaxError here just means the agent didn't answer with JSON: in
+			// batch mode some agents fall back to plain prose ("Hello. I'm ...") or
+			// emit a TUI frame with box-drawing characters when they can't honor
+			// the JSON output flag. That's an expected shape we already recover
+			// from by emitting the raw buffer below, so it isn't worth a Sentry
+			// report. Anything else thrown out of the block above (a real fault in
+			// aggregateModelUsage or an emit handler) still gets captured. (MAESTRO-V9)
+			if (!(error instanceof SyntaxError)) {
+				void captureException(error);
+			}
+			logger.warn('[ProcessManager] Failed to parse JSON response', 'ProcessManager', {
 				sessionId,
 				error: String(error),
 			});

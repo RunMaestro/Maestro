@@ -29,8 +29,8 @@ import { MarkdownRenderer } from '../MarkdownRenderer';
 import { Spinner } from '../ui/Spinner';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 import { AGENT_COLOR } from '../../../shared/crossAgentTypes';
-import { formatNumber, formatDurationLong } from '../../../shared/formatters';
-import { MAX_ENTRIES_PER_SESSION } from '../../../shared/history';
+import { formatCount, formatNumber, formatDurationLong } from '../../../shared/formatters';
+import { resolveHistoryEntryLimit } from '../../../shared/history';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -38,6 +38,7 @@ import { COLORBLIND_STATUS_COLORS } from '../../constants/colorblindPalettes';
 import { logger } from '../../utils/logger';
 import { daysToLookbackHours, bucketCountForLookback } from './lookback';
 import { NarrativeSections } from './NarrativeSections';
+import { richSectionId } from './directorNotesToc';
 import { useNarrativeGroupLookup } from './useNarrativeGroupLookup';
 import { NarrativeParseError } from './NarrativeParseError';
 import {
@@ -96,6 +97,7 @@ export function RichOverview({
 	chatMath = false,
 }: RichOverviewProps) {
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const retentionLimit = useSettingsStore((s) => resolveHistoryEntryLimit(s.maxLogBuffer));
 	// Agent -> group mapping for narrative bucketing. Derived from live session
 	// state, never from the model.
 	const groupLookup = useNarrativeGroupLookup();
@@ -224,7 +226,12 @@ export function RichOverview({
 			{!awaitingStats && (
 				<>
 					{/* Activity timeline */}
-					<SectionCard theme={theme} title="Activity Timeline" icon={Activity}>
+					<SectionCard
+						theme={theme}
+						id={richSectionId('Activity Timeline')}
+						title="Activity Timeline"
+						icon={Activity}
+					>
 						<ChartErrorBoundary theme={theme} chartName="Activity Timeline">
 							{/* Cue starts hidden: on a Cue-heavy install its bars dwarf every
 					    other source and flatten them into invisible slivers. The
@@ -242,7 +249,12 @@ export function RichOverview({
 			    (a split bar and a 132px donut), so stacking them wasted a screen of
 			    vertical space. Collapses to one column on a narrow modal. */}
 					<div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
-						<SectionCard theme={theme} title="Success vs Failure" icon={CheckCircle2}>
+						<SectionCard
+							theme={theme}
+							id={richSectionId('Success vs Failure')}
+							title="Success vs Failure"
+							icon={CheckCircle2}
+						>
 							<ChartErrorBoundary theme={theme} chartName="Success vs Failure">
 								<SuccessFailureWidget
 									theme={theme}
@@ -253,7 +265,12 @@ export function RichOverview({
 							</ChartErrorBoundary>
 						</SectionCard>
 
-						<SectionCard theme={theme} title="Source Breakdown" icon={PieChart}>
+						<SectionCard
+							theme={theme}
+							id={richSectionId('Source Breakdown')}
+							title="Source Breakdown"
+							icon={PieChart}
+						>
 							<ChartErrorBoundary theme={theme} chartName="Source Breakdown">
 								<TypeBreakdown theme={theme} slices={slices} />
 							</ChartErrorBoundary>
@@ -262,14 +279,19 @@ export function RichOverview({
 
 					{/* Per-agent activity. The unit is spelled out: a bare "5.0K" beside an
 			    agent name is unreadable without knowing what was counted. */}
-					<SectionCard theme={theme} title="Agent Activity" icon={Users}>
+					<SectionCard
+						theme={theme}
+						id={richSectionId('Agent Activity')}
+						title="Agent Activity"
+						icon={Users}
+					>
 						<ChartErrorBoundary theme={theme} chartName="Agent Activity">
 							<AgentActivityBars
 								theme={theme}
 								data={agentBars}
 								unitLabel="history entries in this window"
-								atLeastHint={`At least this many. This agent's history file is full at its ${formatNumber(
-									MAX_ENTRIES_PER_SESSION
+								atLeastHint={`At least this many. This agent's history file is full at its ${formatCount(
+									retentionLimit
 								)}-entry retention limit, so older runs were already discarded and the real total is higher.`}
 							/>
 						</ChartErrorBoundary>

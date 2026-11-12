@@ -3,3 +3,7 @@
 # `{...}` examples that are valid Markdown but not valid MDX, so exclude the whole
 # directory from the Mintlify build to keep the deploy green.
 agent-guides/
+
+# Internal architecture note, not user documentation and not in the navigation.
+# It documents how the env-var layers are composed in the main process.
+env-vars.md

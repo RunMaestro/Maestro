@@ -24,6 +24,12 @@ export interface GitStatus {
 	branch?: string;
 	/** Git reported the directory is not inside a repo (its `.git` is gone). */
 	notARepo?: boolean;
+	/**
+	 * Git did not answer the status or branch query in time (a folder in
+	 * iCloud Drive can block it for minutes). `files` and `branch` may be
+	 * empty placeholders rather than answers - keep the last good value.
+	 */
+	timedOut?: boolean;
 }
 
 export interface GitDiff {
@@ -36,6 +42,23 @@ export interface GitNumstat {
 		additions: number;
 		deletions: number;
 	}>;
+	/** Git did not answer in time; see `GitStatus.timedOut`. */
+	timedOut?: boolean;
+}
+
+export interface GitGraphNode {
+	hash: string;
+	shortHash: string;
+	parents: string[];
+	author: string;
+	date: string;
+	refs: string[];
+	subject: string;
+}
+
+export interface GitSwitchResult {
+	success: boolean;
+	stderr: string;
 }
 
 /**
@@ -70,6 +93,26 @@ export const gitService = {
 	},
 
 	/**
+	 * Stage all changes and commit them in one shot. A clean working tree is not
+	 * an error: it resolves `{ success: true, committed: false }`. Used by Auto
+	 * Run to checkpoint each iteration.
+	 * @param cwd Working directory path
+	 * @param message Commit message
+	 * @param sshRemoteId Optional SSH remote ID for remote execution
+	 */
+	async commitAll(
+		cwd: string,
+		message: string,
+		sshRemoteId?: string
+	): Promise<{ success: boolean; committed: boolean; commitHash?: string; error?: string }> {
+		return createIpcMethod({
+			call: () => window.maestro.git.commitAll(cwd, message, sshRemoteId),
+			errorContext: 'Git commitAll',
+			defaultValue: { success: false, committed: false, error: 'git commit failed' },
+		});
+	},
+
+	/**
 	 * Get git status (porcelain format) and current branch
 	 * @param cwd Working directory path
 	 * @param sshRemoteId Optional SSH remote ID for remote execution
@@ -84,6 +127,8 @@ export const gitService = {
 
 				const files = parseGitStatusPorcelain(statusResult.stdout || '');
 				const branch = branchResult.stdout?.trim() || undefined;
+				if (statusResult.timedOut || branchResult.timedOut)
+					return { files, branch, timedOut: true };
 				const notARepo = isNotAGitRepositoryError(statusResult.stderr);
 
 				return notARepo ? { files, branch, notARepo } : { files, branch };
@@ -128,7 +173,7 @@ export const gitService = {
 			call: async () => {
 				const result = await window.maestro.git.numstat(cwd, sshRemoteId);
 				const files = parseGitNumstat(result.stdout || '');
-				return { files };
+				return result.timedOut ? { files, timedOut: true } : { files };
 			},
 			errorContext: 'Git numstat',
 			defaultValue: { files: [] },
@@ -242,6 +287,53 @@ export const gitService = {
 			},
 			errorContext: 'Git tags',
 			defaultValue: [],
+		});
+	},
+
+	/**
+	 * Get topology graph nodes (commits with parent hashes) for graph rendering.
+	 * Throws on a main-process git error so the caller can render a real error
+	 * state instead of an indistinguishable empty list.
+	 */
+	async getGraph(
+		cwd: string,
+		options?: { limit?: number },
+		sshRemoteId?: string,
+		remoteCwd?: string
+	): Promise<GitGraphNode[]> {
+		return createIpcMethod({
+			call: async () => {
+				const result = await window.maestro.git.graph(cwd, options, sshRemoteId, remoteCwd);
+				if (result.error) throw new Error(result.error);
+				return result.nodes || [];
+			},
+			errorContext: 'Git graph',
+			rethrow: true,
+		});
+	},
+
+	/**
+	 * Switch to an existing branch in the current working tree.
+	 * Returns success=false with stderr text on failure (e.g., dirty working tree).
+	 */
+	async switchBranch(
+		cwd: string,
+		branchName: string,
+		sshRemoteId?: string,
+		remoteCwd?: string
+	): Promise<GitSwitchResult> {
+		return createIpcMethod({
+			call: async () => {
+				const result = await window.maestro.git.switchBranch(
+					cwd,
+					branchName,
+					sshRemoteId,
+					remoteCwd
+				);
+				return { success: result.success, stderr: result.stderr };
+			},
+			errorContext: 'Git switch',
+			defaultValue: { success: false, stderr: 'IPC call failed' },
 		});
 	},
 };

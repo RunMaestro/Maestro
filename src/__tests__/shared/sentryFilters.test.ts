@@ -24,6 +24,24 @@ describe('shouldDropSentryEvent', () => {
 			).toBe(true);
 		});
 
+		it('drops SQLITE_FULL, the SQLite wording for the same full disk (MAESTRO-ZD)', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('SqliteError', 'database or disk is full'))).toBe(
+				true
+			);
+		});
+
+		it('still reports SQLite failures that can indicate a real bug', () => {
+			expect(
+				shouldDropSentryEvent(exceptionEvent('SqliteError', 'database disk image is malformed'))
+			).toBe(false);
+			expect(shouldDropSentryEvent(exceptionEvent('SqliteError', 'database is locked'))).toBe(
+				false
+			);
+			expect(
+				shouldDropSentryEvent(exceptionEvent('SqliteError', 'no such table: query_events'))
+			).toBe(false);
+		});
+
 		it('drops EPIPE broken-pipe errors', () => {
 			expect(shouldDropSentryEvent(exceptionEvent('Error', 'EPIPE: broken pipe, write'))).toBe(
 				true
@@ -124,6 +142,39 @@ describe('shouldDropSentryEvent', () => {
 					)
 				)
 			).toBe(true);
+		});
+
+		// MAESTRO-15T: the Linux wording of the same refusal.
+		it('drops the Linux trash failure through shell:trashItem', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'shell:trashItem': Error: Failed to move item to trash"
+					)
+				)
+			).toBe(true);
+		});
+
+		// MAESTRO-16F/16G/176: agent prose linked as a path is too long to stat.
+		it('drops ENAMETOOLONG through fs:stat and fs:readFile', () => {
+			for (const [method, op] of [
+				['fs:stat', 'Failed to get file stats: Error: ENAMETOOLONG: name too long, stat'],
+				['fs:readFile', 'Failed to read file: Error: ENAMETOOLONG: name too long, open'],
+			]) {
+				expect(
+					shouldDropSentryEvent(
+						exceptionEvent(
+							'Error',
+							`Error invoking remote method '${method}': Error: ${op} '/consegna verificata; nessun output trovato...'`
+						)
+					)
+				).toBe(true);
+			}
+		});
+
+		it('keeps ENAMETOOLONG from a spawn, which is our own argv', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('Error', 'spawn ENAMETOOLONG'))).toBe(false);
 		});
 
 		it('keeps a generic delete failure that did NOT come from shell:trashItem', () => {
@@ -253,6 +304,55 @@ describe('shouldDropSentryEvent', () => {
 					},
 				})
 			).toBe(true);
+		});
+
+		// Regression (MAESTRO-18K): a stalled connection trips our own fetch
+		// timeout, so the wrapped message says "timed out" instead of "fetch failed".
+		it('drops marketplace fetches that hit the request timeout', () => {
+			expect(
+				shouldDropSentryEvent({
+					exception: {
+						values: [
+							{
+								type: 'TimeoutError',
+								value:
+									'Request to https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main/manifest.json timed out after 30000ms',
+							},
+							{
+								type: 'MarketplaceFetchError',
+								value:
+									'Network error fetching manifest: Request to https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main/manifest.json timed out after 30000ms',
+							},
+						],
+					},
+				})
+			).toBe(true);
+			// A bare timeout from anywhere else is not this rule's business.
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent('TimeoutError', 'Request to https://example.com timed out after 30000ms')
+				)
+			).toBe(false);
+		});
+
+		// Regression (MAESTRO-TY): GitHub raw rate-limits playbook imports.
+		it('drops marketplace fetches rejected by GitHub rate limiting or a 5xx', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent('MarketplaceFetchError', 'Failed to fetch document: 429 Too Many Requests')
+				)
+			).toBe(true);
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent('MarketplaceFetchError', 'Failed to fetch asset: 503 Service Unavailable')
+				)
+			).toBe(true);
+		});
+
+		it('does NOT drop a marketplace document that is genuinely missing', () => {
+			expect(
+				shouldDropSentryEvent(exceptionEvent('MarketplaceFetchError', 'Document not found: setup'))
+			).toBe(false);
 		});
 
 		it('drops GitHub CLI network failures when the user is offline', () => {

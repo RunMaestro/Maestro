@@ -46,18 +46,13 @@ export interface UseSessionNavigationReturn {
  * Hook that provides session navigation handlers for back/forward navigation
  * through sessions and AI tabs.
  *
- * Extracted from App.tsx to reduce file size and improve maintainability.
- * Works with useNavigationHistory to implement browser-like back/forward
- * navigation across sessions and their AI conversation tabs.
+ * PERF: Session existence is checked via getState() at event time so App does
+ * not need a reactive `sessions` subscription for this handler.
  *
- * @param sessions - The current list of sessions
  * @param deps - Dependencies including navigation functions and state setters
  * @returns Object containing navigation handler functions
  */
-export function useSessionNavigation(
-	sessions: Session[],
-	deps: UseSessionNavigationDeps
-): UseSessionNavigationReturn {
+export function useSessionNavigation(deps: UseSessionNavigationDeps): UseSessionNavigationReturn {
 	const {
 		navigateBack,
 		navigateForward,
@@ -78,7 +73,9 @@ export function useSessionNavigation(
 
 			// Session entry
 			if (!entry.sessionId) return;
-			const sessionExists = sessions.some((s) => s.id === entry.sessionId);
+			const sessionExists = useSessionStore
+				.getState()
+				.sessions.some((s) => s.id === entry.sessionId);
 			if (!sessionExists) return;
 
 			setActiveSessionId(entry.sessionId);
@@ -99,7 +96,7 @@ export function useSessionNavigation(
 				);
 			}
 		},
-		[sessions, setActiveSessionId, cyclePositionRef, setSessions, onNavigateToGroupChat]
+		[setActiveSessionId, cyclePositionRef, setSessions, onNavigateToGroupChat]
 	);
 
 	// Would visiting this entry actually take the user somewhere?

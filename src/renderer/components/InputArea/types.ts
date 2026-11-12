@@ -1,13 +1,7 @@
 import type React from 'react';
 import type { TabCompletionFilter, TabCompletionSuggestion } from '../../hooks';
-import type {
-	BatchRunState,
-	Shortcut,
-	Session,
-	Theme,
-	ThinkingItem,
-	ThinkingMode,
-} from '../../types';
+import type { MentionPickerItem, MentionCategory } from '../../hooks/input/useMentionPicker';
+import type { BatchRunState, Shortcut, Session, Theme, ThinkingMode } from '../../types';
 import type {
 	GroomingProgress,
 	MergeResult,
@@ -77,10 +71,13 @@ export interface InputAreaProps {
 	setAtMentionFilter?: (filter: string) => void;
 	atMentionStartIndex?: number;
 	setAtMentionStartIndex?: (index: number) => void;
-	atMentionSuggestions?: AtMentionSuggestion[];
+	// Unified `@` picker: files + directories + agents + groups in one dropdown
+	atMentionItems?: MentionPickerItem[];
+	atMentionCounts?: Record<MentionCategory, number>;
+	atMentionCategory?: MentionCategory;
+	setAtMentionCategory?: (category: MentionCategory) => void;
 	selectedAtMentionIndex?: number;
 	setSelectedAtMentionIndex?: (index: number) => void;
-	thinkingItems?: ThinkingItem[];
 	namedSessions?: Record<string, string>;
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
 	autoRunState?: BatchRunState;
@@ -124,4 +121,7 @@ export interface InputAreaProps {
 	availableEfforts?: string[];
 	onModelChange?: (model: string) => void;
 	onEffortChange?: (effort: string) => void;
+	/** Re-run model discovery past the cache; omit to hide the dropdown's Refresh. */
+	onRefreshModels?: () => void;
+	refreshingModels?: boolean;
 }

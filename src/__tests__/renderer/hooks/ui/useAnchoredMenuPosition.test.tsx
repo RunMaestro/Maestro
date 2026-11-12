@@ -156,6 +156,35 @@ describe('useAnchoredMenuPosition', () => {
 		expect(top).toBe(46);
 	});
 
+	it('remeasures the anchor and menu after an explicit layout change', () => {
+		const { rerender } = render(
+			<Harness
+				anchorRect={{ left: 340, top: 20, right: 400, bottom: 40 }}
+				menuSize={{ width: 200, height: 100 }}
+				options={{ align: 'end', contentKey: 'wide' }}
+			/>
+		);
+		rerender(
+			<Harness
+				anchorRect={{ left: 220, top: 30, right: 280, bottom: 50 }}
+				menuSize={{ width: 240, height: 100 }}
+				options={{ align: 'end', contentKey: 'narrow' }}
+			/>
+		);
+		expect(readPosition()).toEqual({ left: 40, top: 56, ready: true });
+	});
+
+	it('leaves room for a saved smaller popover to regain its default size', () => {
+		render(
+			<Harness
+				anchorRect={{ left: 1060, right: 1100, bottom: 300 }}
+				menuSize={{ width: 320, height: 240 }}
+				options={{ align: 'end', minPlacementSize: { width: 608, height: 650 } }}
+			/>
+		);
+		expect(readPosition()).toEqual({ left: 492, top: 142, ready: true });
+	});
+
 	it('combines above and end, the media transport case', () => {
 		render(
 			<Harness

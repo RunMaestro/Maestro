@@ -16,6 +16,7 @@ const mockMaestro = {
 		spawn: vi.fn(),
 		onData: vi.fn(() => vi.fn()),
 		onExit: vi.fn(() => vi.fn()),
+		onStderr: vi.fn(() => vi.fn()),
 		onThinkingChunk: vi.fn(() => vi.fn()),
 		onToolExecution: vi.fn(() => vi.fn()),
 		kill: vi.fn(),
@@ -36,6 +37,72 @@ describe('conversationManager (Onboarding Wizard)', () => {
 	});
 
 	describe('sendMessage', () => {
+		it('surfaces Codex stderr when the process exits non-zero with no stdout (#1983)', async () => {
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'codex',
+				available: true,
+				command: 'codex',
+				path: '/opt/homebrew/bin/codex',
+				args: [],
+				batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
+				jsonOutputArgs: ['--json'],
+			});
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'codex',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const stderrCallback = mockMaestro.process.onStderr.mock.calls[0][0];
+			// Another process's stderr must not leak into this turn.
+			stderrCallback('some-other-session', 'error: unrelated failure\n');
+			stderrCallback(
+				sessionId,
+				"error: unexpected argument '--skip-git-repo-check' found\n\nUsage: codex [OPTIONS] [PROMPT]\n"
+			);
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 2);
+
+			const result = await messagePromise;
+			expect(result.success).toBe(false);
+			expect(result.error).toBe("unexpected argument '--skip-git-repo-check' found");
+			// stderr stays out of the stdout buffer the response parser reads.
+			expect(result.rawOutput).toBe('');
+
+			await conversationManager.endConversation();
+		});
+
+		it('unsubscribes the stderr listener when the turn ends (#1983)', async () => {
+			const stderrCleanup = vi.fn();
+			mockMaestro.process.onStderr.mockReturnValueOnce(stderrCleanup);
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'claude-code',
+				available: true,
+				command: 'claude',
+				args: [],
+			});
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'claude-code',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			mockMaestro.process.onExit.mock.calls[0][0](sessionId, 0);
+			await messagePromise;
+			expect(stderrCleanup).toHaveBeenCalled();
+
+			await conversationManager.endConversation();
+		});
 		it('should use agent.path when available instead of agent.command for spawn', async () => {
 			// This test verifies the fix for issue #171
 			// The wizard was using agent.command ("claude") instead of agent.path ("/opt/homebrew/bin/claude")
@@ -385,6 +452,56 @@ describe('conversationManager (Onboarding Wizard)', () => {
 			exitCallback(sessionId, 0);
 
 			await messagePromise;
+			await conversationManager.endConversation();
+		});
+
+		it('should apply Grok discovery args and extract structured replies from text deltas', async () => {
+			// Pins dual-path parity with inlineWizardConversation (shared GROK_WIZARD_DISCOVERY_ARGS).
+			const mockAgent = {
+				id: 'grok',
+				available: true,
+				command: 'grok',
+				args: [],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'grok',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			expect(mockMaestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+			expect(spawnCall.args).toEqual(
+				expect.arrayContaining(['--always-approve', '--max-turns', '8', '--no-subagents'])
+			);
+			expect(spawnCall.args).not.toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			// Thought must not pollute structured JSON; only text deltas join.
+			dataCallback(sessionId, '{"type":"thought","data":"planning"}\n');
+			dataCallback(sessionId, '{"type":"text","data":"{\\"confidence\\":90,\\"ready\\":true,"}\n');
+			dataCallback(sessionId, '{"type":"text","data":"\\"message\\":\\"Onboarding ready\\"}"}\n');
+			dataCallback(
+				sessionId,
+				'{"type":"end","stopReason":"EndTurn","sessionId":"019f47fa-e297-7993-a1f6-adfaf940ba8c","requestId":"req-1"}\n'
+			);
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 0);
+
+			const result = await messagePromise;
+			expect(result.success).toBe(true);
+			expect(result.response?.parseSuccess).toBe(true);
+			expect(result.response?.structured?.ready).toBe(true);
+			expect(result.response?.structured?.message).toContain('Onboarding ready');
+
 			await conversationManager.endConversation();
 		});
 	});

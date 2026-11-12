@@ -7,7 +7,7 @@ import {
 } from '../../utils/fileExplorer';
 import type { FileNode } from '../../types/fileTree';
 import { useModalStore } from '../../stores/modalStore';
-import { useSessionStore } from '../../stores/sessionStore';
+import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { generateId } from '../../utils/ids';
 import { isAbsolutePath } from '../../../shared/formatters';
@@ -81,10 +81,6 @@ export interface FileClickOptions {
 }
 
 export interface UseAppHandlersDeps {
-	/** Currently active session */
-	activeSession: Session | null;
-	/** ID of the currently active session */
-	activeSessionId: string | null;
 	/** Session state setter */
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	/** Focus area setter */
@@ -205,8 +201,6 @@ function findSubtreeFolders(
  */
 export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 	const {
-		activeSession,
-		activeSessionId,
 		setSessions,
 		setActiveFocus,
 		setConfirmModalMessage,
@@ -353,6 +347,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 
 	const handleFileClick = useCallback(
 		async (node: FileNode, path: string, options?: FileClickOptions) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return; // Guard against null session
 			if (node.type !== 'file') return;
 
@@ -418,12 +413,33 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 			}
 
 			try {
-				// Pass SSH remote ID for remote sessions
-				// Fetch both content and stat for lastModified timestamp
-				const [content, stat] = await Promise.all([
+				// Fetch content and stat independently. `stat` failing must not
+				// drop a successfully-read content (was an issue when running
+				// over the bridge: a stat-only failure would reject the whole
+				// Promise.all and the catch path would log "Failed to read
+				// file:" with the read content thrown away).
+				const [contentResult, statResult] = await Promise.allSettled([
 					window.maestro.fs.readFile(fullPath, sshRemoteId, loadRequestId),
 					window.maestro.fs.stat(fullPath, sshRemoteId),
 				]);
+
+				if (contentResult.status === 'rejected') {
+					logger.error(
+						`Failed to read file: ${
+							contentResult.reason instanceof Error
+								? contentResult.reason.message
+								: String(contentResult.reason)
+						}`,
+						undefined,
+						contentResult.reason
+					);
+					if (loadRequestId) {
+						closeLoadingTabIfStillLoading(targetSessionId, fullPath, loadRequestId);
+					}
+					return;
+				}
+
+				const content = contentResult.value;
 
 				// content === null means either the file is missing or the SSH read
 				// was cancelled (user closed the loading tab). In both cases the tab
@@ -436,6 +452,18 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 					return;
 				}
 
+				const stat = statResult.status === 'fulfilled' ? statResult.value : null;
+				if (statResult.status === 'rejected') {
+					// Non-fatal - content is fine, just log so the failure is visible.
+					logger.warn(
+						`fs.stat failed for ${fullPath}: ${
+							statResult.reason instanceof Error
+								? statResult.reason.message
+								: String(statResult.reason)
+						}`,
+						undefined
+					);
+				}
 				const lastModified = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
 
 				// Fill the per-session tab with content. For SSH this hits the
@@ -453,7 +481,11 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 				);
 				setActiveFocus('main');
 			} catch (error) {
-				logger.error('Failed to read file:', undefined, error);
+				logger.error(
+					`Failed to read file: ${error instanceof Error ? error.message : String(error)}`,
+					undefined,
+					error
+				);
 				// Don't strand a loading tab if the SSH read errored out.
 				if (loadRequestId) {
 					closeLoadingTabIfStillLoading(targetSessionId, fullPath, loadRequestId);
@@ -461,7 +493,6 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 			}
 		},
 		[
-			activeSession,
 			setConfirmModalMessage,
 			setConfirmModalOnConfirm,
 			setConfirmModalOpen,
@@ -471,12 +502,17 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 	);
 
 	const updateSessionWorkingDirectory = useCallback(async () => {
+		// Pin before the folder dialog awaits - switching agents while the
+		// picker is open must not retarget the cwd update.
+		const initiatingSessionId = selectActiveSession(useSessionStore.getState())?.id;
+		if (!initiatingSessionId) return;
+
 		const newPath = await window.maestro.dialog.selectFolder();
 		if (!newPath) return;
 
 		setSessions((prev) =>
 			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
+				if (s.id !== initiatingSessionId) return s;
 				return {
 					...s,
 					cwd: newPath,
@@ -495,7 +531,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 				};
 			})
 		);
-	}, [activeSessionId, setSessions]);
+	}, [setSessions]);
 
 	// --- FOLDER HANDLERS ---
 

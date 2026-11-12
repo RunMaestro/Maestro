@@ -22,6 +22,7 @@ import { processCarriageReturns, getCachedAnsiHtml } from '../utils/textProcessi
 import { useAnsiConverter } from '../hooks/ui/useAnsiConverter';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { useGitCommandRunStore, gitRunKey, selectGitRun } from '../stores/gitCommandRunStore';
+import { useSessionStore } from '../stores/sessionStore';
 import type { GitCommandRunnerData } from '../stores/modalStore';
 import type { GitStreamingOperation } from '../../shared/gitUtils';
 import type { Theme } from '../types';
@@ -50,9 +51,17 @@ function needsUpstream(output: string): boolean {
 }
 
 export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunnerModalProps) {
-	const { operation, branch } = data;
+	const { sessionId, operation, branch } = data;
 	const runKey = gitRunKey(data);
 	const run = useGitCommandRunStore(selectGitRun(runKey));
+
+	// Which agent this transfer belongs to. Pull/Push are reachable by
+	// right-clicking any row in the Left Bar, so the target is often NOT the
+	// highlighted agent and the command line alone ("git push") names nothing.
+	// Subscribe to the name only, never the Session: this modal is on screen
+	// while a command streams, and a whole-session subscription would re-render
+	// it on every unrelated token and log update.
+	const agentName = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.name);
 
 	const scrollRef = useRef<HTMLPreElement>(null);
 	const pinnedToBottomRef = useRef(true);
@@ -133,6 +142,7 @@ export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunner
 		<Modal
 			theme={theme}
 			title={commandLine}
+			subtitle={agentName}
 			priority={MODAL_PRIORITIES.GIT_COMMAND_RUNNER}
 			onClose={handleClose}
 			width={700}
@@ -174,7 +184,7 @@ export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunner
 						<button
 							type="button"
 							onClick={handleRetryWithUpstream}
-							className="px-4 py-2 rounded transition-colors"
+							className="px-4 py-1.5 rounded transition-colors text-sm"
 							style={{
 								backgroundColor: theme.colors.accent,
 								color: theme.colors.accentForeground,
@@ -188,7 +198,7 @@ export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunner
 						<button
 							type="button"
 							onClick={handleCancel}
-							className="px-4 py-2 rounded border hover:bg-white/5 transition-colors"
+							className="px-4 py-1.5 rounded border hover:bg-white/5 transition-colors text-sm"
 							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							title={`Stop git ${operation}`}
 							data-testid="git-command-cancel"
@@ -200,7 +210,7 @@ export function GitCommandRunnerModal({ theme, data, onClose }: GitCommandRunner
 					<button
 						type="button"
 						onClick={handleClose}
-						className="px-4 py-2 rounded border hover:bg-white/5 transition-colors"
+						className="px-4 py-1.5 rounded border hover:bg-white/5 transition-colors text-sm"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 						title={
 							status === 'running'

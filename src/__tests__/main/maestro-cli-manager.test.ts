@@ -32,11 +32,16 @@ vi.mock('../../main/utils/logger', () => ({
 	},
 }));
 
+import { isWindows } from '../../shared/platformDetection';
 import { MaestroCliManager, normalizeVersion } from '../../main/maestro-cli-manager';
+
+const APPIMAGE_MARKER = '# Maestro CLI shim for the Linux AppImage build.';
+const TEST_APPIMAGE = '/home/tester/Applications/maestro.AppImage';
 
 describe('MaestroCliManager', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.restoreAllMocks();
 		mockExecFileNoThrow.mockResolvedValue({
 			exitCode: 0,
 			stderr: '',
@@ -79,6 +84,60 @@ describe('MaestroCliManager', () => {
 		expect(script).not.toContain('{;');
 	});
 
+	describe('ensurePosixPathExport', () => {
+		const callEnsure = (manager: MaestroCliManager, installDir: string) =>
+			(
+				manager as unknown as {
+					ensurePosixPathExport(
+						installDir: string
+					): Promise<{ updated: boolean; files: string[]; error?: string }>;
+				}
+			).ensurePosixPathExport(installDir);
+
+		const withShell = async (shell: string, run: () => Promise<void>) => {
+			const previous = process.env.SHELL;
+			process.env.SHELL = shell;
+			try {
+				await run();
+			} finally {
+				if (previous === undefined) delete process.env.SHELL;
+				else process.env.SHELL = previous;
+			}
+		};
+
+		it('reports an unwritable rc file as a PATH error instead of throwing (MAESTRO-177, MAESTRO-15Z)', async () => {
+			vi.spyOn(os, 'homedir').mockReturnValue('/home/tester');
+			vi.spyOn(fs.promises, 'readFile').mockResolvedValue('');
+			vi.spyOn(fs.promises, 'appendFile').mockRejectedValue(
+				Object.assign(new Error("EPERM: operation not permitted, open '/home/tester/.zshrc'"), {
+					code: 'EPERM',
+				})
+			);
+
+			await withShell('/bin/zsh', async () => {
+				const result = await callEnsure(new MaestroCliManager(), '/home/tester/.local/bin');
+				expect(result.updated).toBe(false);
+				expect(result.files).toEqual([]);
+				expect(result.error).toContain(path.join('/home/tester', '.zshrc'));
+				expect(result.error).toContain('export PATH="$HOME/.local/bin:$PATH"');
+			});
+		});
+
+		it('still throws an rc write failure that is not a permission problem', async () => {
+			vi.spyOn(os, 'homedir').mockReturnValue('/home/tester');
+			vi.spyOn(fs.promises, 'readFile').mockResolvedValue('');
+			vi.spyOn(fs.promises, 'appendFile').mockRejectedValue(
+				Object.assign(new Error('EIO: i/o error, write'), { code: 'EIO' })
+			);
+
+			await withShell('/bin/zsh', async () => {
+				await expect(
+					callEnsure(new MaestroCliManager(), '/home/tester/.local/bin')
+				).rejects.toThrow('EIO');
+			});
+		});
+	});
+
 	// Creating a symlink needs elevated rights on Windows CI; the bug is POSIX-only.
 	it.skipIf(process.platform === 'win32')(
 		'replaces a symlinked install path instead of writing through it into the bundled CLI',
@@ -108,4 +167,234 @@ describe('MaestroCliManager', () => {
 			}
 		}
 	);
+
+	describe('AppImage shim', () => {
+		beforeEach(() => {
+			vi.mocked(isWindows).mockReturnValue(true);
+		});
+
+		const withAppImage = async (value: string | undefined, run: () => Promise<void>) => {
+			const previousImage = process.env.APPIMAGE;
+			const previousDir = process.env.APPDIR;
+			if (value === undefined) delete process.env.APPIMAGE;
+			else process.env.APPIMAGE = value;
+			// The manager trusts APPIMAGE only when the running binary sits in APPDIR.
+			process.env.APPDIR = path.dirname(process.execPath);
+			try {
+				await run();
+			} finally {
+				if (previousImage === undefined) delete process.env.APPIMAGE;
+				else process.env.APPIMAGE = previousImage;
+				if (previousDir === undefined) delete process.env.APPDIR;
+				else process.env.APPDIR = previousDir;
+			}
+		};
+
+		/** Point the manager's install paths at a scratch directory. */
+		const bindInstallDir = (manager: MaestroCliManager, dir: string) => {
+			const internal = manager as unknown as {
+				getInstallDir(): string;
+				getInstallPath(): string;
+				writeUnixShim(installPath: string, bundledCliPath: string): Promise<void>;
+			};
+			internal.getInstallDir = () => dir;
+			internal.getInstallPath = () => path.join(dir, 'maestro-cli');
+			return internal;
+		};
+
+		it.skipIf(process.platform === 'win32')(
+			'writes a shim that re-enters the AppImage instead of recording a mount path',
+			async () => {
+				const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cli-appimage-'));
+				try {
+					const installPath = path.join(dir, 'maestro-cli');
+					const internal = bindInstallDir(new MaestroCliManager(), dir);
+
+					await withAppImage(TEST_APPIMAGE, async () => {
+						await internal.writeUnixShim(installPath, path.join(dir, 'maestro-cli.js'));
+					});
+
+					const shim = fs.readFileSync(installPath, 'utf-8');
+					expect(shim).toContain(APPIMAGE_MARKER);
+					expect(shim).toContain(`appimage='${TEST_APPIMAGE}'`);
+					expect(shim).toContain('ELECTRON_RUN_AS_NODE=1 exec "$appimage" "$bootstrap" "$@"');
+					expect(shim).not.toMatch(/appimage='\/tmp\/\.mount_/);
+					expect(fs.statSync(installPath).mode & 0o777).toBe(0o755);
+
+					const bootstrap = fs.readFileSync(path.join(dir, 'maestro-cli-bootstrap.js'), 'utf-8');
+					expect(bootstrap).toContain(`'resources'`);
+					expect(bootstrap).toContain(
+						'process.argv = [process.execPath, cli, ...process.argv.slice(2)]'
+					);
+				} finally {
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'ignores an APPIMAGE inherited from a parent process',
+			async () => {
+				const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cli-inherited-'));
+				const previousImage = process.env.APPIMAGE;
+				const previousDir = process.env.APPDIR;
+				try {
+					process.env.APPIMAGE = TEST_APPIMAGE;
+					process.env.APPDIR = '/tmp/.mount_anotherprocess';
+					const installPath = path.join(dir, 'maestro-cli');
+					const bundledCliPath = path.join(dir, 'maestro-cli.js');
+					const internal = bindInstallDir(new MaestroCliManager(), dir);
+
+					await internal.writeUnixShim(installPath, bundledCliPath);
+
+					const shim = fs.readFileSync(installPath, 'utf-8');
+					expect(shim).not.toContain(APPIMAGE_MARKER);
+					expect(shim).toContain(`'${bundledCliPath}' "$@"`);
+				} finally {
+					if (previousImage === undefined) delete process.env.APPIMAGE;
+					else process.env.APPIMAGE = previousImage;
+					if (previousDir === undefined) delete process.env.APPDIR;
+					else process.env.APPDIR = previousDir;
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'repairs an older shim that recorded a /tmp/.mount_* path',
+			async () => {
+				const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cli-heal-'));
+				try {
+					const installPath = path.join(dir, 'maestro-cli');
+					fs.writeFileSync(
+						installPath,
+						'#!/usr/bin/env bash\n' +
+							`ELECTRON_RUN_AS_NODE=1 '/tmp/.mount_maestrOLD/maestro' '/tmp/.mount_maestrOLD/resources/maestro-cli.js' "$@"\n`
+					);
+					const manager = new MaestroCliManager();
+					bindInstallDir(manager, dir);
+					vi.mocked(isWindows).mockReturnValue(false);
+
+					await withAppImage(TEST_APPIMAGE, async () => {
+						await expect(manager.healAppImageShim()).resolves.toBe(true);
+					});
+
+					const shim = fs.readFileSync(installPath, 'utf-8');
+					expect(shim).toContain(`appimage='${TEST_APPIMAGE}'`);
+					expect(shim).not.toMatch(/appimage='\/tmp\/\.mount_/);
+				} finally {
+					vi.mocked(isWindows).mockReturnValue(true);
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'repairs its own shim when an AppImage update renamed the file',
+			async () => {
+				const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cli-rename-'));
+				try {
+					const installPath = path.join(dir, 'maestro-cli');
+					fs.writeFileSync(
+						installPath,
+						'#!/usr/bin/env bash\n' +
+							`${APPIMAGE_MARKER}\n` +
+							"appimage='/home/tester/Applications/maestro-1.1.0-RC.AppImage'\n" +
+							'ELECTRON_RUN_AS_NODE=1 exec "$appimage" "$bootstrap" "$@"\n'
+					);
+					const manager = new MaestroCliManager();
+					bindInstallDir(manager, dir);
+					vi.mocked(isWindows).mockReturnValue(false);
+
+					await withAppImage('/home/tester/Applications/maestro-1.2.0-AppImage', async () => {
+						await expect(manager.healAppImageShim()).resolves.toBe(true);
+					});
+
+					expect(fs.readFileSync(installPath, 'utf-8')).toContain(
+						"appimage='/home/tester/Applications/maestro-1.2.0-AppImage'"
+					);
+				} finally {
+					vi.mocked(isWindows).mockReturnValue(true);
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'leaves a custom wrapper that mentions the installer strings untouched',
+			async () => {
+				const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cli-custom-'));
+				try {
+					const installPath = path.join(dir, 'maestro-cli');
+					const custom =
+						'#!/usr/bin/env bash\n' +
+						'# Avoid /tmp/.mount_* because the mount name changes.\n' +
+						'ELECTRON_RUN_AS_NODE=1 /opt/Maestro/maestro /opt/Maestro/resources/maestro-cli.js "$@"\n';
+					fs.writeFileSync(installPath, custom);
+					const manager = new MaestroCliManager();
+					bindInstallDir(manager, dir);
+					vi.mocked(isWindows).mockReturnValue(false);
+
+					await withAppImage(TEST_APPIMAGE, async () => {
+						await expect(manager.healAppImageShim()).resolves.toBe(false);
+					});
+
+					expect(fs.readFileSync(installPath, 'utf-8')).toBe(custom);
+				} finally {
+					vi.mocked(isWindows).mockReturnValue(true);
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'leaves a deb or rpm legacy shim alone when the AppImage starts',
+			async () => {
+				const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cli-opt-'));
+				try {
+					const installPath = path.join(dir, 'maestro-cli');
+					const packageShim =
+						'#!/usr/bin/env bash\n' +
+						"ELECTRON_RUN_AS_NODE=1 '/opt/Maestro/maestro' '/opt/Maestro/resources/maestro-cli.js' \"$@\"\n";
+					fs.writeFileSync(installPath, packageShim);
+					const manager = new MaestroCliManager();
+					bindInstallDir(manager, dir);
+					vi.mocked(isWindows).mockReturnValue(false);
+
+					await withAppImage(TEST_APPIMAGE, async () => {
+						await expect(manager.healAppImageShim()).resolves.toBe(false);
+					});
+
+					expect(fs.readFileSync(installPath, 'utf-8')).toBe(packageShim);
+				} finally {
+					vi.mocked(isWindows).mockReturnValue(true);
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'leaves a shim it did not write untouched',
+			async () => {
+				const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cli-foreign-'));
+				try {
+					const installPath = path.join(dir, 'maestro-cli');
+					const foreign = '#!/usr/bin/env bash\necho my own wrapper\n';
+					fs.writeFileSync(installPath, foreign);
+					const manager = new MaestroCliManager();
+					bindInstallDir(manager, dir);
+					vi.mocked(isWindows).mockReturnValue(false);
+
+					await withAppImage(TEST_APPIMAGE, async () => {
+						await expect(manager.healAppImageShim()).resolves.toBe(false);
+					});
+
+					expect(fs.readFileSync(installPath, 'utf-8')).toBe(foreign);
+				} finally {
+					vi.mocked(isWindows).mockReturnValue(true);
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		);
+	});
 });

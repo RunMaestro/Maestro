@@ -28,6 +28,7 @@ import {
 	CREATE_IMAGE_ANNOTATIONS_SQL,
 	CREATE_IMAGE_ANNOTATIONS_INDEXES_SQL,
 	CREATE_SHORTCUT_USAGE_DAILY_SQL,
+	CREATE_MULTI_WINDOW_USAGE_DAILY_SQL,
 	ADD_QUERY_EVENT_TOKEN_COLUMNS,
 	CREATE_RESILIENCE_EVENTS_SQL,
 	CREATE_RESILIENCE_EVENTS_INDEXES_SQL,
@@ -85,43 +86,51 @@ function getMigrations(): Migration[] {
 			up: (db) => migrateV7(db),
 		},
 		{
-			// v8-v10 declare `isApplied` because rc assigns different migrations to
-			// these numbers (rc's v8 is multi_window_usage_daily). An install that
-			// last ran an rc build can already sit at user_version 8+ without ever
-			// running main's bodies, so runMigrations re-applies any whose schema is
-			// missing (MAESTRO-113/114).
+			// v8 onwards declare `isApplied` because rc and main assign DIFFERENT
+			// migrations to these numbers (main's v8 is the token columns, rc's is
+			// multi_window_usage_daily). user_version is a bare number, so an install
+			// that last ran the other branch can already sit at version 8+ without
+			// ever having run this body, and every write touching the missing schema
+			// then fails (MAESTRO-113/114). Each guard must test the schema THIS
+			// migration creates - the numbers differ per branch, so a guard that
+			// drifts onto its neighbour reports a table as present because an
+			// unrelated one is.
 			version: 8,
-			description: 'Add per-turn token and cost columns to query_events for cost attribution',
+			description:
+				'Add multi_window_usage_daily table for tracking windows opened and peak concurrent windows per day',
 			up: (db) => migrateV8(db),
+			isApplied: (db) => hasTable(db, 'multi_window_usage_daily'),
+		},
+		{
+			version: 9,
+			description: 'Add per-turn token and cost columns to query_events for cost attribution',
+			up: (db) => migrateV9(db),
 			isApplied: (db) =>
 				ADD_QUERY_EVENT_TOKEN_COLUMNS.every((column) => hasColumn(db, 'query_events', column)),
 		},
 		{
-			// MERGE NOTE (main -> rc): rc numbers its token-columns migration 9, so
-			// this entry must become version 10 there or the two branches' installs
-			// diverge on what "9" means. The migration body is idempotent
-			// (CREATE IF NOT EXISTS) precisely so renumbering it is safe.
-			version: 9,
+			version: 10,
 			description: 'Add resilience_events table for Agent Resilience outage tracking',
-			up: (db) => migrateV9(db),
+			up: (db) => migrateV10(db),
 			isApplied: (db) => hasTable(db, 'resilience_events'),
 		},
 		{
-			// MERGE NOTE (main -> rc): this rides on top of the v9 renumbering
-			// note above - if v9 becomes 10 on rc, this becomes 11 there. The
-			// body is idempotent (CREATE IF NOT EXISTS) so renumbering is safe.
-			version: 10,
+			version: 11,
 			description: 'Add wizard_runs table for Auto Run wizard usage tracking',
-			up: (db) => migrateV10(db),
+			up: (db) => migrateV11(db),
 			isApplied: (db) => hasTable(db, 'wizard_runs'),
 		},
 		{
-			// MERGE NOTE (main -> rc): rides on the v9/v10 renumbering above - this
-			// becomes 13 on rc, where wizard_runs is v11 and v12 is taken. The body
-			// is guarded by hasColumn, so renumbering and re-applying are both safe.
-			version: 11,
+			version: 12,
+			description: 'Add user_name column to query_events for Web Login turn attribution',
+			up: (db) => migrateV12(db),
+		},
+		{
+			// main numbers this v11; on rc wizard_runs is v11 and v12 is Web Login's
+			// user_name column. The body is guarded by hasColumn, so renumbering is safe.
+			version: 13,
 			description: 'Add active_ms column to wizard_runs so wizard time excludes idle tabs',
-			up: (db) => migrateV11(db),
+			up: (db) => migrateV13(db),
 			isApplied: (db) => hasColumn(db, 'wizard_runs', 'active_ms'),
 		},
 	];
@@ -390,7 +399,21 @@ function migrateV7(db: Database.Database): void {
 }
 
 /**
- * Migration v8: Add per-turn token and cost columns to query_events.
+ * Migration v8: Add multi_window_usage_daily table.
+ *
+ * Per-day rolled-up counters for multi-window usage telemetry - one row per
+ * local-date with the number of secondary windows opened and the peak number of
+ * windows open concurrently that day. The main process UPSERTs on each window
+ * open so the table stays bounded (one row per day). Aggregate counters only.
+ */
+function migrateV8(db: Database.Database): void {
+	db.prepare(CREATE_MULTI_WINDOW_USAGE_DAILY_SQL).run();
+
+	logger.debug('Created multi_window_usage_daily table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v9: Add per-turn token and cost columns to query_events.
  *
  * Columns stay nullable with no default so a historical row reads as "unknown"
  * rather than "zero tokens" - see ADD_QUERY_EVENT_TOKEN_COLUMNS. Guarded by
@@ -399,7 +422,7 @@ function migrateV7(db: Database.Database): void {
  *
  * `cost_usd` is REAL; the token columns are INTEGER.
  */
-function migrateV8(db: Database.Database): void {
+function migrateV9(db: Database.Database): void {
 	for (const column of ADD_QUERY_EVENT_TOKEN_COLUMNS) {
 		if (hasColumn(db, 'query_events', column)) continue;
 		const type = column === 'cost_usd' ? 'REAL' : 'INTEGER';
@@ -410,32 +433,59 @@ function migrateV8(db: Database.Database): void {
 }
 
 /**
- * Migration v9: resilience_events - one row per resolved Agent Resilience
+ * Migration v10: resilience_events - one row per resolved Agent Resilience
  * outage, powering the Usage Dashboard's "outages survived" view.
+ *
+ * This lands on rc as v10 rather than main's v9: rc already numbers its
+ * query_events token-columns migration 9, and the two installs must not
+ * disagree about what a version means. The body is idempotent, so renumbering
+ * is safe.
  */
-function migrateV9(db: Database.Database): void {
+function migrateV10(db: Database.Database): void {
 	runStatements(db, CREATE_RESILIENCE_EVENTS_SQL);
 	runStatements(db, CREATE_RESILIENCE_EVENTS_INDEXES_SQL);
 	logger.debug('Created resilience_events table', LOG_CONTEXT);
 }
 
 /**
- * Migration v10: wizard_runs - one row per Auto Run wizard conversation,
+ * Migration v11: wizard_runs - one row per Auto Run wizard conversation,
  * powering the Usage Dashboard's "Wizard" section on the Auto Run tab.
+ *
+ * This lands on rc as v11 rather than main's v10, for the same reason the
+ * resilience_events migration above is v10 there: rc already numbers its
+ * query_events token-columns migration 9. The body is idempotent, so
+ * renumbering is safe.
  */
-function migrateV10(db: Database.Database): void {
+function migrateV11(db: Database.Database): void {
 	runStatements(db, CREATE_WIZARD_RUNS_SQL);
 	runStatements(db, CREATE_WIZARD_RUNS_INDEXES_SQL);
 	logger.debug('Created wizard_runs table', LOG_CONTEXT);
 }
 
 /**
- * Migration v11: wizard_runs.active_ms - time actually spent in the wizard.
+ * Migration v12: Add user_name to query_events for Web Login turn attribution.
+ *
+ * Nullable with no default, like the v9 token columns: NULL means "nobody was
+ * signed in for this turn" (the desktop, or Web Login switched off), which is a
+ * different fact from an account named the empty string. Guarded by hasColumn
+ * for the same reason as v5 - a partially applied run must be safe to repeat.
+ */
+function migrateV12(db: Database.Database): void {
+	if (!hasColumn(db, 'query_events', 'user_name')) {
+		db.prepare('ALTER TABLE query_events ADD COLUMN user_name TEXT').run();
+	}
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_query_user_name ON query_events(user_name)').run();
+
+	logger.debug('Added user_name column to query_events table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v13: wizard_runs.active_ms - time actually spent in the wizard.
  * Rows from before it stay NULL ("not measured") rather than being backfilled
  * from `ended_at - started_at`, which is the open-to-close wall clock this
  * column exists to replace. The dashboard leaves NULL rows out of time totals.
  */
-function migrateV11(db: Database.Database): void {
+function migrateV13(db: Database.Database): void {
 	if (!hasColumn(db, 'wizard_runs', 'active_ms')) {
 		db.prepare('ALTER TABLE wizard_runs ADD COLUMN active_ms INTEGER').run();
 	}

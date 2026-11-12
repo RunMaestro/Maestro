@@ -36,6 +36,7 @@ import { useElementWidth } from '../../hooks/ui/useElementWidth';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Sparkline } from './Sparkline';
 import { Kpi, MetaField, SectionHeading } from './DetailPrimitives';
+import { usageCoverageNote } from './usageCoverage';
 
 const EM_DASH = '—';
 
@@ -60,20 +61,6 @@ interface MemberRow {
  */
 function defaultDirectionFor(key: MemberSortKey): 'asc' | 'desc' {
 	return key === 'name' ? 'asc' : 'desc';
-}
-
-/**
- * Explain how much of the group's activity the cost figure actually covers.
- * Mirrors the tile's tooltip so the two surfaces cannot contradict each other.
- */
-function coverageNote(pricedQueries: number, queries: number): string {
-	if (pricedQueries === 0) {
-		return 'No token usage recorded yet. Cost tracking covers turns recorded after the stats database gained token columns.';
-	}
-	if (pricedQueries >= queries) {
-		return `Covers all ${formatNumber(queries)} recorded ${queries === 1 ? 'query' : 'queries'}.`;
-	}
-	return `Covers ${formatNumber(pricedQueries)} of ${formatNumber(queries)} queries - earlier turns report no usage.`;
 }
 
 export interface GroupDetailModalProps {
@@ -165,7 +152,7 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 	const sparkline = useMemo(() => rollup.byDay.map((d) => d.count), [rollup.byDay]);
 	const groupTokens = totalTokens(rollup.tokens);
 	const hasUsage = rollup.tokens.pricedQueries > 0;
-	const note = coverageNote(rollup.tokens.pricedQueries, rollup.queries);
+	const note = usageCoverageNote(rollup.tokens.pricedQueries, rollup.queries);
 	const memberLabel = `${rollup.memberCount} ${rollup.memberCount === 1 ? 'agent' : 'agents'}`;
 
 	const headerCellClass = 'py-2 px-2 border-b';
@@ -390,7 +377,7 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 								</thead>
 								<tbody>
 									{sortedRows.map((row) => {
-										const rowNote = coverageNote(row.pricedQueries, row.queries);
+										const rowNote = usageCoverageNote(row.pricedQueries, row.queries);
 										const rowHasUsage = row.pricedQueries > 0;
 										const isClickable = Boolean(onSelectAgent);
 										return (

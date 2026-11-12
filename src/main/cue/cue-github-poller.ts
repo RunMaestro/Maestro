@@ -284,8 +284,9 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 
 	async function resolveGh(): Promise<string | null> {
 		if (ghCommand !== null) return ghCommand;
+		let cmd: string | null = null;
 		try {
-			const cmd = await resolveGhPath();
+			cmd = await resolveGhPath();
 			await execFileAsync(cmd, ['--version']);
 			ghCommand = cmd;
 		} catch (err) {
@@ -293,7 +294,22 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			// Sentry report fires for every shape EXCEPT ENOENT. Errors without
 			// a `code` (e.g. unexpected throws from `resolveGhPath`) used to slip
 			// through the old `code && code !== 'ENOENT'` guard silently.
-			const code = (err as { code?: string } | undefined)?.code;
+			const code = (err as { code?: unknown } | undefined)?.code;
+			// A NUMERIC code means the binary we resolved actually ran and exited
+			// non-zero: the user's own gh install is broken, not our lookup. The
+			// common case is a version-manager shim with no version selected
+			// (asdf: "No version is set for command gh"), which fails identically
+			// on every poll, so reporting it paged Sentry once per tick from a
+			// single machine (MAESTRO-15J). Say what is wrong instead, quoting the
+			// tool's own explanation so the user can act on it.
+			if (typeof code === 'number') {
+				const detail = err instanceof Error ? err.message.split('\n')[1]?.trim() : '';
+				onLog(
+					'warn',
+					`[CUE] GitHub CLI (gh) at "${cmd}" exited with code ${code} - skipping "${triggerName}"${detail ? `: ${detail}` : ''}`
+				);
+				return null;
+			}
 			onLog('warn', `[CUE] GitHub CLI (gh) not found - skipping "${triggerName}"`);
 			if (code !== 'ENOENT') {
 				void captureException(err, { operation: 'cue:github:resolveGh', triggerName });
@@ -339,7 +355,8 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			// first, so without this a `gh repo view` 5xx during an outage would
 			// still page Sentry once per tick for every auto-detect trigger
 			// (MAESTRO-KE). Skipping the poll and returning null is unchanged.
-			if (!isGitHubConnectivityError(err)) {
+			// A stale `gh` token is the same story with a different cause.
+			if (!isGitHubConnectivityError(err) && !isGitHubAuthError(err)) {
 				void captureException(err, { operation: 'cue:github:resolveRepo', triggerName });
 			}
 			return null;

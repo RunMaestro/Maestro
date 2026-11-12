@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Zap, Sparkles, Database } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import type { Theme } from '../../constants/themes';
 import type { PreviewTier } from './filePreviewUtils';
 import { HoverTooltip } from '../ui/HoverTooltip';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 export interface PreviewTierChipProps {
 	/** The tier the auto-picker would choose for the current file. */
@@ -26,16 +28,15 @@ export interface PreviewTierChipProps {
 	headerIconClass?: string;
 }
 
-const TIER_META: Record<
-	PreviewTier,
-	{ label: string; icon: React.ComponentType<{ className?: string }> }
-> = {
+/** Label + icon per tier. Shared with the phone actions sheet, which draws
+ *  the same four choices as an accordion instead of an anchored popover. */
+export const TIER_META: Record<PreviewTier, { label: string; icon: LucideIcon }> = {
 	rich: { label: 'Rich', icon: Sparkles },
 	fast: { label: 'Fast', icon: Zap },
 	giant: { label: 'Giant', icon: Database },
 };
 
-const TIER_DESCRIPTION: Record<PreviewTier, string> = {
+export const TIER_DESCRIPTION: Record<PreviewTier, string> = {
 	rich: 'Full features (Mermaid, math, full plugins). Slower on huge files.',
 	fast: 'Virtualized markdown-it preview. Best for 5k+ line documents.',
 	giant: 'CodeMirror viewer (multi-MB files). Read-only, instant open.',
@@ -146,10 +147,9 @@ export const PreviewTierChip: React.FC<PreviewTierChipProps> = ({
 				<div
 					role="menu"
 					data-testid="preview-tier-chip-menu"
-					className="absolute right-0 mt-1 rounded-md shadow-lg z-50 overflow-hidden"
+					className="absolute right-0 mt-1 rounded-md z-50 overflow-hidden"
 					style={{
-						backgroundColor: theme.colors.bgSidebar,
-						border: `1px solid ${theme.colors.border}`,
+						...elevatedSurfaceStyle(theme),
 						minWidth: '240px',
 					}}
 				>

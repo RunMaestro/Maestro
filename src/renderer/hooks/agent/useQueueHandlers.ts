@@ -11,7 +11,7 @@
  */
 
 import { useCallback } from 'react';
-import type { QueuedItem, QueuedItemEditPatch, SessionState } from '../../types';
+import type { QueuedItem, QueuedItemEditPatch } from '../../types';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 import {
 	applyQueuedItemDispatch,
@@ -19,6 +19,7 @@ import {
 	getQueueBusyContext,
 } from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
+import { planCrossAgentMentions } from '../../services/crossAgentMentions';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -125,10 +126,27 @@ export function useQueueHandlers({
 
 	const handleEditQueueItem = useCallback(
 		(sessionId: string, itemId: string, patch: QueuedItemEditPatch) => {
+			// Re-resolve the pending consult against the EDITED text: the user may
+			// have added or removed an `@agent` mention, and the item's stale flag
+			// would otherwise consult the wrong agent (or nobody) when it dispatches.
+			//
+			// BOTH flags have to be re-derived, not just `crossAgentMention`. Whether
+			// this agent answers at all is decided by where the mention sits, and the
+			// edit can move it: `@Codex do X` -> `do X, and @Codex too` must go back to
+			// spawning locally, and the reverse must stop spawning. Leaving
+			// `crossAgentOnly` behind silently discards half of what the user edited.
+			const mentionPlan = planCrossAgentMentions(patch.text, sessionId);
+			const crossAgent = {
+				crossAgentMention: !!mentionPlan,
+				crossAgentOnly: mentionPlan?.suppressLocal ?? false,
+			};
 			setSessions((prev) =>
 				prev.map((s) =>
 					s.id === sessionId
-						? { ...s, executionQueue: applyQueuedItemEdit(s.executionQueue, itemId, patch) }
+						? {
+								...s,
+								executionQueue: applyQueuedItemEdit(s.executionQueue, itemId, patch, crossAgent),
+							}
 						: s
 				)
 			);
@@ -159,33 +177,12 @@ export function useQueueHandlers({
 				prev.map((s) => (s.id === sessionId ? applyQueuedItemDispatch(s, dispatchItem) : s))
 			);
 
+			// Recovery (release the tab, take the card back, re-queue the prompt) is
+			// owned by `agentStore.processQueuedItem`'s catch, which is the only place
+			// that knows WHY the dispatch failed. This rejection still needs an owner
+			// so it does not surface as an unhandled promise crash report.
 			processQueuedItem(sessionId, dispatchItem).catch((err) => {
-				logger.error('[ForceSend] Dispatch failed, re-queueing item', undefined, err);
-				// Put the item back at the front and release the tab. The agent only
-				// returns to idle if no OTHER tab is still working.
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId) return s;
-						const aiTabs = s.aiTabs.map((tab) =>
-							tab.id === dispatchItem.tabId
-								? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-								: tab
-						);
-						const stillWorking = aiTabs.some((tab) => tab.state === 'busy');
-						return {
-							...s,
-							executionQueue: [dispatchItem, ...s.executionQueue],
-							aiTabs,
-							...(stillWorking
-								? {}
-								: {
-										state: 'idle' as SessionState,
-										busySource: undefined,
-										thinkingStartTime: undefined,
-									}),
-						};
-					})
-				);
+				logger.error('[ForceSend] Dispatch failed, item returned to queue', undefined, err);
 			});
 		},
 		[processQueuedItem]

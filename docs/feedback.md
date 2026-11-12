@@ -9,7 +9,11 @@ Maestro includes a built-in feedback system that uses AI to help you craft well-
 ## Prerequisites
 
 - [GitHub CLI](https://cli.github.com/) (`gh`) must be installed
-- You must be authenticated (`gh auth login`)
+- gh must be signed in to GitHub. If it is not, the Feedback modal offers **Log in to GitHub**, which runs `gh auth login` (one-time code plus browser) in a terminal inside Maestro and continues into the chat as soon as it finishes. **Check Again** re-checks if you signed in somewhere else.
+
+Before the chat starts, Maestro also checks that GitHub will accept an issue from your gh account, so a refusal shows up front instead of after you write the report. The check sends GitHub an empty issue, which it authorizes and then rejects for having no title: nothing is created. If GitHub refuses the account (for example, an organization has not approved the GitHub CLI, or the token lacks a scope), the modal names the account gh is signed in as and says what to fix, offering **Log in to GitHub** when signing in again can fix it.
+
+If filing still fails later because the gh login expired or was revoked, the same **Log in to GitHub** button appears beside the error and files the issue again once you are signed in.
 
 ## Sending Feedback
 
@@ -21,11 +25,13 @@ Click the **Feedback** button in the bottom-left corner of the sidebar, next to 
 
 You can also open it via **Quick Actions** (`Cmd+K` / `Ctrl+K`) → "Send Feedback".
 
-### 2. Which AI Runs the Conversation
+### 2. Which Account Runs the Chat
 
-There is no provider to pick. Maestro runs the conversation on the provider your own agents use (Claude Code, Codex, or OpenCode), since that is the one most likely to be signed in on this machine. With no agents yet, it uses the first of those that is installed.
+Maestro picks the account for you. It looks at the accounts your own agents run as (Claude Code, Codex, or OpenCode, including any per-agent `CLAUDE_CONFIG_DIR` or `CODEX_HOME`) and uses the first one that is installed and signed in. The provider's default login and accounts on SSH remotes are tried last.
 
-If that provider cannot answer, for example because it is installed but not signed in, the conversation says which provider failed and offers to **Switch to** another installed one. Switching re-asks your last message on the new provider, so nothing has to be retyped.
+If the first account cannot answer (for example, its login expired), the chat sends your message to the next account instead of failing. The account that answered is remembered for next time.
+
+The **Running as** menu at the very bottom of the window, under the message box, shows the account in use. Pick another one there to override it.
 
 ### 3. Describe Your Issue
 
@@ -45,7 +51,11 @@ A confidence bar at the top tracks how well the AI understands your issue. As yo
 
 ### Live Diagnostics
 
-The feedback agent runs on your own machine, so it can look at the problem instead of asking you to describe it. While it thinks, it may check your Maestro version, read the tail of the debug log, or query the running app with `maestro-cli` (`status`, `doctor`, `list agents`, and other read-only verbs). What it finds is folded into the issue as context you would otherwise have to gather by hand.
+The feedback agent runs on your own machine, so it can look at the problem instead of asking you to describe it.
+
+When the chat opens, Maestro reads its own live state and hands it to the agent: every agent that is busy, errored, paused on a usage limit, retrying, holding queued messages, or running Auto Run, the auto-resume settings, and the recent warnings and errors from the log (renderer console errors included). If that already shows what you are about to describe, such as an Auto Run still parked after its limit reset, the agent says so in its first reply instead of asking. Paths and secrets are redacted the same way the support package redacts them.
+
+While it thinks, it may check your Maestro version, read the tail of the debug log, or query the running app with `maestro-cli` (`status`, `doctor`, `list agents`, and other read-only verbs). What it finds is folded into the issue as context you would otherwise have to gather by hand.
 
 Two guarantees:
 
@@ -56,15 +66,13 @@ The agent is told to stay inside Maestro's own logs and configuration. Your sour
 
 ### 4. Review and Submit
 
-Once understanding reaches **80%**, a green **Submit Feedback** button appears. The AI presents a structured summary of what it will submit. Review the summary, tweak anything by continuing the conversation, then click **Submit**.
+You never have to finish the interview. As soon as you have said anything, a **Submit now** button sits beside the progress bar. It files the issue with whatever has been gathered so far, even while the agent is still thinking: your own words fill any field the agent has not, and the issue notes it was submitted early. Your screenshots, performance trace, and support package (if checked) go with it.
+
+Once understanding reaches **80%**, the button turns into a green **Submit Feedback**. The AI presents a structured summary of what it will submit. Review the summary, tweak anything by continuing the conversation, then click **Submit**.
+
+Every filed issue carries a **Live Diagnosis** section when something in the app looked wrong at the time: each affected agent's provider, state, error type, Auto Run progress, and pause or retry status, plus the auto-resume settings. It never includes agent names, error text, or paths.
 
 ![Submit feedback](./screenshots/feedback-3.png)
-
-### If Filing Fails
-
-Filing goes through your `gh` login, which can be refused even when `gh auth status` looks fine: an expired token, a token missing a scope, or an organization that has not approved the GitHub CLI. When that happens, Maestro tells you what to run (`gh auth login`, `gh auth refresh -h github.com -s repo`, or approving the GitHub CLI for the organization) and offers **Open prefilled issue on GitHub**, which opens the same issue, already filled in, so you can submit it from your browser. The report is never lost.
-
-Screenshots and the support package are uploaded to a public `maestro-feedback-attachments` repository on your GitHub account. If `gh` cannot create or write to it, the issue is still filed, without them, and Maestro says which parts are missing so you can drag them into a comment.
 
 ### Closing Without Losing Anything
 
@@ -94,7 +102,10 @@ Once submitted, you'll see a confirmation with:
 Agents and scripts can file the same issue through `maestro-cli`, with no modal:
 
 ```bash
-maestro-cli feedback auth                          # gh installed and logged in?
+maestro-cli feedback auth                          # gh installed, logged in, and allowed to file? (--fresh skips the cache)
+maestro-cli feedback login                         # sign gh in (device code + browser)
+maestro-cli feedback accounts                      # which account the chat runs as (--use <key> to pick)
+maestro-cli feedback diagnose                      # the live app state the chat starts from (read-only)
 maestro-cli feedback search "tab closes on escape" # find duplicates first
 maestro-cli feedback submit -c bug -s "..." -e "..." -a "..." --attach shot.png --support-package
 maestro-cli feedback subscribe 1234 --comment "Same on Linux"

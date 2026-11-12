@@ -45,6 +45,11 @@ const AGENT_CONFIG_METADATA: Record<string, { description: string; type: string 
 		description: 'Reasoning effort level for agents that support it (low, medium, high).',
 		type: 'string',
 	},
+	reasoningSummary: {
+		description:
+			'Codex reasoning summary mode (auto, concise, detailed, none); empty inherits the provider default.',
+		type: 'string',
+	},
 };
 
 interface AgentListOptions {

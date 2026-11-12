@@ -46,6 +46,8 @@ const mockInputContext = {
 	setAtMentionStartIndex: vi.fn(),
 	selectedAtMentionIndex: 0,
 	setSelectedAtMentionIndex: vi.fn(),
+	atMentionCategory: 'all' as const,
+	setAtMentionCategory: vi.fn(),
 	commandHistoryOpen: false,
 	setCommandHistoryOpen: vi.fn(),
 	commandHistoryFilter: '',
@@ -127,6 +129,7 @@ import { useComposerInputStore } from '../../../renderer/stores/composerInputSto
 import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
 
 const mockNotifyCenterFlash = vi.mocked(notifyCenterFlash);
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -240,6 +243,7 @@ beforeEach(() => {
 		atMentionOpen: false,
 		atMentionFilter: '',
 		selectedAtMentionIndex: 0,
+		atMentionCategory: 'all',
 		commandHistoryOpen: false,
 	});
 
@@ -300,12 +304,14 @@ describe('useInputHandlers', () => {
 			expect(result.current).toHaveProperty('processInput');
 			expect(result.current).toHaveProperty('processInputRef');
 			expect(result.current).toHaveProperty('handleInputKeyDown');
+			expect(result.current).toHaveProperty('handleMainPanelInputFocus');
 			expect(result.current).toHaveProperty('handleMainPanelInputBlur');
 			expect(result.current).toHaveProperty('handleReplayMessage');
 			expect(result.current).toHaveProperty('handlePaste');
 			expect(result.current).toHaveProperty('handleDrop');
 			expect(result.current).toHaveProperty('tabCompletionSuggestions');
-			expect(result.current).toHaveProperty('atMentionSuggestions');
+			expect(result.current).toHaveProperty('atMentionItems');
+			expect(result.current).toHaveProperty('atMentionCounts');
 			expect(result.current).toHaveProperty('syncFileTreeToTabCompletion');
 		});
 
@@ -362,7 +368,7 @@ describe('useInputHandlers', () => {
 		it('initializes with empty completion suggestions', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 			expect(result.current.tabCompletionSuggestions).toEqual([]);
-			expect(result.current.atMentionSuggestions).toEqual([]);
+			expect(result.current.atMentionItems).toEqual([]);
 		});
 	});
 
@@ -737,7 +743,7 @@ describe('useInputHandlers', () => {
 			// The draft is written back to the tab it was typed in, by id. Passing
 			// the id is the point: without it the flush would target whatever tab
 			// is active when it runs, which is already tab-2 here.
-			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('typed in tab 1', 'tab-1');
+			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('typed in tab 1', { tabId: 'tab-1' });
 		});
 
 		it('queues a write-back to the typed-in tab on every keystroke', () => {
@@ -839,24 +845,27 @@ describe('useInputHandlers', () => {
 		});
 	});
 
-	describe('@ mention suggestions', () => {
+	describe('@ mention picker items', () => {
 		it('returns empty when @ mention is not open', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
-			expect(result.current.atMentionSuggestions).toEqual([]);
+			expect(result.current.atMentionItems).toEqual([]);
 		});
 
-		it('calls getSuggestions when @ mention is open in AI mode', () => {
+		it('tags file suggestions into unified picker items when open in AI mode', () => {
 			mockInputContext.atMentionOpen = true;
 			mockInputContext.atMentionFilter = 'test';
 
 			mockGetAtMentionSuggestions.mockReturnValue([
-				{ type: 'file', value: 'test.ts', display: 'test.ts' },
+				{ type: 'file', value: 'test.ts', displayText: 'test.ts', fullPath: 'test.ts', score: 10 },
 			]);
 
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
-			expect(result.current.atMentionSuggestions).toHaveLength(1);
-			expect(result.current.atMentionSuggestions[0].value).toBe('test.ts');
+			// The picker wraps the raw file suggestion as a `@path ` token to insert.
+			expect(result.current.atMentionItems).toHaveLength(1);
+			expect(result.current.atMentionItems[0].kind).toBe('file');
+			expect(result.current.atMentionItems[0].value).toBe('@test.ts ');
+			expect(result.current.atMentionCounts.files).toBe(1);
 		});
 
 		it('returns empty in terminal mode even when @ mention is open', () => {
@@ -869,7 +878,7 @@ describe('useInputHandlers', () => {
 			} as any);
 
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
-			expect(result.current.atMentionSuggestions).toEqual([]);
+			expect(result.current.atMentionItems).toEqual([]);
 		});
 	});
 
@@ -986,7 +995,10 @@ describe('useInputHandlers', () => {
 				result.current.handleMainPanelInputBlur();
 			});
 
-			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('hello from AI', 'tab-1');
+			expect(mockSyncAiInputToSession).toHaveBeenCalledWith(
+				'hello from AI',
+				expect.objectContaining({ tabId: 'tab-1' })
+			);
 		});
 
 		it('syncs terminal input to session in terminal mode', () => {
@@ -1399,6 +1411,7 @@ describe('useInputHandlers', () => {
 
 			const firstRender = {
 				handleInputKeyDown: result.current.handleInputKeyDown,
+				handleMainPanelInputFocus: result.current.handleMainPanelInputFocus,
 				handleMainPanelInputBlur: result.current.handleMainPanelInputBlur,
 				handleReplayMessage: result.current.handleReplayMessage,
 				syncFileTreeToTabCompletion: result.current.syncFileTreeToTabCompletion,
@@ -1407,6 +1420,7 @@ describe('useInputHandlers', () => {
 			rerender();
 
 			expect(result.current.handleInputKeyDown).toBe(firstRender.handleInputKeyDown);
+			expect(result.current.handleMainPanelInputFocus).toBe(firstRender.handleMainPanelInputFocus);
 			expect(result.current.handleMainPanelInputBlur).toBe(firstRender.handleMainPanelInputBlur);
 			expect(result.current.handleReplayMessage).toBe(firstRender.handleReplayMessage);
 			expect(result.current.syncFileTreeToTabCompletion).toBe(
@@ -1843,7 +1857,9 @@ describe('useInputHandlers', () => {
 				});
 
 				expect(pasteEvent.preventDefault).toHaveBeenCalled();
-				expect(mockSetGroupChatStagedImages).toHaveBeenCalled();
+				// Addressed to the room active at paste time, not whichever is active
+				// when the FileReader resolves.
+				expect(mockSetGroupChatStagedImages).toHaveBeenCalledWith(expect.any(Function), 'group-1');
 			} finally {
 				global.FileReader = originalFileReader;
 			}
@@ -1875,7 +1891,7 @@ describe('useInputHandlers', () => {
 	// ========================================================================
 
 	describe('handleDrop edge cases', () => {
-		it('ignores drop with non-image file types', () => {
+		it('does not stage non-image file drops as images', () => {
 			const deps = createMockDeps();
 			const { result } = renderHook(() => useInputHandlers(deps));
 
@@ -1885,8 +1901,8 @@ describe('useInputHandlers', () => {
 					getData: () => '',
 					files: {
 						length: 2,
-						0: { type: 'application/pdf', name: 'doc.pdf' },
-						1: { type: 'text/plain', name: 'readme.txt' },
+						0: { type: 'application/pdf', name: 'doc.pdf', path: '/tmp/doc.pdf' },
+						1: { type: 'text/plain', name: 'readme.txt', path: '/tmp/readme.txt' },
 					} as any,
 				},
 			} as unknown as React.DragEvent;
@@ -1897,10 +1913,177 @@ describe('useInputHandlers', () => {
 
 			// preventDefault is always called (for drag cleanup)
 			expect(dropEvent.preventDefault).toHaveBeenCalled();
-			// But no images should be staged
+			// They become @mentions, not image attachments.
 			const sessions = useSessionStore.getState().sessions;
 			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
 			expect(tab?.stagedImages).toEqual([]);
+			expect(inputVal()).toBe('@/tmp/doc.pdf @/tmp/readme.txt ');
+		});
+
+		// Regression: in the web-desktop (browser) build a dropped `File` has no
+		// filesystem path, so these used to be skipped with no chip, no mention,
+		// and no error - a completely silent failure. See issue #1411.
+		describe('path-less (browser) file drops', () => {
+			// This suite runs on fake timers, so jsdom's real async FileReader would
+			// never fire. Stub it the way the image-drop tests above do.
+			let originalFileReader: typeof FileReader;
+
+			beforeEach(() => {
+				originalFileReader = global.FileReader;
+				class MockFileReaderLocal {
+					result: string | null = null;
+					onload: ((ev: any) => void) | null = null;
+					onerror: ((ev: any) => void) | null = null;
+					readAsDataURL = vi.fn(function (this: MockFileReaderLocal) {
+						this.result = 'data:application/pdf;base64,cGRmLWJ5dGVz';
+						this.onload?.({ target: { result: this.result } });
+					});
+				}
+				global.FileReader = MockFileReaderLocal as unknown as typeof FileReader;
+			});
+
+			afterEach(() => {
+				global.FileReader = originalFileReader;
+			});
+
+			function dropPathlessPdf() {
+				return {
+					preventDefault: vi.fn(),
+					dataTransfer: {
+						getData: () => '',
+						files: {
+							length: 1,
+							// A browser `File` - no `path`, so `getPathForFile` returns ''.
+							0: new File(['pdf-bytes'], 'doc.pdf', { type: 'application/pdf' }),
+						} as any,
+					},
+				} as unknown as React.DragEvent;
+			}
+
+			it('uploads the file and @mentions the host copy', async () => {
+				const deps = createMockDeps();
+				const { result } = renderHook(() => useInputHandlers(deps));
+				const dropEvent = dropPathlessPdf();
+
+				await act(async () => {
+					result.current.handleDrop(dropEvent);
+				});
+
+				expect(window.maestro.attachments.save).toHaveBeenCalledWith(
+					'session-1',
+					'cGRmLWJ5dGVz',
+					// Uniquified so a second `doc.pdf` cannot overwrite this one.
+					expect.stringMatching(/^doc-[0-9a-z]+\.pdf$/)
+				);
+				expect(inputVal()).toMatch(/^@\/userData\/attachments\/session-1\/doc-[0-9a-z]+\.pdf $/);
+			});
+
+			// Regression: the upload awaits the host, and the composer store holds
+			// whichever draft is on screen when it resolves. Without a pin the
+			// mention landed in the tab the user had switched to.
+			it('mentions the tab the file was dropped into, not the one switched to', async () => {
+				useSessionStore.setState({
+					sessions: [
+						createMockSession({
+							id: 'session-1',
+							inputMode: 'ai',
+							aiTabs: [
+								{ id: 'tab-1', name: 'Tab 1', inputValue: '', data: [], stagedImages: [] },
+								{ id: 'tab-2', name: 'Tab 2', inputValue: '', data: [], stagedImages: [] },
+							] as any,
+							activeTabId: 'tab-1',
+						}),
+					],
+					activeSessionId: 'session-1',
+				} as any);
+
+				let landTheUpload: () => void = () => {};
+				vi.mocked(window.maestro.attachments.save).mockImplementationOnce(
+					(sessionId: string, _b64: string, filename: string) =>
+						new Promise((resolve) => {
+							landTheUpload = () =>
+								resolve({
+									success: true,
+									path: `/userData/attachments/${sessionId}/${filename}`,
+								});
+						})
+				);
+
+				const deps = createMockDeps();
+				const { result, rerender } = renderHook(() => useInputHandlers(deps));
+
+				// Awaited so the read finishes and the upload is actually in flight
+				// (pending on the host) before the user moves on.
+				await act(async () => {
+					result.current.handleDrop(dropPathlessPdf());
+				});
+
+				// The user moves on while the bytes are still crossing the bridge.
+				act(() => {
+					useSessionStore.setState({
+						sessions: useSessionStore
+							.getState()
+							.sessions.map((sn: any) => ({ ...sn, activeTabId: 'tab-2' })),
+					} as any);
+				});
+				rerender();
+
+				await act(async () => {
+					landTheUpload();
+				});
+
+				const tabs = (useSessionStore.getState().sessions[0] as any).aiTabs;
+				const droppedInto = tabs.find((t: any) => t.id === 'tab-1');
+				const switchedTo = tabs.find((t: any) => t.id === 'tab-2');
+				expect(droppedInto.inputValue).toMatch(
+					/^@\/userData\/attachments\/session-1\/doc-[0-9a-z]+\.pdf $/
+				);
+				expect(switchedTo.inputValue).toBe('');
+				// The on-screen composer (now tab-2's) was left alone.
+				expect(inputVal()).toBe('');
+			});
+
+			it('normalises a Windows host path into the mention', async () => {
+				// The host is whichever machine runs Maestro, so a browser drop can
+				// land on a Windows path even when the browser is elsewhere.
+				vi.mocked(window.maestro.attachments.save).mockResolvedValueOnce({
+					success: true,
+					path: 'C:\\Users\\dev\\AppData\\maestro\\attachments\\session-1\\doc-abc123.pdf',
+				});
+
+				const deps = createMockDeps();
+				const { result } = renderHook(() => useInputHandlers(deps));
+
+				await act(async () => {
+					result.current.handleDrop(dropPathlessPdf());
+				});
+
+				expect(inputVal()).toBe(
+					'@C:/Users/dev/AppData/maestro/attachments/session-1/doc-abc123.pdf '
+				);
+			});
+
+			it('raises a toast when the upload fails', async () => {
+				vi.mocked(window.maestro.attachments.save).mockResolvedValueOnce({
+					success: false,
+					error: 'disk full',
+				});
+				useNotificationStore.setState({ toasts: [] });
+
+				const deps = createMockDeps();
+				const { result } = renderHook(() => useInputHandlers(deps));
+
+				await act(async () => {
+					result.current.handleDrop(dropPathlessPdf());
+				});
+
+				const toasts = useNotificationStore.getState().toasts;
+				expect(toasts).toHaveLength(1);
+				expect(toasts[0].message).toBe('disk full');
+				expect(toasts[0].color).toBe('red');
+				// Nothing was mentioned, but the failure is visible.
+				expect(inputVal()).toBe('');
+			});
 		});
 
 		it('processes all image files when dropping multiple images', () => {
@@ -2422,7 +2605,10 @@ describe('useInputHandlers', () => {
 
 			// Draft should be restored after replay
 			expect(inputVal()).toBe('my draft message');
-			expect(mockProcessInput).toHaveBeenCalledWith('replayed message');
+			expect(mockProcessInput).toHaveBeenCalledWith('replayed message', {
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+			});
 
 			// Clean up mock
 			mockProcessInput.mockReset();

@@ -87,7 +87,8 @@ describe('createCueDispatchService', () => {
 				undefined,
 				undefined, // chainRootId
 				undefined, // parentEventId
-				undefined // notify
+				undefined, // notify
+				undefined // turnSettings
 			);
 		});
 	});
@@ -203,7 +204,9 @@ describe('createCueDispatchService', () => {
 				undefined,
 				undefined,
 				undefined, // chainRootId
-				undefined // parentEventId
+				undefined, // parentEventId
+				undefined, // notify
+				undefined // turnSettings
 			);
 		});
 
@@ -231,7 +234,9 @@ describe('createCueDispatchService', () => {
 				undefined,
 				undefined,
 				undefined, // chainRootId
-				undefined // parentEventId
+				undefined, // parentEventId
+				undefined, // notify
+				undefined // turnSettings
 			);
 		});
 	});
@@ -319,6 +324,76 @@ describe('createCueDispatchService', () => {
 			expect(dispatched).toBe(1);
 			expect(executeRun).toHaveBeenCalledTimes(1);
 			expect(logs.some(([level, msg]) => level === 'warn' && /no prompt/.test(msg))).toBe(false);
+		});
+	});
+
+	describe('turn settings (tier / model / effort)', () => {
+		it("threads a single-target sub's model choice as the last executeRun arg", () => {
+			const { deps, executeRun } = makeDeps();
+			const svc = createCueDispatchService(deps);
+			const sub = makeSub({ prompt: 'hello', tier: 'high', effort: 'low' });
+
+			svc.dispatchSubscription('owner', sub, createCueEvent('time.heartbeat', 'my-sub'), 'src');
+
+			expect(executeRun.mock.calls[0][13]).toEqual({ tier: 'high', effort: 'low' });
+		});
+
+		it('gives every fan-out target the same model choice', () => {
+			const { deps, executeRun } = makeDeps();
+			const svc = createCueDispatchService(deps);
+			const sub = makeSub({ fan_out: ['alpha', 'bravo'], prompt: 'p', model: 'gpt-5.5-codex' });
+
+			svc.dispatchSubscription('owner', sub, createCueEvent('time.heartbeat', 'my-sub'), 'src');
+
+			expect(executeRun).toHaveBeenCalledTimes(2);
+			expect(executeRun.mock.calls[0][13]).toEqual({ model: 'gpt-5.5-codex' });
+			expect(executeRun.mock.calls[1][13]).toEqual({ model: 'gpt-5.5-codex' });
+		});
+
+		it('passes undefined when the sub sets no model choice', () => {
+			const { deps, executeRun } = makeDeps();
+			const svc = createCueDispatchService(deps);
+
+			svc.dispatchSubscription(
+				'owner',
+				makeSub({ prompt: 'hello' }),
+				createCueEvent('time.heartbeat', 'my-sub'),
+				'src'
+			);
+
+			expect(executeRun.mock.calls[0][13]).toBeUndefined();
+		});
+	});
+
+	describe('onTriggerFired (cue.fired plugin hook)', () => {
+		it('fires once per dispatch with the source event TYPE only (no prompt text)', () => {
+			const { deps } = makeDeps();
+			const onTriggerFired = vi.fn();
+			const svc = createCueDispatchService({ ...deps, onTriggerFired });
+			const sub = makeSub({ prompt: 'secret prompt body that must never leak' });
+			const event = createCueEvent('time.heartbeat', 'my-sub');
+
+			svc.dispatchSubscription('owner', sub, event, 'src');
+
+			expect(onTriggerFired).toHaveBeenCalledTimes(1);
+			expect(onTriggerFired).toHaveBeenCalledWith('time.heartbeat');
+			// Exactly one string arg - no object/extra args that could carry a prompt.
+			const call = onTriggerFired.mock.calls[0];
+			expect(call).toHaveLength(1);
+			expect(typeof call[0]).toBe('string');
+		});
+
+		it('fires once for a fan-out dispatch (per subscription, not per target)', () => {
+			const { deps } = makeDeps();
+			const onTriggerFired = vi.fn();
+			const svc = createCueDispatchService({ ...deps, onTriggerFired });
+			const sub = makeSub({ fan_out: ['alpha', 'bravo'], prompt: 'p' });
+			const event = createCueEvent('time.heartbeat', 'my-sub');
+
+			svc.dispatchSubscription('owner', sub, event, 'src');
+
+			expect(onTriggerFired).toHaveBeenCalledTimes(1);
+			expect(onTriggerFired).toHaveBeenCalledWith('time.heartbeat');
 		});
 	});
 });

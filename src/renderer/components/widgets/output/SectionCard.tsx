@@ -15,6 +15,11 @@ import type { WidgetProps } from '../types';
 interface SectionCardProps extends WidgetProps {
 	/** Card title shown in the header row. */
 	title: string;
+	/**
+	 * Optional DOM id on the card element. Used as a scroll anchor so a table
+	 * of contents can jump to this section.
+	 */
+	id?: string;
 	/** Optional lucide icon rendered before the title. */
 	icon?: LucideIcon;
 	/** Optional accent color for the icon. Defaults to the theme accent. */
@@ -30,6 +35,7 @@ interface SectionCardProps extends WidgetProps {
 export const SectionCard = memo(function SectionCard({
 	theme,
 	title,
+	id,
 	icon: Icon,
 	accent,
 	action,
@@ -39,6 +45,7 @@ export const SectionCard = memo(function SectionCard({
 	const accentColor = accent ?? theme.colors.accent;
 	return (
 		<section
+			id={id}
 			className={`rounded-lg border overflow-hidden ${className ?? ''}`}
 			style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
 		>

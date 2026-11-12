@@ -65,7 +65,7 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 			const [statusData, runsData, logData, queueData, eventCountData] = await Promise.all([
 				window.maestro.cue.getStatus(),
 				window.maestro.cue.getActiveRuns(),
-				window.maestro.cue.getActivityLog(100),
+				window.maestro.cue.getActivityLog(1000),
 				window.maestro.cue.getQueueStatus(),
 				window.maestro.cue.getEventCount(),
 			]);
@@ -130,7 +130,7 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 				notifyToast({
 					type: 'success',
 					title: `"${subscriptionName}" triggered`,
-					message: 'Manual run dispatched — watch the pipeline for activity.',
+					message: 'Manual run dispatched - watch the pipeline for activity.',
 				});
 			}
 			await refresh();
@@ -156,7 +156,7 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 				notifyToast({
 					type: 'warning',
 					title: `Cue queue overflow: ${payload.sessionName} (${stamp})`,
-					message: `Oldest queued "${payload.subscriptionName}" event was dropped — raise queue_size or max_concurrent to avoid loss.`,
+					message: `Oldest queued "${payload.subscriptionName}" event was dropped - raise queue_size or max_concurrent to avoid loss.`,
 				});
 			}
 			refresh();

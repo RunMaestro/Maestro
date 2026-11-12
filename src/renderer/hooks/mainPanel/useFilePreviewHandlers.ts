@@ -1,6 +1,7 @@
 import { useMemo, useCallback } from 'react';
 import type { Session, FilePreviewTab } from '../../types';
-import { useSessionStore } from '../../stores/sessionStore';
+import { updateFileTab } from '../../stores/sessionStore';
+import { getFileTabFileName } from '../../utils/tabHelpers';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
 
 interface UseFilePreviewHandlersParams {
@@ -42,7 +43,7 @@ export function useFilePreviewHandlers({
 	const memoizedFilePreviewFile = useMemo(() => {
 		if (!activeFileTab) return null;
 		return {
-			name: activeFileTab.name + activeFileTab.extension,
+			name: getFileTabFileName(activeFileTab),
 			content: activeFileTab.content,
 			path: activeFileTab.path,
 		};
@@ -136,29 +137,18 @@ export function useFilePreviewHandlers({
 					const fileName = savePath.split('/').pop() || 'Untitled';
 					const ext = fileName.includes('.') ? '.' + fileName.split('.').pop() : '';
 					const nameWithoutExt = ext ? fileName.slice(0, -ext.length) : fileName;
-					const { setSessions } = useSessionStore.getState();
 					const sessionId = activeSession?.id;
-					setSessions((prev: Session[]) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							return {
-								...s,
-								filePreviewTabs: s.filePreviewTabs.map((tab) =>
-									tab.id === activeFileTabId
-										? {
-												...tab,
-												path: savePath,
-												name: nameWithoutExt,
-												extension: ext,
-												content,
-												editContent: undefined,
-												lastModified: savedMtime,
-											}
-										: tab
-								),
-							};
-						})
-					);
+					if (sessionId) {
+						updateFileTab(sessionId, activeFileTabId, (tab) => ({
+							...tab,
+							path: savePath,
+							name: nameWithoutExt,
+							extension: ext,
+							content,
+							editContent: undefined,
+							lastModified: savedMtime,
+						}));
+					}
 
 					// A file just landed at a new on-disk location (untitled save, or
 					// redirect after a move/delete). The Files panel won't show it until

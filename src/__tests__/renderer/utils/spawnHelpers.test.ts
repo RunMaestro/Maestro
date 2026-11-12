@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getStdinFlags, prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
+import { prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
 
 vi.mock('../../../renderer/utils/templateVariables', () => ({
 	substituteTemplateVariables: vi.fn((content: string, vars: Record<string, any>) => {
@@ -132,71 +132,5 @@ describe('prepareMaestroSystemPrompt', () => {
 		expect(first).toBeDefined();
 		expect(second).toBeDefined();
 		expect((window as any).maestro.prompts.get).toHaveBeenCalledTimes(2);
-	});
-});
-
-describe('getStdinFlags', () => {
-	afterEach(() => {
-		(window as any).maestro = { platform: 'darwin' };
-	});
-
-	it('returns both false on non-Windows platforms', () => {
-		(window as any).maestro = { platform: 'darwin' };
-		const result = getStdinFlags({
-			isSshSession: false,
-			supportsStreamJsonInput: true,
-			hasImages: false,
-		});
-		expect(result).toEqual({ sendPromptViaStdin: false, sendPromptViaStdinRaw: false });
-	});
-
-	it('returns sendPromptViaStdin when Windows + stream-json + images', () => {
-		(window as any).maestro = { platform: 'win32' };
-		const result = getStdinFlags({
-			isSshSession: false,
-			supportsStreamJsonInput: true,
-			hasImages: true,
-		});
-		expect(result).toEqual({ sendPromptViaStdin: true, sendPromptViaStdinRaw: false });
-	});
-
-	it('returns sendPromptViaStdinRaw when Windows + stream-json + no images', () => {
-		(window as any).maestro = { platform: 'win32' };
-		const result = getStdinFlags({
-			isSshSession: false,
-			supportsStreamJsonInput: true,
-			hasImages: false,
-		});
-		expect(result).toEqual({ sendPromptViaStdin: false, sendPromptViaStdinRaw: true });
-	});
-
-	it('returns sendPromptViaStdinRaw when Windows + stream-json unsupported', () => {
-		(window as any).maestro = { platform: 'win32' };
-		const result = getStdinFlags({
-			isSshSession: false,
-			supportsStreamJsonInput: false,
-			hasImages: false,
-		});
-		expect(result).toEqual({ sendPromptViaStdin: false, sendPromptViaStdinRaw: true });
-	});
-
-	it('returns both false for SSH sessions on Windows', () => {
-		(window as any).maestro = { platform: 'win32' };
-		const result = getStdinFlags({
-			isSshSession: true,
-			supportsStreamJsonInput: true,
-			hasImages: true,
-		});
-		expect(result).toEqual({ sendPromptViaStdin: false, sendPromptViaStdinRaw: false });
-	});
-
-	it('returns both false for SSH sessions on Windows without stream-json', () => {
-		(window as any).maestro = { platform: 'win32' };
-		const result = getStdinFlags({
-			isSshSession: true,
-			supportsStreamJsonInput: false,
-			hasImages: false,
-		});
-		expect(result).toEqual({ sendPromptViaStdin: false, sendPromptViaStdinRaw: false });
 	});
 });

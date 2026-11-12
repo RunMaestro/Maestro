@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, MessageSquare, Hourglass } from 'lucide-react';
+import { AlertTriangle, Hourglass } from 'lucide-react';
 import type { Theme } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -24,8 +24,6 @@ interface QuitConfirmModalProps {
 	activeCueRunCount?: number;
 	/** Number of active (non-idle) group chats */
 	activeGroupChatCount?: number;
-	/** True when the Feedback modal has an unsent draft (typed text, attachments, or messages) */
-	hasFeedbackDraft?: boolean;
 	/** Callback when user confirms quit */
 	onConfirmQuit: () => void;
 	/** Callback when user chooses to quit once all operations finish */
@@ -47,7 +45,6 @@ export function QuitConfirmModal({
 	activeTerminalTasks = [],
 	activeCueRunCount = 0,
 	activeGroupChatCount = 0,
-	hasFeedbackDraft = false,
 	onConfirmQuit,
 	onQuitWhenIdle,
 	onCancel,
@@ -82,8 +79,6 @@ export function QuitConfirmModal({
 	const displayTerminalTasks = activeTerminalTasks.slice(0, 3);
 	const remainingTerminalCount = activeTerminalTasks.length - 3;
 
-	// Real operations in flight (excludes a feedback draft, which never "finishes"
-	// and so can't be waited out by the idle watcher).
 	const hasActiveOperations = busyAgentCount > 0 || hasTerminalTasks || hasCueRuns || hasGroupChats;
 
 	return (
@@ -150,15 +145,7 @@ export function QuitConfirmModal({
 								active.{' '}
 							</>
 						)}
-						{hasFeedbackDraft && <>You have unsent feedback in the Feedback window. </>}
-						{!hasActiveOperations && hasFeedbackDraft ? (
-							'Quitting now will discard your draft.'
-						) : (
-							<>
-								Quitting now will interrupt active work
-								{hasFeedbackDraft ? ' and discard your feedback draft' : ''}.
-							</>
-						)}
+						Quitting now will interrupt active work.
 					</p>
 
 					{/* List of busy agents */}
@@ -290,33 +277,8 @@ export function QuitConfirmModal({
 						</div>
 					)}
 
-					{/* Feedback draft warning */}
-					{hasFeedbackDraft && (
-						<div
-							className="mt-4 p-3 rounded-lg border"
-							style={{
-								backgroundColor: theme.colors.bgMain,
-								borderColor: theme.colors.border,
-							}}
-						>
-							<div className="text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
-								Unsent Feedback
-							</div>
-							<span
-								className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium"
-								style={{
-									backgroundColor: `${theme.colors.warning}15`,
-									color: theme.colors.warning,
-								}}
-							>
-								<MessageSquare className="w-3 h-3" />
-								Draft will be discarded
-							</span>
-						</div>
-					)}
-
 					{/* Quit-when-idle option: only meaningful when real operations are
-					    running (a feedback draft never goes idle on its own). */}
+					    running. */}
 					{hasActiveOperations && (
 						<label
 							className="mt-5 flex items-start gap-2 cursor-pointer select-none"

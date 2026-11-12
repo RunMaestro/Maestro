@@ -20,11 +20,10 @@ export interface SimpleResult {
 }
 
 /** Send one command to the desktop and return the typed result. */
-export async function sendSimpleCommand(
-	payload: Record<string, unknown>,
-	responseType: string
-): Promise<SimpleResult> {
-	return withMaestroClient((client) => client.sendCommand<SimpleResult>(payload, responseType));
+export async function sendSimpleCommand<
+	T extends Pick<SimpleResult, 'success' | 'error'> = SimpleResult,
+>(payload: Record<string, unknown>, responseType: string): Promise<T> {
+	return withMaestroClient((client) => client.sendCommand<T>(payload, responseType));
 }
 
 /**
@@ -54,8 +53,19 @@ export function failCommand(message: string, json?: boolean): never {
 /** Report a `{ success }` result: success line, or error + exit(1) on failure. */
 export function reportResult(
 	result: SimpleResult,
-	options: { json?: boolean; successMessage: string; jsonExtra?: Record<string, unknown> }
+	options: {
+		json?: boolean;
+		successMessage: string;
+		jsonExtra?: Record<string, unknown>;
+		/** Commands returning a live snapshot preserve it on success and failure. */
+		jsonResult?: Record<string, unknown>;
+	}
 ): void {
+	if (options.json && options.jsonResult) {
+		console.log(JSON.stringify(options.jsonResult));
+		if (!result.success) process.exit(1);
+		return;
+	}
 	if (result.success) {
 		if (options.json) {
 			console.log(JSON.stringify({ success: true, ...options.jsonExtra }));

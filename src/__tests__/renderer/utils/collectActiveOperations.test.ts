@@ -59,7 +59,6 @@ describe('collectActiveOperations', () => {
 		expect(ops.activeTerminalTasks).toEqual([]);
 		expect(ops.activeCueRunCount).toBe(0);
 		expect(ops.activeGroupChatCount).toBe(0);
-		expect(ops.hasFeedbackDraft).toBe(false);
 	});
 
 	it('counts thinking AI agents but excludes terminal-driven busy state', async () => {
@@ -175,12 +174,14 @@ describe('collectActiveOperations', () => {
 		expect(ops.hasActiveOperations).toBe(true);
 	});
 
-	it('reports a feedback draft but never treats it as an active operation', async () => {
+	it('ignores a feedback draft entirely', async () => {
+		// Drafts persist to disk and the quit handler writes the live editor out
+		// before asking, so a draft is neither an operation to wait for nor work
+		// at risk. It must not block an idle-quit either.
 		useFeedbackDraftStore.setState({ hasDraft: true });
 		const ops = await collectActiveOperations();
-		expect(ops.hasFeedbackDraft).toBe(true);
-		// A draft never finishes on its own, so it must not block an idle-quit.
 		expect(ops.hasActiveOperations).toBe(false);
+		expect(ops).not.toHaveProperty('hasFeedbackDraft');
 	});
 
 	it('degrades to "nothing running" when the IPC probes reject', async () => {

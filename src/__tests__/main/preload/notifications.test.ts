@@ -9,12 +9,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock electron ipcRenderer
 const mockInvoke = vi.fn();
+const mockSend = vi.fn();
 const mockOn = vi.fn();
 const mockRemoveListener = vi.fn();
 
 vi.mock('electron', () => ({
 	ipcRenderer: {
 		invoke: (...args: unknown[]) => mockInvoke(...args),
+		send: (...args: unknown[]) => mockSend(...args),
 		on: (...args: unknown[]) => mockOn(...args),
 		removeListener: (...args: unknown[]) => mockRemoveListener(...args),
 	},
@@ -29,6 +31,26 @@ describe('Notification Preload API', () => {
 		vi.clearAllMocks();
 		api = createNotificationApi();
 	});
+
+	it.each(['success', 'missing', 'rejected'] as const)(
+		'acknowledges %s source activation to main',
+		async (result) => {
+			const action = { kind: 'open-terminal' as const, sessionId: 'source', tabRef: 'terminal' };
+			const callback =
+				result === 'rejected'
+					? vi.fn().mockRejectedValue(new Error('Unavailable'))
+					: vi.fn().mockResolvedValue(result === 'success');
+			const unsubscribe = api.onActivateAction(callback);
+			const handler = mockOn.mock.calls.find(
+				([channel]) => channel === 'notification:activateAction'
+			)![1];
+			const responseChannel = 'notification:activateAction:response:test';
+			await handler({}, action, responseChannel);
+			expect(mockSend).toHaveBeenCalledWith(responseChannel, result === 'success');
+			unsubscribe();
+			expect(mockRemoveListener).toHaveBeenCalledWith('notification:activateAction', handler);
+		}
+	);
 
 	describe('show', () => {
 		it('should invoke notification:show with title and body', async () => {

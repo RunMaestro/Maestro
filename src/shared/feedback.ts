@@ -47,9 +47,50 @@ export const MAX_FEEDBACK_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_FEEDBACK_SUMMARY_LENGTH = 120;
 export const MAX_FEEDBACK_FIELD_LENGTH = 5000;
 
+/**
+ * Arguments for signing the GitHub CLI in. The device-code web flow needs no
+ * typed password or token, so it works the same from the embedded terminal,
+ * a plain terminal, or an agent's non-interactive shell; the host and protocol
+ * flags skip the two questions gh would otherwise ask first.
+ */
+export const GH_LOGIN_ARGS: readonly string[] = [
+	'auth',
+	'login',
+	'--hostname',
+	'github.com',
+	'--git-protocol',
+	'https',
+	'--web',
+];
+
+/** The gh login to run, with the gh binary Feedback actually uses. */
+export interface FeedbackGhLoginCommand {
+	command: string;
+	args: string[];
+	/** The same thing as one posix command line, for messages. */
+	display: string;
+}
+
 export interface FeedbackAuthResponse {
 	authenticated: boolean;
 	message?: string;
+	/**
+	 * Why feedback cannot be filed. Absent when `authenticated`.
+	 * `no-repo-access`: gh is signed in, but GitHub refused this account an issue
+	 * on the feedback repo (an org's OAuth restriction, a missing scope, a token
+	 * the API rejects), so the check fails up front instead of at submit.
+	 */
+	reason?: 'not-installed' | 'not-authenticated' | 'no-repo-access';
+	/**
+	 * Whether signing gh in again can fix it. Always true for
+	 * `not-authenticated`; for `no-repo-access` only when the refusal is one a
+	 * fresh login addresses.
+	 */
+	needsGhLogin?: boolean;
+	/** How to sign gh in. Present whenever `needsGhLogin` is. */
+	login?: FeedbackGhLoginCommand;
+	/** The GitHub account gh acts as, when gh names one. Shown as a pill. */
+	account?: { host: string; login: string };
 }
 
 export interface FeedbackSubmitResponse {
@@ -57,62 +98,10 @@ export interface FeedbackSubmitResponse {
 	error?: string;
 	issueUrl?: string;
 	/**
-	 * When filing failed: a github.com "new issue" URL prefilled with the same
-	 * title and body, so the report survives a `gh` that cannot file it (expired
-	 * login, missing scope, an org OAuth restriction). Opening it in a browser
-	 * uses the browser's GitHub session instead of gh's.
+	 * gh refused the request in a way signing in again can fix (expired or
+	 * revoked token, org OAuth restriction, missing scope).
 	 */
-	fallbackIssueUrl?: string;
-	/**
-	 * Parts of the report that were dropped so the rest could be filed - a
-	 * screenshot upload or the label that `gh` refused. The issue exists; these
-	 * say what is missing from it.
-	 */
-	warnings?: string[];
-}
-
-export const FEEDBACK_REPO = 'RunMaestro/Maestro';
-export const FEEDBACK_LABEL = 'Maestro-feedback';
-
-/**
- * GitHub answers a request line much longer than this with a 414, and browsers
- * start truncating not far past it, so the body is cut to keep the whole URL
- * under the limit.
- */
-export const MAX_PREFILLED_ISSUE_URL_LENGTH = 8000;
-
-const PREFILL_TRUNCATION_NOTE =
-	'\n\n_(Truncated to fit in a URL. Paste the rest of the details as a comment.)_';
-
-/**
- * Build a github.com "new issue" URL prefilled with `title` and `body`.
- *
- * The body is shortened (never the title) until the encoded URL fits under
- * {@link MAX_PREFILLED_ISSUE_URL_LENGTH}. Cutting is done on the raw text and
- * re-encoded each time, because a cut taken from the encoded string can split
- * a percent escape and produce a URL GitHub rejects.
- */
-export function buildPrefilledIssueUrl(title: string, body: string): string {
-	const build = (text: string) =>
-		`https://github.com/${FEEDBACK_REPO}/issues/new?${new URLSearchParams({
-			title,
-			body: text,
-			labels: FEEDBACK_LABEL,
-		}).toString()}`;
-
-	let url = build(body);
-	if (url.length <= MAX_PREFILLED_ISSUE_URL_LENGTH) return url;
-
-	let keep = body.length;
-	while (keep > 0) {
-		// Shrink proportionally to the overshoot; encoding expands text unevenly,
-		// so this converges in a few passes rather than landing in one.
-		const overshoot = url.length - MAX_PREFILLED_ISSUE_URL_LENGTH;
-		keep = Math.max(0, keep - Math.max(overshoot, 64));
-		url = build(body.slice(0, keep).trimEnd() + PREFILL_TRUNCATION_NOTE);
-		if (url.length <= MAX_PREFILLED_ISSUE_URL_LENGTH) return url;
-	}
-	return build(PREFILL_TRUNCATION_NOTE.trim());
+	needsGhLogin?: boolean;
 }
 
 export interface FeedbackAttachmentPayload {
@@ -148,6 +137,12 @@ export interface FeedbackConversationSubmitPayload {
 	attachments?: FeedbackAttachmentPayload[];
 	/** Generate a support package and link it from the issue. */
 	includeDebugPackage?: boolean;
+	/**
+	 * Absolute path to a temp performance-trace .zip captured via
+	 * debug:stopProfilingToFile. When present, it is uploaded and linked in the
+	 * issue body, then deleted.
+	 */
+	performanceTracePath?: string;
 }
 
 /** One possible duplicate returned by the issue search. */
@@ -164,4 +159,69 @@ export interface FeedbackIssueMatch {
 
 export interface FeedbackIssueSearchResponse {
 	issues: FeedbackIssueMatch[];
+}
+
+export interface FeedbackDraftAttachment {
+	id: string;
+	name: string;
+	dataUrl: string;
+	sizeBytes: number;
+}
+
+export interface FeedbackDraftMessage {
+	role: 'user' | 'assistant' | 'system';
+	content: string;
+	timestamp: number;
+	confidence?: number;
+	category?: FeedbackCategory;
+	summary?: string;
+}
+
+export interface FeedbackDraftStructured {
+	expectedBehavior: string;
+	actualBehavior: string;
+	reproductionSteps: string;
+	additionalContext: string;
+}
+
+/**
+ * The parsed assistant response captured when a draft reaches the submit-ready
+ * state. Persisting it lets a resumed draft stay submittable without forcing
+ * the user to send another message to regenerate the structured fields.
+ */
+export interface FeedbackDraftResponse {
+	confidence: number;
+	ready: boolean;
+	message: string;
+	category: FeedbackCategory;
+	summary: string;
+	structured: FeedbackDraftStructured;
+}
+
+/** A persisted, resumable Send Feedback conversation. */
+export interface FeedbackDraft {
+	id: string;
+	suggestedName: string;
+	category: FeedbackCategory;
+	summary: string;
+	confidence: number;
+	agentType: string;
+	messages: FeedbackDraftMessage[];
+	attachments: FeedbackDraftAttachment[];
+	inputDraft: string;
+	includeDebugPackage: boolean;
+	createdAt: number;
+	updatedAt: number;
+	lastResponse?: FeedbackDraftResponse | null;
+}
+
+/** One issue the user filed, kept locally so the modal can list its state. */
+export interface SubmittedIssue {
+	number: number;
+	url: string;
+	title: string;
+	category: FeedbackCategory;
+	submittedAt: number;
+	state: 'open' | 'closed';
+	lastCheckedAt: number;
 }

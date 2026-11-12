@@ -53,10 +53,10 @@ Press `R` (or click the crop icon) to arm the crop tool. It opens on a frame ins
 - **Drag** anywhere on the dimmed area to draw a new selection.
 - **Drag the body** to reposition the frame without resizing it.
 - **Drag a handle** - corners resize two edges, side handles resize one.
-- **`Enter`** (or the scissors icon) applies the crop.
+- **`Enter`** (or the scissors icon) applies the crop and closes the frame, returning you to the tool you were using. Press `R` again to crop further.
 - **`Esc`** resets the selection back to the default frame. Press it again to close the annotator.
 
-Cropping is not a flatten. The base image is cut, and every stroke, shape, and text label moves into the new origin still fully editable - so you can crop first and keep annotating, or annotate first and crop afterwards. Anything that fell outside the crop is clipped from view but not destroyed: `Cmd+Z` / `Ctrl+Z` undoes the crop and brings back the original frame along with everything on it.
+Cropping is not a flatten. The base image is cut, and every stroke, shape, and text label moves into the new origin still fully editable - so you can crop first and keep annotating, or annotate first and crop afterwards. Anything that fell outside the crop is clipped from view but not destroyed: `Cmd+Z` / `Ctrl+Z` undoes the crop and brings back the original frame along with everything on it, with the crop tool re-opened on the selection you applied so you can adjust it and try again.
 
 `Clear all` wipes your strokes but leaves the crop in place, since cropping the frame is a separate decision from the marks you drew on it.
 
@@ -102,6 +102,7 @@ When you open the annotator from the **File Preview** pane, saving opens a desti
 | `Delete` / `Backspace`            | Delete the selected shape or text label                                  |
 | `Cmd/Ctrl+Enter` (in text editor) | Commit the text label and exit the editor                                |
 | `D` `E` `P` `S` `C` `A` `T` `R`   | Select tool: Draw / Eraser / Pan / Square / Circle / Arrow / Text / Crop |
+| `1` - `8`                         | Pick that color from the palette (the number is shown on each swatch)    |
 | `0`                               | Reset zoom and pan                                                       |
 | `f`                               | Fit image to viewport                                                    |
 | `+` / `-`                         | Grow / shrink the size of the current tool (text size for Text)          |

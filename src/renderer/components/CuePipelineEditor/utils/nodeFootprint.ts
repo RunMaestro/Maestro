@@ -232,3 +232,49 @@ export function pipelineCardBounds(
 		height: maxY - minY + 2 * inset,
 	};
 }
+
+// ─── Agent clusters (All Pipelines view) ────────────────────────────────────
+// The All Pipelines view files every pipeline under its home agent and draws a
+// labeled box around each agent's cards. The packer (`arrangePipelineGroups`)
+// leaves exactly this much room around a cluster and the renderer
+// (`convertToReactFlowNodes`) draws the box from the same numbers, so a packed
+// cluster is exactly the box the user sees.
+
+/** Clear space between the cluster border and the cards inside it. */
+export const AGENT_CLUSTER_PADDING = 32;
+/** Extra room inside the cluster's top edge: each pipeline card draws its name
+ *  label ~38px ABOVE the card, and that label must stay inside the cluster. */
+export const AGENT_CLUSTER_HEADER = 56;
+/** Space between two clusters. The cluster's own label is drawn above its top
+ *  edge, so the gap has to clear that label as well as separate the boxes. */
+export const AGENT_CLUSTER_GAP = 120;
+
+/**
+ * The box drawn around one agent's pipeline cards: their union, grown by the
+ * cluster padding (and the header allowance on top). Null when there are no
+ * cards.
+ */
+export function agentClusterBounds(cards: PipelineCardBounds[]): PipelineCardBounds | null {
+	if (cards.length === 0) return null;
+	let minX = Infinity;
+	let minY = Infinity;
+	let maxX = -Infinity;
+	let maxY = -Infinity;
+	for (const card of cards) {
+		minX = Math.min(minX, card.x);
+		minY = Math.min(minY, card.y);
+		maxX = Math.max(maxX, card.x + card.width);
+		maxY = Math.max(maxY, card.y + card.height);
+	}
+	return {
+		x: minX - AGENT_CLUSTER_PADDING,
+		y: minY - AGENT_CLUSTER_HEADER,
+		width: maxX - minX + 2 * AGENT_CLUSTER_PADDING,
+		height: maxY - minY + AGENT_CLUSTER_HEADER + AGENT_CLUSTER_PADDING,
+	};
+}
+
+/** True when two rects share any area. */
+export function cardBoundsOverlap(a: PipelineCardBounds, b: PipelineCardBounds): boolean {
+	return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}

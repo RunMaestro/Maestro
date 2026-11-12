@@ -24,11 +24,11 @@ vi.mock('../../../cli/services/file-tree-refresh', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn((id: string) => id),
 	readSessions: vi.fn().mockReturnValue([]),
-	getConfigDir: vi.fn(),
+	getSyncDir: vi.fn(),
 }));
 
 import { imageList, imageSave } from '../../../cli/commands/image';
-import { readSessions, getConfigDir, resolveAgentId } from '../../../cli/services/storage';
+import { readSessions, getSyncDir, resolveAgentId } from '../../../cli/services/storage';
 import { nudgeFileTreeForPaths } from '../../../cli/services/file-tree-refresh';
 
 const PNG_SHA = 'a'.repeat(64);
@@ -75,7 +75,7 @@ describe('image commands', () => {
 		fs.writeFileSync(path.join(imageDir, `${JPEG_SHA}.jpeg`), Buffer.from('jpeg-bytes'));
 		fs.writeFileSync(path.join(imageDir, `${STAGED_SHA}.png`), Buffer.from('staged-bytes'));
 
-		vi.mocked(getConfigDir).mockReturnValue(configDir);
+		vi.mocked(getSyncDir).mockReturnValue(configDir);
 		vi.mocked(resolveAgentId).mockImplementation((id: string) => id);
 		vi.mocked(readSessions).mockReturnValue(mockSessions());
 		vi.mocked(nudgeFileTreeForPaths).mockResolvedValue([]);

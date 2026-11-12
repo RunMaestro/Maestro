@@ -6,12 +6,16 @@ import { parseGitDiff, getFileName, getDiffStats } from '../utils/gitDiffParser'
 import { getBasename } from '../../shared/formatters';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
+import { revealActiveProps, useRevealActiveItem } from '../hooks/ui/useRevealActiveItem';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { ImageDiffViewer } from './ImageDiffViewer';
 import { GitFilePathHeader } from './GitFilePathHeader';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
+import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { ModalSubtitle } from './ui/Modal';
+import { useSessionStore } from '../stores/sessionStore';
 import 'react-diff-view/style/index.css';
 
 export type GitDiffViewType = 'unified' | 'split';
@@ -19,22 +23,12 @@ export type GitDiffViewType = 'unified' | 'split';
 const VIEW_TYPE_STORAGE_KEY = 'maestro.gitDiffViewer.viewType';
 
 function readStoredViewType(): GitDiffViewType | null {
-	if (typeof window === 'undefined') return null;
-	try {
-		const raw = window.localStorage.getItem(VIEW_TYPE_STORAGE_KEY);
-		return raw === 'unified' || raw === 'split' ? raw : null;
-	} catch {
-		return null;
-	}
+	const raw = safeStorageGet(VIEW_TYPE_STORAGE_KEY);
+	return raw === 'unified' || raw === 'split' ? raw : null;
 }
 
 function writeStoredViewType(value: GitDiffViewType): void {
-	if (typeof window === 'undefined') return;
-	try {
-		window.localStorage.setItem(VIEW_TYPE_STORAGE_KEY, value);
-	} catch {
-		// Ignore quota / privacy-mode errors - preference just won't persist.
-	}
+	safeStorageSet(VIEW_TYPE_STORAGE_KEY, value);
 }
 
 function isFormControl(target: EventTarget | null): boolean {
@@ -57,6 +51,11 @@ interface GitDiffViewerProps {
 	cwd: string;
 	theme: Theme;
 	onClose: () => void;
+	/**
+	 * Agent whose diff is shown, named in the header. See GitLogViewer: the cwd
+	 * pill alone does not identify the agent.
+	 */
+	sessionId?: string;
 	/**
 	 * Default view type when the user has no persisted preference yet. Once the
 	 * user toggles the header button, the chosen value is saved to localStorage
@@ -87,13 +86,20 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	initialViewType = 'unified',
 	title = 'Git Diff',
 	priority,
+	sessionId,
 	onOpenFile,
 }: GitDiffViewerProps) {
+	// Name the agent whose repo this is. Subscribe to the name alone, never the
+	// Session: these viewers stay open over a streaming agent and a whole-session
+	// subscription would re-render the diff list on every unrelated token update.
+	const agentName = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.name);
+
 	const [activeTab, setActiveTab] = useState(0);
 	const [viewType, setViewType] = useState<GitDiffViewType>(
 		() => readStoredViewType() ?? initialViewType
 	);
-	const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+	// The file tab strip scrolls; center the active file in it.
+	const tabStripRef = useRevealActiveItem<HTMLDivElement>(activeTab, { align: 'center' });
 	const dialogRef = useRef<HTMLDivElement>(null);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 
@@ -127,18 +133,6 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 			focusTrap: 'lenient',
 		}
 	);
-
-	// Auto-scroll to active tab when it changes
-	useEffect(() => {
-		const activeTabElement = tabRefs.current[activeTab];
-		if (activeTabElement) {
-			activeTabElement.scrollIntoView({
-				behavior: 'smooth',
-				block: 'nearest',
-				inline: 'center',
-			});
-		}
-	}, [activeTab]);
 
 	// Handle keyboard shortcuts (tab navigation + view toggle)
 	useEffect(() => {
@@ -215,15 +209,23 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 						className="flex items-center justify-between px-6 py-4 border-b"
 						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 					>
-						<span className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
-							{title}
-						</span>
+						<div className="flex items-center gap-3 min-w-0">
+							<span
+								className="text-lg font-semibold shrink-0"
+								style={{ color: theme.colors.textMain }}
+							>
+								{title}
+							</span>
+							<ModalSubtitle theme={theme} subtitle={agentName} />
+						</div>
 						<button
 							onClick={onClose}
 							className="px-3 py-1 rounded text-sm hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textDim }}
+							aria-label="Close diff viewer"
 						>
-							Close (Esc)
+							<span className="hidden md:inline">Close (Esc)</span>
+							<span className="md:hidden text-base leading-none">×</span>
 						</button>
 					</div>
 					<div className="flex-1 flex items-center justify-center">
@@ -268,27 +270,38 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 
 				{/* Header */}
 				<div
-					className="flex items-center justify-between px-6 py-4 border-b"
+					className="flex items-center justify-between gap-2 px-3 sm:px-6 py-3 sm:py-4 border-b"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 				>
-					<div className="flex items-center gap-3">
-						<span className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
+					<div className="flex items-center gap-3 min-w-0">
+						<span
+							className="text-lg font-semibold shrink-0"
+							style={{ color: theme.colors.textMain }}
+						>
 							{title}
 						</span>
+						<ModalSubtitle theme={theme} subtitle={agentName} />
 						<span
-							className="text-xs px-2 py-1 rounded"
+							className="text-xs px-2 py-1 rounded truncate min-w-0"
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 						>
 							{cwd}
 						</span>
-						<span className="text-xs" style={{ color: theme.colors.textDim }}>
+						{/* File counter hidden on narrow viewports - the per-file tab bar
+						    below already shows which file is active and the total count. */}
+						<span
+							className="hidden md:inline text-xs shrink-0"
+							style={{ color: theme.colors.textDim }}
+						>
 							File {activeTab + 1} of {parsedFiles.length}
 						</span>
 					</div>
-					<div className="flex items-center gap-2">
+					<div className="flex items-center gap-2 shrink-0">
+						{/* Layout toggle hidden on narrow viewports - unified is the only
+						    practical view at small widths. */}
 						<button
 							onClick={() => setViewType((v) => (v === 'unified' ? 'split' : 'unified'))}
-							className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs hover:bg-white/10 transition-colors"
+							className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded text-xs hover:bg-white/10 transition-colors"
 							style={{
 								color: theme.colors.textDim,
 								border: `1px solid ${theme.colors.border}`,
@@ -312,14 +325,17 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 							onClick={onClose}
 							className="px-3 py-1 rounded text-sm hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textDim }}
+							aria-label="Close diff viewer"
 						>
-							Close (Esc)
+							<span className="hidden md:inline">Close (Esc)</span>
+							<span className="md:hidden text-base leading-none">×</span>
 						</button>
 					</div>
 				</div>
 
 				{/* Tabs */}
 				<div
+					ref={tabStripRef}
 					className="flex gap-0 border-b overflow-x-auto scrollbar-thin"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 				>
@@ -328,7 +344,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 						return (
 							<button
 								key={file.newPath || file.oldPath || `file-${index}`}
-								ref={(el) => (tabRefs.current[index] = el)}
+								{...revealActiveProps(activeTab === index)}
 								onClick={() => setActiveTab(index)}
 								className={`px-4 py-3 text-sm whitespace-nowrap transition-colors ${
 									activeTab === index ? 'border-b-2' : 'hover:bg-white/5'

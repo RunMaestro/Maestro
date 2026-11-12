@@ -17,6 +17,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TerminalOutput } from '../../../renderer/components/TerminalOutput';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
 
+declare global {
+	interface Window {
+		__mutationCallback?: () => void;
+	}
+}
+
 // Mock dependencies (same pattern as TerminalOutput.test.tsx)
 vi.mock('react-syntax-highlighter', () => ({
 	Prism: ({ children }: { children: string }) => (
@@ -70,8 +76,11 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 class MockMutationObserver {
 	private callback: MutationCallback;
 	observe = vi.fn(() => {
-		// Store callback so rerender-triggered DOM changes can flush it
-		(window as any).__mutationCallback = this.callback;
+		// Store callback so rerender-triggered DOM changes can flush it.
+		window.__mutationCallback = () => {
+			// Test double implements the MutationObserver methods the component uses.
+			this.callback([], this as unknown as MutationObserver);
+		};
 	});
 	disconnect = vi.fn();
 	takeRecords = vi.fn().mockReturnValue([]);
@@ -83,7 +92,7 @@ vi.stubGlobal('MutationObserver', MockMutationObserver);
 
 // Default theme for testing
 const defaultTheme: Theme = {
-	id: 'test-theme' as any,
+	id: 'custom',
 	name: 'Test Theme',
 	mode: 'dark',
 	colors: {
@@ -228,7 +237,7 @@ describe('Auto-scroll feature', () => {
 			rerender(<TerminalOutput {...createDefaultProps({ session: updatedSession })} />);
 
 			// Trigger MutationObserver callback (simulates DOM mutation)
-			(window as any).__mutationCallback?.([]);
+			window.__mutationCallback?.();
 
 			await act(async () => {
 				vi.advanceTimersByTime(20); // Flush RAF + any timers
@@ -322,13 +331,74 @@ describe('Auto-scroll feature', () => {
 			rerender(<TerminalOutput {...createDefaultProps({ session: updatedSession })} />);
 
 			// Trigger MutationObserver callback (simulates DOM mutation from new node)
-			(window as any).__mutationCallback?.([]);
+			window.__mutationCallback?.();
 
 			await act(async () => {
 				vi.advanceTimersByTime(20);
 			});
 
 			expect(scrollToSpy).toHaveBeenCalled();
+		});
+
+		it('gates MutationObserver auto-scroll on the latest at-bottom position', async () => {
+			const session = createDefaultSession({
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: [createLogEntry({ id: 'initial-log', text: 'Initial output' })],
+						isUnread: false,
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			let scrollTop = 1600;
+			scrollContainer.scrollTo = scrollToSpy;
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 2000, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', {
+				get: () => scrollTop,
+				set: (next: number) => {
+					scrollTop = next;
+				},
+				configurable: true,
+			});
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+			scrollToSpy.mockClear();
+
+			scrollTop = 500;
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(20);
+			});
+			scrollToSpy.mockClear();
+
+			window.__mutationCallback?.();
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scrollToSpy).not.toHaveBeenCalled();
+
+			scrollTop = 1600;
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(20);
+			});
+			scrollToSpy.mockClear();
+
+			window.__mutationCallback?.();
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scrollToSpy).toHaveBeenCalledWith({ top: 2000, behavior: 'auto' });
 		});
 	});
 });

@@ -26,10 +26,21 @@ export interface MatchSegment {
  *
  * Returns a single non-match segment when the query is empty or absent, so
  * callers never have to special-case "no filter".
+ *
+ * An ARRAY of terms highlights every one of them, for filters whose query is
+ * several words the caller ANDs together (see the Git Log search): a single
+ * literal "fix usage" never occurs in "fix(usage):", so a filter that matched
+ * term by term would highlight nothing it had just matched on. Longer terms are
+ * tried first, because regex alternation takes the first branch that matches at
+ * a position and a shorter term would otherwise mask a longer one containing it.
  */
-export function splitOnMatches(text: string, query: string): MatchSegment[] {
-	if (!query) return [{ text, isMatch: false, start: 0 }];
-	const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export function splitOnMatches(text: string, query: string | string[]): MatchSegment[] {
+	const terms = (Array.isArray(query) ? query : [query]).filter(Boolean);
+	if (terms.length === 0) return [{ text, isMatch: false, start: 0 }];
+	const escaped = [...terms]
+		.sort((a, b) => b.length - a.length)
+		.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+		.join('|');
 	const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
 	// String.split with a capturing group interleaves the captured separators at
 	// odd indices, so parity identifies the matches. Re-testing each part with a
@@ -56,15 +67,19 @@ export interface MatchRange {
  * a surface that offers both a preview and a source editor cannot disagree with
  * itself about what counts as a hit.
  */
-export function searchMatchRanges(text: string, query: string): MatchRange[] {
-	if (!query) return [];
+export function searchMatchRanges(text: string, query: string | string[]): MatchRange[] {
+	if (!query || (Array.isArray(query) && query.length === 0)) return [];
 	return splitOnMatches(text, query)
 		.filter((segment) => segment.isMatch)
 		.map((segment) => ({ from: segment.start, to: segment.start + segment.text.length }));
 }
 
-export function highlightMatches(text: string, query: string, accentColor: string): ReactNode {
-	if (!query) return text;
+export function highlightMatches(
+	text: string,
+	query: string | string[],
+	accentColor: string
+): ReactNode {
+	if (!query || (Array.isArray(query) && query.length === 0)) return text;
 	const segments = splitOnMatches(text, query);
 	if (segments.length === 1) return text;
 	// The offset doubles as the key so identical substrings at different

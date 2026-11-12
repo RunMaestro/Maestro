@@ -147,6 +147,43 @@ records ride along when an agent is duplicated into a git worktree, so a parked 
 not silently lost there either. **Never merge `customEnvVarsDisabled` into a spawn
 environment.**
 
+#### Basic and Advanced Editing
+
+Every environment variable editor (Settings → Environment, and the per-agent editor in New
+Agent, Edit Agent, the Wizard, Group Chat, and Director's Notes) has a **Basic / Advanced**
+toggle. Basic is a row per variable. Advanced is one textarea of `.env` text, for pasting a
+block out of a `.env` file, a password manager, or a provider's docs, and for copying an
+agent's variables back out. The choice is remembered across editors and restarts.
+
+Both modes edit the same records, so switching back and forth changes nothing by itself.
+What a line means in Advanced mode:
+
+| Line                       | Meaning                                                               |
+| -------------------------- | --------------------------------------------------------------------- |
+| `KEY=value`                | A live variable. Only the first `=` splits, so `KEY=a=b` is `a=b`.    |
+| `export KEY=value`         | The same. The leading `export` is dropped.                            |
+| `# KEY=value`              | A parked variable, where the editor has an eye button. See above.     |
+| `# anything else`, a blank | Ignored, and not saved: it is gone the next time the editor is opened |
+
+Things worth knowing:
+
+- **Quotes are kept as typed.** `TOKEN="a b"` stores the quotes as part of the value, exactly
+  as the Basic row does. Maestro does not unquote a value in either mode.
+- **A line that cannot be saved is listed under the textarea with its line number**, and
+  every other line is still saved. A line fails when it is not `KEY=value` or its name is
+  not a valid variable name. In Settings → Environment it also fails for the two reasons a
+  Basic row does there: an unquoted shell special character, or a relative
+  `CLAUDE_CONFIG_DIR` / `CODEX_HOME`.
+- **A value cannot span lines.** A quoted multiline value (a PEM key, for instance) is
+  reported once, against the line that opens the quote, and nothing from there through the
+  line that closes it is saved.
+- **The same name twice: the last one wins**, with a warning. A name that is both live and
+  commented out stays live, and the commented copy is dropped.
+- **There are no inline comments.** `URL=https://example.com # prod` stores everything after
+  the `=`, and the editor warns about it.
+
+The parser and serializer are `parseDotEnv()` / `serializeDotEnv()` in `src/shared/dotEnv.ts`.
+
 ---
 
 ## Precedence Rules
@@ -226,6 +263,30 @@ agent that reads the value as a path gets `''` rather than its default, which is
 how a blank `CLAUDE_CONFIG_DIR` used to kill Claude Code before it made a single
 API call. To keep a genuinely empty string, you cannot - use the eye button to
 park the variable instead, or delete the row.
+
+### Selecting a Provider Account
+
+Three providers keep their credentials and transcripts in a directory their CLI
+lets you relocate, so setting one variable on an agent is how you put that agent
+on a different account:
+
+```env
+CLAUDE_CONFIG_DIR=/Users/john/.claude-work     (default ~/.claude)
+CODEX_HOME=/Users/john/.codex-project-acc-1    (default ~/.codex)
+COPILOT_HOME=/Users/john/.copilot-work         (default ~/.copilot)
+```
+
+Set any of these on the agent to move just that agent, or on the provider (in
+**Settings** -> **Agents**) to move every agent of that type that does not set
+its own. Remember the layering rule above: an agent's own set of variables
+REPLACES the provider-level set rather than merging with it.
+
+Maestro reads these the same way everywhere, so an agent's account is what the
+Agents tab provider filter narrows on, what the Context Window tooltip's
+**Profile** row names, and what the Usage Dashboard's Tokens tab bills the
+tokens to. See [Multiple Accounts](/multi-provider) for the full per-provider
+table, the per-provider setup recipes, and the providers that ship no such
+variable.
 
 ### Inspecting the Effective Environment
 

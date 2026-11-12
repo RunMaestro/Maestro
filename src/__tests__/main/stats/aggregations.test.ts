@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
+import { startOfLocalDay } from '../../../shared/localDay';
 
 // Track Database constructor calls to verify file path
 let lastDbPath: string | null = null;
@@ -119,9 +120,8 @@ describe('Time-range filtering works correctly for all ranges', () => {
 	});
 
 	describe('getQueryEvents time range calculations', () => {
-		it('should filter by "day" range (last 24 hours)', async () => {
+		it('should filter by "day" range (since local midnight)', async () => {
 			const now = Date.now();
-			const oneDayMs = 24 * 60 * 60 * 1000;
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -129,16 +129,15 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			db.getQueryEvents('day');
 
-			// Verify the start_time parameter is approximately 24 hours ago
+			// Verify the start_time parameter is local midnight today
 			const allCalls = mockStatement.all.mock.calls;
 			expect(allCalls.length).toBeGreaterThan(0);
 
 			const lastCall = allCalls[allCalls.length - 1];
 			const startTimeParam = lastCall[0] as number;
 
-			// The start time should be approximately now - 24 hours (within a few seconds tolerance)
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneDayMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneDayMs + 5000);
+			// "Today" is the local calendar day, not a rolling 24 hours (#1960)
+			expect(startTimeParam).toBe(startOfLocalDay(now));
 		});
 
 		it('should filter by "week" range (last 7 days)', async () => {
@@ -225,7 +224,6 @@ describe('Time-range filtering works correctly for all ranges', () => {
 	describe('getAutoRunSessions time range calculations', () => {
 		it('should filter Auto Run sessions by "day" range', async () => {
 			const now = Date.now();
-			const oneDayMs = 24 * 60 * 60 * 1000;
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -239,8 +237,8 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			const lastCall = allCalls[allCalls.length - 1];
 			const startTimeParam = lastCall[0] as number;
 
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneDayMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneDayMs + 5000);
+			// "Today" is the local calendar day, not a rolling 24 hours (#1960)
+			expect(startTimeParam).toBe(startOfLocalDay(now));
 		});
 
 		it('should filter Auto Run sessions by "week" range', async () => {
@@ -323,7 +321,6 @@ describe('Time-range filtering works correctly for all ranges', () => {
 	describe('getAggregatedStats time range calculations', () => {
 		it('should aggregate stats for "day" range', async () => {
 			const now = Date.now();
-			const oneDayMs = 24 * 60 * 60 * 1000;
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -339,8 +336,8 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			const firstCall = getCalls[0];
 			const startTimeParam = firstCall[0] as number;
 
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneDayMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneDayMs + 5000);
+			// "Today" is the local calendar day, not a rolling 24 hours (#1960)
+			expect(startTimeParam).toBe(startOfLocalDay(now));
 		});
 
 		it('should aggregate stats for "week" range', async () => {
@@ -424,16 +421,15 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		});
 	});
 
-	describe('exportToCsv time range calculations', () => {
-		it('should export CSV for "day" range only', async () => {
+	describe('getQueryEvents time range calculations', () => {
+		it('should query events for the "day" range only', async () => {
 			const now = Date.now();
-			const oneDayMs = 24 * 60 * 60 * 1000;
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
 			db.initialize();
 
-			db.exportToCsv('day');
+			db.getQueryEvents('day');
 
 			const allCalls = mockStatement.all.mock.calls;
 			expect(allCalls.length).toBeGreaterThan(0);
@@ -441,16 +437,16 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			const lastCall = allCalls[allCalls.length - 1];
 			const startTimeParam = lastCall[0] as number;
 
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneDayMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneDayMs + 5000);
+			// "Today" is the local calendar day, not a rolling 24 hours (#1960)
+			expect(startTimeParam).toBe(startOfLocalDay(now));
 		});
 
-		it('should export CSV for "all" range', async () => {
+		it('should query events for the "all" range', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
 			db.initialize();
 
-			db.exportToCsv('all');
+			db.getQueryEvents('all');
 
 			const allCalls = mockStatement.all.mock.calls;
 			expect(allCalls.length).toBeGreaterThan(0);
@@ -1369,6 +1365,47 @@ describe('Aggregation queries return correct calculations', () => {
 		});
 	});
 
+	describe('bySessionLastQuery', () => {
+		it('should map each session to its most recent query timestamp', async () => {
+			mockStatement.get.mockReturnValue({ count: 3, total_duration: 300 });
+			// queryBySessionLastQuery is the 11th .all call in getAggregatedStats.
+			mockStatement.all
+				.mockReturnValueOnce([]) // 1: byAgent
+				.mockReturnValueOnce([]) // 2: bySource
+				.mockReturnValueOnce([]) // 3: byLocation
+				.mockReturnValueOnce([]) // 4: byDay
+				.mockReturnValueOnce([]) // 5: byAgentByDay
+				.mockReturnValueOnce([]) // 6: byHour
+				.mockReturnValueOnce([]) // 7: sessionsByAgent
+				.mockReturnValueOnce([]) // 8: sessionsByDay
+				.mockReturnValueOnce([]) // 9: bySessionByDay
+				.mockReturnValueOnce([]) // 10: bySessionSource
+				.mockReturnValueOnce([
+					{ session_id: 'a', last_query: 1700000000000 },
+					{ session_id: 'b', last_query: 1700000500000 },
+				]); // 11: bySessionLastQuery
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const stats = db.getAggregatedStats('week');
+
+			expect(stats.bySessionLastQuery).toEqual({ a: 1700000000000, b: 1700000500000 });
+		});
+
+		it('should return an empty map when no queries exist in range', async () => {
+			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
+			mockStatement.all.mockReturnValue([]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			expect(db.getAggregatedStats('day').bySessionLastQuery).toEqual({});
+		});
+	});
+
 	describe('byWorktreeStatus breakdown calculations', () => {
 		it('should return correct worktree vs parent counts and durations', async () => {
 			mockStatement.get.mockReturnValue({ count: 100, total_duration: 500000 });
@@ -1385,11 +1422,12 @@ describe('Aggregation queries return correct calculations', () => {
 				.mockReturnValueOnce([]) // 8: sessionsByDay (from querySessionStats)
 				.mockReturnValueOnce([]) // 9: bySessionByDay
 				.mockReturnValueOnce([]) // 10: bySessionSource
-				.mockReturnValueOnce([]) // 11: bySessionTokens
+				.mockReturnValueOnce([]) // 11: bySessionLastQuery
+				.mockReturnValueOnce([]) // 12: bySessionTokens
 				.mockReturnValueOnce([
 					{ is_worktree: 0, count: 70, duration: 350000 },
 					{ is_worktree: 1, count: 30, duration: 150000 },
-				]); // 12: byWorktreeStatus
+				]); // 13: byWorktreeStatus
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -1438,7 +1476,8 @@ describe('Aggregation queries return correct calculations', () => {
 				.mockReturnValueOnce([]) // 8: sessionsByDay
 				.mockReturnValueOnce([]) // 9: bySessionByDay
 				.mockReturnValueOnce([]) // 10: bySessionSource
-				.mockReturnValueOnce([]) // 11: bySessionTokens
+				.mockReturnValueOnce([]) // 11: bySessionLastQuery
+				.mockReturnValueOnce([]) // 12: bySessionTokens
 				.mockReturnValueOnce([{ is_worktree: 0, count: 50, duration: 250000 }]); // 12
 
 			const { StatsDB } = await import('../../../main/stats');
@@ -1473,6 +1512,64 @@ describe('Aggregation queries return correct calculations', () => {
 			expect(worktreeCall![0]).toContain('FROM query_events');
 			// Ensures duration is summed alongside the count for the activity-split bar
 			expect(worktreeCall![0]).toContain('SUM(duration)');
+		});
+	});
+
+	describe('prompt cadence', () => {
+		it('counts only non-auto turns and windows from local midnight', async () => {
+			const now = new Date();
+			const atHour = (daysAgo: number, hour: number) =>
+				new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo, hour).getTime();
+			const promptRows = [
+				{ start_time: atHour(2, 9) },
+				{ start_time: atHour(2, 10) },
+				{ start_time: atHour(1, 9) },
+			];
+			let windowBound: unknown;
+			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
+			mockStatement.all.mockReturnValue([]);
+			mockDb.prepare.mockImplementation((sql: string) => {
+				if (sql.includes('MIN(start_time) as first')) {
+					return { ...mockStatement, get: vi.fn(() => ({ first: atHour(20, 8) })) };
+				}
+				if (sql.includes("source != 'auto' AND start_time >= ?")) {
+					return {
+						...mockStatement,
+						all: vi.fn((bound: unknown) => {
+							windowBound = bound;
+							return promptRows;
+						}),
+					};
+				}
+				return mockStatement;
+			});
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const stats = db.getAggregatedStats('week');
+
+			expect(stats.prompts.total).toBe(3);
+			expect(stats.prompts.calendarDays).toBe(7);
+			expect(stats.prompts.busiestDay?.count).toBe(2);
+			// Window opens at local midnight six days back, not a rolling 7 * 24h.
+			const sixDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+			expect(windowBound).toBe(sixDaysAgo.getTime());
+		});
+
+		it('reports an empty cadence when nothing was ever prompted', async () => {
+			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
+			mockStatement.all.mockReturnValue([]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const stats = db.getAggregatedStats('all');
+
+			expect(stats.prompts.total).toBe(0);
+			expect(stats.prompts.days).toEqual([]);
 		});
 	});
 });

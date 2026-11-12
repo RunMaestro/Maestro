@@ -17,7 +17,15 @@ import {
 	DEFAULT_CUE_HISTORY_RETENTION_MS,
 	resolveCueHistoryRetentionMs,
 } from '../../shared/cue/retention';
-import { closeCueDb, getLastHeartbeat, initCueDb, pruneCueEvents } from './cue-db';
+import {
+	closeCueDb,
+	failOrphanedRunningEvents,
+	getLastHeartbeat,
+	initCueDb,
+	isCueDbCorruptionError,
+	pruneCueEvents,
+	quarantineCorruptCueDb,
+} from './cue-db';
 import { reconcileMissedTimeEvents, type ReconcileSessionInfo } from './cue-reconciler';
 import { captureException } from '../utils/sentry';
 import type { CueConfig, CueEvent, CueSubscription } from './cue-types';
@@ -34,6 +42,10 @@ export const SLEEP_THRESHOLD_MS = 120_000; // 2 minutes
  * Activity Log promised to keep for two.
  */
 export const EVENT_PRUNE_AGE_MS = DEFAULT_CUE_HISTORY_RETENTION_MS;
+
+/** Stamped on a run whose engine died before the run finished. */
+export const ORPHANED_RUN_MESSAGE =
+	'The Cue engine exited before this run finished (crash, forced kill, or power loss). Its outcome was not recorded.';
 
 export type CueRecoveryInitResult = { ok: true } | { ok: false; error: Error };
 
@@ -68,16 +80,43 @@ export interface CueRecoveryService {
 	 * catch-up events for missed time.heartbeat subscriptions. Safe to call
 	 * even if the heartbeat row is empty (returns silently).
 	 */
-	detectSleepAndReconcile(): void;
+	detectSleepAndReconcile(options?: { atEngineStart?: boolean }): void;
 	/** Close the Cue database. Non-fatal if already closed. */
 	shutdown(): void;
 }
 
 export function createCueRecoveryService(deps: CueRecoveryServiceDeps): CueRecoveryService {
+	function openCueDb(): void {
+		initCueDb((level, msg) => deps.onLog(level as MainLogLevel, msg));
+		pruneCueEvents(resolveCueHistoryRetentionMs(deps.getCueHistoryRetentionDays?.()));
+		const orphaned = failOrphanedRunningEvents(ORPHANED_RUN_MESSAGE);
+		if (orphaned > 0) {
+			deps.onLog(
+				'warn',
+				`[CUE] Marked ${orphaned} run(s) left running by an engine that exited unexpectedly as failed`
+			);
+		}
+	}
+
 	function init(): CueRecoveryInitResult {
 		try {
-			initCueDb((level, msg) => deps.onLog(level as MainLogLevel, msg));
-			pruneCueEvents(resolveCueHistoryRetentionMs(deps.getCueHistoryRetentionDays?.()));
+			try {
+				openCueDb();
+			} catch (error) {
+				// A damaged cue.db fails the same way on every boot, so without this
+				// Cue never starts again until the user finds and deletes the file.
+				// Corruption can surface in initCueDb() or only on the first write
+				// (pruneCueEvents), which is why the whole open sequence is retried.
+				if (!isCueDbCorruptionError(error) || !quarantineCorruptCueDb()) throw error;
+				deps.onLog(
+					'warn',
+					'[CUE] Cue database was corrupt - moved it aside and started a new one. Past Cue activity history is not shown.'
+				);
+				// Reported, not thrown: the engine recovers, but we still want to
+				// know how often this happens.
+				captureException(error, { extra: { operation: 'cue.dbCorruptRecovered' } });
+				openCueDb();
+			}
 			return { ok: true };
 		} catch (error) {
 			const err = error instanceof Error ? error : new Error(String(error));
@@ -90,7 +129,7 @@ export function createCueRecoveryService(deps: CueRecoveryServiceDeps): CueRecov
 		}
 	}
 
-	function detectSleepAndReconcile(): void {
+	function detectSleepAndReconcile(options: { atEngineStart?: boolean } = {}): void {
 		try {
 			const lastHeartbeat = getLastHeartbeat();
 			if (lastHeartbeat === null) return; // First ever start - nothing to reconcile
@@ -127,6 +166,8 @@ export function createCueRecoveryService(deps: CueRecoveryServiceDeps): CueRecov
 				sleepStartMs: lastHeartbeat,
 				wakeTimeMs: now,
 				sessions: reconcileSessions,
+				// At engine start every heartbeat fires on its own; see ReconcileConfig.
+				skipHeartbeats: options.atEngineStart === true,
 				onDispatch: (sessionId, sub, event) => {
 					deps.onDispatch(sessionId, sub, event);
 				},

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { calculateContextDisplay } from '../../utils/contextUsage';
+import { calculateContextDisplay, resolveGaugeTokenStats } from '../../utils/contextUsage';
 import { resolveConfiguredContextWindow } from '../../utils/contextWindowResolver';
+import { resolveContextWindow } from '../../utils/contextWindowPrecedence';
 import type { Session, AITab } from '../../types';
 
 /**
@@ -32,11 +33,30 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 		};
 	}, [activeSession?.toolType, activeSession?.customContextWindow]);
 
-	const activeTabContextWindow = useMemo(() => {
-		const configured = configuredContextWindow;
-		const reported = activeTab?.usageStats?.contextWindow ?? 0;
-		return configured > 0 ? configured : reported;
-	}, [configuredContextWindow, activeTab?.usageStats?.contextWindow]);
+	// Resolved window AND which rank supplied it. The source is what lets the
+	// Edit Agent panel say "your stored value is being overridden" without
+	// re-deriving the ranking (#1370) - a second copy could disagree with this
+	// one, which is the bug PR #1221 fixed.
+	const resolvedContextWindow = useMemo(
+		() =>
+			resolveContextWindow({
+				customModel: activeSession?.customModel,
+				customContextWindow: activeSession?.customContextWindow,
+				contextWindowSource: activeSession?.contextWindowSource,
+				reportedWindow: activeTab?.usageStats?.contextWindow,
+				reportedResolved: activeTab?.usageStats?.contextWindowResolved,
+				configuredWindow: configuredContextWindow,
+			}),
+		[
+			configuredContextWindow,
+			activeTab?.usageStats?.contextWindow,
+			activeTab?.usageStats?.contextWindowResolved,
+			activeSession?.customContextWindow,
+			activeSession?.contextWindowSource,
+			activeSession?.customModel,
+		]
+	);
+	const activeTabContextWindow = resolvedContextWindow.window;
 
 	// Hold the last trustworthy result per tab so an untrustworthy frame
 	// (overflow without fallback, missing window) preserves the prior good
@@ -61,13 +81,10 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 			return { tokens: lastGoodRef.current.tokens, percentage: lastGoodRef.current.percentage };
 		}
 
+		// Measure the occupancy snapshot when the provider attached one, not the
+		// turn's summed token spend (#1782).
 		const result = calculateContextDisplay(
-			{
-				inputTokens: activeTab.usageStats.inputTokens,
-				outputTokens: activeTab.usageStats.outputTokens,
-				cacheCreationInputTokens: activeTab.usageStats.cacheCreationInputTokens ?? 0,
-				cacheReadInputTokens: activeTab.usageStats.cacheReadInputTokens ?? 0,
-			},
+			resolveGaugeTokenStats(activeTab.usageStats, activeSession?.toolType),
 			activeTabContextWindow,
 			activeSession?.toolType,
 			activeSession?.contextUsage
@@ -96,5 +113,7 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 		activeTabContextWindow,
 		activeTabContextTokens,
 		activeTabContextUsage,
+		/** Which rank supplied `activeTabContextWindow` (see contextWindowPrecedence). */
+		activeTabContextWindowSource: resolvedContextWindow.source,
 	};
 }

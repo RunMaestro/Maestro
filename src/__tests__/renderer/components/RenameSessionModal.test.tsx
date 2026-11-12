@@ -117,6 +117,47 @@ describe('RenameSessionModal', () => {
 			expect(screen.getByText('Rename Agent')).toBeInTheDocument();
 		});
 
+		// The header shows the CURRENT name of the agent being renamed; the input
+		// already shows the new one being typed.
+		it('names the agent being renamed in the header', () => {
+			render(
+				<TestWrapper>
+					<RenameSessionModal
+						theme={mockTheme}
+						value="Session 1"
+						setValue={mockSetValue}
+						onClose={mockOnClose}
+						sessions={mockSessions}
+						setSessions={mockSetSessions}
+						activeSessionId="session-1"
+					/>
+				</TestWrapper>
+			);
+
+			expect(screen.getByTestId('modal-subtitle')).toHaveTextContent('Session 1');
+			expect(screen.queryByText(/Rename Agent . Session 1/)).not.toBeInTheDocument();
+		});
+
+		// Right-clicking a row that is not highlighted renames THAT row.
+		it('names the right-clicked agent, not the active one', () => {
+			render(
+				<TestWrapper>
+					<RenameSessionModal
+						theme={mockTheme}
+						value="Session 2"
+						setValue={mockSetValue}
+						onClose={mockOnClose}
+						sessions={mockSessions}
+						setSessions={mockSetSessions}
+						activeSessionId="session-1"
+						targetSessionId="session-2"
+					/>
+				</TestWrapper>
+			);
+
+			expect(screen.getByTestId('modal-subtitle')).toHaveTextContent(mockSessions[1].name);
+		});
+
 		it('renders input with current value', () => {
 			render(
 				<TestWrapper>

@@ -9,8 +9,10 @@ import {
 	XCircle,
 } from 'lucide-react';
 import type { Theme } from '../../types';
+import { AGENT_COLOR } from '../../../shared/crossAgentTypes';
 import type { ProcessNode, ProcessMonitorProps } from './types';
 import { formatRuntime } from './runtime';
+import { isCoarsePointer } from '../../utils/touch';
 import { cueSourceBadgeLabel } from './processTree';
 
 export interface ProcessListViewProps {
@@ -229,6 +231,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 				node.processType === 'moderator' || node.processType === 'participant';
 			const isWizardProcess = node.processType === 'wizard' || node.processType === 'wizard-gen';
 			const isCueProcess = node.processType === 'cue';
+			const isConsultProcess = node.processType === 'consult';
 			const altBg = index % 2 === 1 ? `${theme.colors.textDim}08` : 'transparent';
 
 			return (
@@ -247,6 +250,13 @@ export function ProcessListView(props: ProcessListViewProps) {
 						}}
 						onClick={() => {
 							onSelectNode(node.id);
+							// A finger cannot double-tap, so on a coarse pointer the row
+							// itself opens the detail and the chevron below owns expand /
+							// collapse. A mouse keeps the click-to-toggle it always had.
+							if (isCoarsePointer()) {
+								onOpenDetail(node);
+								return;
+							}
 							if (hasChildren) onToggleNode(node.id);
 						}}
 						onDoubleClick={() => onOpenDetail(node)}
@@ -259,17 +269,27 @@ export function ProcessListView(props: ProcessListViewProps) {
 					>
 						<div className="flex items-center gap-2">
 							{hasChildren ? (
-								isExpanded ? (
-									<ChevronDown
-										className="w-4 h-4 flex-shrink-0"
-										style={{ color: theme.colors.textDim }}
-									/>
-								) : (
-									<ChevronRight
-										className="w-4 h-4 flex-shrink-0"
-										style={{ color: theme.colors.textDim }}
-									/>
-								)
+								// A real control, not a glyph: on touch the row tap opens the
+								// detail, so this is the only way to expand a parent there.
+								// `min-h-0` opts out of the phone stylesheet's 44px button
+								// floor, which would otherwise stretch every row.
+								<button
+									type="button"
+									className="w-4 h-4 min-h-0 p-0 flex-shrink-0 flex items-center justify-center bg-transparent border-0"
+									style={{ color: theme.colors.textDim }}
+									aria-label={isExpanded ? 'Collapse' : 'Expand'}
+									aria-expanded={isExpanded}
+									onClick={(e) => {
+										e.stopPropagation();
+										onToggleNode(node.id);
+									}}
+								>
+									{isExpanded ? (
+										<ChevronDown className="w-4 h-4" />
+									) : (
+										<ChevronRight className="w-4 h-4" />
+									)}
+								</button>
 							) : (
 								<div className="w-4 h-4 flex-shrink-0" />
 							)}
@@ -302,7 +322,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 										{node.agentSessionId.substring(0, 8)}
 									</span>
 								)}
-								{(isGroupChatProcess || isWizardProcess) && node.toolType && (
+								{(isGroupChatProcess || isWizardProcess || isConsultProcess) && node.toolType && (
 									<span>{node.toolType}</span>
 								)}
 								<span>PID {node.pid}</span>
@@ -379,6 +399,18 @@ export function ProcessListView(props: ProcessListViewProps) {
 										}}
 									>
 										GENERATING
+									</span>
+								)}
+								{isConsultProcess && (
+									<span
+										className="text-xs font-semibold px-1.5 py-0.5 rounded"
+										style={{
+											backgroundColor: `${AGENT_COLOR}30`,
+											color: AGENT_COLOR,
+											border: `1px solid ${AGENT_COLOR}50`,
+										}}
+									>
+										CONSULT
 									</span>
 								)}
 								{node.processType === 'cue' && (

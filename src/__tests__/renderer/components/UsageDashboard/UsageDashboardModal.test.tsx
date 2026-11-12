@@ -20,6 +20,7 @@ import { useCodexUsageStore } from '../../../../renderer/stores/codexUsageStore'
 import { useUIStore } from '../../../../renderer/stores/uiStore';
 import { mockTheme } from '../../../helpers/mockTheme';
 import type { StatsAggregation } from '../../../../shared/stats-types';
+import { emptyPromptCadence } from '../../../../shared/promptCadence';
 
 // useModalLayer needs a LayerStackProvider in real renders. The stack
 // behavior is irrelevant to this test, so stub the context hook.
@@ -56,6 +57,7 @@ vi.mock('../../../../renderer/components/UsageDashboard/CodexPlanUsage', () => (
 // Populated aggregation so the dashboard renders the tab panel (the empty
 // state branch swallows everything before tabs become reachable).
 const populatedAggregation: StatsAggregation = {
+	prompts: emptyPromptCadence(),
 	totalQueries: 42,
 	totalDuration: 3_600_000,
 	avgDuration: 85_714,
@@ -118,6 +120,7 @@ const populatedAggregation: StatsAggregation = {
 };
 
 const emptyAggregation: StatsAggregation = {
+	prompts: emptyPromptCadence(),
 	totalQueries: 0,
 	totalDuration: 0,
 	avgDuration: 0,
@@ -137,9 +140,13 @@ const emptyAggregation: StatsAggregation = {
 
 const mockStats = {
 	getAggregation: vi.fn(),
+	// The delegation surfaces read their own merged split; without these the
+	// data hook throws a TypeError and every tab renders the error state.
+	getDelegationTotals: vi.fn(),
+	getDelegationByDay: vi.fn(),
 	getDatabaseSize: vi.fn(),
 	onStatsUpdate: vi.fn(() => () => {}),
-	exportCsv: vi.fn(),
+	exportUsage: vi.fn(),
 };
 
 // When both Encore flags are on, the dashboard fetches Cue run totals alongside
@@ -229,6 +236,12 @@ beforeEach(() => {
 		},
 	};
 	mockStats.getAggregation.mockResolvedValue(populatedAggregation);
+	mockStats.getDelegationTotals.mockResolvedValue({
+		interactive: { count: 0, durationMs: 0 },
+		autoRun: { count: 0, durationMs: 0 },
+		cue: { count: 0, durationMs: 0 },
+	});
+	mockStats.getDelegationByDay.mockResolvedValue([]);
 	mockStats.getDatabaseSize.mockResolvedValue(1024 * 1024);
 });
 

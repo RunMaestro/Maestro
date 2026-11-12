@@ -12,6 +12,10 @@ import type { ProcessManager } from '../../../../main/process-manager';
 import type { AgentDetector, AgentConfig } from '../../../../main/agents';
 
 // Mock the logger
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
 		info: vi.fn(),
@@ -132,6 +136,9 @@ describe('Tab Naming IPC Handlers', () => {
 		],
 		batchModeArgs: ['--print'],
 		readOnlyArgs: ['--permission-mode', 'plan'],
+		capabilities: {
+			supportsPromptViaStdin: true,
+		},
 	};
 
 	beforeEach(async () => {
@@ -167,7 +174,13 @@ describe('Tab Naming IPC Handlers', () => {
 		};
 
 		mockSettingsStore = {
-			get: vi.fn().mockReturnValue({}),
+			// Return the provided default for utility-agent keys (null) so the
+			// resolver falls back to the session agent; other keys default to {}.
+			get: vi.fn((key: string, defaultValue?: unknown) =>
+				key === 'utilityAgentId' || key === 'utilityModelId'
+					? (defaultValue ?? null)
+					: (defaultValue ?? {})
+			),
 			set: vi.fn(),
 		};
 
@@ -256,6 +269,84 @@ describe('Tab Naming IPC Handlers', () => {
 
 			const result = await resultPromise;
 			expect(result).toBe('Login Form Implementation');
+		});
+
+		it('routes naming to the configured utility agent instead of the session agent', async () => {
+			// A cheaper/faster utility agent (codex) is configured; tab naming for a
+			// claude-code session must resolve to codex for detection AND the spawn.
+			const mockCodexAgent: AgentConfig = {
+				id: 'codex',
+				name: 'OpenAI Codex',
+				command: 'codex',
+				path: '/usr/local/bin/codex',
+				args: [],
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockCodexAgent);
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+				if (key === 'utilityAgentId') return 'codex';
+				if (key === 'utilityModelId') return 'gpt-4o-mini';
+				return defaultValue ?? {};
+			});
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// Detection and spawn must both use the utility agent, not claude-code.
+			expect(mockAgentDetector.getAgent).toHaveBeenCalledWith('codex');
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ toolType: 'codex' })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Login Form Implementation');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
+		});
+
+		it('uses the session agent when no utility agent is configured (backward compatible)', async () => {
+			// Default settings (utilityAgentId = null) must leave the session agent untouched.
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockAgentDetector.getAgent).toHaveBeenCalledWith('claude-code');
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ toolType: 'claude-code' })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Login Form Implementation');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
 		});
 
 		it('forwards promptArgs and noPromptSeparator so agents like copilot-cli receive -p <prompt>', async () => {
@@ -545,6 +636,166 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Side-Scroller Game');
 		});
 
+		const LONG_TITLE_AGENTS = [
+			'claude-code',
+			'codex',
+			'grok',
+			'factory-droid',
+			'copilot-cli',
+		] as const;
+		it.each(
+			LONG_TITLE_AGENTS.flatMap((agentType) => [
+				[agentType, true, 'Donation Appeal Pages Japanese...'] as const,
+				[agentType, false, 'Donation Appeal Pages Japanese Translation Dates'] as const,
+			])
+		)(
+			'names a 48-character final title from %s (shortenLongTabNames: %s)',
+			async (agentType, shorten, expected) => {
+				const title = 'Donation Appeal Pages Japanese Translation Dates';
+				mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+					if (key === 'shortenLongTabNames') return shorten;
+					if (key === 'utilityAgentId' || key === 'utilityModelId') return defaultValue ?? null;
+					return defaultValue ?? {};
+				});
+				const listeners = new Map<string, (...args: any[]) => void>();
+				mockProcessManager.on.mockImplementation(
+					(event: string, callback: (...args: any[]) => void) => {
+						listeners.set(event, callback);
+					}
+				);
+				mockAgentDetector.getAgent.mockResolvedValue({ ...mockClaudeAgent, id: agentType });
+
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Translate the donation appeal pages and dates into Japanese',
+					agentType,
+					cwd: '/test/project',
+				});
+				await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalled());
+
+				const sessionId = 'tab-naming-mock-uuid-1234';
+				const streams = {
+					'claude-code': [{ type: 'result', result: title }],
+					codex: [{ type: 'item.completed', item: { type: 'agent_message', text: title } }],
+					grok: [
+						{ type: 'thought', data: 'Generate a short title' },
+						{ type: 'text', data: title.slice(0, 20) },
+						{ type: 'text', data: title.slice(20) },
+						{ type: 'end', stopReason: 'end_turn' },
+					],
+					'factory-droid': [
+						{ type: 'message', role: 'assistant', text: title },
+						{ type: 'completion' },
+					],
+					'copilot-cli': [
+						{ type: 'assistant.message_delta', data: { deltaContent: title } },
+						{ type: 'result' },
+					],
+				};
+				const raw = streams[agentType].map((event) => JSON.stringify(event)).join('\n') + '\n';
+				if (agentType !== 'claude-code') {
+					// ProcessManager emits the parsed title on data; raw-stdout retains its provenance.
+					listeners.get('raw-stdout')?.(sessionId, raw.slice(0, 20));
+					listeners.get('raw-stdout')?.(sessionId, raw.slice(20));
+					listeners.get('data')?.(sessionId, title);
+				} else {
+					listeners.get('data')?.(sessionId, raw);
+				}
+				listeners.get('exit')?.(sessionId, 0);
+
+				expect(title).toHaveLength(48);
+				expect(await resultPromise).toBe(expected);
+				expect(mockProcessManager.off).toHaveBeenCalledWith(
+					'raw-stdout',
+					listeners.get('raw-stdout')
+				);
+			}
+		);
+
+		it('cuts a final title past 80 characters even with shortening off', async () => {
+			const title =
+				'Translate Donation Appeal Pages And Every Event Date Into Japanese For The Autumn Campaign';
+			const listeners = new Map<string, (...args: any[]) => void>();
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					listeners.set(event, callback);
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Translate the donation appeal pages and dates into Japanese',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalled());
+
+			const sessionId = 'tab-naming-mock-uuid-1234';
+			listeners.get('data')?.(sessionId, JSON.stringify({ type: 'result', result: title }) + '\n');
+			listeners.get('exit')?.(sessionId, 0);
+
+			expect(title.length).toBeGreaterThan(80);
+			expect(await resultPromise).toBe(
+				'Translate Donation Appeal Pages And Every Event Date Into Japanese For The...'
+			);
+		});
+
+		it.each(['missing', 'cancelled'])(
+			'rejects a long Grok title with %s completion',
+			async (kind) => {
+				const title = 'Donation Appeal Pages Japanese Translation Dates';
+				const listeners = new Map<string, (...args: any[]) => void>();
+				mockProcessManager.on.mockImplementation(
+					(event: string, callback: (...args: any[]) => void) => {
+						listeners.set(event, callback);
+					}
+				);
+				mockAgentDetector.getAgent.mockResolvedValue({ ...mockClaudeAgent, id: 'grok' });
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Translate the donation appeal pages and dates into Japanese',
+					agentType: 'grok',
+					cwd: '/test/project',
+				});
+				await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalled());
+
+				const stream = [JSON.stringify({ type: 'text', data: title })];
+				if (kind === 'cancelled') {
+					stream.push(JSON.stringify({ type: 'end', stopReason: 'cancelled' }));
+				}
+				const sessionId = 'tab-naming-mock-uuid-1234';
+				listeners.get('raw-stdout')?.(sessionId, stream.join('\n') + '\n');
+				listeners.get('data')?.(sessionId, title);
+				listeners.get('exit')?.(sessionId, 0);
+				expect(await resultPromise).toBeNull();
+			}
+		);
+
+		it.each(['raw', 'partial', 'noise'])('does not shorten a long %s response', async (kind) => {
+			const title = 'Donation Appeal Pages Japanese Translation Dates';
+			const listeners = new Map<string, (...args: any[]) => void>();
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					listeners.set(event, callback);
+				}
+			);
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Translate the donation appeal pages and dates into Japanese',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalled());
+
+			const output =
+				kind === 'raw'
+					? title
+					: JSON.stringify(
+							kind === 'partial'
+								? { type: 'assistant', message: { content: [{ type: 'text', text: title }] } }
+								: { type: 'result', result: title + ' <invoke>' }
+						);
+			listeners.get('data')?.('tab-naming-mock-uuid-1234', output);
+			listeners.get('exit')?.('tab-naming-mock-uuid-1234', 0);
+			expect(await resultPromise).toBeNull();
+		});
+
 		it('extracts from streaming assistant text when no result event arrives (early extraction)', async () => {
 			// Early extraction resolves before the process exits, so only assistant
 			// (streaming) events are present - no terminating result line yet.
@@ -582,6 +833,62 @@ describe('Tab Naming IPC Handlers', () => {
 
 			const result = await resultPromise;
 			expect(result).toBe('Leaderboard Endpoint');
+		});
+
+		it('ignores reasoning deltas when extracting from Grok streaming-json output', async () => {
+			// Grok streams `thought` deltas BEFORE the answer's `text` deltas, and
+			// the grok parser forwards them as text events with isReasoning=true.
+			// Without filtering those out, the accumulated response text would be
+			// the thinking fragment glued to the answer ("The user wants a nameAuth
+			// Bug Fix") and that garbage would pass extractTabName's filters.
+			const mockGrokAgent: AgentConfig = {
+				id: 'grok',
+				name: 'Grok CLI',
+				command: 'grok',
+				path: '/usr/local/bin/grok',
+				args: [],
+				promptArgs: (p: string) => ['-p', p],
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockGrokAgent);
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the authentication bug',
+				agentType: 'grok',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// Real grok v0.2.93 stream shape (thoughts, then text, then end):
+			const streamJson = [
+				JSON.stringify({ type: 'thought', data: 'The user wants a name' }),
+				JSON.stringify({ type: 'text', data: 'Auth Bug' }),
+				JSON.stringify({ type: 'text', data: ' Fix' }),
+				JSON.stringify({
+					type: 'end',
+					stopReason: 'EndTurn',
+					sessionId: '019f47fb-2316-7f21-98db-55907d4ddb60',
+					requestId: 'req-1',
+				}),
+			].join('\n');
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', streamJson);
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+			const result = await resultPromise;
+			expect(result).toBe('Auth Bug Fix');
 		});
 
 		it('returns null for empty output', async () => {
@@ -822,6 +1129,47 @@ describe('Tab Naming IPC Handlers', () => {
 
 			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({ sendPromptViaStdinRaw: true })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Tab Name');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
+		});
+
+		it('does NOT set sendPromptViaStdinRaw for agents that never read stdin', async () => {
+			// omp takes the prompt positionally; stdin delivery would name nothing.
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			(isWindows as Mock).mockReturnValue(true);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				...mockClaudeAgent,
+				id: 'omp',
+				command: 'omp',
+				path: '/home/user/.bun/bin/omp',
+				capabilities: { supportsPromptViaStdin: false },
+			} as AgentConfig);
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'long first message',
+				agentType: 'omp',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ sendPromptViaStdinRaw: false })
 			);
 
 			onDataCallback?.('tab-naming-mock-uuid-1234', 'Tab Name');
@@ -1158,6 +1506,80 @@ describe('Tab Naming IPC Handlers', () => {
 			await resultPromise;
 		});
 
+		// Regression for #1110: on the TUI path maestro-p strips the headless-only
+		// flags (including the `--tools ""` guard), so naming runs a real agentic
+		// turn and its raw terminal transcript is thinking/response prose, not
+		// stream-json. Scraping that buffer put a sentence fragment on the tab,
+		// which users saw as the response streaming into the tab name. Prose has no
+		// angle brackets, so STRUCTURAL_NOISE_RE can't catch it - we must decline.
+		it('returns null instead of scraping a plain-text TUI transcript for a name', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				maestroPPath: '/bundled/maestro-p.js',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// A realistic maestro-p TUI transcript: short prose lines that clear the
+			// 40-char filter and carry no structural noise.
+			onDataCallback?.(
+				'tab-naming-mock-uuid-1234',
+				'I should look at the auth flow\nLet me start with the form\n'
+			);
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+			await expect(resultPromise).resolves.toBeNull();
+		});
+
+		it('still accepts a stream-json name on the TUI path', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				maestroPPath: '/bundled/maestro-p.js',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			onDataCallback?.(
+				'tab-naming-mock-uuid-1234',
+				`${JSON.stringify({ type: 'result', subtype: 'success', result: 'Login Form' })}\n`
+			);
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+			await expect(resultPromise).resolves.toBe('Login Form');
+		});
+
 		it('spawns plain claude when the agent is API-only (enableMaestroP false)', async () => {
 			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
 			const finish = wireProcessEvents();
@@ -1191,9 +1613,11 @@ describe('Tab Naming IPC Handlers', () => {
 			// (CLAUDE_CODE_CONFIG_DIR / ANTHROPIC_API_KEY). Tab naming used to drop both,
 			// so a working chat could still fail naming with "Not logged in".
 			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
-			mockSettingsStore.get.mockImplementation((key: string, fallback?: unknown) =>
-				key === 'shellEnvVars' ? { CLAUDE_CONFIG_DIR: '/home/u/.claude' } : (fallback ?? {})
-			);
+			mockSettingsStore.get.mockImplementation((key: string, fallback?: unknown) => {
+				if (key === 'shellEnvVars') return { CLAUDE_CONFIG_DIR: '/home/u/.claude' };
+				if (key === 'utilityAgentId' || key === 'utilityModelId') return fallback ?? null;
+				return fallback ?? {};
+			});
 			const finish = wireProcessEvents();
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
@@ -1298,6 +1722,260 @@ describe('Tab Naming IPC Handlers', () => {
 			await resultPromise;
 		});
 	});
+
+	describe('effort refused by the provider', () => {
+		// Verbatim from a Codex-over-SSH naming run. The turn never ran: the API
+		// answered the cheap effort with a 400, the process exited 1 with no
+		// output, and the tab kept its session-id label with nothing to say why.
+		const REFUSAL = {
+			type: 'unknown',
+			agentId: 'claude-code',
+			recoverable: true,
+			timestamp: 0,
+			message:
+				'{"type":"error","error":{"message":"Unsupported value: \'low\' is not supported with the \'gpt-6-astra\' model. Supported values are: \'medium\', \'high\'.","type":"invalid_request_error","param":"reasoning.effort","code":"unsupported_value"},"status":400}',
+		};
+
+		type Callbacks = {
+			data?: (sessionId: string, data: string) => void;
+			exit?: (sessionId: string, code?: number) => void;
+			'agent-error'?: (sessionId: string, error: unknown) => void;
+		};
+
+		// Each attempt registers its own listeners; keep the latest set.
+		function captureListeners(): Callbacks {
+			const callbacks: Callbacks = {};
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					(callbacks as Record<string, unknown>)[event] = callback;
+				}
+			);
+			return callbacks;
+		}
+
+		it('runs the naming turn once more with the effort left to the agent', async () => {
+			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			expect((applyAgentConfigOverrides as Mock).mock.calls[0][2]).toMatchObject({
+				sessionCustomEffort: 'low',
+			});
+
+			// The refusal arrives as an agent error, then the process exits 1.
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+			});
+			const retryOverrides = (applyAgentConfigOverrides as Mock).mock.calls[1][2];
+			expect(retryOverrides.sessionCustomEffort).toBeUndefined();
+			// Only the effort is dropped; the cheap MODEL is still wanted.
+			expect(retryOverrides.sessionCustomModel).toBe('haiku');
+
+			callbacks.data?.('tab-naming-mock-uuid-1234', 'Slack Formatting Fix');
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 0);
+
+			expect(await resultPromise).toBe('Slack Formatting Fix');
+		});
+
+		it('retries when the refusal is only in the raw stderr (Copilot Auto model)', async () => {
+			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+
+			// Copilot's parser reports a generic exit message and keeps the
+			// provider's own words only in `raw.stderr`.
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', {
+				type: 'agent_crashed',
+				agentId: 'copilot-cli',
+				recoverable: true,
+				timestamp: 0,
+				message: 'Agent exited with code 1',
+				raw: {
+					exitCode: 1,
+					stderr:
+						'Error: Model "auto" does not support reasoning effort configuration (requested: "low").',
+				},
+			});
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+			});
+			expect((applyAgentConfigOverrides as Mock).mock.calls[1][2].sessionCustomEffort).toBe(
+				undefined
+			);
+
+			callbacks.data?.('tab-naming-mock-uuid-1234', 'Slack Formatting Fix');
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 0);
+
+			expect(await resultPromise).toBe('Slack Formatting Fix');
+		});
+
+		it('detaches the first attempt listeners before retrying', async () => {
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			const firstErrorListener = callbacks['agent-error'];
+
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+			});
+
+			expect(mockProcessManager.off).toHaveBeenCalledWith('agent-error', firstErrorListener);
+
+			callbacks.data?.('tab-naming-mock-uuid-1234', 'Slack Formatting Fix');
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 0);
+			await resultPromise;
+		});
+
+		it('gives up after one retry rather than looping', async () => {
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+			});
+
+			// The agent's OWN configured effort is refused too. That is the
+			// user's setting to change; a third spawn would just repeat it.
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			expect(await resultPromise).toBeNull();
+			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+		});
+
+		it('does not retry an ordinary failure', async () => {
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', {
+				...REFUSAL,
+				message: 'Not logged in',
+			});
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			expect(await resultPromise).toBeNull();
+			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('ignores a refusal that belongs to another process', async () => {
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+			callbacks['agent-error']?.('some-other-session', REFUSAL);
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			expect(await resultPromise).toBeNull();
+			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('spawn failures (MAESTRO-X4)', () => {
+		// child_process.spawn throws synchronously for an unusable binary. The
+		// call sits in the naming Promise's executor, and the enclosing
+		// try/catch returns that promise rather than awaiting it, so the throw
+		// escaped as a hard IPC rejection for a purely cosmetic feature.
+		async function spawnThrowing(error: unknown) {
+			const { captureException } = await import('../../../../main/utils/sentry');
+			(captureException as Mock).mockClear();
+			mockProcessManager.spawn.mockImplementation(() => {
+				throw error;
+			});
+
+			const result = await invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			return { result, captureException: captureException as Mock };
+		}
+
+		function errnoError(message: string, code: string): NodeJS.ErrnoException {
+			const err = new Error(message) as NodeJS.ErrnoException;
+			err.code = code;
+			return err;
+		}
+
+		it('resolves to null instead of rejecting when spawn throws EFTYPE', async () => {
+			const { result } = await spawnThrowing(errnoError('spawn EFTYPE', 'EFTYPE'));
+			expect(result).toBeNull();
+		});
+
+		it('does not page Sentry for an unusable agent binary', async () => {
+			for (const code of ['ENOENT', 'EFTYPE', 'EACCES', 'EPERM', 'ENOEXEC']) {
+				const { result, captureException } = await spawnThrowing(errnoError(`spawn ${code}`, code));
+				expect(result).toBeNull();
+				expect(captureException).not.toHaveBeenCalled();
+			}
+		});
+
+		it('still reports an unexpected spawn error to Sentry', async () => {
+			const { result, captureException } = await spawnThrowing(
+				new TypeError('spawnCommand is not a string')
+			);
+			expect(result).toBeNull();
+			expect(captureException).toHaveBeenCalledTimes(1);
+		});
+
+		it('removes its process listeners when the spawn fails', async () => {
+			await spawnThrowing(errnoError('spawn EFTYPE', 'EFTYPE'));
+			expect(mockProcessManager.off).toHaveBeenCalledWith('data', expect.any(Function));
+			expect(mockProcessManager.off).toHaveBeenCalledWith('exit', expect.any(Function));
+		});
+	});
 });
 
 describe('tab naming diagnostic logging', () => {
@@ -1362,7 +2040,13 @@ describe('tab naming diagnostic logging', () => {
 		};
 
 		mockSettingsStore = {
-			get: vi.fn().mockReturnValue({}),
+			// Return the provided default for utility-agent keys (null) so the
+			// resolver falls back to the session agent; other keys default to {}.
+			get: vi.fn((key: string, defaultValue?: unknown) =>
+				key === 'utilityAgentId' || key === 'utilityModelId'
+					? (defaultValue ?? null)
+					: (defaultValue ?? {})
+			),
 			set: vi.fn(),
 		};
 
@@ -1637,7 +2321,11 @@ describe('extractTabName utility', () => {
 			};
 
 			mockSettingsStore = {
-				get: vi.fn().mockReturnValue({}),
+				get: vi.fn((key: string, defaultValue?: unknown) =>
+					key === 'utilityAgentId' || key === 'utilityModelId'
+						? (defaultValue ?? null)
+						: (defaultValue ?? {})
+				),
 				set: vi.fn(),
 			};
 

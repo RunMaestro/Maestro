@@ -25,6 +25,7 @@ export type ThemeId =
 	| 'catppuccin-mocha'
 	| 'gruvbox-dark'
 	| 'olive-nights'
+	| 'indigo-blue'
 	| 'catppuccin-latte'
 	| 'ayu-light'
 	| 'pedurple'
@@ -71,6 +72,26 @@ export interface ThemeColors {
 	accentText: string;
 	/** Text color for use ON accent backgrounds (contrasting color) */
 	accentForeground: string;
+	/**
+	 * Background tint for a cross-agent (@mention) response bubble - a subtle
+	 * wash of the theme accent that flags "this reply came from another agent."
+	 * Optional: when unset the renderer derives a subtle accent tint via
+	 * color-mix, so every theme (custom included) gets a correct tint for free.
+	 */
+	crossAgentBubbleBg?: string;
+	/** Border color for a cross-agent response bubble. Optional; derived from the accent when unset. */
+	crossAgentBubbleBorder?: string;
+	/**
+	 * `@file` / `@agent` mention-chip tokens. Chips appear frequently in dense
+	 * input, so these are deliberately subtle: `Bg` a faint tint a touch off the
+	 * input background, `Border` a slightly higher-contrast edge, `Text`
+	 * contrast-safe against `Bg`. All optional - when unset the renderer derives
+	 * them from the accent/border/text tokens via `getMentionChipColors`, so
+	 * every theme (custom included) gets legible chips for free.
+	 */
+	mentionChipBg?: string;
+	mentionChipBorder?: string;
+	mentionChipText?: string;
 	/** Success state color (green tones) */
 	success: string;
 	/** Warning state color (yellow/orange tones) */
@@ -92,9 +113,10 @@ export interface ThemeColors {
 	 */
 	accentHover?: string;
 	/**
-	 * Surface for something raised above `bgMain` (a popover, a card, a menu).
-	 * Optional: derived by lifting `bgMain` toward white on dark themes and
-	 * toward black on light ones. Published as `--surface-elevated`.
+	 * Fill for something floating above the app (a popover, a menu, a hover
+	 * card). Optional: derived one step past `bgActivity` toward `textMain`, so
+	 * it differs from every base surface (see `getElevatedSurfaceColors` in
+	 * `src/renderer/utils/elevatedSurface.ts`). Published as `--surface-elevated`.
 	 */
 	surfaceElevated?: string;
 
@@ -153,6 +175,7 @@ export function isValidThemeId(id: string): id is ThemeId {
 		'catppuccin-mocha',
 		'gruvbox-dark',
 		'olive-nights',
+		'indigo-blue',
 		'catppuccin-latte',
 		'ayu-light',
 		'pedurple',

@@ -15,7 +15,7 @@ import * as fs from 'fs/promises';
 import { ipcMain, BrowserWindow } from 'electron';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { logger } from '../../utils/logger';
-import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createSafeSend } from '../../utils/safe-send';
 
 // Group chat storage imports
 import {
@@ -40,6 +40,18 @@ import { mentionMatches, type GroupChatHistoryEntry } from '../../../shared/grou
 
 // Group chat log imports
 import { appendToLog, readLog, saveImage, GroupChatMessage } from '../../group-chat/group-chat-log';
+import {
+	addToQueue,
+	getQueue,
+	installGroupChatQueue,
+	onModeratorStateChanged,
+	pauseQueueFor,
+	removeFromQueue,
+	reorderQueue,
+	resumeQueueFor,
+	submitMessage,
+} from '../../group-chat/group-chat-queue';
+import type { GroupChatQueuedItem } from '../../../shared/group-chat-types';
 
 // Group chat moderator imports
 import {
@@ -75,15 +87,29 @@ import {
 
 // Agent detector import
 import { AgentDetector } from '../../agents';
-import { groomContext } from '../../utils/context-groomer';
+import { isAgentOwnWorkingDirectory } from '../../agents/claudeSpawnCore';
+import { groomContext, GroomingAgentError } from '../../utils/context-groomer';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { getSessionsStore, getSettingsStore } from '../../stores';
 import { v4 as uuidv4 } from 'uuid';
 import { captureException } from '../../utils/sentry';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
-import type { ToolType } from '../../../shared/types';
+import type { AgentErrorType, ToolType } from '../../../shared/types';
+import {
+	getClaudeTokenSourceFields,
+	type ClaudeTokenSourceFields,
+} from '../../../shared/claudeTokenMode';
 
 const LOG_CONTEXT = '[GroupChat]';
+
+const areGroupChatProviderProcessesDisabled = (): boolean =>
+	process.env.MAESTRO_DISABLE_GROUP_CHAT_PROVIDERS === '1';
+
+const assertGroupChatProviderProcessesEnabled = (): void => {
+	if (areGroupChatProviderProcessesDisabled()) {
+		throw new Error('Group Chat provider processes are disabled for this load demo');
+	}
+};
 
 /**
  * Moderator usage stats for display in the moderator card.
@@ -133,11 +159,9 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
  * spawning needs the full `{ enabled, remoteId }` config, so we read it off the
  * agent whose name matches the participant.
  *
- * The match deliberately uses the SAME predicate the router uses when it picks
- * the session for a participant's turn (`group-chat-router`, cwd / sshRemoteConfig
- * / tokenMode resolution). Name matching is the only association a participant
- * record carries, so grooming on a different rule than the turn dispatch would
- * be strictly worse: the summary would resume on a host the turns never ran on.
+ * A participant linked by `sourceSessionId` resolves by that GUID, as the
+ * router does. A participant from a chat saved before the link existed falls
+ * back to a name match.
  *
  * Persisted sessions store this as `sessionSshRemoteConfig`; the flat
  * `sshRemoteConfig` field only exists on the mapped view the router consumes
@@ -148,19 +172,71 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
  * than failing the reset).
  */
 export function resolveParticipantSshRemoteConfig(
-	participantName: string
+	participant: ParticipantRef
 ): { enabled: boolean; remoteId: string | null; workingDirOverride?: string } | undefined {
+	return findParticipantSourceSession(participant)?.sessionSshRemoteConfig;
+}
+
+/**
+ * The Claude token source of the agent a participant was added from, resolved
+ * by the same name match as {@link resolveParticipantSshRemoteConfig}, so a
+ * participant whose agent is set to TUI summarizes through maestro-p like its
+ * turns do. Undefined when the source agent is gone (the summary runs as API).
+ */
+export function resolveParticipantClaudeTokenSource(
+	participant: ParticipantRef
+): ClaudeTokenSourceFields | undefined {
+	const match = findParticipantSourceSession(participant);
+	// StoredSession keeps these fields behind its index signature.
+	return match ? getClaudeTokenSourceFields(match as ClaudeTokenSourceFields) : undefined;
+}
+
+/**
+ * Whether a participant's context summary may accept claude's folder-trust
+ * prompt: only when it runs in the source agent's own directory (#1872), the
+ * same rule the router applies to the participant's turns. The summary can be
+ * the first TUI spawn there, and the prompt defaults to "No, exit".
+ */
+export function resolveParticipantWorkspaceTrust(
+	participant: ParticipantRef,
+	cwd: string
+): boolean {
+	return isAgentOwnWorkingDirectory(cwd, findParticipantSourceSession(participant));
+}
+
+/** A participant's name, or its record (which may carry the source agent's GUID). */
+type ParticipantRef = string | Pick<GroupChatParticipant, 'name' | 'sourceSessionId'>;
+
+function findParticipantSourceSession(participant: ParticipantRef) {
 	const sessions = getSessionsStore().get('sessions', []);
-	const match = sessions.find(
+	// By GUID when the participant is linked, so a renamed agent is still found
+	// and a deleted one never resolves to a newer agent that took its name.
+	if (typeof participant !== 'string' && participant.sourceSessionId) {
+		return sessions.find((session) => session.id === participant.sourceSessionId);
+	}
+	const participantName = typeof participant === 'string' ? participant : participant.name;
+	return sessions.find(
 		(session) => mentionMatches(session.name, participantName) || session.name === participantName
 	);
-	return match?.sessionSshRemoteConfig;
 }
 
 /**
  * Group chat state type
  */
 export type GroupChatState = 'idle' | 'moderator-thinking' | 'agent-working';
+
+/**
+ * Agent error categories that describe the user's account or connection, not
+ * a fault in Maestro. `agent_crashed`, `permission_denied` and `unknown` are
+ * deliberately absent: those are the shapes a real grooming bug would take.
+ */
+const EXPECTED_GROOMING_AGENT_ERRORS: ReadonlySet<AgentErrorType> = new Set<AgentErrorType>([
+	'auth_expired',
+	'rate_limited',
+	'token_exhaustion',
+	'network_error',
+	'session_not_found',
+]);
 
 /**
  * Grooming failures that are expected, user-environment conditions rather than
@@ -177,14 +253,33 @@ export type GroupChatState = 'idle' | 'moderator-thinking' | 'agent-working';
  *   from here (MAESTRO-JS).
  * - Revoked / unrefreshable provider credentials - the user has to sign back
  *   in; grooming just happened to be the call that surfaced it (MAESTRO-K7).
+ * - Any agent-reported error the provider's parser already classified as the
+ *   user's account or connection (`EXPECTED_GROOMING_AGENT_ERRORS`): a login
+ *   that expired, a plan out of quota, a rate limit, a network drop. The
+ *   message wording differs per provider ("Authentication failed. Sign in
+ *   again", "Unauthorized access. Please check your API key.", "Individual
+ *   quota reached"), which is why this reads the parser's category rather than
+ *   another regex (MAESTRO-K7).
+ * - Provider wordings of a missing session that do not say "Session not
+ *   found" verbatim: Oh My Pi's `Session "<id>" not found` and Codex's
+ *   "Previous Codex session could not be found" (MAESTRO-JB).
  *
  * Anything else still reports, so a genuine fault in the grooming path keeps
- * surfacing.
+ * surfacing - including a crashed agent (`agent_crashed`, "Agent exited with
+ * code N") and a summary that timed out with no output.
  */
 export function isExpectedGroomingFailure(error: unknown): boolean {
+	if (
+		error instanceof GroomingAgentError &&
+		error.agentErrorType !== undefined &&
+		EXPECTED_GROOMING_AGENT_ERRORS.has(error.agentErrorType)
+	) {
+		return true;
+	}
 	const message = error instanceof Error ? error.message : String(error);
 	return (
 		/Session not found/i.test(message) ||
+		/\bsession\b(?: "[^"]*")? (?:not found|could not be found)/i.test(message) ||
 		/Agent .* is not available/i.test(message) ||
 		/Failed to spawn grooming process for /i.test(message) ||
 		/(access token could not be refreshed|refresh token was revoked)/i.test(message)
@@ -243,6 +338,7 @@ export interface GroupChatHandlerDependencies {
 export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): void {
 	const { getMainWindow, getProcessManager, getAgentDetector, getCustomEnvVars, getAgentConfig } =
 		deps;
+	const safeSend = createSafeSend(getMainWindow);
 
 	// ========== Storage Handlers ==========
 
@@ -279,7 +375,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				// Initialize the moderator immediately so it's "hot and ready"
 				// This spawns the session ID prefix so the UI doesn't show "pending"
 				const processManager = getProcessManager();
-				if (processManager) {
+				if (processManager && !areGroupChatProviderProcessesDisabled()) {
 					logger.info(`Initializing moderator for group chat: ${chat.id}`, LOG_CONTEXT);
 					await spawnModerator(chat, processManager);
 					// Reload the chat to get the updated moderatorSessionId
@@ -326,6 +422,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			const processManager = getProcessManager();
 			await killModerator(id, processManager ?? undefined);
 			await clearAllParticipantSessions(id, processManager ?? undefined);
+			clearPendingParticipants(id);
 
 			// Delete the group chat data
 			await deleteGroupChat(id);
@@ -402,7 +499,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					updates.moderatorAgentId && updates.moderatorAgentId !== chat.moderatorAgentId;
 
 				// Kill existing moderator if agent is changing
-				if (moderatorChanged) {
+				if (moderatorChanged && !areGroupChatProviderProcessesDisabled()) {
 					const processManager = getProcessManager();
 					await killModerator(id, processManager ?? undefined);
 				}
@@ -421,7 +518,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				});
 
 				// Restart moderator if agent changed
-				if (moderatorChanged) {
+				if (moderatorChanged && !areGroupChatProviderProcessesDisabled()) {
 					const processManager = getProcessManager();
 					if (processManager) {
 						logger.info(
@@ -526,6 +623,10 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			if (!chat) {
 				throw new Error(`Group chat not found: ${id}`);
 			}
+			if (areGroupChatProviderProcessesDisabled()) {
+				logger.info(`Moderator process disabled for group chat load demo: ${id}`, LOG_CONTEXT);
+				return chat.moderatorSessionId || `group-chat-${id}-moderator-disabled`;
+			}
 
 			const processManager = getProcessManager();
 			if (!processManager) {
@@ -539,57 +640,148 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		})
 	);
 
+	/**
+	 * Deliver one user message to a group chat's moderator.
+	 *
+	 * Extracted verbatim from the `groupChat:sendToModerator` handler body so the
+	 * main-process execution queue can send an item itself. The queue is drained
+	 * by main rather than by whichever client happens to be watching, so the send
+	 * has to be reachable from somewhere other than an IPC callback - and it
+	 * cannot be the low-level `sendToModerator` primitive re-exported at the top
+	 * of this file, which skips the Encore gate and the auto-restart below.
+	 *
+	 * Kept inside `registerGroupChatHandlers` because it closes over
+	 * `getProcessManager` and `getAgentDetector`, which are per-registration
+	 * dependencies rather than module state.
+	 *
+	 * It deliberately does NOT catch: the IPC handler is wrapped in
+	 * `withIpcErrorLogging`, and the queue drainer does its own catching so it can
+	 * keep the item and warn the user rather than dropping it silently.
+	 */
+	const sendUserMessageToModerator = async (
+		id: string,
+		message: string,
+		images?: string[],
+		readOnly?: boolean
+	): Promise<void> => {
+		assertGroupChatProviderProcessesEnabled();
+		logger.info(`[GroupChat:Debug] ========== USER MESSAGE RECEIVED ==========`);
+		logger.info(`[GroupChat:Debug] Group Chat ID: ${id}`);
+		logger.info(
+			`[GroupChat:Debug] Message: "${message.substring(0, 200)}${message.length > 200 ? '...' : ''}"`
+		);
+		logger.info(`[GroupChat:Debug] Read-only: ${readOnly ?? false}`);
+		logger.info(`[GroupChat:Debug] Images: ${images?.length ?? 0}`);
+
+		const processManager = getProcessManager();
+		const agentDetector = getAgentDetector();
+
+		logger.info(`[GroupChat:Debug] Process manager available: ${!!processManager}`);
+		logger.info(`[GroupChat:Debug] Agent detector available: ${!!agentDetector}`);
+
+		// Auto-restart moderator if it exited (e.g., after completing a turn)
+		if (!isModeratorActive(id) && processManager) {
+			logger.info(`[GroupChat:Debug] Moderator not active, auto-restarting...`);
+			const chat = await loadGroupChat(id);
+			if (!chat) {
+				throw new Error(`Group chat not found: ${id}`);
+			}
+			await spawnModerator(chat, processManager);
+			logger.info(`[GroupChat:Debug] Moderator auto-restarted`);
+		}
+
+		// Route through the user message router which handles logging and forwarding
+		await routeUserMessage(
+			id,
+			message,
+			processManager ?? undefined,
+			agentDetector ?? undefined,
+			readOnly,
+			images
+		);
+
+		logger.info(`[GroupChat:Debug] User message routed to moderator`);
+		logger.info(`[GroupChat:Debug] ===========================================`);
+
+		logger.debug(`Sent message to moderator in ${id}`, LOG_CONTEXT, {
+			messageLength: message.length,
+			imageCount: images?.length ?? 0,
+			readOnly: readOnly ?? false,
+		});
+	};
+
 	// Send a message to the moderator
 	ipcMain.handle(
 		'groupChat:sendToModerator',
 		withIpcErrorLogging(
 			handlerOpts('sendToModerator'),
 			async (id: string, message: string, images?: string[], readOnly?: boolean): Promise<void> => {
-				logger.info(`[GroupChat:Debug] ========== USER MESSAGE RECEIVED ==========`);
-				logger.info(`[GroupChat:Debug] Group Chat ID: ${id}`);
-				logger.info(
-					`[GroupChat:Debug] Message: "${message.substring(0, 200)}${message.length > 200 ? '...' : ''}"`
-				);
-				logger.info(`[GroupChat:Debug] Read-only: ${readOnly ?? false}`);
-				logger.info(`[GroupChat:Debug] Images: ${images?.length ?? 0}`);
-
-				const processManager = getProcessManager();
-				const agentDetector = getAgentDetector();
-
-				logger.info(`[GroupChat:Debug] Process manager available: ${!!processManager}`);
-				logger.info(`[GroupChat:Debug] Agent detector available: ${!!agentDetector}`);
-
-				// Auto-restart moderator if it exited (e.g., after completing a turn)
-				if (!isModeratorActive(id) && processManager) {
-					logger.info(`[GroupChat:Debug] Moderator not active, auto-restarting...`);
-					const chat = await loadGroupChat(id);
-					if (!chat) {
-						throw new Error(`Group chat not found: ${id}`);
-					}
-					await spawnModerator(chat, processManager);
-					logger.info(`[GroupChat:Debug] Moderator auto-restarted`);
-				}
-
-				// Route through the user message router which handles logging and forwarding
-				await routeUserMessage(
-					id,
-					message,
-					processManager ?? undefined,
-					agentDetector ?? undefined,
-					readOnly,
-					images
-				);
-
-				logger.info(`[GroupChat:Debug] User message routed to moderator`);
-				logger.info(`[GroupChat:Debug] ===========================================`);
-
-				logger.debug(`Sent message to moderator in ${id}`, LOG_CONTEXT, {
-					messageLength: message.length,
-					imageCount: images?.length ?? 0,
-					readOnly: readOnly ?? false,
-				});
+				await sendUserMessageToModerator(id, message, images, readOnly);
 			}
 		)
+	);
+
+	// =====================================================================
+	// Execution queue
+	//
+	// The queue lives in MAIN (`group-chat-queue.ts`) rather than in each
+	// client's store. Every change is answered with the whole state AND
+	// broadcast on `groupChat:queueState`, so a phone and the desktop are
+	// looking at the same list rather than two private ones.
+	// =====================================================================
+
+	/**
+	 * Hand a freshly composed message to the queue.
+	 *
+	 * MAIN decides whether it is sent now or queued, not the client. A client
+	 * decides from its own copy, and a copy that is even slightly stale sends
+	 * directly while items are already waiting - so the newest message reaches
+	 * the moderator ahead of older ones.
+	 */
+	ipcMain.handle(
+		'groupChat:submitMessage',
+		withIpcErrorLogging(
+			handlerOpts('submitMessage'),
+			async (
+				id: string,
+				item: GroupChatQueuedItem
+			): Promise<ReturnType<typeof submitMessage> extends Promise<infer R> ? R : never> => {
+				assertGroupChatProviderProcessesEnabled();
+				return submitMessage(id, item);
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'groupChat:getQueue',
+		withIpcErrorLogging(handlerOpts('getQueue'), async (id: string) => getQueue(id))
+	);
+
+	ipcMain.handle(
+		'groupChat:queueAdd',
+		withIpcErrorLogging(handlerOpts('queueAdd'), async (id: string, item: GroupChatQueuedItem) =>
+			addToQueue(id, item)
+		)
+	);
+
+	ipcMain.handle(
+		'groupChat:queueRemove',
+		withIpcErrorLogging(handlerOpts('queueRemove'), async (id: string, itemId: string) =>
+			removeFromQueue(id, itemId)
+		)
+	);
+
+	ipcMain.handle(
+		'groupChat:queueReorder',
+		withIpcErrorLogging(
+			handlerOpts('queueReorder'),
+			async (id: string, itemId: string, toIndex: number) => reorderQueue(id, itemId, toIndex)
+		)
+	);
+
+	ipcMain.handle(
+		'groupChat:queueResume',
+		withIpcErrorLogging(handlerOpts('queueResume'), async (id: string) => resumeQueueFor(id))
 	);
 
 	// Stop the moderator for a group chat
@@ -627,6 +819,11 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			}
 
 			// Emit idle state for the group chat
+			// D8: Stop All holds the queue. Nobody presses it expecting the room to
+			// start again, and the send path auto-restarts a moderator that is not
+			// running - so without this the next queued item respawns what was just
+			// killed.
+			await pauseQueueFor(id);
 			groupChatEmitters.emitStateChange?.(id, 'idle');
 
 			logger.info(`Stopped all activity in group chat: ${id}`, LOG_CONTEXT);
@@ -641,6 +838,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(
 			handlerOpts('reportAutoRunComplete'),
 			async (groupChatId: string, participantName: string, summary: string): Promise<void> => {
+				assertGroupChatProviderProcessesEnabled();
 				logger.info(
 					`Auto Run complete for participant ${participantName} in ${groupChatId}`,
 					LOG_CONTEXT
@@ -727,6 +925,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				agentId: string,
 				cwd?: string
 			): Promise<GroupChatParticipant> => {
+				assertGroupChatProviderProcessesEnabled();
 				const processManager = getProcessManager();
 				if (!processManager) {
 					throw new Error('Process manager not initialized');
@@ -759,6 +958,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(
 			handlerOpts('sendToParticipant'),
 			async (id: string, name: string, message: string, images?: string[]): Promise<void> => {
+				assertGroupChatProviderProcessesEnabled();
 				const processManager = getProcessManager();
 				await sendToParticipant(id, name, message, processManager ?? undefined);
 
@@ -775,10 +975,28 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		'groupChat:removeParticipant',
 		withIpcErrorLogging(
 			handlerOpts('removeParticipant'),
-			async (id: string, name: string): Promise<void> => {
+			async (id: string, name: string): Promise<GroupChat | null> => {
 				const processManager = getProcessManager();
-				await removeParticipant(id, name, processManager ?? undefined);
-				logger.info(`Removed participant ${name} from ${id}`, LOG_CONTEXT);
+				const removal = await removeParticipant(id, name, processManager ?? undefined);
+				if (removal) {
+					if (removal.removed) {
+						groupChatEmitters.emitParticipantsChanged?.(id, removal.chat.participants);
+					}
+					logger.info(
+						removal.removed
+							? `Removed participant ${name} from ${id}`
+							: `Remove participant no-op for ${name} in ${id}`,
+						LOG_CONTEXT,
+						{
+							participantCount: removal.chat.participants.length,
+						}
+					);
+				} else {
+					logger.info(`Remove participant skipped for missing group chat ${id}`, LOG_CONTEXT, {
+						participant: name,
+					});
+				}
+				return removal?.chat ?? null;
 			}
 		)
 	);
@@ -793,6 +1011,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				participantName: string,
 				cwd?: string
 			): Promise<{ newAgentSessionId: string }> => {
+				assertGroupChatProviderProcessesEnabled();
 				logger.info(
 					`Resetting context for participant ${participantName} in ${groupChatId}`,
 					LOG_CONTEXT
@@ -843,7 +1062,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 				// the same association the router uses when it dispatches a turn.
 				// Without this the summary would resume a remote agent session on the
 				// local machine, where that session does not exist (issue #1416).
-				const participantSshRemoteConfig = resolveParticipantSshRemoteConfig(participantName);
+				const participantSshRemoteConfig = resolveParticipantSshRemoteConfig(participant);
 
 				const cheapSummary = cheapTurnSettings(participant.agentId as ToolType);
 
@@ -868,6 +1087,8 @@ Respond with ONLY the summary text, no additional commentary.`;
 							sessionCustomModel: cheapSummary.model,
 							sessionCustomEffort: cheapSummary.effort,
 							sessionSshRemoteConfig: participantSshRemoteConfig,
+							claudeTokenSource: resolveParticipantClaudeTokenSource(participant),
+							acceptWorkspaceTrust: resolveParticipantWorkspaceTrust(participant, effectiveCwd),
 							sshStore: participantSshRemoteConfig?.enabled
 								? createSshRemoteStoreAdapter(getSettingsStore())
 								: undefined,
@@ -1042,21 +1263,51 @@ Respond with ONLY the summary text, no additional commentary.`;
 	 * Called when a new message is added to any group chat.
 	 */
 	groupChatEmitters.emitMessage = (groupChatId: string, message: GroupChatMessage): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('groupChat:message', groupChatId, message);
-		}
+		safeSend('groupChat:message', groupChatId, message);
 	};
+
+	/**
+	 * Each chat's last known moderator state.
+	 *
+	 * Main owns the queue now, so it cannot ask a renderer whether the moderator
+	 * is idle: a client may be asleep, reloading, or absent entirely. Recorded
+	 * from `emitStateChange` below, which is the single funnel every transition
+	 * already goes through.
+	 */
+	const lastModeratorState = new Map<string, GroupChatState>();
+
+	installGroupChatQueue({
+		broadcast: (groupChatId, state) => safeSend('groupChat:queueState', groupChatId, state),
+		send: sendUserMessageToModerator,
+		postSystemMessage: async (groupChatId, content) => {
+			// Same path a normal system message takes: write to the chat's own log
+			// and tell every client, so the warning survives a reload rather than
+			// living only in whichever renderer happened to be open.
+			const chat = await loadGroupChat(groupChatId);
+			if (!chat) return;
+			await appendToLog(chat.logPath, 'system', content);
+			groupChatEmitters.emitMessage?.(groupChatId, {
+				timestamp: new Date().toISOString(),
+				from: 'system',
+				content,
+			});
+		},
+		// Absent means nothing has run yet, which is idle.
+		isIdle: (groupChatId) => (lastModeratorState.get(groupChatId) ?? 'idle') === 'idle',
+	});
 
 	/**
 	 * Emit a state change event to the renderer.
 	 * Called when the group chat state changes (idle, moderator-thinking, agent-working).
 	 */
 	groupChatEmitters.emitStateChange = (groupChatId: string, state: GroupChatState): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('groupChat:stateChange', groupChatId, state);
-		}
+		// The queue drains in MAIN, so main needs its own answer to "is the
+		// moderator free?". This emitter is the one funnel every state change
+		// already passes through, so the map is recorded here rather than being
+		// re-derived somewhere that could disagree with what clients were told.
+		lastModeratorState.set(groupChatId, state);
+		safeSend('groupChat:stateChange', groupChatId, state);
+		onModeratorStateChanged(groupChatId, state === 'idle');
 	};
 
 	/**
@@ -1067,10 +1318,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		groupChatId: string,
 		participants: GroupChatParticipant[]
 	): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('groupChat:participantsChanged', groupChatId, participants);
-		}
+		safeSend('groupChat:participantsChanged', groupChatId, participants);
 	};
 
 	/**
@@ -1078,10 +1326,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 	 * Called when the moderator process reports usage statistics.
 	 */
 	groupChatEmitters.emitModeratorUsage = (groupChatId: string, usage: ModeratorUsage): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('groupChat:moderatorUsage', groupChatId, usage);
-		}
+		safeSend('groupChat:moderatorUsage', groupChatId, usage);
 	};
 
 	/**
@@ -1092,10 +1337,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		groupChatId: string,
 		entry: GroupChatHistoryEntry
 	): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('groupChat:historyEntry', groupChatId, entry);
-		}
+		safeSend('groupChat:historyEntry', groupChatId, entry);
 	};
 
 	/**
@@ -1110,20 +1352,8 @@ Respond with ONLY the summary text, no additional commentary.`;
 		logger.info(
 			`[GroupChat:IPC] emitParticipantState: chatId=${groupChatId}, participant=${participantName}, state=${state}`
 		);
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send(
-				'groupChat:participantState',
-				groupChatId,
-				participantName,
-				state
-			);
-			logger.info(`[GroupChat:IPC] Sent 'groupChat:participantState' event`);
-		} else {
-			logger.warn(
-				`[GroupChat:IPC] WARNING: mainWindow not available, cannot send participant state`
-			);
-		}
+		safeSend('groupChat:participantState', groupChatId, participantName, state);
+		logger.info(`[GroupChat:IPC] Sent 'groupChat:participantState' event`);
 	};
 
 	/**
@@ -1134,10 +1364,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		groupChatId: string,
 		sessionId: string
 	): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('groupChat:moderatorSessionIdChanged', groupChatId, sessionId);
-		}
+		safeSend('groupChat:moderatorSessionIdChanged', groupChatId, sessionId);
 	};
 
 	/**
@@ -1150,15 +1377,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		participantName: string,
 		filename?: string
 	): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send(
-				'groupChat:autoRunTriggered',
-				groupChatId,
-				participantName,
-				filename
-			);
-		}
+		safeSend('groupChat:autoRunTriggered', groupChatId, participantName, filename);
 	};
 
 	/**
@@ -1171,10 +1390,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		groupChatId: string,
 		participantName: string
 	): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send('groupChat:autoRunBatchComplete', groupChatId, participantName);
-		}
+		safeSend('groupChat:autoRunBatchComplete', groupChatId, participantName);
 	};
 
 	/**
@@ -1186,15 +1402,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		participantName: string,
 		chunk: string
 	): void => {
-		const mainWindow = getMainWindow();
-		if (isWebContentsAvailable(mainWindow)) {
-			mainWindow.webContents.send(
-				'groupChat:participantLiveOutput',
-				groupChatId,
-				participantName,
-				chunk
-			);
-		}
+		safeSend('groupChat:participantLiveOutput', groupChatId, participantName, chunk);
 	};
 
 	logger.info('Registered Group Chat IPC handlers', LOG_CONTEXT);

@@ -62,6 +62,9 @@ vi.mock('lucide-react', () => ({
 	ChevronDown: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="chevron-down-icon" className={className} style={style} />
 	),
+	ChevronLeft: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="chevron-left-icon" className={className} style={style} />
+	),
 	ChevronRight: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="chevron-right-icon" className={className} style={style} />
 	),

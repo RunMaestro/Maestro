@@ -13,6 +13,7 @@ import path from 'path';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
+import { createSafeSend } from '../../utils/safe-send';
 import {
 	generateDebugPackage,
 	previewDebugPackage,
@@ -73,6 +74,7 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 		groupsStore,
 		bootstrapStore,
 	} = deps;
+	const safeSend = createSafeSend(getMainWindow);
 
 	// Generate debug package with user-selected save location
 	ipcMain.handle(
@@ -286,24 +288,30 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 	// seconds for a large capture. We emit `debug:profilingProgress` phase events
 	// throughout so the renderer can show a live progress modal instead of the UI
 	// looking frozen after the user hits "End Performance Profiling".
+	// Set when the user dismisses the progress modal while the stop is still
+	// running. The save dialog is a sheet over the main window, so raising it
+	// later would grab the app back from someone who deliberately walked away;
+	// a backgrounded capture saves to the default location instead and reports
+	// the path through a toast.
+	let profilingRunInBackground = false;
+	ipcMain.handle('debug:profilingRunInBackground', () => {
+		profilingRunInBackground = true;
+		return { success: true };
+	});
+
 	ipcMain.handle(
 		'debug:stopProfiling',
 		createIpcHandler(handlerOpts('stopProfiling'), async () => {
+			profilingRunInBackground = false;
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				throw new Error('No main window available');
 			}
 
-			// Best-effort progress ping; a closed/destroyed window must never throw
-			// out of the capture flow.
+			// Best-effort progress ping; safeSend swallows closed/destroyed
+			// windows and also fans out to web-desktop bridge clients.
 			const sendProgress = (payload: Record<string, unknown>) => {
-				try {
-					if (!mainWindow.isDestroyed()) {
-						mainWindow.webContents.send('debug:profilingProgress', payload);
-					}
-				} catch {
-					// window gone mid-capture; ignore
-				}
+				safeSend('debug:profilingProgress', payload);
 			};
 
 			const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -314,12 +322,18 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 			const outcome = await stopProfiling(tracePath);
 			const { durationMs } = outcome;
 
-			sendProgress({ phase: 'awaiting-save' });
-			const result = await dialog.showSaveDialog(mainWindow, {
-				title: 'Save Performance Profile',
-				defaultPath: path.join(app.getPath('desktop'), `maestro-profile-${timestamp}.zip`),
-				filters: [{ name: 'Zip Files', extensions: ['zip'] }],
-			});
+			const defaultPath = path.join(app.getPath('desktop'), `maestro-profile-${timestamp}.zip`);
+			let result: { canceled: boolean; filePath?: string };
+			if (profilingRunInBackground) {
+				result = { canceled: false, filePath: defaultPath };
+			} else {
+				sendProgress({ phase: 'awaiting-save' });
+				result = await dialog.showSaveDialog(mainWindow, {
+					title: 'Save Performance Profile',
+					defaultPath,
+					filters: [{ name: 'Zip Files', extensions: ['zip'] }],
+				});
+			}
 
 			if (result.canceled || !result.filePath) {
 				await fs.promises.unlink(tracePath).catch(() => {});
@@ -371,6 +385,53 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 			} finally {
 				await fs.promises.unlink(tracePath).catch(() => {});
 			}
+		})
+	);
+
+	// Stop the recording and write the bundle to a temp file WITHOUT prompting
+	// for a save location, returning the path. Used by the Feedback modal to
+	// attach a performance trace directly to a report. The caller either hands
+	// the path to feedback submission (which consumes and deletes it) or drops it
+	// via debug:discardTrace so the (potentially large) zip never lingers.
+	ipcMain.handle(
+		'debug:stopProfilingToFile',
+		createIpcHandler(handlerOpts('stopProfilingToFile'), async () => {
+			const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+			const tracePath = path.join(app.getPath('temp'), `maestro-trace-${timestamp}.json`);
+			const outcome = await stopProfiling(tracePath);
+			const { durationMs } = outcome;
+			const bundlePath = path.join(app.getPath('temp'), `maestro-profile-${timestamp}.zip`);
+			try {
+				const finalized = await finalizeCapture(tracePath, bundlePath, outcome);
+				logger.info(`${LOG_CONTEXT} Performance profile captured for feedback: ${finalized.path}`);
+				return {
+					path: finalized.path,
+					bundleSizeBytes: finalized.bundleSizeBytes,
+					traceSizeBytes: finalized.traceSizeBytes,
+					durationMs,
+				};
+			} finally {
+				await fs.promises.unlink(tracePath).catch(() => {});
+			}
+		})
+	);
+
+	// Delete a temp trace bundle produced by debug:stopProfilingToFile that the
+	// user abandoned (removed the attachment or discarded the report). Guarded to
+	// our own temp-dir naming so it can only unlink a maestro trace zip.
+	ipcMain.handle(
+		'debug:discardTrace',
+		createIpcHandler(handlerOpts('discardTrace', false), async (filePath?: string) => {
+			const tempDir = app.getPath('temp');
+			if (
+				typeof filePath === 'string' &&
+				filePath.startsWith(tempDir) &&
+				/[/\\]maestro-profile-[^/\\]+\.zip$/.test(filePath)
+			) {
+				await fs.promises.unlink(filePath).catch(() => {});
+				return { success: true };
+			}
+			return { success: false };
 		})
 	);
 

@@ -85,9 +85,11 @@ class TunnelManager {
 			// Pass the expanded env so the fallback bare 'cloudflared' name resolves
 			// even when the app was launched from the Dock (no shell PATH). The
 			// absolute path from detection already works; this is belt-and-braces.
+			// 127.0.0.1, not `localhost`: the web server listens on IPv4 only, and
+			// `localhost` can resolve to ::1 first.
 			this.process = spawn(
 				cloudflaredBinary,
-				['tunnel', '--url', `http://localhost:${port}`, '--protocol', 'http2'],
+				['tunnel', '--url', `http://127.0.0.1:${port}`, '--protocol', 'http2'],
 				{ env: getExpandedEnv() }
 			);
 

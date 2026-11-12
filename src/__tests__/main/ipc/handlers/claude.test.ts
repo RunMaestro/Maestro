@@ -18,6 +18,7 @@ import {
 	registerClaudeHandlers,
 	ClaudeHandlerDependencies,
 } from '../../../../main/ipc/handlers/claude';
+import { captureException } from '../../../../main/utils/sentry';
 
 // Mock electron's ipcMain and app
 vi.mock('electron', () => ({
@@ -41,6 +42,15 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
+// Mock the web-desktop bridge fanout. Stats updates now route through
+// safeSend, which always broadcasts to bridge clients even when the desktop
+// window is unavailable. Mocking it lets us assert web clients receive the
+// event without a live Electron renderer.
+vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
+	broadcastBridgeEvent: vi.fn(),
+}));
+import { broadcastBridgeEvent } from '../../../../main/web-server/handlers/bridgeHandlers';
+
 // Mock fs/promises
 vi.mock('fs/promises', () => ({
 	default: {
@@ -52,6 +62,11 @@ vi.mock('fs/promises', () => ({
 		mkdir: vi.fn(),
 	},
 }));
+
+// Transcript reads stream; feed them from the readFile stub above.
+vi.mock('../../../../main/utils/jsonl-stream', async () =>
+	(await import('../../../helpers/mockJsonlStream')).jsonlStreamFromReadFileMock()
+);
 
 // Mock path - we need to preserve the actual path functionality but mock specific behaviors
 vi.mock('path', async () => {
@@ -72,11 +87,38 @@ vi.mock('os', () => ({
 	},
 }));
 
+// Session usage now goes through the shared subagent-aware helper. Delegate to
+// the mocked pricing above so the cost assertions keep one formula, and report
+// no subagents (that module is covered by shared/claudeSessionUsage.test.ts).
+vi.mock('../../../../shared/claudeSessionUsage', async () => {
+	const { computeClaudeUsageCost } = await import('../../../../main/utils/pricing');
+	const price = (content: string, subagents: readonly string[] = []) =>
+		computeClaudeUsageCost(subagents.length ? [content, ...subagents].join('\n') : content);
+	return {
+		readClaudeSubagentTranscripts: vi.fn(async () => []),
+		readClaudeSubagentTranscriptsSync: vi.fn(() => []),
+		listClaudeSubagentTranscriptPaths: vi.fn(async () => []),
+		isAbsentTranscriptError: vi.fn(() => false),
+		computeClaudeUsageWithSubagents: vi.fn(price),
+		computeClaudeSessionUsage: vi.fn(async (_filePath: string, content: string) => price(content)),
+	};
+});
+
 // Mock statsCache module
-vi.mock('../../../../main/utils/statsCache', () => ({
+// Mock Sentry so transcript-read noise assertions can inspect the reporter
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
+}));
+
+// The derivation-upgrade helpers stay real (they are pure); only disk I/O and
+// the version are pinned.
+vi.mock('../../../../main/utils/statsCache', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/utils/statsCache')>()),
 	encodeClaudeProjectPath: vi.fn((p: string) => p.replace(/[^a-zA-Z0-9]/g, '-')),
 	loadStatsCache: vi.fn(),
 	saveStatsCache: vi.fn(),
+	statsCacheScope: vi.fn().mockResolvedValue(undefined),
 	STATS_CACHE_VERSION: 1,
 }));
 
@@ -223,6 +265,59 @@ describe('Claude IPC handlers', () => {
 
 			// Verify total count matches - ensures no handlers are added without updating this test
 			expect(handlers.size).toBe(expectedChannels.length);
+		});
+	});
+
+	describe('web-desktop bridge fanout', () => {
+		it('should route claude:projectStatsUpdate to bridge clients even with no desktop window', async () => {
+			// mockGetMainWindow returns null in this suite, so only the bridge
+			// path can deliver the progressive stats update. Before the safeSend
+			// migration a null window starved web-desktop clients entirely.
+			const fs = await import('fs/promises');
+			const { loadStatsCache } = await import('../../../../main/utils/statsCache');
+
+			vi.mocked(fs.default.access).mockResolvedValue(undefined);
+			vi.mocked(fs.default.readdir).mockResolvedValue(['sess1.jsonl'] as unknown as Awaited<
+				ReturnType<typeof fs.default.readdir>
+			>);
+			vi.mocked(fs.default.stat).mockResolvedValue({
+				size: 100,
+				mtimeMs: 1000,
+				mtime: new Date('2024-01-15T10:00:00Z'),
+			} as unknown as Awaited<ReturnType<typeof fs.default.stat>>);
+			// A cached, unchanged session keeps the reparse list empty so the
+			// handler emits a single immediate progressive update from cache.
+			vi.mocked(loadStatsCache).mockResolvedValue({
+				version: 1,
+				sessions: {
+					sess1: {
+						messages: 5,
+						inputTokens: 100,
+						outputTokens: 100,
+						costUsd: 0.1,
+						sizeBytes: 100,
+						tokens: 200,
+						oldestTimestamp: '2024-01-01T00:00:00Z',
+						fileMtimeMs: 1000,
+						archived: false,
+					},
+				},
+				totals: {
+					totalSessions: 1,
+					totalMessages: 5,
+					totalCostUsd: 0.1,
+					totalSizeBytes: 100,
+					totalTokens: 200,
+					oldestTimestamp: '2024-01-01T00:00:00Z',
+				},
+				lastUpdated: 0,
+			} as never);
+
+			const handler = handlers.get('claude:getProjectStats');
+			await handler!({} as any, '/test/project');
+
+			const channels = vi.mocked(broadcastBridgeEvent).mock.calls.map((c) => c[0]);
+			expect(channels).toContain('claude:projectStatsUpdate');
 		});
 	});
 
@@ -2264,6 +2359,143 @@ not valid json at all
 				name: 'Legacy',
 				description: 'Legacy skill',
 			});
+		});
+	});
+
+	// MAESTRO-YJ: the stats walk reads every transcript it discovers under
+	// ~/.claude/projects. A tree we lack permission on paged one Sentry event per
+	// file per refresh; it's environmental, so it stays a local warn.
+	describe('claude:getProjectStats scans', () => {
+		const transcript = `${JSON.stringify({
+			type: 'assistant',
+			message: { usage: { input_tokens: 1_000_000 } },
+		})}\n`;
+
+		const listSessionFiles = async (names: string[]) => {
+			const fs = await import('fs/promises');
+			vi.mocked(fs.default.access).mockResolvedValue(undefined);
+			vi.mocked(fs.default.readdir).mockResolvedValue(
+				names as unknown as Awaited<ReturnType<typeof fs.default.readdir>>
+			);
+			vi.mocked(fs.default.stat).mockResolvedValue({
+				size: 100,
+				mtimeMs: 1000,
+			} as unknown as Awaited<ReturnType<typeof fs.default.stat>>);
+			vi.mocked(fs.default.readFile).mockResolvedValue(transcript as never);
+			return fs;
+		};
+
+		it('shares one scan between concurrent requests for the same project', async () => {
+			await listSessionFiles(['a.jsonl']);
+			const { loadStatsCache } = await import('../../../../main/utils/statsCache');
+			vi.mocked(loadStatsCache).mockResolvedValue(null);
+
+			const handler = handlers.get('claude:getProjectStats')!;
+			const [first, second] = await Promise.all([
+				handler({} as any, '/test/project'),
+				handler({} as any, '/test/project'),
+			]);
+
+			expect(vi.mocked(loadStatsCache)).toHaveBeenCalledTimes(1);
+			expect(second).toEqual(first);
+		});
+
+		it('resumes a part-done upgrade: skips upgraded entries and rescales archived ones once', async () => {
+			const fs = await listSessionFiles(['live.jsonl', 'done.jsonl']);
+			const { loadStatsCache, saveStatsCache } = await import('../../../../main/utils/statsCache');
+			const entry = (costUsd: number, tokens: number, extra: Record<string, unknown> = {}) => ({
+				messages: 1,
+				costUsd,
+				sizeBytes: 100,
+				tokens,
+				oldestTimestamp: null,
+				// Newer than the file, so only the derivation can force a re-parse.
+				fileMtimeMs: 5000,
+				...extra,
+			});
+			vi.mocked(loadStatsCache).mockResolvedValue({
+				version: 0,
+				// A previous run re-parsed one session ($4 -> $2) before it was killed.
+				upgrade: {
+					toVersion: 1,
+					baseline: {
+						costUsd: { oldSum: 4, newSum: 2 },
+						tokens: { oldSum: 2_000_000, newSum: 1_000_000 },
+					},
+				},
+				sessions: {
+					live: entry(6, 2_000_000),
+					done: entry(5, 5, { derivedVersion: 1 }),
+					gone: entry(12, 4_000_000, { archived: true }),
+				},
+				totals: {
+					totalSessions: 3,
+					totalMessages: 3,
+					totalCostUsd: 23,
+					totalSizeBytes: 300,
+					totalTokens: 6_000_005,
+					oldestTimestamp: null,
+				},
+				lastUpdated: 0,
+			} as never);
+
+			const handler = handlers.get('claude:getProjectStats')!;
+			await handler({} as any, '/test/project');
+
+			// Only the session still derived by the old parser was read again.
+			expect(vi.mocked(fs.default.readFile)).toHaveBeenCalledTimes(1);
+			const saved = vi.mocked(saveStatsCache).mock.calls.at(-1)![1];
+			expect(saved.version).toBe(1);
+			expect(saved.upgrade).toBeUndefined();
+			expect(saved.sessions.live).toMatchObject({ costUsd: 3, derivedVersion: 1 });
+			expect(saved.sessions.done.costUsd).toBe(5);
+			// Both runs' sums: $10 -> $5 halves the archived session, once.
+			expect(saved.sessions.gone.costUsd).toBeCloseTo(6, 10);
+			expect(saved.sessions.gone.tokens).toBe(2_000_000);
+			expect(saved.sessions.gone.derivedVersion).toBe(1);
+		});
+	});
+
+	describe('claude:getProjectStats unreadable transcripts', () => {
+		const listOneSessionFile = async () => {
+			const fs = await import('fs/promises');
+			vi.mocked(fs.default.access).mockResolvedValue(undefined);
+			vi.mocked(fs.default.readdir).mockResolvedValue(['session-1.jsonl'] as unknown as Awaited<
+				ReturnType<typeof fs.default.readdir>
+			>);
+			vi.mocked(fs.default.stat).mockResolvedValue({
+				size: 1024,
+				mtime: new Date('2026-08-06T02:00:00Z'),
+				mtimeMs: Date.parse('2026-08-06T02:00:00Z'),
+			} as unknown as Awaited<ReturnType<typeof fs.default.stat>>);
+			return fs;
+		};
+
+		it.each(['EACCES', 'EPERM', 'ENOENT'])(
+			'skips captureException when the read fails with %s',
+			async (code) => {
+				const fs = await listOneSessionFile();
+				vi.mocked(fs.default.readFile).mockRejectedValue(
+					Object.assign(new Error(`${code}: permission denied, open 'session-1.jsonl'`), { code })
+				);
+
+				const handler = handlers.get('claude:getProjectStats');
+				await handler!({} as any, '/test/project');
+
+				expect(vi.mocked(captureException)).not.toHaveBeenCalled();
+			}
+		);
+
+		it('still reports an unexpected read failure', async () => {
+			const fs = await listOneSessionFile();
+			vi.mocked(fs.default.readFile).mockRejectedValue(
+				Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' })
+			);
+
+			const handler = handlers.get('claude:getProjectStats');
+			await handler!({} as any, '/test/project');
+
+			expect(vi.mocked(captureException)).toHaveBeenCalledTimes(1);
 		});
 	});
 });

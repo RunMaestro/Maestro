@@ -234,12 +234,13 @@ describe('buildExpandedPath', () => {
 		});
 
 		it('should not duplicate paths already in PATH', () => {
-			process.env.PATH = '/opt/homebrew/bin:/usr/bin';
+			// Seed and split with `path.delimiter` (the same primitive the product
+			// uses). `path.delimiter` is a platform constant that does NOT follow
+			// the `process.platform` mock, so a literal ':' breaks on Windows.
+			process.env.PATH = ['/opt/homebrew/bin', '/usr/bin'].join(path.delimiter);
 			const result = buildExpandedPath();
 
-			// Use hardcoded ':' since this test models Unix behavior
-			// (path.delimiter is a compile-time constant that doesn't follow process.platform mocks)
-			const pathParts = result.split(':');
+			const pathParts = result.split(path.delimiter);
 			const homebrewCount = pathParts.filter((p) => p === '/opt/homebrew/bin').length;
 			expect(homebrewCount).toBe(1);
 		});
@@ -256,7 +257,8 @@ describe('buildExpandedPath', () => {
 		it('should prepend detected Node version manager bin paths', () => {
 			process.env.PATH = '/usr/bin';
 			const originalNvmDir = process.env.NVM_DIR;
-			const tempNvmDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-nvm-'));
+			const realTempParent = fs.realpathSync(process.env.TEMP ?? process.env.TMP ?? process.cwd());
+			const tempNvmDir = fs.mkdtempSync(path.join(realTempParent, 'maestro-nvm-'));
 			process.env.NVM_DIR = tempNvmDir;
 			fs.mkdirSync(path.join(tempNvmDir, 'current', 'bin'), { recursive: true });
 			fs.mkdirSync(path.join(tempNvmDir, 'versions', 'node', 'v22.10.0', 'bin'), {
@@ -265,7 +267,7 @@ describe('buildExpandedPath', () => {
 
 			try {
 				const result = buildExpandedPath();
-				const pathParts = result.split(':');
+				const pathParts = result.split(path.delimiter);
 				const currentBin = path.join(tempNvmDir, 'current', 'bin');
 				const versionedBin = path.join(tempNvmDir, 'versions', 'node', 'v22.10.0', 'bin');
 

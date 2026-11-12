@@ -29,12 +29,18 @@ import {
 } from '../../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
-import type { ToolType } from '../../../shared/types';
+import type { AgentError, ToolType } from '../../../shared/types';
+import {
+	parseAgentErrorEffortRejection,
+	parseEffortRejection,
+	type EffortRejection,
+} from '../../../shared/effortRejection';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
 import { getPrompt } from '../../prompt-manager';
 import { isWindows } from '../../../shared/platformDetection';
+import { truncateAtWordBoundary } from '../../../shared/formatters';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
@@ -78,6 +84,20 @@ export interface TabNamingHandlerDependencies {
 const TAB_NAMING_TIMEOUT_MS = 120 * 1000;
 
 /**
+ * Spawn failures that mean "the configured agent binary is unusable on this
+ * machine", not "Maestro has a bug": a missing/renamed CLI, a path pointing at
+ * a non-executable (EFTYPE on Windows when the resolved target is a script or
+ * a broken shim), or one the user can't execute. Tab naming is cosmetic and
+ * degrades to leaving the tab unnamed, so these shouldn't page us. (MAESTRO-X4)
+ */
+const EXPECTED_SPAWN_ERROR_CODES = new Set(['ENOENT', 'EFTYPE', 'EACCES', 'EPERM', 'ENOEXEC']);
+
+function isExpectedSpawnFailure(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | null)?.code;
+	return typeof code === 'string' && EXPECTED_SPAWN_ERROR_CODES.has(code);
+}
+
+/**
  * Interval for checking partial output for a valid tab name.
  * Allows resolving as soon as the agent outputs the name,
  * without waiting for the full process to exit.
@@ -100,29 +120,35 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 		'tabNaming:generateTabName',
 		withIpcErrorLogging(
 			handlerOpts('generateTabName'),
-			async (config: {
-				userMessage: string;
-				agentType: string;
-				cwd: string;
-				sessionSshRemoteConfig?: {
-					enabled: boolean;
-					remoteId: string | null;
-					workingDirOverride?: string;
-				};
-				// Session-level custom env vars from the triggering agent, forwarded so
-				// the naming spawn inherits the SAME provider auth as the chat. The chat
-				// spawn merges global shell env (Settings) -> agent-level -> session-level;
-				// dropping this layer here was why naming could fail "Not logged in" while
-				// the chat (which carries CLAUDE_CONFIG_DIR / ANTHROPIC_API_KEY) worked.
-				sessionCustomEnvVars?: Record<string, string>;
-				// Claude token-source selection for the triggering agent, forwarded
-				// from the renderer's session (tab naming has no sessionId to look up
-				// the persisted session by, so the caller passes these inline). When
-				// absent, getClaudeTokenMode() collapses to 'api'.
-				enableMaestroP?: boolean;
-				maestroPMode?: 'interactive' | 'dynamic';
-				maestroPPath?: string;
-			}): Promise<string | null> => {
+			async function generateTabNameHandler(
+				config: {
+					userMessage: string;
+					agentType: string;
+					cwd: string;
+					sessionSshRemoteConfig?: {
+						enabled: boolean;
+						remoteId: string | null;
+						workingDirOverride?: string;
+					};
+					// Session-level custom env vars from the triggering agent, forwarded so
+					// the naming spawn inherits the SAME provider auth as the chat. The chat
+					// spawn merges global shell env (Settings) -> agent-level -> session-level;
+					// dropping this layer here was why naming could fail "Not logged in" while
+					// the chat (which carries CLAUDE_CONFIG_DIR / ANTHROPIC_API_KEY) worked.
+					sessionCustomEnvVars?: Record<string, string>;
+					// Claude token-source selection for the triggering agent, forwarded
+					// from the renderer's session (tab naming has no sessionId to look up
+					// the persisted session by, so the caller passes these inline). When
+					// absent, getClaudeTokenMode() collapses to 'api'.
+					enableMaestroP?: boolean;
+					maestroPMode?: 'interactive' | 'dynamic';
+					maestroPPath?: string;
+				},
+				// Internal: set by this handler's own retry (see the effort-rejection
+				// branch in onExit) so the second attempt leaves the effort to the
+				// agent. A named function rather than an arrow so it can call itself.
+				skipCheapEffort?: boolean
+			): Promise<string | null> {
 				const processManager = requireDependency(getProcessManager, 'Process manager');
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
@@ -136,11 +162,18 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 				});
 
 				try {
+					// Resolve the agent: use the utility agent if configured, otherwise the
+					// session agent. Null/empty leaves behavior unchanged (session agent).
+					const utilityAgentId = settingsStore.get('utilityAgentId', null) as string | null;
+					const utilityModelId = settingsStore.get('utilityModelId', null) as string | null;
+					const effectiveAgentType = utilityAgentId || config.agentType;
+
 					// Get the agent configuration
-					const agent = await agentDetector.getAgent(config.agentType);
+					const agent = await agentDetector.getAgent(effectiveAgentType);
 					if (!agent) {
 						logger.warn('Agent not found for tab naming', LOG_CONTEXT, {
-							agentType: config.agentType,
+							agentType: effectiveAgentType,
+							isUtilityAgent: !!utilityAgentId,
 						});
 						return null;
 					}
@@ -160,6 +193,8 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						prompt: fullPrompt,
 						cwd: config.cwd,
 						readOnlyMode: true, // Always read-only since we're not modifying anything
+						// Only apply the model override when a utility agent is actually in use.
+						modelId: utilityAgentId ? (utilityModelId ?? undefined) : undefined,
 					});
 
 					// Apply config overrides from store.
@@ -172,9 +207,16 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					// isn't mapped, and applyAgentConfigOverrides then falls through to
 					// the agent's own configured value - so an unmapped provider keeps
 					// exactly the behaviour it had before.
-					const cheapNaming = cheapTurnSettings(config.agentType as ToolType);
+					const cheapSettings = cheapTurnSettings(config.agentType as ToolType);
+					// The cheap effort is a value MAESTRO picked off a static ladder, and
+					// a provider can retire a rung without notice. When it has refused
+					// this one, the retry below runs again with the effort left to the
+					// agent - a tab named at the wrong effort beats a tab with no name.
+					const cheapNaming = skipCheapEffort
+						? { ...cheapSettings, effort: undefined }
+						: cheapSettings;
 					const allConfigs = agentConfigsStore.get('configs', {});
-					const agentConfigValues = allConfigs[config.agentType] || {};
+					const agentConfigValues = allConfigs[effectiveAgentType] || {};
 					const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
 						agentConfigValues,
 						readOnlyMode: true,
@@ -208,9 +250,14 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						string,
 						string
 					>;
+					// The session's env overrides belong to the SESSION's agent (its
+					// API keys, its base URL). Layering them onto a different utility
+					// agent points that agent at the wrong provider, so they are only
+					// merged when the two are the same agent. `configResolution` is
+					// already keyed by `effectiveAgentType` and always applies.
 					let customEnvVars: Record<string, string> | undefined = {
 						...(configResolution.effectiveCustomEnvVars ?? {}),
-						...(config.sessionCustomEnvVars ?? {}),
+						...(effectiveAgentType === config.agentType ? (config.sessionCustomEnvVars ?? {}) : {}),
 					};
 
 					// Resolve the triggering agent's Claude token source ONCE, up front,
@@ -397,16 +444,29 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						});
 					}
 
+					// A TUI (maestro-p) naming spawn emits a plain terminal transcript,
+					// not stream-json, so the raw-output fallback in extraction would
+					// scrape live thinking/response prose onto the tab. Require
+					// structured output on that path. Covers both the local wrap above
+					// and the remote maestro-p case, which share the same decision mode.
+					const requireStructuredOutput = claudeSpawnDecision?.mode === 'interactive';
+					// Read once per request so early and final extraction cap alike.
+					const shortenLongNames = settingsStore.get('shortenLongTabNames', false) === true;
+
 					// Create a promise that resolves when we get the tab name
 					return new Promise<string | null>((resolve) => {
 						let output = '';
+						let rawOutput = '';
 						let resolved = false;
+						let effortRejection: EffortRejection | null = null;
 
 						const cleanup = () => {
 							clearTimeout(timeoutId);
 							clearInterval(earlyExtractIntervalId);
 							processManager.off('data', onData);
+							processManager.off('raw-stdout', onRawStdout);
 							processManager.off('exit', onExit);
+							processManager.off('agent-error', onAgentError);
 						};
 
 						const resolveWith = (tabName: string | null, reason: string) => {
@@ -442,7 +502,11 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						// without waiting for the full process to exit.
 						const earlyExtractIntervalId = setInterval(() => {
 							if (resolved || !output.trim()) return;
-							const earlyResult = extractTabNameFromOutput(config.agentType, output);
+							const earlyResult = extractTabNameFromOutput(effectiveAgentType, output, {
+								structuredOnly: requireStructuredOutput,
+								rawOutput,
+								shortenLongNames,
+							});
 							if (earlyResult.name) {
 								resolveWith(earlyResult.name, 'resolved early from partial output');
 							}
@@ -453,6 +517,20 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							if (dataSessionId !== sessionId) return;
 							output += data;
 						};
+						// The data event contains parsed text. Keep stdout so a final JSON
+						// response can be distinguished from an unstructured terminal line.
+						const onRawStdout = (dataSessionId: string, data: string) => {
+							if (dataSessionId !== sessionId) return;
+							rawOutput += data;
+						};
+
+						// A provider's refusal of the effort arrives as an agent error, not
+						// as output: the turn never ran, so `output` stays empty and the
+						// exit below would otherwise read as an anonymous failure.
+						const onAgentError = (errorSessionId: string, agentError: AgentError) => {
+							if (errorSessionId !== sessionId) return;
+							effortRejection = parseAgentErrorEffortRejection(agentError) ?? effortRejection;
+						};
 
 						// Listen for process exit
 						const onExit = (exitSessionId: string, code?: number) => {
@@ -462,6 +540,24 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 								// Already resolved by early extraction, just clean up listeners
 								processManager.off('data', onData);
 								processManager.off('exit', onExit);
+								processManager.off('agent-error', onAgentError);
+								return;
+							}
+
+							// The provider refused the effort Maestro chose for this turn.
+							// Run it once more at the agent's own effort instead of leaving
+							// the tab unnamed. Only when THIS attempt sent the cheap effort,
+							// so a refusal of the agent's own configured value cannot loop.
+							const rejection = effortRejection ?? parseEffortRejection(output);
+							if (rejection && cheapNaming.effort !== undefined) {
+								resolved = true;
+								cleanup();
+								logger.warn(
+									'Tab naming effort rejected by the provider; retrying at the agent default',
+									LOG_CONTEXT,
+									{ sessionId, effort: cheapNaming.effort, ...rejection }
+								);
+								resolve(generateTabNameHandler(config, true));
 								return;
 							}
 
@@ -482,7 +578,11 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 								return;
 							}
 
-							const extraction = extractTabNameFromOutput(config.agentType, output);
+							const extraction = extractTabNameFromOutput(effectiveAgentType, output, {
+								structuredOnly: requireStructuredOutput,
+								rawOutput,
+								shortenLongNames,
+							});
 							if (!extraction.name) {
 								logger.warn('Tab naming extraction failed', LOG_CONTEXT, {
 									sessionId,
@@ -496,36 +596,64 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						};
 
 						processManager.on('data', onData);
+						processManager.on('raw-stdout', onRawStdout);
 						processManager.on('exit', onExit);
+						processManager.on('agent-error', onAgentError);
 
 						// On Windows (non-SSH), route the prompt via raw stdin to avoid
 						// cmd.exe's ~8KB command-line limit (ENAMETOOLONG on spawn).
 						// Tab naming concatenates a multi-KB system prompt with the user
 						// message, so a long first message easily exceeds the limit.
-						const sendPromptViaStdinRaw = isWindows() && !config.sessionSshRemoteConfig?.enabled;
+						// Only for CLIs that actually read stdin - one that takes the
+						// prompt positionally (omp) would run with no prompt and name
+						// nothing.
+						const sendPromptViaStdinRaw =
+							isWindows() &&
+							!config.sessionSshRemoteConfig?.enabled &&
+							(agent.capabilities?.supportsPromptViaStdin ?? false);
 
 						// Spawn the process
 						// When using SSH with stdin, pass the flag so ChildProcessSpawner
 						// sends the prompt via stdin instead of command line args
-						processManager.spawn({
-							sessionId,
-							toolType: config.agentType,
-							cwd,
-							command,
-							args: finalArgs,
-							prompt: fullPrompt,
-							// Global shell env vars (Settings -> Shell Configuration) are the
-							// lowest env layer the chat applies; without them a subscription
-							// auth carried via CLAUDE_CONFIG_DIR / ANTHROPIC_API_KEY never
-							// reaches the naming spawn and claude exits "Not logged in".
-							shellEnvVars: globalShellEnvVars,
-							customEnvVars,
-							promptArgs: agent.promptArgs,
-							noPromptSeparator: agent.noPromptSeparator,
-							sendPromptViaStdin: shouldSendPromptViaStdin,
-							sendPromptViaStdinRaw,
-							promptAlreadyInArgs,
-						});
+						//
+						// child_process.spawn throws synchronously for a bad binary or an
+						// over-long argv. This runs in the Promise executor, so an escaping
+						// throw rejects the naming promise and surfaces as a hard IPC
+						// failure - the outer try/catch can't see it, because the promise is
+						// returned rather than awaited. Bail to null like every other
+						// failure path here so a cosmetic feature can't break the send.
+						try {
+							processManager.spawn({
+								sessionId,
+								toolType: effectiveAgentType,
+								cwd,
+								command,
+								args: finalArgs,
+								prompt: fullPrompt,
+								// Global shell env vars (Settings -> Shell Configuration) are the
+								// lowest env layer the chat applies; without them a subscription
+								// auth carried via CLAUDE_CONFIG_DIR / ANTHROPIC_API_KEY never
+								// reaches the naming spawn and claude exits "Not logged in".
+								shellEnvVars: globalShellEnvVars,
+								customEnvVars,
+								promptArgs: agent.promptArgs,
+								noPromptSeparator: agent.noPromptSeparator,
+								sendPromptViaStdin: shouldSendPromptViaStdin,
+								sendPromptViaStdinRaw,
+								promptAlreadyInArgs,
+							});
+						} catch (error) {
+							if (!isExpectedSpawnFailure(error)) {
+								void captureException(error);
+							}
+							logger.warn('Tab naming spawn failed', LOG_CONTEXT, {
+								sessionId,
+								command,
+								code: (error as NodeJS.ErrnoException).code,
+								error: String(error),
+							});
+							resolveWith(null, 'spawn failed');
+						}
 					});
 				} catch (error) {
 					void captureException(error);
@@ -555,7 +683,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
  *      along with the other headless-only flags, so the model runs a real
  *      agentic turn and its raw terminal transcript leaks function-call markup
  *      like `<invoke name="...">` / `</parameter>` / `</invoke>`. That output
- *      isn't stream-json, so extractAgentResponseText() can't lift a clean
+ *      isn't stream-json, so extractAgentResponse() can't lift a clean
  *      result and we fall back to scraping the raw TUI buffer.
  *   2. Empty-turn placeholders. The TUI renders `(no content)` / `(no output)`
  *      for a turn with no text block.
@@ -596,11 +724,15 @@ interface TabNameExtractionResult {
  * maestro-p TUI emits plain terminal text), so the caller falls back to
  * running extractTabName over the raw output exactly as before.
  */
-function extractAgentResponseText(agentType: string, output: string): string | null {
+function extractAgentResponse(
+	agentType: string,
+	output: string
+): { text: string; isFinal: boolean } | null {
 	const parser = createOutputParser(agentType);
 	if (!parser) return null;
 
 	let sawJson = false;
+	let isFinal = false;
 	let resultText = '';
 	let assistantText = '';
 	for (const line of output.split('\n')) {
@@ -616,38 +748,94 @@ function extractAgentResponseText(agentType: string, output: string): string | n
 		if (!parsed || typeof parsed !== 'object') continue;
 		sawJson = true;
 		const event = parser.parseJsonObject(parsed);
-		if (!event?.text) continue;
-		if (event.type === 'result') {
-			// The final result carries the complete response; last one wins.
-			resultText = event.text;
-		} else if (event.type === 'text') {
+		if (!event) continue;
+		if (parser.isResultMessage(event)) {
+			// Completion can be a textless marker after streamed answer chunks.
+			isFinal = true;
+			if (event.text) resultText = event.text;
+		} else if (event.type === 'text' && !event.isReasoning && event.text) {
 			// Streaming assistant chunks - accumulate so early extraction can
-			// resolve before the terminating result event arrives.
+			// resolve before the terminating result event arrives. Reasoning
+			// deltas (grok `thought`, codex/copilot reasoning) are excluded:
+			// they stream BEFORE the answer, so mining them would let early
+			// extraction resolve with a thinking fragment ("This is a simple
+			// task") instead of the generated name.
 			assistantText += event.text;
 		}
 	}
 
 	if (!sawJson) return null;
 	const text = (resultText || assistantText).trim();
-	return text.length > 0 ? text : null;
+	return text.length > 0 ? { text, isFinal } : null;
 }
 
 /**
  * Extract a tab name from raw agent process output, normalizing structured
  * (stream-json) output via the agent's parser first and falling back to
  * plain-text extraction over the raw output.
+ *
+ * `structuredOnly` disables that raw-output fallback. Pass it when the naming
+ * spawn drives the maestro-p TUI (Claude token mode = TUI/dynamic): maestro-p
+ * strips the headless-only flags, including the `--tools ""` guard, so the
+ * model runs a real agentic turn and `output` is a live terminal transcript of
+ * thinking and response prose rather than stream-json. Scraping that buffer
+ * lifts an arbitrary sentence fragment onto the tab, which is what users see as
+ * "the response is streaming into the tab name" (issue #1110). Prose has no
+ * angle brackets, so STRUCTURAL_NOISE_RE can't catch it - the only safe answer
+ * is to decline. Returning null costs nothing: the send-side trigger retries
+ * naming on the next message, so the tab keeps its placeholder and self-heals.
  */
-function extractTabNameFromOutput(agentType: string, output: string): TabNameExtractionResult {
-	const responseText = extractAgentResponseText(agentType, output);
-	return extractTabName(responseText ?? output);
+function extractTabNameFromOutput(
+	agentType: string,
+	output: string,
+	{
+		structuredOnly = false,
+		rawOutput = '',
+		shortenLongNames = false,
+	}: { structuredOnly?: boolean; rawOutput?: string; shortenLongNames?: boolean } = {}
+): TabNameExtractionResult {
+	const response = extractAgentResponse(agentType, rawOutput || output);
+	if (response === null && structuredOnly) {
+		return { name: null, reason: 'structured_only_no_json' };
+	}
+	return extractTabName(response?.text ?? output, {
+		isFinal: response?.isFinal ?? false,
+		shortenLongNames,
+	});
 }
+
+/**
+ * Longest line accepted as a name from output that is NOT a parser-confirmed
+ * final response (raw terminal text, unfinished streams). Anything longer is
+ * treated as prose, not a title.
+ */
+const TAB_NAME_RAW_MAX_LENGTH = 40;
+
+/**
+ * Length a final title is cut to when "Shorten long tab names" is on. The
+ * same value as the raw ceiling, so a shortened name looks like any other.
+ */
+const TAB_NAME_SHORT_MAX_LENGTH = 40;
+
+/**
+ * Length a final title is cut to when the setting is off. The tab strip shows
+ * the full name, so this is only a guard against a model answering with a
+ * sentence instead of a title.
+ */
+const TAB_NAME_FULL_MAX_LENGTH = 80;
 
 /**
  * Extract a clean tab name from agent output.
  * The output may contain ANSI codes, extra whitespace, or markdown formatting.
  * Returns a structured result with diagnostic reason for logging.
  */
-function extractTabName(output: string): TabNameExtractionResult {
+function extractTabName(
+	output: string,
+	{
+		isFinal = false,
+		shortenLongNames = false,
+	}: { isFinal?: boolean; shortenLongNames?: boolean } = {}
+): TabNameExtractionResult {
 	if (!output || !output.trim()) {
 		return { name: null, reason: 'empty_output' };
 	}
@@ -671,7 +859,7 @@ function extractTabName(output: string): TabNameExtractionResult {
 		// Filter out empty lines and lines that look like instructions/examples
 		return (
 			trimmed.length > 0 &&
-			trimmed.length <= 40 && // Tab names should be short
+			(isFinal || trimmed.length <= TAB_NAME_RAW_MAX_LENGTH) && // Only final responses may run long
 			!trimmed.toLowerCase().includes('example') &&
 			!trimmed.toLowerCase().includes('message:') &&
 			!trimmed.toLowerCase().includes('rules:') &&
@@ -696,10 +884,12 @@ function extractTabName(output: string): TabNameExtractionResult {
 	// Remove trailing punctuation (periods, colons, etc.)
 	tabName = tabName.replace(/[.:;,!?]+$/, '');
 
-	// Ensure reasonable length (max 40 chars for tab names)
-	if (tabName.length > 40) {
-		tabName = tabName.substring(0, 37) + '...';
-	}
+	// A long final title is kept whole unless the user asked for short names.
+	tabName = truncateAtWordBoundary(
+		tabName,
+		shortenLongNames ? TAB_NAME_SHORT_MAX_LENGTH : TAB_NAME_FULL_MAX_LENGTH,
+		'...'
+	);
 
 	// If the result is empty or too short, return null
 	if (tabName.length < 2) {

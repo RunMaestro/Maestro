@@ -4,9 +4,11 @@ import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
+import { getAgentDefinition } from '../../agents/definitions';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
@@ -14,9 +16,19 @@ import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
 import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
+import { readClaudeTurnBaseline } from '../../../shared/claudeCostTracker';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
+import { stripNulBytesFromArgs } from '../utils/argvNulBytes';
+import { promptExceedsPosixArgvLimit } from '../utils/promptArgvLimit';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
+import { armStdioCloseWatchdog } from '../utils/stdioCloseWatchdog';
+import {
+	newRemotePidFilePath,
+	signalRemoteAgent,
+	sshConnectionArgs,
+	withRemotePidRecord,
+} from '../../utils/ssh-remote-signal';
 import { isWindows } from '../../../shared/platformDetection';
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
@@ -67,11 +79,11 @@ export class ChildProcessSpawner {
 			imagePromptBuilder,
 			promptArgs,
 			contextWindow,
+			ompModelCatalogKey,
 			customEnvVars,
 			shellEnvVars,
 			noPromptSeparator,
 			sendPromptViaStdin,
-			sendPromptViaStdinRaw,
 		} = config;
 
 		const hasImages = images && images.length > 0;
@@ -91,6 +103,38 @@ export class ChildProcessSpawner {
 		const argsHaveInputStreamJson = args.some(
 			(arg, i) => arg === 'stream-json' && i > 0 && args[i - 1] === '--input-format'
 		);
+
+		// Callers move the prompt to stdin only on Windows. On Linux and macOS a
+		// prompt past the argv limit (a long group chat history, a big Cue
+		// payload) fails the spawn with E2BIG (MAESTRO-VR), so send it as raw
+		// stdin instead when the agent reads its prompt there. Local spawns only:
+		// an SSH spawn's prompt belongs to the remote command or script.
+		const promptTooLongForArgv =
+			!!prompt &&
+			!hasImages &&
+			!isWindows() &&
+			!sendPromptViaStdin &&
+			!argsHaveInputStreamJson &&
+			!config.sendPromptViaStdinRaw &&
+			!config.promptAlreadyInArgs &&
+			!config.sshStdinScript &&
+			!config.sshRemoteCommand &&
+			!config.sshRemoteId &&
+			capabilities.supportsPromptViaStdin &&
+			promptExceedsPosixArgvLimit(prompt);
+		const sendPromptViaStdinRaw = !!config.sendPromptViaStdinRaw || promptTooLongForArgv;
+		if (promptTooLongForArgv) {
+			logger.info(
+				'[ProcessManager] Prompt too long for argv, sending via stdin',
+				'ProcessManager',
+				{
+					sessionId,
+					toolType,
+					promptLength: prompt?.length,
+				}
+			);
+		}
+
 		const promptViaStdin = sendPromptViaStdin || sendPromptViaStdinRaw || argsHaveInputStreamJson;
 
 		// Build final args based on batch mode and images
@@ -194,7 +238,30 @@ export class ChildProcessSpawner {
 			finalArgs = args;
 		}
 
-		// Log spawn config
+		// Some CLIs need an explicit query source to avoid opening their interactive UI.
+		// SSH scripts own their remote arguments and must not receive local stdin flags.
+		if (
+			sendPromptViaStdinRaw &&
+			effectivePrompt &&
+			!config.sshStdinScript &&
+			!config.promptAlreadyInArgs
+		) {
+			const stdinPromptArgs = getAgentDefinition(toolType)?.stdinPromptArgs;
+			if (stdinPromptArgs) finalArgs = [...finalArgs, ...stdinPromptArgs];
+		}
+
+		// A NUL byte anywhere in argv makes Node refuse the spawn outright (MAESTRO-153).
+		const nulSafe = stripNulBytesFromArgs(finalArgs);
+		if (nulSafe.stripped > 0) {
+			finalArgs = nulSafe.args;
+			logger.warn('[ProcessManager] Dropped NUL bytes from agent arguments', 'ProcessManager', {
+				sessionId,
+				toolType,
+				strippedCount: nulSafe.stripped,
+			});
+		}
+
+		// Log metadata only: prompts and argv can contain private user or playbook text.
 		const spawnConfigLogFn = isWindows() ? logger.info.bind(logger) : logger.debug.bind(logger);
 		spawnConfigLogFn('[ProcessManager] spawn() config', 'ProcessManager', {
 			sessionId,
@@ -202,13 +269,6 @@ export class ChildProcessSpawner {
 			platform: process.platform,
 			hasPrompt: !!prompt,
 			promptLength: prompt?.length,
-			promptPreview:
-				prompt && isWindows()
-					? {
-							first100: prompt.substring(0, 100),
-							last100: prompt.substring(Math.max(0, prompt.length - 100)),
-						}
-					: undefined,
 			hasImages,
 			hasImageArgs: !!imageArgs,
 			tempImageFilesCount: tempImageFiles.length,
@@ -245,7 +305,7 @@ export class ChildProcessSpawner {
 
 			logger.debug('[ProcessManager] About to spawn child process', 'ProcessManager', {
 				command,
-				finalArgs,
+				argsCount: finalArgs.length,
 				cwd,
 				PATH: env.PATH?.substring(0, 150),
 				hasStdio: 'default (pipe)',
@@ -321,7 +381,6 @@ export class ChildProcessSpawner {
 					originalArgsCount: finalArgs.length,
 					escapedArgsCount: spawnArgs.length,
 					escapedPromptArgLength: spawnArgs[spawnArgs.length - 1]?.length,
-					escapedPromptArgPreview: spawnArgs[spawnArgs.length - 1]?.substring(0, 200),
 					argsModified: finalArgs.some((arg, i) => arg !== spawnArgs[i]),
 				});
 			}
@@ -360,7 +419,6 @@ export class ChildProcessSpawner {
 				isWindows: isWindows(),
 				argsCount: spawnArgs.length,
 				promptArgLength: prompt ? spawnArgs[spawnArgs.length - 1]?.length : undefined,
-				fullCommandPreview: `${spawnCommand} ${spawnArgs.join(' ')}`,
 			});
 
 			const childProcess = spawn(spawnCommand, spawnArgs, {
@@ -400,6 +458,24 @@ export class ChildProcessSpawner {
 			// to isolate mutable state like tool name tracking across concurrent sessions
 			const outputParser = createOutputParser(toolType) || undefined;
 
+			// Claude reports its cost and per-model usage as running SESSION totals.
+			// Hand its parser the session's total as this turn starts, read from
+			// the transcript it resumes, so the usage it emits is this turn's
+			// alone (see src/shared/claudeCostTracker.ts).
+			const resumeSessionId = config.agentSessionId ?? resumeIdFromArgs(args);
+			if (toolType === 'claude-code' && resumeSessionId && outputParser?.primeResumedSession) {
+				outputParser.primeResumedSession(
+					resumeSessionId,
+					readClaudeTurnBaseline({
+						resumeSessionId,
+						cwd,
+						env,
+						homeDir: os.homedir(),
+						remote: !!config.sshRemoteId,
+					})
+				);
+			}
+
 			const isStreamJsonMode =
 				argsContain('stream-json') ||
 				argsContain('--json') ||
@@ -420,9 +496,12 @@ export class ChildProcessSpawner {
 				hasSshStdinScript: !!config.sshStdinScript,
 				command: config.command,
 				argsCount: finalArgs.length,
-				argsPreview:
-					finalArgs.length > 0 ? finalArgs[finalArgs.length - 1]?.substring(0, 500) : undefined,
 			});
+
+			// A stdin-script SSH spawn records the remote agent's pid so Stop can
+			// reach it: signalling only the local ssh client leaves it running.
+			const sshRemotePidFile =
+				config.sshStdinScript && sshConnectionArgs(finalArgs) ? newRemotePidFilePath() : undefined;
 
 			const managedProcess: ManagedProcess = {
 				sessionId,
@@ -439,6 +518,7 @@ export class ChildProcessSpawner {
 				stderrBuffer: '',
 				stdoutBuffer: '',
 				contextWindow,
+				ompModelCatalogKey,
 				tempImageFiles: tempImageFiles.length > 0 ? tempImageFiles : undefined,
 				command,
 				args: finalArgs,
@@ -448,6 +528,7 @@ export class ChildProcessSpawner {
 				sshRemoteId: config.sshRemoteId,
 				sshRemoteHost: config.sshRemoteHost,
 				sshRemoteCommand: config.sshRemoteCommand,
+				sshRemotePidFile,
 				// Seed from config on resume. Copilot emits `session.resume`
 				// (no sessionId) instead of `session.start` when --resume=<id>
 				// is set, so StdoutHandler can't populate this from the stream
@@ -582,12 +663,48 @@ export class ChildProcessSpawner {
 					});
 					return;
 				}
-				void this.exitHandler.handleExit(sessionId, code || 0).catch((err) => {
+				// Hand the exiting process in explicitly: it may already have been
+				// unregistered, and handleExit must settle THIS process rather than
+				// whatever currently owns the session id.
+				void this.exitHandler.handleExit(sessionId, code || 0, managedProcess).catch((err) => {
+					void captureException(err);
 					logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
 						sessionId,
 						error: String(err),
 					});
+					// handleExit releases the entry immediately before emitting `exit`,
+					// so an entry that is still ours means it threw before getting there.
+					// Left alone, that entry owns the tab forever: every later spawn is
+					// refused as "already running" and the renderer never learns the turn
+					// ended. Release it and report the exit so the turn settles.
+					if (this.processes.get(sessionId) === managedProcess) {
+						this.processes.delete(sessionId);
+						this.emitter.emit('exit', sessionId, code || 0);
+					}
 				});
+			});
+
+			// `close` waits on every holder of the stdio pipes, and an SSH
+			// ControlMaster or a stray grandchild can hold them long after the child
+			// itself is dead. Without this, a stopped SSH turn left its entry behind
+			// and the tab's queue hot-looped against the spawn refusal.
+			armStdioCloseWatchdog(childProcess, {
+				onForceClose: () => {
+					logger.warn(
+						'[ProcessManager] stdio still open after exit, forcing close',
+						'ProcessManager',
+						{ sessionId, pid: childProcess.pid }
+					);
+					// For SSH the open stdio usually means the remote agent is still
+					// running behind a ControlMaster. Settling the turn while it keeps
+					// working would put a second writer on the session next turn.
+					if (sshRemotePidFile) {
+						signalRemoteAgent(
+							{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
+							'terminate'
+						);
+					}
+				},
 			});
 
 			// Handle errors
@@ -610,9 +727,13 @@ export class ChildProcessSpawner {
 					sessionId,
 					scriptLength: config.sshStdinScript.length,
 				});
-				childProcess.stdin?.write(config.sshStdinScript);
+				childProcess.stdin?.write(
+					sshRemotePidFile
+						? withRemotePidRecord(config.sshStdinScript, sshRemotePidFile)
+						: config.sshStdinScript
+				);
 				childProcess.stdin?.end();
-			} else if (config.sendPromptViaStdinRaw && effectivePrompt) {
+			} else if (sendPromptViaStdinRaw && effectivePrompt) {
 				// Raw stdin mode: send prompt as literal text (non-stream-json agents on Windows)
 				// Note: When sending via stdin, PowerShell treats the input as literal text,
 				// NOT as code to parse. No escaping is needed for special characters.
@@ -654,4 +775,14 @@ export class ChildProcessSpawner {
 			return { pid: -1, success: false };
 		}
 	}
+}
+
+/** The session id a `--resume <id>` (or `--resume=<id>`) argument names, if any. */
+function resumeIdFromArgs(args: readonly string[]): string | undefined {
+	for (let i = 0; i < args.length; i += 1) {
+		const arg = args[i];
+		if (arg === '--resume') return args[i + 1] || undefined;
+		if (arg.startsWith('--resume=')) return arg.slice('--resume='.length) || undefined;
+	}
+	return undefined;
 }

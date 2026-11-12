@@ -1,6 +1,6 @@
 // Tab commands - manage an agent's AI tabs in the running desktop app: open a
-// new tab (optionally seeded with a prompt), close, rename, star/unstar, and
-// move. These mirror the tab bar and AI tab overlay menu via the new_tab,
+// new tab (optionally seeded with a prompt), close, reopen the last closed tab,
+// rename, star/unstar, and move. These mirror the tab bar and AI tab overlay menu via the new_tab,
 // new_ai_tab_with_prompt, close_tab, rename_tab, star_tab, and reorder_tab WS
 // messages.
 //
@@ -149,6 +149,58 @@ export async function tabStar(
 		successMessage: `${starred ? 'Starred' : 'Unstarred'} tab ${owner.tabId}`,
 		extraPayload: { starred },
 	}));
+}
+
+interface TabReopenOptions {
+	agent: string;
+	background?: boolean;
+	focus?: boolean;
+	json?: boolean;
+}
+
+/**
+ * Reopen an agent's most recently closed tab (mirrors Cmd+Shift+T and the
+ * command palette's Reopen Closed Tab). The closed-tab history lives only in
+ * the desktop, so the reply names the tab that came back, or says the history
+ * was empty. Verify with "maestro-cli session list".
+ */
+export async function tabReopen(options: TabReopenOptions): Promise<void> {
+	const sessionId = resolveAgentOrFail(options.agent, options.json);
+	const background = resolveBackgroundFlag(options, 'tab-reopen');
+
+	try {
+		const result = await sendSimpleCommand(
+			{ type: 'reopen_closed_tab', sessionId, background },
+			'reopen_closed_tab_result'
+		);
+		if (!result.success) {
+			failCommand((result.error as string) || 'Failed to reopen closed tab', options.json);
+		}
+		const tabId = typeof result.tabId === 'string' ? result.tabId : null;
+		const tabType = typeof result.tabType === 'string' ? result.tabType : null;
+		const wasDuplicate = result.wasDuplicate === true;
+		if (options.json) {
+			console.log(
+				JSON.stringify({
+					success: true,
+					agentId: sessionId,
+					tabId,
+					tabType,
+					wasDuplicate,
+					background,
+				})
+			);
+			return;
+		}
+		const what = wasDuplicate ? 'Switched to already-open' : 'Reopened';
+		const kind = tabType ? `${tabType} tab` : 'tab';
+		console.log(
+			formatSuccess(`${what} ${kind} in ${sessionId}${background ? ' (background)' : ''}`)
+		);
+		if (tabId) console.log(`  Tab: ${tabId}`);
+	} catch (error) {
+		failCommand(error instanceof Error ? error.message : String(error), options.json);
+	}
 }
 
 /**

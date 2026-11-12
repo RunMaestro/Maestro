@@ -5,7 +5,7 @@ import {
 	resolveTextareaHeight,
 	resizeTextareaToContent,
 	sanitizeTextareaHeights,
-	shouldScrollTextareaToEnd,
+	scrollTextareaToCaretEnd,
 } from '../../../renderer/utils/textareaSizing';
 
 function setViewportHeight(height: number) {
@@ -125,16 +125,51 @@ describe('resizeTextareaToContent', () => {
 	});
 });
 
-describe('shouldScrollTextareaToEnd', () => {
-	it('scrolls when caret was at previous end', () => {
-		expect(shouldScrollTextareaToEnd(5, 5, 6)).toBe(true);
+describe('scrollTextareaToCaretEnd', () => {
+	it('scrolls the textarea to the bottom when the caret is at the end', () => {
+		const textarea = document.createElement('textarea');
+		textarea.value = 'hello';
+		textarea.scrollTop = 12;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', {
+			value: textarea.value.length,
+			configurable: true,
+		});
+
+		scrollTextareaToCaretEnd(textarea);
+
+		expect(textarea.scrollTop).toBe(240);
 	});
 
-	it('scrolls for bulk inserts even when caret was mid-text', () => {
-		expect(shouldScrollTextareaToEnd(2, 5, 9)).toBe(true);
+	it('leaves scroll untouched when the caret is mid-way through the final logical line', () => {
+		const textarea = document.createElement('textarea');
+		// Regression for the soft-wrap edge case: a long final logical line can wrap
+		// across several visual rows past the height cap. A caret before the trailing
+		// characters (e.g. an inserted mention) belongs to an earlier visual row, so
+		// snapping to scrollHeight would scroll it out of view. The gate keys off the
+		// true end of the value, not the final logical line, precisely to avoid that.
+		textarea.value = 'first\nsecond\nlast line';
+		textarea.scrollTop = 12;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', {
+			value: textarea.value.indexOf('last line') + 4,
+			configurable: true,
+		});
+
+		scrollTextareaToCaretEnd(textarea);
+
+		expect(textarea.scrollTop).toBe(12);
 	});
 
-	it('does not scroll normal mid-text typing', () => {
-		expect(shouldScrollTextareaToEnd(2, 5, 6)).toBe(false);
+	it('leaves scroll untouched for mid-text typing', () => {
+		const textarea = document.createElement('textarea');
+		textarea.value = 'hello world';
+		textarea.scrollTop = 30;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', { value: 2, configurable: true });
+
+		scrollTextareaToCaretEnd(textarea);
+
+		expect(textarea.scrollTop).toBe(30);
 	});
 });

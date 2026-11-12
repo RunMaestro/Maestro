@@ -7,6 +7,7 @@
  */
 
 import { Wand2 } from 'lucide-react';
+import { Wordmark } from '../../ui/Wordmark';
 import type { Theme } from '../../../types';
 import { MaestroFlags } from '../../ui/MaestroFlags';
 
@@ -23,15 +24,11 @@ export function AboutTab({ theme }: AboutTabProps) {
 			{/* Glyph + wordmark */}
 			<div className="flex items-center gap-5">
 				<Wand2 className="w-20 h-20" style={{ color: theme.colors.accent }} />
-				<h1 className="text-6xl font-bold tracking-widest" style={{ color: theme.colors.textMain }}>
-					MAESTRO
-				</h1>
+				<Wordmark as="h1" className="text-6xl" style={{ color: theme.colors.textMain }} />
 			</div>
 
 			{/* Tagline */}
-			<p className="text-base mt-3 opacity-70" style={{ color: theme.colors.textDim }}>
-				Agent Orchestration Command Center
-			</p>
+			<p className="text-base mt-3 opacity-70">Agent Orchestration Command Center</p>
 
 			{/* Version */}
 			<div className="mt-10 text-3xl font-bold font-mono" style={{ color: theme.colors.textMain }}>

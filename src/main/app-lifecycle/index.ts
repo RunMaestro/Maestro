@@ -10,6 +10,14 @@ export {
 	type WindowManager,
 	type WindowManagerDependencies,
 } from './window-manager';
+export {
+	ensureCadenzaHudWindow,
+	deliverCadenzaToHud,
+	deliverCadenzaToExistingHud,
+	getCadenzaHudWindow,
+	closeCadenzaHudWindow,
+	type CadenzaHudWindowDeps,
+} from './cadenza-hud-window';
 export { createQuitHandler, type QuitHandler, type QuitHandlerDependencies } from './quit-handler';
 export {
 	createSettingsWatcher,

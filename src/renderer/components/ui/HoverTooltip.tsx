@@ -13,6 +13,7 @@
 import { useState, useRef, useLayoutEffect, type ReactNode, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../../types';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 export interface HoverTooltipProps {
 	/** Main label rendered in the tooltip. */
@@ -156,7 +157,7 @@ export function HoverTooltip({
 					<div
 						ref={tooltipRef}
 						role="tooltip"
-						className={`fixed px-2 py-1 rounded text-xs-plus pointer-events-none shadow-lg flex gap-2 ${
+						className={`fixed px-2 py-1 rounded text-xs-plus pointer-events-none flex gap-2 ${
 							maxWidth ? 'items-start leading-snug' : 'items-center whitespace-nowrap'
 						}`}
 						style={{
@@ -168,9 +169,8 @@ export function HoverTooltip({
 								? Math.min(maxWidth, window.innerWidth - VIEWPORT_MARGIN * 2)
 								: undefined,
 							zIndex: 10000,
-							backgroundColor: theme.colors.bgActivity,
+							...elevatedSurfaceStyle(theme),
 							color: theme.colors.textMain,
-							border: `1px solid ${theme.colors.border}`,
 							opacity: pos ? 1 : 0,
 							transition: 'opacity 80ms ease-out',
 						}}

@@ -138,12 +138,12 @@ describe('HistoryPanel', () => {
 	beforeEach(() => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 
-		// HistoryPanel persists its USER/AUTO/CUE filter selection to
-		// localStorage per agent (see historyFilterPersistence.ts). jsdom here
-		// has no working Storage, and a filter toggled in one test would
-		// otherwise leak into every test that follows, silently filtering out
-		// entries with no visible cause. Installing a fresh mock per test
-		// provides the API and doubles as the reset.
+		// Install a fresh in-memory localStorage mock between tests. Filter
+		// toggles persist under HISTORY_PANEL_FILTERS_KEY; without a reset, a test
+		// that deselects a type leaks the restrictive filter into every later
+		// test, hiding their entries and failing all entry-render assertions.
+		// jsdom here provides no working Storage, so a mock is required. This
+		// installs a fresh in-memory store, which also serves as the per-test reset.
 		installLocalStorageMock();
 
 		// Reset uiStore state used by HistoryPanel
@@ -649,7 +649,9 @@ describe('HistoryPanel', () => {
 			});
 			const typesOnLoad = getAllPaginated.mock.calls[getAllPaginated.mock.calls.length - 1][0]
 				.types as string[];
-			expect([...typesOnLoad].sort()).toEqual(['AUTO', 'CUE', 'USER']);
+			// AGENT is rc's cross-agent consult type; it rides along with the
+			// always-on types, so the set is one wider than main's was.
+			expect([...typesOnLoad].sort()).toEqual(['AGENT', 'AUTO', 'CUE', 'USER']);
 
 			// Toggling the pill off must drop CUE from the request, not merely
 			// hide already-fetched rows.
@@ -659,7 +661,7 @@ describe('HistoryPanel', () => {
 				const types = getAllPaginated.mock.calls[getAllPaginated.mock.calls.length - 1][0]
 					.types as string[];
 				expect(types).not.toContain('CUE');
-				expect([...types].sort()).toEqual(['AUTO', 'USER']);
+				expect([...types].sort()).toEqual(['AGENT', 'AUTO', 'USER']);
 			});
 		});
 
@@ -909,6 +911,91 @@ describe('HistoryPanel', () => {
 			await waitFor(() => {
 				expect(screen.queryByText('Local task')).not.toBeInTheDocument();
 				expect(screen.getByText('Remote task')).toBeInTheDocument();
+			});
+		});
+
+		it('should hide the sender picker when every entry came from the desktop', async () => {
+			const entry = createMockEntry({ id: 'e1', summary: 'Desktop only' });
+			mockHistoryGetAll.mockResolvedValue([entry]);
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Desktop only')).toBeInTheDocument();
+			});
+
+			expect(screen.queryByText('All Senders')).not.toBeInTheDocument();
+		});
+
+		it('should show the sender picker and narrow the list when an account is selected', async () => {
+			const desktopEntry = createMockEntry({ id: 'e1', summary: 'Desktop task' });
+			const webEntry = createMockEntry({
+				id: 'e2',
+				summary: 'Phone task',
+				userName: 'pedram',
+				userDisplayName: 'Pedram A',
+			});
+			mockHistoryGetAll.mockResolvedValue([desktopEntry, webEntry]);
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Desktop task')).toBeInTheDocument();
+				expect(screen.getByText('Phone task')).toBeInTheDocument();
+			});
+
+			const trigger = await screen.findByText('All Senders');
+			fireEvent.click(trigger);
+
+			// The popover row carries a parenthesized count; the footer pill on
+			// the entry renders the bare display name, so this matcher is unique
+			// to the popover.
+			const webOption = await screen.findByText(/Pedram A \(\d+\)/);
+			fireEvent.click(webOption);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Desktop task')).not.toBeInTheDocument();
+				expect(screen.getByText('Phone task')).toBeInTheDocument();
+			});
+		});
+
+		it('should match the sender username and display name in search', async () => {
+			const desktopEntry = createMockEntry({ id: 'e1', summary: 'Desktop task' });
+			const webEntry = createMockEntry({
+				id: 'e2',
+				summary: 'Phone task',
+				userName: 'pedram',
+				userDisplayName: 'Pedram A',
+			});
+			mockHistoryGetAll.mockResolvedValue([desktopEntry, webEntry]);
+
+			const { container } = render(
+				<HistoryPanel session={createMockSession()} theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Desktop task')).toBeInTheDocument();
+			});
+
+			const listContainer = container.querySelector('[tabIndex="0"]');
+			if (listContainer) {
+				fireEvent.keyDown(listContainer, { key: 'f', metaKey: true });
+			}
+
+			const searchInput = await screen.findByPlaceholderText('Filter history...');
+			fireEvent.change(searchInput, { target: { value: 'pedram' } });
+
+			await waitFor(() => {
+				expect(screen.queryByText('Desktop task')).not.toBeInTheDocument();
+				expect(screen.getByText('Phone task')).toBeInTheDocument();
+			});
+
+			// The display name is what the pill draws, so typing that has to
+			// find the same row.
+			fireEvent.change(searchInput, { target: { value: 'Pedram A' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('Phone task')).toBeInTheDocument();
 			});
 		});
 
@@ -1391,6 +1478,7 @@ describe('HistoryPanel', () => {
 			const entry = createMockEntry({
 				summary: 'Jump entry',
 				agentSessionId: 'abc12345-def-789',
+				sessionName: 'Jump Session',
 			});
 			mockHistoryGetAll.mockResolvedValue([entry]);
 
@@ -1410,7 +1498,13 @@ describe('HistoryPanel', () => {
 			fireEvent.keyDown(listContainer!, { key: 'ArrowDown' });
 			fireEvent.keyDown(listContainer!, { key: 'Enter', metaKey: true });
 
-			expect(onOpenSessionAsTab).toHaveBeenCalledWith('abc12345-def-789', '/test/project');
+			// Keyboard jump and pill click are the same restore, so both hand over
+			// the recorded name the tab would otherwise come back without.
+			expect(onOpenSessionAsTab).toHaveBeenCalledWith(
+				'abc12345-def-789',
+				'/test/project',
+				'Jump Session'
+			);
 			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
 		});
 
@@ -1737,7 +1831,11 @@ describe('HistoryPanel', () => {
 
 			fireEvent.click(screen.getByText('ABC12345'));
 
-			expect(onOpenSessionAsTab).toHaveBeenCalledWith('abc12345-def-789', '/test/project');
+			expect(onOpenSessionAsTab).toHaveBeenCalledWith(
+				'abc12345-def-789',
+				'/test/project',
+				undefined
+			);
 		});
 
 		it('should render summary with truncation', async () => {

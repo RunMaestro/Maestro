@@ -127,6 +127,7 @@ import {
 	compressFolderRemote,
 } from '../../../../main/utils/remote-fs';
 import { existsSync } from 'fs';
+import path from 'path';
 
 describe('filesystem handlers', () => {
 	beforeEach(() => {
@@ -729,24 +730,31 @@ describe('filesystem handlers', () => {
 			expect(archiveMock.directory).toHaveBeenCalledWith('/project/Competition', 'Competition');
 			expect(result).toEqual({
 				success: true,
-				path: '/project/Competition.zip',
+				// The handler builds the destination with path.join, so the expected
+				// separator is the host's. Hardcoding '/' fails on Windows even
+				// though the product is correct.
+				path: path.join('/project', 'Competition.zip'),
 				name: 'Competition.zip',
 			});
 		});
 
 		it('increments a numeric suffix until the archive name is free', async () => {
-			// Competition.zip and Competition-1.zip are taken; -2 is free.
-			vi.mocked(existsSync).mockImplementation(
-				(candidate) =>
-					candidate === '/project/Competition.zip' || candidate === '/project/Competition-1.zip'
-			);
+			// Competition.zip and Competition-1.zip are taken; -2 is free. The
+			// candidates are path.join'd by the handler, so the mock has to match on
+			// the host's separator or the collision is never seen and the suffix
+			// never advances.
+			const taken = [
+				path.join('/project', 'Competition.zip'),
+				path.join('/project', 'Competition-1.zip'),
+			];
+			vi.mocked(existsSync).mockImplementation((candidate) => taken.includes(candidate as string));
 
 			const handler = registeredHandlers.get('fs:compressFolder');
 			const result = await handler!({}, '/project/Competition');
 
 			expect(result).toEqual({
 				success: true,
-				path: '/project/Competition-2.zip',
+				path: path.join('/project', 'Competition-2.zip'),
 				name: 'Competition-2.zip',
 			});
 		});
@@ -1290,14 +1298,15 @@ describe('filesystem handlers', () => {
 
 			// Root has: src/ (dir), .git/ (dir), file.txt (file)
 			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
-				if (dirPath === '/project') {
+				const p = String(dirPath).replace(/\\/g, '/');
+				if (p === '/project') {
 					return [
 						{ name: 'src', isDirectory: () => true, isFile: () => false },
 						{ name: '.git', isDirectory: () => true, isFile: () => false },
 						{ name: 'file.txt', isDirectory: () => false, isFile: () => true },
 					] as any;
 				}
-				if (dirPath.includes('/src')) {
+				if (p.includes('/src')) {
 					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
 				}
 				return [];
@@ -1314,14 +1323,15 @@ describe('filesystem handlers', () => {
 
 			// With .git in ignore patterns - .git is excluded
 			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
-				if (dirPath === '/project') {
+				const p = String(dirPath).replace(/\\/g, '/');
+				if (p === '/project') {
 					return [
 						{ name: 'src', isDirectory: () => true, isFile: () => false },
 						{ name: '.git', isDirectory: () => true, isFile: () => false },
 						{ name: 'file.txt', isDirectory: () => false, isFile: () => true },
 					] as any;
 				}
-				if (dirPath.includes('/src')) {
+				if (p.includes('/src')) {
 					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
 				}
 				return [];
@@ -1350,7 +1360,8 @@ describe('filesystem handlers', () => {
 			});
 
 			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
-				if (dirPath === '/project') {
+				const p = String(dirPath).replace(/\\/g, '/');
+				if (p === '/project') {
 					return [
 						{ name: 'src', isDirectory: () => true, isFile: () => false },
 						{ name: 'dist', isDirectory: () => true, isFile: () => false },
@@ -1358,7 +1369,7 @@ describe('filesystem handlers', () => {
 						{ name: 'debug.log', isDirectory: () => false, isFile: () => true },
 					] as any;
 				}
-				if (dirPath.includes('/src')) {
+				if (p.includes('/src')) {
 					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
 				}
 				return [];
@@ -1395,7 +1406,10 @@ describe('filesystem handlers', () => {
 			const handler = registeredHandlers.get('fs:fetchImageAsBase64');
 			const result = await handler!({}, 'https://example.com/image.jpg');
 
-			expect(global.fetch).toHaveBeenCalledWith('https://example.com/image.jpg');
+			expect(global.fetch).toHaveBeenCalledWith(
+				'https://example.com/image.jpg',
+				expect.objectContaining({ signal: expect.any(AbortSignal) })
+			);
 			expect(result).toMatch(/^data:image\/jpeg;base64,/);
 		});
 
@@ -1525,7 +1539,10 @@ describe('filesystem handlers', () => {
 				const handler = registeredHandlers.get('fs:fetchImageAsBase64');
 				const result = await handler!({}, 'https://cdn.example.com/image.png');
 
-				expect(global.fetch).toHaveBeenCalledWith('https://cdn.example.com/image.png');
+				expect(global.fetch).toHaveBeenCalledWith(
+					'https://cdn.example.com/image.png',
+					expect.objectContaining({ signal: expect.any(AbortSignal) })
+				);
 				expect(result).toMatch(/^data:image\/png;base64,/);
 			});
 		});

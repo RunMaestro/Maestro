@@ -16,6 +16,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter } from './ui/Modal';
 import { notifyToast } from '../stores/notificationStore';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
+import { safeClipboardWrite } from '../utils/clipboard';
 import { logger } from '../utils/logger';
 import { createDebugPackage } from '../services/debugPackage';
 
@@ -159,12 +160,9 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 	// Copy file path to clipboard
 	const handleCopyPath = useCallback(() => {
 		if (resultPath) {
-			navigator.clipboard
-				.writeText(resultPath)
-				.then(() => {
-					flashCopiedToClipboard(resultPath, 'File Path Copied');
-				})
-				.catch(console.error);
+			void safeClipboardWrite(resultPath).then((copied) => {
+				if (copied) flashCopiedToClipboard(resultPath, 'File Path Copied');
+			});
 		}
 	}, [resultPath]);
 

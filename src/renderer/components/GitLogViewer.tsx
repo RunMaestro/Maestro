@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
-import { GitCommit, GitBranch, Tag } from 'lucide-react';
+import { GitCommit, GitBranch, Tag, List, Network } from 'lucide-react';
+import { FilterInput } from './ui/FilterInput';
 import type { Theme } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
@@ -9,10 +10,54 @@ import { parseGitDiff } from '../utils/gitDiffParser';
 import { getBasename } from '../../shared/formatters';
 import { GitFilePathHeader } from './GitFilePathHeader';
 import { useListNavigation } from '../hooks';
+import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
+import { gitLogSearchTerms, matchesGitLogTerms } from '../utils/gitLogSearch';
+import { highlightMatches } from '../utils/highlightMatches';
+import { isEditingTextTarget } from '../utils/editableTarget';
 import { useSettingsStore } from '../stores/settingsStore';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { ModalSubtitle } from './ui/Modal';
+import { useSessionStore } from '../stores/sessionStore';
+import { gitService, type GitGraphNode } from '../services/git';
+import { GitGraphView } from './GitGraphView';
+import {
+	computeGitGraphGeometry,
+	contractGitGraphNodes,
+	gitGraphColumnEdge,
+	gitGraphTopCommit,
+	jumpGitGraphVertical,
+	stepGitGraphHorizontal,
+	stepGitGraphVertical,
+} from '../utils/gitGraphLayout';
 import 'react-diff-view/style/index.css';
+
+const VIEW_MODE_STORAGE_KEY = 'maestro:gitLogViewer:viewMode';
+const COMMIT_FETCH_LIMIT = 200;
+type ViewMode = 'list' | 'graph';
+
+// Cmd/Ctrl+Shift+[ / ] steps between the List and Graph views. On macOS Shift+[
+// arrives as '{' and Shift+] as '}', so both spellings have to be matched (the
+// same pair the app-level handler checks). This chord cannot collide with the
+// app's tab cycling: `useMainKeyboardHandler` blocks it outright whenever a true
+// modal is open, precisely so a modal can claim it for its own views.
+function viewModeStepFromKey(e: KeyboardEvent): -1 | 1 | null {
+	if (!(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey) return null;
+	if (e.key === '[' || e.key === '{') return -1;
+	if (e.key === ']' || e.key === '}') return 1;
+	return null;
+}
+
+const VIEW_MODES: ViewMode[] = ['list', 'graph'];
+
+// Commits a PageUp/PageDown covers down the current branch line in graph view.
+// Matches the list view's own page size so the two views move at the same rate.
+const GRAPH_PAGE_COMMITS = 10;
+
+// The only keys that still move the commit cursor while the caret sits in the
+// search box. Everything else there is text entry or caret movement.
+const NAV_KEYS_FROM_SEARCH = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown']);
 
 interface GitLogEntry {
 	hash: string;
@@ -31,6 +76,12 @@ interface GitLogViewerProps {
 	onClose: () => void;
 	sshRemoteId?: string;
 	/**
+	 * Agent whose log is shown, named in the header. The cwd pill alone does not
+	 * identify it - worktrees of one repo share a path prefix, and two agents can
+	 * sit on the same directory.
+	 */
+	sessionId?: string;
+	/**
 	 * Open a file as a preview tab. Given an absolute path and the display name.
 	 * When provided, the per-file diff headers become clickable; the viewer
 	 * dismisses itself via `onClose` first, then calls this to open the file.
@@ -43,14 +94,62 @@ export const GitLogViewer = memo(function GitLogViewer({
 	theme,
 	onClose,
 	sshRemoteId,
+	sessionId,
 	onOpenFile,
 }: GitLogViewerProps) {
+	// Name the agent whose repo this is. Subscribe to the name alone, never the
+	// Session: these viewers stay open over a streaming agent and a whole-session
+	// subscription would re-render the diff list on every unrelated token update.
+	const agentName = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.name);
+
 	const [entries, setEntries] = useState<GitLogEntry[]>([]);
 	const [totalCommits, setTotalCommits] = useState<number | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [selectedCommitDiff, setSelectedCommitDiff] = useState<string | null>(null);
 	const [loadingDiff, setLoadingDiff] = useState(false);
+	const [viewMode, setViewMode] = useState<ViewMode>(() => {
+		const stored = safeStorageGet(VIEW_MODE_STORAGE_KEY);
+		return stored === 'graph' ? 'graph' : 'list';
+	});
+	const [graphNodes, setGraphNodes] = useState<GitGraphNode[]>([]);
+	// Initialised to true so the first frame after toggling to graph view shows
+	// the spinner instead of flashing "No commits found" before the effect fires.
+	const [graphLoading, setGraphLoading] = useState(true);
+	const [graphError, setGraphError] = useState<string | null>(null);
+	// Commit clicked from the graph that isn't part of `entries` (e.g. a side-branch
+	// commit only visible via `git log --all`). Drives the right-side detail panel
+	// when the list mode's selected entry would otherwise be out of sync.
+	const [graphSelected, setGraphSelected] = useState<GitGraphNode | null>(null);
+	const [query, setQuery] = useState('');
+
+	// Terms every shown commit has to match, and the two filtered views derived
+	// from them. Both views go through the same predicate on purpose - see
+	// gitLogSearch.
+	const searchTerms = useMemo(() => gitLogSearchTerms(query), [query]);
+	const visibleEntries = useMemo(
+		() =>
+			searchTerms.length === 0
+				? entries
+				: entries.filter((entry) => matchesGitLogTerms(entry, searchTerms)),
+		[entries, searchTerms]
+	);
+	// The graph is CONTRACTED rather than merely thinned: dropping commits
+	// outright would dangle every parent link through them and leave the
+	// survivors as unconnected dots (see contractGitGraphNodes).
+	const visibleGraphNodes = useMemo(
+		() =>
+			searchTerms.length === 0
+				? graphNodes
+				: contractGitGraphNodes(graphNodes, (node) => matchesGitLogTerms(node, searchTerms)),
+		[graphNodes, searchTerms]
+	);
+
+	useEffect(() => {
+		safeStorageSet(VIEW_MODE_STORAGE_KEY, viewMode);
+		// When leaving graph mode, clear graph-only selection so list selection drives the right panel.
+		if (viewMode !== 'graph') setGraphSelected(null);
+	}, [viewMode]);
 
 	const listRef = useRef<HTMLDivElement>(null);
 	const dialogRef = useRef<HTMLDivElement>(null);
@@ -59,13 +158,23 @@ export const GitLogViewer = memo(function GitLogViewer({
 
 	// Keyboard navigation via shared hook
 	const { selectedIndex, setSelectedIndex, handleKeyDown } = useListNavigation({
-		listLength: entries.length,
+		listLength: visibleEntries.length,
 		onSelect: () => {}, // Click-only selection in GitLogViewer
 		enableVimKeys: true,
 		enablePageNavigation: true,
 		pageSize: 10,
 	});
 
+	// A new query means a new list, so the cursor starts at its top rather than
+	// holding an offset that now points at an unrelated commit. The graph-only
+	// selection is dropped when the filter hides it, so the detail pane can never
+	// show a commit that is no longer drawn anywhere.
+	useEffect(() => {
+		setSelectedIndex(0);
+		setGraphSelected((prev) => (prev && !matchesGitLogTerms(prev, searchTerms) ? null : prev));
+	}, [searchTerms, setSelectedIndex]);
+
+	const searchInputRef = useRef<HTMLInputElement>(null);
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 
@@ -84,7 +193,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 			try {
 				// Fetch log entries and total count in parallel
 				const [logResult, countResult] = await Promise.all([
-					window.maestro.git.log(cwd, { limit: 200 }, sshRemoteId),
+					window.maestro.git.log(cwd, { limit: COMMIT_FETCH_LIMIT }, sshRemoteId),
 					window.maestro.git.commitCount(cwd, sshRemoteId),
 				]);
 
@@ -106,6 +215,30 @@ export const GitLogViewer = memo(function GitLogViewer({
 		loadLog();
 	}, [cwd]);
 
+	// Lazy-load graph data the first time the user switches to the Graph view (and on cwd change).
+	useEffect(() => {
+		if (viewMode !== 'graph') return;
+		let cancelled = false;
+		setGraphLoading(true);
+		setGraphError(null);
+		(async () => {
+			try {
+				const nodes = await gitService.getGraph(cwd, { limit: COMMIT_FETCH_LIMIT }, sshRemoteId);
+				if (!cancelled) setGraphNodes(nodes);
+			} catch (err) {
+				if (!cancelled) {
+					setGraphError(err instanceof Error ? err.message : String(err));
+					setGraphNodes([]);
+				}
+			} finally {
+				if (!cancelled) setGraphLoading(false);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [viewMode, cwd, sshRemoteId]);
+
 	// Load diff when selected entry changes
 	const loadCommitDiff = useCallback(
 		async (hash: string) => {
@@ -119,19 +252,81 @@ export const GitLogViewer = memo(function GitLogViewer({
 				setLoadingDiff(false);
 			}
 		},
-		[cwd]
+		[cwd, sshRemoteId]
 	);
 
-	// Auto-load diff for selected commit
-	useEffect(() => {
-		if (entries.length > 0 && entries[selectedIndex]) {
-			loadCommitDiff(entries[selectedIndex].hash);
-		}
-	}, [selectedIndex, entries, loadCommitDiff]);
+	// Where each commit is actually DRAWN, read back from the same @gitgraph
+	// construction the view renders. Navigation is visual, so it has to move by
+	// the layout on screen rather than by an order re-derived beside it.
+	const graphGeometry = useMemo(
+		() => computeGitGraphGeometry(visibleGraphNodes, theme),
+		[visibleGraphNodes, theme]
+	);
 
-	useModalLayer(MODAL_PRIORITIES.GIT_LOG, 'Git Log Viewer', () => onCloseRef.current(), {
-		focusTrap: 'lenient',
-	});
+	// Memoised so GitGraphView's `useMemo` (which lists onCommitClick in its deps)
+	// doesn't rebuild the entire GitgraphCore on every parent render.
+	const handleGraphCommitClick = useCallback(
+		(hash: string) => {
+			const idx = visibleEntries.findIndex((e) => e.hash === hash);
+			if (idx >= 0) {
+				setGraphSelected(null);
+				setSelectedIndex(idx);
+			} else {
+				const node = graphNodes.find((n) => n.hash === hash);
+				if (node) setGraphSelected(node);
+			}
+		},
+		[visibleEntries, graphNodes, setSelectedIndex]
+	);
+
+	// Auto-load diff for selected commit (priority: graph-only selection, else list selection)
+	useEffect(() => {
+		if (graphSelected) {
+			loadCommitDiff(graphSelected.hash);
+			return;
+		}
+		if (visibleEntries.length > 0 && visibleEntries[selectedIndex]) {
+			loadCommitDiff(visibleEntries[selectedIndex].hash);
+		}
+	}, [selectedIndex, visibleEntries, loadCommitDiff, graphSelected]);
+
+	// Effective commit displayed on the right side: graph-clicked commit overrides list selection.
+	const displayedCommit: {
+		hash: string;
+		shortHash: string;
+		subject: string;
+		author: string;
+		date: string;
+	} | null = graphSelected
+		? graphSelected
+		: visibleEntries[selectedIndex]
+			? {
+					hash: visibleEntries[selectedIndex].hash,
+					shortHash: visibleEntries[selectedIndex].shortHash,
+					subject: visibleEntries[selectedIndex].subject,
+					author: visibleEntries[selectedIndex].author,
+					date: visibleEntries[selectedIndex].date,
+				}
+			: null;
+
+	// The layer stack answers Escape at capture on `window`, so `FilterInput`'s
+	// own "Escape clears the query first" never fires inside a modal - the host
+	// has to do it here, or Escape throws the whole viewer away from under a user
+	// who only wanted to reset the filter.
+	const queryRef = useRef(query);
+	queryRef.current = query;
+	useModalLayer(
+		MODAL_PRIORITIES.GIT_LOG,
+		'Git Log Viewer',
+		() => {
+			if (queryRef.current) {
+				setQuery('');
+				return;
+			}
+			onCloseRef.current();
+		},
+		{ focusTrap: 'lenient' }
+	);
 
 	// Scroll selected item into view
 	useEffect(() => {
@@ -144,15 +339,121 @@ export const GitLogViewer = memo(function GitLogViewer({
 		}
 	}, [selectedIndex]);
 
+	// Graph-mode keyboard model, with one axis per question, both answered in
+	// SCREEN terms. Up/Down follow the branch line the selected commit is drawn
+	// on, skipping commits that belong to other columns; Left/Right move to the
+	// branch line drawn immediately beside it, landing at the same height. Moving
+	// vertically by the global commit order instead would drift sideways on its
+	// own, leaving Left/Right with nothing to do.
+	//
+	// Columns are used instead of the list's index because the graph is built
+	// from `git log --all` while the list only holds the current branch, so a
+	// commit selected off a side branch would otherwise leave the arrow keys
+	// doing nothing visible.
+	const handleGraphKeyDown = useCallback(
+		(e: KeyboardEvent): boolean => {
+			if (viewMode !== 'graph' || e.metaKey || e.ctrlKey || e.altKey) return false;
+
+			const selected = displayedCommit?.hash;
+			// Fall back to the newest commit when the selection is not on the graph
+			// (an empty log, or an entry outside the graph's range). Keys that answer
+			// with nothing read as broken, so give them somewhere to start.
+			const anchor =
+				selected && graphGeometry.positionOfCommit.has(selected)
+					? selected
+					: gitGraphTopCommit(graphGeometry);
+
+			let target: string | null = null;
+			switch (e.key) {
+				case 'ArrowRight':
+					target = stepGitGraphHorizontal(graphGeometry, anchor, 'right');
+					break;
+				case 'ArrowLeft':
+					target = stepGitGraphHorizontal(graphGeometry, anchor, 'left');
+					break;
+				case 'ArrowUp':
+				case 'k':
+					target = stepGitGraphVertical(graphGeometry, anchor, 'up');
+					break;
+				case 'ArrowDown':
+				case 'j':
+					target = stepGitGraphVertical(graphGeometry, anchor, 'down');
+					break;
+				// The page and end keys are answered here too, and stay in the column
+				// for the same reason. Left to the list handler they would move an
+				// index the graph is not showing, which reads as the key having died.
+				case 'PageUp':
+					target = jumpGitGraphVertical(graphGeometry, anchor, -GRAPH_PAGE_COMMITS);
+					break;
+				case 'PageDown':
+					target = jumpGitGraphVertical(graphGeometry, anchor, GRAPH_PAGE_COMMITS);
+					break;
+				case 'Home':
+					target = gitGraphColumnEdge(graphGeometry, anchor, 'top');
+					break;
+				case 'End':
+					target = gitGraphColumnEdge(graphGeometry, anchor, 'bottom');
+					break;
+				default:
+					return false;
+			}
+
+			e.preventDefault();
+			// A step off the end of a column (or of the graph) holds the selection
+			// rather than falling through to the list handler, which would move the
+			// cursor somewhere the graph never showed it going.
+			if (target) handleGraphCommitClick(target);
+			return true;
+		},
+		[viewMode, displayedCommit?.hash, graphGeometry, handleGraphCommitClick]
+	);
+
 	// Handle keyboard navigation via global listener
 	// Store handleKeyDown in a ref to avoid stale closure issues
 	// The ref is updated synchronously on every render, before any events can fire
 	const handleKeyDownRef = useRef(handleKeyDown);
 	handleKeyDownRef.current = handleKeyDown;
+	const handleGraphKeyDownRef = useRef(handleGraphKeyDown);
+	handleGraphKeyDownRef.current = handleGraphKeyDown;
 
 	useEffect(() => {
 		// Wrapper function that always calls the current handler from the ref
 		const handler = (e: KeyboardEvent) => {
+			// Cmd/Ctrl+F puts the caret in the search box from anywhere in the
+			// viewer, including from inside the box itself, where it re-selects
+			// what is already typed so the next keystroke replaces the query.
+			if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+				e.preventDefault();
+				searchInputRef.current?.focus();
+				searchInputRef.current?.select();
+				return;
+			}
+
+			const step = viewModeStepFromKey(e);
+			if (step !== null) {
+				e.preventDefault();
+				setViewMode((prev) => {
+					const next = VIEW_MODES.indexOf(prev) + step;
+					return VIEW_MODES[Math.min(Math.max(next, 0), VIEW_MODES.length - 1)];
+				});
+				return;
+			}
+
+			// With the caret in the search box the navigation keys belong to the
+			// TEXT, not the log: j/k are letters, Left/Right and Home/End move the
+			// caret. Only the keys a filter box has no use for keep navigating, so
+			// the user can narrow the list and step into the results without ever
+			// leaving the box.
+			if (isEditingTextTarget(e.target)) {
+				if (!NAV_KEYS_FROM_SEARCH.has(e.key)) return;
+			} else if (e.key === '/') {
+				// Bare `/` is the other way in, for hands already on the log.
+				e.preventDefault();
+				searchInputRef.current?.focus();
+				return;
+			}
+
+			if (handleGraphKeyDownRef.current(e)) return;
 			handleKeyDownRef.current(e);
 		};
 		window.addEventListener('keydown', handler);
@@ -289,6 +590,28 @@ export const GitLogViewer = memo(function GitLogViewer({
 		dialogRef.current?.focus();
 	}, []);
 
+	// Platform-correct spelling of the view-switch chord for the toggle tooltips
+	// and the footer hint (⌘ ⇧ [ on macOS, Ctrl+Shift+[ elsewhere).
+	const viewToggleHint = useMemo(() => formatShortcutKeys(['Meta', 'Shift', '[']), []);
+	const viewToggleHintForward = useMemo(() => formatShortcutKeys(['Meta', 'Shift', ']']), []);
+	const searchFocusHint = useMemo(() => formatShortcutKeys(['Meta', 'f']), []);
+
+	// "12 of 200" against whichever view is on screen, so the count always
+	// describes the commits the user can actually see being narrowed.
+	const filterResultLabel = useMemo(() => {
+		if (searchTerms.length === 0) return undefined;
+		return viewMode === 'graph'
+			? `${visibleGraphNodes.length} of ${graphNodes.length}`
+			: `${visibleEntries.length} of ${entries.length}`;
+	}, [
+		searchTerms,
+		viewMode,
+		visibleGraphNodes.length,
+		graphNodes.length,
+		visibleEntries.length,
+		entries.length,
+	]);
+
 	return (
 		<div
 			className="fixed inset-0 z-[9999] flex items-center justify-center modal-overlay"
@@ -318,44 +641,122 @@ export const GitLogViewer = memo(function GitLogViewer({
 
 				{/* Header */}
 				<div
-					className="flex items-center justify-between px-6 py-4 border-b"
+					className="flex items-center justify-between gap-3 px-6 py-4 border-b"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 				>
-					<div className="flex items-center gap-3">
+					<div className="flex items-center gap-3 min-w-0">
 						<GitCommit className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<span className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
+						<span
+							className="text-lg font-semibold shrink-0"
+							style={{ color: theme.colors.textMain }}
+						>
 							Git Log
 						</span>
+						<ModalSubtitle theme={theme} subtitle={agentName} />
 						<span
-							className="text-xs px-2 py-1 rounded"
+							className="text-xs px-2 py-1 rounded truncate"
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+							title={cwd}
 						>
 							{cwd}
 						</span>
-						<span className="text-xs" style={{ color: theme.colors.textDim }}>
+						<span className="text-xs whitespace-nowrap" style={{ color: theme.colors.textDim }}>
 							{totalCommits !== null && totalCommits > entries.length
 								? `${entries.length} of ${totalCommits} commits`
 								: `${entries.length} commits`}
 						</span>
 					</div>
-					<button
-						onClick={onClose}
-						className="px-3 py-1 rounded text-sm hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-					>
-						Close (Esc)
-					</button>
+					<FilterInput
+						ref={searchInputRef}
+						theme={theme}
+						value={query}
+						onChange={setQuery}
+						width={260}
+						className="shrink-0"
+						placeholder="Search hash, message, author..."
+						ariaLabel="Search commits"
+						title={`Filter the log by hash, message, author, branch or date (${searchFocusHint})`}
+						resultLabel={filterResultLabel}
+					/>
+					<div className="flex items-center gap-2 shrink-0">
+						{/* List | Graph toggle */}
+						<div
+							className="flex items-center rounded overflow-hidden border"
+							style={{ borderColor: theme.colors.border }}
+						>
+							<button
+								onClick={() => setViewMode('list')}
+								className="flex items-center gap-1 px-2.5 py-1 text-xs transition-colors"
+								style={{
+									backgroundColor: viewMode === 'list' ? theme.colors.bgActivity : 'transparent',
+									color: viewMode === 'list' ? theme.colors.textMain : theme.colors.textDim,
+								}}
+								title={`List view (${viewToggleHint})`}
+								aria-pressed={viewMode === 'list'}
+							>
+								<List className="w-3.5 h-3.5" />
+								List
+							</button>
+							<button
+								onClick={() => setViewMode('graph')}
+								className="flex items-center gap-1 px-2.5 py-1 text-xs transition-colors"
+								style={{
+									backgroundColor: viewMode === 'graph' ? theme.colors.bgActivity : 'transparent',
+									color: viewMode === 'graph' ? theme.colors.textMain : theme.colors.textDim,
+								}}
+								title={`Graph view (${viewToggleHintForward})`}
+								aria-pressed={viewMode === 'graph'}
+							>
+								<Network className="w-3.5 h-3.5" />
+								Graph
+							</button>
+						</div>
+						<button
+							onClick={onClose}
+							className="px-3 py-1 rounded text-sm hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textDim }}
+						>
+							Close (Esc)
+						</button>
+					</div>
 				</div>
 
 				{/* Content */}
 				<div className="flex-1 flex overflow-hidden">
-					{/* Left side: Commit list */}
+					{/* Left side: Commit list OR graph (graph gets more room for lanes) */}
 					<div
 						ref={listRef}
-						className="w-2/5 border-r overflow-y-auto"
+						className={`${viewMode === 'graph' ? 'w-3/5' : 'w-2/5'} border-r overflow-y-auto overflow-x-auto`}
 						style={{ borderColor: theme.colors.border }}
 					>
-						{loading ? (
+						{viewMode === 'graph' ? (
+							graphLoading ? (
+								<div className="flex items-center justify-center h-full">
+									<p className="text-sm" style={{ color: theme.colors.textDim }}>
+										Loading graph...
+									</p>
+								</div>
+							) : graphError ? (
+								<div className="flex items-center justify-center h-full p-6">
+									<p className="text-sm text-red-500">{graphError}</p>
+								</div>
+							) : visibleGraphNodes.length === 0 ? (
+								<div className="flex items-center justify-center h-full p-6">
+									<p className="text-sm text-center" style={{ color: theme.colors.textDim }}>
+										{graphNodes.length === 0
+											? 'No commits found'
+											: `No commits match "${query.trim()}"`}
+									</p>
+								</div>
+							) : (
+								<GitGraphView
+									nodes={visibleGraphNodes}
+									theme={theme}
+									selectedHash={displayedCommit?.hash}
+									onCommitClick={handleGraphCommitClick}
+								/>
+							)
+						) : loading ? (
 							<div className="flex items-center justify-center h-full">
 								<p className="text-sm" style={{ color: theme.colors.textDim }}>
 									Loading git log...
@@ -365,15 +766,15 @@ export const GitLogViewer = memo(function GitLogViewer({
 							<div className="flex items-center justify-center h-full p-6">
 								<p className="text-sm text-red-500">{error}</p>
 							</div>
-						) : entries.length === 0 ? (
-							<div className="flex items-center justify-center h-full">
-								<p className="text-sm" style={{ color: theme.colors.textDim }}>
-									No commits found
+						) : visibleEntries.length === 0 ? (
+							<div className="flex items-center justify-center h-full p-6">
+								<p className="text-sm text-center" style={{ color: theme.colors.textDim }}>
+									{entries.length === 0 ? 'No commits found' : `No commits match "${query.trim()}"`}
 								</p>
 							</div>
 						) : (
 							<div className="divide-y" style={{ borderColor: theme.colors.border }}>
-								{entries.map((entry, index) => (
+								{visibleEntries.map((entry, index) => (
 									<div
 										key={entry.hash}
 										ref={(el) => (itemRefs.current[index] = el)}
@@ -428,7 +829,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 											className="text-sm font-medium truncate"
 											style={{ color: theme.colors.textMain }}
 										>
-											{entry.subject}
+											{highlightMatches(entry.subject, searchTerms, theme.colors.accent)}
 										</p>
 
 										{/* Metadata */}
@@ -436,8 +837,12 @@ export const GitLogViewer = memo(function GitLogViewer({
 											className="flex items-center gap-3 mt-1 text-xs"
 											style={{ color: theme.colors.textDim }}
 										>
-											<span className="font-mono">{entry.shortHash}</span>
-											<span>{entry.author}</span>
+											<span className="font-mono">
+												{highlightMatches(entry.shortHash, searchTerms, theme.colors.accent)}
+											</span>
+											<span>
+												{highlightMatches(entry.author, searchTerms, theme.colors.accent)}
+											</span>
 											<span>{formatDate(entry.date)}</span>
 											{/* Addition/deletion stats */}
 											{((entry.additions ?? 0) > 0 || (entry.deletions ?? 0) > 0) && (
@@ -459,7 +864,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 
 					{/* Right side: Commit details & diff */}
 					<div className="flex-1 overflow-y-auto">
-						{entries[selectedIndex] && (
+						{displayedCommit && (
 							<div className="p-6">
 								{/* Commit header */}
 								<div className="mb-6">
@@ -467,7 +872,7 @@ export const GitLogViewer = memo(function GitLogViewer({
 										className="text-lg font-semibold mb-2"
 										style={{ color: theme.colors.textMain }}
 									>
-										{entries[selectedIndex].subject}
+										{displayedCommit.subject}
 									</h3>
 									<div
 										className="flex items-center gap-4 text-sm"
@@ -477,10 +882,10 @@ export const GitLogViewer = memo(function GitLogViewer({
 											className="font-mono px-2 py-1 rounded"
 											style={{ backgroundColor: theme.colors.bgActivity }}
 										>
-											{entries[selectedIndex].hash}
+											{displayedCommit.hash}
 										</span>
-										<span>{entries[selectedIndex].author}</span>
-										<span>{new Date(entries[selectedIndex].date).toLocaleString('en-US')}</span>
+										<span>{displayedCommit.author}</span>
+										<span>{new Date(displayedCommit.date).toLocaleString('en-US')}</span>
 									</div>
 								</div>
 
@@ -583,6 +988,22 @@ export const GitLogViewer = memo(function GitLogViewer({
 								className="px-1 py-0.5 rounded"
 								style={{ backgroundColor: theme.colors.bgActivity }}
 							>
+								{searchFocusHint}
+							</kbd>{' '}
+							or
+							<kbd
+								className="px-1 py-0.5 rounded ml-1"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								/
+							</kbd>{' '}
+							search
+						</span>
+						<span>
+							<kbd
+								className="px-1 py-0.5 rounded"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
 								↑↓
 							</kbd>{' '}
 							or
@@ -594,6 +1015,33 @@ export const GitLogViewer = memo(function GitLogViewer({
 							</kbd>{' '}
 							navigate
 						</span>
+						{viewMode === 'graph' && (
+							<span>
+								<kbd
+									className="px-1 py-0.5 rounded"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									←→
+								</kbd>{' '}
+								switch branch
+							</span>
+						)}
+						<span>
+							<kbd
+								className="px-1 py-0.5 rounded"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								{viewToggleHint}
+							</kbd>{' '}
+							/{' '}
+							<kbd
+								className="px-1 py-0.5 rounded"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								]
+							</kbd>{' '}
+							switch view
+						</span>
 						<span>
 							<kbd
 								className="px-1 py-0.5 rounded"
@@ -604,9 +1052,10 @@ export const GitLogViewer = memo(function GitLogViewer({
 							close
 						</span>
 					</div>
-					{entries.length > 0 && (
+					{visibleEntries.length > 0 && (
 						<span style={{ color: theme.colors.textDim }}>
-							Commit {selectedIndex + 1} of {entries.length}
+							Commit {selectedIndex + 1} of {visibleEntries.length}
+							{searchTerms.length > 0 ? ` (filtered from ${entries.length})` : ''}
 						</span>
 					)}
 				</div>

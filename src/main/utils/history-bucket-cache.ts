@@ -14,6 +14,9 @@
  * expected to recompute and re-`set()`. The fingerprint is the caller's to
  * compose, and it has to cover EVERY source the aggregate reads - the history
  * graph mixes in a Cue-database stamp because its CUE series no longer comes
+ * from the file (see `getCueHistoryFingerprint()`). The fingerprint is the caller's to
+ * compose, and it has to cover EVERY source the aggregate reads - the history
+ * graph mixes in a Cue-database stamp because its CUE series no longer comes
  * from the file (see `getCueHistoryFingerprint()`).
  */
 
@@ -24,22 +27,29 @@ import * as crypto from 'crypto';
 import { app } from 'electron';
 import { logger } from './logger';
 import { captureException } from './sentry';
+import type { GraphBucket } from '../../shared/history';
 
 const LOG_CONTEXT = '[HistoryBucketCache]';
 
 /** Bump to invalidate every existing cache entry on disk. */
-export const HISTORY_BUCKET_CACHE_VERSION = 3;
+// v3: added the `agent` series / `agentCount` (cross-agent consults split out of
+// `auto`). Cached v2 buckets tallied consults as AUTO, so they must be discarded
+// rather than merged - the read path drops any entry whose version differs.
+// v4: the CUE series now comes from cue_events rather than the history file.
+// Both branches had independently shipped a v3 for DIFFERENT reasons (the agent
+// series here, the cue_events source on main), so a cache written by either one
+// is wrong for the other and the shared number could not tell them apart. This
+// bump is what discards both.
+export const HISTORY_BUCKET_CACHE_VERSION = 4;
 
 /**
  * Single bucket of the activity graph - counts of each entry type within the
- * bucket's time slice. Mirrors `GraphBucket` in director-notes / ActivityGraph
- * so all three layers (cache, IPC, renderer) share the same shape.
+ * bucket's time slice. Alias for the canonical `GraphBucket` (shared/history.ts)
+ * kept under this name because callers in this file rely on `agent` being
+ * guaranteed present: pre-agent-series cache entries are discarded by the
+ * version check above before ever reaching a `CachedGraphBucket`.
  */
-export interface CachedGraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-}
+export type CachedGraphBucket = GraphBucket;
 
 /**
  * What the cache stores per (cacheKey, sourceFingerprint) pair.
@@ -62,6 +72,7 @@ export interface CachedBucketData {
 	autoCount: number;
 	userCount: number;
 	cueCount: number;
+	agentCount: number;
 	/**
 	 * Per-host entry counts within the same window the buckets cover. Key
 	 * is the entry's `hostname`, or the synthetic `"__local__"` for entries

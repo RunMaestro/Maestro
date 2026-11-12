@@ -298,7 +298,7 @@ describe('Chart Accessibility - SummaryCards', () => {
 	it('each metric card has role="group"', () => {
 		render(<SummaryCards data={mockStatsData} theme={mockTheme} />);
 		const metricCards = screen.getAllByTestId('metric-card');
-		expect(metricCards).toHaveLength(12); // 12 metric cards
+		expect(metricCards).toHaveLength(14); // 14 metric cards
 		metricCards.forEach((card) => {
 			expect(card).toHaveAttribute('role', 'group');
 		});
@@ -316,6 +316,8 @@ describe('Chart Accessibility - SummaryCards', () => {
 			/Open Tabs/i,
 			/Total Queries/i,
 			/Queries\/Session/i,
+			/Tokens/i,
+			/Cost/i,
 			/Total Time/i,
 			/Avg Duration/i,
 			/Peak Hour/i,

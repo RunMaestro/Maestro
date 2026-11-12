@@ -7,7 +7,7 @@ import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { formatError, formatSuccess } from '../output/formatter';
 import { AGENT_IDS } from '../../shared/agentIds';
-import { parseCliBool } from '../utils/parse';
+import { parseCliBool, resolveAgentCwdArg } from '../utils/parse';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 
 const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
@@ -45,7 +45,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 		process.exit(1);
 	}
 
-	const cwd = path.resolve(options.cwd);
+	const cwd = resolveAgentCwdArg(options.cwd);
 
 	// Parse --env KEY=VALUE pairs into a Record
 	let customEnvVars: Record<string, string> | undefined;
@@ -145,7 +145,15 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	if (customEnvVars) payload.customEnvVars = customEnvVars;
 	if (options.model) payload.customModel = options.model;
 	if (options.effort) payload.customEffort = options.effort;
-	if (customContextWindow !== undefined) payload.customContextWindow = customContextWindow;
+	if (customContextWindow !== undefined) {
+		payload.customContextWindow = customContextWindow;
+		// Typing `--context-window` is unambiguously a deliberate choice, exactly as
+		// it is on `update-agent` (finding AD1, review of PR #1362). Without this the
+		// same flag on the same CLI produced two different outcomes: a scripted
+		// create with a lowered budget was silently overridden by the provider's
+		// report and had to be re-applied with `update-agent` to stick.
+		payload.contextWindowSource = 'user-edited';
+	}
 	if (options.providerPath) payload.customProviderPath = options.providerPath;
 	if (sessionSshRemoteConfig) payload.sessionSshRemoteConfig = sessionSshRemoteConfig;
 	if (options.autoRunFolder) payload.autoRunFolderPath = path.resolve(options.autoRunFolder);

@@ -16,6 +16,7 @@ import type { GroupLike } from '../../../../shared/statsGroupRollup';
 import { THEMES } from '../../../../shared/themes';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import { GROUP_TILE_SCALE_KEY } from '../../../../renderer/components/UsageDashboard/tileScale';
+import { emptyPromptCadence } from '../../../../shared/promptCadence';
 
 // The grid reads the layer stack to decide whether the bare zoom keys are its
 // to answer. Stub it as the top layer so the component renders standalone.
@@ -86,6 +87,7 @@ function makeData(overrides: Partial<StatsAggregation> = {}): StatsAggregation {
 		parentQueries: 0,
 		byWorktreeStatus: { worktree: { count: 0, duration: 0 }, parent: { count: 0, duration: 0 } },
 		imageAnnotations: 0,
+		prompts: emptyPromptCadence(),
 		...overrides,
 	} as StatsAggregation;
 }
@@ -325,7 +327,7 @@ describe('GroupOverviewCards', () => {
 		renderCards();
 
 		expect(screen.getByTestId('group-overview-cards')).toHaveStyle({
-			gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))',
+			gridTemplateColumns: 'repeat(auto-fill, minmax(min(440px, 100%), 1fr))',
 		});
 	});
 
@@ -337,12 +339,12 @@ describe('GroupOverviewCards', () => {
 			const { unmount } = renderCards();
 
 			fireEvent.keyDown(window, { key: '+' });
-			expect(columns()).toBe('repeat(auto-fill, minmax(484px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(484px, 100%), 1fr))');
 			expect(window.localStorage.getItem(GROUP_TILE_SCALE_KEY)).toBe('1.1');
 
 			unmount();
 			renderCards();
-			expect(columns()).toBe('repeat(auto-fill, minmax(484px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(484px, 100%), 1fr))');
 		});
 
 		it('keeps its own size, independent of the agent grid', () => {
@@ -361,7 +363,7 @@ describe('GroupOverviewCards', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: 'Increase tile size' }));
 
-			expect(columns()).toBe('repeat(auto-fill, minmax(484px, 1fr))');
+			expect(columns()).toBe('repeat(auto-fill, minmax(min(484px, 100%), 1fr))');
 			expect(screen.queryByRole('button', { name: 'Reset tile size' })).toBeNull();
 		});
 	});

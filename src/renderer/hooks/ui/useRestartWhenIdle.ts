@@ -13,11 +13,12 @@ import { useRestartPendingStore } from '../../stores/restartPendingStore';
  * fires `updates.install()` so the app restarts and applies the downloaded
  * update without further user input.
  *
- * Activity matches `useIdleNotification`, reading the SAME selectors so the two
- * cannot drift on what counts as idle: any session busy, any session holding
- * runnable queued work, OR any Auto Run batch running. Cue tasks are
- * intentionally excluded. Restarting the app out from under a full queue is the
- * same mistake as announcing idle over one, only louder.
+ * Activity matches `useIdleNotification` by reading the SAME selectors: any
+ * session busy, any session with runnable queued work, or any Auto Run batch
+ * running. Cue tasks are intentionally excluded. Keep the two definitions
+ * sharing `selectHasAnyRunnableQueuedWork` rather than restating the condition -
+ * this hook restarts the app, so a definition that drifts from the notification's
+ * would relaunch Maestro in the gap between two queued turns.
  *
  * If the flag is set while the app is *already* idle (user clicked the
  * deferred-restart button without anything running), we fire on the next

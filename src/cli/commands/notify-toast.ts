@@ -73,9 +73,8 @@ export async function notifyToast(
 			);
 			process.exit(1);
 		}
-		// Renderer's notificationStore treats `toast.duration` as already-in-ms,
-		// so convert from seconds before sending across the IPC bridge.
-		duration = Math.round(seconds * 1000);
+		// The WebSocket contract uses seconds; main normalizes to renderer milliseconds.
+		duration = seconds;
 	}
 
 	let sessionId: string | undefined;

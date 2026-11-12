@@ -39,6 +39,37 @@ function toHex(value: number): string {
 }
 
 /**
+ * Normalize an OPAQUE CSS color to `#rrggbb` so it can be fed to the math in
+ * this file. Accepts `#rgb`, `#rrggbb`, `#rrggbbff`, and `rgb()`/`rgba()` in
+ * both comma and space syntax - which covers everything `getComputedStyle`
+ * reports for `color` and `fill`. Returns null for anything translucent
+ * (its effective color depends on what is behind it), named colors, `hsl()`,
+ * `none`, and `url(...)` paint servers.
+ */
+export function cssColorToHex(value: string | null | undefined): string | null {
+	if (!value) return null;
+	const color = value.trim().toLowerCase();
+
+	const short = /^#([a-f\d])([a-f\d])([a-f\d])$/.exec(color);
+	if (short) return `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`;
+
+	const long = /^#([a-f\d]{6})(ff)?$/.exec(color);
+	if (long) return `#${long[1]}`;
+
+	const fn =
+		/^rgba?\(\s*([\d.]+)\s*[,\s]\s*([\d.]+)\s*[,\s]\s*([\d.]+)\s*(?:[,/]\s*([\d.]+)(%?)\s*)?\)$/.exec(
+			color
+		);
+	if (!fn) return null;
+	if (fn[4] !== undefined) {
+		const alpha = Number(fn[4]) / (fn[5] ? 100 : 1);
+		if (!(alpha >= 1)) return null;
+	}
+	const channel = (raw: string) => Math.min(255, Math.max(0, Math.round(Number(raw))));
+	return `#${toHex(channel(fn[1]))}${toHex(channel(fn[2]))}${toHex(channel(fn[3]))}`;
+}
+
+/**
  * Shift a color toward white (positive percent) or black (negative percent).
  * The shift is a flat offset on each channel, so hue is broadly preserved.
  */

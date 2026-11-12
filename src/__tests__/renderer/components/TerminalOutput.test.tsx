@@ -13,12 +13,17 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TerminalOutput } from '../../../renderer/components/TerminalOutput';
+import {
+	TerminalOutput,
+	collapseAiResponseLogs,
+} from '../../../renderer/components/TerminalOutput';
+import { computeTurnDurations } from '../../../renderer/components/TerminalOutput/utils/turnDurations';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
-import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
 import { TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT } from '../../../renderer/services/transcriptScroll';
+import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 
 // Mock dependencies
 vi.mock('react-syntax-highlighter', () => ({
@@ -133,6 +138,7 @@ const createDefaultSession = (overrides: Partial<Session> = {}): Session => ({
 			agentSessionId: 'claude-123',
 			logs: [],
 			isUnread: false,
+			showThinking: 'on',
 		},
 	],
 	activeTabId: 'tab-1',
@@ -178,6 +184,7 @@ describe('TerminalOutput', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
+		useSettingsStore.setState({ showToolCalls: true });
 		// A jump left behind by one test would fire inside the next one.
 		useUIStore.setState({ pendingLogJump: null });
 	});
@@ -215,7 +222,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -229,7 +238,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'User input here', source: 'user' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -249,7 +260,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -265,7 +278,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -279,7 +294,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'Regular message', source: 'user' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -297,7 +314,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: errorText, source: 'error' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -325,7 +344,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -345,7 +366,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -584,6 +607,69 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByText('1m')).not.toBeInTheDocument();
 		});
 
+		it.each([
+			{
+				name: 'before the answer',
+				entries: [
+					['warning', 'stderr', 1],
+					['answer', 'stdout', 10],
+				],
+				replyId: 'answer',
+				elapsedMinutes: 10,
+			},
+			{
+				name: 'the only output',
+				entries: [['warning', 'stderr', 1]],
+				replyId: null,
+				elapsedMinutes: 1,
+			},
+			{
+				name: 'between answer fragments',
+				entries: [
+					['opening', 'stdout', 1],
+					['warning', 'stderr', 5],
+					['answer', 'stdout', 10],
+					['answer-part', 'stdout', 12],
+				],
+				replyId: 'answer',
+				elapsedMinutes: 12,
+			},
+			{
+				name: 'after the answer',
+				entries: [
+					['answer', 'stdout', 5],
+					['answer-part', 'stdout', 7],
+					['warning', 'stderr', 10],
+				],
+				replyId: 'answer',
+				elapsedMinutes: 10,
+			},
+		] as const)(
+			'keeps the duration badge off stderr when a warning is $name',
+			({ entries, replyId, elapsedMinutes }) => {
+				const sentAt = Date.now() - 30 * MINUTE;
+				const logs = [
+					createLogEntry({ id: 'user', text: 'Go', source: 'user', timestamp: sentAt }),
+					...entries.map(([id, source, minutes]) =>
+						createLogEntry({ id, source, text: id, timestamp: sentAt + minutes * MINUTE })
+					),
+				];
+				const durations = computeTurnDurations(logs);
+				const renderedAnswerIds = collapseAiResponseLogs(logs)
+					.filter((log) => log.source === 'stdout')
+					.map((log) => log.id);
+				expect([...durations]).toEqual(replyId ? [[replyId, elapsedMinutes * MINUTE]] : []);
+				expect([...durations.keys()]).toEqual(renderedAnswerIds.slice(-1));
+
+				const { container } = renderTurn(logs);
+				const badges = Array.from(container.querySelectorAll('[title^="Agent took "]'));
+				expect(
+					badges.map((badge) => badge.closest('[data-log-id]')?.getAttribute('data-log-id'))
+				).toEqual(replyId ? [replyId] : []);
+				if (replyId) expect(badges[0]).toHaveTextContent(`${elapsedMinutes}m`);
+			}
+		);
+
 		it('reads as instant when the agent answered inside a minute', () => {
 			const sentAt = Date.now() - 5 * MINUTE;
 			renderTurn([
@@ -602,6 +688,46 @@ describe('TerminalOutput', () => {
 			]);
 
 			expect(screen.queryByText('<1m')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('agent delegation pills', () => {
+		const renderDelegation = (timestamp: number) => {
+			const logs = [
+				createLogEntry({
+					text: 'Asked Worker: check the build',
+					source: 'system',
+					timestamp,
+					delegation: {
+						kind: 'ask',
+						toSessionId: 'worker',
+						toAgentName: 'Worker',
+						toToolType: 'claude-code',
+						subject: 'check the build',
+					},
+				}),
+			];
+			const tabs = [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }];
+			const session = createDefaultSession({ tabs, aiTabs: tabs, activeTabId: 'tab-1' } as never);
+			return render(<TerminalOutput {...createDefaultProps({ session })} />);
+		};
+
+		it('shows when a hand-off happened today in the timestamp gutter', () => {
+			const at = new Date();
+			at.setHours(9, 5, 0, 0);
+			renderDelegation(at.getTime());
+
+			const gutter = screen.getByTestId('agent-delegation-timestamp');
+			expect(gutter).toHaveTextContent(
+				at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+			);
+			expect(screen.getByTestId('agent-delegation-card')).toBeInTheDocument();
+		});
+
+		it('adds the date for a hand-off from another day', () => {
+			renderDelegation(new Date(2024, 0, 15, 14, 30).getTime());
+
+			expect(screen.getByTestId('agent-delegation-timestamp')).toHaveTextContent('2024-01-15');
 		});
 	});
 
@@ -824,7 +950,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1089,7 +1217,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'Copy this text', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1115,6 +1245,65 @@ describe('TerminalOutput', () => {
 				expect(active?.detail).toBe('Copy this text');
 				expect(active?.color).toBe('theme');
 			});
+		});
+	});
+
+	describe('quote selection into the composer (#1663)', () => {
+		const renderWithReply = (text: string) => {
+			const logs: LogEntry[] = [createLogEntry({ text, source: 'stdout' })];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+			return render(<TerminalOutput {...createDefaultProps({ session })} />);
+		};
+
+		const selectContents = (el: Element) => {
+			const range = document.createRange();
+			range.selectNodeContents(el);
+			const selection = window.getSelection()!;
+			selection.removeAllRanges();
+			selection.addRange(range);
+		};
+
+		beforeEach(() => {
+			useComposerInputStore.getState().loadAiDraft('tab-1', '', 'off');
+		});
+
+		afterEach(() => {
+			window.getSelection()?.removeAllRanges();
+		});
+
+		it('offers Quote in Message on a right-click over selected reply text and appends a quote', () => {
+			renderWithReply('Passage to quote');
+			const passage = screen.getByText('Passage to quote');
+			selectContents(passage);
+
+			fireEvent.contextMenu(passage, { clientX: 10, clientY: 10 });
+			fireEvent.click(screen.getByText('Quote in Message'));
+
+			expect(useComposerInputStore.getState().aiValue).toBe('> Passage to quote\n\n');
+			expect(screen.queryByText('Quote in Message')).not.toBeInTheDocument();
+		});
+
+		it('keeps text already in the composer and leaves command mode', () => {
+			useComposerInputStore.getState().loadAiDraft('tab-1', 'first comment', 'shell');
+			renderWithReply('Second passage');
+			const passage = screen.getByText('Second passage');
+			selectContents(passage);
+
+			fireEvent.contextMenu(passage);
+			fireEvent.click(screen.getByText('Quote in Message'));
+
+			const state = useComposerInputStore.getState();
+			expect(state.aiValue).toBe('first comment\n\n> Second passage\n\n');
+			expect(state.aiCommandMode).toBe('off');
+		});
+
+		it('shows no menu when nothing is selected', () => {
+			renderWithReply('Unselected passage');
+			fireEvent.contextMenu(screen.getByText('Unselected passage'));
+			expect(screen.queryByText('Quote in Message')).not.toBeInTheDocument();
 		});
 	});
 
@@ -1570,7 +1759,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1589,7 +1780,14 @@ describe('TerminalOutput', () => {
 			const newLogs = [...logs, createLogEntry({ text: 'New message', source: 'stdout' })];
 			const newSession = {
 				...session,
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: newLogs,
+						isUnread: false,
+					},
+				],
 			};
 
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
@@ -1607,7 +1805,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'User message', source: 'user' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1625,7 +1825,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'User message', source: 'user' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1651,7 +1853,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1681,7 +1885,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'User message', source: 'user' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1703,7 +1909,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1735,7 +1943,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'AI response', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1754,7 +1964,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'Error output', source: 'stderr' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1778,7 +1990,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1798,7 +2012,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'User message', source: 'user' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1828,7 +2044,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1861,7 +2079,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1880,7 +2100,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1906,7 +2128,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1925,7 +2149,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1952,7 +2178,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -1994,7 +2222,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2015,7 +2245,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2038,7 +2270,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2058,7 +2292,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2079,7 +2315,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: codeBlockText, source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2101,7 +2339,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2122,7 +2362,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2145,7 +2387,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2166,7 +2410,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2187,7 +2433,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2208,7 +2456,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2231,7 +2481,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2252,7 +2504,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2275,7 +2529,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2296,7 +2552,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2318,7 +2576,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2358,7 +2618,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2394,7 +2656,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2430,7 +2694,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2469,7 +2735,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2496,7 +2764,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2505,6 +2775,220 @@ describe('TerminalOutput', () => {
 
 			expect(screen.getByText('Bash')).toBeInTheDocument();
 			expect(screen.getByText('npm run test')).toBeInTheDocument();
+		});
+
+		it('hides tool logs at render when showToolCalls is off', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Bash',
+					source: 'tool',
+					metadata: { toolState: { status: 'running', input: { command: 'npm run test' } } },
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			useSettingsStore.setState({ showToolCalls: false });
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			// Tool events stay recorded in state; the tab hid them, so the badge must
+			// not render. Visibility is a pure render concern (no log mutation).
+			expect(screen.queryByText('Bash')).not.toBeInTheDocument();
+			expect(screen.queryByText('npm run test')).not.toBeInTheDocument();
+		});
+
+		it('shows tool logs when the tab has Thinking off but showToolCalls is on', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Bash',
+					source: 'tool',
+					metadata: { toolState: { status: 'running', input: { command: 'npm run test' } } },
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'off' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			// The two settings are independent: showToolCalls alone decides whether
+			// tool cells are drawn, so Thinking off must not suppress them.
+			useSettingsStore.setState({ showToolCalls: true });
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('Bash')).toBeInTheDocument();
+			expect(screen.getByText('npm run test')).toBeInTheDocument();
+		});
+
+		it('hides tool logs when showToolCalls is off even with Thinking sticky', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Bash',
+					source: 'tool',
+					metadata: { toolState: { status: 'running', input: { command: 'npm run test' } } },
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs,
+						isUnread: false,
+						showThinking: 'sticky',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			// The other direction of the same independence: a tab that keeps its
+			// reasoning chain still honours a global "no tool cells" preference.
+			useSettingsStore.setState({ showToolCalls: false });
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.queryByText('Bash')).not.toBeInTheDocument();
+			expect(screen.queryByText('npm run test')).not.toBeInTheDocument();
+		});
+
+		it('keeps response segments separate when a hidden tool call sat between them', () => {
+			// collapseAiResponseLogs treats a tool entry as a boundary. If tools were
+			// filtered BEFORE collapse, the two replies would merge into one bubble
+			// ("First replySecond reply"). Collapsing first preserves the boundary.
+			const logs: LogEntry[] = [
+				createLogEntry({ text: 'First reply', source: 'stdout' }),
+				createLogEntry({
+					text: 'Bash',
+					source: 'tool',
+					metadata: { toolState: { status: 'completed' } },
+				}),
+				createLogEntry({ text: 'Second reply', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			useSettingsStore.setState({ showToolCalls: false });
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			// The tool badge is hidden, but the two replies stay separate.
+			expect(screen.getByText('First reply')).toBeInTheDocument();
+			expect(screen.getByText('Second reply')).toBeInTheDocument();
+			expect(screen.queryByText('Bash')).not.toBeInTheDocument();
+		});
+
+		it('collapses subagent tool calls behind a count under the Task badge', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'tool-task_1',
+					text: 'Task',
+					source: 'tool',
+					metadata: { toolState: { status: 'running', input: { description: 'explore parsers' } } },
+				}),
+				createLogEntry({
+					id: 'tool-child_a',
+					text: 'Grep',
+					source: 'tool',
+					metadata: {
+						toolState: { status: 'completed', input: { pattern: 'parseJsonLine' } },
+						parentToolUseId: 'task_1',
+					},
+				}),
+				createLogEntry({
+					id: 'tool-child_b',
+					text: 'Read',
+					source: 'tool',
+					metadata: {
+						toolState: { status: 'completed', input: { file_path: '/tmp/a.ts' } },
+						parentToolUseId: 'task_1',
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			// Parent renders; children are hidden behind the count until expanded.
+			expect(screen.getByText('Task')).toBeInTheDocument();
+			expect(screen.getByText('2 tool calls')).toBeInTheDocument();
+			expect(screen.queryByText('Grep')).not.toBeInTheDocument();
+			expect(screen.queryByText('Read')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('2 tool calls'));
+
+			expect(screen.getByText('Grep')).toBeInTheDocument();
+			expect(screen.getByText('Read')).toBeInTheDocument();
+		});
+
+		it('singularizes the subagent tool call count', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'tool-task_1',
+					text: 'Task',
+					source: 'tool',
+					metadata: { toolState: { status: 'running' } },
+				}),
+				createLogEntry({
+					id: 'tool-child_a',
+					text: 'Grep',
+					source: 'tool',
+					metadata: { toolState: { status: 'running' }, parentToolUseId: 'task_1' },
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+			expect(screen.getByText('1 tool call')).toBeInTheDocument();
+		});
+
+		it('renders an orphaned subagent tool entry flat', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'tool-child_a',
+					text: 'Grep',
+					source: 'tool',
+					metadata: {
+						toolState: { status: 'completed', input: { pattern: 'orphan' } },
+						parentToolUseId: 'trimmed_away',
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('Grep')).toBeInTheDocument();
+			expect(screen.getByText('orphan')).toBeInTheDocument();
+			expect(screen.queryByText(/tool calls?$/)).not.toBeInTheDocument();
 		});
 
 		it('renders Bash tool with description and full multi-line command', () => {
@@ -2526,7 +3010,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2556,7 +3042,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2590,7 +3078,15 @@ describe('TerminalOutput', () => {
 				];
 
 				const session = createDefaultSession({
-					tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+					tabs: [
+						{
+							id: 'tab-1',
+							agentSessionId: 'claude-123',
+							logs,
+							isUnread: false,
+							showThinking: 'on',
+						},
+					],
 					activeTabId: 'tab-1',
 				});
 
@@ -2620,7 +3116,15 @@ describe('TerminalOutput', () => {
 				];
 
 				const session = createDefaultSession({
-					tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+					tabs: [
+						{
+							id: 'tab-1',
+							agentSessionId: 'claude-123',
+							logs,
+							isUnread: false,
+							showThinking: 'on',
+						},
+					],
 					activeTabId: 'tab-1',
 				});
 
@@ -2646,7 +3150,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2672,7 +3178,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2699,7 +3207,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2721,7 +3231,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2744,7 +3256,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2774,7 +3288,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2806,9 +3322,15 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// Header pill still renders, body goes through the markdown stack
-			// (react-markdown is mocked to a div with this testid).
+			// Collapsed by default: only the first line shows, as plain text.
 			expect(screen.getByText('/archive-playbooks:')).toBeInTheDocument();
+			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
+			expect(screen.getByText(/## Step 1/)).toBeInTheDocument();
+			expect(screen.queryByText(/what moved/)).not.toBeInTheDocument();
+
+			// Clicking the header expands the body through the markdown stack
+			// (react-markdown is mocked to a div with this testid).
+			fireEvent.click(screen.getByText('/archive-playbooks:'));
 			expect(screen.getByTestId('react-markdown')).toHaveTextContent('Step 1');
 		});
 
@@ -2826,12 +3348,15 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
 			const props = createDefaultProps({ session, markdownEditMode: true });
 			render(<TerminalOutput {...props} />);
+			fireEvent.click(screen.getByText('/pr-review:'));
 
 			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
 
@@ -2854,7 +3379,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2874,7 +3401,14 @@ describe('TerminalOutput', () => {
 			];
 			const newSession = {
 				...session,
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: newLogs,
+						isUnread: false,
+					},
+				],
 			};
 
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
@@ -2895,7 +3429,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2926,7 +3462,14 @@ describe('TerminalOutput', () => {
 			];
 			const newSession = {
 				...session,
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: newLogs,
+						isUnread: false,
+					},
+				],
 			};
 
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
@@ -2943,7 +3486,9 @@ describe('TerminalOutput', () => {
 			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -2963,13 +3508,23 @@ describe('TerminalOutput', () => {
 			];
 			const newSession = {
 				...session,
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: newLogs,
+						isUnread: false,
+					},
+				],
 			};
 
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 
 			await act(async () => {
-				vi.advanceTimersByTime(50);
+				// Follow-scroll is armed by a MutationObserver microtask that schedules a
+				// rAF; the async variant drains microtasks between timer steps so the
+				// scroll deterministically fires on slow CI runners.
+				await vi.advanceTimersByTimeAsync(50);
 			});
 
 			expect(scrollToSpy).toHaveBeenCalled();
@@ -3005,11 +3560,177 @@ describe('TerminalOutput', () => {
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 
 			await act(async () => {
-				vi.advanceTimersByTime(50);
+				// Follow-scroll is armed by a MutationObserver microtask that schedules a
+				// rAF; the async variant drains microtasks between timer steps so the
+				// scroll deterministically fires on slow CI runners.
+				await vi.advanceTimersByTimeAsync(50);
 			});
 
 			// Terminal mode always auto-scrolls
 			expect(scrollToSpy).toHaveBeenCalled();
+		});
+
+		it('keeps sticking to the bottom after clicking the pin button while scrolled up', async () => {
+			// Regression (#1140 follow-up): clicking the scroll-to-bottom / pin
+			// button used to scroll once but not re-arm the observer's at-bottom
+			// gate, so streaming thinking output stopped following. web-desktop
+			// surfaced it most visibly, but the bug was shared with desktop.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'Response', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				// TerminalOutput's activeTab memo keys off the real `aiTabs` field (this
+				// suite's `tabs` fixture only feeds the mocked getActiveTab), so a rerender
+				// that only changes `tabs` never busts the memo. Give it a real reference to
+				// depend on; content is irrelevant since getActiveTab still reads `tabs`.
+				aiTabs: [] as any,
+				activeTabId: 'tab-1',
+			});
+
+			const { container, rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			// jsdom never actually scrolls. Mirror the requested top into scrollTop
+			// (clamped to the max, like a real browser) AND dispatch the native
+			// `scroll` event that scrollTo fires, so the handleScrollInner guard
+			// path is genuinely exercised rather than bypassed.
+			const scrollToSpy = vi.fn((arg: number | ScrollToOptions) => {
+				const top = typeof arg === 'object' && arg ? (arg.top ?? 0) : (arg ?? 0);
+				const max = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+				Object.defineProperty(scrollContainer, 'scrollTop', {
+					value: Math.min(top, max),
+					configurable: true,
+				});
+				fireEvent.scroll(scrollContainer);
+			});
+			scrollContainer.scrollTo = scrollToSpy as unknown as HTMLElement['scrollTo'];
+
+			// User scrolls up: 1000 tall, viewport 400, parked at the top.
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			// The pin button appears once we're away from the bottom.
+			const pinButton = screen.getByTitle(/pin/i);
+			await act(async () => {
+				fireEvent.click(pinButton);
+				vi.advanceTimersByTime(50);
+			});
+			// The click performs the initial jump to the current bottom.
+			expect(scrollToSpy).toHaveBeenCalled();
+
+			scrollToSpy.mockClear();
+
+			// New streamed content arrives. Because the click re-armed the
+			// at-bottom gate, the observer must follow it (call scrollTo again).
+			const newLogs = [
+				...logs,
+				createLogEntry({ id: 'resp-2', text: 'More streamed text', source: 'stdout' }),
+			];
+			const newSession = {
+				...session,
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: newLogs,
+						isUnread: false,
+					},
+				],
+				// New reference so the activeTab memo (keyed on aiTabs) actually recomputes.
+				aiTabs: [{}] as any,
+			};
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
+			await act(async () => {
+				// Drain the MutationObserver microtask (it schedules the follow rAF) and
+				// advance that rAF in one deterministic step. The async variant flushes
+				// microtasks between timer steps, so a slow CI runner cannot advance
+				// timers before the observer arms the scroll (Windows shard flake).
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(scrollToSpy).toHaveBeenCalled();
+		});
+
+		it('pauses auto-scroll when the user scrolls up after pinning, within the guard window', async () => {
+			// Greptile P1: after the pin button arms the ~100ms programmatic-scroll
+			// guard, a real user scroll-up that lands inside that window must NOT be
+			// mistaken for our own bottom-jump. The guard is anchored to the
+			// recorded bottom target, so a scroll-up (scrollTop below the target)
+			// still leaves the bottom - proven by onAtBottomChange(false) firing.
+			// A position-blind guard would swallow it and keep auto-scroll pinned.
+			const onAtBottomChange = vi.fn();
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'Response', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(
+				<TerminalOutput {...createDefaultProps({ session, onAtBottomChange })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 600, configurable: true });
+
+			// scrollTo clamps to the max and dispatches the native scroll event a
+			// real browser fires, so the handleScrollInner guard path runs.
+			const scrollToSpy = vi.fn((arg: number | ScrollToOptions) => {
+				const top = typeof arg === 'object' && arg ? (arg.top ?? 0) : (arg ?? 0);
+				const max = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+				Object.defineProperty(scrollContainer, 'scrollTop', {
+					value: Math.min(top, max),
+					configurable: true,
+				});
+				fireEvent.scroll(scrollContainer);
+			});
+			scrollContainer.scrollTo = scrollToSpy as unknown as HTMLElement['scrollTo'];
+
+			// User scrolls up so the pin button appears.
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(20);
+			});
+			expect(screen.getByTitle(/pin/i)).toBeInTheDocument();
+
+			// Click the pin: synchronously arms the guard (records bottom target
+			// 600, starts the 100ms timer) and jumps to the bottom.
+			await act(async () => {
+				fireEvent.click(screen.getByTitle(/pin/i));
+				vi.advanceTimersByTime(20); // clear the scroll throttle; guard still armed
+			});
+			onAtBottomChange.mockClear();
+			scrollToSpy.mockClear();
+
+			// User scrolls up again, still well inside the guard window.
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(20);
+			});
+
+			// Discriminator: the scroll-up registered as leaving the bottom, and
+			// the pin button is shown again (auto-scroll paused).
+			expect(onAtBottomChange).toHaveBeenCalledWith(false);
+			expect(screen.getByTitle(/pin/i)).toBeInTheDocument();
 		});
 	});
 
@@ -3118,10 +3839,16 @@ describe('TerminalOutput', () => {
 						isUnread: false,
 					},
 				],
+				// New reference so the activeTab memo (keyed on aiTabs) recomputes
+				// the test's mocked legacy `tabs` value after rerender.
+				aiTabs: [{}] as any,
 			};
 			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
 			await act(async () => {
-				vi.advanceTimersByTime(50);
+				// The MutationObserver callback is a microtask that schedules the
+				// follow-scroll rAF. Drain microtasks between timer steps so the test
+				// cannot advance an empty frame queue on a loaded CI runner.
+				await vi.advanceTimersByTimeAsync(50);
 			});
 
 			expect(scrollToSpy).toHaveBeenCalled();
@@ -3160,6 +3887,12 @@ describe('TerminalOutput', () => {
 		 * actually put the view. `scrollHeight` is settable because the whole
 		 * point of these tests is content whose height changes underneath the
 		 * restore - while the tab was off screen, or as it settles on mount.
+		 *
+		 * Writes to `scrollTop` are CLAMPED to `scrollHeight - clientHeight`, the
+		 * way a real browser clamps them. Without that, "scroll to the bottom"
+		 * (which asks for `scrollHeight`, the honest way to say "as far as this
+		 * goes") reads back as a number no element could ever hold, and the test
+		 * measures the stub rather than the restore.
 		 */
 		function mountWithScrollBox(
 			extraProps: Record<string, unknown>,
@@ -3169,17 +3902,18 @@ describe('TerminalOutput', () => {
 			const el = container.querySelector('.overflow-y-auto') as HTMLElement;
 			let top = 0;
 			let height = scrollHeight;
+			const clamp = (v: number) => Math.max(0, Math.min(v, height - clientHeight));
 			Object.defineProperty(el, 'scrollTop', {
 				configurable: true,
 				get: () => top,
 				set: (v: number) => {
-					top = v;
+					top = clamp(v);
 				},
 			});
 			Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => height });
 			Object.defineProperty(el, 'clientHeight', { configurable: true, value: clientHeight });
 			el.scrollTo = ((opts: { top: number }) => {
-				top = opts.top;
+				top = clamp(opts.top);
 			}) as unknown as typeof el.scrollTo;
 
 			return {
@@ -3188,9 +3922,20 @@ describe('TerminalOutput', () => {
 				bottom: () => height - clientHeight,
 				grow: (to: number) => {
 					height = to;
+					// Growth the transcript can SEE. `scrollHeight` is a getter here,
+					// and moving a getter notifies nothing: the follow-the-tail
+					// re-pin hangs off a MutationObserver on the scroll container, so
+					// content has to actually arrive in the DOM for it to fire, the
+					// same as it does in the app.
+					el.appendChild(document.createElement('div'));
 				},
 				settle: async (ms = 800) => {
 					await act(async () => {
+						// Let any pending MutationObserver callback land FIRST. It is
+						// delivered as a microtask and it is what schedules the re-pin
+						// frame, so advancing timers before it runs drains an empty
+						// frame queue and the re-pin is never seen.
+						await Promise.resolve();
 						vi.advanceTimersByTime(ms);
 					});
 				},
@@ -3348,7 +4093,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -3365,7 +4112,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -3458,7 +4207,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -3490,7 +4241,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -3520,7 +4273,9 @@ describe('TerminalOutput', () => {
 
 			const session = createDefaultSession({
 				enableMaestroP: true,
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -3555,7 +4310,9 @@ describe('TerminalOutput', () => {
 			const session = createDefaultSession({
 				enableMaestroP: true,
 				maestroPMode: 'interactive',
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -3578,7 +4335,9 @@ describe('TerminalOutput', () => {
 			];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -3842,7 +4601,9 @@ describe('helper function behaviors (tested via component)', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: markdownText, source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -3863,7 +4624,9 @@ describe('helper function behaviors (tested via component)', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: markdownText, source: 'stdout' })];
 
 			const session = createDefaultSession({
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
 				activeTabId: 'tab-1',
 			});
 
@@ -3894,7 +4657,9 @@ describe('memoization behavior', () => {
 		const logs: LogEntry[] = [createLogEntry({ id: 'log-1', text: 'Test', source: 'stdout' })];
 
 		const session = createDefaultSession({
-			tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+			tabs: [
+				{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+			],
 			activeTabId: 'tab-1',
 		});
 
@@ -3916,7 +4681,9 @@ describe('memoization behavior', () => {
 		];
 
 		const session = createDefaultSession({
-			tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+			tabs: [
+				{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+			],
 			activeTabId: 'tab-1',
 		});
 
@@ -4042,5 +4809,131 @@ describe('memoization behavior', () => {
 
 			expect(onPublishMessageGist).toHaveBeenCalledWith('AI response to share', '1');
 		});
+	});
+});
+
+describe('collapseAiResponseLogs', () => {
+	const mk = (over: Partial<LogEntry>): LogEntry =>
+		({ id: 'x', timestamp: 0, source: 'stdout', text: '', ...over }) as LogEntry;
+
+	const crossAgent = (fromAgentName: string, error?: string) => ({
+		requestId: `req-${fromAgentName}`,
+		fromSessionId: `sess-${fromAgentName}`,
+		fromAgentName,
+		fromToolType: 'claude-code' as const,
+		...(error ? { error } : {}),
+	});
+
+	it('collapses consecutive local response entries into one bubble', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'u', source: 'user', text: 'hi' }),
+			mk({ id: 'a', source: 'stdout', text: 'part 1 ' }),
+			mk({ id: 'b', source: 'stdout', text: 'part 2' }),
+		]);
+		expect(out.map((l) => l.id)).toEqual(['u', 'a']);
+		expect(out[1].text).toBe('part 1 part 2');
+	});
+
+	it.each([true, false])(
+		'keeps a stderr diagnostic separate with warningFirst=%s',
+		(warningFirst) => {
+			const warning = mk({
+				id: 'warning',
+				source: 'stderr',
+				text: 'Codex warning: ignored setting\n',
+			});
+			const answer = mk({ id: 'answer', source: 'stdout', text: 'The answer.' });
+			const logs = warningFirst ? [warning, answer] : [answer, warning];
+
+			expect(collapseAiResponseLogs(logs)).toEqual(logs);
+		}
+	);
+
+	it('keeps diagnostic boundaries while collapsing assistant chunks on either side', () => {
+		const warning = mk({
+			id: 'warning',
+			source: 'stderr',
+			text: 'Codex warning: ignored setting\n',
+		});
+		const nextWarning = mk({
+			id: 'warning-2',
+			source: 'stderr',
+			text: 'Codex warning: another setting\n',
+		});
+		const out = collapseAiResponseLogs([
+			mk({ id: 'before', text: 'Before ' }),
+			mk({ id: 'before-2', text: 'warning.' }),
+			warning,
+			nextWarning,
+			mk({ id: 'answer', text: 'The ' }),
+			mk({ id: 'answer-2', text: 'answer.' }),
+		]);
+
+		expect(out.map(({ id, source, text }) => ({ id, source, text }))).toEqual([
+			{ id: 'before', source: 'stdout', text: 'Before warning.' },
+			{ id: 'warning', source: 'stderr', text: warning.text },
+			{ id: 'warning-2', source: 'stderr', text: nextWarning.text },
+			{ id: 'answer', source: 'stdout', text: 'The answer.' },
+		]);
+	});
+
+	it('keeps each cross-agent reply as its own standalone bubble', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'u', source: 'user', text: 'what are we working on? @LH and @MM' }),
+			mk({
+				id: 'lh',
+				source: 'ai',
+				text: 'LH failed',
+				metadata: { crossAgent: crossAgent('Learned Hand', 'no output') },
+			}),
+			mk({ id: 'local', source: 'stdout', text: 'Scratch here, we did X' }),
+			mk({
+				id: 'mm',
+				source: 'ai',
+				text: 'MM here',
+				metadata: { crossAgent: crossAgent('Maestro Marketing') },
+			}),
+		]);
+		// Four separate bubbles, in order, none merged.
+		expect(out.map((l) => l.id)).toEqual(['u', 'lh', 'local', 'mm']);
+		// The local reply keeps its own text and NO cross-agent provenance.
+		const local = out.find((l) => l.id === 'local')!;
+		expect(local.text).toBe('Scratch here, we did X');
+		expect(local.metadata?.crossAgent).toBeUndefined();
+		// Each cross-agent bubble keeps its own attribution.
+		expect(out.find((l) => l.id === 'lh')!.metadata?.crossAgent?.fromAgentName).toBe(
+			'Learned Hand'
+		);
+		expect(out.find((l) => l.id === 'mm')!.metadata?.crossAgent?.fromAgentName).toBe(
+			'Maestro Marketing'
+		);
+	});
+
+	it('does not fold two consecutive cross-agent replies together', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'a', source: 'ai', text: 'A', metadata: { crossAgent: crossAgent('Alpha') } }),
+			mk({ id: 'b', source: 'ai', text: 'B', metadata: { crossAgent: crossAgent('Beta') } }),
+		]);
+		expect(out.map((l) => l.id)).toEqual(['a', 'b']);
+	});
+
+	it('preserves text-stream renderStyle when any grouped local entry carries it', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'a', source: 'system', text: 'banner ' }),
+			mk({ id: 'b', source: 'stdout', text: 'streamed', renderStyle: 'text-stream' }),
+		]);
+		expect(out).toHaveLength(1);
+		expect(out[0].renderStyle).toBe('text-stream');
+	});
+
+	it('keeps Agent Resilience outage markers standalone, not folded into a text group', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'a', source: 'stdout', text: 'before ' }),
+			mk({ id: 'outage', source: 'stdout', text: 'retrying...', retryOutageId: 'out-1' }),
+			mk({ id: 'b', source: 'stdout', text: 'after' }),
+		]);
+		// The outage marker breaks the run: the text on either side stays separate.
+		expect(out.map((l) => l.id)).toEqual(['a', 'outage', 'b']);
+		expect(out.find((l) => l.id === 'outage')!.retryOutageId).toBe('out-1');
 	});
 });

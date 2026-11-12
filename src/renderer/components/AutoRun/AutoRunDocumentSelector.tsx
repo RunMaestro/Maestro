@@ -21,10 +21,12 @@ import { getExplorerFileIcon } from '../../utils/theme';
 import { fuzzyMatchWithScore } from '../../utils/search';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { useResizableDropdownHeight } from '../../hooks/ui/useResizableDropdownHeight';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
 import { aggregateFolderTaskCounts } from './documentTaskAggregation';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 // Module-level cache so the user's expand/collapse choices survive the dropdown
 // closing/reopening and the component remounting (e.g. switching agents) until
@@ -89,6 +91,10 @@ export const AutoRunDocumentSelector = forwardRef<
 	ref
 ) {
 	const [isOpen, setIsOpen] = useState(false);
+	// Phone: the row is the document dropdown alone. The three buttons beside it
+	// squeezed the selected name down to a couple of characters in a 390px
+	// drawer; "Change Folder..." is still in the dropdown's footer.
+	const phone = usePhoneLayout();
 	const [showCreateModal, setShowCreateModal] = useState(false);
 	const [newDocName, setNewDocName] = useState('');
 	const [isCreating, setIsCreating] = useState(false);
@@ -511,10 +517,9 @@ export const AutoRunDocumentSelector = forwardRef<
 						<div
 							ref={dropdownHeight.panelRef}
 							data-testid="autorun-document-dropdown"
-							className="absolute top-full left-0 mt-1 rounded shadow-lg overflow-hidden z-50 flex flex-col"
+							className="absolute top-full left-0 mt-1 rounded overflow-hidden z-50 flex flex-col"
 							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								border: `1px solid ${theme.colors.border}`,
+								...elevatedSurfaceStyle(theme),
 								maxHeight: `${dropdownHeight.maxHeight}px`,
 								minWidth: '100%',
 								width: 'calc(100% + 120px)', // Extend under the +, refresh, and folder buttons
@@ -651,45 +656,49 @@ export const AutoRunDocumentSelector = forwardRef<
 					)}
 				</div>
 
-				{/* Create New Document Button */}
-				<button
-					onClick={() => setShowCreateModal(true)}
-					className="inline-flex h-10 min-w-10 items-center justify-center p-2 rounded transition-colors hover:bg-white/10 shrink-0"
-					style={{
-						color: theme.colors.textDim,
-						border: `1px solid ${theme.colors.border}`,
-					}}
-					title="Create new document"
-				>
-					<Plus className="w-4 h-4" />
-				</button>
+				{!phone && (
+					<>
+						{/* Create New Document Button */}
+						<button
+							onClick={() => setShowCreateModal(true)}
+							className="inline-flex h-10 min-w-10 items-center justify-center p-2 rounded transition-colors hover:bg-white/10 shrink-0"
+							style={{
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title="Create new document"
+						>
+							<Plus className="w-4 h-4" />
+						</button>
 
-				{/* Refresh Button */}
-				<button
-					onClick={onRefresh}
-					disabled={isLoading}
-					className={`inline-flex h-10 min-w-10 items-center justify-center p-2 rounded transition-colors hover:bg-white/10 shrink-0 ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-					style={{
-						color: theme.colors.textDim,
-						border: `1px solid ${theme.colors.border}`,
-					}}
-					title="Refresh document list"
-				>
-					<RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-				</button>
+						{/* Refresh Button */}
+						<button
+							onClick={onRefresh}
+							disabled={isLoading}
+							className={`inline-flex h-10 min-w-10 items-center justify-center p-2 rounded transition-colors hover:bg-white/10 shrink-0 ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+							style={{
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title="Refresh document list"
+						>
+							<RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+						</button>
 
-				{/* Change Folder Button */}
-				<button
-					onClick={onChangeFolder}
-					className="inline-flex h-10 min-w-10 items-center justify-center p-2 rounded transition-colors hover:bg-white/10 shrink-0"
-					style={{
-						color: theme.colors.textDim,
-						border: `1px solid ${theme.colors.border}`,
-					}}
-					title="Change folder"
-				>
-					<FolderOpen className="w-4 h-4" />
-				</button>
+						{/* Change Folder Button */}
+						<button
+							onClick={onChangeFolder}
+							className="inline-flex h-10 min-w-10 items-center justify-center p-2 rounded transition-colors hover:bg-white/10 shrink-0"
+							style={{
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title="Change folder"
+						>
+							<FolderOpen className="w-4 h-4" />
+						</button>
+					</>
+				)}
 			</div>
 
 			{/* Create New Document Modal */}

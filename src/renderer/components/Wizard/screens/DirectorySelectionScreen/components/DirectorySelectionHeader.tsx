@@ -28,7 +28,7 @@ export function DirectorySelectionHeader({
 					className="px-1.5 py-0.5 rounded text-xs"
 					style={{ backgroundColor: theme.colors.warning, color: theme.colors.bgMain }}
 				>
-					YOLO
+					Full Access
 				</code>{' '}
 				mode, aka:
 			</p>

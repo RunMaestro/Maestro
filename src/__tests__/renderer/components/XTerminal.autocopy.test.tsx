@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, act } from '@testing-library/react';
+import { render, act, cleanup } from '@testing-library/react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { XTerminal } from '../../../renderer/components/XTerminal';
 import type { Theme } from '../../../shared/theme-types';
@@ -11,6 +11,8 @@ const { mockSafeClipboardWrite, mockTerminalInstances, mockFit, mockResize, mock
 			selection: string;
 			selectionListeners: Array<() => void>;
 			triggerSelectionChange(): void;
+			focus: ReturnType<typeof vi.fn>;
+			oscHandlers: Map<number, (data: string) => boolean>;
 		}>,
 		mockFit: vi.fn(),
 		mockResize: vi.fn(),
@@ -65,6 +67,14 @@ vi.mock('@xterm/xterm', () => ({
 			mockTerminalInstances.push(this);
 		}
 
+		oscHandlers = new Map<number, (data: string) => boolean>();
+		parser = {
+			registerOscHandler: vi.fn((ident: number, handler: (data: string) => boolean) => {
+				this.oscHandlers.set(ident, handler);
+				return { dispose: () => this.oscHandlers.delete(ident) };
+			}),
+		};
+
 		loadAddon = vi.fn();
 		registerLinkProvider = vi.fn(() => ({ dispose: vi.fn() }));
 		attachCustomKeyEventHandler = vi.fn();
@@ -105,6 +115,75 @@ const theme = {
 		border: '#222222',
 	},
 } as unknown as Theme;
+
+describe('XTerminal OSC 52 clipboard', () => {
+	beforeEach(() => {
+		vi.mocked(window.maestro.process.write).mockClear();
+		mockSafeClipboardWrite.mockReset();
+		mockSafeClipboardWrite.mockResolvedValue(true);
+		mockTerminalInstances.length = 0;
+		mockOnData.mockReset();
+		mockOnData.mockReturnValue(() => {});
+		window.maestro.process.onData = mockOnData;
+		window.maestro.process.resize = mockResize.mockResolvedValue(undefined);
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	/** The handler a program reaches by emitting `ESC ] 52 ; ... BEL`. */
+	const osc52 = () => {
+		render(
+			<XTerminal
+				sessionId="session-1-terminal-tab-1"
+				theme={theme}
+				fontFamily="Menlo"
+				fontSize={12}
+			/>
+		);
+		const handler = mockTerminalInstances[0].oscHandlers.get(52);
+		if (!handler) throw new Error('no OSC 52 handler registered');
+		return handler;
+	};
+
+	it('copies what the program in the PTY asked to copy', async () => {
+		const handler = osc52();
+		const url = 'https://claude.com/cai/oauth/authorize?code=true&state=abc';
+
+		let consumed = false;
+		await act(async () => {
+			consumed = handler(`c;${btoa(url)}`);
+			await Promise.resolve();
+		});
+
+		expect(consumed).toBe(true);
+		expect(mockSafeClipboardWrite).toHaveBeenCalledWith(url);
+	});
+
+	it('consumes a clipboard query without answering it', async () => {
+		const handler = osc52();
+
+		let consumed = false;
+		await act(async () => {
+			consumed = handler('c;?');
+			await Promise.resolve();
+		});
+
+		// Consumed so the sequence is not printed, but nothing is read or written:
+		// a reply would type the clipboard into the PTY for the program to read.
+		expect(consumed).toBe(true);
+		expect(mockSafeClipboardWrite).not.toHaveBeenCalled();
+		expect(window.maestro.process.write).not.toHaveBeenCalled();
+	});
+
+	it('stops handling OSC 52 once the terminal unmounts', () => {
+		osc52();
+		const terminal = mockTerminalInstances[0];
+		cleanup();
+		expect(terminal.oscHandlers.has(52)).toBe(false);
+	});
+});
 
 describe('XTerminal auto-copy selection', () => {
 	beforeEach(() => {
@@ -194,5 +273,190 @@ describe('XTerminal auto-copy selection', () => {
 		expect(mockSafeClipboardWrite).toHaveBeenCalledTimes(2);
 		expect(mockSafeClipboardWrite).toHaveBeenNthCalledWith(1, 'same text');
 		expect(mockSafeClipboardWrite).toHaveBeenNthCalledWith(2, 'same text');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tap-to-focus (mobile keyboard). Tapping the viewport must focus the terminal
+// (its hidden helper textarea) so mobile browsers summon the soft keyboard. A
+// scroll/drag gesture must NOT focus, so the keyboard doesn't pop while the user
+// is scrolling the scrollback. Reuses the shared xterm mocks above; the mock
+// Terminal exposes `focus` as a vi.fn() per instance.
+// ---------------------------------------------------------------------------
+
+/** Dispatch a native touch event with a single point. jsdom lacks TouchEvent, so
+ *  we synthesize the touches/changedTouches lists the handler reads. */
+function fireTouch(el: Element, type: 'touchstart' | 'touchend', x: number, y: number): void {
+	const event = new Event(type, { bubbles: true, cancelable: true });
+	const point = { clientX: x, clientY: y } as Touch;
+	Object.defineProperty(event, 'touches', {
+		value: type === 'touchend' ? [] : [point],
+	});
+	Object.defineProperty(event, 'changedTouches', { value: [point] });
+	el.dispatchEvent(event);
+}
+
+describe('XTerminal tap-to-focus (mobile keyboard)', () => {
+	beforeEach(() => {
+		mockTerminalInstances.length = 0;
+		window.maestro.process.onData = vi.fn().mockReturnValue(() => {});
+		window.maestro.process.resize = vi.fn().mockResolvedValue(undefined);
+	});
+
+	function renderTerminal(): { container: Element } {
+		const { container } = render(
+			<XTerminal
+				sessionId="session-1-terminal-tab-1"
+				theme={theme}
+				fontFamily="Menlo"
+				fontSize={12}
+			/>
+		);
+		return { container };
+	}
+
+	/** The inner div holds the xterm viewport and carries the touch listeners. */
+	function viewport(container: Element): Element {
+		return container.querySelectorAll('div')[1];
+	}
+
+	it('focuses the terminal when the viewport is tapped (no movement)', () => {
+		const { container } = renderTerminal();
+		const term = mockTerminalInstances[0];
+		expect(term.focus).not.toHaveBeenCalled();
+
+		const el = viewport(container);
+		act(() => {
+			fireTouch(el, 'touchstart', 100, 100);
+			fireTouch(el, 'touchend', 101, 102);
+		});
+
+		expect(term.focus).toHaveBeenCalledTimes(1);
+	});
+
+	it('does NOT focus the terminal on a scroll gesture (finger travels past tolerance)', () => {
+		const { container } = renderTerminal();
+		const term = mockTerminalInstances[0];
+
+		const el = viewport(container);
+		act(() => {
+			fireTouch(el, 'touchstart', 100, 100);
+			// Scrolled ~80px down the scrollback - not a tap.
+			fireTouch(el, 'touchend', 102, 180);
+		});
+
+		expect(term.focus).not.toHaveBeenCalled();
+	});
+
+	it('stops focusing after unmount (listeners are torn down)', () => {
+		const { container } = renderTerminal();
+		const term = mockTerminalInstances[0];
+		const el = viewport(container);
+
+		act(() => {
+			fireTouch(el, 'touchstart', 50, 50);
+			fireTouch(el, 'touchend', 50, 50);
+		});
+		expect(term.focus).toHaveBeenCalledTimes(1);
+
+		cleanup();
+
+		// A tap on the detached element must not reach the disposed terminal.
+		act(() => {
+			fireTouch(el, 'touchstart', 50, 50);
+			fireTouch(el, 'touchend', 50, 50);
+		});
+		expect(term.focus).toHaveBeenCalledTimes(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Sticky-Ctrl bridge (touch key bar). When the touch key bar's Ctrl key is
+// armed, the NEXT single character typed into the terminal is folded into its
+// control code (e.g. 'c' -> \x03) and the arm is consumed. Multi-byte input
+// (paste, IME) passes through untouched and does NOT consume the arm. Without a
+// stickyCtrl prop (the native desktop app), input is a pure pass-through. The
+// arm/disarm state machine itself is covered by TerminalView's tests; here we
+// cover XTerminal's side - applying the armed state to terminal input. The full
+// toControlChar mapping table is unit-tested in terminalKeys.test.ts, so these
+// only exercise XTerminal's branching around it.
+// ---------------------------------------------------------------------------
+
+type StickyCtrlBridge = { isActive: () => boolean; onConsume: () => void };
+
+describe('XTerminal sticky-Ctrl (touch key bar)', () => {
+	const SESSION_ID = 'session-1-terminal-tab-1';
+
+	beforeEach(() => {
+		mockTerminalInstances.length = 0;
+		window.maestro.process.onData = vi.fn().mockReturnValue(() => {});
+		window.maestro.process.resize = vi.fn().mockResolvedValue(undefined);
+		vi.mocked(window.maestro.process.write).mockClear();
+		vi.mocked(window.maestro.process.write).mockResolvedValue(undefined);
+	});
+
+	/** The callback XTerminal registered via term.onData - i.e. the terminal input
+	 *  path that carries the sticky-Ctrl folding. */
+	function inputHandler(): (data: string) => void {
+		const term = mockTerminalInstances[0] as unknown as {
+			onData: { mock: { calls: Array<[(data: string) => void]> } };
+		};
+		return term.onData.mock.calls[0][0];
+	}
+
+	function renderWith(stickyCtrl?: StickyCtrlBridge, onData?: (data: string) => void): void {
+		render(
+			<XTerminal
+				sessionId={SESSION_ID}
+				theme={theme}
+				fontFamily="Menlo"
+				fontSize={12}
+				stickyCtrl={stickyCtrl}
+				onData={onData}
+			/>
+		);
+	}
+
+	it('folds the next single character to its control code and consumes the arm when armed', () => {
+		const onConsume = vi.fn();
+		const onData = vi.fn();
+		renderWith({ isActive: () => true, onConsume }, onData);
+
+		act(() => inputHandler()('c'));
+
+		// 'c' -> Ctrl-C (\x03) reaches both the PTY and the onData callback.
+		expect(window.maestro.process.write).toHaveBeenCalledWith(SESSION_ID, '\x03');
+		expect(onData).toHaveBeenCalledWith('\x03');
+		expect(onConsume).toHaveBeenCalledTimes(1);
+	});
+
+	it('leaves multi-byte input (paste/IME) untouched and does NOT consume the arm', () => {
+		const onConsume = vi.fn();
+		renderWith({ isActive: () => true, onConsume });
+
+		act(() => inputHandler()('hello'));
+
+		expect(window.maestro.process.write).toHaveBeenCalledWith(SESSION_ID, 'hello');
+		expect(onConsume).not.toHaveBeenCalled();
+	});
+
+	it('passes input through unchanged when the bridge is not armed', () => {
+		const onConsume = vi.fn();
+		renderWith({ isActive: () => false, onConsume });
+
+		act(() => inputHandler()('c'));
+
+		expect(window.maestro.process.write).toHaveBeenCalledWith(SESSION_ID, 'c');
+		expect(onConsume).not.toHaveBeenCalled();
+	});
+
+	it('is a pure pass-through with no stickyCtrl prop (native desktop app)', () => {
+		const onData = vi.fn();
+		renderWith(undefined, onData);
+
+		act(() => inputHandler()('c'));
+
+		expect(window.maestro.process.write).toHaveBeenCalledWith(SESSION_ID, 'c');
+		expect(onData).toHaveBeenCalledWith('c');
 	});
 });

@@ -5,11 +5,12 @@
  * Tests session listing from Claude Code's .jsonl files on disk.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { listClaudeSessions } from '../../../cli/services/agent-sessions';
+import { readClaudeSubagentTranscriptsSync } from '../../../shared/claudeSessionUsage';
 
 // Mock fs
 vi.mock('fs', () => ({
@@ -17,6 +18,14 @@ vi.mock('fs', () => ({
 	readdirSync: vi.fn(),
 	readFileSync: vi.fn(),
 	statSync: vi.fn(),
+}));
+
+// The fs mock above answers every readdirSync with the session listing, which
+// would hand the session files back as their own "subagents". Subagent reads are
+// stubbed instead and driven per test.
+vi.mock('../../../shared/claudeSessionUsage', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../shared/claudeSessionUsage')>()),
+	readClaudeSubagentTranscriptsSync: vi.fn(() => []),
 }));
 
 // Mock os
@@ -342,7 +351,7 @@ describe('listClaudeSessions', () => {
 
 		vi.mocked(fs.readFileSync).mockImplementation((p) => {
 			const pStr = p.toString();
-			if (pStr.includes('claude-session-origins.json')) {
+			if (pStr.endsWith('maestro-claude-session-origins.json')) {
 				return JSON.stringify({
 					origins: {
 						[projectPath]: {
@@ -392,7 +401,7 @@ describe('listClaudeSessions', () => {
 
 		vi.mocked(fs.readFileSync).mockImplementation((p) => {
 			const pStr = p.toString();
-			if (pStr.includes('claude-session-origins.json')) {
+			if (pStr.endsWith('maestro-claude-session-origins.json')) {
 				return JSON.stringify({
 					origins: {
 						[projectPath]: {
@@ -421,6 +430,82 @@ describe('listClaudeSessions', () => {
 
 		expect(result.filteredCount).toBe(1);
 		expect(result.sessions[0].sessionName).toBe('Database migration');
+	});
+
+	// The desktop store is `maestro-claude-session-origins` and lives in the sync
+	// directory when a custom Storage Location is set. The CLI used to read
+	// `claude-session-origins.json` from the data directory, a file nothing
+	// writes, so every listing came back without names.
+	describe('origins store location', () => {
+		const dataDir = path.resolve('/data/Maestro');
+		const syncDir = path.resolve('/sync/Maestro');
+		const originalUserData = process.env.MAESTRO_USER_DATA;
+
+		const originsFor = (sessionName: string) =>
+			JSON.stringify({
+				origins: { [projectPath]: { 'session-a': { origin: 'user', sessionName } } },
+			});
+
+		/** Serve the transcript plus the given files by absolute path. */
+		function mockDisk(files: Record<string, string>, existingDirs: string[] = []): void {
+			vi.mocked(fs.existsSync).mockImplementation(
+				(p) => p === sessionsDir || existingDirs.includes(p as string)
+			);
+			vi.mocked(fs.readdirSync).mockReturnValue(['session-a.jsonl' as unknown as fs.Dirent]);
+			vi.mocked(fs.statSync).mockReturnValue({ size: 500, mtimeMs: Date.now() } as fs.Stats);
+			vi.mocked(fs.readFileSync).mockImplementation((p) => {
+				const pStr = p.toString();
+				if (pStr.endsWith('session-a.jsonl')) {
+					return makeJsonlContent({ userMessage: 'Hi', assistantMessage: 'Hello' });
+				}
+				if (files[pStr] !== undefined) return files[pStr];
+				throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			});
+		}
+
+		beforeEach(() => {
+			process.env.MAESTRO_USER_DATA = dataDir;
+		});
+
+		afterEach(() => {
+			if (originalUserData === undefined) delete process.env.MAESTRO_USER_DATA;
+			else process.env.MAESTRO_USER_DATA = originalUserData;
+		});
+
+		it('reads the store from the data directory when no custom location is set', () => {
+			mockDisk({
+				[path.join(dataDir, 'maestro-claude-session-origins.json')]: originsFor('From data dir'),
+			});
+
+			expect(listClaudeSessions(projectPath).sessions[0].sessionName).toBe('From data dir');
+		});
+
+		it('reads the store from the sync directory when a custom location is set', () => {
+			mockDisk(
+				{
+					[path.join(dataDir, 'maestro-bootstrap.json')]: JSON.stringify({
+						customSyncPath: syncDir,
+					}),
+					[path.join(dataDir, 'maestro-claude-session-origins.json')]: originsFor('Stale copy'),
+					[path.join(syncDir, 'maestro-claude-session-origins.json')]: originsFor('From sync dir'),
+				},
+				[syncDir]
+			);
+
+			expect(listClaudeSessions(projectPath).sessions[0].sessionName).toBe('From sync dir');
+		});
+
+		it('does not read a store under the old file name', () => {
+			mockDisk({
+				[path.join(dataDir, 'claude-session-origins.json')]: originsFor('Old name'),
+			});
+
+			const session = listClaudeSessions(projectPath).sessions[0];
+			expect(session.sessionName).toBeUndefined();
+			expect(vi.mocked(fs.readFileSync).mock.calls.map(([p]) => p)).not.toContain(
+				path.join(dataDir, 'claude-session-origins.json')
+			);
+		});
 	});
 
 	it('should extract token counts and calculate cost', () => {
@@ -475,5 +560,27 @@ describe('listClaudeSessions', () => {
 		expect(session.cacheCreationTokens).toBe(100);
 		expect(session.costUsd).toBeGreaterThan(0);
 		expect(session.durationSeconds).toBe(5);
+	});
+
+	it("prices a session's subagent transcripts into its cost and tokens", () => {
+		vi.mocked(fs.existsSync).mockImplementation((p) => p === sessionsDir);
+		vi.mocked(fs.readdirSync).mockReturnValue(['session-sub.jsonl' as unknown as fs.Dirent]);
+		vi.mocked(fs.statSync).mockReturnValue({ size: 1000, mtimeMs: Date.now() } as fs.Stats);
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			if (p.toString().includes('session-sub.jsonl')) {
+				return makeJsonlContent({ userMessage: 'Go', inputTokens: 1000, outputTokens: 0 });
+			}
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		});
+		vi.mocked(readClaudeSubagentTranscriptsSync).mockReturnValueOnce([
+			makeJsonlContent({ inputTokens: 3000, outputTokens: 0 }),
+		]);
+
+		const [session] = listClaudeSessions(projectPath).sessions;
+
+		expect(readClaudeSubagentTranscriptsSync).toHaveBeenCalledWith(
+			path.join(sessionsDir, 'session-sub.jsonl')
+		);
+		expect(session.inputTokens).toBe(4000);
 	});
 });

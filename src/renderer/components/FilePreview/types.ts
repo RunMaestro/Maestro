@@ -107,8 +107,9 @@ export interface FilePreviewHandle {
 	focus: () => void;
 }
 
-export interface TocEntry {
-	level: number; // 1-6 for h1-h6
-	text: string;
-	slug: string;
-}
+/**
+ * Re-exported from the shared TOC library so existing File Preview imports keep
+ * working. The canonical definition lives in `components/Toc/types` because
+ * Director's Notes builds entries of the same shape.
+ */
+export type { TocEntry } from '../Toc/types';

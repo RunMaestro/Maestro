@@ -11,9 +11,9 @@
     irm https://runmaestro.ai/install/maestro-p.ps1 | iex
 
   Steps (system-wide install, accessible to all users):
-    1. Verifies Node.js >= 20 and the `claude` CLI are present.
+    1. Verifies Node.js >= 20, Bun, and the `claude` CLI are present.
     2. Downloads maestro-p.js + a pinned package.json into %ProgramFiles%\maestro-p.
-    3. Runs `npm install` so npm fetches the correct node-pty prebuild (no MSVC build tools needed).
+    3. Runs `bun install` so Bun fetches the correct node-pty prebuild (no MSVC build tools needed).
     4. Installs a maestro-p.cmd shim and adds it to the SYSTEM (Machine) PATH.
 
   Requires Administrator (writes under Program Files + Machine PATH).
@@ -49,7 +49,8 @@ $nodeMajor = [int]((& node -p 'process.versions.node.split(".")[0]'))
 if ($nodeMajor -lt $MinNodeMajor) { Die "Node.js $nodeVersion is too old. maestro-p needs Node >= $MinNodeMajor." }
 Ok "Node.js $nodeVersion"
 
-if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { Die "npm is not installed (it ships with Node.js). Reinstall Node >= $MinNodeMajor." }
+if (-not (Get-Command bun -ErrorAction SilentlyContinue)) { Die "Bun is not installed. Install Bun (https://bun.sh) and re-run." }
+Ok "Bun $(& bun --version)"
 
 # ---- prerequisite: claude (warn-only) ------------------------------------
 $claude = Get-Command claude -ErrorAction SilentlyContinue
@@ -58,8 +59,8 @@ if ($claude) {
 	Ok "claude $cv"
 } else {
 	Warn "The 'claude' CLI was not found on PATH."
-	Warn "maestro-p drives Claude Code, so install + log in to it before use:"
-	Warn "    npm install -g @anthropic-ai/claude-code   # then run: claude  (and sign in)"
+	Warn "maestro-p drives Claude Code, so install + log in to it before use."
+	Warn "See official Claude Code install docs, then run: claude"
 }
 
 # ---- install -------------------------------------------------------------
@@ -75,11 +76,11 @@ Info "Downloading package.json"
 Invoke-WebRequest -Uri "$BaseUrl/maestro-p.package.json" -OutFile (Join-Path $InstallDir 'package.json') -UseBasicParsing
 Ok "package.json"
 
-Info "Fetching node-pty prebuild via npm (no build tools needed)"
+Info "Fetching node-pty prebuild via Bun (no build tools needed)"
 Push-Location $InstallDir
 try {
-	& npm install --omit=dev --no-audit --no-fund --silent
-	if ($LASTEXITCODE -ne 0) { Die "npm install failed in $InstallDir" }
+	& bun install --production --no-progress
+	if ($LASTEXITCODE -ne 0) { Die "bun install failed in $InstallDir" }
 } finally { Pop-Location }
 & node -e "require('$($InstallDir -replace '\\','/')/node_modules/node-pty')"
 if ($LASTEXITCODE -ne 0) { Die "node-pty failed to load after install." }

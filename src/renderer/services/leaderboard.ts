@@ -234,6 +234,30 @@ export async function recoverUncommittedAutoRunCredit(): Promise<number> {
 }
 
 // ============================================================================
+// Install binding
+// ============================================================================
+
+/** The server's spelling of an email: it trims and lowercases before every lookup. */
+export function normalizeLeaderboardEmail(email: string): string {
+	return email.trim().toLowerCase();
+}
+
+/**
+ * Whether an `auth-status` answer belongs to the email this install registers.
+ *
+ * The server resolves `auth-status` by clientToken alone. An install that has
+ * confirmed two different emails leaves its clientToken on BOTH subscriber
+ * rows, and the server answers with the older one. The client then stored the
+ * previous email's auth token under the current email, and every submit and
+ * Pull Down came back 401 (issue #2011). An answer that names no email (an
+ * older server) is accepted as before.
+ */
+export function authStatusMatchesEmail(statusEmail: string | undefined, email: string): boolean {
+	if (!statusEmail) return true;
+	return normalizeLeaderboardEmail(statusEmail) === normalizeLeaderboardEmail(email);
+}
+
+// ============================================================================
 // Submission
 // ============================================================================
 

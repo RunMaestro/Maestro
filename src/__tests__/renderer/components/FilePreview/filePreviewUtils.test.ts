@@ -7,7 +7,7 @@ import {
 	formatDateTime,
 	countMarkdownTasks,
 	extractHeadings,
-	resolveImagePath,
+	deriveProjectRoot,
 	isCodeFile,
 	LARGE_FILE_TOKEN_SKIP_THRESHOLD,
 	LARGE_FILE_PREVIEW_LIMIT,
@@ -21,6 +21,8 @@ import {
 	LINE_LENGTH_GIANT_THRESHOLD,
 	canScaleFontForView,
 	isGistPublishableFile,
+	resolvePreviewScroller,
+	PREVIEW_SCROLLER_ATTR,
 	type FontScaleTargetView,
 } from '../../../../renderer/components/FilePreview/filePreviewUtils';
 import { buildParquetPreviewMarker } from '../../../../shared/parquet/preview';
@@ -295,43 +297,21 @@ describe('filePreviewUtils', () => {
 		});
 	});
 
-	describe('resolveImagePath', () => {
-		it('returns data URLs as-is', () => {
-			expect(resolveImagePath('data:image/png;base64,abc', '/docs/readme.md')).toBe(
-				'data:image/png;base64,abc'
-			);
+	describe('deriveProjectRoot', () => {
+		it('strips the cwd and file name from the end of the path', () => {
+			expect(deriveProjectRoot('/vault/Body/note.md', 'Body')).toBe('/vault');
+			expect(deriveProjectRoot('/x/Body/vault/Body/note.md', 'Body')).toBe('/x/Body/vault');
 		});
 
-		it('returns http URLs as-is', () => {
-			expect(resolveImagePath('https://example.com/img.png', '/docs/readme.md')).toBe(
-				'https://example.com/img.png'
-			);
+		it('handles a nested cwd', () => {
+			expect(deriveProjectRoot('/vault/a/b/note.md', 'a/b')).toBe('/vault');
 		});
 
-		it('returns absolute paths as-is', () => {
-			expect(resolveImagePath('/absolute/path.png', '/docs/readme.md')).toBe('/absolute/path.png');
-		});
-
-		it('resolves relative paths from markdown directory', () => {
-			expect(resolveImagePath('images/photo.png', '/project/docs/readme.md')).toBe(
-				'/project/docs/images/photo.png'
-			);
-		});
-
-		it('handles ./ prefix', () => {
-			expect(resolveImagePath('./images/photo.png', '/project/docs/readme.md')).toBe(
-				'/project/docs/images/photo.png'
-			);
-		});
-
-		it('resolves ../ paths by normalization', () => {
-			expect(resolveImagePath('../assets/img.png', '/project/docs/readme.md')).toBe(
-				'/project/assets/img.png'
-			);
-		});
-
-		it('resolves deeply nested ../ paths', () => {
-			expect(resolveImagePath('../../img.png', '/a/b/c/readme.md')).toBe('/a/img.png');
+		it('uses the file tree to tell a root-level file from one outside the project', () => {
+			const indices = { allPaths: new Set(['note.md']), filenameIndex: new Map() };
+			expect(deriveProjectRoot('/vault/note.md', '', indices)).toBe('/vault');
+			expect(deriveProjectRoot('/elsewhere/other.md', '', indices)).toBeUndefined();
+			expect(deriveProjectRoot('/vault/note.md', undefined)).toBeUndefined();
 		});
 	});
 
@@ -454,6 +434,25 @@ describe('filePreviewUtils', () => {
 			it('long-line signal does not downgrade tiers (Giant stays Giant)', () => {
 				expect(pickPreviewTier(20 * 1024 * 1024, 1_000_000, 5_000)).toBe('giant');
 			});
+
+			it('does not escalate markdown to Giant on a long line (renders instead of showing source)', () => {
+				// A small markdown note with one pathologically long prose line
+				// (e.g. a pasted transcript) stays renderable: markdown wraps in
+				// HTML, so the long-line jump is skipped and it lands in Rich.
+				expect(pickPreviewTier(1024, 50, LINE_LENGTH_GIANT_THRESHOLD + 1, true)).toBe('rich');
+			});
+
+			it('still honors byte/line Giant thresholds for markdown', () => {
+				// The carve-out only drops the long-line signal; genuinely huge
+				// markdown (over 8MB / 500k lines) still falls through to Giant.
+				expect(pickPreviewTier(GIANT_TIER_BYTES + 1, 100, 5_000, true)).toBe('giant');
+			});
+
+			it('markdown with a long line over Fast byte threshold lands in Fast (still rendered)', () => {
+				// Over 256 KB but under Giant byte/line limits: markdown skips the
+				// long-line escalation and renders via Fast tier, not Giant source.
+				expect(pickPreviewTier(500_000, 1, LINE_LENGTH_GIANT_THRESHOLD + 1, true)).toBe('fast');
+			});
 		});
 	});
 
@@ -497,6 +496,28 @@ describe('filePreviewUtils', () => {
 
 		it('returns true for any other non-empty language identifier', () => {
 			expect(isCodeFile('whatever')).toBe(true);
+		});
+	});
+
+	describe('resolvePreviewScroller', () => {
+		it('returns null when there is no content column', () => {
+			expect(resolvePreviewScroller(null)).toBeNull();
+		});
+
+		it('falls back to the content column when no view owns a scroller', () => {
+			const content = document.createElement('div');
+			content.appendChild(document.createElement('pre'));
+			expect(resolvePreviewScroller(content)).toBe(content);
+		});
+
+		it("returns a table view's own tagged scroller", () => {
+			const content = document.createElement('div');
+			const pane = document.createElement('div');
+			const scroller = document.createElement('div');
+			scroller.setAttribute(PREVIEW_SCROLLER_ATTR, 'true');
+			pane.appendChild(scroller);
+			content.appendChild(pane);
+			expect(resolvePreviewScroller(content)).toBe(scroller);
 		});
 	});
 

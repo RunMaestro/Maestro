@@ -14,6 +14,7 @@ import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { getRevealLabel } from '../utils/platformUtils';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 export interface FileContextMenuState {
 	x: number;
@@ -52,7 +53,7 @@ export function FileContextMenu({
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
 
-	const { left, top, ready } = useContextMenuPosition(menuRef, menu.x, menu.y);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, menu.x, menu.y);
 
 	// Dismiss on click outside or Escape. The menu is portaled to document.body,
 	// so a click inside it doesn't reach this listener via the React tree - guard
@@ -113,13 +114,17 @@ export function FileContextMenu({
 	return createPortal(
 		<div
 			ref={menuRef}
-			className="fixed z-[10000] rounded-lg shadow-xl border overflow-hidden whitespace-nowrap"
+			className="fixed z-[10000] rounded-lg overflow-hidden whitespace-nowrap"
 			style={{
 				left,
 				top,
+				// A menu taller than the viewport pins to the top edge and runs off
+				// the bottom; the container is overflow-hidden, so those items are
+				// simply unreachable. Scroll instead of clipping.
+				maxHeight,
+				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '11.25rem',
 			}}
 			onMouseDown={(e) => e.stopPropagation()}

@@ -1,20 +1,27 @@
 /**
  * Claude Token-Source Mode
  *
- * Claude Code can spend either Max-plan quota (by driving the real claude TUI
- * through `maestro-p`) or per-token API credit (`claude --print`). A Maestro
- * agent picks one of three behaviors:
+ * A Claude Code turn runs through either the real claude TUI (driven by
+ * `maestro-p`) or `claude --print`. A Maestro agent picks one of three behaviors:
  *
- *   - `api`         always `claude --print` (per-token API credit)
- *   - `interactive` always the maestro-p TUI (Max-plan quota)
- *   - `dynamic`     start interactive, fall back to API when the latest usage
- *                   snapshot shows a window at/above the limit threshold
+ *   - `api`         always `claude --print`
+ *   - `interactive` always the maestro-p TUI
+ *   - `dynamic`     start interactive, switch to `claude --print` when the latest
+ *                   usage snapshot shows a window at/above the limit threshold
+ *
+ * The mode picks the INTERFACE, not the bill. Signed in with a Claude plan,
+ * `claude --print` draws from the same 5-hour and weekly limits as the TUI
+ * (verified 2026-10-10: `apiKeySource: none` plus the plan's own
+ * `rate_limit_event` windows), so Dynamic's switch only buys time when the
+ * agent also carries a separate credential such as `ANTHROPIC_API_KEY`.
  *
  * Storage keeps the legacy `enableMaestroP` boolean (the original Adaptive
  * toggle) plus a `maestroPMode` refinement so existing sessions migrate
  * losslessly: a pre-refinement session with the toggle on reads as `dynamic`
  * (its historical behavior), toggle off reads as `api`.
  */
+
+import { AUTOMATION_SETTINGS_METADATA } from './settingsMetadataAutomation';
 
 export type ClaudeTokenMode = 'api' | 'interactive' | 'dynamic';
 
@@ -124,4 +131,34 @@ export function toClaudeTokenModeSource(mode: ClaudeTokenMode): Required<ClaudeT
 		case 'dynamic':
 			return { enableMaestroP: true, maestroPMode: 'dynamic' };
 	}
+}
+
+/** A day: the idle cap handed to maestro-p when Auto Run's own watchdog is off. */
+const AUTO_RUN_UNWATCHED_MAX_WAIT_SECONDS = 24 * 60 * 60;
+
+/**
+ * maestro-p's `--max-wait` for an Auto Run task that runs through the TUI.
+ *
+ * maestro-p kills a turn after 300s with no transcript output, which is right
+ * for a chat turn and wrong for Auto Run: a task that runs a ten-minute test
+ * suite writes nothing while it waits. Auto Run already supervises its tasks
+ * with an inactivity watchdog (default four hours), so maestro-p gets that
+ * budget, then the wall-clock cap, then a day when both are switched off.
+ */
+export function autoRunMaestroPMaxWaitSeconds(settings: {
+	// `unknown` so the CLI can hand over its raw settings file.
+	autoRunInactivityTimeoutMin?: unknown;
+	autoRunMaxTaskDurationMin?: unknown;
+}): number {
+	// An unset value means the documented default (the CLI reads the raw file,
+	// where a setting never changed is simply absent); 0 means switched off.
+	const minutes = (value: unknown, key: string): number => {
+		const raw = value === undefined ? AUTOMATION_SETTINGS_METADATA[key]?.default : value;
+		return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : 0;
+	};
+	const inactivity = minutes(settings.autoRunInactivityTimeoutMin, 'autoRunInactivityTimeoutMin');
+	if (inactivity > 0) return Math.ceil(inactivity * 60);
+	const maxDuration = minutes(settings.autoRunMaxTaskDurationMin, 'autoRunMaxTaskDurationMin');
+	if (maxDuration > 0) return Math.ceil(maxDuration * 60);
+	return AUTO_RUN_UNWATCHED_MAX_WAIT_SECONDS;
 }

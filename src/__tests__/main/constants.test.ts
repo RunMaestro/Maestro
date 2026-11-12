@@ -14,9 +14,24 @@ import {
 	REGEX_AI_TAB_ID,
 	debugLog,
 	MAX_GROUP_CHAT_BUFFER_SIZE,
+	resolveSharedDataPath,
 } from '../../main/constants';
 
 describe('main/constants', () => {
+	describe('resolveSharedDataPath', () => {
+		it('shares the install data directory outside demo mode', () => {
+			expect(resolveSharedDataPath('/data/maestro', { enabled: false, path: '/tmp/demo' })).toBe(
+				'/data/maestro'
+			);
+		});
+
+		it('keeps a demo profile sealed inside its own directory', () => {
+			expect(resolveSharedDataPath('/data/maestro', { enabled: true, path: '/tmp/demo' })).toBe(
+				'/tmp/demo'
+			);
+		});
+	});
+
 	// groupChatId is ALWAYS a uuidv4() in production (see group-chat-storage.ts).
 	// The regexes now anchor on the UUID format to eliminate greedy-backtrack
 	// ambiguity when participant names contain sentinel substrings like

@@ -10,6 +10,45 @@ import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
 import { extractCopilotUsageFromDisk } from '../group-chat/copilot-usage-extractor';
 
 /**
+ * True when routing a participant's response failed only because the group chat
+ * no longer exists.
+ *
+ * Participants keep running after the user deletes their group chat, so the exit
+ * that fires minutes later routes into a chat `loadGroupChat` can no longer
+ * find. The listener already handles it (the participant is marked done and the
+ * buffer is cleared), so it is an expected outcome of a normal user action
+ * rather than a defect worth reporting (MAESTRO-M4). Any other routing failure
+ * still reaches Sentry.
+ */
+export function isDeletedGroupChatFailure(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error ?? '');
+	return /^Group chat not found: /i.test(message);
+}
+
+/**
+ * True when routing a participant's response failed only because the user
+ * removed that participant while it was still working.
+ *
+ * `removeParticipant` kills the participant's process and drops it from the
+ * chat; it is the only code path that removes a participant once added, and
+ * `addParticipant` persists before anything is spawned. So the exit that the
+ * kill produces routes into a chat that no longer lists the participant, and
+ * `routeAgentResponse` throws `Participant '<name>' not found in group chat`.
+ * The listener already recovers (participant marked done), and the fallback
+ * path retried the same routing, so each removal produced two Sentry events
+ * (MAESTRO-WJ).
+ */
+export function isRemovedParticipantFailure(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error ?? '');
+	return /^Participant '.*' not found in group chat$/i.test(message);
+}
+
+/** Routing failures caused by a user deleting the chat or removing the participant. */
+function isExpectedRoutingFailure(error: unknown): boolean {
+	return isDeletedGroupChatFailure(error) || isRemovedParticipantFailure(error);
+}
+
+/**
  * Sets up the exit listener for process termination.
  * Handles:
  * - Power management cleanup
@@ -475,7 +514,7 @@ export function setupExitListener(
 							markAndMaybeSynthesize();
 						}
 					} catch (err) {
-						void captureException(err);
+						if (!isExpectedRoutingFailure(err)) void captureException(err);
 						debugLog('GroupChat:Debug', ` ERROR loading chat for participant:`, err);
 						logger.error(
 							'[GroupChat] Failed to load chat for participant output parsing',
@@ -499,7 +538,7 @@ export function setupExitListener(
 								markAndMaybeSynthesize();
 							}
 						} catch (routeErr) {
-							void captureException(routeErr);
+							if (!isExpectedRoutingFailure(routeErr)) void captureException(routeErr);
 							debugLog('GroupChat:Debug', ` ERROR routing agent response (fallback):`, routeErr);
 							logger.error('[GroupChat] Failed to route agent response', 'ProcessListener', {
 								error: String(routeErr),

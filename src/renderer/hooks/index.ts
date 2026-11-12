@@ -98,6 +98,11 @@ export * from './stats';
 export * from './worktree';
 
 // ============================================================================
+// AgentRun Module - Agent run/campaign ledger viewer
+// ============================================================================
+export * from './agentRun/useAgentRun';
+
+// ============================================================================
 // Wizard Module - Wizard lifecycle and command handlers
 // ============================================================================
 export * from './wizard';

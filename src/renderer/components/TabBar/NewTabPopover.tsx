@@ -1,15 +1,23 @@
-import { useState, useRef, useCallback, useEffect, useLayoutEffect, memo } from 'react';
+import { useState, useRef, useCallback, useLayoutEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { FileText, Globe, MessageSquare, Plus, Terminal } from 'lucide-react';
+import { FileText, Globe, MessageSquare, Plus, Terminal, VenetianMask } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import { getTabKindColor } from './tabBarUtils';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { useHoverPopover } from '../../hooks/ui/useHoverPopover';
+
+// Single source of truth for the popover width. Used both for the overflow
+// math in the anchor effect (to decide whether to right-align near the viewport
+// edge) and as the rendered minWidth, so the two never drift apart.
+const POPOVER_MIN_WIDTH = 200;
 
 interface NewTabPopoverProps {
 	theme: Theme;
 	onNewTab: () => void;
 	onNewFileTab?: () => void;
-	onNewBrowserTab?: () => void;
+	onNewBrowserTab?: (options?: { ephemeral?: boolean }) => void;
 	onNewTerminalTab?: () => void;
 	/** Shortcut keys config for new tab */
 	newTabKeys: string[];
@@ -26,7 +34,8 @@ interface NewTabPopoverProps {
 /**
  * The + new tab button and its popover menu.
  * When only AI tabs are available, clicking creates one directly.
- * When terminal tabs are also available, shows a popover to choose.
+ * When terminal tabs are also available, shows a popover to choose: it peeks
+ * open on mouse hover and pins on click (`useHoverPopover`).
  */
 export const NewTabPopover = memo(function NewTabPopover({
 	theme,
@@ -40,21 +49,39 @@ export const NewTabPopover = memo(function NewTabPopover({
 	terminalKeys,
 	isOverflowing,
 }: NewTabPopoverProps) {
-	const [popoverOpen, setPopoverOpen] = useState(false);
 	const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
 	const btnRef = useRef<HTMLButtonElement>(null);
 	const popoverRef = useRef<HTMLDivElement>(null);
 
-	// Close popover on outside click
-	useEffect(() => {
-		if (!popoverOpen) return;
-		const handler = (e: MouseEvent) => {
-			if (btnRef.current && btnRef.current.contains(e.target as Node)) return;
-			if (popoverRef.current && popoverRef.current.contains(e.target as Node)) return;
-			setPopoverOpen(false);
-		};
-		document.addEventListener('mousedown', handler);
-		return () => document.removeEventListener('mousedown', handler);
+	// With only AI tabs available the + acts directly, so there is no menu to peek.
+	const hasMenu = Boolean(onNewTerminalTab || onNewBrowserTab || onNewFileTab);
+	const popover = useHoverPopover({
+		triggerRef: btnRef,
+		contentRef: popoverRef,
+		hoverEnabled: hasMenu,
+	});
+	const { isOpen: popoverOpen, toggle, close, closeForAction } = popover;
+
+	// Anchor under the + each time it opens, by hover or by click. Declared
+	// before the clamp below so the clamp corrects this position in the same
+	// commit; dropped on close so a reopen never clamps a stale spot.
+	useLayoutEffect(() => {
+		if (!popoverOpen) {
+			setPopoverPos(null);
+			return;
+		}
+		const btn = btnRef.current;
+		if (!btn) return;
+		const rect = btn.getBoundingClientRect();
+		// Right-align the popover when the button is too close to the right edge
+		// so the labels don't get clipped on narrow viewports (iOS Safari).
+		const VIEWPORT_MARGIN = 8;
+		const viewportW = window.innerWidth || document.documentElement.clientWidth;
+		const wouldOverflow = rect.left + POPOVER_MIN_WIDTH > viewportW - VIEWPORT_MARGIN;
+		const left = wouldOverflow
+			? Math.max(VIEWPORT_MARGIN, rect.right - POPOVER_MIN_WIDTH)
+			: rect.left;
+		setPopoverPos({ top: rect.bottom + 4, left });
 	}, [popoverOpen]);
 
 	// Clamp the popover into the viewport once mounted. The initial position is
@@ -81,32 +108,22 @@ export const NewTabPopover = memo(function NewTabPopover({
 		}
 	}, [popoverOpen, popoverPos]);
 
-	// Auto-focus popover when opened, restore focus to button when closed
-	useEffect(() => {
-		if (popoverOpen) {
-			// Wait one frame for the portal to mount
-			requestAnimationFrame(() => popoverRef.current?.focus());
-		} else {
-			btnRef.current?.focus();
-		}
-	}, [popoverOpen]);
-
 	const handleClick = useCallback(() => {
-		if (!onNewTerminalTab && !onNewBrowserTab && !onNewFileTab) {
+		if (!hasMenu) {
 			onNewTab();
 			return;
 		}
-		const btn = btnRef.current;
-		if (!btn) return;
-		const rect = btn.getBoundingClientRect();
-		setPopoverPos({ top: rect.bottom + 4, left: rect.left });
-		setPopoverOpen((open) => !open);
-	}, [onNewFileTab, onNewBrowserTab, onNewTerminalTab, onNewTab]);
+		toggle();
+	}, [hasMenu, onNewTab, toggle]);
 
-	const closeAndDo = useCallback((action: () => void) => {
-		setPopoverOpen(false);
-		action();
-	}, []);
+	// The new tab owns focus once created, so focus is not handed back to the +.
+	const closeAndDo = useCallback(
+		(action: () => void) => {
+			closeForAction();
+			action();
+		},
+		[closeForAction]
+	);
 
 	return (
 		<>
@@ -120,6 +137,7 @@ export const NewTabPopover = memo(function NewTabPopover({
 				<button
 					ref={btnRef}
 					onClick={handleClick}
+					{...popover.triggerHandlers}
 					className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
 					style={{ color: theme.colors.textDim }}
 					title={onNewTerminalTab ? 'New tab…' : `New tab (${formatShortcutKeys(newTabKeys)})`}
@@ -134,18 +152,18 @@ export const NewTabPopover = memo(function NewTabPopover({
 					<div
 						ref={popoverRef}
 						tabIndex={0}
-						className="fixed z-50 rounded-lg shadow-xl overflow-hidden outline-none"
+						className="fixed z-50 rounded-lg overflow-hidden outline-none"
 						style={{
 							top: popoverPos.top,
 							left: popoverPos.left,
-							backgroundColor: theme.colors.bgSidebar,
-							border: `1px solid ${theme.colors.border}`,
-							minWidth: 180,
+							...elevatedSurfaceStyle(theme),
+							minWidth: POPOVER_MIN_WIDTH,
 						}}
+						{...popover.contentHandlers}
 						onKeyDown={(e) => {
 							if (e.key === 'Escape') {
 								e.stopPropagation();
-								setPopoverOpen(false);
+								close();
 							}
 						}}
 					>
@@ -159,7 +177,11 @@ export const NewTabPopover = memo(function NewTabPopover({
 								style={{ color: getTabKindColor('ai', theme) }}
 							/>
 							New AI Chat
-							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+							<span
+								className="ml-auto text-xs"
+								data-shortcut-hint=""
+								style={{ color: theme.colors.textDim }}
+							>
 								{formatShortcutKeys(newTabKeys)}
 							</span>
 						</button>
@@ -174,7 +196,11 @@ export const NewTabPopover = memo(function NewTabPopover({
 								style={{ color: getTabKindColor('terminal', theme) }}
 							/>
 							New Terminal
-							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+							<span
+								className="ml-auto text-xs"
+								data-shortcut-hint=""
+								style={{ color: theme.colors.textDim }}
+							>
 								{formatShortcutKeys(terminalKeys)}
 							</span>
 						</button>
@@ -189,12 +215,18 @@ export const NewTabPopover = memo(function NewTabPopover({
 									style={{ color: getTabKindColor('file', theme) }}
 								/>
 								New File
-								<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+								<span
+									className="ml-auto text-xs"
+									data-shortcut-hint=""
+									style={{ color: theme.colors.textDim }}
+								>
 									{formatShortcutKeys(fileTabKeys)}
 								</span>
 							</button>
 						)}
-						{onNewBrowserTab && (
+						{/* Browser tabs rely on the Electron <webview>, which is inert in the
+						    web-desktop browser bundle - hide the create affordance there. */}
+						{onNewBrowserTab && !isWebDesktop() && (
 							<button
 								className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
@@ -205,9 +237,27 @@ export const NewTabPopover = memo(function NewTabPopover({
 									style={{ color: getTabKindColor('browser', theme) }}
 								/>
 								New Browser
-								<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+								<span
+									className="ml-auto text-xs"
+									data-shortcut-hint=""
+									style={{ color: theme.colors.textDim }}
+								>
 									{formatShortcutKeys(browserTabKeys)}
 								</span>
+							</button>
+						)}
+						{onNewBrowserTab && (
+							<button
+								className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+								onClick={() => closeAndDo(() => onNewBrowserTab({ ephemeral: true }))}
+								title="Browsing data is kept in memory only and discarded when the app closes"
+							>
+								<VenetianMask
+									className="w-3.5 h-3.5"
+									style={{ color: getTabKindColor('browser', theme) }}
+								/>
+								New Incognito Browser
 							</button>
 						)}
 					</div>,

@@ -6,8 +6,11 @@
  *   - Badge unlock triggers standing ovation overlay
  *   - Peak usage stats tracker (max agents, concurrent queries, queue depth)
  *
- * Reads from: sessionStore (sessions), settingsStore (autoRunStats, usageStats),
+ * Reads from: sessionStore (usagePeaksKey via sessions), settingsStore (autoRunStats, usageStats),
  *             batchStore (activeBatchSessionIds), modalStore (setStandingOvationData)
+ *
+ * PERF: Does not subscribe to full sessions[]. Peak-stats use a narrow count signature;
+ * streaming log/token flushes must not wake App via this hook.
  */
 
 import { useEffect, useRef } from 'react';
@@ -28,6 +31,13 @@ import type { SleepAwareSpan } from '../../services/systemSleep';
 export interface UseAutoRunAchievementsDeps {
 	/** IDs of sessions with active batch runs */
 	activeBatchSessionIds: string[];
+	/**
+	 * Whether this renderer owns app-wide side effects (`useIsLifecycleOwner`).
+	 * Cue credit is broadcast to every window and every web-desktop client, so
+	 * only the owner may credit it, or each one adds the same minutes and ships
+	 * the same delta to the leaderboard. Defaults to true (single-window app).
+	 */
+	isLifecycleOwner?: boolean;
 }
 
 // ============================================================================
@@ -35,10 +45,21 @@ export interface UseAutoRunAchievementsDeps {
 // ============================================================================
 
 export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
-	const { activeBatchSessionIds } = deps;
+	const { activeBatchSessionIds, isLifecycleOwner = true } = deps;
 
-	// --- Reactive subscriptions ---
-	const sessions = useSessionStore((s) => s.sessions);
+	// PERF: Peak-stats signature only - do not subscribe to full sessions[]. Streaming
+	// log/token flushes must not wake App; re-run when agent/busy/queue counts shift.
+	const usagePeaksKey = useSessionStore((s) => {
+		let nonTerminal = 0;
+		let busy = 0;
+		let queueDepth = 0;
+		for (const sess of s.sessions) {
+			if (sess.toolType !== 'terminal') nonTerminal++;
+			if (sess.state === 'busy') busy++;
+			queueDepth += sess.executionQueue?.length || 0;
+		}
+		return `${nonTerminal}|${busy}|${queueDepth}`;
+	});
 	// The peak-usage effect below is a no-op until settings hydrate (the store
 	// would otherwise max against zeroed defaults). Subscribing here re-runs it
 	// on the render after hydration, so the sample taken during load is not lost.
@@ -56,6 +77,11 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	const autoRunProgressRef = useRef<{ lastUpdateSpan: SleepAwareSpan | null }>({
 		lastUpdateSpan: null,
 	});
+	// Cue credit that arrived before settings hydrated. The store still holds
+	// the zeroed default then, so crediting would persist a few minutes as the
+	// lifetime total, and the leaderboard submit would drop the delta for want
+	// of a registration. Held here and applied once settings are loaded.
+	const pendingCueCreditMsRef = useRef(0);
 
 	// Credit a block of achievement time and raise the standing ovation if it
 	// crosses a badge threshold. Shared by the Auto Run timer below and the Cue
@@ -121,32 +147,50 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	// Credit autonomous Cue AI time toward the Conductor level. The main-process
 	// Cue engine emits `conductorTimeCredit` once per naturally-completed agent
 	// run, already gated (no command nodes) and floored to whole minutes, so the
-	// renderer simply accrues it through the same path as Auto Run. This effect
-	// is always mounted; Cue runs regardless of whether any Auto Run is active.
+	// renderer simply accrues it through the same path as Auto Run. Cue runs
+	// regardless of whether any Auto Run is active, so this stays subscribed.
+	const creditCueTime = (creditMs: number): void => {
+		if (!(creditMs > 0)) return;
+		creditAchievementTime(creditMs, 'cue');
+		// Ship the same delta to the leaderboard. The server accumulates from
+		// deltaMs, so time credited only locally would drift below the server
+		// total forever. deltaRuns is 0 because a Cue run is not an Auto Run and
+		// must not inflate totalRuns.
+		//
+		// This lives here rather than in creditAchievementTime because the Auto
+		// Run timer above shares that helper, and Auto Run already submits its
+		// full elapsed time once on completion (useBatchHandlers) - submitting
+		// per tick too would double-count.
+		void submitLeaderboardTimeDelta({ deltaMs: creditMs, source: 'cue' });
+	};
+
 	useEffect(() => {
+		if (!isLifecycleOwner) return;
 		const unsubscribe = cueService.onActivityUpdate((payload) => {
-			if (payload?.type === 'conductorTimeCredit') {
-				creditAchievementTime(payload.creditMs, 'cue');
-				// Ship the same delta to the leaderboard. The server accumulates
-				// from deltaMs, so time credited only locally would drift below
-				// the server total forever. deltaRuns is 0 because a Cue run is
-				// not an Auto Run and must not inflate totalRuns.
-				//
-				// This lives here rather than in creditAchievementTime because
-				// the Auto Run timer above shares that helper, and Auto Run
-				// already submits its full elapsed time once on completion
-				// (useBatchHandlers) - submitting per tick too would double-count.
-				void submitLeaderboardTimeDelta({ deltaMs: payload.creditMs, source: 'cue' });
+			if (payload?.type !== 'conductorTimeCredit') return;
+			if (!useSettingsStore.getState().settingsLoaded) {
+				pendingCueCreditMsRef.current += payload.creditMs > 0 ? payload.creditMs : 0;
+				return;
 			}
+			creditCueTime(payload.creditMs);
 		});
 		return unsubscribe;
-	}, []);
+	}, [isLifecycleOwner]);
+
+	useEffect(() => {
+		if (!settingsLoaded || !isLifecycleOwner) return;
+		const pending = pendingCueCreditMsRef.current;
+		if (pending <= 0) return;
+		pendingCueCreditMsRef.current = 0;
+		creditCueTime(pending);
+	}, [settingsLoaded, isLifecycleOwner]);
 
 	// Track peak usage stats for achievements image
 	useEffect(() => {
 		// Nothing sampled before hydration is trustworthy as a peak, and the
 		// store would be comparing it against zeros. Wait for the real baseline.
 		if (!settingsLoaded) return;
+		const sessions = useSessionStore.getState().sessions;
 
 		// Count current active agents (non-terminal sessions)
 		const activeAgents = sessions.filter((s) => s.toolType !== 'terminal').length;
@@ -168,5 +212,7 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 			maxSimultaneousQueries: busySessions,
 			maxQueueDepth: totalQueueDepth,
 		});
-	}, [sessions, activeBatchSessionIds, settingsLoaded]);
+		// usagePeaksKey encodes the same counts read above; include it so peaks
+		// refresh when agent/busy/queue shift without a full sessions[] sub.
+	}, [usagePeaksKey, activeBatchSessionIds, settingsLoaded]);
 }

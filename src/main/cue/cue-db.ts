@@ -9,7 +9,8 @@
 import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as fs from 'fs';
-import { app } from 'electron';
+import { resolveUserDataDir } from '../../shared/userDataDir';
+import { fileTimestampSlug } from '../../shared/formatters';
 import { captureException } from '../utils/sentry';
 
 const LOG_CONTEXT = '[CueDB]';
@@ -50,7 +51,9 @@ export interface CueEventRecord {
 	/**
 	 * Process exit code the run terminated with. For agent runs through
 	 * maestro-p this is the distinguishing signal (3 = idle timeout, 4 =
-	 * ready_timeout, 5 = first_byte_timeout, 6 = prompt_truncated, 1 =
+	 * ready_timeout, 5 = first_byte_timeout, 6 = prompt_truncated, 7 =
+	 * workspace_untrusted, 8 = terminal API error such as an unknown model, 9 =
+	 * resumed session has no transcript on this host, 1 =
 	 * tui_exited, 2 = limit, 0 = success). NULL when the run never produced an exit code (spawn error,
 	 * still running) or for status flips that aren't run completions.
 	 */
@@ -179,7 +182,8 @@ const CREATE_CUE_EVENT_QUEUE_SQL = `
     chain_depth INTEGER DEFAULT 0,
     queued_at INTEGER NOT NULL,
     chain_root_id TEXT,
-    parent_event_id TEXT
+    parent_event_id TEXT,
+    turn_settings_json TEXT
   )
 `;
 
@@ -187,7 +191,13 @@ const CREATE_CUE_EVENT_QUEUE_SQL = `
 // `cue_events` additive set because the two tables migrate independently:
 // queue rows are transient (deleted on dispatch), so the migration only needs
 // to keep schema in sync without backfilling values.
-const CUE_EVENT_QUEUE_ADDITIVE_COLUMNS = ['chain_root_id', 'parent_event_id'] as const;
+// `turn_settings_json` carries the subscription's tier / model / effort so a
+// run restored after a crash spawns on the model it was queued with.
+const CUE_EVENT_QUEUE_ADDITIVE_COLUMNS = [
+	'chain_root_id',
+	'parent_event_id',
+	'turn_settings_json',
+] as const;
 
 const CREATE_CUE_EVENT_QUEUE_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_cue_event_queue_session ON cue_event_queue(session_id);
@@ -275,14 +285,36 @@ export function initCueDb(
 
 	if (onLog) logFn = onLog;
 
-	const dbPath = dbPathOverride ?? path.join(app.getPath('userData'), 'cue.db');
+	const dbPath = resolveCueDbPath(dbPathOverride);
 	const dir = path.dirname(dbPath);
 	if (!fs.existsSync(dir)) {
 		fs.mkdirSync(dir, { recursive: true });
 	}
 
-	db = new Database(dbPath);
+	const opened = new Database(dbPath);
+	try {
+		prepareCueDb(opened, dbPath);
+	} catch (err) {
+		// A half-prepared handle must not stay live. Left in place, `isCueDbReady()`
+		// reports true and every later caller (telemetry flush, GitHub poller) hits
+		// the same broken file, and a retry of initCueDb() returns early on it.
+		try {
+			opened.close();
+		} catch {
+			// The handle is already unusable; the original error is the one to report.
+		}
+		throw err;
+	}
+	db = opened;
 
+	log('info', `Cue database initialized at ${dbPath}`);
+}
+
+function resolveCueDbPath(dbPathOverride?: string): string {
+	return dbPathOverride ?? path.join(resolveUserDataDir(), 'cue.db');
+}
+
+function prepareCueDb(database: Database.Database, dbPath: string): void {
 	// Tighten permissions so only the current user can read/write the DB. On
 	// NTFS/Windows POSIX modes are largely ignored (near no-op); on network
 	// mounts without POSIX support chmod can throw EPERM/ENOTSUP. Either way
@@ -296,29 +328,27 @@ export function initCueDb(
 		);
 	}
 
-	db.pragma('journal_mode = WAL');
+	database.pragma('journal_mode = WAL');
 
 	// Create tables
-	db.prepare(CREATE_CUE_EVENTS_SQL).run();
-	migrateCueEventsAdditiveColumns(db);
+	database.prepare(CREATE_CUE_EVENTS_SQL).run();
+	migrateCueEventsAdditiveColumns(database);
 	for (const sql of CREATE_CUE_EVENTS_INDEXES_SQL.split(';').filter((s) => s.trim())) {
-		db.prepare(sql).run();
+		database.prepare(sql).run();
 	}
-	db.prepare(CREATE_CUE_HEARTBEAT_SQL).run();
-	db.prepare(CREATE_CUE_GITHUB_SEEN_SQL).run();
-	migrateCueGitHubSeenAdditiveColumns(db);
-	db.prepare(CREATE_CUE_GITHUB_SEEN_INDEX_SQL).run();
-	db.prepare(CREATE_CUE_EVENT_QUEUE_SQL).run();
-	migrateCueEventQueueAdditiveColumns(db);
+	database.prepare(CREATE_CUE_HEARTBEAT_SQL).run();
+	database.prepare(CREATE_CUE_GITHUB_SEEN_SQL).run();
+	migrateCueGitHubSeenAdditiveColumns(database);
+	database.prepare(CREATE_CUE_GITHUB_SEEN_INDEX_SQL).run();
+	database.prepare(CREATE_CUE_EVENT_QUEUE_SQL).run();
+	migrateCueEventQueueAdditiveColumns(database);
 	for (const sql of CREATE_CUE_EVENT_QUEUE_INDEXES_SQL.split(';').filter((s) => s.trim())) {
-		db.prepare(sql).run();
+		database.prepare(sql).run();
 	}
-	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_SQL).run();
-	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL).run();
-	db.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_SQL).run();
-	db.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_INDEX_SQL).run();
-
-	log('info', `Cue database initialized at ${dbPath}`);
+	database.prepare(CREATE_CUE_TELEMETRY_OUTBOX_SQL).run();
+	database.prepare(CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL).run();
+	database.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_SQL).run();
+	database.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_INDEX_SQL).run();
 }
 
 /**
@@ -337,6 +367,115 @@ export function closeCueDb(): void {
  */
 export function isCueDbReady(): boolean {
 	return db !== null;
+}
+
+/**
+ * True when `err` is SQLite saying the file itself is damaged: `SQLITE_CORRUPT`
+ * ("database disk image is malformed", plus its extended codes) or
+ * `SQLITE_NOTADB` ("file is not a database"). better-sqlite3 puts the result
+ * code on `SqliteError.code`.
+ *
+ * These do not heal on a retry or a restart: the same bytes fail the same way
+ * on every boot. Lock contention (`SQLITE_BUSY`), a full disk or a permission
+ * error are not corruption and stay out of this set.
+ */
+export function isCueDbCorruptionError(err: unknown): boolean {
+	const code = (err as { code?: unknown } | null)?.code;
+	if (typeof code !== 'string') return false;
+	return (
+		code === 'SQLITE_NOTADB' || code === 'SQLITE_CORRUPT' || code.startsWith('SQLITE_CORRUPT_')
+	);
+}
+
+/**
+ * Move a damaged Cue database aside so the next initCueDb() starts clean.
+ *
+ * Closes the live handle first, then renames `cue.db` and its `-wal` / `-shm`
+ * companions to `cue.corrupt-<stamp>.db[-wal|-shm]`. The WAL has to move with
+ * the main file: SQLite would replay a stale WAL into the new database. Renamed,
+ * not deleted, so the event history is still on disk for anyone who wants it.
+ * The stamp keeps a second incident from overwriting the first.
+ *
+ * What a fresh database loses is recoverable by design: event history and the
+ * heartbeat are bookkeeping, the GitHub pollers re-seed an empty seen table
+ * without firing, and the telemetry outbox and persisted queue are best-effort.
+ *
+ * @returns the quarantined main-file path, or null when it could not be moved
+ *   or a `-wal` / `-shm` beside it could be neither moved nor removed (the main
+ *   file is then put back, because a fresh database would replay that WAL)
+ */
+export function quarantineCorruptCueDb(dbPathOverride?: string): string | null {
+	if (db) {
+		try {
+			db.close();
+		} catch {
+			// A corrupt handle may refuse to close cleanly; it is discarded either way.
+		}
+		db = null;
+	}
+
+	const dbPath = resolveCueDbPath(dbPathOverride);
+	const quarantinedPath = unusedQuarantinePath(dbPath);
+
+	try {
+		fs.renameSync(dbPath, quarantinedPath);
+	} catch (err) {
+		log('error', `Could not move corrupt database ${dbPath} aside: ${errorMessage(err)}`);
+		return null;
+	}
+
+	for (const suffix of CUE_DB_SIDECARS) {
+		const sidecar = `${dbPath}${suffix}`;
+		try {
+			fs.renameSync(sidecar, `${quarantinedPath}${suffix}`);
+			continue;
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+		}
+		// A WAL left beside a fresh cue.db would be replayed into it, so remove it.
+		try {
+			fs.rmSync(sidecar, { force: true });
+		} catch {
+			// Checked below.
+		}
+		if (fs.existsSync(sidecar)) {
+			// Starting fresh beside this file would defeat the quarantine. Put the
+			// main file back so the next boot meets the same, honest failure.
+			log('error', `Could not clear ${sidecar}; leaving the corrupt database in place`);
+			try {
+				fs.renameSync(quarantinedPath, dbPath);
+			} catch (err) {
+				log('error', `Could not restore ${dbPath}: ${errorMessage(err)}`);
+			}
+			return null;
+		}
+	}
+
+	log('warn', `Corrupt database moved to ${path.basename(quarantinedPath)}; starting a new one`);
+	return quarantinedPath;
+}
+
+const CUE_DB_SIDECARS = ['-wal', '-shm'] as const;
+
+function errorMessage(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * `cue.corrupt-<stamp>.db`, plus `-2`, `-3`, ... when that name (or one of its
+ * sidecars) is already taken. The stamp has whole-second resolution, so two
+ * quarantines in one second would otherwise rename onto the earlier copy.
+ */
+function unusedQuarantinePath(dbPath: string): string {
+	const dir = path.dirname(dbPath);
+	const stem = `${path.basename(dbPath, '.db')}.corrupt-${fileTimestampSlug()}`;
+	const taken = (candidate: string) =>
+		fs.existsSync(candidate) || CUE_DB_SIDECARS.some((s) => fs.existsSync(`${candidate}${s}`));
+	let candidate = path.join(dir, `${stem}.db`);
+	for (let n = 2; taken(candidate); n++) {
+		candidate = path.join(dir, `${stem}-${n}.db`);
+	}
+	return candidate;
 }
 
 // ============================================================================
@@ -778,6 +917,72 @@ export function getCueEventGroupCounts(options: {
 }
 
 /**
+ * Cue's contribution to the delegation split: how many runs finished and how
+ * much wall-clock time they took, over all retained history or since `sinceMs`.
+ *
+ * Only naturally-completed runs count, matching the crediting rule the engine
+ * and `getHistoricalConductorCreditMs` already use. A failed or killed run has
+ * a `completed_at` too, so including them would credit hours of hung processes
+ * as delegated work - the dashboard's Cue duration total already does that, and
+ * it is why that figure reads so much higher than the Conductor card's.
+ *
+ * Unlike the Conductor credit, durations are NOT floored to whole minutes: this
+ * feeds a ratio against per-turn query durations, most of which are seconds, so
+ * flooring would drop the short runs entirely and skew the ratio.
+ *
+ * Returns zeroes when the DB hasn't been initialized, the same tolerance as the
+ * other read paths, so a delegation surface renders "no Cue history" instead of
+ * throwing.
+ */
+export function getCueRunTotals(sinceMs = 0): { count: number; durationMs: number } {
+	if (!db) return { count: 0, durationMs: 0 };
+	const row = db
+		.prepare(
+			`SELECT COUNT(*) AS count, COALESCE(SUM(completed_at - created_at), 0) AS duration_ms
+			 FROM cue_events
+			 WHERE status = 'completed'
+			   AND completed_at IS NOT NULL
+			   AND completed_at >= created_at
+			   AND created_at >= ?`
+		)
+		.get(sinceMs) as { count: number; duration_ms: number } | undefined;
+	return { count: row?.count ?? 0, durationMs: Math.max(0, row?.duration_ms ?? 0) };
+}
+
+/**
+ * The same completed-run totals, bucketed by local-time day so the delegation
+ * trend chart can lay Cue runs alongside the per-day query series.
+ *
+ * Bucketing is by `created_at` (when the run started), matching how the stats
+ * DB buckets a query by its start time - a run that crosses midnight belongs to
+ * the day it was triggered on.
+ */
+export function getCueRunTotalsByDay(
+	sinceMs = 0
+): Array<{ date: string; count: number; durationMs: number }> {
+	if (!db) return [];
+	const rows = db
+		.prepare(
+			`SELECT date(created_at / 1000, 'unixepoch', 'localtime') AS date,
+			        COUNT(*) AS count,
+			        COALESCE(SUM(completed_at - created_at), 0) AS duration_ms
+			 FROM cue_events
+			 WHERE status = 'completed'
+			   AND completed_at IS NOT NULL
+			   AND completed_at >= created_at
+			   AND created_at >= ?
+			 GROUP BY date(created_at / 1000, 'unixepoch', 'localtime')
+			 ORDER BY date ASC`
+		)
+		.all(sinceMs) as Array<{ date: string; count: number; duration_ms: number }>;
+	return rows.map((row) => ({
+		date: row.date,
+		count: row.count,
+		durationMs: Math.max(0, row.duration_ms),
+	}));
+}
+
+/**
  * Bucket width the activity-graph counts are grouped to in SQL.
  *
  * One minute is finer than the graph's finest bucket by a wide margin (the
@@ -987,6 +1192,25 @@ export function pruneCueEvents(olderThanMs: number): void {
 	}
 }
 
+/**
+ * Settle every run a previous engine left `running`. Only called at engine
+ * start, and the single-instance desktop app is the only process that runs a
+ * Cue engine over this data directory, so no live engine can own one of these
+ * rows: its engine was killed (SIGKILL, crash, power loss) before the run
+ * finished. Left alone, the row reads as in progress
+ * forever. The run's own process may have outlived the engine and finished,
+ * but nothing recorded how, so `failed` with an explanation is the honest
+ * status. Returns how many rows were settled.
+ */
+export function failOrphanedRunningEvents(message: string): number {
+	const result = getDb()
+		.prepare(
+			`UPDATE cue_events SET status = 'failed', completed_at = ?, error_message = COALESCE(error_message, ?) WHERE status = 'running'`
+		)
+		.run(Date.now(), message);
+	return result.changes;
+}
+
 // ============================================================================
 // GitHub Seen Tracking
 // ============================================================================
@@ -1170,6 +1394,8 @@ export interface CueQueuedEventRecord {
 	chainRootId: string | null;
 	/** Phase 01 - immediate parent's runId, NULL for roots. */
 	parentEventId: string | null;
+	/** JSON of the subscription's `CueTurnSettings`, NULL when it sets none. */
+	turnSettingsJson: string | null;
 }
 
 /** Persist a queued event. Throws on DB failure - use safePersistQueuedEvent for
@@ -1180,8 +1406,8 @@ export function persistQueuedEvent(record: CueQueuedEventRecord): void {
 			`INSERT OR REPLACE INTO cue_event_queue
 			 (id, session_id, subscription_name, event_json, prompt, output_prompt,
 			  cli_output_json, action, command_json, chain_depth, queued_at,
-			  chain_root_id, parent_event_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			  chain_root_id, parent_event_id, turn_settings_json)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
 			record.id,
@@ -1196,7 +1422,8 @@ export function persistQueuedEvent(record: CueQueuedEventRecord): void {
 			record.chainDepth,
 			record.queuedAt,
 			record.chainRootId,
-			record.parentEventId
+			record.parentEventId,
+			record.turnSettingsJson ?? null
 		);
 }
 
@@ -1230,6 +1457,7 @@ export function getQueuedEvents(sessionId?: string): CueQueuedEventRecord[] {
 		queued_at: number;
 		chain_root_id: string | null;
 		parent_event_id: string | null;
+		turn_settings_json: string | null;
 	}>;
 
 	return rows.map((row) => ({
@@ -1246,6 +1474,7 @@ export function getQueuedEvents(sessionId?: string): CueQueuedEventRecord[] {
 		queuedAt: row.queued_at,
 		chainRootId: row.chain_root_id,
 		parentEventId: row.parent_event_id,
+		turnSettingsJson: row.turn_settings_json ?? null,
 	}));
 }
 

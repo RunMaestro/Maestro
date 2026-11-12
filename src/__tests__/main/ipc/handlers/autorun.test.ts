@@ -58,14 +58,21 @@ vi.mock('fs/promises', () => ({
 
 // Don't mock path - use the real Node.js implementation
 
-// Mock chokidar
-vi.mock('chokidar', () => ({
-	default: {
-		watch: vi.fn(() => ({
+// Mock chokidar. The watch fn and the per-watcher close are hoisted so tests
+// can assert WHEN a watcher is created and closed (reference counting).
+const { mockChokidarWatch, mockWatcherClose } = vi.hoisted(() => {
+	const close = vi.fn();
+	return {
+		mockWatcherClose: close,
+		mockChokidarWatch: vi.fn(() => ({
 			on: vi.fn().mockReturnThis(),
-			close: vi.fn(),
+			close,
 		})),
-	},
+	};
+});
+
+vi.mock('chokidar', () => ({
+	default: { watch: mockChokidarWatch },
 }));
 
 // Mock electron-store
@@ -116,6 +123,11 @@ vi.mock('../../../../main/utils/logger', () => ({
 		error: vi.fn(),
 		debug: vi.fn(),
 	},
+}));
+
+// Mock Sentry so malformed-STATUS.json reporting has no real side effects
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
 }));
 
 describe('autorun IPC handlers', () => {
@@ -214,6 +226,8 @@ describe('autorun IPC handlers', () => {
 				'autorun:restoreBackup',
 				'autorun:deleteBackups',
 				'autorun:createWorkingCopy',
+				'autorun:watchStatus',
+				'autorun:unwatchStatus',
 			];
 
 			for (const channel of expectedChannels) {
@@ -224,6 +238,106 @@ describe('autorun IPC handlers', () => {
 
 		it('should register app before-quit event handler', () => {
 			expect(appEventHandlers.has('before-quit')).toBe(true);
+		});
+	});
+
+	describe('autorun:watchStatus / unwatchStatus (STATUS.json)', () => {
+		it('returns the parsed initial status when .maestro/STATUS.json exists', async () => {
+			const status = {
+				feature: 'F-13',
+				phase: 'IMPLEMENT',
+				summary: '11/14 tasks complete',
+				tests: { pass: 394, fail: 0 },
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(status));
+
+			const handler = handlers.get('autorun:watchStatus');
+			const result = await handler!({} as any, '/test/project');
+
+			expect(result.success).toBe(true);
+			expect(result.status).toEqual(status);
+			// Reads the canonical .maestro/STATUS.json path
+			expect(vi.mocked(fs.readFile).mock.calls[0][0]).toBe(
+				path.join('/test/project', '.maestro', 'STATUS.json')
+			);
+		});
+
+		it('returns null status when the file does not exist', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue(
+				Object.assign(new Error('not found'), { code: 'ENOENT' })
+			);
+
+			const handler = handlers.get('autorun:watchStatus');
+			const result = await handler!({} as any, '/test/project');
+
+			expect(result.success).toBe(true);
+			expect(result.status).toBeNull();
+		});
+
+		it('does not throw and returns null status on malformed initial JSON', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue('{ not valid json');
+
+			const handler = handlers.get('autorun:watchStatus');
+			const result = await handler!({} as any, '/test/project');
+
+			expect(result.success).toBe(true);
+			expect(result.status).toBeNull();
+		});
+
+		it('unwatchStatus resolves cleanly even when nothing is being watched', async () => {
+			const handler = handlers.get('autorun:unwatchStatus');
+			const result = await handler!({} as any, '/never/watched');
+
+			expect(result.success).toBe(true);
+		});
+
+		it('before-quit cleanup runs without throwing after a status watch', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ feature: 'F-1' }));
+			await handlers.get('autorun:watchStatus')!({} as any, '/test/project', 'agent-1');
+
+			const beforeQuit = appEventHandlers.get('before-quit');
+			expect(() => beforeQuit!()).not.toThrow();
+		});
+
+		// Several agents can run Auto Run against one project at the same time.
+		// The watcher is shared, so it must outlive any single one of them.
+		it('keeps the watcher alive while another agent is still subscribed', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ feature: 'F-1' }));
+
+			await handlers.get('autorun:watchStatus')!({} as any, '/test/project', 'agent-1');
+			const second = await handlers.get('autorun:watchStatus')!(
+				{} as any,
+				'/test/project',
+				'agent-2'
+			);
+			// The second agent joins the existing watcher instead of replacing it.
+			expect(second.watching).toBe(true);
+			expect(mockWatcherClose).not.toHaveBeenCalled();
+
+			// agent-1 finishing must not blind agent-2.
+			await handlers.get('autorun:unwatchStatus')!({} as any, '/test/project', 'agent-1');
+			expect(mockWatcherClose).not.toHaveBeenCalled();
+
+			// Only the last release actually closes it.
+			await handlers.get('autorun:unwatchStatus')!({} as any, '/test/project', 'agent-2');
+			expect(mockWatcherClose).toHaveBeenCalled();
+		});
+
+		// An SSH agent writes STATUS.json on the remote host; chokidar only sees
+		// the local disk, so watching would report nothing forever, or report an
+		// unrelated same-named local file.
+		it('declines to watch for a remote session instead of watching the wrong host', async () => {
+			const result = await handlers.get('autorun:watchStatus')!(
+				{} as any,
+				'/test/project',
+				'agent-1',
+				true
+			);
+
+			expect(result.watching).toBe(false);
+			expect(result.isRemote).toBe(true);
+			expect(result.status).toBeNull();
+			expect(mockChokidarWatch).not.toHaveBeenCalled();
 		});
 	});
 
@@ -538,6 +652,42 @@ describe('autorun IPC handlers', () => {
 			expect(result.success).toBe(true);
 			expect(result.files).toEqual(['visible']);
 		});
+
+		it('never descends into dependency trees', async () => {
+			// An Auto Run folder holding a project checkout used to walk every
+			// node_modules entry, and list its READMEs as playbooks.
+			vi.mocked(fs.stat).mockResolvedValue({
+				isDirectory: () => true,
+				isFile: () => false,
+			} as any);
+			vi.mocked(fs.readdir).mockResolvedValue([
+				{
+					name: 'node_modules',
+					isDirectory: () => true,
+					isFile: () => false,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: '__pycache__',
+					isDirectory: () => true,
+					isFile: () => false,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'plan.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+			] as any);
+
+			const handler = handlers.get('autorun:listDocs');
+			const result = await handler!({} as any, '/test/folder');
+
+			expect(result.files).toEqual(['plan']);
+			// Only the root was read: neither skipped tree was opened.
+			expect(vi.mocked(fs.readdir)).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	describe('autorun:listDocs SSH', () => {
@@ -562,7 +712,7 @@ describe('autorun IPC handlers', () => {
 			expect(mockReadDirRemote).not.toHaveBeenCalled();
 			expect(mockListTreeRemote).toHaveBeenCalledWith(
 				'/remote/folder',
-				expect.objectContaining({ ignorePatterns: ['.*'] }),
+				expect.objectContaining({ ignorePatterns: ['.*', 'node_modules', '__pycache__'] }),
 				sampleSshRemote
 			);
 		});
@@ -1219,6 +1369,29 @@ describe('autorun IPC handlers', () => {
 
 			expect(result.success).toBe(true);
 			expect(chokidar.default.watch).toHaveBeenCalledWith('/test/folder', expect.any(Object));
+		});
+
+		it('watches only what it reports: no dependency trees, no non-markdown files', async () => {
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as any);
+			const chokidar = await import('chokidar');
+			vi.mocked(chokidar.default.watch).mockClear();
+
+			const handler = handlers.get('autorun:watchFolder');
+			await handler!({} as any, '/repo/.maestro/playbooks');
+
+			const options = vi.mocked(chokidar.default.watch).mock.calls[0][1] as {
+				ignored: Array<RegExp | ((p: string, stats?: { isFile(): boolean }) => boolean)>;
+			};
+			const matcher = options.ignored.find((m) => typeof m === 'function') as (
+				p: string,
+				stats?: { isFile(): boolean }
+			) => boolean;
+			const file = { isFile: () => true };
+			expect(matcher('/repo/.maestro/playbooks/plan.md', file)).toBe(false);
+			expect(matcher('/repo/.maestro/playbooks/app/node_modules')).toBe(true);
+			expect(matcher('/repo/.maestro/playbooks/app/src/index.ts', file)).toBe(true);
+			// A directory is still walked, so a document deeper down is still seen.
+			expect(matcher('/repo/.maestro/playbooks/app/src')).toBe(false);
 		});
 
 		it('should create folder if it does not exist', async () => {

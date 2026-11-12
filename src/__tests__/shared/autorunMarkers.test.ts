@@ -10,6 +10,7 @@ import {
 	findPendingHitlGate,
 	acknowledgeHitlGate,
 	detectHaltMarker,
+	describeUnresolvedHaltMarker,
 	findHaltMarker,
 	hasMaestroMarker,
 } from '../../shared/autorunMarkers';
@@ -305,6 +306,20 @@ describe('halt marker - description vs instruction', () => {
 	it('draws no pill for a halt quoted in prose', () => {
 		const doc = 'Emit `<!-- maestro:halt: reason -->` to stop the run.';
 		expect(scanMaestroMarkers(doc)).toEqual([]);
+	});
+});
+
+describe('describeUnresolvedHaltMarker', () => {
+	it('names the document, the 1-indexed line, and the reason', () => {
+		const halt = findHaltMarker('# Review\n\n<!-- maestro:halt: queue empty -->');
+		expect(describeUnresolvedHaltMarker('TASK-02', halt!)).toMatch(
+			/^Document "TASK-02" contains an unresolved halt marker on line 3: queue empty\. Remove the <!-- maestro:halt --> marker before re-running\./
+		);
+	});
+
+	it('omits the reason clause for a bare marker', () => {
+		const message = describeUnresolvedHaltMarker('doc', { line: 0 });
+		expect(message).toMatch(/^Document "doc" contains an unresolved halt marker on line 1\. /);
 	});
 });
 

@@ -37,6 +37,7 @@ import {
 	type NarrativeGroupLookup,
 } from '../../../shared/directorNotesGrouping';
 import { SectionCard } from '../widgets';
+import { richSectionId } from './directorNotesToc';
 
 interface NarrativeSectionsProps {
 	theme: Theme;
@@ -198,6 +199,8 @@ export const NarrativeSections = memo(function NarrativeSections({
 					<SectionCard
 						key={`${section.kind}-${sectionIndex}`}
 						theme={theme}
+						// Anchor for the table of contents' jump list.
+						id={richSectionId(section.title)}
 						title={section.title}
 						icon={Icon}
 						accent={accent}

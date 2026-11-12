@@ -247,7 +247,10 @@ export const SessionListItem = React.memo(function SessionListItem({
 				</div>
 
 				{/* Stats row: origin pill + session ID + stats + match info */}
-				<div className="flex items-center gap-3 text-xs" style={{ color: theme.colors.textDim }}>
+				<div
+					className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"
+					style={{ color: theme.colors.textDim }}
+				>
 					{/* Session origin pill */}
 					{session.origin === 'user' && (
 						<span
@@ -291,15 +294,15 @@ export const SessionListItem = React.memo(function SessionListItem({
 					</span>
 
 					{/* Stats */}
-					<span className="flex items-center gap-1">
+					<span className="flex items-center gap-1 whitespace-nowrap">
 						<Clock className="w-3 h-3" />
 						{formatRelativeTime(session.modifiedAt)}
 					</span>
-					<span className="flex items-center gap-1">
+					<span className="flex items-center gap-1 whitespace-nowrap">
 						<MessageSquare className="w-3 h-3" />
 						{session.messageCount}
 					</span>
-					<span className="flex items-center gap-1">
+					<span className="flex items-center gap-1 whitespace-nowrap">
 						<HardDrive className="w-3 h-3" />
 						{formatSize(session.sizeBytes)}
 					</span>
@@ -307,7 +310,7 @@ export const SessionListItem = React.memo(function SessionListItem({
 					{/* Cost per session */}
 					{(session.costUsd ?? 0) > 0 && (
 						<span
-							className="flex items-center gap-1 font-mono"
+							className="flex items-center gap-1 font-mono whitespace-nowrap"
 							style={{ color: theme.colors.success }}
 						>
 							<DollarSign className="w-3 h-3" />

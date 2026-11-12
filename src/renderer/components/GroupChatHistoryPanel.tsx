@@ -22,6 +22,7 @@ import { useGroupChatStore, viewPrefsFor } from '../stores/groupChatStore';
 import { formatTimestamp } from '../../shared/formatters';
 import { useListNavigation, useScrollIntoView } from '../hooks';
 import { CUE_COLOR, tintedPillColors } from './History/historyConstants';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 // Lookback period options for the activity graph
 type LookbackPeriod = {
@@ -241,13 +242,16 @@ function GroupChatActivityGraph({
 			{contextMenu && (
 				<div
 					ref={contextMenuRef}
-					className="fixed z-50 py-1 rounded border shadow-lg"
+					className="fixed z-50 py-1 rounded"
 					style={{
 						left: contextMenuPos.left,
 						top: contextMenuPos.top,
+						// See useContextMenuPosition: a menu taller than the viewport
+						// pins to the top edge and runs off the bottom, unreachable.
+						maxHeight: contextMenuPos.maxHeight,
+						overflowY: 'auto',
 						opacity: contextMenuPos.ready ? 1 : 0,
-						backgroundColor: theme.colors.bgSidebar,
-						borderColor: theme.colors.border,
+						...elevatedSurfaceStyle(theme),
 						minWidth: '120px',
 					}}
 				>
@@ -283,8 +287,7 @@ function GroupChatActivityGraph({
 				<div
 					className="absolute top-full mt-1 px-2 py-1.5 rounded text-2xs font-mono whitespace-nowrap z-20 pointer-events-none"
 					style={{
-						backgroundColor: theme.colors.bgSidebar,
-						border: `1px solid ${theme.colors.border}`,
+						...elevatedSurfaceStyle(theme),
 						color: theme.colors.textMain,
 						left: `${(hoveredIndex / (bucketCount - 1)) * 100}%`,
 						transform:
@@ -471,6 +474,12 @@ const TYPE_FILTER_CONFIG: {
 		color: (t) => t.colors.error,
 	},
 ];
+
+// Lookup the same icon + label used by the filter pills, keyed by entry type,
+// so per-entry badges stay in sync with the filter pills automatically.
+const TYPE_CONFIG_BY_TYPE = Object.fromEntries(
+	TYPE_FILTER_CONFIG.map((config) => [config.type, config])
+) as Record<GroupChatHistoryEntryType, (typeof TYPE_FILTER_CONFIG)[number]>;
 
 // All entry types for default filter state
 const ALL_ENTRY_TYPES = new Set<GroupChatHistoryEntryType>([
@@ -839,11 +848,12 @@ export function GroupChatHistoryPanel({
 									borderLeftColor: participantColor,
 								}}
 							>
-								{/* Header Row */}
-								<div className="flex items-center justify-between mb-1.5">
+								{/* Header Row - grid so the type badge stays optically centered
+								    regardless of how wide the name or timestamp render */}
+								<div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 mb-1.5">
 									{/* Participant Name Pill */}
 									<span
-										className="px-2 py-0.5 rounded text-2xs font-bold"
+										className="justify-self-start truncate max-w-full px-2 py-0.5 rounded text-2xs font-bold"
 										style={{
 											backgroundColor: participantColor + '25',
 											color: participantColor,
@@ -852,8 +862,28 @@ export function GroupChatHistoryPanel({
 									>
 										{entry.participantName}
 									</span>
+									{/* Entry type badge - mirrors the filter pill icon + short label,
+									    with the full word kept in the tooltip */}
+									{(() => {
+										const typeConfig = TYPE_CONFIG_BY_TYPE[entry.type];
+										if (!typeConfig) return <span />;
+										const { label, shortLabel, icon: TypeIcon } = typeConfig;
+										return (
+											<span
+												className="justify-self-center flex items-center gap-1 text-2xs font-bold uppercase whitespace-nowrap"
+												style={{ color: theme.colors.accent }}
+												title={`${label} entry`}
+											>
+												<TypeIcon className="w-2.5 h-2.5 shrink-0" />
+												{shortLabel}
+											</span>
+										);
+									})()}
 									{/* Timestamp */}
-									<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+									<span
+										className="justify-self-end text-2xs whitespace-nowrap"
+										style={{ color: theme.colors.textDim }}
+									>
 										{formatTime(entry.timestamp)}
 									</span>
 								</div>

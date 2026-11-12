@@ -2,12 +2,15 @@
 // Requires a Maestro agent ID. Optionally resumes an existing agent session.
 
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
-import { resolveAgentId, getSessionById } from '../services/storage';
+import { captureCliRun } from '../services/agent-run-capture';
+import { resolveAgentId, getSessionById, readStoredAiTabs } from '../services/storage';
+import { listDesktopTabs } from '../services/session-command';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { withMaestroClient } from '../services/maestro-client';
 import type { ToolType } from '../../shared/types';
+import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
 
 interface SendOptions {
 	session?: string;
@@ -76,6 +79,58 @@ function buildResponse(
 	};
 }
 
+/**
+ * Why a `--session` value must not be resumed, or `null` when it may.
+ *
+ * `send` runs a headless provider process beside the desktop; it never writes
+ * into a desktop tab. Two values used to slip through and come back as an
+ * opaque `crashed` turn:
+ *   - a Maestro TAB id, which the provider cannot resume (it is not one of its
+ *     session ids), and
+ *   - the provider session of a tab that is mid-turn, which puts a second
+ *     writer on one conversation.
+ * Both are refused with a reason that names the verb that does what the caller
+ * meant (`dispatch --tab --queue`). The desktop's live tab list is asked first
+ * because only it knows which tab is busy; with the app down, the persisted
+ * tabs still catch the tab-id mistake.
+ */
+async function sessionResumeRefusal(
+	agentId: string,
+	sessionArg: string
+): Promise<{ error: string; code: string } | null> {
+	let tabs: { tabId: string; agentSessionId: string | null; state: string }[];
+	try {
+		tabs = (await listDesktopTabs()).filter((tab) => tab.agentId === agentId);
+	} catch {
+		tabs = readStoredAiTabs(agentId).map((tab) => ({
+			tabId: tab.id,
+			agentSessionId: tab.agentSessionId ?? null,
+			state: 'unknown',
+		}));
+	}
+	const queueHint = (tabId: string) =>
+		`To deliver into that tab instead, run: maestro-cli dispatch ${agentId} "<message>" --tab ${tabId} --queue`;
+
+	const byTabId = tabs.find((tab) => tab.tabId === sessionArg);
+	if (byTabId) {
+		const providerNote = byTabId.agentSessionId
+			? ` (that tab's provider session is ${byTabId.agentSessionId})`
+			: '';
+		return {
+			code: 'SESSION_IS_TAB_ID',
+			error: `"${sessionArg}" is a Maestro tab id; --session takes a provider session id${providerNote}. ${queueHint(sessionArg)}`,
+		};
+	}
+	const busyTab = tabs.find((tab) => tab.agentSessionId === sessionArg && tab.state === 'busy');
+	if (busyTab) {
+		return {
+			code: 'TAB_BUSY',
+			error: `Provider session ${sessionArg} is mid-turn in desktop tab ${busyTab.tabId}; resuming it now would put a second writer on one conversation. Wait for the turn to finish. ${queueHint(busyTab.tabId)}`,
+		};
+	}
+	return null;
+}
+
 export async function send(
 	agentIdArg: string,
 	message: string,
@@ -119,6 +174,14 @@ export async function send(
 	// Without -s, always create a fresh session to prevent session leakage
 	// when multiple callers (e.g. Discord threads) send concurrently.
 	const agentSessionId = options.session;
+	if (agentSessionId) {
+		const refusal = await sessionResumeRefusal(agentId, agentSessionId);
+		if (refusal) {
+			emitErrorJson(refusal.error, refusal.code);
+			console.error(`maestro-cli send refused: ${refusal.error}`);
+			process.exit(1);
+		}
+	}
 
 	// Build the Maestro system prompt unless the caller opted out with
 	// `--no-system-prompt`. Failure to build (template missing, fs error) is
@@ -130,25 +193,52 @@ export async function send(
 		? await prepareMaestroSystemPromptCli(agent)
 		: undefined;
 
-	// Spawn agent - spawnAgent handles --resume vs fresh session internally
-	const result = await spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
-		readOnlyMode: options.readOnly,
-		customModel: agent.customModel,
-		customEffort: agent.customEffort,
-		customArgs: agent.customArgs,
-		customEnvVars: agent.customEnvVars,
-		sshRemoteConfig: agent.sessionSshRemoteConfig,
-		appendSystemPrompt,
-		// Honor the agent's Claude token source for `maestro-cli send` turns.
-		enableMaestroP: agent.enableMaestroP,
-		maestroPMode: agent.maestroPMode,
-		maestroPPath: agent.maestroPPath,
-	});
+	// A send without `--session` opens a new provider session, so it carries the
+	// agent's New Session Message like the first message of a desktop tab does.
+	// Agent-only: the run ledger below records the message as it was sent.
+	const agentPrompt = prependNewSessionMessageOnFirstTurn(
+		message,
+		agent.newSessionMessage,
+		agentSessionId
+	);
+
+	// Spawn agent - spawnAgent handles --resume vs fresh session internally.
+	// Wrapped in captureCliRun so the send lands in the agent-run ledger.
+	const result = await captureCliRun(
+		{
+			sessionId: agentSessionId ?? agentId,
+			toolType: agent.toolType,
+			cwd: agent.cwd,
+			prompt: message,
+			source: 'cli:send',
+		},
+		() =>
+			spawnAgent(agent.toolType, agent.cwd, agentPrompt, agentSessionId, {
+				readOnlyMode: options.readOnly,
+				customModel: agent.customModel,
+				customEffort: agent.customEffort,
+				customArgs: agent.customArgs,
+				additionalDirectories: agent.additionalDirectories,
+				customEnvVars: agent.customEnvVars,
+				sshRemoteConfig: agent.sessionSshRemoteConfig,
+				appendSystemPrompt,
+				// Honor the agent's Claude token source for `maestro-cli send` turns.
+				enableMaestroP: agent.enableMaestroP,
+				maestroPMode: agent.maestroPMode,
+				maestroPPath: agent.maestroPPath,
+				// The turn runs in the agent's own cwd (#1872).
+				acceptWorkspaceTrust: true,
+			}),
+		(r) => (r.success ? 0 : 1)
+	);
 	const response = buildResponse(agentId, agent.name, result, agent.toolType);
 
 	console.log(JSON.stringify(response, null, 2));
 
 	if (!result.success) {
+		// The JSON on stdout is the contract, but a caller that only reads stderr
+		// would otherwise see a silent exit 1.
+		console.error(`maestro-cli send failed: ${result.error ?? 'unknown error'}`);
 		process.exit(1);
 	}
 

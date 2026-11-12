@@ -44,6 +44,7 @@ import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { remoteUrlToBrowserUrl, type GitChangeTotals } from '../../shared/gitUtils';
 import { openUrl } from '../utils/openUrl';
 import type { Theme } from '../types';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 export interface GitPillMenuProps {
 	theme: Theme;
@@ -167,13 +168,12 @@ export const GitPillMenu = memo(function GitPillMenu({
 	return createPortal(
 		<div
 			ref={menuRef}
-			className="fixed z-[100] rounded shadow-xl overflow-hidden whitespace-nowrap select-none"
+			className="fixed z-[100] rounded overflow-hidden whitespace-nowrap select-none"
 			style={{
 				left,
 				top,
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				border: `1px solid ${theme.colors.border}`,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '12rem',
 			}}
 			role="menu"

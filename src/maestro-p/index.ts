@@ -22,23 +22,48 @@ import * as fs from 'node:fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { isRateLimitErrorRow } from './api-error-row';
+import { isRateLimitErrorRow, terminalApiErrorTag } from './api-error-row';
 import { parseArgs, type ParsedArgs } from './args';
 import { diagnoseApiUsageBilling } from './billing-mode';
 import { buildChildEnv } from './child-env';
 import { JsonEmitter, type EmitResultOptions } from './json-emitter';
 import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
+import { isSlashCommandPrompt, localCommandOutput } from './local-command-row';
 import { extractExitPlanText } from './plan-mode';
+import { extractAskUserQuestionText } from './ask-user-question';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
-import { discoverSessionId, cwdSlug } from './session-watcher';
+import { isPreTurnRow } from './turn-start';
+import { collectAssistantText, ReplyText } from './reply-text';
+import {
+	discoverSessionId,
+	findLatestSessionId,
+	noConversationFoundMessage,
+	sessionTranscriptPath,
+} from './session-watcher';
+import { installStopSignalHandlers, STOP_EXIT_CODES } from './stop-signals';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
-import { formatScreenTailReport, idleTimeoutMessage } from './timeout-report';
-import { TuiDriver } from './tui-driver';
+import { formatScreenTailReport, idleTimeoutMessage, readyTimeoutMessage } from './timeout-report';
+import { PROMPT_TAB_SPACES, TuiDriver } from './tui-driver';
+import { OpenToolCalls, skipsPermissionPrompts, withPermissionBypass } from './open-tool-calls';
+import {
+	addToCostState,
+	parseCostStateRow,
+	readLastClaudeCostState,
+	type ClaudeCostState,
+} from '../shared/claudeCostTracker';
+import { TurnUsage } from './turn-usage';
+import { hasBlockOfType, SubagentStream, SubagentWatcher } from './subagent-watcher';
+import { initModelFromEntry, lastModelAttachment, resolveInitModel } from './init-model';
 import { parseUsage } from './usage-parser';
 import { VERSION } from './package-info';
 
 // Watchdog tick. Cheap; the real budget lives in args.maxWaitSeconds.
 const WATCHDOG_INTERVAL_MS = 1000;
+
+// Longest transcript silence the watchdog tolerates while a tool call runs
+// unattended. Claude bounds its own Bash calls well under this; the ceiling
+// is for a call nothing else bounds, such as a hung MCP tool.
+const OPEN_TOOL_SILENCE_CEILING_MS = 60 * 60 * 1000;
 
 // Interval between Enter re-submits while waiting for the first transcript
 // byte. send()'s initial burst all lands within ~3s; on agents that load
@@ -107,12 +132,14 @@ program
 	.description(
 		[
 			'Wrap Claude Code so callers see `claude -p` semantics while the underlying',
-			'session runs through the interactive TUI (Claude Max quota, not API billing).',
+			'session runs through the interactive TUI, on the Claude login it is signed in with.',
 			'',
 			'Argument handling:',
 			'  - Prompt-input flags (consumed): -p, --print, --prompt',
-			'  - maestro-p flags (consumed):    --status, --stream-thinking, --max-wait, --first-byte-timeout, --help, --version',
+			'  - maestro-p flags (consumed):    --status, --stream-thinking, --max-wait, --first-byte-timeout, --ready-timeout, --help, --version',
 			'  - Stripped (dropped with warning): --output-format, --input-format, --verbose',
+			'  - Permissions: --dangerously-skip-permissions is added, as `claude -p` never stops on a',
+			'    permission prompt; an explicit --permission-mode (e.g. plan, for read-only) is kept.',
 			'  - Everything else is forwarded verbatim to the spawned `claude` TUI.',
 			'',
 			'Environment:',
@@ -159,37 +186,22 @@ function resolveBinPath(): string {
 	return 'claude';
 }
 
+// Explicit opt-in to answer claude's folder-trust dialog with "Yes". Maestro's
+// usage sampler sets it for the empty probe folder it owns; a user can set it
+// for a folder they mean to trust. Trust persists in claude for that folder.
+function acceptsWorkspaceTrust(): boolean {
+	return process.env.MAESTRO_P_ACCEPT_WORKSPACE_TRUST === '1';
+}
+
+// What to tell the caller when claude's trust dialog defaulted to "No, exit"
+// (the home dir and the system temp dir, never-trusted folders). Without this
+// the TUI quit on the blind Enter and the only signal was `tui_exited`.
+function workspaceUntrustedHint(cwd: string): string {
+	return `maestro-p: claude has not been trusted to work in ${cwd}, and its folder-trust prompt defaults to "No, exit" there. Open claude in that folder once and choose "Yes, I trust this folder", or set MAESTRO_P_ACCEPT_WORKSPACE_TRUST=1 to have maestro-p accept it. Failing with workspace_untrusted.\n`;
+}
+
 function waitForEvent(emitter: EventEmitter, event: string): Promise<void> {
 	return new Promise<void>((resolve) => emitter.once(event, () => resolve()));
-}
-
-interface AggregateUsage {
-	input_tokens: number;
-	output_tokens: number;
-	cache_creation_input_tokens: number;
-	cache_read_input_tokens: number;
-}
-
-function emptyUsage(): AggregateUsage {
-	return {
-		input_tokens: 0,
-		output_tokens: 0,
-		cache_creation_input_tokens: 0,
-		cache_read_input_tokens: 0,
-	};
-}
-
-function addUsage(agg: AggregateUsage, msgUsage: unknown): void {
-	if (!msgUsage || typeof msgUsage !== 'object') return;
-	const u = msgUsage as Record<string, unknown>;
-	if (typeof u.input_tokens === 'number') agg.input_tokens += u.input_tokens;
-	if (typeof u.output_tokens === 'number') agg.output_tokens += u.output_tokens;
-	if (typeof u.cache_creation_input_tokens === 'number') {
-		agg.cache_creation_input_tokens += u.cache_creation_input_tokens;
-	}
-	if (typeof u.cache_read_input_tokens === 'number') {
-		agg.cache_read_input_tokens += u.cache_read_input_tokens;
-	}
 }
 
 // Per the playbook tool_result filter: `user` entries pass through ONLY if
@@ -197,30 +209,7 @@ function addUsage(agg: AggregateUsage, msgUsage: unknown): void {
 // user entries are the prompt echo claude writes immediately after we send
 // stdin - drop those.
 function hasToolResultBlock(message: unknown): boolean {
-	if (!message || typeof message !== 'object') return false;
-	const content = (message as { content?: unknown }).content;
-	if (!Array.isArray(content)) return false;
-	return content.some(
-		(b) => b && typeof b === 'object' && (b as { type?: unknown }).type === 'tool_result'
-	);
-}
-
-function collectAssistantText(message: unknown): string {
-	if (!message || typeof message !== 'object') return '';
-	const content = (message as { content?: unknown }).content;
-	if (!Array.isArray(content)) return '';
-	let out = '';
-	for (const block of content) {
-		if (
-			block &&
-			typeof block === 'object' &&
-			(block as { type?: unknown }).type === 'text' &&
-			typeof (block as { text?: unknown }).text === 'string'
-		) {
-			out += (block as { text: string }).text;
-		}
-	}
-	return out;
+	return hasBlockOfType(message, 'tool_result');
 }
 
 async function runMode(args: ParsedArgs): Promise<never> {
@@ -249,11 +238,44 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		}
 	}
 
+	// claude's input editor cannot carry a tab, so the driver types each one as
+	// spaces (see PROMPT_TAB_SPACES). That changes the prompt, and the echo
+	// check ignores whitespace so it would never notice - say so here instead.
+	if (prompt.includes('\t')) {
+		process.stderr.write(
+			`maestro-p: warning: the prompt contains tab characters; claude's TUI input cannot hold a literal tab, so each one is sent as ${PROMPT_TAB_SPACES} spaces.\n`
+		);
+	}
+
 	const cwd = process.cwd();
 	const configDir = resolveConfigDir();
 	const binPath = resolveBinPath();
 	const emitter = new JsonEmitter();
 	const startMs = Date.now();
+
+	// Resuming an id with no transcript behind it cannot work: claude's TUI quits
+	// on it and the turn dies as an anonymous `tui_exited`. That is every tab of
+	// an agent moved to another host (the transcripts stayed on the old one), or
+	// of a transcript that was pruned. Fail before spawning, in claude's own
+	// words, so the desktop recovers it as session_not_found.
+	if (args.resumeSessionId) {
+		const transcriptPath = sessionTranscriptPath(configDir, cwd, args.resumeSessionId);
+		if (!fs.existsSync(transcriptPath)) {
+			const message = noConversationFoundMessage(args.resumeSessionId);
+			process.stderr.write(`maestro-p: ${message} (no transcript at ${transcriptPath})\n`);
+			emitter.emitInit({ sessionId: args.resumeSessionId, model: null, cwd });
+			emitter.emitResult({
+				sessionId: args.resumeSessionId,
+				durationMs: Date.now() - startMs,
+				isError: true,
+				error: message,
+			});
+			cleanupStreamJsonImages(tempImagePaths);
+			// stdout is asynchronous on a macOS pipe: exit once the envelope drains.
+			process.stdout.write('', () => process.exit(9));
+			return new Promise<never>(() => undefined);
+		}
+	}
 
 	// Fresh sessions: pre-assign the session id and tell the TUI to use it via
 	// `claude --session-id <uuid>`. The watcher then polls for exactly
@@ -263,9 +285,39 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	// its id, so we leave that path untouched. claude 2.1.x honours
 	// `--session-id` in interactive/TUI mode (verified: it writes exactly the
 	// requested `<uuid>.jsonl`).
-	const passThroughArgs = [...args.passThroughArgs];
+	// Always bypass permission prompts, as `claude -p` cannot stop on one (see
+	// withPermissionBypass for the read-only exception).
+	let passThroughArgs = withPermissionBypass(args.passThroughArgs);
+	let resumeSessionId = args.resumeSessionId;
+
+	// `--continue` cannot reach claude as-is: every fresh TUI gets a
+	// pre-assigned `--session-id` below, and claude refuses the two together
+	// and exits before painting anything. Resolve the session `--continue`
+	// would pick (the newest transcript for this cwd) and run it as a resume.
+	if (!resumeSessionId && passThroughArgs.some((a) => a === '--continue' || a === '-c')) {
+		const latest = await findLatestSessionId(configDir, cwd);
+		if (!latest) {
+			process.stderr.write(
+				`maestro-p: --continue found no earlier conversation for ${cwd}. Failing with no_conversation.\n`
+			);
+			emitter.emitInit({ sessionId: '', model: null, cwd });
+			emitter.emitResult({
+				sessionId: '',
+				durationMs: Date.now() - startMs,
+				isError: true,
+				error: 'no_conversation',
+			});
+			// stdout is asynchronous on a macOS pipe: exit once the envelope drains.
+			process.stdout.write('', () => process.exit(1));
+			return new Promise<never>(() => undefined);
+		}
+		resumeSessionId = latest;
+		passThroughArgs = passThroughArgs.filter((a) => a !== '--continue' && a !== '-c');
+		passThroughArgs.push('--resume', latest);
+	}
+
 	let freshSessionId: string | null = null;
-	if (!args.resumeSessionId) {
+	if (!resumeSessionId) {
 		freshSessionId = randomUUID();
 		passThroughArgs.push('--session-id', freshSessionId);
 	}
@@ -276,6 +328,8 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		args: passThroughArgs,
 		cwd,
 		env: childEnv,
+		acceptWorkspaceTrust: acceptsWorkspaceTrust(),
+		readyTimeoutMs: args.readyTimeoutSeconds * 1000,
 	});
 
 	// A turn on API Usage Billing still completes, so nothing downstream would
@@ -296,7 +350,10 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	}
 
 	let tailer: JsonlTailer | null = null;
-	let resolvedSessionId: string = args.resumeSessionId ?? '';
+	// Tails the session a slash command rotated claude onto (see
+	// watchRotatedSession).
+	let rotatedTailer: JsonlTailer | null = null;
+	let resolvedSessionId: string = resumeSessionId ?? '';
 	let initEmitted = false;
 	let finalized = false;
 	let watchdogTimer: NodeJS.Timeout | null = null;
@@ -314,9 +371,25 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	let firstEntrySeen = false;
 	// Set once the first prompt-echo row has been compared with what we typed.
 	let promptEchoChecked = false;
+	// Tool calls claude has issued and not yet answered; see the idle watchdog.
+	const openToolCalls = new OpenToolCalls();
+	const permissionsBypassed = skipsPermissionPrompts(passThroughArgs);
+	const slashCommandPrompt = isSlashCommandPrompt(prompt);
 	let limitHit = false;
-	let aggregatedText = '';
-	const usage = emptyUsage();
+	const reply = new ReplyText();
+	const turnUsage = new TurnUsage();
+	// claude's own spend tracker, from the cost-state row it writes on exit.
+	let costState: ClaudeCostState | null = null;
+	// The session's tracker before this turn, from a resumed transcript. Only
+	// the no-cost-state fallback needs it, to report a running total as claude does.
+	let costBaseline: ClaudeCostState | null = null;
+	// Follows the session's subagent transcripts once the session is known.
+	let subagents: SubagentWatcher | null = null;
+	// Set once the session id is known. init then waits for the first row that
+	// names the model (see init-model.ts), as `claude -p`'s init names it.
+	let initSessionId: string | null = null;
+	// The model an earlier turn of a resumed session named; see init-model.ts.
+	let resumedModel: string | null = null;
 	// Buffer for entries that race ahead of emitInit. Should be empty in
 	// the normal flow (tailer.start() / EOF-skip prevent racing), but keeps
 	// us robust against weird PTY timing.
@@ -401,57 +474,126 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		}, RESUBMIT_INTERVAL_MS);
 	};
 
-	const finalize = (options: { isError: boolean; error?: string; exitCode: number }): void => {
+	const finalize = (options: {
+		isError: boolean;
+		error?: string;
+		exitCode: number;
+		// A Stop keeps its own exit code even after a quota limit: exit 2 makes
+		// the desktop replay the prompt through the API, which is the opposite of
+		// what the user just asked for.
+		stopped?: boolean;
+	}): void => {
 		if (finalized) return;
 		finalized = true;
 		cleanupTimers();
-		tailer?.stop();
-		// Best-effort: synchronous so claude (which has long-since consumed
-		// these via the @path Read tool) doesn't leave them behind.
-		cleanupStreamJsonImages(tempImagePaths);
+		const exitCode = limitHit && !options.stopped ? 2 : options.exitCode;
 
-		// Ensure init is emitted so emitResult doesn't throw on pre-discovery
-		// failure paths (timeout before discovery, etc.).
-		if (!initEmitted) {
-			emitter.emitInit({ sessionId: resolvedSessionId, model: null, cwd });
-			initEmitted = true;
-		}
-
-		// limitHit overrides exit code (2) and tags the result as a limit
-		// error while preserving the assistant text we collected before the
-		// quota line was painted.
-		const errorIsLimit = limitHit && !options.isError;
-		const finalIsError = options.isError || limitHit;
-		const finalError = options.error ?? (errorIsLimit ? 'limit' : undefined);
-		const resultOpts: EmitResultOptions = {
-			sessionId: resolvedSessionId,
-			durationMs: Date.now() - startMs,
-			isError: finalIsError,
+		const stopTailers = (): void => {
+			tailer?.stop();
+			rotatedTailer?.stop();
+			subagents?.stop();
 		};
-		if (finalError !== undefined) resultOpts.error = finalError;
-		// Carry aggregated text/usage on success and on the limit-drain path
-		// (assistant emitted text BEFORE the limit was hit). Pure error paths
-		// (timeout, tui_exited) omit them.
-		if (!options.isError || errorIsLimit) {
-			resultOpts.result = aggregatedText;
-			resultOpts.usage = usage;
-		}
-		try {
-			emitter.emitResult(resultOpts);
-		} catch (err) {
-			process.stderr.write(
-				`maestro-p: failed to emit result envelope: ${(err as Error).message}\n`
-			);
+
+		const emitFinalResult = (): void => {
+			// Best-effort: synchronous so claude (which has long-since consumed
+			// these via the @path Read tool) doesn't leave them behind.
+			cleanupStreamJsonImages(tempImagePaths);
+
+			// Ensure init is emitted so emitResult doesn't throw on pre-discovery
+			// failure paths (timeout before discovery, etc.).
+			if (!initEmitted) emitInitNow();
+
+			// limitHit overrides exit code (2) and tags the result as a limit
+			// error while preserving the assistant text we collected before the
+			// quota line was painted.
+			const errorIsLimit = limitHit && !options.isError;
+			const finalIsError = options.isError || limitHit;
+			const finalError = options.error ?? (errorIsLimit ? 'limit' : undefined);
+			const resultOpts: EmitResultOptions = {
+				sessionId: resolvedSessionId,
+				durationMs: Date.now() - startMs,
+				isError: finalIsError,
+			};
+			if (finalError !== undefined) resultOpts.error = finalError;
+			// Carry aggregated text/usage on success and on the limit-drain path
+			// (assistant emitted text BEFORE the limit was hit). Pure error paths
+			// (timeout, tui_exited) omit them.
+			if (!options.isError || errorIsLimit) {
+				resultOpts.result = reply.text;
+				resultOpts.usage = turnUsage.totals();
+			}
+			// Spend is reported on every path, as `claude -p` does: a turn that
+			// failed still cost what it ran. Like `claude -p`, it is the SESSION's
+			// running total (see src/shared/claudeCostTracker.ts): claude's own
+			// tracker when it wrote one, otherwise this turn's main thread priced
+			// from the rate table and added to the tracker the turn started from.
+			const estimate = turnUsage.estimatedModelUsage();
+			const reported =
+				costState ??
+				(Object.keys(estimate).length > 0 ? addToCostState(costBaseline, estimate) : null);
+			if (reported && Object.keys(reported.modelUsage).length > 0) {
+				resultOpts.modelUsage = reported.modelUsage;
+				resultOpts.totalCostUsd = reported.totalCostUSD;
+			}
+			try {
+				emitter.emitResult(resultOpts);
+			} catch (err) {
+				process.stderr.write(
+					`maestro-p: failed to emit result envelope: ${(err as Error).message}\n`
+				);
+			}
+		};
+
+		// stdout is asynchronous on a macOS pipe: exit once the envelope drains.
+		// The timer covers a reader that went away, whose write never settles.
+		const exitAfterStdout = (): void => {
+			setTimeout(() => process.exit(exitCode), 1000);
+			process.stdout.write('', () => process.exit(exitCode));
+		};
+
+		// A Stop answers at once: the caller asked for the turn to end now, and
+		// the spend of an abandoned turn is not worth holding the result for.
+		// A prompt claude never started on is still parked in its editor, and
+		// typing `/quit` there submits "<prompt>/quit" as a real turn into the
+		// session. The next turn to resume it then reads that row as its own
+		// echo and fails with prompt_truncated. So a turn that never started
+		// is ended without typing anything (see TuiDriver.quit).
+		const quitOptions = { discardTypedInput: !firstEntrySeen };
+
+		if (options.stopped) {
+			stopTailers();
+			emitFinalResult();
+			void driver
+				.quit(quitOptions)
+				.catch(() => {
+					/* already gone; nothing to escalate against */
+				})
+				.finally(exitAfterStdout);
+			return;
 		}
 
-		const exitCode = limitHit ? 2 : options.exitCode;
+		// Every other ending quits claude BEFORE reporting: claude writes its
+		// cost-state row to the transcript as it exits, and that row is the only
+		// record of what the session spent. Drain the tailers once it has gone so
+		// the row is read, then report.
 		void driver
-			.quit()
+			.quit(quitOptions)
 			.catch(() => {
 				/* already gone; nothing to escalate against */
 			})
 			.finally(() => {
-				process.exit(exitCode);
+				try {
+					tailer?.drain();
+					subagents?.drain();
+				} catch (err) {
+					// The result still goes out; it just falls back to the estimate.
+					process.stderr.write(
+						`maestro-p: could not read claude's final transcript rows: ${(err as Error).message}\n`
+					);
+				}
+				stopTailers();
+				emitFinalResult();
+				exitAfterStdout();
 			});
 	};
 
@@ -491,6 +633,40 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			return;
 		}
 
+		// A bad model, rejected credential, or refused request is the same kind
+		// of synthetic row, and claude goes idle after it just the same. Fail now
+		// with claude's own wording rather than waiting out `--max-wait` and
+		// reporting a timeout (#1753). Exit 8 rather than 2: replaying the turn
+		// under `claude --print` cannot fix a model name that does not exist.
+		const apiErrorTag = terminalApiErrorTag(e);
+		if (apiErrorTag !== null) {
+			const errorText = collectAssistantText(message).trim() || apiErrorTag;
+			process.stderr.write(
+				`maestro-p: claude reported a terminal API error (${apiErrorTag}): ${errorText}\n`
+			);
+			finalize({ isError: true, error: errorText, exitCode: 8 });
+			return;
+		}
+
+		// A local slash command (`/compact`, `/clear`) ends with its output row
+		// instead of an `end_turn`, so that row is the end of the turn (see
+		// local-command-row.ts). The result carries the session id the row was
+		// written under: `/clear` rotates claude onto a new session.
+		if (slashCommandPrompt) {
+			const commandOutput = localCommandOutput(e);
+			if (commandOutput !== null) {
+				if (graceTimer) clearTimeout(graceTimer);
+				reply.setIfEmpty(commandOutput);
+				if (typeof e.sessionId === 'string' && e.sessionId) resolvedSessionId = e.sessionId;
+				graceTimer = setTimeout(() => {
+					if (!finalized) {
+						finalize({ isError: false, exitCode: 0 });
+					}
+				}, END_TURN_GRACE_MS);
+				return;
+			}
+		}
+
 		// Synthetic-model bookkeeping rows ("No response requested.") never
 		// reach the wire.
 		if (message && message.model === '<synthetic>') return;
@@ -501,9 +677,10 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				clearTimeout(graceTimer);
 				graceTimer = null;
 			}
-			aggregatedText += collectAssistantText(message);
-			addUsage(usage, message.usage);
+			reply.addAssistant(message);
+			turnUsage.note(message);
 			emitter.emitAssistantMessage(message);
+			openToolCalls.noteAssistant(message);
 
 			// Plan/read-only mode (`--permission-mode plan`) ends the turn with an
 			// ExitPlanMode tool call that parks the TUI on a blocking approval
@@ -514,9 +691,18 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			// result and finalize cleanly.
 			const planText = extractExitPlanText(message);
 			if (planText !== null) {
-				if (planText && !aggregatedText.includes(planText)) {
-					aggregatedText += (aggregatedText ? '\n\n' : '') + planText;
-				}
+				reply.appendIfMissing(planText);
+				finalize({ isError: false, exitCode: 0 });
+				return;
+			}
+
+			// AskUserQuestion parks the TUI on a picker the same way, and nothing
+			// answers it here (the permission relay is an API-path feature). End
+			// the turn with the questions as the reply; the user answers in their
+			// next message. See ask-user-question.ts.
+			const questionText = extractAskUserQuestionText(message);
+			if (questionText !== null) {
+				reply.appendIfMissing(questionText);
 				finalize({ isError: false, exitCode: 0 });
 				return;
 			}
@@ -539,32 +725,53 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				graceTimer = null;
 			}
 			if (hasToolResultBlock(message)) {
+				openToolCalls.noteToolResult(message);
+				reply.addToolResult();
 				emitter.emitUserMessage(message);
 				return;
 			}
 			// Otherwise it's the prompt echo claude logs on receipt. It is never
-			// re-emitted, but the first one is proof of what claude actually
-			// received: if the PTY lost part of the prompt on the way in (see
-			// prompt-echo.ts), stop the turn before it acts on a damaged prompt.
-			if (!promptEchoChecked) {
-				const echo = promptEchoText(e);
-				if (echo !== null) {
-					promptEchoChecked = true;
-					const mismatch = isPromptEchoVerifiable(prompt) ? checkPromptEcho(prompt, echo) : null;
-					if (mismatch) {
-						process.stderr.write(
-							`maestro-p: claude received a damaged prompt (${mismatch.receivedBytes} of ${mismatch.sentBytes} bytes; first missing text: "${mismatch.missingFrom}"). The terminal dropped part of the input. Stopping the turn and failing with prompt_truncated.\n`
-						);
-						driver.kill('SIGTERM');
-						finalize({ isError: true, error: 'prompt_truncated', exitCode: 6 });
-					}
-				}
-			}
+			// re-emitted (see checkPromptEchoRow).
+			checkPromptEchoRow(e);
 			return;
 		}
 
 		// Ignore other entry types (system/summary/etc.) - claude's internal
 		// taxonomy.
+	};
+
+	// The first prompt echo is proof of what claude actually received: if the
+	// PTY lost part of the prompt on the way in (see prompt-echo.ts), stop the
+	// turn before it acts on a damaged prompt. Checked as the row arrives, even
+	// while init is still waiting on the model, so the check is never deferred
+	// past the point where claude starts acting.
+	const checkPromptEchoRow = (e: Record<string, unknown>): void => {
+		if (promptEchoChecked || finalized || e.type !== 'user') return;
+		const echo = promptEchoText(e);
+		if (echo === null) return;
+		promptEchoChecked = true;
+		const mismatch = isPromptEchoVerifiable(prompt) ? checkPromptEcho(prompt, echo) : null;
+		if (mismatch) {
+			process.stderr.write(
+				`maestro-p: claude received a damaged prompt (${mismatch.receivedBytes} of ${mismatch.sentBytes} bytes; first missing text: "${mismatch.missingFrom}"). The terminal dropped part of the input. Stopping the turn and failing with prompt_truncated.\n`
+			);
+			driver.kill('SIGTERM');
+			finalize({ isError: true, error: 'prompt_truncated', exitCode: 6 });
+		}
+	};
+
+	// A subagent's rows, tagged with the Task call that started it, filtered the
+	// way `claude -p` streams them (see SubagentStream). Its usage is not the
+	// turn's `usage`, which `claude -p` reports for the main thread alone.
+	const subagentStream = new SubagentStream();
+	const processSubagentEntry = (entry: unknown, parentToolUseId: string): void => {
+		if (finalized || !initEmitted) return;
+		const forwarded = subagentStream.forward(entry, parentToolUseId);
+		if (forwarded?.type === 'assistant') {
+			emitter.emitAssistantMessage(forwarded.message, parentToolUseId);
+		} else if (forwarded?.type === 'user') {
+			emitter.emitUserMessage(forwarded.message, parentToolUseId);
+		}
 	};
 
 	const flushPending = (): void => {
@@ -574,16 +781,104 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		pendingEntries.length = 0;
 	};
 
+	const emitInitNow = (model: string | null = null): void => {
+		if (initEmitted) return;
+		emitter.emitInit({
+			sessionId: initSessionId ?? resolvedSessionId,
+			model: resolveInitModel(model, resumedModel),
+			cwd,
+		});
+		initEmitted = true;
+		flushPending();
+	};
+
+	// Once the session id is known, init goes out with the first row that names
+	// the model (see init-model.ts). Rows that arrived before that are held and
+	// replayed in order.
+	const armInit = (sessionId: string): void => {
+		initSessionId = sessionId;
+		for (const pending of pendingEntries) {
+			const trigger = initModelFromEntry(pending);
+			if (trigger) {
+				emitInitNow(trigger.model);
+				return;
+			}
+		}
+	};
+
+	// Subagents write beside the session transcript; follow them from the
+	// moment the session is known so none of a Task call's work is missed.
+	const watchSubagents = (jsonlPath: string): void => {
+		subagents = new SubagentWatcher({ sessionTranscriptPath: jsonlPath });
+		subagents.on('entry', processSubagentEntry);
+		subagents.on('parse-error', handleParseError);
+		subagents.start();
+	};
+
 	const handleEntry = (entry: unknown): void => {
+		// claude writes its spend tracker as it exits, after the turn: record it,
+		// even once finalize has begun (that is when it arrives), and nothing else.
+		const cost = parseCostStateRow(entry);
+		if (cost) {
+			costState = cost;
+			return;
+		}
 		// Any transcript line means claude started the turn - cancel the
 		// first-byte timer before the init-gating buffer logic so a pre-init
-		// entry still counts as "first byte".
-		markFirstEntrySeen();
+		// entry still counts as "first byte". A SessionStart hook row does not:
+		// claude writes it at boot, before it reads the prompt (see turn-start.ts).
+		if (!isPreTurnRow(entry)) markFirstEntrySeen();
 		if (!initEmitted) {
+			if (entry && typeof entry === 'object') {
+				checkPromptEchoRow(entry as Record<string, unknown>);
+			}
 			pendingEntries.push(entry);
+			if (initSessionId !== null) {
+				const trigger = initModelFromEntry(entry);
+				if (trigger) emitInitNow(trigger.model);
+			}
 			return;
 		}
 		processEntry(entry);
+	};
+
+	// `/clear` (and its `/reset` and `/new` aliases) moves claude onto a brand-new
+	// session and writes the command's output row THERE, so the transcript this
+	// run tails never sees the end of the turn and it rode out `--max-wait`.
+	// For a slash-command prompt, also watch the project folder for a session
+	// that appears after the prompt was sent, and let its local-command output
+	// row end the turn like any other. An ordinary command never rotates, so
+	// the watch just expires unused.
+	const watchRotatedSession = (currentSessionId: string, sentAt: number): void => {
+		if (!slashCommandPrompt) return;
+		discoverSessionId({
+			configDir,
+			cwd,
+			spawnTimestamp: sentAt,
+			excludeSessionIds: new Set([currentSessionId]),
+			timeoutMs: args.maxWaitSeconds * 1000,
+		}).then(
+			async (rotated) => {
+				if (finalized) return;
+				rotatedTailer = new JsonlTailer({ path: rotated.jsonlPath, skipExisting: false });
+				rotatedTailer.on('entry', (entry: unknown) => {
+					markFirstEntrySeen();
+					if (!initEmitted) {
+						initSessionId = rotated.sessionId;
+						emitInitNow();
+					}
+					// Only the command's own output row: the rest of the new
+					// session (its caveat and command-name rows) is not this turn's
+					// output.
+					if (localCommandOutput(entry) !== null) processEntry(entry);
+				});
+				rotatedTailer.on('parse-error', handleParseError);
+				await rotatedTailer.start();
+			},
+			() => {
+				// No new session: the command finished in the one being tailed.
+			}
+		);
 	};
 
 	const handleParseError = (payload: ParseErrorPayload): void => {
@@ -596,7 +891,20 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	driver.on('limit-hit', markLimitHit);
 	driver.on('exit', () => {
 		if (finalized) return;
+		// claude prints why it quit (a rejected flag, a crash, a config error)
+		// to the screen it just left, which is the only evidence there is.
+		process.stderr.write(
+			formatScreenTailReport(
+				'claude exited before the turn finished. Failing with tui_exited.',
+				driver.getScreenTail()
+			)
+		);
 		finalize({ isError: true, error: 'tui_exited', exitCode: 1 });
+	});
+	driver.on('workspace-untrusted', () => {
+		if (finalized) return;
+		process.stderr.write(workspaceUntrustedHint(cwd));
+		finalize({ isError: true, error: 'workspace_untrusted', exitCode: 7 });
 	});
 	driver.on('ready-timeout', () => {
 		if (finalized) return;
@@ -604,10 +912,42 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// startup handshake (READY_REGEX or blind taps) never cleared
 		// whatever modal the TUI is parked on. finalize() drives quit()
 		// which will SIGTERM the PTY if it doesn't /quit gracefully.
+		// Dump the screen first: a still-painting boot and a stuck modal look
+		// different, and the screen is gone once finalize() quits the TUI.
+		process.stderr.write(
+			formatScreenTailReport(readyTimeoutMessage(args.readyTimeoutSeconds), driver.getScreenTail())
+		);
 		finalize({ isError: true, error: 'ready_timeout', exitCode: 4 });
 	});
 
+	// A Stop (SIGINT from the desktop's interrupt, or SIGTERM) ends the turn like
+	// any other ending: result envelope, `/quit`, then exit. Installed before
+	// start() so a Stop during boot or session discovery is handled too.
+	installStopSignalHandlers({
+		onStop: (signal) => {
+			// Already ending (a normal end, a timeout): that path is quitting the
+			// TUI and exits within QUIT_GRACE_MS, so let it finish.
+			if (finalized) return;
+			finalize({
+				isError: true,
+				error: 'interrupted',
+				exitCode: STOP_EXIT_CODES[signal],
+				stopped: true,
+			});
+		},
+		onForce: (signal) => {
+			driver.kill('SIGKILL');
+			cleanupStreamJsonImages(tempImagePaths);
+			process.exit(STOP_EXIT_CODES[signal]);
+		},
+	});
+
+	// Once finalize() has run, the flow below must not carry on (emitting a
+	// second init envelope, attaching a tailer) while the exit is pending.
+	const settled = (): Promise<never> => new Promise<never>(() => undefined);
+
 	await driver.start();
+	if (finalized) return settled();
 
 	// Arm the first-byte timer the moment the TUI is up. It spans the ready
 	// handshake, session discovery, and the wait for claude's first transcript
@@ -630,26 +970,25 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		finalize({ isError: true, error: 'first_byte_timeout', exitCode: 5 });
 	}, firstByteTimeoutMs);
 
-	if (args.resumeSessionId) {
+	if (resumeSessionId) {
 		// Resume path: the JSONL already exists from the prior turn(s); tail
 		// from EOF so we don't replay history to stdout. The wait-for-ready
 		// step ensures the TUI is accepting input before we send our reply.
-		const jsonlPath = path.join(
-			configDir,
-			'projects',
-			cwdSlug(cwd),
-			`${args.resumeSessionId}.jsonl`
-		);
+		const jsonlPath = sessionTranscriptPath(configDir, cwd, resumeSessionId);
 		tailer = new JsonlTailer({ path: jsonlPath, skipExisting: true });
 		tailer.on('entry', handleEntry);
 		tailer.on('parse-error', handleParseError);
 		await tailer.start();
 		await waitForEvent(driver, 'ready');
-		emitter.emitInit({ sessionId: args.resumeSessionId, model: null, cwd });
-		initEmitted = true;
-		flushPending();
+		if (finalized) return settled();
+		resumedModel = lastModelAttachment(jsonlPath);
+		costBaseline = readLastClaudeCostState(jsonlPath) ?? null;
+		watchSubagents(jsonlPath);
+		armInit(resumeSessionId);
+		watchRotatedSession(resumeSessionId, Date.now());
 		// Await the whole paced prompt before the resubmit loop can press Enter.
 		await driver.send(prompt);
+		if (finalized) return settled();
 		startResubmitLoop();
 	} else {
 		// Fresh-session path: we pre-assigned `freshSessionId` and passed it to
@@ -659,6 +998,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// precedence. We start discovery and send the prompt back-to-back, then
 		// attach the tailer once the file appears.
 		await waitForEvent(driver, 'ready');
+		if (finalized) return settled();
 		const discoveryPromise = discoverSessionId({
 			configDir,
 			cwd,
@@ -671,8 +1011,10 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			// --max-wait window. The FLOOR still covers a slow cold start.
 			timeoutMs: Math.max(DISCOVERY_TIMEOUT_FLOOR_MS, firstByteTimeoutMs),
 		});
+		if (freshSessionId) watchRotatedSession(freshSessionId, Date.now());
 		// Await the whole paced prompt before the resubmit loop can press Enter.
 		await driver.send(prompt);
+		if (finalized) return settled();
 		startResubmitLoop();
 		let discovered: { sessionId: string; jsonlPath: string };
 		try {
@@ -693,23 +1035,34 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			}
 			return new Promise<never>(() => undefined);
 		}
+		if (finalized) return settled();
 		resolvedSessionId = discovered.sessionId;
-		emitter.emitInit({ sessionId: discovered.sessionId, model: null, cwd });
-		initEmitted = true;
 		tailer = new JsonlTailer({ path: discovered.jsonlPath, skipExisting: false });
 		tailer.on('entry', handleEntry);
 		tailer.on('parse-error', handleParseError);
 		await tailer.start();
-		flushPending();
+		watchSubagents(discovered.jsonlPath);
+		armInit(discovered.sessionId);
 	}
+	if (finalized) return settled();
 
 	// Watchdog: trips when no JSONL bytes have arrived for maxWaitSeconds.
 	// JsonlTailer seeds lastByteAt at start() time, so a fresh tailer with
 	// no data still gets the full window before timeout.
 	watchdogTimer = setInterval(() => {
 		if (finalized || !tailer) return;
-		const idleMs = Date.now() - tailer.getLastByteAt();
+		// A subagent writing its own transcript is the turn making progress too.
+		const lastByteAt = Math.max(tailer.getLastByteAt(), subagents?.getLastByteAt() ?? 0);
+		const idleMs = Date.now() - lastByteAt;
 		if (idleMs > args.maxWaitSeconds * 1000) {
+			// A tool still running unattended (a long `npm test`, a subagent) is
+			// expected silence, not a stall, up to the ceiling (see open-tool-calls.ts).
+			if (
+				idleMs < OPEN_TOOL_SILENCE_CEILING_MS &&
+				openToolCalls.runningUnattended(permissionsBypassed)
+			) {
+				return;
+			}
 			// Dump the screen before finalize() quits the TUI: a turn that goes
 			// silent mid-turn is parked on something (a permission prompt, a
 			// modal, a hung tool or API call), and the screen is the only record
@@ -744,11 +1097,11 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		// 'line' events: heavier panels paint via cursor-addressing with no line
 		// feeds, so the 'line' stream is empty and the content would be lost.
 		captureScreen: true,
-		// Set only by Maestro's usage sampler, which runs this from a dedicated
-		// folder it owns and keeps empty. In the home or temp dir claude's trust
-		// prompt defaults to "No, exit", so without this the probe quits before
-		// /usage renders. Never honored implicitly: trust persists for that folder.
-		acceptWorkspaceTrust: process.env.MAESTRO_P_ACCEPT_WORKSPACE_TRUST === '1',
+		// Set by Maestro's usage sampler, which runs this from a dedicated folder
+		// it owns and keeps empty. In the home or temp dir claude's trust prompt
+		// defaults to "No, exit", so without this the probe cannot reach /usage.
+		// Never honored implicitly: trust persists for that folder.
+		acceptWorkspaceTrust: acceptsWorkspaceTrust(),
 	});
 
 	const lines: string[] = [];
@@ -770,12 +1123,42 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 	});
 
 	let statusFinalized = false;
+	driver.on('workspace-untrusted', () => {
+		if (statusFinalized) return;
+		statusFinalized = true;
+		process.stderr.write(workspaceUntrustedHint(cwd));
+		driver.kill('SIGTERM');
+		process.exit(1);
+	});
 	driver.on('exit', () => {
 		if (statusFinalized) return;
 		statusFinalized = true;
 		process.stderr.write('maestro-p: claude TUI exited before /usage panel could render\n');
 		process.exit(1);
 	});
+
+	// Same Stop contract as run mode: quit the TUI, then exit with the stop code.
+	// The probe has no result envelope to write, so there is nothing to settle.
+	installStopSignalHandlers({
+		onStop: (signal) => {
+			if (statusFinalized) return;
+			statusFinalized = true;
+			void driver
+				.quit()
+				.catch(() => {
+					/* already gone; nothing to escalate against */
+				})
+				.finally(() => {
+					process.exit(STOP_EXIT_CODES[signal]);
+				});
+		},
+		onForce: (signal) => {
+			driver.kill('SIGKILL');
+			process.exit(STOP_EXIT_CODES[signal]);
+		},
+	});
+	// A Stop may land mid-probe: stop sending /usage and wait for its exit.
+	const stopped = (): Promise<never> => new Promise<never>(() => undefined);
 
 	// Measured before start() so the retry budget below covers claude's boot too:
 	// the caller's 30s kill timer starts when this process does, not when the TUI
@@ -785,6 +1168,7 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 
 	await driver.start();
 	await waitForEvent(driver, 'ready');
+	if (statusFinalized) return stopped();
 
 	// Wait out one /usage paint: an initial hold to let it start rendering, then
 	// debounce on no-new-lines until the stream has been quiet for
@@ -837,7 +1221,7 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		// and that is load-bearing rather than an oversight. Both accumulate, so a
 		// retry's panel lands appended to the previous one - which is exactly the
 		// shape parseUsage already expects: sliceToFinalPanel() anchors on the LAST
-		// `Current session` header and reads forward from there, so the newest panel
+		// opening section header and reads forward from there, so the newest panel
 		// wins and the stale one is ignored. Clearing would break claude's
 		// differential repaints, where only the changed cells arrive and no fresh
 		// section header is painted: a cleared buffer would hold anchorless
@@ -845,6 +1229,7 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		// usage-parser.test.ts, "stacked /usage panels".
 		driver.send('/usage');
 		await settleUsagePanel();
+		if (statusFinalized) return stopped();
 
 		// Parse from the full raw screen capture, not the `\n`-delimited 'line'
 		// events: heavier /usage panels (Team/Enterprise accounts, or any account
@@ -866,6 +1251,7 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 
 		if (Date.now() + retryDelay + STATUS_ATTEMPT_COST_MS > deadline) break;
 		await new Promise<void>((resolve) => setTimeout(resolve, retryDelay));
+		if (statusFinalized) return stopped();
 		retryDelay = Math.min(retryDelay * 2, STATUS_RETRY_MAX_DELAY_MS);
 	}
 

@@ -28,10 +28,18 @@ const FOCUSING_TODAY: BackgroundCapableVerb[] = [
 	'open-terminal',
 	'open-browser',
 	'tab-new',
+	// Cmd+Shift+T makes the reopened tab the visible one; so does the verb.
+	'tab-reopen',
 	'dispatch',
 	'create-agent',
 	'create-worktree',
 	'switch-mode',
+	// The two snooze verbs that announce. `--background` suppresses the notice;
+	// absent, they flash/toast exactly as the click paths do.
+	'snooze',
+	'snooze-dismiss',
+	// Sending a steering note flashes "Steering note queued", as the click does.
+	'steer-auto-run',
 ];
 
 describe('no verb changes its default', () => {
@@ -81,6 +89,23 @@ describe('no verb changes its default', () => {
 describe('verbs that accept the flag and ignore it', () => {
 	it('recognises refresh-files as already quiet', () => {
 		expect(isAlreadyQuietVerb('refresh-files')).toBe(true);
+	});
+
+	it('recognises the four silent snooze verbs as already quiet', () => {
+		// `wake` restores a tab WITHOUT focusing it - unlike the Snoozed Tabs list,
+		// which jumps to the tab it brought back - so there is nothing for the flag
+		// to suppress on any of these.
+		for (const verb of ['snooze-list', 'snooze-wake', 'snooze-reschedule', 'snooze-history']) {
+			expect(isAlreadyQuietVerb(verb), verb).toBe(true);
+		}
+	});
+
+	it('recognises reading and cancelling steering notes as already quiet', () => {
+		for (const verb of ['steer-auto-run-list', 'steer-auto-run-cancel']) {
+			expect(isAlreadyQuietVerb(verb), verb).toBe(true);
+		}
+		// `send` flashes a confirmation, so the flag means something there.
+		expect(isAlreadyQuietVerb('steer-auto-run')).toBe(false);
 	});
 
 	it('does not claim a verb that really can move the view', () => {

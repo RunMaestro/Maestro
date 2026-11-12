@@ -26,6 +26,7 @@ See [Performance Guidelines](#performance-guidelines) for specific practices.
 - [Common Development Tasks](#common-development-tasks)
 - [Encore Features (Feature Gating)](#encore-features-feature-gating)
 - [Adding a New AI Agent](#adding-a-new-ai-agent)
+- [Contributing Themes](#contributing-themes)
 - [Code Style](#code-style)
 - [Performance Guidelines](#performance-guidelines)
 - [Debugging Guide](#debugging-guide)
@@ -102,11 +103,11 @@ maestro/
 npm run dev            # Start dev server with hot reload (isolated data directory)
 npm run dev:prod-data  # Start dev server using production data (requires closing production app)
 npm run dev:demo       # Start in demo mode (fresh settings, isolated data)
-npm run dev:web        # Start web interface dev server
-npm run build          # Full production build (main + renderer + web + CLI)
-npm run build:main     # Build main process only
+npm run dev:web-desktop # Start browser (web-desktop) build dev server
+npm run build          # Full production build (main + renderer + web-desktop + CLI)
+npm run build:main     # Build main process + preload only (clears stale output first)
 npm run build:renderer # Build renderer only
-npm run build:web      # Build web interface only
+npm run build:web-desktop # Build browser (web-desktop) bundle only
 npm run build:cli      # Build CLI tool only
 npm start              # Start built application
 npm run clean          # Clean build artifacts
@@ -119,7 +120,7 @@ npm run package:linux  # Package for Linux
 
 ### Development Data Directories
 
-By default, `npm run dev` uses an isolated data directory (`~/Library/Application Support/maestro-dev/`) separate from production. This allows you to run both dev and production instances simultaneously-useful when using the production Maestro to work on the dev instance.
+By default, `npm run dev` uses an isolated data directory (`~/Library/Application Support/maestro-dev/`) separate from production. This allows you to run both dev and production instances simultaneously - useful when using the production Maestro to work on the dev instance.
 
 | Command                 | Data Directory          | Can Run Alongside Production?  |
 | ----------------------- | ----------------------- | ------------------------------ |
@@ -170,7 +171,9 @@ VITE_PORT=17175 npm run dev
 
 This allows you to develop and test different branches simultaneously without port conflicts.
 
-**Note:** The web interface dev server (`npm run dev:web`) uses a separate port (default 5174) and can be configured with `VITE_WEB_PORT` if needed.
+**Note:** The browser (web-desktop) dev server (`npm run dev:web-desktop`) runs on its own fixed port (5176).
+
+**Pushing from a worktree whose `node_modules` may be reconciled in the background:** the `pre-push` hook runs `validate:push`, which invokes `prettier`, `tsc`, `eslint`, and `vitest` as bare commands resolved from `node_modules/.bin`. A package-manager install links those `.bin` shims last (after unpacking the package directories), so if an install is mid-flight the package exists but its shim is briefly absent and the push fails with a cryptic `command not found` (exit 127). The hook now preflights those four shims and fails with an actionable message instead, but the deterministic fix is to let the install settle first: run `npm ci`, confirm `ls node_modules/.bin/prettier` resolves, then push. Prefer that over hand-creating individual `.bin` symlinks, which masks a partial install rather than completing it.
 
 ## Testing
 
@@ -375,16 +378,20 @@ For commands that need programmatic behavior (not just prompts), handle them in 
 
 Maestro bundles two spec-driven workflow systems. To add a similar bundled command set:
 
+<!-- doc-refs-ignore:start -->
+
 1. **Create prompts directory**: `src/prompts/my-workflow/`
 2. **Add command markdown files**: `my-workflow.command1.md`, `my-workflow.command2.md`
 3. **Create index.ts**: Export command definitions with IDs, slash commands, descriptions, and prompts
 4. **Create metadata.json**: Track source version, commit SHA, and last refreshed date
 5. **Create manager**: `src/main/my-workflow-manager.ts` (handles loading, saving, refreshing)
 6. **Add IPC handlers**: In `src/main/index.ts` for get/set/refresh operations
-7. **Add preload API**: In `src/main/preload.ts` to expose to renderer
+7. **Add preload API**: In a new module under `src/main/preload/` to expose to renderer
 8. **Create UI panel**: Similar to `OpenSpecCommandsPanel.tsx` or `SpecKitCommandsPanel.tsx`
 9. **Add to extraResources**: In `package.json` build config for all platforms
 10. **Create refresh script**: `scripts/refresh-my-workflow.mjs`
+
+<!-- doc-refs-ignore:end -->
 
 Reference the existing Spec-Kit (`src/prompts/speckit/`, `src/main/speckit-manager.ts`) and OpenSpec (`src/prompts/openspec/`, `src/main/openspec-manager.ts`) implementations.
 
@@ -430,7 +437,7 @@ Then add the ID to `ThemeId` type in `src/shared/theme-types.ts` and to the `isV
    });
    ```
 
-2. Expose in `src/main/preload.ts`:
+2. Expose in the matching module under `src/main/preload/`:
 
    ```typescript
    myNamespace: {
@@ -442,7 +449,9 @@ Then add the ID to `ThemeId` type in `src/shared/theme-types.ts` and to the `isV
 
 ## Encore Features (Feature Gating)
 
-Encore Features is Maestro's system for user-toggled features. A capability starts life as a plugin: gated, off, and opt-in. When it earns its place in the core experience it graduates to an Encore Feature and ships on by default, with the toggle kept so users can turn it back off. The default state for every flag lives in `DEFAULT_ENCORE_FEATURES` (`src/shared/encoreFeatures.ts`).
+Encore Features is Maestro's system for optional, user-toggled features - powerful but not essential for every user, and disabled by default.
+
+They ship as **built-in (first-party) plugins**, listed in the same catalog as community plugins under the Settings tab labelled **Plugins**. The gating idea is unchanged and the flags below are still how a feature is turned on and off; what changed is that the tile, its description, and its settings body are declared in the plugin registry rather than hand-written into the settings modal. See [[CLAUDE-PLUGINS.md]] for the plugin system itself.
 
 ### When to Use Encore Features
 
@@ -467,7 +476,10 @@ export interface EncoreFeatureFlags {
 }
 ```
 
-The flags live in `useSettings.ts` and persist via `window.maestro.settings`. The Encore Features panel in Settings (`SettingsModal.tsx`) provides toggle UI for each feature.
+The flags persist via `window.maestro.settings`, with defaults in `src/renderer/stores/settingsStore.ts`. The **Plugins** tab (`Settings/tabs/EncoreTab`, which renders the Extensions marketplace) draws one tile per feature from `FIRST_PARTY_PLUGIN_DEFINITIONS` in `src/shared/plugins/first-party.ts`; each tile's detail pane owns that feature's own settings, keyed by its Encore flag.
+
+> [!NOTE]
+> The tab's internal id is still `encore` (deep links and the persisted last-tab depend on it) even though it is labelled **Plugins** in the UI.
 
 ### Adding a New Encore Feature
 
@@ -480,7 +492,7 @@ The flags live in `useSettings.ts` and persist via `window.maestro.settings`. Th
    }
    ```
 
-2. **Set the default** in `useSettings.ts` - always default to `false`:
+2. **Set the default** in `DEFAULT_ENCORE_FEATURES` (`src/renderer/stores/settingsStore.ts`) - always default to `false`:
 
    ```typescript
    const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
@@ -489,7 +501,9 @@ The flags live in `useSettings.ts` and persist via `window.maestro.settings`. Th
    };
    ```
 
-3. **Add toggle UI** in `SettingsModal.tsx` under the Encore Features tab. Follow the existing Director's Notes pattern - a clickable section with a toggle switch and feature-specific settings that only render when enabled.
+3. **Register the tile** by adding a `FirstPartyPluginDefinition` to `src/shared/plugins/first-party.ts` and listing it in `FIRST_PARTY_PLUGIN_DEFINITIONS`. Set `encoreFlag` to the flag from step 1 - that is what binds the tile's enable/disable control to your feature. Give it a `name`, `description`, `category`, and `releaseDate`; these are what the user reads in the catalog, so write the description for them rather than for the codebase. Declare any `permissions` and `backgroundServices` the feature actually uses.
+
+   If the feature needs its own options, render them into the tile's **Settings** sub-tab: add a section component under `Settings/tabs/EncoreTab/components/` and wire it into the `settingsBodies` map keyed by your Encore flag. Do not add a separate list entry to the settings modal - the marketplace tile is the only surface.
 
 4. **Gate all access points** - the feature must be invisible when disabled:
    - **Keyboard shortcuts** (`useMainKeyboardHandler.ts`): Guard with `ctx.encoreFeatures?.myFeature`
@@ -497,13 +511,29 @@ The flags live in `useSettings.ts` and persist via `window.maestro.settings`. Th
    - **SessionList hamburger menu**: Make the setter optional and conditionally render the menu item
    - **Quick Actions** (`QuickActionsModal.tsx`): Pass `undefined` for the handler when disabled
 
-5. **Update tests** in `SettingsModal.test.tsx` - add toggle and settings tests within the Encore Features describe block.
+5. **Update tests** - add a `src/__tests__/shared/plugins/<feature>-first-party*.test.ts` covering the definition (flag binding, declared permissions, background services), following the existing per-feature files there. Add rendering tests alongside the other marketplace tests if the feature contributes a settings body.
+
+6. **Document it** - add a row to the table in [docs/encore-features.md](docs/encore-features.md), and give the feature its own page if it has more than a paragraph of behavior worth explaining.
 
 ### Existing Encore Features
 
-| Feature          | Flag            | Description                                   |
-| ---------------- | --------------- | --------------------------------------------- |
-| Director's Notes | `directorNotes` | AI-generated synopsis of work across sessions |
+Nine features ship this way. `FIRST_PARTY_PLUGIN_DEFINITIONS` in `src/shared/plugins/first-party.ts` is the source of truth for the list, its display order, and each entry's description.
+
+| Feature          | Flag             | Description                                                                     |
+| ---------------- | ---------------- | ------------------------------------------------------------------------------- |
+| Usage & Stats    | `usageStats`     | Records query and Auto Run activity, and unlocks the Usage Dashboard            |
+| Director's Notes | `directorNotes`  | AI-generated synopsis of work across sessions                                   |
+| Maestro Cue      | `maestroCue`     | Event-driven automation on timers, file changes, and completions                |
+| Concerto         | `concerto`       | Agents answer with interactive views, plus always-on-top Cadenza HUD cards      |
+| Maestro Symphony | `symphony`       | Contribute to open source through curated repositories                          |
+| Groups+          | `groupsPlus`     | Group folders, icons, and label colors                                          |
+| Pianola          | `pianola`        | Autonomous manager agent that answers or escalates other agents' prompts        |
+| Coworking        | `coworking`      | Per-agent MCP server exposing terminal scrollback and browser tabs              |
+| OpenCode Server  | `opencodeServer` | Runs local OpenCode via a shared `opencode serve` process rather than per-spawn |
+
+<!-- Keep this table in sync with FIRST_PARTY_PLUGIN_DEFINITIONS and docs/encore-features.md. -->
+
+`plugins` is a flag in the same object but is not a feature tile: it turns on loading of **community** plugins. Built-in features work with it off.
 
 ## Adding a New AI Agent
 
@@ -530,7 +560,7 @@ Before implementing, investigate the agent's CLI to determine which capabilities
 
 #### 1. Add Agent Definition
 
-In `src/main/agent-detector.ts`, add to `AGENT_DEFINITIONS`:
+In `src/main/agents/definitions.ts`, add to `AGENT_DEFINITIONS`:
 
 ```typescript
 {
@@ -544,7 +574,7 @@ In `src/main/agent-detector.ts`, add to `AGENT_DEFINITIONS`:
 
 #### 2. Define Capabilities
 
-In `src/main/agent-capabilities.ts` (create if needed):
+In `src/main/agents/capabilities.ts`:
 
 ```typescript
 'my-agent': {
@@ -564,7 +594,7 @@ In `src/main/agent-capabilities.ts` (create if needed):
 
 #### 3. Implement Output Parser
 
-In `src/main/agent-output-parser.ts`, add a parser for the agent's JSON format:
+In `src/main/parsers/agent-output-parser.ts`, add a parser for the agent's JSON format:
 
 ```typescript
 class MyAgentOutputParser implements AgentOutputParser {
@@ -655,6 +685,16 @@ Based on capabilities, these UI features are automatically enabled/disabled:
 | Gemini CLI    | TBD                          | TBD                         | TBD  | TBD    | TBD                            | ✅                      | 📋 Planned  |
 
 For detailed implementation guide, see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md).
+
+## Contributing Themes
+
+Theme definitions live in `src/shared/themes.ts` (colors and palettes) and
+`src/shared/theme-types.ts` (the `ThemeId` union). To add a theme, add the
+definition in both files and update `src/__tests__/renderer/constants/themes.test.ts`.
+
+For theme screenshots and the showcase workflow (launching the app against
+curated demo data, in a specific theme, at a screenshot-ready window size), see
+[THEMES.md - Showcase Mode](THEMES.md#showcase-mode).
 
 ## Code Style
 
@@ -905,12 +945,16 @@ All PRs must pass these checks before review:
 
 ## Branching & Release Strategy
 
-Maestro uses a two-branch release model with **odd/even version numbering**:
+Maestro uses a two-branch release model with **odd/even version numbering**. The
+minor (`Y` in `X.Y.Z`) says which line a version belongs to:
 
-| Branch | Version Pattern | Audience                                                | Example |
-| ------ | --------------- | ------------------------------------------------------- | ------- |
-| `main` | `0.ODD.x`       | All users (stable)                                      | 0.15.x  |
-| `rc`   | `0.EVEN.x`      | Users who opt into "beta and release candidate updates" | 0.16.x  |
+| Branch | Version Pattern | Audience                                                | Example  |
+| ------ | --------------- | ------------------------------------------------------- | -------- |
+| `main` | `X.EVEN.z`      | All users (stable)                                      | 1.0.x    |
+| `rc`   | `X.ODD.z-RC`    | Users who opt into "beta and release candidate updates" | 1.1.x-RC |
+
+Before 1.0 the parity was the other way round (stable `0.17.x`, RC `0.18.x-RC`).
+It flipped at 1.0 so that `1.0.0` itself sits on the stable (even) line.
 
 ### How It Works
 
@@ -924,13 +968,13 @@ Maestro uses a two-branch release model with **odd/even version numbering**:
 When `rc` is mature and ready to become the next stable release:
 
 1. `rc` merges into `main`.
-2. `main` bumps to the next **odd** minor version (e.g., 0.15.x → 0.17.x).
-3. `rc` bumps to the next **even** minor version (e.g., 0.16.x → 0.18.x).
+2. `main` bumps to the next **even** minor version (e.g., 1.0.x → 1.2.0).
+3. `rc` bumps to the next **odd** minor version (e.g., 1.1.x-RC → 1.3.0-RC).
 
 ```
 Example timeline:
-  main: 0.15.0 → 0.15.1 → 0.15.2 ──────────────────→ 0.17.0 (rc merged in)
-  rc:   0.16.0 → 0.16.1 → 0.16.2 → 0.16.3 (merge) → 0.18.0 (new rc cycle)
+  main: 1.0.0 → 1.0.1 → 1.0.2 ──────────────────────────→ 1.2.0 (rc merged in)
+  rc:   1.1.0-RC → 1.1.1-RC → 1.1.2-RC (merge) → 1.3.0-RC (new rc cycle)
 ```
 
 ### Branch Guards
@@ -953,7 +997,7 @@ Each guard applies two checks to anything landing on `main`:
 | 2. Must not add 10+ commits that `rc` already has | Yes, for the declared promotion | `rc` history being absorbed into `main`                            |
 
 Check 1 is what separates an accident from a release: an accidental sync carries
-`0.EVEN.x-RC`, while a real promotion has already been bumped to its GA version.
+`X.ODD.z-RC`, while a real promotion has already been bumped to its GA version.
 
 **Merging `main` into `rc` is unaffected.** Only the `rc` -> `main` direction is
 guarded, so the usual "mirror safe fixes into rc" flow needs no special handling.
@@ -967,12 +1011,12 @@ version bump comes **before** the merge, because guard check 1 is not bypassable
 
    ```bash
    git checkout rc && git pull
-   git checkout -b release/0.ODD.0
-   # set package.json version to the next ODD minor, e.g. 0.18.5-RC -> 0.19.0
-   git commit -am "chore(version): set version to 0.19.0"
+   git checkout -b release/1.2.0
+   # set package.json version to the next EVEN minor, e.g. 1.1.5-RC -> 1.2.0
+   git commit -am "chore(version): set version to 1.2.0"
    ```
 
-2. Open a PR from `release/0.ODD.0` into `main`. Put the marker
+2. Open a PR from `release/X.EVEN.0` into `main`. Put the marker
    `[release-promotion]` in the merge commit message so guard check 2 lets the
    `rc` history through. Without it CI fails with "rc reached main".
 
@@ -987,15 +1031,15 @@ version bump comes **before** the merge, because guard check 1 is not bypassable
    until this step:
 
    ```bash
-   git tag v0.19.0 && git push origin v0.19.0
+   git tag v1.2.0 && git push origin v1.2.0
    ```
 
-5. Start the next RC cycle by bumping `rc` to the next EVEN minor:
+5. Start the next RC cycle by bumping `rc` to the next ODD minor:
 
    ```bash
    git checkout rc
-   # set package.json version to e.g. 0.20.0-RC
-   git commit -am "chore(version): set version to 0.20.0-RC"
+   # set package.json version to e.g. 1.3.0-RC
+   git commit -am "chore(version): set version to 1.3.0-RC"
    ```
 
 From here the cycle repeats: aggressive work lands on `rc`, safe fixes land on
@@ -1009,7 +1053,7 @@ From here the cycle repeats: aggressive work lands on `rc`, safe fixes land on
 
 ### Release Tags
 
-Tags follow the pattern `v0.MINOR.PATCH`. Tags with `-RC` suffix (e.g., `v0.16.0-RC`) are automatically marked as pre-releases on GitHub. The update checker in Maestro uses tag naming to route updates to the correct channel.
+Tags follow the pattern `vMAJOR.MINOR.PATCH`: an even minor for stable, an odd minor with an `-RC` suffix for release candidates. `node scripts/release.mjs tag` and `bump` refuse a version whose minor parity does not match its branch. Tags with `-RC` suffix (e.g., `v1.1.0-RC`) are automatically marked as pre-releases on GitHub. The update checker in Maestro uses tag naming to route updates to the correct channel.
 
 ## Building for Release
 
@@ -1040,7 +1084,9 @@ Place icons in `build/` directory:
 
 - `icon.icns` - macOS (512x512 or 1024x1024)
 - `icon.ico` - Windows (256x256)
-- `icon.png` - Linux (512x512)
+- `icon.png` - Linux source image (512x512 or larger). Also shipped as `<resources>/icon.png` and set as the window icon at runtime (`src/main/app-lifecycle/app-icon.ts`), since a Linux binary carries no embedded icon. Linux packages also install the sizes in `build/icons/`. `desktopName` in `package.json` must stay in sync with the `.desktop` entry so the desktop links running windows to it.
+
+After you update `icon.png`, regenerate `build/icons/`. See [build/README.md](build/README.md#generate-the-icons).
 
 ### 2. Update Version
 

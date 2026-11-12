@@ -13,6 +13,7 @@
 import { ipcMain, App } from 'electron';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
+import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
 import type { MaestroSettings } from './persistence';
 
 // ==========================================================================
@@ -21,12 +22,6 @@ import type { MaestroSettings } from './persistence';
 
 const LEADERBOARD_API_BASE = 'https://runmaestro.ai/api';
 const M4ESTR0_API_BASE = 'https://runmaestro.ai/api/m4estr0';
-
-/**
- * Default timeout for fetch requests in milliseconds.
- * 30 seconds is reasonable for API calls that may have some latency.
- */
-const FETCH_TIMEOUT_MS = 30000;
 
 // ==========================================================================
 // Types
@@ -103,6 +98,13 @@ export interface LeaderboardSubmitResponse {
 export interface AuthStatusResponse {
 	status: 'pending' | 'confirmed' | 'expired' | 'error';
 	authToken?: string;
+	/**
+	 * The subscriber email the server resolved this clientToken to. The server
+	 * looks the token up by clientToken alone, so this is the only way the client
+	 * can tell that `authToken` belongs to a different email than the one it is
+	 * registering (issue #2011).
+	 */
+	email?: string;
 	message?: string;
 	error?: string;
 }
@@ -198,33 +200,6 @@ export interface LeaderboardHandlerDependencies {
 // Helper Functions
 // ==========================================================================
 
-/**
- * Creates a fetch request with timeout support.
- *
- * @param url - The URL to fetch
- * @param options - Fetch options
- * @param timeoutMs - Timeout in milliseconds (default: FETCH_TIMEOUT_MS)
- * @returns Promise that resolves to the Response or rejects on timeout
- */
-async function fetchWithTimeout(
-	url: string,
-	options: RequestInit = {},
-	timeoutMs: number = FETCH_TIMEOUT_MS
-): Promise<Response> {
-	const controller = new AbortController();
-	const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-	try {
-		const response = await fetch(url, {
-			...options,
-			signal: controller.signal,
-		});
-		return response;
-	} finally {
-		clearTimeout(timeoutId);
-	}
-}
-
 // ==========================================================================
 // Handler Registration
 // ==========================================================================
@@ -299,9 +274,14 @@ export function registerLeaderboardHandlers(deps: LeaderboardHandlerDependencies
 					};
 				} else if (response.status === 401) {
 					// Auth token required or invalid
-					logger.warn('Leaderboard submission requires auth token', 'Leaderboard', {
-						error: result.error || result.message,
-					});
+					// Missing OR rejected token: the server answers both with 401.
+					logger.warn(
+						'Leaderboard submission rejected: auth token missing or invalid',
+						'Leaderboard',
+						{
+							error: result.error || result.message,
+						}
+					);
 					return {
 						success: false,
 						message: result.message || 'Authentication required',
@@ -358,6 +338,7 @@ export function registerLeaderboardHandlers(deps: LeaderboardHandlerDependencies
 				const result = (await response.json()) as {
 					status: 'pending' | 'confirmed' | 'expired';
 					authToken?: string;
+					email?: string;
 					message?: string;
 				};
 
@@ -368,6 +349,7 @@ export function registerLeaderboardHandlers(deps: LeaderboardHandlerDependencies
 					return {
 						status: result.status,
 						authToken: result.authToken,
+						email: result.email,
 						message: result.message,
 					};
 				} else {
@@ -646,19 +628,3 @@ export function registerLeaderboardHandlers(deps: LeaderboardHandlerDependencies
 		}
 	);
 }
-
-// ==========================================================================
-// Exports for Testing
-// ==========================================================================
-
-/**
- * Get the default fetch timeout in milliseconds (for testing)
- */
-export function getFetchTimeoutMs(): number {
-	return FETCH_TIMEOUT_MS;
-}
-
-/**
- * Exposed for testing - fetch with timeout helper
- */
-export { fetchWithTimeout };

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getChildProcesses } from '../childProcessInfo';
+import { getChildProcesses, isPidAlive } from '../childProcessInfo';
 
 // Note: this test mocks execFile (not exec) - the implementation uses execFile
 // which is safe from shell injection by design.
@@ -142,5 +142,46 @@ describe('getChildProcesses', () => {
 
 		const result = await getChildProcesses(12345);
 		expect(result).toEqual([]);
+	});
+});
+
+describe('isPidAlive', () => {
+	beforeEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('reports the current process as alive', () => {
+		expect(isPidAlive(process.pid)).toBe(true);
+	});
+
+	it('treats a missing process (ESRCH) as dead', () => {
+		vi.spyOn(process, 'kill').mockImplementation(() => {
+			const err = new Error('kill ESRCH') as NodeJS.ErrnoException;
+			err.code = 'ESRCH';
+			throw err;
+		});
+
+		expect(isPidAlive(4242)).toBe(false);
+	});
+
+	it('treats a foreign-owned process (EPERM) as alive', () => {
+		// EPERM means the PID exists but belongs to another user, so the entry
+		// must not be reclaimed as stale.
+		vi.spyOn(process, 'kill').mockImplementation(() => {
+			const err = new Error('kill EPERM') as NodeJS.ErrnoException;
+			err.code = 'EPERM';
+			throw err;
+		});
+
+		expect(isPidAlive(4242)).toBe(true);
+	});
+
+	it('treats absent or non-positive pids as dead without probing', () => {
+		const killSpy = vi.spyOn(process, 'kill');
+
+		expect(isPidAlive(undefined)).toBe(false);
+		expect(isPidAlive(0)).toBe(false);
+		expect(isPidAlive(-1)).toBe(false);
+		expect(killSpy).not.toHaveBeenCalled();
 	});
 });

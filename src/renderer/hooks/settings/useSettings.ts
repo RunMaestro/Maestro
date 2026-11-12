@@ -13,6 +13,7 @@
 import { useEffect } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
+import type { BrowserConfirmPolicy } from '../../../shared/coworkingBrowser';
 import type {
 	ThemeId,
 	ThemeColors,
@@ -43,6 +44,7 @@ import type {
 	FilePreviewToolbarButton,
 	FilePreviewToolbarVisibility,
 } from '../../stores/settingsStore';
+import type { ModalResizeKey, ModalSize, ModalSizes } from '../../utils/modalSizing';
 import { notifyToast } from '../../stores/notificationStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
@@ -119,6 +121,12 @@ export interface UseSettingsReturn {
 	// UI settings
 	activeThemeId: ThemeId;
 	setActiveThemeId: (value: ThemeId) => void;
+	themeFollowSystem: boolean;
+	setThemeFollowSystem: (value: boolean) => void;
+	lightThemeId: ThemeId;
+	setLightThemeId: (value: ThemeId) => void;
+	darkThemeId: ThemeId;
+	setDarkThemeId: (value: ThemeId) => void;
 	customThemeColors: ThemeColors;
 	setCustomThemeColors: (value: ThemeColors) => void;
 	customThemeBaseId: ThemeId;
@@ -135,17 +143,26 @@ export interface UseSettingsReturn {
 	// Default thinking toggle (three states: 'off' | 'on' | 'sticky')
 	defaultShowThinking: ThinkingMode;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
+	// Global tool-call visibility toggle (Settings -> General)
+	showToolCalls: boolean;
+	setShowToolCalls: (value: boolean) => void;
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
+	modalSizes: ModalSizes;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
+	groupChatAutoScroll: boolean;
 	bionifyReadingMode: boolean;
 	bionifyIntensity: number;
 	bionifyAlgorithm: string;
 	setLeftSidebarWidth: (value: number) => void;
 	setRightPanelWidth: (value: number) => void;
+	setModalSize: (key: ModalResizeKey, value: ModalSize) => void;
+	resetModalSize: (key: ModalResizeKey) => void;
+	resetModalSizes: () => void;
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;
+	setGroupChatAutoScroll: (value: boolean) => void;
 	setBionifyReadingMode: (value: boolean) => void;
 	setBionifyIntensity: (value: number) => void;
 	setBionifyAlgorithm: (value: string) => void;
@@ -153,6 +170,8 @@ export interface UseSettingsReturn {
 	setShowHiddenFiles: (value: boolean) => void;
 	fileExplorerIconTheme: FileExplorerIconTheme;
 	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
+	fileTreeBranchConnectors: boolean;
+	setFileTreeBranchConnectors: (value: boolean) => void;
 	toastWidth: ToastWidth;
 	setToastWidth: (value: ToastWidth) => void;
 	toastPosition: ToastPosition;
@@ -176,6 +195,16 @@ export interface UseSettingsReturn {
 	audioFeedbackCommand: string;
 	setAudioFeedbackCommand: (value: string) => void;
 	toastDuration: number;
+	notificationCenterLarge: boolean;
+	setNotificationCenterLarge: (value: boolean) => void;
+	notificationCenterDetails: boolean;
+	setNotificationCenterDetails: (value: boolean) => void;
+	notificationCenterKeyboardNavigation: boolean;
+	setNotificationCenterKeyboardNavigation: (value: boolean) => void;
+	notificationHistoryQueuedReplies: boolean;
+	setNotificationHistoryQueuedReplies: (value: boolean) => void;
+	notificationHistoryAutoRunTasks: boolean;
+	setNotificationHistoryAutoRunTasks: (value: boolean) => void;
 	setToastDuration: (value: number) => void;
 	idleNotificationEnabled: boolean;
 	setIdleNotificationEnabled: (value: boolean) => void;
@@ -185,6 +214,13 @@ export interface UseSettingsReturn {
 	// Update settings
 	checkForUpdatesOnStartup: boolean;
 	setCheckForUpdatesOnStartup: (value: boolean) => void;
+	// Auto-resume paused agents when provider limits/credits become available again
+	autoResumeOnLimit: boolean;
+	setAutoResumeOnLimit: (value: boolean) => void;
+	autoResumeCheckIntervalHours: number;
+	setAutoResumeCheckIntervalHours: (value: number) => void;
+	autoResumeGiveUpDays: number;
+	setAutoResumeGiveUpDays: (value: number) => void;
 	enableBetaUpdates: boolean;
 	setEnableBetaUpdates: (value: boolean) => void;
 
@@ -272,6 +308,8 @@ export interface UseSettingsReturn {
 	isLeaderboardRegistered: boolean;
 
 	// Web Interface settings
+	webInterfaceAutoStart: boolean;
+	setWebInterfaceAutoStart: (value: boolean) => void;
 	webInterfaceUseCustomPort: boolean;
 	setWebInterfaceUseCustomPort: (value: boolean) => void;
 	webInterfaceCustomPort: number;
@@ -310,6 +348,8 @@ export interface UseSettingsReturn {
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	showBrowserTabDomain: boolean;
 	setShowBrowserTabDomain: (value: boolean) => void;
+	tabBarWheelScroll: boolean;
+	setTabBarWheelScroll: (value: boolean) => void;
 	showTabCountBadge: boolean;
 	setShowTabCountBadge: (value: boolean) => void;
 
@@ -380,6 +420,14 @@ export interface UseSettingsReturn {
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
+	shortenLongTabNames: boolean;
+	setShortenLongTabNames: (value: boolean) => void;
+
+	// Utility agent settings (auxiliary tasks: tab naming, context grooming)
+	utilityAgentId: string | null;
+	setUtilityAgentId: (value: string | null) => void;
+	utilityModelId: string | null;
+	setUtilityModelId: (value: string | null) => void;
 
 	// Where new tabs are inserted in the tab bar (per content type)
 	newTabPlacement: 'end' | 'after-current';
@@ -411,11 +459,27 @@ export interface UseSettingsReturn {
 	symphonyRegistryUrls: string[];
 	setSymphonyRegistryUrls: (value: string[]) => void;
 
+	// Coworking browser interaction (agent ids allowed to use browser tools)
+	coworkingBrowserInteraction: string[];
+	setCoworkingBrowserInteraction: (value: string[]) => void;
+	coworkingBrowserInteractionConfirm: Record<string, BrowserConfirmPolicy>;
+	setCoworkingBrowserInteractionConfirm: (value: Record<string, BrowserConfirmPolicy>) => void;
+	coworkingBackgroundBrowsers: boolean;
+	setCoworkingBackgroundBrowsers: (value: boolean) => void;
+	coworkingBackgroundBrowsersLimit: number;
+	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
+
 	// Forced Parallel Execution
 	forcedParallelExecution: boolean;
 	setForcedParallelExecution: (value: boolean) => void;
 	forcedParallelAcknowledged: boolean;
 	setForcedParallelAcknowledged: (value: boolean) => void;
+	forcedParallelAlways: boolean;
+	setForcedParallelAlways: (value: boolean) => void;
+	crossAgentMentionsWritable: boolean;
+	setCrossAgentMentionsWritable: (value: boolean) => void;
+	crossAgentHandoffsWritable: boolean;
+	setCrossAgentHandoffsWritable: (value: boolean) => void;
 
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;
@@ -464,6 +528,8 @@ export interface UseSettingsReturn {
 	setShowStarredSessionsSection: (value: boolean) => void;
 	showLeftPanelGroupMemberCount: boolean;
 	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
+	showLeftPanelCollapsedInitials: boolean;
+	setShowLeftPanelCollapsedInitials: (value: boolean) => void;
 	leftPanelCollapsedPillsPerRow: number;
 	setLeftPanelCollapsedPillsPerRow: (value: number) => void;
 	showLeftPanelLocationPills: boolean;
@@ -496,6 +562,8 @@ export interface UseSettingsReturn {
 	setAutoRunDisabled: (value: boolean) => void;
 	autoRunInactivityTimeoutMin: number;
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
+	autoRunMaxTaskDurationMin: number;
+	setAutoRunMaxTaskDurationMin: (value: number) => void;
 
 	// Built-in AI command bundle visibility
 	speckitEnabled: boolean;
@@ -519,13 +587,26 @@ export interface UseSettingsReturn {
 // a fresh selector and recompute every render).
 const selectAllSettings = (s: SettingsStore): SettingsStore => s;
 
-export function useSettings(): UseSettingsReturn {
+/**
+ * Every setting and setter, with NONE of useSettings' lifecycle effects (load on
+ * mount, reload on resume or external change, typography vars, hotkey toasts).
+ *
+ * Use this from a component that may mount many times at once - each Settings
+ * section is its own component so the tab and the search results can both
+ * render it, and calling useSettings there would re-read the settings file once
+ * per section on every mount.
+ */
+export function useSettingsValues(): SettingsStore {
 	// PERF: Subscribe with shallow equality on the top-level state so a `set()` call that
 	// only flips one field doesn't re-render every consumer of useSettings. Critically,
 	// when an action calls `set({ x: value })` where `x === value` already, the resulting
 	// state object has a new reference but identical fields - shallow equality stops the
 	// re-render cascade through MaestroConsoleInner → GitStatusProvider → workspace tree.
-	const store = useStoreWithEqualityFn(useSettingsStore, selectAllSettings, shallow);
+	return useStoreWithEqualityFn(useSettingsStore, selectAllSettings, shallow);
+}
+
+export function useSettings(): UseSettingsReturn {
+	const store = useSettingsValues();
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 
 	// Load settings on mount

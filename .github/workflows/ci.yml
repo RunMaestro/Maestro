@@ -22,9 +22,22 @@ jobs:
       # dash-rule-only pass over src/__tests__ and scripts.
       - run: npm run lint:eslint
       - run: npm run lint # TypeScript type checking
+      # Agent briefing docs (CLAUDE*.md, docs/agent-guides/) are the first thing
+      # every coding agent reads, and CLAUDE.md's list of canonical helpers is a
+      # table of import paths. A moved file silently turns those into
+      # instructions to import from nowhere, so the paths get checked here
+      # rather than in the pre-push hook, which is routinely --no-verify'd past.
+      - run: npm run lint:doc-refs
 
   test:
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }}, shard ${{ matrix.shard }}/2)
+    strategy:
+      # Run the suite on both platforms; don't cancel one when the other fails.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        shard: [1, 2]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -32,4 +45,4 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
-      - run: npm run test
+      - run: npm run test -- --shard=${{ matrix.shard }}/2

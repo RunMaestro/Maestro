@@ -52,8 +52,11 @@ import {
 	resolveAgentId,
 	resolveGroupId,
 	getSessionById,
+	readStoredAiTabs,
+	resolveStoredAiTabId,
 	getSessionsByGroup,
 	getConfigDirectory,
+	getSyncDir,
 	addHistoryEntry,
 	readSshRemotes,
 	writeSshRemotes,
@@ -141,14 +144,14 @@ describe('storage service', () => {
 			expect(result).toContain('Maestro');
 		});
 
-		it('should return Linux config path with XDG_CONFIG_HOME', () => {
+		it('should return the lowercase Linux config path with XDG_CONFIG_HOME', () => {
 			vi.mocked(os.platform).mockReturnValue('linux');
 			vi.mocked(os.homedir).mockReturnValue('/home/testuser');
 			process.env.XDG_CONFIG_HOME = '/home/testuser/.custom-config';
 
 			const result = getConfigDirectory();
 
-			expect(result).toBe(path.join('/home/testuser/.custom-config', 'Maestro'));
+			expect(result).toBe(path.join('/home/testuser/.custom-config', 'maestro'));
 		});
 
 		it('should return Linux config path fallback without XDG_CONFIG_HOME', () => {
@@ -158,7 +161,7 @@ describe('storage service', () => {
 
 			const result = getConfigDirectory();
 
-			expect(result).toBe(path.join('/home/testuser', '.config', 'Maestro'));
+			expect(result).toBe(path.join('/home/testuser', '.config', 'maestro'));
 		});
 
 		it('should use Linux path for unknown platforms', () => {
@@ -169,6 +172,110 @@ describe('storage service', () => {
 			const result = getConfigDirectory();
 
 			expect(result).toBe(path.join('/home/testuser', '.config', 'Maestro'));
+		});
+	});
+
+	// Issue #1784: with a custom Storage Location the desktop keeps its synced
+	// stores somewhere else, and the CLI kept reading the copies left behind.
+	describe('custom sync path', () => {
+		const configDir = path.join('/Users/testuser', 'Library', 'Application Support', 'Maestro');
+		const syncDir = '/Users/testuser/Sync/Maestro';
+
+		function enoent(): NodeJS.ErrnoException {
+			const error = new Error('ENOENT') as NodeJS.ErrnoException;
+			error.code = 'ENOENT';
+			return error;
+		}
+
+		/** Serve the given files by absolute path; every other read is a missing file. */
+		function mockFiles(files: Record<string, unknown>): void {
+			vi.mocked(fs.readFileSync).mockImplementation((file) => {
+				const content = files[file as string];
+				if (content === undefined) throw enoent();
+				return JSON.stringify(content);
+			});
+		}
+
+		const bootstrap = {
+			[path.join(configDir, 'maestro-bootstrap.json')]: { customSyncPath: syncDir },
+		};
+
+		beforeEach(() => {
+			vi.mocked(fs.existsSync).mockImplementation((file) => file === syncDir);
+			vi.mocked(fs.writeFileSync).mockReset();
+			vi.spyOn(console, 'error').mockImplementation(() => {});
+		});
+
+		it('resolves the sync directory from the bootstrap store', () => {
+			mockFiles(bootstrap);
+
+			expect(getSyncDir()).toBe(syncDir);
+			expect(getConfigDirectory()).toBe(configDir);
+		});
+
+		it('reads agents from the sync directory, not the stale copy beside the bootstrap store', () => {
+			mockFiles({
+				...bootstrap,
+				[path.join(configDir, 'maestro-sessions.json')]: {
+					sessions: [mockSession({ id: 'stale' })],
+				},
+				[path.join(syncDir, 'maestro-sessions.json')]: {
+					sessions: [mockSession({ id: 'stale' }), mockSession({ id: 'created-after-move' })],
+				},
+			});
+
+			expect(readSessions().map((s) => s.id)).toEqual(['stale', 'created-after-move']);
+			expect(getSessionById('created-after-move')?.id).toBe('created-after-move');
+		});
+
+		it('reads groups and settings from the sync directory', () => {
+			mockFiles({
+				...bootstrap,
+				[path.join(syncDir, 'maestro-groups.json')]: { groups: [mockGroup({ id: 'synced' })] },
+				[path.join(syncDir, 'maestro-settings.json')]: { fontSize: 18 },
+				[path.join(configDir, 'maestro-settings.json')]: { fontSize: 12 },
+			});
+
+			expect(readGroups().map((g) => g.id)).toEqual(['synced']);
+			expect(readSettingValue('fontSize')).toBe(18);
+		});
+
+		it('writes settings to the sync directory', () => {
+			mockFiles({ ...bootstrap, [path.join(syncDir, 'maestro-settings.json')]: { fontSize: 12 } });
+
+			writeSettingValue('fontSize', 18);
+
+			expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(fs.writeFileSync).mock.calls[0][0]).toBe(
+				path.join(syncDir, 'maestro-settings.json')
+			);
+		});
+
+		it('keeps reading agent configs from the config directory', () => {
+			mockFiles({
+				...bootstrap,
+				[path.join(configDir, 'maestro-agent-configs.json')]: {
+					configs: { 'claude-code': { customPath: '/real/claude' } },
+				},
+				[path.join(syncDir, 'maestro-agent-configs.json')]: {
+					configs: { 'claude-code': { customPath: '/migrated/copy/claude' } },
+				},
+			});
+
+			expect(getAgentCustomPath('claude-code')).toBe('/real/claude');
+		});
+
+		it('falls back to the config directory when the sync directory is missing', () => {
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			mockFiles({
+				...bootstrap,
+				[path.join(configDir, 'maestro-sessions.json')]: {
+					sessions: [mockSession({ id: 'local' })],
+				},
+			});
+
+			expect(getSyncDir()).toBe(configDir);
+			expect(readSessions().map((s) => s.id)).toEqual(['local']);
 		});
 	});
 
@@ -489,6 +596,54 @@ describe('storage service', () => {
 			expect(() => resolveAgentId('nonexistent')).toThrow('Agent not found: nonexistent');
 		});
 
+		it('matches the readable name when the stored name carries an emoji prefix', () => {
+			// Agent names are routinely prefixed with a glyph. Both a human and an
+			// agent type the name they READ, so an exact-name match alone reports a
+			// visible agent as missing.
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					sessions: [mockSession({ id: 'ped-1', name: '\u{1F4DC} Substrate PedTome' })],
+				})
+			);
+
+			expect(resolveAgentId('Substrate PedTome')).toBe('ped-1');
+			expect(resolveAgentId('substrate pedtome')).toBe('ped-1');
+		});
+
+		it('still prefers an exact name match over a decoration-stripped one', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					sessions: [
+						mockSession({ id: 'plain-1', name: 'Kensho' }),
+						mockSession({ id: 'fancy-1', name: '\u{1F94B} Kensho' }),
+					],
+				})
+			);
+
+			expect(resolveAgentId('Kensho')).toBe('plain-1');
+		});
+
+		it('reports ambiguity rather than guessing between two decorated names', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					sessions: [
+						mockSession({ id: 'a-1', name: '\u{1F94B} Kensho' }),
+						mockSession({ id: 'b-1', name: '\u{1F4DC} Kensho' }),
+					],
+				})
+			);
+
+			expect(() => resolveAgentId('Kensho')).toThrow('Ambiguous agent name');
+		});
+
+		it('does not match two decoration-only names to each other', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({ sessions: [mockSession({ id: 'glyph-1', name: '\u{1F4DC}' })] })
+			);
+
+			expect(() => resolveAgentId('\u{1F94B}')).toThrow('Agent not found');
+		});
+
 		it('should throw with match list when ambiguous', () => {
 			vi.mocked(fs.readFileSync).mockReturnValue(
 				JSON.stringify({
@@ -666,6 +821,39 @@ describe('storage service', () => {
 				expect((error as Error).message).toContain('Unknown');
 				expect((error as Error).message).toContain('Named Group');
 			}
+		});
+	});
+
+	describe('readStoredAiTabs / resolveStoredAiTabId', () => {
+		const withTabs = (tabs: Array<{ id: string; agentSessionId?: string }>) =>
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					sessions: [
+						{ ...mockSession({ id: 'agent-1' }), aiTabs: tabs },
+						{ ...mockSession({ id: 'agent-2' }), aiTabs: [{ id: 'tab-other' }] },
+					],
+				})
+			);
+
+		it("returns only the named agent's tabs, and none for an unknown agent", () => {
+			withTabs([{ id: 'tab-aaa', agentSessionId: 'prov-1' }]);
+
+			expect(readStoredAiTabs('agent-1')).toEqual([{ id: 'tab-aaa', agentSessionId: 'prov-1' }]);
+			expect(readStoredAiTabs('missing')).toEqual([]);
+		});
+
+		it('resolves an exact id, then a unique prefix, else null', () => {
+			withTabs([{ id: 'tab-aaa' }, { id: 'tab-bbb' }]);
+
+			expect(resolveStoredAiTabId('agent-1', 'tab-aaa')).toBe('tab-aaa');
+			expect(resolveStoredAiTabId('agent-1', 'tab-b')).toBe('tab-bbb');
+			expect(resolveStoredAiTabId('agent-1', 'tab-other')).toBeNull();
+		});
+
+		it('throws on an ambiguous prefix', () => {
+			withTabs([{ id: 'tab-aaa' }, { id: 'tab-abb' }]);
+
+			expect(() => resolveStoredAiTabId('agent-1', 'tab-a')).toThrow(/Ambiguous tab/);
 		});
 	});
 

@@ -27,11 +27,16 @@ export function getTabKindIcon(kind: TabKind): LucideIcon {
 			return Globe;
 		case 'terminal':
 			return TerminalSquare;
+		case 'group':
+			// rc-only kind: a tiled group of panes. Same glyph the group chip in the
+			// tab strip falls back to when no emoji is set (GroupTabChip), so a
+			// parked group is recognisable as the thing that was on the strip.
+			return LayoutGrid;
 		default:
-			// Unreachable for TabKind as declared here, but deliberate: branches that
-			// add a kind (rc carries a `group` tile) would otherwise fail this switch
-			// to compile rather than merge. A generic glyph is the right answer for a
-			// kind this map has not been taught yet.
+			// Unreachable for TabKind as declared here, but deliberate: a branch that
+			// adds a kind should merge rather than fail this switch to compile. A
+			// generic glyph is the right answer for a kind this map has not been
+			// taught yet.
 			return LayoutGrid;
 	}
 }
@@ -79,8 +84,16 @@ export function isUnifiedTabActive(
 	activeFileTabId: string | null | undefined,
 	activeBrowserTabId: string | null | undefined,
 	activeTerminalTabId: string | null | undefined,
-	inputMode: 'ai' | 'terminal' | undefined
+	inputMode: 'ai' | 'terminal' | undefined,
+	activeGroupId?: string | null
 ): boolean {
+	// A tiled group is the active tab when it takes over the panel; it outranks the
+	// standalone selections (which navigation clears when a group activates).
+	if (tab.type === 'group') {
+		return tab.id === activeGroupId;
+	}
+	// While a group is active, no standalone chip should read as active.
+	if (activeGroupId) return false;
 	if (tab.type === 'ai') {
 		return (
 			tab.id === activeTabId && !activeFileTabId && !activeBrowserTabId && inputMode !== 'terminal'

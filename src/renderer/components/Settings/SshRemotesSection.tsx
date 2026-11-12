@@ -18,7 +18,7 @@
  * ```
  */
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
 	Server,
 	Plus,
@@ -31,15 +31,36 @@ import {
 	WifiOff,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { FilterInput } from '../ui/FilterInput';
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import type { SshRemoteConfig } from '../../../shared/types';
 import type { SshRemoteRemediation } from '../../../shared/sshRemoteShell';
 import { formatSshTarget } from '../../../shared/formatters';
+import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { useSshRemotes } from '../../hooks';
 import { SshRemoteModal } from './SshRemoteModal';
 import { SshRemediationNotice } from './SshRemediationNotice';
 import { logger } from '../../utils/logger';
+
+/** Name A-Z, with the connection target breaking ties between same-named remotes. */
+export function sortSshRemotes(configs: SshRemoteConfig[]): SshRemoteConfig[] {
+	return [...configs].sort(
+		(a, b) =>
+			compareNamesIgnoringEmojis(a.name || a.host, b.name || b.host) ||
+			formatSshTarget(a).localeCompare(formatSshTarget(b))
+	);
+}
+
+/** Case-insensitive match on the remote's name or its `user@host:port` target. */
+export function matchesSshRemoteFilter(config: SshRemoteConfig, query: string): boolean {
+	const needle = query.trim().toLowerCase();
+	if (!needle) return true;
+	return (
+		config.name.toLowerCase().includes(needle) ||
+		formatSshTarget(config).toLowerCase().includes(needle)
+	);
+}
 
 export interface SshRemotesSectionProps {
 	/** Theme object for styling */
@@ -67,6 +88,14 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 	const [testResults, setTestResults] = useState<
 		Record<string, { success: boolean; message: string; remediation?: SshRemoteRemediation }>
 	>({});
+	const [filter, setFilter] = useState('');
+
+	const sortedConfigs = useMemo(() => sortSshRemotes(configs), [configs]);
+	const visibleConfigs = useMemo(
+		() => sortedConfigs.filter((config) => matchesSshRemoteFilter(config, filter)),
+		[sortedConfigs, filter]
+	);
+	const isFiltering = filter.trim().length > 0;
 
 	// Handle add new remote
 	const handleAddNew = () => {
@@ -164,7 +193,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 				<div className="flex-1 min-w-0">
 					<p className="text-2xs uppercase font-bold opacity-50 mb-1">Remote Execution</p>
 					<p className="font-semibold mb-1">SSH Remote Hosts</p>
-					<p className="text-xs opacity-60 mb-3">
+					<p className="text-xs opacity-70 mb-3">
 						Configure remote hosts where AI agents can be executed via SSH. This allows running
 						agents on powerful remote machines or servers with specific tools installed.
 					</p>
@@ -183,10 +212,26 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 						</div>
 					)}
 
+					{/* Filter - a single remote has nothing to narrow */}
+					{configs.length > 1 && (
+						<FilterInput
+							theme={theme}
+							value={filter}
+							onChange={setFilter}
+							placeholder="Filter remotes..."
+							ariaLabel="Filter SSH remotes"
+							resultLabel={
+								isFiltering ? `${visibleConfigs.length} of ${configs.length}` : undefined
+							}
+							width={280}
+							className="mb-3"
+						/>
+					)}
+
 					{/* Remote List */}
-					{configs.length > 0 && (
+					{visibleConfigs.length > 0 && (
 						<div className="space-y-2 mb-3">
-							{configs.map((config) => {
+							{visibleConfigs.map((config) => {
 								const isDefault = config.id === defaultId;
 								const isTesting = testingConfigId === config.id;
 								const isDeleting = deletingId === config.id;
@@ -211,6 +256,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 											<div className="flex-1 min-w-0">
 												<div className="flex items-center gap-2 mb-1">
 													<span
+														data-testid="ssh-remote-name"
 														className="font-medium truncate"
 														style={{ color: theme.colors.textMain }}
 													>
@@ -339,6 +385,13 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 						</div>
 					)}
 
+					{/* No filter matches */}
+					{configs.length > 0 && visibleConfigs.length === 0 && (
+						<p className="text-xs mb-3" style={{ color: theme.colors.textDim }}>
+							No remotes match &ldquo;{filter.trim()}&rdquo;
+						</p>
+					)}
+
 					{/* Empty State */}
 					{configs.length === 0 && (
 						<div
@@ -352,7 +405,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 							<p className="text-sm" style={{ color: theme.colors.textDim }}>
 								No SSH remotes configured
 							</p>
-							<p className="text-xs opacity-60 mt-1" style={{ color: theme.colors.textDim }}>
+							<p className="text-xs opacity-70 mt-1">
 								Add a remote host to run AI agents on external machines
 							</p>
 						</div>

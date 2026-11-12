@@ -3,6 +3,7 @@ import type { Session } from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import type { AutoRunTreeNode } from '../batch/useAutoRunHandlers';
 import { fuzzyMatchWithScore, isSubsequence } from '../../utils/search';
+import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 
 export interface AtMentionSuggestion {
 	value: string; // Full path to insert
@@ -41,15 +42,32 @@ interface MentionCandidate {
 /**
  * Hook for providing @ mention file completion in AI mode.
  * Uses fuzzy matching to find files in the project tree and Auto Run folder.
+ *
+ * PERF: Prefer calling with no args. Then this hook subscribes only to
+ * non-streaming fields (fileTree, cwd, autoRunFolderPath). Passing a Session
+ * (or null) keeps the injected-session API for tests and PromptComposerModal;
+ * when injected, store selectors return stable sentinels so streaming updates
+ * do not re-render through those subscriptions.
  */
-export function useAtMentionCompletion(session: Session | null): UseAtMentionCompletionReturn {
+export function useAtMentionCompletion(session?: Session | null): UseAtMentionCompletionReturn {
+	const injected = session !== undefined;
+
+	const storeFileTree = useSessionStore((s) =>
+		injected ? undefined : selectActiveSession(s)?.fileTree
+	);
+	const storeCwd = useSessionStore((s) => (injected ? undefined : selectActiveSession(s)?.cwd));
+	const storeAutoRunFolderPath = useSessionStore((s) =>
+		injected ? undefined : selectActiveSession(s)?.autoRunFolderPath
+	);
+
+	const fileTree = injected ? session?.fileTree : storeFileTree;
+	const sessionCwd = injected ? session?.cwd : storeCwd;
+	const autoRunFolderPath = injected ? session?.autoRunFolderPath : storeAutoRunFolderPath;
+
 	// State for Auto Run folder files (fetched asynchronously)
 	const [autoRunFiles, setAutoRunFiles] = useState<MentionCandidate[]>([]);
 
 	// Fetch Auto Run folder files when the path changes
-	const autoRunFolderPath = session?.autoRunFolderPath;
-	const sessionCwd = session?.cwd;
-
 	useEffect(() => {
 		// Clear if no Auto Run folder configured
 		if (!autoRunFolderPath) {
@@ -114,7 +132,7 @@ export function useAtMentionCompletion(session: Session | null): UseAtMentionCom
 
 	// Build a flat list of all files/folders from the file tree
 	const projectFiles = useMemo(() => {
-		if (!session?.fileTree) return [];
+		if (!fileTree) return [];
 
 		const files: MentionCandidate[] = [];
 
@@ -133,9 +151,9 @@ export function useAtMentionCompletion(session: Session | null): UseAtMentionCom
 			}
 		};
 
-		traverse(session.fileTree);
+		traverse(fileTree);
 		return files;
-	}, [session?.fileTree]);
+	}, [fileTree]);
 
 	// Combine project files with Auto Run files
 	const allFiles = useMemo(() => {

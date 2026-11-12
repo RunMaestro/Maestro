@@ -12,7 +12,7 @@
 import { spawn } from 'child_process';
 import { SshRemoteConfig } from '../../shared/types';
 import { execFileNoThrow, ExecResult } from './execFile';
-import { shellEscape, shellEscapeForDoubleQuotes } from './shell-escape';
+import { shellEscape, shellEscapeRemotePath } from './shell-escape';
 import { sshRemoteManager } from '../ssh-remote-manager';
 import { logger } from './logger';
 import { resolveSshPath } from './cliDetection';
@@ -277,26 +277,6 @@ async function execRemoteCommand(
 	} finally {
 		limiter.release();
 	}
-}
-
-function shellEscapeRemotePath(filePath: string): string {
-	if (filePath === '~') {
-		return '"$HOME"';
-	}
-
-	if (filePath.startsWith('~/')) {
-		return `"$HOME/${shellEscapeForDoubleQuotes(filePath.slice(2))}"`;
-	}
-
-	if (filePath === '$HOME') {
-		return '"$HOME"';
-	}
-
-	if (filePath.startsWith('$HOME/')) {
-		return `"$HOME/${shellEscapeForDoubleQuotes(filePath.slice('$HOME/'.length))}"`;
-	}
-
-	return shellEscape(filePath);
 }
 
 /**
@@ -1548,10 +1528,15 @@ export async function listTreeRemote(
 		return { success: false, error: `Directory not found or not accessible: ${rootPath}` };
 	}
 
+	// A root with no subdirectories prints the separator as the FIRST line, with
+	// no newline before it. Prefix one so the separator is always found;
+	// otherwise every file lands in the directory section and the file list is
+	// empty (a flat Auto Run playbook folder showed no documents over SSH).
+	const output = `\n${result.stdout}`;
 	const sepLine = `\n${SEP}\n`;
-	const sepIdx = result.stdout.indexOf(sepLine);
-	const dirSection = sepIdx >= 0 ? result.stdout.slice(0, sepIdx) : result.stdout;
-	const fileSection = sepIdx >= 0 ? result.stdout.slice(sepIdx + sepLine.length) : '';
+	const sepIdx = output.indexOf(sepLine);
+	const dirSection = sepIdx >= 0 ? output.slice(0, sepIdx) : output;
+	const fileSection = sepIdx >= 0 ? output.slice(sepIdx + sepLine.length) : '';
 
 	const stripPrefix = (line: string): string => (line.startsWith('./') ? line.slice(2) : line);
 

@@ -3,6 +3,7 @@ import type { MutableRefObject } from 'react';
 import { File, Folder, GitBranch, History, Tag } from 'lucide-react';
 import type { TabCompletionFilter, TabCompletionSuggestion } from '../../../hooks';
 import type { Theme } from '../../../types';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface TabCompletionPopoverProps {
 	isOpen: boolean;
@@ -88,8 +89,8 @@ export const TabCompletionPopover = memo(function TabCompletionPopover({
 
 	return (
 		<div
-			className="absolute bottom-full left-0 right-0 mb-2 border rounded-lg shadow-2xl max-h-64 overflow-hidden"
-			style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+			className="absolute bottom-full left-0 right-0 mb-2 rounded-lg max-h-64 overflow-hidden"
+			style={elevatedSurfaceStyle(theme)}
 		>
 			<div
 				className="px-3 py-2 border-b flex items-center justify-between"

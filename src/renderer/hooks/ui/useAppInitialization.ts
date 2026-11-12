@@ -8,7 +8,7 @@
  *   - Splash screen coordination (wait for settings + sessions)
  *   - GitHub CLI availability check
  *   - Windows warning modal for Windows users
- *   - First-run modal series (typography -> theme -> updates -> agent powers)
+ *   - First-run modal series (typography, theme, agent powers)
  *   - File gist URLs loading from settings
  *   - Beta updates setting sync
  *   - Update check on startup
@@ -42,6 +42,7 @@ import {
 	recoverUncommittedAutoRunCredit,
 	reportLeaderboardDrift,
 } from '../../services/leaderboard';
+import { useIsLifecycleOwner, useWindowContextOptional } from '../../contexts/WindowContext';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -77,7 +78,6 @@ export function useAppInitialization(): AppInitializationReturn {
 	const themePromptSeen = useSettingsStore((s) => s.themePromptSeen);
 	const updatesPromptSeen = useSettingsStore((s) => s.updatesPromptSeen);
 	const agentPowersPromptSeen = useSettingsStore((s) => s.agentPowersPromptSeen);
-	const hasPriorInstallation = useSettingsStore((s) => s.hasPriorInstallation);
 	const activeThemeId = useSettingsStore((s) => s.activeThemeId);
 	// "Does this user already have agents" is the only signal that separates a
 	// fresh install from one that predates these steps, and it needs no new
@@ -95,6 +95,13 @@ export function useAppInitialization(): AppInitializationReturn {
 	const speckitEnabled = useSettingsStore((s) => s.speckitEnabled);
 	const openspecEnabled = useSettingsStore((s) => s.openspecEnabled);
 	const bmadEnabled = useSettingsStore((s) => s.bmadEnabled);
+
+	// Outside a WindowProvider (web build) there is only one renderer, so treat
+	// it as the main window.
+	const isMainWindow = useWindowContextOptional()?.isMainWindow ?? true;
+	// Narrower than isMainWindow: a web-desktop client also reads as the main
+	// window, and it shares the same settings file and leaderboard outbox.
+	const isLifecycleOwner = useIsLifecycleOwner();
 
 	// --- Local state ---
 	const [ghCliAvailable, setGhCliAvailable] = useState(false);
@@ -177,22 +184,19 @@ export function useAppInitialization(): AppInitializationReturn {
 	// modals change their own copy.
 	//
 	// Gated on sessionsLoaded because "does this user already have agents" is
-	// the primary signal for a new user vs a returning one. It is not the only
-	// one: a returning user who has deleted every agent also has zero sessions,
-	// so `hasPriorInstallation` (true once this install has ever booted before,
-	// regardless of current agent count) also counts as returning. There is no
-	// second-window context on this branch, so the series always starts in this
-	// process.
+	// what tells a new user from a returning one, and on isMainWindow so a
+	// second window does not ask the same questions again.
 	const onboardingSeriesStartedRef = useRef(false);
 	useEffect(() => {
 		exposeOnboardingSeriesDebug();
 
 		if (!settingsLoaded || !sessionsLoaded) return;
+		if (!isMainWindow) return;
 		if (onboardingSeriesStartedRef.current) return;
 		onboardingSeriesStartedRef.current = true;
 
 		startOnboardingSeries({
-			audience: hasAnySession || hasPriorInstallation ? 'returning' : 'new',
+			audience: hasAnySession ? 'returning' : 'new',
 			seen: {
 				typography: typographyPromptSeen,
 				theme: themePromptSeen,
@@ -204,8 +208,8 @@ export function useAppInitialization(): AppInitializationReturn {
 	}, [
 		settingsLoaded,
 		sessionsLoaded,
+		isMainWindow,
 		hasAnySession,
-		hasPriorInstallation,
 		typographyPromptSeen,
 		themePromptSeen,
 		updatesPromptSeen,
@@ -283,6 +287,11 @@ export function useAppInitialization(): AppInitializationReturn {
 		const email = leaderboardRegistration?.email;
 		if (!authToken || !email) return;
 
+		// Only the desktop's main window syncs. Every window and every web-desktop
+		// client runs this hook, and a flush from two of them would submit the
+		// same queued deltas twice.
+		if (!isLifecycleOwner) return;
+
 		const timer = setTimeout(async () => {
 			try {
 				// Ship everything owed BEFORE reading the server total, so the
@@ -328,7 +337,7 @@ export function useAppInitialization(): AppInitializationReturn {
 		}, 3000);
 
 		return () => clearTimeout(timer);
-	}, [settingsLoaded, leaderboardAuthToken]);
+	}, [settingsLoaded, leaderboardAuthToken, isLifecycleOwner]);
 
 	// --- SpecKit commands loading ---
 	// Wait for settings so we know whether the user has disabled this bundle.

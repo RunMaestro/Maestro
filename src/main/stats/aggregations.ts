@@ -17,6 +17,12 @@ import {
 	type DurationPercentiles,
 } from '../../shared/percentiles';
 import { PERFORMANCE_THRESHOLDS } from '../../shared/performance-metrics';
+import {
+	computePromptCadence,
+	localDayStartMs,
+	promptWindowStart,
+	type PromptCadence,
+} from '../../shared/promptCadence';
 import { getTimeRangeStart, perfMetrics, LOG_CONTEXT } from './utils';
 import { countImageAnnotationsSince } from './image-annotations';
 import { logger } from '../utils/logger';
@@ -387,6 +393,30 @@ function queryBySessionSource(
 	return result;
 }
 
+function queryBySessionLastQuery(db: Database.Database, startTime: number): Record<string, number> {
+	const perfStart = perfMetrics.start();
+	const rows = db
+		.prepare(
+			`
+      SELECT session_id, MAX(start_time) as last_query
+      FROM query_events
+      WHERE start_time >= ?
+      GROUP BY session_id
+    `
+		)
+		.all(startTime) as Array<{ session_id: string; last_query: number }>;
+
+	const result: Record<string, number> = {};
+	for (const row of rows) {
+		result[row.session_id] = row.last_query;
+	}
+	perfMetrics.end(perfStart, 'getAggregatedStats:bySessionLastQuery');
+	return result;
+}
+
+/**
+ * Token and cost totals per session.
+ */
 function queryBySessionTokens(
 	db: Database.Database,
 	startTime: number
@@ -520,6 +550,37 @@ function queryAutoRunTaskPercentiles(
 	return rows.length > 0 ? percentilesFromSorted(rows.map((r) => r.duration)) : emptyPercentiles();
 }
 
+/**
+ * How often the user prompts: interactive turns only (`source != 'auto'`, the
+ * same split as `delegation.ts`). Reads raw timestamps rather than SQL day
+ * buckets because the cadence window is calendar-aligned, not the rolling
+ * `startTime` every other sub-query uses - see `src/shared/promptCadence.ts`.
+ */
+function queryPromptCadence(db: Database.Database, range: StatsTimeRange): PromptCadence {
+	const perfStart = perfMetrics.start();
+	const first = db
+		.prepare(`SELECT MIN(start_time) as first FROM query_events WHERE source != 'auto'`)
+		.get() as { first: number | null } | undefined;
+	const windowStart = promptWindowStart(range, first?.first ?? null);
+	const rows = windowStart
+		? (db
+				.prepare(
+					`
+      SELECT start_time
+      FROM query_events
+      WHERE source != 'auto' AND start_time >= ?
+    `
+				)
+				.all(localDayStartMs(windowStart)) as Array<{ start_time: number }>)
+		: [];
+	const cadence = computePromptCadence({
+		timestamps: rows.map((row) => row.start_time),
+		windowStart,
+	});
+	perfMetrics.end(perfStart, 'getAggregatedStats:promptCadence', { promptCount: cadence.total });
+	return cadence;
+}
+
 // ============================================================================
 // Orchestrator
 // ============================================================================
@@ -544,11 +605,13 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 	const sessionStats = querySessionStats(db, startTime);
 	const bySessionByDay = queryBySessionByDay(db, startTime);
 	const bySessionSource = queryBySessionSource(db, startTime);
+	const bySessionLastQuery = queryBySessionLastQuery(db, startTime);
 	const bySessionTokens = queryBySessionTokens(db, startTime);
 	const worktreeStatus = queryByWorktreeStatus(db, startTime);
 	const durationPercentiles = queryDurationPercentiles(db, startTime);
 	const autoRunTaskDurationPercentiles = queryAutoRunTaskPercentiles(db, startTime);
 	const imageAnnotations = countImageAnnotationsSince(db, startTime);
+	const prompts = queryPromptCadence(db, range);
 
 	const totalDuration = perfMetrics.end(perfStart, 'getAggregatedStats:total', {
 		range,
@@ -580,10 +643,12 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 		byAgentByDay,
 		bySessionByDay,
 		bySessionSource,
+		bySessionLastQuery,
 		bySessionTokens,
 		worktreeQueries: worktreeStatus.worktreeQueries,
 		parentQueries: worktreeStatus.parentQueries,
 		byWorktreeStatus: worktreeStatus.byWorktreeStatus,
 		imageAnnotations,
+		prompts,
 	};
 }

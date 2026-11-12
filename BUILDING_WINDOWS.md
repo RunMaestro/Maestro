@@ -62,7 +62,7 @@ If you encounter issues with the `dev:win` script or prefer to run the steps man
 3.  **Start the Electron main process:**
     Open a **new** PowerShell terminal and run the following command:
     ```powershell
-    npx tsc -p tsconfig.main.json; $env:NODE_ENV='development'; npx electron .
+    npm run build:main; if ($LASTEXITCODE -eq 0) { $env:NODE_ENV='development'; npx electron . }
     ```
 
 This will launch the application in development mode with hot-reloading for the renderer.

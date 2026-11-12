@@ -23,6 +23,11 @@ function Harness({
 		<textarea
 			ref={(el) => {
 				if (!el) return;
+				// `defaultValue` is applied once, so a rerender would leave the DOM
+				// value on the FIRST render's text. The caret rule compares
+				// selectionEnd against the live value, so a stale value makes the
+				// harness - not the hook - decide the outcome. Track it here.
+				el.value = value;
 				Object.defineProperty(el, 'scrollHeight', { value: scrollHeight, configurable: true });
 				Object.defineProperty(el, 'selectionEnd', { value: selectionEnd, configurable: true });
 				el.scrollTop = initialScrollTop;

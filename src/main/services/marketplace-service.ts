@@ -18,6 +18,7 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import type {
 	MarketplaceManifest,
 	MarketplaceCache,
@@ -32,6 +33,14 @@ import { captureException } from '../utils/sentry';
 const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main';
 const MANIFEST_URL = `${GITHUB_RAW_BASE}/manifest.json`;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Request budget for marketplace downloads. These are playbook markdown and
+ * assets pulled from GitHub raw on a user-initiated action, so the user is
+ * waiting on them: a stalled socket must surface as an error, not a spinner
+ * that never resolves.
+ */
+const MARKETPLACE_FETCH_TIMEOUT_MS = 30_000;
 const LOG_CONTEXT = '[Marketplace]';
 
 export function getCacheFilePath(app: App): string {
@@ -65,6 +74,24 @@ function resolveTildePath(pathStr: string): string {
  * Rejects path separators and traversal sequences so the folder cannot
  * escape `autoRunFolderPath`. Throws `MarketplaceImportError` on bad input.
  */
+/**
+ * Points a playbook's asset references at the folder it was imported into.
+ *
+ * Exchange playbooks reference bundled files as `{{AUTORUN_FOLDER}}/assets/...`
+ * (the documented convention), but the import writes them to
+ * `<autoRunFolderPath>/<targetFolderName>/assets/`, and `{{AUTORUN_FOLDER}}`
+ * expands to the Auto Run root, so the reference never resolved. Rewriting the
+ * reference at import keeps `{{AUTORUN_FOLDER}}` meaning the root everywhere
+ * else and keeps each playbook's assets in its own folder.
+ */
+export function rebaseAssetReferences(text: string, targetFolderName: string): string {
+	if (!targetFolderName.trim()) return text;
+	return text.replace(
+		/\{\{AUTORUN_FOLDER\}\}\/assets(?![\w.-])/gi,
+		() => `{{AUTORUN_FOLDER}}/${targetFolderName}/assets`
+	);
+}
+
 export function assertSafeTargetFolderName(targetFolderName: string): void {
 	if (!targetFolderName || targetFolderName.trim() === '') {
 		throw new MarketplaceImportError('targetFolderName is required');
@@ -112,6 +139,26 @@ async function readLocalManifest(app: App): Promise<MarketplaceManifest | null> 
 	}
 }
 
+/**
+ * `documents[].filename` names a document WITHOUT its `.md` extension, and
+ * every consumer appends one: the fetch URL, the file the import writes, the
+ * saved playbook entry, and the label in the Marketplace modal. Some official
+ * manifest entries carry the extension anyway (`Agent-Prompt.md`), so the
+ * fetch asked GitHub for `Agent-Prompt.md.md`, got a 404, and the whole import
+ * failed (MAESTRO-QB). Strip it once, here, so every consumer agrees.
+ */
+function withExtensionlessDocuments(playbook: MarketplacePlaybook): MarketplacePlaybook {
+	if (!Array.isArray(playbook.documents)) return playbook;
+	return {
+		...playbook,
+		documents: playbook.documents.map((doc) =>
+			typeof doc?.filename === 'string'
+				? { ...doc, filename: doc.filename.replace(/\.md$/i, '') }
+				: doc
+		),
+	};
+}
+
 function mergeManifests(
 	official: MarketplaceManifest | null,
 	local: MarketplaceManifest | null
@@ -122,13 +169,19 @@ function mergeManifests(
 	if (official && !local) {
 		return {
 			...official,
-			playbooks: official.playbooks.map((p) => ({ ...p, source: 'official' as const })),
+			playbooks: official.playbooks.map((p) => ({
+				...withExtensionlessDocuments(p),
+				source: 'official' as const,
+			})),
 		};
 	}
 	if (!official && local) {
 		return {
 			...local,
-			playbooks: local.playbooks.map((p) => ({ ...p, source: 'local' as const })),
+			playbooks: local.playbooks.map((p) => ({
+				...withExtensionlessDocuments(p),
+				source: 'local' as const,
+			})),
 		};
 	}
 	const officialPlaybooks = official!.playbooks;
@@ -145,7 +198,7 @@ function mergeManifests(
 			logger.warn(`Local playbook "${playbook.id}" missing required fields, skipping`, LOG_CONTEXT);
 			continue;
 		}
-		localMap.set(playbook.id, { ...playbook, source: 'local' });
+		localMap.set(playbook.id, { ...withExtensionlessDocuments(playbook), source: 'local' });
 	}
 	const mergedPlaybooks = officialPlaybooks.map((official) => {
 		const localOverride = localMap.get(official.id);
@@ -153,7 +206,7 @@ function mergeManifests(
 			logger.info(`Local playbook "${official.id}" overrides official version`, LOG_CONTEXT);
 			return localOverride;
 		}
-		return { ...official, source: 'official' as const };
+		return { ...withExtensionlessDocuments(official), source: 'official' as const };
 	});
 	const officialIds = new Set(officialPlaybooks.map((p) => p.id));
 	const localOnlyPlaybooks = Array.from(localMap.values()).filter(
@@ -205,7 +258,7 @@ function isCacheValid(cache: MarketplaceCache): boolean {
 async function fetchManifest(): Promise<MarketplaceManifest> {
 	logger.info('Fetching manifest from GitHub', LOG_CONTEXT);
 	try {
-		const response = await fetch(MANIFEST_URL);
+		const response = await fetchWithTimeout(MANIFEST_URL, {}, MARKETPLACE_FETCH_TIMEOUT_MS);
 		if (!response.ok) {
 			throw new MarketplaceFetchError(
 				`Failed to fetch manifest: ${response.status} ${response.statusText}`
@@ -244,7 +297,7 @@ async function fetchDocument(playbookPath: string, filename: string): Promise<st
 	}
 	const url = `${GITHUB_RAW_BASE}/${playbookPath}/${filename}.md`;
 	try {
-		const response = await fetch(url);
+		const response = await fetchWithTimeout(url, {}, MARKETPLACE_FETCH_TIMEOUT_MS);
 		if (!response.ok) {
 			if (response.status === 404) {
 				throw new MarketplaceFetchError(`Document not found: ${filename}`, { status: 404 });
@@ -282,7 +335,7 @@ async function fetchAsset(playbookPath: string, assetFilename: string): Promise<
 	}
 	const url = `${GITHUB_RAW_BASE}/${playbookPath}/assets/${assetFilename}`;
 	try {
-		const response = await fetch(url);
+		const response = await fetchWithTimeout(url, {}, MARKETPLACE_FETCH_TIMEOUT_MS);
 		if (!response.ok) {
 			if (response.status === 404) {
 				throw new MarketplaceFetchError(`Asset not found: ${assetFilename}`, { status: 404 });
@@ -316,7 +369,7 @@ async function fetchReadme(playbookPath: string): Promise<string | null> {
 		}
 	}
 	const url = `${GITHUB_RAW_BASE}/${playbookPath}/README.md`;
-	const response = await fetch(url);
+	const response = await fetchWithTimeout(url, {}, MARKETPLACE_FETCH_TIMEOUT_MS);
 	if (!response.ok) {
 		if (response.status === 404) return null;
 		throw new MarketplaceFetchError(
@@ -517,7 +570,10 @@ export async function importMarketplacePlaybook(
 	const importedDocs: string[] = [];
 	for (const doc of marketplacePlaybook.documents) {
 		try {
-			const content = await fetchDocument(marketplacePlaybook.path, doc.filename);
+			const content = rebaseAssetReferences(
+				await fetchDocument(marketplacePlaybook.path, doc.filename),
+				targetFolderName
+			);
 			const docPath = isRemote
 				? `${targetPath}/${doc.filename}.md`
 				: path.join(targetPath, `${doc.filename}.md`);
@@ -627,7 +683,7 @@ export async function importMarketplacePlaybook(
 			})),
 		loopEnabled: marketplacePlaybook.loopEnabled,
 		maxLoops: marketplacePlaybook.maxLoops,
-		prompt: marketplacePlaybook.prompt ?? '',
+		prompt: rebaseAssetReferences(marketplacePlaybook.prompt ?? '', targetFolderName),
 	};
 
 	const playbooksDir = path.join(app.getPath('userData'), 'playbooks');

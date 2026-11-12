@@ -12,7 +12,7 @@
  * flag is off, which we render as a friendly note as defense in depth).
  */
 
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import {
 	AlertTriangle,
@@ -58,8 +58,11 @@ import {
 } from './ChartSkeletons';
 import { MetricCard } from './SummaryCards';
 import { PercentilesCard } from './PercentilesCard';
+import { computeAxisLabelIndices, PHONE_AXIS_LABELS } from './chartUtils';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { buildCueSummary } from './footerSummary';
 import { usePublishFooterSummary } from './useFooterSummary';
+import { useCachedResource } from '../../hooks/utils/useCachedResource';
 
 interface CueStatsProps {
 	timeRange: StatsTimeRange;
@@ -128,17 +131,23 @@ const SummaryCardsRow = memo(function SummaryCardsRow({
 	);
 
 	const sublabelStyle: React.CSSProperties = {
-		fontSize: '10px',
+		fontSize: '0.625rem',
 		color: theme.colors.textDim,
 		marginTop: 2,
 	};
 
-	const cardCount = hasTokenData ? 4 : 3;
-
 	return (
 		<div
 			className="grid gap-4"
-			style={{ gridTemplateColumns: `repeat(${cardCount}, minmax(0, 1fr))` }}
+			style={{
+				// `auto-fit` over a 200px floor rather than a hard `repeat(cardCount)`:
+				// the fixed count had no responsive rung at all, so in a narrow
+				// window - a phone's 340px worst of all - each card got about 110px
+				// and values broke one character per line ("61" / ".9" / "K").
+				// Above the floor this lays out exactly as the fixed count did,
+				// because `auto-fit` collapses the tracks it has no card for.
+				gridTemplateColumns: `repeat(auto-fit, minmax(min(200px, 100%), 1fr))`,
+			}}
 			data-testid="cue-stats-summary-cards"
 		>
 			<MetricCard
@@ -202,6 +211,12 @@ const TimeSeriesChart = memo(function TimeSeriesChart({
 	theme: Theme;
 	colorBlindMode: boolean;
 }) {
+	const phone = usePhoneLayout();
+	const xLabelIndices = useMemo(
+		() => computeAxisLabelIndices(buckets.length, phone ? PHONE_AXIS_LABELS : undefined),
+		[buckets.length, phone]
+	);
+
 	const chartWidth = 600;
 	const chartHeight = 220;
 	const padding = { top: 20, right: 50, bottom: 40, left: 50 };
@@ -396,9 +411,7 @@ const TimeSeriesChart = memo(function TimeSeriesChart({
 
 					{/* X-axis labels (every Nth bucket) */}
 					{buckets.map((b, idx) => {
-						const interval =
-							buckets.length > 14 ? Math.ceil(buckets.length / 7) : buckets.length > 7 ? 2 : 1;
-						if (idx % interval !== 0 && idx !== buckets.length - 1) return null;
+						if (!xLabelIndices.has(idx)) return null;
 						return (
 							<text
 								key={`x-${b.bucketStartMs}`}
@@ -618,7 +631,7 @@ const GroupTable = memo(function GroupTable({
 												<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
 													{row.totals.totalCostUsd != null
 														? formatCost(row.totals.totalCostUsd)
-														: '—'}
+														: '-'}
 												</td>
 											</>
 										)}
@@ -840,7 +853,7 @@ const SlowestRunsTable = memo(function SlowestRunsTable({
 										{row.subscriptionName}
 									</td>
 									<td className="px-3 py-2" style={{ color: theme.colors.textDim }}>
-										{row.agentType ? getAgentDisplayName(row.agentType) : '—'}
+										{row.agentType ? getAgentDisplayName(row.agentType) : '-'}
 									</td>
 									<td className="px-3 py-2 font-mono" style={{ color: theme.colors.textDim }}>
 										{format(new Date(row.startedAtMs), 'MMM d HH:mm')}
@@ -1200,7 +1213,7 @@ const HourOfDayChart = memo(function HourOfDayChart({
 									data-hour={bucket.hour}
 								>
 									<title>
-										{`${String(bucket.hour).padStart(2, '0')}:00 — ${formatNumber(
+										{`${String(bucket.hour).padStart(2, '0')}:00 - ${formatNumber(
 											bucket.occurrences
 										)} ${bucket.occurrences === 1 ? 'run' : 'runs'}${
 											bucket.failureCount > 0 ? `, ${bucket.failureCount} failed` : ''
@@ -1314,14 +1327,15 @@ const ErrorNote = memo(function ErrorNote({
 
 /* -------------------------------- Component ------------------------------ */
 
+function isCueStatsDisabled(err: unknown): boolean {
+	return (err instanceof Error ? err.message : String(err)).includes('CueStatsDisabled');
+}
+
 export const CueStats = memo(function CueStats({
 	timeRange,
 	theme,
 	colorBlindMode = false,
 }: CueStatsProps) {
-	const [aggregation, setAggregation] = useState<CueStatsAggregation | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState<string | null>(null);
 	// Raw trigger types the user has hidden. Kept as a sorted, joined string so
 	// the fetch callback has a primitive dependency and a re-render with an
 	// equivalent set doesn't refire the query.
@@ -1332,29 +1346,38 @@ export const CueStats = memo(function CueStats({
 	);
 	const excludedSet = useMemo(() => new Set(excludedTriggers), [excludedTriggers]);
 
-	const fetchAggregation = useCallback(async () => {
-		setLoading(true);
-		setError(null);
-		try {
-			const excluded = excludedKey.length === 0 ? [] : excludedKey.split('\u0000');
-			const result = await window.maestro.cueStats.getAggregation(timeRange, excluded);
-			setAggregation(result);
-		} catch (err) {
-			// Preload normalizes the disabled sentinel to a bare 'CueStatsDisabled'
-			// message (Electron otherwise wraps thrown errors). Substring check
-			// remains as defense-in-depth in case the bridge changes.
-			const rawMessage = err instanceof Error ? err.message : String(err);
-			const isDisabled = rawMessage.includes('CueStatsDisabled');
-			if (!isDisabled) {
+	// Cached per range and trigger filter, so reopening the dashboard shows the
+	// last result at once and refreshes it in place.
+	const {
+		data,
+		loading,
+		error: fetchError,
+		refresh: fetchAggregation,
+	} = useCachedResource(
+		`cue-stats:${timeRange}:${excludedKey}`,
+		() =>
+			window.maestro.cueStats.getAggregation(
+				timeRange,
+				excludedKey.length === 0 ? [] : excludedKey.split('\u0000')
+			),
+		{
+			onError: (err) => {
+				// Preload normalizes the disabled sentinel to a bare 'CueStatsDisabled'
+				// message (Electron otherwise wraps thrown errors). Substring check
+				// remains as defense-in-depth in case the bridge changes.
+				if (isCueStatsDisabled(err)) return;
 				logger.error('Failed to fetch Cue stats:', undefined, err);
 				captureException(err, { extra: { timeRange } });
-			}
-			setError(isDisabled ? 'CueStatsDisabled' : rawMessage);
-			setAggregation(null);
-		} finally {
-			setLoading(false);
+			},
 		}
-	}, [timeRange, excludedKey]);
+	);
+	const aggregation: CueStatsAggregation | null = data ?? null;
+	// A failed refresh keeps the last good data on screen.
+	const error = data
+		? null
+		: fetchError && fetchError.includes('CueStatsDisabled')
+			? 'CueStatsDisabled'
+			: fetchError;
 
 	const toggleTrigger = useCallback((key: string) => {
 		setExcludedTriggers((prev) => {
@@ -1368,10 +1391,6 @@ export const CueStats = memo(function CueStats({
 		setExcludedTriggers([]);
 		saveExcludedTriggers([]);
 	}, []);
-
-	useEffect(() => {
-		fetchAggregation();
-	}, [fetchAggregation]);
 
 	// Published above the loading / error / empty returns below: a hook cannot
 	// sit behind an early return, and a tab that just went empty is exactly the

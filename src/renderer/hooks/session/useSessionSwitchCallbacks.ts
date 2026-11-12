@@ -16,25 +16,19 @@
  */
 
 import { useCallback, useEffect, useMemo } from 'react';
-import type { Session, LogEntry, UsageStats } from '../../types';
-import { useSessionStore } from '../../stores/sessionStore';
-import { useActiveSession } from './useActiveSession';
+import type { LogEntry, UsageStats } from '../../types';
+import type { FlatFileItem } from '../../components/FileSearchModal';
+import type { FileNode } from '../../types/fileTree';
+import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
-import { aiTabFocusFields } from '../../utils/tabHelpers';
+import { aiTabFocusFields, focusAiTabInSession } from '../../utils/tabHelpers';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
 import type { CrossTabSearchJumpTarget } from '../../components/CrossTabSearchModal';
 import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
 import type { ParsedDeepLink } from '../../../shared/types';
-
-/** Helper: update a single session by ID using an updater function */
-function updateSession(sessionId: string, updater: (s: Session) => Session): void {
-	useSessionStore
-		.getState()
-		.setSessions((prev: Session[]) =>
-			prev.map((s: Session) => (s.id === sessionId ? updater(s) : s))
-		);
-}
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
 
 // ============================================================================
 // Dependencies interface
@@ -59,6 +53,8 @@ export interface UseSessionSwitchCallbacksDeps {
 	) => Promise<boolean>;
 	/** Ref to main input textarea (for auto-focus after navigation) */
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
+	/** Open a file in the file preview tab (from fuzzy file search) */
+	handleFileClick: (file: FileNode, path: string) => void;
 }
 
 // ============================================================================
@@ -97,6 +93,8 @@ export interface UseSessionSwitchCallbacksReturn {
 	handleUtilityTabSelect: (tabId: string) => void;
 	/** Switch to a file tab from utility modals */
 	handleUtilityFileTabSelect: (tabId: string) => void;
+	/** Preview a file selected from fuzzy file search */
+	handleFileSearchSelect: (file: FlatFileItem) => void;
 	/** Jump to one message in one AI tab, from cross-tab message search */
 	handleCrossTabSearchJump: (target: CrossTabSearchJumpTarget) => void;
 }
@@ -108,14 +106,15 @@ export interface UseSessionSwitchCallbacksReturn {
 export function useSessionSwitchCallbacks(
 	deps: UseSessionSwitchCallbacksDeps
 ): UseSessionSwitchCallbacksReturn {
-	const { setActiveSessionId, handleResumeSession, inputRef } = deps;
+	const { setActiveSessionId, handleResumeSession, inputRef, handleFileClick } = deps;
 
 	// Self-source stable actions from stores
 	const setSessions = useMemo(() => useSessionStore.getState().setSessions, []);
 	const setGroups = useMemo(() => useSessionStore.getState().setGroups, []);
 	const setActiveFocus = useMemo(() => useUIStore.getState().setActiveFocus, []);
 
-	const activeSession = useActiveSession();
+	// PERF: Never subscribe to the full Session. Utility tab selects resolve the
+	// active agent at event time via getState().
 
 	// Navigate from ProcessMonitor to a specific session/tab
 	const handleProcessMonitorNavigateToSession = useCallback(
@@ -136,13 +135,15 @@ export function useSessionSwitchCallbacks(
 					)
 				);
 			} else if (tabId) {
-				// Switch to the specific AI tab within the session. Clear file/terminal/browser
-				// state and force AI input mode so the view actually shows the target AI tab even
-				// if the target session was last viewed on a terminal/file/browser tab. Without
-				// this, activeTabId changes but the session still renders its previous non-AI
-				// view (the bug: jumping to an AI tab silently leaves the user on a terminal).
+				// Switch to the specific AI tab within the session, through the shared
+				// jump transform. It clears the file/terminal/browser selections that
+				// outrank the AI tab (without that, activeTabId changes and the session
+				// still renders its previous non-AI view), AND it REVEALS the tab first.
+				// The reveal is what makes a cross-agent consult row usable: consult tabs
+				// are hidden, so activating one the strip refuses to draw strands the
+				// user on a tab with no chip.
 				setSessions((prev) =>
-					prev.map((s) => (s.id === sessionId ? { ...s, ...aiTabFocusFields(tabId) } : s))
+					prev.map((s) => (s.id === sessionId ? focusAiTabInSession(s, tabId) : s))
 				);
 			}
 		},
@@ -167,12 +168,9 @@ export function useSessionSwitchCallbacks(
 			// activeBrowserTabId/activeTerminalTabId, activeTabId changes but the session keeps
 			// rendering its previous non-AI view (the bug: clicking a toast while a browser tab
 			// is active silently leaves the user on the browser tab).
-			updateSession(sessionId, (s) => {
-				// If a specific tab ID is provided but doesn't exist, force the AI view
-				// without changing which AI tab is active.
-				const targetTabId = tabId && s.aiTabs?.some((t) => t.id === tabId) ? tabId : undefined;
-				return { ...s, ...aiTabFocusFields(targetTabId) };
-			});
+			// Shared with the thinking status pill: reveals a hidden tab, reopens a
+			// closed one, and focuses the right pane when the tab lives in a tiled group.
+			updateSessionWith(sessionId, (s) => focusAiTabInSession(s, tabId));
 		},
 		[setActiveSessionId]
 	);
@@ -278,15 +276,16 @@ export function useSessionSwitchCallbacks(
 	);
 
 	// Switch to an AI tab from utility modals (tab switcher, queue browser, etc.)
-	const handleUtilityTabSelect = useCallback(
-		(tabId: string) => {
-			if (!activeSession) return;
-			// Land on the AI tab, clearing any active file/terminal/browser view that
-			// would otherwise outrank it in the render precedence.
-			updateSession(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
-		},
-		[activeSession]
-	);
+	const handleUtilityTabSelect = useCallback((tabId: string) => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		if (!activeSession) return;
+		// Land on the AI tab, clearing any active file/terminal/browser view that
+		// would otherwise outrank it in the render precedence.
+		updateSessionWith(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+		if (!isWebDesktop()) {
+			noteDesktopAiTabSelection(activeSession.id, tabId);
+		}
+	}, []);
 
 	// Jump to a specific message from cross-tab search: land on the tab, seed that
 	// tab's Find bar with the same query (so every hit stays highlighted and
@@ -294,8 +293,12 @@ export function useSessionSwitchCallbacks(
 	// + flash the entry.
 	const handleCrossTabSearchJump = useCallback(
 		({ tabId, logId, query, regex }: CrossTabSearchJumpTarget) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
-			updateSession(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+			updateSessionWith(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+			if (!isWebDesktop()) {
+				noteDesktopAiTabSelection(activeSession.id, tabId);
+			}
 
 			const ui = useUIStore.getState();
 			const searchKey = outputSearchKeyFor(activeSession.id, tabId);
@@ -305,23 +308,30 @@ export function useSessionSwitchCallbacks(
 			ui.setPendingLogJump({ sessionId: activeSession.id, tabId, logId });
 			setActiveFocus('main');
 		},
-		[activeSession, setActiveFocus]
+		[setActiveFocus]
 	);
 
 	// Switch to a file tab from utility modals
-	const handleUtilityFileTabSelect = useCallback(
-		(tabId: string) => {
-			if (!activeSession) return;
-			// Set activeFileTabId, keep activeTabId as-is (for when returning to AI tabs).
-			// Also reset inputMode to 'ai' and clear activeTerminalTabId in case we're coming from terminal mode.
-			updateSession(activeSession.id, (s) => ({
-				...s,
-				activeFileTabId: tabId,
-				activeTerminalTabId: null,
-				inputMode: 'ai',
-			}));
+	const handleUtilityFileTabSelect = useCallback((tabId: string) => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		if (!activeSession) return;
+		// Set activeFileTabId, keep activeTabId as-is (for when returning to AI tabs).
+		// Also reset inputMode to 'ai' and clear activeTerminalTabId in case we're coming from terminal mode.
+		updateSessionWith(activeSession.id, (s) => ({
+			...s,
+			activeFileTabId: tabId,
+			activeTerminalTabId: null,
+			inputMode: 'ai',
+		}));
+	}, []);
+
+	const handleFileSearchSelect = useCallback(
+		(file: FlatFileItem) => {
+			if (!file.isFolder) {
+				handleFileClick({ name: file.name, type: 'file' }, file.fullPath);
+			}
 		},
-		[activeSession]
+		[handleFileClick]
 	);
 
 	return {
@@ -331,6 +341,7 @@ export function useSessionSwitchCallbacks(
 		handleJumpToStarredSession,
 		handleUtilityTabSelect,
 		handleUtilityFileTabSelect,
+		handleFileSearchSelect,
 		handleCrossTabSearchJump,
 	};
 }

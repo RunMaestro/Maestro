@@ -22,6 +22,46 @@ const mkState = (over: Partial<BatchRunState> = {}): BatchRunState => ({
 });
 
 describe('useBatchBroadcast', () => {
+	it('carries the fields a mirroring client needs to draw the whole card', () => {
+		// A web-desktop client renders the same components the owner does, so the
+		// broadcast has to carry more than the mobile progress bar needs. A field
+		// dropped here is silently missing from the mirror.
+		const dispatch = vi.fn();
+		const { result } = renderHook(() => useBatchBroadcast({ dispatch }));
+
+		act(() => {
+			result.current.broadcastAutoRunState(
+				'sess',
+				mkState({
+					documents: ['plan', 'cleanup'],
+					lockedDocuments: ['plan'],
+					currentDocTasksTotal: 3,
+					currentDocTasksCompleted: 1,
+					worktreeActive: true,
+					worktreeBranch: 'auto/plan',
+					startTime: 1_700_000_000_000,
+					loopEnabled: true,
+					loopIteration: 2,
+				})
+			);
+		});
+
+		expect(broadcastMock).toHaveBeenCalledWith(
+			'sess',
+			expect.objectContaining({
+				documents: ['plan', 'cleanup'],
+				lockedDocuments: ['plan'],
+				currentDocTasksTotal: 3,
+				currentDocTasksCompleted: 1,
+				worktreeActive: true,
+				worktreeBranch: 'auto/plan',
+				startTime: 1_700_000_000_000,
+				loopEnabled: true,
+				loopIteration: 2,
+			})
+		);
+	});
+
 	it('broadcasts a populated payload when state is running', () => {
 		const dispatch = vi.fn();
 		const { result } = renderHook(() => useBatchBroadcast({ dispatch }));

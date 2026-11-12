@@ -16,7 +16,12 @@ import type { AgentDetector } from './detector';
 import type { AgentConfigsData, SessionsData } from '../stores/types';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
-import { resolveCodexHomeKey, setCodexUsageSnapshot } from '../stores/codexUsageStore';
+import { effectiveAgentCustomEnvVars, isAccountDirName } from '../../shared/providerProfiles';
+import {
+	forgetCodexUsageSnapshots,
+	resolveCodexHomeKey,
+	setCodexUsageSnapshot,
+} from '../stores/codexUsageStore';
 import { getRememberedQuotaAccountKeys, rememberQuotaAccounts } from '../stores/quotaAccountsStore';
 import { sampleCodexUsage } from './codex-usage-sampler';
 
@@ -37,8 +42,6 @@ interface SamplingTarget {
 	codexHomeKey: string;
 }
 
-const ACCOUNT_DIR_EXCLUDE_RE =
-	/(^|[-_.])(backup|bak|old|archive|archived|stage|local|server)([-_.]|$)/i;
 const RECOVERABLE_DISCOVERY_ERROR_CODES = new Set(['ENOENT', 'EACCES', 'ENOTDIR']);
 const RECOVERABLE_SAMPLE_ERROR_CODES = new Set([
 	'ENOENT',
@@ -50,10 +53,6 @@ const RECOVERABLE_SAMPLE_ERROR_CODES = new Set([
 	'ETIMEDOUT',
 	'EAI_AGAIN',
 ]);
-
-function isLikelyCodexAccountDirName(name: string): boolean {
-	return name === '.codex' || name.startsWith('.codex-');
-}
 
 function getErrorCode(err: unknown): string | undefined {
 	if (!err || typeof err !== 'object' || !('code' in err)) return undefined;
@@ -96,8 +95,7 @@ export async function discoverCodexHomes(homeDir = os.homedir()): Promise<string
 		// A symlinked CODEX_HOME is a normal two-account setup and `isDirectory()`
 		// is false for it; the `auth.json` check below follows the link.
 		if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-		if (!isLikelyCodexAccountDirName(entry.name)) continue;
-		if (ACCOUNT_DIR_EXCLUDE_RE.test(entry.name)) continue;
+		if (!isAccountDirName(entry.name, '.codex')) continue;
 		const codexHome = path.join(homeDir, entry.name);
 		const authPath = path.join(codexHome, 'auth.json');
 		try {
@@ -136,6 +134,15 @@ function getAgentLevelEnvVars(agentConfigsStore: Store<AgentConfigsData>): Recor
 	return envVars && typeof envVars === 'object' ? (envVars as Record<string, string>) : {};
 }
 
+function isSshRemoteSession(session: Record<string, unknown>): boolean {
+	const sshRemoteConfig = session.sessionSshRemoteConfig as { enabled?: boolean } | undefined;
+	return sshRemoteConfig?.enabled === true;
+}
+
+/**
+ * The CODEX_HOME a session's process receives: the session's own env vars, or
+ * the agent-level set when it has none (they replace, never layer).
+ */
 function buildTarget(
 	session: Record<string, unknown>,
 	agentLevelEnvVars: Record<string, string>
@@ -143,11 +150,11 @@ function buildTarget(
 	const sessionEnvVars =
 		session.customEnvVars && typeof session.customEnvVars === 'object'
 			? (session.customEnvVars as Record<string, string>)
-			: {};
-	const merged = { ...agentLevelEnvVars, ...sessionEnvVars };
+			: undefined;
+	const envVars = effectiveAgentCustomEnvVars(sessionEnvVars, agentLevelEnvVars);
 	const configuredCodexHome =
-		typeof merged.CODEX_HOME === 'string' && merged.CODEX_HOME.length > 0
-			? merged.CODEX_HOME
+		typeof envVars.CODEX_HOME === 'string' && envVars.CODEX_HOME.length > 0
+			? envVars.CODEX_HOME
 			: null;
 	const codexHome = configuredCodexHome ?? path.join(os.homedir(), '.codex');
 	const codexHomeKey = resolveCodexHomeKey({ CODEX_HOME: codexHome });
@@ -166,8 +173,17 @@ export async function runCodexUsageSampling(deps: CodexUsageSamplingDeps): Promi
 	const agentLevelEnvVars = getAgentLevelEnvVars(deps.agentConfigsStore);
 
 	const targetsByKey = new Map<string, SamplingTarget>();
+	// SSH-remote agents run codex on the remote host, so their CODEX_HOME names a
+	// directory on THAT machine. Reading it here finds no auth.json (or, worse, a
+	// local dir of the same name holding a different account) and stores a
+	// "needs login" row the user cannot fix from this machine.
+	const remoteHomeKeys = new Set<string>();
 	for (const session of codexSessions) {
 		const target = buildTarget(session, agentLevelEnvVars);
+		if (isSshRemoteSession(session)) {
+			remoteHomeKeys.add(target.codexHomeKey);
+			continue;
+		}
 		if (!targetsByKey.has(target.codexHomeKey)) {
 			targetsByKey.set(target.codexHomeKey, target);
 		}
@@ -201,6 +217,10 @@ export async function runCodexUsageSampling(deps: CodexUsageSamplingDeps): Promi
 		const fallbackKey = resolveCodexHomeKey({ CODEX_HOME: fallbackHome });
 		targetsByKey.set(fallbackKey, { codexHome: fallbackHome, codexHomeKey: fallbackKey });
 	}
+
+	// Clear the rows earlier builds stored for remote homes. A path that is also
+	// a local target keeps its snapshot, since this run re-samples it.
+	forgetCodexUsageSnapshots(Array.from(remoteHomeKeys).filter((key) => !targetsByKey.has(key)));
 
 	// Remember every account this run targeted, so the dashboard keeps its row
 	// after the user moves every agent off it - see `quotaAccountsStore`.

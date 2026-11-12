@@ -39,8 +39,28 @@ vi.mock('../../main/utils/pricing', () => {
 				cacheReadTokens,
 				cacheCreationTokens,
 				costUsd: flatCost(inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens),
+				// Per-model split the storage now maps via `claudeModelUsage`; this
+				// simplified mock doesn't track models, so an empty split is honest.
+				byModel: [],
 			};
 		}),
+	};
+});
+
+// Session usage now goes through the shared subagent-aware helper. Delegate to
+// the mocked pricing above so the cost assertions keep one formula, and report
+// no subagents (that module is covered by shared/claudeSessionUsage.test.ts).
+vi.mock('../../shared/claudeSessionUsage', async () => {
+	const { computeClaudeUsageCost } = await import('../../main/utils/pricing');
+	const price = (content: string, subagents: readonly string[] = []) =>
+		computeClaudeUsageCost(subagents.length ? [content, ...subagents].join('\n') : content);
+	return {
+		readClaudeSubagentTranscripts: vi.fn(async () => []),
+		readClaudeSubagentTranscriptsSync: vi.fn(() => []),
+		listClaudeSubagentTranscriptPaths: vi.fn(async () => []),
+		isAbsentTranscriptError: vi.fn(() => false),
+		computeClaudeUsageWithSubagents: vi.fn(price),
+		computeClaudeSessionUsage: vi.fn(async (_filePath: string, content: string) => price(content)),
 	};
 });
 
@@ -75,12 +95,26 @@ vi.mock('fs/promises', () => ({
 	},
 }));
 
+// Transcript reads stream; feed them from the readFile stub above.
+vi.mock('../../main/utils/jsonl-stream', async () =>
+	(await import('../helpers/mockJsonlStream')).jsonlStreamFromReadFileMock()
+);
+
+// listSessions now serves unchanged transcripts from the on-disk parse cache,
+// which resolves its location through electron's userData path.
+vi.mock('electron', () => ({
+	app: { getPath: vi.fn().mockReturnValue('/mock/userData') },
+}));
+
 // ============================================================================
 // Imports (after mocks)
 // ============================================================================
 
 import { ClaudeSessionStorage } from '../../main/storage/claude-session-storage';
-import { computeClaudeUsageCost } from '../../main/utils/pricing';
+import {
+	SessionInfoCache,
+	setSessionInfoCacheForTest,
+} from '../../main/storage/session-info-cache';
 import Store from 'electron-store';
 import fs from 'fs/promises';
 
@@ -135,6 +169,10 @@ describe('ClaudeSessionStorage', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Fresh parse cache per test: these cases reuse one project path and one
+		// set of file stats while varying the transcript CONTENT, which the real
+		// (mtime + size) fingerprint is entitled to treat as unchanged.
+		setSessionInfoCacheForTest('claude-code', new SessionInfoCache('claude-code', '/mock/cache'));
 		storage = new ClaudeSessionStorage();
 	});
 
@@ -354,7 +392,7 @@ describe('ClaudeSessionStorage', () => {
 			expect(sessions[0].cacheCreationTokens).toBe(25); // 10 + 15
 		});
 
-		it('should calculate cost via computeClaudeUsageCost', async () => {
+		it('should price the usage lines into the session cost', async () => {
 			const content = jsonl(
 				userMsg('Hello'),
 				assistantMsg('World'),
@@ -373,9 +411,10 @@ describe('ClaudeSessionStorage', () => {
 			vi.mocked(fs.readFile).mockResolvedValue(content);
 
 			const sessions = await storage.listSessions('/test/project');
-			expect(computeClaudeUsageCost).toHaveBeenCalledWith(content);
 			expect(sessions[0].costUsd).toBeDefined();
-			// Using mock formula: (1000*3 + 500*15 + 200*0.3 + 100*3.75) / 1000000
+			// The transcript is streamed and priced line by line by the shared
+			// accumulator; a model-less line is priced at the default (Sonnet) rates:
+			// (1000*3 + 500*15 + 200*0.3 + 100*3.75) / 1000000
 			const expectedCost = (1000 * 3 + 500 * 15 + 200 * 0.3 + 100 * 3.75) / 1_000_000;
 			expect(sessions[0].costUsd).toBeCloseTo(expectedCost, 10);
 		});
@@ -403,6 +442,43 @@ describe('ClaudeSessionStorage', () => {
 			// Last timestamp comes from result entry: 10:10:00
 			// Duration = 10 minutes = 600 seconds
 			expect(sessions[0].durationSeconds).toBe(600);
+		});
+
+		it('should time each API call into hourly token speed buckets', async () => {
+			const content = jsonl(userMsg('Start', '2025-06-01T10:00:00Z'), {
+				type: 'assistant',
+				timestamp: '2025-06-01T10:00:20Z',
+				requestId: 'req-1',
+				message: {
+					id: 'msg-1',
+					role: 'assistant',
+					model: 'claude-opus-4-8',
+					content: 'Done',
+					usage: { input_tokens: 40, output_tokens: 400, cache_read_input_tokens: 1000 },
+				},
+			});
+
+			vi.mocked(fs.access).mockResolvedValue(undefined);
+			vi.mocked(fs.readdir).mockResolvedValue(['sess-speed.jsonl'] as unknown as Awaited<
+				ReturnType<typeof fs.readdir>
+			>);
+			vi.mocked(fs.stat).mockResolvedValue({
+				size: 900,
+				mtimeMs: DEFAULT_STATS.mtimeMs,
+				mtime: new Date(DEFAULT_STATS.mtimeMs),
+			} as unknown as Awaited<ReturnType<typeof fs.stat>>);
+			vi.mocked(fs.readFile).mockResolvedValue(content);
+
+			const sessions = await storage.listSessions('/test/project');
+			expect(sessions[0].speed).toEqual([
+				expect.objectContaining({
+					model: 'claude-opus-4-8',
+					calls: 1,
+					durationMs: 20_000,
+					inputTokens: 1040,
+					outputTokens: 400,
+				}),
+			]);
 		});
 
 		it('should truncate firstMessage to FIRST_MESSAGE_PREVIEW_LENGTH (200)', async () => {
@@ -542,10 +618,24 @@ describe('ClaudeSessionStorage', () => {
 		});
 
 		it('should return empty array when project directory does not exist', async () => {
-			vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
+			// The missing directory surfaces on readdir - listing no longer pays for a
+			// separate existence check before enumerating.
+			vi.mocked(fs.readdir).mockRejectedValue(
+				Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' })
+			);
 
 			const sessions = await storage.listSessions('/nonexistent/path');
 			expect(sessions).toEqual([]);
+		});
+
+		it('should rethrow when the session directory is unreadable', async () => {
+			// EACCES/EIO are real faults - swallowing them would report a user's
+			// existing transcripts as "no sessions".
+			vi.mocked(fs.readdir).mockRejectedValue(
+				Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+			);
+
+			await expect(storage.listSessions('/test/project')).rejects.toThrow('EACCES');
 		});
 	});
 
@@ -1212,6 +1302,49 @@ describe('ClaudeSessionStorage', () => {
 			// Only the user message should survive
 			expect(result.messages).toHaveLength(1);
 			expect(result.messages[0].type).toBe('user');
+		});
+
+		// Valid JSON whose shape breaks the conversion: the content filter reads
+		// `b.type` off a null block. One such record must be skipped, not fail the
+		// read and lock the user out of the rest of the conversation.
+		const withDamagedRecord = () =>
+			[
+				JSON.stringify(userMsg('before')),
+				JSON.stringify({ type: 'user', message: { role: 'user', content: [null] } }),
+				JSON.stringify(assistantMsg('after')),
+			].join('\n');
+
+		it('skips a damaged record and keeps the rest of a local transcript', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(withDamagedRecord());
+
+			const result = await storage.readSessionMessages('/test/project', 'sess-1');
+			expect(result.messages.map((m) => m.content)).toEqual(['before', 'after']);
+			expect(result.total).toBe(2);
+		});
+
+		it('skips a damaged record and keeps the rest of a remote transcript', async () => {
+			const remoteFs = await import('../../main/utils/remote-fs');
+			vi.mocked(remoteFs.readFileRemote).mockResolvedValue({
+				success: true,
+				data: withDamagedRecord(),
+			});
+			const sshConfig = {
+				id: 'r1',
+				name: 'r1',
+				host: 'h',
+				port: 22,
+				username: 'u',
+				privateKeyPath: '~/.ssh/id_ed25519',
+				enabled: true,
+			} as const;
+
+			const result = await storage.readSessionMessages(
+				'/remote/project',
+				'sess-1',
+				undefined,
+				sshConfig
+			);
+			expect(result.messages.map((m) => m.content)).toEqual(['before', 'after']);
 		});
 	});
 

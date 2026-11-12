@@ -16,6 +16,32 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
+import * as fs from 'fs';
+
+// Real fs, except that a path in `stuckPaths` can be neither renamed nor
+// removed (a sidecar another process holds open on Windows).
+const { stuckPaths } = vi.hoisted(() => ({ stuckPaths: new Set<string>() }));
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	const refuse = (p: fs.PathLike) => {
+		if (stuckPaths.has(String(p))) {
+			throw Object.assign(new Error(`EBUSY: resource busy or locked, '${String(p)}'`), {
+				code: 'EBUSY',
+			});
+		}
+	};
+	return {
+		...actual,
+		renameSync: (from: fs.PathLike, to: fs.PathLike) => {
+			refuse(from);
+			return actual.renameSync(from, to);
+		},
+		rmSync: (p: fs.PathLike, options?: fs.RmOptions) => {
+			refuse(p);
+			return actual.rmSync(p, options);
+		},
+	};
+});
 
 // Store parameters passed to mock statement methods
 const runCalls: unknown[][] = [];
@@ -66,8 +92,8 @@ const mockDb = {
 		}
 		// Same idea for cue_event_queue - Phase 01 added chain_root_id /
 		// parent_event_id so persisted queue rows survive restart with
-		// lineage intact. Returning the full column set keeps the additive
-		// migration a no-op under the mock.
+		// lineage intact. This is the set from BEFORE `turn_settings_json`,
+		// so the additive migration must backfill that one column.
 		if (query.startsWith('table_info(cue_event_queue)')) {
 			return [
 				{ name: 'id' },
@@ -141,6 +167,8 @@ import {
 	clearGitHubSeenForSubscription,
 	safeRecordCueEvent,
 	safeUpdateCueEventStatus,
+	isCueDbCorruptionError,
+	quarantineCorruptCueDb,
 } from '../../../main/cue/cue-db';
 
 beforeEach(() => {
@@ -225,6 +253,121 @@ describe('cue-db lifecycle', () => {
 	});
 });
 
+describe('cue-db corruption handling', () => {
+	function sqliteError(code: string): Error {
+		return Object.assign(new Error(code), { code });
+	}
+
+	it('classifies SQLITE_CORRUPT, its extended codes and SQLITE_NOTADB as corruption', () => {
+		expect(isCueDbCorruptionError(sqliteError('SQLITE_CORRUPT'))).toBe(true);
+		expect(isCueDbCorruptionError(sqliteError('SQLITE_CORRUPT_INDEX'))).toBe(true);
+		expect(isCueDbCorruptionError(sqliteError('SQLITE_NOTADB'))).toBe(true);
+	});
+
+	it('does not classify lock, I/O or plain errors as corruption', () => {
+		expect(isCueDbCorruptionError(sqliteError('SQLITE_BUSY'))).toBe(false);
+		expect(isCueDbCorruptionError(sqliteError('SQLITE_IOERR'))).toBe(false);
+		expect(isCueDbCorruptionError(new Error('database disk image is malformed'))).toBe(false);
+		expect(isCueDbCorruptionError(null)).toBe(false);
+		expect(isCueDbCorruptionError('SQLITE_CORRUPT')).toBe(false);
+	});
+
+	it('closes the handle and stays not ready when preparing the schema throws', () => {
+		const dbPath = path.join(os.tmpdir(), 'test-cue.db');
+		mockDb.prepare.mockImplementationOnce(() => {
+			throw sqliteError('SQLITE_CORRUPT');
+		});
+
+		expect(() => initCueDb(undefined, dbPath)).toThrow('SQLITE_CORRUPT');
+		expect(isCueDbReady()).toBe(false);
+		expect(mockDb.close).toHaveBeenCalledOnce();
+
+		// A retry opens again instead of returning early on the dead handle.
+		initCueDb(undefined, dbPath);
+		expect(isCueDbReady()).toBe(true);
+	});
+
+	describe('quarantineCorruptCueDb', () => {
+		let dir: string;
+
+		beforeEach(() => {
+			dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-db-quarantine-'));
+		});
+
+		afterEach(() => {
+			stuckPaths.clear();
+			vi.useRealTimers();
+			fs.rmSync(dir, { recursive: true, force: true });
+		});
+
+		it('never renames onto an earlier quarantine from the same second', () => {
+			vi.useFakeTimers({ toFake: ['Date'] });
+			vi.setSystemTime(new Date(2026, 10, 11, 9, 30, 0));
+			const dbPath = path.join(dir, 'cue.db');
+
+			fs.writeFileSync(dbPath, 'first');
+			const first = quarantineCorruptCueDb(dbPath);
+			fs.writeFileSync(dbPath, 'second');
+			const second = quarantineCorruptCueDb(dbPath);
+
+			expect(first).not.toBeNull();
+			expect(second).not.toBeNull();
+			expect(second).not.toBe(first);
+			expect(path.basename(second!)).toMatch(/^cue\.corrupt-.+-2\.db$/);
+			expect(fs.readFileSync(first!, 'utf-8')).toBe('first');
+			expect(fs.readFileSync(second!, 'utf-8')).toBe('second');
+		});
+
+		it('puts the database back when a WAL can be neither moved nor removed', () => {
+			const dbPath = path.join(dir, 'cue.db');
+			fs.writeFileSync(dbPath, 'main');
+			fs.writeFileSync(`${dbPath}-wal`, 'wal');
+			stuckPaths.add(`${dbPath}-wal`);
+
+			expect(quarantineCorruptCueDb(dbPath)).toBeNull();
+			expect(fs.readFileSync(dbPath, 'utf-8')).toBe('main');
+			expect(fs.readFileSync(`${dbPath}-wal`, 'utf-8')).toBe('wal');
+			expect(fs.readdirSync(dir).filter((f) => f.includes('.corrupt-'))).toEqual([]);
+		});
+
+		it('closes the database and moves the file and its WAL/SHM aside', () => {
+			const dbPath = path.join(dir, 'cue.db');
+			fs.writeFileSync(dbPath, 'main');
+			fs.writeFileSync(`${dbPath}-wal`, 'wal');
+			fs.writeFileSync(`${dbPath}-shm`, 'shm');
+			initCueDb(undefined, dbPath);
+
+			const moved = quarantineCorruptCueDb(dbPath);
+
+			expect(moved).not.toBeNull();
+			expect(path.basename(moved!)).toMatch(/^cue\.corrupt-.+\.db$/);
+			expect(isCueDbReady()).toBe(false);
+			expect(mockDb.close).toHaveBeenCalled();
+			expect(fs.existsSync(dbPath)).toBe(false);
+			expect(fs.existsSync(`${dbPath}-wal`)).toBe(false);
+			expect(fs.existsSync(`${dbPath}-shm`)).toBe(false);
+			expect(fs.readFileSync(moved!, 'utf-8')).toBe('main');
+			expect(fs.readFileSync(`${moved}-wal`, 'utf-8')).toBe('wal');
+			expect(fs.readFileSync(`${moved}-shm`, 'utf-8')).toBe('shm');
+		});
+
+		it('moves the main file when there is no WAL or SHM', () => {
+			const dbPath = path.join(dir, 'cue.db');
+			fs.writeFileSync(dbPath, 'main');
+
+			const moved = quarantineCorruptCueDb(dbPath);
+
+			expect(moved).not.toBeNull();
+			expect(fs.existsSync(dbPath)).toBe(false);
+			expect(fs.existsSync(moved!)).toBe(true);
+		});
+
+		it('returns null when the main file cannot be moved', () => {
+			expect(quarantineCorruptCueDb(path.join(dir, 'missing.db'))).toBeNull();
+		});
+	});
+});
+
 describe('cue-db additive column migration', () => {
 	const dbPath = path.join(os.tmpdir(), 'test-cue.db');
 
@@ -237,6 +380,30 @@ describe('cue-db additive column migration', () => {
 		expect(createSql).toBeDefined();
 		expect(createSql).toContain('output_excerpt TEXT');
 		expect(createSql).toContain('full_output TEXT');
+	});
+
+	it('declares turn_settings_json on the persisted queue table', () => {
+		initCueDb(undefined, dbPath);
+
+		const createSql = prepareCalls.find((sql) =>
+			sql.includes('CREATE TABLE IF NOT EXISTS cue_event_queue')
+		);
+		expect(createSql).toContain('turn_settings_json TEXT');
+	});
+
+	it('ALTERs a queue table that predates turn_settings_json', () => {
+		initCueDb(undefined, dbPath);
+
+		expect(
+			prepareCalls.some(
+				(sql) => sql === 'ALTER TABLE cue_event_queue ADD COLUMN turn_settings_json TEXT'
+			)
+		).toBe(true);
+		expect(
+			prepareCalls.some(
+				(sql) => sql === 'ALTER TABLE cue_event_queue ADD COLUMN chain_root_id TEXT'
+			)
+		).toBe(false);
 	});
 
 	it('ALTERs an existing database that predates the output columns', () => {

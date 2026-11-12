@@ -64,6 +64,12 @@ describe('notify-toast command click actions', () => {
 		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
+	it('keeps --timeout in seconds on the existing WebSocket wire contract', async () => {
+		await notifyToast('Timeout', 'Message', { timeout: '5' });
+		expect(captured.duration).toBe(5);
+		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
 	it('maps --open-file to an open-file action scoped to the agent', async () => {
 		await notifyToast('Title', 'Message', { agent: 'Test Agent', openFile: '/tmp/report.md' });
 

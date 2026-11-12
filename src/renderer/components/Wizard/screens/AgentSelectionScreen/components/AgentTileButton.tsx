@@ -11,7 +11,6 @@ interface AgentTileButtonProps {
 	isDetected: boolean;
 	isSelected: boolean;
 	isFocused: boolean;
-	colSpanClass: string;
 	onTileClick: (tile: AgentTile, index: number) => void;
 	onOpenConfig: (agentId: string) => void;
 	onFocusTile: (index: number) => void;
@@ -25,7 +24,6 @@ export function AgentTileButton({
 	isDetected,
 	isSelected,
 	isFocused,
-	colSpanClass,
 	onTileClick,
 	onOpenConfig,
 	onFocusTile,
@@ -41,9 +39,8 @@ export function AgentTileButton({
 			onFocus={() => onFocusTile(index)}
 			disabled={!canSelect}
 			className={`
-				relative flex flex-col items-center justify-center pt-6 px-6 pb-10 rounded-xl
-				border-2 transition-all duration-200 outline-none min-w-[160px]
-				${colSpanClass}
+				relative flex flex-none flex-col items-center justify-center pt-7 px-6 pb-11 rounded-xl
+				border-2 transition-all duration-200 outline-none w-[220px]
 				${canSelect ? 'cursor-pointer' : 'cursor-not-allowed'}
 			`}
 			style={{

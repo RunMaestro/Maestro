@@ -59,6 +59,15 @@ const createMockSession = (overrides: Partial<Session> = {}): Session =>
 		...overrides,
 	});
 
+/** Seed useSessionStore so handlers resolve Session via selectActiveSession(getState()). */
+function seedActiveSession(session: Session | null) {
+	if (session) {
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id } as any);
+	} else {
+		useSessionStore.setState({ sessions: [], activeSessionId: null } as any);
+	}
+}
+
 const createMockDeps = () => ({
 	setSessions: vi.fn(),
 	setAutoRunDocumentList: vi.fn(),
@@ -99,7 +108,8 @@ describe('useAutoRunHandlers', () => {
 			const mockSession = createMockSession();
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunContentChange('Updated content');
@@ -115,7 +125,8 @@ describe('useAutoRunHandlers', () => {
 			const mockSession = createMockSession();
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunContentChange('New content');
@@ -128,7 +139,8 @@ describe('useAutoRunHandlers', () => {
 		it('should do nothing when activeSession is null', async () => {
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(null, mockDeps));
+			seedActiveSession(null);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunContentChange('Content');
@@ -141,7 +153,8 @@ describe('useAutoRunHandlers', () => {
 			const mockSession = createMockSession({ id: 'session-2' });
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunContentChange('Session 2 content');
@@ -164,7 +177,8 @@ describe('useAutoRunHandlers', () => {
 			const mockSession = createMockSession();
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunContentChange('');
@@ -185,7 +199,8 @@ describe('useAutoRunHandlers', () => {
 			const mockSession = createMockSession({ autoRunMode: 'preview' });
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			act(() => {
 				result.current.handleAutoRunModeChange('edit');
@@ -200,7 +215,8 @@ describe('useAutoRunHandlers', () => {
 			const mockSession = createMockSession({ autoRunMode: 'edit' });
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			act(() => {
 				result.current.handleAutoRunModeChange('preview');
@@ -214,7 +230,8 @@ describe('useAutoRunHandlers', () => {
 		it('should do nothing when activeSession is null', () => {
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(null, mockDeps));
+			seedActiveSession(null);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			act(() => {
 				result.current.handleAutoRunModeChange('edit');
@@ -227,7 +244,8 @@ describe('useAutoRunHandlers', () => {
 			const mockSession = createMockSession({ id: 'session-2', autoRunMode: 'edit' });
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			act(() => {
 				result.current.handleAutoRunModeChange('preview');
@@ -254,7 +272,8 @@ describe('useAutoRunHandlers', () => {
 			const mockSession = createMockSession();
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			act(() => {
 				result.current.handleAutoRunStateChange({
@@ -276,7 +295,8 @@ describe('useAutoRunHandlers', () => {
 		it('should do nothing when activeSession is null', () => {
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(null, mockDeps));
+			seedActiveSession(null);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			act(() => {
 				result.current.handleAutoRunStateChange({
@@ -305,7 +325,8 @@ describe('useAutoRunHandlers', () => {
 				content: '# Phase 2\n\nNew document content',
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunSelectDocument('Phase 2');
@@ -333,7 +354,8 @@ describe('useAutoRunHandlers', () => {
 				content: undefined,
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunSelectDocument('Missing Doc');
@@ -348,7 +370,8 @@ describe('useAutoRunHandlers', () => {
 		it('should do nothing when activeSession is null', async () => {
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(null, mockDeps));
+			seedActiveSession(null);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunSelectDocument('Phase 1');
@@ -362,7 +385,8 @@ describe('useAutoRunHandlers', () => {
 			const mockSession = createMockSession({ autoRunFolderPath: undefined });
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunSelectDocument('Phase 1');
@@ -381,7 +405,8 @@ describe('useAutoRunHandlers', () => {
 				content: 'Content',
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunSelectDocument('Phase 2');
@@ -415,7 +440,8 @@ describe('useAutoRunHandlers', () => {
 				tree: [],
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunRefresh();
@@ -447,7 +473,8 @@ describe('useAutoRunHandlers', () => {
 				tree: [],
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunRefresh({ silent: true });
@@ -471,7 +498,8 @@ describe('useAutoRunHandlers', () => {
 				tree: [],
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunRefresh({
@@ -493,7 +521,8 @@ describe('useAutoRunHandlers', () => {
 				tree: [],
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunRefresh();
@@ -513,7 +542,8 @@ describe('useAutoRunHandlers', () => {
 				tree: [],
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunRefresh();
@@ -533,7 +563,8 @@ describe('useAutoRunHandlers', () => {
 				tree: [],
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunRefresh();
@@ -554,7 +585,8 @@ describe('useAutoRunHandlers', () => {
 				tree: [],
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunRefresh();
@@ -574,7 +606,8 @@ describe('useAutoRunHandlers', () => {
 		it('should do nothing when activeSession is null', async () => {
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(null, mockDeps));
+			seedActiveSession(null);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunRefresh();
@@ -587,7 +620,8 @@ describe('useAutoRunHandlers', () => {
 			const mockSession = createMockSession({ autoRunFolderPath: undefined });
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunRefresh();
@@ -606,7 +640,8 @@ describe('useAutoRunHandlers', () => {
 				tree: [],
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunRefresh();
@@ -632,7 +667,8 @@ describe('useAutoRunHandlers', () => {
 				tree: [],
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			let success: boolean = false;
 			await act(async () => {
@@ -659,7 +695,8 @@ describe('useAutoRunHandlers', () => {
 				tree: [{ name: 'Phase 1', type: 'file', path: 'Phase 1.md' }],
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunCreateDocument('New Doc');
@@ -683,7 +720,8 @@ describe('useAutoRunHandlers', () => {
 				tree: [],
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunCreateDocument('New Doc');
@@ -707,7 +745,8 @@ describe('useAutoRunHandlers', () => {
 				tree: [],
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunCreateDocument('New Doc');
@@ -724,7 +763,8 @@ describe('useAutoRunHandlers', () => {
 
 			vi.mocked(window.maestro.autorun.writeDoc).mockResolvedValue({ success: false });
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			let success: boolean = true;
 			await act(async () => {
@@ -738,7 +778,8 @@ describe('useAutoRunHandlers', () => {
 		it('should return false when activeSession is null', async () => {
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(null, mockDeps));
+			seedActiveSession(null);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			let success: boolean = true;
 			await act(async () => {
@@ -753,7 +794,8 @@ describe('useAutoRunHandlers', () => {
 			const mockSession = createMockSession({ autoRunFolderPath: undefined });
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			let success: boolean = true;
 			await act(async () => {
@@ -770,7 +812,8 @@ describe('useAutoRunHandlers', () => {
 
 			vi.mocked(window.maestro.autorun.writeDoc).mockRejectedValue(new Error('Write failed'));
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			let success: boolean = true;
 			await act(async () => {
@@ -799,7 +842,8 @@ describe('useAutoRunHandlers', () => {
 - [ ] Task three`,
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			let count: number = 0;
 			await act(async () => {
@@ -823,7 +867,8 @@ describe('useAutoRunHandlers', () => {
 				content: '# Just a heading\n\nSome text without tasks.',
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			let count: number = 99;
 			await act(async () => {
@@ -845,7 +890,8 @@ describe('useAutoRunHandlers', () => {
 - [x] Done 3`,
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			let count: number = 99;
 			await act(async () => {
@@ -864,7 +910,8 @@ describe('useAutoRunHandlers', () => {
 				content: undefined,
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			let count: number = 99;
 			await act(async () => {
@@ -878,7 +925,8 @@ describe('useAutoRunHandlers', () => {
 			const mockSession = createMockSession({ autoRunFolderPath: undefined });
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			let count: number = 99;
 			await act(async () => {
@@ -901,7 +949,8 @@ describe('useAutoRunHandlers', () => {
     - [ ] Grandchild`,
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			let count: number = 0;
 			await act(async () => {
@@ -924,7 +973,8 @@ describe('useAutoRunHandlers', () => {
 - [ ] Task with [link](url)`,
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			let count: number = 0;
 			await act(async () => {
@@ -943,7 +993,8 @@ describe('useAutoRunHandlers', () => {
 				content: '',
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			let count: number = 99;
 			await act(async () => {
@@ -973,7 +1024,8 @@ describe('useAutoRunHandlers', () => {
 				content: '# Phase 1 Content',
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunFolderSelected('/new/folder');
@@ -1002,7 +1054,8 @@ describe('useAutoRunHandlers', () => {
 				content: '# First Doc Content',
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunFolderSelected('/folder');
@@ -1031,7 +1084,8 @@ describe('useAutoRunHandlers', () => {
 				tree: [],
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunFolderSelected('/empty/folder');
@@ -1057,7 +1111,8 @@ describe('useAutoRunHandlers', () => {
 				tree: [],
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunFolderSelected('/bad/folder');
@@ -1075,7 +1130,8 @@ describe('useAutoRunHandlers', () => {
 		it('should do nothing when activeSession is null', async () => {
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(null, mockDeps));
+			seedActiveSession(null);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunFolderSelected('/folder');
@@ -1099,7 +1155,8 @@ describe('useAutoRunHandlers', () => {
 				content: 'Content',
 			});
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleAutoRunFolderSelected('/folder');
@@ -1126,7 +1183,8 @@ describe('useAutoRunHandlers', () => {
 				loopEnabled: false,
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1149,7 +1207,8 @@ describe('useAutoRunHandlers', () => {
 				loopEnabled: false,
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(null, mockDeps));
+			seedActiveSession(null);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1168,7 +1227,8 @@ describe('useAutoRunHandlers', () => {
 				loopEnabled: false,
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1205,7 +1265,7 @@ describe('useAutoRunHandlers', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1247,7 +1307,8 @@ describe('useAutoRunHandlers', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1303,7 +1364,8 @@ describe('useAutoRunHandlers', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1341,7 +1403,8 @@ describe('useAutoRunHandlers', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1385,7 +1448,8 @@ describe('useAutoRunHandlers', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1423,7 +1487,8 @@ describe('useAutoRunHandlers', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1467,7 +1532,8 @@ describe('useAutoRunHandlers', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1511,7 +1577,8 @@ describe('useAutoRunHandlers', () => {
 				},
 			};
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			await act(async () => {
 				await result.current.handleStartBatchRun(config);
@@ -1537,7 +1604,8 @@ describe('useAutoRunHandlers', () => {
 			const mockSession = createMockSession();
 			const mockDeps = createMockDeps();
 
-			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			act(() => {
 				result.current.handleAutoRunOpenSetup();
@@ -1556,7 +1624,8 @@ describe('useAutoRunHandlers', () => {
 			const mockSession = createMockSession();
 			const mockDeps = createMockDeps();
 
-			const { result, rerender } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+			seedActiveSession(mockSession);
+			const { result, rerender } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			const firstRender = { ...result.current };
 			rerender();
@@ -1568,22 +1637,31 @@ describe('useAutoRunHandlers', () => {
 			expect(firstRender.handleAutoRunOpenSetup).toBe(secondRender.handleAutoRunOpenSetup);
 		});
 
-		it('should update handlers when session changes', () => {
+		it('should keep stable handlers when active session changes (getState at call time)', async () => {
 			const mockSession1 = createMockSession({ id: 'session-1' });
 			const mockSession2 = createMockSession({ id: 'session-2' });
 			const mockDeps = createMockDeps();
 
-			const { result, rerender } = renderHook(
-				({ session }) => useAutoRunHandlers(session, mockDeps),
-				{ initialProps: { session: mockSession1 } }
-			);
+			seedActiveSession(mockSession1);
+			const { result } = renderHook(() => useAutoRunHandlers(mockDeps));
 
 			const firstHandler = result.current.handleAutoRunContentChange;
-			rerender({ session: mockSession2 });
-			const secondHandler = result.current.handleAutoRunContentChange;
 
-			// Handler should change when session changes
-			expect(firstHandler).not.toBe(secondHandler);
+			// Switch active session in the store without re-creating the hook
+			seedActiveSession(mockSession2);
+
+			expect(result.current.handleAutoRunContentChange).toBe(firstHandler);
+
+			await act(async () => {
+				await result.current.handleAutoRunContentChange('from-session-2');
+			});
+
+			const updateFn = mockDeps.setSessions.mock.calls[0][0];
+			const updated = updateFn([mockSession1, mockSession2]);
+			const session2 = updated.find((s: Session) => s.id === 'session-2');
+			expect(session2?.autoRunContent).toBe('from-session-2');
+			const session1 = updated.find((s: Session) => s.id === 'session-1');
+			expect(session1?.autoRunContent).toBe(mockSession1.autoRunContent);
 		});
 	});
 });

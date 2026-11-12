@@ -16,9 +16,15 @@ interface ResizeHandlesCommonProps {
 	/** Whether a size is actually remembered, so the tooltip can say so. */
 	canReset?: boolean;
 	/**
-	 * Which edges and corners get a handle. Defaults to all eight; pass a subset
-	 * for a surface that only grows one way (a dropdown resized by its bottom
-	 * edge passes `['s']`).
+	 * Which edges/corners to render. Defaults to all eight.
+	 *
+	 * Pass a subset for a surface that only grows one way (a dropdown resized by
+	 * its bottom edge passes `['s']`).
+	 *
+	 * Narrow it for a frame whose origin is pinned: a top-left-anchored floating
+	 * window cannot honor a north or west drag without also moving, so offering
+	 * those handles would promise a gesture that silently behaves like its
+	 * opposite edge.
 	 */
 	directions?: readonly ModalResizeDirection[];
 }

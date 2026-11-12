@@ -19,6 +19,8 @@ import * as path from 'path';
 import * as fsSync from 'fs';
 import Store from 'electron-store';
 import { execFileNoThrow } from '../../utils/execFile';
+import { peekShellPath } from '../../runtime/getShellPath';
+import { fallbackFontResult, type FontDetectionResult } from '../../../shared/fontDetection';
 import { logger } from '../../utils/logger';
 import { detectShells } from '../../utils/shellDetector';
 import { isCloudflaredInstalled } from '../../utils/cliDetection';
@@ -27,11 +29,36 @@ import { checkForUpdates } from '../../update-checker';
 import { sendCheckin } from '../../checkin';
 import { setAllowPrerelease } from '../../auto-updater';
 import { WebServer } from '../../web-server';
+import { startTunnel, stopTunnel, getTunnelState } from '../../web-server/live-mode';
 import { powerManager } from '../../power-manager';
 import { setMenuShortcutKeys } from '../../app-menu';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
+import { createSafeSend } from '../../utils/safe-send';
 import type { BootstrapSettings } from '../../stores/types';
+import { INSTALL_DIR_SYNC_PATH_ERROR, isInsideInstallDir } from '../../../shared/syncPath';
+import { isLinux, isMacOS } from '../../../shared/platformDetection';
+
+/**
+ * `shell.openPath` that always settles.
+ *
+ * On Linux, Electron's `platform_util::OpenPath` launches `xdg-open` with
+ * `wait_for_exit = false` and never runs its completion callback, so the promise
+ * `shell.openPath` returns there never resolves (Electron 41,
+ * `shell/common/platform_util_linux.cc`). An IPC handler that awaits it never
+ * replies; once the pending invoke is garbage-collected the renderer gets
+ * "Error invoking remote method 'shell:openPath': reply was never sent"
+ * (MAESTRO-QH, Linux only). Linux reports nothing either way, so there it is
+ * fired and reported as launched; macOS and Windows still return the real
+ * error message.
+ */
+function openPathSettled(target: string): Promise<string> {
+	if (isLinux()) {
+		void shell.openPath(target);
+		return Promise.resolve('');
+	}
+	return shell.openPath(target);
+}
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
@@ -46,6 +73,19 @@ export interface SystemHandlerDependencies {
 	tunnelManager: TunnelManagerType;
 	getWebServer: () => WebServer | null;
 	bootstrapStore?: Store<BootstrapSettings>;
+}
+
+/**
+ * The directory an update replaces: the folder holding the executable, or on
+ * macOS the `.app` bundle around it (the updater swaps the whole bundle).
+ */
+function getInstallDir(app: App): string {
+	const exeDir = path.dirname(app.getPath('exe'));
+	if (isMacOS()) {
+		const bundle = /^(.*?\.app)(?:\/|$)/.exec(exeDir);
+		if (bundle) return bundle[1];
+	}
+	return exeDir;
 }
 
 /**
@@ -140,48 +180,54 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	// ============ Font Detection Handlers ============
 
 	// Font detection
-	ipcMain.handle('fonts:detect', async () => {
+	ipcMain.handle('fonts:detect', async (): Promise<FontDetectionResult> => {
+		// fc-list is fontconfig, which ships with essentially no macOS or Windows
+		// install - it is present on a dev Mac only because Homebrew pulled it in
+		// as a dependency. It was also being executed with the GUI process PATH,
+		// which does not include /opt/homebrew/bin, so even a machine that HAS it
+		// failed once the app was packaged. Both failures returned the hard-coded
+		// list silently, and the picker then annotated genuinely-installed fonts
+		// "(Not Found)".
+		//
+		// The renderer now tries Chromium's Local Font Access API first (native,
+		// cross-platform, no external binary) and only falls back to here. This
+		// handler keeps fc-list for Linux, where fontconfig IS the system font
+		// database, and now runs it with the login-shell PATH.
 		try {
-			// Use fc-list on all platforms (faster than system_profiler on macOS)
-			// macOS: 0.74s (was 8.77s with system_profiler) - 11.9x faster
-			// Linux/Windows: 0.5-0.6s
-			const result = await execFileNoThrow('fc-list', [':', 'family']);
+			const shellPath = peekShellPath();
+			const env = shellPath ? { ...process.env, PATH: shellPath } : undefined;
+			const result = await execFileNoThrow('fc-list', [':', 'family'], undefined, { env });
 
 			if (result.exitCode === 0 && result.stdout) {
-				// Parse font list and deduplicate
-				const fonts = result.stdout
-					.split('\n')
-					.filter(Boolean)
-					.map((line: string) => line.trim())
-					.filter((font) => font.length > 0);
-
-				// Deduplicate fonts (fc-list can return duplicates)
-				return [...new Set(fonts)];
+				// fc-list prints comma-separated aliases per family ("DejaVu Sans,
+				// DejaVu Sans Book"). Splitting on the comma recovers each real name;
+				// the previous parse kept the whole line, so a family with aliases
+				// never matched a picker entry by name.
+				const fonts = new Set<string>();
+				for (const line of result.stdout.split('\n')) {
+					for (const alias of line.split(',')) {
+						const name = alias.trim();
+						if (name) fonts.add(name);
+					}
+				}
+				if (fonts.size > 0) {
+					return { fonts: [...fonts], source: 'fc-list', reliable: true };
+				}
 			}
 
-			// Fallback if fc-list not available (rare on modern systems)
-			return [
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			];
+			logger.info('Font detection: fc-list unavailable, availability unknown', 'Fonts', {
+				exitCode: result.exitCode,
+				hadShellPath: Boolean(shellPath),
+			});
+			return fallbackFontResult('fontconfig (fc-list) is not installed on this system');
 		} catch (error) {
-			void captureException(error);
-			logger.error('Font detection error:', undefined, error);
-			// Return common monospace fonts as fallback
-			return [
-				'Monaco',
-				'Menlo',
-				'Courier New',
-				'Consolas',
-				'Roboto Mono',
-				'Fira Code',
-				'JetBrains Mono',
-			];
+			// Not reported to Sentry: on macOS and Windows a missing fc-list is the
+			// EXPECTED path, not an anomaly, and the renderer has already tried the
+			// native API by the time it asks us.
+			logger.info('Font detection: fc-list threw, availability unknown', 'Fonts', {
+				reason: error instanceof Error ? error.message : String(error),
+			});
+			return fallbackFontResult('the system font list could not be read');
 		}
 	});
 
@@ -237,7 +283,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			// Detect absolute file paths and redirect to openPath - Fixes MAESTRO-FN/FA/F4
 			if (path.isAbsolute(url)) {
 				if (fsSync.existsSync(url)) {
-					const errorMessage = await shell.openPath(url);
+					const errorMessage = await openPathSettled(url);
 					if (errorMessage) {
 						throw new Error(errorMessage);
 					}
@@ -255,7 +301,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			if (!fsSync.existsSync(filePath)) {
 				throw new Error(`Path does not exist: ${filePath}`);
 			}
-			const errorMessage = await shell.openPath(filePath);
+			const errorMessage = await openPathSettled(filePath);
 			if (errorMessage) {
 				throw new Error(errorMessage);
 			}
@@ -338,13 +384,20 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			logger.warn(`shell:openPath - path does not exist: ${absolutePath}`, 'Shell');
 			return;
 		}
-		const errorMessage = await shell.openPath(absolutePath);
+		const errorMessage = await openPathSettled(absolutePath);
 		if (errorMessage) {
 			logger.warn(`shell:openPath failed for ${absolutePath}: ${errorMessage}`, 'Shell');
 		}
 	});
 
-	// Clipboard operations - copy image to system clipboard via Electron native API
+	// Clipboard operations - copy text/image to system clipboard via Electron native API
+	ipcMain.handle('clipboard:writeText', async (_event, text: string) => {
+		if (typeof text !== 'string') {
+			throw new Error('Invalid clipboard text: must be a string');
+		}
+		clipboard.writeText(text);
+	});
+
 	ipcMain.handle('clipboard:writeImage', async (_event, dataUrl: string) => {
 		if (!dataUrl || typeof dataUrl !== 'string') {
 			throw new Error('Invalid data URL: must be a non-empty string');
@@ -407,57 +460,13 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		return await isCloudflaredInstalled();
 	});
 
-	ipcMain.handle('tunnel:start', async () => {
-		const webServer = getWebServer();
-		// Get web server URL (includes the security token)
-		const serverUrl = webServer?.getSecureUrl();
-		if (!serverUrl) {
-			return { success: false, error: 'Web server not running' };
-		}
+	// Start/stop/status share one implementation with `maestro-cli live tunnel`
+	// through the Live Mode service.
+	ipcMain.handle('tunnel:start', async () => startTunnel(getWebServer(), tunnelManager));
 
-		// Parse the URL to get port and token path
-		const parsedUrl = new URL(serverUrl);
-		const port = parseInt(parsedUrl.port, 10);
-		const tokenPath = parsedUrl.pathname; // e.g., "/7d7f7162-614c-43e2-bb8a-8a8123c2f56a"
+	ipcMain.handle('tunnel:stop', async () => stopTunnel(getWebServer(), tunnelManager));
 
-		const result = await tunnelManager.start(port);
-
-		if (result.success && result.url) {
-			// Append the token path to the tunnel URL for security
-			// e.g., "https://xyz.trycloudflare.com" + "/TOKEN" = "https://xyz.trycloudflare.com/TOKEN"
-			const fullTunnelUrl = result.url + tokenPath;
-			return { success: true, url: fullTunnelUrl };
-		}
-
-		return result;
-	});
-
-	ipcMain.handle('tunnel:stop', async () => {
-		await tunnelManager.stop();
-		return { success: true };
-	});
-
-	ipcMain.handle('tunnel:getStatus', async () => {
-		const status = tunnelManager.getStatus();
-		if (!status.isRunning || !status.url) return status;
-
-		// Append the web server's token path so the URL stays usable.
-		// tunnelManager itself is token-agnostic - composition happens here,
-		// matching tunnel:start above.
-		const webServer = getWebServer();
-		const serverUrl = webServer?.getSecureUrl();
-		if (!serverUrl) return status;
-
-		try {
-			const tokenPath = new URL(serverUrl).pathname;
-			if (tokenPath && tokenPath !== '/' && !status.url.endsWith(tokenPath)) {
-				return { ...status, url: status.url + tokenPath };
-			}
-		} catch {
-			// Malformed server URL - fall back to bare tunnel URL
-		}
-		return status;
-	});
+	ipcMain.handle('tunnel:getStatus', async () => getTunnelState(getWebServer(), tunnelManager));
 
 	// ============ DevTools Handlers ============
 
@@ -678,6 +687,11 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			return { success: false, error: 'Bootstrap store not available' };
 		}
 
+		if (newPath && isInsideInstallDir(newPath, getInstallDir(app))) {
+			logger.warn(`Rejected Storage Location inside the install directory: ${newPath}`, 'Sync');
+			return { success: false, error: INSTALL_DIR_SYNC_PATH_ERROR };
+		}
+
 		const defaultPath = app.getPath('userData');
 		const currentCustomPath = deps.bootstrapStore.get('customSyncPath');
 		const currentPath = currentCustomPath || defaultPath;
@@ -826,6 +840,7 @@ const LOGGER_FORWARD_FLUSH_SIZE = 100;
  * out to per-entry consumers so the public API stays single-entry.
  */
 export function setupLoggerEventForwarding(getMainWindow: () => BrowserWindow | null): void {
+	const safeSend = createSafeSend(getMainWindow);
 	let buffer: unknown[] = [];
 	let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -839,19 +854,9 @@ export function setupLoggerEventForwarding(getMainWindow: () => BrowserWindow | 
 		const batch = buffer;
 		buffer = [];
 
-		const mainWindow = getMainWindow();
-		try {
-			if (
-				mainWindow &&
-				!mainWindow.isDestroyed() &&
-				mainWindow.webContents &&
-				!mainWindow.webContents.isDestroyed()
-			) {
-				mainWindow.webContents.send('logger:newLogBatch', batch);
-			}
-		} catch {
-			// Silently ignore - renderer not available
-		}
+		// safeSend handles null/destroyed windows and fans the batch out to
+		// web-desktop bridge clients so remote log viewers stay in sync.
+		safeSend('logger:newLogBatch', batch);
 	};
 
 	logger.on('newLog', (entry) => {

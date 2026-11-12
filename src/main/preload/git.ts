@@ -33,6 +33,14 @@ export interface WorktreeInfo {
  */
 export interface WorktreeEntry {
 	path: string;
+	/** Physical identity for the raw registry path, including a missing leaf candidate. */
+	resolvedPath?: string;
+	/** The registry path's individual filesystem probe could not be completed. */
+	pathUnresolved?: boolean;
+	/** The directory was absent when its reachable parent was probed. */
+	pathMissing?: boolean;
+	/** Git retains a registration for a worktree that can be pruned. */
+	isPrunable?: boolean;
 	head: string;
 	branch: string | null;
 	isBare: boolean;
@@ -55,6 +63,19 @@ export interface GitSubdirEntry {
 export interface GitLogEntry {
 	hash: string;
 	shortHash: string;
+	author: string;
+	date: string;
+	refs: string[];
+	subject: string;
+}
+
+/**
+ * Git graph node - like GitLogEntry but with parent hashes for topology rendering.
+ */
+export interface GitGraphNode {
+	hash: string;
+	shortHash: string;
+	parents: string[];
 	author: string;
 	date: string;
 	refs: string[];
@@ -175,13 +196,29 @@ export function createGitApi() {
 			ipcRenderer.invoke('git:init', cwd, sshRemoteId, remoteCwd),
 
 		/**
+		 * Stage all changes and commit them. A clean tree returns
+		 * { success: true, committed: false } (not an error).
+		 */
+		commitAll: (
+			cwd: string,
+			message: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{
+			success: boolean;
+			committed: boolean;
+			commitHash?: string;
+			error?: string;
+		}> => ipcRenderer.invoke('git:commitAll', cwd, message, sshRemoteId, remoteCwd),
+
+		/**
 		 * Get git diff numstat
 		 */
 		numstat: (
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		): Promise<{ stdout: string; stderr: string }> =>
+		): Promise<{ stdout: string; stderr: string; timedOut?: boolean }> =>
 			ipcRenderer.invoke('git:numstat', cwd, sshRemoteId, remoteCwd),
 
 		/**
@@ -191,7 +228,7 @@ export function createGitApi() {
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		): Promise<{ stdout: string; stderr: string }> =>
+		): Promise<{ stdout: string; stderr: string; timedOut?: boolean }> =>
 			ipcRenderer.invoke('git:branch', cwd, sshRemoteId, remoteCwd),
 
 		/**
@@ -237,6 +274,8 @@ export function createGitApi() {
 			behind: number;
 			ahead: number;
 			uncommittedChanges: number;
+			/** One of the underlying queries timed out; the zero/empty fields are placeholders. */
+			timedOut?: boolean;
 		}> => ipcRenderer.invoke('git:info', cwd, sshRemoteId, remoteCwd),
 
 		/**
@@ -250,6 +289,29 @@ export function createGitApi() {
 			entries: GitLogEntry[];
 			error: string | null;
 		}> => ipcRenderer.invoke('git:log', cwd, options, sshRemoteId),
+
+		/**
+		 * Get topology graph data (commits with parent hashes) for graph rendering
+		 */
+		graph: (
+			cwd: string,
+			options?: { limit?: number },
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{ nodes: GitGraphNode[]; error: string | null }> =>
+			ipcRenderer.invoke('git:graph', cwd, options, sshRemoteId, remoteCwd),
+
+		/**
+		 * Switch the current working tree to an existing branch.
+		 * Returns success=false on dirty working tree (stderr contains git's message).
+		 */
+		switchBranch: (
+			cwd: string,
+			branchName: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{ success: boolean; stdout: string; stderr: string }> =>
+			ipcRenderer.invoke('git:switch', cwd, branchName, sshRemoteId, remoteCwd),
 
 		/**
 		 * Run a network git operation (pull/push/fetch), streaming its output.
@@ -402,20 +464,31 @@ export function createGitApi() {
 			baseBranch: string,
 			title: string,
 			body: string,
-			ghPath?: string
+			ghPath?: string,
+			sshRemoteId?: string
 		): Promise<{
 			success: boolean;
 			prUrl?: string;
 			error?: string;
-		}> => ipcRenderer.invoke('git:createPR', worktreePath, baseBranch, title, body, ghPath),
+		}> =>
+			ipcRenderer.invoke(
+				'git:createPR',
+				worktreePath,
+				baseBranch,
+				title,
+				body,
+				ghPath,
+				sshRemoteId
+			),
 
 		/**
 		 * Get the default branch of a repository
 		 */
 		getDefaultBranch: (
-			cwd: string
+			cwd: string,
+			sshRemoteId?: string
 		): Promise<{ success: boolean; branch?: string; error?: string }> =>
-			ipcRenderer.invoke('git:getDefaultBranch', cwd),
+			ipcRenderer.invoke('git:getDefaultBranch', cwd, sshRemoteId),
 
 		/**
 		 * Check if GitHub CLI is installed and authenticated
@@ -441,9 +514,23 @@ export function createGitApi() {
 		/**
 		 * List all worktrees for a git repository
 		 * Supports SSH remote execution via optional sshRemoteId parameter
+		 * Passing basePath resolves SSH directory aliases for safe reconciliation.
 		 */
-		listWorktrees: (cwd: string, sshRemoteId?: string): Promise<{ worktrees: WorktreeEntry[] }> =>
-			ipcRenderer.invoke('git:listWorktrees', cwd, sshRemoteId),
+		listWorktrees: (
+			cwd: string,
+			sshRemoteId?: string,
+			basePath?: string,
+			sessionPaths?: string[]
+		): Promise<{
+			worktrees: WorktreeEntry[];
+			resolvedCwd?: string;
+			resolvedBasePath?: string;
+			resolvedSessionPaths?: Record<string, string>;
+			// Missing candidates are safe to reconcile only after a successful registry read.
+			missingSessionPaths?: string[];
+			/** Individual aliases that could not be resolved; keep their existing sessions. */
+			unresolvedSessionPaths?: string[];
+		}> => ipcRenderer.invoke('git:listWorktrees', cwd, sshRemoteId, basePath, sessionPaths),
 
 		/**
 		 * Scan a directory for subdirectories that are git repositories or worktrees
@@ -452,8 +539,12 @@ export function createGitApi() {
 		scanWorktreeDirectory: (
 			parentPath: string,
 			sshRemoteId?: string
-		): Promise<{ gitSubdirs: GitSubdirEntry[]; scanFailed?: boolean }> =>
-			ipcRenderer.invoke('git:scanWorktreeDirectory', parentPath, sshRemoteId),
+		): Promise<{
+			gitSubdirs: GitSubdirEntry[];
+			scanFailed?: boolean;
+			/** Uncertain candidate or group roots whose existing sessions must be preserved. */
+			unresolvedPaths?: string[];
+		}> => ipcRenderer.invoke('git:scanWorktreeDirectory', parentPath, sshRemoteId),
 
 		/**
 		 * Watch a worktree directory for new worktrees

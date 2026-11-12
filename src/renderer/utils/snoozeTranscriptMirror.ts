@@ -15,6 +15,7 @@
  */
 
 import type { AITab, Session, SnoozedTabEntry } from '../types';
+import { collectSnoozedAiTabs } from './snoozeHelpers';
 import { logger } from './logger';
 
 /**
@@ -41,26 +42,33 @@ function mirrorTarget(
 }
 
 /**
- * Preserve a tab's transcript for the length of its snooze.
+ * Preserve a snooze's transcripts for its duration.
  * Call when a tab is snoozed - the moment it is put away is the loss boundary.
+ *
+ * Takes the ENTRY rather than a tab so it covers a parked group, which owns one
+ * transcript per AI pane, and so it stays symmetric with
+ * {@link releaseSnoozedTranscript}: the two run the same list, and a copy taken
+ * on the way in that nothing releases on the way out is a mirror kept forever.
  */
 export function mirrorSnoozedTranscript(
 	session: Session | null | undefined,
-	tab: AITab | undefined
+	entry: SnoozedTabEntry
 ): void {
-	const target = mirrorTarget(session, tab);
-	if (!target) return;
-	void window.maestro.agentSessions
-		.snapshotStarredTranscript(
-			target.agentId,
-			target.projectPath,
-			target.sessionId,
-			target.sessionName,
-			'snoozed'
-		)
-		.catch((err) => {
-			logger.warn(`Failed to mirror snoozed transcript ${target.sessionId}: ${err}`);
-		});
+	for (const tab of collectSnoozedAiTabs(entry)) {
+		const target = mirrorTarget(session, tab);
+		if (!target) continue;
+		void window.maestro.agentSessions
+			.snapshotStarredTranscript(
+				target.agentId,
+				target.projectPath,
+				target.sessionId,
+				target.sessionName,
+				'snoozed'
+			)
+			.catch((err) => {
+				logger.warn(`Failed to mirror snoozed transcript ${target.sessionId}: ${err}`);
+			});
+	}
 }
 
 /**
@@ -74,14 +82,16 @@ export function releaseSnoozedTranscript(
 	session: Session | null | undefined,
 	entry: SnoozedTabEntry
 ): void {
-	// Only an AI snooze has a provider transcript mirrored on disk. The other
-	// kinds never took a copy, so there is nothing to release.
-	if (entry.type !== 'ai') return;
-	const target = mirrorTarget(session, entry.tab);
-	if (!target) return;
-	void window.maestro.agentSessions
-		.releaseSnoozedTranscript(target.agentId, target.projectPath, target.sessionId)
-		.catch((err) => {
-			logger.warn(`Failed to release snoozed transcript ${target.sessionId}: ${err}`);
-		});
+	// Only a conversation has a provider transcript mirrored on disk, and a
+	// group holds one per AI pane. The other kinds never took a copy, so
+	// `collectSnoozedAiTabs` returns nothing and this is a no-op for them.
+	for (const tab of collectSnoozedAiTabs(entry)) {
+		const target = mirrorTarget(session, tab);
+		if (!target) continue;
+		void window.maestro.agentSessions
+			.releaseSnoozedTranscript(target.agentId, target.projectPath, target.sessionId)
+			.catch((err) => {
+				logger.warn(`Failed to release snoozed transcript ${target.sessionId}: ${err}`);
+			});
+	}
 }

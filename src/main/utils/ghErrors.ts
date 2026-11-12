@@ -72,3 +72,44 @@ export function isGitHubMissingScopeError(err: unknown): boolean {
 		haystack.includes('missing required scope')
 	);
 }
+
+/** The GitHub account a `gh` command acts as. */
+export interface GhAccount {
+	host: string;
+	login: string;
+}
+
+/**
+ * The ACTIVE account in `gh auth status` output, or undefined when it cannot be
+ * named.
+ *
+ * gh lists every stored account per host and marks the one in use with
+ * "Active account: true" on the lines below it. The entry reads
+ * `Logged in to <host> account <login>` when the token works and
+ * `Failed to log in to <host> account <login>` when it does not (older gh says
+ * `as <login>`). An env token (`GH_TOKEN`) carries no login name, so when THAT
+ * is the active credential nothing is named: falling back to the inactive
+ * keyring account would put the wrong name on the pill. Output from a gh old
+ * enough to print no "Active account" lines names its first account.
+ */
+export function parseGhActiveAccount(output: string): GhAccount | undefined {
+	const entries: Array<{ host: string; login?: string; active: boolean }> = [];
+	for (const line of output.split(/\r?\n/)) {
+		const entry = /(?:Logged in to|log in to)\s+(\S+)\s+(?:account|as)\s+(\S+)/i.exec(line);
+		if (entry) {
+			entries.push({ host: entry[1], login: entry[2], active: false });
+			continue;
+		}
+		const tokenEntry = /(?:Logged in to|log in to)\s+(\S+)\s+using token/i.exec(line);
+		if (tokenEntry) {
+			entries.push({ host: tokenEntry[1], active: false });
+			continue;
+		}
+		if (/Active account:\s*true/i.test(line) && entries.length > 0) {
+			entries[entries.length - 1].active = true;
+		}
+	}
+	const anyActive = entries.some((e) => e.active);
+	const chosen = anyActive ? entries.find((e) => e.active) : entries[0];
+	return chosen?.login ? { host: chosen.host, login: chosen.login } : undefined;
+}

@@ -3,6 +3,7 @@ import type { MutableRefObject } from 'react';
 import type { Theme } from '../../../types';
 import { highlightSlashCommand } from '../../../utils/search';
 import type { SlashCommand } from '../types';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface SlashCommandPopoverProps {
 	isOpen: boolean;
@@ -35,8 +36,8 @@ export const SlashCommandPopover = memo(function SlashCommandPopover({
 
 	return (
 		<div
-			className="absolute bottom-full left-0 right-0 mb-2 border rounded-lg shadow-2xl overflow-hidden"
-			style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+			className="absolute bottom-full left-0 right-0 mb-2 rounded-lg overflow-hidden"
+			style={elevatedSurfaceStyle(theme)}
 		>
 			<div
 				className="overflow-y-auto max-h-96 scrollbar-thin"
@@ -55,10 +56,17 @@ export const SlashCommandPopover = memo(function SlashCommandPopover({
 							color: idx === selectedIndex ? theme.colors.bgMain : theme.colors.textMain,
 						}}
 						onClick={() => {
+							// A single click ACCEPTS, the way every other composer popover
+							// behaves (`AtMentionPopover`, `CommandHistoryPopover`,
+							// `TabCompletionPopover`). This used to only move the highlight
+							// and leave acceptance to a double-click, which a touch screen
+							// cannot produce: on a phone the menu opened, every tap did
+							// nothing visible, and there was no keyboard to press Enter on.
+							// The trailing space matches what Tab/Enter writes in
+							// `useInputKeyDown`, so a tapped command and a typed one leave
+							// the caret in the same place.
 							setSelectedSlashCommandIndex(idx);
-						}}
-						onDoubleClick={() => {
-							setInputValue(cmd.command);
+							setInputValue(cmd.command + ' ');
 							setSlashCommandOpen(false);
 							inputRef.current?.focus();
 						}}

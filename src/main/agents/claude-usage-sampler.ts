@@ -14,6 +14,13 @@
  *   the binary's node-script-with-shebang packaging stays valid on Windows
  *   where shebangs aren't honored.
  *
+ * - SSH limitation: this spawn is always LOCAL - it does NOT honor a session's
+ *   `sshRemoteConfig` / `wrapSpawnWithSsh`, so the snapshot reflects the local
+ *   account keyed by `CLAUDE_CONFIG_DIR`, never a remote host's Claude account.
+ *   Consumers that act per remote session (notably Auto-Resume On Limit's
+ *   `probeAvailability`) must NOT trust this snapshot for an SSH-backed session;
+ *   they fall back to a resume-as-probe interval attempt instead.
+ *
  * - Env precedence: `process.env` < `customEnvVars` < explicit `configDir`.
  *   Explicit `configDir` wins so a caller cannot accidentally smuggle a
  *   `CLAUDE_CONFIG_DIR` through `customEnvVars` that contradicts the path the
@@ -99,11 +106,12 @@ export interface SampleUsageOptions {
 // `resets_at` is optional per window - claude paints no "Resets ..." row for a
 // window with nothing running in it, and rejecting the envelope over that
 // discarded the panel's real percentages (see the parser's module docblock).
+// `session` is optional too: claude 2.1.317 stopped painting the 5-hour window.
 interface StatusWireEnvelope {
 	type: 'status';
 	auth_state?: 'authenticated' | 'unauthenticated';
 	config_dir: string;
-	session: { percent: number; resets_at?: string };
+	session?: { percent: number; resets_at?: string };
 	week_all_models: { percent: number; resets_at?: string };
 	/** `unread` marks the parser's 0% placeholder for a section it could not read. */
 	week_sonnet_only: { percent: number; resets_at?: string; label?: string; unread?: true };
@@ -186,12 +194,20 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 	// sessions - those spawn through the process manager, not this sampler.
 	childEnv.BROWSER = '/usr/bin/true';
 
+	// The canonical key for WHICH account this sample is about. Resolved before
+	// the spawn because the failure paths below need it too: `CLAUDE_CONFIG_DIR`
+	// can arrive via `customEnvVars` rather than `opts.configDir`, and keying off
+	// `opts.configDir` alone collapses two such accounts onto the same
+	// home-directory key - one broken account would then mute the other's reports
+	// and name the wrong directory in the breadcrumb.
+	const configDirKey = resolveConfigDirKey(childEnv);
+
 	// Start claude in the private probe folder, and let maestro-p answer the
 	// folder-trust prompt there. See ensureUsageProbeDir for why neither the
 	// caller's working directory nor the home dir will do.
 	const probeDir = await ensureUsageProbeDir();
 	if (!probeDir) {
-		void reportFailure('spawn', opts, 'usage probe folder is missing or not private');
+		void reportFailure('spawn', opts, configDirKey, 'usage probe folder is missing or not private');
 		return null;
 	}
 	childEnv.MAESTRO_P_ACCEPT_WORKSPACE_TRUST = '1';
@@ -229,18 +245,18 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 		});
 		stdout = result.stdout;
 	} catch (err) {
-		void reportFailure('spawn', opts, classifySpawnError(err));
+		void reportFailure('spawn', opts, configDirKey, classifySpawnError(err));
 		return null;
 	}
 
 	if (!stdout || stdout.trim().length === 0) {
-		void reportFailure('parse', opts, 'empty stdout');
+		void reportFailure('parse', opts, configDirKey, 'empty stdout');
 		return null;
 	}
 
 	const jsonLine = extractFirstJsonLine(stdout);
 	if (jsonLine === null) {
-		void reportFailure('parse', opts, 'no json object line found');
+		void reportFailure('parse', opts, configDirKey, 'no json object line found');
 		return null;
 	}
 
@@ -251,13 +267,14 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 		void reportFailure(
 			'parse',
 			opts,
+			configDirKey,
 			`json parse: ${err instanceof Error ? err.message : String(err)}`
 		);
 		return null;
 	}
 
 	if (!isStatusWireEnvelope(parsed)) {
-		void reportFailure('parse', opts, 'wire shape rejected by type guard');
+		void reportFailure('parse', opts, configDirKey, 'wire shape rejected by type guard');
 		return null;
 	}
 
@@ -268,7 +285,6 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 	// between samples, and a row captioned with the new account over the old
 	// account's bars would be a worse lie than the directory name it replaces.
 	// Best-effort - null just falls back to the directory name downstream.
-	const configDirKey = resolveConfigDirKey(childEnv);
 	const identity = await readClaudeAccountIdentity(configDirKey);
 
 	return {
@@ -278,7 +294,7 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 		...(identity?.email ? { accountEmail: identity.email } : {}),
 		...(identity?.accountUuid ? { accountUuid: identity.accountUuid } : {}),
 		...(identity?.organizationName ? { organizationName: identity.organizationName } : {}),
-		session: toStoreWindow(parsed.session),
+		...(parsed.session ? { session: toStoreWindow(parsed.session) } : {}),
 		weekAllModels: toStoreWindow(parsed.week_all_models),
 		weekSonnetOnly: parsed.week_sonnet_only.unread
 			? keepLastSecondaryWeekReading(configDirKey, parsed.week_sonnet_only)
@@ -374,8 +390,12 @@ function isStatusWireEnvelope(obj: unknown): obj is StatusWireEnvelope {
 	) {
 		return false;
 	}
+	// The session window may be absent (no 5-hour bar on the panel), but when
+	// present it must be well-formed like the other two.
 	return (
-		isWireWindow(e.session) && isWireWindow(e.week_all_models) && isWireWindow(e.week_sonnet_only)
+		(e.session === undefined || isWireWindow(e.session)) &&
+		isWireWindow(e.week_all_models) &&
+		isWireWindow(e.week_sonnet_only)
 	);
 }
 
@@ -411,18 +431,80 @@ function classifySpawnError(err: unknown): string {
 }
 
 /**
+ * When each failure signature was last reported, per config dir. Every
+ * signature keeps its own clock: a dir that alternates between two failures
+ * (seen in the field as `exit: 1` and `exit: 143` on the same account) would
+ * otherwise look "new" on every flip and report on every tick.
+ * Module-level because the sampler is a set of free functions sharing one
+ * process; `resetFailureReportingForTests` clears it between cases.
+ */
+const lastReportedFailure = new Map<string, Map<string, number>>();
+
+/**
+ * Re-report a failure that has not changed only this often. Long enough that a
+ * permanently broken account costs a handful of events per day instead of one
+ * per tick, short enough that an ongoing outage is still visible in Sentry.
+ */
+export const FAILURE_REREPORT_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Decide whether this failure is worth reporting, and record it either way.
+ *
+ * The sampler runs on a timer and keeps running after a failure, so a config
+ * dir that is broken for a week reported the identical warning on every single
+ * tick - one install produced over ten thousand of them, which is most of the
+ * project's Sentry volume (MAESTRO-Q2). We report the FIRST occurrence of each
+ * distinct (stage, reason) signature per config dir, re-report an unchanged one
+ * every `FAILURE_REREPORT_INTERVAL_MS`, and suppress the rest.
+ *
+ * A successful sample does NOT reset the clock. It used to, and an account that
+ * flaps (fail, succeed, fail) then reported on every failing tick. The interval
+ * already bounds how long a recurring failure stays quiet, so nothing is hidden
+ * for longer than `FAILURE_REREPORT_INTERVAL_MS`.
+ *
+ * Note what this deliberately does NOT do: it makes no claim that any exit code
+ * is expected. Every distinct failure a user hits still reaches Sentry, and a
+ * regression that hits many installs still shows up as many events, one per
+ * install, instead of being buried under one install's repeats.
+ */
+function shouldReportFailure(configDirKey: string, signature: string, now: number): boolean {
+	let reported = lastReportedFailure.get(configDirKey);
+	if (!reported) {
+		reported = new Map();
+		lastReportedFailure.set(configDirKey, reported);
+	}
+	const reportedAt = reported.get(signature);
+	if (reportedAt !== undefined && now - reportedAt < FAILURE_REREPORT_INTERVAL_MS) {
+		return false;
+	}
+	reported.set(signature, now);
+	return true;
+}
+
+/** Test-only: drop all remembered failure signatures. */
+export function resetFailureReportingForTests(): void {
+	lastReportedFailure.clear();
+}
+
+/**
  * Emit a Sentry warning breadcrumb with the safe subset of context - stage,
  * binPath, configDir, reason. Full env / full stdout are deliberately omitted.
+ *
+ * Repeats of an unchanged failure are dropped - see `shouldReportFailure`.
  */
 async function reportFailure(
 	stage: 'spawn' | 'parse',
 	opts: SampleUsageOptions,
+	configDirKey: string,
 	reason: string
 ): Promise<void> {
+	if (!shouldReportFailure(configDirKey, `${stage}|${reason}`, Date.now())) {
+		return;
+	}
 	await captureMessage('maestro-p --status sample failed', 'warning', {
 		stage,
 		binPath: opts.binPath,
-		configDir: opts.configDir ?? path.join(os.homedir(), '.claude'),
+		configDir: configDirKey,
 		reason,
 	});
 }

@@ -7,6 +7,9 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
+import * as nodeFs from 'fs';
+import * as nodeOs from 'os';
+import * as nodePath from 'path';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -108,8 +111,24 @@ import { buildStreamJsonMessage } from '../../../../main/process-manager/utils/s
 import { saveImageToTempFile } from '../../../../main/process-manager/utils/imageUtils';
 import { createOutputParser } from '../../../../main/parsers';
 import { isWindows } from '../../../../shared/platformDetection';
-
+import { getAgentDefinition } from '../../../../main/agents/definitions';
+import { getAgentCapabilities as getRealAgentCapabilities } from '../../../../main/agents/capabilities';
+import { logger } from '../../../../main/utils/logger';
+import { POSIX_PROMPT_ARGV_MAX_BYTES } from '../../../../main/process-manager/utils/promptArgvLimit';
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * The child's event handlers by name, keeping the FIRST registration of each.
+ * `close` and `exit` also get listeners from the stdio watchdog, registered
+ * after the spawner's own, and a plain Map would keep those instead.
+ */
+function childHandlers(child: { on: { mock: { calls: unknown[][] } } }): Map<string, Function> {
+	const handlers = new Map<string, Function>();
+	for (const [event, fn] of child.on.mock.calls as [string, Function][]) {
+		if (!handlers.has(event)) handlers.set(event, fn);
+	}
+	return handlers;
+}
 
 function createTestContext() {
 	const processes = new Map<string, ManagedProcess>();
@@ -343,6 +362,102 @@ describe('ChildProcessSpawner', () => {
 		});
 	});
 
+	// MAESTRO-153: a wizard prompt carrying a NUL byte made Node refuse the spawn
+	// ("The argument 'args[4]' must be a string without null bytes").
+	describe('NUL bytes in arguments', () => {
+		it('drops them from the prompt and every other argument before spawning', () => {
+			const { spawner } = createTestContext();
+
+			const result = spawner.spawn(
+				createBaseConfig({
+					args: ['--print', '--append-system-prompt', 'sys\0tem'],
+					prompt: 'Conductor\0 Profile\0',
+				})
+			);
+
+			expect(result.success).toBe(true);
+			const spawnedArgs = mockSpawn.mock.calls[0][1] as string[];
+			expect(spawnedArgs.some((arg) => arg.includes('\0'))).toBe(false);
+			expect(spawnedArgs).toContain('system');
+			expect(spawnedArgs).toContain('Conductor Profile');
+		});
+
+		it('leaves arguments without NUL bytes untouched', () => {
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ args: ['--print'], prompt: 'plain' }));
+
+			expect(mockSpawn.mock.calls[0][1]).toEqual(['--print', '--', 'plain']);
+		});
+	});
+
+	describe('prompt too long for argv on Linux/macOS (MAESTRO-VR)', () => {
+		const longPrompt = 'x'.repeat(POSIX_PROMPT_ARGV_MAX_BYTES + 1);
+		const stdinCapable = { supportsStreamJsonInput: false, supportsPromptViaStdin: true } as any;
+
+		it('sends a prompt past the limit over stdin instead of argv', () => {
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(stdinCapable);
+			const { spawner } = createTestContext();
+
+			const result = spawner.spawn(createBaseConfig({ prompt: longPrompt }));
+
+			expect(result.success).toBe(true);
+			const spawnedArgs = mockSpawn.mock.calls[0][1] as string[];
+			expect(spawnedArgs).toEqual(['--print']);
+			expect(mockChildProcess.stdin.write).toHaveBeenCalledWith(longPrompt);
+			expect(mockChildProcess.stdin.end).toHaveBeenCalled();
+		});
+
+		it('keeps a prompt under the limit in argv', () => {
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(stdinCapable);
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ prompt: 'short' }));
+
+			expect(mockSpawn.mock.calls[0][1]).toEqual(['--print', '--', 'short']);
+			expect(mockChildProcess.stdin.write).not.toHaveBeenCalled();
+		});
+
+		it('keeps the prompt in argv for an agent that does not read stdin', () => {
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce({
+				supportsStreamJsonInput: false,
+				supportsPromptViaStdin: false,
+			} as any);
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ toolType: 'omp', command: 'omp', prompt: longPrompt }));
+
+			expect(mockSpawn.mock.calls[0][1]).toEqual(['--print', '--', longPrompt]);
+			expect(mockChildProcess.stdin.write).not.toHaveBeenCalled();
+		});
+
+		it('leaves an SSH spawn alone', () => {
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(stdinCapable);
+			const { spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({ command: 'ssh', prompt: longPrompt, sshRemoteId: 'remote-1' })
+			);
+
+			expect(mockSpawn.mock.calls[0][1]).toEqual(['--print', '--', longPrompt]);
+			expect(mockChildProcess.stdin.write).not.toHaveBeenCalled();
+		});
+
+		it('leaves Windows to the callers, which already pick stdin there', () => {
+			vi.mocked(isWindows).mockReturnValue(true);
+			try {
+				vi.mocked(getAgentCapabilities).mockReturnValueOnce(stdinCapable);
+				const { spawner } = createTestContext();
+
+				spawner.spawn(createBaseConfig({ command: 'claude.exe', prompt: longPrompt }));
+
+				expect(mockChildProcess.stdin.write).not.toHaveBeenCalled();
+			} finally {
+				vi.mocked(isWindows).mockReturnValue(false);
+			}
+		});
+	});
+
 	describe('SSH remote context', () => {
 		it('should store sshRemoteId on managed process', () => {
 			const { processes, spawner } = createTestContext();
@@ -358,6 +473,41 @@ describe('ChildProcessSpawner', () => {
 			const proc = processes.get('test-session');
 			expect(proc?.sshRemoteId).toBe('my-remote-server');
 			expect(proc?.sshRemoteHost).toBe('dev.example.com');
+		});
+
+		// Stop over SSH used to signal only the local ssh client, leaving the remote
+		// agent running. The launch script records the remote pid so Stop can reach it.
+		it('records the remote agent pid ahead of a stdin launch script', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					command: '/usr/bin/ssh',
+					args: ['-o', 'BatchMode=yes', 'user@host', '/bin/bash', '--norc', '--noprofile', '-s'],
+					sshStdinScript: 'cd /project\nexec claude --print\n',
+				})
+			);
+
+			const pidFile = processes.get('test-session')?.sshRemotePidFile;
+			expect(pidFile).toMatch(/^\/tmp\/maestro-agent-[0-9a-f-]+\.pid$/);
+			const written = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+			expect(written).toContain(`printf '%s %s\\n' "$$"`);
+			expect(written).toContain(pidFile);
+			expect(written.endsWith('cd /project\nexec claude --print\n')).toBe(true);
+		});
+
+		it('records nothing when the args are not a stdin-script ssh invocation', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					args: ['-o', 'BatchMode=yes', 'user@host', '/bin/bash'],
+					sshStdinScript: 'exec claude',
+				})
+			);
+
+			expect(processes.get('test-session')?.sshRemotePidFile).toBeUndefined();
+			expect(mockChildProcess.stdin.write).toHaveBeenCalledWith('exec claude');
 		});
 	});
 
@@ -593,7 +743,39 @@ describe('ChildProcessSpawner', () => {
 			const onCalls = mockChildProcess.on.mock.calls as [string, Function][];
 			const eventNames = onCalls.map(([event]) => event);
 			expect(eventNames).toContain('close');
-			expect(eventNames).not.toContain('exit');
+		});
+
+		it('does not settle the turn on "exit" alone (that listener only arms the stdio watchdog)', async () => {
+			const { spawner, emitter, processes } = createTestContext();
+			const config = createBaseConfig({ prompt: 'test' });
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			spawner.spawn(config);
+			const exitHandlers = (mockChildProcess.on.mock.calls as [string, Function][])
+				.filter(([event]) => event === 'exit')
+				.map(([, fn]) => fn);
+			exitHandlers.forEach((fn) => fn(0, null));
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			expect(onExit).not.toHaveBeenCalled();
+			expect(processes.has(config.sessionId)).toBe(true);
+		});
+
+		it('releases the entry and reports exit when handleExit throws before doing so', async () => {
+			const { spawner, emitter, processes } = createTestContext();
+			const config = createBaseConfig({ prompt: 'test' });
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			spawner.spawn(config);
+			const exitHandler = (spawner as any).exitHandler;
+			vi.spyOn(exitHandler, 'handleExit').mockRejectedValueOnce(new Error('boom'));
+			const handlers = childHandlers(mockChildProcess);
+
+			handlers.get('close')?.(130);
+			await vi.waitFor(() => expect(onExit).toHaveBeenCalledWith(config.sessionId, 130));
+			expect(processes.has(config.sessionId)).toBe(false);
 		});
 
 		it('should listen for "error" events on the child process', () => {
@@ -620,9 +802,7 @@ describe('ChildProcessSpawner', () => {
 
 			ctx.spawner.spawn(config);
 			const first = mockChildProcess;
-			const firstHandlers = new Map<string, Function>(
-				(first.on.mock.calls as [string, Function][]).map(([event, fn]) => [event, fn])
-			);
+			const firstHandlers = childHandlers(first);
 
 			// ProcessManager.spawn() kills the predecessor (dropping its map entry)
 			// before the spawner registers the successor under the same key.
@@ -683,9 +863,7 @@ describe('ChildProcessSpawner', () => {
 			const baseConfig = createBaseConfig({ prompt: 'only turn' });
 
 			spawner.spawn(baseConfig);
-			const handlers = new Map<string, Function>(
-				(mockChildProcess.on.mock.calls as [string, Function][]).map(([event, fn]) => [event, fn])
-			);
+			const handlers = childHandlers(mockChildProcess);
 			const onExit = vi.fn();
 			emitter.on('exit', onExit);
 
@@ -921,6 +1099,46 @@ describe('ChildProcessSpawner', () => {
 			vi.mocked(isWindows).mockReturnValue(false);
 		});
 
+		it('delivers a long Hermes query through stdin with explicit one-shot query selection', () => {
+			const { spawner } = createTestContext();
+			const hermes = getAgentDefinition('hermes')!;
+			const capabilities = getRealAgentCapabilities('hermes');
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(capabilities);
+			const prompt = 'Private playbook text "quoted" & %PATH% 日本語\n'.repeat(1000);
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'hermes',
+					command: 'hermes.cmd',
+					args: [...hermes.batchModePrefix!, ...hermes.batchModeArgs!],
+					promptArgs: hermes.promptArgs,
+					prompt,
+					sendPromptViaStdinRaw: capabilities.supportsPromptViaStdin,
+				})
+			);
+			const args = mockSpawn.mock.calls[0][1] as string[];
+			expect(args).toEqual(['chat', '-Q', '--yolo', '--query-file', '-']);
+			expect(mockChildProcess.stdin.write).toHaveBeenCalledExactlyOnceWith(prompt);
+			expect(mockChildProcess.stdin.end).toHaveBeenCalledOnce();
+		});
+
+		it.each([false, true])('keeps prompt content out of spawn diagnostics (stdin=%s)', (stdin) => {
+			const { spawner } = createTestContext();
+			const secret = 'PRIVATE_HERMES_PROMPT_CONTENT';
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'hermes',
+					command: 'hermes.cmd',
+					args: ['chat', '-Q', '--yolo'],
+					promptArgs: getAgentDefinition('hermes')!.promptArgs,
+					prompt: secret,
+					sendPromptViaStdinRaw: stdin,
+				})
+			);
+			expect(mockSpawn).toHaveBeenCalledOnce();
+			for (const level of ['info', 'debug', 'warn', 'error'] as const) {
+				expect(JSON.stringify(vi.mocked(logger[level]).mock.calls)).not.toContain(secret);
+			}
+		});
 		it('auto-enables shell for a .cmd command on Windows', () => {
 			const { spawner } = createTestContext();
 
@@ -1014,6 +1232,78 @@ describe('ChildProcessSpawner', () => {
 
 			const proc = processes.get('test-session');
 			expect(proc?.agentSessionId).toBeUndefined();
+		});
+	});
+
+	// Claude reports its cost as a running SESSION total; the spawn hands the
+	// parser the total the resumed transcript held, so it can report the turn's.
+	describe('Claude session cost baseline', () => {
+		const primedParser = () => {
+			const primeResumedSession = vi.fn();
+			vi.mocked(createOutputParser).mockReturnValueOnce({
+				agentId: 'claude-code',
+				parseJsonLine: vi.fn(),
+				extractUsage: vi.fn(),
+				extractSessionId: vi.fn(),
+				extractSlashCommands: vi.fn(),
+				isResultMessage: vi.fn(),
+				detectErrorFromLine: vi.fn(),
+				detectErrorFromExit: vi.fn(() => null),
+				primeResumedSession,
+			} as any);
+			return primeResumedSession;
+		};
+
+		it("primes a resumed turn with the transcript's last cost-state row", () => {
+			const root = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'spawner-cost-'));
+			try {
+				const cwd = nodePath.join(root, 'proj');
+				const projectDir = nodePath.join(
+					root,
+					'cfg',
+					'projects',
+					cwd.replace(/[^a-zA-Z0-9]/g, '-')
+				);
+				nodeFs.mkdirSync(projectDir, { recursive: true });
+				nodeFs.writeFileSync(
+					nodePath.join(projectDir, 'sid-1.jsonl'),
+					JSON.stringify({ type: 'cost-state', totalCostUSD: 0.5, modelUsage: {} }) + '\n'
+				);
+				vi.mocked(buildChildProcessEnv).mockReturnValueOnce({
+					PATH: '/usr/bin',
+					CLAUDE_CONFIG_DIR: nodePath.join(root, 'cfg'),
+				});
+				const prime = primedParser();
+				const { spawner } = createTestContext();
+
+				spawner.spawn(
+					createBaseConfig({ cwd, args: ['--print', '--resume', 'sid-1'], prompt: 'next' })
+				);
+
+				expect(prime).toHaveBeenCalledWith('sid-1', { totalCostUSD: 0.5, modelUsage: {} });
+			} finally {
+				nodeFs.rmSync(root, { recursive: true, force: true });
+			}
+		});
+
+		it('primes a remote resumed turn with an unknown baseline', () => {
+			const prime = primedParser();
+			const { spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({ agentSessionId: 'sid-2', sshRemoteId: 'remote-1', prompt: 'next' })
+			);
+
+			expect(prime).toHaveBeenCalledWith('sid-2', undefined);
+		});
+
+		it('does not prime a fresh session', () => {
+			const prime = primedParser();
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ args: ['--print', '--session-id', 'new'], prompt: 'hi' }));
+
+			expect(prime).not.toHaveBeenCalled();
 		});
 	});
 });

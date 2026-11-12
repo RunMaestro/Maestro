@@ -97,7 +97,7 @@ describe('WorktreeAnalytics', () => {
 	});
 
 	describe('ratio badge', () => {
-		it('shows a placeholder dash when no agents exist', () => {
+		it('shows a hyphen placeholder when no agents exist', () => {
 			render(<WorktreeAnalytics sessions={[]} data={buildData()} theme={theme} />);
 			expect(screen.getByTestId('worktree-ratio-badge').textContent).toBe('-');
 		});

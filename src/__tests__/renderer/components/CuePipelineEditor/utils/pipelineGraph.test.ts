@@ -683,6 +683,94 @@ describe('convertToReactFlowNodes', () => {
 		expect((group.data as { height: number }).height).toBeGreaterThan(0);
 	});
 
+	describe('agent cluster boxes', () => {
+		const homeOf = (sessionId: string) => ({ sessionId, sessionName: `Agent ${sessionId}` });
+		const at = (id: string, y: number) =>
+			makePipeline(id, {
+				nodes: [makeTrigger(`${id}-t`, 'time.heartbeat', {}, { x: 0, y: 0 })],
+				viewOffset: { x: 0, y },
+			});
+		const convert = (
+			pipelines: CuePipeline[],
+			homes: Map<string, { sessionId: string; sessionName: string }> | undefined,
+			selectedPipelineId: string | null = null
+		) =>
+			convertToReactFlowNodes(
+				pipelines,
+				selectedPipelineId,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				false,
+				homes
+			);
+
+		it('draws no cluster without home agents', () => {
+			const nodes = convert([at('p1', 0), at('p2', 300)], undefined);
+			expect(nodes.some((n) => n.type === 'agent-cluster')).toBe(false);
+		});
+
+		it("draws one labeled box around an agent's cards, behind them", () => {
+			const pipelines = [at('p1', 0), at('p2', 300)];
+			const homes = new Map([
+				['p1', homeOf('a')],
+				['p2', homeOf('a')],
+			]);
+			const nodes = convert(pipelines, homes);
+			const clusters = nodes.filter((n) => n.type === 'agent-cluster');
+			expect(clusters).toHaveLength(1);
+			const cluster = clusters[0];
+			const data = cluster.data as {
+				agentName: string;
+				pipelineCount: number;
+				width: number;
+				height: number;
+			};
+			expect(cluster.id).toBe('agent-cluster:a');
+			expect(data.agentName).toBe('Agent a');
+			expect(data.pipelineCount).toBe(2);
+			// A pure backdrop: below the cards and never interactive.
+			expect(cluster.zIndex).toBe(-2);
+			expect(cluster.draggable).toBe(false);
+			expect(cluster.selectable).toBe(false);
+			expect(cluster.style).toEqual({ pointerEvents: 'none' });
+			// It encloses every card it groups.
+			for (const p of pipelines) {
+				const card = pipelineCardBounds(p.nodes, { offset: p.viewOffset })!;
+				expect(card.x).toBeGreaterThan(cluster.position.x);
+				expect(card.y).toBeGreaterThan(cluster.position.y);
+				expect(card.x + card.width).toBeLessThan(cluster.position.x + data.width);
+				expect(card.y + card.height).toBeLessThan(cluster.position.y + data.height);
+			}
+			// Emitted before the cards, so it paints underneath at equal z.
+			const clusterIndex = nodes.indexOf(cluster);
+			const firstGroup = nodes.findIndex((n) => n.type === 'pipeline-group');
+			expect(clusterIndex).toBeLessThan(firstGroup);
+		});
+
+		it("skips a cluster whose box would cover another agent's card", () => {
+			// Agent a's cards sit above and below agent b's, so a's box would
+			// swallow b's card; b's own box stays clear and is drawn.
+			const pipelines = [at('a1', 0), at('b1', 400), at('a2', 800)];
+			const homes = new Map([
+				['a1', homeOf('a')],
+				['a2', homeOf('a')],
+				['b1', homeOf('b')],
+			]);
+			const ids = convert(pipelines, homes)
+				.filter((n) => n.type === 'agent-cluster')
+				.map((n) => n.id);
+			expect(ids).toEqual(['agent-cluster:b']);
+		});
+
+		it('draws no clusters in single-pipeline view', () => {
+			const homes = new Map([['p1', homeOf('a')]]);
+			const nodes = convert([at('p1', 0)], homes, 'p1');
+			expect(nodes.some((n) => n.type === 'agent-cluster')).toBe(false);
+		});
+	});
+
 	// A node renders at `width: max-content`, so a long name makes it far wider
 	// than the canonical 320px footprint. Sizing the card as if every node were
 	// 320 drew the node, its gear, its handle and its "in: <agent>" pill outside

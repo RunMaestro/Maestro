@@ -1,9 +1,12 @@
-import { useState, useRef, useCallback, useEffect, memo } from 'react';
+import { useState, useRef, useCallback, useLayoutEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, Clock, Layers } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import { useHoverPopover } from '../../hooks/ui/useHoverPopover';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface SearchPopoverProps {
 	theme: Theme;
@@ -58,7 +61,8 @@ function CountPill({
 
 /**
  * The search button and its popover menu.
- * Shows options for searching tabs or searching message history.
+ * Shows options for searching tabs or searching message history. On desktop
+ * the menu peeks open on mouse hover and pins on click (`useHoverPopover`).
  */
 export const SearchPopover = memo(function SearchPopover({
 	theme,
@@ -82,69 +86,68 @@ export const SearchPopover = memo(function SearchPopover({
 	const badgeCount = hasCount && showTabCountBadge ? (openTabCount as number) : null;
 	const popoverCount = hasCount && !showTabCountBadge ? (openTabCount as number) : null;
 
-	const [popoverOpen, setPopoverOpen] = useState(false);
+	// On a phone the magnifier is the tab list, full stop. The four-item menu it
+	// opens on desktop is mostly keyboard chords a phone cannot press, and the
+	// message-search modals it leads to do not fit a 390px screen; the one
+	// thing a handheld user wants from this button is to switch tabs.
+	const phone = usePhoneLayout();
+
 	const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
 	const btnRef = useRef<HTMLButtonElement>(null);
 	const popoverRef = useRef<HTMLDivElement>(null);
 
-	// Close popover on outside click
-	useEffect(() => {
-		if (!popoverOpen) return;
-		const handler = (e: MouseEvent) => {
-			if (btnRef.current && btnRef.current.contains(e.target as Node)) return;
-			if (popoverRef.current && popoverRef.current.contains(e.target as Node)) return;
-			setPopoverOpen(false);
-		};
-		document.addEventListener('mousedown', handler);
-		return () => document.removeEventListener('mousedown', handler);
-	}, [popoverOpen]);
+	// Desktop peeks the menu on hover and pins it on click; a phone has no menu.
+	const popover = useHoverPopover({
+		triggerRef: btnRef,
+		contentRef: popoverRef,
+		hoverEnabled: !phone,
+	});
+	const { isOpen: popoverOpen, toggle, close, closeForAction } = popover;
 
-	// Tracks whether the popover has ever been open, so the close branch below
-	// can't fire on mount and yank focus out of whatever the user was typing in.
-	const wasOpenRef = useRef(false);
-	// Set when a menu item is chosen: the item opens a modal that owns focus, so
-	// handing focus back to the trigger would leave the user typing nowhere.
-	const actionTakenRef = useRef(false);
-
-	// Auto-focus popover when opened, restore focus to the button when the user
-	// dismisses it (Escape / outside click) without picking anything.
-	useEffect(() => {
-		if (popoverOpen) {
-			wasOpenRef.current = true;
-			requestAnimationFrame(() => popoverRef.current?.focus());
+	// Anchor under the magnifier each time it opens, by hover or by click. The
+	// position is dropped on close so a reopen never paints at a stale spot.
+	useLayoutEffect(() => {
+		if (!popoverOpen) {
+			setPopoverPos(null);
 			return;
 		}
-		if (!wasOpenRef.current) return;
-		wasOpenRef.current = false;
-		if (actionTakenRef.current) {
-			actionTakenRef.current = false;
-			return;
-		}
-		btnRef.current?.focus();
+		const rect = btnRef.current?.getBoundingClientRect();
+		if (rect) setPopoverPos({ top: rect.bottom + 4, left: rect.left });
 	}, [popoverOpen]);
 
 	const handleClick = useCallback(() => {
-		const btn = btnRef.current;
-		if (!btn) return;
-		const rect = btn.getBoundingClientRect();
-		setPopoverPos({ top: rect.bottom + 4, left: rect.left });
-		setPopoverOpen((open) => !open);
-	}, []);
+		if (phone) {
+			onSearchTabs();
+			return;
+		}
+		toggle();
+	}, [phone, onSearchTabs, toggle]);
 
-	const closeAndDo = useCallback((action: () => void) => {
-		actionTakenRef.current = true;
-		setPopoverOpen(false);
-		action();
-	}, []);
+	const closeAndDo = useCallback(
+		(action: () => void) => {
+			closeForAction();
+			action();
+		},
+		[closeForAction]
+	);
 
 	return (
 		<>
 			<button
 				ref={btnRef}
 				onClick={handleClick}
+				{...popover.triggerHandlers}
 				className="relative flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
 				style={{ color: theme.colors.textDim }}
-				title={badgeCount != null ? `Search… (${badgeCount} open tabs)` : 'Search…'}
+				title={
+					phone
+						? badgeCount != null
+							? `Switch tab (${badgeCount} open tabs)`
+							: 'Switch tab'
+						: badgeCount != null
+							? `Search… (${badgeCount} open tabs)`
+							: 'Search…'
+				}
 			>
 				<Search className="w-4 h-4" />
 				{badgeCount != null && (
@@ -168,18 +171,18 @@ export const SearchPopover = memo(function SearchPopover({
 					<div
 						ref={popoverRef}
 						tabIndex={0}
-						className="fixed z-50 rounded-lg shadow-xl overflow-hidden outline-none"
+						className="fixed z-50 rounded-lg overflow-hidden outline-none"
 						style={{
 							top: popoverPos.top,
 							left: popoverPos.left,
-							backgroundColor: theme.colors.bgSidebar,
-							border: `1px solid ${theme.colors.border}`,
+							...elevatedSurfaceStyle(theme),
 							minWidth: 220,
 						}}
+						{...popover.contentHandlers}
 						onKeyDown={(e) => {
 							if (e.key === 'Escape') {
 								e.stopPropagation();
-								setPopoverOpen(false);
+								close();
 							}
 						}}
 					>

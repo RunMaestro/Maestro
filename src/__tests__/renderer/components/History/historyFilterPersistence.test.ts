@@ -66,15 +66,32 @@ describe('historyFilterPersistence', () => {
 	});
 
 	describe('resolveInitialHistoryFilters', () => {
-		it('defaults to all-on (incl. CUE) when nothing is stored and Cue is enabled', () => {
+		it('defaults to all-on (incl. CUE and AGENT) when nothing is stored and Cue is enabled', () => {
 			const key = historyPanelFilterKeyForAgent(AGENT_A);
-			expect(resolveInitialHistoryFilters(key, true)).toEqual(new Set(['USER', 'AUTO', 'CUE']));
+			expect(resolveInitialHistoryFilters(key, true)).toEqual(
+				new Set(['USER', 'AGENT', 'AUTO', 'CUE'])
+			);
 		});
 
 		it('strips CUE when the Cue feature is off', () => {
 			const key = historyPanelFilterKeyForAgent(AGENT_A);
 			savePersistedHistoryFilters(key, new Set<HistoryEntryType>(['USER', 'AUTO', 'CUE']));
 			expect(resolveInitialHistoryFilters(key, false)).toEqual(new Set(['USER', 'AUTO']));
+		});
+
+		it('switches AGENT on when upgrading a legacy (pre-AGENT) stored selection', () => {
+			// A bare array is the pre-v2 payload. It predates the AGENT type, so it
+			// cannot have opted out of it - hydrating verbatim would silently hide
+			// every consult entry.
+			const key = historyPanelFilterKeyForAgent(AGENT_A);
+			localStorage.setItem(key, JSON.stringify(['USER', 'AUTO']));
+			expect(resolveInitialHistoryFilters(key, true)).toEqual(new Set(['USER', 'AUTO', 'AGENT']));
+		});
+
+		it('honors an explicit AGENT deselection saved in the current format', () => {
+			const key = historyPanelFilterKeyForAgent(AGENT_A);
+			savePersistedHistoryFilters(key, new Set<HistoryEntryType>(['USER', 'AUTO']));
+			expect(resolveInitialHistoryFilters(key, true)).toEqual(new Set(['USER', 'AUTO']));
 		});
 
 		it('hydrates the per-agent selection over the default', () => {

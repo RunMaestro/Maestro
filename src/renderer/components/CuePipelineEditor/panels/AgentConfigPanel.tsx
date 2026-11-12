@@ -2,7 +2,8 @@
  * AgentConfigPanel - Configuration panel for agent nodes in the pipeline.
  *
  * Handles input/output prompts, single-trigger vs multi-trigger modes,
- * upstream output inclusion, and pipeline membership display.
+ * upstream output inclusion, the node's model / effort, and pipeline
+ * membership display.
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -23,6 +24,7 @@ import type { IncomingTriggerEdgeInfo } from './NodeConfigPanel';
 import { EdgePromptRow } from './EdgePromptRow';
 import { CueSelect } from './CueSelect';
 import { UpstreamSourcesPanel } from './UpstreamSourcesPanel';
+import { AgentTurnSettings } from './AgentTurnSettings';
 import { computeTransitiveUpstream } from '../utils/transitiveUpstream';
 import { getInputStyle, getLabelStyle } from './triggers/triggerConfigStyles';
 
@@ -535,6 +537,12 @@ export function AgentConfigPanel({
 					</div>
 				</div>
 			)}
+
+			<AgentTurnSettings
+				data={data}
+				theme={theme}
+				onChange={(patch) => onUpdateNode(node.id, patch)}
+			/>
 
 			<div
 				style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}

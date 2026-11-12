@@ -10,7 +10,7 @@ $repoRootEscaped = $repoRoot -replace "'","''"
 $vitePort = node (Join-Path $repoRootEscaped 'scripts/dev-port.mjs')
 $vitePort = $vitePort.Trim()
 
-$cmdRenderer = "Set-Location -LiteralPath '$repoRootEscaped'; `$env:VITE_PORT='$vitePort'; npm run dev:renderer"
+$cmdRenderer = "Set-Location -LiteralPath '$repoRootEscaped'; `$env:VITE_PORT='$vitePort'; bun run dev:renderer"
 Start-Process powershell -ArgumentList '-NoExit', '-Command', $cmdRenderer
 
 # Wait for renderer dev server to start before launching main process
@@ -18,7 +18,10 @@ Start-Process powershell -ArgumentList '-NoExit', '-Command', $cmdRenderer
 Write-Host "Waiting for renderer dev server on port $vitePort..." -ForegroundColor Yellow
 Start-Sleep -Seconds 5
 
-$cmdBuild = "Set-Location -LiteralPath '$repoRootEscaped'; npx tsc -p tsconfig.main.json; npm run build:preload; `$env:NODE_ENV='development'; `$env:VITE_PORT='$vitePort'; npx electron ."
+# build:main wipes dist/main before compiling, so a failed build leaves no preload
+# behind. Start Electron only when the build succeeded, or it opens without its
+# preload bridge.
+$cmdBuild = "Set-Location -LiteralPath '$repoRootEscaped'; bun run build:main; if (`$LASTEXITCODE -eq 0) { `$env:NODE_ENV='development'; `$env:VITE_PORT='$vitePort'; bunx electron . } else { Write-Host 'build:main failed, so Electron was not started.' -ForegroundColor Red }"
 Start-Process powershell -ArgumentList '-NoExit', '-Command', $cmdBuild
 
 Write-Host "Launched renderer and main developer windows on port $vitePort." -ForegroundColor Green

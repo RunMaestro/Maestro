@@ -27,6 +27,7 @@ import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { notifyToast } from '../stores/notificationStore';
 import { getBasename } from '../../shared/formatters';
 import { openZoomViewer, ZOOM_VIEWER_ATTR } from './ZoomViewer/zoomViewerStore';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 export interface ImageContextMenuState {
 	x: number;
@@ -52,7 +53,7 @@ export function ImageContextMenu({
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
 
-	const { left, top, ready } = useContextMenuPosition(menuRef, menu.x, menu.y);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, menu.x, menu.y);
 
 	// Dismiss on click outside or Escape. The menu is portaled to document.body,
 	// so a click inside it doesn't reach this listener via the React tree - guard
@@ -111,13 +112,17 @@ export function ImageContextMenu({
 	return createPortal(
 		<div
 			ref={menuRef}
-			className="fixed z-[10000] py-1 rounded-md shadow-xl border whitespace-nowrap"
+			className="fixed z-[10000] py-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
+				// A menu taller than the viewport pins to the top edge and runs off
+				// the bottom; the container is overflow-hidden, so those items are
+				// simply unreachable. Scroll instead of clipping.
+				maxHeight,
+				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '12.5rem',
 			}}
 			onMouseDown={(e) => e.stopPropagation()}

@@ -24,8 +24,21 @@ export function createCueHeartbeatTriggerSource(
 	let nextFireMs: number | null = null;
 
 	function fire(label: string): void {
+		const missedCount =
+			nextFireMs === null ? 0 : Math.floor((Date.now() - nextFireMs) / intervalMs);
+		// Log only, never a `triggerHealthWarning`: that payload raises a sticky
+		// toast, and a late tick is almost always the machine waking from sleep.
+		// Every heartbeat on every agent misses at once then, the trigger already
+		// recovers by firing once, and the user has nothing to act on.
+		if (missedCount > 0) {
+			ctx.onLog(
+				'warn',
+				`[CUE] "${ctx.subscription.name}" missed ${missedCount} heartbeat interval(s); evaluating once`
+			);
+		}
 		const event = createCueEvent('time.heartbeat', ctx.subscription.name, {
 			interval_minutes: intervalMinutes,
+			...(missedCount > 0 ? { missedCount } : {}),
 		});
 
 		// Always advance nextFireMs so nextTriggerAt() stays current even when the

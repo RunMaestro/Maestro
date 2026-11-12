@@ -27,6 +27,7 @@ import { existsSync, createWriteStream } from 'fs';
 import archiver from 'archiver';
 
 import { logger } from '../../utils/logger';
+import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
 import {
 	shouldIgnore,
 	parseGitignoreContent,
@@ -160,6 +161,13 @@ interface DirectorySizeResult {
  * only has to outlive one burst of callers, not act as a real cache.
  */
 const DIRECTORY_SIZE_CACHE_MS = 2_000;
+
+/**
+ * Request budget for fs:fetchImageAsBase64. The renderer blocks a preview on
+ * this, and the SSRF guard above only vets the host: a permitted host that
+ * accepts the connection and then stalls would hang the handler forever.
+ */
+const IMAGE_FETCH_TIMEOUT_MS = 15_000;
 
 /**
  * Check if a hostname resolves to a private/internal network address.
@@ -1119,7 +1127,7 @@ export function registerFilesystemHandlers(): void {
 				throw new Error(`Requests to private/internal addresses are not allowed: ${hostname}`);
 			}
 
-			const response = await fetch(url);
+			const response = await fetchWithTimeout(url, {}, IMAGE_FETCH_TIMEOUT_MS);
 			if (!response.ok) {
 				throw new Error(`HTTP ${response.status}`);
 			}

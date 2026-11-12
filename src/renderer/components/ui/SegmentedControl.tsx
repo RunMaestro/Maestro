@@ -20,6 +20,7 @@
  */
 
 import { useCallback } from 'react';
+import { revealActiveProps, useRevealActiveItem } from '../../hooks/ui/useRevealActiveItem';
 import type { Theme } from '../../types';
 
 export interface SegmentedOption<T extends string> {
@@ -71,9 +72,21 @@ export function SegmentedControl<T extends string>({
 		[options, value, onChange]
 	);
 
+	// A bar that scrolls has to keep the chosen segment in view, or the active
+	// option can be one the user cannot see.
+	const revealRef = useRevealActiveItem<HTMLDivElement>(value);
+
 	return (
 		<div
-			className="flex rounded overflow-hidden border"
+			ref={revealRef}
+			// Scrolls sideways when the row cannot hold every segment, rather
+			// than clipping. `overflow-hidden` is what rounds the corners, and it
+			// used to mean a bar wider than its row simply lost its last options:
+			// invisible AND unclickable, with no scrollbar to hint they were
+			// there. On a phone the five-way sort bar lost two of them.
+			// `overflow-y-hidden` is required beside it - `overflow-x: auto`
+			// alone computes `overflow-y` to `auto` and adds a vertical bar.
+			className="flex min-w-0 max-w-full rounded border overflow-x-auto overflow-y-hidden no-scrollbar"
 			style={{ borderColor: theme.colors.border }}
 			role="radiogroup"
 			aria-label={ariaLabel}
@@ -86,8 +99,9 @@ export function SegmentedControl<T extends string>({
 					<button
 						key={opt.value}
 						type="button"
+						{...revealActiveProps(isActive)}
 						onClick={() => onChange(opt.value)}
-						className="px-2 py-1 text-xs transition-colors whitespace-nowrap"
+						className="shrink-0 px-2 py-1 text-xs transition-colors whitespace-nowrap"
 						style={{
 							backgroundColor: isActive ? `${theme.colors.accent}20` : 'transparent',
 							color: isActive ? theme.colors.accent : theme.colors.textDim,

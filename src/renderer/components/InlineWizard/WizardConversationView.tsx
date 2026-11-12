@@ -322,7 +322,7 @@ function ErrorDisplay({
 						className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center"
 						style={{ backgroundColor: `${theme.colors.error}20` }}
 					>
-						<span style={{ color: theme.colors.error, fontSize: '16px' }}>⚠️</span>
+						<span style={{ color: theme.colors.error, fontSize: '1rem' }}>⚠️</span>
 					</div>
 					<div className="flex-1 min-w-0">
 						<h4

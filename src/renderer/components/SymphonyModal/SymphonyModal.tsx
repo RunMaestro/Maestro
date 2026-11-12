@@ -40,7 +40,6 @@ export function SymphonyModal({
 	isOpen,
 	onClose,
 	onStartContribution,
-	sessions,
 	onSelectSession,
 }: SymphonyModalProps) {
 	const onCloseRef = useRef(onClose);
@@ -379,7 +378,6 @@ export function SymphonyModal({
 								<ActiveTab
 									theme={theme}
 									activeContributions={activeContributions}
-									sessions={sessions}
 									prStatusMessage={prStatusSync.prStatusMessage}
 									isCheckingPRStatuses={prStatusSync.isCheckingPRStatuses}
 									syncingContributionId={prStatusSync.syncingContributionId}

@@ -6,7 +6,7 @@
  * codec for either - which reads as a broken build rather than a deleted file.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { MediaViewer } from '../../../../renderer/components/FilePreview/MediaViewer';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -19,7 +19,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	(window as any).maestro = {
 		fs: { readFile, stat },
-		shell: { openPath: vi.fn() },
+		shell: { openPath: vi.fn(), openExternal: vi.fn() },
 	};
 });
 
@@ -84,5 +84,72 @@ describe('MediaViewer failure states', () => {
 		renderViewer('/tmp/remote.mp3');
 
 		expect(await screen.findByText('Cannot Play This File')).toBeInTheDocument();
+	});
+});
+
+describe('MediaViewer remote URLs', () => {
+	const url = 'https://cdn.example.com/clip.mp3?sig=1';
+
+	it('loads an http(s) URL straight into the element, without touching the disk', async () => {
+		const { container } = renderViewer(url);
+
+		await waitFor(() => {
+			expect(container.querySelector('audio')?.getAttribute('src')).toBe(url);
+		});
+		expect(readFile).not.toHaveBeenCalled();
+	});
+
+	it('words a failed stream as a stream and offers the browser, not the disk', async () => {
+		const { container } = renderViewer(url);
+		const audio = await waitFor(() => {
+			const el = container.querySelector('audio');
+			expect(el).not.toBeNull();
+			return el as HTMLAudioElement;
+		});
+		audio.dispatchEvent(new Event('error'));
+
+		expect(await screen.findByText('Cannot Play This Stream')).toBeInTheDocument();
+		expect(stat).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByText('Open in Browser'));
+		expect((window as any).maestro.shell.openExternal).toHaveBeenCalledWith(url);
+		expect((window as any).maestro.shell.openPath).not.toHaveBeenCalled();
+	});
+});
+
+describe('MediaViewer Escape handling', () => {
+	beforeEach(() => {
+		readFile.mockResolvedValue(buildMediaStreamUrl('token', '/tmp/ok.mp3'));
+		stat.mockResolvedValue({ size: 1024, isDirectory: false });
+	});
+
+	/** The speed button is the only thing in the transport that opens a menu. */
+	const openRateMenu = async () => {
+		const button = await screen.findByLabelText('Playback speed');
+		fireEvent.click(button);
+		return button;
+	};
+
+	it('closes the speed menu and stops there', async () => {
+		const { container } = renderViewer('/tmp/ok.mp3');
+		await openRateMenu();
+		expect(screen.getByText('1.5x')).toBeInTheDocument();
+
+		const player = container.firstElementChild as HTMLElement;
+		const escape = fireEvent.keyDown(player, { key: 'Escape' });
+
+		expect(screen.queryByText('1.5x')).not.toBeInTheDocument();
+		// Handled here, so the surface around the player does not ALSO act on it -
+		// otherwise one Escape would close the menu and minimize the widget.
+		expect(escape).toBe(false);
+	});
+
+	it('lets Escape through when there is no menu to close', async () => {
+		// The player owns nothing else Escape could mean, so the floating widget
+		// around it gets to minimize on the same keypress.
+		const { container } = renderViewer('/tmp/ok.mp3');
+		await screen.findByLabelText('Playback speed');
+
+		const player = container.firstElementChild as HTMLElement;
+		expect(fireEvent.keyDown(player, { key: 'Escape' })).toBe(true);
 	});
 });

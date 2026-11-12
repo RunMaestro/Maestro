@@ -9,6 +9,10 @@
  * `cue:setActive` are logged at debug level - the worst case is the
  * scanners stay running, which is the pre-existing behavior.
  *
+ * The web-desktop bundle sends nothing. The flag is one host-wide boolean, so
+ * a browser reporting its own visibility paused the host's scanners every time
+ * a phone locked, however visible the desktop window was.
+ *
  * See CLAUDE-PERFORMANCE.md§"Visibility-Aware Operations" and PR-B 1.4.
  */
 
@@ -16,6 +20,7 @@ import { useEffect } from 'react';
 import { useEventListener } from '../utils/useEventListener';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 function notifyMain(active: boolean): void {
 	const cue = window.maestro?.cue;
@@ -32,18 +37,22 @@ function notifyMain(active: boolean): void {
 }
 
 export function useCueVisibilityWiring(): void {
+	// Only the host's own window speaks for the host's visibility.
+	const enabled = !isWebDesktop();
+
 	// Seed the main process with the current visibility state on mount.
 	// Without this, a renderer that starts up while the window is hidden
 	// would leave Cue active until the first visibilitychange event fires.
 	useEffect(() => {
+		if (!enabled) return;
 		notifyMain(!document.hidden);
-	}, []);
+	}, [enabled]);
 
 	useEventListener(
 		'visibilitychange',
 		() => {
 			notifyMain(!document.hidden);
 		},
-		{ target: document }
+		{ target: document, enabled }
 	);
 }

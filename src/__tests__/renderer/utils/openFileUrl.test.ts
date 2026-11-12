@@ -74,6 +74,33 @@ describe('openFileUrl', () => {
 		expect(openPath).toHaveBeenCalledWith('/tmp/song.mp3');
 	});
 
+	it('percent-decodes the path before handing it to the caller', () => {
+		const onFileClick = vi.fn();
+		// A `file://` href is a URL, so a space arrives as `%20` - from the agent
+		// writing the link and from mdast-util-to-hast's normalizeUri. Reading the
+		// literal `%20` is an ENOENT, and the file-click handler reports that by
+		// returning, so the click silently did nothing.
+		openFileUrl('file:///Users/me/Projects/Voice%20Cloning/audition/01-take.wav', onFileClick);
+
+		expect(onFileClick).toHaveBeenCalledWith(
+			'/Users/me/Projects/Voice Cloning/audition/01-take.wav'
+		);
+		expect(openPath).not.toHaveBeenCalled();
+	});
+
+	it('percent-decodes the path on the OS branch too', () => {
+		openFileUrl('file:///Users/me/Quarterly%20Reports/q3.pdf', vi.fn());
+		expect(openPath).toHaveBeenCalledWith('/Users/me/Quarterly Reports/q3.pdf');
+	});
+
+	it('leaves a malformed percent escape alone rather than throwing', () => {
+		const onFileClick = vi.fn();
+		// `100% done.md` is a real filename; decodeURIComponent throws on it.
+		openFileUrl('file:///tmp/100% done.md', onFileClick);
+
+		expect(onFileClick).toHaveBeenCalledWith('/tmp/100% done.md');
+	});
+
 	it('reports handled so callers can stop, even for the OS branch', () => {
 		// The return value is the "I took this" signal, not "I played it".
 		expect(openFileUrl('file:///tmp/report.pdf')).toBe(true);

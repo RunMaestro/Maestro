@@ -1,9 +1,8 @@
-import GithubSlugger from 'github-slugger';
-import type { TocEntry } from './types';
 import { formatSize } from '../../../shared/formatters';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
+import type { FileTreeIndices } from '../../utils/fileLinks';
 
 // ─── Image Cache ──────────────────────────────────────────────────────────────
 
@@ -93,12 +92,25 @@ export type PreviewTier = 'rich' | 'fast' | 'giant';
  *     GIANT_TIER_LINES - used for markdown, text, and code alike.
  *   - Long-line escalation: lines above LINE_LENGTH_GIANT_THRESHOLD jump to
  *     Giant regardless of byte / line count to avoid wide-layer freeze.
+ *
+ * `isMarkdown` opts out of the long-line escalation: that jump exists to spare
+ * CodeMirror's syntax highlighter and Fast tier's pre-rendered DOM from a
+ * pathologically wide layer, but markdown renders to wrapping HTML (Rich/Fast)
+ * which has no wide layer to freeze. A long prose line (e.g. a pasted
+ * transcript) would otherwise demote a perfectly renderable note to Giant's
+ * raw-source view, so markdown keeps the byte/line thresholds but ignores
+ * maxLineLength.
  */
-export function pickPreviewTier(bytes: number, lines: number, maxLineLength = 0): PreviewTier {
+export function pickPreviewTier(
+	bytes: number,
+	lines: number,
+	maxLineLength = 0,
+	isMarkdown = false
+): PreviewTier {
 	if (
 		bytes > GIANT_TIER_BYTES ||
 		lines > GIANT_TIER_LINES ||
-		maxLineLength > LINE_LENGTH_GIANT_THRESHOLD
+		(!isMarkdown && maxLineLength > LINE_LENGTH_GIANT_THRESHOLD)
 	) {
 		return 'giant';
 	}
@@ -181,6 +193,26 @@ export function canScaleFontForView(view: FontScaleTargetView): boolean {
 		!view.isMermaid &&
 		!view.isRenderedHtml
 	);
+}
+
+// ─── Scroll Container ─────────────────────────────────────────────────────────
+
+/**
+ * Marks the element that scrolls a view which owns its own scroller.
+ *
+ * Most views scroll inside the preview's padded content column. The CSV and
+ * JSONL tables cannot: a sticky header pins to its nearest scrolling ancestor,
+ * so the table has to sit directly in the element that scrolls it on BOTH
+ * axes. Those views fill the column and scroll themselves, and tag that
+ * scroller with this attribute so keyboard scrolling, scroll restore, and the
+ * stats-bar collapse follow it.
+ */
+export const PREVIEW_SCROLLER_ATTR = 'data-preview-scroller';
+
+/** The element that actually scrolls the preview: a view's own tagged scroller, else the content column. */
+export function resolvePreviewScroller(content: HTMLElement | null): HTMLElement | null {
+	if (!content) return null;
+	return content.querySelector<HTMLElement>(`[${PREVIEW_SCROLLER_ATTR}]`) ?? content;
 }
 
 // ─── Language Detection ───────────────────────────────────────────────────────
@@ -417,61 +449,44 @@ export const countMarkdownTasks = (content: string): { open: number; closed: num
 	return { open, closed };
 };
 
-/** Extract headings from markdown content for table of contents */
-export const extractHeadings = (content: string): TocEntry[] => {
-	const headings: TocEntry[] = [];
-	const lines = content.split('\n');
-	let inCodeFence = false;
-	const slugger = new GithubSlugger();
-
-	for (const line of lines) {
-		if (/^ {0,3}(`{3,}|~{3,})/.test(line)) {
-			inCodeFence = !inCodeFence;
-			continue;
-		}
-		if (inCodeFence) continue;
-
-		const match = line.match(/^(#{1,6})\s+(.+)$/);
-		if (match) {
-			const level = match[1].length;
-			const text = match[2].trim();
-			const slug = slugger.slug(text);
-			headings.push({ level, text, slug });
-		}
-	}
-
-	return headings;
-};
+/**
+ * Re-exported from the shared TOC library, which owns heading extraction now
+ * that Director's Notes builds a jump list too. Kept here so existing File
+ * Preview imports keep resolving.
+ */
+export { extractHeadings } from '../Toc';
 
 /**
- * Normalize a POSIX-style path by resolving `.` and `..` segments.
- * Does not use Node's path module (runs in renderer).
+ * Re-exported from the shared markdown-task helper, which main extracted so the
+ * chat renderer's clickable checkboxes and the File Preview toggle share one
+ * implementation. Kept here so existing File Preview imports keep resolving.
  */
-function normalizePosixPath(p: string): string {
-	const parts = p.split('/');
-	const resolved: string[] = [];
-	for (const part of parts) {
-		if (part === '.' || part === '') continue;
-		if (part === '..') {
-			resolved.pop();
-		} else {
-			resolved.push(part);
-		}
-	}
-	return (p.startsWith('/') ? '/' : '') + resolved.join('/');
-}
+export { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
+export type { TaskToggleResult } from '../../utils/markdownTasks';
 
-/** Resolve image path relative to markdown file directory */
-export const resolveImagePath = (src: string, markdownFilePath: string): string => {
-	if (src.startsWith('data:') || src.startsWith('http://') || src.startsWith('https://')) {
-		return src;
+/**
+ * The project root a previewed file sits under, from its absolute path and
+ * `cwd` (its folder relative to that root, as `useFilePreviewHandlers` derives
+ * it). That `cwd` is `''` both for a file at the root and for one outside the
+ * project, so for an empty `cwd` the file tree decides: when the tree lists the
+ * file's own name at its top level, the file's folder is the root.
+ */
+export const deriveProjectRoot = (
+	filePath: string,
+	cwd?: string,
+	indices?: FileTreeIndices | null
+): string | undefined => {
+	if (!filePath) return undefined;
+	const slash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+	const name = filePath.slice(slash + 1);
+	if (!cwd) {
+		return slash > 0 && indices?.allPaths.has(name) ? filePath.slice(0, slash) : undefined;
 	}
-
-	if (src.startsWith('/')) {
-		return src;
-	}
-
-	const markdownDir = markdownFilePath.substring(0, markdownFilePath.lastIndexOf('/'));
-	if (!markdownDir) return normalizePosixPath(src);
-	return normalizePosixPath(`${markdownDir}/${src}`);
+	const tail = `/${cwd}/${name}`;
+	const posixPath = filePath.replace(/\\/g, '/');
+	if (posixPath.endsWith(tail)) return filePath.slice(0, -tail.length);
+	const cwdIndex = posixPath.indexOf(`/${cwd}/`);
+	if (cwdIndex !== -1) return filePath.substring(0, cwdIndex);
+	const segmentIndex = posixPath.indexOf(`/${cwd.split('/')[0]}/`);
+	return segmentIndex !== -1 ? filePath.substring(0, segmentIndex) : undefined;
 };

@@ -10,9 +10,13 @@ vi.mock('../../../../renderer/utils/openUrl', () => ({
 vi.mock('../../../../renderer/utils/openMaestroLink', () => ({
 	openMaestroLink: vi.fn(),
 }));
+vi.mock('../../../../renderer/stores/notificationStore', () => ({
+	notifyToast: vi.fn(),
+}));
 
 import { openUrl } from '../../../../renderer/utils/openUrl';
 import { openMaestroLink } from '../../../../renderer/utils/openMaestroLink';
+import { notifyToast } from '../../../../renderer/stores/notificationStore';
 
 const theme = { colors: { accent: '#3366ff', accentText: '#88aaff' } } as any;
 
@@ -46,6 +50,21 @@ beforeEach(() => {
 });
 
 describe('createMarkdownLink - shared targets', () => {
+	it('reports when a Concerto chip points to an unavailable Movement', async () => {
+		const el = renderLink(
+			{ theme },
+			{ href: 'maestro://concerto/movement/missing', children: 'open it' }
+		);
+
+		el.props.onClick(makeEvent());
+
+		await vi.waitFor(() =>
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Concerto unavailable', color: 'orange' })
+			)
+		);
+	});
+
 	it('routes maestro:// through openMaestroLink', () => {
 		const el = renderLink({ theme }, { href: 'maestro://settings', children: 'x' });
 		el.props.onClick(makeEvent());
@@ -108,6 +127,19 @@ describe('createMarkdownLink - chat behavior (directExternal, accentText, contex
 		const el = renderLink(chat(), { href: 'https://example.com', children: 'x' });
 		el.props.onClick(makeEvent({ metaKey: true }));
 		expect(openUrl).toHaveBeenCalledWith('https://example.com', { ctrlKey: true });
+	});
+
+	it('hands a routing-hinted link to openUrl unstripped, so openUrl decides', () => {
+		const el = renderLink(chat(), { href: 'maestro+http://localhost:5173/x', children: 'x' });
+		el.props.onClick(makeEvent());
+		expect(openUrl).toHaveBeenCalledWith('maestro+http://localhost:5173/x', { ctrlKey: false });
+	});
+
+	it('opens nothing for a hint in front of a non-http scheme', () => {
+		const el = renderLink(chat(), { href: 'maestro+javascript:void(0)', children: 'x' });
+		el.props.onClick(makeEvent());
+		expect(openUrl).not.toHaveBeenCalled();
+		expect((window as any).maestro.shell.openExternal).not.toHaveBeenCalled();
 	});
 
 	it('opens file:// links via the shell', () => {
@@ -246,6 +278,20 @@ describe('createMarkdownLink - document behavior (anchors, relativeAsFile, callb
 		});
 		el.props.onClick(makeEvent());
 		expect(onExternalLinkClick).toHaveBeenCalledWith('https://example.com', { ctrlKey: false });
+	});
+
+	it('routes a routing-hinted link through onExternalLinkClick, not as a relative file', () => {
+		const onExternalLinkClick = vi.fn();
+		const onFileClick = vi.fn();
+		const el = renderLink(doc({ onExternalLinkClick, onFileClick }), {
+			href: 'system+https://example.com',
+			children: 'x',
+		});
+		el.props.onClick(makeEvent());
+		expect(onExternalLinkClick).toHaveBeenCalledWith('system+https://example.com', {
+			ctrlKey: false,
+		});
+		expect(onFileClick).not.toHaveBeenCalled();
 	});
 
 	it('routes relative paths to onFileClick with options', () => {

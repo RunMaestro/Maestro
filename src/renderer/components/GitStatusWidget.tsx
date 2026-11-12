@@ -5,7 +5,9 @@ import type { Theme } from '../types';
 import { useGitFileStatus, useGitDetail, type GitFileChange } from '../contexts/GitStatusContext';
 import { useAnchoredMenuPosition } from '../hooks/ui/useAnchoredMenuPosition';
 import { GitChangeCounts } from './ui/GitChangeCounts';
+import { StartTruncatedText } from './ui/StartTruncatedText';
 import { formatGitChangeSummary, type GitChangeTotals } from '../../shared/gitUtils';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 interface GitStatusWidgetProps {
 	/** Session ID to look up git status from context */
@@ -177,13 +179,12 @@ function GitStatusTooltip({
 	return createPortal(
 		<div
 			ref={tooltipRef}
-			className="fixed w-max max-w-[400px] rounded shadow-xl z-[100] pointer-events-auto"
+			className="fixed w-max max-w-[min(560px,calc(100vw-16px))] rounded z-[100] pointer-events-auto"
 			style={{
 				left,
 				top,
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				border: `1px solid ${theme.colors.border}`,
+				...elevatedSurfaceStyle(theme),
 			}}
 			onMouseEnter={onKeepOpen}
 			onMouseLeave={onScheduleClose}
@@ -215,9 +216,7 @@ function GitStatusTooltip({
 							}}
 						>
 							<div className="flex items-center justify-between gap-3 mb-1">
-								<span className="font-mono flex-1 min-w-0" title={file.path}>
-									{file.path}
-								</span>
+								<StartTruncatedText className="font-mono flex-1">{file.path}</StartTruncatedText>
 								<div className="flex items-center gap-2 shrink-0 text-2xs">
 									{file.additions > 0 && <span className="text-green-500">+{file.additions}</span>}
 									{file.deletions > 0 && <span className="text-red-500">−{file.deletions}</span>}

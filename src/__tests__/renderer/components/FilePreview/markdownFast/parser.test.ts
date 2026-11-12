@@ -33,7 +33,7 @@ describe('createParser', () => {
 		// With typographer enabled markdown-it would emit curly quotes and an em dash
 		expect(html).toContain('&quot;hello&quot;');
 		expect(html).toContain('--');
-		expect(html).not.toContain('—');
+		expect(html).not.toContain('\u2014');
 	});
 
 	it('returns fresh instances on each call (no shared state)', () => {

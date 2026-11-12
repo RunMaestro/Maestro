@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Check } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 // Lookback period options for the activity graph
 export type LookbackPeriod = {
@@ -237,13 +238,12 @@ export const SessionActivityGraph: React.FC<SessionActivityGraphProps> = ({
 			{contextMenu && (
 				<div
 					ref={contextMenuRef}
-					className="fixed z-50 py-1 rounded border shadow-lg"
+					className="fixed z-50 py-1 rounded"
 					style={{
 						left: contextMenuPos.left,
 						top: contextMenuPos.top,
 						opacity: contextMenuPos.ready ? 1 : 0,
-						backgroundColor: theme.colors.bgSidebar,
-						borderColor: theme.colors.border,
+						...elevatedSurfaceStyle(theme),
 						minWidth: '120px',
 					}}
 				>
@@ -279,8 +279,7 @@ export const SessionActivityGraph: React.FC<SessionActivityGraphProps> = ({
 				<div
 					className="absolute top-full mt-1 px-2 py-1.5 rounded text-2xs font-mono whitespace-nowrap z-20 pointer-events-none"
 					style={{
-						backgroundColor: theme.colors.bgSidebar,
-						border: `1px solid ${theme.colors.border}`,
+						...elevatedSurfaceStyle(theme),
 						color: theme.colors.textMain,
 						left: `${(hoveredIndex / (bucketCount - 1)) * 100}%`,
 						transform:

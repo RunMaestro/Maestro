@@ -368,4 +368,65 @@ describe('codex-usage-sampler', () => {
 			expect.objectContaining({ reason: 'http 400' })
 		);
 	});
+
+	// The reset-credit counts ride the usage payload, so the sampler is where
+	// they enter the app. `applicable` is the one that must survive the trip
+	// unchanged: absent means UNKNOWN, and coercing it to 0 here would tell
+	// every surface downstream that the account's credits are all useless.
+	describe('reset credit counts', () => {
+		async function sampleWithBody(body: Record<string, unknown>) {
+			await fs.writeFile(
+				path.join(TEST_ROOT, 'auth.json'),
+				JSON.stringify({ tokens: { access_token: 'redacted-token' } })
+			);
+			vi.mocked(globalThis.fetch).mockResolvedValue({
+				ok: true,
+				status: 200,
+				json: vi.fn().mockResolvedValue(body),
+			} as unknown as Response);
+			return sampleCodexUsage({ codexHome: TEST_ROOT });
+		}
+
+		it('carries both counts through when the payload reports them', async () => {
+			const snapshot = await sampleWithBody({
+				rate_limit_reset_credits: { available_count: 2, applicable_available_count: 1 },
+			});
+
+			expect(snapshot.resetCredits).toEqual({ available: 2, applicable: 1 });
+		});
+
+		it('keeps an applicable count of zero distinct from an absent one', async () => {
+			// The live shape that motivated the split: the account owns credits and
+			// none of them would do anything right now.
+			const snapshot = await sampleWithBody({
+				rate_limit_reset_credits: { available_count: 2, applicable_available_count: 0 },
+			});
+
+			expect(snapshot.resetCredits).toEqual({ available: 2, applicable: 0 });
+		});
+
+		it('leaves an omitted applicable count undefined rather than zero', async () => {
+			const snapshot = await sampleWithBody({
+				rate_limit_reset_credits: { available_count: 3 },
+			});
+
+			expect(snapshot.resetCredits?.available).toBe(3);
+			expect(snapshot.resetCredits?.applicable).toBeUndefined();
+			expect(snapshot.resetCredits).not.toHaveProperty('applicable', 0);
+		});
+
+		it('reports nothing at all when the payload omits the block', async () => {
+			const snapshot = await sampleWithBody({ email: 'codex@example.com' });
+
+			expect(snapshot.resetCredits).toBeUndefined();
+		});
+
+		it('ignores a malformed available count', async () => {
+			const snapshot = await sampleWithBody({
+				rate_limit_reset_credits: { available_count: 'two', applicable_available_count: 1 },
+			});
+
+			expect(snapshot.resetCredits).toBeUndefined();
+		});
+	});
 });

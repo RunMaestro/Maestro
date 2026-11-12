@@ -5,5 +5,7 @@ export * from './CueGroupRuns';
 export * from './HistoryFilterToggle';
 export * from './HistoryStatsBar';
 export * from './HostSourceFilter';
+export * from './UserSourceFilter';
 export * from './LookbackSelector';
 export * from './historyFilterPersistence';
+export * from './historyPillDensity';

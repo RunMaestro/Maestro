@@ -26,6 +26,8 @@ import {
 	type CueNotifyConfig,
 	type CueSubscription,
 } from '../../../../shared/cue';
+import { cueTurnSettingsOf } from '../../../../shared/cue/turn-settings';
+import type { EffortLevel, ModelTier } from '../../../../shared/modelTiers';
 
 /** Minimal graph session input - compatible with both local and cue-types CueGraphSession */
 interface GraphSessionInput {
@@ -64,6 +66,9 @@ interface GraphSessionInput {
 		self_destruct_on_failure?: boolean;
 		target_node_key?: string;
 		fan_out_node_keys?: string[];
+		tier?: ModelTier;
+		model?: string;
+		effort?: EffortLevel;
 	}>;
 }
 
@@ -317,6 +322,17 @@ function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
 		case 'task.pending':
 			if (sub.watch != null) config.watch = sub.watch;
 			break;
+		case 'webhook.received':
+			// A literal `secret` is hydrated (and re-emitted on save) purely so
+			// the editor doesn't strip a hand-written one off disk. The panel
+			// shows it read-only; new triggers always get `secret_env`.
+			if (sub.webhook?.secret != null) config.webhook_secret = sub.webhook.secret;
+			if (sub.webhook?.path != null) config.webhook_path = sub.webhook.path;
+			if (sub.webhook?.secret_env != null) config.webhook_secret_env = sub.webhook.secret_env;
+			if (sub.webhook?.signature_header != null) {
+				config.webhook_signature_header = sub.webhook.signature_header;
+			}
+			break;
 	}
 
 	return config;
@@ -347,6 +363,8 @@ function triggerLabel(eventType: CueEventType): string {
 			return 'Agent Done';
 		case 'cli.trigger':
 			return 'CLI Trigger';
+		case 'webhook.received':
+			return 'Webhook';
 		default:
 			return 'Trigger';
 	}
@@ -741,6 +759,8 @@ export function subscriptionsToPipelines(
 						if (i === 0 && sub.output_prompt) {
 							(agentNode.data as AgentNodeData).outputPrompt = sub.output_prompt;
 						}
+						// A fan-out sub's one model choice belongs to every target.
+						Object.assign(agentNode.data, cueTurnSettingsOf(sub));
 
 						// Store per-edge prompt when fan_out_prompts differ from shared prompt
 						const edgePrompt =
@@ -846,6 +866,7 @@ export function subscriptionsToPipelines(
 					if (sub.output_prompt) {
 						(agentNode.data as AgentNodeData).outputPrompt = sub.output_prompt;
 					}
+					Object.assign(agentNode.data, cueTurnSettingsOf(sub));
 
 					// `edge.prompt` is the single source of truth for every
 					// trigger→agent edge. Always emit the subscription's prompt
@@ -1141,6 +1162,7 @@ export function subscriptionsToPipelines(
 				if (sub.output_prompt) {
 					(targetNode.data as AgentNodeData).outputPrompt = sub.output_prompt;
 				}
+				Object.assign(targetNode.data, cueTurnSettingsOf(sub));
 				// Fan-in timeout settings
 				if (typeof sub.fan_in_timeout_minutes === 'number') {
 					(targetNode.data as AgentNodeData).fanInTimeoutMinutes = sub.fan_in_timeout_minutes;

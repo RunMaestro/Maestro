@@ -12,7 +12,7 @@
  *   - `derivePipelineHealth(...)`   → whether it is working (status + detail)
  */
 
-import type { CueRunResult } from './cue/contracts';
+import { normalizeWebhookPath, type CueRunResult } from './cue/contracts';
 import { parseSubscriptionName, CUE_EVENT_LABELS } from './cue/cue-summary';
 import type {
 	AgentNodeData,
@@ -61,6 +61,11 @@ export function getTriggerConfigSummary(data: TriggerNodeData): string {
 			return 'agent done';
 		case 'cli.trigger':
 			return 'cli';
+		case 'webhook.received':
+			// Mirror TriggerConfig: an unset path defaults to a slug of the
+			// trigger's label, so the node should show the URL that will
+			// actually be served rather than a bare `/cue/`.
+			return `/cue/${normalizeWebhookPath(config.webhook_path || data.customLabel || data.label || '')}`;
 		default:
 			return '';
 	}

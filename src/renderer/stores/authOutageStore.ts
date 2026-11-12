@@ -288,6 +288,35 @@ export function startManualReauth(sessionId: string): { providerKey: ProviderAut
 }
 
 /**
+ * Start a user-requested login for one provider ACCOUNT rather than one agent.
+ *
+ * The Usage Dashboard lists accounts with no agent on them, so there is no
+ * agent to start {@link startManualReauth} from. The outage is the same
+ * user-initiated record with an empty roster; the caller names where the login
+ * runs through `ReauthModalData.host`. An existing outage for the provider is
+ * joined untouched, so a real failure keeps its roster and its resume.
+ *
+ * Local accounts only: the quota panels skip SSH-remote agents, so this never
+ * keys on a remote.
+ */
+export function startAccountReauth(toolType: string): { providerKey: ProviderAuthKey } {
+	const key = providerAuthKey(toolType);
+	if (!useAuthOutageStore.getState().outages[key]) {
+		useAuthOutageStore.getState().setOutage(key, {
+			providerKey: key,
+			toolType,
+			message: '',
+			startedAt: Date.now(),
+			blocked: [],
+			fromPipeline: false,
+			initiatedBy: 'user',
+		});
+		logger.info('[auth-outage] User started an account login', undefined, { providerKey: key });
+	}
+	return { providerKey: key };
+}
+
+/**
  * Close an outage and put every agent it blocked back to work.
  *
  * Each blocked agent has its error cleared (which releases its held execution

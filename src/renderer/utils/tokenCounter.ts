@@ -7,7 +7,7 @@
  * Uses lazy loading to avoid loading the tokenizer until it's needed.
  */
 
-import { getEncoding, type Tiktoken } from 'js-tiktoken';
+import type { Tiktoken } from 'js-tiktoken';
 import { estimateTokenCount } from '../../shared/formatters';
 import { logger } from './logger';
 
@@ -20,7 +20,7 @@ let encoderPromise: Promise<Tiktoken> | null = null;
  */
 export function getEncoder(): Promise<Tiktoken> {
 	if (!encoderPromise) {
-		encoderPromise = Promise.resolve(getEncoding('cl100k_base'));
+		encoderPromise = import('js-tiktoken').then(({ getEncoding }) => getEncoding('cl100k_base'));
 	}
 	return encoderPromise;
 }

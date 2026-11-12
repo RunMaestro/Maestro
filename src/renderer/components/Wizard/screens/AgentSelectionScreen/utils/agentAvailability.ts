@@ -1,4 +1,5 @@
 import type { AgentConfig } from '../../../../../types';
+import { filterToAvailableProviders } from '../../../../../utils/providerAvailability';
 import type { AgentTile } from '../types';
 
 export function getVisibleAgents(agents: AgentConfig[]): AgentConfig[] {
@@ -21,6 +22,27 @@ export function countSelectableAgentTiles(
 	detectedAgents: AgentConfig[]
 ): number {
 	return tiles.filter((tile) => tile.supported && isAgentAvailable(detectedAgents, tile.id)).length;
+}
+
+/**
+ * The tiles the strip actually renders.
+ *
+ * Binds the shared provider-filter rule to this screen's shape. The New Agent
+ * modal's list applies the same rule to its own rows, so the two pickers agree
+ * on what "available" hides and on the empty-detection fallback.
+ */
+export function selectVisibleAgentTiles(
+	tiles: AgentTile[],
+	detectedAgents: AgentConfig[],
+	showAll: boolean,
+	selectedAgentId?: string | null
+): AgentTile[] {
+	return filterToAvailableProviders(
+		tiles,
+		(tile) => tile.supported && isAgentAvailable(detectedAgents, tile.id),
+		showAll,
+		(tile) => tile.id === selectedAgentId
+	);
 }
 
 export function findFirstSelectableTileIndex(

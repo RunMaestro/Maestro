@@ -29,8 +29,24 @@ export type {
 	ScrollMetrics,
 } from './useScrollPosition';
 
+// Horizontal strip scrolling (edge affordances + wheel-to-horizontal)
+export { useHorizontalScroll } from './useHorizontalScroll';
+export type { HorizontalScrollState } from './useHorizontalScroll';
+
+// Live CSS-grid column count (for arrow navigation over a responsive grid)
+export { useGridColumnCount } from './useGridColumnCount';
+
 // Scroll into view helper
 export { useScrollIntoView } from './useScrollIntoView';
+
+// Keep a scrolling strip's active item on screen (tab bars, segmented controls)
+export {
+	useRevealActiveItem,
+	revealActiveProps,
+	computeRevealScroll,
+	REVEAL_ACTIVE_ATTRIBUTE,
+} from './useRevealActiveItem';
+export type { RevealAlign, RevealAxis } from './useRevealActiveItem';
 export { useStickToBottom } from './useStickToBottom';
 
 // Edge auto-scroll while an HTML5 drag hovers a scrollable container
@@ -39,6 +55,14 @@ export type { UseDragAutoScrollOptions } from './useDragAutoScroll';
 
 // Hover tooltip management
 export { useHoverTooltip } from './useHoverTooltip';
+
+// Menu that peeks on mouse hover and pins open on click (tab bar search and +)
+export {
+	useHoverPopover,
+	HOVER_POPOVER_OPEN_DELAY_MS,
+	HOVER_POPOVER_CLOSE_DELAY_MS,
+} from './useHoverPopover';
+export type { UseHoverPopoverOptions } from './useHoverPopover';
 
 // Fixed-pitch font for surfaces that render shell text
 export { useFixedPitchFont } from './useFixedPitchFont';
@@ -74,6 +98,13 @@ export type {
 export { useResizablePanel } from './useResizablePanel';
 export type { UseResizablePanelOptions, UseResizablePanelReturn } from './useResizablePanel';
 
+// Resizable modal drag behavior
+export { useResizableModal } from './useResizableModal';
+export type {
+	ModalResizeDirection,
+	UseResizableModalOptions,
+	UseResizableModalReturn,
+} from './useResizableModal';
 // Remembered height for user-resized textareas
 export { useResizableTextarea } from './useResizableTextarea';
 export type {
@@ -104,6 +135,8 @@ export type { UsePanZoomOptions, UsePanZoomReturn, PanZoomView } from './usePanZ
 // Persisted view toggle (collapsed banners, folded sections)
 export { usePersistedToggle } from './usePersistedToggle';
 export type { UsePersistedToggleReturn } from './usePersistedToggle';
+export { usePersistedChoice } from './usePersistedChoice';
+export type { UsePersistedChoiceReturn } from './usePersistedChoice';
 export { usePersistedPanelWidth } from './usePersistedPanelWidth';
 export type {
 	UsePersistedPanelWidthOptions,
@@ -115,7 +148,7 @@ export { usePagination } from './usePagination';
 export type { UsePaginationResult } from './usePagination';
 
 // ResizeObserver-backed element width, for JS-computed layout
-export { useElementWidth } from './useElementWidth';
+export { useElementWidth, useFreeHeightInFlexColumn } from './useElementWidth';
 
 // Composer rects the toast stack lifts itself above
 export { useToastAvoidZone, useToastAvoidZoneStore, toastBottomInset } from './useToastAvoidZone';
@@ -140,3 +173,11 @@ export { useIdleNotification } from './useIdleNotification';
 
 // Deferred update-restart (installs downloaded update on idle transition)
 export { useRestartWhenIdle } from './useRestartWhenIdle';
+
+// Responsive viewport breakpoint (drives drawer-mode sidebars on narrow widths)
+export { useViewportBreakpoint } from './useViewportBreakpoint';
+export type { Breakpoint } from './useViewportBreakpoint';
+
+// Per-window panel-collapse state (reads/persists left/right panel collapse
+// through window.maestro.windows.*, keyed per-window not as a global setting)
+export { useWindowState } from './useWindowState';

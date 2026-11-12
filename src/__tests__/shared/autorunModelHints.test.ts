@@ -4,7 +4,8 @@
  * marker above it, and whether a marker in a code fence counts.
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
+import { noteEffortRejection, resetEffortRejections } from '../../shared/effortRejection';
 import {
 	findActiveModelHint,
 	findAllModelHints,
@@ -347,6 +348,39 @@ describe('resolveTurnSettings', () => {
 		expect(resolved.effort).toBe('xhigh');
 		expect(resolved.model).toBe('gpt-5.3-codex');
 		expect(resolved.warnings).toHaveLength(1);
+	});
+
+	describe('after the provider refused the value a level maps to', () => {
+		afterEach(() => {
+			resetEffortRejections();
+		});
+
+		it('inherits the agent effort and says the provider refused it', () => {
+			// Not "no level is mapped": the document is fine, the provider's
+			// catalogue moved, and the author should be told which it was.
+			noteEffortRejection('codex', {
+				value: 'xhigh',
+				model: 'gpt-6-luna',
+				supported: ['low', 'medium', 'high'],
+			});
+			const hint = findActiveModelHint(`<!-- MAESTRO:MODEL effort="high" -->\n- [ ] x`);
+			const resolved = resolveTurnSettings('codex', hint, 'gpt-6-luna', 'medium');
+
+			expect(resolved.effort).toBe('medium');
+			expect(resolved.notes).toEqual([]);
+			expect(resolved.warnings).toEqual([
+				'codex rejected effort "xhigh" for gpt-6-luna. It accepts low, medium, high. effort="high" was ignored; using the agent\'s configured effort.',
+			]);
+		});
+
+		it('leaves a level that maps to a different value untouched', () => {
+			noteEffortRejection('codex', { value: 'xhigh', supported: [] });
+			const hint = findActiveModelHint(`<!-- MAESTRO:MODEL effort="low" -->\n- [ ] x`);
+			const resolved = resolveTurnSettings('codex', hint, undefined, 'medium');
+
+			expect(resolved.effort).toBe('low');
+			expect(resolved.warnings).toEqual([]);
+		});
 	});
 
 	it('resolves an explicit "default" back to the agent\'s own values', () => {

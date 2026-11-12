@@ -8,9 +8,9 @@
  */
 
 import type { ToolType } from '../types';
-import type { AgentError, AgentErrorType } from '../../shared/types';
-import { getAgentDisplayName } from '../../shared/agentMetadata';
-import { getStdinFlags } from '../utils/spawnHelpers';
+import { stripAnsiCodes } from '../../shared/stringUtils';
+import type { FeedbackAccount } from '../../shared/feedbackAccounts';
+import { MAX_FEEDBACK_FIELD_LENGTH } from '../../shared/feedback';
 
 // ============================================================================
 // Types
@@ -23,13 +23,6 @@ export interface FeedbackMessage {
 	confidence?: number;
 	category?: FeedbackCategory;
 	summary?: string;
-	/**
-	 * An assistant bubble reporting that the provider could not answer. Shown to
-	 * the user but kept out of the transcript sent to the agent: it is not
-	 * something the agent said, and after a provider switch it would only tell
-	 * the new provider about the old one's login.
-	 */
-	failed?: boolean;
 }
 
 export type FeedbackCategory =
@@ -64,11 +57,12 @@ export interface FeedbackConversationConfig {
 	 * .app and made every diagnostic command fail.
 	 */
 	cwd?: string;
-	sshRemoteConfig?: {
-		enabled: boolean;
-		remoteId: string | null;
-		workingDirOverride?: string;
-	};
+	/**
+	 * The account to run as (see `shared/feedbackAccounts`). Its env replaces the
+	 * provider-level set, the way an agent's own env does, so the chat signs in
+	 * as that account rather than the provider's default login.
+	 */
+	account?: Pick<FeedbackAccount, 'env' | 'customPath' | 'sshRemoteId' | 'remoteCwd'>;
 }
 
 /** A diagnostic command the feedback agent ran while investigating. */
@@ -79,19 +73,6 @@ export interface FeedbackDiagnostic {
 	timestamp: number;
 }
 
-/**
- * The interview agent could not answer at all: its provider is not signed in,
- * crashed, or is not installed. Distinct from a reply the parser could not
- * read - this one means "try a different provider", so the UI offers that.
- */
-export interface FeedbackAgentFailure {
-	agentId: ToolType;
-	/** The classified agent error, when the provider's output matched one. */
-	type?: AgentErrorType;
-	/** User-facing text that names the provider and what went wrong. */
-	message: string;
-}
-
 export interface FeedbackSendCallbacks {
 	onChunk?: (chunk: string) => void;
 	onThinkingChunk?: (content: string) => void;
@@ -99,59 +80,18 @@ export interface FeedbackSendCallbacks {
 	onDiagnostic?: (diagnostic: FeedbackDiagnostic) => void;
 	onComplete?: (response: FeedbackParsedResponse) => void;
 	onError?: (error: string) => void;
-	/** Fired instead of `onComplete` when the provider could not answer. */
-	onAgentFailure?: (failure: FeedbackAgentFailure) => void;
 }
 
-/**
- * Providers the feedback interview can run on, in fallback order. Each one
- * needs output-format handling in `buildArgsForAgent`, so this is not the full
- * provider registry.
- */
-export const FEEDBACK_PROVIDERS: readonly ToolType[] = ['claude-code', 'codex', 'opencode'];
-
-/**
- * Pick the provider the feedback interview runs on.
- *
- * Detection only proves a binary exists, not that it is signed in, so a fixed
- * "first installed" order hands a Codex-only user a Claude Code interview the
- * moment a stale `claude` binary is on their PATH. The provider the user's own
- * agents run is the one most likely to be logged in, so the most-used
- * supported provider among their agents wins, and the fixed order only breaks
- * ties or covers an install with no agents yet.
- */
-export function pickFeedbackProvider(
-	agentToolTypes: readonly string[],
-	available: ReadonlySet<string>
-): ToolType | null {
-	const candidates = FEEDBACK_PROVIDERS.filter((id) => available.has(id));
-	if (candidates.length === 0) return null;
-
-	const usage = new Map<string, number>();
-	for (const toolType of agentToolTypes) {
-		usage.set(toolType, (usage.get(toolType) ?? 0) + 1);
-	}
-	let best = candidates[0];
-	for (const id of candidates) {
-		if ((usage.get(id) ?? 0) > (usage.get(best) ?? 0)) best = id;
-	}
-	return best;
-}
-
-/** Turn an agent error into text that says which provider failed and why. */
-export function describeFeedbackAgentFailure(
-	agentId: ToolType,
-	error: Pick<AgentError, 'type' | 'message'> | null,
-	exitCode?: number
-): string {
-	const name = getAgentDisplayName(agentId);
-	if (error?.type === 'auth_expired') {
-		return `${name} is not signed in on this machine, or its login has expired, so it could not answer. Switch to another provider below, or sign in to ${name} and send your message again.`;
-	}
-	if (error) {
-		return `${name} could not answer: ${error.message}`;
-	}
-	return `${name} stopped before answering${exitCode !== undefined ? ` (exit code ${exitCode})` : ''}. Send your message again, or switch to another provider below.`;
+/** What one turn produced, and whether the agent behind it ran at all. */
+export interface FeedbackTurnResult {
+	response: FeedbackParsedResponse;
+	/**
+	 * The agent could not answer: it was missing, or exited non-zero (a refused
+	 * login lands here). The caller decides whether to try another account.
+	 */
+	failed: boolean;
+	/** Why it failed, with the tail of the agent's output when there was any. */
+	error?: string;
 }
 
 // ============================================================================
@@ -330,6 +270,54 @@ function normalizeResponse(raw: any): FeedbackParsedResponse {
 	};
 }
 
+function redactProviderSecrets(output: string): string {
+	return output
+		.replace(
+			/\b((?:[A-Z][A-Z0-9_]*_)?(?:API_KEY|TOKEN|ACCESS_TOKEN|SECRET)\b\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\r\n]+)/gi,
+			'$1[REDACTED]'
+		)
+		.replace(/\b(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]')
+		.replace(/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b/g, '[REDACTED_GITHUB_TOKEN]')
+		.replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, '[REDACTED_GITHUB_TOKEN]')
+		.replace(/\bsk-[A-Za-z0-9][A-Za-z0-9_-]{8,}\b/g, '[REDACTED_API_KEY]');
+}
+
+function summarizeProcessFailure(output: string): string {
+	const cleaned = redactProviderSecrets(stripAnsiCodes(output))
+		.split('\n')
+		.map((line) => line.trimEnd())
+		.filter((line) => line.trim().length > 0);
+	if (cleaned.length === 0) return '';
+
+	const tail = cleaned.slice(-8).join('\n');
+	const maxLength = 600;
+	return tail.length > maxLength ? `...${tail.slice(-maxLength)}` : tail;
+}
+
+function indentForMarkdownCode(output: string): string {
+	return output
+		.split('\n')
+		.map((line) => `    ${line}`)
+		.join('\n');
+}
+
+function buildProviderFailureMessage(params: {
+	agentName: string;
+	binaryPath: string;
+	reason: string;
+	output?: string;
+}): string {
+	const detail = params.output ? summarizeProcessFailure(params.output) : '';
+
+	return (
+		`The ${params.agentName} provider ${params.reason}.\n\n` +
+		`**Binary:** ${params.binaryPath}\n\n` +
+		(detail
+			? `**Output:**\n\n${indentForMarkdownCode(detail)}`
+			: 'No output was captured. The binary may have failed to launch, may need authentication, or may be the wrong install. If you have multiple installs, confirm the selected provider path.')
+	);
+}
+
 /**
  * Pull the shell command out of a tool-execution event.
  *
@@ -353,14 +341,12 @@ export class FeedbackConversationManager {
 	private sessionId: string | null = null;
 	private agentType: ToolType | null = null;
 	private systemPrompt = '';
-	private outputBuffer = '';
 	private dataCleanup?: () => void;
 	private exitCleanup?: () => void;
 	private thinkingCleanup?: () => void;
 	private toolCleanup?: () => void;
-	private agentErrorCleanup?: () => void;
 	private timeoutId?: ReturnType<typeof setTimeout>;
-	private sshRemoteConfig?: FeedbackConversationConfig['sshRemoteConfig'];
+	private account?: FeedbackConversationConfig['account'];
 	private cwd = '.';
 
 	/**
@@ -372,28 +358,23 @@ export class FeedbackConversationManager {
 		this.sessionId = `feedback-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 		this.agentType = config.agentType;
 		this.systemPrompt = config.systemPrompt;
-		this.sshRemoteConfig = config.sshRemoteConfig;
+		this.account = config.account;
 		this.cwd = config.cwd || '.';
 
 		return this.sessionId;
 	}
 
 	/**
-	 * Move the conversation to another provider, keeping its prompt and working
-	 * directory. History travels with each `sendMessage`, so nothing the user
-	 * already said is lost.
+	 * Run the next turn as a different account. Every turn is a fresh process
+	 * that is handed the whole conversation, so switching between turns loses
+	 * nothing.
 	 */
-	switchAgent(agentType: ToolType): void {
+	switchAccount(agentType: ToolType, account: FeedbackConversationConfig['account']): void {
 		if (!this.sessionId) {
 			throw new Error('No active feedback conversation. Call start() first.');
 		}
-		const { systemPrompt, sshRemoteConfig, cwd } = this;
-		this.start({ agentType, systemPrompt, sshRemoteConfig, cwd });
-	}
-
-	/** The provider the conversation is currently running on. */
-	get currentAgent(): ToolType | null {
-		return this.agentType;
+		this.agentType = agentType;
+		this.account = account;
 	}
 
 	/**
@@ -404,40 +385,75 @@ export class FeedbackConversationManager {
 		history: FeedbackMessage[],
 		callbacks?: FeedbackSendCallbacks
 	): Promise<FeedbackParsedResponse> {
+		return (await this.sendTurn(userMessage, history, callbacks)).response;
+	}
+
+	/**
+	 * Send a user message and report whether the agent actually answered, so a
+	 * caller can fall through to another account when it did not.
+	 */
+	async sendTurn(
+		userMessage: string,
+		history: FeedbackMessage[],
+		callbacks?: FeedbackSendCallbacks
+	): Promise<FeedbackTurnResult> {
 		if (!this.sessionId || !this.agentType) {
 			throw new Error('No active feedback conversation. Call start() first.');
 		}
 
-		this.outputBuffer = '';
-		const agentType = this.agentType;
+		const currentSessionId = this.sessionId;
+		const currentAgentType = this.agentType;
+		const currentSystemPrompt = this.systemPrompt;
+		const account = this.account;
 
-		const fail = (failure: FeedbackAgentFailure): FeedbackParsedResponse => {
-			callbacks?.onAgentFailure?.(failure);
-			callbacks?.onError?.(failure.message);
-			return { ...DEFAULT_FEEDBACK_RESPONSE, message: failure.message };
-		};
-
-		const agent = await window.maestro.agents.get(agentType);
-		const isRemote = this.sshRemoteConfig?.enabled && this.sshRemoteConfig?.remoteId;
-		if (!agent || (!isRemote && !agent.available)) {
-			return fail({
-				agentId: agentType,
-				message: `${getAgentDisplayName(agentType)} is not installed or could not be found on this machine. Switch to another provider below.`,
-			});
+		const agent = await window.maestro.agents.get(currentAgentType);
+		if (!agent) {
+			throw new Error(`The ${currentAgentType} provider could not be found.`);
 		}
 
-		const prompt = this.buildPrompt(userMessage, history);
+		const binaryPath = agent.path || agent.command || currentAgentType;
+		// What the failure messages name: an account's own binary is the one that
+		// actually runs (the main process swaps it in via sessionCustomPath).
+		const displayBinaryPath = account?.customPath || binaryPath;
+		const agentName = agent.name || currentAgentType;
+		const isRemote = Boolean(account?.sshRemoteId);
+		// An account's own binary stands in for detection, which only knows the
+		// provider-level path. A missing agent is reported as a failed turn rather
+		// than thrown, so the caller can fall through to another account.
+		if (!isRemote && !agent.available && !account?.customPath) {
+			const error = `The ${agentName} provider is not available. Maestro resolved its binary to "${binaryPath}", but it reported as not runnable. Check that it is installed, on your PATH, and authenticated.`;
+			callbacks?.onError?.(error);
+			return { response: { ...DEFAULT_FEEDBACK_RESPONSE, message: error }, failed: true, error };
+		}
 
-		const currentSessionId = this.sessionId;
-		return new Promise<FeedbackParsedResponse>((resolve) => {
+		const prompt = this.buildPrompt(userMessage, history, currentSystemPrompt);
+
+		let outputBuffer = '';
+		let settled = false;
+		return new Promise<FeedbackTurnResult>((resolve) => {
+			const resolveOnce = (result: FeedbackTurnResult) => {
+				if (settled) return;
+				settled = true;
+				if (this.sessionId === currentSessionId) {
+					this.cleanupListeners();
+				}
+				// Surface the terminal response to the caller for *every* outcome
+				// (success, provider failure, timeout) so UI state like feedback
+				// readiness always reflects the final result instead of going stale.
+				callbacks?.onComplete?.(result.response);
+				resolve(result);
+			};
+
 			// Activity timeout
 			const resetTimeout = () => {
 				if (this.timeoutId) clearTimeout(this.timeoutId);
 				this.timeoutId = setTimeout(() => {
-					this.cleanupListeners();
-					resolve({
-						...DEFAULT_FEEDBACK_RESPONSE,
-						message: 'The agent took too long to respond. Please try again.',
+					resolveOnce({
+						response: {
+							...DEFAULT_FEEDBACK_RESPONSE,
+							message: 'The agent took too long to respond. Please try again.',
+						},
+						failed: false,
 					});
 				}, INACTIVITY_TIMEOUT_MS);
 			};
@@ -445,8 +461,8 @@ export class FeedbackConversationManager {
 
 			// Data listener
 			this.dataCleanup = window.maestro.process.onData((sid: string, data: string) => {
-				if (sid === this.sessionId) {
-					this.outputBuffer += data;
+				if (sid === currentSessionId) {
+					outputBuffer += data;
 					resetTimeout();
 					callbacks?.onChunk?.(data);
 				}
@@ -456,7 +472,7 @@ export class FeedbackConversationManager {
 			if (callbacks?.onThinkingChunk) {
 				this.thinkingCleanup = window.maestro.process.onThinkingChunk?.(
 					(sid: string, content: string) => {
-						if (sid === this.sessionId && content) {
+						if (sid === currentSessionId && content) {
 							resetTimeout();
 							callbacks.onThinkingChunk?.(content);
 						}
@@ -496,55 +512,39 @@ export class FeedbackConversationManager {
 				);
 			}
 
-			// Agent error listener - an auth rejection, quota, or crash classified
-			// from the provider's output. Recorded rather than resolved on: the
-			// process still exits after it, and the exit decides the turn.
-			let agentError: Pick<AgentError, 'type' | 'message'> | null = null;
-			this.agentErrorCleanup = window.maestro.process.onAgentError?.(
-				(sid: string, error: { type: string; message: string }) => {
-					if (sid !== this.sessionId) return;
-					agentError = { type: error.type as AgentErrorType, message: error.message };
-				}
-			);
-
 			// Exit listener
 			this.exitCleanup = window.maestro.process.onExit((sid: string, code: number) => {
-				if (sid !== this.sessionId) return;
-				this.cleanupListeners();
+				if (sid !== currentSessionId) return;
 
-				const parsed = code === 0 ? extractJsonFromOutput(this.outputBuffer) : null;
-				if (parsed) {
-					callbacks?.onComplete?.(parsed);
-					resolve(parsed);
-					return;
+				if (code === 0) {
+					const parsed = extractJsonFromOutput(outputBuffer);
+					const response = parsed ?? DEFAULT_FEEDBACK_RESPONSE;
+					resolveOnce({ response, failed: false });
+				} else {
+					const message = buildProviderFailureMessage({
+						agentName,
+						binaryPath: displayBinaryPath,
+						reason: `exited with code ${code} before it could respond`,
+						output: outputBuffer,
+					});
+					const errorResponse = {
+						...DEFAULT_FEEDBACK_RESPONSE,
+						message,
+					};
+					const detail = summarizeProcessFailure(outputBuffer);
+					const error = `Agent exited with code ${code}: ${detail || '(no output)'}`;
+					callbacks?.onError?.(error);
+					resolveOnce({ response: errorResponse, failed: true, error });
 				}
-				if (code !== 0 || agentError) {
-					resolve(
-						fail({
-							agentId: agentType,
-							type: agentError?.type,
-							message: describeFeedbackAgentFailure(agentType, agentError, code),
-						})
-					);
-					return;
-				}
-				callbacks?.onComplete?.(DEFAULT_FEEDBACK_RESPONSE);
-				resolve(DEFAULT_FEEDBACK_RESPONSE);
 			});
 
 			// Build args based on agent type
 			const argsForSpawn = this.buildArgsForAgent(agent);
-			const commandToUse = agent.path || agent.command;
 
-			// Get stdin flags for Windows
-			const isSshSession = Boolean(this.sshRemoteConfig?.enabled);
-			const stdinFlags = getStdinFlags({
-				isSshSession,
-				supportsStreamJsonInput: Boolean(agent?.capabilities?.supportsStreamJsonInput),
-				hasImages: false,
-			});
-
-			// Spawn agent.
+			// Spawn agent. A synchronous throw here (before a promise is returned)
+			// would bypass the .then/.catch chain below and leave resolveOnce
+			// unreached, hanging the turn until the inactivity timeout. Promise
+			// resolution funnels both sync and async failures through one path.
 			//
 			// readOnlyMode is what makes live diagnostics safe to hand to a feedback
 			// agent: the spawner appends the provider's CLI-enforced read-only flags
@@ -552,16 +552,70 @@ export class FeedbackConversationManager {
 			// Codex, `--agent plan` for OpenCode) and skips the batch-mode permission
 			// grants. The agent can read logs and query maestro-cli; it cannot write,
 			// install, or change a setting in the app it is filing a bug about.
-			window.maestro.process.spawn({
-				sessionId: currentSessionId,
-				toolType: agentType,
-				cwd: this.cwd,
-				command: commandToUse,
-				args: argsForSpawn,
-				prompt,
-				readOnlyMode: true,
-				...stdinFlags,
-			} as any);
+			//
+			// Note there is deliberately no stdin-flag plumbing here: prompt delivery
+			// is decided in the main process, never in the renderer (#1280).
+			let spawnPromise: Promise<{ success?: boolean; pid?: number } | undefined>;
+			try {
+				spawnPromise = Promise.resolve(
+					window.maestro.process.spawn({
+						sessionId: currentSessionId,
+						toolType: currentAgentType,
+						cwd: isRemote && account?.remoteCwd ? account.remoteCwd : this.cwd,
+						command: binaryPath,
+						args: argsForSpawn,
+						prompt,
+						readOnlyMode: true,
+						// The account: its env replaces the provider-level set, exactly as
+						// the agent it came from is spawned.
+						sessionCustomEnvVars: account?.env,
+						sessionCustomPath: account?.customPath,
+						sessionSshRemoteConfig: account?.sshRemoteId
+							? { enabled: true, remoteId: account.sshRemoteId }
+							: undefined,
+					} as any)
+				);
+			} catch (error: unknown) {
+				spawnPromise = Promise.reject(error);
+			}
+
+			spawnPromise
+				.then((spawnResult: { success?: boolean; pid?: number } | undefined) => {
+					if (spawnResult?.success !== false) return;
+
+					const output = `Process spawn returned success=false${
+						typeof spawnResult.pid === 'number' ? ` (pid ${spawnResult.pid})` : ''
+					}`;
+					const message = buildProviderFailureMessage({
+						agentName,
+						binaryPath: displayBinaryPath,
+						reason: 'could not be started',
+						output,
+					});
+					callbacks?.onError?.(output);
+					resolveOnce({
+						response: { ...DEFAULT_FEEDBACK_RESPONSE, message },
+						failed: true,
+						error: output,
+					});
+				})
+				.catch((error: unknown) => {
+					const output = redactProviderSecrets(
+						error instanceof Error ? error.message : String(error)
+					);
+					const message = buildProviderFailureMessage({
+						agentName,
+						binaryPath: displayBinaryPath,
+						reason: 'could not be started',
+						output,
+					});
+					callbacks?.onError?.(output);
+					resolveOnce({
+						response: { ...DEFAULT_FEEDBACK_RESPONSE, message },
+						failed: true,
+						error: output,
+					});
+				});
 		});
 	}
 
@@ -590,10 +644,10 @@ export class FeedbackConversationManager {
 				return args;
 			}
 			case 'codex': {
-				// batchModeArgs is intentionally omitted: it is pure permission bypass,
-				// and Codex's readOnlyArgs already carries the non-interactive flags
-				// (--dangerously-bypass-approvals-and-sandbox, --skip-git-repo-check)
-				// alongside --sandbox read-only.
+				// batchModeArgs is intentionally omitted: it is pure permission bypass
+				// (--dangerously-bypass-approvals-and-sandbox nullifies --sandbox
+				// read-only). Codex's readOnlyArgs carries --sandbox read-only and
+				// --skip-git-repo-check; `exec` is non-interactive on its own.
 				const args = [...baseArgs];
 				if (agent.jsonOutputArgs) args.push(...agent.jsonOutputArgs);
 				return args;
@@ -611,15 +665,19 @@ export class FeedbackConversationManager {
 	/**
 	 * Build the full prompt with conversation context
 	 */
-	private buildPrompt(userMessage: string, history: FeedbackMessage[]): string {
-		let prompt = this.systemPrompt + '\n\n';
+	private buildPrompt(
+		userMessage: string,
+		history: FeedbackMessage[],
+		systemPrompt: string
+	): string {
+		let prompt = systemPrompt + '\n\n';
 
 		if (history.length > 0) {
 			prompt += '## Conversation So Far\n\n';
 			for (const msg of history) {
 				if (msg.role === 'user') {
 					prompt += `User: ${msg.content}\n\n`;
-				} else if (msg.role === 'assistant' && !msg.failed) {
+				} else if (msg.role === 'assistant') {
 					prompt += `Assistant: ${msg.content}\n\n`;
 				}
 			}
@@ -648,8 +706,6 @@ export class FeedbackConversationManager {
 		this.thinkingCleanup = undefined;
 		this.toolCleanup?.();
 		this.toolCleanup = undefined;
-		this.agentErrorCleanup?.();
-		this.agentErrorCleanup = undefined;
 	}
 
 	/**
@@ -666,8 +722,8 @@ export class FeedbackConversationManager {
 		}
 		this.sessionId = null;
 		this.agentType = null;
+		this.account = undefined;
 		this.systemPrompt = '';
-		this.outputBuffer = '';
 	}
 
 	get isActive(): boolean {
@@ -691,3 +747,75 @@ export function getConfidenceColor(confidence: number): string {
 }
 
 export { FEEDBACK_CONFIDENCE_THRESHOLD };
+
+// ============================================================================
+// What gets filed
+// ============================================================================
+
+/** Title length when the summary has to be derived from the user's words. */
+const DERIVED_SUMMARY_LENGTH = 72;
+
+/** The fields an issue is filed with, plus whether the interview finished. */
+export interface FeedbackSubmission {
+	category: FeedbackCategory;
+	summary: string;
+	structured: FeedbackStructured;
+	/** True when filed before the agent reported it had enough. */
+	early: boolean;
+}
+
+function clip(text: string, max: number): string {
+	return text.length > max ? `${text.slice(0, max - 3).trimEnd()}...` : text;
+}
+
+/**
+ * Resolve what to file right now. Submitting is never gated on the agent's
+ * understanding: the user can file at any point, and whatever the interview
+ * has not filled yet is backed by the user's own words, so nothing they typed
+ * is lost and the required fields are never empty. Returns null only when the
+ * user has not said anything yet - there is nothing to file.
+ */
+export function resolveFeedbackSubmission(
+	lastResponse: FeedbackParsedResponse | null,
+	messages: FeedbackMessage[],
+	ready: boolean,
+	confidence: number
+): FeedbackSubmission | null {
+	const userWords = messages
+		.filter((m) => m.role === 'user')
+		.map((m) => m.content.trim())
+		.filter(Boolean);
+	if (userWords.length === 0) return null;
+
+	const structured = lastResponse?.structured;
+	const early = !ready || !lastResponse;
+	const firstLine = userWords[0].split('\n')[0].trim();
+	const transcript = userWords.join('\n\n');
+	const quoted = transcript
+		.split('\n')
+		.map((line) => `> ${line}`)
+		.join('\n');
+
+	const actual = structured?.actualBehavior?.trim() || transcript;
+	const contextParts = [structured?.additionalContext?.trim() || ''];
+	if (early) {
+		contextParts.push(
+			`Submitted before the interview finished (understanding ${confidence}%).` +
+				(actual === transcript ? '' : ` The reporter's own words:\n\n${quoted}`)
+		);
+	}
+
+	return {
+		category: lastResponse?.category ?? 'general_feedback',
+		summary: lastResponse?.summary?.trim() || clip(firstLine, DERIVED_SUMMARY_LENGTH),
+		structured: {
+			expectedBehavior:
+				structured?.expectedBehavior?.trim() ||
+				'Not provided (submitted before the interview finished).',
+			actualBehavior: clip(actual, MAX_FEEDBACK_FIELD_LENGTH),
+			reproductionSteps: structured?.reproductionSteps?.trim() || '',
+			additionalContext: clip(contextParts.filter(Boolean).join('\n\n'), MAX_FEEDBACK_FIELD_LENGTH),
+		},
+		early,
+	};
+}

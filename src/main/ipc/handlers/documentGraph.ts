@@ -2,8 +2,8 @@ import { ipcMain, BrowserWindow, App } from 'electron';
 import chokidar, { FSWatcher } from 'chokidar';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
-import { isWebContentsAvailable } from '../../utils/safe-send';
-import { WINDOWS_LOCKED_SYSTEM_FILES } from '../../utils/watcher-ignore';
+import { createSafeSend } from '../../utils/safe-send';
+import { WINDOWS_LOCKED_SYSTEM_FILES, ignoreDotfilesUnder } from '../../utils/watcher-ignore';
 
 const LOG_CONTEXT = '[DocumentGraph]';
 
@@ -61,6 +61,7 @@ export interface DocumentGraphHandlerDependencies {
  */
 export function registerDocumentGraphHandlers(deps: DocumentGraphHandlerDependencies): void {
 	const { getMainWindow, app } = deps;
+	const safeSend = createSafeSend(getMainWindow);
 
 	/**
 	 * Process pending events for a root path and send to renderer
@@ -69,20 +70,14 @@ export function registerDocumentGraphHandlers(deps: DocumentGraphHandlerDependen
 		const events = pendingEvents.get(rootPath);
 		if (!events || events.size === 0) return;
 
-		const mainWindow = getMainWindow();
-		if (!isWebContentsAvailable(mainWindow)) {
-			events.clear();
-			return;
-		}
-
 		// Convert Map to array of file change events
 		const changes: Array<{ filePath: string; eventType: 'add' | 'change' | 'unlink' }> = [];
 		for (const [filePath, eventType] of events) {
 			changes.push({ filePath, eventType });
 		}
 
-		// Send batched changes to renderer
-		mainWindow.webContents.send('documentGraph:filesChanged', {
+		// Send batched changes to the renderer and web-desktop bridge clients
+		safeSend('documentGraph:filesChanged', {
 			rootPath,
 			changes,
 		});
@@ -149,7 +144,7 @@ export function registerDocumentGraphHandlers(deps: DocumentGraphHandlerDependen
 			// Create file watcher using chokidar (cross-platform)
 			const watcher = chokidar.watch(rootPath, {
 				ignored: [
-					/(^|[/\\])\../, // Ignore dotfiles
+					ignoreDotfilesUnder(rootPath), // Ignore dotfiles below the root, not above it
 					/node_modules/,
 					/dist/,
 					/build/,

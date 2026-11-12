@@ -9,7 +9,15 @@
 // number the user can find in the app. See `overlayTabConversationStats` for how
 // the disk-based Claude path is reconciled with it.
 
-import { resolveAgentId, getSessionById, readSessions } from '../services/storage';
+import os from 'os';
+import {
+	resolveAgentId,
+	getSessionById,
+	readStoredAiTabs,
+	readAgentConfig,
+	readSettings,
+} from '../services/storage';
+import { resolveAgentAccountDir } from '../../shared/agentAccountDir';
 import { listClaudeSessions } from '../services/agent-sessions';
 import { formatSessions, formatError, SessionDisplay } from '../output/formatter';
 import { computeTabConversationStats } from '../../shared/tabConversationStats';
@@ -50,11 +58,6 @@ interface StoredAiTab {
 interface TabSessionStats {
 	messageCount: number;
 	durationSeconds: number;
-}
-
-function readAgentTabs(agentId: string): StoredAiTab[] {
-	const agent = readSessions().find((s) => s.id === agentId);
-	return ((agent as { aiTabs?: StoredAiTab[] } | undefined)?.aiTabs ?? []) as StoredAiTab[];
 }
 
 /**
@@ -231,13 +234,30 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 		// Both end up reporting the same conversation figures: the tab reader
 		// computes them, and the disk reader has them overlaid where a tab exists.
 		let result: { sessions: SessionDisplay[]; totalCount: number; filteredCount: number };
-		const tabs = readAgentTabs(agentId);
+		const tabs = readStoredAiTabs<StoredAiTab>(agentId);
 
 		if (DISK_SESSION_TYPES.includes(agent.toolType)) {
+			// List the account the agent runs under, as the desktop browser does:
+			// claude resumes only from the config dir it was started with.
 			const claudeResult = listClaudeSessions(agent.cwd, {
 				limit,
 				skip,
 				search: options.search,
+				configDir: resolveAgentAccountDir(
+					{
+						toolType: agent.toolType,
+						customEnvVars: agent.customEnvVars,
+						sshRemote: !!agent.sessionSshRemoteConfig?.enabled,
+					},
+					{
+						agentLevelEnvVars: readAgentConfig(agent.toolType).customEnvVars as
+							| Record<string, string>
+							| undefined,
+						globalShellEnvVars: readSettings().shellEnvVars as Record<string, string> | undefined,
+						env: process.env,
+						homeDir: os.homedir(),
+					}
+				),
 			});
 			result = {
 				totalCount: claudeResult.totalCount,

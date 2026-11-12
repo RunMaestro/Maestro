@@ -1183,6 +1183,7 @@ describe('WizardContext', () => {
 					selectedAgent: 'claude-code',
 					agentName: 'Test Project',
 					directoryPath: '/test/path',
+					additionalDirectories: [],
 					isGitRepo: true,
 					conversationHistory: [],
 					confidenceLevel: 50,

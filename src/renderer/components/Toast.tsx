@@ -1,23 +1,33 @@
-import React, { memo, useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../types';
-import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
+import {
+	useNotificationStore,
+	type Toast as ToastType,
+	type ToastColor,
+} from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
-import { dispatchToastClickAction } from '../services/toastClickActions';
-import { formatDurationParts as formatDuration } from '../../shared/formatters';
+import { runToastClick } from '../services/toastClickActions';
+import { formatDurationParts as formatDuration, formatTimestamp } from '../../shared/formatters';
 import { getToastWidthDimensions, TOAST_VIEWPORT_GUTTER } from '../../shared/toastWidth';
+import { useMediaPlaybackStore } from '../stores/mediaPlaybackStore';
+import { mediaFloatLaneLift } from '../utils/mediaFloatGeometry';
+import { withMonoFallback } from '../../shared/fontStack';
 import {
 	isLeftToastPosition,
 	isTopToastPosition,
 	TOAST_BOTTOM_OFFSET,
 	TOAST_STACK_GAP,
+	TOAST_TAB_STRIP_CLEARANCE,
 	TOAST_TOP_OFFSET,
 	toastSidePanel,
 } from '../../shared/toastPosition';
+import { useUIStore } from '../stores/uiStore';
 import { useElementWidth } from '../hooks/ui/useElementWidth';
 import { toastBottomInset, useToastAvoidZoneStore } from '../hooks/ui/useToastAvoidZone';
 import { Z_LAYERS } from '../constants/zLayers';
+import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { CopyIconButton } from './ui';
 
 interface ToastContainerProps {
@@ -38,6 +48,93 @@ export function buildToastClipboardText(toast: ToastType): string {
 		.trim();
 }
 
+/** Fixed orange - no theme defines this slot. Matches CenterFlash. */
+const ORANGE_HEX = '#f97316';
+
+/** The accent a toast color resolves to under a theme (icon, badge, progress bar). */
+export function toastAccentColor(color: ToastColor, theme: Theme): string {
+	switch (color) {
+		case 'green':
+			return theme.colors.success;
+		case 'red':
+			return theme.colors.error;
+		case 'yellow':
+			return theme.colors.warning;
+		case 'orange':
+			return ORANGE_HEX;
+		case 'theme':
+		default:
+			return theme.colors.accent;
+	}
+}
+
+/** Same glyph renderer for floating toasts and durable inbox entries. */
+export function ToastIcon({
+	color,
+	className = 'w-5 h-5',
+}: {
+	color: ToastColor;
+	className?: string;
+}) {
+	switch (color) {
+		case 'green':
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+				</svg>
+			);
+		case 'red':
+			// XCircle - error. Circled so it's not mistaken for the bare close (X) button.
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth={2}
+						d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
+					/>
+				</svg>
+			);
+		case 'yellow':
+			// Info-style "i" - yellow is a soft heads-up.
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth={2}
+						d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+					/>
+				</svg>
+			);
+		case 'orange':
+			// AlertTriangle - more emphatic warning than yellow.
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth={2}
+						d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+					/>
+				</svg>
+			);
+		case 'theme':
+		default:
+			// Sparkles - themed default, no semantic.
+			return (
+				<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						strokeWidth={2}
+						d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
+					/>
+				</svg>
+			);
+	}
+}
+
 const ToastItem = memo(function ToastItem({
 	toast,
 	theme,
@@ -50,7 +147,8 @@ const ToastItem = memo(function ToastItem({
 	theme: Theme;
 	onRemove: (toastId: string) => void;
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
-	widthDimensions: { minWidth: number; maxWidth: number };
+	/** Pixel bounds from the toast-width setting, or null to fill the stack (phone). */
+	widthDimensions: { minWidth: number; maxWidth: number } | null;
 	/** Slide in from (and out to) the left edge instead of the right. */
 	fromLeft: boolean;
 }) {
@@ -75,117 +173,28 @@ const ToastItem = memo(function ToastItem({
 
 	const handleClose = (e?: React.MouseEvent) => {
 		e?.stopPropagation();
+		// Closing or clicking a toast is the user dealing with it; one that timed
+		// out on its own stays unread in the notification center.
+		useNotificationStore.getState().markNotificationRead(toast.id);
 		setIsExiting(true);
 		setTimeout(() => onRemove(toast.id), 300);
 	};
 
 	// Handle click on toast to navigate to session or trigger custom action.
-	// Order: onClick (renderer-only callback) → clickAction (data-driven, survives
-	// the IPC bridge from CLI/web) → legacy sessionId fallback.
+	// The precedence lives in runToastClick so the notification center's entry
+	// for this toast does the same thing.
 	const handleToastClick = () => {
-		if (toast.onClick) {
-			toast.onClick();
-			handleClose();
-			return;
-		}
-		if (toast.clickAction) {
-			// Every kind (AI tab, file preview, terminal tab, browser tab, external
-			// URL) is dispatched by one shared service so the behavior is identical
-			// wherever a toast came from.
-			dispatchToastClickAction(toast.clickAction, { onSessionClick });
-			handleClose();
-			return;
-		}
-		if (toast.sessionId && onSessionClick) {
-			onSessionClick(toast.sessionId, toast.tabId);
-			handleClose();
-		}
+		runToastClick(toast, { onSessionClick });
+		// An explicit click acknowledges this toast even if its destination is gone.
+		handleClose();
 	};
 
 	// Check if toast is clickable (has session navigation or custom action)
 	const isClickable = toast.onClick || toast.clickAction || (toast.sessionId && onSessionClick);
 
-	// Icon based on the toast color (5-color design language).
-	const getIcon = () => {
-		switch (toast.color) {
-			case 'green':
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-					</svg>
-				);
-			case 'red':
-				// XCircle - error. Circled so it's not mistaken for the bare close (X) button.
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
-						/>
-					</svg>
-				);
-			case 'yellow':
-				// Info-style "i" - yellow is a soft heads-up.
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-						/>
-					</svg>
-				);
-			case 'orange':
-				// AlertTriangle - more emphatic warning than yellow.
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-						/>
-					</svg>
-				);
-			case 'theme':
-			default:
-				// Sparkles - themed default, no semantic.
-				return (
-					<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
-						/>
-					</svg>
-				);
-		}
-	};
-
 	const offscreen = fromLeft ? 'translateX(-100%)' : 'translateX(100%)';
 
-	/** Fixed orange - no theme defines this slot. Matches CenterFlash. */
-	const ORANGE_HEX = '#f97316';
-
-	const getTypeColor = () => {
-		switch (toast.color) {
-			case 'green':
-				return theme.colors.success;
-			case 'red':
-				return theme.colors.error;
-			case 'yellow':
-				return theme.colors.warning;
-			case 'orange':
-				return ORANGE_HEX;
-			case 'theme':
-			default:
-				return theme.colors.accent;
-		}
-	};
+	const getTypeColor = () => toastAccentColor(toast.color, theme);
 
 	return (
 		<div
@@ -200,8 +209,12 @@ const ToastItem = memo(function ToastItem({
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					border: `1px solid ${theme.colors.border}`,
-					minWidth: `${widthDimensions.minWidth}px`,
-					maxWidth: `${widthDimensions.maxWidth}px`,
+					...(widthDimensions
+						? {
+								minWidth: `${widthDimensions.minWidth}px`,
+								maxWidth: `${widthDimensions.maxWidth}px`,
+							}
+						: { width: '100%' }),
 				}}
 				onClick={isClickable ? handleToastClick : undefined}
 			>
@@ -213,12 +226,14 @@ const ToastItem = memo(function ToastItem({
 						backgroundColor: `${getTypeColor()}20`,
 					}}
 				>
-					{getIcon()}
+					<ToastIcon color={toast.color} />
 				</div>
 
 				{/* Content */}
 				<div className="flex-1 min-w-0">
-					{/* Line 1: Group + Agent/Project name + Tab name (wraps to line 2 if needed) */}
+					{/* Line 1: Group + Agent/Project name + Tab name (wraps to line 2 if
+					    needed). The arrival time rides the title row below instead, so a
+					    toast with no agent context does not spend a line on a lone clock. */}
 					{(toast.group || toast.project || toast.tabName) && (
 						<div
 							className="flex flex-wrap items-center gap-2 text-xs mb-1"
@@ -258,9 +273,25 @@ const ToastItem = memo(function ToastItem({
 						</div>
 					)}
 
-					{/* Title */}
-					<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
-						{toast.title}
+					{/* Title, with the arrival time pinned right on the same line. Every
+					    toast is stamped, not just the ones that carry agent context. */}
+					<div className="flex items-baseline gap-2">
+						<div
+							className="font-medium text-sm min-w-0 flex-1"
+							style={{ color: theme.colors.textMain }}
+						>
+							{toast.title}
+						</div>
+						{toast.timestamp > 0 && (
+							<time
+								className="flex-shrink-0 text-xs tabular-nums"
+								style={{ color: theme.colors.textDim }}
+								dateTime={new Date(toast.timestamp).toISOString()}
+								title={formatTimestamp(toast.timestamp, 'full')}
+							>
+								{formatTimestamp(toast.timestamp, 'smart')}
+							</time>
+						)}
 					</div>
 
 					{/* Message */}
@@ -276,6 +307,7 @@ const ToastItem = memo(function ToastItem({
 							style={{ color: theme.colors.accent }}
 							onClick={(e) => {
 								e.stopPropagation();
+								useNotificationStore.getState().markNotificationRead(toast.id);
 								openUrl(toast.actionUrl!);
 							}}
 						>
@@ -292,7 +324,7 @@ const ToastItem = memo(function ToastItem({
 					)}
 
 					{/* Duration badge */}
-					{toast.taskDuration && toast.taskDuration > 0 && (
+					{typeof toast.taskDuration === 'number' && toast.taskDuration > 0 && (
 						<div
 							className="flex items-center gap-1 text-xs mt-2"
 							style={{ color: theme.colors.textDim }}
@@ -350,7 +382,7 @@ const ToastItem = memo(function ToastItem({
 			</div>
 
 			{/* Progress bar - hidden for dismissible (sticky) toasts */}
-			{!toast.dismissible && toast.duration && toast.duration > 0 && (
+			{!toast.dismissible && typeof toast.duration === 'number' && toast.duration > 0 && (
 				<div
 					className="absolute bottom-0 left-0 h-1 rounded-b-lg transition-all ease-linear"
 					style={{
@@ -371,6 +403,12 @@ const ToastItem = memo(function ToastItem({
 	);
 });
 
+/** Breathing room left between a lifted toast stack and the media player. */
+const TOAST_MEDIA_PLAYER_GAP = 8;
+
+/** The phone stack is pinned `left-3 right-3`, so its gutter is 0.75rem. */
+const TOAST_PHONE_GUTTER = 12;
+
 export const ToastContainer = memo(function ToastContainer({
 	theme,
 	onSessionClick,
@@ -385,10 +423,20 @@ export const ToastContainer = memo(function ToastContainer({
 	// drags the side bar on the toast's side; ignored by the fixed presets.
 	const leftSidebarWidth = useSettingsStore((s) => s.leftSidebarWidth);
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
-	const widthDimensions = getToastWidthDimensions(
-		toastWidth,
-		toastSidePanel(toastPosition, { leftSidebarWidth, rightPanelWidth }).width
-	);
+	// Phone: every width preset is wider than the screen (small starts at 320px
+	// plus the gutter, on a 390px viewport), so the stack spans the width
+	// instead and each toast fills it. A phone stack stays pinned to the bottom
+	// regardless of the corner setting: the top band belongs to the iOS status
+	// bar, and a stack spanning the screen has no left or right to pick.
+	const phone = usePhoneLayout();
+	const stackAtTop = isTop && !phone;
+	const stackAtLeft = isLeft && !phone;
+	const widthDimensions = phone
+		? null
+		: getToastWidthDimensions(
+				toastWidth,
+				toastSidePanel(toastPosition, { leftSidebarWidth, rightPanelWidth }).width
+			);
 
 	// In a bottom corner, lift the stack above the composer when it would cover
 	// it (side bar closed or narrower than the toast). Width falls back to the
@@ -396,17 +444,78 @@ export const ToastContainer = memo(function ToastContainer({
 	// than covering. A top corner never meets the composer.
 	const avoidZones = useToastAvoidZoneStore((s) => s.zones);
 	const stackRef = useRef<HTMLDivElement>(null);
-	const stackWidth = useElementWidth(stackRef, toasts.length > 0) || widthDimensions.maxWidth;
-	const stackLeft = isLeft
-		? TOAST_VIEWPORT_GUTTER
-		: window.innerWidth - TOAST_VIEWPORT_GUTTER - stackWidth;
-	const bottomInset = isTop
+	const stackWidth =
+		useElementWidth(stackRef, toasts.length > 0) ||
+		(widthDimensions ? widthDimensions.maxWidth : window.innerWidth - 2 * TOAST_PHONE_GUTTER);
+	const stackGutter = phone ? TOAST_PHONE_GUTTER : TOAST_VIEWPORT_GUTTER;
+	const stackLeft = stackAtLeft ? stackGutter : window.innerWidth - stackGutter - stackWidth;
+	const bottomInset = stackAtTop
 		? 0
 		: toastBottomInset(
 				avoidZones,
 				{ left: stackLeft, right: stackLeft + stackWidth },
 				window.innerHeight
 			);
+
+	// The floating media player opens in the bottom-right corner and sits far
+	// below toasts in z-order (toasts have to stay readable over modals), so an
+	// arriving notification used to paint straight over the widget - it looked
+	// like the player had closed itself. The stack steps over it instead: toasts
+	// are transient, and the widget is where the user deliberately put it.
+	//
+	// The lane is measured at the preset's FULL width rather than at the width
+	// this toast happens to render at, so the worst case is lifting when a short
+	// toast would have cleared the widget anyway - which costs nothing, while
+	// the other way round is the bug being fixed. The player's footprint is in
+	// right-edge coordinates, so a left-corner lane is translated into them.
+	const floatFootprint = useMediaPlaybackStore((s) => s.floatFootprint);
+	const laneWidth = widthDimensions ? widthDimensions.maxWidth : Number.POSITIVE_INFINITY;
+	const playerLift = stackAtTop
+		? 0
+		: mediaFloatLaneLift(floatFootprint, {
+				fromRight: stackAtLeft
+					? Math.max(0, window.innerWidth - stackGutter - laneWidth)
+					: stackGutter,
+				// A phone stack spans the screen, so it always shares the widget's column.
+				width: laneWidth,
+				gap: TOAST_MEDIA_PLAYER_GAP,
+			});
+
+	// Toasts portal to document.body, which puts them OUTSIDE the app shell -
+	// the element that carries the interface font. Without restating it here
+	// they inherit the body's default face, so a user who switched the UI font
+	// kept getting toasts in the old one. Same monospace safety net the shell
+	// applies, so a bare picker name can't fall through to serif.
+	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
+
+	// Keep the stack off the Right Bar's Files / History / Auto Run tab strip
+	// (#1628). Only a right-side stack over an open Right Bar can reach the
+	// strip, so only that stack clears it: a top stack starts below the strip,
+	// and a bottom stack is capped below it with the overflow scrolling inside
+	// the stack. Every other stack only has to clear the title bar. Interactive
+	// toasts over the strip swallowed the clicks meant for its tabs.
+	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
+	const topOffset = !stackAtLeft && rightPanelOpen ? TOAST_TAB_STRIP_CLEARANCE : TOAST_TOP_OFFSET;
+	const bottomOffset = TOAST_BOTTOM_OFFSET + Math.max(bottomInset, playerLift);
+	// The scroller is padded (one stack gap above and below, the gutter at the
+	// sides) and pulled back out by the same negative margin, so the toasts sit
+	// exactly where they did while their shadows and the slide-in clip at the
+	// window edge rather than at the toast. The cap is a border-box height that
+	// includes that padding, so the toasts themselves never rise into the
+	// clearance band (bottom stack) or run past the bottom offset (top stack).
+	const maxHeight = stackAtTop
+		? `calc(100vh - ${topOffset - TOAST_STACK_GAP}px)`
+		: `calc(100vh - ${bottomOffset + topOffset - 2 * TOAST_STACK_GAP}px)`;
+
+	// A bottom stack puts the newest toast last, so once it overflows, scroll
+	// to the end to keep that toast in view. A top stack renders reversed, so
+	// its newest toast is already at the scroll origin.
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const newestToastId = toasts[toasts.length - 1]?.id;
+	useLayoutEffect(() => {
+		const scroller = scrollRef.current;
+		if (scroller && !stackAtTop) scroller.scrollTop = scroller.scrollHeight;
+	}, [newestToastId, stackAtTop]);
 
 	if (toasts.length === 0) return null;
 
@@ -415,21 +524,45 @@ export const ToastContainer = memo(function ToastContainer({
 	// stack renders reversed.
 	return createPortal(
 		<div
-			className="fixed"
+			ref={scrollRef}
+			className="fixed scrollbar-thin"
 			style={{
-				...(isTop
-					? { top: TOAST_TOP_OFFSET }
-					: { bottom: TOAST_BOTTOM_OFFSET + bottomInset, transition: 'bottom 200ms ease-out' }),
-				...(isLeft ? { left: TOAST_VIEWPORT_GUTTER } : { right: TOAST_VIEWPORT_GUTTER }),
+				...(stackAtTop
+					? { top: topOffset }
+					: {
+							// Whichever obstacle reaches higher wins: the composer or the
+							// floating media player. Both are measured from the window bottom.
+							bottom: bottomOffset,
+							transition: 'bottom 200ms ease-out',
+						}),
+				maxHeight,
+				overflowX: 'hidden',
+				overflowY: 'auto',
+				paddingTop: TOAST_STACK_GAP,
+				paddingLeft: stackGutter,
+				paddingRight: stackGutter,
+				marginTop: -TOAST_STACK_GAP,
+				marginBottom: -TOAST_STACK_GAP,
+				marginLeft: -stackGutter,
+				marginRight: -stackGutter,
+				...(phone
+					? { left: TOAST_PHONE_GUTTER, right: TOAST_PHONE_GUTTER }
+					: stackAtLeft
+						? { left: TOAST_VIEWPORT_GUTTER }
+						: { right: TOAST_VIEWPORT_GUTTER }),
 				pointerEvents: 'none',
 				zIndex: Z_LAYERS.TOAST,
+				fontFamily,
+				paddingBottom: phone
+					? `calc(env(safe-area-inset-bottom, 0px) + ${TOAST_STACK_GAP}px)`
+					: TOAST_STACK_GAP,
 			}}
 			data-testid="toast-stack"
 			data-position={toastPosition}
 		>
 			<div
 				ref={stackRef}
-				className={`flex ${isTop ? 'flex-col-reverse' : 'flex-col'}`}
+				className={`flex ${stackAtTop ? 'flex-col-reverse' : 'flex-col'}`}
 				style={{ pointerEvents: 'auto', gap: TOAST_STACK_GAP }}
 			>
 				{toasts.map((toast) => (
@@ -440,7 +573,7 @@ export const ToastContainer = memo(function ToastContainer({
 						onRemove={removeToast}
 						onSessionClick={onSessionClick}
 						widthDimensions={widthDimensions}
-						fromLeft={isLeft}
+						fromLeft={stackAtLeft}
 					/>
 				))}
 			</div>

@@ -53,10 +53,15 @@ const createDefaultProps = (
 	theme: createTheme(),
 	loading: false,
 	sshConnectionError: null,
-	sortedAgents: [
+	visibleAgents: [
 		createAgent(),
 		createAgent({ id: 'codex', name: 'OpenAI Codex', available: true, binaryName: 'codex' }),
 	],
+	availableProviderCount: 2,
+	totalProviderCount: 11,
+	providerLocationLabel: 'locally',
+	showAllProviders: false,
+	onShowAllProvidersChange: vi.fn(),
 	selectedAgent: 'claude-code',
 	expandedAgent: null,
 	refreshingAgent: null,
@@ -127,7 +132,7 @@ describe('AgentPickerGrid', () => {
 		render(
 			<AgentPickerGrid
 				{...createDefaultProps({
-					sortedAgents: [createAgent({ available: false })],
+					visibleAgents: [createAgent({ available: false })],
 				})}
 			/>
 		);
@@ -139,7 +144,7 @@ describe('AgentPickerGrid', () => {
 		render(
 			<AgentPickerGrid
 				{...createDefaultProps({
-					sortedAgents: [
+					visibleAgents: [
 						createAgent({ id: 'future-agent', name: 'Future Agent', available: false }),
 					],
 				})}
@@ -180,7 +185,7 @@ describe('AgentPickerGrid', () => {
 		render(
 			<AgentPickerGrid
 				{...createDefaultProps({
-					sortedAgents: [
+					visibleAgents: [
 						createAgent({ id: 'future-agent', name: 'Future Agent', available: false }),
 					],
 					onAgentSelect,
@@ -301,6 +306,35 @@ describe('AgentPickerGrid', () => {
 		expect(screen.getByText('Agent Provider')).toBeInTheDocument();
 	});
 
+	it('reports the provider counts beside the section heading', () => {
+		render(<AgentPickerGrid {...createDefaultProps()} />);
+
+		// Compact wording: the full sentence would wrap the heading onto a second
+		// line in a modal that already scrolls.
+		expect(screen.getByText('2 of 11 locally')).toBeInTheDocument();
+		expect(screen.getByText('Show All')).toBeInTheDocument();
+	});
+
+	it('forwards the availability toggle', () => {
+		const onShowAllProvidersChange = vi.fn();
+		render(<AgentPickerGrid {...createDefaultProps({ onShowAllProvidersChange })} />);
+
+		fireEvent.click(screen.getByRole('switch', { name: 'Show all supported providers' }));
+		expect(onShowAllProvidersChange).toHaveBeenCalledWith(true);
+	});
+
+	it('hides the counts while detection is still running or unreachable', () => {
+		// Both states make the numbers a lie: nothing has been counted yet, or the
+		// host never answered.
+		const { rerender } = render(<AgentPickerGrid {...createDefaultProps({ loading: true })} />);
+		expect(screen.queryByRole('switch', { name: 'Show all supported providers' })).toBeNull();
+
+		rerender(
+			<AgentPickerGrid {...createDefaultProps({ sshConnectionError: 'Connection timed out' })} />
+		);
+		expect(screen.queryByRole('switch', { name: 'Show all supported providers' })).toBeNull();
+	});
+
 	it('should render hook behavior note', () => {
 		render(<AgentPickerGrid {...createDefaultProps()} />);
 		expect(screen.getByText(/Agent hooks run per-message/)).toBeInTheDocument();
@@ -311,7 +345,7 @@ describe('AgentPickerGrid', () => {
 		render(
 			<AgentPickerGrid
 				{...createDefaultProps({
-					sortedAgents: [
+					visibleAgents: [
 						createAgent(),
 						createAgent({ id: 'future-agent', name: 'Future', available: false }),
 					],
@@ -322,6 +356,26 @@ describe('AgentPickerGrid', () => {
 		const options = screen.getAllByRole('option');
 		expect(options[0]).toHaveAttribute('tabindex', '0'); // claude-code (supported)
 		expect(options[1]).toHaveAttribute('tabindex', '-1'); // future-agent (unsupported)
+	});
+
+	it('should treat grok as a supported agent (selectable, tabIndex=0)', () => {
+		const onAgentSelect = vi.fn();
+
+		render(
+			<AgentPickerGrid
+				{...createDefaultProps({
+					visibleAgents: [
+						createAgent({ id: 'grok', name: 'Grok CLI', available: true, binaryName: 'grok' }),
+					],
+					onAgentSelect,
+					selectedAgent: '',
+				})}
+			/>
+		);
+
+		expect(screen.getByRole('option')).toHaveAttribute('tabindex', '0');
+		fireEvent.click(screen.getByText('Grok CLI'));
+		expect(onAgentSelect).toHaveBeenCalledWith('grok');
 	});
 
 	it('should set aria-selected on selected agent', () => {

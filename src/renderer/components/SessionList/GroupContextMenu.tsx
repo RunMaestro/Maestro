@@ -1,19 +1,35 @@
-import { useEffect, useRef } from 'react';
-import { Edit3, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AppWindow, Edit3, FolderInput, FolderPlus, FolderUp, Plus, Trash2 } from 'lucide-react';
 import type { Group, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
+import type { WindowMoveTarget } from '../../utils/windowTargets';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface GroupContextMenuProps {
 	x: number;
 	y: number;
 	theme: Theme;
 	group: Group;
+	/** Enables hierarchy-specific menu actions. */
+	groupsPlusEnabled?: boolean;
 	memberCount: number;
 	onRename: () => void;
 	onNewAgent: () => void;
 	onDelete?: () => void;
 	/** Override the delete button label; defaults based on memberCount. */
 	deleteLabel?: string;
+	/** Root groups this group can safely be moved into. */
+	eligibleParentGroups?: Group[];
+	onMoveInto?: (parentGroupId: string) => void;
+	onMoveToTopLevel?: () => void;
+	onNewGroupInside?: () => void;
+	/**
+	 * Windows the whole group can move into (`buildGroupWindowMoveTargets`).
+	 * Empty or absent in a single-window app, which hides "Move Group to Window".
+	 */
+	windowTargets?: WindowMoveTarget[];
+	onMoveToNewWindow?: () => void;
+	onMoveToWindow?: (windowId: string) => void;
 	onDismiss: () => void;
 }
 
@@ -22,13 +38,28 @@ export function GroupContextMenu({
 	y,
 	theme,
 	group,
+	groupsPlusEnabled = false,
 	memberCount,
 	onRename,
 	onNewAgent,
 	onDelete,
 	deleteLabel,
+	eligibleParentGroups = [],
+	onMoveInto,
+	onMoveToTopLevel,
+	onNewGroupInside,
+	windowTargets = [],
+	onMoveToNewWindow,
+	onMoveToWindow,
 	onDismiss,
 }: GroupContextMenuProps) {
+	const [moveSubmenuOpen, setMoveSubmenuOpen] = useState(false);
+	const [windowSubmenuOpen, setWindowSubmenuOpen] = useState(false);
+	// Same gate as the agent menu: a mover and at least one enumerated window.
+	// Not gated on `memberCount`, which counts only the agents THIS window shows:
+	// a group whose agents all live in another window must still be movable back.
+	// An empty group yields no targets, so it hides the entry on its own.
+	const showMoveToWindow = !!onMoveToNewWindow && !!onMoveToWindow && windowTargets.length > 0;
 	const menuRef = useRef<HTMLDivElement>(null);
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
@@ -45,19 +76,29 @@ export function GroupContextMenu({
 		return () => document.removeEventListener('keydown', handleKeyDown);
 	}, []);
 
-	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(
+		menuRef,
+		x,
+		y,
+		8,
+		moveSubmenuOpen || windowSubmenuOpen
+	);
 
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-50 py-1 rounded-md shadow-xl border whitespace-nowrap"
+			className="fixed z-50 py-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '10rem',
+				// The measured budget, not `100vh`: this menu can be pushed DOWN as
+				// well as up, and a viewport-sized cap on a menu anchored low still
+				// runs off the bottom edge with nothing to scroll it.
+				maxHeight,
+				overflowY: 'auto',
 			}}
 		>
 			<div
@@ -68,6 +109,20 @@ export function GroupContextMenu({
 				<span className="truncate max-w-[12rem]">{group.name}</span>
 			</div>
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+
+			{/* First on purpose: adding an agent is the most common reason to open this menu. */}
+			<button
+				type="button"
+				onClick={() => {
+					onNewAgent();
+					onDismiss();
+				}}
+				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+				style={{ color: theme.colors.accent }}
+			>
+				<Plus className="w-3.5 h-3.5" />
+				New Agent in Group...
+			</button>
 
 			<button
 				type="button"
@@ -82,18 +137,116 @@ export function GroupContextMenu({
 				Rename Group...
 			</button>
 
-			<button
-				type="button"
-				onClick={() => {
-					onNewAgent();
-					onDismiss();
-				}}
-				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-				style={{ color: theme.colors.accent }}
-			>
-				<Plus className="w-3.5 h-3.5" />
-				New Agent in Group...
-			</button>
+			{showMoveToWindow && (
+				<div>
+					<button
+						type="button"
+						aria-expanded={windowSubmenuOpen}
+						aria-haspopup="menu"
+						onClick={() => setWindowSubmenuOpen((open) => !open)}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+					>
+						<AppWindow className="w-3.5 h-3.5" />
+						Move Group to Window...
+					</button>
+					{windowSubmenuOpen && (
+						<>
+							<button
+								type="button"
+								onClick={() => {
+									onMoveToNewWindow?.();
+									onDismiss();
+								}}
+								className="w-full text-left pl-8 pr-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+								style={{ color: theme.colors.accent }}
+							>
+								<Plus className="w-3.5 h-3.5" />
+								New Window
+							</button>
+							{windowTargets.map((target) => (
+								<button
+									key={target.windowId}
+									type="button"
+									disabled={target.isCurrentOwner}
+									title={target.isCurrentOwner ? 'The whole group is already here' : undefined}
+									onClick={() => {
+										onMoveToWindow?.(target.windowId);
+										onDismiss();
+									}}
+									className="w-full text-left pl-8 pr-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2 disabled:opacity-40 disabled:cursor-default disabled:hover:bg-transparent"
+									style={{ color: theme.colors.textMain }}
+								>
+									<AppWindow className="w-3.5 h-3.5 shrink-0" />
+									<span className="truncate">{target.label}</span>
+								</button>
+							))}
+						</>
+					)}
+				</div>
+			)}
+
+			{groupsPlusEnabled && eligibleParentGroups.length > 0 && onMoveInto && (
+				<div>
+					<button
+						type="button"
+						aria-expanded={moveSubmenuOpen}
+						aria-haspopup="menu"
+						onClick={() => setMoveSubmenuOpen((open) => !open)}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+					>
+						<FolderInput className="w-3.5 h-3.5" />
+						Move into...
+					</button>
+					{moveSubmenuOpen &&
+						eligibleParentGroups.map((parentGroup) => (
+							<button
+								key={parentGroup.id}
+								type="button"
+								onClick={() => {
+									onMoveInto(parentGroup.id);
+									onDismiss();
+								}}
+								className="w-full text-left pl-8 pr-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								<span>{parentGroup.emoji}</span>
+								<span className="truncate">{parentGroup.name}</span>
+							</button>
+						))}
+				</div>
+			)}
+
+			{groupsPlusEnabled && group.parentGroupId && onMoveToTopLevel && (
+				<button
+					type="button"
+					onClick={() => {
+						onMoveToTopLevel();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<FolderUp className="w-3.5 h-3.5" />
+					Move to top level
+				</button>
+			)}
+
+			{groupsPlusEnabled && !group.parentGroupId && onNewGroupInside && (
+				<button
+					type="button"
+					onClick={() => {
+						onNewGroupInside();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.accent }}
+				>
+					<FolderPlus className="w-3.5 h-3.5" />
+					New group inside...
+				</button>
+			)}
 
 			{onDelete && (
 				<>

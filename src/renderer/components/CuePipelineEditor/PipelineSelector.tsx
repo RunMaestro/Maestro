@@ -1,26 +1,41 @@
 /**
- * PipelineSelector - Dropdown for selecting which pipeline to view/edit.
+ * PipelineSelector - the graph's one "what am I looking at?" picker.
  *
- * Shows current selection with color dot, and a dropdown menu with
- * All Pipelines, individual pipelines (with rename/delete), and New Pipeline.
+ * A filterable dropdown with three kinds of answer: All Pipelines, one
+ * pipeline (with rename / recolor / delete), or one agent - which narrows All
+ * Pipelines to every pipeline that agent belongs to. One control with one
+ * search box rather than a dropdown per kind: the user types a name and sees
+ * the pipeline AND the agent it matches, and the trigger always says which of
+ * the three is current.
  */
 
 import { useState, useRef, useCallback, useMemo } from 'react';
-import { ChevronDown, Plus, X, Check, Layers, Pencil } from 'lucide-react';
+import { ChevronDown, Plus, X, Check, Layers, Pencil, Bot } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { CuePipeline } from '../../../shared/cue-pipeline-types';
 import { useClickOutside } from '../../hooks/ui/useClickOutside';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ModalResizeGrip } from '../ui/ModalResizeGrip';
+import { FilterInput } from '../ui/FilterInput';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { widestLabelWidth } from '../../utils/labelWidth';
+import { highlightMatches } from '../../utils/highlightMatches';
 import { PIPELINE_COLORS } from './pipelineColors';
+import type { PipelineAgentScope } from './utils/pipelineMembership';
 
 const ALL_PIPELINES_LABEL = 'All Pipelines';
+/** Stable default, so the memos keyed on `agents` do not rebuild every render. */
+const NO_AGENTS: PipelineAgentScope[] = [];
 
 /** A `px-3 py-2 text-xs` row: 16px line box plus 8px of padding either side. */
 const MENU_ROW_HEIGHT = 32;
 const MENU_DIVIDER_HEIGHT = 1;
+/** The filter box row: a `py-1` input plus the row's own `p-2` padding. */
+const MENU_FILTER_HEIGHT = 44;
+/** A "Pipelines" / "Agents" section label. */
+const MENU_SECTION_HEIGHT = 24;
 /** Pipelines visible without scrolling, on top of the All Pipelines row. */
 const MENU_DEFAULT_VISIBLE_PIPELINES = 10;
 /** Everything in a row that is not the name: padding, color dot, check, pencil, delete, gaps. */
@@ -33,16 +48,20 @@ const MENU_DEFAULT_MAX_WIDTH = 460;
 const MENU_MIN_SIZE = { width: 180, height: 140 };
 
 /**
- * The menu opens wide enough to read the longest pipeline name without
- * truncation, and tall enough for ten pipelines plus the All Pipelines row and
- * the New Pipeline footer. A dropdown that clips the names it exists to let you
- * pick between defeats itself, and the old fixed 220 x 320 did both.
+ * The menu opens wide enough to read the longest pipeline or agent name without
+ * truncation, and tall enough for ten rows plus the filter box, the All
+ * Pipelines row and the New Pipeline footer. A dropdown that clips the names it
+ * exists to let you pick between defeats itself, and the old fixed 220 x 320
+ * did both.
  */
-export function pipelineMenuDefaultSize(pipelineNames: string[]): {
+export function pipelineMenuDefaultSize(
+	pipelineNames: string[],
+	agentNames: string[] = []
+): {
 	width: number;
 	height: number;
 } {
-	const width = widestLabelWidth([ALL_PIPELINES_LABEL, ...pipelineNames], {
+	const width = widestLabelWidth([ALL_PIPELINES_LABEL, ...pipelineNames, ...agentNames], {
 		fontSizePx: 12,
 		chromePx: MENU_ROW_CHROME_WIDTH,
 		minPx: MENU_DEFAULT_MIN_WIDTH,
@@ -50,7 +69,9 @@ export function pipelineMenuDefaultSize(pipelineNames: string[]): {
 	});
 	const rows = MENU_DEFAULT_VISIBLE_PIPELINES + 1; // + the All Pipelines row
 	const height =
+		MENU_FILTER_HEIGHT + // filter box
 		rows * MENU_ROW_HEIGHT + // scrolling list
+		(agentNames.length > 0 ? 2 * MENU_SECTION_HEIGHT : 0) + // Pipelines / Agents labels
 		MENU_DIVIDER_HEIGHT + // rule under All Pipelines
 		MENU_DIVIDER_HEIGHT + // rule above the footer
 		MENU_ROW_HEIGHT; // New Pipeline footer
@@ -65,6 +86,14 @@ export interface PipelineSelectorProps {
 	onDeletePipeline: (id: string) => void;
 	onRenamePipeline: (id: string, name: string) => void;
 	onChangePipelineColor?: (id: string, color: string) => void;
+	/** Agents the view can be narrowed to. The Agents section is hidden when
+	 *  this is empty or `onSelectAgent` is absent. */
+	agents?: PipelineAgentScope[];
+	/** The scope All Pipelines is currently narrowed to, if any. Passed whole
+	 *  rather than looked up in `agents` by id, so the trigger names and counts
+	 *  exactly what the canvas draws even when the two lists disagree. */
+	activeAgent?: PipelineAgentScope | null;
+	onSelectAgent?: (agent: PipelineAgentScope) => void;
 	theme?: Theme;
 	textColor?: string;
 	borderColor?: string;
@@ -78,6 +107,9 @@ export function PipelineSelector({
 	onDeletePipeline,
 	onRenamePipeline,
 	onChangePipelineColor,
+	agents = NO_AGENTS,
+	activeAgent: activeAgentScope = null,
+	onSelectAgent,
 	theme,
 	textColor,
 	borderColor,
@@ -88,20 +120,51 @@ export function PipelineSelector({
 	const [renamingId, setRenamingId] = useState<string | null>(null);
 	const [renameValue, setRenameValue] = useState('');
 	const [colorPickerId, setColorPickerId] = useState<string | null>(null);
+	const [query, setQuery] = useState('');
 	const dropdownRef = useRef<HTMLDivElement>(null);
 	const buttonRef = useRef<HTMLButtonElement>(null);
 
+	const closeMenu = useCallback(() => {
+		setIsOpen(false);
+		setQuery('');
+		setRenamingId(null);
+		setColorPickerId(null);
+	}, []);
+
 	useClickOutside(
 		[dropdownRef as React.RefObject<HTMLElement>, buttonRef as React.RefObject<HTMLElement>],
-		() => setIsOpen(false),
+		closeMenu,
 		isOpen
 	);
+
+	// While open the menu owns Escape: the first press clears the filter, the
+	// next closes the menu. The layer stack handles Escape at capture on
+	// `window`, so without a layer that outranks CUE_MODAL the key would close
+	// the whole Cue modal out from under an open dropdown. A rename in progress
+	// keeps its own Escape (cancel the rename) via the input's key handler.
+	const handleMenuEscape = useCallback(() => {
+		if (renamingId) {
+			setRenamingId(null);
+			return;
+		}
+		if (query) {
+			setQuery('');
+			return;
+		}
+		closeMenu();
+	}, [renamingId, query, closeMenu]);
+
+	const showAgents = !!onSelectAgent && agents.length > 0;
 
 	// Recomputed only when a name actually changes: the hook re-clamps the live
 	// size on viewport resize, and a default that moves under it fights that.
 	const defaultSize = useMemo(
-		() => pipelineMenuDefaultSize(pipelines.map((p) => p.name)),
-		[pipelines]
+		() =>
+			pipelineMenuDefaultSize(
+				pipelines.map((p) => p.name),
+				showAgents ? agents.map((a) => a.sessionName) : []
+			),
+		[pipelines, agents, showAgents]
 	);
 
 	// A pipeline list can run long or short, so the menu is the user's to size.
@@ -118,25 +181,65 @@ export function PipelineSelector({
 	const selectedPipeline = selectedPipelineId
 		? pipelines.find((p) => p.id === selectedPipelineId)
 		: null;
+	const activeAgent = selectedPipelineId === null ? activeAgentScope : null;
 
 	const sortedPipelines = useMemo(
 		() => [...pipelines].sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name)),
 		[pipelines]
 	);
 
+	// Case-insensitive substring match - the same rule `highlightMatches` marks,
+	// so every row the filter keeps shows why it was kept.
+	const needle = query.trim().toLowerCase();
+	const visiblePipelines = useMemo(
+		() =>
+			needle
+				? sortedPipelines.filter((p) => p.name.toLowerCase().includes(needle))
+				: sortedPipelines,
+		[sortedPipelines, needle]
+	);
+	const visibleAgents = useMemo(
+		() =>
+			!showAgents
+				? []
+				: needle
+					? agents.filter((a) => a.sessionName.toLowerCase().includes(needle))
+					: agents,
+		[agents, showAgents, needle]
+	);
+	const highlight = (text: string) =>
+		highlightMatches(text, query.trim(), theme?.colors.accent ?? '#8b5cf6');
+
 	const handleToggle = useCallback(() => {
-		setIsOpen((v) => !v);
-		setRenamingId(null);
-		setColorPickerId(null);
-	}, []);
+		if (isOpen) closeMenu();
+		else setIsOpen(true);
+	}, [isOpen, closeMenu]);
 
 	const handleSelect = useCallback(
 		(id: string | null) => {
 			onSelect(id);
-			setIsOpen(false);
-			setRenamingId(null);
+			closeMenu();
 		},
-		[onSelect]
+		[onSelect, closeMenu]
+	);
+
+	const handleSelectAgent = useCallback(
+		(agent: PipelineAgentScope) => {
+			onSelectAgent?.(agent);
+			closeMenu();
+		},
+		[onSelectAgent, closeMenu]
+	);
+
+	// Enter takes the first match, pipelines before agents (the order drawn).
+	const handleFilterKeyDown = useCallback(
+		(e: React.KeyboardEvent<HTMLInputElement>) => {
+			if (e.key !== 'Enter') return;
+			e.preventDefault();
+			if (visiblePipelines.length > 0) handleSelect(visiblePipelines[0].id);
+			else if (visibleAgents.length > 0) handleSelectAgent(visibleAgents[0]);
+		},
+		[visiblePipelines, visibleAgents, handleSelect, handleSelectAgent]
 	);
 
 	const handleStartRename = useCallback((pipeline: CuePipeline) => {
@@ -172,8 +275,21 @@ export function PipelineSelector({
 
 	const handleCreate = useCallback(() => {
 		onCreatePipeline();
-		setIsOpen(false);
-	}, [onCreatePipeline]);
+		closeMenu();
+	}, [onCreatePipeline, closeMenu]);
+
+	const sectionLabel = (label: string) => (
+		<div
+			className="px-3 text-2xs font-semibold uppercase tracking-wider flex items-end"
+			style={{
+				height: MENU_SECTION_HEIGHT,
+				paddingBottom: 4,
+				color: theme?.colors.textDim ?? 'rgba(255,255,255,0.5)',
+			}}
+		>
+			{label}
+		</div>
+	);
 
 	return (
 		<div className="relative" style={{ zIndex: 20 }}>
@@ -200,14 +316,29 @@ export function PipelineSelector({
 							flexShrink: 0,
 						}}
 					/>
+				) : activeAgent ? (
+					<Bot size={12} style={{ color: theme?.colors.accent, flexShrink: 0 }} />
 				) : (
 					<MultiColorIcon />
 				)}
-				<span>{selectedPipeline ? selectedPipeline.name : ALL_PIPELINES_LABEL}</span>
+				<span>
+					{selectedPipeline
+						? selectedPipeline.name
+						: activeAgent
+							? activeAgent.sessionName
+							: ALL_PIPELINES_LABEL}
+				</span>
+				{activeAgent && (
+					<span style={{ opacity: 0.6 }}>
+						· {activeAgent.pipelineIds.length} pipeline
+						{activeAgent.pipelineIds.length === 1 ? '' : 's'}
+					</span>
+				)}
 				<ChevronDown size={10} style={{ opacity: 0.5 }} />
 			</button>
 
 			{/* Dropdown menu */}
+			{isOpen && <MenuEscapeLayer onEscape={handleMenuEscape} />}
 			{isOpen && (
 				<div
 					ref={dropdownRef}
@@ -219,6 +350,20 @@ export function PipelineSelector({
 						...menuResize.style,
 					}}
 				>
+					{theme && (
+						<div className="p-2 shrink-0">
+							<FilterInput
+								theme={theme}
+								value={query}
+								onChange={setQuery}
+								placeholder={showAgents ? 'Filter pipelines and agents...' : 'Filter pipelines...'}
+								width="100%"
+								autoFocus
+								onKeyDown={handleFilterKeyDown}
+							/>
+						</div>
+					)}
+
 					{/* Scrollable list; the New Pipeline footer below stays pinned. */}
 					<div className="flex-1 min-h-0 overflow-y-auto">
 						{/* All Pipelines option */}
@@ -241,7 +386,7 @@ export function PipelineSelector({
 						>
 							<MultiColorIcon />
 							<span className="flex-1">{ALL_PIPELINES_LABEL}</span>
-							{selectedPipelineId === null && (
+							{selectedPipelineId === null && !activeAgent && (
 								<Check
 									size={12}
 									style={{ color: theme?.colors.textDim ?? 'rgba(255,255,255,0.5)' }}
@@ -259,8 +404,10 @@ export function PipelineSelector({
 							/>
 						)}
 
+						{showAgents && visiblePipelines.length > 0 && sectionLabel('Pipelines')}
+
 						{/* Pipeline list */}
-						{sortedPipelines.map((pipeline) => (
+						{visiblePipelines.map((pipeline) => (
 							<div key={pipeline.id}>
 								<div
 									className="flex items-center gap-2 w-full px-3 py-2 text-xs"
@@ -324,7 +471,7 @@ export function PipelineSelector({
 											}}
 										/>
 									) : (
-										<span className="flex-1 truncate">{pipeline.name}</span>
+										<span className="flex-1 truncate">{highlight(pipeline.name)}</span>
 									)}
 									{selectedPipelineId === pipeline.id && renamingId !== pipeline.id && (
 										<Check
@@ -433,6 +580,60 @@ export function PipelineSelector({
 								)}
 							</div>
 						))}
+
+						{visibleAgents.length > 0 && (
+							<>
+								{sectionLabel('Agents')}
+								{visibleAgents.map((agent) => (
+									<button
+										key={agent.sessionId}
+										data-testid={`pipeline-selector-agent-${agent.sessionId}`}
+										onClick={() => handleSelectAgent(agent)}
+										className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left"
+										style={{
+											color: theme?.colors.textMain ?? 'rgba(255,255,255,0.9)',
+											backgroundColor: 'transparent',
+											border: 'none',
+											cursor: 'pointer',
+										}}
+										onMouseEnter={(e) => {
+											e.currentTarget.style.backgroundColor =
+												theme?.colors.bgActivity ?? 'rgba(255,255,255,0.06)';
+										}}
+										onMouseLeave={(e) => {
+											e.currentTarget.style.backgroundColor = 'transparent';
+										}}
+									>
+										<Bot
+											size={12}
+											style={{
+												color: theme?.colors.textDim ?? 'rgba(255,255,255,0.5)',
+												flexShrink: 0,
+											}}
+										/>
+										<span className="flex-1 truncate">{highlight(agent.sessionName)}</span>
+										<span style={{ color: theme?.colors.textDim ?? 'rgba(255,255,255,0.5)' }}>
+											{agent.pipelineIds.length}
+										</span>
+										{activeAgent?.sessionId === agent.sessionId && (
+											<Check
+												size={12}
+												style={{ color: theme?.colors.textDim ?? 'rgba(255,255,255,0.5)' }}
+											/>
+										)}
+									</button>
+								))}
+							</>
+						)}
+
+						{needle && visiblePipelines.length === 0 && visibleAgents.length === 0 && (
+							<div
+								className="px-3 py-2 text-xs"
+								style={{ color: theme?.colors.textDim ?? 'rgba(255,255,255,0.5)' }}
+							>
+								No pipelines or agents match "{query.trim()}"
+							</div>
+						)}
 					</div>
 
 					{/* Divider */}
@@ -480,6 +681,20 @@ export function PipelineSelector({
 			)}
 		</div>
 	);
+}
+
+/**
+ * Registers the open menu with the layer stack. A component of its own, mounted
+ * only while the menu is open, so a closed selector (the toolbar's resting
+ * state) never touches the layer stack at all.
+ */
+function MenuEscapeLayer({ onEscape }: { onEscape: () => void }) {
+	useModalLayer(MODAL_PRIORITIES.CUE_PIPELINE_SELECTOR, undefined, onEscape, {
+		focusTrap: 'none',
+		blocksLowerLayers: false,
+		capturesFocus: false,
+	});
+	return null;
 }
 
 /** Small multi-color icon representing "All Pipelines" */

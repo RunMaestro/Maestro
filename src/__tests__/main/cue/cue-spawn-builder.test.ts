@@ -56,9 +56,15 @@ vi.mock('../../../main/utils/agent-args', () => ({
 }));
 
 const mockWrapSpawnWithSsh = vi.fn();
-vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
-	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
-}));
+vi.mock('../../../main/utils/ssh-spawn-wrapper', async () => {
+	const actual = await vi.importActual<typeof import('../../../main/utils/ssh-spawn-wrapper')>(
+		'../../../main/utils/ssh-spawn-wrapper'
+	);
+	return {
+		...actual,
+		wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
+	};
+});
 
 // Mock the Claude token-source resolver's leaf dependencies so the maestro-p
 // binary reads as present and config-dir resolution is deterministic. The
@@ -78,6 +84,13 @@ vi.mock('fs', async (importOriginal) => {
 	// Make the resolved maestro-p script read as present; leave every other fs
 	// function untouched so the rest of the import graph behaves normally.
 	return { ...actual, existsSync: () => true };
+});
+
+// POSIX by default; the Windows `.cmd` shim tests flip it.
+const { mockIsWindows } = vi.hoisted(() => ({ mockIsWindows: vi.fn(() => false) }));
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return { ...actual, isWindows: () => mockIsWindows() };
 });
 
 // Must import after mocks
@@ -131,6 +144,7 @@ function createConfig(overrides: Partial<CueExecutionConfig> = {}): CueExecution
 describe('cue-spawn-builder', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockIsWindows.mockReturnValue(false);
 		mockGetAgentDefinition.mockReturnValue(defaultAgentDef);
 		// The spec env spreads process.env, so an ambient MAESTRO_CLAUDE_BIN
 		// (leaked when these tests run inside a maestro/claude agent) would bleed
@@ -217,12 +231,405 @@ describe('cue-spawn-builder', () => {
 			}
 		});
 
+		describe('Windows .cmd shim (MAESTRO-R0)', () => {
+			const codexDef = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				command: 'codex',
+				args: ['exec'],
+			};
+			const shimPath = 'C:\\Users\\dev\\AppData\\Roaming\\npm\\codex.cmd';
+			const multiLinePrompt = 'Review the diff.\nThen summarize "what changed".';
+
+			function useStdinCapableCodex(stdin = true) {
+				mockGetAgentDefinition.mockReturnValue(codexDef);
+				mockBuildAgentArgs.mockReturnValueOnce(['exec', '--json']);
+				mockGetAgentCapabilities.mockReturnValueOnce({
+					...mockGetAgentCapabilities(),
+					supportsPromptViaStdin: stdin,
+				} as ReturnType<typeof mockGetAgentCapabilities>);
+			}
+
+			beforeEach(() => {
+				mockIsWindows.mockReturnValue(true);
+			});
+
+			it('starts the shim through cmd.exe and sends the prompt on stdin', async () => {
+				useStdinCapableCodex();
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					multiLinePrompt
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.shell).toBe(true);
+					expect(result.spec.command).toBe(shimPath);
+					// cmd.exe ends a command at a line break, so the prompt must not ride argv.
+					expect(result.spec.args).toEqual(['exec', '--json']);
+					expect(result.spec.stdinPrompt).toBe(multiLinePrompt);
+				}
+			});
+
+			it('appends the stdin query args an agent declares', async () => {
+				useStdinCapableCodex();
+				mockGetAgentDefinition.mockReturnValue({
+					...codexDef,
+					stdinPromptArgs: ['--query-file', '-'],
+				});
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.args).toEqual(['exec', '--json', '--query-file', '-']);
+					expect(result.spec.stdinPrompt).toBe('prompt');
+				}
+			});
+
+			it('quotes a shim path containing spaces for cmd.exe', async () => {
+				useStdinCapableCodex();
+				const spaced = 'C:\\Users\\First Last\\AppData\\Roaming\\npm\\codex.cmd';
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: spaced }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.command).toBe(`"${spaced}"`);
+					expect(result.spec.shell).toBe(true);
+				}
+			});
+
+			it('keeps the prompt in argv, escaped, for an agent that cannot read stdin', async () => {
+				useStdinCapableCodex(false);
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					'fix the "auth" bug'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.shell).toBe(true);
+					expect(result.spec.stdinPrompt).toBeUndefined();
+					expect(result.spec.args).toEqual(['exec', '--json', '--', '"fix the ""auth"" bug"']);
+				}
+			});
+
+			it('refuses a multi-line prompt for an agent that cannot read stdin', async () => {
+				useStdinCapableCodex(false);
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					multiLinePrompt
+				);
+
+				expect(result).toEqual({
+					ok: false,
+					message: `Codex at ${shimPath} only starts through cmd.exe, which cannot pass the prompt intact: it contains a line break, which ends a cmd.exe command line`,
+				});
+			});
+
+			it('refuses a prompt containing % for an agent that cannot read stdin', async () => {
+				useStdinCapableCodex(false);
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					'Use %USERPROFILE% as the root'
+				);
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) {
+					expect(result.message).toContain('cannot pass the prompt intact');
+					expect(result.message).toContain(
+						'it contains a %NAME% pair, which cmd.exe expands as a variable'
+					);
+				}
+			});
+
+			it('refuses a prompt containing ^ for an agent that cannot read stdin', async () => {
+				useStdinCapableCodex(false);
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					'match ^main$'
+				);
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) {
+					expect(result.message).toContain('it contains ^, which cmd.exe would pass on doubled');
+				}
+			});
+
+			it('still runs a stdin-capable agent with a multi-line, % prompt: it never rides cmd.exe', async () => {
+				useStdinCapableCodex();
+				const prompt = 'Use %USERPROFILE% as the root.\nThen match ^main$.';
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					prompt
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.shell).toBe(true);
+					expect(result.spec.args).toEqual(['exec', '--json']);
+					expect(result.spec.stdinPrompt).toBe(prompt);
+				}
+			});
+
+			it('refuses any other shell-bound argument cmd.exe would rewrite, even with the prompt on stdin', async () => {
+				useStdinCapableCodex();
+				mockApplyOverrides.mockReturnValueOnce({
+					args: ['exec', '--json', '--config', 'home=%APPDATA%'],
+					effectiveCustomEnvVars: undefined,
+				} as unknown as ReturnType<typeof mockApplyOverrides>);
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) {
+					expect(result.message).toContain('cannot pass the value of --config intact');
+					expect(result.message).not.toContain('%APPDATA%');
+				}
+			});
+
+			// The same cases as rc's src/__tests__/shared/maestro-lib/launch/windows-command.test.ts,
+			// run through the builder because main's cmdShellArgProblem() is private to
+			// it. Change both together until main has maestro-lib. The cmd.exe
+			// behaviour is read from documented parser rules; only the windows-latest
+			// CI leg has a real cmd.exe.
+			describe('the cmd.exe argument rule', () => {
+				/** The reason the builder refuses `arg`, or null when it builds. */
+				async function problemFor(arg: string): Promise<string | null> {
+					useStdinCapableCodex();
+					mockApplyOverrides.mockReturnValueOnce({
+						args: ['exec', '--json', '--', arg],
+						effectiveCustomEnvVars: undefined,
+					} as unknown as ReturnType<typeof mockApplyOverrides>);
+					const result = await buildSpawnSpec(
+						createConfig({ toolType: 'codex', customPath: shimPath }),
+						'prompt'
+					);
+					if (result.ok) return null;
+					const marker = ' intact: ';
+					expect(result.message).not.toContain(arg);
+					return result.message.slice(result.message.indexOf(marker) + marker.length);
+				}
+
+				it.each([
+					['a trailing percent', '100%'],
+					['a URL escape', '%20'],
+					['a percent in prose', '50% off'],
+					['an empty pair', '%%'],
+					['a doubled trailing percent', '100%%'],
+					['a plain argument', '--print'],
+					['an argument with spaces and quotes', 'say "hi" & more'],
+				])('lets %s through', async (_label, arg) => {
+					expect(await problemFor(arg)).toBeNull();
+				});
+
+				it.each([
+					['a plain variable', '%PATH%'],
+					['a name with parentheses', '%ProgramFiles(x86)%'],
+					['a substring form', '%PATH:~0,3%'],
+					['a substitution form', '%X:a=b%'],
+					['a name with a space', '%a b%'],
+					['a drive variable', '%=C:%'],
+					['a pair inside doubled percents', '%%PATH%%'],
+					['a pair inside a value', '--settings=%APPDATA%\\claude.json'],
+					['two lone percents in one argument', '50% off, then 20% more'],
+				])('refuses %s', async (_label, arg) => {
+					expect(await problemFor(arg)).toBe(
+						'it contains a %NAME% pair, which cmd.exe expands as a variable'
+					);
+				});
+
+				it.each(['first\nsecond', 'first\r\nsecond', 'first\rsecond'])(
+					'refuses a line break (%j)',
+					async (arg) => {
+						expect(await problemFor(arg)).toBe(
+							'it contains a line break, which ends a cmd.exe command line'
+						);
+					}
+				);
+
+				it('refuses a caret', async () => {
+					expect(await problemFor('match ^main$')).toBe(
+						'it contains ^, which cmd.exe would pass on doubled'
+					);
+				});
+
+				it('runs a prompt with a lone % on the command line', async () => {
+					useStdinCapableCodex(false);
+
+					const result = await buildSpawnSpec(
+						createConfig({ toolType: 'codex', customPath: shimPath }),
+						'Cut it by 50% off'
+					);
+
+					expect(result.ok).toBe(true);
+					if (result.ok) expect(result.spec.args).toContain('"Cut it by 50% off"');
+				});
+			});
+
+			describe('never quotes a refused argument, which may be a credential', () => {
+				async function refusalFor(args: string[]) {
+					useStdinCapableCodex();
+					mockApplyOverrides.mockReturnValueOnce({
+						args,
+						effectiveCustomEnvVars: undefined,
+					} as unknown as ReturnType<typeof mockApplyOverrides>);
+					const result = await buildSpawnSpec(
+						createConfig({ toolType: 'codex', customPath: shimPath }),
+						'prompt'
+					);
+					expect(result.ok).toBe(false);
+					return result.ok ? '' : result.message;
+				}
+
+				it('names a --flag=value argument by its flag', async () => {
+					const message = await refusalFor(['exec', '--json', '--api-key=ab%cd%']);
+
+					expect(message).toContain(
+						'cannot pass the value of --api-key intact: it contains a %NAME% pair, which cmd.exe expands as a variable'
+					);
+					expect(message).not.toContain('ab%cd');
+				});
+
+				it('names the value of a --flag value pair with a %NAME% secret by its flag', async () => {
+					const message = await refusalFor(['exec', '--api-key', 'sk-%SECRET%-value']);
+
+					expect(message).toContain(
+						'cannot pass the value of --api-key intact: it contains a %NAME% pair, which cmd.exe expands as a variable'
+					);
+					expect(message).not.toContain('SECRET');
+				});
+
+				it('names the value of a --flag value pair by its flag', async () => {
+					const message = await refusalFor(['exec', '--json', '--token', 'ab^cd']);
+
+					expect(message).toContain(
+						'cannot pass the value of --token intact: it contains ^, which cmd.exe would pass on doubled'
+					);
+					expect(message).not.toContain('ab^cd');
+				});
+
+				it('names any other argument by its position', async () => {
+					const message = await refusalFor(['exec', '--json', '--', 'ab%cd%']);
+
+					expect(message).toContain('cannot pass argument 4 intact');
+					expect(message).not.toContain('ab%cd');
+				});
+
+				it('names the value of a single-letter flag by its flag', async () => {
+					const message = await refusalFor(['exec', '-c', 'home=%APPDATA%']);
+
+					expect(message).toContain('cannot pass the value of -c intact');
+					expect(message).not.toContain('%APPDATA%');
+				});
+
+				it('never names a short flag with a value attached, which may be the secret', async () => {
+					const message = await refusalFor(['exec', '-pSECRET', '%APPDATA%']);
+
+					expect(message).toContain('cannot pass argument 3 intact');
+					expect(message).not.toContain('SECRET');
+				});
+
+				it('never names a preceding value that only starts with a dash', async () => {
+					const message = await refusalFor(['exec', '--token', '-secret-value', 'bad%arg%']);
+
+					expect(message).toContain('cannot pass argument 4 intact');
+					expect(message).not.toContain('secret-value');
+					expect(message).not.toContain('bad%arg');
+				});
+
+				it('never names the part before = unless it is a bare flag name', async () => {
+					const message = await refusalFor(['exec', '-pSECRET=ab%cd%']);
+
+					expect(message).toContain('cannot pass argument 2 intact');
+					expect(message).not.toContain('SECRET');
+				});
+
+				it('can only name a flag, never a value, after a flag that takes no value', async () => {
+					// Shape alone cannot tell that --json takes no value, so the label is
+					// imprecise here, but what it names is still only a flag.
+					const message = await refusalFor(['exec', '--json', '-pSECRET=ab%cd%']);
+
+					expect(message).toContain('cannot pass the value of --json intact');
+					expect(message).not.toContain('SECRET');
+				});
+			});
+
+			it('leaves a Windows .exe untouched: no shell, prompt in argv', async () => {
+				useStdinCapableCodex();
+				const exe = 'C:\\Users\\dev\\AppData\\Local\\OpenAI\\Codex\\bin\\codex.exe';
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: exe }),
+					multiLinePrompt
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.shell).toBeUndefined();
+					expect(result.spec.command).toBe(exe);
+					expect(result.spec.args).toEqual(['exec', '--json', '--', multiLinePrompt]);
+					expect(result.spec.stdinPrompt).toBeUndefined();
+				}
+			});
+
+			it('does nothing off Windows, even for a .cmd path', async () => {
+				mockIsWindows.mockReturnValue(false);
+				useStdinCapableCodex();
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.shell).toBeUndefined();
+					expect(result.spec.args).toEqual(['exec', '--json', '--', 'prompt']);
+					expect(result.spec.stdinPrompt).toBeUndefined();
+				}
+			});
+
+			it('passes a multi-line, % prompt through untouched off Windows', async () => {
+				mockIsWindows.mockReturnValue(false);
+				useStdinCapableCodex(false);
+				const prompt = 'Use %HOME% as the root.\nThen match ^main$.';
+
+				const result = await buildSpawnSpec(createConfig({ toolType: 'codex' }), prompt);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.command).toBe('codex');
+					expect(result.spec.shell).toBeUndefined();
+					expect(result.spec.args).toEqual(['exec', '--json', '--', prompt]);
+					expect(result.spec.stdinPrompt).toBeUndefined();
+				}
+			});
+		});
+
 		it('calls buildAgentArgs with yoloMode: true', async () => {
 			await buildSpawnSpec(createConfig(), 'prompt');
 
 			expect(mockBuildAgentArgs).toHaveBeenCalledWith(
 				expect.objectContaining({ id: 'claude-code' }),
-				expect.objectContaining({ yoloMode: true })
+				expect.objectContaining({ yoloMode: true, permissionMode: 'full' })
 			);
 		});
 
@@ -432,6 +839,90 @@ describe('cue-spawn-builder', () => {
 				}
 			});
 
+			it('fails instead of spawning locally when the wrapper cannot resolve the remote', async () => {
+				mockWrapSpawnWithSsh.mockResolvedValue({
+					command: 'claude',
+					args: ['--print', '--verbose'],
+					cwd: '/projects/test',
+					customEnvVars: undefined,
+					prompt: 'Hello world',
+					sshRemoteUsed: null,
+				});
+
+				const result = await buildSpawnSpec(
+					createConfig({
+						sshRemoteConfig: { enabled: true, remoteId: 'deleted-remote' },
+						sshStore: { getSshRemotes: vi.fn(() => []) },
+					}),
+					'Hello world'
+				);
+
+				expect(result).toEqual({
+					ok: false,
+					message: expect.stringContaining(
+						'configured remote "deleted-remote" could not be resolved'
+					),
+				});
+			});
+
+			describe('with the real SSH wrapper and resolver', () => {
+				let realWrap: typeof import('../../../main/utils/ssh-spawn-wrapper').wrapSpawnWithSsh;
+				beforeEach(async () => {
+					realWrap = (
+						await vi.importActual<typeof import('../../../main/utils/ssh-spawn-wrapper')>(
+							'../../../main/utils/ssh-spawn-wrapper'
+						)
+					).wrapSpawnWithSsh;
+					mockWrapSpawnWithSsh.mockImplementation((...args: Parameters<typeof realWrap>) =>
+						realWrap(...args)
+					);
+				});
+
+				it('fails when the remote id is not in settings', async () => {
+					const result = await buildSpawnSpec(
+						createConfig({
+							sshRemoteConfig: { enabled: true, remoteId: 'deleted-remote' },
+							sshStore: { getSshRemotes: () => [] },
+						}),
+						'Hello world'
+					);
+
+					expect(result.ok).toBe(false);
+					if (!result.ok) {
+						expect(result.message).toContain(
+							'configured remote "deleted-remote" could not be resolved'
+						);
+					}
+				});
+
+				it('fails when the remote exists but is disabled', async () => {
+					const result = await buildSpawnSpec(
+						createConfig({
+							sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+							sshStore: {
+								getSshRemotes: () => [
+									{
+										id: 'r1',
+										name: 'Server',
+										host: 'host.example.com',
+										port: 22,
+										username: 'dev',
+										privateKeyPath: '',
+										enabled: false,
+									},
+								],
+							},
+						}),
+						'Hello world'
+					);
+
+					expect(result.ok).toBe(false);
+					if (!result.ok) {
+						expect(result.message).toContain('configured remote "r1" could not be resolved');
+					}
+				});
+			});
+
 			it('still appends prompt when SSH is enabled but sshStore is missing', async () => {
 				// SSH enabled in config, but no sshStore → SSH wrapping skipped
 				// Prompt should still be appended for local fallback
@@ -550,6 +1041,67 @@ describe('cue-spawn-builder', () => {
 					expect(result.spec.command).toBe('ssh');
 					expect(result.spec.command).not.toBe(process.execPath);
 				}
+			});
+
+			// #1872: a Cue run in the agent's own project root accepts claude's
+			// folder-trust prompt; any other folder must still fail loudly.
+			it('opts maestro-p into workspace trust when the run is in the agent project root', async () => {
+				mockGetAgentDefinition.mockReturnValue(claudeInteractiveAgentDef);
+
+				const result = await buildSpawnSpec(
+					createConfig({ enableMaestroP: true, maestroPMode: 'interactive' }),
+					'Hello world'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.env.MAESTRO_P_ACCEPT_WORKSPACE_TRUST).toBe('1');
+				}
+			});
+
+			it('does not opt into workspace trust for a folder that is not the agent own', async () => {
+				mockGetAgentDefinition.mockReturnValue(claudeInteractiveAgentDef);
+
+				const result = await buildSpawnSpec(
+					createConfig({
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+						projectRoot: '/somewhere/else',
+					}),
+					'Hello world'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.env.MAESTRO_P_ACCEPT_WORKSPACE_TRUST).toBeUndefined();
+				}
+			});
+
+			it('passes the workspace-trust opt-in to the remote maestro-p over SSH', async () => {
+				mockGetAgentDefinition.mockReturnValue(claudeInteractiveAgentDef);
+				mockWrapSpawnWithSsh.mockResolvedValue({
+					command: 'ssh',
+					args: ['user@host', 'maestro-p'],
+					cwd: '/projects/test',
+					customEnvVars: undefined,
+					prompt: undefined,
+					sshRemoteUsed: { id: 'r1', name: 'S', host: 'h' },
+				});
+
+				await buildSpawnSpec(
+					createConfig({
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+						sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+						sshStore: { getSshRemotes: vi.fn(() => []) },
+					}),
+					'Hello world'
+				);
+
+				const wrapConfig = mockWrapSpawnWithSsh.mock.calls[0][0] as {
+					customEnvVars?: Record<string, string>;
+				};
+				expect(wrapConfig.customEnvVars?.MAESTRO_P_ACCEPT_WORKSPACE_TRUST).toBe('1');
 			});
 		});
 	});

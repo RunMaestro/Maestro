@@ -125,7 +125,7 @@ describe('useCue', () => {
 			expect(result.current.sessions).toEqual([mockSession]);
 			expect(result.current.activeRuns).toEqual([]);
 			expect(result.current.activityLog).toEqual([mockRun]);
-			expect(mockGetActivityLog).toHaveBeenCalledWith(100);
+			expect(mockGetActivityLog).toHaveBeenCalledWith(1000);
 		});
 
 		it('should set loading to false even if fetch fails', async () => {

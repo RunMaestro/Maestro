@@ -22,7 +22,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { readSessions, resolveAgentId, getConfigDir } from '../services/storage';
+import { readSessions, resolveAgentId, getSyncDir } from '../services/storage';
 import {
 	configureImageStore,
 	extFromMediaType,
@@ -328,7 +328,7 @@ export async function imageSave(
 	options: ImageSaveOptions
 ): Promise<void> {
 	const { agentId, tabId } = resolveScope(options, 'image save');
-	configureImageStore(getConfigDir());
+	configureImageStore(getSyncDir());
 
 	const images = collectImages({ agentId, tabId });
 	if (images.length === 0) {

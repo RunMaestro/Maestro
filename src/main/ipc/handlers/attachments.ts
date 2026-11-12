@@ -19,6 +19,7 @@ import fs from 'fs/promises';
 
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { mediaSubtype, parseBase64DataUrl } from '../../../shared/dataUrl';
 
 /**
  * Dependencies required for attachments handlers
@@ -73,13 +74,14 @@ export function registerAttachmentsHandlers(deps: AttachmentsHandlerDependencies
 				await fs.mkdir(attachmentsDir, { recursive: true });
 
 				// Extract the base64 content (remove data:image/...;base64, prefix if present)
-				const base64Match = base64Data.match(/^data:image\/([a-zA-Z]+);base64,(.+)$/);
+				const parsed = parseBase64DataUrl(base64Data);
+				const subtype = parsed ? mediaSubtype(parsed.mediaType) : null;
+				const extension = subtype && /^[a-zA-Z]+$/.test(subtype) ? subtype : null;
 				let buffer: Buffer;
 				let finalFilename = filename;
 
-				if (base64Match) {
-					const extension = base64Match[1];
-					buffer = Buffer.from(base64Match[2], 'base64');
+				if (parsed && extension) {
+					buffer = Buffer.from(parsed.base64, 'base64');
 					// Update filename with correct extension if not already present
 					if (!filename.includes('.')) {
 						finalFilename = `${filename}.${extension}`;

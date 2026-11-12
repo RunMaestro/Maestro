@@ -15,13 +15,15 @@
 import { memo, useMemo } from 'react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
-import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
 import {
 	findSessionByStatId,
 	isWorktreeAgent,
 	buildNameMap,
-	barChartLabelWidth,
+	BAR_CHART_GRID_CLASS,
+	BAR_CHART_GRID_STYLE,
+	BAR_CHART_ROW_STYLE,
+	getSeriesColor,
 } from './chartUtils';
 
 interface AgentEfficiencyChartProps {
@@ -36,29 +38,6 @@ interface AgentEfficiencyChartProps {
 	sessions?: Session[];
 	/** Active drill-down filter key - when set, non-matching entries dim to 0.3 opacity. */
 	activeFilterKey?: string | null;
-}
-
-/**
- * Get color for an agent
- */
-function getAgentColor(index: number, theme: Theme, colorBlindMode?: boolean): string {
-	if (colorBlindMode) {
-		return COLORBLIND_AGENT_PALETTE[index % COLORBLIND_AGENT_PALETTE.length];
-	}
-	if (index === 0) {
-		return theme.colors.accent;
-	}
-	const additionalColors = [
-		'#10b981',
-		'#8b5cf6',
-		'#ef4444',
-		'#06b6d4',
-		'#ec4899',
-		'#f59e0b',
-		'#84cc16',
-		'#6366f1',
-	];
-	return additionalColors[(index - 1) % additionalColors.length];
 }
 
 export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
@@ -209,15 +188,6 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 
 	const hasWorktreeBars = useMemo(() => efficiencyData.some((e) => e.isWorktree), [efficiencyData]);
 
-	const labelWidth = useMemo(
-		() =>
-			barChartLabelWidth(
-				efficiencyData.map((e) => e.label),
-				{ withSwatch: true }
-			),
-		[efficiencyData]
-	);
-
 	// Get max duration for bar scaling
 	const maxDuration = useMemo(() => {
 		if (efficiencyData.length === 0) return 0;
@@ -259,7 +229,7 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 				</span>
 			</h3>
 
-			<div className="space-y-3">
+			<div className={`${BAR_CHART_GRID_CLASS} gap-y-3`} style={BAR_CHART_GRID_STYLE}>
 				{(() => {
 					// Assign colors per unique provider so the regular and worktree
 					// variants of the same provider share a color.
@@ -271,22 +241,22 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 					}
 					return efficiencyData.map((agent) => {
 						const percentage = maxDuration > 0 ? (agent.avgDuration / maxDuration) * 100 : 0;
-						const color = getAgentColor(providerColorIdx[agent.agent], theme, colorBlindMode);
+						const color = getSeriesColor(providerColorIdx[agent.agent], theme, colorBlindMode);
 						const isDimmed = activeFilterKey !== null && activeFilterKey !== agent.key;
 
 						return (
 							<div
 								key={agent.key}
-								className="flex items-center gap-3"
 								style={{
+									...BAR_CHART_ROW_STYLE,
 									opacity: isDimmed ? 0.3 : 1,
 									transition: 'opacity 0.15s ease',
 								}}
 							>
 								{/* Agent name */}
 								<div
-									className="text-sm flex-shrink-0 flex items-center gap-2"
-									style={{ width: labelWidth, color: theme.colors.textDim }}
+									className="text-sm min-w-0 flex items-center gap-2"
+									style={{ color: theme.colors.textDim }}
 									title={agent.label}
 									data-testid="bar-chart-label"
 								>
@@ -305,7 +275,7 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 
 								{/* Bar */}
 								<div
-									className="flex-1 h-6 rounded overflow-hidden"
+									className="h-6 rounded overflow-hidden"
 									style={{ backgroundColor: `${theme.colors.border}30` }}
 								>
 									<div
@@ -333,7 +303,7 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 
 								{/* Duration label */}
 								<div
-									className="w-20 text-xs text-right flex-shrink-0 flex flex-col"
+									className="w-20 text-xs text-right flex flex-col"
 									style={{ color: theme.colors.textDim }}
 								>
 									<span className="font-medium" style={{ color: theme.colors.textMain }}>

@@ -9,7 +9,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { canAppendToLogEntry, isSelfContainedCard } from '../../../renderer/utils/logEntries';
+import {
+	canAppendToLogEntry,
+	dropRecoveredOutageNotices,
+	isSelfContainedCard,
+} from '../../../renderer/utils/logEntries';
 import type { LogEntry } from '../../../renderer/types';
 
 function entry(overrides: Partial<LogEntry> = {}): LogEntry {
@@ -47,6 +51,18 @@ describe('isSelfContainedCard', () => {
 					snoozedAt: 1,
 					wakeAt: 2,
 					resolution: 'woke' as const,
+				},
+			},
+		],
+		[
+			'agent delegation pill',
+			{
+				delegation: {
+					kind: 'dispatch' as const,
+					toSessionId: 'proxmox',
+					toAgentName: 'Proxmox',
+					toToolType: 'claude-code' as const,
+					subject: 'Fix the advisory bug',
 				},
 			},
 		],
@@ -146,5 +162,42 @@ describe('canAppendToLogEntry', () => {
 		for (const card of cards) {
 			expect(canAppendToLogEntry(card, card.source)).toBe(false);
 		}
+	});
+});
+
+describe('dropRecoveredOutageNotices', () => {
+	const BANNER = "You've hit your weekly limit · resets 10am (America/Chicago)";
+	const scope = { outageId: 'o1', lastMessage: 'Usage limit reached', resolvedAt: 100 };
+	const user = entry({ id: 'u', source: 'user', text: 'hi', timestamp: 10 });
+	const card = entry({
+		id: 'card',
+		source: 'system',
+		text: 'Usage limit reached',
+		retryOutageId: 'o1',
+		timestamp: 20,
+	});
+
+	it('drops the banner that landed under the outage card', () => {
+		const banner = entry({ id: 'b', text: BANNER, timestamp: 21 });
+		expect(dropRecoveredOutageNotices([user, card, banner], scope)).toEqual([user, card]);
+	});
+
+	it('drops a bubble that is exactly the failing message', () => {
+		const echo = entry({ id: 'e', text: 'Usage limit reached\n', timestamp: 21 });
+		expect(dropRecoveredOutageNotices([user, card, echo], scope)).toEqual([user, card]);
+	});
+
+	it('keeps real replies, earlier turns, and output after the resolution', () => {
+		const earlier = entry({ id: 'old', text: BANNER, timestamp: 1 });
+		const reply = entry({ id: 'r', text: 'Here is the answer.', timestamp: 50 });
+		const late = entry({ id: 'late', text: BANNER, timestamp: 200 });
+		const logs = [earlier, user, card, reply, late];
+
+		expect(dropRecoveredOutageNotices(logs, scope)).toBe(logs);
+	});
+
+	it('returns the same array when the outage card is not in this transcript', () => {
+		const logs = [user, entry({ id: 'b', text: BANNER, timestamp: 21 })];
+		expect(dropRecoveredOutageNotices(logs, scope)).toBe(logs);
 	});
 });

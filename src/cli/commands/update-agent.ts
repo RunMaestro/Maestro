@@ -11,13 +11,12 @@
 // Use `--ssh-remote none` to revert the agent to local execution. All of these
 // (like `--cwd`) are refused by the renderer while the agent process is alive.
 
-import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId, resolveGroupId, getSessionById } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
 import { toClaudeTokenModeSource, type ClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { AGENT_IDS } from '../../shared/agentIds';
-import { parseCliBool } from '../utils/parse';
+import { parseCliBool, resolveAgentCwdArg } from '../utils/parse';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -107,6 +106,8 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 		const raw = options.contextWindow.trim().toLowerCase();
 		if (raw === '' || raw === 'none' || raw === '0') {
 			patch.customContextWindow = null;
+			// Clearing the value clears its provenance with it.
+			patch.contextWindowSource = null;
 		} else {
 			const n = Number(raw);
 			if (!Number.isFinite(n) || n < 0) {
@@ -115,6 +116,10 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 				);
 			}
 			patch.customContextWindow = Math.floor(n);
+			// Typing `--context-window` is unambiguously a deliberate choice, so it
+			// outranks a provider-reported window (finding AD1). No seed to compare
+			// against here, unlike the edit modal.
+			patch.contextWindowSource = 'user-edited';
 		}
 	}
 
@@ -265,7 +270,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		}
 	}
 
-	const resolvedCwd = options.cwd !== undefined ? path.resolve(options.cwd) : undefined;
+	const resolvedCwd = options.cwd !== undefined ? resolveAgentCwdArg(options.cwd) : undefined;
 
 	const applied: {
 		group?: string | null;
@@ -430,6 +435,9 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			maestroPPath: 'maestro-p path',
 		};
 		for (const [key, value] of Object.entries(applied.config)) {
+			// Derived marker, not something the caller typed - it is implied by
+			// `--context-window` and printing it just adds noise (finding AD1).
+			if (key === 'contextWindowSource') continue;
 			const label = labels[key] ?? key;
 			if (value === null) {
 				console.log(`  ${label}: (cleared)`);

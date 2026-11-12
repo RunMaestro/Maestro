@@ -16,6 +16,8 @@ import { CodexPlanUsage } from '../../../../renderer/components/UsageDashboard/C
 import { useCodexUsageStore } from '../../../../renderer/stores/codexUsageStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
+import { selectModalData, useModalStore } from '../../../../renderer/stores/modalStore';
+import { useAuthOutageStore } from '../../../../renderer/stores/authOutageStore';
 import { THEMES } from '../../../../shared/themes';
 
 const theme = THEMES['dracula'];
@@ -36,11 +38,14 @@ beforeEach(() => {
 			refreshCodexUsageSnapshots: refreshCodexUsageSnapshotsMock,
 			getCustomEnvVars: getCustomEnvVarsMock,
 		},
+		fs: { homeDir: vi.fn().mockResolvedValue('/Users/me') },
 	};
 
 	useCodexUsageStore.getState().__resetForTests();
 	useSessionStore.setState({ sessions: [] } as any);
 	useUIStore.setState({ hiddenQuotaAccounts: {} });
+	useModalStore.getState().closeAll();
+	useAuthOutageStore.setState({ outages: {} });
 	cleanup();
 });
 
@@ -263,6 +268,53 @@ describe('CodexPlanUsage - non-authenticated row', () => {
 		expect(screen.getByTestId('codex-plan-row-work-error')).toBeInTheDocument();
 		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
 		expect(screen.getByText(/HTTP 500/i)).toBeInTheDocument();
+		// A server error is not fixed by logging in, so no login is offered.
+		expect(screen.queryByTestId('codex-plan-row-work-error-login')).toBeNull();
+	});
+
+	it('opens the re-auth login for a logged-out account with no agents, then re-samples on close', async () => {
+		seedSnapshots({
+			'/Users/me/.codex-banaco': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex-banaco',
+				authState: 'unauthenticated',
+				error: 'Codex auth token was rejected. Run `codex login` for this CODEX_HOME.',
+			},
+		});
+
+		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
+		fireEvent.click(screen.getByTestId('codex-plan-row-banaco-unauthenticated-login'));
+
+		await waitFor(() => expect(selectModalData('reauth')(useModalStore.getState())).toBeDefined());
+		const data = selectModalData('reauth')(useModalStore.getState())!;
+		expect(data.providerKey).toBe('codex');
+		// The login is pinned to THIS account, not to whichever agent failed first.
+		expect(data.host?.toolType).toBe('codex');
+		expect(data.host?.customEnvVars).toEqual({ CODEX_HOME: '/Users/me/.codex-banaco' });
+		expect(useAuthOutageStore.getState().outages.codex?.initiatedBy).toBe('user');
+		expect(refreshCodexUsageSnapshotsMock).not.toHaveBeenCalled();
+
+		useModalStore.getState().closeModal('reauth');
+		await waitFor(() => expect(refreshCodexUsageSnapshotsMock).toHaveBeenCalledTimes(1));
+	});
+
+	it('leaves CODEX_HOME unset when logging in to the default account', async () => {
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'missing_auth',
+				error: 'No Codex auth.json found.',
+			},
+		});
+
+		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
+		fireEvent.click(screen.getByTestId('codex-plan-row-default-missing_auth-login'));
+
+		await waitFor(() => expect(selectModalData('reauth')(useModalStore.getState())).toBeDefined());
+		expect(
+			selectModalData('reauth')(useModalStore.getState())!.host?.customEnvVars
+		).toBeUndefined();
 	});
 });
 
@@ -305,6 +357,46 @@ describe('CodexPlanUsage - refresh wiring', () => {
 		fireEvent.keyDown(window, { key: 'r', metaKey: true });
 
 		expect(refreshCodexUsageSnapshotsMock).not.toHaveBeenCalled();
+	});
+
+	it('keeps sampling after the panel unmounts and fills the store in when done', async () => {
+		let finishSample!: (value: unknown) => void;
+		refreshCodexUsageSnapshotsMock.mockReturnValue(
+			new Promise((resolve) => {
+				finishSample = resolve;
+			})
+		);
+		getCodexUsageSnapshotsMock.mockResolvedValue({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T01:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				session: { percent: 11, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekly: { percent: 2, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		const { unmount } = render(<CodexPlanUsage theme={theme} />);
+		fireEvent.click(screen.getByTestId('codex-plan-refresh'));
+		await waitFor(() => expect(refreshCodexUsageSnapshotsMock).toHaveBeenCalledTimes(1));
+
+		// Switching dashboard tabs unmounts the panel mid-sample.
+		unmount();
+
+		// Coming back while main is still sampling shows the run as busy, and a
+		// click joins it instead of starting a second sample.
+		render(<CodexPlanUsage theme={theme} />);
+		const button = screen.getByTestId('codex-plan-refresh') as HTMLButtonElement;
+		expect(button.disabled).toBe(true);
+		expect(button.textContent).toContain('Sampling');
+		fireEvent.click(button);
+		expect(refreshCodexUsageSnapshotsMock).toHaveBeenCalledTimes(1);
+
+		finishSample({ refreshed: 1 });
+		await waitFor(() => {
+			expect(screen.getByTestId('codex-plan-row-default')).toBeInTheDocument();
+		});
+		await waitFor(() => expect(button.disabled).toBe(false));
 	});
 
 	it('disables the refresh button while a refresh is already in flight', () => {

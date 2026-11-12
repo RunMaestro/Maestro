@@ -60,22 +60,31 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 	// inside is the only thing here that can be clipped without reading as a
 	// bug: a truncated filename is ordinary, a truncated brand is not. The
 	// wordmark drops out whole instead (see SessionList's width gate), so it is
-	// no longer available to squeeze. Both buttons, both icons, and the divider
-	// stay shrink-0 - they are the entire transport a minimized player has.
+	// no longer available to squeeze.
+	//
+	// The filename is the ONLY thing that yields. The pill used to be
+	// `min-w-0 overflow-hidden`, which let a squeezed header band shrink it past
+	// its own transport and clip the restore button in half. Now the pill keeps
+	// its automatic minimum (no overflow clip, no `min-w-0`), and that minimum is
+	// exactly the transport: the toggle is a grid whose label track is
+	// `minmax(0, max-content)`, so the label contributes nothing to the pill's
+	// min-content while still taking its natural width when there is room. The
+	// hover backgrounds carry their own corner radius, since without the clip on
+	// the pill they would otherwise square off its rounded ends.
 	return (
 		<div
 			data-testid="now-playing-indicator"
-			className="flex items-stretch min-w-0 rounded border overflow-hidden"
+			className="flex items-stretch rounded border"
 			style={{ borderColor: theme.colors.border }}
 		>
 			<button
 				type="button"
 				data-testid="now-playing-toggle"
 				onClick={requestToggle}
-				// `min-w-0` so the label span below can actually shrink inside it; a
-				// flex item defaults to min-width:auto and would refuse to.
-				className={`flex items-center gap-1 min-w-0 text-2xs font-bold transition-colors hover:bg-white/10 ${
-					compact ? 'px-1 py-1' : 'pl-1.5 pr-1.5 py-0.5'
+				className={`items-center gap-1 rounded-l-[3px] text-2xs font-bold transition-colors hover:bg-white/10 ${
+					compact
+						? 'flex justify-center px-2 py-1'
+						: 'grid grid-cols-[auto_minmax(0,max-content)] pl-2 pr-2 py-0.5'
 				}`}
 				style={{ color: playing ? theme.colors.accent : theme.colors.textDim }}
 				title={`${active.name} - click to ${playing ? 'pause' : 'play'}`}
@@ -86,14 +95,18 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 			</button>
 
 			{/* The divider is what makes the pill read as two controls rather than
-			    one wide button, so a click lands where the user meant. */}
+			    one wide button, so a click lands where the user meant. Both halves
+			    carry the same padding on both sides, so each glyph sits clear of the
+			    line instead of crowding it - two icons a few pixels either side of a
+			    rule read as one cramped graphic rather than as two buttons, which
+			    defeats the point of drawing the divider at all. */}
 			<div className="w-px shrink-0" style={{ backgroundColor: theme.colors.border }} aria-hidden />
 
 			<button
 				type="button"
 				data-testid="now-playing-restore"
 				onClick={restore}
-				className="px-1 transition-colors hover:bg-white/10"
+				className="flex items-center justify-center shrink-0 px-2 rounded-r-[3px] transition-colors hover:bg-white/10"
 				style={{ color: theme.colors.textDim }}
 				title="Show the media player"
 				aria-label="Show the media player"

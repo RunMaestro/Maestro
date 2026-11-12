@@ -47,6 +47,10 @@ export function DeleteAgentConfirmModal({
 		<Modal
 			theme={theme}
 			title="Confirm Delete"
+			// Reachable by right-clicking any Left Bar row, so the agent being
+			// deleted is often not the highlighted one. The body names it, but a
+			// destructive confirm should say what it targets in the header too.
+			subtitle={agentName}
 			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
 			headerIcon={<Trash2 className="w-4 h-4" style={{ color: theme.colors.error }} />}

@@ -24,12 +24,13 @@ All stores are in `src/renderer/stores/`.
 | ---------------------- | ----------------------- | ----------------------- | --------------------------------------------------------------------------------------------------- |
 | **sessionStore**       | `sessionStore.ts`       | `useSessionStore`       | Sessions, groups, active session, bookmarks, worktree tracking, initialization                      |
 | **uiStore**            | `uiStore.ts`            | `useUIStore`            | UI layout: sidebars, focus, notifications, search, drag-and-drop, editing                           |
-| **tabStore**           | `tabStore.ts`           | `useTabStore`           | Tab operations (CRUD, navigation, metadata), gist state. Wraps tabHelpers.ts + sessionStore         |
+| **tabStore**           | `tabStore.ts`           | `useTabStore`           | Tab operations (CRUD, navigation, metadata), gist state. Wraps tabHelpers + sessionStore            |
 | **agentStore**         | `agentStore.ts`         | `useAgentStore`         | Agent detection cache, error recovery, queue processing, agent lifecycle                            |
 | **modalStore**         | `modalStore.ts`         | `useModalStore`         | Modal visibility via registry pattern. Single Map replaces 90+ boolean fields                       |
 | **groupChatStore**     | `groupChatStore.ts`     | `useGroupChatStore`     | Group chat state: chats list, messages, moderator, participants, execution queue                    |
-| **settingsStore**      | `settingsStore.ts`      | `useSettingsStore`      | App settings (theme, font, shortcuts, agent configs, etc.)                                          |
+| **settingsStore**      | `settingsStore.ts`      | `useSettingsStore`      | App settings (theme, font, shortcuts, agent configs, per-modal `modalSizes`, etc.)                  |
 | **fileExplorerStore**  | `fileExplorerStore.ts`  | `useFileExplorerStore`  | File explorer panel state                                                                           |
+| **sidebarNavStore**    | `sidebarNavStore.ts`    | `useSidebarNavStore`    | Left Bar sort/nav/starred projections (`SidebarNavSync` host writes; SessionList + keyboard read)   |
 | **batchStore**         | `batchStore.ts`         | `useBatchStore`         | Batch/Auto Run execution state                                                                      |
 | **notificationStore**  | `notificationStore.ts`  | `useNotificationStore`  | In-app notification queue                                                                           |
 | **operationStore**     | `operationStore.ts`     | `useOperationStore`     | Long-running operation tracking                                                                     |
@@ -90,13 +91,24 @@ selectIsAnySessionBusy; // (state) => boolean
 ### Non-React Access
 
 ```typescript
-import { getSessionState, getSessionActions } from './stores/sessionStore';
+import {
+	useSessionStore,
+	updateSessionWith,
+	updateAiTab,
+	updateFileTab,
+	updateBrowserTab,
+} from './stores/sessionStore';
 
-// Read current state (snapshot)
-const { sessions, activeSessionId } = getSessionState();
+// Read current state (snapshot) or call an action - both live on getState()
+const { sessions, activeSessionId, setSessions, setActiveSessionId } = useSessionStore.getState();
 
-// Get stable action references
-const { setSessions, setActiveSessionId } = getSessionActions();
+// Patch one agent without walking the sessions array yourself
+updateSessionWith(sessionId, (s) => ({ ...s, batchRunnerPrompt: prompt }));
+
+// One single-tab updater per tab type - all three take (sessionId, tabId, updater)
+updateAiTab(sessionId, tabId, (tab) => ({ ...tab, hasUnread: false }));
+updateFileTab(sessionId, tabId, (tab) => ({ ...tab, scrollTop }));
+updateBrowserTab(sessionId, tabId, (tab) => ({ ...tab, isLoading: false }));
 ```
 
 ---
@@ -135,6 +147,8 @@ All actions support functional updaters and have toggle variants where appropria
 
 A test that renders the Left Bar must reset both in `beforeEach`. They are module-global now, so a test that types into the filter leaves the query behind and every later test in the file renders an empty sidebar.
 
+**`closeLeftSidebarForNavigation()` is the one way to dismiss the drawer after a navigation.** On a narrow viewport (`xs` / `sm`) the Left Bar is an overlay over the main panel, so activating anything listed in it - an agent row, a group chat, a starred session, any `jumpToAgent()` - has to close it; on a wide viewport it is a permanent column and the action is a no-op. The width check (`isNarrowViewportNow()`) lives inside the action so no call site re-derives the breakpoint. Call it AT THE TAP, not from an effect keyed on `activeSessionId`: a group chat never moves that id, and a row that is already active moves nothing either, so a transition-keyed effect sees nothing to react to and the drawer stays over what the tap was meant to show. Full entry: [CANONICAL-UTILITIES.md](CANONICAL-UTILITIES.md).
+
 ---
 
 ## tabStore
@@ -142,7 +156,7 @@ A test that renders the Left Bar must reset both in `beforeEach`. They are modul
 **File:** `src/renderer/stores/tabStore.ts`
 **Hook:** `useTabStore`
 
-Tab data lives inside Session objects in sessionStore. This store provides orchestration actions that compose `tabHelpers.ts` pure functions with sessionStore mutations.
+Tab data lives inside Session objects in sessionStore. This store provides orchestration actions that compose `tabHelpers` pure functions with sessionStore mutations.
 
 ### Own State
 
@@ -657,3 +671,27 @@ Each AI tab within a session:
 | `agentError`     | `AgentError?`  | Per-tab error state                                                                |
 
 **Model/effort resolution chain** (used at user-facing spawn time in `useInputProcessing` and `agentStore.processQueuedItem`): `tab.customModel ?? session.customModel ?? agentConfig.model`. The MainPanel model/effort pill writes to the active tab via `tabStore.setTabModel`/`setTabEffort` - only the Edit Agent modal mutates `session.customModel`/`customEffort`. Programmatic spawns (Auto Run batch, synopsis, Cue, group chat, fork/merge) intentionally read the session value only.
+
+## Auto-Resume On Limit
+
+When an agent pauses on a provider limit (a rate / token / credit limit - `isLimitError(err)` in `src/shared/types.ts`, true for `rate_limited` and `token_exhaustion`), Maestro can auto-resume it once the window reopens. The coordinator is a renderer singleton, `useAutoResumeCoordinator` (`src/renderer/hooks/agent/useAutoResumeCoordinator.ts`), mounted once in `App.tsx` beside the other agent listeners.
+
+**Settings** (General tab → "Auto-Resume on Limit"; metadata in `settingsMetadata.ts`, defaults in `main/stores/defaults.ts`):
+
+| Setting                        | Default | Meaning                                                      |
+| ------------------------------ | ------- | ------------------------------------------------------------ |
+| `autoResumeOnLimit`            | `true`  | Master toggle. Off = no timer, nothing scheduled.            |
+| `autoResumeCheckIntervalHours` | `2`     | How often the coordinator probes every limit-paused session. |
+| `autoResumeGiveUpDays`         | `7`     | Time-based give-up window measured from the first pause.     |
+
+**Lifecycle** - limit-pause → probe → resume:
+
+1. **Pause** (Phase 2): `useAgentErrorListener` sets `agentError` + `agentErrorPaused: true` + `state: 'error'`, seeds `resumeAttemptCount`, and best-effort stamps `limitResetAt` (when the provider window reopens, via `agents:getLimitResetAt`).
+2. **Probe** (on the interval; a kickoff tick fires ~10s after mount so a restart probes fast). The coordinator selects sessions matching `isLimitPausedSession` and past their `limitResetAt`, then calls `probeAvailability`:
+   - **Claude** (local): reads a freshly re-sampled usage snapshot and returns available only when both the session and weekly windows are below `LIMIT_THRESHOLD`. Missing/unauthenticated snapshot → stay paused.
+   - **All other providers** (and **SSH-backed Claude**): no trustworthy usage signal, so availability is **unknown** and the coordinator falls back to **resume-as-probe** - the resume attempt itself is the probe; if it re-hits the limit, Phase 2 re-pauses it and the next interval retries. (The usage sampler `maestro-p --status` runs locally only and does not honor `sessionSshRemoteConfig`, so it can't describe a remote account - see `claude-usage-sampler.ts`.)
+3. **Resume**: dispatched by run kind. Spec-/goal-driven Auto Runs resolve the shared `errorResolution` promise both runners await (`resumeAfterError`); a standard query clears the error so the persisted `executionQueue` drains (re-firing any captured in-flight direct send). A green "Resumed" toast fires.
+
+**Restart behavior**: a limit pause is the ONE error state that survives an app restart. `prepareSessionForPersistence` (`useDebouncedPersistence.ts`) and `restoreSession` (`useSessionRestoration.ts`) preserve `agentError`/`agentErrorPaused`/`agentErrorTabId`/`state: 'error'` only for limit pauses (every other error stays stripped). On a cold start the coordinator re-finds the session with no extra wiring and resumes the **agent conversation** (the agent re-spawns with its native `--resume <agentSessionId>` and the persisted queue drains). The in-memory **Auto Run / goal-run orchestration loop is NOT reconstructed** (`batchStore` is in-memory by design), so even a formerly Auto-Run session resumes via the standard queue-drain path - the agent continues from its own transcript, the loop controller does not resume.
+
+**Give-up (time-based)**: the coordinator keeps probing on the normal interval the entire window - there is NO attempt-count cap (`resumeAttemptCount` is telemetry only). Only once `limitPausedAt + autoResumeGiveUpDays` elapses does it stop retrying that session, leave it paused, and fire ONE distinct orange "Auto-resume stopped" toast. The window anchor survives a resume-then-re-hit (so "N days of repeated limits" actually elapses), and resets on any successful resume or manual clear (`clearAgentError`) so a later limit starts fresh. Any manual recovery action drops the session from consideration (its selector no longer matches).

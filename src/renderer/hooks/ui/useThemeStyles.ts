@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { adjustBrightness, blendColors, hexToRgb } from '../../../shared/colorContrast';
 import type { ThemeMode } from '../../../shared/theme-types';
 import type { GlossLevel } from '../../../shared/themeGloss';
+import { getElevatedSurfaceColors } from '../../utils/elevatedSurface';
 
 /**
  * The light source the gloss rules mix, as an `R G B` triple for `rgb(... / a%)`.
@@ -101,7 +102,14 @@ interface DerivedThemeSlots {
 function deriveThemeSlots(
 	colors: Pick<
 		ThemeColors,
-		'bgMain' | 'textMain' | 'accent' | 'bgHover' | 'accentHover' | 'surfaceElevated'
+		| 'bgMain'
+		| 'bgActivity'
+		| 'border'
+		| 'textMain'
+		| 'accent'
+		| 'bgHover'
+		| 'accentHover'
+		| 'surfaceElevated'
 	>,
 	mode: ThemeMode
 ): DerivedThemeSlots {
@@ -118,10 +126,9 @@ function deriveThemeSlots(
 	// which reads as a different colour rather than the same control lit up.
 	const accentHover = colors.accentHover ?? adjustBrightness(colors.accent, isLight ? -8 : 10);
 
-	// Light themes have no "brighter than white" to reach for, so an elevated
-	// surface goes the other way and carries its own shadow.
-	const surfaceElevated =
-		colors.surfaceElevated ?? adjustBrightness(colors.bgMain, isLight ? -3 : 4);
+	// One step past bgActivity toward textMain, shared with the inline
+	// `elevatedSurfaceStyle()` so the var and the popovers cannot disagree.
+	const surfaceElevated = getElevatedSurfaceColors(colors).background;
 
 	return { bgHover, bgHoverWash, accentHover, surfaceElevated };
 }
@@ -224,7 +231,7 @@ export interface UseThemeStylesReturn {
  *   --bg-hover               = themeColors.bgHover, or textMain blended into bgMain
  *   --bg-hover-wash          = the same decision as a translucent overlay
  *   --accent-hover           = themeColors.accentHover, or the accent brightened
- *   --surface-elevated       = themeColors.surfaceElevated, or bgMain lifted
+ *   --surface-elevated       = themeColors.surfaceElevated, or one step past bgActivity
  *   --accent-rgb             = themeColors.accent as "R, G, B"
  *   --pulse-color            = accent at 40% (highlight-pulse ring)
  *   --glow-color             = accent at 15% (card-glow hover halo)

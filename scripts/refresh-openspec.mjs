@@ -10,7 +10,7 @@
  * (proposal/apply/archive) and map each onto the upstream workflow that
  * matches, extracting the `instructions:` template literal as the prompt body.
  *
- * Usage: npm run refresh-openspec
+ * Usage: bun run refresh-openspec
  */
 
 import fs from 'fs';

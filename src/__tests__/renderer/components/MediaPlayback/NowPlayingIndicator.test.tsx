@@ -154,10 +154,35 @@ describe('NowPlayingIndicator', () => {
 		render(<NowPlayingIndicator theme={mockTheme} />);
 		const pill = screen.getByTestId('now-playing-indicator');
 		expect(pill.className).not.toContain('shrink-0');
-		// It needs min-w-0 to be able to shrink at all: a flex item defaults to
-		// min-width:auto and would refuse to go below its content.
-		expect(pill.className).toContain('min-w-0');
-		expect(screen.getByTestId('now-playing-toggle').className).toContain('min-w-0');
+		// The label track is `minmax(0, max-content)`: it takes the filename's
+		// natural width when there is room and contributes nothing to the pill's
+		// minimum, so the filename is what yields.
+		expect(screen.getByTestId('now-playing-toggle').className).toContain(
+			'grid-cols-[auto_minmax(0,max-content)]'
+		);
+	});
+
+	it('never shrinks past its own transport', () => {
+		// It used to be `min-w-0 overflow-hidden`, so a squeezed header band could
+		// shrink the pill below its buttons and clip the restore button in half.
+		// Its automatic minimum is the transport now, so both must stay off.
+		render(<NowPlayingIndicator theme={mockTheme} />);
+		const pill = screen.getByTestId('now-playing-indicator');
+		expect(pill.className).not.toContain('min-w-0');
+		expect(pill.className).not.toContain('overflow-hidden');
+		// With `min-w-0` the toggle shrank past its own padding box and the glyph
+		// spilled over the divider.
+		expect(screen.getByTestId('now-playing-toggle').className).not.toContain('min-w-0');
+	});
+
+	it('centers each glyph in its own half of the pill', () => {
+		render(<NowPlayingIndicator theme={mockTheme} compact />);
+		for (const id of ['now-playing-toggle', 'now-playing-restore']) {
+			expect(screen.getByTestId(id).className).toContain('justify-center');
+			expect(screen.getByTestId(id).className).toContain('items-center');
+		}
+		// The restore half has nothing that may be clipped, so it never yields.
+		expect(screen.getByTestId('now-playing-restore').className).toContain('shrink-0');
 	});
 
 	it('never sheds a control, only the filename', () => {

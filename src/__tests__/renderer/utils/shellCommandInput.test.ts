@@ -8,7 +8,9 @@
 
 import { describe, test, expect } from 'vitest';
 import {
+	commandFromShellFence,
 	detectCommandModeEntry,
+	isRunnableShellLanguage,
 	isAiCommandMode,
 	isShellCommandMode,
 	nextComposerCommandMode,
@@ -120,5 +122,43 @@ describe('normalizeComposerCommandMode', () => {
 		expect(normalizeComposerCommandMode(null)).toBe('off');
 		expect(normalizeComposerCommandMode('bogus')).toBe('off');
 		expect(normalizeComposerCommandMode(1)).toBe('off');
+	});
+});
+
+describe('isRunnableShellLanguage', () => {
+	test('accepts the shell tags agents write and their Shiki canonical ids', () => {
+		for (const lang of ['bash', 'sh', 'shell', 'zsh', 'console', 'shellscript', 'shellsession']) {
+			expect(isRunnableShellLanguage(lang)).toBe(true);
+		}
+	});
+
+	test('is case-insensitive', () => {
+		expect(isRunnableShellLanguage('Bash')).toBe(true);
+	});
+
+	test('rejects other languages and other shell dialects', () => {
+		for (const lang of ['python', 'text', 'fish', 'powershell', '', null, undefined]) {
+			expect(isRunnableShellLanguage(lang)).toBe(false);
+		}
+	});
+});
+
+describe('commandFromShellFence', () => {
+	test('runs an ordinary fence as written, line continuations included', () => {
+		const code = 'cd ~/dl && curl -L -o out.mp4 \\\n  "https://example.com/a.mp4"';
+		expect(commandFromShellFence(`\n${code}\n`)).toBe(code);
+	});
+
+	test('runs only the prompt lines of a session transcript, prompt stripped', () => {
+		const code = '$ npm test\n> vitest run\n 12 passed\n$ git status';
+		expect(commandFromShellFence(code)).toBe('npm test\ngit status');
+	});
+
+	test('does not mistake a variable for a prompt', () => {
+		expect(commandFromShellFence('$HOME/bin/tool --flag')).toBe('$HOME/bin/tool --flag');
+	});
+
+	test('returns an empty string for a blank fence', () => {
+		expect(commandFromShellFence('  \n ')).toBe('');
 	});
 });

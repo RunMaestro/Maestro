@@ -9,6 +9,8 @@
  * `vi.mock('electron-store')` take effect, and CODEX_HOME key resolution.
  */
 
+import path from 'path';
+
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const { mockStoreConstructorCalls } = vi.hoisted(() => ({
@@ -193,14 +195,17 @@ describe('codexUsageStore', () => {
 		});
 	});
 
+	// The subject ends in `path.resolve`, so a POSIX literal picks up a drive
+	// letter on Windows. Expect through the same resolver rather than pinning
+	// the separator this machine happens to use.
 	describe('resolveCodexHomeKey', () => {
 		it('falls back to ~/.codex when CODEX_HOME is unset', () => {
-			expect(resolveCodexHomeKey({})).toBe('/Users/test/.codex');
+			expect(resolveCodexHomeKey({})).toBe(path.resolve('/Users/test/.codex'));
 		});
 
 		it('honors an explicit CODEX_HOME', () => {
 			expect(resolveCodexHomeKey({ CODEX_HOME: '/Users/test/.codex-work' })).toBe(
-				'/Users/test/.codex-work'
+				path.resolve('/Users/test/.codex-work')
 			);
 		});
 	});

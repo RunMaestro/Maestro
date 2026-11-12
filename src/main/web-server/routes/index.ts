@@ -4,8 +4,8 @@
  * Re-exports all route modules for the web server.
  */
 
-export {
-	ApiRoutes,
+export { ApiRoutes } from './apiRoutes';
+export type {
 	ApiRouteCallbacks,
 	SessionUsageStats,
 	LastResponsePreview,
@@ -18,10 +18,18 @@ export {
 
 // Note: HistoryEntry type is exported from shared/types.ts (canonical location)
 
+export { AuthRoutes } from './authRoutes';
+
+export { ConcertoRoutes } from './concertoRoutes';
+
+export { MediaRoutes } from './mediaRoutes';
+
+export { ImageRoutes } from './imageRoutes';
+
 export { StaticRoutes } from './staticRoutes';
 
-export {
-	WsRoute,
+export { WsRoute } from './wsRoute';
+export type {
 	WsRouteCallbacks,
 	WsSessionData,
 	LiveSessionInfo as WsLiveSessionInfo,

@@ -15,13 +15,67 @@ Settings are organized into tabs:
 | **General**                     | About Me (conductor profile), [system-wide hotkey to summon Maestro](./keyboard-shortcuts#system-wide-hotkey-summon-maestro), shell configuration, input send behavior, default toggles (history, thinking), automatic tab naming, power management, updates, privacy, usage stats, storage location |
 | **Display**                     | [Typography](#typography) (a font and size per surface, presets, custom fonts, zoom), terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings, [Accessibility](#accessibility) (Color Blind Mode, Bionify reading emphasis)            |
 | **Shortcuts**                   | Customize keyboard shortcuts (see [Keyboard Shortcuts](./keyboard-shortcuts))                                                                                                                                                                                                                        |
-| **Themes**                      | Dark, light, and vibe mode themes, custom theme builder with import/export                                                                                                                                                                                                                           |
+| **Themes**                      | Dark, light, and vibe mode themes, custom theme builder with import/export, Follow System Appearance (light/dark theme pair)                                                                                                                                                                         |
 | **Notifications**               | OS notifications, custom command notifications, toast notification duration, position, and width                                                                                                                                                                                                     |
 | **AI Commands**                 | View and edit slash commands, [Spec-Kit](./speckit-commands), [OpenSpec](./openspec-commands), and [BMAD](./bmad-commands) prompts                                                                                                                                                                   |
 | **Maestro Prompts**             | Browse and edit the 23 core system prompts (wizard, Auto Run, group chat, context, etc.). Changes take effect immediately; reset to bundled defaults at any time                                                                                                                                     |
 | **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                                                                                                                             |
 | **Environment**                 | Global environment variables that cascade to all agents and terminal sessions                                                                                                                                                                                                                        |
-| **WakaTime** _(in General tab)_ | WakaTime integration toggle, API key, detailed file tracking                                                                                                                                                                                                                                         |
+| **Plugins**                     | Enable or disable built-in [Encore Features](./encore-features) and community plugins, with per-plugin settings and permissions                                                                                                                                                                      |
+| **WakaTime** _(in Plugins tab)_ | WakaTime integration toggle, API key, detailed file tracking - under the **Usage & Stats** plugin's settings                                                                                                                                                                                         |
+
+## Typography
+
+**Settings → Display → Fonts.** Maestro does not have one font: it has a font per surface, so the places you read and the places you work can use different faces.
+
+![The Display tab's font controls, with a picker per surface](./screenshots/settings-fonts.png)
+
+Two surfaces are the roots that everything else can follow:
+
+- **Interface** - the whole app, and the proportional face other surfaces inherit.
+- **Terminal** - the command terminal, and the fixed-width face other surfaces inherit. A Nerd Font here gets you shell prompt glyphs.
+
+Four more surfaces each pick their own face, or inherit:
+
+| Surface            | What it covers                                                     |
+| ------------------ | ------------------------------------------------------------------ |
+| **AI Chat**        | The AI transcript, in the main panel and in tiled panes            |
+| **File Preview**   | A file being read                                                  |
+| **File Editor**    | A file being edited                                                |
+| **Document Graph** | Node titles and previews in the [Document Graph](./document-graph) |
+
+Each surface has its own size, which can also inherit. Press **Up** / **Down** on any picker to step through the installed faces and preview them live.
+
+### Presets
+
+**Factory Reset Fonts** sets every font and size at once:
+
+- **Default** - proportional to read, monospace to work. The interface, AI chat, and file preview are proportional; the terminal and file editor are monospace.
+- **Hacker** - monospace everywhere. The original Maestro look.
+
+Maestro tells you which preset is active, or that you have customized away from both.
+
+### Save and restore your own setup
+
+A preset overwrites every font and size, so **Save & Restore Customizations** keeps yours. Click **Save Customizations** once you like what you have, then try a preset or keep tinkering, and **Restore Customizations** puts your fonts back in one click.
+
+There is one slot, and saving again replaces it (Maestro asks first). Zoom is not part of a saved setup, so restoring one never changes how big everything is.
+
+### Custom fonts
+
+The pickers list fonts Maestro knows about. If you have a font installed that is not in the list, add its name once under **Manage Custom Fonts** and it becomes available in every picker.
+
+<Warning>
+Type the family name exactly as the system reports it. A name that is not installed cannot be resolved, and the surface falls back to the browser default rather than telling you it failed.
+</Warning>
+
+### Zoom
+
+**Zoom** scales every surface by the same amount, so the sizes you set relative to each other are preserved. `Cmd+=` / `Cmd+-` adjusts it and `Cmd+Shift+0` resets it.
+
+<Tip>
+You are offered the Default and Hacker presets once, on first run, so you do not have to find this screen to make Maestro readable. Nothing there is permanent - every choice is a setting you can change here later. See [First run](./getting-started#first-run).
+</Tip>
 
 ## Typography
 
@@ -123,6 +177,16 @@ Surfaces that aren't recolored: theme accent itself, file extension labels in pl
 ### Bionify Emphasis (Reading Mode)
 
 Bionify-style emphasis bolds the leading fixation portion of each word to make long-form reading easier. It is opt-in and applies **only** to dedicated readers - File Preview and Auto Run document panes. Terminals, logs, chat input, and AI output stay unchanged so they remain easy to copy/paste.
+
+Off, and on, on the same document:
+
+![File preview without Bionify emphasis](./screenshots/bionify-file-preview-before.png)
+
+![The same file preview with Bionify emphasis on](./screenshots/bionify-file-preview-after.png)
+
+The toggle sits in the reader's own toolbar, so you can turn it on for the document in front of you without opening Settings:
+
+![The Bionify toggle in the file preview toolbar](./screenshots/bionify-file-preview-highlighted.png)
 
 - **Intensity** - Soft / Default / Strong. Controls how aggressive the fixation emphasis is.
 - **Algorithm** - Advanced override of the fixation formula. Format: `[+|-] N1 N2 N3 N4 frac` where `-` skips common English words (`a`, `and`, `the`) and `+` highlights every word. The four integers set how many characters are emphasized for words of length 1-4, and `frac` is the fraction of characters emphasized for longer words (e.g. `0.4` = first 40%). Default: `- 0 1 1 2 0.4`. Click the **info** icon next to the toggle for the in-app reference.
@@ -263,13 +327,13 @@ Maestro spawns each provider's own CLI, so it does not have a "model gateway" se
 
 Set these in **Edit Agent → Environment Variables (optional)** (`Alt+Cmd+,` / `Alt+Ctrl+,`) so they apply to that agent alone, or in **Settings → Environment** to apply them everywhere.
 
-| Provider          | Variables that redirect it                                                                                                            | Notes                                                                            |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| **Claude Code**   | `ANTHROPIC_BASE_URL` plus `ANTHROPIC_AUTH_TOKEN` (gateway token) or `ANTHROPIC_API_KEY`. `CLAUDE_CONFIG_DIR` picks a different login. | The endpoint must speak the Anthropic Messages API. See the warning below.       |
-| **Codex**         | `OPENAI_API_KEY`, and `CODEX_HOME` to point at a config directory with its own `base_url`                                             | Codex reads a custom model provider from its own config file.                    |
-| **OpenCode**      | `OPENCODE_CONFIG_DIR`, plus the provider key var for whichever backend you configure (`ANTHROPIC_API_KEY`, `GROQ_API_KEY`, and so on) | OpenCode recognizes roughly a hundred `*_API_KEY` vars and stores them together. |
-| **Copilot CLI**   | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` (the CLI's own precedence order)                                                   | Selects which GitHub account is used. The backend itself is not redirectable.    |
-| **Factory Droid** | Configured in Droid's own settings                                                                                                    | Maestro passes the environment through but does not define the vars.             |
+| Provider          | Variables that redirect it                                                                                                              | Notes                                                                            |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **Claude Code**   | `ANTHROPIC_BASE_URL` plus `ANTHROPIC_AUTH_TOKEN` (gateway token) or `ANTHROPIC_API_KEY`. `CLAUDE_CONFIG_DIR` picks a different login.   | The endpoint must speak the Anthropic Messages API. See the warning below.       |
+| **Codex**         | `OPENAI_API_KEY`, and `CODEX_HOME` to point at a config directory with its own `base_url`                                               | Codex reads a custom model provider from its own config file.                    |
+| **OpenCode**      | `OPENCODE_CONFIG_DIR`, plus the provider key var for whichever backend you configure (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and so on) | OpenCode recognizes roughly a hundred `*_API_KEY` vars and stores them together. |
+| **Copilot CLI**   | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN` (the CLI's own precedence order)                                                     | Consulted only when there is no stored login. The backend is not redirectable.   |
+| **Factory Droid** | Configured in Droid's own settings                                                                                                      | Maestro passes the environment through but does not define the vars.             |
 
 Claude Code also honors `CLAUDE_CODE_USE_BEDROCK=1` and `CLAUDE_CODE_USE_VERTEX=1`, which route it to AWS Bedrock or Google Vertex AI. Those take credentials from the cloud SDK chain rather than from an Anthropic key, and they override the variables above.
 
@@ -283,8 +347,10 @@ maestro-cli update-agent <agent-id> --env ANTHROPIC_AUTH_TOKEN=sk-gateway-...
 #### What Will Not Work
 
 <Warning>
-An OpenAI-compatible gateway cannot back Claude Code directly. OpenRouter, Requesty, Together, and similar routers expose an OpenAI-shaped `/chat/completions` endpoint, while Claude Code speaks the Anthropic Messages API. Pointing `ANTHROPIC_BASE_URL` straight at one of them produces request failures, not a working agent. Put a translating proxy (LiteLLM, `claude-code-router`, or the router's own Anthropic-compatible route if it publishes one) in between, and point `ANTHROPIC_BASE_URL` at that. Codex and OpenCode have no such problem, because they are OpenAI-shaped already.
+An OpenAI-compatible gateway cannot back Claude Code directly. Many routers expose only an OpenAI-shaped `/chat/completions` endpoint, while Claude Code speaks the Anthropic Messages API. Pointing `ANTHROPIC_BASE_URL` straight at one of them produces request failures, not a working agent. Put a translating proxy in between, and point `ANTHROPIC_BASE_URL` at that. Codex and OpenCode have no such problem, because they are OpenAI-shaped already.
 </Warning>
+
+A gateway that serves the Anthropic Messages API itself needs no proxy. For a Claude Code agent, set `ANTHROPIC_BASE_URL` to the gateway's base URL without a `/v1` suffix (the CLI appends `/v1/messages`), and `ANTHROPIC_AUTH_TOKEN` to your gateway key. If the gateway uses its own model IDs, set `ANTHROPIC_MODEL` to one of them; the gateway's documentation lists them. Codex and OpenCode take the gateway's OpenAI-compatible URL, which usually ends in `/v1`.
 
 Two more things that surprise people:
 
@@ -401,11 +467,11 @@ Execute a custom command when AI tasks complete. Use any notification method tha
 
 In-app toast notifications appear in the corner when events occur. Configure how long they stay visible:
 
-| Duration                 | Behavior                                  |
-| ------------------------ | ----------------------------------------- |
-| **Off**                  | Toasts are disabled entirely              |
-| **5s / 10s / 20s / 30s** | Toast disappears after the specified time |
-| **Never**                | Toast stays until manually dismissed      |
+| Duration                 | Behavior                                      |
+| ------------------------ | --------------------------------------------- |
+| **Off**                  | No floating toasts; history is still recorded |
+| **5s / 10s / 20s / 30s** | Toast disappears after the specified time     |
+| **Never**                | Toast stays until manually dismissed          |
 
 Choose which corner toasts appear in: **Top Left**, **Top Right**, **Bottom Left**, or **Bottom Right** (the default). Toasts in a bottom corner stack upward. Toasts in a top corner stack downward, below the title bar. In both cases the newest toast is nearest the corner. In a bottom corner, the stack rises above the message input when it would otherwise cover it. To switch corners without opening Settings, search **Move Toast Notifications** in Quick Actions (<kbd>Cmd</kbd>+<kbd>K</kbd>), or run `maestro-cli settings set toastPosition top-left` (also `top-right`, `bottom-left`, `bottom-right`).
 
@@ -431,6 +497,31 @@ Most toasts are clickable, and where the click takes you depends on what the toa
 | An external link                | Opens it in your system browser                  |
 
 If the target tab was closed since the toast appeared, the click still switches to the agent and tells you what was missing, so a click never silently does nothing. Scripts and agents choose the target with the `--open-*` flags on [`maestro-cli notify toast`](/cli#notifications). A toast can also carry a separate inline link button beneath its message (`--action-url`); that link is independent of the body click.
+
+#### Notification Center
+
+A toast is only on screen for a moment, so every one is also kept in the notification center: the bell icon at the right of the header, which shows a badge with the number of unread notifications. Click the bell, choose **Notification Center** from the hamburger menu, or run **Open Notification Center** from the command palette to see them newest first.
+
+- **Unread / All** switches between what still needs attention and the full history.
+- Clicking an entry marks it read and does what clicking the toast would have done, such as jumping to the agent and tab it came from.
+- **Mark all as read** clears the badge. **Clear all** empties the history.
+- Closing or clicking a toast marks it read. One that times out on its own stays unread.
+
+The history keeps the most recent 200 notifications and survives a restart. Desktop windows share the same history and read state, saved in `maestro-notification-history.json` in the app data directory. Changes are committed by the main process, so independent windows cannot overwrite each other. Existing localStorage history is imported once. If you find the popups intrusive, switch off **In-App Toasts** in the bell popover beside the composer, run **Turn Off In-App Toasts** from the command palette, or set the toast duration to **Off** in Settings: in-app floating toasts are suppressed and history is still recorded. Switching them back on restores the duration you had before. **Toggle In-App Toasts** ships with no shortcut; bind one in **Settings** -> **Shortcuts**. OS notifications and custom notification commands remain enabled independently; disable both separately for inbox-only delivery.
+
+The compact inbox, three-line message previews, and initially unbound **Open Notification Center** shortcut remain the defaults. In **Settings → Notifications → Notification center**, these enhancements are opt-in:
+
+| Setting                                                       | Default | Behavior when enabled                                                                                                                                                                                                                              |
+| ------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Use a larger notification center (`notificationCenterLarge`)  | Off     | Opens a wider, taller panel, bounded by the window.                                                                                                                                                                                                |
+| Expand notification details (`notificationCenterDetails`)     | Off     | Adds Show details / Hide details to read the full source, title, and message without leaving the inbox.                                                                                                                                            |
+| Keyboard navigation (`notificationCenterKeyboardNavigation`)  | Off     | Focuses the inbox on opening. Arrows and Home/End/PageUp/PageDown navigate, Enter activates, R marks read, Delete/Backspace dismisses, and D toggles details when enabled. Escape closes; focus returns to the caller when no navigation occurred. |
+| Record each queued reply (`notificationHistoryQueuedReplies`) | Off     | Records intermediate queued replies in the inbox. By default, only the final completion is recorded.                                                                                                                                               |
+| Record each Auto Run task (`notificationHistoryAutoRunTasks`) | Off     | Records each completed task in the inbox. By default, existing run outcomes, warnings, and errors are recorded.                                                                                                                                    |
+
+**Configure notification shortcut** opens the Shortcuts tab, where **Open Notification Center** can be bound. Existing bindings are preserved.
+
+A final completion is recorded even when you are viewing its tab. Its popup remains suppressed and the existing custom audio cue still runs. Intermediate queued and Auto Run task entries are history-only; enabling them does not add popups, OS notifications, or audio commands. Synopsis notifications remain separate from completion notifications. Dismissing an inbox entry marks it read and removes its floating toast, while retaining the history entry.
 
 ### When Notifications Trigger
 

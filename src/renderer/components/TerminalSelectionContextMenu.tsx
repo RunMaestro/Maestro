@@ -1,15 +1,18 @@
 /**
- * TerminalSelectionContextMenu - Right-click menu for selected text in XTerminal.
+ * TerminalSelectionContextMenu - Right-click menu for selected text.
  *
  * Shown when the user right-clicks while text is highlighted in the terminal
- * (and no URL link is being hovered - that case is handled by LinkContextMenu).
+ * (and no URL link is being hovered - that case is handled by LinkContextMenu),
+ * and on a selection inside the AI transcript (TerminalOutput), where it also
+ * offers "Quote in Message". Each item renders only when its handler is passed.
  */
 
 import { useRef, useCallback } from 'react';
-import { Copy, Send } from 'lucide-react';
+import { Copy, Quote, Send } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { useEventListener } from '../hooks/utils/useEventListener';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 export interface TerminalSelectionContextMenuState {
 	x: number;
@@ -26,6 +29,8 @@ interface TerminalSelectionContextMenuProps {
 	onCopy?: (text: string) => void;
 	/** Send the selection to another agent via the Send-to-Agent modal. */
 	onSendToAgent?: (text: string) => void;
+	/** Append the selection to the composer as a Markdown quote. */
+	onQuote?: (text: string) => void;
 }
 
 export function TerminalSelectionContextMenu({
@@ -34,12 +39,13 @@ export function TerminalSelectionContextMenu({
 	onDismiss,
 	onCopy,
 	onSendToAgent,
+	onQuote,
 }: TerminalSelectionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
 
-	const { left, top, ready } = useContextMenuPosition(menuRef, menu.x, menu.y);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, menu.x, menu.y);
 
 	useEventListener('mousedown', () => onDismissRef.current(), { target: document });
 	useEventListener(
@@ -60,20 +66,39 @@ export function TerminalSelectionContextMenu({
 		onDismiss();
 	}, [menu.selection, onSendToAgent, onDismiss]);
 
+	const handleQuote = useCallback(() => {
+		onQuote?.(menu.selection);
+		onDismiss();
+	}, [menu.selection, onQuote, onDismiss]);
+
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-[10000] py-1 rounded-md shadow-xl border whitespace-nowrap"
+			className="fixed z-[10000] py-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
+				// A menu taller than the viewport pins to the top edge and runs off
+				// the bottom; the container is overflow-hidden, so those items are
+				// simply unreachable. Scroll instead of clipping.
+				maxHeight,
+				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '12.5rem',
 			}}
 			onMouseDown={(e) => e.stopPropagation()}
 		>
+			{onQuote && (
+				<button
+					onClick={handleQuote}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Quote className="w-3.5 h-3.5" />
+					Quote in Message
+				</button>
+			)}
 			{onCopy && (
 				<button
 					onClick={handleCopy}

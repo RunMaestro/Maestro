@@ -1,6 +1,7 @@
 ---
 title: Release Notes
 description: Version history and changelog for Maestro releases
+icon: tag
 ---
 
 # Release Notes
@@ -13,40 +14,80 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ---
 
-## v0.17.x - Maestro Cue
+## v1.0.x - Right on Cue
 
-**Latest: v0.17.6** | Released October 2, 2026
+**Latest: v1.0.3** | Released November 12, 2026
 
-# 0.17.6 Highlights
+# 1.0.3 Highlights
 
-🔍 **Pan and zoom any diagram or image, full window.** Mermaid diagrams and markdown images get an expand button, chat images open with a click, and anything else opens from its right-click menu with Expand (Pan and Zoom). Zoom at the cursor with the wheel or a pinch, drag or arrow-key to pan, double-click to fit, and diagrams stay vector-sharp however far you go in. Pinching an image in the file preview no longer zooms the whole window either.
+⏰ **A scheduled prompt can come back to the conversation that asked for it.** `maestro-cli cue schedule --here` (or `--tab`) delivers the prompt into that tab when it fires. It waits behind a busy turn, marks the tab unread, and never moves your view, and if you closed the tab, it opens a new one with a toast. Agents use this now: ask one to "check back in 20 minutes" and the follow-up arrives in the same tab instead of in History. If you customized the CLI or Cue prompts in Settings > Maestro Prompts, your version stays; compare it with the new default there to pick this up.
 
-📨 **Send to Agent waits its turn.** Handing context to a busy agent used to start it right on top of the running turn. It now opens a new tab and queues the context for when the current turn finishes, and with Forced Parallel Execution on, Force Send to Agent still runs it alongside. A dimmed Force Send also tells you why it is dimmed and takes you straight to the setting that unlocks it.
+⚙️ **Settings search changes the setting for you.** An on/off result shows its switch right on the row and flips in place, and a bigger setting opens its full section under the row. Down arrow walks the results, Space flips or expands, Right and Left expand and collapse, and Enter still jumps to the tab.
 
-🍞 **Toasts go where you want them and stay out of your way.** Pick any corner in Settings > Notifications, or search Move Toast Notifications in Quick Actions. In a bottom corner they now lift above the message input, group chat included, instead of covering what you are typing.
+🌗 **Themes can track your device's light and dark mode.** Turn on Follow System Appearance in Settings > Themes and pick one light theme and one dark theme. Each screen follows its own device, so a phone on the web interface switches with the phone while the desktop follows the computer.
 
-🩹 **The outage card tells the truth.** It clears the moment a resend gets through, counts the retry that worked, and says "Quota restored." when it was your quota that came back. When a resend fails for a different reason, like an expired login, the card says auto-retry ended and names the real error instead of showing a green "Connection recovered." above it.
+📋 **Environment variables take plain `.env` text.** Every env var editor has a Basic / Advanced toggle. Advanced is one box of `KEY=value` lines: paste a `.env` file or a block from a provider's docs, or copy an agent's variables back out. A line that does not parse is listed with its line number, and `# KEY=value` parks a variable without deleting it.
 
-🗣️ **Your agents can do more of Maestro for you.** `maestro-cli` now starts and drives group chats, files feedback (searching for duplicates and adding a +1 first), writes a support package, flips any Cue subscription on or off, lists recent Cue runs, reads and redirects an agent's Auto Run, browses and installs from the Playbook Exchange, and queues audio or video in the player without starting it. A failing call now reports back right away instead of hanging until it times out.
+🧠 **Huge transcripts no longer take Maestro down.** Resuming a long conversation read the whole transcript at once, so a few hundred megabytes could crash the app and anything past about 512 MB would not open. Maestro now reads only the messages it shows, loads several times faster, and the usage data scan reads transcripts line by line for the same reason.
 
-## Also in 0.17.6
+## Also in 1.0.3
 
-- 💾 **Auto Run gets Save & Exit**, which saves to the loaded playbook and closes, or creates a dated, codenamed playbook when none is loaded.
-- ↕️ **Drag the Auto Run document list taller** by its bottom edge; it remembers the height, never runs off the bottom of a smaller screen, and a double-click resets it.
-- 📋 **Every code block has a working copy button**, in documents, release notes, and wizard replies as well as chat.
-- 🧭 **The Left Bar scrolls to the agent you jump to**, whether you got there by shortcut, Cmd+K, Cmd+O, a toast, or the CLI.
-- ⌨️ **Quick Actions shows each agent's Opt+Cmd+number chord** next to its name, so you pick up the shortcut while you search.
-- 📎 **@-mentions search every file in a big repo**, so the file you meant no longer loses to loose matches from deep folders.
-- 🔁 **Cue GitHub triggers fire on new comments again**, and `max_notifications` is honored, for subscriptions that set `retrigger_on_comments`.
-- ⏹️ **Cue shell commands and CLI runs appear in the Process Monitor**, badged with their trigger, and Stop ends them.
-- ⏱️ **"Time in the Wizard" counts the time you spent working**, so a wizard tab left open overnight no longer logs the whole night.
-- 🔑 **Codex sign-in works on SSH remotes** through device-code login, and the remote login hint names your provider's own command.
-- 🧰 **Install/Update CLI no longer breaks an existing `maestro-cli` link**, and its Settings section now sits right below your Conductor Profile.
-- ⏳ **Loading a big file tree shows a spinner** while Load more or Load all is scanning.
-- 📊 **Usage Dashboard agent names stop clipping**, since the name column now fits the longest one.
+- 🧭 **Agents follow the code when a repo's docs are out of date, and list each mismatch** in their final reply. Your own instructions and files like CLAUDE.md still win. A customized system prompt in Settings > Maestro Prompts keeps your version; compare it with the new default there.
+- ⭐ **Starred sessions are in Cmd+K.** Type part of the name to bring an open tab forward or resume a closed one.
+- ♻️ **Reopen Closed Tab is in the command palette**, and `maestro-cli tab reopen` does it from a script.
+- 🧩 **The Memory Viewer works for Codex agents**, and every agent now shows the memory of the account it really runs as.
+- 🔄 **Model pickers refresh on demand.** A model you just pulled shows up after one click on Refresh, in every picker at once.
+- 💬 **Group Chat follows an agent through a rename**, reports an @mention that matched nobody, and `maestro-cli group-chat add` adds a participant.
+- 🔀 **Agents on an SSH remote can open pull requests**, from Create PR and from Auto Run.
+- 📡 **`maestro-cli live` switches the web interface and its tunnel on and off.** Only the CLI can do it; a browser on your network or the tunnel link cannot.
+- 🔐 **Claude in TUI or Dynamic mode no longer stalls on a hidden folder-trust prompt** for the agent's own working directory.
+- ❓ **A multiple-choice question from Claude in TUI mode ends the turn** with the options in the reply, instead of timing out.
+- ⏱️ **Auto Run no longer stops a Claude task that is busy running tools or thinking.**
+- 💭 **OpenCode agents show their reasoning in Thinking**, and an OpenCode usage limit reads as a limit.
+- 📈 **Claude plan usage refreshes again** after Claude Code dropped the 5-hour window from its usage screen.
+- 🏆 **Lifetime Conductor time only goes up.** A second window or web tab can no longer reset it.
+- 🖼️ **Obsidian images render in markdown previews**, including vault-root links and `|220` sizing.
+- 🔗 **A file path in an agent's reply links only the path**, not the sentence around it.
+- 📏 **Very long prompts and large screenshots send** instead of failing with E2BIG or a stack overflow.
+- 🎯 **Cmd+O on a running agent opens the tab doing the work.**
+- 📅 **Today on the Usage Dashboard starts at local midnight**, not 24 hours ago.
+- 📱 **A web interface waking from sleep no longer closes the tabs you opened on the desktop.**
+- 🩹 **Damaged saved data no longer blocks a launch.** Bad tab data, a broken group chat, and a corrupt Cue database are repaired or set aside.
+- 📂 **Cue file triggers keep firing when Linux runs out of file watches**, by polling instead.
+- 🛒 **Marketplace playbooks import again** and find the scripts and templates they ship with.
+- 💾 **Maestro refuses a Storage Location inside its own install folder**, which the next update would wipe.
+- 🐧 **Linux:** `maestro-cli` finds your agents, survives an AppImage restart, and the app icon shows in GNOME.
+- 🪟 **Windows:** Cue runs work with npm-installed agents, terminal tabs stop respawning into a crash, and shell paths and `--cwd` stay as typed.
 
 ### Previous Releases in this Series
 
+- **v1.0.2** (October 21, 2026) - Press Run
+- **v1.0.1** (October 20, 2026) - Full Orchestra
+- **v1.0.0** (October 9, 2026) - Full Orchestra
+
+---
+
+## v0.17.x - Security Release
+
+**Latest: v0.17.8** | Released October 4, 2026
+
+# 0.17.8 Highlights
+
+🔒 **This is a security release, and every user should install it.** Maestro runs a small built-in server so `maestro-cli` and the phone interface can drive the app. Until now that server listened on your whole network from the moment Maestro opened, even with Live off, and it answered requests from any web page. Anyone who got hold of its URL (someone on the same Wi-Fi while you used the phone link, a pairing link that leaked, or a web page that knew the URL) could run commands on your computer through it.
+
+📡 **The server now stays on your computer until you turn Live on.** While the button reads OFFLINE it listens on 127.0.0.1 only, so nothing on your network can reach it, and `maestro-cli` works exactly as before. Turning Live on opens it to your LAN for your phone, and turning Live off closes it again with a fresh token. If a Persistent Web Link let you reach Maestro from your phone with Live off, turn Live on to use it now.
+
+🛡️ **Web pages can no longer drive Maestro, even with the URL.** The server refuses any browser request from a page it did not serve itself, WebSocket connections included, so a malicious site that learns your link gets nothing back. The file `maestro-cli` reads its token from is now readable by your user account only.
+
+## Also in 0.17.8
+
+- 🔁 **Running Maestro behind a reverse proxy?** Have it forward the original `Host` header (nginx: `proxy_set_header Host $host;`, Caddy does this already), or browser requests through it will be refused.
+- 🙏 **Thank you to CopperKoi and YoAm**, who found these problems and reported them responsibly, and to notwo1f, CopperKoi's mentor, who guided the audit. The full write-up is in advisory [GHSA-q8p2-cpg2-fhpc](https://github.com/RunMaestro/Maestro/security/advisories/GHSA-q8p2-cpg2-fhpc).
+
+### Previous Releases in this Series
+
+- **v0.17.7** (October 4, 2026) - Maestro Cue
+- **v0.17.6** (October 2, 2026) - Maestro Cue
 - **v0.17.5** (September 25, 2026) - Maestro Cue
 - **v0.17.4** (September 21, 2026) - Maestro Cue
 - **v0.17.3** (July 4, 2026) - Maestro Cue
@@ -503,11 +544,6 @@ Plus the pre-release ALPHA...
 ### Previous Releases in this Series
 
 - **v0.1.5** (November 27, 2025)
-- **v0.1.4** (November 27, 2025)
-- **v0.1.3** (November 27, 2025)
-- **v0.1.2** (November 27, 2025)
-- **v0.1.1** (November 27, 2025)
-- **v0.1.0** (November 27, 2025)
 
 ---
 

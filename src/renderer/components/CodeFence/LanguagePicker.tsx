@@ -6,6 +6,7 @@ import {
 	type BundledLanguageEntry as LanguageEntry,
 	getBundledLanguageEntries,
 } from '../../utils/shiki/highlighterManager';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 let cachedEntries: LanguageEntry[] | null = null;
 let cachedEntriesPromise: Promise<LanguageEntry[]> | null = null;
@@ -181,14 +182,13 @@ export const LanguagePicker = memo(function LanguagePicker({
 						ref={popoverRef}
 						tabIndex={-1}
 						onKeyDown={handleKeyDown}
-						className="fixed z-[1000] rounded-lg shadow-xl overflow-hidden outline-none flex flex-col"
+						className="fixed z-[1000] rounded-lg overflow-hidden outline-none flex flex-col"
 						style={{
 							top: position.top,
 							left: position.left,
 							width: 280,
 							maxHeight: 320,
-							backgroundColor: theme.colors.bgSidebar,
-							border: `1px solid ${theme.colors.border}`,
+							...elevatedSurfaceStyle(theme),
 						}}
 					>
 						<div

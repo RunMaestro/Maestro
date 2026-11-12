@@ -5,6 +5,7 @@ import { CsvTableRenderer } from '../../../renderer/components/CsvTableRenderer'
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 
 import { mockTheme } from '../../helpers/mockTheme';
+import { restorePointer, setCoarsePointer } from '../../helpers/mockPointer';
 // lucide-react icons are auto-mocked globally in src/__tests__/setup.ts
 
 describe('CsvTableRenderer', () => {
@@ -27,6 +28,19 @@ describe('CsvTableRenderer', () => {
 			render(<CsvTableRenderer content={'A,B\n1,2\n3,4\n5,6'} theme={mockTheme} />);
 
 			expect(screen.getByText('3 rows × 2 columns')).toBeInTheDocument();
+		});
+
+		it('pins the header inside a scroller that scrolls both axes', () => {
+			// A horizontal-only wrapper would be the header's nearest scrolling
+			// ancestor while never scrolling vertically, so the header would
+			// scroll away with the rows.
+			render(<CsvTableRenderer content={'A,B\n1,2\n3,4'} theme={mockTheme} />);
+
+			const header = screen.getByText('A').closest('th');
+			expect(header).toHaveStyle({ position: 'sticky', top: '0px' });
+			const scroller = header?.closest('[data-preview-scroller]');
+			expect(scroller).toHaveClass('overflow-auto');
+			expect(scroller).not.toHaveClass('overflow-x-auto');
 		});
 
 		it('renders empty state for empty content', () => {
@@ -353,6 +367,29 @@ describe('CsvTableRenderer', () => {
 			const rows = container.querySelectorAll('tbody tr');
 			fireEvent.doubleClick(rows[rowIdx]);
 		};
+
+		it('opens on a single tap under a coarse pointer', () => {
+			// A finger cannot double-tap and a phone has no keyboard to fall back
+			// on, so on touch one tap on the row is the way into the record view.
+			setCoarsePointer(true);
+			try {
+				const { container } = renderWithLayers(
+					<CsvTableRenderer content={'Name,City\nAlice,NYC\nBob,LA'} theme={mockTheme} />
+				);
+				fireEvent.click(container.querySelectorAll('tbody tr')[1]);
+				expect(screen.getByTestId('csv-row-detail-modal')).toBeInTheDocument();
+			} finally {
+				restorePointer();
+			}
+		});
+
+		it('a single click under a mouse leaves the table alone', () => {
+			const { container } = renderWithLayers(
+				<CsvTableRenderer content={'Name,City\nAlice,NYC\nBob,LA'} theme={mockTheme} />
+			);
+			fireEvent.click(container.querySelectorAll('tbody tr')[1]);
+			expect(screen.queryByTestId('csv-row-detail-modal')).not.toBeInTheDocument();
+		});
 
 		it('opens on double-click with the row as field/value pairs', () => {
 			const { container } = renderWithLayers(

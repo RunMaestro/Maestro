@@ -8,9 +8,9 @@
  * it, retaining 22% and 43% of their windows.
  *
  * The main process now watches buffer usage and emits `profilingAutoStopped`
- * before that point. All this hook does is open the ordinary capture modal,
- * which runs the same stop-and-save flow the user's own "End Performance
- * Profiling" runs. Deliberately not a second stop path: an automatic stop and a
+ * before that point. All this hook does is start the ordinary stop-and-save
+ * flow (in the background, since nobody asked for it) that the user's own "End
+ * Performance Profiling" runs. Deliberately not a second stop path: an automatic stop and a
  * manual one produce identical bundles because they ARE the same code.
  *
  * Mounted once, app-wide. The palette is not a valid home for this - it only
@@ -18,7 +18,10 @@
  */
 
 import { useEffect } from 'react';
-import { useModalStore } from '../../stores/modalStore';
+import {
+	runProfilingCaptureInBackground,
+	startProfilingCapture,
+} from '../../services/profilingCapture';
 import { notifyToast } from '../../stores/notificationStore';
 import { useUIStore } from '../../stores/uiStore';
 
@@ -34,12 +37,15 @@ export function useProfilingAutoStop(): void {
 				// Say why, because the user did not ask for this and the honest
 				// reason is also the useful one: how long a recording can run is set
 				// by how busy the app is, not by how long the user waits.
-				message: `Trace buffer full after ${seconds}s. Capture ended early to keep it complete - saving now.`,
+				message: `Trace buffer full after ${seconds}s. Capture ended early to keep it complete - saving to your Desktop.`,
 				dismissible: true,
 			});
 
-			// Opening the modal is what actually stops and saves the recording.
-			useModalStore.getState().openModal('profilingCapture');
+			// Nobody asked for this stop, so nobody is waiting on a modal: run the
+			// ordinary stop-and-save flow straight into the background. The toast
+			// above says it is happening and a second one reports the saved path.
+			startProfilingCapture();
+			runProfilingCaptureInBackground();
 		});
 
 		return () => {

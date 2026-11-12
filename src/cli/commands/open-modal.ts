@@ -12,6 +12,7 @@ import { withMaestroClient } from '../services/maestro-client';
 import { isMacOS } from '../../shared/platformDetection';
 import { formatShortcutKeysFor } from '../../shared/shortcutKeys';
 import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS } from '../../renderer/constants/shortcuts';
+import type { Shortcut } from '../../shared/shortcut-types';
 import {
 	UI_SURFACES,
 	describeSurfaceAccess,
@@ -30,7 +31,12 @@ interface OpenModalOptions {
 /** Formatted hotkey for a surface, or `undefined` when it has none. */
 function shortcutFor(surface: UiSurface): string | undefined {
 	if (!surface.shortcutId) return undefined;
-	const shortcut = DEFAULT_SHORTCUTS[surface.shortcutId] ?? FIXED_SHORTCUTS[surface.shortcutId];
+	// `shortcutId` is a plain string off the surface table, while
+	// DEFAULT_SHORTCUTS is a literal object (its keys are the source of
+	// `ShortcutId`). Widen only at this dynamic lookup rather than annotating the
+	// constant, which would collapse ShortcutId to `string` everywhere.
+	const byId = DEFAULT_SHORTCUTS as Record<string, Shortcut | undefined>;
+	const shortcut = byId[surface.shortcutId] ?? FIXED_SHORTCUTS[surface.shortcutId];
 	// An action can be registered with no default binding, in which case there is
 	// no hotkey to print - same answer as a surface that names no shortcut at all.
 	if (!shortcut?.keys?.length) return undefined;

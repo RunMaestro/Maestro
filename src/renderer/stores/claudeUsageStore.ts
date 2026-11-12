@@ -12,8 +12,9 @@
  *   - The `process:claude-mode-resolved` listener fires `refresh()` because the
  *     spawner sampled usage as part of its mode decision; the on-disk map may
  *     have changed.
- *   - The settings UI / Usage Dashboard "Refresh now" button can also call
- *     `refresh()` after asking main to re-sample.
+ *   - The Usage Dashboard Refresh button calls `sample()`, which asks main to
+ *     re-sample and then pulls. It runs in the store, so it survives the panel
+ *     unmounting (see `createQuotaSnapshotStore`).
  *
  * This is renderer-local state, NOT persisted across app restarts - the
  * authoritative store is on the main side. We hold the same map shape here for
@@ -21,7 +22,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { create } from 'zustand';
+import { createQuotaSnapshotStore } from './quotaSnapshotStore';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
 import type { Session } from '../types';
 import {
@@ -55,7 +56,11 @@ export interface ClaudeUsageSnapshot {
 	// `resetsAt` is absent when claude's panel painted a percentage but no
 	// "Resets ..." row (it omits the row for an idle 0% window). Render the
 	// percentage anyway and drop the caption.
-	session: { percent: number; resetsAt?: string };
+	//
+	// `session` (the 5-hour window) is absent when the /usage panel painted no
+	// session block, which claude 2.1.317 does for every account. Draw no row
+	// for it rather than a 0% bar.
+	session?: { percent: number; resetsAt?: string };
 	weekAllModels: { percent: number; resetsAt?: string };
 	/**
 	 * The separately-metered premium-model weekly limit. The field name is
@@ -65,45 +70,10 @@ export interface ClaudeUsageSnapshot {
 	weekSonnetOnly: { percent: number; resetsAt?: string; label?: string };
 }
 
-interface ClaudeUsageState {
-	snapshots: Record<string, ClaudeUsageSnapshot>;
-	/** True once the first fetch has resolved (success or empty). Drives lazy first-read. */
-	loaded: boolean;
-	/** True while a refresh is in flight. Settings/Dashboard UIs use this to disable buttons. */
-	refreshing: boolean;
-	/** Replace the full snapshot map. */
-	setSnapshots: (next: Record<string, ClaudeUsageSnapshot>) => void;
-	/** Pull the latest map from main via IPC and store it. Safe to call repeatedly. */
-	refresh: () => Promise<void>;
-	/** Test-only: reset to initial state. */
-	__resetForTests: () => void;
-}
-
-const initial = {
-	snapshots: {} as Record<string, ClaudeUsageSnapshot>,
-	loaded: false,
-	refreshing: false,
-};
-
-export const useClaudeUsageStore = create<ClaudeUsageState>((set, get) => ({
-	...initial,
-	setSnapshots: (next) => set({ snapshots: next, loaded: true }),
-	refresh: async () => {
-		if (get().refreshing) return;
-		set({ refreshing: true });
-		try {
-			const next = await window.maestro.agents.getClaudeUsageSnapshots();
-			set({ snapshots: next ?? {}, loaded: true });
-		} catch {
-			// Swallow - main-side errors surface in main logs; the renderer just
-			// keeps the last good snapshot rather than blowing up the UI.
-			set({ loaded: true });
-		} finally {
-			set({ refreshing: false });
-		}
-	},
-	__resetForTests: () => set({ ...initial }),
-}));
+export const useClaudeUsageStore = createQuotaSnapshotStore<ClaudeUsageSnapshot>({
+	fetchSnapshots: () => window.maestro.agents.getClaudeUsageSnapshots(),
+	sampleOnMain: () => window.maestro.agents.refreshClaudeUsageSnapshots(),
+});
 
 /**
  * Imperative accessor for non-React call sites (the
@@ -146,6 +116,48 @@ export function useClaudeUsageSnapshot(
 		const exact = snapshots[configDirKey];
 		if (exact) return exact;
 		const targetBasename = configDirKey.slice(configDirKey.lastIndexOf('/') + 1);
+		if (targetBasename) {
+			for (const [k, v] of Object.entries(snapshots)) {
+				const basename = k.slice(k.lastIndexOf('/') + 1);
+				if (basename === targetBasename) return v;
+			}
+		}
+	}
+
+	const entries = Object.values(snapshots);
+	if (entries.length === 1) return entries[0];
+	return null;
+}
+
+/**
+ * Non-hook variant of `useClaudeUsageSnapshot` for imperative call sites (the
+ * auto-resume coordinator probes a paused session's account outside React).
+ * Resolves the session's canonical `CLAUDE_CONFIG_DIR` key from the spawner's
+ * stamped `lastUsageSnapshotKey` (or the session/agent env var as a fallback),
+ * then applies the same forgiving lookup as the hook: exact key, then basename,
+ * then the single-account fallback. Returns `null` for non-Claude sessions or
+ * when no snapshot matches.
+ */
+export function getClaudeUsageSnapshotForSession(
+	session: Pick<Session, 'toolType' | 'claudeInteractive' | 'customEnvVars'> | null | undefined
+): ClaudeUsageSnapshot | null {
+	if (!session || session.toolType !== 'claude-code') return null;
+	const snapshots = useClaudeUsageStore.getState().snapshots;
+
+	const stamped = session.claudeInteractive?.lastUsageSnapshotKey;
+	const envKey = (session.customEnvVars as Record<string, string> | undefined)?.CLAUDE_CONFIG_DIR;
+	const rawKey =
+		typeof stamped === 'string' && stamped.length > 0
+			? stamped
+			: typeof envKey === 'string' && envKey.length > 0
+				? envKey
+				: undefined;
+	const key = rawKey ? rawKey.replace(/\/+$/, '') : undefined;
+
+	if (key) {
+		const exact = snapshots[key];
+		if (exact) return exact;
+		const targetBasename = key.slice(key.lastIndexOf('/') + 1);
 		if (targetBasename) {
 			for (const [k, v] of Object.entries(snapshots)) {
 				const basename = k.slice(k.lastIndexOf('/') + 1);

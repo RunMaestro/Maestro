@@ -44,3 +44,121 @@ export function useElementWidth(ref: RefObject<HTMLElement | null>, enabled = tr
 
 	return width;
 }
+
+/**
+ * useFreeWidthInFlexRow - how much room a flex child has LEFT, measured from
+ * its parent rather than from itself.
+ *
+ * Reach for this instead of `useElementWidth` when the element's own width is
+ * the thing being decided. Measuring yourself in order to choose your own size
+ * is circular: you render at some size, measure it, conclude it fits (it is
+ * your own width, so it always does), and never move. Squeeze the row and the
+ * loop runs the other way, each measurement feeding the next choice, which
+ * oscillates.
+ *
+ * The parent breaks the loop because nothing here depends on the child. The
+ * figure returned is the parent's content box minus its other children and the
+ * gaps between all of them, so it answers "what is left for me" without ever
+ * consulting what the child currently renders as.
+ *
+ * The child should still be allowed to shrink (`min-w-0` with flex-shrink left
+ * at its default) so an answer this hook has not caught up with yet costs a
+ * clipped child rather than a row that pushes its neighbours out of view.
+ *
+ * Siblings are observed alongside the parent, since a row can be squeezed
+ * either by the container narrowing or by a neighbour growing.
+ */
+export function useFreeWidthInFlexRow(ref: RefObject<HTMLElement | null>, enabled = true): number {
+	return useFreeSpaceInFlexLine(ref, 'width', enabled);
+}
+
+/**
+ * useFreeHeightInFlexColumn - the vertical twin of `useFreeWidthInFlexRow`: how
+ * much height a flex-column child has LEFT, measured from its parent.
+ *
+ * Same reasoning on the other axis. A block choosing how many rows to draw
+ * cannot read its own height to decide, because its height IS the row count.
+ * The parent's content box minus its other children answers "how tall may I
+ * be" without consulting the child.
+ *
+ * The parent needs a height of its own (a `flex-1 min-h-0` pane inside a sized
+ * modal, say). A parent that grows with its content just reports back whatever
+ * the child currently is, which is circular again.
+ */
+export function useFreeHeightInFlexColumn(
+	ref: RefObject<HTMLElement | null>,
+	enabled = true
+): number {
+	return useFreeSpaceInFlexLine(ref, 'height', enabled);
+}
+
+const FLEX_AXIS_METRICS = {
+	width: {
+		client: 'clientWidth',
+		offset: 'offsetWidth',
+		paddingStart: 'paddingLeft',
+		paddingEnd: 'paddingRight',
+		gap: 'columnGap',
+	},
+	height: {
+		client: 'clientHeight',
+		offset: 'offsetHeight',
+		paddingStart: 'paddingTop',
+		paddingEnd: 'paddingBottom',
+		gap: 'rowGap',
+	},
+} as const;
+
+function useFreeSpaceInFlexLine(
+	ref: RefObject<HTMLElement | null>,
+	axis: keyof typeof FLEX_AXIS_METRICS,
+	enabled: boolean
+): number {
+	const [free, setFree] = useState(0);
+
+	useEffect(() => {
+		const element = ref.current;
+		const parent = element?.parentElement;
+		if (!enabled || !element || !parent) {
+			return;
+		}
+		const metrics = FLEX_AXIS_METRICS[axis];
+
+		const measure = () => {
+			const style = getComputedStyle(parent);
+			const children = Array.from(parent.children) as HTMLElement[];
+			const siblingsSize = children.reduce(
+				(sum, child) => (child === element ? sum : sum + child[metrics.offset]),
+				0
+			);
+			// client* includes the parent's padding, so take it back off.
+			const padding =
+				parseFloat(style[metrics.paddingStart]) + parseFloat(style[metrics.paddingEnd]);
+			// `normal` (no gap set) parses to NaN and counts as zero.
+			const gap = parseFloat(style[metrics.gap]);
+			const gaps = Number.isFinite(gap) ? gap * Math.max(0, children.length - 1) : 0;
+			setFree(
+				Math.max(
+					0,
+					parent[metrics.client] - (Number.isFinite(padding) ? padding : 0) - siblingsSize - gaps
+				)
+			);
+		};
+		measure();
+
+		// jsdom has no layout engine and no ResizeObserver by default; bail out
+		// rather than throwing so component tests can render without a polyfill.
+		if (typeof ResizeObserver === 'undefined') {
+			return;
+		}
+
+		const observer = new ResizeObserver(measure);
+		observer.observe(parent);
+		for (const child of Array.from(parent.children)) {
+			if (child !== element) observer.observe(child);
+		}
+		return () => observer.disconnect();
+	}, [ref, axis, enabled]);
+
+	return free;
+}

@@ -4,9 +4,13 @@
  */
 
 import { app, ipcMain, BrowserWindow } from 'electron';
+import type Store from 'electron-store';
 import { logger } from '../utils/logger';
 import type { ProcessManager } from '../process-manager';
 import type { WebServer } from '../web-server';
+import type { WindowState } from '../stores/types';
+import type { WindowRegistry } from '../window-registry';
+import { saveAllWindowStates } from '../window-state-persistence';
 import { tunnelManager as tunnelManagerInstance } from '../tunnel-manager';
 import type { HistoryManager } from '../history-manager';
 import { isWebContentsAvailable } from '../utils/safe-send';
@@ -92,10 +96,6 @@ export interface QuitHandlerDependencies {
 	getHistoryManager: () => HistoryManager;
 	/** Tunnel manager instance */
 	tunnelManager: typeof tunnelManagerInstance;
-	/** Function to get active grooming session count */
-	getActiveGroomingSessionCount: () => number;
-	/** Function to cleanup all grooming sessions */
-	cleanupAllGroomingSessions: (pm: ProcessManager) => Promise<void>;
 	/** Function to close the stats database */
 	closeStatsDB: () => void;
 	/** Function to stop CLI watcher (optional, may not be started yet) */
@@ -111,6 +111,16 @@ export interface QuitHandlerDependencies {
 	 * flush every open starred tab's transcript to Maestro's mirror before exit.
 	 */
 	getPersistedSessions?: () => Array<Record<string, unknown>>;
+	/**
+	 * Window-state store. When provided alongside {@link getWindowRegistry}, the
+	 * full multi-window layout (bounds, display mode, owned agents, panel state)
+	 * is snapshotted to it during quit cleanup so the next launch can restore it.
+	 * Optional for the phased multi-window rollout and for tests that don't
+	 * exercise persistence.
+	 */
+	windowStateStore?: Store<WindowState>;
+	/** Registry of every open window, the source of truth for the saved layout. */
+	getWindowRegistry?: () => WindowRegistry | null;
 }
 
 /** Quit handler state */
@@ -162,14 +172,14 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		getWebServer,
 		getHistoryManager,
 		tunnelManager,
-		getActiveGroomingSessionCount,
-		cleanupAllGroomingSessions,
 		closeStatsDB,
 		stopCliWatcher,
 		stopSettingsWatcher,
 		powerManager,
 		stopSessionCleanup,
 		getPersistedSessions,
+		windowStateStore,
+		getWindowRegistry,
 	} = deps;
 
 	const state: QuitHandlerState = {
@@ -205,7 +215,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 			// repeat quit attempts stay suppressed; the eventual confirm/cancel from
 			// the modal clears it.
 			ipcMain.on('app:quitConfirmationPending', () => {
-				logger.info('Quit confirmation pending — user deciding, disarming timeout', 'Window');
+				logger.info('Quit confirmation pending - user deciding, disarming timeout', 'Window');
 				clearConfirmationTimeout();
 			});
 
@@ -238,7 +248,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 						state.confirmationTimeout = setTimeout(() => {
 							if (state.isRequestingConfirmation) {
 								logger.warn(
-									'Quit confirmation timed out — renderer did not respond, forcing quit',
+									'Quit confirmation timed out - renderer did not respond, forcing quit',
 									'Window'
 								);
 								state.isRequestingConfirmation = false;
@@ -341,6 +351,16 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 			logger.error(`Error flushing sessions on quit: ${err}`, 'Shutdown');
 		}
 
+		// Snapshot the multi-window layout while every window is still open and its
+		// bounds are valid (windows are destroyed after before-quit). This is
+		// additive to the legacy per-window 'close' save in window-manager.ts and
+		// never throws, so it can't disrupt the rest of cleanup. Skipped when the
+		// window-state store / registry weren't injected (phased rollout, tests).
+		const windowRegistry = getWindowRegistry?.();
+		if (windowStateStore && windowRegistry) {
+			saveAllWindowStates(windowStateStore, windowRegistry);
+		}
+
 		// Stop history manager watcher
 		getHistoryManager().stopWatching();
 
@@ -371,17 +391,6 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 			stopSessionCleanup();
 		}
 
-		// Clean up active grooming sessions (context merge/transfer operations)
-		const processManager = getProcessManager();
-		const groomingSessionCount = getActiveGroomingSessionCount();
-		if (groomingSessionCount > 0 && processManager) {
-			logger.info(`Cleaning up ${groomingSessionCount} active grooming session(s)`, 'Shutdown');
-			// Fire and forget - don't await
-			cleanupAllGroomingSessions(processManager).catch((err) => {
-				logger.error(`Error cleaning up grooming sessions: ${err}`, 'Shutdown');
-			});
-		}
-
 		// Kill all active Cue processes (tracked separately from ProcessManager)
 		logger.info('Killing active Cue processes', 'Shutdown');
 		stopAllCueRuns();
@@ -408,7 +417,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		// underlying mutex is already gone, aborting the main process
 		// (Sentry MAESTRO-3B).
 		logger.info('Killing all running processes', 'Shutdown');
-		processManager?.killAll({ shutdown: true });
+		getProcessManager()?.killAll({ shutdown: true });
 
 		// Clear power save blocker AFTER killAll() to prevent late process output
 		// from re-arming the blocker via addBlockReason()

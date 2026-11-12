@@ -98,7 +98,9 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	const activeSessionId = useSessionStore((state) => state.activeSessionId);
 	const scheduledTaskAgents = useMemo(
 		() =>
-			allSessions.filter((s) => s.toolType !== 'terminal').map((s) => ({ id: s.id, name: s.name })),
+			allSessions
+				.filter((s) => s.toolType !== 'terminal')
+				.map((s) => ({ id: s.id, name: s.name, toolType: s.toolType })),
 		[allSessions]
 	);
 
@@ -400,6 +402,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 									onTriggerSubscription={triggerSubscription}
 									onStopRun={stopRun}
 									onStopAll={stopAll}
+									focusSessionId={cueModalData?.focusSessionId}
 								/>
 							</div>
 						) : activeTab === 'scheduled' ? (

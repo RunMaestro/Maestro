@@ -21,7 +21,12 @@ import {
 	NODE_BG_HEIGHT,
 	PIPELINE_GROUP_PADDING,
 } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineGraph';
-import { pipelineCardBounds } from '../../../../../renderer/components/CuePipelineEditor/utils/nodeFootprint';
+import {
+	agentClusterBounds,
+	pipelineCardBounds,
+	type PipelineCardBounds,
+} from '../../../../../renderer/components/CuePipelineEditor/utils/nodeFootprint';
+import type { PipelineHome } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineMembership';
 import type { CuePipeline, PipelineNode } from '../../../../../shared/cue-pipeline-types';
 
 function agentNode(id: string, x: number, y: number): PipelineNode {
@@ -667,6 +672,116 @@ describe('estimateNodeWidth', () => {
 	it('is deterministic: the same data always yields the same estimate', () => {
 		const n = agentNode('a', 12, 700);
 		expect(estimateNodeWidth(n)).toBe(estimateNodeWidth({ ...n, position: { x: 0, y: 0 } }));
+	});
+});
+
+describe('arrangePipelineGroups with agent homes', () => {
+	function card(id: string, offsetY: number, rows = 1): CuePipeline {
+		return pipeline({
+			id,
+			name: id,
+			nodes: Array.from({ length: rows }, (_, i) => agentNode(`${id}-a${i}`, 0, i * 200)),
+			viewOffset: { x: 0, y: offsetY },
+		});
+	}
+	const home = (sessionId: string): PipelineHome => ({ sessionId, sessionName: sessionId });
+
+	function placedCards(pipelines: CuePipeline[], offsets: Map<string, { x: number; y: number }>) {
+		return new Map(
+			pipelines.map((p) => [p.id, pipelineCardBounds(p.nodes, { offset: offsets.get(p.id)! })!])
+		);
+	}
+
+	function overlaps(a: PipelineCardBounds, b: PipelineCardBounds): boolean {
+		return (
+			a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+		);
+	}
+
+	// Interleaved on purpose: in reading order the agents alternate, so only a
+	// clustered pack can put each agent's cards next to each other.
+	const pipelines = [
+		card('a1', 0),
+		card('b1', 300),
+		card('a2', 600),
+		card('b2', 900),
+		card('a3', 1200, 3),
+		card('b3', 1500),
+	];
+	const homes = new Map([
+		['a1', home('agent-a')],
+		['a2', home('agent-a')],
+		['a3', home('agent-a')],
+		['b1', home('agent-b')],
+		['b2', home('agent-b')],
+		['b3', home('agent-b')],
+	]);
+
+	it("keeps every agent's cluster clear of the other agent's cards", () => {
+		const cards = placedCards(
+			pipelines,
+			arrangePipelineGroups(pipelines, new Map(), undefined, homes)
+		);
+		for (const agent of ['agent-a', 'agent-b']) {
+			const own = pipelines.filter((p) => homes.get(p.id)!.sessionId === agent);
+			const foreign = pipelines.filter((p) => homes.get(p.id)!.sessionId !== agent);
+			const box = agentClusterBounds(own.map((p) => cards.get(p.id)!))!;
+			for (const p of foreign) expect(overlaps(box, cards.get(p.id)!)).toBe(false);
+		}
+	});
+
+	it('never overlaps two clusters', () => {
+		const cards = placedCards(
+			pipelines,
+			arrangePipelineGroups(pipelines, new Map(), undefined, homes)
+		);
+		const boxFor = (agent: string) =>
+			agentClusterBounds(
+				pipelines.filter((p) => homes.get(p.id)!.sessionId === agent).map((p) => cards.get(p.id)!)
+			)!;
+		expect(overlaps(boxFor('agent-a'), boxFor('agent-b'))).toBe(false);
+	});
+
+	it('orders clusters by where their first card was', () => {
+		// agent-a's first card (a1) is the topmost, so its cluster packs first,
+		// at the origin.
+		const cards = placedCards(
+			pipelines,
+			arrangePipelineGroups(pipelines, new Map(), undefined, homes)
+		);
+		const aBox = agentClusterBounds(['a1', 'a2', 'a3'].map((id) => cards.get(id)!))!;
+		expect(aBox.x).toBe(0);
+		expect(aBox.y).toBe(0);
+	});
+
+	it('packs a pipeline with no home on its own, outside every cluster', () => {
+		const loose = card('loose', 50);
+		const all = [...pipelines, loose];
+		const cards = placedCards(all, arrangePipelineGroups(all, new Map(), undefined, homes));
+		for (const agent of ['agent-a', 'agent-b']) {
+			const box = agentClusterBounds(
+				pipelines.filter((p) => homes.get(p.id)!.sessionId === agent).map((p) => cards.get(p.id)!)
+			)!;
+			expect(overlaps(box, cards.get('loose')!)).toBe(false);
+		}
+	});
+
+	it('packs a subset the same way, so an agent filter keeps the All Pipelines grouping', () => {
+		// The filtered view hands the packer only the agent's pipelines (plus any
+		// it shares with others); cards of one home still land in one cluster.
+		const subset = pipelines.filter((p) => p.id.startsWith('a'));
+		const offsets = arrangePipelineGroups(subset, new Map(), undefined, homes);
+		expect([...offsets.keys()].sort()).toEqual(['a1', 'a2', 'a3']);
+		const cards = placedCards(subset, offsets);
+		const box = agentClusterBounds([...cards.values()])!;
+		expect(box.x).toBe(0);
+		expect(box.y).toBe(0);
+	});
+
+	it('packs exactly like the unclustered layout when no pipeline has a home', () => {
+		expect(arrangePipelineGroups(pipelines, new Map(), undefined, new Map())).toEqual(
+			arrangePipelineGroups(pipelines, new Map())
+		);
 	});
 });
 

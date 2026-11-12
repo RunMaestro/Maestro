@@ -1,0 +1,20 @@
+{
+	// Typecheck-only config for the drift guard's compile-time type-parity tests
+	// (src/__tests__/*.test-d.ts). Unlike the build tsconfig (which excludes tests
+	// and pins rootDir to keep the emitted package self-contained), this one has no
+	// rootDir and emits nothing, so the type tests may reach into ../../../../src to
+	// compare the vendored contracts against the real host sources.
+	"compilerOptions": {
+		"strict": true,
+		"noEmit": true,
+		"target": "ES2020",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"esModuleInterop": true,
+		"resolveJsonModule": true,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"types": ["node"]
+	},
+	"include": ["src/__tests__/**/*.test-d.ts"]
+}

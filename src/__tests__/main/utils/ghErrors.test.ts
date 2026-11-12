@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	parseGhActiveAccount,
 	isGitHubAuthError,
 	isGitHubMissingScopeError,
 	isGitHubOAuthRestrictionError,
@@ -39,5 +40,48 @@ describe('gh error classifiers', () => {
 			)
 		).toBe(true);
 		expect(isGitHubMissingScopeError('HTTP 401: Bad credentials')).toBe(false);
+	});
+});
+
+describe('parseGhActiveAccount', () => {
+	it('names the active account in gh 2.40+ output', () => {
+		const output = [
+			'github.com',
+			'  ✓ Logged in to github.com account work-user (keyring)',
+			'  - Active account: false',
+			'  ✓ Logged in to github.com account home-user (keyring)',
+			'  - Active account: true',
+		].join('\n');
+		expect(parseGhActiveAccount(output)).toEqual({ host: 'github.com', login: 'home-user' });
+	});
+
+	it('names an account whose login has expired', () => {
+		const output =
+			'github.com\n  X Failed to log in to github.com account octocat (keyring)\n  - Active account: true';
+		expect(parseGhActiveAccount(output)).toEqual({ host: 'github.com', login: 'octocat' });
+	});
+
+	// An env token has no login name. Falling back to the keyring account below
+	// it would name an account gh is not using.
+	it('names nobody when the active credential is an env token', () => {
+		const output = [
+			'github.com',
+			'  X Failed to log in to github.com using token (GH_TOKEN)',
+			'  - Active account: true',
+			'  ✓ Logged in to github.com account octocat (keyring)',
+			'  - Active account: false',
+		].join('\n');
+		expect(parseGhActiveAccount(output)).toBeUndefined();
+	});
+
+	it('reads older gh, which says "as" and marks no active account', () => {
+		expect(
+			parseGhActiveAccount('github.com\n  ✓ Logged in to github.com as octocat (oauth_token)')
+		).toEqual({ host: 'github.com', login: 'octocat' });
+	});
+
+	it('returns undefined for output it does not recognize', () => {
+		expect(parseGhActiveAccount('')).toBeUndefined();
+		expect(parseGhActiveAccount('You are not logged into any GitHub hosts.')).toBeUndefined();
 	});
 });

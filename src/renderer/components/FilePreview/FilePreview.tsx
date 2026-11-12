@@ -2,6 +2,7 @@ import React, {
 	useState,
 	useRef,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useCallback,
 	forwardRef,
@@ -45,7 +46,6 @@ import { JsonlViewer, SYNTAX_EXAMPLES } from '../JsonlViewer';
 import { getEncoder } from '../../utils/tokenCounter';
 import { remarkFileLinks, buildFileTreeIndices } from '../../utils/remarkFileLinks';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
-import { isEditingTextTarget } from '../../utils/editableTarget';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { remarkAlert } from '../Markdown/remarkAlert';
@@ -58,6 +58,8 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { buildFileDeepLink } from '../../../shared/deep-link-urls';
 import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
+import { isWebUrl } from '../../../shared/urlRoutingHint';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import { openFileUrl } from '../../utils/openFileUrl';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
@@ -79,6 +81,8 @@ import {
 	pickPreviewTier,
 	scanLineStats,
 	canScaleFontForView,
+	resolvePreviewScroller,
+	deriveProjectRoot,
 } from './filePreviewUtils';
 import { BionifyTextBlock } from '../../utils/bionifyReadingMode';
 import { MarkdownImage } from './MarkdownImage';
@@ -91,6 +95,7 @@ import { ImageSaveModal } from './ImageSaveModal';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 import { getParentDir, getBasename } from '../../../shared/formatters';
 import { FilePreviewToc } from './FilePreviewToc';
+import { computeTocWidth } from '../Toc';
 import { HeadingPalette } from './HeadingPalette';
 import { findActiveHeadingSlug, scrollToHeadingSlug } from './shared/headings';
 import { FontScaleControl } from '../ui/FontScaleControl';
@@ -110,6 +115,16 @@ import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { HEADING_PALETTE_EVENT } from '../../services/headingPalette';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+
+/**
+ * How long to keep re-applying a restored scroll offset while the document
+ * settles. Images decoding, web fonts, markdown reflow and syntax highlighting
+ * all grow the content AFTER the first layout pass, and assigning scrollTop is
+ * clamped to whatever the height is at that instant. This is the hard stop, so
+ * a file that never reaches its saved offset cannot leave an observer running.
+ */
+const SCROLL_RESTORE_SETTLE_MS = 2000;
 
 // Lazy-loaded large-file markdown renderer. Keeping it out of the main bundle
 // means small-file previews don't pay the ~135 KB cost of markdown-it +
@@ -189,7 +204,25 @@ export const FilePreview = React.memo(
 		const fontScaleControl = useFontScale(FONT_SCALE_STORAGE_KEY);
 		const { fontScale } = fontScaleControl;
 		const [fileStats, setFileStats] = useState<FileStats | null>(null);
-		const [showStatsBar, setShowStatsBar] = useState(true);
+		const [showStatsBar, setShowStatsBar] = useState(
+			() => initialScrollTop === undefined || initialScrollTop <= 10
+		);
+		// Track which file last drove showStatsBar so we can reset during render
+		// (before paint) when the reused scroll container switches files. An
+		// effect-only reset flashes one frame of the previous file's hidden state.
+		const showStatsBarPathRef = useRef<string | undefined>(file?.path);
+		// scrollTop at which the user clicked the collapsed header to bring the
+		// details back. While set, the scroll handler keeps them shown until the
+		// user actually scrolls away from that spot. null = not pinned.
+		const detailsRevealedAtRef = useRef<number | null>(null);
+		if (file?.path !== showStatsBarPathRef.current) {
+			showStatsBarPathRef.current = file?.path;
+			detailsRevealedAtRef.current = null;
+			const atTop = initialScrollTop === undefined || initialScrollTop <= 10;
+			if (showStatsBar !== atTop) {
+				setShowStatsBar(atTop);
+			}
+		}
 		const [tokenCount, setTokenCount] = useState<number | null>(null);
 		const [showRemoteImages, setShowRemoteImages] = useState(false);
 		const [showFullContent, setShowFullContent] = useState(false);
@@ -454,8 +487,8 @@ export const FilePreview = React.memo(
 			if (!file?.content || isImage || isBinary) return 'rich' as const;
 			const bytes = file.content.length;
 			const { lines, maxLineLength } = scanLineStats(file.content);
-			return pickPreviewTier(bytes, lines, maxLineLength);
-		}, [file?.path, file?.content, isImage, isBinary]);
+			return pickPreviewTier(bytes, lines, maxLineLength, isMarkdown);
+		}, [file?.path, file?.content, isImage, isBinary, isMarkdown]);
 
 		// Effective tier respects the user's per-tab override, falling back to
 		// the auto-picked tier. The PreviewTierChip in the header lets the user
@@ -537,6 +570,14 @@ export const FilePreview = React.memo(
 			}
 			return undefined;
 		}, [previewTier, isMarkdown, markdownEditMode, isImage, isBinary, isParquet]);
+
+		// The CSV and JSONL tables scroll themselves (see PREVIEW_SCROLLER_ATTR):
+		// the content column stops scrolling and hands them its full height.
+		const isTablePane =
+			!isImage &&
+			!isBinary &&
+			!markdownEditMode &&
+			(isCsv || isJsonl || (isJson && searchMode === 'jq'));
 
 		// Whether the active preview shows line numbers; gates the regex / line
 		// search chip (left of the Cmd+F input). True for the code editor and the
@@ -620,6 +661,10 @@ export const FilePreview = React.memo(
 		const setFileEditWordWrap = useSettingsStore((s) => s.setFileEditWordWrap);
 		const fileEditShowLineNumbers = useSettingsStore((s) => s.fileEditShowLineNumbers);
 		const filePreviewToolbarVisibility = useSettingsStore((s) => s.filePreviewToolbarVisibility);
+		// Reading and editing are separate typographic jobs, so they are separate
+		// settings: a proportional face is easier to read a document in, while an
+		// editor wants the line-number gutter to stay aligned. Empty means "inherit
+		// the interface font", which is what resolveSurfaceFont resolves.
 		const previewTypography = useSurfaceTypography('filePreview');
 		const editorTypography = useSurfaceTypography('fileEditor');
 		const previewFontFamily = previewTypography.fontFamily;
@@ -674,23 +719,9 @@ export const FilePreview = React.memo(
 			return extractHeadings(file.content);
 		}, [isMarkdown, file?.content]);
 
-		// Compute dynamic ToC overlay width based on longest heading text
-		const tocWidth = useMemo(() => {
-			if (tocEntries.length === 0) return 200;
-			const MIN_WIDTH = 200;
-			const MAX_WIDTH = 500;
-			const CHAR_WIDTH = 7.5; // approximate px per character at ~0.8rem
-			const BASE_PADDING = 24; // px padding inside buttons
-			const HEADER_EXTRA = 100; // "CONTENTS" header + headings count badge
-
-			let maxNeeded = HEADER_EXTRA;
-			for (const entry of tocEntries) {
-				const indent = (entry.level - 1) * 12 + 8;
-				const textWidth = entry.text.length * CHAR_WIDTH;
-				maxNeeded = Math.max(maxNeeded, indent + textWidth + BASE_PADDING);
-			}
-			return Math.min(Math.max(Math.ceil(maxNeeded), MIN_WIDTH), MAX_WIDTH);
-		}, [tocEntries]);
+		// Dynamic ToC overlay width - shared with Director's Notes so an equally
+		// long heading yields an equally wide panel on both surfaces.
+		const tocWidth = useMemo(() => computeTocWidth(tocEntries), [tocEntries]);
 
 		const scrollMarkdownToBoundary = useCallback((direction: 'top' | 'bottom') => {
 			// Use contentRef which is the actual scrollable container
@@ -772,6 +803,8 @@ export const FilePreview = React.memo(
 			}
 			return null;
 		}, [fileTree]);
+		const fileTreeIndicesRef = useRef(fileTreeIndices);
+		fileTreeIndicesRef.current = fileTreeIndices;
 
 		// Resolve homeDir for tilde path expansion
 		const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
@@ -809,6 +842,32 @@ export const FilePreview = React.memo(
 		// before rehypeRaw re-parses raw HTML (which discards position info).
 		const rehypePlugins = useMemo(() => [rehypeSourceLine, rehypeRaw, rehypeSlug], []);
 
+		// Shared handler for external links clicked inside rendered markdown, used
+		// by both the ReactMarkdown and fast-preview render paths. In the desktop
+		// app a file:// link opens on the host via the shell bridge. In the
+		// web-desktop build that bridge targets the HOST machine, not the browser
+		// user's device, so opening a local path there is meaningless - surface a
+		// toast instead. http/mailto links open the same way in both builds.
+		const handleExternalLinkClick = useCallback(
+			(href: string, opts?: { ctrlKey?: boolean }) => {
+				if (/^file:\/\//.test(href) && isWebDesktop()) {
+					notifyToast({
+						color: 'theme',
+						title: 'Open file',
+						message: 'Available in the desktop app',
+					});
+					return;
+				}
+				// A file:// target Maestro can render stays inside the app (preview
+				// tab or player); only OS-owned types go to the default app.
+				if (openFileUrl(href, (path) => onFileClick?.(path))) return;
+				if (isWebUrl(href) || /^mailto:/.test(href)) {
+					openUrl(href, opts);
+				}
+			},
+			[onFileClick]
+		);
+
 		// Ticking a task checkbox in the rendered preview writes the file straight
 		// to disk, so back-to-back clicks need two guards. `pendingTaskContentRef`
 		// holds the document the previous click produced, because `file.content` is
@@ -829,7 +888,7 @@ export const FilePreview = React.memo(
 					// The preview renders the file on disk, not the unsaved buffer, so a
 					// write here would silently drop the user's in-editor edits.
 					notifyToast({
-						type: 'warning',
+						color: 'yellow',
 						title: 'Unsaved Changes',
 						message: 'Save or discard your edits before ticking tasks.',
 					});
@@ -866,7 +925,7 @@ export const FilePreview = React.memo(
 					revert();
 					logger.error('Failed to toggle task checkbox:', undefined, err);
 					notifyToast({
-						type: 'error',
+						color: 'red',
 						title: 'Save Failed',
 						message: err instanceof Error ? err.message : 'Could not update the task.',
 					});
@@ -892,14 +951,7 @@ export const FilePreview = React.memo(
 					mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} />,
 				},
 				onFileClick: (filePath, options) => onFileClick?.(filePath, options),
-				onExternalLinkClick: (href, opts) => {
-					// A file:// target Maestro can render stays inside the app (preview
-					// tab or player); only OS-owned types go to the default app.
-					if (openFileUrl(href, (path) => onFileClick?.(path))) return;
-					if (/^https?:\/\/|^mailto:/.test(href)) {
-						openUrl(href, opts);
-					}
-				},
+				onExternalLinkClick: handleExternalLinkClick,
 				containerRef: markdownContainerRef,
 				enableBionifyReadingMode: effectiveBionifyReadingMode,
 				bionifyIntensity,
@@ -911,24 +963,14 @@ export const FilePreview = React.memo(
 			return {
 				...components,
 				img: ({ src, alt, ...props }: any) => {
-					// Check if this image came from file tree (set by remarkFileLinks)
-					const isFromTree = props['data-maestro-from-tree'] === 'true';
-					let projectRootForImage: string | undefined;
-
-					if (isFromTree && cwd && file) {
-						// Resolve project root so relative image links from tree render correctly.
-						const cwdIndex = file.path.indexOf(`/${cwd}/`);
-						if (cwdIndex !== -1) {
-							projectRootForImage = file.path.substring(0, cwdIndex);
-						} else {
-							const firstCwdSegment = cwd.split('/')[0];
-							const segmentIndex = file.path.indexOf(`/${firstCwdSegment}/`);
-							if (segmentIndex !== -1) {
-								projectRootForImage = file.path.substring(0, segmentIndex);
-							}
-						}
-					}
-
+					// `![[name|300]]` embeds carry their width from remarkFileLinks.
+					const embedWidth = Number(props['data-maestro-width']) || undefined;
+					// Read through a ref: a file-tree refresh must not rebuild this map,
+					// which would remount the document and lose the reader's scroll.
+					const fileTreeIndices = fileTreeIndicesRef.current;
+					const embedProjectRoot = file
+						? deriveProjectRoot(file.path, cwd, fileTreeIndices)
+						: undefined;
 					return (
 						<MarkdownImage
 							src={src}
@@ -936,8 +978,11 @@ export const FilePreview = React.memo(
 							markdownFilePath={file?.path || ''}
 							theme={theme}
 							showRemoteImages={showRemoteImages}
-							isFromFileTree={isFromTree}
-							projectRoot={projectRootForImage}
+							projectRoot={embedProjectRoot}
+							homeDir={homeDir}
+							fileTreeIndices={fileTreeIndices}
+							width={embedWidth}
+							onOpenFile={onFileClick}
 							sshRemoteId={sshRemoteId}
 						/>
 					);
@@ -951,11 +996,13 @@ export const FilePreview = React.memo(
 			// (and remount the rendered document) on every content change.
 		}, [
 			onFileClick,
+			handleExternalLinkClick,
 			theme,
 			cwd,
 			file?.path,
 			showRemoteImages,
 			sshRemoteId,
+			homeDir,
 			onSave,
 			stableToggleTask,
 			effectiveBionifyReadingMode,
@@ -977,6 +1024,14 @@ export const FilePreview = React.memo(
 			if (!file?.path) return;
 			requestFileDeletion({ path: file.path, sshRemoteId });
 		}, [file?.path, sshRemoteId]);
+
+		// Click on the collapsed header: show the path + stats again, pinned to
+		// the current scroll position. The next real scroll collapses them.
+		const handleRevealDetails = useCallback(() => {
+			const scrollEl = contentRef.current ? resolvePreviewScroller(contentRef.current) : null;
+			detailsRevealedAtRef.current = scrollEl?.scrollTop ?? 0;
+			setShowStatsBar(true);
+		}, []);
 
 		// Fetch file stats when file changes
 		useEffect(() => {
@@ -1313,14 +1368,47 @@ export const FilePreview = React.memo(
 			[file, siblingImagePath, writeEditedImage]
 		);
 
-		// Track scroll position to show/hide stats bar and report changes
+		// Track scroll position to show/hide stats bar and report changes.
+		// Collapsing the stats row + path grows the viewport. Hide only when both
+		// overflow and scrollTop clear that chrome height with room to spare, so
+		// the layout change can't clamp scrollTop back into the "show" band and
+		// bounce the bar once (or forever on barely overflowing files).
 		useEffect(() => {
 			const contentEl = contentRef.current;
 			if (!contentEl) return;
 
-			const handleScroll = () => {
-				// Show stats bar when scrolled to top (within 10px), hide otherwise
-				setShowStatsBar(contentEl.scrollTop <= 10);
+			// Stats subbar (~28px) + directory path row (~20px) + cushion.
+			const STATS_CHROME_PX = 64;
+			const AT_TOP_PX = 10;
+			// How far the user must scroll from a click-reveal before the
+			// details collapse again. Absorbs trailing momentum events.
+			const REVEAL_SCROLL_SLOP_PX = 8;
+
+			// Captured, because a table view scrolls its own element inside the
+			// column and scroll events do not bubble. Only the preview's real
+			// scroller counts: a code block or markdown table scrolling sideways
+			// would otherwise report scrollTop 0 and save the wrong position.
+			const handleScroll = (event: Event) => {
+				const scrollEl = resolvePreviewScroller(contentEl);
+				if (!scrollEl || event.target !== scrollEl) return;
+				const { scrollTop, scrollHeight, clientHeight } = scrollEl;
+				const overflow = scrollHeight - clientHeight;
+				const revealedAt = detailsRevealedAtRef.current;
+				if (revealedAt !== null && Math.abs(scrollTop - revealedAt) >= REVEAL_SCROLL_SLOP_PX) {
+					detailsRevealedAtRef.current = null;
+				}
+				const pinnedByClick = detailsRevealedAtRef.current !== null;
+				setShowStatsBar((prev) => {
+					if (scrollTop <= AT_TOP_PX) return true;
+					if (pinnedByClick) return prev;
+					// Require scrollTop past chrome+at-top so after the header
+					// collapses we remain below the show threshold even if the
+					// browser preserves content position by reducing scrollTop.
+					if (overflow > STATS_CHROME_PX && scrollTop > STATS_CHROME_PX + AT_TOP_PX) {
+						return false;
+					}
+					return prev;
+				});
 
 				// Throttled scroll position save (200ms) - same timing as TerminalOutput
 				if (onScrollPositionChange) {
@@ -1328,15 +1416,15 @@ export const FilePreview = React.memo(
 						clearTimeout(scrollSaveTimerRef.current);
 					}
 					scrollSaveTimerRef.current = setTimeout(() => {
-						onScrollPositionChange(contentEl.scrollTop);
+						onScrollPositionChange(scrollEl.scrollTop);
 						scrollSaveTimerRef.current = null;
 					}, 200);
 				}
 			};
 
-			contentEl.addEventListener('scroll', handleScroll, { passive: true });
+			contentEl.addEventListener('scroll', handleScroll, { passive: true, capture: true });
 			return () => {
-				contentEl.removeEventListener('scroll', handleScroll);
+				contentEl.removeEventListener('scroll', handleScroll, { capture: true });
 				// Clear any pending scroll save timer
 				if (scrollSaveTimerRef.current) {
 					clearTimeout(scrollSaveTimerRef.current);
@@ -1346,72 +1434,93 @@ export const FilePreview = React.memo(
 		}, [onScrollPositionChange]);
 
 		// Restore scroll position when initialScrollTop is provided (file tab switching)
-		// Use a ref to track if we've already restored for this file to avoid re-scrolling on re-renders
+		// Use a ref to track if we've already restored for this file to avoid re-scrolling on re-renders.
+		// useLayoutEffect so leftover scrollTop from the previous file is cleared
+		// before paint (the container is reused and was not previously reset).
 		const hasRestoredScrollRef = useRef<string | null>(null);
-		useEffect(() => {
+		useLayoutEffect(() => {
 			const contentEl = contentRef.current;
 			if (!contentEl || !file?.path) return;
 
-			// Only restore if this is a new file and we have a scroll position to
-			// restore. `>= 0`, not `> 0`: a document deliberately left at the absolute
-			// top persists scrollTop: 0, and requiring a positive offset made that one
-			// position unrestorable.
-			if (
+			// `>= 0`, not `> 0`: a file deliberately left at the very top persists
+			// `scrollTop: 0`, and requiring a positive offset made that one position
+			// unrestorable. It lands on the same branch as "no saved position" today,
+			// so the behaviour is identical - but it stops being an accident.
+			const wantsRestore =
 				initialScrollTop !== undefined &&
 				initialScrollTop >= 0 &&
-				hasRestoredScrollRef.current !== file.path
-			) {
-				// A single frame proves the DOM is mounted, not that it has settled.
-				// Assigning scrollTop once here let the browser silently CLAMP it to
-				// whatever height existed on that frame - images still decoding, web
-				// fonts still swapping, markdown still reflowing - so the document
-				// opened above where it was left, and the latch below meant there was
-				// never a second attempt. Re-attempt until the assignment sticks.
-				const targetPath = file.path;
-				let cancelled = false;
-				let framesWithoutGrowth = 0;
-				let lastScrollHeight = -1;
-				let lastWrite = -1;
-				const MAX_QUIET_FRAMES = 30;
+				hasRestoredScrollRef.current !== file.path;
 
-				const attempt = () => {
-					if (cancelled) return;
-					// Something moved the view since our last write - the user scrolling,
-					// or a jump-to-line. They win; stop chasing the saved offset.
-					if (lastWrite >= 0 && contentEl.scrollTop !== lastWrite) {
-						hasRestoredScrollRef.current = targetPath;
-						return;
-					}
-
-					contentEl.scrollTop = initialScrollTop;
-					lastWrite = contentEl.scrollTop;
-
-					if (contentEl.scrollTop >= initialScrollTop) {
-						// The assignment stuck - the document is tall enough now.
-						hasRestoredScrollRef.current = targetPath;
-						return;
-					}
-
-					const { scrollHeight } = contentEl;
-					framesWithoutGrowth = scrollHeight > lastScrollHeight ? 0 : framesWithoutGrowth + 1;
-					lastScrollHeight = scrollHeight;
-					if (framesWithoutGrowth >= MAX_QUIET_FRAMES) {
-						// Height has stopped changing and the offset is still out of
-						// reach - the document really is shorter now. Accept it.
-						hasRestoredScrollRef.current = targetPath;
-						return;
-					}
-					requestAnimationFrame(attempt);
-				};
-
-				requestAnimationFrame(attempt);
-				return () => {
-					cancelled = true;
-				};
-			} else if (hasRestoredScrollRef.current !== file.path) {
-				// New file without saved scroll position - reset to top
-				hasRestoredScrollRef.current = file.path;
+			if (!wantsRestore) {
+				if (hasRestoredScrollRef.current !== file.path) {
+					// New file without a saved position - reset to top. The container is
+					// reused across files, so leftover scrollTop has to be cleared.
+					contentEl.scrollTop = 0;
+					const scrollEl = resolvePreviewScroller(contentEl);
+					if (scrollEl) scrollEl.scrollTop = 0;
+					hasRestoredScrollRef.current = file.path;
+				}
+				return;
 			}
+
+			// Assigning scrollTop is CLAMPED BY THE BROWSER to the element's current
+			// scrollHeight. In a layout effect - before paint, before images decode,
+			// before fonts load, before markdown and syntax highlighting settle - the
+			// content is at its shortest, so a deep offset silently lands short and
+			// the file opens scrolled UP from where it was left.
+			//
+			// So don't latch on the attempt, latch on the RESULT: keep re-applying
+			// while the content grows, and only mark this file done once the offset
+			// actually sticks. `target` is re-derived each pass because scrollHeight
+			// is what changes.
+			const applyScroll = (): boolean => {
+				const el = resolvePreviewScroller(contentRef.current);
+				if (!el) return true; // Unmounted - stop trying.
+				const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+				const target = Math.min(initialScrollTop, maxScroll);
+				el.scrollTop = target;
+				// Settled once we reached the offset the user actually left, or once
+				// the content genuinely cannot scroll that far.
+				return Math.abs(el.scrollTop - initialScrollTop) <= 1 || target >= maxScroll;
+			};
+
+			if (applyScroll()) {
+				hasRestoredScrollRef.current = file.path;
+				return;
+			}
+
+			// Still short. Re-apply as the content grows, and stop the moment the
+			// user takes over - a restore that keeps yanking the view after they
+			// have started scrolling is worse than the miss it is correcting.
+			let done = false;
+			const finish = () => {
+				if (done) return;
+				done = true;
+				hasRestoredScrollRef.current = file.path;
+				observer?.disconnect();
+				window.clearTimeout(giveUpTimer);
+				contentEl.removeEventListener('wheel', finish);
+				contentEl.removeEventListener('touchstart', finish);
+				contentEl.removeEventListener('keydown', finish);
+			};
+
+			const observer =
+				typeof ResizeObserver !== 'undefined'
+					? new ResizeObserver(() => {
+							if (applyScroll()) finish();
+						})
+					: undefined;
+			observer?.observe(resolvePreviewScroller(contentEl) ?? contentEl);
+
+			// Hard stop, so a document that never reaches the saved offset (content
+			// shrank, file changed on disk) cannot leave an observer running.
+			const giveUpTimer = window.setTimeout(finish, SCROLL_RESTORE_SETTLE_MS);
+
+			contentEl.addEventListener('wheel', finish, { passive: true });
+			contentEl.addEventListener('touchstart', finish, { passive: true });
+			contentEl.addEventListener('keydown', finish);
+
+			return finish;
 		}, [file?.path, initialScrollTop]);
 
 		// Auto-focus on mount and when file changes so keyboard shortcuts work immediately
@@ -1744,7 +1853,7 @@ export const FilePreview = React.memo(
 				if (useUIStore.getState().activeFocus !== 'main') return;
 
 				e.preventDefault();
-				const container = contentRef.current;
+				const container = resolvePreviewScroller(contentRef.current);
 				if (!container) return;
 
 				if (e.metaKey || e.ctrlKey) {
@@ -1765,7 +1874,7 @@ export const FilePreview = React.memo(
 				if (useUIStore.getState().activeFocus !== 'main') return;
 
 				e.preventDefault();
-				const container = contentRef.current;
+				const container = resolvePreviewScroller(contentRef.current);
 				if (!container) return;
 
 				if (e.metaKey || e.ctrlKey) {
@@ -1779,16 +1888,19 @@ export const FilePreview = React.memo(
 					container.scrollTop += 40;
 				}
 			} else if (e.key === 'ArrowLeft' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-				// Cmd+Left: Navigate back in history.
-				// Skipped while the caret is in a text field: on macOS this chord is
-				// beginning-of-line, so claiming it there walks the breadcrumb out
-				// from under someone who is typing in the find bar or the filename
-				// box. `isEditableText && markdownEditMode` did NOT cover that -
-				// `isEditableText` is a FILE-TYPE property (!isImage && !isBinary &&
-				// !isParquet, :402), decided once per file and nothing to do with
-				// focus - so on any ordinary text file not in edit mode the guard was
-				// false and the shortcut fired regardless of where the caret was.
-				if (isEditingTextTarget(e.target) || (isEditableText && markdownEditMode)) return;
+				// Cmd+Left: walk back through this tab's breadcrumb history.
+				//
+				// Bail whenever the caret is in a text field, NOT merely when the
+				// markdown editor is open. On macOS Cmd+Left is beginning-of-line, so
+				// the find bar (Cmd+F), the fast/plain text editor, and any other input
+				// rendered inside the preview all need it to stay a caret move. The old
+				// guard tested `isEditableText && markdownEditMode`, and `isEditableText`
+				// is a FILE-TYPE property (`!isImage && !isBinary && !isParquet`), not a
+				// focus check - so typing in the find bar and reaching for Cmd+Left
+				// navigated to the previous file instead of jumping to the line start.
+				// Same rule the browser back/forward path already applies in
+				// useMainKeyboardHandler.
+				if (isTextInputTarget(e.target)) return;
 				e.preventDefault();
 				e.stopPropagation();
 				if (canGoBack && onNavigateBack) {
@@ -1796,9 +1908,9 @@ export const FilePreview = React.memo(
 					onShortcutUsed?.('filePreviewBack');
 				}
 			} else if (e.key === 'ArrowRight' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-				// Cmd+Right: Navigate forward in history. Same focus guard as
-				// Cmd+Left above - on macOS this chord is end-of-line.
-				if (isEditingTextTarget(e.target) || (isEditableText && markdownEditMode)) return;
+				// Cmd+Right: forward through the breadcrumb. Same caret rule as Cmd+Left
+				// above - end-of-line has to keep working inside any text field.
+				if (isTextInputTarget(e.target)) return;
 				e.preventDefault();
 				e.stopPropagation();
 				if (canGoForward && onNavigateForward) {
@@ -1901,6 +2013,7 @@ export const FilePreview = React.memo(
 					setWordWrap={setFileEditWordWrap}
 					toolbarVisibility={filePreviewToolbarVisibility}
 					onDelete={handleDeleteFile}
+					onRevealDetails={handleRevealDetails}
 				/>
 
 				{/* File changed on disk banner */}
@@ -1977,18 +2090,35 @@ export const FilePreview = React.memo(
 					ref={contentRef}
 					// The parquet viewer is a full-height application pane with its
 					// own virtualized scroller and a pinned footer, so it takes the
-					// content box edge to edge. Every other view is a document that
-					// scrolls inside this padded column.
+					// content box edge to edge. The CSV / JSONL tables keep the
+					// padding but scroll themselves, so the column stacks the find
+					// bar over them instead of scrolling. Every other view is a
+					// document that scrolls inside this padded column. Its bottom
+					// padding (`pb-24`) lets the last lines scroll clear of the
+					// round controls floating in the bottom corners (the ToC
+					// button is ~56px tall from the edge), so they never sit on
+					// top of the text.
 					className={
 						isParquet
 							? 'flex-1 min-h-0 overflow-hidden'
-							: 'flex-1 overflow-y-auto px-6 pt-3 pb-6 scrollbar-thin'
+							: isTablePane
+								? 'flex-1 min-h-0 flex flex-col overflow-hidden px-6 pt-3 pb-6'
+								: 'flex-1 overflow-y-auto px-6 pt-3 pb-24 scrollbar-thin'
 					}
 					style={
 						{
 							overscrollBehavior: 'contain',
 							'--fp-font-scale': String(fontScale),
+							// The prose tiers (rich markdown, markdown Fast, text Fast) set no
+							// font of their own, so the File Preview font reaches all three by
+							// inheritance from here. The two CM6 tiers own `.cm-scroller`'s
+							// font and take theirs as a prop instead.
 							fontFamily: previewFontFamily,
+							// The prose tiers (rich markdown, markdown Fast) carry no size
+							// of their own and scale off this one in `em`, so the File
+							// Preview size setting reaches them by inheritance. The two
+							// CodeMirror tiers own their scroller's font and take theirs
+							// as a prop instead.
 							fontSize: `${previewTypography.fontSize}px`,
 						} as React.CSSProperties
 					}
@@ -2018,7 +2148,7 @@ export const FilePreview = React.memo(
 					)}
 					{/* Floating Search */}
 					{searchOpen && (
-						<div className="sticky top-0 z-10 pb-4" ref={jqHelpRef}>
+						<div className="sticky top-0 z-10 shrink-0 pb-4" ref={jqHelpRef}>
 							<div className="relative">
 								<div className="flex items-center gap-2">
 									{/* jq mode toggle for JSON/JSONL files */}
@@ -2231,10 +2361,9 @@ export const FilePreview = React.memo(
 								{/* jq syntax help popup */}
 								{searchMode === 'jq' && showJqHelp && (
 									<div
-										className="absolute top-full left-0 right-0 mt-1 rounded-lg shadow-xl overflow-hidden z-50"
+										className="absolute top-full left-0 right-0 mt-1 rounded-lg overflow-hidden z-50"
 										style={{
-											backgroundColor: theme.colors.bgSidebar,
-											border: `1px solid ${theme.colors.border}`,
+											...elevatedSurfaceStyle(theme),
 										}}
 									>
 										<div
@@ -2307,8 +2436,16 @@ export const FilePreview = React.memo(
 								<p className="text-sm mt-1" style={{ color: theme.colors.textDim }}>
 									This file cannot be displayed as text.
 								</p>
+								{/* "Open in default app" hands the file to the HOST machine's OS
+								    opener via the shell bridge. In the web-desktop build the host
+								    is not the browser user's device, so the button is disabled with
+								    an explaining tooltip instead of silently acting on the wrong
+								    machine. */}
 								<button
+									disabled={isWebDesktop()}
+									title={isWebDesktop() ? 'Available in the desktop app' : undefined}
 									onClick={async () => {
+										if (isWebDesktop()) return;
 										// Local files open in place. Remote files don't exist on this
 										// machine, so download a binary-safe copy to a temp dir over SSH
 										// first, then hand the local path to the OS opener.
@@ -2334,7 +2471,7 @@ export const FilePreview = React.memo(
 											});
 										}
 									}}
-									className="mt-4 px-4 py-2 rounded text-sm hover:opacity-80 transition-opacity"
+									className="mt-4 px-4 py-2 rounded text-sm hover:opacity-80 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:opacity-50"
 									style={{
 										backgroundColor: theme.colors.accent,
 										color: theme.colors.accentForeground,
@@ -2453,7 +2590,7 @@ export const FilePreview = React.memo(
 									style={{
 										padding: '24px',
 										color: theme.colors.textDim,
-										fontSize: '13px',
+										fontSize: '0.8125rem',
 									}}
 								>
 									Loading giant preview…
@@ -2479,7 +2616,7 @@ export const FilePreview = React.memo(
 									style={{
 										padding: '24px',
 										color: theme.colors.textDim,
-										fontSize: '13px',
+										fontSize: '0.8125rem',
 									}}
 								>
 									Loading fast preview…
@@ -2496,14 +2633,7 @@ export const FilePreview = React.memo(
 								homeDir={homeDir}
 								filePath={file.path}
 								onFileClick={onFileClick}
-								onExternalLinkClick={(href, opts) => {
-									// A file:// target Maestro can render stays inside the app;
-									// only OS-owned types go to the default app.
-									if (openFileUrl(href, (path) => onFileClick?.(path))) return;
-									if (/^https?:\/\/|^mailto:/.test(href)) {
-										openUrl(href, opts);
-									}
-								}}
+								onExternalLinkClick={handleExternalLinkClick}
 							/>
 						</Suspense>
 					) : isMarkdown ? (
@@ -2559,7 +2689,7 @@ export const FilePreview = React.memo(
 									style={{
 										padding: '24px',
 										color: theme.colors.textDim,
-										fontSize: '13px',
+										fontSize: '0.8125rem',
 									}}
 								>
 									Loading fast preview…
@@ -2574,6 +2704,7 @@ export const FilePreview = React.memo(
 								containerRef={markdownContainerRef}
 								filePath={file.path}
 								fontScale={fontScale}
+								baseFontPx={previewTypography.fontSize}
 							/>
 						</Suspense>
 					) : isReadableText && !markdownEditMode ? (
@@ -2632,7 +2763,7 @@ export const FilePreview = React.memo(
 									style={{
 										padding: '24px',
 										color: theme.colors.textDim,
-										fontSize: '13px',
+										fontSize: '0.8125rem',
 									}}
 								>
 									Loading fast preview…
@@ -2647,6 +2778,7 @@ export const FilePreview = React.memo(
 								containerRef={markdownContainerRef}
 								filePath={file.path}
 								fontScale={fontScale}
+								baseFontPx={previewTypography.fontSize}
 							/>
 						</Suspense>
 					) : (
@@ -2792,12 +2924,11 @@ export const FilePreview = React.memo(
 							}}
 						/>
 						<div
-							className="fixed z-50 py-1 rounded-md shadow-xl border whitespace-nowrap"
+							className="fixed z-50 py-1 rounded-md whitespace-nowrap"
 							style={{
 								left: lineCtxMenu.x,
 								top: lineCtxMenu.y,
-								backgroundColor: theme.colors.bgSidebar,
-								borderColor: theme.colors.border,
+								...elevatedSurfaceStyle(theme),
 								minWidth: '14rem',
 							}}
 						>

@@ -42,6 +42,10 @@ const defaultProps = {
 	setRenameGroupValue: vi.fn(),
 	renameGroupEmoji: '',
 	setRenameGroupEmoji: vi.fn(),
+	renameGroupIcon: undefined,
+	setRenameGroupIcon: vi.fn(),
+	renameGroupColor: undefined,
+	setRenameGroupColor: vi.fn(),
 	onCloseRenameGroupModal: vi.fn(),
 };
 

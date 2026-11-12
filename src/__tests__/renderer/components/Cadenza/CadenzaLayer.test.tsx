@@ -1,0 +1,101 @@
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CadenzaLayer } from '../../../../renderer/components/Cadenza/CadenzaLayer';
+import { applyCadenzaPayload, useCadenzaStore } from '../../../../renderer/stores/cadenzaStore';
+import { mockTheme } from '../../../helpers/mockTheme';
+
+describe('CadenzaLayer', () => {
+	beforeEach(() => {
+		useCadenzaStore.setState({ cadenzas: [], hidden: false, flashedId: null });
+		vi.mocked(window.maestro.fs.readFile).mockReset();
+		vi.mocked(window.maestro.process.releaseConcertoHtmlDocument).mockClear();
+	});
+
+	it('loads an image cadenza through the shared local-image IPC path', async () => {
+		const path = 'C:\\workspace\\artifacts\\preview.png';
+		const dataUrl = 'data:image/png;base64,cHJldmlldw==';
+		vi.mocked(window.maestro.fs.readFile).mockResolvedValue(dataUrl);
+		applyCadenzaPayload({
+			op: 'open',
+			id: 'preview',
+			viewType: 'image',
+			title: 'Build preview',
+			path,
+		});
+
+		render(<CadenzaLayer theme={mockTheme} />);
+
+		const image = await screen.findByRole('img', { name: 'Build preview' });
+		expect(window.maestro.fs.readFile).toHaveBeenCalledWith(path, undefined);
+		expect(image).toHaveAttribute('src', dataUrl);
+		expect(image).toHaveAttribute('draggable', 'false');
+	});
+
+	it('stashes every card without unmounting it, so live state survives', () => {
+		applyCadenzaPayload({
+			op: 'open',
+			id: 'game',
+			viewType: 'html',
+			title: 'Live game',
+			body: '<button>Move</button>',
+		});
+		render(<CadenzaLayer theme={mockTheme} />);
+		const frame = screen.getByTestId('concerto-html-iframe');
+
+		act(() => useCadenzaStore.getState().setHidden(true));
+
+		expect(screen.getByTestId('cadenza-layer')).toHaveStyle({ visibility: 'hidden' });
+		expect(screen.getByTestId('concerto-html-iframe')).toBe(frame);
+
+		act(() => useCadenzaStore.getState().setHidden(false));
+
+		expect(screen.getByTestId('cadenza-layer')).toHaveStyle({ visibility: 'visible' });
+		expect(screen.getByTestId('concerto-html-iframe')).toBe(frame);
+	});
+
+	it('leaves the stash alone when an agent opens another card', () => {
+		useCadenzaStore.getState().setHidden(true);
+
+		applyCadenzaPayload({ op: 'open', id: 'tracker', title: 'Tracker' });
+
+		expect(useCadenzaStore.getState().hidden).toBe(true);
+	});
+
+	it('labels plugin-namespaced host views with their provenance', () => {
+		applyCadenzaPayload({
+			op: 'open',
+			id: 'com.acme.metrics/release-summary',
+			viewType: 'view',
+			title: 'Release summary',
+			body: JSON.stringify({ blocks: [] }),
+			sourcePlugin: 'Acme Metrics',
+		});
+		render(<CadenzaLayer theme={mockTheme} />);
+
+		expect(screen.getByText('from Acme Metrics')).toHaveAttribute('title', 'from Acme Metrics');
+	});
+
+	it('renders an HTML cadenza in the isolated document frame', () => {
+		applyCadenzaPayload({
+			op: 'open',
+			id: 'mini-mockup',
+			viewType: 'html',
+			title: 'Mini mockup',
+			body: '<style>body{margin:0}</style><button>Try it</button>',
+		});
+		render(<CadenzaLayer theme={mockTheme} />);
+
+		const iframe = screen.getByTestId('concerto-html-iframe');
+		expect(iframe).toHaveAttribute('sandbox', 'allow-scripts');
+		expect(iframe.getAttribute('src')).toContain(
+			'maestro-concerto://render/?surface=cadenza&id=mini-mockup'
+		);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Close cadenza' }));
+		expect(window.maestro.process.releaseConcertoHtmlDocument).toHaveBeenCalledWith(
+			'cadenza',
+			'mini-mockup'
+		);
+		expect(useCadenzaStore.getState().cadenzas).toEqual([]);
+	});
+});

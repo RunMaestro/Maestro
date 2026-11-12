@@ -22,16 +22,27 @@
  * Extracted from main/index.ts to improve code organization.
  */
 
-import { ipcMain, app } from 'electron';
+import { ipcMain, BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
-import { WebServer } from '../../web-server';
+import { isWebContentsAvailable } from '../../utils/safe-send';
 import type { AITabData } from '../../web-server/services/broadcastService';
-import type { SettingsStoreInterface } from '../../stores/types';
+import { getAutoRunStateTracker } from '../../autorun/autorun-state-tracker';
+import type { AutoRunBroadcastState } from '../../../shared/autoRunBroadcast';
 import {
-	writeCliServerInfo,
-	deleteCliServerInfo,
-	readCliServerInfo,
-} from '../../../shared/cli-server-discovery';
+	startLiveServer,
+	stopLiveServer,
+	disableAllLive,
+	isLiveModeOn,
+	type LiveModeDependencies,
+} from '../../web-server/live-mode';
+
+// The CLI server lifecycle lives in the Live Mode service; re-exported here
+// because startup and the quit handler have always imported it from this module.
+export {
+	ensureCliServer,
+	startCliDiscoveryWatchdog,
+	stopCliDiscoveryWatchdog,
+} from '../../web-server/live-mode';
 
 /**
  * Timeout for waiting for web server to become active (ms)
@@ -44,191 +55,71 @@ const SERVER_STARTUP_TIMEOUT_MS = 5000;
 const SERVER_STARTUP_POLL_INTERVAL_MS = 100;
 
 /**
- * Dependencies required for web handlers
+ * Dependencies required for web handlers. Same shape as the Live Mode
+ * service's deps, since most of what these handlers do is call it.
  */
-export interface WebHandlerDependencies {
-	getWebServer: () => WebServer | null;
-	setWebServer: (server: WebServer | null) => void;
-	createWebServer: () => WebServer;
-	settingsStore: SettingsStoreInterface;
+export type WebHandlerDependencies = LiveModeDependencies;
+
+/**
+ * True when this invoke arrived over the web-desktop WebSocket bridge rather
+ * than from an Electron renderer.
+ *
+ * `handleBridgeInvoke` dispatches to the registered `ipcMain` handler with a
+ * synthetic event (`FAKE_EVENT` in `web-server/handlers/bridgeHandlers.ts`)
+ * stamped `type: 'bridge'`; a real `IpcMainInvokeEvent` has no `type`. This is
+ * the only thing that tells main WHICH client owns an Auto Run, and the whole
+ * echo-safety of the forward below rests on it.
+ */
+function isBridgeOriginatedInvoke(event: unknown): boolean {
+	return (event as { type?: unknown } | null)?.type === 'bridge';
 }
 
 /**
- * Write the CLI discovery file for the currently-running server so the CLI
- * can locate it. Centralized so `ensureCliServer` and `live:startServer`
- * cannot drift on pid/startedAt semantics or future fields.
- */
-function refreshCliDiscoveryFile(port: number, token: string): void {
-	writeCliServerInfo({
-		port,
-		token,
-		pid: process.pid,
-		startedAt: Date.now(),
-		// Stamp the running build's version so the CLI can detect version skew
-		// (e.g. a freshly-built CLI talking to an older still-running app).
-		version: app.getVersion(),
-	});
-}
-
-/**
- * Verify the discovery file on disk matches the running server. Used by
- * `ensureCliServer` to detect silent write failures or external interference
- * (deleted file, stale pid, etc.).
- */
-function discoveryFileMatches(port: number, token: string): boolean {
-	const info = readCliServerInfo();
-	return info !== null && info.port === port && info.token === token && info.pid === process.pid;
-}
-
-/** Number of times `ensureCliServer` will retry on failure. */
-const ENSURE_CLI_MAX_ATTEMPTS = 3;
-
-/**
- * Ensure the CLI server is running and the discovery file is published.
+ * Mirror a web-owned Auto Run into the Electron desktop windows.
  *
- * Called during app initialization to make the web server always available
- * for CLI IPC connections. The server binds to 0.0.0.0 - this is intentional
- * for LAN accessibility; the UUID security token prevents unauthorized access.
+ * Auto Run is renderer-owned state, so a run started in a web-desktop browser
+ * tab lives entirely in that tab. #1508 taught the browser to RENDER a run
+ * owned by the desktop (`autorun_state` -> `remote:autoRunStateMirror`), but
+ * only in that direction: the desktop is not a WebSocket client, so nothing
+ * carried the reverse. The desktop drew the agent as idle for the whole run.
  *
- * Retries on any failure (port collision, transient fs error, etc.) and
- * verifies the discovery file is actually present on disk after each attempt.
- * Historically this could fail silently when a later `whenReady` step threw
- * before we got here, leaving the CLI unable to connect until the user
- * manually toggled Live Mode.
- */
-export async function ensureCliServer(deps: WebHandlerDependencies): Promise<boolean> {
-	const { getWebServer, setWebServer, createWebServer } = deps;
-
-	for (let attempt = 1; attempt <= ENSURE_CLI_MAX_ATTEMPTS; attempt++) {
-		try {
-			let webServer = getWebServer();
-
-			if (!webServer) {
-				logger.info(`Creating CLI server (attempt ${attempt})`, 'CliServer');
-				webServer = createWebServer();
-				setWebServer(webServer);
-			}
-
-			if (!webServer.isActive()) {
-				logger.info(`Starting CLI server (attempt ${attempt})`, 'CliServer');
-				const { port, token } = await webServer.start();
-				logger.info(`CLI server running on port ${port}`, 'CliServer');
-				refreshCliDiscoveryFile(port, token);
-			} else {
-				refreshCliDiscoveryFile(webServer.getPort(), webServer.getSecurityToken());
-			}
-
-			if (discoveryFileMatches(webServer.getPort(), webServer.getSecurityToken())) {
-				if (attempt > 1) {
-					logger.info(`CLI discovery file confirmed after ${attempt} attempt(s)`, 'CliServer');
-				}
-				return true;
-			}
-
-			logger.warn(
-				`CLI discovery file missing/mismatched after write (attempt ${attempt}); will retry`,
-				'CliServer'
-			);
-		} catch (error: any) {
-			logger.error(
-				`Failed to start CLI server (attempt ${attempt}): ${error?.message ?? error}`,
-				'CliServer'
-			);
-			// Tear down the (potentially half-initialized) server so the next
-			// attempt creates a fresh instance instead of reusing a broken one.
-			const existing = getWebServer();
-			if (existing) {
-				try {
-					await existing.stop();
-				} catch {
-					// Best-effort cleanup - the next attempt will recreate the server.
-				}
-				setWebServer(null);
-			}
-		}
-
-		if (attempt < ENSURE_CLI_MAX_ATTEMPTS) {
-			await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
-		}
-	}
-
-	logger.error(
-		`Gave up starting CLI server after ${ENSURE_CLI_MAX_ATTEMPTS} attempts — maestro-cli will be unavailable until Live Mode is toggled`,
-		'CliServer'
-	);
-	return false;
-}
-
-/** Active watchdog timer, if any. */
-let cliDiscoveryWatchdog: ReturnType<typeof setInterval> | null = null;
-
-/**
- * Default interval between watchdog checks.
+ * Two deliberate narrowings:
  *
- * Short on purpose: maestro-cli is the user's hands-off entry point and a 30s
- * window of "command says app isn't running" is enough to retrain muscle
- * memory toward toggling Live Mode. 5s self-heals well before the user gives
- * up and reaches for the UI.
- */
-const CLI_WATCHDOG_INTERVAL_MS = 5_000;
-
-/**
- * Start a periodic watchdog that re-publishes the CLI discovery file whenever
- * it goes missing or drifts out of sync with the running server. Defense in
- * depth for cases the main-path retry can't catch (file deleted externally,
- * disk hiccup after a successful write, ensureCliServer racing with a Live
- * Mode toggle, etc.). Also self-heals if the initial ensureCliServer attempt
- * gave up - the next time the server is reachable, the watchdog republishes.
+ * 1. **Bridge-originated frames only.** A desktop-owned run must never be
+ *    forwarded, or the owning window would receive its own state back and
+ *    `applyAutoRunMirrorFrame` could stamp its own live run `mirrored: true` -
+ *    which disables Stop, Skip, Resume and Abort on the window that is actually
+ *    driving the run. The renderer has an ownership guard of its own, but the
+ *    cheapest way to be sure is not to send the echo in the first place.
  *
- * Safe to call multiple times - the previous timer is cleared first. Pass
- * `intervalMs` only for tests; production uses the default 5s interval.
+ * 2. **Not `safeSend`.** `safeSend` fans every push out to the bridge as well,
+ *    which would deliver this frame to web clients a second time on a second
+ *    channel - they already receive it as `autorun_state`. The desktop windows
+ *    are the entire audience for this message, so it goes straight to them.
+ *
+ * Still out of scope: desktop window A does not mirror into desktop window B.
+ * That needs the same echo reasoning applied per-window and is not what #1519
+ * reports.
  */
-export function startCliDiscoveryWatchdog(
-	deps: WebHandlerDependencies,
-	intervalMs: number = CLI_WATCHDOG_INTERVAL_MS
+function forwardAutoRunStateToDesktopWindows(
+	event: unknown,
+	sessionId: string,
+	state: AutoRunBroadcastState | null
 ): void {
-	stopCliDiscoveryWatchdog();
-	cliDiscoveryWatchdog = setInterval(() => {
-		const webServer = deps.getWebServer();
-		if (!webServer) {
-			// No server yet (initial ensureCliServer never succeeded) - try to
-			// bring one up so maestro-cli works without forcing a Live Mode toggle.
-			void ensureCliServer(deps).catch((err: unknown) => {
-				logger.error(
-					`Watchdog ensureCliServer failed: ${err instanceof Error ? err.message : String(err)}`,
-					'CliServer'
-				);
-			});
-			return;
-		}
-		if (!webServer.isActive()) {
-			return;
-		}
-		const port = webServer.getPort();
-		const token = webServer.getSecurityToken();
-		if (discoveryFileMatches(port, token)) {
-			return;
-		}
-		logger.warn('CLI discovery file is missing or stale — watchdog republishing', 'CliServer');
-		try {
-			refreshCliDiscoveryFile(port, token);
-		} catch (err: any) {
-			logger.error(
-				`Watchdog failed to refresh CLI discovery file: ${err?.message ?? err}`,
-				'CliServer'
-			);
-		}
-	}, intervalMs);
-	// Don't keep the event loop alive just for the watchdog - Electron's
-	// lifecycle owns process exit and we don't want this timer to delay quit.
-	cliDiscoveryWatchdog.unref?.();
-}
+	if (!isBridgeOriginatedInvoke(event)) return;
 
-/** Stop the discovery-file watchdog (called on app quit). */
-export function stopCliDiscoveryWatchdog(): void {
-	if (cliDiscoveryWatchdog) {
-		clearInterval(cliDiscoveryWatchdog);
-		cliDiscoveryWatchdog = null;
+	for (const win of BrowserWindow.getAllWindows()) {
+		try {
+			if (isWebContentsAvailable(win)) {
+				win.webContents.send('remote:autoRunStateMirror', sessionId, state);
+			}
+		} catch (error) {
+			// A window closing mid-broadcast is routine, not a fault. Keep going so
+			// one dead window never costs the others their frame.
+			logger.debug('Failed to mirror Auto Run state to a desktop window', 'WebHandlers', {
+				error: String(error),
+			});
+		}
 	}
 }
 
@@ -236,7 +127,7 @@ export function stopCliDiscoveryWatchdog(): void {
  * Register all web/live-related IPC handlers.
  */
 export function registerWebHandlers(deps: WebHandlerDependencies): void {
-	const { getWebServer, setWebServer, createWebServer, settingsStore } = deps;
+	const { getWebServer, settingsStore } = deps;
 
 	// Broadcast user input to web clients (called when desktop sends a message)
 	ipcMain.handle(
@@ -258,24 +149,31 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 
 	// Broadcast AutoRun state to web clients (called when batch processing state changes)
 	// Always store state even if no clients are connected, so new clients get initial state
+	ipcMain.handle('web:claimAutoRunStart', async (_, sessionId: string) => {
+		return getAutoRunStateTracker().tryClaimStart(sessionId);
+	});
+	ipcMain.handle('web:releaseAutoRunStartClaim', async (_, sessionId: string) => {
+		return getAutoRunStateTracker().releaseStartClaim(sessionId);
+	});
+
 	ipcMain.handle(
 		'web:broadcastAutoRunState',
-		async (
-			_,
-			sessionId: string,
-			state: {
-				isRunning: boolean;
-				totalTasks: number;
-				completedTasks: number;
-				currentTaskIndex: number;
-				isStopping?: boolean;
-				// Multi-document progress fields
-				totalDocuments?: number;
-				currentDocumentIndex?: number;
-				totalTasksAcrossAllDocs?: number;
-				completedTasksAcrossAllDocs?: number;
-			} | null
-		) => {
+		async (event, sessionId: string, state: AutoRunBroadcastState | null) => {
+			// Feed the first-party main-process tracker FIRST, unconditionally.
+			// The web-server branch below returns early when Live Mode is off, so
+			// anything downstream of it (dispatch callbacks, and later Cue's
+			// agent.completed) would otherwise never learn that an Auto Run batch
+			// finished. Auto Run finality is main-process state now, not a
+			// web-broadcast side effect.
+			getAutoRunStateTracker().update(sessionId, state);
+
+			// A run OWNED by a web-desktop browser client has to reach the desktop
+			// windows too, or the desktop renders the agent as idle for the whole
+			// run. Web clients are already served by the `autorun_state` packet
+			// below; the desktop is not a WebSocket client, so this is its only
+			// path to the frame.
+			forwardAutoRunStateToDesktopWindows(event, sessionId, state);
+
 			const webServer = getWebServer();
 			if (webServer) {
 				// Always call broadcastAutoRunState - it stores the state for new clients
@@ -288,12 +186,26 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	);
 
 	// Broadcast tab changes to web clients
+	ipcMain.handle('web:requestNewTab', async (_, sessionId: string, background = false) => {
+		const webServer = getWebServer();
+		return webServer?.requestNewTab(sessionId, background) ?? null;
+	});
+	ipcMain.handle('web:requestCloseTab', async (_, sessionId: string, tabId: string) => {
+		return getWebServer()?.requestCloseTab(sessionId, tabId) ?? false;
+	});
+
 	ipcMain.handle(
 		'web:broadcastTabsChange',
-		async (_, sessionId: string, aiTabs: AITabData[], activeTabId: string) => {
+		async (
+			_,
+			sessionId: string,
+			aiTabs: AITabData[],
+			activeTabId: string,
+			activeTabChanged = false
+		) => {
 			const webServer = getWebServer();
 			if (webServer && webServer.getWebClientCount() > 0) {
-				webServer.broadcastTabsChange(sessionId, aiTabs, activeTabId);
+				webServer.broadcastTabsChange(sessionId, aiTabs, activeTabId, activeTabChanged);
 				return true;
 			}
 			return false;
@@ -377,12 +289,12 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		};
 	});
 
+	// Only a Live Mode (LAN) server has a dashboard. The loopback CLI server's
+	// URL is not one: auto-start reads a non-null answer as "Live is already
+	// on" and would never open the server to the LAN.
 	ipcMain.handle('live:getDashboardUrl', async () => {
 		const webServer = getWebServer();
-		if (!webServer) {
-			return null;
-		}
-		return webServer.getSecureUrl();
+		return isLiveModeOn(webServer) ? webServer.getSecureUrl() : null;
 	});
 
 	ipcMain.handle('live:getLiveSessions', async () => {
@@ -400,101 +312,12 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		}
 	});
 
-	// Start web server (creates if needed, starts if not running)
-	ipcMain.handle('live:startServer', async () => {
-		try {
-			let webServer = getWebServer();
-
-			// Rotate the security token on every Live toggle unless the user
-			// opted into Persistent Web Link. After live:stopServer the CLI-only
-			// server (spun up by ensureCliServer) keeps the previous token -
-			// reusing it on the next Live ON would silently leak the prior URL.
-			// Tear it down so createWebServer() mints a fresh ephemeral token.
-			const persistentWebLink = settingsStore.get<boolean>('persistentWebLink', false);
-			if (webServer && !persistentWebLink) {
-				try {
-					await webServer.stop();
-				} catch (err: any) {
-					// Don't drop the reference - the old server may still be bound
-					// to its port. Nulling it would leak a live server and the next
-					// start() would either collide on a custom port or run a second
-					// server in parallel on a random one.
-					logger.error(
-						`Failed to stop existing server before token rotation: ${err?.message ?? err}`,
-						'WebServer'
-					);
-					return { success: false, error: err?.message ?? String(err) };
-				}
-				setWebServer(null);
-				webServer = null;
-			}
-
-			// Create web server if it doesn't exist
-			if (!webServer) {
-				logger.info('Creating web server', 'WebServer');
-				webServer = createWebServer();
-				setWebServer(webServer);
-			}
-
-			// Start if not already running
-			if (!webServer.isActive()) {
-				logger.info('Starting web server', 'WebServer');
-				const { port, token, url } = await webServer.start();
-				logger.info(`Web server running at ${url} (port ${port})`, 'WebServer');
-
-				// Refresh CLI discovery file so the CLI can reconnect after a
-				// stop/start cycle (ensureCliServer only runs once at app launch).
-				// Non-fatal: the server is genuinely up - a failure here would only
-				// break CLI IPC, so don't let it mask the UI's success path.
-				try {
-					refreshCliDiscoveryFile(port, token);
-				} catch (err: any) {
-					logger.error(`Failed to write CLI discovery file: ${err?.message ?? err}`, 'WebServer');
-				}
-				return { success: true, url };
-			}
-
-			// Already running - refresh discovery file in case it's stale.
-			// Same non-fatal treatment: server is up, CLI discovery is secondary.
-			try {
-				refreshCliDiscoveryFile(webServer.getPort(), webServer.getSecurityToken());
-			} catch (err: any) {
-				logger.error(`Failed to refresh CLI discovery file: ${err?.message ?? err}`, 'WebServer');
-			}
-			return { success: true, url: webServer.getSecureUrl() };
-		} catch (error: any) {
-			logger.error(`Failed to start web server: ${error.message}`, 'WebServer');
-			return { success: false, error: error.message };
-		}
-	});
+	// Start web server (creates if needed, starts if not running). Shared with
+	// `maestro-cli live on` through the Live Mode service.
+	ipcMain.handle('live:startServer', async () => startLiveServer(deps));
 
 	// Stop web server and clean up
-	ipcMain.handle('live:stopServer', async () => {
-		const webServer = getWebServer();
-		if (!webServer) {
-			// Even with no server, ensure the CLI channel is available so
-			// maestro-cli works after Live Mode toggles.
-			await ensureCliServer(deps);
-			return { success: true };
-		}
-
-		try {
-			logger.info('Stopping web server', 'WebServer');
-			await webServer.stop();
-			setWebServer(null); // Allow garbage collection, will recreate on next start
-			deleteCliServerInfo();
-			logger.info('Web server stopped and cleaned up', 'WebServer');
-		} catch (error: any) {
-			logger.error(`Failed to stop web server: ${error.message}`, 'WebServer');
-			return { success: false, error: error.message };
-		}
-
-		// Bring the CLI server back up on a fresh port + token. The user
-		// turned off Live Mode (closing the public URL) but the CLI server
-		// must remain reachable for maestro-cli.
-		await ensureCliServer(deps);
-		return { success: true };
-	});
+	ipcMain.handle('live:stopServer', async () => stopLiveServer(deps));
 
 	// Persist the current web server's security token and enable persistent web link.
 	// Flag is written first: a crash between the two writes leaves
@@ -550,36 +373,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	});
 
 	// Disable all live sessions and stop the server
-	ipcMain.handle('live:disableAll', async () => {
-		const webServer = getWebServer();
-		if (!webServer) {
-			await ensureCliServer(deps);
-			return { success: true, count: 0 };
-		}
-
-		// First mark all sessions as offline
-		const liveSessions = webServer.getLiveSessions();
-		const count = liveSessions.length;
-		for (const session of liveSessions) {
-			webServer.setSessionOffline(session.sessionId);
-		}
-
-		// Then stop the server
-		try {
-			logger.info(`Disabled ${count} live sessions, stopping server`, 'Live');
-			await webServer.stop();
-			setWebServer(null);
-			deleteCliServerInfo();
-		} catch (error: any) {
-			logger.error(`Failed to stop web server during disableAll: ${error.message}`, 'WebServer');
-			return { success: false, count, error: error.message };
-		}
-
-		// Bring the CLI server back up on a fresh port + token so maestro-cli
-		// continues working after Live Mode is fully disabled.
-		await ensureCliServer(deps);
-		return { success: true, count };
-	});
+	ipcMain.handle('live:disableAll', async () => disableAllLive(deps));
 
 	// Web server management
 	ipcMain.handle('webserver:getUrl', async () => {

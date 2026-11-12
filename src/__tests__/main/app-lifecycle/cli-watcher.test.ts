@@ -67,6 +67,15 @@ vi.mock('../../../main/utils/logger', () => ({
 	logger: mockLogger,
 }));
 
+// Mock the web-desktop bridge fanout so we can assert CLI activity events
+// reach browser clients even when no desktop window is available.
+const { mockBroadcastBridgeEvent } = vi.hoisted(() => ({
+	mockBroadcastBridgeEvent: vi.fn(),
+}));
+vi.mock('../../../main/web-server/handlers/bridgeHandlers', () => ({
+	broadcastBridgeEvent: mockBroadcastBridgeEvent,
+}));
+
 describe('app-lifecycle/cli-watcher', () => {
 	let mockMainWindow: {
 		isDestroyed: ReturnType<typeof vi.fn>;
@@ -197,6 +206,21 @@ describe('app-lifecycle/cli-watcher', () => {
 			watcherCallback!('change', 'cli-activity.json');
 
 			expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+		});
+
+		it('fans cli:activityChange out to the web-desktop bridge even when the window is null', async () => {
+			getMainWindow.mockReturnValue(null);
+
+			const { createCliWatcher } = await import('../../../main/app-lifecycle/cli-watcher');
+
+			const cliWatcher = createCliWatcher({ getMainWindow, getUserDataPath });
+			cliWatcher.start();
+
+			watcherCallback!('change', 'cli-activity.json');
+
+			// Desktop renderer is unavailable, but web clients still receive it.
+			expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+			expect(mockBroadcastBridgeEvent).toHaveBeenCalledWith('cli:activityChange', []);
 		});
 
 		it('should not notify renderer if window is destroyed', async () => {

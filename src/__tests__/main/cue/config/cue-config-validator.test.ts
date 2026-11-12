@@ -299,3 +299,65 @@ describe('validateSubscription - github.label', () => {
 		).toBe(true);
 	});
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// tier / model / effort
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('validateSubscription - tier / model / effort', () => {
+	const base = {
+		name: 'review',
+		event: 'time.heartbeat',
+		interval_minutes: 30,
+		prompt: 'Review the latest changes',
+	};
+
+	it('accepts a tier with an effort', () => {
+		expect(errs({ ...base, tier: 'high', effort: 'low' })).toEqual([]);
+	});
+
+	it('accepts an exact model with an effort', () => {
+		expect(errs({ ...base, model: 'gpt-5.5-codex', effort: 'medium' })).toEqual([]);
+	});
+
+	it('rejects a misspelled tier rather than silently running the default model', () => {
+		const found = errs({ ...base, tier: 'hgih' });
+		expect(found.some((e) => /"tier" must be one of: low, medium, high/.test(e))).toBe(true);
+	});
+
+	it('rejects a misspelled effort', () => {
+		const found = errs({ ...base, effort: 'max' });
+		expect(found.some((e) => /"effort" must be one of: low, medium, high/.test(e))).toBe(true);
+	});
+
+	it('rejects an empty model', () => {
+		const found = errs({ ...base, model: '   ' });
+		expect(found.some((e) => /"model" must be a non-empty string/.test(e))).toBe(true);
+	});
+
+	it('rejects tier and model together', () => {
+		const found = errs({ ...base, tier: 'high', model: 'opus' });
+		expect(found.some((e) => /set "tier" or "model", not both/.test(e))).toBe(true);
+	});
+
+	it('rejects model settings on a notify subscription', () => {
+		const found = errs({
+			...base,
+			action: 'notify',
+			notify: { message: 'hi' },
+			agent_id: 'agent-xyz',
+			tier: 'low',
+		});
+		expect(found.some((e) => /not supported when action is "notify"/.test(e))).toBe(true);
+	});
+
+	it('rejects model settings on a command subscription', () => {
+		const found = errs({
+			...base,
+			action: 'command',
+			command: { mode: 'shell', shell: 'echo hi' },
+			effort: 'high',
+		});
+		expect(found.some((e) => /not supported when action is "command"/.test(e))).toBe(true);
+	});
+});

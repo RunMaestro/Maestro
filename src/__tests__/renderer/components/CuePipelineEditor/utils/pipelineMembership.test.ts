@@ -10,8 +10,10 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	pipelineAgentScopes,
 	pipelineInvolvesSession,
 	pipelinesForSession,
+	resolvePipelineHomes,
 } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineMembership';
 import type {
 	CueGraphSession,
@@ -107,5 +109,74 @@ describe('pipelinesForSession', () => {
 
 	it('returns nothing when the agent owns no pipelines', () => {
 		expect(pipelinesForSession('sess-3', [mine, theirs])).toEqual([]);
+	});
+});
+
+describe('resolvePipelineHomes', () => {
+	it('files a pipeline under the agent whose cue.yaml declares it', () => {
+		const p = pipeline('Fanout', [triggerNode('t'), agentNode('a', 'sess-2')]);
+		const homes = resolvePipelineHomes([p], [graphSession('sess-1', ['Fanout'])]);
+		expect(homes.get(p.id)).toEqual({ sessionId: 'sess-1', sessionName: 'sess-1' });
+	});
+
+	it('picks the agent declaring the most of a chained pipeline', () => {
+		const p = pipeline('Chain', [agentNode('a', 'sess-1'), agentNode('b', 'sess-2')]);
+		const graph = [graphSession('sess-1', ['Chain']), graphSession('sess-2', ['Chain', 'Chain'])];
+		expect(resolvePipelineHomes([p], graph).get(p.id)?.sessionId).toBe('sess-2');
+	});
+
+	it('breaks a declaration tie toward the agent drawn in the pipeline', () => {
+		const p = pipeline('Shared', [agentNode('a', 'sess-b')]);
+		const graph = [graphSession('sess-a', ['Shared']), graphSession('sess-b', ['Shared'])];
+		expect(resolvePipelineHomes([p], graph).get(p.id)?.sessionId).toBe('sess-b');
+	});
+
+	it('breaks a full tie alphabetically, so the result does not depend on input order', () => {
+		const p = pipeline('Tied', [triggerNode('t')]);
+		const forward = [graphSession('sess-a', ['Tied']), graphSession('sess-b', ['Tied'])];
+		const reversed = [...forward].reverse();
+		expect(resolvePipelineHomes([p], forward).get(p.id)?.sessionId).toBe('sess-a');
+		expect(resolvePipelineHomes([p], reversed).get(p.id)?.sessionId).toBe('sess-a');
+	});
+
+	it('falls back to the first agent node when nobody declares the pipeline', () => {
+		const p = pipeline('Unsaved', [triggerNode('t'), agentNode('a', 'sess-9')]);
+		expect(resolvePipelineHomes([p]).get(p.id)?.sessionId).toBe('sess-9');
+	});
+
+	it('falls back to a command node owner', () => {
+		const p = pipeline('Shell', [triggerNode('t'), commandNode('c', 'sess-4')]);
+		expect(resolvePipelineHomes([p]).get(p.id)?.sessionId).toBe('sess-4');
+	});
+
+	it('leaves a pipeline with no agent anywhere out of the map', () => {
+		const p = pipeline('Orphan', [triggerNode('t')]);
+		expect(resolvePipelineHomes([p]).has(p.id)).toBe(false);
+	});
+});
+
+describe('pipelineAgentScopes', () => {
+	const mine = pipeline('Mine', [triggerNode('t1'), commandNode('c1', 'sess-1')]);
+	const theirs = pipeline('Theirs', [triggerNode('t2'), agentNode('a2', 'sess-2')]);
+
+	it('lists every agent that owns a pipeline, alphabetically, with its pipelines', () => {
+		const sessions = [
+			{ id: 'sess-2', name: 'Zed' },
+			{ id: 'sess-1', name: 'Amy' },
+			{ id: 'sess-3', name: 'Idle' },
+		];
+		expect(pipelineAgentScopes(sessions, [mine, theirs])).toEqual([
+			{ sessionId: 'sess-1', sessionName: 'Amy', pipelineIds: [mine.id] },
+			{ sessionId: 'sess-2', sessionName: 'Zed', pipelineIds: [theirs.id] },
+		]);
+	});
+
+	it('counts pipelines the agent only declares', () => {
+		const sessions = [{ id: 'sess-1', name: 'Amy' }];
+		const graph = [graphSession('sess-1', ['Theirs'])];
+		expect(pipelineAgentScopes(sessions, [mine, theirs], graph)[0].pipelineIds).toEqual([
+			mine.id,
+			theirs.id,
+		]);
 	});
 });

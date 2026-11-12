@@ -16,10 +16,15 @@ import {
 	AITab,
 	LogEntry,
 	SnoozedTabEntry,
+	SnoozeContent,
 	SnoozeHistoryEntry,
 	SnoozeResolution,
+	SnoozedGroupEntry,
+	SnoozedGroupMember,
+	TabGroup,
 	UnifiedTabRef,
 } from '../types';
+import type { SnoozedTabSummary } from '../../shared/snoozeCommands';
 import { generateId } from './ids';
 import {
 	closeTab,
@@ -33,9 +38,162 @@ import {
 	terminalTabFocusFields,
 } from './tabHelpers';
 import { closeTerminalTab } from './terminalTabHelpers';
+import {
+	collectLeafTabRefs,
+	countLeaves,
+	removeLeafByTabRef,
+	rebalanceLayout,
+	resolveTabRefTitle,
+} from './panelLayout';
 
-/** The tab kinds a snooze can hold - the tag on {@link SnoozedTabEntry}. */
-export type SnoozableTabKind = SnoozedTabEntry['type'];
+/**
+ * The SINGLE-tab kinds a snooze can hold.
+ *
+ * `group` is deliberately excluded: a parked group is not one tab, it is a
+ * layout plus its members, and it travels through its own entry points
+ * ({@link snoozeTabGroup} / {@link wakeSnoozedTabGroup}) rather than a fifth
+ * branch in every per-kind switch here.
+ */
+export type SnoozableTabKind = Exclude<SnoozedTabEntry['type'], 'group'>;
+
+/** Narrow a snooze entry to the group variant. */
+export function isSnoozedGroup(entry: SnoozedTabEntry): entry is SnoozedGroupEntry {
+	return entry.type === 'group';
+}
+
+/**
+ * The stored form of a snooze's free text.
+ *
+ * Blank is not a value here: an all-whitespace note or prompt is the user
+ * having typed nothing, and storing it would put an empty italic line under the
+ * row and dispatch an empty turn on wake. Trimmed-to-nothing fields are dropped
+ * so `entry.note` / `entry.wakePrompt` read as plain "is there one?" tests
+ * everywhere downstream.
+ */
+function snoozeContentFields(content?: SnoozeContent): SnoozeContent {
+	const note = content?.note?.trim();
+	const wakePrompt = content?.wakePrompt?.trim();
+	return {
+		...(note ? { note } : {}),
+		...(wakePrompt ? { wakePrompt } : {}),
+	};
+}
+
+/**
+ * Whether this snooze has somewhere to send a wake prompt.
+ *
+ * Only a conversation can be prompted, so a parked file, terminal, or browser
+ * tab answers false and the dialog hides the field rather than collecting a
+ * prompt that could never run. A group qualifies on holding one AI pane.
+ *
+ * Answers the same question `resolveWakePromptTabId` does, but ahead of time
+ * and without a wake to resolve against - that one needs to know which panes
+ * actually came back.
+ */
+export function canSnoozeRunWakePrompt(entry: SnoozedTabEntry): boolean {
+	return isSnoozedGroup(entry)
+		? entry.members.some((member) => member.type === 'ai')
+		: entry.type === 'ai';
+}
+
+/**
+ * Every AI tab a snooze is holding: one for an `ai` entry, each AI pane for a
+ * group, none for the other kinds.
+ *
+ * Exists because "which conversations does this snooze own?" is asked at both
+ * ends of a snooze's life - the transcript mirror takes a copy of each when the
+ * snooze starts and releases each when it ends - and answering it per caller is
+ * how a group's panes ended up mirrored on the way in and never released.
+ */
+export function collectSnoozedAiTabs(entry: SnoozedTabEntry): AITab[] {
+	if (isSnoozedGroup(entry)) {
+		return entry.members.filter((member) => member.type === 'ai').map((member) => member.tab);
+	}
+	return entry.type === 'ai' ? [entry.tab] : [];
+}
+
+/** What the snooze dialog needs to know about the thing it is about to park. */
+export interface SnoozeTarget {
+	/** Tab or GROUP id, passed straight back to `snoozeTab`, which resolves both. */
+	tabId: string;
+	/** Header label, so the user can see what they are snoozing. */
+	tabLabel: string;
+	/** Whether to offer the wake-prompt field. See {@link canSnoozeRunWakePrompt}. */
+	canRunWakePrompt: boolean;
+}
+
+/**
+ * Resolve the id a snooze opener was handed into what the dialog should show.
+ *
+ * Every entry point is handed ONE id and no kind: the tab strip passes whatever
+ * chip was right-clicked (any of the four kinds, or a tiled group), while the
+ * shortcut and the palette pass the active AI tab. Resolving the kind here
+ * rather than at each opener is what keeps the dialog's wake-prompt field
+ * honest - a hard-coded `canRunWakePrompt: true` beside a value derived from
+ * the tab is exactly the pair that drifts.
+ *
+ * The unified order is the only place that knows an id's kind, which is the
+ * same lookup `snoozeTab` itself does, so an id this resolves is an id that
+ * will park.
+ *
+ * @returns null when the id names nothing in this session, letting an opener
+ *   skip a dialog whose confirm could not commit.
+ */
+export function resolveSnoozeTarget(
+	session: Session | null | undefined,
+	id: string
+): SnoozeTarget | null {
+	if (!session) return null;
+
+	// A group is not in aiTabs and not a tab, but it IS snoozable, so it is
+	// checked first - its layout decides whether a prompt can run.
+	const group = session.tabGroups?.find((g) => g.id === id);
+	if (group) {
+		const paneRefs = collectLeafTabRefs(group.layout);
+		return {
+			tabId: id,
+			tabLabel: clampLabel(group.name) || 'Tab group',
+			canRunWakePrompt: paneRefs.some((ref) => ref.type === 'ai'),
+		};
+	}
+
+	const ref = getRepairedUnifiedTabOrder(session).find((entry) => entry.id === id);
+	if (!ref) return null;
+
+	return {
+		tabId: id,
+		tabLabel: resolveTabRefTitle(session, ref),
+		canRunWakePrompt: ref.type === 'ai',
+	};
+}
+
+/**
+ * The AI tab a snooze's wake prompt should be dispatched into, or null when
+ * there is nothing to dispatch.
+ *
+ * Only a conversation can be prompted, so a parked file, terminal, or browser
+ * tab resolves to null however the entry was written. A group resolves to its
+ * first surviving AI pane in leaf order: the layout's focused pane is stored as
+ * a pane id rather than a tab id, and a group whose focus was on a file pane
+ * would otherwise have nowhere to send a prompt the user did ask for.
+ *
+ * @param entry - The snooze that just resolved
+ * @param restoredTabId - Tab id the wake actually landed on (which is the
+ *   pre-existing duplicate, not `entry.tab.id`, when one was already open)
+ * @param isMemberRestored - For a group, whether that pane came back at all
+ */
+export function resolveWakePromptTabId(
+	entry: SnoozedTabEntry,
+	restoredTabId: string,
+	isMemberRestored: (member: SnoozedGroupMember) => boolean = () => true
+): string | null {
+	if (!entry.wakePrompt?.trim()) return null;
+	if (isSnoozedGroup(entry)) {
+		const pane = entry.members.find((member) => member.type === 'ai' && isMemberRestored(member));
+		return pane ? pane.tab.id : null;
+	}
+	return entry.type === 'ai' ? restoredTabId : null;
+}
 
 /**
  * Session patch that lands on a restored tab of any kind.
@@ -70,6 +228,10 @@ function focusFieldsForKind(kind: SnoozableTabKind, tabId: string): Partial<Sess
  */
 function isSameSnoozedTab(entry: SnoozedTabEntry, session: Session): { id: string } | undefined {
 	switch (entry.type) {
+		case 'group':
+			// A group's identity is its own id - the layout and membership can both
+			// have changed underneath without making it a different group.
+			return session.tabGroups?.find((g) => g.id === entry.group.id);
 		case 'ai': {
 			const byId = session.aiTabs.find((t) => t.id === entry.tab.id);
 			if (byId) return byId;
@@ -132,7 +294,7 @@ export interface SnoozedTabListItem {
  * @param session - Session owning the tab
  * @param tabId - AI tab to snooze
  * @param wakeAt - When the tab should come back (ms epoch)
- * @param note - Optional note-to-self shown in the wake notification
+ * @param content - Optional note-to-self and wake prompt
  * @param showUnreadOnly - Unread-filter override; omit to read the live filter state
  *                         (it decides which tab is selected next)
  * @returns Updated session and the stored entry, or null if the tab doesn't exist
@@ -141,7 +303,7 @@ export function snoozeTab(
 	session: Session,
 	tabId: string,
 	wakeAt: number,
-	note?: string,
+	content?: SnoozeContent,
 	showUnreadOnly?: boolean
 ): SnoozeTabResult | null {
 	if (!session) return null;
@@ -151,15 +313,18 @@ export function snoozeTab(
 	const order = getRepairedUnifiedTabOrder(session);
 	const unifiedIndex = order.findIndex((ref) => ref.id === tabId);
 	if (unifiedIndex === -1) return null;
+	// A tiled group is not a tab. It parks through snoozeTabGroup(), which has to
+	// carry a layout tree and every member; refusing here keeps the per-kind
+	// switch below honest instead of growing a fifth branch that cannot share it.
+	if (order[unifiedIndex].type === 'group') return null;
 	const kind = order[unifiedIndex].type as SnoozableTabKind;
 
-	const trimmedNote = note?.trim();
 	const common = {
 		id: generateId(),
 		unifiedIndex,
 		snoozedAt: Date.now(),
 		wakeAt,
-		...(trimmedNote ? { note: trimmedNote } : {}),
+		...snoozeContentFields(content),
 	};
 
 	let closedSession: Session;
@@ -169,7 +334,13 @@ export function snoozeTab(
 		case 'ai': {
 			const tab = session.aiTabs?.find((t) => t.id === tabId);
 			if (!tab) return null;
-			const closed = closeTab(session, tabId, showUnreadOnly, { skipHistory: true });
+			// preserveTabScopedWork: a snoozed tab is hidden, not gone - it must not
+			// cancel anything main is holding against it (e.g. an armed dispatch
+			// callback). rc-only; main has no such flag, so the merge must re-add it.
+			const closed = closeTab(session, tabId, showUnreadOnly, {
+				skipHistory: true,
+				preserveTabScopedWork: true,
+			});
 			if (!closed) return null;
 			closedSession = closed.session;
 			entry = {
@@ -272,6 +443,10 @@ export function wakeSnoozedTab(
 ): WakeSnoozedTabResult | null {
 	const entry = session.snoozedTabs?.find((s) => s.id === snoozeId);
 	if (!entry) return null;
+	// A group rebuilds a layout, not a tab. Callers that do not care which kind
+	// they woke should call wakeSnooze(); this one stays single-tab so the
+	// per-kind switches below never have to answer for a group.
+	if (isSnoozedGroup(entry)) return null;
 
 	const remaining = (session.snoozedTabs || []).filter((s) => s.id !== snoozeId);
 
@@ -366,6 +541,12 @@ export function wakeSnoozedTab(
 			break;
 	}
 
+	// A kind this switch has not been taught leaves `tabsPatch` unassigned, and
+	// spreading undefined is a silent no-op: the snooze would be cleared while
+	// the tab it holds is never restored, destroying the transcript. Refuse
+	// instead, so the snooze survives to be woken by a build that knows the kind.
+	if (!tabsPatch) return null;
+
 	const tabRef: UnifiedTabRef = { type: entry.type, id: entry.tab.id };
 
 	return {
@@ -400,35 +581,42 @@ export function removeSnoozedTab(session: Session, snoozeId: string): Session {
 }
 
 /**
- * Reschedule a snooze (and optionally rewrite its note).
+ * Reschedule a snooze (and optionally rewrite its note and wake prompt).
  *
- * Passing `note` as undefined leaves the existing note alone; passing an empty
- * string clears it.
+ * Each field of `content` is read independently: omitting one leaves the
+ * snooze's existing value alone, and passing an empty string clears it. The
+ * reschedule dialog always sends both fields, so an emptied box really does
+ * remove what was there.
  *
  * @param session - Session owning the snooze
  * @param snoozeId - Snooze entry to update
  * @param wakeAt - New wake time (ms epoch)
- * @param note - New note, or undefined to keep the current one
+ * @param content - New note / wake prompt, per field
  * @returns Updated session (unchanged if the snooze wasn't found)
  */
 export function updateSnoozedTab(
 	session: Session,
 	snoozeId: string,
 	wakeAt: number,
-	note?: string
+	content?: SnoozeContent
 ): Session {
 	const snoozedTabs = session.snoozedTabs || [];
 	if (!snoozedTabs.some((s) => s.id === snoozeId)) return session;
+
+	const trimmed = snoozeContentFields(content);
 
 	return {
 		...session,
 		snoozedTabs: snoozedTabs.map((entry) => {
 			if (entry.id !== snoozeId) return entry;
-			const trimmed = note?.trim();
 			const next: SnoozedTabEntry = { ...entry, wakeAt };
-			if (note !== undefined) {
-				if (trimmed) next.note = trimmed;
+			if (content?.note !== undefined) {
+				if (trimmed.note) next.note = trimmed.note;
 				else delete next.note;
+			}
+			if (content?.wakePrompt !== undefined) {
+				if (trimmed.wakePrompt) next.wakePrompt = trimmed.wakePrompt;
+				else delete next.wakePrompt;
 			}
 			return next;
 		}),
@@ -442,6 +630,42 @@ export function updateSnoozedTab(
  */
 export function getDueSnoozes(session: Session, now: number = Date.now()): SnoozedTabEntry[] {
 	return (session.snoozedTabs || []).filter((entry) => entry.wakeAt <= now);
+}
+
+/**
+ * A snooze parked before the kind tag existed.
+ *
+ * The first snooze implementation could only park AI tabs, so it wrote no
+ * `type` field at all. Every per-kind switch added since falls through for
+ * those entries.
+ */
+function isUntaggedSnooze(entry: SnoozedTabEntry): boolean {
+	return !entry.type;
+}
+
+/**
+ * Tag snoozes written before {@link SnoozedTabEntry} carried a `type`.
+ *
+ * Left untagged, a legacy entry is invisible to every kind switch: the Snoozed
+ * Tabs list draws the generic fallback glyph with a BLANK label, the Usage
+ * Dashboard leaves its tokens out of the breakdown, and - worst - the wake path
+ * builds no tabs patch, so the snooze is cleared while the AI tab and its whole
+ * transcript are dropped on the floor. The payload was always an AITab, so
+ * stamping `'ai'` at load is the entire fix.
+ *
+ * Runs on restore rather than in a one-shot disk migration because a session
+ * can also arrive from the CLI or the web bridge; normalizing where sessions
+ * enter the store covers every path, and it is idempotent.
+ */
+export function migrateLegacySnoozedTabs(session: Session): Session {
+	const entries = session.snoozedTabs;
+	if (!entries?.length || !entries.some(isUntaggedSnooze)) return session;
+	return {
+		...session,
+		snoozedTabs: entries.map((entry) =>
+			isUntaggedSnooze(entry) ? ({ ...entry, type: 'ai' } as SnoozedTabEntry) : entry
+		),
+	};
 }
 
 /**
@@ -476,7 +700,8 @@ export function buildSnoozeHistoryRecord(
 		label: getSnoozedTabLabel(entry),
 		sessionId: session?.id ?? '',
 		sessionName: session?.name ?? '',
-		tabId: tabId ?? entry.tab.id,
+		// A group has no single tab id; its own id is the stable handle.
+		tabId: tabId ?? (isSnoozedGroup(entry) ? entry.group.id : entry.tab.id),
 		...(entry.note ? { note: entry.note } : {}),
 		snoozedAt: entry.snoozedAt,
 		wakeAt: entry.wakeAt,
@@ -513,7 +738,286 @@ export function getSnoozedTabLabel(entry: SnoozedTabEntry): string {
 			return clampLabel(entry.tab.customTitle || entry.tab.title || entry.tab.url) || 'Browser tab';
 		case 'terminal':
 			return entry.tab.name || clampLabel(entry.tab.cwd) || 'Terminal';
+		case 'group':
+			return clampLabel(entry.group.name) || 'Tab group';
 	}
+}
+
+/**
+ * Flatten a snooze for anything outside the renderer - today, the
+ * `snooze_command` wire and so `maestro-cli snooze list`.
+ *
+ * Flat by necessity: the stored entry carries the whole parked tab, transcript
+ * included, so handing five of them to a socket would put megabytes on the wire
+ * to answer "what is parked?". The label comes from
+ * {@link getSnoozedTabLabel} rather than being re-derived, so a snooze reads
+ * identically in the CLI and in the Snoozed Tabs list.
+ */
+export function toSnoozedTabSummary(
+	entry: SnoozedTabEntry,
+	sessionId: string,
+	sessionName: string
+): SnoozedTabSummary {
+	const group = isSnoozedGroup(entry);
+	return {
+		snoozeId: entry.id,
+		agentId: sessionId,
+		agentName: sessionName,
+		type: entry.type,
+		label: getSnoozedTabLabel(entry),
+		// A group has no single tab id; its own id is the stable handle, the same
+		// one `buildSnoozeHistoryRecord` falls back to.
+		tabId: group ? entry.group.id : entry.tab.id,
+		snoozedAt: entry.snoozedAt,
+		wakeAt: entry.wakeAt,
+		...(entry.note ? { note: entry.note } : {}),
+		...(entry.wakePrompt ? { wakePrompt: entry.wakePrompt } : {}),
+		...(group ? { memberCount: entry.members.length } : {}),
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Tiled groups
+//
+// A parked group is a layout plus its members, not a tab, so it gets its own
+// pair of entry points rather than a fifth branch inside the per-kind switches
+// above. That keeps this half independent of the single-tab half, which is
+// still growing.
+// ---------------------------------------------------------------------------
+
+/** Result of parking a whole tiled group. */
+export interface SnoozeTabGroupResult {
+	session: Session;
+	entry: SnoozedGroupEntry;
+}
+
+/** Result of waking a parked group. */
+export interface WakeSnoozedTabGroupResult {
+	session: Session;
+	entry: SnoozedGroupEntry;
+	groupId: string;
+	/** Members that could not be restored, already dropped from the layout. */
+	droppedMembers: SnoozedGroupMember[];
+	/** True when a group with this id was already open, so nothing was restored. */
+	wasDuplicate: boolean;
+}
+
+/** Pull one pane's tab out of the session, parked for restore. */
+function captureGroupMember(session: Session, ref: UnifiedTabRef): SnoozedGroupMember | null {
+	switch (ref.type) {
+		case 'ai': {
+			const tab = session.aiTabs?.find((t) => t.id === ref.id);
+			// Park it idle - a pane mid-turn must not come back still thinking.
+			return tab
+				? {
+						type: 'ai',
+						tab: { ...tab, state: 'idle', thinkingStartTime: undefined, agentError: undefined },
+					}
+				: null;
+		}
+		case 'file': {
+			const tab = session.filePreviewTabs?.find((t) => t.id === ref.id);
+			return tab ? { type: 'file', tab } : null;
+		}
+		case 'browser': {
+			const tab = session.browserTabs?.find((t) => t.id === ref.id);
+			return tab ? { type: 'browser', tab } : null;
+		}
+		case 'terminal': {
+			const tab = session.terminalTabs?.find((t) => t.id === ref.id);
+			// The PTY dies with the pane. Keep the shell's identity, drop the
+			// process - waking spawns a fresh shell in the same place.
+			return tab
+				? { type: 'terminal', tab: { ...tab, pid: 0, state: 'idle', exitCode: undefined } }
+				: null;
+		}
+		default:
+			// Groups do not nest, so a group ref inside a layout is not a member.
+			return null;
+	}
+}
+
+/** Remove one pane's tab from the session, using that kind's own close path. */
+function closeGroupMember(session: Session, ref: UnifiedTabRef): Session {
+	switch (ref.type) {
+		case 'ai': {
+			// Explicit false: the group's own restore math picks what comes back, so
+			// no neighbor is selected here and the unread filter has nothing to say.
+			const closed = closeTab(session, ref.id, false, {
+				skipHistory: true,
+				preserveTabScopedWork: true,
+			});
+			return closed?.session ?? session;
+		}
+		case 'file':
+			return closeFileTab(session, ref.id)?.session ?? session;
+		case 'browser':
+			return closeBrowserTab(session, ref.id)?.session ?? session;
+		case 'terminal':
+			return closeTerminalTab(session, ref.id);
+		default:
+			return session;
+	}
+}
+
+/**
+ * Park a whole tiled group until `wakeAt`.
+ *
+ * The entry carries the whole {@link TabGroup} - layout tree and focused pane -
+ * so the wake replays the arrangement verbatim instead of re-deriving it from a
+ * member list. Members are captured in the tree's own leaf order.
+ */
+export function snoozeTabGroup(
+	session: Session,
+	groupId: string,
+	wakeAt: number,
+	content?: SnoozeContent
+): SnoozeTabGroupResult | null {
+	if (!session) return null;
+	const group = session.tabGroups?.find((g) => g.id === groupId);
+	if (!group) return null;
+
+	const order = getRepairedUnifiedTabOrder(session);
+	const unifiedIndex = order.findIndex((ref) => ref.type === 'group' && ref.id === groupId);
+
+	const refs = collectLeafTabRefs(group.layout);
+	const members = refs
+		.map((ref) => captureGroupMember(session, ref))
+		.filter((m): m is SnoozedGroupMember => m !== null);
+	// A group whose panes have all vanished is not worth parking.
+	if (members.length === 0) return null;
+
+	let next = session;
+	for (const ref of refs) next = closeGroupMember(next, ref);
+
+	const entry: SnoozedGroupEntry = {
+		type: 'group',
+		group,
+		members,
+		id: generateId(),
+		unifiedIndex: unifiedIndex === -1 ? (session.unifiedTabOrder?.length ?? 0) : unifiedIndex,
+		snoozedAt: Date.now(),
+		wakeAt,
+		...snoozeContentFields(content),
+	};
+
+	return {
+		session: {
+			...next,
+			tabGroups: (next.tabGroups || []).filter((g) => g.id !== groupId),
+			unifiedTabOrder: (next.unifiedTabOrder || []).filter(
+				(ref) => !(ref.type === 'group' && ref.id === groupId)
+			),
+			activeGroupId: next.activeGroupId === groupId ? null : next.activeGroupId,
+			snoozedTabs: [...(next.snoozedTabs || []), entry],
+		},
+		entry,
+	};
+}
+
+/**
+ * Bring a parked group back, layout intact.
+ *
+ * A member that can no longer be restored - a file whose path is gone - is
+ * DROPPED rather than restored as a dead placeholder: its leaf comes out of the
+ * tree and the remaining splits are re-balanced. A group that returns with
+ * three panes instead of four is a better artifact than one with a pane the
+ * user cannot interact with. The caller is handed what was dropped so it can
+ * say so once, rather than the user discovering it.
+ */
+export function wakeSnoozedTabGroup(
+	session: Session,
+	snoozeId: string,
+	isMemberRestorable: (member: SnoozedGroupMember) => boolean = () => true
+): WakeSnoozedTabGroupResult | null {
+	const found = session.snoozedTabs?.find((s) => s.id === snoozeId);
+	if (!found || !isSnoozedGroup(found)) return null;
+	const entry = found;
+	const remaining = (session.snoozedTabs || []).filter((s) => s.id !== snoozeId);
+
+	// Already open? Focus it rather than restoring a second copy.
+	const existingGroup = session.tabGroups?.find((g) => g.id === entry.group.id);
+	if (existingGroup) {
+		return {
+			session: { ...session, snoozedTabs: remaining, activeGroupId: existingGroup.id },
+			entry,
+			groupId: existingGroup.id,
+			droppedMembers: [],
+			wasDuplicate: true,
+		};
+	}
+
+	const keep: SnoozedGroupMember[] = [];
+	const droppedMembers: SnoozedGroupMember[] = [];
+	for (const member of entry.members) {
+		(isMemberRestorable(member) ? keep : droppedMembers).push(member);
+	}
+
+	// Every pane gone means there is no layout left to restore.
+	if (keep.length === 0) {
+		return {
+			session: { ...session, snoozedTabs: remaining },
+			entry,
+			groupId: entry.group.id,
+			droppedMembers,
+			wasDuplicate: false,
+		};
+	}
+
+	// Drop the dead panes out of the tree, then re-balance what is left so the
+	// survivors share the space instead of inheriting a hole.
+	let layout = entry.group.layout;
+	for (const member of droppedMembers) {
+		const pruned = removeLeafByTabRef(layout, { type: member.type, id: member.tab.id });
+		if (pruned) layout = pruned;
+	}
+	if (droppedMembers.length > 0) layout = rebalanceLayout(layout);
+
+	// The focused pane may have been one of the casualties.
+	const survivingRefs = collectLeafTabRefs(layout);
+	const focusStillThere =
+		entry.group.focusedPaneId != null && countLeaves(layout) > 0 && survivingRefs.length > 0;
+
+	// Sort survivors back into their own arrays. `as never` on the push is the
+	// price of a discriminated union walked in a loop: the element type is
+	// correct per branch, TypeScript just cannot see it across the index.
+	const restored = {
+		ai: [] as Session['aiTabs'],
+		file: [] as NonNullable<Session['filePreviewTabs']>,
+		browser: [] as NonNullable<Session['browserTabs']>,
+		terminal: [] as NonNullable<Session['terminalTabs']>,
+	};
+	for (const member of keep) {
+		restored[member.type].push(member.tab as never);
+	}
+
+	const group: TabGroup = {
+		...entry.group,
+		layout,
+		focusedPaneId: focusStillThere ? entry.group.focusedPaneId : null,
+	};
+
+	const nextOrder = [...(session.unifiedTabOrder || [])];
+	const at = Math.min(Math.max(entry.unifiedIndex, 0), nextOrder.length);
+	nextOrder.splice(at, 0, { type: 'group', id: group.id });
+
+	return {
+		session: {
+			...session,
+			aiTabs: [...(session.aiTabs || []), ...restored.ai],
+			filePreviewTabs: [...(session.filePreviewTabs || []), ...restored.file],
+			browserTabs: [...(session.browserTabs || []), ...restored.browser],
+			terminalTabs: [...(session.terminalTabs || []), ...restored.terminal],
+			tabGroups: [...(session.tabGroups || []), group],
+			unifiedTabOrder: nextOrder,
+			activeGroupId: group.id,
+			snoozedTabs: remaining,
+		},
+		entry,
+		groupId: group.id,
+		droppedMembers,
+		wasDuplicate: false,
+	};
 }
 
 /**

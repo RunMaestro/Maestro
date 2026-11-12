@@ -18,10 +18,15 @@ export const AGENT_IDS = [
 	'claude-code',
 	'codex',
 	'gemini-cli',
+	'antigravity',
 	'qwen3-coder',
 	'opencode',
 	'factory-droid',
+	'hermes',
+	'pi',
 	'copilot-cli',
+	'omp',
+	'grok',
 ] as const;
 
 /**

@@ -14,7 +14,7 @@
 
 import { create } from 'zustand';
 import type { GroupChat, GroupChatMessage, GroupChatState, AgentError } from '../types';
-import type { QueuedItem } from '../types';
+import type { GroupChatQueueState } from '../../shared/group-chat-types';
 
 // ============================================================================
 // Types
@@ -212,13 +212,29 @@ export interface GroupChatStoreState {
 	unreadGroupChatIds: Set<string>;
 
 	// Execution
-	groupChatExecutionQueue: QueuedItem[];
+	/**
+	 * Pending sends for each chat, as MAIN reports them.
+	 *
+	 * Keyed by chat id and written only from the `groupChat:queueState`
+	 * broadcast. It is a MIRROR, never a source of truth: the queue used to be a
+	 * renderer array, so every client had its own and a message queued on a phone
+	 * was invisible to the desktop and died with the browser tab holding it. Main
+	 * owns it now, so the rule here is simply to render what we are told and send
+	 * every change back over IPC.
+	 */
+	groupChatQueues: Record<string, GroupChatQueueState>;
 	groupChatReadOnlyMode: boolean;
 
 	// UI
 	groupChatRightTab: GroupChatRightTab;
 	groupChatParticipantColors: Record<string, string>;
-	groupChatStagedImages: string[];
+	/**
+	 * Images staged in each room's composer, keyed by group chat id. Keyed like
+	 * `draftMessage` so a screenshot pasted into one room never rides along into
+	 * another after a switch. Read the active room's list through
+	 * `selectActiveGroupChatStagedImages`. A room with nothing staged has no key.
+	 */
+	groupChatStagedImagesById: Record<string, string[]>;
 	/**
 	 * True when the room shows only the user <-> moderator conversation, hiding
 	 * delegations and participant replies from both the message list and the
@@ -238,6 +254,12 @@ export interface GroupChatStoreState {
 
 	// Error
 	groupChatError: GroupChatErrorState | null;
+
+	// Multi-window: the window that opened the active group chat. The Group Chat
+	// panel renders only in this window so a chat shows once even when its
+	// participant agents are spread across windows. null = no window scoping
+	// (single-window app, web, or pre-hydrate); stamped on open, cleared on close.
+	initiatorWindowId: string | null;
 }
 
 export interface GroupChatStoreActions {
@@ -285,7 +307,8 @@ export interface GroupChatStoreActions {
 	clearGroupChatUnread: (groupChatId?: string) => void;
 
 	// Execution
-	setGroupChatExecutionQueue: (v: QueuedItem[] | ((prev: QueuedItem[]) => QueuedItem[])) => void;
+	/** Replace one chat's mirrored queue from a main broadcast. */
+	setGroupChatQueue: (groupChatId: string, state: GroupChatQueueState) => void;
 	setGroupChatReadOnlyMode: (v: boolean | ((prev: boolean) => boolean)) => void;
 
 	// UI
@@ -295,7 +318,16 @@ export interface GroupChatStoreActions {
 	setGroupChatParticipantColors: (
 		v: Record<string, string> | ((prev: Record<string, string>) => Record<string, string>)
 	) => void;
-	setGroupChatStagedImages: (v: string[] | ((prev: string[]) => string[])) => void;
+	/**
+	 * Set one room's staged images. `groupChatId` defaults to the active room;
+	 * pass it explicitly from async work (a FileReader) so the image lands in the
+	 * room it was pasted into even if the user switched rooms meanwhile. A no-op
+	 * when there is no room to own the images.
+	 */
+	setGroupChatStagedImages: (
+		v: string[] | ((prev: string[]) => string[]),
+		groupChatId?: string | null
+	) => void;
 	/** Set the moderator-only view preference and persist it. */
 	setGroupChatModeratorOnly: (v: boolean | ((prev: boolean) => boolean)) => void;
 	/** Flip between the team view and the moderator-only view. */
@@ -314,6 +346,9 @@ export interface GroupChatStoreActions {
 			| null
 			| ((prev: GroupChatErrorState | null) => GroupChatErrorState | null)
 	) => void;
+
+	// Multi-window
+	setInitiatorWindowId: (v: string | null | ((prev: string | null) => string | null)) => void;
 
 	// Convenience methods
 	/** Clear the current error. Focus side-effect (ref.focus) must be handled by caller. */
@@ -335,6 +370,32 @@ function resolve<T>(valOrFn: T | ((prev: T) => T), prev: T): T {
 	return typeof valOrFn === 'function' ? (valOrFn as (prev: T) => T)(prev) : valOrFn;
 }
 
+/**
+ * Whether the Group Chat panel should render in the window identified by
+ * `windowId`. Multi-window: a chat is shown only in the window that initiated it
+ * (`initiatorWindowId`, stamped on open). A null `initiatorWindowId` (single-
+ * window app, web, or pre-hydrate) or a null `windowId` (no `WindowProvider`,
+ * e.g. isolation tests) means "show here", preserving single-window behaviour.
+ */
+export function isGroupChatVisibleInWindow(
+	initiatorWindowId: string | null,
+	windowId: string | null
+): boolean {
+	if (initiatorWindowId == null || windowId == null) return true;
+	return initiatorWindowId === windowId;
+}
+
+const EMPTY_GROUP_CHAT_STAGED_IMAGES: string[] = [];
+
+/**
+ * The active room's staged images. Returns one stable empty array when nothing
+ * is staged, so subscribers do not re-render on a fresh `[]` every read.
+ */
+export function selectActiveGroupChatStagedImages(state: GroupChatStoreState): string[] {
+	const id = state.activeGroupChatId;
+	return (id && state.groupChatStagedImagesById[id]) || EMPTY_GROUP_CHAT_STAGED_IMAGES;
+}
+
 // ============================================================================
 // Store
 // ============================================================================
@@ -350,17 +411,21 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 	groupChatStates: new Map(),
 	allGroupChatParticipantStates: new Map(),
 	unreadGroupChatIds: new Set(),
-	groupChatExecutionQueue: [],
+	groupChatQueues: {},
 	groupChatReadOnlyMode: false,
 	groupChatRightTab: 'participants' as GroupChatRightTab,
 	groupChatParticipantColors: {},
-	groupChatStagedImages: [],
+	// rc keys staged images by chat so switching rooms cannot show one room's
+	// attachments in another; main's flat `groupChatStagedImages` array is the
+	// shape that replaced.
+	groupChatStagedImagesById: {},
 	groupChatViewPrefs: readStoredViewPrefs(),
 	// No chat is open at boot, so this is the legacy default until one is
 	// selected and `setActiveGroupChatId` swaps in that chat's own value.
 	groupChatModeratorOnly: viewPrefsFor(readStoredViewPrefs(), null).moderatorOnly,
 	participantLiveOutput: new Map(),
 	groupChatError: null,
+	initiatorWindowId: null,
 
 	// --- Actions ---
 	setGroupChats: (v) => set((s) => ({ groupChats: resolve(v, s.groupChats) })),
@@ -407,15 +472,25 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 			return { unreadGroupChatIds: next };
 		}),
 
-	setGroupChatExecutionQueue: (v) =>
-		set((s) => ({ groupChatExecutionQueue: resolve(v, s.groupChatExecutionQueue) })),
+	setGroupChatQueue: (groupChatId, state) =>
+		set((s) => ({ groupChatQueues: { ...s.groupChatQueues, [groupChatId]: state } })),
 	setGroupChatReadOnlyMode: (v) =>
 		set((s) => ({ groupChatReadOnlyMode: resolve(v, s.groupChatReadOnlyMode) })),
 	setGroupChatRightTab: (v) => set((s) => ({ groupChatRightTab: resolve(v, s.groupChatRightTab) })),
 	setGroupChatParticipantColors: (v) =>
 		set((s) => ({ groupChatParticipantColors: resolve(v, s.groupChatParticipantColors) })),
-	setGroupChatStagedImages: (v) =>
-		set((s) => ({ groupChatStagedImages: resolve(v, s.groupChatStagedImages) })),
+	setGroupChatStagedImages: (v, groupChatId) =>
+		set((s) => {
+			const id = groupChatId ?? s.activeGroupChatId;
+			if (!id) return {};
+			const prev = s.groupChatStagedImagesById[id] ?? EMPTY_GROUP_CHAT_STAGED_IMAGES;
+			const next = resolve(v, prev);
+			if (next === prev) return {};
+			const byId = { ...s.groupChatStagedImagesById };
+			if (next.length === 0) delete byId[id];
+			else byId[id] = next;
+			return { groupChatStagedImagesById: byId };
+		}),
 	setGroupChatModeratorOnly: (v) =>
 		set((s) => {
 			const next = resolve(v, s.groupChatModeratorOnly);
@@ -438,6 +513,7 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 			return { groupChatViewPrefs: prefs };
 		}),
 	setGroupChatError: (v) => set((s) => ({ groupChatError: resolve(v, s.groupChatError) })),
+	setInitiatorWindowId: (v) => set((s) => ({ initiatorWindowId: resolve(v, s.initiatorWindowId) })),
 
 	appendParticipantLiveOutput: (participantName, chunk) =>
 		set((s) => {
@@ -469,5 +545,6 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 			participantStates: new Map(),
 			participantLiveOutput: new Map(),
 			groupChatError: null,
+			initiatorWindowId: null,
 		}),
 }));

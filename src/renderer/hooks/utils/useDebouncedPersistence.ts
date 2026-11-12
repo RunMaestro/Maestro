@@ -6,16 +6,17 @@
  * This hook batches those changes and writes at most once every 2 seconds.
  *
  * Persistence path (after PR-A 1.1):
- *  - First flush after load: ship the entire prepared sessions array via
- *    `sessions:setAll`. This seeds the main process and establishes a
- *    diff baseline (`previouslyPersistedRef`).
- *  - Subsequent flushes: diff `sessionsRef.current` against the baseline
+ *  - During a successful initial load: capture the loaded sessions array as
+ *    the diff baseline (`previouslyPersistedRef`).
+ *  - Subsequent flushes: diff `sessionsRef.current` against that baseline
  *    using reference equality per session, then ship only the changed
  *    sessions plus the ids of any removed sessions via
  *    `sessions:setMany`. With Zustand's immutable update pattern, every
  *    mutated session gets a fresh object reference - so the diff catches
  *    every real change in O(N) without needing per-mutator dirty
  *    tracking.
+ *  - `sessions:setAll` remains a fallback if the hook did not observe the
+ *    initial load, such as after a development remount.
  *
  * Why diff in the hook rather than tracking dirty IDs in the store: the
  * 200+ existing `setSessions((prev) => prev.map(...))` call sites use
@@ -32,12 +33,26 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { Session } from '../../types';
-import { sanitizeBrowserTabForPersistence } from '../../utils/browserTabPersistence';
+import { isLimitError } from '../../../shared/types';
+import {
+	isEphemeralBrowserTab,
+	sanitizeBrowserTabForPersistence,
+} from '../../utils/browserTabPersistence';
+import { useSessionStore } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { compactSessionToolOutputs } from '../../../shared/toolOutput';
+import { MAX_PERSISTED_SESSION_LOGS } from '../../../shared/deferredSessionContent';
 
-// Maximum persisted logs per AI tab (matches session persistence limit)
-const MAX_PERSISTED_LOGS_PER_TAB = 100;
+/**
+ * Thrown by `persistInternal` when the session registry was never read back
+ * from disk. Matched by message in `persistSessions` so it is kept out of
+ * Sentry - it is a user-environment condition (an unmounted sync folder, a
+ * corrupt file), not a Maestro bug, and reporting it on every mutation for
+ * the rest of the run would only be noise.
+ */
+export const SESSIONS_NOT_READ_MESSAGE =
+	'sessions were never read from disk; refusing to persist an unverified tree';
 
 // Maximum persisted file-preview content per tab. Preview tabs hold the full
 // file in `content`, but the viewer only renders a truncated slice (see
@@ -52,9 +67,19 @@ const MAX_PERSISTED_PREVIEW_CONTENT = 256 * 1024;
 /**
  * Prepare a session for persistence by:
  * 1. Filtering out tabs with active wizard state (incomplete wizards should not persist)
- * 2. Truncating logs in each AI tab to MAX_PERSISTED_LOGS_PER_TAB entries
+ * 2. Truncating logs in each AI tab to MAX_PERSISTED_SESSION_LOGS entries
  * 3. Resetting runtime-only state (busy state, thinking time, etc.)
  * 4. Excluding runtime-only fields (closedTabHistory, agentError, etc.)
+ *
+ * Exception: a limit pause (a token/API/credit/rate limit the agent can resume
+ * from) is deliberately persisted - `state: 'error'`, `agentError`,
+ * `agentErrorPaused`, `agentErrorTabId`, and the paused tab's `agentError`. This
+ * is what lets Auto-Resume On Limit survive an app restart: on a cold start the
+ * coordinator re-finds the paused session and resumes the agent conversation
+ * (via the agent's native `--resume`) once its provider window reopens. Every
+ * OTHER error stays stripped - a stale auth/crash error must not survive a
+ * restart. Note: the in-memory Auto Run / goal-run ORCHESTRATION loop is NOT
+ * persisted; only the agent session and its `executionQueue` resume.
  *
  * This ensures sessions don't get stuck in busy state after app restart,
  * since underlying processes are gone after restart.
@@ -78,6 +103,12 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	// presence so a stuck busy state can't survive a restart.
 	const sourceTabs = session.aiTabs ?? [];
 	const nonWizardTabs = sourceTabs.filter((tab) => !tab.wizardState?.isActive);
+
+	// A limit pause is the one error state we persist so Auto-Resume On Limit can
+	// re-attach after an app restart (see the block comment above). All other
+	// error state stays stripped below.
+	const isLimitPause =
+		!!session.agentError && session.agentErrorPaused === true && isLimitError(session.agentError);
 
 	// "All tabs were wizard tabs" fallback - only fires when there were
 	// originally tabs but every one was a wizard. For truly-empty input
@@ -108,13 +139,22 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	const truncatedTabs = tabsToProcess.map((tab) => ({
 		...tab,
 		logs:
-			tab.logs.length > MAX_PERSISTED_LOGS_PER_TAB
-				? tab.logs.slice(-MAX_PERSISTED_LOGS_PER_TAB)
+			tab.logs.length > MAX_PERSISTED_SESSION_LOGS
+				? tab.logs.slice(-MAX_PERSISTED_SESSION_LOGS)
 				: tab.logs,
 		// Reset runtime-only tab state - processes don't survive app restart
 		state: 'idle' as const,
 		thinkingStartTime: undefined,
-		agentError: undefined,
+		// Keep the paused tab's limit-pause error so it round-trips a restart;
+		// every other tab error is transient and stripped. Gate on the paused tab
+		// id so a stale limit error on a non-paused tab can't revive error UI.
+		agentError:
+			isLimitPause &&
+			tab.id === session.agentErrorTabId &&
+			tab.agentError &&
+			isLimitError(tab.agentError)
+				? tab.agentError
+				: undefined,
 		// Clear wizard state entirely from persistence (even inactive wizard state)
 		wizardState: undefined,
 	}));
@@ -152,9 +192,11 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	const newActiveTerminalTabId = activeTerminalTabExists
 		? session.activeTerminalTabId
 		: (cleanedTerminalTabs[0]?.id ?? null);
-	const cleanedBrowserTabs = (session.browserTabs || []).map((tab) =>
-		sanitizeBrowserTabForPersistence(tab, session.id)
-	);
+	// Ephemeral (incognito) tabs never reach disk: their in-memory partition is
+	// gone after restart, so persisting the tab would resurrect it with no state.
+	const cleanedBrowserTabs = (session.browserTabs || [])
+		.filter((tab) => !isEphemeralBrowserTab(tab))
+		.map((tab) => sanitizeBrowserTabForPersistence(tab, session.id));
 	const activeBrowserTabExists = cleanedBrowserTabs.some(
 		(tab) => tab.id === session.activeBrowserTabId
 	);
@@ -186,8 +228,8 @@ const prepareSessionForPersistence = (session: Session): Session => {
 					tab: {
 						...entry.tab,
 						logs:
-							entry.tab.logs.length > MAX_PERSISTED_LOGS_PER_TAB
-								? entry.tab.logs.slice(-MAX_PERSISTED_LOGS_PER_TAB)
+							entry.tab.logs.length > MAX_PERSISTED_SESSION_LOGS
+								? entry.tab.logs.slice(-MAX_PERSISTED_SESSION_LOGS)
 								: entry.tab.logs,
 						state: 'idle' as const,
 						thinkingStartTime: undefined,
@@ -197,10 +239,11 @@ const prepareSessionForPersistence = (session: Session): Session => {
 				}
 	);
 
-	return {
+	const prepared = {
 		...sessionWithoutRuntimeFields,
 		aiTabs: truncatedTabs,
 		activeTabId: newActiveTabId,
+		executionQueue: sessionWithoutRuntimeFields.executionQueue || [],
 		snoozedTabs: cleanedSnoozedTabs,
 		filePreviewTabs: cleanedFilePreviewTabs,
 		// Reset terminal tab runtime state
@@ -208,8 +251,20 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		activeTerminalTabId: newActiveTerminalTabId,
 		browserTabs: cleanedBrowserTabs,
 		activeBrowserTabId: newActiveBrowserTabId,
-		// Reset runtime-only session state - processes don't survive app restart
-		state: 'idle',
+		// Reset runtime-only session state - processes don't survive app restart.
+		// A limit pause is the exception: keep it in 'error' so Auto-Resume can
+		// re-find it on restart (see the block comment above).
+		state: isLimitPause ? 'error' : 'idle',
+		// Restore the limit-pause fields stripped by the destructuring above so
+		// they round-trip to disk. Only set on a limit pause; otherwise they stay
+		// undefined (stripped).
+		...(isLimitPause
+			? {
+					agentError: session.agentError,
+					agentErrorPaused: true,
+					agentErrorTabId: session.agentErrorTabId,
+				}
+			: {}),
 		busySource: undefined,
 		thinkingStartTime: undefined,
 		currentCycleTokens: undefined,
@@ -247,6 +302,7 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		// fields from Session for persistence. The resulting object is a valid
 		// persisted session but missing non-persisted fields.
 	} as unknown as Session;
+	return compactSessionToolOutputs(prepared).session;
 };
 
 export interface UseDebouncedPersistenceReturn {
@@ -308,22 +364,27 @@ function diffSessions(
 /**
  * Hook that debounces session persistence to reduce disk writes.
  *
- * @param sessions - Array of sessions to persist
+ * PERF: Owns its own `useSessionStore.subscribe` so App does not need a
+ * reactive `sessions` subscription. Streaming updates reset the debounce
+ * timer via the subscription without re-rendering App on every flush
+ * (`isPending` only flips false→true once per dirty streak).
+ *
  * @param initialLoadComplete - Ref indicating if initial load is done (prevents persisting on mount)
  * @param delay - Debounce delay in milliseconds (default 2000)
  * @returns Object with isPending state and flushNow function
  */
 export function useDebouncedPersistence(
-	sessions: Session[],
 	initialLoadComplete: React.MutableRefObject<boolean>,
 	delay: number = DEFAULT_DEBOUNCE_DELAY
 ): UseDebouncedPersistenceReturn {
 	// Track if there are pending changes
 	const [isPending, setIsPending] = useState(false);
+	// Mirror isPending so the store subscription can avoid setState on every
+	// streaming tick after the first dirty mark (would re-render App).
+	const isPendingRef = useRef(false);
 
 	// Store the latest sessions in a ref for access in flush callbacks
-	const sessionsRef = useRef<Session[]>(sessions);
-	sessionsRef.current = sessions;
+	const sessionsRef = useRef<Session[]>(useSessionStore.getState().sessions);
 
 	// Store the timer ID for cleanup
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -332,11 +393,19 @@ export function useDebouncedPersistence(
 	const flushingRef = useRef(false);
 
 	// Snapshot of the sessions array as it existed at the previous flush.
-	// Starts null - the first flush after load uses setAll to seed the main
-	// process and captures the snapshot. Every subsequent flush diffs the
-	// current sessions array against this snapshot and ships only the
-	// changed subset via setMany.
+	// Captured from the successful initial load. If this hook did not observe
+	// that load, the first flush establishes the baseline instead.
+	// The first observed startup flush makes restored repairs durable, then every
+	// later flush ships only the changed subset via setMany.
 	const previouslyPersistedRef = useRef<Session[] | null>(null);
+	// If loading finished before the subscription mounted, retain that tree only
+	// long enough to express a first-flush deletion through setMany.
+	const mountedSessionsRef = useRef<Session[] | null>(
+		useSessionStore.getState().sessionsReadOk ? sessionsRef.current : null
+	);
+	// Restoring a session repairs its in-memory shape. Those repaired objects are
+	// not durable yet, so the first incremental flush must include the whole tree.
+	const startupBaselineNeedsFullFlushRef = useRef(false);
 
 	/**
 	 * Run one persistence pass. Throws on failure so callers can decide
@@ -345,11 +414,12 @@ export function useDebouncedPersistence(
 	 * leaving beforeunload with no signal to attempt one more retry before
 	 * the window closes.
 	 *
-	 * - First call after load: ships everything via setAll. Baseline is
-	 *   captured ONLY if setAll resolves truthy.
-	 * - Subsequent calls: diffs against the baseline; ships only the
-	 *   changed subset via setMany. Baseline advances ONLY if the IPC
-	 *   resolves truthy.
+	 * - With a startup baseline: the first flush ships the restored tree so
+	 *   startup repairs become durable, then later flushes ship only the changed
+	 *   subset via setMany. Baseline advances ONLY if the IPC resolves truthy.
+	 * - Without a baseline: uses explicit tombstones when a mounted session was
+	 *   removed, otherwise falls back to setAll. Captures the current tree ONLY
+	 *   if the IPC resolves truthy.
 	 * - On rejection or `ok === false`: leave previouslyPersistedRef
 	 *   untouched (so the next diff retries the still-dirty sessions) and
 	 *   throw - caller decides whether to surface and how to handle.
@@ -359,29 +429,51 @@ export function useDebouncedPersistence(
 	 * still need to log so the failure is visible.
 	 */
 	const persistInternal = useCallback(async (): Promise<void> => {
+		// Never write a tree we never read. sessions:getAll answers [] both for
+		// a new install and for a registry it could not read (the store lives
+		// under the configurable sync path, and a cloud folder that has not
+		// mounted yet is exactly that), and the restoration hook sets the
+		// in-memory tree to [] on failure. Every flush path funnels through
+		// here - the debounce timer, flushNow, unmount, beforeunload - which is
+		// the point: `initialLoadComplete` is set in a `finally`, so it is true
+		// even when the read failed, and flushNow with a snapshot skips it
+		// entirely. This is the one gate they all share.
+		if (!useSessionStore.getState().sessionsReadOk) {
+			throw new Error(SESSIONS_NOT_READ_MESSAGE);
+		}
 		const current = sessionsRef.current;
 		if (previouslyPersistedRef.current === null) {
 			const sessionsForPersistence = current.map(prepareSessionForPersistence);
-			const ok = await window.maestro.sessions.setAll(sessionsForPersistence);
+			const tombstones = mountedSessionsRef.current
+				? diffSessions(mountedSessionsRef.current, current).tombstones
+				: [];
+			const ok =
+				tombstones.length > 0
+					? await window.maestro.sessions.setMany(sessionsForPersistence, tombstones)
+					: await window.maestro.sessions.setAll(sessionsForPersistence);
 			if (ok === false) {
-				throw new Error('sessions:setAll returned false (recoverable disk error)');
+				throw new Error('Session persistence returned false (recoverable disk error)');
 			}
 			previouslyPersistedRef.current = current;
+			startupBaselineNeedsFullFlushRef.current = false;
 			return;
 		}
 		const { dirty, tombstones } = diffSessions(previouslyPersistedRef.current, current);
-		if (dirty.length === 0 && tombstones.length === 0) {
+		const sessionsToPersist = startupBaselineNeedsFullFlushRef.current ? current : dirty;
+		if (sessionsToPersist.length === 0 && tombstones.length === 0) {
 			// Nothing changed - safe to advance the baseline (it would be
 			// identical anyway).
 			previouslyPersistedRef.current = current;
+			startupBaselineNeedsFullFlushRef.current = false;
 			return;
 		}
-		const dirtyForPersistence = dirty.map(prepareSessionForPersistence);
+		const dirtyForPersistence = sessionsToPersist.map(prepareSessionForPersistence);
 		const ok = await window.maestro.sessions.setMany(dirtyForPersistence, tombstones);
 		if (ok === false) {
 			throw new Error('sessions:setMany returned false (recoverable disk error)');
 		}
 		previouslyPersistedRef.current = current;
+		startupBaselineNeedsFullFlushRef.current = false;
 	}, []);
 
 	/**
@@ -401,6 +493,7 @@ export function useDebouncedPersistence(
 		flushingRef.current = true;
 		try {
 			await persistInternal();
+			isPendingRef.current = false;
 			setIsPending(false);
 		} catch (err) {
 			logger.warn(
@@ -415,7 +508,7 @@ export function useDebouncedPersistence(
 			// Maestro bug, so keep it out of Sentry. Genuine flush failures (real
 			// exceptions) still report. (MAESTRO-QF)
 			const message = err instanceof Error ? err.message : String(err);
-			if (!message.includes('recoverable disk error')) {
+			if (!message.includes('recoverable disk error') && message !== SESSIONS_NOT_READ_MESSAGE) {
 				captureException(err instanceof Error ? err : new Error(String(err)), {
 					extra: { operation: 'useDebouncedPersistence.persistSessions' },
 				});
@@ -455,41 +548,68 @@ export function useDebouncedPersistence(
 			}
 
 			// No snapshot: only flush if there are known pending changes.
-			if (isPending) {
+			if (isPendingRef.current) {
 				persistSessions();
 			}
 		},
-		[isPending, persistSessions]
+		[persistSessions]
 	);
 
-	// Debounced persistence effect
+	// Debounced persistence via store subscribe (no App-level sessions subscription)
 	useEffect(() => {
-		// Skip persistence during initial load
-		if (!initialLoadComplete.current) {
-			return;
-		}
+		const schedulePersist = () => {
+			// Skip persistence during initial load
+			if (!initialLoadComplete.current) {
+				return;
+			}
 
-		// Mark as pending
-		setIsPending(true);
+			// Mark pending once per dirty streak - avoid setState on every stream tick
+			if (!isPendingRef.current) {
+				isPendingRef.current = true;
+				setIsPending(true);
+			}
 
-		// Clear existing timer
-		if (timerRef.current) {
-			clearTimeout(timerRef.current);
-		}
+			// Clear existing timer
+			if (timerRef.current) {
+				clearTimeout(timerRef.current);
+			}
 
-		// Set new debounce timer
-		timerRef.current = setTimeout(() => {
-			persistSessions();
-			timerRef.current = null;
-		}, delay);
+			// Set new debounce timer
+			timerRef.current = setTimeout(() => {
+				persistSessions();
+				timerRef.current = null;
+			}, delay);
+		};
 
-		// Cleanup on unmount or when sessions change
+		const unsubscribe = useSessionStore.subscribe((state, prevState) => {
+			// Restoration writes the loaded tree BEFORE it marks the read as ok, so
+			// the read succeeding is the moment that tree becomes the baseline.
+			// Missing it left the first flush on setAll, which keeps every id the
+			// client omits, so an agent removed during startup (a worktree child
+			// the startup scan found gone) came back on the next launch.
+			const readJustSucceeded = state.sessionsReadOk && !prevState.sessionsReadOk;
+			if (state.sessions === prevState.sessions && !readJustSucceeded) return;
+			sessionsRef.current = state.sessions;
+			if (
+				!initialLoadComplete.current &&
+				state.sessionsReadOk &&
+				previouslyPersistedRef.current === null
+			) {
+				previouslyPersistedRef.current = state.sessions;
+				startupBaselineNeedsFullFlushRef.current = true;
+				return;
+			}
+			if (state.sessions === prevState.sessions) return;
+			schedulePersist();
+		});
+
 		return () => {
+			unsubscribe();
 			if (timerRef.current) {
 				clearTimeout(timerRef.current);
 			}
 		};
-	}, [sessions, delay, initialLoadComplete, persistSessions]);
+	}, [delay, initialLoadComplete, persistSessions]);
 
 	// Flush on unmount to prevent data loss
 	useEffect(() => {
@@ -515,7 +635,7 @@ export function useDebouncedPersistence(
 	// Flush on visibility change (user switching away from app)
 	useEffect(() => {
 		const handleVisibilityChange = () => {
-			if (document.hidden && isPending) {
+			if (document.hidden && isPendingRef.current) {
 				flushNow();
 			}
 		};
@@ -525,12 +645,12 @@ export function useDebouncedPersistence(
 		return () => {
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 		};
-	}, [isPending, flushNow]);
+	}, [flushNow]);
 
 	// Flush on beforeunload (app closing)
 	useEffect(() => {
 		const handleBeforeUnload = () => {
-			if (isPending) {
+			if (isPendingRef.current) {
 				// Synchronous flush for beforeunload - uses the same dirty-only
 				// path as the debounce timer (see persistInternal).
 				// Swallow rejections: the window is closing, there's no caller
@@ -546,7 +666,7 @@ export function useDebouncedPersistence(
 		return () => {
 			window.removeEventListener('beforeunload', handleBeforeUnload);
 		};
-	}, [isPending, persistInternal]);
+	}, [persistInternal]);
 
 	return { isPending, flushNow };
 }

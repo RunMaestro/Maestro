@@ -34,9 +34,12 @@ import type {
 	SessionMessage,
 } from '../agents';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
-import { BaseSessionStorage } from './base-session-storage';
+import { BaseSessionStorage, MessagePageCollector } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
+import { forEachJsonlLine, readFirstJsonlLine } from '../utils/jsonl-stream';
+import { ModelUsageAccumulator } from '../../shared/modelUsage';
 import { CodexTokenCounts } from '../../shared/codexTokenUsage';
+import { CodexTokenSpeedTracker } from '../../shared/tokenSpeed';
 
 const LOG_CONTEXT = '[CodexSessionStorage]';
 const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
@@ -45,19 +48,29 @@ const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
  * Get Codex sessions base directory (platform-specific)
  * - Linux/macOS: ~/.codex/sessions
  * - Windows: %USERPROFILE%\.codex\sessions (Codex uses dotfile convention on all platforms)
+ *
+ * `accountDir` is the `CODEX_HOME` an agent was pointed at, not the `sessions`
+ * subdir. It is a parameter rather than a module const because Maestro sets
+ * `CODEX_HOME` per agent in `customEnvVars`, never in its own environment: the
+ * value this process would read is never the value an agent's process received.
  */
-function getCodexSessionsDir(): string {
+function getCodexSessionsDir(accountDir?: string): string {
 	// Codex CLI uses ~/.codex on all platforms (including Windows)
-	return path.join(os.homedir(), '.codex', 'sessions');
+	return path.join(accountDir || path.join(os.homedir(), '.codex'), 'sessions');
 }
-
-const CODEX_SESSIONS_DIR = getCodexSessionsDir();
 
 // Bumped to 4: Codex's `total_token_usage` is a running session total and was
 // being summed per event, so cached entries hold inflated token counts. Entries
 // are reused whenever `fileMtimeMs` still covers the file, which a parsing fix
 // does not change, so the old numbers would be served until a session is touched.
-const CODEX_SESSION_CACHE_VERSION = 4;
+//
+// Bumped to 5: pruning is now scoped to the account dir that was walked, so
+// entries left behind by an account dir that no longer exists are unreachable.
+// One clean slate here retires the ones that predate the scoped prune.
+//
+// Bumped to 6: sessions carry per-call token speed buckets (`speed`), which
+// cached entries lack and the fingerprint cannot ask for.
+const CODEX_SESSION_CACHE_VERSION = 6;
 const CODEX_SESSION_CACHE_FILENAME = 'codex-sessions-cache.json';
 
 /**
@@ -300,12 +313,27 @@ async function parseSessionFile(
 		let userMessageCount = 0;
 		let assistantMessageCount = 0;
 		const tokenCounts = new CodexTokenCounts();
+		const speedTracker = new CodexTokenSpeedTracker();
 		let firstTimestamp = timestamp;
 		let lastTimestamp = timestamp;
+		// Codex is single-model per session; the model id lives on turn_context /
+		// session_meta entries rather than on the usage events. Capture the last
+		// seen one so per-model token attribution has a real model to key on.
+		let capturedModel: string | undefined =
+			metadata?.payload && 'model' in metadata.payload
+				? (metadata.payload as { model?: string }).model
+				: undefined;
 
 		for (let i = 0; i < lines.length; i++) {
 			try {
 				const entry = JSON.parse(lines[i]);
+
+				// Capture the model id from turn_context entries (current Codex format)
+				if (entry.type === 'turn_context' && entry.payload?.model) {
+					capturedModel = entry.payload.model;
+				}
+
+				speedTracker.observe(entry, capturedModel);
 
 				// Handle turn.completed for usage stats (already per-turn)
 				if (entry.type === 'turn.completed' && entry.usage) {
@@ -420,6 +448,16 @@ async function parseSessionFile(
 		// Extract session ID from metadata (new format uses payload.id, legacy uses id)
 		const metadataSessionId = metadata?.payload?.id || metadata?.id || sessionId;
 
+		const modelAcc = new ModelUsageAccumulator();
+		if (!tokenCounts.isEmpty) {
+			modelAcc.add(capturedModel, {
+				inputTokens: tokenCounts.inputTokens,
+				outputTokens: tokenCounts.outputTokens,
+				cacheReadTokens: tokenCounts.cachedTokens,
+				cacheCreationTokens: 0,
+			});
+		}
+
 		return {
 			sessionId: metadataSessionId,
 			projectPath: sessionProjectPath ? normalizeProjectPath(sessionProjectPath) : '',
@@ -437,6 +475,8 @@ async function parseSessionFile(
 			cacheReadTokens: tokenCounts.cachedTokens,
 			cacheCreationTokens: 0, // Codex doesn't report cache creation separately
 			durationSeconds,
+			byModel: modelAcc.isEmpty ? undefined : modelAcc.finalize(),
+			speed: speedTracker.result(),
 		};
 	} catch (error) {
 		// RangeError: Invalid string length occurs when the file is too large for V8
@@ -461,25 +501,28 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'codex';
 
 	/**
-	 * Get the Codex sessions directory path
+	 * Get the Codex sessions directory path for an account (`CODEX_HOME`), or
+	 * the default account when `accountDir` is undefined.
 	 */
-	private getSessionsDir(): string {
-		return CODEX_SESSIONS_DIR;
+	private getSessionsDir(accountDir?: string): string {
+		return getCodexSessionsDir(accountDir);
 	}
 
 	/**
 	 * Get the Codex sessions directory path (remote via SSH)
 	 * On remote Linux hosts, ~ expands to the user's home directory
 	 */
-	private getRemoteSessionsDir(): string {
-		return '~/.codex/sessions';
+	private getRemoteSessionsDir(accountDir?: string): string {
+		return path.posix.join(accountDir || '~/.codex', 'sessions');
 	}
 
 	/**
 	 * Find all session files, organized by date directories
 	 */
-	private async findAllSessionFiles(): Promise<Array<{ filePath: string; filename: string }>> {
-		const sessionsDir = this.getSessionsDir();
+	private async findAllSessionFiles(
+		accountDir?: string
+	): Promise<Array<{ filePath: string; filename: string }>> {
+		const sessionsDir = this.getSessionsDir(accountDir);
 		const sessionFiles: Array<{ filePath: string; filename: string }> = [];
 
 		try {
@@ -549,9 +592,10 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 * Recursively scans the YYYY/MM/DD directory structure
 	 */
 	private async findAllSessionFilesRemote(
-		sshConfig: SshRemoteConfig
+		sshConfig: SshRemoteConfig,
+		accountDir?: string
 	): Promise<Array<{ filePath: string; filename: string }>> {
-		const sessionsDir = this.getRemoteSessionsDir();
+		const sessionsDir = this.getRemoteSessionsDir(accountDir);
 		const sessionFiles: Array<{ filePath: string; filename: string }> = [];
 
 		// List YYYY directories
@@ -801,15 +845,23 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		}
 	}
 
+	/**
+	 * List sessions for a project.
+	 *
+	 * `accountDir` selects which `CODEX_HOME` account's rollouts to read;
+	 * undefined reads the default account. See {@link AgentSessionStorage}.
+	 */
 	async listSessions(
 		projectPath: string,
-		sshConfig?: SshRemoteConfig
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
 	): Promise<AgentSessionInfo[]> {
 		// Use SSH remote access if config provided
 		if (sshConfig) {
-			return this.listSessionsRemote(projectPath, sshConfig);
+			return this.listSessionsRemote(projectPath, sshConfig, accountDir);
 		}
-		const allSessionFiles = await this.findAllSessionFiles();
+		const sessionsDir = this.getSessionsDir(accountDir);
+		const allSessionFiles = await this.findAllSessionFiles(accountDir);
 
 		const cache = (await loadCodexSessionCache()) || {
 			version: CODEX_SESSION_CACHE_VERSION,
@@ -861,7 +913,20 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			}
 		}
 
+		// Prune only entries under the account we just walked. Cache keys are
+		// absolute rollout paths, so two accounts never collide, but a blind
+		// prune would delete the OTHER account's entries on every pass: with
+		// multiple accounts the two calls would take turns evicting each other
+		// and every dashboard refresh would reparse every transcript.
+		// Entries under an account dir the user has since deleted are no longer
+		// reachable by any prefix, so they survive until the cache version is
+		// bumped. They are a handful of stale records, not stale numbers: every
+		// session served to a caller comes from the account it just walked.
+		const accountPrefix = sessionsDir.endsWith(path.sep)
+			? sessionsDir
+			: `${sessionsDir}${path.sep}`;
 		for (const cachedPath of Object.keys(cache.sessions)) {
+			if (!cachedPath.startsWith(accountPrefix)) continue;
 			if (!currentFilePaths.has(cachedPath)) {
 				delete cache.sessions[cachedPath];
 				cacheUpdated = true;
@@ -893,9 +958,10 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 */
 	private async listSessionsRemote(
 		projectPath: string,
-		sshConfig: SshRemoteConfig
+		sshConfig: SshRemoteConfig,
+		accountDir?: string
 	): Promise<AgentSessionInfo[]> {
-		const allSessionFiles = await this.findAllSessionFilesRemote(sshConfig);
+		const allSessionFiles = await this.findAllSessionFilesRemote(sshConfig, accountDir);
 
 		if (allSessionFiles.length === 0) {
 			logger.info(`No Codex sessions found on remote`, LOG_CONTEXT);
@@ -942,8 +1008,180 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		options?: SessionReadOptions,
 		sshConfig?: SshRemoteConfig
 	): Promise<SessionMessagesResult> {
-		// Get session file content either locally or via SSH
-		let content: string;
+		// Only the requested page is held; see MessagePageCollector.
+		const page = new MessagePageCollector(options);
+		// A tool's output is merged into its call, the FIRST message carrying that
+		// uuid and a toolUse. Positions are tracked so the merge still finds the
+		// call when it is in the window, and still knows the call EXISTS (rather
+		// than emitting a standalone output) when it is older than the page.
+		const toolCallPositions = new Map<string, number>();
+		let messageIndex = 0;
+		const push = (message: SessionMessage) => {
+			const position = page.push(message);
+			if (message.toolUse && !toolCallPositions.has(message.uuid)) {
+				toolCallPositions.set(message.uuid, position);
+			}
+			messageIndex++;
+		};
+
+		const collect = (line: string) => {
+			try {
+				const entry = JSON.parse(line);
+
+				// Handle direct message entries
+				if (entry.type === 'message' && (entry.role === 'user' || entry.role === 'assistant')) {
+					const textContent = extractTextFromContent(entry.content);
+
+					if (textContent) {
+						push({
+							type: entry.role,
+							role: entry.role,
+							content: textContent,
+							timestamp: entry.timestamp || '',
+							uuid: `codex-msg-${messageIndex}`,
+						});
+					}
+				}
+
+				// Handle response_item messages (current Codex format)
+				if (entry.type === 'response_item' && entry.payload?.type === 'message') {
+					if (entry.payload.role === 'user' || entry.payload.role === 'assistant') {
+						const textContent = extractTextFromContent(entry.payload.content);
+
+						if (textContent) {
+							push({
+								type: entry.payload.role,
+								role: entry.payload.role,
+								content: textContent,
+								timestamp: entry.timestamp || '',
+								uuid: entry.payload.id || `codex-msg-${messageIndex}`,
+							});
+						}
+					}
+				}
+
+				// Handle response_item function_call / custom_tool_call (current Codex format)
+				if (
+					entry.type === 'response_item' &&
+					(entry.payload?.type === 'function_call' || entry.payload?.type === 'custom_tool_call')
+				) {
+					let parsedInput: unknown;
+					try {
+						parsedInput = JSON.parse(entry.payload.arguments || '{}');
+					} catch {
+						parsedInput = entry.payload.arguments || {};
+					}
+					const toolInfo: CodexToolUseEntry = {
+						tool: entry.payload.name,
+						args: entry.payload.arguments,
+						state: {
+							status: 'running',
+							input: parsedInput,
+						},
+					};
+					push({
+						type: 'assistant',
+						role: 'assistant',
+						content: `Tool: ${entry.payload.name}`,
+						timestamp: entry.timestamp || '',
+						uuid: entry.payload.call_id || `codex-msg-${messageIndex}`,
+						toolUse: [toolInfo],
+					});
+				}
+
+				// Handle response_item function_call_output / custom_tool_call_output (current Codex format)
+				// Merge output into the preceding tool call message instead of creating a new message
+				if (
+					entry.type === 'response_item' &&
+					(entry.payload?.type === 'function_call_output' ||
+						entry.payload?.type === 'custom_tool_call_output')
+				) {
+					const callId = entry.payload.call_id;
+					const outputText = entry.payload.output || '';
+					// Find the matching tool call message by call_id and merge the output
+					const matchingPosition = callId ? toolCallPositions.get(callId) : undefined;
+					if (matchingPosition !== undefined) {
+						page.update(matchingPosition, (matchingMsg) => {
+							const toolEntries = matchingMsg.toolUse as CodexToolUseEntry[] | undefined;
+							const firstEntry = toolEntries?.[0];
+							if (!firstEntry?.state) return matchingMsg;
+							// Replace the message immutably with updated tool state
+							const updatedEntry: CodexToolUseEntry = {
+								...firstEntry,
+								state: {
+									...firstEntry.state,
+									status: 'completed',
+									output: outputText,
+								},
+							};
+							return {
+								...matchingMsg,
+								toolUse: [updatedEntry, ...(toolEntries?.slice(1) || [])],
+							};
+						});
+					} else {
+						// No matching tool call found - create a standalone message
+						push({
+							type: 'assistant',
+							role: 'assistant',
+							content: outputText || '[Tool result]',
+							timestamp: entry.timestamp || '',
+							uuid: callId || `codex-msg-${messageIndex}`,
+						});
+					}
+				}
+
+				// Handle item.completed agent_message events (legacy format)
+				if (entry.type === 'item.completed' && entry.item?.type === 'agent_message') {
+					push({
+						type: 'assistant',
+						role: 'assistant',
+						content: entry.item.text || '',
+						timestamp: entry.timestamp || '',
+						uuid: entry.item.id || `codex-msg-${messageIndex}`,
+					});
+				}
+
+				// Handle item.completed tool_call events (legacy format)
+				if (entry.type === 'item.completed' && entry.item?.type === 'tool_call') {
+					const toolInfo = {
+						tool: entry.item.tool,
+						args: entry.item.args,
+					};
+					push({
+						type: 'assistant',
+						role: 'assistant',
+						content: `Tool: ${entry.item.tool}`,
+						timestamp: entry.timestamp || '',
+						uuid: entry.item.id || `codex-msg-${messageIndex}`,
+						toolUse: [toolInfo],
+					});
+				}
+
+				// Handle item.completed tool_result events (legacy format)
+				if (entry.type === 'item.completed' && entry.item?.type === 'tool_result') {
+					let resultContent = '';
+					if (entry.item.output) {
+						// Output may be a byte array that needs decoding
+						if (Array.isArray(entry.item.output)) {
+							resultContent = Buffer.from(entry.item.output).toString('utf-8');
+						} else {
+							resultContent = String(entry.item.output);
+						}
+					}
+
+					push({
+						type: 'assistant',
+						role: 'assistant',
+						content: resultContent || '[Tool result]',
+						timestamp: entry.timestamp || '',
+						uuid: entry.item.id || `codex-msg-${messageIndex}`,
+					});
+				}
+			} catch {
+				// Skip malformed lines
+			}
+		};
 
 		if (sshConfig) {
 			// For SSH, find the session file remotely
@@ -960,199 +1198,23 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				);
 				return { messages: [], total: 0, hasMore: false };
 			}
-			content = result.data;
-		} else {
-			// Find the session file by sessionId locally
-			const sessionFilePath = await this.findSessionFile(sessionId);
-
-			if (!sessionFilePath) {
-				logger.warn(`Codex session file not found: ${sessionId}`, LOG_CONTEXT);
-				return { messages: [], total: 0, hasMore: false };
+			for (const line of result.data.split('\n')) {
+				if (line.trim()) collect(line);
 			}
-
-			content = await fs.readFile(sessionFilePath, 'utf-8');
+			return page.result();
 		}
 
-		try {
-			const lines = content.split('\n').filter((l) => l.trim());
+		// Find the session file by sessionId locally
+		const sessionFilePath = await this.findSessionFile(sessionId);
 
-			const messages: SessionMessage[] = [];
-			let messageIndex = 0;
-
-			for (const line of lines) {
-				try {
-					const entry = JSON.parse(line);
-
-					// Handle direct message entries
-					if (entry.type === 'message' && (entry.role === 'user' || entry.role === 'assistant')) {
-						const textContent = extractTextFromContent(entry.content);
-
-						if (textContent) {
-							messages.push({
-								type: entry.role,
-								role: entry.role,
-								content: textContent,
-								timestamp: entry.timestamp || '',
-								uuid: `codex-msg-${messageIndex}`,
-							});
-							messageIndex++;
-						}
-					}
-
-					// Handle response_item messages (current Codex format)
-					if (entry.type === 'response_item' && entry.payload?.type === 'message') {
-						if (entry.payload.role === 'user' || entry.payload.role === 'assistant') {
-							const textContent = extractTextFromContent(entry.payload.content);
-
-							if (textContent) {
-								messages.push({
-									type: entry.payload.role,
-									role: entry.payload.role,
-									content: textContent,
-									timestamp: entry.timestamp || '',
-									uuid: entry.payload.id || `codex-msg-${messageIndex}`,
-								});
-								messageIndex++;
-							}
-						}
-					}
-
-					// Handle response_item function_call / custom_tool_call (current Codex format)
-					if (
-						entry.type === 'response_item' &&
-						(entry.payload?.type === 'function_call' || entry.payload?.type === 'custom_tool_call')
-					) {
-						let parsedInput: unknown;
-						try {
-							parsedInput = JSON.parse(entry.payload.arguments || '{}');
-						} catch {
-							parsedInput = entry.payload.arguments || {};
-						}
-						const toolInfo: CodexToolUseEntry = {
-							tool: entry.payload.name,
-							args: entry.payload.arguments,
-							state: {
-								status: 'running',
-								input: parsedInput,
-							},
-						};
-						messages.push({
-							type: 'assistant',
-							role: 'assistant',
-							content: `Tool: ${entry.payload.name}`,
-							timestamp: entry.timestamp || '',
-							uuid: entry.payload.call_id || `codex-msg-${messageIndex}`,
-							toolUse: [toolInfo],
-						});
-						messageIndex++;
-					}
-
-					// Handle response_item function_call_output / custom_tool_call_output (current Codex format)
-					// Merge output into the preceding tool call message instead of creating a new message
-					if (
-						entry.type === 'response_item' &&
-						(entry.payload?.type === 'function_call_output' ||
-							entry.payload?.type === 'custom_tool_call_output')
-					) {
-						const callId = entry.payload.call_id;
-						const outputText = entry.payload.output || '';
-						// Find the matching tool call message by call_id and merge the output
-						const matchingIdx = callId
-							? messages.findIndex((m) => m.uuid === callId && m.toolUse)
-							: -1;
-						if (matchingIdx >= 0) {
-							const matchingMsg = messages[matchingIdx];
-							const toolEntries = matchingMsg.toolUse as CodexToolUseEntry[] | undefined;
-							const firstEntry = toolEntries?.[0];
-							if (firstEntry?.state) {
-								// Replace the message immutably with updated tool state
-								const updatedEntry: CodexToolUseEntry = {
-									...firstEntry,
-									state: {
-										...firstEntry.state,
-										status: 'completed',
-										output: outputText,
-									},
-								};
-								messages[matchingIdx] = {
-									...matchingMsg,
-									toolUse: [updatedEntry, ...(toolEntries?.slice(1) || [])],
-								};
-							}
-						} else {
-							// No matching tool call found - create a standalone message
-							messages.push({
-								type: 'assistant',
-								role: 'assistant',
-								content: outputText || '[Tool result]',
-								timestamp: entry.timestamp || '',
-								uuid: callId || `codex-msg-${messageIndex}`,
-							});
-							messageIndex++;
-						}
-					}
-
-					// Handle item.completed agent_message events (legacy format)
-					if (entry.type === 'item.completed' && entry.item?.type === 'agent_message') {
-						messages.push({
-							type: 'assistant',
-							role: 'assistant',
-							content: entry.item.text || '',
-							timestamp: entry.timestamp || '',
-							uuid: entry.item.id || `codex-msg-${messageIndex}`,
-						});
-						messageIndex++;
-					}
-
-					// Handle item.completed tool_call events (legacy format)
-					if (entry.type === 'item.completed' && entry.item?.type === 'tool_call') {
-						const toolInfo = {
-							tool: entry.item.tool,
-							args: entry.item.args,
-						};
-						messages.push({
-							type: 'assistant',
-							role: 'assistant',
-							content: `Tool: ${entry.item.tool}`,
-							timestamp: entry.timestamp || '',
-							uuid: entry.item.id || `codex-msg-${messageIndex}`,
-							toolUse: [toolInfo],
-						});
-						messageIndex++;
-					}
-
-					// Handle item.completed tool_result events (legacy format)
-					if (entry.type === 'item.completed' && entry.item?.type === 'tool_result') {
-						let resultContent = '';
-						if (entry.item.output) {
-							// Output may be a byte array that needs decoding
-							if (Array.isArray(entry.item.output)) {
-								resultContent = Buffer.from(entry.item.output).toString('utf-8');
-							} else {
-								resultContent = String(entry.item.output);
-							}
-						}
-
-						messages.push({
-							type: 'assistant',
-							role: 'assistant',
-							content: resultContent || '[Tool result]',
-							timestamp: entry.timestamp || '',
-							uuid: entry.item.id || `codex-msg-${messageIndex}`,
-						});
-						messageIndex++;
-					}
-				} catch {
-					// Skip malformed lines
-				}
-			}
-
-			return BaseSessionStorage.applyMessagePagination(messages, options);
-		} catch (error) {
-			logger.error(`Error reading Codex session: ${sessionId}`, LOG_CONTEXT, error);
-			captureException(error, { operation: 'codexStorage:readSessionMessages', sessionId });
+		if (!sessionFilePath) {
+			logger.warn(`Codex session file not found: ${sessionId}`, LOG_CONTEXT);
 			return { messages: [], total: 0, hasMore: false };
 		}
+
+		// Streamed, never read whole: a rollout can be hundreds of MB (#1862).
+		await forEachJsonlLine(sessionFilePath, collect);
+		return page.result();
 	}
 
 	protected async getSearchableMessages(
@@ -1240,10 +1302,11 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				return filePath;
 			}
 
-			// Also check by reading first line for session ID
+			// Also check by reading first line for session ID. Only that line: this
+			// runs for every rollout until the match, and a rollout can be hundreds
+			// of MB (#1862).
 			try {
-				const content = await fs.readFile(filePath, 'utf-8');
-				const firstLine = content.split('\n')[0];
+				const firstLine = await readFirstJsonlLine(filePath);
 				if (firstLine) {
 					const metadata = JSON.parse(firstLine) as CodexSessionMetadata;
 					const metadataId = metadata?.payload?.id || metadata.id;

@@ -27,3 +27,11 @@ export function idleTimeoutMessage(idleMs: number, maxWaitSeconds: number): stri
 	const idleSeconds = Math.round(idleMs / 1000);
 	return `no transcript output for ${idleSeconds}s (--max-wait ${maxWaitSeconds}s) - claude stopped writing to its transcript, likely parked on a permission prompt, a modal, or a hung tool or API call. Failing with timeout.`;
 }
+
+/**
+ * The message for a ready-timeout: the TUI never painted its input prompt, so
+ * the turn never started and nothing reached the model.
+ */
+export function readyTimeoutMessage(readyTimeoutSeconds: number): string {
+	return `claude TUI did not reach its input prompt within ${readyTimeoutSeconds}s (--ready-timeout) - it is still booting (a loaded host, slow MCP servers or plugins) or parked on a startup modal. Nothing was sent to the model. Failing with ready_timeout.`;
+}

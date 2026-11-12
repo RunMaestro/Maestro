@@ -19,6 +19,7 @@ import { dispatchShellCommand, resolveCommandCwd } from './shellCommand';
 import { aiCommandKey, useAiCommandStore, type AiCommandEntry } from '../stores/aiCommandStore';
 import { codifyTurnSettings } from '../utils/providerTabSessions';
 import { collectRecentCommands } from '../../shared/aiCommand';
+import { getClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 
 /**
  * Ask the model for a command line for `request`, in the context of `session`.
@@ -70,6 +71,7 @@ export async function requestAiCommand(options: {
 			customEnvVars: session.customEnvVars,
 			customModel: turnModel,
 			customEffort: turnEffort,
+			claudeTokenSource: getClaudeTokenSourceFields(session),
 			recentCommands,
 		});
 

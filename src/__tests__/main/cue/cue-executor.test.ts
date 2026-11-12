@@ -102,6 +102,9 @@ vi.mock('../../../main/utils/agent-args', () => ({
 const mockWrapSpawnWithSsh = vi.fn();
 vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
+	// Stand-in; the real wording is covered by the ssh-spawn-wrapper suite.
+	sshUnresolvedRemoteMessage: (cfg: { remoteId: string | null }) =>
+		`remote "${cfg.remoteId}" could not be resolved`,
 }));
 
 // Mock parsers - default returns null (no parser), overridden per test as needed
@@ -112,13 +115,25 @@ vi.mock('../../../main/parsers', () => ({
 	getOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
 }));
 
+// Force the POSIX kill path (child.kill('SIGTERM')) in the underlying
+// cue-process-lifecycle so these SIGTERM → SIGKILL assertions hold regardless of
+// host OS. On Windows the product correctly uses taskkill /t /f instead, which
+// these tests don't assert. This mirrors what CI exercises on Unix.
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return {
+		...actual,
+		isWindows: () => false,
+	};
+});
+
 // Mock child_process.spawn
 class MockChildProcess extends EventEmitter {
 	pid = 12345;
-	stdin = {
+	stdin = Object.assign(new EventEmitter(), {
 		write: vi.fn(),
 		end: vi.fn(),
-	};
+	});
 	stdout = new EventEmitter();
 	stderr = new EventEmitter();
 	killed = false;
@@ -295,6 +310,59 @@ describe('cue-executor', () => {
 
 			mockChild.emit('close', 0);
 			await resultPromise;
+		});
+
+		describe('New Session Message', () => {
+			// Every Cue run is a fresh provider session (no --resume), so the
+			// agent's standing instructions ride along on each one.
+			it('prefixes the agent message onto the prompt of every run', async () => {
+				const config = createExecutionConfig({
+					promptPath: 'Triage the new issue',
+					session: createMockSession({ newSessionMessage: 'Always answer in English' }),
+				});
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const [, spawnedArgs] = mockSpawn.mock.calls[0] as [string, string[], unknown];
+				expect(spawnedArgs[spawnedArgs.length - 1]).toBe(
+					'Always answer in English\n\n---\n\nsubstituted: Triage the new issue'
+				);
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			it('sends the prompt unchanged when the agent has no message', async () => {
+				const config = createExecutionConfig({ promptPath: 'Triage the new issue' });
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const [, spawnedArgs] = mockSpawn.mock.calls[0] as [string, string[], unknown];
+				expect(spawnedArgs[spawnedArgs.length - 1]).toBe('substituted: Triage the new issue');
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			it("is not template-substituted (it is the user's own text, not a Cue prompt)", async () => {
+				const config = createExecutionConfig({
+					promptPath: 'Triage the new issue',
+					session: createMockSession({ newSessionMessage: 'Keep {{CUE_SOURCE_OUTPUT}} literal' }),
+				});
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(mockSubstitute).not.toHaveBeenCalledWith(
+					expect.stringContaining('Keep {{CUE_SOURCE_OUTPUT}} literal'),
+					expect.anything()
+				);
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
 		});
 
 		it('returns failed result when prompt content is empty', async () => {
@@ -712,6 +780,34 @@ describe('cue-executor', () => {
 
 				mockChild.emit('close', 0);
 				await resultPromise;
+			});
+
+			it('fails the run without spawning when the configured remote cannot be resolved', async () => {
+				mockWrapSpawnWithSsh.mockResolvedValue({
+					command: 'claude',
+					args: ['--print'],
+					cwd: '/projects/test',
+					customEnvVars: undefined,
+					prompt: 'test prompt',
+					sshRemoteUsed: null,
+				});
+				const onLog = vi.fn();
+
+				const result = await executeCuePrompt(
+					createExecutionConfig({
+						sshRemoteConfig: { enabled: true, remoteId: 'deleted-remote' },
+						sshStore: { getSshRemotes: vi.fn(() => []) },
+						onLog,
+					})
+				);
+
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(result.status).toBe('failed');
+				expect(result.stderr).toBe('remote "deleted-remote" could not be resolved');
+				expect(onLog).toHaveBeenCalledWith(
+					'error',
+					'remote "deleted-remote" could not be resolved'
+				);
 			});
 
 			it('should write prompt to stdin for SSH large prompt mode', async () => {

@@ -15,6 +15,7 @@
 
 import { visit } from 'unist-util-visit';
 import type { Root, Text, Link, Image } from 'mdast';
+import { safeDecodeURIComponent } from '../../shared/stringUtils';
 import type { FileNode } from '../types/fileTree';
 import {
 	buildFileTreeIndices,
@@ -50,13 +51,20 @@ export interface RemarkFileLinksOptions {
 	projectRoot?: string;
 	/** User's home directory (e.g. /Users/pedram) - used to expand ~/... paths */
 	homeDir?: string;
+	/**
+	 * Whether an absolute path exists: `true`, `false`, or `undefined` while
+	 * unknown. Consulted only for a path with whitespace in it, whose extent the
+	 * pattern had to guess (see ABSOLUTE_PATH_PATTERN); such a path links only
+	 * on `true`. Without it, every match links, as before.
+	 */
+	pathExists?: (absolutePath: string) => boolean | undefined;
 }
 
 /**
  * The remark plugin
  */
 export function remarkFileLinks(options: RemarkFileLinksOptions) {
-	const { fileTree, indices, cwd, projectRoot, homeDir } = options;
+	const { fileTree, indices, cwd, projectRoot, homeDir, pathExists } = options;
 
 	// Resolve indices: prefer pre-built (caller memoized), build from fileTree
 	// as a fallback, or use empty indices when neither is provided.
@@ -94,7 +102,6 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				resolvedPath: string;
 				type: 'link' | 'image';
 				isRelativeToCwd?: boolean; // For images: true if path needs cwd prepended (fallback paths)
-				isFromFileTree?: boolean; // For images: true if path was found in file tree (complete from project root)
 				imageWidth?: number; // For images: optional width in pixels
 				absoluteUrl?: string; // For links outside projectRoot: use file:// URL instead of maestro-file://
 			}
@@ -134,12 +141,9 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				let resolvedPath: string;
 				let isRelativeToCwd = false; // Track if path needs cwd prepended
 
-				let isFromFileTree = false;
-
 				if (foundPath) {
 					// Found in file tree - path is already complete from project root
 					resolvedPath = foundPath;
-					isFromFileTree = true;
 				} else {
 					// Not found - use _attachments fallback relative to current document
 					resolvedPath = `_attachments/${imagePath}`;
@@ -153,7 +157,6 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 					resolvedPath,
 					type: 'image',
 					isRelativeToCwd,
-					isFromFileTree,
 					imageWidth,
 				});
 			}
@@ -198,8 +201,29 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 					);
 					if (isInsideExisting) continue;
 
+					// A match starting right after a `~` is the tail of a tilde path,
+					// not an absolute one - leave it for the tilde pass below, which
+					// knows how to expand it. The pattern's segments admit spaces, so
+					// an absolute link minted here would also swallow whatever follows.
+					if (absMatch.index > 0 && text[absMatch.index - 1] === '~') continue;
+
 					// Convert to relative path
 					const relativePath = toRelativePath(absolutePath);
+
+					// A space-free path's extent is unambiguous. One with whitespace
+					// is the pattern's best guess at where a path ends, and the same
+					// text could be prose that runs into a file name, so it links only
+					// once the file is known to exist: from the file tree when it is
+					// in the project, otherwise from the filesystem.
+					if (
+						pathExists &&
+						/\s/.test(absolutePath) &&
+						!(relativePath && allPaths.has(relativePath)) &&
+						pathExists(absolutePath) !== true
+					) {
+						continue;
+					}
+
 					// For absolute paths within projectRoot, always create a link even if not in file tree
 					// The file click handler will attempt to open the file from disk
 					if (relativePath) {
@@ -209,6 +233,19 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 							display: absolutePath,
 							resolvedPath: relativePath,
 							type: 'link',
+						});
+					} else {
+						// Outside projectRoot - same file, different spelling from the
+						// tilde branch below, so it gets the same file:// URL rather
+						// than being left as dead text. openFileUrl routes it to the
+						// preview tab, the floating player, or the OS by file type.
+						matches.push({
+							start: absMatch.index,
+							end: absMatch.index + absMatch[0].length,
+							display: absolutePath,
+							resolvedPath: absolutePath,
+							type: 'link',
+							absoluteUrl: `file://${absolutePath}`,
 						});
 					}
 				}
@@ -299,7 +336,8 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				if (match.type === 'image') {
 					// Add image node - construct file:// URL for the image
 					// For AI terminal (has projectRoot): build absolute file:// URL
-					// For FilePreview (no projectRoot): use relative path (resolveImagePath handles it)
+					// For FilePreview (no projectRoot): emit a relative reference and let the
+					// preview's resolveEmbedCandidates find the file
 					let imageSrc: string;
 					if (projectRoot) {
 						// Build full path:
@@ -313,8 +351,11 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 						}
 						imageSrc = `file://${fullPath}`;
 					} else {
-						// Relative path - FilePreview's resolveImagePath will resolve from markdown file location
-						imageSrc = match.resolvedPath;
+						// Found in the tree: a root-relative path. Not found: the name exactly
+						// as written, since resolveEmbedCandidates already tries the
+						// attachment folders (`_attachments/` among them) and the note's own
+						// folder, which a pre-guessed `_attachments/` prefix would rule out.
+						imageSrc = match.isRelativeToCwd ? match.display : match.resolvedPath;
 					}
 					// Build style string - use specified width or default to max-width: 100%
 					const imageStyle = match.imageWidth
@@ -329,7 +370,6 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 							hProperties: {
 								'data-maestro-image': match.resolvedPath,
 								'data-maestro-width': match.imageWidth?.toString(),
-								'data-maestro-from-tree': match.isFromFileTree ? 'true' : undefined,
 								style: imageStyle,
 							},
 						},
@@ -413,9 +453,9 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				const extMatch = code.match(INLINE_CODE_EXT_PATTERN);
 				if (extMatch) {
 					const relativePath = toRelativePath(code);
+					// Extract just the filename for display
+					const filename = code.split('/').pop() || code;
 					if (relativePath) {
-						// Extract just the filename for display
-						const filename = code.split('/').pop() || code;
 						const link: Link = {
 							type: 'link',
 							url: `maestro-file://${relativePath}`,
@@ -429,6 +469,15 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 						parent.children.splice(index, 1, link);
 						return index + 1;
 					}
+					// Outside projectRoot - open via file:// URL, matching the tilde
+					// branch below and the plain-text absolute path above.
+					const link: Link = {
+						type: 'link',
+						url: `file://${code}`,
+						children: [{ type: 'text', value: filename }],
+					};
+					parent.children.splice(index, 1, link);
+					return index + 1;
 				}
 			}
 
@@ -504,8 +553,11 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				return;
 			}
 
-			// Decode URL-encoded characters (e.g., %20 -> space)
-			const decodedHref = decodeURIComponent(href);
+			// Decode URL-encoded characters (e.g., %20 -> space). Must not throw:
+			// this runs inside the unified transform, so a URIError from a stray
+			// '%' in a link target ("[see](100% done.md)") propagates out of
+			// react-markdown's render and blanks the whole message. (MAESTRO-XS)
+			const decodedHref = safeDecodeURIComponent(href);
 
 			let resolvedPath: string | null = null;
 
@@ -513,6 +565,13 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 			// These should be resolved directly, not searched via filename index
 			if (projectRoot && decodedHref.startsWith('/')) {
 				resolvedPath = toRelativePath(decodedHref);
+				if (!resolvedPath) {
+					// Outside projectRoot - use a file:// URL, same as the tilde branch
+					// below. Left as a bare absolute href, nothing in the click router
+					// claims it and the link is dead.
+					node.url = `file://${decodedHref}`;
+					return;
+				}
 			}
 
 			// Handle tilde paths (e.g., [file](~/Projects/file.tsx))

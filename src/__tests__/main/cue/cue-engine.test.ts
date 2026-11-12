@@ -74,6 +74,7 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	initCueDb: (...args: unknown[]) => mockInitCueDb(...args),
 	closeCueDb: () => mockCloseCueDb(),
 	pruneCueEvents: (...args: unknown[]) => mockPruneCueEvents(...args),
+	failOrphanedRunningEvents: () => 0,
 	isCueDbReady: () => true,
 	recordCueEvent: vi.fn(),
 	updateCueEventStatus: vi.fn(),
@@ -756,7 +757,7 @@ describe('CueEngine', () => {
 			expect(engine.getStatus()).toHaveLength(0);
 		});
 
-		it('sets up a pending yaml watcher after config deletion for re-creation', () => {
+		it('retains the yaml watcher after config deletion for re-creation', () => {
 			const config = createMockConfig({
 				subscriptions: [
 					{
@@ -776,8 +777,9 @@ describe('CueEngine', () => {
 			const initialWatchCalls = mockWatchCueYaml.mock.calls.length;
 			engine.refreshSession('session-1', '/projects/test');
 
-			// A new yaml watcher should be created for watching re-creation
-			expect(mockWatchCueYaml.mock.calls.length).toBe(initialWatchCalls + 1);
+			// Keep the original watcher alive for deletion, re-creation and read retries.
+			expect(mockWatchCueYaml.mock.calls.length).toBe(initialWatchCalls);
+			expect(yamlWatcherCleanup).not.toHaveBeenCalled();
 		});
 
 		it('recovers when config file is re-created after deletion', () => {
@@ -842,19 +844,18 @@ describe('CueEngine', () => {
 					},
 				],
 			});
-			const pendingCleanup = vi.fn();
 			mockLoadCueConfig.mockReturnValueOnce(config).mockReturnValue(null);
-			mockWatchCueYaml.mockReturnValueOnce(yamlWatcherCleanup).mockReturnValue(pendingCleanup);
+			mockWatchCueYaml.mockReturnValue(yamlWatcherCleanup);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			// Delete config - creates pending yaml watcher
+			// Delete config - the original watcher now waits for re-creation
 			engine.refreshSession('session-1', '/projects/test');
 
 			// Stop engine - should clean up pending watcher
 			engine.stop();
-			expect(pendingCleanup).toHaveBeenCalled();
+			expect(yamlWatcherCleanup).toHaveBeenCalledTimes(1);
 		});
 
 		it('cleans up pending yaml watchers on removeSession', () => {
@@ -869,19 +870,18 @@ describe('CueEngine', () => {
 					},
 				],
 			});
-			const pendingCleanup = vi.fn();
 			mockLoadCueConfig.mockReturnValueOnce(config).mockReturnValue(null);
-			mockWatchCueYaml.mockReturnValueOnce(yamlWatcherCleanup).mockReturnValue(pendingCleanup);
+			mockWatchCueYaml.mockReturnValue(yamlWatcherCleanup);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			// Delete config - creates pending yaml watcher
+			// Delete config - the original watcher now waits for re-creation
 			engine.refreshSession('session-1', '/projects/test');
 
 			// Remove session - should clean up pending watcher
 			engine.removeSession('session-1');
-			expect(pendingCleanup).toHaveBeenCalled();
+			expect(yamlWatcherCleanup).toHaveBeenCalledTimes(1);
 		});
 
 		it('triggers refresh via yaml watcher callback on file change', () => {
@@ -2049,7 +2049,7 @@ describe('CueEngine', () => {
 			expect(date.getMinutes()).toBe(0);
 		});
 
-		it('respects days filter — skips non-matching days', () => {
+		it('respects days filter - skips non-matching days', () => {
 			// Monday 2026-03-09 at 10:00
 			vi.setSystemTime(new Date('2026-03-09T10:00:00'));
 			const result = calculateNextScheduledTime(['09:00'], ['wed']);
@@ -2200,7 +2200,7 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('respects schedule_days filter — skips non-matching days', async () => {
+		it('respects schedule_days filter - skips non-matching days', async () => {
 			// Saturday 2026-03-14 at 08:59:00 - interval fires at 09:00
 			vi.setSystemTime(new Date('2026-03-14T08:59:00'));
 
@@ -3259,7 +3259,7 @@ describe('CueEngine', () => {
 				ok: true,
 				config,
 				warnings: [
-					'"missing-file-sub" has prompt_file "missing.md" but the file was not found — subscription will fail on trigger',
+					'"missing-file-sub" has prompt_file "missing.md" but the file was not found - subscription will fail on trigger',
 				],
 			});
 			const deps = createMockDeps();
@@ -3761,6 +3761,94 @@ describe('CueEngine', () => {
 				.sort();
 			expect(names).toEqual(['morning-1', 'morning-2']);
 			expect(names).not.toContain('evening');
+
+			engine.stop();
+		});
+	});
+	describe('plugin event emission', () => {
+		const heartbeatConfig = () =>
+			createMockConfig({
+				subscriptions: [
+					{
+						name: 'periodic',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: 'Run check',
+						interval_minutes: 5,
+					},
+				],
+			});
+
+		it('emits cue.runStarted then cue.runFinished for a completed run', async () => {
+			mockLoadCueConfig.mockReturnValue(heartbeatConfig());
+			const emitPluginEvent =
+				vi.fn<(event: { topic: string; payload: Record<string, unknown> }) => void>();
+			const engine = new CueEngine(createMockDeps({ emitPluginEvent }));
+			engine.start();
+			await vi.advanceTimersByTimeAsync(10);
+
+			const topics = emitPluginEvent.mock.calls.map((c) => c[0].topic);
+			expect(topics).toContain('cue.runStarted');
+			expect(topics).toContain('cue.runFinished');
+
+			const started = emitPluginEvent.mock.calls.find((c) => c[0].topic === 'cue.runStarted')![0];
+			expect(started.payload).toMatchObject({
+				sessionId: 'session-1',
+				subscriptionName: 'periodic',
+			});
+			expect(started.payload).toHaveProperty('runId');
+
+			const finished = emitPluginEvent.mock.calls.find((c) => c[0].topic === 'cue.runFinished')![0];
+			expect(finished.payload).toMatchObject({
+				sessionId: 'session-1',
+				subscriptionName: 'periodic',
+				status: 'completed',
+			});
+
+			engine.stop();
+		});
+
+		it('emits cue.runFinished with status "stopped" when a run is manually stopped', async () => {
+			mockLoadCueConfig.mockReturnValue(heartbeatConfig());
+			const emitPluginEvent =
+				vi.fn<(event: { topic: string; payload: Record<string, unknown> }) => void>();
+			const engine = new CueEngine(
+				createMockDeps({
+					emitPluginEvent,
+					onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
+				})
+			);
+			engine.start();
+			await vi.advanceTimersByTimeAsync(10);
+
+			const activeRun = engine.getActiveRuns()[0];
+			expect(activeRun).toBeDefined();
+			engine.stopRun(activeRun.runId);
+
+			const finished = emitPluginEvent.mock.calls
+				.map((c) => c[0])
+				.filter((e) => e.topic === 'cue.runFinished');
+			expect(finished).toHaveLength(1);
+			expect(finished[0].payload).toMatchObject({ runId: activeRun.runId, status: 'stopped' });
+
+			engine.stop();
+		});
+
+		it('does not let a throwing plugin bus break the run lifecycle', async () => {
+			mockLoadCueConfig.mockReturnValue(heartbeatConfig());
+			const emitPluginEvent = vi.fn(() => {
+				throw new Error('plugin bus down');
+			});
+			const deps = createMockDeps({ emitPluginEvent });
+			const engine = new CueEngine(deps);
+
+			expect(() => engine.start()).not.toThrow();
+			await vi.advanceTimersByTimeAsync(10);
+
+			// The run still reached a natural completion despite the throwing sink.
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+			expect(engine.getActivityLog()).toHaveLength(1);
+			expect(engine.getActivityLog()[0].status).toBe('completed');
 
 			engine.stop();
 		});

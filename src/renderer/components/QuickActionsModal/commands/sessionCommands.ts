@@ -4,13 +4,18 @@ import { startManualReauth } from '../../../stores/authOutageStore';
 import { getModalActions } from '../../../stores/modalStore';
 import type { Session } from '../../../types';
 import { sessionJumpShortcut } from '../../../utils/sessionJumpSlots';
+import { getRunningJumpTab } from '../../../utils/tabHelpers';
 import type { QuickAction } from '../types';
 import { alphabetizeKey } from '../utils/quickActionSorting';
+import { makeAgentJumpAction, type GetSessionWindow } from './agentJumpAction';
 
 interface BuildSessionCommandsArgs {
 	sessions: Session[];
 	setActiveSessionId: (id: string) => void;
 	revealJumpTarget: (session: Session) => void;
+	/** Multi-window: resolves an agent's owning window so cross-window picks focus
+	 * that window instead of stealing the agent. Omitted = single-window behavior. */
+	getSessionWindow?: GetSessionWindow;
 	/** Agent ID -> Opt+Cmd+# digit, for agents in the Left Bar's first ten slots. */
 	jumpSlots?: Map<string, string>;
 }
@@ -35,6 +40,7 @@ export function buildSessionJumpCommands({
 	sessions,
 	setActiveSessionId,
 	revealJumpTarget,
+	getSessionWindow,
 	jumpSlots,
 }: BuildSessionCommandsArgs): QuickAction[] {
 	return sessions.map((session) => {
@@ -52,10 +58,13 @@ export function buildSessionJumpCommands({
 			id: `jump-${session.id}`,
 			label,
 			shortcut: jumpDigit ? sessionJumpShortcut(jumpDigit) : undefined,
-			action: () => {
-				setActiveSessionId(session.id);
-				revealJumpTarget(session);
-			},
+			action: makeAgentJumpAction({
+				session,
+				setActiveSessionId,
+				revealJumpTarget,
+				getSessionWindow,
+				tabId: getRunningJumpTab(session)?.id,
+			}),
 			subtext: session.state.toUpperCase(),
 			bookmarked: !!session.bookmarked,
 			agentSortKey: alphabetizeKey(session.name),

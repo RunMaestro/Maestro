@@ -14,6 +14,7 @@ import type {
 	UsageStats,
 } from '../../../types';
 import type { HistoryEntryInput } from '../useAgentSessionManagement';
+import type { AgentSpawnResult } from '../useAgentExecution';
 import type { RightPanelHandle } from '../../../components/RightPanel';
 
 export type ToolProgressState = NonNullable<LogEntry['metadata']>['toolState'];
@@ -66,13 +67,7 @@ export interface UseAgentListenersDeps {
 						workingDirOverride?: string;
 					};
 				}
-		  ) => Promise<{
-				success: boolean;
-				response?: string;
-				agentSessionId?: string;
-				usageStats?: UsageStats;
-				contextUsage?: number;
-		  }>)
+		  ) => Promise<AgentSpawnResult>)
 		| null
 	>;
 	/** Batch state lookup for Auto Run integration */

@@ -28,6 +28,7 @@ export interface BucketAggregateResult {
 	autoCount: number;
 	userCount: number;
 	cueCount: number;
+	agentCount: number;
 	/**
 	 * Per-host entry counts within the same window the buckets cover. Key
 	 * is the entry's `hostname`, or `LOCAL_HOST_AGG_KEY` for entries with no
@@ -129,13 +130,19 @@ export function buildBucketAggregate(
 		const fallbackEnd = endTime;
 		const fallbackStart = windowStart ?? endTime;
 		return {
-			buckets: Array.from({ length: safeBucketCount }, () => ({ auto: 0, user: 0, cue: 0 })),
+			buckets: Array.from({ length: safeBucketCount }, () => ({
+				auto: 0,
+				user: 0,
+				cue: 0,
+				agent: 0,
+			})),
 			earliestTimestamp: fallbackStart,
 			latestTimestamp: fallbackEnd,
 			totalCount: 0,
 			autoCount: 0,
 			userCount: 0,
 			cueCount: 0,
+			agentCount: 0,
 			hostCounts: {},
 		};
 	}
@@ -145,6 +152,7 @@ export function buildBucketAggregate(
 	let autoCount = 0;
 	let userCount = 0;
 	let cueCount = 0;
+	let agentCount = 0;
 	const hostCounts: Record<string, number> = {};
 
 	for (const entry of filtered) {
@@ -153,6 +161,7 @@ export function buildBucketAggregate(
 		if (entry.type === 'AUTO') autoCount++;
 		else if (entry.type === 'USER') userCount++;
 		else if (entry.type === 'CUE') cueCount++;
+		else if (entry.type === 'AGENT') agentCount++;
 		const hostKey = entry.hostname || LOCAL_HOST_AGG_KEY;
 		hostCounts[hostKey] = (hostCounts[hostKey] ?? 0) + 1;
 	}
@@ -177,6 +186,7 @@ export function buildBucketAggregate(
 		auto: 0,
 		user: 0,
 		cue: 0,
+		agent: 0,
 	}));
 
 	const bucketIndexFor = (timestamp: number): number =>
@@ -187,6 +197,7 @@ export function buildBucketAggregate(
 		if (entry.type === 'AUTO') bucket.auto++;
 		else if (entry.type === 'USER') bucket.user++;
 		else if (entry.type === 'CUE') bucket.cue++;
+		else if (entry.type === 'AGENT') bucket.agent++;
 	}
 
 	// Fold in the database's Cue counts, taking the larger of the two stores
@@ -218,6 +229,7 @@ export function buildBucketAggregate(
 		autoCount,
 		userCount,
 		cueCount,
+		agentCount,
 		hostCounts,
 	};
 }

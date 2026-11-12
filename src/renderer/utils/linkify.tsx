@@ -1,9 +1,15 @@
 import React from 'react';
 import type { Theme } from '../types';
+import { openUrl } from './openUrl';
+import { URL_ROUTING_HINT_PREFIX_SOURCE } from '../../shared/urlRoutingHint';
 
-// Matches http(s) URLs. Excludes whitespace and a few characters that almost
-// never belong inside a URL but commonly bracket one in prose.
-const URL_REGEX = /https?:\/\/[^\s<>"`]+/g;
+// Matches http(s) URLs, with an optional routing hint (`maestro+https://`).
+// Excludes whitespace and a few characters that almost never belong inside a
+// URL but commonly bracket one in prose.
+const URL_REGEX = new RegExp(
+	`(?:${URL_ROUTING_HINT_PREFIX_SOURCE})?https?:\\/\\/[^\\s<>"\`]+`,
+	'g'
+);
 
 // Punctuation that is almost always sentence/parenthetical terminators rather
 // than part of the URL. Stripped from the tail of a match and pushed back into
@@ -17,7 +23,8 @@ function ExternalLink({ url, theme }: { url: string; theme: Theme }) {
 			onClick={(e) => {
 				e.preventDefault();
 				e.stopPropagation();
-				void window.maestro.shell.openExternal(url);
+				// openUrl honors useSystemBrowser, Cmd/Ctrl inversion, and routing hints.
+				openUrl(url, { ctrlKey: e.metaKey || e.ctrlKey });
 			}}
 			className="underline hover:opacity-80 cursor-pointer"
 			// accentText (not accent) so links stay legible against accent-tinted

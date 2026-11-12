@@ -2,9 +2,10 @@
  * Markdown - the single, unified react-markdown renderer for the desktop app.
  *
  * One component, selected by `preset`, replaces the previously separate chat
- * renderer, document factory wiring, wizard-bubble, and release-notes render
- * paths. It owns the shared responsibilities (preprocess -> plugins ->
- * components -> ReactMarkdown, plus chat context-menu state) while delegating
+ * renderer, document factory wiring, and release-notes render paths (the
+ * wizard conversation renders through the chat preset). It owns the shared
+ * responsibilities (preprocess -> plugins -> components -> ReactMarkdown, plus
+ * chat context-menu state) while delegating
  * element rendering to per-preset component maps that share the same leaf
  * modules (links, inline code, code fences, image loader).
  *
@@ -21,10 +22,10 @@ import type { FileNode } from '../../types/fileTree';
 import { buildFileTreeIndices } from '../../utils/remarkFileLinks';
 import { urlTransformAllowingMaestro } from '../../utils/markdownUrlTransform';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
+import { usePathExistence } from '../../hooks/utils/usePathExistence';
 import { copyTextWithFlash } from '../../utils/inlineCodeCopy';
 import {
 	createMarkdownComponents,
-	createWizardBubbleMarkdownComponents,
 	createReleaseNotesMarkdownComponents,
 	type MarkdownComponentsOptions,
 } from '../../utils/markdownConfig';
@@ -34,6 +35,7 @@ import { remarkStripHtmlComments } from '../../../shared/remarkStripHtmlComments
 import { buildMarkdownPlugins } from './plugins';
 import { preprocessMarkdown } from './preprocess';
 import { createChatMarkdownComponents } from './chatComponents';
+import { writeRenderedChatSelectionToClipboard } from './renderedCopy';
 import type { MarkdownPreset } from './config';
 
 export interface MarkdownProps {
@@ -72,6 +74,23 @@ export interface MarkdownProps {
 	chatLineBreaks?: boolean;
 	/** Render `$...$` / `$$...$$` as KaTeX math (#622). */
 	chatMath?: boolean;
+	/**
+	 * Chip-render Codex's assistant directives (`:codex-followup[...]{...}`).
+	 * Ignored outside the chat preset - an authored document that contains the
+	 * syntax is quoting it, not offering it. Set this only for Codex agents.
+	 */
+	codexDirectives?: boolean;
+	/**
+	 * Which conversation a clicked `:codex-followup` chip belongs to. Chat preset
+	 * only. Absent leaves the chips inert - `codexDirectives` decides whether the
+	 * syntax is parsed, this decides whether there is a control to press.
+	 */
+	codexFollowup?: { sessionId: string; tabId: string };
+	/**
+	 * Which conversation a shell fence's Run button belongs to. Chat preset only.
+	 * Absent leaves shell fences without a Run button.
+	 */
+	commandRun?: { sessionId: string; tabId: string };
 
 	// --- Document preset ---
 	/** Render YAML frontmatter as a table. Defaults to true for document. */
@@ -118,6 +137,9 @@ export const Markdown = memo(function Markdown({
 	allowRawHtml,
 	chatLineBreaks = false,
 	chatMath = false,
+	codexDirectives = false,
+	codexFollowup,
+	commandRun,
 	frontmatter = true,
 	imageRenderer,
 	customLanguageRenderers,
@@ -145,6 +167,10 @@ export const Markdown = memo(function Markdown({
 		}
 	}, [homeDir]);
 
+	// Answers "does this path exist?" for a link whose extent had to be guessed,
+	// on whichever machine the agent runs on.
+	const pathExists = usePathExistence(sshRemoteId);
+
 	// Memoize file tree indices to avoid O(n) traversal on every render.
 	const fileTreeIndices = useMemo(() => {
 		if (fileTree && fileTree.length > 0) {
@@ -152,6 +178,29 @@ export const Markdown = memo(function Markdown({
 		}
 		return null;
 	}, [fileTree]);
+
+	// The followup context is an object, and a call site that builds it inline
+	// hands us a new identity on every render - which would invalidate the
+	// `components` memo below and re-run react-markdown's entire parse each time
+	// (#1180). Depending on the two strings instead makes the memo hold however
+	// the caller spells the prop.
+	const followupSessionId = codexFollowup?.sessionId;
+	const followupTabId = codexFollowup?.tabId;
+	const chatFollowup = useMemo(
+		() =>
+			followupSessionId && followupTabId
+				? { sessionId: followupSessionId, tabId: followupTabId }
+				: undefined,
+		[followupSessionId, followupTabId]
+	);
+
+	// Same identity rule as the followup context above.
+	const runSessionId = commandRun?.sessionId;
+	const runTabId = commandRun?.tabId;
+	const chatCommandRun = useMemo(
+		() => (runSessionId && runTabId ? { sessionId: runSessionId, tabId: runTabId } : undefined),
+		[runSessionId, runTabId]
+	);
 
 	// Right-click context menus (chat only).
 	const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);
@@ -165,10 +214,6 @@ export const Markdown = memo(function Markdown({
 		if (preset === 'release-notes') {
 			return { remarkPlugins: RELEASE_NOTES_PLUGINS, rehypePlugins: undefined };
 		}
-		// Wizard bubbles: GFM only.
-		if (preset === 'wizard-bubble') {
-			return buildMarkdownPlugins({ frontmatter: false });
-		}
 		return buildMarkdownPlugins({
 			frontmatter,
 			chatLineBreaks: isChat ? chatLineBreaks : false,
@@ -177,8 +222,13 @@ export const Markdown = memo(function Markdown({
 			// run, so a marker in it is live configuration worth showing. A chat
 			// message only ever describes one.
 			autorunMarkers: preset === 'document',
+			// The mirror image: a Codex directive is live only where an agent just
+			// said it. A document or a release note renders text somebody
+			// authored, where the same string is content.
+			codexDirectives: isChat && codexDirectives,
 			allowRawHtml: effectiveAllowRawHtml,
-			fileLinks: { indices: fileTreeIndices, cwd, projectRoot, homeDir },
+			fileLinks: { indices: fileTreeIndices, cwd, projectRoot, homeDir, pathExists },
+			mentionChips: isChat,
 			extraRemarkPlugins,
 			extraRehypePlugins,
 		});
@@ -188,11 +238,13 @@ export const Markdown = memo(function Markdown({
 		isChat,
 		chatLineBreaks,
 		chatMath,
+		codexDirectives,
 		effectiveAllowRawHtml,
 		fileTreeIndices,
 		cwd,
 		projectRoot,
 		homeDir,
+		pathExists,
 		extraRemarkPlugins,
 		extraRehypePlugins,
 	]);
@@ -220,9 +272,9 @@ export const Markdown = memo(function Markdown({
 					onLinkContextMenu: (e, url) => setLinkMenu({ x: e.clientX, y: e.clientY, url }),
 					onFileContextMenu: (e, absPath, fileName) =>
 						setFileMenu({ x: e.clientX, y: e.clientY, filePath: absPath, fileName }),
+					codexFollowup: chatFollowup,
+					commandRun: chatCommandRun,
 				});
-			case 'wizard-bubble':
-				return createWizardBubbleMarkdownComponents(theme);
 			case 'release-notes':
 				return createReleaseNotesMarkdownComponents(theme);
 			case 'document':
@@ -259,17 +311,27 @@ export const Markdown = memo(function Markdown({
 		containerRef,
 		searchHighlight,
 		codeBlockStyle,
+		chatFollowup,
+		chatCommandRun,
 	]);
 
-	const markdown = (
-		<ReactMarkdown
-			remarkPlugins={remarkPlugins}
-			rehypePlugins={rehypePlugins}
-			urlTransform={urlTransformAllowingMaestro}
-			components={components}
-		>
-			{processedContent}
-		</ReactMarkdown>
+	// Memoize the ReactMarkdown element: react-markdown re-runs the full remark+
+	// rehype parse/runSync on every render (no internal memoization), so without
+	// this a re-render with referentially-stable inputs still re-parses the whole
+	// message. Keyed on the already-memoized plugin arrays, components, and
+	// content (urlTransform is a module constant). (#1180)
+	const markdown = useMemo(
+		() => (
+			<ReactMarkdown
+				remarkPlugins={remarkPlugins}
+				rehypePlugins={rehypePlugins}
+				urlTransform={urlTransformAllowingMaestro}
+				components={components}
+			>
+				{processedContent}
+			</ReactMarkdown>
+		),
+		[remarkPlugins, rehypePlugins, components, processedContent]
 	);
 
 	// Chat owns its prose container + context menus. Other presets render bare so
@@ -285,8 +347,17 @@ export const Markdown = memo(function Markdown({
 			// that owns it, e.g. GroupChatMessages) instead of inheriting it, and
 			// make the Settings -> Display -> AI Chat size row a no-op for chat
 			// prose. `prose-sm` alone still keeps the tighter chat spacing.
-			className={`prose prose-sm max-w-none ${className}`}
+			// whitespace-normal: some callers (the Thinking block, collapsed AI
+			// messages) sit inside a `whitespace-pre-wrap` box for their raw-text
+			// branch. Inherited, that turns the "\n" text nodes react-markdown
+			// emits between table/list elements into visible blank lines (#1726).
+			// Line breaks the user wrote are already <br>s via chatLineBreaks, and
+			// code fences set their own white-space.
+			className={`prose prose-sm max-w-none whitespace-normal ${className}`}
 			style={{ color: theme.colors.textMain, lineHeight: 1.4, paddingLeft: '0.5em' }}
+			onCopy={(event) => {
+				writeRenderedChatSelectionToClipboard(event.nativeEvent, event.currentTarget);
+			}}
 		>
 			{markdown}
 			{linkMenu && <LinkContextMenu menu={linkMenu} theme={theme} onDismiss={dismissLinkMenu} />}

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { Wordmark } from './ui/Wordmark';
 import {
 	Wand2,
 	Bot,
@@ -19,6 +20,8 @@ import { useClickOutside } from '../hooks';
 import { WelcomeContent } from './WelcomeContent';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
+import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 interface EmptyStateViewProps {
 	theme: Theme;
@@ -74,12 +77,7 @@ export function EmptyStateView({
 				{/* Left: Logo and Name */}
 				<div className="flex items-center gap-2">
 					<Wand2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h1
-						className="font-bold tracking-widest text-lg"
-						style={{ color: theme.colors.textMain }}
-					>
-						MAESTRO
-					</h1>
+					<Wordmark as="h1" className="text-lg" style={{ color: theme.colors.textMain }} />
 				</div>
 
 				{/* Right: Hamburger Menu */}
@@ -96,10 +94,9 @@ export function EmptyStateView({
 					{/* Menu Overlay */}
 					{menuOpen && (
 						<div
-							className="absolute top-full right-0 mt-2 w-72 rounded-lg shadow-2xl z-50 overflow-hidden"
+							className="absolute top-full right-0 mt-2 w-72 rounded-lg z-50 overflow-hidden"
 							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								border: `1px solid ${theme.colors.border}`,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							<div className="p-1">
@@ -296,6 +293,8 @@ export function EmptyStateView({
 						Create your first agent
 					</button>
 				</div>
+
+				<PluginUiItemsSlot surface="emptyState" className="mt-3 justify-center" />
 			</div>
 		</div>
 	);

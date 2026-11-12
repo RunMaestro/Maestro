@@ -53,6 +53,7 @@ export function DeleteWorktreeModal({
 		<Modal
 			theme={theme}
 			title="Delete Worktree"
+			subtitle={session.name}
 			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
 			headerIcon={<Trash2 className="w-4 h-4" style={{ color: theme.colors.error }} />}

@@ -9,7 +9,7 @@
  * - Error handling when Maestro app is not running
  */
 
-import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import * as path from 'path';
 
 // Mock fs
@@ -50,6 +50,36 @@ describe('open-file command', () => {
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+		// The suite may run inside a Maestro agent or terminal tab; its own shell
+		// identity would otherwise pick the target agent.
+		vi.stubEnv('MAESTRO_CALLER_AGENT_ID', '');
+		vi.stubEnv('MAESTRO_TERMINAL_AGENT_ID', '');
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	it("defaults to the terminal tab's agent for a file outside every workspace", async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.stubEnv('MAESTRO_TERMINAL_AGENT_ID', 'session-123');
+		let captured: { sessionId?: string; filePath?: string } = {};
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			const mockClient = {
+				sendCommand: vi.fn().mockImplementation((msg) => {
+					captured = msg;
+					return Promise.resolve({ type: 'open_file_tab_result', success: true });
+				}),
+			};
+			return action(mockClient as never);
+		});
+
+		await openFile('/config/.bashrc', {});
+
+		expect(captured.sessionId).toBe('session-123');
+		// path.resolve gives this a drive letter on Windows (D:\config\.bashrc).
+		expect(captured.filePath).toBe(path.resolve('/config/.bashrc'));
+		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
 	it('should open a valid file with explicit agent', async () => {
@@ -74,6 +104,54 @@ describe('open-file command', () => {
 		expect(captured.switchToAgent).toBe(true);
 		expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Opened file.ts in Maestro'));
 		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
+	describe('http(s) URLs stream in the media player', () => {
+		function captureSend() {
+			const sent: Array<Record<string, unknown>> = [];
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((msg) => {
+						sent.push(msg);
+						return Promise.resolve({ type: 'open_file_tab_result', success: true });
+					}),
+				};
+				return action(mockClient as never);
+			});
+			return sent;
+		}
+
+		it('sends the URL untouched, skipping the on-disk check', async () => {
+			vi.mocked(existsSync).mockReturnValue(false);
+			const sent = captureSend();
+
+			await openFile('https://cdn.example.com/media/clip.mp4?sig=1', { agent: 'session-123' });
+
+			expect(sent[0].filePath).toBe('https://cdn.example.com/media/clip.mp4?sig=1');
+			expect(sent[0].mediaMode).toBe('play');
+			expect(existsSync).not.toHaveBeenCalled();
+			expect(consoleSpy).toHaveBeenCalledWith('Streaming clip.mp4 in the media player');
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('accepts --queue for a URL with no media extension', async () => {
+			const sent = captureSend();
+
+			await openFile('https://example.com/stream?id=7', { agent: 'session-123', queue: true });
+
+			expect(sent[0].mediaMode).toBe('queue');
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it("files the URL under the agent owning the shell's cwd when --agent is absent", async () => {
+			const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue('/home/user/project/sub');
+			const sent = captureSend();
+
+			await openFile('https://example.com/a.mp4', {});
+
+			expect(sent[0].sessionId).toBe('session-123');
+			cwdSpy.mockRestore();
+		});
 	});
 
 	describe('--background vs --no-switch (they are different asks)', () => {

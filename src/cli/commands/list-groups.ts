@@ -18,7 +18,10 @@ export function listGroups(options: ListGroupsOptions): void {
 				id: g.id,
 				name: g.name,
 				emoji: g.emoji,
+				icon: g.icon,
+				color: g.color,
 				collapsed: g.collapsed,
+				parentGroupId: g.parentGroupId,
 			}));
 			console.log(JSON.stringify(output, null, 2));
 		} else {

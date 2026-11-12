@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { GitLogViewer } from '../../../renderer/components/GitLogViewer';
+import { createMockSession } from '../../helpers/mockSession';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Theme } from '../../../renderer/types';
 
 // Mock react-diff-view
@@ -29,6 +32,21 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 		unregisterLayer: mockUnregisterLayer,
 		updateLayerHandler: mockUpdateLayerHandler,
 	}),
+}));
+
+// Mock GitGraphView - @gitgraph renders real SVG and measures it with getBBox,
+// which jsdom does not implement. The stub reports what the viewer told it to
+// highlight, which is exactly what the keyboard navigation is supposed to move.
+vi.mock('../../../renderer/components/GitGraphView', () => ({
+	GitGraphView: ({ selectedHash, nodes }: { selectedHash?: string; nodes: { hash: string }[] }) => (
+		<div
+			data-testid="graph-view"
+			data-selected={selectedHash ?? ''}
+			// The hashes it was handed, so a filter can be asserted on the commits
+			// the graph is actually drawing rather than on the ones it was fetched with.
+			data-nodes={nodes.map((n) => n.hash).join(',')}
+		/>
+	),
 }));
 
 // Mock parseGitDiff
@@ -95,6 +113,12 @@ describe('GitLogViewer', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
+		// Local jsdom ships no working Storage, so the fresh mock doubles as the
+		// per-test reset this line used to do by hand.
+		installLocalStorageMock();
+		// Graph view writes this; without a reset the next test mounts already in
+		// graph mode and the "hint only in graph view" assertion is a false fail.
+		window.localStorage.removeItem('maestro:gitLogViewer:viewMode');
 
 		gitLogMock().mockResolvedValue({
 			entries: [createGitLogEntry()],
@@ -131,6 +155,31 @@ diff --git a/src/test.ts b/src/test.ts
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.restoreAllMocks();
+	});
+
+	// The cwd pill alone does not identify the agent: worktrees of one repo share
+	// a path prefix, and two agents can sit on the same directory.
+	describe('agent name in the header', () => {
+		it('names the agent whose log is shown', async () => {
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'session-1', name: 'Sonoma-Fix' })],
+			} as never);
+
+			render(<GitLogViewer {...defaultProps} sessionId="session-1" />);
+
+			await waitFor(() =>
+				expect(screen.getByTestId('modal-subtitle')).toHaveTextContent('Sonoma-Fix')
+			);
+		});
+
+		it('renders no name when opened without a target agent', async () => {
+			useSessionStore.setState({ sessions: [] } as never);
+
+			render(<GitLogViewer {...defaultProps} />);
+
+			await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+			expect(screen.queryByTestId('modal-subtitle')).not.toBeInTheDocument();
+		});
 	});
 
 	describe('Initial render', () => {
@@ -794,15 +843,18 @@ diff --git a/src/test.ts b/src/test.ts
 		it('should register layer on mount', async () => {
 			render(<GitLogViewer {...defaultProps} />);
 
-			expect(mockRegisterLayer).toHaveBeenCalledWith({
-				type: 'modal',
-				priority: expect.any(Number),
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'lenient',
-				ariaLabel: 'Git Log Viewer',
-				onEscape: expect.any(Function),
-			});
+			expect(mockRegisterLayer).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'modal',
+					priority: expect.any(Number),
+					blocksLowerLayers: true,
+					capturesFocus: true,
+					blocksAppShortcuts: true,
+					focusTrap: 'lenient',
+					ariaLabel: 'Git Log Viewer',
+					onEscape: expect.any(Function),
+				})
+			);
 		});
 
 		it('should unregister layer on unmount', async () => {
@@ -1399,6 +1451,436 @@ this is not valid diff`,
 			const firstShortHash = screen.getByText('first1');
 			const firstCommitRow = firstShortHash.closest('div[class*="cursor-pointer"]');
 			expect(firstCommitRow).toHaveStyle({ backgroundColor: theme.colors.bgActivity });
+		});
+	});
+
+	// The graph is built from `git log --all`, so it holds commits the list view
+	// never shows. Its keyboard model is two-dimensional: Up/Down walk rows,
+	// Left/Right jump lanes.
+	describe('Graph view', () => {
+		// main:    c1 --- c2 ------ m1 (HEAD)
+		//                    \     /
+		// feature:  f1 ------ f2 --
+		// Rows oldest-first: c1=0, f1=1, c2=2, f2=3, m1=4.
+		const graphNode = (
+			hash: string,
+			minute: number,
+			parents: string[] = [],
+			refs: string[] = []
+		) => ({
+			hash,
+			shortHash: hash,
+			parents,
+			refs,
+			author: 'Test Author',
+			date: `2026-08-28T10:0${minute}:00Z`,
+			subject: `commit ${hash}`,
+		});
+
+		const gitGraphMock = () => vi.mocked(window.maestro.git.graph);
+
+		const renderGraphView = async () => {
+			gitGraphMock().mockResolvedValue({
+				nodes: [
+					graphNode('m1', 5, ['c2', 'f2'], ['HEAD -> main']),
+					graphNode('c1', 1, [], ['main']),
+					graphNode('f2', 4, ['f1']),
+					graphNode('f1', 2, ['c1'], ['feature']),
+					graphNode('c2', 3, ['c1']),
+				],
+				error: undefined,
+			});
+			// The list only knows the current branch, and its newest commit (m1) is
+			// the default selection the arrows start from.
+			gitLogMock().mockResolvedValue({
+				entries: [
+					createGitLogEntry({ hash: 'm1', shortHash: 'm1' }),
+					createGitLogEntry({ hash: 'c2', shortHash: 'c2' }),
+					createGitLogEntry({ hash: 'c1', shortHash: 'c1' }),
+				],
+				error: undefined,
+			});
+
+			render(<GitLogViewer {...defaultProps} />);
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+			await waitFor(() => {
+				expect(screen.getByTestId('graph-view')).toHaveAttribute('data-selected', 'm1');
+			});
+			return screen.getByTestId('graph-view');
+		};
+
+		// The toggle's pressed state is the assertion rather than the rendered
+		// graph, because an empty repo shows "No commits found" in graph mode and
+		// would make a mode switch look like it never happened.
+		const graphPressed = () =>
+			screen.getByRole('button', { name: /Graph/ }).getAttribute('aria-pressed');
+
+		it('switches List <-> Graph with Cmd+Shift+] and Cmd+Shift+[', async () => {
+			render(<GitLogViewer {...defaultProps} />);
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+			expect(graphPressed()).toBe('false');
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+			await waitFor(() => expect(graphPressed()).toBe('true'));
+
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+			await waitFor(() => expect(graphPressed()).toBe('false'));
+		});
+
+		// macOS reports Shift+[ as '{' and Shift+] as '}', so the chord has to be
+		// matched by both spellings or it dies on the platform it was asked for.
+		it('accepts the shifted brace spellings of the view chord', async () => {
+			render(<GitLogViewer {...defaultProps} />);
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+
+			fireEvent.keyDown(window, { key: '}', metaKey: true, shiftKey: true });
+			await waitFor(() => expect(graphPressed()).toBe('true'));
+
+			fireEvent.keyDown(window, { key: '{', metaKey: true, shiftKey: true });
+			await waitFor(() => expect(graphPressed()).toBe('false'));
+		});
+
+		// Ctrl+Shift+] is the same chord on Windows/Linux.
+		it('accepts the Ctrl spelling of the view chord', async () => {
+			render(<GitLogViewer {...defaultProps} />);
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+
+			fireEvent.keyDown(window, { key: ']', ctrlKey: true, shiftKey: true });
+			await waitFor(() => expect(graphPressed()).toBe('true'));
+		});
+
+		it('jumps to the branch line drawn beside it with Left/Right', async () => {
+			const graph = await renderGraphView();
+
+			// m1 is drawn at the top of the main column; the feature commit nearest
+			// that height is f2.
+			fireEvent.keyDown(window, { key: 'ArrowRight' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f2'));
+
+			// And back. Landing at the nearest height in each direction is what makes
+			// a jump and a jump back return the user to where they started.
+			fireEvent.keyDown(window, { key: 'ArrowLeft' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'm1'));
+		});
+
+		it('holds the selection at the outermost column', async () => {
+			const graph = await renderGraphView();
+
+			fireEvent.keyDown(window, { key: 'ArrowLeft' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'm1'));
+		});
+
+		// Up/Down follow the line the cursor is on. Wandering onto a neighbouring
+		// branch by itself would leave Left/Right with nothing to do.
+		it('walks Up/Down along the current column, skipping other branches', async () => {
+			const graph = await renderGraphView();
+
+			// m1 -> c2 down the main lane, stepping over f2 (feature, one row nearer).
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'c2'));
+
+			// And again over f1, to main's root.
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'c1'));
+
+			fireEvent.keyDown(window, { key: 'ArrowUp' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'c2'));
+		});
+
+		// Commits off the current branch are still reachable - via Left/Right, and
+		// once there Up/Down walks that branch instead.
+		it('walks the branch it was moved onto, including commits the list never holds', async () => {
+			const graph = await renderGraphView();
+
+			fireEvent.keyDown(window, { key: 'ArrowRight' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f2'));
+
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f1'));
+
+			// f1 is the feature lane's root; Down holds rather than falling onto main.
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f1'));
+		});
+
+		// Left to the list handler these would move an index the graph is not
+		// showing, so the key would look dead.
+		it('answers Home/End and the page keys along the current column', async () => {
+			const graph = await renderGraphView();
+
+			fireEvent.keyDown(window, { key: 'End' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'c1'));
+
+			fireEvent.keyDown(window, { key: 'Home' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'm1'));
+
+			// A page is larger than this lane, so it clamps to its root instead of
+			// refusing to move.
+			fireEvent.keyDown(window, { key: 'PageDown' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'c1'));
+
+			fireEvent.keyDown(window, { key: 'PageUp' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'm1'));
+		});
+
+		// These are lane ends, not graph ends: on the feature branch they must stop
+		// at f2/f1 rather than at main's tip and root.
+		it('bounds Home/End by the column the cursor is on', async () => {
+			const graph = await renderGraphView();
+
+			fireEvent.keyDown(window, { key: 'ArrowRight' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f2'));
+
+			fireEvent.keyDown(window, { key: 'End' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f1'));
+
+			fireEvent.keyDown(window, { key: 'Home' });
+			await waitFor(() => expect(graph).toHaveAttribute('data-selected', 'f2'));
+		});
+
+		it('loads the diff for a commit reached by keyboard', async () => {
+			await renderGraphView();
+			gitShowMock().mockClear();
+
+			fireEvent.keyDown(window, { key: 'ArrowRight' });
+			await waitFor(() => {
+				expect(gitShowMock()).toHaveBeenCalledWith('/test/project', 'f2', undefined);
+			});
+		});
+
+		it('shows the branch-jump hint only in graph view', async () => {
+			render(<GitLogViewer {...defaultProps} />);
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+			expect(screen.queryByText(/switch branch/)).not.toBeInTheDocument();
+			expect(screen.getByText(/switch view/)).toBeInTheDocument();
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+			await waitFor(() => {
+				expect(screen.getByText(/switch branch/)).toBeInTheDocument();
+			});
+		});
+	});
+
+	// The log the user is looking at is a 200-commit window over a repository with
+	// thousands, so "where is that commit" is a question the viewer has to answer
+	// itself rather than leaving to scrolling.
+	describe('Search', () => {
+		const searchBox = () => screen.getByLabelText('Search commits');
+		// A subject the filter keeps is drawn TWICE - once in the list, once as the
+		// heading of the detail pane - so presence is counted, never asserted as
+		// one element.
+		const shown = (subject: RegExp) => screen.queryAllByText(subject).length;
+
+		const renderWithCommits = async () => {
+			gitLogMock().mockResolvedValue({
+				entries: [
+					createGitLogEntry({
+						hash: 'aaa111aaa111aaa111aaa111aaa111aaa111aaa1',
+						shortHash: 'aaa111a',
+						subject: 'feat(wand): bring the sparkle back',
+						author: 'Pedram Amini',
+					}),
+					createGitLogEntry({
+						hash: 'bbb222bbb222bbb222bbb222bbb222bbb222bbb2',
+						shortHash: 'bbb222b',
+						subject: 'fix(usage): keep a capped plan account',
+						author: 'Other Person',
+					}),
+					createGitLogEntry({
+						hash: 'ccc333ccc333ccc333ccc333ccc333ccc333ccc3',
+						shortHash: 'ccc333c',
+						subject: 'perf(wand): animate the svg root',
+						author: 'Pedram Amini',
+					}),
+				],
+				error: undefined,
+			});
+			gitCommitCountMock().mockResolvedValue({ count: 7904, error: null });
+
+			render(<GitLogViewer {...defaultProps} />);
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+		};
+
+		it('narrows the list to the commits matching a keyword', async () => {
+			await renderWithCommits();
+
+			fireEvent.change(searchBox(), { target: { value: 'wand' } });
+
+			await waitFor(() => expect(shown(/keep a capped plan account/)).toBe(0));
+			expect(shown(/bring the sparkle back/)).toBeGreaterThan(0);
+			expect(shown(/animate the svg root/)).toBeGreaterThan(0);
+		});
+
+		it('finds a commit by a short-hash prefix', async () => {
+			await renderWithCommits();
+
+			fireEvent.change(searchBox(), { target: { value: 'bbb222' } });
+
+			await waitFor(() => expect(shown(/bring the sparkle back/)).toBe(0));
+			expect(shown(/keep a capped plan account/)).toBeGreaterThan(0);
+		});
+
+		it('ANDs the words, so terms that are not adjacent still match', async () => {
+			await renderWithCommits();
+
+			fireEvent.change(searchBox(), { target: { value: 'fix account' } });
+
+			await waitFor(() => expect(shown(/bring the sparkle back/)).toBe(0));
+			expect(shown(/keep a capped plan account/)).toBeGreaterThan(0);
+		});
+
+		it('reports how much of the log is left', async () => {
+			await renderWithCommits();
+
+			fireEvent.change(searchBox(), { target: { value: 'wand' } });
+
+			await waitFor(() => expect(screen.getByText('2 of 3')).toBeInTheDocument());
+			expect(screen.getByText(/Commit 1 of 2 \(filtered from 3\)/)).toBeInTheDocument();
+		});
+
+		it('says so when nothing matches instead of looking empty', async () => {
+			await renderWithCommits();
+
+			fireEvent.change(searchBox(), { target: { value: 'nothing-here' } });
+
+			await waitFor(() =>
+				expect(screen.getByText('No commits match "nothing-here"')).toBeInTheDocument()
+			);
+		});
+
+		// The selected commit drives the diff pane, so a filter that left the index
+		// where it was would show a commit no longer in the list.
+		it('moves the selection to the top of the filtered list', async () => {
+			await renderWithCommits();
+
+			fireEvent.keyDown(window, { key: 'ArrowDown' });
+			await waitFor(() => expect(screen.getByText(/Commit 2 of 3/)).toBeInTheDocument());
+
+			fireEvent.change(searchBox(), { target: { value: 'wand' } });
+
+			await waitFor(() => expect(screen.getByText(/Commit 1 of 2/)).toBeInTheDocument());
+			expect(gitShowMock()).toHaveBeenCalledWith(
+				'/test/project',
+				'aaa111aaa111aaa111aaa111aaa111aaa111aaa1',
+				undefined
+			);
+		});
+
+		// The layer stack answers Escape at capture on `window`, so the filter box
+		// never sees the key - the viewer has to clear the query itself or Escape
+		// throws the whole log away from under a user who was only resetting a filter.
+		it('clears the query on Escape before it closes the viewer', async () => {
+			const onClose = vi.fn();
+			gitLogMock().mockResolvedValue({ entries: [createGitLogEntry()], error: undefined });
+			render(<GitLogViewer {...defaultProps} onClose={onClose} />);
+			await waitFor(() => {
+				expect(screen.queryByText('Loading git log...')).not.toBeInTheDocument();
+			});
+
+			fireEvent.change(searchBox(), { target: { value: 'wand' } });
+			const onEscape = mockRegisterLayer.mock.calls[0][0].onEscape;
+
+			onEscape();
+			await waitFor(() => expect(searchBox()).toHaveValue(''));
+			expect(onClose).not.toHaveBeenCalled();
+
+			onEscape();
+			expect(onClose).toHaveBeenCalled();
+		});
+
+		it('focuses the box on Cmd+F and on a bare slash', async () => {
+			await renderWithCommits();
+
+			fireEvent.keyDown(window, { key: '/' });
+			await waitFor(() => expect(searchBox()).toHaveFocus());
+
+			searchBox().blur();
+			fireEvent.keyDown(window, { key: 'f', metaKey: true });
+			await waitFor(() => expect(searchBox()).toHaveFocus());
+		});
+
+		// j/k navigate the log, but inside the filter box they are letters. Stealing
+		// them there makes half the alphabet untypeable.
+		it('leaves the navigation letters alone while the caret is in the box', async () => {
+			await renderWithCommits();
+			const box = searchBox();
+			box.focus();
+
+			fireEvent.keyDown(box, { key: 'j' });
+
+			expect(screen.getByText(/Commit 1 of 3/)).toBeInTheDocument();
+		});
+
+		it('still steps the list with the arrows from inside the box', async () => {
+			await renderWithCommits();
+			const box = searchBox();
+			box.focus();
+
+			fireEvent.keyDown(box, { key: 'ArrowDown' });
+
+			await waitFor(() => expect(screen.getByText(/Commit 2 of 3/)).toBeInTheDocument());
+		});
+
+		it('filters the graph too, and contracts it so the lines survive', async () => {
+			vi.mocked(window.maestro.git.graph).mockResolvedValue({
+				nodes: [
+					{
+						hash: 'm1',
+						shortHash: 'm1',
+						parents: ['c2'],
+						refs: [],
+						author: 'A',
+						date: '2026-08-28T10:05:00Z',
+						subject: 'feat(wand): sparkle',
+					},
+					{
+						hash: 'c2',
+						shortHash: 'c2',
+						parents: ['c1'],
+						refs: [],
+						author: 'A',
+						date: '2026-08-28T10:03:00Z',
+						subject: 'chore: unrelated',
+					},
+					{
+						hash: 'c1',
+						shortHash: 'c1',
+						parents: [],
+						refs: [],
+						author: 'A',
+						date: '2026-08-28T10:01:00Z',
+						subject: 'perf(wand): svg root',
+					},
+				],
+				error: undefined,
+			});
+			await renderWithCommits();
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+			await waitFor(() =>
+				expect(screen.getByTestId('graph-view')).toHaveAttribute('data-nodes', 'm1,c2,c1')
+			);
+
+			fireEvent.change(searchBox(), { target: { value: 'wand' } });
+
+			await waitFor(() =>
+				expect(screen.getByTestId('graph-view')).toHaveAttribute('data-nodes', 'm1,c1')
+			);
+			// The count follows the view the user is looking at.
+			expect(screen.getByText('2 of 3')).toBeInTheDocument();
 		});
 	});
 

@@ -46,7 +46,10 @@ const bootstrapStore = new Store<BootstrapSettings>({
  */
 export interface GroupChatParticipant {
 	name: string;
+	/** Provider type (e.g. `claude-code`), NOT the Maestro agent. See `sourceSessionId`. */
 	agentId: string;
+	/** GUID of the Maestro agent this participant was added from (survives a rename). */
+	sourceSessionId?: string;
 	/** Internal process session ID (used for routing) */
 	sessionId: string;
 	/** Agent's session ID (e.g., Claude Code's session GUID for continuity) */
@@ -111,6 +114,11 @@ export type GroupChatUpdate = Partial<
 		| 'requireIdleParticipants'
 	>
 >;
+
+export interface ParticipantRemovalResult {
+	chat: GroupChat;
+	removed: boolean;
+}
 
 /**
  * Get the Maestro config directory path.
@@ -251,7 +259,23 @@ export async function loadGroupChat(id: string): Promise<GroupChat | null> {
 			// Empty file treated as non-existent
 			return null;
 		}
-		return JSON.parse(content) as GroupChat;
+		const parsed: unknown = JSON.parse(content);
+		// Valid JSON that is not an object (`null`, an array) is as unusable as a
+		// corrupt file. Reading its paths would throw past the catch below and fail
+		// listGroupChats for every healthy room.
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+			return null;
+		}
+		const chat = parsed as GroupChat;
+		// Both paths are a function of the id. Metadata that lacks them used to
+		// hand `undefined` to every reader, so the chat could never open again
+		// (MAESTRO-170/171). Fill them in; the next metadata write keeps them.
+		return {
+			...chat,
+			logPath: typeof chat.logPath === 'string' && chat.logPath ? chat.logPath : getLogPath(id),
+			imagesDir:
+				typeof chat.imagesDir === 'string' && chat.imagesDir ? chat.imagesDir : getImagesDir(id),
+		};
 	} catch (error: unknown) {
 		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
 			return null;
@@ -398,22 +422,42 @@ export function addParticipantToChat(
  * @returns The updated GroupChat object
  */
 export function removeParticipantFromChat(id: string, participantName: string): Promise<GroupChat> {
+	return removeParticipantFromChatWithResult(id, participantName).then((result) => result.chat);
+}
+
+/**
+ * Remove a participant from a group chat by name and report whether storage changed.
+ *
+ * @param id - The group chat ID
+ * @param participantName - The name of the participant to remove
+ * @returns The updated group chat and whether a participant was removed
+ */
+export function removeParticipantFromChatWithResult(
+	id: string,
+	participantName: string
+): Promise<ParticipantRemovalResult> {
 	return enqueueWrite(id, async () => {
 		const chat = await loadGroupChat(id);
 		if (!chat) {
 			throw new Error(`Group chat not found: ${id}`);
 		}
 
+		const participants = chat.participants.filter((p) => p.name !== participantName);
+		const removed = participants.length !== chat.participants.length;
+		if (!removed) {
+			return { chat, removed };
+		}
+
 		const updated: GroupChat = {
 			...chat,
-			participants: chat.participants.filter((p) => p.name !== participantName),
+			participants,
 			updatedAt: Date.now(),
 		};
 
 		const metadataPath = getMetadataPath(id);
 		await atomicWriteJson(metadataPath, updated);
 
-		return updated;
+		return { chat: updated, removed };
 	});
 }
 
@@ -450,6 +494,7 @@ export type ParticipantUpdate = Partial<
 		| 'processingTimeMs'
 		| 'agentSessionId'
 		| 'totalCost'
+		| 'sourceSessionId'
 	>
 >;
 

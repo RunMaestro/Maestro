@@ -95,6 +95,39 @@ describe('checkPromptEcho', () => {
 		expect(checkPromptEcho(prompt, logged)).toBeNull();
 	});
 
+	it('passes when the editor composed decomposed Unicode (NFD in, NFC logged)', () => {
+		// The Pedsidian command-bus failure: iMessage context carried "Lagardère"
+		// and claude logged "Lagardère", so a whole prompt read as truncated.
+		const prompt = `${longPrompt()}\n\nParadies Lagardère (Hut's) and more.`;
+		expect(checkPromptEcho(prompt, prompt.normalize('NFC'))).toBeNull();
+	});
+
+	it('passes when the editor logged part of the typing as a paste', () => {
+		// claude 2.1.294+ wraps a span it read as a paste in paste markers; the
+		// synopsis turns that failed this way had every character inside them.
+		const prompt = `Give a brief synopsis.\n\n${longPrompt()}`;
+		const split = prompt.indexOf('Rule 3:');
+		const logged = `\n\n<pasted_content id="bb60">\n${prompt.slice(0, split)}\n</pasted_content id="bb60">\n\n${prompt.slice(split)}`;
+		expect(checkPromptEcho(prompt, logged)).toBeNull();
+	});
+
+	it('still fails a real hole inside a paste-wrapped echo', () => {
+		const prompt = longPrompt();
+		const logged = `<pasted_content id="855e">\n${prompt.slice(1022)}\n</pasted_content id="855e">`;
+		const mismatch = checkPromptEcho(prompt, logged);
+		expect(mismatch).not.toBeNull();
+		expect(mismatch!.missingFrom.startsWith('Rule 0:')).toBe(true);
+	});
+
+	it('points the snippet at the hole even after a decomposed character', () => {
+		const prompt = `Café first. ${longPrompt()}`;
+		const holeStart = prompt.indexOf('Rule 5:');
+		const logged = (prompt.slice(0, holeStart) + prompt.slice(holeStart + 1022)).normalize('NFC');
+		const mismatch = checkPromptEcho(prompt, logged);
+		expect(mismatch).not.toBeNull();
+		expect(mismatch!.missingFrom.startsWith('Rule 5:')).toBe(true);
+	});
+
 	it('fails on the Cue failure: a 1,022-byte hole in the middle of the prompt', () => {
 		const prompt = longPrompt();
 		const holeStart = 900;

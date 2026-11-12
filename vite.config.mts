@@ -9,8 +9,13 @@ const packageJson = JSON.parse(readFileSync(path.join(__dirname, 'package.json')
 // Use VITE_APP_VERSION env var if set (during CI builds), otherwise use package.json
 const appVersion = process.env.VITE_APP_VERSION || packageJson.version;
 
-// Get the first 8 chars of git commit hash for dev mode
+// Get the first 8 chars of the git commit hash. Honors VITE_COMMIT_HASH when set
+// (CI builds from a tarball / shallow checkout where `git rev-parse` may fail),
+// otherwise reads it from the local repo. Empty string when neither is available.
 function getCommitHash(): string {
+	if (process.env.VITE_COMMIT_HASH) {
+		return process.env.VITE_COMMIT_HASH.trim().slice(0, 8);
+	}
 	try {
 		// Note: execSync is safe here - no user input, static git command
 		return execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim().slice(0, 8);
@@ -43,8 +48,10 @@ export default defineConfig(({ mode }) => ({
 		// artifact, not in source, so a build from source reports nowhere - this flag is
 		// the renderer's copy of that decision. See src/shared/buildProvenance.ts.
 		__CRASH_REPORTING_BUILD__: JSON.stringify(Boolean(process.env.MAESTRO_SENTRY_DSN?.trim())),
-		// Show commit hash only in development mode
-		__COMMIT_HASH__: JSON.stringify(mode === 'development' ? getCommitHash() : ''),
+		// Embed the commit hash in every build (dev AND production) so the About modal
+		// can show exactly what HEAD a local/packaged build was cut from. Empty only
+		// when git isn't reachable and VITE_COMMIT_HASH isn't set.
+		__COMMIT_HASH__: JSON.stringify(getCommitHash()),
 		// Explicitly define NODE_ENV for React and related packages
 		'process.env.NODE_ENV': JSON.stringify(mode),
 	},
@@ -68,6 +75,12 @@ export default defineConfig(({ mode }) => ({
 	build: {
 		outDir: path.join(__dirname, 'dist/renderer'),
 		emptyOutDir: true,
+		// Release CI sets MAESTRO_RENDERER_SOURCEMAPS=1 so it can upload the maps
+		// to Sentry (renderer frames otherwise arrive as minified
+		// `app://app/assets/index-XXXX.js` columns). 'hidden' writes the .map files
+		// without a sourceMappingURL comment, and the workflow deletes them before
+		// packaging, so no map ships inside the app. Local and fork builds skip it.
+		sourcemap: process.env.MAESTRO_RENDERER_SOURCEMAPS === '1' ? 'hidden' : false,
 		// TODO(vite-css): revisit this pin once one of these is true:
 		//   1) lightningcss tolerates xterm's malformed selectors (see
 		//      `[-:\s|]`-style class on or near style.css line ~2801)
@@ -77,6 +90,13 @@ export default defineConfig(({ mode }) => ({
 		// strict about malformed CSS that esbuild's minifier silently passed
 		// through. esbuild here matches prior (Vite 5-7) behavior.
 		cssMinify: 'esbuild',
+		// Never inline a font as a data: URI. The renderer CSP is `font-src 'self'`
+		// (src/renderer/index.html), so an inlined font is blocked and its glyphs
+		// fall back silently. Vite inlines anything under 4 KB, which caught
+		// KaTeX_Size3.woff2 and broke size-3 math delimiters in packaged builds.
+		// Other assets keep Vite's default limit (undefined defers to it).
+		assetsInlineLimit: (filePath: string) =>
+			/\.(woff2?|ttf|otf|eot)$/i.test(filePath) ? false : undefined,
 		// Disable modulepreload polyfill - Electron loads from local filesystem
 		modulePreload: false,
 		rollupOptions: {
@@ -137,12 +157,20 @@ export default defineConfig(({ mode }) => ({
 									if (!resolvedMatch) {
 										throw new Error(
 											`skip-xterm-minify: could not resolve placeholder ${placeholder} ` +
-												`in ${asset.fileName} — Rolldown internals may have changed.`
+												`in ${asset.fileName} - Rolldown internals may have changed.`
 										);
 									}
 									fixed = fixed.split(placeholder).join(`${prefix}-${resolvedMatch[1]}.${ext}`);
 								}
 								asset.code = fixed;
+								// The chunk's map describes the minified code just discarded, so
+								// with source maps on (release builds, for Sentry) it would point
+								// every xterm frame at the wrong line. Drop it rather than upload
+								// a lie; the shipped code is unminified and readable without one.
+								// Rolldown emits the map as its own bundle entry, so removing that
+								// entry is what keeps the file from being written.
+								asset.map = null;
+								delete bundle[`${asset.fileName}.map`];
 							}
 							xtermPreMinifyCache.clear();
 						},

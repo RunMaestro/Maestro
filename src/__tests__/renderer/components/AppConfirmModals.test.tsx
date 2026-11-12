@@ -17,7 +17,8 @@ import type { Theme, Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // Mock lucide-react
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	AlertTriangle: () => <svg data-testid="alert-triangle-icon" />,
 	X: () => <svg data-testid="x-icon" />,
 	Trash2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (

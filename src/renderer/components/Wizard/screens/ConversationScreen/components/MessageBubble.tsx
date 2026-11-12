@@ -2,7 +2,7 @@ import type { Theme } from '../../../../../types';
 import type { WizardMessage } from '../../../WizardContext';
 import { getConfidenceColor } from '../../../services/wizardPrompts';
 import { formatAgentName } from '../../../shared/wizardHelpers';
-import { Markdown } from '../../../../Markdown';
+import { WizardMarkdown } from '../../../shared/WizardMarkdown';
 import { formatTimestamp } from '../../../../../../shared/formatters';
 
 export function MessageBubble({
@@ -72,7 +72,7 @@ export function MessageBubble({
 					{isUser ? (
 						<span className="whitespace-pre-wrap">{message.content}</span>
 					) : (
-						<Markdown preset="wizard-bubble" theme={theme} content={message.content} />
+						<WizardMarkdown theme={theme} content={message.content} />
 					)}
 				</div>
 

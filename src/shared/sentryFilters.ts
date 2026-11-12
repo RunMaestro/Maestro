@@ -46,6 +46,16 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	// Out of disk space - user environment, never a Maestro bug.
 	if (/ENOSPC: no space left on device/i.test(haystack)) return true;
 
+	// The same out-of-disk condition as above, worded by SQLite instead of libuv.
+	// better-sqlite3 raises `SqliteError: database or disk is full` (SQLITE_FULL)
+	// from any write once the volume fills, which lights up every stats / cue DB
+	// writer at once - the query-event buffer flush is just the one that reached
+	// us first (MAESTRO-ZD). Those writes are best-effort telemetry and the code
+	// already drops the batch rather than retrying, so there is nothing to fix.
+	// Narrow on purpose: SQLITE_CORRUPT, SQLITE_BUSY and I/O errors still report,
+	// because those are the shapes that can indicate a real bug of ours.
+	if (/database or disk is full/i.test(haystack)) return true;
+
 	// Broken pipe writing to a closed stdout/stderr (process torn down underneath us).
 	// Two message shapes reach us: libuv fs-style writes surface as `EPIPE: broken pipe`,
 	// while Node stream/socket writes (console.* into a stdout pipe whose reader already
@@ -79,8 +89,12 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	const ipcMatch = haystack.match(/Error invoking remote method '([^']+)'/);
 	const ipcMethod = ipcMatch ? ipcMatch[1] : '';
 	if (ipcMethod === 'fs:stat' || ipcMethod === 'fs:readFile') {
+		// ENAMETOOLONG is the same miss: a sentence of agent prose that starts with
+		// `/` gets linked as a path, and clicking it asks the OS to stat a "file
+		// name" hundreds of bytes long (MAESTRO-16F/16G/176).
 		if (
 			/ENOENT: no such file or directory/i.test(haystack) ||
+			/ENAMETOOLONG: name too long/i.test(haystack) ||
 			/File not found:/i.test(haystack) ||
 			/Path not found:/i.test(haystack) ||
 			/EISDIR: illegal operation on a directory/i.test(haystack)
@@ -97,7 +111,11 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	// code, and the delete is user-initiated - the caller already shows a
 	// "Failed to Erase Directory" toast carrying this message, so the user knows
 	// and can retry. The crash report on top of that is pure noise (MAESTRO-9V).
-	if (ipcMethod === 'shell:trashItem' && /Failed to perform delete operation/i.test(haystack)) {
+	// Linux words the same refusal "Failed to move item to trash" (MAESTRO-15T).
+	if (
+		ipcMethod === 'shell:trashItem' &&
+		/Failed to (perform delete operation|move item to trash)/i.test(haystack)
+	) {
 		return true;
 	}
 
@@ -155,6 +173,21 @@ export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	// ---- 5. Network failures (user offline) ----
 
 	if (/MarketplaceFetchError: Network error fetching .*: fetch failed/i.test(haystack)) return true;
+	// The same unreachable GitHub, worded by our own 30s fetch timeout instead of
+	// undici: a connection that stalls rather than refuses (slow or filtered
+	// network). The refresh already falls back to the cached manifest. (MAESTRO-18K)
+	if (
+		/MarketplaceFetchError: Network error fetching .*: Request to \S+ timed out after \d+ms/i.test(
+			haystack
+		)
+	) {
+		return true;
+	}
+
+	// GitHub raw rate-limits us (429) and serves 5xx during its own incidents.
+	// The import still fails visibly in the UI; there's nothing to fix on our
+	// side, and a 404 is raised as a distinct "not found" error. (MAESTRO-TY)
+	if (/MarketplaceFetchError: Failed to fetch [^:]+: (429|5\d\d) /i.test(haystack)) return true;
 	if (
 		/error connecting to api\.github\.com/i.test(haystack) ||
 		/check your internet connection/i.test(haystack) ||

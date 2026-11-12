@@ -72,6 +72,12 @@ export interface SpawnGroupChatAgentConfig {
 	 * full 10 minutes. Same contract Cue follows. Ignored on the API path.
 	 */
 	maxWaitSeconds?: number;
+	/**
+	 * `cwd` is the agent's own working directory, so maestro-p may accept
+	 * claude's folder-trust prompt there (#1872). Leave unset for any other
+	 * folder (the moderator's, a synthesis scratch dir).
+	 */
+	acceptWorkspaceTrust?: boolean;
 }
 
 export interface SpawnGroupChatAgentResult {
@@ -158,6 +164,7 @@ export async function spawnGroupChatAgent(
 			args,
 			customEnvVars,
 			maxWaitSeconds: config.maxWaitSeconds,
+			acceptWorkspaceTrust: config.acceptWorkspaceTrust,
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
@@ -187,6 +194,7 @@ export async function spawnGroupChatAgent(
 			interactiveModeArgs: agent.interactiveModeArgs,
 			remoteClaudeBin: claudeDecision.claudeRealBinPath,
 			maxWaitSeconds: config.maxWaitSeconds,
+			acceptWorkspaceTrust: config.acceptWorkspaceTrust,
 		});
 		if (remoteInteractive && debugLabel) {
 			console.log(

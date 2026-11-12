@@ -1,5 +1,6 @@
 import type { FilePreviewHistoryEntry, FilePreviewTab } from '../../../types';
 import type { FileTabOpenParams } from './types';
+import { generateId } from '../../../utils/ids';
 
 export interface FileNameParts {
 	nameWithoutExtension: string;
@@ -115,4 +116,28 @@ export function buildReplacementNavigationHistory(
 			scrollTop: 0,
 		},
 	];
+}
+
+/**
+ * Build a blank, unsaved file tab ("Untitled", open in edit mode). Shared by the
+ * New File action and by the tile-below commands, which need the same tab shape
+ * without the session activation the handler applies around it.
+ */
+export function createUntitledFileTab(): FilePreviewTab {
+	return {
+		id: generateId(),
+		path: '',
+		name: 'Untitled',
+		extension: '',
+		content: '',
+		scrollTop: 0,
+		searchQuery: '',
+		editMode: true,
+		editContent: '',
+		createdAt: Date.now(),
+		lastModified: Date.now(),
+		isLoading: false,
+		navigationHistory: [],
+		navigationIndex: -1,
+	};
 }

@@ -26,6 +26,7 @@ import { captureException } from '../../utils/sentry';
 import { resolveFileReference } from '../../utils/fileLinks/resolve';
 import { getBasename } from '../../../shared/formatters';
 import { isTextInputTarget } from '../../utils/messageScrollNavigation';
+import { readPathForOpen, revealPathInFileTree } from '../../services/fileTreeReveal';
 
 // ============================================================================
 // Dependencies interface
@@ -95,8 +96,15 @@ export function useFileExplorerEffects(
 	} = deps;
 
 	// --- Store subscriptions ---
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
-	const activeSession = useSessionStore(selectActiveSession);
+	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
+	// wake App via this hook. Subscribe only to file-explorer fields needed for
+	// tree flatten / jump / keyboard expand state. Use the resolved agent id
+	// (same fallback as selectActiveSession) so jump clear / toggleFolder match
+	// the session those fields came from.
+	const activeSessionId = useSessionStore((s) => selectActiveSession(s)?.id);
+	const fileTree = useSessionStore((s) => selectActiveSession(s)?.fileTree);
+	const fileExplorerExpanded = useSessionStore((s) => selectActiveSession(s)?.fileExplorerExpanded);
+	const pendingJumpPath = useSessionStore((s) => selectActiveSession(s)?.pendingJumpPath);
 	const setSessions = useMemo(() => useSessionStore.getState().setSessions, []);
 
 	const activeFocus = useUIStore((s) => s.activeFocus);
@@ -127,7 +135,7 @@ export function useFileExplorerEffects(
 	// stableFileTree - prevents FilePreview re-renders during agent activity
 	// ====================================================================
 
-	const stableFileTree = useMemo(() => activeSession?.fileTree || [], [activeSession?.fileTree]);
+	const stableFileTree = useMemo(() => fileTree || [], [fileTree]);
 
 	// ====================================================================
 	// handleMainPanelFileClick - open [[wiki]] and path links in markdown
@@ -151,20 +159,17 @@ export function useFileExplorerEffects(
 			}
 
 			try {
-				// Fetch content and stat in parallel for efficiency
-				const [content, stat] = await Promise.all([
-					window.maestro.fs.readFile(fullPath, sshRemoteId),
-					window.maestro.fs.stat(fullPath, sshRemoteId).catch((err) => {
-						// ENOENT is expected (file may have been deleted between listing and open)
-						if (err?.code === 'ENOENT') return null;
-						captureException(err, {
-							extra: { fullPath, operation: 'file-stat', sshRemoteId },
-						});
-						return null;
-					}),
-				]);
-				if (content === null) return;
-				const lastModified = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : undefined;
+				const target = await readPathForOpen(fullPath, sshRemoteId);
+				if (!target) return;
+				if (target.kind === 'directory') {
+					// A folder has no preview: take the user to it in the Files panel.
+					// One outside the tree can't be shown there, so hand it to the OS.
+					if (!revealPathInFileTree(currentSession.id, fullPath, { focus: true }) && !sshRemoteId) {
+						void window.maestro.shell.openPath(fullPath);
+					}
+					return;
+				}
+				const { content, lastModified } = target;
 				handleOpenFileTab(
 					{
 						path: fullPath,
@@ -195,6 +200,7 @@ export function useFileExplorerEffects(
 	// ====================================================================
 
 	useEffect(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (
 			activeSession &&
 			fileTreeContainerRef.current &&
@@ -209,12 +215,12 @@ export function useFileExplorerEffects(
 	// ====================================================================
 
 	useEffect(() => {
-		if (!activeSession || !activeSession.fileExplorerExpanded) {
+		if (!fileExplorerExpanded) {
 			setFilteredFileTree([]);
 			setFlatFileList([]);
 			return;
 		}
-		const expandedSet = new Set(activeSession.fileExplorerExpanded);
+		const expandedSet = new Set(fileExplorerExpanded);
 
 		// Apply hidden files filter to match FileExplorerPanel's display
 		const filterHiddenFiles = (nodes: FileNode[]): FileNode[] => {
@@ -244,38 +250,38 @@ export function useFileExplorerEffects(
 
 		setFilteredFileTree(filteredFileTree);
 		setFlatFileList(newFlatList);
-	}, [activeSession?.fileExplorerExpanded, filteredFileTree, showHiddenFiles]);
+	}, [fileExplorerExpanded, filteredFileTree, showHiddenFiles]);
 
 	// ====================================================================
-	// Effect: Handle pending jump path from /jump command
+	// Effect: Select the row a reveal asked for (revealPathInFileTree)
 	// ====================================================================
 
 	useEffect(() => {
-		if (!activeSession || activeSession.pendingJumpPath === undefined || flatFileList.length === 0)
-			return;
+		if (pendingJumpPath === undefined || flatFileList.length === 0 || !activeSessionId) return;
 
-		const jumpPath = activeSession.pendingJumpPath;
-		let targetIndex = 0;
-
-		if (jumpPath === '') {
-			targetIndex = 0;
-		} else {
-			const folderIndex = flatFileList.findIndex(
-				(item) => item.fullPath === jumpPath && item.isFolder
-			);
-			if (folderIndex !== -1) {
-				targetIndex = folderIndex;
-			}
-		}
+		const targetIndex =
+			pendingJumpPath === ''
+				? 0
+				: flatFileList.findIndex((item) => item.fullPath === pendingJumpPath);
+		// Not in the list yet: the reveal just expanded its ancestors, and a folder
+		// past the scan depth cap only appears once the rescan that expansion
+		// triggers lands. Keep the request until the row exists.
+		if (targetIndex === -1) return;
 
 		fileTreeKeyboardNavRef.current = true;
 		setSelectedFileIndex(targetIndex);
+		// A reveal that moved the app's focus to the Files tab moves real DOM focus
+		// with it, so arrow keys and Enter drive the tree rather than the chat.
+		const ui = useUIStore.getState();
+		if (ui.activeFocus === 'right' && ui.activeRightTab === 'files') {
+			requestAnimationFrame(() => fileTreeContainerRef.current?.focus());
+		}
 
 		// Clear the pending jump path
 		setSessions((prev) =>
-			prev.map((s) => (s.id === activeSession.id ? { ...s, pendingJumpPath: undefined } : s))
+			prev.map((s) => (s.id === activeSessionId ? { ...s, pendingJumpPath: undefined } : s))
 		);
-	}, [activeSession?.pendingJumpPath, flatFileList, activeSession?.id]);
+	}, [pendingJumpPath, flatFileList, activeSessionId]);
 
 	// ====================================================================
 	// Effect: Scroll to selected file on keyboard navigation
@@ -325,8 +331,9 @@ export function useFileExplorerEffects(
 
 			if (activeFocus !== 'right' || activeRightTab !== 'files' || flatFileList.length === 0)
 				return;
+			if (!activeSessionId) return;
 
-			const expandedFolders = new Set(activeSession?.fileExplorerExpanded || []);
+			const expandedFolders = new Set(fileExplorerExpanded || []);
 
 			// Collapse the multi-selection and re-anchor at `index`. Called by every
 			// non-extending move (plain/Cmd/Option arrows, ArrowLeft-to-parent) so the
@@ -450,8 +457,8 @@ export function useFileExplorerEffects(
 		activeRightTab,
 		flatFileList,
 		selectedFileIndex,
-		activeSession?.fileExplorerExpanded,
 		activeSessionId,
+		fileExplorerExpanded,
 		setSessions,
 		toggleFolder,
 		handleFileClick,

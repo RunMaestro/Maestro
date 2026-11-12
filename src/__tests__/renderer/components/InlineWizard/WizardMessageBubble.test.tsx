@@ -344,14 +344,15 @@ describe('WizardMessageBubble', () => {
 			expect(quote.closest('blockquote')).toBeInTheDocument();
 		});
 
-		it('renders markdown links as buttons in assistant messages', () => {
+		it('renders markdown links as chat-preset anchors in assistant messages', () => {
 			const message = createMessage({
 				role: 'assistant',
 				content: 'Check out [this link](https://example.com)',
 			});
 			render(<WizardMessageBubble message={message} theme={mockTheme} />);
-			const link = screen.getByText('this link');
-			expect(link.tagName).toBe('BUTTON');
+			const link = screen.getByText('this link').closest('a');
+			expect(link).toBeInTheDocument();
+			expect(link).toHaveAttribute('href', 'https://example.com');
 		});
 
 		it('opens external links when clicked', () => {

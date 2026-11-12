@@ -12,6 +12,8 @@ import { detectLanguage } from '../../utils/shiki/languageDetect';
 import { useDebouncedValue } from '../../hooks/utils/useThrottle';
 import { LanguagePicker } from './LanguagePicker';
 import { CodeCopyButton } from './CodeCopyButton';
+import { CodeRunButton } from './CodeRunButton';
+import { commandFromShellFence, isRunnableShellLanguage } from '../../utils/shellCommandInput';
 
 interface CodeFenceProps {
 	/** Raw fence tag from the markdown (e.g. `'ts'`, `''`, `'TypeScript'`). */
@@ -20,6 +22,12 @@ interface CodeFenceProps {
 	code: string;
 	theme: Theme;
 	onCopy: (text: string) => void;
+	/**
+	 * Run a shell fence's command in command mode. When present, fences whose
+	 * resolved language is a shell get a Run button beside the copy button.
+	 * Omitted wherever the fence is not an agent's own reply in a live tab.
+	 */
+	onRun?: (command: string, mode: 'run' | 'prefill') => void;
 }
 
 const FALLBACK_LANG = 'text';
@@ -46,6 +54,7 @@ export const CodeFence = memo(function CodeFence({
 	code,
 	theme,
 	onCopy,
+	onRun,
 }: CodeFenceProps) {
 	// What the picker shows / what Shiki renders. Starts from the fence tag
 	// (resolved against our local alias table so common short tags like `js`
@@ -131,6 +140,11 @@ export const CodeFence = memo(function CodeFence({
 		};
 	}, [resolvedLang, code, theme.mode]);
 
+	// Keyed on the RESOLVED language, so an untagged fence detected as a shell,
+	// or one the user re-tags in the picker, gets the button too.
+	const runnableCommand =
+		onRun && isRunnableShellLanguage(resolvedLang) ? commandFromShellFence(code) : '';
+
 	const handlePickerChange = (lang: string) => {
 		userOverrodeRef.current = true;
 		setResolvedLang(lang);
@@ -184,6 +198,9 @@ export const CodeFence = memo(function CodeFence({
 				<pre style={fallbackPreStyle}>
 					<code>{code}</code>
 				</pre>
+			)}
+			{onRun && runnableCommand && (
+				<CodeRunButton command={runnableCommand} theme={theme} onRun={onRun} />
 			)}
 			<CodeCopyButton code={code} theme={theme} onCopy={onCopy} />
 		</div>

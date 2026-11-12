@@ -30,6 +30,15 @@ interface RunDocOptions {
 	verbose?: boolean;
 	synopsis?: boolean; // --no-synopsis => synopsis: false
 	wait?: boolean;
+	/**
+	 * Run-scoped model/effort overrides. When set they win over the agent's
+	 * configured `customModel` / `customEffort` for this run's spawns only and
+	 * are never written back to the stored session.
+	 */
+	model?: string;
+	effort?: string;
+	/** Skip the documents' MAESTRO:MODEL markers for this run (--ignore-model-hints). */
+	ignoreModelHints?: boolean;
 }
 
 /**
@@ -200,6 +209,13 @@ export async function runDoc(docs: string[], options: RunDocOptions): Promise<vo
 				const loopInfo = maxLoops ? `max ${maxLoops}` : '∞';
 				console.log(formatInfo(`Loop: enabled (${loopInfo})`));
 			}
+			const runModel = options.model?.trim();
+			const runEffort = options.effort?.trim();
+			if (runModel) console.log(formatInfo(`Model: ${runModel} (this run only)`));
+			if (runEffort) console.log(formatInfo(`Effort: ${runEffort} (this run only)`));
+			if (options.ignoreModelHints) {
+				console.log(formatInfo('Model hints in documents: ignored (this run only)'));
+			}
 			if (options.dryRun) {
 				console.log(formatInfo('Dry run mode - no changes will be made'));
 			}
@@ -213,6 +229,9 @@ export async function runDoc(docs: string[], options: RunDocOptions): Promise<vo
 			debug: options.debug,
 			verbose: options.verbose,
 			skipSynopsis: options.synopsis === false,
+			model: options.model?.trim() || undefined,
+			effort: options.effort?.trim() || undefined,
+			ignoreModelHints: options.ignoreModelHints || undefined,
 		});
 
 		for await (const event of generator) {

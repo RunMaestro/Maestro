@@ -9,7 +9,7 @@
  * - Assistant messages: left-aligned with bgActivity background
  * - System messages: left-aligned with warning-tinted background
  * - Timestamp display in bottom-right
- * - Markdown rendering with ReactMarkdown + remarkGfm
+ * - Full chat markdown rendering (diagrams, SVG, images, math) via WizardMarkdown
  * - Confidence badge for assistant messages (when confidence is available)
  */
 
@@ -17,8 +17,9 @@ import React from 'react';
 import type { Theme } from '../../types';
 import { getConfidenceColor } from '../Wizard/services/wizardPrompts';
 import { formatAgentName } from '../Wizard/shared/wizardHelpers';
-import { Markdown } from '../Markdown';
+import { WizardMarkdown } from '../Wizard/shared/WizardMarkdown';
 import { formatTimestamp } from '../../../shared/formatters';
+import { displayImageSrc } from '../../utils/sessionImageSrc';
 
 /**
  * Message structure for wizard conversations
@@ -132,7 +133,7 @@ export const WizardMessageBubble = React.memo(function WizardMessageBubble({
 					{isUser ? (
 						<span className="whitespace-pre-wrap">{message.content}</span>
 					) : (
-						<Markdown preset="wizard-bubble" theme={theme} content={message.content} />
+						<WizardMarkdown theme={theme} content={message.content} />
 					)}
 				</div>
 
@@ -146,7 +147,7 @@ export const WizardMessageBubble = React.memo(function WizardMessageBubble({
 						{message.images.map((img, imgIdx) => (
 							<img
 								key={imgIdx}
-								src={img}
+								src={displayImageSrc(img)}
 								alt={`Attached image ${imgIdx + 1}`}
 								className="h-20 rounded border cursor-zoom-in shrink-0"
 								style={{

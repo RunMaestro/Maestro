@@ -207,6 +207,15 @@ describe('wizardPrompts', () => {
 				expect(result.structured?.message).toBe('What type of project?');
 			});
 
+			it('should parse a fenced JSON envelope whose message carries its own mermaid fence', () => {
+				const message = 'Mockup:\n\n```mermaid\nflowchart LR\n  A --> B\n```';
+				const input = `\`\`\`json\n${JSON.stringify({ confidence: 50, ready: false, message })}\n\`\`\``;
+				const result = parseStructuredOutput(input);
+
+				expect(result.parseSuccess).toBe(true);
+				expect(result.structured?.message).toBe(message);
+			});
+
 			it('should extract JSON from ``` code block without language', () => {
 				const input = '```\n{"confidence": 40, "ready": false, "message": "Tell me more"}\n```';
 				const result = parseStructuredOutput(input);
@@ -350,6 +359,15 @@ describe('wizardPrompts', () => {
 				expect(result.parseSuccess).toBe(false);
 				// Should have removed the code block markers
 				expect(result.structured?.message).not.toContain('```');
+			});
+
+			it('should keep fences inside the reply so a mockup diagram still renders', () => {
+				const input =
+					'Here is a rough flow:\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\nDoes this match? confidence: 40';
+				const result = parseStructuredOutput(input);
+
+				expect(result.parseSuccess).toBe(false);
+				expect(result.structured?.message).toContain('```mermaid\nflowchart LR\n  A --> B\n```');
 			});
 
 			it('should use raw text as message when cleanup results in empty string', () => {

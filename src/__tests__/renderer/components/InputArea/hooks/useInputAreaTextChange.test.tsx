@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { useRef } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useInputAreaTextChange } from '../../../../../renderer/components/InputArea/hooks/useInputAreaTextChange';
 
 function Harness({
@@ -38,6 +38,10 @@ function Harness({
 }
 
 describe('useInputAreaTextChange', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
 	function createHandlers() {
 		return {
 			setInputValue: vi.fn(),
@@ -101,41 +105,80 @@ describe('useInputAreaTextChange', () => {
 		expect(handlers.setAtMentionOpen).not.toHaveBeenCalled();
 	});
 
-	it('pins the scroll to the bottom after a keystroke when the caret is at the end', () => {
+	it('scrolls the resized textarea to the caret at the end during the keystroke frame', () => {
 		const handlers = createHandlers();
-		const rafSpy = vi
-			.spyOn(window, 'requestAnimationFrame')
-			.mockImplementation((cb: FrameRequestCallback) => {
-				cb(0);
-				return 0;
-			});
+		const runAnimationFrame = vi.fn((callback: FrameRequestCallback): number => {
+			callback(0);
+			return 1;
+		});
+		vi.stubGlobal('requestAnimationFrame', runAnimationFrame);
 		render(<Harness handlers={handlers} />);
 		const textarea = screen.getByLabelText('input') as HTMLTextAreaElement;
-		Object.defineProperty(textarea, 'scrollHeight', { value: 500, configurable: true });
+		const value = `${'line\n'.repeat(80)}end`;
+		textarea.scrollTop = 0;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 640, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', { value: value.length, configurable: true });
 
-		fireEvent.change(textarea, { target: { value: 'hello world', selectionStart: 11 } });
+		fireEvent.change(textarea, {
+			target: { value, selectionStart: value.length },
+		});
 
-		expect(textarea.scrollTop).toBe(500);
-		rafSpy.mockRestore();
+		expect(runAnimationFrame).toHaveBeenCalledTimes(1);
+		expect(textarea.scrollTop).toBe(640);
 	});
 
-	it('leaves the scroll position alone when editing mid-text', () => {
+	it('preserves the restored scroll when the caret sits before trailing text on the final line', () => {
 		const handlers = createHandlers();
-		const rafSpy = vi
-			.spyOn(window, 'requestAnimationFrame')
-			.mockImplementation((cb: FrameRequestCallback) => {
-				cb(0);
-				return 0;
-			});
+		const runAnimationFrame = vi.fn((callback: FrameRequestCallback): number => {
+			callback(0);
+			return 1;
+		});
+		vi.stubGlobal('requestAnimationFrame', runAnimationFrame);
 		render(<Harness handlers={handlers} />);
 		const textarea = screen.getByLabelText('input') as HTMLTextAreaElement;
-		Object.defineProperty(textarea, 'scrollHeight', { value: 500, configurable: true });
-		textarea.scrollTop = 42;
+		// Content well past TEXTAREA_MAX_HEIGHT, caret in the middle of the final logical
+		// line (what an inserted mention or trailing whitespace leaves behind). That line
+		// can soft-wrap across several visual rows, so the caret is not guaranteed to be
+		// on the bottom row; snapping to scrollHeight would scroll it out of view. The
+		// gate keys off the true end of the value, so this mid-line caret is a no-op and
+		// the scroll resizeTextareaToContent restored survives.
+		const value = `${'line\n'.repeat(80)}trailing`;
+		const caret = value.length - 4;
+		textarea.scrollTop = 96;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 640, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', { value: caret, configurable: true });
 
-		fireEvent.change(textarea, { target: { value: 'hello world', selectionStart: 3 } });
+		fireEvent.change(textarea, {
+			target: { value, selectionStart: caret },
+		});
+
+		expect(runAnimationFrame).toHaveBeenCalledTimes(1);
+		expect(textarea.style.height).toBe('176px');
+		expect(textarea.scrollTop).toBe(96);
+	});
+
+	it('leaves the scroll position alone when editing an earlier line', () => {
+		const handlers = createHandlers();
+		const runAnimationFrame = vi.fn((callback: FrameRequestCallback): number => {
+			callback(0);
+			return 1;
+		});
+		vi.stubGlobal('requestAnimationFrame', runAnimationFrame);
+		render(<Harness handlers={handlers} />);
+		const textarea = screen.getByLabelText('input') as HTMLTextAreaElement;
+		const value = `${'line\n'.repeat(80)}end`;
+		textarea.scrollTop = 42;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 640, configurable: true });
+		// Caret parked on the FIRST line: scrollTextareaToCaretEnd only snaps when the
+		// caret is at the very end of the value, so the keystroke resize must preserve
+		// the scroll rather than jump the viewport to the bottom.
+		Object.defineProperty(textarea, 'selectionEnd', { value: 2, configurable: true });
+
+		fireEvent.change(textarea, {
+			target: { value, selectionStart: 2 },
+		});
 
 		expect(textarea.scrollTop).toBe(42);
-		rafSpy.mockRestore();
 	});
 
 	describe('command mode entry (the ! gesture)', () => {

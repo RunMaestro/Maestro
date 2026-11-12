@@ -9,6 +9,7 @@ export function buildSerializableWizardState(state: WizardState): SerializableWi
 		selectedAgent: state.selectedAgent,
 		agentName: state.agentName,
 		directoryPath: state.directoryPath,
+		additionalDirectories: state.additionalDirectories,
 		isGitRepo: state.isGitRepo,
 		conversationHistory: state.conversationHistory,
 		confidenceLevel: state.confidenceLevel,

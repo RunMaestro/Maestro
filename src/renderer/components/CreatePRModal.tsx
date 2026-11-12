@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, GitPullRequest, AlertTriangle, ExternalLink } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { ModalSubtitle } from './ui/Modal';
 import { Spinner } from './ui/Spinner';
 import type { Theme, GhCliStatus } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
@@ -65,8 +66,16 @@ interface CreatePRModalProps {
 	// Worktree info
 	worktreePath: string;
 	worktreeBranch: string;
+	/**
+	 * Agent whose branch the PR is opened from, shown in the header. Only
+	 * `cwd`/branch reach this component, so without it the modal has no way to
+	 * say which agent a right-click targeted.
+	 */
+	agentName?: string;
 	/** Agent this repo belongs to, recorded on the in-flight creation. */
 	sessionId?: string;
+	/** SSH remote the repo lives on, so the push and `gh pr create` run there. */
+	sshRemoteId?: string;
 	// Available branches for target selection
 	availableBranches: string[];
 }
@@ -94,7 +103,9 @@ export function CreatePRModal({
 	worktreePath,
 	worktreeBranch,
 	sessionId,
+	sshRemoteId,
 	availableBranches,
+	agentName,
 }: CreatePRModalProps) {
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
@@ -161,6 +172,11 @@ export function CreatePRModal({
 	}, [isOpen, availableBranches, runKey]);
 
 	const checkGhCli = async () => {
+		// A remote PR runs gh on the SSH host, which reports its own errors on create
+		if (sshRemoteId) {
+			setGhCliStatus({ installed: true, authenticated: true });
+			return;
+		}
 		try {
 			const status = await window.maestro.git.checkGhCli();
 			setGhCliStatus(status);
@@ -196,6 +212,7 @@ export function CreatePRModal({
 			targetBranch,
 			title: title.trim(),
 			description,
+			sshRemoteId,
 		});
 	};
 
@@ -221,11 +238,12 @@ export function CreatePRModal({
 					className="flex items-center justify-between px-4 py-3 border-b"
 					style={{ borderColor: theme.colors.border }}
 				>
-					<div className="flex items-center gap-2">
-						<GitPullRequest className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h2 className="font-bold" style={{ color: theme.colors.textMain }}>
+					<div className="flex items-center gap-2 min-w-0">
+						<GitPullRequest className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
+						<h2 className="font-bold shrink-0" style={{ color: theme.colors.textMain }}>
 							Create Pull Request
 						</h2>
+						<ModalSubtitle theme={theme} subtitle={agentName} />
 					</div>
 					<GhostIconButton onClick={onClose} ariaLabel="Close">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />

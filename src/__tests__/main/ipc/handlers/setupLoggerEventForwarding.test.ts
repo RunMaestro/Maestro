@@ -17,6 +17,15 @@ vi.mock('../../../../main/utils/logger', () => {
 	};
 });
 
+// Mock the web-desktop bridge fanout so we can assert log batches reach
+// browser clients even when no desktop window is available.
+const { mockBroadcastBridgeEvent } = vi.hoisted(() => ({
+	mockBroadcastBridgeEvent: vi.fn(),
+}));
+vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
+	broadcastBridgeEvent: mockBroadcastBridgeEvent,
+}));
+
 // Lightweight mocks for unrelated modules pulled in transitively by system.ts.
 vi.mock('electron', () => ({
 	ipcMain: { handle: vi.fn(), removeHandler: vi.fn() },
@@ -60,6 +69,7 @@ describe('setupLoggerEventForwarding', () => {
 
 	beforeEach(() => {
 		vi.useFakeTimers();
+		mockBroadcastBridgeEvent.mockClear();
 		mainWindow = {
 			isDestroyed: () => false,
 			webContents: {
@@ -143,5 +153,19 @@ describe('setupLoggerEventForwarding', () => {
 		(logger as unknown as EventEmitter).emit('newLog', { id: 1 });
 		// Should not throw despite the missing window.
 		expect(() => vi.advanceTimersByTime(FLUSH_INTERVAL_MS)).not.toThrow();
+	});
+
+	it('fans the batch out to the web-desktop bridge even when there is no main window', () => {
+		setupLoggerEventForwarding(() => null);
+
+		(logger as unknown as EventEmitter).emit('newLog', { id: 1 });
+		(logger as unknown as EventEmitter).emit('newLog', { id: 2 });
+		vi.advanceTimersByTime(FLUSH_INTERVAL_MS);
+
+		// No desktop renderer, but web-desktop clients still receive the batch.
+		expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+		expect(mockBroadcastBridgeEvent).toHaveBeenCalledWith('logger:newLogBatch', [
+			[{ id: 1 }, { id: 2 }],
+		]);
 	});
 });

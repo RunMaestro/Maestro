@@ -178,6 +178,26 @@ describe('stores/defaults', () => {
 			expect(SETTINGS_DEFAULTS.installationId).toBeNull();
 		});
 
+		it('should enable autoResumeOnLimit by default', () => {
+			expect(SETTINGS_DEFAULTS.autoResumeOnLimit).toBe(true);
+		});
+
+		it('should default autoResumeCheckIntervalHours to 2', () => {
+			expect(SETTINGS_DEFAULTS.autoResumeCheckIntervalHours).toBe(2);
+		});
+
+		it('should default autoResumeGiveUpDays to 7', () => {
+			expect(SETTINGS_DEFAULTS.autoResumeGiveUpDays).toBe(7);
+		});
+
+		it("should ship Usage & Stats, Director's Notes, and Cue enabled", () => {
+			expect(SETTINGS_DEFAULTS.encoreFeatures).toMatchObject({
+				usageStats: true,
+				directorNotes: true,
+				maestroCue: true,
+			});
+		});
+
 		// The Cue prune reads this from the store at engine start, so the default
 		// has to be present here - not just in the renderer - or a fresh install
 		// prunes against `undefined`.

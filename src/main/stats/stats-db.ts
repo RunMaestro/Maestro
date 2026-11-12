@@ -58,7 +58,13 @@ import {
 import { recordResilienceEvent, getResilienceEvents, clearResilienceCache } from './resilience';
 import { recordWizardRun, getWizardRuns, clearWizardRunsCache } from './wizard-runs';
 import { getAggregatedStats } from './aggregations';
-import { clearOldData, exportToCsv } from './data-management';
+import {
+	getQuerySourceTotals,
+	getQuerySourceByDay,
+	type QuerySourceTotals,
+	type QuerySourceDay,
+} from './delegation';
+import { clearOldData } from './data-management';
 import {
 	insertImageAnnotation,
 	clearImageAnnotationCache,
@@ -70,8 +76,29 @@ import {
 	getShortcutUsageTotal,
 	clearShortcutUsageCache,
 } from './shortcut-usage';
-import type { ShortcutUsageDay } from '../../shared/stats-types';
+import {
+	recordWindowOpened,
+	getMultiWindowUsage,
+	clearMultiWindowUsageCache,
+} from './multi-window-usage';
+import type { ShortcutUsageDay, MultiWindowUsage } from '../../shared/stats-types';
 import { captureException } from '../utils/sentry';
+
+/**
+ * Errno codes that mean a WAL/SHM sidecar could not be removed for an
+ * environmental reason rather than a Maestro defect: the file is still held
+ * open by another process (EBUSY - the usual Windows result when a second
+ * instance or a worktree build has the database open), we lack permission to
+ * unlink it (EPERM/EACCES/EROFS), or it vanished between the existsSync check
+ * and the unlink (ENOENT). Removal is best-effort, so none of these deserve a
+ * Sentry report (MAESTRO-TX).
+ */
+const EXPECTED_SIDECAR_ERROR_CODES = new Set(['EBUSY', 'EPERM', 'EACCES', 'EROFS', 'ENOENT']);
+
+function isExpectedSidecarError(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | null)?.code;
+	return typeof code === 'string' && EXPECTED_SIDECAR_ERROR_CODES.has(code);
+}
 
 /**
  * StatsDB manages the SQLite database for usage statistics.
@@ -187,6 +214,7 @@ export class StatsDB {
 			clearWizardRunsCache();
 			clearImageAnnotationCache();
 			clearShortcutUsageCache();
+			clearMultiWindowUsageCache();
 
 			logger.info('Stats database closed', LOG_CONTEXT);
 		}
@@ -675,7 +703,15 @@ export class StatsDB {
 				logger.debug(`Removed stale SHM file: ${shmPath}`, LOG_CONTEXT);
 			}
 		} catch (error) {
-			void captureException(error);
+			// Best-effort cleanup: the sidecars are only removed to avoid a false
+			// corruption verdict, and SQLite recovers from a live WAL on its own.
+			// The listed codes all mean "another process still holds these files"
+			// or "we may not touch them" - environmental, never a Maestro bug.
+			// EBUSY in particular is the normal Windows result when a second
+			// instance (or a worktree build) has the database open (MAESTRO-TX).
+			if (!isExpectedSidecarError(error)) {
+				void captureException(error);
+			}
 			logger.warn(`Failed to remove stale WAL/SHM files for ${dbFilePath}: ${error}`, LOG_CONTEXT);
 		}
 	}
@@ -834,6 +870,20 @@ export class StatsDB {
 		return getAggregatedStats(this.database, range);
 	}
 
+	/**
+	 * Interactive vs Auto Run turn counts and REAL summed durations. The Cue
+	 * half of the delegation split lives in the Cue DB; the IPC handler merges
+	 * them.
+	 */
+	getQuerySourceTotals(range: StatsTimeRange = 'all'): QuerySourceTotals {
+		return getQuerySourceTotals(this.database, range);
+	}
+
+	/** The same split, bucketed by local-time day. */
+	getQuerySourceByDay(range: StatsTimeRange = 'all'): QuerySourceDay[] {
+		return getQuerySourceByDay(this.database, range);
+	}
+
 	// ============================================================================
 	// Image Annotations (delegated)
 	// ============================================================================
@@ -863,6 +913,18 @@ export class StatsDB {
 	}
 
 	// ============================================================================
+	// Multi-Window Usage (delegated)
+	// ============================================================================
+
+	recordWindowOpened(openedAt: number, concurrentWindowCount: number): string {
+		return recordWindowOpened(this.database, openedAt, concurrentWindowCount);
+	}
+
+	getMultiWindowUsage(range: StatsTimeRange): MultiWindowUsage {
+		return getMultiWindowUsage(this.database, range);
+	}
+
+	// ============================================================================
 	// Data Management (delegated)
 	// ============================================================================
 
@@ -878,10 +940,6 @@ export class StatsDB {
 			};
 		}
 		return clearOldData(this.database, olderThanDays);
-	}
-
-	exportToCsv(range: StatsTimeRange): string {
-		return exportToCsv(this.database, range);
 	}
 
 	// ============================================================================

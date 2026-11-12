@@ -15,6 +15,7 @@ import { useTabStore } from '../../stores/tabStore';
 import { formatLogsForClipboard, hasThinkingEntries } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { safeClipboardWrite } from '../../utils/clipboard';
 import { logger } from '../../utils/logger';
 import { getModalActions } from '../../stores/modalStore';
 
@@ -117,22 +118,24 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 			return;
 		}
 
-		navigator.clipboard
-			.writeText(text)
-			.then(() => {
+		// safeClipboardWrite, not navigator.clipboard: the async Clipboard API is
+		// undefined over plain HTTP, which is how web-desktop is usually reached on
+		// a plain LAN address, so the bare call threw before it ever copied.
+		void safeClipboardWrite(text).then((copied) => {
+			if (copied) {
 				flashCopiedToClipboard(
 					undefined,
 					hadThinking ? 'Conversation Copied (with reasoning)' : 'Conversation Copied'
 				);
-			})
-			.catch((err) => {
-				logger.error('Failed to copy context:', undefined, err);
-				notifyToast({
-					type: 'error',
-					title: 'Copy Failed',
-					message: 'Failed to copy context to clipboard.',
-				});
+				return;
+			}
+			logger.error('Failed to copy context: clipboard unavailable');
+			notifyToast({
+				type: 'error',
+				title: 'Copy Failed',
+				message: 'Failed to copy context to clipboard.',
 			});
+		});
 	}, []);
 
 	const handleExportHtml = useCallback(async (tabId: string) => {
@@ -202,19 +205,18 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 			return;
 		}
 
-		navigator.clipboard
-			.writeText(text)
-			.then(() => {
+		void safeClipboardWrite(text).then((copied) => {
+			if (copied) {
 				flashCopiedToClipboard(undefined, `${subject} Copied`);
-			})
-			.catch((err) => {
-				console.error('Failed to copy text:', err);
-				notifyToast({
-					type: 'error',
-					title: 'Copy Failed',
-					message: `Failed to copy ${subject.toLowerCase()} to clipboard.`,
-				});
+				return;
+			}
+			logger.error('Failed to copy text: clipboard unavailable');
+			notifyToast({
+				type: 'error',
+				title: 'Copy Failed',
+				message: `Failed to copy ${subject.toLowerCase()} to clipboard.`,
 			});
+		});
 	}, []);
 
 	const handlePublishTextAsGist = useCallback(

@@ -46,8 +46,9 @@ export interface FilterInputProps {
 	/** Native tooltip / accessible label for the input. */
 	title?: string;
 	ariaLabel?: string;
-	/** Width of the whole control in px. Defaults to 200. */
-	width?: number;
+	/** Width of the whole control: px, or a CSS length such as `'100%'` to fill
+	 *  its container. Defaults to 200. */
+	width?: number | string;
 	/** Focus the input on mount. */
 	autoFocus?: boolean;
 	className?: string;

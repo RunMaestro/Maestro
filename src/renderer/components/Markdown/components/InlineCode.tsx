@@ -5,7 +5,7 @@
  * handled separately by the code-fence renderers.
  *
  * Styling is intentionally left to the caller: chat/doc rely on scoped `.prose
- * code` CSS, while wizard-bubble/release-notes pass an explicit className/style.
+ * code` CSS, while release-notes passes an explicit className/style.
  */
 
 import React from 'react';

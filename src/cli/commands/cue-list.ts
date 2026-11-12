@@ -1,6 +1,7 @@
 // Cue list command - list all Cue subscriptions across agents
 
 import { withMaestroClient } from '../services/maestro-client';
+import { formatCueTurnSettings, type CueTurnSettings } from '../../shared/cue/turn-settings';
 
 interface CueListOptions {
 	json?: boolean;
@@ -17,6 +18,9 @@ interface CueSubscription {
 	enabled: boolean;
 	lastTriggered?: number;
 	triggerCount: number;
+	tier?: CueTurnSettings['tier'];
+	model?: string;
+	effort?: CueTurnSettings['effort'];
 }
 
 export async function cueList(options: CueListOptions): Promise<void> {
@@ -55,6 +59,10 @@ export async function cueList(options: CueListOptions): Promise<void> {
 				}
 				if (sub.schedule) {
 					lines.push(`     schedule: ${sub.schedule}`);
+				}
+				const modelNote = formatCueTurnSettings(sub);
+				if (modelNote) {
+					lines.push(`     model: ${modelNote}`);
 				}
 				lines.push('');
 			}

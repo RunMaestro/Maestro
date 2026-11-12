@@ -40,6 +40,7 @@ vi.mock('highlight.js', () => ({
 // separately below, so its icons don't matter here).
 vi.mock('lucide-react', () => ({
 	Clipboard: () => <span data-testid="clipboard-icon">Clipboard</span>,
+	Play: () => <span data-testid="play-icon">Play</span>,
 }));
 
 // Replace the real LanguagePicker (portal + async bundled-language loading)
@@ -192,5 +193,50 @@ describe('CodeFence', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe('CodeFence Run button', () => {
+	it('offers Run on a shell fence when an onRun handler is supplied', () => {
+		const onRun = vi.fn();
+		render(<CodeFence {...defaultProps} language="bash" code="ls -la" onRun={onRun} />);
+		fireEvent.click(screen.getByTestId('code-run-button'));
+		expect(onRun).toHaveBeenCalledWith('ls -la', 'run');
+	});
+
+	it('Alt-click asks for a prefill instead of a run', () => {
+		const onRun = vi.fn();
+		render(<CodeFence {...defaultProps} language="sh" code="make build" onRun={onRun} />);
+		fireEvent.click(screen.getByTestId('code-run-button'), { altKey: true });
+		expect(onRun).toHaveBeenCalledWith('make build', 'prefill');
+	});
+
+	it('runs only the prompt lines of a console transcript', () => {
+		const onRun = vi.fn();
+		render(
+			<CodeFence
+				{...defaultProps}
+				language="console"
+				code={'$ npm test\n 12 passed'}
+				onRun={onRun}
+			/>
+		);
+		fireEvent.click(screen.getByTestId('code-run-button'));
+		expect(onRun).toHaveBeenCalledWith('npm test', 'run');
+	});
+
+	it('has no Run button without an onRun handler', () => {
+		render(<CodeFence {...defaultProps} language="bash" code="ls" />);
+		expect(screen.queryByTestId('code-run-button')).toBeNull();
+	});
+
+	it('has no Run button on a non-shell fence', () => {
+		render(<CodeFence {...defaultProps} language="python" code="print(1)" onRun={vi.fn()} />);
+		expect(screen.queryByTestId('code-run-button')).toBeNull();
+	});
+
+	it('has no Run button on an empty shell fence', () => {
+		render(<CodeFence {...defaultProps} language="bash" code="   " onRun={vi.fn()} />);
+		expect(screen.queryByTestId('code-run-button')).toBeNull();
 	});
 });

@@ -1,5 +1,6 @@
 import React, { memo, useCallback } from 'react';
 import type { Theme } from '../../../types';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface CommandHistoryPopoverProps {
 	isOpen: boolean;
@@ -45,8 +46,8 @@ export const CommandHistoryPopover = memo(function CommandHistoryPopover({
 
 	return (
 		<div
-			className="absolute bottom-full left-0 right-0 mb-2 border rounded-lg shadow-2xl max-h-64 overflow-hidden"
-			style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+			className="absolute bottom-full left-0 right-0 mb-2 rounded-lg max-h-64 overflow-hidden"
+			style={elevatedSurfaceStyle(theme)}
 		>
 			<div className="p-2">
 				<input

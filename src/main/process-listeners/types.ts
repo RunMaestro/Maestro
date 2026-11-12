@@ -12,6 +12,7 @@ import type { GroupChat, GroupChatParticipant } from '../group-chat/group-chat-s
 import type { GroupChatMessage, GroupChatState } from '../../shared/group-chat-types';
 import type { ParticipantState } from '../ipc/handlers/groupChat';
 import type { SshRemoteConfig } from '../../shared/types';
+import type { PluginEvent } from '../../shared/plugins/events';
 
 // ==========================================================================
 // Constants
@@ -184,4 +185,9 @@ export interface ProcessListenerDependencies {
 	 * percentage gauge.
 	 */
 	getAgentContextWindow?: (agentId: string) => number;
+	/**
+	 * Emit a metadata-only plugin event to subscribed plugins. No-op when the
+	 * plugin event bus is unavailable (feature off / not yet constructed).
+	 */
+	emitPluginEvent?: (event: PluginEvent) => void;
 }

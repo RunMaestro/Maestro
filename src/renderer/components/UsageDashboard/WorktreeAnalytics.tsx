@@ -204,7 +204,7 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 				</span>
 			</div>
 
-			<div className="grid grid-cols-2 gap-3 mb-6">
+			<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
 				<StatCard
 					icon={<Layers className="w-4 h-4" />}
 					label="Parent Agents"

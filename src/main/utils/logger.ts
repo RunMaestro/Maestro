@@ -68,6 +68,7 @@ class Logger extends EventEmitter {
 	private logFilePath: string;
 	private logFileStream: fs.WriteStream | null = null;
 	private currentLogDate: string = '';
+	private consoleToStderr = false;
 
 	private levelPriority = LOG_LEVEL_PRIORITY;
 
@@ -151,11 +152,11 @@ class Logger extends EventEmitter {
 
 					if (!fs.existsSync(targetPath)) {
 						fs.renameSync(legacyPath, targetPath);
-						console.log(`[Logger] Migrated legacy log file to maestro-debug-${mtimeDate}.log`);
+						console.error(`[Logger] Migrated legacy log file to maestro-debug-${mtimeDate}.log`);
 					} else {
 						// Target dated file already exists; remove the legacy file to prevent orphans
 						fs.unlinkSync(legacyPath);
-						console.log(`[Logger] Removed legacy log file (dated file already exists)`);
+						console.error(`[Logger] Removed legacy log file (dated file already exists)`);
 					}
 				}
 			} catch (migrationError) {
@@ -173,7 +174,7 @@ class Logger extends EventEmitter {
 			// Clean up old log files
 			this.cleanOldLogs();
 
-			console.log(`[Logger] File logging enabled: ${this.logFilePath}`);
+			console.error(`[Logger] File logging enabled: ${this.logFilePath}`);
 		} catch (error) {
 			console.error(`[Logger] Failed to enable file logging:`, error);
 		}
@@ -261,7 +262,7 @@ class Logger extends EventEmitter {
 				if (ageInDays > 7) {
 					try {
 						fs.unlinkSync(path.join(logsDir, file));
-						console.log(`[Logger] Cleaned up old log file: ${file}`);
+						console.error(`[Logger] Cleaned up old log file: ${file}`);
 					} catch (deleteError) {
 						console.error(`[Logger] Failed to delete old log file ${file}:`, deleteError);
 					}
@@ -306,6 +307,18 @@ class Logger extends EventEmitter {
 		return this.maxLogs;
 	}
 
+	/**
+	 * Send every console echo to stderr, whatever its level.
+	 *
+	 * For processes whose stdout is a data channel rather than a diagnostics
+	 * stream: `maestro-cli` reuses main-process modules (the WakaTime manager,
+	 * agent spawning) and prints JSON on stdout, so an `info` line echoed there
+	 * by `console.info` corrupts output that scripts parse.
+	 */
+	routeConsoleToStderr(): void {
+		this.consoleToStderr = true;
+	}
+
 	private shouldLog(level: MainLogLevel): boolean {
 		return this.levelPriority[level] >= this.levelPriority[this.minLevel];
 	}
@@ -346,6 +359,10 @@ class Logger extends EventEmitter {
 		// (e.g., when a parent process consuming output dies unexpectedly)
 		// Fixes MAESTRO-5C
 		try {
+			if (this.consoleToStderr) {
+				console.error(message, entry.data || '');
+				return;
+			}
 			switch (entry.level) {
 				case 'error':
 					console.error(message, entry.data || '');

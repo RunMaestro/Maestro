@@ -47,6 +47,23 @@ vi.mock('lucide-react', () => {
 		RotateCcw: icon('rotate-ccw-icon'),
 		BellRing: icon('bell-ring-icon'),
 		X: icon('x-icon'),
+		// Pulled in transitively via EmojiPickerField -> groupAppearanceOptions.
+		Archive: icon('archive-icon'),
+		BookOpen: icon('book-open-icon'),
+		Briefcase: icon('briefcase-icon'),
+		Calendar: icon('calendar-icon'),
+		Code2: icon('code2-icon'),
+		Folder: icon('folder-icon'),
+		Heart: icon('heart-icon'),
+		Layers: icon('layers-icon'),
+		Lightbulb: icon('lightbulb-icon'),
+		Palette: icon('palette-icon'),
+		Rocket: icon('rocket-icon'),
+		Shield: icon('shield-icon'),
+		Star: icon('star-icon'),
+		Target: icon('target-icon'),
+		Wrench: icon('wrench-icon'),
+		Zap: icon('zap-icon'),
 	};
 });
 

@@ -6,6 +6,7 @@ import type { Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab, createMockFileTab } from '../../helpers/mockTab';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { resetStore } from '../../helpers/resetStores';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 
 /**
@@ -14,11 +15,17 @@ import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
  * terminal), not just AI tabs. Guards against regressing to AI-only restore.
  */
 describe('useSessionNavigation', () => {
+	beforeEach(() => {
+		resetStore(useSessionStore);
+	});
+
 	function setup(
 		sessions: Session[],
 		backEntry: NavHistoryEntry | null,
 		forwardEntry: NavHistoryEntry | null = null
 	) {
+		useSessionStore.setState({ sessions });
+
 		const navigateBack = vi.fn((_canUse?: (e: NavHistoryEntry) => boolean) => backEntry);
 		const navigateForward = vi.fn((_canUse?: (e: NavHistoryEntry) => boolean) => forwardEntry);
 		const setActiveSessionId = vi.fn();
@@ -35,7 +42,7 @@ describe('useSessionNavigation', () => {
 		const cyclePositionRef = { current: 0 };
 
 		const { result } = renderHook(() =>
-			useSessionNavigation(sessions, {
+			useSessionNavigation({
 				navigateBack,
 				navigateForward,
 				setActiveSessionId,

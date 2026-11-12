@@ -130,6 +130,7 @@ vi.mock('fs', async () => {
 			...actual.promises,
 			stat: vi.fn(),
 			access: vi.fn(),
+			readdir: vi.fn(),
 		},
 		constants: {
 			X_OK: 1,
@@ -184,6 +185,10 @@ import {
 	AgentResult,
 } from '../../../cli/services/agent-spawner';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
+// Static, so they share one module instance with the statically imported
+// `spawnAgent` above; other suites here call `vi.resetModules()`.
+import { resetEffortRejections } from '../../../shared/effortRejection';
+import { resolveEffortLevel } from '../../../shared/modelTiers';
 
 describe('agent-spawner', () => {
 	beforeEach(() => {
@@ -242,6 +247,21 @@ describe('agent-spawner', () => {
 
 			expect(result.content).toBe('');
 			expect(result.taskCount).toBe(0);
+			expect(result.missingPath).toBeUndefined();
+		});
+
+		it('names the path it tried when the file does not exist', () => {
+			vi.mocked(fs.readFileSync).mockImplementation(() => {
+				throw Object.assign(new Error('no such file'), { code: 'ENOENT' });
+			});
+
+			const result = readDocAndCountTasks('/playbooks', 'sub/missing');
+
+			expect(result).toEqual({
+				content: '',
+				taskCount: 0,
+				missingPath: '/playbooks/sub/missing.md',
+			});
 		});
 
 		it('should handle various checkbox formats', () => {
@@ -808,6 +828,61 @@ Some text with [x] in it that's not a checkbox
 			expect(result.source).toBe('settings');
 		});
 
+		it('should resolve a rotated Codex Desktop path from settings', async () => {
+			const originalPlatform = process.platform;
+			const originalLocalAppData = process.env.LOCALAPPDATA;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
+			const stalePath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'old-version',
+				'codex.exe'
+			);
+			const currentPath = path.win32.join(
+				process.env.LOCALAPPDATA,
+				'OpenAI',
+				'Codex',
+				'bin',
+				'current-version',
+				'codex.exe'
+			);
+			mockGetAgentCustomPath.mockReturnValue(stalePath);
+			vi.mocked(fs.promises.readdir).mockResolvedValue([
+				{ name: 'current-version', isDirectory: () => true },
+			] as any);
+			vi.mocked(fs.promises.stat).mockImplementation(async (filePath) => {
+				if (filePath === currentPath) {
+					return { isFile: () => true, birthtimeMs: 200 } as fs.Stats;
+				}
+				throw new Error('ENOENT');
+			});
+
+			try {
+				const { detectAgent: freshDetectAgent } =
+					await import('../../../cli/services/agent-spawner');
+				const result = await freshDetectAgent('codex');
+
+				expect(result).toEqual({
+					available: true,
+					path: currentPath,
+					source: 'settings',
+				});
+			} finally {
+				if (originalLocalAppData === undefined) {
+					delete process.env.LOCALAPPDATA;
+				} else {
+					process.env.LOCALAPPDATA = originalLocalAppData;
+				}
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		});
+
 		it('should fall back to PATH detection when custom path is invalid', async () => {
 			mockGetAgentCustomPath.mockReturnValue('/invalid/path');
 			vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
@@ -926,9 +1001,10 @@ Some text with [x] in it that's not a checkbox
 			// interactive (TUI) wraps the spawn with maestro-p via process.execPath
 			// (node), injecting MAESTRO_CLAUDE_BIN, instead of running `claude --print`.
 			// Make maestro-p "present": getCliMaestroPBinPath() (accessSync) resolves
-			// and the resolver's fileExists (existsSync) confirms the candidate.
+			// and the resolver's fileExists (existsSync) confirms the candidate. No
+			// `app.asar` beside the CLI: this is the dev layout, not a packaged app.
 			vi.mocked(fs.accessSync).mockReturnValue(undefined);
-			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(fs.existsSync).mockImplementation((p) => !String(p).endsWith('app.asar'));
 
 			const resultPromise = spawnAgent('claude-code', '/project/path', 'Test prompt', undefined, {
 				enableMaestroP: true,
@@ -955,6 +1031,38 @@ Some text with [x] in it that's not a checkbox
 			mockChild.emit('close', 0);
 			const result = await resultPromise;
 			expect(result.success).toBe(true);
+		});
+
+		it('runs maestro-p under the packaged app binary when the CLI was started by a system node (#1770)', async () => {
+			// A packaged CLI sits beside app.asar, which a plain `node` cannot read,
+			// so node-pty only loads when maestro-p runs under the app binary itself.
+			vi.mocked(fs.accessSync).mockReturnValue(undefined);
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			const original = process.resourcesPath;
+			Object.defineProperty(process, 'resourcesPath', { value: undefined, configurable: true });
+			try {
+				const resultPromise = spawnAgent('claude-code', '/project/path', 'Test prompt', undefined, {
+					enableMaestroP: true,
+					maestroPMode: 'interactive',
+				});
+				await new Promise((resolve) => setTimeout(resolve, 0));
+
+				const [cmd, args, options] = mockSpawn.mock.calls[0];
+				const resourcesDir = path.dirname(String(args[0]));
+				expect(cmd).not.toBe(process.execPath);
+				expect(path.dirname(String(cmd)).startsWith(path.dirname(resourcesDir))).toBe(true);
+				expect(options.env.ELECTRON_RUN_AS_NODE).toBe('1');
+				expect(String(options.env.NODE_PATH).split(path.delimiter)[0]).toBe(
+					path.join(resourcesDir, 'app.asar', 'node_modules')
+				);
+
+				mockStdout.emit('data', Buffer.from('{"type":"result","result":"ok"}\n'));
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				mockChild.emit('close', 0);
+				expect((await resultPromise).success).toBe(true);
+			} finally {
+				Object.defineProperty(process, 'resourcesPath', { value: original, configurable: true });
+			}
 		});
 
 		it('stays on claude --print for the API token source (no maestro-p wrap)', async () => {
@@ -1073,6 +1181,9 @@ Some text with [x] in it that's not a checkbox
 				cacheCreationInputTokens: 10,
 				totalCostUsd: 0.05,
 				contextWindow: 200000,
+				// Reported by the model, so flagged authoritative even though it
+				// matches the fallback size (review of PR #1356).
+				contextWindowResolved: true,
 			});
 		});
 
@@ -1104,6 +1215,58 @@ Some text with [x] in it that's not a checkbox
 
 			expect(result.usageStats?.inputTokens).toBe(200);
 			expect(result.usageStats?.outputTokens).toBe(100);
+		});
+
+		// claude reports cost and modelUsage as the SESSION's running totals; a
+		// resumed turn reports its share, using the cost-state row the transcript
+		// held when it spawned.
+		it('reports a resumed turn its share of the session totals', async () => {
+			const realFs = await vi.importActual<typeof import('fs')>('fs');
+			const realOs = await vi.importActual<typeof import('os')>('os');
+			// Real filesystem I/O needs the runner's temp directory, not the suite's POSIX mock.
+			const configDir = realFs.mkdtempSync(
+				path.join(realFs.realpathSync(realOs.tmpdir()), 'cli-cost-')
+			);
+			const projectDir = path.join(configDir, 'projects', '-project');
+			realFs.mkdirSync(projectDir, { recursive: true });
+			realFs.writeFileSync(
+				path.join(projectDir, 'sid-resume.jsonl'),
+				JSON.stringify({
+					type: 'cost-state',
+					totalCostUSD: 0.1,
+					modelUsage: { 'claude-x': { inputTokens: 10, outputTokens: 5, costUSD: 0.1 } },
+				}) + '\n'
+			);
+			const previous = process.env.CLAUDE_CONFIG_DIR;
+			process.env.CLAUDE_CONFIG_DIR = configDir;
+			try {
+				const resultPromise = spawnAgent('claude-code', '/project', 'prompt', 'sid-resume');
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				mockStdout.emit(
+					'data',
+					Buffer.from(
+						JSON.stringify({
+							type: 'result',
+							result: 'Done',
+							session_id: 'sid-resume',
+							total_cost_usd: 0.25,
+							modelUsage: { 'claude-x': { inputTokens: 30, outputTokens: 12, costUSD: 0.25 } },
+						}) + '\n'
+					)
+				);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				mockChild.emit('close', 0);
+
+				const result = await resultPromise;
+
+				expect(result.usageStats?.totalCostUsd).toBeCloseTo(0.15, 9);
+				expect(result.usageStats?.inputTokens).toBe(20);
+				expect(result.usageStats?.outputTokens).toBe(7);
+			} finally {
+				if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+				else process.env.CLAUDE_CONFIG_DIR = previous;
+				realFs.rmSync(configDir, { recursive: true, force: true });
+			}
 		});
 
 		it('should aggregate usage from multiple models', async () => {
@@ -1648,6 +1811,150 @@ Some text with [x] in it that's not a checkbox
 			expect(result.agentSessionId).toBe('cop-resume-1');
 		});
 
+		it('should spawn grok headless with -p, --always-approve, streaming-json and accumulate text deltas', async () => {
+			const resultPromise = spawnAgent('grok', '/project', 'Hello grok');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [cmd, args] = mockSpawn.mock.calls[0];
+			expect(cmd).toBeTruthy();
+
+			// Grok batch mode: grok --always-approve --output-format streaming-json -p "prompt"
+			expect(args).toContain('--always-approve');
+			expect(args).toContain('--output-format');
+			expect(args).toContain('streaming-json');
+			expect(args).toContain('-p');
+			expect(args).toContain('Hello grok');
+			// promptArgs path replaces the '--' separator
+			expect(args).not.toContain('--');
+			// --permission-mode belongs to read-only mode only; grok's clap errors
+			// with "cannot be used multiple times" if the flag ever repeats.
+			expect(args).not.toContain('--permission-mode');
+
+			// Mirror real grok streaming-json stdout: the answer arrives only as
+			// token-sized text deltas, thought deltas are reasoning (excluded from
+			// the response), and the terminal `end` event carries the sole
+			// sessionId but no text.
+			mockStdout.emit(
+				'data',
+				Buffer.from('{"type":"thought","data":"thinking..."}\n{"type":"text","data":"REA"}\n')
+			);
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"text","data":"DY"}\n' +
+						JSON.stringify({
+							type: 'end',
+							stopReason: 'EndTurn',
+							sessionId: 'grok-sess-1',
+							requestId: 'req-1',
+						}) +
+						'\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('READY');
+			expect(result.agentSessionId).toBe('grok-sess-1');
+		});
+
+		it('should run grok read-only with a single --permission-mode plan and no approve flag', async () => {
+			const resultPromise = spawnAgent('grok', '/project', 'look around', undefined, {
+				readOnlyMode: true,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			// grok hard-errors on a repeated --permission-mode ("the argument
+			// '--permission-mode <MODE>' cannot be used multiple times"), so
+			// read-only must strip the batch approve flag and leave exactly one.
+			expect(args.filter((a) => a === '--permission-mode')).toHaveLength(1);
+			expect(args[args.indexOf('--permission-mode') + 1]).toBe('plan');
+			expect(args).not.toContain('--always-approve');
+			expect(args).not.toContain('bypassPermissions');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"text","data":"ok"}\n{"type":"end","stopReason":"EndTurn","sessionId":"grok-sess-2"}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('ok');
+		});
+
+		it('should resume a grok session via --resume <sessionId> and round-trip the id', async () => {
+			const resultPromise = spawnAgent('grok', '/project', 'follow-up', 'grok-resume-1');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			const resumeIdx = args.indexOf('--resume');
+			expect(resumeIdx).toBeGreaterThanOrEqual(0);
+			expect(args[resumeIdx + 1]).toBe('grok-resume-1');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"text","data":"still remembers"}\n{"type":"end","stopReason":"EndTurn","sessionId":"grok-resume-1"}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			// The resumed session id must round-trip through agentSessionId so the
+			// caller can persist it and keep the chain going.
+			expect(result.agentSessionId).toBe('grok-resume-1');
+		});
+
+		it('should surface a grok stream error event as a failed result', async () => {
+			const resultPromise = spawnAgent('grok', '/project', 'trigger an error');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			// grok emits {"type":"error","message":...} on stdout, duplicates it on
+			// stderr as `Error: <message>`, and exits 1.
+			mockStdout.emit(
+				'data',
+				Buffer.from('{"type":"error","message":"This model does not support that"}\n')
+			);
+			mockStderr.emit('data', Buffer.from('Error: This model does not support that\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 1);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('This model does not support that');
+		});
+
+		it('should soft-succeed when Grok streams a full answer then exits non-zero without a structured error', async () => {
+			// Mirrors wizard recovery: --max-turns (or similar) can exit 1 after
+			// a complete text+end stream with no {"type":"error"} event.
+			const resultPromise = spawnAgent('grok', '/project', 'brief task');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"text","data":"all done"}\n{"type":"end","stopReason":"EndTurn","sessionId":"sess-soft"}\n'
+				)
+			);
+			mockStderr.emit('data', Buffer.from('max turns reached\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 1);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('all done');
+			expect(result.agentSessionId).toBe('sess-soft');
+		});
+
 		it('should let a pre-set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS from shell env win', async () => {
 			// `isolateAgentEnv` restores the real value after the test.
 			process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '0';
@@ -2046,6 +2353,138 @@ Some text with [x] in it that's not a checkbox
 		});
 	});
 
+	describe('spawnAgent: effort refused by the provider', () => {
+		isolateAgentEnv();
+
+		// What `codex exec --json` prints when the API answers the effort with a
+		// 400: the API's own JSON, carried as a string inside a JSONL event.
+		const REFUSAL_LINE =
+			JSON.stringify({
+				type: 'error',
+				message:
+					'{"type":"error","error":{"message":"Unsupported value: \'low\' is not supported with the \'gpt-6-astra\' model. Supported values are: \'medium\', \'high\'.","type":"invalid_request_error","param":"reasoning.effort","code":"unsupported_value"},"status":400}',
+			}) + '\n';
+
+		let errorSpy: ReturnType<typeof vi.spyOn>;
+
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+			errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		});
+
+		afterEach(() => {
+			errorSpy.mockRestore();
+			resetEffortRejections();
+		});
+
+		/** Args of the Nth agent spawn (0-based). */
+		const argsOfSpawn = (index: number) => mockSpawn.mock.calls[index][1] as string[];
+		const effortArg = (args: string[]) =>
+			args.find((arg) => arg.startsWith('model_reasoning_effort='));
+
+		it('runs the turn once more with the effort left to the agent', async () => {
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { customEffort: 'low' });
+
+			await waitForSpawnCall(1);
+			expect(effortArg(argsOfSpawn(0))).toBe('model_reasoning_effort="low"');
+			mockStdout.emit('data', Buffer.from(REFUSAL_LINE));
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 1);
+
+			await waitForSpawnCall(2);
+			expect(mockSpawn).toHaveBeenCalledTimes(2);
+			expect(effortArg(argsOfSpawn(1))).toBeUndefined();
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 0);
+
+			const result = await p;
+			expect(result.success).toBe(true);
+			expect(errorSpy).toHaveBeenCalledWith(
+				expect.stringContaining('codex rejected effort "low" for gpt-6-astra')
+			);
+		});
+
+		it('takes the refused value out of the ladder for the rest of the run', async () => {
+			expect(resolveEffortLevel('codex', 'low')).toBe('low');
+
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { customEffort: 'low' });
+			await waitForSpawnCall(1);
+			mockStdout.emit('data', Buffer.from(REFUSAL_LINE));
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 1);
+			await waitForSpawnCall(2);
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 0);
+			await p;
+
+			expect(resolveEffortLevel('codex', 'low')).toBeUndefined();
+		});
+
+		it('does not retry when the caller sent no effort', async () => {
+			// The agent's own configured effort was refused: nothing Maestro chose
+			// is left to drop, so the failure is returned as it is.
+			const p = spawnAgent('codex', '/p', 'hi');
+			await waitForSpawnCall(1);
+			mockStdout.emit('data', Buffer.from(REFUSAL_LINE));
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 1);
+
+			const result = await p;
+			expect(result.success).toBe(false);
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not retry an ordinary failure', async () => {
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { customEffort: 'low' });
+			await waitForSpawnCall(1);
+			mockStderr.emit('data', Buffer.from('Not logged in\n'));
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 1);
+
+			const result = await p;
+			expect(result.success).toBe(false);
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('keeps a successful answer and effort when a warning contains a refusal message', async () => {
+			const message = JSON.parse(REFUSAL_LINE).message;
+			const output = [
+				{ type: 'item.completed', item: { type: 'error', message } },
+				{ type: 'item.completed', item: { type: 'agent_message', text: 'Finished normally' } },
+				{ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 2 } },
+			]
+				.map((event) => JSON.stringify(event))
+				.join('\n');
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { customEffort: 'low' });
+			const result = await driveSpawnToCompletion(p, 0, output);
+
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('Finished normally');
+			expect(result.error).toBeUndefined();
+			expect(errorSpy).toHaveBeenCalledWith(`Codex warning: ${message}`);
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			expect(resolveEffortLevel('codex', 'low')).toBe('low');
+		});
+
+		it.each([
+			['Reasoning summaries are unavailable', 'Codex warning: Reasoning summaries are unavailable'],
+			[undefined, 'Codex warning'],
+		])(
+			'prints warning %s without treating it as an answer or failure',
+			async (message, diagnostic) => {
+				const output = JSON.stringify({ type: 'item.completed', item: { type: 'error', message } });
+				const p = spawnAgent('codex', '/p', 'hi');
+				const result = await driveSpawnToCompletion(p, 0, output);
+
+				expect(result.success).toBe(true);
+				expect(result.response).toBeUndefined();
+				expect(result.error).toBeUndefined();
+				expect(errorSpy).toHaveBeenCalledWith(diagnostic);
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+			}
+		);
+	});
+
 	describe('spawnAgent: SSH integration', () => {
 		beforeEach(() => {
 			mockSpawn.mockReturnValue(mockChild);
@@ -2437,6 +2876,34 @@ Some text with [x] in it that's not a checkbox
 			// resume args are ['resume', '<id>']
 			expect(args).toContain('resume');
 			expect(args).toContain('codex-thread-123');
+
+			// Ordering is load-bearing: `-C` is a ROOT-level global flag that MUST
+			// precede the `exec` subcommand, which in turn precedes `resume <id>`.
+			// Placing `-C` after `resume` makes Codex hard-fail with
+			// "unexpected argument '-C' found", breaking Relay follow-up messages
+			// to Codex agents (regression of #960). Enforce -C < exec < resume.
+			const execIdx = args.indexOf('exec');
+			const resumeIdx = args.indexOf('resume');
+			expect(c).toBeLessThan(execIdx);
+			expect(execIdx).toBeLessThan(resumeIdx);
+		});
+
+		it('Codex puts --add-dir before the resume subcommand', async () => {
+			// `codex exec resume` has no `--add-dir`: a flag after `resume <id>`
+			// belongs to that subcommand, so it answered "unexpected argument
+			// '--add-dir' found" and exited 2. Every follow-up turn of an agent with
+			// a writable Additional Directory died before it started.
+			const p = spawnAgent('codex', '/working', 'hi', 'codex-thread-123', {
+				additionalDirectories: [{ path: '/config', read: true, write: true }],
+			});
+			await driveSpawnToCompletion(p, 0, CODEX_INIT());
+
+			const { args } = spawnCall();
+			const addDirIdx = args.indexOf('--add-dir');
+			expect(addDirIdx).toBeGreaterThanOrEqual(0);
+			expect(args[addDirIdx + 1]).toBe('/config');
+			expect(args.indexOf('exec')).toBeLessThan(addDirIdx);
+			expect(addDirIdx).toBeLessThan(args.indexOf('resume'));
 		});
 
 		it('unsupported agent type returns a failure result', async () => {
@@ -2575,17 +3042,32 @@ Some text with [x] in it that's not a checkbox
 		});
 
 		it('still injects the Maestro system prompt on resume (Claude reads it every turn)', async () => {
-			const p = spawnAgent('claude-code', '/p', 'follow-up', 'session-abc', {
-				appendSystemPrompt: 'maestro context',
-			});
-			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+			// Pin the platform to a POSIX value so this exercises the inline
+			// `--append-system-prompt` path deterministically. On Windows local
+			// spawns the product instead writes the prompt to a temp file and
+			// passes `--append-system-prompt-file` (see buildAppendSystemPromptArgs),
+			// which is correct but a different arg shape. On Unix this override is
+			// a no-op.
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+			try {
+				const p = spawnAgent('claude-code', '/p', 'follow-up', 'session-abc', {
+					appendSystemPrompt: 'maestro context',
+				});
+				await driveSpawnToCompletion(p, 0, CLAUDE_OK());
 
-			const { args } = spawnCall();
-			expect(args).toContain('--resume');
-			expect(args).toContain('session-abc');
-			const flagIdx = args.indexOf('--append-system-prompt');
-			expect(flagIdx).toBeGreaterThanOrEqual(0);
-			expect(args[flagIdx + 1]).toBe('maestro context');
+				const { args } = spawnCall();
+				expect(args).toContain('--resume');
+				expect(args).toContain('session-abc');
+				const flagIdx = args.indexOf('--append-system-prompt');
+				expect(flagIdx).toBeGreaterThanOrEqual(0);
+				expect(args[flagIdx + 1]).toBe('maestro context');
+			} finally {
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
 		});
 
 		it('Codex (no native --append-system-prompt support) embeds the system prompt in the first user turn', async () => {

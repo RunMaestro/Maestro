@@ -284,7 +284,7 @@ describe('TunnelManager', () => {
 
 			expect(mocks.mockSpawn).toHaveBeenCalledWith(
 				expect.any(String),
-				expect.arrayContaining(['http://localhost:8080']),
+				expect.arrayContaining(['http://127.0.0.1:8080']),
 				expect.objectContaining({ env: expect.anything() })
 			);
 
@@ -322,7 +322,7 @@ describe('TunnelManager', () => {
 
 			expect(mocks.mockSpawn).toHaveBeenCalledWith(
 				expect.any(String),
-				expect.arrayContaining(['http://localhost:9000']),
+				expect.arrayContaining(['http://127.0.0.1:9000']),
 				expect.objectContaining({ env: expect.anything() })
 			);
 

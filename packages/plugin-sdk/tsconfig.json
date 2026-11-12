@@ -1,0 +1,23 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"declaration": true,
+		"outDir": "dist",
+		// index.ts is fully self-contained (it VENDORS the plugin contracts; no
+		// relative/external imports), so rootDir is the package's own src and a
+		// plain build emits dist/index.js + dist/index.d.ts at the TOP level with
+		// zero external references. The drift-guard test reaches into ../../../../src
+		// for parity checks and is run by vitest, not this build, so it is excluded
+		// below to keep the emitted package self-contained.
+		"rootDir": "src",
+		"target": "ES2020",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"esModuleInterop": true,
+		"resolveJsonModule": true,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true
+	},
+	"include": ["src"],
+	"exclude": ["dist", "src/__tests__"]
+}

@@ -9,6 +9,7 @@
 
 import { ipcRenderer } from 'electron';
 import type { AiCommandHistoryEntry } from '../../shared/aiCommand';
+import type { ClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 
 export interface AiCommandSuggestRequest {
 	/** The user's plain-English description of what they want to do. */
@@ -30,6 +31,8 @@ export interface AiCommandSuggestRequest {
 	/** The tab's current model and effort. */
 	customModel?: string;
 	customEffort?: string;
+	/** The agent's Claude token source, so a TUI agent suggests through maestro-p. */
+	claudeTokenSource?: ClaudeTokenSourceFields;
 	/** Commands already run in this tab, oldest first, so follow-ups can refine. */
 	recentCommands?: AiCommandHistoryEntry[];
 }

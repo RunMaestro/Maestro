@@ -13,6 +13,7 @@ import os from 'os';
 import path from 'path';
 import Store from 'electron-store';
 
+import type { CodexResetCreditCounts } from '../../shared/codexResetCredits';
 import { partitionSnapshotsByAge, SNAPSHOT_RETENTION_MS } from './usageSnapshotRetention';
 
 export { SNAPSHOT_RETENTION_MS } from './usageSnapshotRetention';
@@ -49,6 +50,13 @@ export interface CodexUsageSnapshot {
 	session?: CodexUsageWindow;
 	weekly?: CodexUsageWindow;
 	additionalLimits?: CodexAdditionalLimit[];
+	/**
+	 * Reset-credit inventory, which the usage payload carries for free. The
+	 * per-credit list lives behind `fetchCodexResetCredits()`; this is only the
+	 * count, so the dashboard can render "2 resets available" without a second
+	 * request per account per refresh.
+	 */
+	resetCredits?: CodexResetCreditCounts;
 	error?: string;
 }
 
@@ -105,6 +113,19 @@ export function getAllCodexUsageSnapshots(): Record<string, CodexUsageSnapshot> 
  */
 export function getRetainedCodexUsageSnapshots(): Record<string, CodexUsageSnapshot> {
 	return readPartitioned(Date.now()).retained;
+}
+
+/** Drop the snapshots stored under `keys` (no-op for keys with no snapshot). */
+export function forgetCodexUsageSnapshots(keys: Iterable<string>): void {
+	const drop = new Set(keys);
+	if (drop.size === 0) return;
+	const { retained } = readPartitioned(Date.now());
+	if (!Object.keys(retained).some((key) => drop.has(key))) return;
+	const next: Record<string, CodexUsageSnapshot> = {};
+	for (const [key, snapshot] of Object.entries(retained)) {
+		if (!drop.has(key)) next[key] = snapshot;
+	}
+	getStore().set('snapshots', next);
 }
 
 export function clearCodexUsageSnapshots(): void {

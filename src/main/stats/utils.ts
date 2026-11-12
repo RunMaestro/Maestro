@@ -8,6 +8,7 @@ import type Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 import { PerformanceMetrics } from '../../shared/performance-metrics';
 import type { StatsTimeRange } from '../../shared/stats-types';
+import { startOfLocalDay, toLocalYmd } from '../../shared/localDay';
 
 export const LOG_CONTEXT = '[StatsDB]';
 
@@ -36,6 +37,44 @@ export function generateId(): string {
 }
 
 /**
+ * Convert a Unix timestamp (ms) to a YYYY-MM-DD bucket using the local
+ * timezone. Shared by every per-day rolled-up counter (shortcut usage,
+ * multi-window usage) so the bucket boundary is identical across them.
+ * Re-exported from `src/shared/localDay.ts`, its canonical home.
+ */
+export { toLocalYmd } from '../../shared/localDay';
+
+/**
+ * Convert a StatsTimeRange to its YYYY-MM-DD lower bound for the daily-bucket
+ * tables. The all-time range resolves to '0000-01-01' so the SELECT picks up
+ * every row.
+ */
+export function rangeStartYmd(range: StatsTimeRange): string {
+	if (range === 'all') {
+		return '0000-01-01';
+	}
+	return toLocalYmd(getTimeRangeStart(range));
+}
+
+/** Minimal view of the settings store the stats gate needs. */
+export interface StatsSettingsStore {
+	get: (key: string) => unknown;
+}
+
+/**
+ * Whether usage-statistics collection is enabled. This is the single
+ * telemetry/analytics gate for every stats writer (IPC handlers and the
+ * main-process multi-window telemetry): nothing is recorded when the user has
+ * turned `statsCollectionEnabled` off. Defaults to enabled when the setting is
+ * unset or no store is provided.
+ */
+export function isStatsCollectionEnabled(settingsStore?: StatsSettingsStore): boolean {
+	if (!settingsStore) return true; // Default to enabled if no settings store
+	// Default to true if not explicitly set to false
+	return settingsStore.get('statsCollectionEnabled') !== false;
+}
+
+/**
  * Get timestamp for start of time range
  */
 export function getTimeRangeStart(range: StatsTimeRange): number {
@@ -44,7 +83,8 @@ export function getTimeRangeStart(range: StatsTimeRange): number {
 
 	switch (range) {
 		case 'day':
-			return now - day;
+			// "Today" is the local calendar day, not a rolling 24 hours.
+			return startOfLocalDay(now);
 		case 'week':
 			return now - 7 * day;
 		case 'month':

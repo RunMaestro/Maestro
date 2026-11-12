@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { CueCommand, CueEvent, CueNotifyConfig, CueSubscription } from './cue-types';
 import { recordTriggerFired } from './cue-telemetry';
+import { cueTurnSettingsOf, type CueTurnSettings } from '../../shared/cue/turn-settings';
 
 export interface CueDispatchServiceDeps {
 	getSessions: () => Array<{ id: string; name: string }>;
@@ -18,9 +19,16 @@ export interface CueDispatchServiceDeps {
 		command?: CueCommand,
 		chainRootId?: string,
 		parentEventId?: string,
-		notify?: CueNotifyConfig
+		notify?: CueNotifyConfig,
+		turnSettings?: CueTurnSettings
 	) => void;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
+	/**
+	 * Optional metadata-only hook fired once per subscription dispatch, carrying
+	 * the source event TYPE only (never prompt text). Used to surface `cue.fired`
+	 * to subscribed plugins; best-effort and must never throw into dispatch.
+	 */
+	onTriggerFired?: (eventType: string) => void;
 }
 
 /**
@@ -82,6 +90,12 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 				triggerName: event.triggerName,
 			});
 
+			// Surface `cue.fired` to subscribed plugins (type only, no prompt text).
+			deps.onTriggerFired?.(event.type);
+
+			// One model choice per subscription: every fan-out target shares it.
+			const turnSettings = cueTurnSettingsOf(sub);
+
 			if (sub.fan_out && sub.fan_out.length > 0) {
 				const targetNames = sub.fan_out.join(', ');
 				deps.onLog('cue', `[CUE] Fan-out: "${sub.name}" → ${targetNames}`);
@@ -100,7 +114,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 						allSessions.find((s) => s.name === targetName || s.id === targetName);
 
 					if (!targetSession) {
-						deps.onLog('cue', `[CUE] Fan-out target not found: "${targetName}" — skipping`);
+						deps.onLog('cue', `[CUE] Fan-out target not found: "${targetName}" - skipping`);
 						skippedTargets.push(`${targetName} (not found)`);
 						continue;
 					}
@@ -121,7 +135,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 					if (!prompt) {
 						deps.onLog(
 							'warn',
-							`[CUE] Fan-out target ${i} of "${sub.name}" has no prompt — skipping dispatch`
+							`[CUE] Fan-out target ${i} of "${sub.name}" has no prompt - skipping dispatch`
 						);
 						skippedTargets.push(`${targetName} (empty prompt)`);
 						continue;
@@ -138,7 +152,9 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 						sub.action,
 						sub.command,
 						chainRootId,
-						parentEventId
+						parentEventId,
+						undefined,
+						turnSettings
 					);
 					dispatched++;
 				}
@@ -167,7 +183,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			} else {
 				prompt = promptOverride ?? sub.prompt;
 				if (!prompt) {
-					deps.onLog('warn', `[CUE] "${sub.name}" has no prompt — skipping dispatch`);
+					deps.onLog('warn', `[CUE] "${sub.name}" has no prompt - skipping dispatch`);
 					return 0;
 				}
 			}
@@ -184,7 +200,8 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 				sub.command,
 				chainRootId,
 				parentEventId,
-				resolvedNotify
+				resolvedNotify,
+				turnSettings
 			);
 			return 1;
 		},

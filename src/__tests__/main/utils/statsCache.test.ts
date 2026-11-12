@@ -14,10 +14,19 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import path from 'path';
+import fs from 'fs/promises';
 import {
 	SessionStatsCache,
 	STATS_CACHE_VERSION,
+	STATS_CACHE_MIN_UPGRADABLE_VERSION,
 	PerProjectSessionStats,
+	loadStatsCache,
+	rescaleArchivedEntries,
+	statsCacheScope,
+	isDerivationStale,
+	accumulateUpgradeBaseline,
+	finishDerivationUpgrade,
+	type DerivationUpgradeBaseline,
 } from '../../../main/utils/statsCache';
 
 // Mock electron app module
@@ -36,6 +45,7 @@ vi.mock('fs/promises', () => ({
 		access: vi.fn(),
 		readdir: vi.fn(),
 		stat: vi.fn(),
+		realpath: vi.fn(),
 	},
 }));
 
@@ -589,5 +599,173 @@ describe('Regression Prevention', () => {
 		expect(updatedCache.totals.totalSessions).toBe(1);
 		expect(updatedCache.totals.totalMessages).toBe(500);
 		expect(updatedCache.totals.totalCostUsd).toBe(50.0);
+	});
+});
+
+describe('Derivation upgrades', () => {
+	const entry = (costUsd: number, tokens: number, archived = false): PerProjectSessionStats => ({
+		messages: 10,
+		costUsd,
+		sizeBytes: 100,
+		tokens,
+		oldestTimestamp: null,
+		fileMtimeMs: 1,
+		archived,
+	});
+
+	it('loads a cache that only differs in derivation instead of discarding its archived sessions', async () => {
+		vi.mocked(fs.readFile).mockResolvedValueOnce(
+			JSON.stringify({
+				version: STATS_CACHE_MIN_UPGRADABLE_VERSION,
+				sessions: { gone: entry(9, 90, true) },
+				totals: {},
+				lastUpdated: 0,
+			})
+		);
+		const cache = await loadStatsCache('/project');
+		expect(cache?.version).toBe(STATS_CACHE_MIN_UPGRADABLE_VERSION);
+		expect(cache?.sessions.gone.archived).toBe(true);
+	});
+
+	it('still discards a cache older than the upgradable floor', async () => {
+		vi.mocked(fs.readFile).mockResolvedValueOnce(
+			JSON.stringify({
+				version: STATS_CACHE_MIN_UPGRADABLE_VERSION - 1,
+				sessions: {},
+				totals: {},
+				lastUpdated: 0,
+			})
+		);
+		expect(await loadStatsCache('/project')).toBeNull();
+	});
+
+	it('rescales archived sessions by how far the fix moved the re-parsed ones', () => {
+		const before = { live: entry(30, 300), gone: entry(9, 90, true) };
+		// The re-parse brought the live session down to two thirds of its cost and
+		// half of its tokens.
+		const after = { live: entry(20, 150), gone: { ...before.gone } };
+
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens'], ['costUsd']);
+
+		expect(after.gone.costUsd).toBeCloseTo(6, 10);
+		expect(after.gone.tokens).toBeCloseTo(45, 10);
+		// Live entries are already re-derived and must not be touched.
+		expect(after.live).toEqual(entry(20, 150));
+	});
+
+	it('rounds scaled counts but keeps cents on fractional fields', () => {
+		const before = {
+			live: { ...entry(3, 3), messages: 3 },
+			gone: { ...entry(10, 10, true), messages: 10 },
+		};
+		const after = { live: { ...entry(2, 2), messages: 2 }, gone: { ...before.gone } };
+
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens', 'messages'], ['costUsd']);
+
+		expect(after.gone.costUsd).toBeCloseTo(6.6667, 3);
+		expect(after.gone.tokens).toBe(7);
+		expect(after.gone.messages).toBe(7);
+	});
+
+	it('leaves archived sessions alone when no live session gives a baseline', () => {
+		const before = { gone: entry(9, 90, true) };
+		const after = { gone: { ...before.gone } };
+
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens'], ['costUsd']);
+
+		expect(after.gone).toEqual(entry(9, 90, true));
+	});
+
+	it('ignores entries that were never re-parsed when measuring the fix', () => {
+		const unchanged = entry(100, 1000);
+		const before = { live: entry(30, 300), stuck: unchanged, gone: entry(9, 90, true) };
+		const after = { live: entry(15, 150), stuck: unchanged, gone: { ...before.gone } };
+
+		rescaleArchivedEntries(after, before, ['costUsd', 'tokens'], ['costUsd']);
+
+		// Only `live` moved, by half; `stuck` (same object, parse failed) is no evidence.
+		expect(after.gone.costUsd).toBeCloseTo(4.5, 10);
+	});
+});
+
+// Two accounts with separate pools must not share a cache file (each would
+// archive the other's sessions), but a pool shared through a symlinked
+// projects/ must keep the unscoped file so its archived sessions survive.
+describe('statsCacheScope', () => {
+	it('keeps the unscoped cache when the account resolves to the default pool', async () => {
+		vi.mocked(fs.realpath).mockImplementation(async () => '/home/.claude/projects/-p');
+		expect(
+			await statsCacheScope('/home/.claude-work/projects/-p', '/home/.claude/projects/-p')
+		).toBeUndefined();
+	});
+
+	it('scopes the cache to a separate pool', async () => {
+		vi.mocked(fs.realpath).mockImplementation(async (p) => String(p));
+		expect(
+			await statsCacheScope('/home/.claude-work/projects/-p', '/home/.claude/projects/-p')
+		).toBe('/home/.claude-work/projects/-p');
+	});
+});
+
+describe('resumable derivation upgrades', () => {
+	interface Entry {
+		costUsd: number;
+		tokens: number;
+		archived?: boolean;
+		derivedVersion?: number;
+	}
+
+	it('judges staleness per entry, falling back to the cache file version', () => {
+		expect(isDerivationStale({}, 5, 6)).toBe(true);
+		expect(isDerivationStale({}, 6, 6)).toBe(false);
+		// An entry upgraded by an earlier, killed run inside a v5 file.
+		expect(isDerivationStale({ derivedVersion: 6 }, 5, 6)).toBe(false);
+		expect(isDerivationStale({ derivedVersion: 5 }, 6, 7)).toBe(true);
+	});
+
+	it('accumulates the before/after sums across calls', () => {
+		const baseline: DerivationUpgradeBaseline = {};
+		accumulateUpgradeBaseline<Entry>(
+			baseline,
+			{ costUsd: 4, tokens: 10 },
+			{ costUsd: 2, tokens: 5 },
+			['costUsd', 'tokens']
+		);
+		accumulateUpgradeBaseline<Entry>(
+			baseline,
+			{ costUsd: 6, tokens: 10 },
+			{ costUsd: 3, tokens: 5 },
+			['costUsd', 'tokens']
+		);
+		expect(baseline).toEqual({
+			costUsd: { oldSum: 10, newSum: 5 },
+			tokens: { oldSum: 20, newSum: 10 },
+		});
+	});
+
+	it('scales only the archived entries still on the old derivation, then stamps them', () => {
+		const entries: Record<string, Entry> = {
+			live: { costUsd: 3, tokens: 5, derivedVersion: 6 },
+			gone: { costUsd: 12, tokens: 40, archived: true },
+			// Rescaled by an earlier finish; must not be scaled twice.
+			goneEarlier: { costUsd: 7, tokens: 7, archived: true, derivedVersion: 6 },
+		};
+		finishDerivationUpgrade(
+			entries,
+			5,
+			6,
+			{ costUsd: { oldSum: 10, newSum: 5 }, tokens: { oldSum: 20, newSum: 10 } },
+			['costUsd', 'tokens'],
+			['costUsd']
+		);
+		expect(entries.gone).toEqual({ costUsd: 6, tokens: 20, archived: true, derivedVersion: 6 });
+		expect(entries.goneEarlier.costUsd).toBe(7);
+		expect(entries.live.costUsd).toBe(3);
+	});
+
+	it('leaves a field with no baseline unscaled but still stamps the entry', () => {
+		const entries: Record<string, Entry> = { gone: { costUsd: 12, tokens: 40, archived: true } };
+		finishDerivationUpgrade(entries, 5, 6, {}, ['costUsd', 'tokens']);
+		expect(entries.gone).toEqual({ costUsd: 12, tokens: 40, archived: true, derivedVersion: 6 });
 	});
 });

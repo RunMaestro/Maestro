@@ -21,7 +21,9 @@
 
 import { useState } from 'react';
 import type { CSSProperties, MouseEvent } from 'react';
+import { X } from 'lucide-react';
 import type { Theme } from '../../types';
+import { isCoarsePointer } from '../../utils/touch';
 
 export interface EscCloseButtonProps {
 	theme: Theme;
@@ -55,6 +57,11 @@ export function EscCloseButton({
 }: EscCloseButtonProps) {
 	const [hovered, setHovered] = useState(false);
 
+	// Coarse pointers (phones/tablets, incl. web-desktop mobile) have no Escape
+	// key, so the "ESC" keycap names a control the user does not have. Same
+	// button, same handler - just an X glyph that reads as "close" there.
+	const isTouch = isCoarsePointer();
+
 	const handleClick = (e: MouseEvent<HTMLButtonElement>) => {
 		// Search bars live inside clickable rows and draggable headers; the pill
 		// must not double as a click on whatever is underneath it.
@@ -72,14 +79,16 @@ export function EscCloseButton({
 			title={label}
 			aria-label={label}
 			data-testid={testId}
-			className={`${VARIANT_CLASSES[variant]} px-2 py-0.5 rounded text-xs font-bold shrink-0 transition-colors cursor-pointer ${className}`.trim()}
+			className={`${VARIANT_CLASSES[variant]} ${
+				isTouch ? 'p-1.5' : 'px-2 py-0.5'
+			} rounded text-xs font-bold shrink-0 transition-colors cursor-pointer ${className}`.trim()}
 			style={{
 				backgroundColor: hovered ? theme.colors.border : theme.colors.bgMain,
 				color: hovered ? theme.colors.textMain : theme.colors.textDim,
 				...style,
 			}}
 		>
-			ESC
+			{isTouch ? <X className="w-4 h-4" /> : 'ESC'}
 		</button>
 	);
 }

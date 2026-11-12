@@ -8,7 +8,8 @@
  * push rc", "every weekday at 9am summarize the PR queue").
  *
  * Modes, selected by flag:
- *   - default:            create a task (one-shot, daily, or interval)
+ *   - default:            create a task (one-shot, daily, or interval); `--tab` /
+ *                         `--here` deliver its prompt into an existing AI tab
  *   - `--list`:           enumerate scheduled tasks across every agent
  *   - `--cancel <name>`:  delete a task
  *   - `--reschedule <n>`: change WHEN an existing task fires
@@ -19,7 +20,8 @@
  * and one created by clicking are the same object on disk. Writes do not need
  * the desktop app running - the engine's YAML watcher picks them up.
  */
-import { readSessions } from '../services/storage';
+import { readSessions, resolveStoredAiTabId } from '../services/storage';
+import { readCallerIdentity } from '../../shared/agentDelegation';
 import { humanizeDuration, DURATION_LADDER_DAYS } from '../../shared/duration';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import {
@@ -43,6 +45,7 @@ import {
 	type ScheduledTaskUpdateInput,
 } from '../../shared/cue/scheduled-tasks';
 import type { CueScheduleDay } from '../../shared/cue/contracts';
+import { formatCueTurnSettings, parseCueTurnSettingsInput } from '../../shared/cue/turn-settings';
 import type { SessionInfo } from '../../shared/types';
 
 export interface CueScheduleOptions {
@@ -67,6 +70,13 @@ export interface CueScheduleOptions {
 	pipeline?: string;
 	graceMinutes?: string;
 	keepOnFailure?: boolean;
+	tier?: string;
+	model?: string;
+	effort?: string;
+	/** Deliver the prompt into this existing AI tab of `--agent`. */
+	tab?: string;
+	/** Deliver into the AI tab this command runs from (`MAESTRO_CALLER_TAB_ID`). */
+	here?: boolean;
 	json?: boolean;
 }
 
@@ -161,7 +171,12 @@ interface ScheduledTaskRow {
 	agent_name: string;
 	project_root: string;
 	action: string;
+	/** AI tab the prompt is delivered into; empty for a detached Cue turn. */
+	tab_id: string;
 	label: string;
+	tier: string;
+	model: string;
+	effort: string;
 }
 
 function toRow(task: ScheduledTask, now: number): ScheduledTaskRow {
@@ -178,7 +193,11 @@ function toRow(task: ScheduledTask, now: number): ScheduledTaskRow {
 		agent_name: task.agentName,
 		project_root: task.projectRoot,
 		action: task.action,
+		tab_id: task.tabId ?? '',
 		label: task.label,
+		tier: task.tier ?? '',
+		model: task.model ?? '',
+		effort: task.effort ?? '',
 	};
 }
 
@@ -196,7 +215,7 @@ function renderTable(rows: ScheduledTaskRow[]): string {
 		{ header: 'SCHEDULE', get: (r) => r.schedule },
 		{ header: 'IN', get: (r) => r.in },
 		{ header: 'AGENT', get: (r) => r.agent_name },
-		{ header: 'ACTION', get: (r) => r.action },
+		{ header: 'ACTION', get: (r) => (r.tab_id ? `tab ${r.tab_id.slice(0, 8)}` : r.action) },
 		{ header: 'LABEL', get: (r) => r.label },
 	];
 	const widths = columns.map((col) =>
@@ -529,18 +548,80 @@ function parseTiming(options: CueScheduleOptions): ParsedTiming {
 // create
 // ────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Resolve `--here` / `--tab` to the AI tab the prompt is delivered into, or
+ * `undefined` for a detached Cue turn. `--here` takes the tab this command runs
+ * from, which only an agent's own shell knows; the agent it implies becomes the
+ * default `--agent`. Errors out (never returns) on a conflict or an unknown tab.
+ */
+function resolveTargetTab(options: CueScheduleOptions): {
+	tabId?: string;
+	impliedAgentId?: string;
+} {
+	if (options.here && options.tab !== undefined) {
+		errorOut('--here and --tab are mutually exclusive', options, 'CONFLICTING_TAB');
+	}
+	if (options.here) {
+		const caller = readCallerIdentity(process.env);
+		if (!caller?.tabId) {
+			errorOut(
+				'--here only works from inside a Maestro AI tab (no caller tab id in the environment); pass --tab <tab-id> instead',
+				options,
+				'NOT_IN_TAB'
+			);
+		}
+		return { tabId: caller.tabId, impliedAgentId: caller.agentId };
+	}
+	if (options.tab !== undefined) {
+		if (options.tab.trim().length === 0) errorOut('--tab needs a tab id', options, 'MISSING_TAB');
+		return { tabId: options.tab.trim() };
+	}
+	return {};
+}
+
 async function runCreate(options: CueScheduleOptions): Promise<void> {
 	const timing = parseTiming(options);
+	const target = resolveTargetTab(options);
 
-	if (!options.agent) errorOut('--agent <id-or-name> is required', options, 'MISSING_AGENT');
+	const agentInput = options.agent ?? target.impliedAgentId;
+	if (!agentInput) errorOut('--agent <id-or-name> is required', options, 'MISSING_AGENT');
 	const sessions = readSessions();
 	let agent: SessionInfo | null;
 	try {
-		agent = resolveAgent(options.agent, sessions);
+		agent = resolveAgent(agentInput, sessions);
 	} catch (err) {
 		errorOut(err instanceof Error ? err.message : String(err), options, 'AMBIGUOUS_AGENT');
 	}
-	if (!agent) errorOut(`agent "${options.agent}" not found`, options, 'AGENT_NOT_FOUND');
+	if (!agent) errorOut(`agent "${agentInput}" not found`, options, 'AGENT_NOT_FOUND');
+	if (target.impliedAgentId && agent.id !== target.impliedAgentId) {
+		errorOut(
+			`--here delivers into this tab, which belongs to agent ${target.impliedAgentId}, not ${agent.id}; drop --agent or pass --tab`,
+			options,
+			'TAB_AGENT_MISMATCH'
+		);
+	}
+
+	// An explicit --tab is checked against the agent's tabs now, so a typo fails
+	// here instead of quietly falling back to a new tab when the task fires. The
+	// caller's own tab (--here) is authoritative and skips the check: a tab
+	// opened a moment ago may not be on disk yet.
+	let tabId = target.tabId;
+	if (tabId && !target.impliedAgentId) {
+		let resolvedTab: string | null;
+		try {
+			resolvedTab = resolveStoredAiTabId(agent.id, tabId);
+		} catch (err) {
+			errorOut(err instanceof Error ? err.message : String(err), options, 'AMBIGUOUS_TAB');
+		}
+		if (!resolvedTab) {
+			errorOut(
+				`agent ${agent.name || agent.id} has no AI tab "${tabId}" (list them with: maestro-cli session list --agent ${agent.id})`,
+				options,
+				'TAB_NOT_FOUND'
+			);
+		}
+		tabId = resolvedTab;
+	}
 
 	const promptText = options.prompt ?? '';
 	const hasPrompt = promptText.length > 0;
@@ -550,6 +631,27 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 	}
 	if (options.sticky && !hasNotify) {
 		errorOut('--sticky requires --notify', options, 'STICKY_WITHOUT_NOTIFY');
+	}
+	if (tabId && !hasPrompt) {
+		errorOut(
+			'--tab and --here need --prompt (the message to deliver)',
+			options,
+			'TAB_WITHOUT_PROMPT'
+		);
+	}
+
+	const turnInput = parseCueTurnSettingsInput(options);
+	if (!turnInput.ok) errorOut(turnInput.error, options, turnInput.code);
+	const { tier, model, effort } = turnInput.settings;
+	if ((tier || model || effort) && !hasPrompt) {
+		errorOut('--tier, --model, and --effort need --prompt', options, 'MODEL_WITHOUT_PROMPT');
+	}
+	if ((tier || model || effort) && tabId) {
+		errorOut(
+			"--tier, --model, and --effort do not apply with --tab or --here: the prompt runs on that tab's own model",
+			options,
+			'MODEL_WITH_TAB'
+		);
 	}
 
 	let graceMinutes: number | undefined;
@@ -588,6 +690,10 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 		pipelineName: options.pipeline,
 		graceMinutes,
 		keepOnFailure: options.keepOnFailure === true,
+		tier,
+		model,
+		effort,
+		tabId,
 	};
 
 	let names: string[];
@@ -617,7 +723,11 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 				schedule_days: timing.scheduleDays ?? [],
 				interval_minutes: timing.intervalMinutes ?? null,
 				agent_id: agent.id,
+				tab_id: tabId ?? '',
 				pipeline_name: pipelineName,
+				tier: tier ?? '',
+				model: model ?? '',
+				effort: effort ?? '',
 			})
 		);
 		return;
@@ -625,5 +735,10 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 
 	const quoted = names.map((n) => `'${n}'`).join(', ');
 	const noun = names.length === 1 ? 'task' : 'tasks';
-	console.log(`Scheduled ${noun} ${quoted} on agent ${agentDisplay}: ${describeTiming(timing)}`);
+	const modelLabel = formatCueTurnSettings({ tier, model, effort });
+	const modelNote = modelLabel ? ` (${modelLabel})` : '';
+	const tabNote = tabId ? `, into tab ${tabId}` : '';
+	console.log(
+		`Scheduled ${noun} ${quoted} on agent ${agentDisplay}${tabNote}: ${describeTiming(timing)}${modelNote}`
+	);
 }

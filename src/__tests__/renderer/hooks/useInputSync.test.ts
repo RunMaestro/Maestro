@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useInputSync } from '../../../renderer/hooks/input/useInputSync';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 import type { Session } from '../../../renderer/types';
@@ -42,13 +43,23 @@ function applySetSessions(setSessions: ReturnType<typeof vi.fn>, session: Sessio
 
 beforeEach(() => {
 	useComposerInputStore.setState({ aiValue: '', terminalValue: '', aiCommandMode: 'off' });
+	// rc's useInputSync resolves the active session from the store at flush time
+	// (so App does not re-render on every streaming update), rather than taking
+	// it as an argument. Seed the store instead of passing a session in.
+	useSessionStore.setState({ sessions: [], activeSessionId: '' });
 });
+
+function seedActiveSession(session: Session) {
+	useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+}
 
 describe('useInputSync - syncAiInputToSession', () => {
 	it('persists the draft text onto the active tab', () => {
 		const setSessions = vi.fn();
 		const session = makeSession();
-		const { result } = renderHook(() => useInputSync(session, { setSessions }));
+		seedActiveSession(session);
+		seedActiveSession(session);
+		const { result } = renderHook(() => useInputSync({ setSessions }));
 
 		result.current.syncAiInputToSession('half a thought');
 
@@ -60,7 +71,9 @@ describe('useInputSync - syncAiInputToSession', () => {
 		useComposerInputStore.setState({ aiCommandMode: 'shell' });
 		const setSessions = vi.fn();
 		const session = makeSession();
-		const { result } = renderHook(() => useInputSync(session, { setSessions }));
+		seedActiveSession(session);
+		seedActiveSession(session);
+		const { result } = renderHook(() => useInputSync({ setSessions }));
 
 		result.current.syncAiInputToSession('rm -rf build');
 
@@ -76,7 +89,8 @@ describe('useInputSync - syncAiInputToSession', () => {
 		const setSessions = vi.fn();
 		const session = makeSession();
 		session.aiTabs[0].commandMode = 'shell';
-		const { result } = renderHook(() => useInputSync(session, { setSessions }));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useInputSync({ setSessions }));
 
 		result.current.syncAiInputToSession('talk to the agent');
 
@@ -87,7 +101,9 @@ describe('useInputSync - syncAiInputToSession', () => {
 	it('reads the mode at flush time, not from a stale closure', () => {
 		const setSessions = vi.fn();
 		const session = makeSession();
-		const { result } = renderHook(() => useInputSync(session, { setSessions }));
+		seedActiveSession(session);
+		seedActiveSession(session);
+		const { result } = renderHook(() => useInputSync({ setSessions }));
 
 		// Mode flips after the hook rendered - the flush must still see it.
 		useComposerInputStore.setState({ aiCommandMode: 'shell' });
@@ -99,7 +115,7 @@ describe('useInputSync - syncAiInputToSession', () => {
 
 	it('does nothing without an active session', () => {
 		const setSessions = vi.fn();
-		const { result } = renderHook(() => useInputSync(null, { setSessions }));
+		const { result } = renderHook(() => useInputSync({ setSessions }));
 
 		result.current.syncAiInputToSession('anything');
 
@@ -113,9 +129,10 @@ describe('useInputSync - syncAiInputToSession', () => {
 		const setSessions = vi.fn();
 		const session = makeSession();
 		session.aiTabs[1].inputValue = 'the other tab draft';
-		const { result } = renderHook(() => useInputSync(session, { setSessions }));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useInputSync({ setSessions }));
 
-		result.current.syncAiInputToSession('typed on tab-1', TAB_ID);
+		result.current.syncAiInputToSession('typed on tab-1', { tabId: TAB_ID });
 
 		const [updated] = applySetSessions(setSessions, session);
 		expect(updated.aiTabs[0].inputValue).toBe('typed on tab-1');
@@ -129,9 +146,10 @@ describe('useInputSync - syncAiInputToSession', () => {
 		const session = makeSession();
 		session.aiTabs[0].inputValue = 'already stored';
 		session.aiTabs[0].commandMode = 'off';
-		const { result } = renderHook(() => useInputSync(session, { setSessions }));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useInputSync({ setSessions }));
 
-		result.current.syncAiInputToSession('already stored', TAB_ID);
+		result.current.syncAiInputToSession('already stored', { tabId: TAB_ID });
 
 		const [updated] = applySetSessions(setSessions, session);
 		expect(updated).toBe(session);
@@ -152,7 +170,8 @@ describe('useInputSync - queueAiDraftFlush', () => {
 		// No flush point (blur, tab switch, send) is load bearing.
 		const setSessions = vi.fn();
 		const session = makeSession();
-		const { result } = renderHook(() => useInputSync(session, { setSessions }));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useInputSync({ setSessions }));
 
 		result.current.queueAiDraftFlush(TAB_ID, 'never blurred', 'off');
 		expect(setSessions).not.toHaveBeenCalled();
@@ -166,7 +185,8 @@ describe('useInputSync - queueAiDraftFlush', () => {
 	it('coalesces a burst of keystrokes into one write', () => {
 		const setSessions = vi.fn();
 		const session = makeSession();
-		const { result } = renderHook(() => useInputSync(session, { setSessions }));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useInputSync({ setSessions }));
 
 		for (const text of ['n', 'ne', 'nev', 'neve', 'never']) {
 			result.current.queueAiDraftFlush(TAB_ID, text, 'off');
@@ -183,7 +203,8 @@ describe('useInputSync - queueAiDraftFlush', () => {
 		// typed in the tab being left.
 		const setSessions = vi.fn();
 		const session = makeSession();
-		const { result } = renderHook(() => useInputSync(session, { setSessions }));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useInputSync({ setSessions }));
 
 		result.current.queueAiDraftFlush(TAB_ID, 'first tab text', 'off');
 		result.current.queueAiDraftFlush(OTHER_TAB_ID, 'second tab text', 'off');
@@ -197,11 +218,12 @@ describe('useInputSync - queueAiDraftFlush', () => {
 	it('is superseded by an explicit sync, so sent text cannot come back', () => {
 		const setSessions = vi.fn();
 		const session = makeSession();
-		const { result } = renderHook(() => useInputSync(session, { setSessions }));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useInputSync({ setSessions }));
 
 		result.current.queueAiDraftFlush(TAB_ID, 'about to be sent', 'off');
 		// Sending clears the composer and syncs the empty value.
-		result.current.syncAiInputToSession('', TAB_ID);
+		result.current.syncAiInputToSession('', { tabId: TAB_ID });
 		vi.advanceTimersByTime(500);
 
 		const [updated] = applySetSessions(setSessions, session);
@@ -211,7 +233,8 @@ describe('useInputSync - queueAiDraftFlush', () => {
 	it('flushes a pending draft on unmount', () => {
 		const setSessions = vi.fn();
 		const session = makeSession();
-		const { result, unmount } = renderHook(() => useInputSync(session, { setSessions }));
+		seedActiveSession(session);
+		const { result, unmount } = renderHook(() => useInputSync({ setSessions }));
 
 		result.current.queueAiDraftFlush(TAB_ID, 'typed right before teardown', 'off');
 		unmount();
@@ -225,7 +248,8 @@ describe('useInputSync - queueAiDraftFlush', () => {
 		// interrupted mid-sentence, and it's when the session file gets written.
 		const setSessions = vi.fn();
 		const session = makeSession();
-		const { result } = renderHook(() => useInputSync(session, { setSessions }));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useInputSync({ setSessions }));
 
 		result.current.queueAiDraftFlush(TAB_ID, 'stepping away mid-sentence', 'off');
 		window.dispatchEvent(new Event('blur'));
@@ -237,7 +261,8 @@ describe('useInputSync - queueAiDraftFlush', () => {
 	it('carries command mode with the queued text', () => {
 		const setSessions = vi.fn();
 		const session = makeSession();
-		const { result } = renderHook(() => useInputSync(session, { setSessions }));
+		seedActiveSession(session);
+		const { result } = renderHook(() => useInputSync({ setSessions }));
 
 		result.current.queueAiDraftFlush(TAB_ID, 'rm -rf build', 'shell');
 		vi.advanceTimersByTime(500);

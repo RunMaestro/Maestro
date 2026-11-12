@@ -1095,6 +1095,44 @@ describe('graphSessionsToPipelines', () => {
 		expect(pipelines[0].edges.length).toBeGreaterThanOrEqual(2);
 	});
 
+	it('keeps webhook triggers with different paths as separate nodes', () => {
+		// The trigger group key must include the webhook block. Without it these
+		// two collapse into one visual trigger and the next save rewrites both
+		// subscriptions to a single path, silently breaking a live endpoint.
+		const graphSessions: CueGraphSession[] = [
+			{
+				sessionId: 's1',
+				sessionName: 'worker',
+				toolType: 'claude-code',
+				subscriptions: [
+					{
+						name: 'hooks',
+						event: 'webhook.received',
+						enabled: true,
+						prompt: 'Handle',
+						webhook: { path: 'from-github', secret_env: 'GH_SECRET' },
+					},
+					{
+						name: 'hooks-chain-2',
+						event: 'webhook.received',
+						enabled: true,
+						prompt: 'Handle',
+						pipeline_name: 'hooks',
+						webhook: { path: 'from-ci', secret_env: 'CI_SECRET' },
+					},
+				],
+			},
+		];
+		const sessions = makeSessions('worker');
+
+		const pipelines = graphSessionsToPipelines(graphSessions, sessions);
+		const triggers = pipelines.flatMap((p) => p.nodes.filter((n) => n.type === 'trigger'));
+		expect(triggers).toHaveLength(2);
+		expect(
+			triggers.map((t) => (t.data as { config: { webhook_path?: string } }).config.webhook_path)
+		).toEqual(expect.arrayContaining(['from-github', 'from-ci']));
+	});
+
 	it('returns empty array for no graph sessions', () => {
 		const result = graphSessionsToPipelines([], []);
 		expect(result).toEqual([]);

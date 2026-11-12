@@ -25,6 +25,8 @@ import {
 	groupChatStart,
 	groupChatStatus,
 	groupChatStop,
+	groupChatArchive,
+	groupChatAdd,
 	resolveChatRef,
 } from '../../../cli/commands/group-chat';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
@@ -266,6 +268,118 @@ describe('group-chat commands', () => {
 
 			expect(sent[1]).toEqual({ type: 'stop_group_chat', chatId: 'abc123' });
 			expect(logSpy).toHaveBeenCalledWith('Stopped group chat abc123');
+		});
+	});
+
+	describe('archive', () => {
+		it('archives the resolved chat', async () => {
+			const { sent } = mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				archive_group_chat: { type: 'archive_group_chat_result', success: true },
+			});
+
+			await groupChatArchive('Release', {});
+
+			expect(sent[1]).toEqual({ type: 'archive_group_chat', chatId: 'abc123', archived: true });
+			expect(logSpy).toHaveBeenCalledWith('Archived group chat abc123');
+		});
+
+		it('restores an archived chat by ID with --restore', async () => {
+			const { sent } = mockBridge({
+				get_group_chats: {
+					type: 'group_chats_list',
+					chats: [chat('abc123', 'Release', { archived: true })],
+				},
+				archive_group_chat: { type: 'archive_group_chat_result', success: true },
+			});
+
+			await groupChatArchive('abc123', { restore: true, json: true });
+
+			expect(sent[1]).toEqual({ type: 'archive_group_chat', chatId: 'abc123', archived: false });
+			expect(JSON.parse(logSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				chatId: 'abc123',
+				archived: false,
+			});
+		});
+
+		it('exits 1 when the app could not archive the chat', async () => {
+			mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				archive_group_chat: { type: 'archive_group_chat_result', success: false },
+			});
+
+			await expect(groupChatArchive('Release', {})).rejects.toThrow('process.exit');
+			expect(errorSpy).toHaveBeenCalledWith('Error: Failed to archive group chat');
+			expect(exitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
+	describe('add', () => {
+		it('resolves the agent and sends its full ID to the app', async () => {
+			const { sent } = mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				add_group_chat_participant: {
+					type: 'add_group_chat_participant_result',
+					success: true,
+					participantName: 'Isabelle',
+				},
+			});
+
+			await groupChatAdd('Release', 'isabelle', {});
+
+			expect(sent[1]).toEqual({
+				type: 'add_group_chat_participant',
+				chatId: 'abc123',
+				agentId: 'id-isabelle',
+			});
+			expect(logSpy).toHaveBeenCalledWith('Added Isabelle (id-isabelle) to group chat abc123');
+		});
+
+		it('reports an agent that is already a participant', async () => {
+			mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				add_group_chat_participant: {
+					type: 'add_group_chat_participant_result',
+					success: true,
+					participantName: 'Isabelle',
+					alreadyMember: true,
+				},
+			});
+
+			await groupChatAdd('abc123', 'isabelle', { json: true });
+
+			expect(JSON.parse(logSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				chatId: 'abc123',
+				agentId: 'id-isabelle',
+				participantName: 'Isabelle',
+				alreadyMember: true,
+			});
+		});
+
+		it('exits 1 with the app error when the add is refused', async () => {
+			mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				add_group_chat_participant: {
+					type: 'add_group_chat_participant_result',
+					success: false,
+					error: 'Moderator must be active before adding participants',
+				},
+			});
+
+			await expect(groupChatAdd('Release', 'isabelle', {})).rejects.toThrow('process.exit');
+			expect(errorSpy).toHaveBeenCalledWith(
+				'Error: Moderator must be active before adding participants'
+			);
+		});
+
+		it('exits 1 before contacting the app when the agent is unknown', async () => {
+			const { sent } = mockBridge({});
+
+			await expect(groupChatAdd('Release', 'missing', {})).rejects.toThrow('process.exit');
+			expect(errorSpy).toHaveBeenCalledWith('Error: Agent not found: missing');
+			expect(sent).toEqual([]);
 		});
 	});
 });

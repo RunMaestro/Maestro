@@ -124,6 +124,25 @@ export function createGroupChatApi() {
 		sendToModerator: (id: string, message: string, images?: string[], readOnly?: boolean) =>
 			ipcRenderer.invoke('groupChat:sendToModerator', id, message, images, readOnly),
 
+		// Execution queue. The queue lives in MAIN, so every one of these returns
+		// the whole state and main also broadcasts it on `groupChat:queueState` -
+		// a client renders what it is told rather than its own private copy, which
+		// is what made a phone's queue invisible to the desktop.
+		submitMessage: (id: string, item: unknown) =>
+			ipcRenderer.invoke('groupChat:submitMessage', id, item),
+		getQueue: (id: string) => ipcRenderer.invoke('groupChat:getQueue', id),
+		queueAdd: (id: string, item: unknown) => ipcRenderer.invoke('groupChat:queueAdd', id, item),
+		queueRemove: (id: string, itemId: string) =>
+			ipcRenderer.invoke('groupChat:queueRemove', id, itemId),
+		queueReorder: (id: string, itemId: string, toIndex: number) =>
+			ipcRenderer.invoke('groupChat:queueReorder', id, itemId, toIndex),
+		queueResume: (id: string) => ipcRenderer.invoke('groupChat:queueResume', id),
+		onQueueState: (callback: (groupChatId: string, state: unknown) => void) => {
+			const handler = (_e: unknown, groupChatId: string, state: unknown) =>
+				callback(groupChatId, state);
+			ipcRenderer.on('groupChat:queueState', handler);
+			return () => ipcRenderer.removeListener('groupChat:queueState', handler);
+		},
 		stopModerator: (id: string) => ipcRenderer.invoke('groupChat:stopModerator', id),
 
 		stopAll: (id: string) => ipcRenderer.invoke('groupChat:stopAll', id),

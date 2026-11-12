@@ -10,26 +10,21 @@ import * as path from 'path';
 import * as os from 'os';
 import { PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY } from '../../../shared/cue-pipeline-types';
 
-// electron's app.getPath is mocked via the module loader so the store writes
-// into a scratch directory under $TMPDIR rather than the real userData path.
+// The store resolves its data directory with `resolveUserDataDir`, which reads
+// MAESTRO_USER_DATA first - the same variable the app publishes at startup. Set
+// it to a scratch directory so the store writes there, not the real userData.
 let scratchDir = '';
-
-vi.mock('electron', () => ({
-	app: {
-		getPath: (_name: string) => scratchDir,
-	},
-}));
 
 vi.mock('../../../main/utils/sentry', () => ({
 	captureException: vi.fn(),
 }));
 
-// Import AFTER vi.mock so the module picks up the stubbed electron.
 let savePipelineLayout: typeof import('../../../main/cue/pipeline-layout-store').savePipelineLayout;
 let loadPipelineLayout: typeof import('../../../main/cue/pipeline-layout-store').loadPipelineLayout;
 
 beforeEach(async () => {
 	scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-layout-test-'));
+	process.env.MAESTRO_USER_DATA = scratchDir;
 	// Re-import fresh so the cached file path inside the store is reset for
 	// each test. Vitest's module graph keeps one instance across tests in the
 	// same file otherwise, which causes the first test's scratch path to
@@ -41,6 +36,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+	delete process.env.MAESTRO_USER_DATA;
 	if (scratchDir && fs.existsSync(scratchDir)) {
 		fs.rmSync(scratchDir, { recursive: true, force: true });
 	}

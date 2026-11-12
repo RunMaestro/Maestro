@@ -24,6 +24,7 @@ import {
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
+import { emptyPromptCadence } from '../../../../shared/promptCadence';
 
 // Test theme
 const theme = THEMES['dracula'];
@@ -58,6 +59,7 @@ const mockData: StatsAggregation = {
 		parent: { count: 150, duration: 7200000 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 // Empty data for edge case testing
@@ -84,6 +86,7 @@ const emptyData: StatsAggregation = {
 		parent: { count: 0, duration: 0 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 // Data with large numbers
@@ -113,6 +116,7 @@ const largeNumbersData: StatsAggregation = {
 		parent: { count: 1500000, duration: 360000000 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 // Single agent data
@@ -141,6 +145,7 @@ const singleAgentData: StatsAggregation = {
 		parent: { count: 50, duration: 1800000 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 // Mock sessions with tabs for open tab count testing
@@ -173,13 +178,123 @@ describe('SummaryCards', () => {
 			expect(screen.getByTestId('summary-cards')).toBeInTheDocument();
 		});
 
-		it('renders all twelve metric cards', () => {
-			// Card count grew from 10 to 12: Interactive % + Local % were removed,
-			// and Current Streak / Best Day / Active Days / Worktree % were added.
+		it('renders all fourteen metric cards', () => {
+			// Card count grew to 14: the Tokens and Cost cards were added alongside
+			// the earlier Streak / Best Day / Active Days additions.
 			render(<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards).toHaveLength(12);
+			expect(cards).toHaveLength(14);
+		});
+
+		// Regression for issue #1399: the Tokens and Cost cards used to sum each
+		// agent's persisted lifetime `usageStats`, which cannot move when the
+		// dashboard's range selector does. They now read the range-scoped
+		// `bySessionTokens` the aggregation already carries.
+		it('reads Tokens and Cost from the range-scoped totals, not lifetime usageStats', () => {
+			const sessionsWithLifetimeUsage = [
+				{
+					id: 's1',
+					toolType: 'claude-code',
+					aiTabs: [],
+					filePreviewTabs: [],
+					// Lifetime counter, deliberately far larger than the range below.
+					usageStats: {
+						inputTokens: 900_000_000,
+						outputTokens: 900_000_000,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						totalCostUsd: 999,
+					},
+				},
+			] as unknown as Session[];
+
+			render(
+				<SummaryCards
+					data={
+						{
+							...mockData,
+							bySessionTokens: {
+								s1: {
+									inputTokens: 1_000_000,
+									outputTokens: 500_000,
+									cacheReadTokens: 0,
+									cacheCreationTokens: 0,
+									costUsd: 12.5,
+									pricedQueries: 40,
+								},
+							},
+						} as StatsAggregation
+					}
+					theme={theme}
+					sessions={sessionsWithLifetimeUsage}
+				/>
+			);
+
+			expect(screen.getByRole('group', { name: 'Tokens: 1.5M' })).toBeInTheDocument();
+			expect(screen.getByRole('group', { name: 'Cost: $12.50' })).toBeInTheDocument();
+		});
+
+		it('shows a dash for Tokens when the selected range recorded none', () => {
+			const sessionsWithLifetimeUsage = [
+				{
+					id: 's1',
+					toolType: 'claude-code',
+					aiTabs: [],
+					filePreviewTabs: [],
+					usageStats: {
+						inputTokens: 5_000_000,
+						outputTokens: 5_000_000,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						totalCostUsd: 42,
+					},
+				},
+			] as unknown as Session[];
+
+			render(
+				<SummaryCards
+					data={{ ...mockData, bySessionTokens: {} } as StatsAggregation}
+					theme={theme}
+					sessions={sessionsWithLifetimeUsage}
+				/>
+			);
+
+			expect(screen.getByRole('group', { name: 'Tokens: \u2014' })).toBeInTheDocument();
+		});
+
+		// The stats DB only stores provider-REPORTED cost, so a provider that
+		// prices nothing itself would blank the Cost card without the rate-table
+		// fallback the lifetime path used to supply.
+		it('estimates Cost from the rate table when the range reported none', () => {
+			const sessions = [
+				{ id: 's1', toolType: 'claude-code', aiTabs: [], filePreviewTabs: [] },
+			] as unknown as Session[];
+
+			render(
+				<SummaryCards
+					data={
+						{
+							...mockData,
+							bySessionTokens: {
+								s1: {
+									inputTokens: 1_000_000,
+									outputTokens: 1_000_000,
+									cacheReadTokens: 0,
+									cacheCreationTokens: 0,
+									costUsd: 0,
+									pricedQueries: 10,
+								},
+							},
+						} as StatsAggregation
+					}
+					theme={theme}
+					sessions={sessions}
+				/>
+			);
+
+			expect(screen.getByText('Est. Cost')).toBeInTheDocument();
+			expect(screen.getByRole('group', { name: /^Est\. Cost: ~\$/ })).toBeInTheDocument();
 		});
 
 		it('renders Total Queries metric', async () => {
@@ -240,6 +355,37 @@ describe('SummaryCards', () => {
 			expect(screen.getByText('Open Tabs')).toBeInTheDocument();
 			const tabsCard = screen.getByRole('group', { name: /Open Tabs: 8/i });
 			expect(tabsCard).toBeInTheDocument();
+		});
+
+		it('counts browser and terminal tabs, and skips hidden AI tabs, like the tab strip', () => {
+			const sessions = [
+				{
+					id: 's1',
+					toolType: 'claude-code',
+					aiTabs: [{ id: 'tab1' }, { id: 'consult', hidden: true }],
+					filePreviewTabs: [{ id: 'file1' }],
+					browserTabs: [{ id: 'browser1' }],
+					terminalTabs: [{ id: 'term1' }, { id: 'term2' }],
+				},
+			] as unknown as Session[];
+			render(<SummaryCards data={mockData} theme={theme} sessions={sessions} />);
+			expect(screen.getByRole('group', { name: /Open Tabs: 5/i })).toBeInTheDocument();
+			expect(screen.getByTestId('open-tab-breakdown')).toHaveTextContent(
+				'1 AI · 1 file · 1 browser · 2 terminal'
+			);
+		});
+
+		it('leaves out a tab with no slot in the strip (#2008)', () => {
+			const sessions = [
+				{
+					id: 's1',
+					toolType: 'claude-code',
+					aiTabs: [{ id: 'open' }, { id: 'orphan' }],
+					unifiedTabOrder: [{ type: 'ai', id: 'open' }],
+				},
+			] as unknown as Session[];
+			render(<SummaryCards data={mockData} theme={theme} sessions={sessions} />);
+			expect(screen.getByRole('group', { name: /Open Tabs: 1/i })).toBeInTheDocument();
 		});
 
 		it('renders Open Tabs as 0 when no sessions provided', () => {
@@ -390,7 +536,7 @@ describe('SummaryCards', () => {
 			const sparklines = grid.querySelectorAll(
 				'[data-testid="sparkline"], [data-testid="sparkline-empty"]'
 			);
-			expect(svgElements.length - sparklines.length).toBe(12);
+			expect(svgElements.length - sparklines.length).toBe(14);
 		});
 	});
 
@@ -751,6 +897,19 @@ describe('RealtimeMetricsCard', () => {
 		expect(indicator.textContent).toContain('5s');
 	});
 
+	it('humanizes the thinking elapsed time past a minute', () => {
+		const now = Date.now();
+		const sessions = [
+			buildSession({ state: 'busy', thinkingStartTime: now - (20 * 60 + 4) * 1000 }),
+		];
+
+		render(<RealtimeMetricsCard sessions={sessions} theme={theme} />);
+
+		const indicator = screen.getByTestId('realtime-thinking-elapsed');
+		expect(indicator.textContent).toContain('20m 4s');
+		expect(indicator).toHaveAttribute('aria-label', 'Thinking for 20 minutes, 4 seconds');
+	});
+
 	it('hides the thinking indicator when no session is actively thinking', () => {
 		const sessions = [buildSession({ state: 'idle', contextUsage: 20 })];
 
@@ -804,5 +963,25 @@ describe('SummaryCards - active agents in range', () => {
 		render(<SummaryCards data={mockData} theme={theme} />);
 
 		expect(screen.queryByTestId('agent-active-count')).not.toBeInTheDocument();
+	});
+});
+
+describe('MetricCard value overflow', () => {
+	// A formatted figure carries no spaces, so a value too wide for its column
+	// (`~$39,605.06` in a 176px card on a phone) had nowhere to break and
+	// painted straight out past the card's own edge. It wraps rather than
+	// truncating: the whole number is the point of the card.
+	it('lets a long value wrap inside its card instead of overflowing it', () => {
+		render(<SummaryCards data={mockData} theme={theme} />);
+
+		const values = screen
+			.getAllByTestId('metric-card')
+			.map((card) => card.querySelector('.font-bold'))
+			.filter((el): el is HTMLElement => el instanceof HTMLElement);
+
+		expect(values.length).toBeGreaterThan(0);
+		for (const value of values) {
+			expect(value.style.overflowWrap).toBe('anywhere');
+		}
 	});
 });
