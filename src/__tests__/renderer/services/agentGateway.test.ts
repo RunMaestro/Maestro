@@ -19,6 +19,7 @@ import {
 } from '../../../renderer/services/agentGateway';
 import { TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION } from '../../../shared/local-models/token-proxy';
 import { BACKGROUND_REQUESTS_NEEDS_PROXY } from '../../../shared/local-models/background-requests';
+import { RUN_ON_GATEWAY_SKIPPED_REASON } from '../../../shared/local-models/run-on';
 import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -260,6 +261,27 @@ describe('flushAgentToStore', () => {
 });
 
 describe('setAgentTokenProxyMode', () => {
+	it.each(['passthrough', 'compress', 'compress-early'] as const)(
+		'refuses %s on a Run on source before setting up or persisting the proxy',
+		async (mode) => {
+			const original = seed({ runOn: QWEN });
+			expect(await setAgentTokenProxyMode('agent-1', mode)).toEqual({
+				ok: false,
+				error: RUN_ON_GATEWAY_SKIPPED_REASON,
+			});
+			expect(stored()).toBe(original);
+			expect(window.maestro.localModels.proxy.ensurePort).not.toHaveBeenCalled();
+			expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+		}
+	);
+
+	it('still clears stale proxy settings on a Run on source', async () => {
+		seed({ runOn: QWEN, gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'compress' });
+		expect(await setAgentTokenProxyMode('agent-1', 'off')).toMatchObject({ ok: true, mode: 'off' });
+		expect(stored().gatewayUrl).toBeUndefined();
+		expect(stored().tokenProxyMode).toBeUndefined();
+	});
+
 	it.each(['compress', 'off'] as const)(
 		'rejects a failed immediate %s write and retries it even when renderer state matches',
 		async (mode) => {
@@ -452,6 +474,18 @@ describe('setAgentTokenProxyMode', () => {
 });
 
 describe('setAgentGatewayUrl and the proxy mode', () => {
+	it('refuses setting a gateway on a Run on source while allowing it to be cleared', async () => {
+		const original = seed({ runOn: QWEN, gatewayUrl: 'https://old.example.com' });
+		expect(await setAgentGatewayUrl('agent-1', 'https://new.example.com')).toEqual({
+			ok: false,
+			error: RUN_ON_GATEWAY_SKIPPED_REASON,
+		});
+		expect(stored()).toBe(original);
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+		expect(await setAgentGatewayUrl('agent-1', '')).toEqual({ ok: true, gatewayUrl: undefined });
+		expect(stored().gatewayUrl).toBeUndefined();
+	});
+
 	it('drops the stored mode when the gateway changes, so it starts from the default', async () => {
 		seed({ gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'compress' });
 

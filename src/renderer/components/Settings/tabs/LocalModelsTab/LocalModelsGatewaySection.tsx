@@ -38,6 +38,7 @@ import {
 	type TokenProxyMode,
 } from '../../../../../shared/local-models/token-proxy';
 import { effectiveAgentCustomEnvVars } from '../../../../../shared/providerProfiles';
+import { runOnGatewayEditProblem } from '../../../../../shared/local-models/run-on';
 import {
 	useAgentLevelEnvVars,
 	useSshRemoteNames,
@@ -100,7 +101,7 @@ export function LocalModelsGatewaySection({ theme }: LocalModelsGatewaySectionPr
 		() =>
 			agents.filter(
 				(agent) =>
-					!agent.runOn &&
+					!runOnGatewayEditProblem(agent.runOn, { tokenProxyMode: 'compress' }) &&
 					!tokenProxyModeBlocker(
 						agent.toolType,
 						agent.sessionSshRemoteConfig?.enabled
@@ -323,7 +324,9 @@ function GatewayRow({
 		storedMode: agent.tokenProxyMode,
 		port: proxyPort,
 	});
-	const modeBlocker = tokenProxyModeBlocker(agent.toolType, sshRemoteName);
+	const runOnBlocker = runOnGatewayEditProblem(agent.runOn, { tokenProxyMode: 'compress' });
+	const modeBlocker =
+		tokenProxyModeBlocker(agent.toolType, sshRemoteName) ?? runOnBlocker ?? undefined;
 	const modeChoice = useTokenProxyModeChoice(agent.id, { onSettled: onProxyModeChanged });
 	const [envOpen, setEnvOpen] = useState(false);
 	const globalEnvVars = useSettingsStore((s) => s.shellEnvVars);
@@ -408,7 +411,7 @@ function GatewayRow({
 						setError(undefined);
 					}}
 					onCommit={commit}
-					disabledReason={removing ? 'Removing gateway...' : undefined}
+					disabledReason={removing ? 'Removing gateway...' : (runOnBlocker ?? undefined)}
 					userEnvVars={userEnvVars}
 					sshRemoteName={sshRemoteName}
 					error={error}

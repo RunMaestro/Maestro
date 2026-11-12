@@ -93,6 +93,33 @@ beforeEach(() => {
 });
 
 describe('LocalModelsGatewaySection', () => {
+	it('includes an explicit Provider target in blanket compression', async () => {
+		seed(agent({ id: 'a', name: 'Alpha', runOn: { type: 'provider' } }));
+		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(runningProxy([]));
+		render(<LocalModelsGatewaySection theme={theme} />);
+		fireEvent.click(screen.getByTestId('gateway-proxy-all-compress'));
+		await waitFor(() =>
+			expect(useSessionStore.getState().sessions[0].tokenProxyMode).toBe('compress')
+		);
+		expect(useSessionStore.getState().sessions[0].runOn).toEqual({ type: 'provider' });
+	});
+
+	it('disables proxy and gateway edits for an agent on a Run on source', () => {
+		seed(
+			agent({
+				id: 'a',
+				name: 'Alpha',
+				runOn: { type: 'source', endpointId: 'local', model: 'model' },
+			})
+		);
+		render(<LocalModelsGatewaySection theme={theme} />);
+		addAgent('Alpha');
+		expect(modeSelect('a')).toBeDisabled();
+		expect(within(row('a')).getByRole('textbox')).toBeDisabled();
+		expect(window.maestro.localModels.proxy.ensurePort).not.toHaveBeenCalled();
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
 	it('lets an agent opt out of blanket compression without changing the saved default or other agents', async () => {
 		seed(agent({ id: 'a', name: 'Alpha' }), agent({ id: 'b', name: 'Beta' }));
 		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(runningProxy(['a', 'b']));
@@ -213,7 +240,12 @@ describe('LocalModelsGatewaySection', () => {
 			expect(sessions.find((s) => s.id === id)?.tokenProxyMode).toBeUndefined();
 		}
 		expect(sessions.find((s) => s.id === 'e')?.gatewayUrl).toBe('https://external.example.com');
-		expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(2);
+		// Off confirms main's copy even when an external gateway stays unchanged.
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(3);
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ id: 'e', gatewayUrl: 'https://external.example.com' })],
+			[]
+		);
 	});
 
 	it('reports a failed agent, continues with the rest, and unlocks the controls', async () => {
@@ -513,7 +545,7 @@ describe('the Maestro proxy mode', () => {
 		expect(modeSelect('b')).toHaveValue('compress');
 	});
 
-	it('offers Compress early, and says under the picker what each mode costs', async () => {
+	it('offers Compress early and describes eligibility without cost guarantees', async () => {
 		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(runningProxy(['a', 'b']));
 		seed(
 			agent({
@@ -537,13 +569,14 @@ describe('the Maestro proxy mode', () => {
 		expect(Array.from(modeSelect('a').options).map((option) => option.textContent)).toContain(
 			'Compress early'
 		);
-		// The two modes differ in what the model sees; the note is where that is said.
+		// The notes describe eligibility, without guaranteeing prior model exposure.
 		expect(screen.getByTestId('gateway-proxy-mode-a-note')).toHaveTextContent(
-			/after the model has read it once/
+			/protected recent part/
 		);
 		expect(screen.getByTestId('gateway-proxy-mode-b-note')).toHaveTextContent(
-			/before the model first reads it/
+			/recent tool-result text eligible/
 		);
+		expect(screen.getByTestId('gateway-proxy-mode-b-note')).toHaveTextContent(/not guaranteed/);
 		// An agent that is not on the proxy has nothing to explain.
 		expect(screen.queryByTestId('gateway-proxy-mode-c-note')).not.toBeInTheDocument();
 	});

@@ -34,7 +34,7 @@ import {
 	type BackgroundRequests,
 } from '../../shared/local-models/background-requests';
 import { agentGatewaySupport, parseGatewayUrlEdit } from '../../shared/local-models/gateway';
-import { storedRunOnNamesSource } from '../../shared/local-models/run-on';
+import { runOnGatewayEditProblem, storedRunOnNamesSource } from '../../shared/local-models/run-on';
 import {
 	gatewayPointsAtTokenProxy,
 	holdsTokenProxyFields,
@@ -100,6 +100,8 @@ export async function setAgentGatewayUrl(
 
 	const edit = parseGatewayUrlEdit(session.toolType, raw);
 	if (!edit.ok) return edit;
+	const problem = runOnGatewayEditProblem(session.runOn, { gatewayUrl: edit.gatewayUrl });
+	if (problem) return { ok: false, error: problem };
 
 	const gatewayUrl = edit.gatewayUrl ?? undefined;
 	if (gatewayUrl === session.gatewayUrl) return { ok: true, gatewayUrl };
@@ -152,7 +154,8 @@ async function agentEffectiveModel(session: Session): Promise<string | undefined
  *   route its provider and credential need) unless it is there already, and
  *   store the mode. They are refused for a provider that cannot use a gateway
  *   and for an agent on an SSH remote, which cannot reach this machine's
- *   loopback address.
+ *   loopback address. A Run on source also refuses a gateway: its own model
+ *   route already owns the target. Clearing remains allowed.
  *
  * Resolves once main holds the new values, so the next request uses them.
  */
@@ -177,6 +180,8 @@ export async function setAgentTokenProxyMode(
 		return { ok: true, mode, gatewayUrl };
 	}
 
+	const problem = runOnGatewayEditProblem(session.runOn, { tokenProxyMode: mode });
+	if (problem) return { ok: false, error: problem };
 	const support = agentGatewaySupport(session.toolType);
 	if (!support.supported) return { ok: false, error: support.reason };
 	if (session.sessionSshRemoteConfig?.enabled) {
