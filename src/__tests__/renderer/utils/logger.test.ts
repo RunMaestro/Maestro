@@ -134,10 +134,15 @@ describe('logger', () => {
 			expect(logSpy).toHaveBeenCalledWith('error', 'error message', 'ErrorContext', undefined);
 		});
 
-		it('should pass data parameter', () => {
+		it('should flatten an Error so its message survives IPC and JSON', () => {
 			const error = new Error('test error');
 			logger.error('error message', 'ErrorContext', error);
-			expect(logSpy).toHaveBeenCalledWith('error', 'error message', 'ErrorContext', error);
+			expect(logSpy).toHaveBeenCalledWith(
+				'error',
+				'error message',
+				'ErrorContext',
+				expect.objectContaining({ name: 'Error', message: 'test error', stack: error.stack })
+			);
 		});
 
 		it('should handle error objects as data', () => {
