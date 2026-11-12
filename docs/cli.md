@@ -1745,7 +1745,7 @@ maestro-cli encore enable symphony
 maestro-cli encore disable maestroCue
 ```
 
-Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `computerHistory`, `quickChat`, `aCappella` (the voice interface), and on macOS `maestroRun`. Friendly aliases are accepted (for example `cue` for `maestroCue`, `quick-chat` for `quickChat`, `voice` for `aCappella`). Group Chat is a core feature with no Encore flag, so `group-chat` is not an alias for `symphony`. Enabling `aCappella` opens nothing and downloads nothing: it only makes the voice surfaces and verbs available.
+Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `computerHistory`, `quickChat`, `aCappella` (the voice interface), and on macOS `maestroRun`. Friendly aliases are accepted (for example `cue` for `maestroCue`, `quick-chat` for `quickChat`, `voice` for `aCappella`). Group Chat is a core feature with no Encore flag, so `group-chat` is not an alias for `symphony`. Enabling `aCappella` opens nothing and downloads nothing: it only makes the voice surfaces available. The [`voice`](#voice) verbs are always listed; a verb that needs voice refuses while it is off and names the fix.
 
 `autopilot`, `auto-pilot`, and `pilot` remain aliases for enabling Pianola. They do not grant automatic repair permission. `encore list --json` includes `pianola.mode` (`disabled`, `supervision`, or `automatic_repairs`), the saved `autoFixEnabled` permission, and `automaticMergeAvailable: false`.
 
@@ -2461,20 +2461,20 @@ Both commands support `--json` for scripting. Toasts respect the user's notifica
 
 `maestro-cli voice` is the command-line form of A Cappella, the voice interface ([Voice Mode](./voice-mode)). It starts and ends sessions, drives the HUD controls, chooses the microphone, providers and voice, stores cloud keys, manages paired devices, and trains the wake word. Every verb reaches the same main-process function as its button, so a session started here is the session the HUD shows. A Cappella is an Encore Feature that is off by default: `maestro-cli encore enable aCappella` turns it on, and enabling it opens no device and downloads nothing.
 
-| To do this                                     | Run                                                                                                                     |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| See whether voice is ready, and what blocks it | `voice status`                                                                                                          |
-| Start or end a session                         | `voice start [--conductor \| --agent <id> [--tab <id>] \| --agent <id> --document <path>] [--paused]`, `voice stop`     |
-| Open or shut the microphone, send now          | `voice listen on\|off [--send]`, `voice send`, `voice stop-reply`                                                       |
-| Re-aim, change the pause, volume, mute         | `voice scope conductor\|agent\|tab`, `voice wait [<ms>\|default]`, `voice volume <0.1-1>`, `voice mute`, `voice unmute` |
-| Choose the microphone                          | `voice input list`, `voice input set <device-id>\|default`                                                              |
-| Choose providers and the voice                 | `voice providers list\|set <slot> <id>`, `voice voices list\|set <id>\|preview [<id>]`                                  |
-| Store a cloud key                              | `voice credentials list\|set\|test\|clear <service>` (`openai`, `elevenlabs`, `anthropic`)                              |
-| Manage paired devices                          | `voice devices list\|rename\|revoke\|forget\|revoke-all\|disconnect\|discovery\|test-connection`                        |
-| Set the models local voice needs               | `voice setup [--download]`                                                                                              |
-| See where the time went, or self-test          | `voice latency`, `voice self-test`                                                                                      |
-| Give one agent its own wake phrase             | `voice wake-phrase list\|set <agent> <phrase>\|clear <agent>`                                                           |
-| Train the wake word                            | `voice wake record\|stop\|add\|undo\|clear-background\|train\|status\|list\|remove\|test`                               |
+| To do this                                     | Run                                                                                                                                                 |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| See whether voice is ready, and what blocks it | `voice status`                                                                                                                                      |
+| Start or end a session                         | `voice start [--conductor \| --agent <id> [--tab <id>] \| --agent <id> --document <path> \| --quick-chat] [--paused]`, `voice stop`                 |
+| Open or shut the microphone, send now          | `voice listen on\|off [--send]`, `voice send`, `voice stop-reply`                                                                                   |
+| Re-aim, change the pause, volume, mute         | `voice scope conductor\|agent\|tab [--agent <id>] [--tab <id>]`, `voice wait [<ms>\|default]`, `voice volume <0.1-1>`, `voice mute`, `voice unmute` |
+| Choose the microphone                          | `voice input list`, `voice input set <device-id>\|default`                                                                                          |
+| Choose providers and the voice                 | `voice providers list\|set <slot> <id>`, `voice voices list\|set <id>\|preview [<id>]`                                                              |
+| Store a cloud key                              | `voice credentials list\|set\|test\|clear <service>` (`openai`, `elevenlabs`, `anthropic`)                                                          |
+| Manage paired devices                          | `voice devices list\|rename\|revoke\|forget\|revoke-all\|disconnect\|discovery\|test-connection`                                                    |
+| Set the models local voice needs               | `voice setup [--download]`, or `open voice-setup` for the **Set up voice** dialog                                                                   |
+| See where the time went, or self-test          | `voice latency`, `voice self-test`                                                                                                                  |
+| Give one agent its own wake phrase             | `voice wake-phrase list\|set <agent> <phrase>\|clear <agent>`                                                                                       |
+| Train the wake word                            | `voice wake record\|stop\|add\|undo\|clear-background\|train\|status\|list\|remove\|test`                                                           |
 
 ```bash
 # Is it ready? Prints what blocks a session by name (a model missing, the mic permission, the feature off).
@@ -2493,18 +2493,19 @@ maestro-cli voice start --agent <agent-id> --document docs/plan.md
 
 A session needs a person at the microphone, so an agent drives voice for the user, not instead of them. Notes:
 
-- **One session, one window.** `voice start` opens the HUD in the window you are looking at. `voice stop` and `voice self-test` work with voice switched off, so a stuck session can always be ended.
+- **One session, one window.** `voice start` opens the HUD in the window you are looking at. `voice start --quick-chat` opens the Quick Chat window instead and locks the session to its chat, so `voice scope` is refused for it.
+- **With voice switched off**, `status`, `stop`, `self-test`, `input`, every `credentials` verb, and every `devices` verb still work, so a stuck session can always be ended and a key or a phone removed. The others refuse with _A Cappella is switched off. Turn it on with "maestro-cli encore enable aCappella", or in Settings > Plugins._ `voice providers set`, `voice voices set`, and `voice wake-phrase` still write the settings file and say _Saved. The running app was not told (...); it applies at the next start._
 - **A missing capability is refused by name.** If a model is not installed or a provider is not set up, `voice start` says which slot and how to fix it (`voice setup --download`, `voice credentials set`). It never switches to a cloud provider you did not choose.
 - **Push-to-talk has no "hold" on the command line.** `listen on` is the press, `listen off` (with `--send` to send what was said) is the release.
 - **Providers and voices** are written to the settings file (so they work with Maestro closed) and then applied to a running session. A swap the app refuses because a turn is in flight is reported as saved but not applied, with the reason, and takes effect when the turn ends. `voice voices preview` is refused while a session is live.
 - **Cloud keys** are read from standard input and kept in the OS keychain. No verb takes one as an argument or prints one: `pbpaste | maestro-cli voice credentials set openai`.
 - **Paired devices.** `revoke`, `forget` and `revoke-all` ask for confirmation on a terminal. With no terminal, or under `--json`, they exit `2` unless `--yes` is passed. Approving or denying a new pairing has no verb on purpose: it is a decision only a person at the computer makes, in the app.
-- **A wake phrase for one agent** (`wake-phrase set`) rewrites only that agent's entry, leaving every other agent's phrase as it was.
+- **A wake phrase for one agent** (`wake-phrase set`) rewrites only that agent's entry, leaving every other agent's phrase as it was. In this build the phrase is saved but not yet listened for: the wake word hears only the main phrase (see [Wake word](./voice-mode#wake-word)).
 - **Every voice setting** is also reachable with `settings get|set|reset acappella.<path>`, checked against the bounds the Voice panels use (see [Managing Settings](#managing-settings)).
 
 #### Training the wake word
 
-`maestro-cli voice wake` teaches the A Cappella wake word a phrase from your own recordings. It is the command-line form of **Train** in Settings > Plugins > A Cappella > Voice Controls, and it reaches the same code, so a recording started here and one started in Settings are the same recording. See [Training your own wake phrase](./voice-mode#training-your-own-wake-phrase) for what the training does.
+`maestro-cli voice wake` teaches the A Cappella wake word a phrase from your own recordings. It is the command-line form of **Train** in Settings > Plugins > A Cappella > Settings > Voice Controls, and it reaches the same code, so a recording started here and one started in Settings are the same recording. See [Training your own wake phrase](./voice-mode#training-your-own-wake-phrase) for what the training does.
 
 ```bash
 # Record the phrase with the microphone. Each time you say it is one recording.
@@ -2532,12 +2533,14 @@ maestro-cli voice wake remove "hey scout"            # delete the model and ever
 
 `record` opens the microphone on the computer running Maestro and returns at once; `stop` ends the run and closes it. A run that hears nothing for 45 seconds closes itself. `add` is the route for an agent, which has no microphone: it keeps going past a file the app will not take (too short, too long, not a WAV), says why, and still exits non-zero when any file was skipped, with `success: false` and the skipped list under `--json`. `train` waits until training finishes. `status`, `record`, `undo`, `clear-background` and `train` take the phrase as optional and use the configured wake phrase when it is left out. `--background` is the old spelling of `--other-speech` and still works, though `reference` and the shell completions no longer list it.
 
-Training needs at least 8 recordings of the phrase and 12 seconds of other speech. When the app refuses a request on purpose (a voice session holds the microphone, there is not enough recorded yet, A Cappella is switched off) the command prints the reason and exits non-zero. `status`, `list`, `stop`, and `remove` work with A Cappella switched off.
+Training needs at least 8 recordings of the phrase and 12 seconds of other speech. When the app refuses a request on purpose (a voice session holds the microphone, there is not enough recorded yet, A Cappella is switched off) the command prints the reason and exits non-zero. Only `record`, `add`, and `train` need A Cappella switched on; `test`, `status`, `list`, `stop`, `undo`, `clear-background`, and `remove` work with it off.
 
-| Flag             | Description                                                             |
-| ---------------- | ----------------------------------------------------------------------- |
-| `--other-speech` | `record` and `add`: the audio is ordinary speech, not the phrase        |
-| `--json`         | JSON output for scripting: `{"success":true,"status":{...}}` or `error` |
+| Flag                | Description                                                             |
+| ------------------- | ----------------------------------------------------------------------- |
+| `--other-speech`    | `record` and `add`: the audio is ordinary speech, not the phrase        |
+| `--seconds <n>`     | `test`: how long to listen, 1 to 60 (default 10)                        |
+| `--sensitivity <n>` | `test`: try a sensitivity from 0 to 1 without saving it                 |
+| `--json`            | JSON output for scripting: `{"success":true,"status":{...}}` or `error` |
 
 `voice wake test [phrase]` runs the wake word alone for a few seconds and counts how often it fired, the Test button next to the phrase. Say the phrase, and say something else, to see both numbers.
 

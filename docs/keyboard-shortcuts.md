@@ -12,7 +12,7 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 
 ## System-Wide Hotkey (Summon Maestro)
 
-Configure a single OS-level hotkey that summons Maestro - bringing the window to the foreground and focusing it - from any application on macOS, Windows, or Linux. It and the [Quick Chat](#quick-chat-hotkey) hotkey are the only shortcuts in Maestro that fire while the app is in the background; every other shortcut on this page is in-app.
+Configure a single OS-level hotkey that summons Maestro - bringing the window to the foreground and focusing it - from any application on macOS, Windows, or Linux. It, the [Quick Chat](#quick-chat-hotkey) hotkey, and the two [voice hotkeys](#voice-hotkeys-a-cappella) are the only shortcuts in Maestro that fire while the app is in the background; every other shortcut on this page is in-app.
 
 **To configure:**
 
@@ -34,7 +34,22 @@ Tips and gotchas:
 
 Inside the Quick Chat window: `Enter` sends, `Shift+Enter` adds a line, `Cmd+N` / `Ctrl+N` starts a new chat, `Cmd+O` / `Ctrl+O` opens the agent picker, `Cmd+T` / `Ctrl+T` opens the tab picker (where the next message goes), `Cmd+Y` / `Ctrl+Y` opens the recent chats to bring one back, `Cmd+S` / `Ctrl+S` keeps the chat as a tab (or makes it temporary again), `Cmd+P` / `Ctrl+P` pins the window on top (or unpins it), `Cmd+Shift+K` / `Ctrl+Shift+K` cycles the agent's thinking (hidden, shown while it works, kept), `Cmd+Shift+T` / `Ctrl+Shift+T` opens the chat as a tab in Maestro, `Cmd+=` / `Cmd+-` / `Cmd+0` (`Ctrl` off macOS) make the conversation text bigger, smaller, or back to normal, `Esc` closes the window (or, with the picker open, just the picker), `Cmd+W` / `Ctrl+W` closes the window even with the picker open, and ``Cmd+` `` (macOS) closes it and brings Maestro forward. The [show Maestro hotkey](#system-wide-hotkey-summon-maestro) also closes Quick Chat on its way to the Maestro window.
 
-The two system-wide hotkeys cannot share a combo. If you set one to the other's combo, the second registration fails and Maestro tells you.
+No two system-wide hotkeys can share a combo. If you set one to a combo another already holds, the second registration fails and Maestro tells you.
+
+## Voice Hotkeys (A Cappella)
+
+[A Cappella](./voice-mode), the voice interface, adds two system-wide hotkeys. Both ship bound, and both register only while A Cappella is on in **Settings -> Plugins**.
+
+| Hotkey                             | Default                   | What it does                                                                                    |
+| ---------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
+| **Talk to Maestro (Global)**       | `Opt+Cmd+V` / `Win+Alt+V` | Opens a voice session with the Conductor without stealing focus, so you can talk in another app |
+| **Talk to Current Agent (Global)** | `Opt+Cmd+A` / `Win+Alt+A` | Brings Maestro forward and opens a voice session bound to the agent you are looking at          |
+
+Press a voice hotkey once to open a session and again to end it. Pressed while a reply is being spoken, it stops the reply and listens. A hold acts as a tap on every platform today.
+
+`Meta` in these defaults is **Cmd** on macOS and **Win** (Super) on Windows and Linux, as for the [show Maestro hotkey](#system-wide-hotkey-summon-maestro). The **Shortcuts** tab spells `Meta` as `Ctrl` off macOS, but the key the OS registers is **Win**.
+
+Rebind either one in **Settings -> Shortcuts**, or under **Hotkeys** in **Settings -> Plugins -> A Cappella -> Settings -> Voice Controls**. They are two views of one binding, and **Voice Controls** also shows whether the OS accepted it. From the command line, `maestro-cli voice start --conductor` and `maestro-cli voice start --agent <agent-id>` do what the two hotkeys do; see [Voice Mode](./voice-mode#the-two-hotkeys) for the rest.
 
 ## Global Shortcuts
 
