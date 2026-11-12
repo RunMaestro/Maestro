@@ -622,7 +622,9 @@ on **Gateway**. `Cmd+[` / `]` step through the Library sections (**Engines**,
 Library**, and not while the Settings search is open. The Models tab has no
 chord of its own: open it with **Open Models Settings** in Quick Actions
 (`Cmd+K`), or `maestro-cli open settings --tab models`. See
-[Local Models](./local-models#models).
+[Local Models](./local-models#models). [System One](./local-models#system-one)
+has no shortcut either: step to its panel with `Cmd+Shift+[` / `]`, or open it
+with `maestro-cli open settings --tab models --sub-tab system-one`.
 
 ## Maestro Prompts (Settings)
 
