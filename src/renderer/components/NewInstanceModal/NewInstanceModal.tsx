@@ -39,15 +39,36 @@ import { buildDuplicateAgentInput } from '../../../shared/newAgentRecord';
 import { useAgentModelEffortOptions } from '../../hooks/agent/useAgentModelEffortOptions';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 
+/** What the initial agent load prefills from: the agent to duplicate, else the caller's draft. */
+interface AgentLoadSeed {
+	source?: Session;
+	draft?: Partial<NewAgentDraft>;
+}
+
+/** A copy of `map` with `agentId` set to `value`, or without it when `value` is `undefined`. */
+function withAgentEntry<T>(
+	map: Record<string, T>,
+	agentId: string,
+	value: T | undefined
+): Record<string, T> {
+	const next = { ...map };
+	if (value === undefined) delete next[agentId];
+	else next[agentId] = value;
+	return next;
+}
+
 export function NewInstanceModal({
 	isOpen,
 	onClose,
 	onCreate,
+	onCapture,
+	mode = 'create',
 	theme,
 	existingSessions,
 	sourceSession,
 	presetGroupId,
 	presetWorkingDir,
+	initialDraft,
 }: NewInstanceModalProps) {
 	const [agents, setAgents] = useState<AgentConfig[]>([]);
 	const [detectedSshRemoteId, setDetectedSshRemoteId] = useState<string | null>();
@@ -120,6 +141,8 @@ export function NewInstanceModal({
 	const nameInputRef = useRef<HTMLInputElement>(null);
 	const agentLoadSequence = useRef(0);
 	const initialSeedPending = useRef(false);
+	// The `initialDraft` this open prefilled from (none when duplicating).
+	const openDraftRef = useRef<Partial<NewAgentDraft> | undefined>(undefined);
 
 	// Fetch home directory on mount for tilde expansion
 	useEffect(() => {
@@ -198,13 +221,16 @@ export function NewInstanceModal({
 	});
 
 	// Define handlers first before they're used in effects
-	const loadAgents = async (source?: Session, sshRemoteId?: string, redetect = false) => {
+	const loadAgents = async (seed: AgentLoadSeed = {}, sshRemoteId?: string, redetect = false) => {
+		const { source } = seed;
+		const draft = source ? undefined : seed.draft;
 		const sourceSshConfig: AgentSshRemoteConfig | undefined =
 			source?.sessionSshRemoteConfig ??
 			(source?.sshRemoteId ? { enabled: true, remoteId: source.sshRemoteId } : undefined);
+		// A seed that runs on an SSH remote is detected there from the start.
+		const seedSshConfig = sourceSshConfig ?? draft?.sessionSshRemoteConfig;
 		const selectedSshRemoteId =
-			sshRemoteId ??
-			(sourceSshConfig?.enabled ? (sourceSshConfig.remoteId ?? undefined) : undefined);
+			sshRemoteId ?? (seedSshConfig?.enabled ? (seedSshConfig.remoteId ?? undefined) : undefined);
 		const sequence = ++agentLoadSequence.current;
 		if (!redetect) {
 			initialSeedPending.current = true;
@@ -246,9 +272,10 @@ export function NewInstanceModal({
 
 			// Per-agent config (path, args, env vars) starts empty - each agent gets its own config
 			// No provider-level loading - config is set per-agent during creation
-			// Only reset if NOT duplicating (source session will provide values)
-			// Also preserve SSH configs when re-detecting (sshRemoteId is provided during re-detection)
-			if (!source && !selectedSshRemoteId) {
+			// Only reset if NOT duplicating (source session will provide values).
+			// Re-detection, which must keep the SSH configs, returned above; a draft
+			// that runs on a remote starts from a clean form like any other.
+			if (!source) {
 				setCustomAgentPaths({});
 				setCustomAgentArgs({});
 				setCustomAgentEnvVars({});
@@ -312,18 +339,53 @@ export function NewInstanceModal({
 				configs[duplicate.toolType] = sourceConfig;
 			}
 
+			// The caller's draft. A key it holds replaces what was loaded, `undefined`
+			// included (each field's empty value, as handleCreate reads it); a key it
+			// leaves out keeps the loaded value. Per-agent settings belong to the
+			// draft's agent, or to the one auto-selected below when it names none.
+			const firstAvailable = detectedAgents.find((a: AgentConfig) => a.available && !a.hidden);
+			const draftAgentId = draft ? (draft.agentId ?? firstAvailable?.id) : undefined;
+			const draftHas = (key: keyof NewAgentDraft) => !!draft && key in draft;
+			if (draft && draftAgentId) {
+				const draftAgent = detectedAgents.find((a: AgentConfig) => a.id === draftAgentId);
+				const draftConfig: Record<string, any> = { ...configs[draftAgentId] };
+				if (draftHas('customModel')) draftConfig.model = draft.customModel ?? '';
+				if (draftHas('customContextWindow')) {
+					if (draft.customContextWindow) draftConfig.contextWindow = draft.customContextWindow;
+					else delete draftConfig.contextWindow;
+				}
+				if (draftHas('customProviderPath')) {
+					draftConfig.providerPath = draft.customProviderPath ?? '';
+				}
+				if (draftHas('customEffort')) {
+					// Same key handling as a duplicate: whichever key the provider uses.
+					delete draftConfig.effort;
+					delete draftConfig.reasoningEffort;
+					draftConfig[getEffortConfigKey(draftAgent)] = draft.customEffort ?? '';
+				}
+				configs[draftAgentId] = draftConfig;
+				if (draftHas('customPath')) paths[draftAgentId] = draft.customPath ?? '';
+				if (draftHas('customArgs')) args[draftAgentId] = draft.customArgs ?? '';
+				// `undefined` inherits the provider env; a map, an empty one included, replaces it.
+				if (draftHas('customEnvVars')) {
+					if (draft.customEnvVars) envVars[draftAgentId] = { ...draft.customEnvVars };
+					else delete envVars[draftAgentId];
+				}
+			}
+
 			setAgentConfigs(configs);
 			setCustomAgentPaths(paths);
 			setCustomAgentArgs(args);
 			setCustomAgentEnvVars(envVars);
 
-			// Select first available non-hidden agent (or source agent if duplicating)
-			// (hidden agents like 'terminal' should never be auto-selected)
+			// Select first available non-hidden agent (or source agent if duplicating,
+			// or the draft's agent) (hidden agents like 'terminal' should never be auto-selected)
 			if (duplicate) {
 				setSelectedAgent(duplicate.toolType);
+			} else if (draftAgentId) {
+				setSelectedAgent(draftAgentId);
 			} else if (!selectedSshRemoteId) {
 				// Only auto-select on initial load, not on SSH remote re-detection
-				const firstAvailable = detectedAgents.find((a: AgentConfig) => a.available && !a.hidden);
 				if (firstAvailable) {
 					setSelectedAgent(firstAvailable.id);
 				}
@@ -405,6 +467,66 @@ export function NewInstanceModal({
 							}
 						: { enabled: false, remoteId: null },
 				});
+			}
+
+			// The rest of the draft, on the same rule as its provider settings above.
+			if (draft) {
+				if (draftHas('name')) setInstanceName(draft.name ?? '');
+				if (draftHas('workingDir')) handleWorkingDirChange(draft.workingDir ?? '');
+				if (draftHas('groupId')) setSelectedGroupId(draft.groupId ?? '');
+				if (draftHas('nudgeMessage')) setNudgeMessage(draft.nudgeMessage ?? '');
+				if (draftHas('newSessionMessage')) setNewSessionMessage(draft.newSessionMessage ?? '');
+				// Copied, so editing the rows never reaches the caller's draft.
+				if (draftHas('additionalDirectories')) {
+					setAdditionalDirectories(draft.additionalDirectories?.map((dir) => ({ ...dir })) ?? []);
+				}
+			}
+			if (draft && draftAgentId) {
+				if (draftHas('enableMaestroP')) {
+					setEnableMaestroPByAgent((prev) =>
+						withAgentEntry(prev, draftAgentId, draft.enableMaestroP)
+					);
+				}
+				if (draftHas('maestroPMode')) {
+					setMaestroPModeByAgent((prev) => withAgentEntry(prev, draftAgentId, draft.maestroPMode));
+				}
+				if (draftHas('maestroPPath')) {
+					setMaestroPPathByAgent((prev) => withAgentEntry(prev, draftAgentId, draft.maestroPPath));
+				}
+				if (draftHas('retryOnAvailabilityErrors')) {
+					setRetryAvailabilityByAgent((prev) =>
+						withAgentEntry(prev, draftAgentId, draft.retryOnAvailabilityErrors)
+					);
+				}
+				if (draftHas('retryOnTokenExhaustion')) {
+					setRetryTokenByAgent((prev) =>
+						withAgentEntry(prev, draftAgentId, draft.retryOnTokenExhaustion)
+					);
+				}
+				if (draftHas('codexAutoResetOnExhaustion')) {
+					setCodexAutoResetByAgent((prev) =>
+						withAgentEntry(prev, draftAgentId, draft.codexAutoResetOnExhaustion)
+					);
+				}
+				if (draftHas('codexTransport')) {
+					setCodexTransportByAgent((prev) =>
+						withAgentEntry(prev, draftAgentId, draft.codexTransport)
+					);
+				}
+				if (draftHas('harnessControlMode')) {
+					setHarnessControlModeByAgent((prev) =>
+						withAgentEntry(prev, draftAgentId, draft.harnessControlMode)
+					);
+				}
+				// Stored under `_pending_` as well, as a pick in the selector is, so the
+				// choice follows the user to another provider. handleCreate rebuilds
+				// workingDirOverride from the directory on screen.
+				if (draftHas('sessionSshRemoteConfig')) {
+					const sshConfig: AgentSshRemoteConfig = draft.sessionSshRemoteConfig
+						? { ...draft.sessionSshRemoteConfig }
+						: { enabled: false, remoteId: null };
+					setAgentSshRemoteConfigs({ _pending_: sshConfig, [draftAgentId]: sshConfig });
+				}
 			}
 			setReadyDraftSource(source?.id ?? null);
 		} catch (error) {
@@ -768,11 +890,12 @@ export function NewInstanceModal({
 			: undefined;
 		// Copy the source tab's effective choice, including legacy read-only state.
 		// The creation consumer refuses unsupported modes for the selected provider.
+		// A prefilled draft's mode passes through: the form has no control for it.
 		const permissionMode = sourceSession
 			? resolveTabPermissionMode(
 					sourceSession.aiTabs?.find((tab) => tab.id === sourceSession.activeTabId)
 				)
-			: undefined;
+			: openDraftRef.current?.permissionMode;
 
 		const draft: NewAgentDraft = {
 			agentId: selectedAgent,
@@ -801,7 +924,9 @@ export function NewInstanceModal({
 				harnessControlModeByAgent[selectedAgent] === 'native' ? 'native' : undefined,
 			permissionMode,
 		};
-		onCreate(draft);
+		// Capture mode hands the settings back and creates nothing.
+		if (mode === 'capture') onCapture?.(draft);
+		else onCreate?.(draft);
 		onClose();
 
 		// Reset
@@ -865,7 +990,9 @@ export function NewInstanceModal({
 		maestroPPathByAgent,
 		agentConfigs,
 		agentSshRemoteConfigs,
+		mode,
 		onCreate,
+		onCapture,
 		onClose,
 		expandTilde,
 		handleWorkingDirChange,
@@ -891,7 +1018,7 @@ export function NewInstanceModal({
 				}
 				return;
 			}
-			// Handle Cmd+Enter or Cmd+S for creating agent
+			// Handle Cmd+Enter or Cmd+S for the confirm button (create, or capture)
 			if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === 's') && !e.shiftKey) {
 				e.preventDefault();
 				if (isFormValid) {
@@ -941,20 +1068,23 @@ export function NewInstanceModal({
 	// rather than claiming "locally" while an SSH remote is selected.
 	const providerLocation = useMemo(() => providerLocationLabel(sshRemoteHost), [sshRemoteHost]);
 
-	// Effects - load agents and optionally pre-fill from source session
+	// Effects - load agents and optionally pre-fill from source session or initialDraft
 	// Dependency uses sourceSession?.id (not the full object) so unrelated
 	// `sessions` store updates don't re-fire pre-fill and clobber what the
-	// user has typed (issue #827).
+	// user has typed (issue #827). initialDraft is left out for the same
+	// reason: it is read once per open.
 	useEffect(() => {
 		if (isOpen) {
-			// Pass sourceSession to loadAgents to handle pre-fill AFTER agents are loaded
+			openDraftRef.current = sourceSession ? undefined : initialDraft;
+			// Pass the seed to loadAgents to handle pre-fill AFTER agents are loaded
 			// This prevents the race condition where loadAgents would overwrite pre-filled values
-			loadAgents(sourceSession);
-			// Keep all agents collapsed by default, or expand when duplicating to show custom config
+			loadAgents({ source: sourceSession, draft: openDraftRef.current });
+			// Keep all agents collapsed by default, or expand the agent being duplicated
+			// or prefilled to show its custom config
 			if (sourceSession) {
 				setExpandedAgent(sourceSession.toolType);
 			} else {
-				setExpandedAgent(null);
+				setExpandedAgent(openDraftRef.current?.agentId ?? null);
 			}
 			// Reset warning acknowledgment when modal opens
 			setDirectoryWarningAcknowledged(false);
@@ -1068,7 +1198,7 @@ export function NewInstanceModal({
 					theme={theme}
 					onCancel={onClose}
 					onConfirm={handleCreate}
-					confirmLabel="Create Agent"
+					confirmLabel={mode === 'capture' ? 'Use these settings' : 'Create Agent'}
 					confirmDisabled={!isFormValid}
 				/>
 			}

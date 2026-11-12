@@ -13,7 +13,10 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Theme, Session } from '../../../renderer/types';
 import type { AgentConfig } from '../../../renderer/types';
 import type { AgentDiscoveryResult } from '../../../shared/types';
-import type { NewAgentDraft } from '../../../renderer/components/NewInstanceModal/types';
+import type {
+	NewAgentDraft,
+	NewInstanceModalProps,
+} from '../../../renderer/components/NewInstanceModal/types';
 import { buildDuplicateAgentInput } from '../../../shared/newAgentRecord';
 import { getAgentDefinition } from '../../../shared/maestro-lib/providers/definitions';
 import { getAgentCapabilities } from '../../../shared/maestro-lib/providers/capabilities';
@@ -4400,6 +4403,350 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByLabelText('Working Directory')).toHaveValue('/source/project');
 			});
 			expect(screen.getByLabelText('Agent Name')).toHaveValue('Source (Copy)');
+		});
+	});
+
+	describe('Capture mode and initialDraft', () => {
+		let onCapture: ReturnType<typeof vi.fn<(draft: NewAgentDraft) => void>>;
+		let close: ReturnType<typeof vi.fn<() => void>>;
+
+		beforeEach(() => {
+			onCapture = vi.fn<(draft: NewAgentDraft) => void>();
+			close = vi.fn<() => void>();
+			// Earlier suites leave provider defaults behind; every case here starts clean.
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+		});
+
+		/** A local Claude Code draft with every field set, the way a capture returns one. */
+		const fullDraft = (): NewAgentDraft => ({
+			agentId: 'claude-code',
+			workingDir: '/work/launch',
+			name: 'Launch Agent',
+			nudgeMessage: 'Be terse',
+			newSessionMessage: 'Read the README first',
+			customPath: '/opt/claude',
+			customArgs: '--verbose',
+			customEnvVars: { DEBUG: 'true' },
+			customModel: 'claude-opus-4',
+			customContextWindow: 200000,
+			customProviderPath: undefined,
+			sessionSshRemoteConfig: { enabled: false, remoteId: null, shareHistoryToProjectDir: true },
+			customEffort: 'high',
+			groupId: 'group-1',
+			enableMaestroP: true,
+			maestroPPath: '/opt/maestro-p',
+			maestroPMode: 'interactive',
+			retryOnAvailabilityErrors: false,
+			retryOnTokenExhaustion: true,
+			additionalDirectories: [{ path: '/shared/docs', read: true, write: false }],
+			codexAutoResetOnExhaustion: false,
+			codexTransport: 'exec',
+			harnessControlMode: undefined,
+			permissionMode: undefined,
+		});
+
+		const captureModal = (
+			props: {
+				isOpen?: boolean;
+				initialDraft?: Partial<NewAgentDraft>;
+				sourceSession?: Session;
+				existingSessions?: Session[];
+			} = {}
+		) => (
+			<NewInstanceModal
+				isOpen={props.isOpen ?? true}
+				mode="capture"
+				onClose={close}
+				onCapture={onCapture}
+				theme={theme}
+				existingSessions={
+					props.existingSessions ?? (props.sourceSession ? [props.sourceSession] : [])
+				}
+				initialDraft={props.initialDraft}
+				sourceSession={props.sourceSession}
+			/>
+		);
+
+		const useTheseSettings = () => screen.getByRole('button', { name: 'Use these settings' });
+
+		const fillNameAndDirectory = (name: string, directory: string) => {
+			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: name } });
+			fireEvent.change(screen.getByLabelText('Working Directory'), {
+				target: { value: directory },
+			});
+		};
+
+		const captureWhenValid = async () => {
+			await waitFor(() => expect(useTheseSettings()).not.toBeDisabled());
+			await act(async () => {
+				fireEvent.click(useTheseSettings());
+			});
+		};
+
+		it('labels the confirm button "Use these settings" instead of "Create Agent"', async () => {
+			render(captureModal());
+
+			expect(await screen.findByRole('button', { name: 'Use these settings' })).toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Create Agent' })).not.toBeInTheDocument();
+		});
+
+		it('hands the draft to onCapture, closes, and creates no agent', async () => {
+			// Even an onCreate passed around the types is never called in capture mode.
+			const strayOnCreate = vi.fn();
+			const props = {
+				isOpen: true,
+				mode: 'capture',
+				onClose: close,
+				onCapture,
+				onCreate: strayOnCreate,
+				theme,
+				existingSessions: [],
+			} as unknown as NewInstanceModalProps;
+			const sessionsBefore = useSessionStore.getState().sessions;
+			render(<NewInstanceModal {...props} />);
+
+			await screen.findByLabelText('Agent Name');
+			fillNameAndDirectory('Launch Agent', '/my/project');
+			await captureWhenValid();
+
+			expect(onCapture).toHaveBeenCalledTimes(1);
+			expect(onCapture).toHaveBeenCalledWith(
+				expectedDraft({ workingDir: '/my/project', name: 'Launch Agent' })
+			);
+			expect(close).toHaveBeenCalled();
+			expect(strayOnCreate).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+		});
+
+		it('runs the same validation as create mode before it captures', async () => {
+			const taken = createMockSession({
+				id: 'taken',
+				name: 'Taken',
+				cwd: '/elsewhere',
+				projectRoot: '/elsewhere',
+			});
+			render(captureModal({ existingSessions: [taken] }));
+
+			await screen.findByLabelText('Agent Name');
+			fillNameAndDirectory('Taken', '/my/project');
+
+			expect(await screen.findByText('An agent named "Taken" already exists')).toBeInTheDocument();
+			expect(useTheseSettings()).toBeDisabled();
+			await act(async () => {
+				fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Enter', metaKey: true });
+			});
+			expect(onCapture).not.toHaveBeenCalled();
+			expect(close).not.toHaveBeenCalled();
+		});
+
+		it('captures on Cmd+Enter, like the button', async () => {
+			render(captureModal());
+
+			await screen.findByLabelText('Agent Name');
+			fillNameAndDirectory('Launch Agent', '/my/project');
+			await waitFor(() => expect(useTheseSettings()).not.toBeDisabled());
+			await act(async () => {
+				fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Enter', metaKey: true });
+			});
+
+			expect(onCapture).toHaveBeenCalledWith(
+				expectedDraft({ workingDir: '/my/project', name: 'Launch Agent' })
+			);
+		});
+
+		it('prefills every field from initialDraft, so a captured draft comes back unchanged', async () => {
+			const draft = fullDraft();
+			render(captureModal({ initialDraft: draft }));
+
+			await waitFor(() => expect(screen.getByLabelText('Agent Name')).toHaveValue('Launch Agent'));
+			expect(screen.getByLabelText('Working Directory')).toHaveValue('/work/launch');
+			await captureWhenValid();
+
+			expect(onCapture).toHaveBeenCalledWith(fullDraft());
+			// The form edits copies: the caller's draft is untouched.
+			expect(draft).toEqual(fullDraft());
+		});
+
+		it("keeps the modal's loaded defaults for every key a partial draft leaves out", async () => {
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+				model: 'claude-sonnet-4',
+				customArgs: '--from-settings',
+			});
+			render(captureModal({ initialDraft: { name: 'Launch Agent', workingDir: '/work/launch' } }));
+
+			await waitFor(() => expect(screen.getByLabelText('Agent Name')).toHaveValue('Launch Agent'));
+			await captureWhenValid();
+
+			expect(onCapture).toHaveBeenCalledWith(
+				expectedDraft({
+					name: 'Launch Agent',
+					workingDir: '/work/launch',
+					customModel: 'claude-sonnet-4',
+					customArgs: '--from-settings',
+				})
+			);
+		});
+
+		it('clears a loaded default for a key the draft holds as undefined', async () => {
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+				model: 'claude-sonnet-4',
+				customArgs: '--from-settings',
+			});
+			render(
+				captureModal({
+					initialDraft: {
+						name: 'Launch Agent',
+						workingDir: '/work/launch',
+						customModel: undefined,
+						customArgs: undefined,
+					},
+				})
+			);
+
+			await waitFor(() => expect(screen.getByLabelText('Agent Name')).toHaveValue('Launch Agent'));
+			await captureWhenValid();
+
+			// expectedDraft holds both as undefined: the provider defaults are gone.
+			expect(onCapture).toHaveBeenCalledWith(
+				expectedDraft({ name: 'Launch Agent', workingDir: '/work/launch' })
+			);
+		});
+
+		it("passes the draft's permission mode through, since the form has no control for it", async () => {
+			render(
+				captureModal({
+					initialDraft: {
+						name: 'Launch Agent',
+						workingDir: '/work/launch',
+						permissionMode: 'readonly',
+					},
+				})
+			);
+
+			await waitFor(() => expect(screen.getByLabelText('Agent Name')).toHaveValue('Launch Agent'));
+			await captureWhenValid();
+
+			expect(onCapture).toHaveBeenCalledWith(
+				expectedDraft({
+					name: 'Launch Agent',
+					workingDir: '/work/launch',
+					permissionMode: 'readonly',
+				})
+			);
+		});
+
+		it("detects agents on the draft's SSH remote and captures its remote settings", async () => {
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'remote-1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			render(
+				captureModal({
+					initialDraft: {
+						agentId: 'claude-code',
+						name: 'Remote Agent',
+						workingDir: '~/project',
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					},
+				})
+			);
+
+			await waitFor(() => expect(screen.getByLabelText('Agent Name')).toHaveValue('Remote Agent'));
+			expect(window.maestro.agents.detect).toHaveBeenCalledWith('remote-1');
+			// The remote is known before the first probe, so nothing is detected locally.
+			expect(window.maestro.agents.detect).not.toHaveBeenCalledWith(undefined);
+			await captureWhenValid();
+
+			expect(onCapture).toHaveBeenCalledWith(
+				expectedDraft({
+					name: 'Remote Agent',
+					// A remote path stays as typed: only the remote shell can expand `~`.
+					workingDir: '~/project',
+					sessionSshRemoteConfig: expect.objectContaining({
+						enabled: true,
+						remoteId: 'remote-1',
+						workingDirOverride: '~/project',
+					}),
+				})
+			);
+		});
+
+		it('reads initialDraft once per open, so a new draft object never clobbers typing', async () => {
+			const { rerender } = render(
+				captureModal({ initialDraft: { name: 'First', workingDir: '/first' } })
+			);
+			await waitFor(() => expect(screen.getByLabelText('Agent Name')).toHaveValue('First'));
+
+			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: 'Typed' } });
+			rerender(captureModal({ initialDraft: { name: 'Second', workingDir: '/second' } }));
+			await act(async () => {
+				await Promise.resolve();
+			});
+			expect(screen.getByLabelText('Agent Name')).toHaveValue('Typed');
+
+			// The next open reads the draft it is handed.
+			rerender(
+				captureModal({ isOpen: false, initialDraft: { name: 'Second', workingDir: '/second' } })
+			);
+			rerender(captureModal({ initialDraft: { name: 'Second', workingDir: '/second' } }));
+			await waitFor(() => expect(screen.getByLabelText('Agent Name')).toHaveValue('Second'));
+			expect(screen.getByLabelText('Working Directory')).toHaveValue('/second');
+		});
+
+		it('ignores initialDraft when duplicating, so the source agent wins', async () => {
+			const source = createMockSession({
+				id: 'src-1',
+				name: 'Source',
+				cwd: '/source/project',
+				projectRoot: '/source/project',
+			});
+			render(
+				captureModal({
+					sourceSession: source,
+					initialDraft: { name: 'From Draft', workingDir: '/draft' },
+				})
+			);
+
+			await waitFor(() => expect(screen.getByLabelText('Agent Name')).toHaveValue('Source (Copy)'));
+			expect(screen.getByLabelText('Working Directory')).toHaveValue('/source/project');
+		});
+
+		it('keeps create mode unchanged: mode="create" creates through onCreate', async () => {
+			const createDraft = vi.fn<(draft: NewAgentDraft) => void>();
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					mode="create"
+					onClose={close}
+					onCreate={createDraft}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await screen.findByLabelText('Agent Name');
+			fillNameAndDirectory('My Agent', '/my/project');
+			const createButton = screen.getByRole('button', { name: 'Create Agent' });
+			expect(screen.queryByRole('button', { name: 'Use these settings' })).not.toBeInTheDocument();
+			await waitFor(() => expect(createButton).not.toBeDisabled());
+			await act(async () => {
+				fireEvent.click(createButton);
+			});
+
+			expect(createDraft).toHaveBeenCalledWith(
+				expectedDraft({ workingDir: '/my/project', name: 'My Agent' })
+			);
+			expect(close).toHaveBeenCalled();
 		});
 	});
 });

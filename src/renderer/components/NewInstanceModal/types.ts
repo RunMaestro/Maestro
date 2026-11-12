@@ -45,7 +45,8 @@ export interface SessionSshRemoteConfig {
 }
 
 /**
- * The settings of one new agent, as the New Agent modal hands them over.
+ * The settings of one new agent, as the New Agent modal hands them over
+ * (to `onCreate`, or to `onCapture` in capture mode).
  *
  * `createNewSession()` (`useSessionCrud.ts`) creates the agent from a draft,
  * and the CLI / web `create_session` handler turns its request into one, so
@@ -85,16 +86,38 @@ export interface NewAgentDraft {
 	permissionMode?: AITab['permissionMode'];
 }
 
-export interface NewInstanceModalProps {
+interface NewInstanceModalBaseProps {
 	isOpen: boolean;
 	onClose: () => void;
-	onCreate: (draft: NewAgentDraft) => void;
 	theme: Theme;
 	existingSessions: Session[];
 	sourceSession?: Session; // Optional session to duplicate from
 	presetGroupId?: string | null; // Group to place the new agent in (ignored when duplicating - duplicate inherits source's group)
 	presetWorkingDir?: string | null; // Working directory to seed, plus a default name from its basename (ignored when duplicating - duplicate inherits source's cwd)
+	/**
+	 * Settings to prefill, read once each time the modal opens (later changes
+	 * wait for the next open). A key the draft holds sets that field, an
+	 * `undefined` value included: it clears what the modal would otherwise
+	 * show, such as the provider's default model. A key the draft leaves out
+	 * keeps that default. So a draft from `onCapture`, passed back, reopens the
+	 * form as it was captured. Per-agent fields apply to `agentId`, or to the
+	 * agent the modal picks when the draft names none. Wins over
+	 * `presetGroupId` and `presetWorkingDir`; ignored when duplicating.
+	 */
+	initialDraft?: Partial<NewAgentDraft>;
 }
+
+/**
+ * `'create'` (the default) hands the draft to `onCreate`, which creates the
+ * agent. `'capture'` runs the same form and validation but hands the draft to
+ * `onCapture` and creates nothing, for a caller that creates the agent later
+ * (Playbook Launch). Each mode takes only its own callback.
+ */
+export type NewInstanceModalProps = NewInstanceModalBaseProps &
+	(
+		| { mode?: 'create'; onCreate: (draft: NewAgentDraft) => void; onCapture?: never }
+		| { mode: 'capture'; onCapture: (draft: NewAgentDraft) => void; onCreate?: never }
+	);
 
 export interface EditAgentModalProps {
 	isOpen: boolean;

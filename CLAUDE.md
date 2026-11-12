@@ -246,6 +246,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Rebasing unsaved session changes during recovery:** `rebasePendingSessionChanges()`, `SESSION_PERSISTENCE_BASELINE_EVENT`, `SessionPersistenceBaseline` in `src/renderer/hooks/utils/useDebouncedPersistence.ts`
 - **The record a new agent starts as:** `buildNewAgentRecord(input)`, `newAgentClaudeInteractive(toolType)` in `src/shared/newAgentRecord.ts`
 - **The agent a New Agent draft describes (modal and `create_session`):** `buildNewAgentSession()`, `probeNewAgentGitState()` in `src/renderer/utils/newAgentSession.ts`; `NewAgentDraft` in `src/renderer/components/NewInstanceModal/types.ts`
+- **A new agent's settings without creating it:** `<NewInstanceModal mode="capture">` with `onCapture` and `initialDraft` in `src/renderer/components/NewInstanceModal/NewInstanceModal.tsx`
 - **What a duplicated agent inherits:** `buildDuplicateAgentInput(source, overrides?)`, `defaultDuplicateAgentName()`, `duplicateAgentBlocker()` in `src/shared/newAgentRecord.ts`
 - **Session lookup:** `selectActiveSession()`, `selectSessionById()` in `src/renderer/stores/sessionStore.ts`; `useActiveSession()` hook in `src/renderer/hooks/session/useActiveSession.ts`
 - **Session mutation:** `updateSessionWith()`, `updateAiTab()`, `updateFileTab()`, `updateBrowserTab()` in `src/renderer/stores/sessionStore.ts` (never `setSessions(prev => prev.map(...))` for one agent or tab)

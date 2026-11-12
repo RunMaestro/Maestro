@@ -164,7 +164,11 @@ export const MODAL_PRIORITIES = {
 	/** New agent choice modal (Manual vs Wizard) */
 	NEW_AGENT_CHOICE: 756,
 
-	/** New instance creation modal */
+	/**
+	 * New instance creation modal. In capture mode it opens from the Playbook
+	 * Exchange's launch dialog, so it must rank above MARKETPLACE and that
+	 * dialog: Escape then closes only the New Agent modal.
+	 */
 	NEW_INSTANCE: 750,
 
 	/** Batch runner modal for scratchpad auto mode */

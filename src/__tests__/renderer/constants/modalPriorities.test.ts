@@ -31,6 +31,12 @@ describe('modalPriorities', () => {
 			expect(MODAL_PRIORITIES.MARKETPLACE).toBeGreaterThan(MODAL_PRIORITIES.AUTORUN_EXPANDED);
 		});
 
+		it('NEW_INSTANCE should have higher priority than MARKETPLACE (opens from its launch dialog in capture mode)', () => {
+			// Playbook Launch opens NewInstanceModal in capture mode on top of the
+			// Exchange, so Escape must close the New Agent modal and leave the Exchange
+			expect(MODAL_PRIORITIES.NEW_INSTANCE).toBeGreaterThan(MODAL_PRIORITIES.MARKETPLACE);
+		});
+
 		it('AGENT_PROMPT_COMPOSER should have higher priority than BATCH_RUNNER (opens from within)', () => {
 			// AgentPromptComposerModal opens from BatchRunnerModal
 			expect(MODAL_PRIORITIES.AGENT_PROMPT_COMPOSER).toBeGreaterThan(MODAL_PRIORITIES.BATCH_RUNNER);
