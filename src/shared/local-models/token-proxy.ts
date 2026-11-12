@@ -464,6 +464,18 @@ export function asStoredTokenProxyMode(value: unknown): StoredTokenProxyMode {
 }
 
 /**
+ * The mode a request was carried as, from a stored string: null for a missing
+ * value or one this build does not know. Unlike {@link asStoredTokenProxyMode} it
+ * never falls back to `passthrough`, because a reader of history must not turn an
+ * unknown mode into a known one.
+ */
+export function asTokenProxyRequestMode(value: unknown): TokenProxyRequestMode | null {
+	return value === 'passthrough' || value === 'compress' || value === 'compress-early'
+		? value
+		: null;
+}
+
+/**
  * An agent's proxy mode, from what is stored on it. `off` unless its gateway
  * reaches the proxy; then the stored mode, and `passthrough` when none is
  * stored: a gateway pointed at the proxy by hand changes nothing until the user
@@ -892,6 +904,15 @@ export const TOKEN_PROXY_UNKNOWN_LABELS: Record<ProxyUnknownReason, string> = {
 	'identity-unavailable': 'needs an identity the proxy cannot see',
 	'not-evaluated': 'not evaluated',
 };
+
+/**
+ * The fewest requests with a processing time from which a range shows a latency
+ * distribution. A display policy, not a statistical guarantee: 30 samples do not
+ * make p95 or p99 stable. A distribution drawn from fewer is withheld as
+ * `insufficient-samples` (the count is still reported), so that a handful of
+ * requests is not drawn as a tail.
+ */
+export const PROXY_LATENCY_MIN_SAMPLES = 30;
 
 /** A figure with no value. Unknown is never zero. */
 export function unknownProxyFigure<K extends ProxyEvidenceKind>(

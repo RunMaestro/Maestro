@@ -10,8 +10,11 @@
  *
  *   - `local_model_runs` - the task router's and System One's runs;
  *   - `query_events`     - agent turns, on a Run on source or on the provider;
- *   - `proxy_requests`   - the token proxy's totals, and the background requests
- *                          it routed to a Local Models target;
+ *   - `proxy_requests`   - the token proxy's totals and effectiveness (from
+ *                          `getProxyRequestUsage()`, the one aggregation the
+ *                          Gateway section and the CLI share), and the
+ *                          background requests it routed to a Local Models
+ *                          target;
  *   - `s1_decisions`     - System One's outcomes (the ledger keeps 30 days).
  *
  * SQLite has no percentile function, so each of the three row scans is ordered
@@ -584,10 +587,13 @@ export function getModelUsage(
 		proxy: {
 			totals: proxy.totals,
 			routedRequests,
+			// A removed agent keeps its row, and its requests stay in the total.
 			byAgent: proxy.byAgent.map((row) => ({
 				...row,
 				name: row.agentId === null ? null : (names.agentName?.(row.agentId) ?? null),
 			})),
+			byMode: proxy.byMode,
+			effectiveness: proxy.effectiveness,
 		},
 	};
 

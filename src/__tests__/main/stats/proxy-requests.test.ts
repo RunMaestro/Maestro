@@ -6,7 +6,7 @@
  * mapping, the two places a request can be silently corrupted.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import type Database from 'better-sqlite3';
 import {
 	recordProxyRequest,
@@ -14,6 +14,7 @@ import {
 	getRecentProxyCompressions,
 	clearProxyRequestsCache,
 } from '../../../main/stats/proxy-requests';
+import { emptyProxyEffectiveness } from '../../helpers/proxyTelemetryFixtures';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -46,6 +47,7 @@ describe('proxy-requests', () => {
 		vi.clearAllMocks();
 		clearProxyRequestsCache();
 		mockStatement.all.mockReturnValue([]);
+		(mockDb.prepare as Mock).mockImplementation(() => mockStatement);
 	});
 
 	describe('recordProxyRequest', () => {
@@ -404,42 +406,82 @@ describe('proxy-requests', () => {
 	});
 
 	describe('getProxyRequestUsage', () => {
-		it('sums per agent and in total, counting tokens only where the body was read', () => {
-			mockStatement.all.mockReturnValue([
-				{
-					agent_id: 'agent-1',
-					requests: 10,
-					compress_requests: 4,
-					original_tokens: 40_000,
-					sent_tokens: 30_000,
-					added_latency_ms: 50,
-					provider_requests: 9,
-					provider_input_tokens: 120,
-					provider_cache_read_tokens: 90_000,
-					provider_cache_write_tokens: 8_000,
-					provider_output_tokens: 2_000,
-				},
-				{
-					agent_id: null,
-					requests: 3,
-					compress_requests: 0,
-					original_tokens: 0,
-					sent_tokens: 0,
-					added_latency_ms: 0,
-					provider_requests: 0,
-					provider_input_tokens: 0,
-					provider_cache_read_tokens: 0,
-					provider_cache_write_tokens: 0,
-					provider_output_tokens: 0,
-				},
-			]);
-			const none = {
+		/** One group of the totals scan: an agent's requests under one stored effective mode. */
+		function group(overrides: Record<string, unknown>) {
+			return {
+				agent_id: null,
+				effective_mode: null,
 				requests: 0,
-				inputTokens: 0,
-				cacheReadTokens: 0,
-				cacheWriteTokens: 0,
-				outputTokens: 0,
+				compress_requests: 0,
+				original_tokens: 0,
+				sent_tokens: 0,
+				added_latency_ms: 0,
+				timed_requests: 0,
+				provider_requests: 0,
+				provider_input_tokens: 0,
+				provider_cache_read_tokens: 0,
+				provider_cache_write_tokens: 0,
+				provider_output_tokens: 0,
+				...overrides,
 			};
+		}
+
+		/**
+		 * Answer the totals scan with `rows`, and every other scan of the answer with
+		 * none: these cases are about how the groups are rolled up, and the other
+		 * scans are tested against a real engine in proxy-effectiveness.test.ts.
+		 */
+		function answerTotalsWith(rows: unknown[]): void {
+			(mockDb.prepare as Mock).mockImplementation((sql: string) =>
+				sql.includes('GROUP BY agent_id, effective_mode')
+					? { ...mockStatement, all: vi.fn(() => rows) }
+					: mockStatement
+			);
+		}
+
+		const none = {
+			requests: 0,
+			inputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			outputTokens: 0,
+		};
+
+		it('sums per agent and in total, counting tokens only where the body was read', () => {
+			answerTotalsWith([
+				group({
+					agent_id: 'agent-1',
+					effective_mode: 'compress',
+					requests: 6,
+					compress_requests: 3,
+					original_tokens: 30_000,
+					sent_tokens: 22_500,
+					added_latency_ms: 45,
+					timed_requests: 3,
+					provider_requests: 5,
+					provider_input_tokens: 100,
+					provider_cache_read_tokens: 60_000,
+					provider_cache_write_tokens: 8_000,
+					provider_output_tokens: 1_500,
+				}),
+				// The same agent before the mode was recorded.
+				group({
+					agent_id: 'agent-1',
+					effective_mode: null,
+					requests: 4,
+					compress_requests: 1,
+					original_tokens: 10_000,
+					sent_tokens: 7_500,
+					added_latency_ms: 5,
+					timed_requests: 1,
+					provider_requests: 4,
+					provider_input_tokens: 20,
+					provider_cache_read_tokens: 30_000,
+					provider_cache_write_tokens: 0,
+					provider_output_tokens: 500,
+				}),
+				group({ agent_id: null, effective_mode: 'passthrough', requests: 3 }),
+			]);
 			const agentOne = {
 				requests: 9,
 				inputTokens: 120,
@@ -461,6 +503,7 @@ describe('proxy-requests', () => {
 					tokensSaved: 10_000,
 					// 50 ms over the 4 requests that were held, not over all 10.
 					avgAddedLatencyMs: 13,
+					timedRequests: 4,
 					provider: agentOne,
 				},
 				{
@@ -471,6 +514,7 @@ describe('proxy-requests', () => {
 					sentTokens: 0,
 					tokensSaved: 0,
 					avgAddedLatencyMs: 0,
+					timedRequests: 0,
 					provider: none,
 				},
 			]);
@@ -481,14 +525,89 @@ describe('proxy-requests', () => {
 				sentTokens: 30_000,
 				tokensSaved: 10_000,
 				avgAddedLatencyMs: 13,
+				timedRequests: 4,
 				provider: agentOne,
 			});
+		});
+
+		it('rolls the same groups up by effective mode, the rows that state none apart', () => {
+			answerTotalsWith([
+				group({ agent_id: 'agent-1', effective_mode: 'compress-early', requests: 2 }),
+				group({
+					agent_id: 'agent-2',
+					effective_mode: 'compress',
+					requests: 5,
+					compress_requests: 5,
+				}),
+				group({ agent_id: 'agent-1', effective_mode: 'compress', requests: 1 }),
+				group({ agent_id: 'agent-3', effective_mode: null, requests: 4 }),
+				// Written by a build that knew another mode: it reads as a row that states none.
+				group({ agent_id: 'agent-3', effective_mode: 'a-future-mode', requests: 1 }),
+			]);
+
+			const usage = getProxyRequestUsage(mockDb, 'month');
+
+			expect(usage.byMode?.map((row) => [row.effectiveMode, row.requests])).toEqual([
+				['compress', 6],
+				[null, 5],
+				['compress-early', 2],
+			]);
+			expect(usage.byMode?.reduce((total, row) => total + row.requests, 0)).toBe(
+				usage.totals.requests
+			);
+			expect(usage.byAgent.map((row) => [row.agentId, row.requests])).toEqual([
+				['agent-2', 5],
+				['agent-3', 5],
+				['agent-1', 3],
+			]);
+		});
+
+		it('divides the added latency by the requests that carry a time, not by the ones read', () => {
+			answerTotalsWith([
+				group({
+					agent_id: 'agent-1',
+					effective_mode: 'compress',
+					requests: 3,
+					compress_requests: 3,
+					added_latency_ms: 30,
+					timed_requests: 2,
+				}),
+			]);
+
+			const usage = getProxyRequestUsage(mockDb, 'week');
+
+			expect(usage.totals.avgAddedLatencyMs).toBe(15);
+			expect(usage.byAgent[0].avgAddedLatencyMs).toBe(15);
+			expect(usage.byMode?.[0].avgAddedLatencyMs).toBe(15);
+			// Each mean says how many requests it is the mean of: 2 of the 3 that were read.
+			expect(usage.totals.timedRequests).toBe(2);
+			expect(usage.byAgent[0].timedRequests).toBe(2);
+			expect(usage.byMode?.[0].timedRequests).toBe(2);
+		});
+
+		it('does not divide by zero when no request carries a time', () => {
+			answerTotalsWith([
+				group({
+					agent_id: 'agent-1',
+					effective_mode: 'compress',
+					requests: 2,
+					compress_requests: 2,
+				}),
+			]);
+
+			const { totals } = getProxyRequestUsage(mockDb, 'week');
+
+			expect(totals.avgAddedLatencyMs).toBe(0);
+			// The mean of nothing reads 0, and this says it is not a measured 0 ms.
+			expect(totals.timedRequests).toBe(0);
 		});
 
 		it('answers zeros for a range with no requests', () => {
 			const usage = getProxyRequestUsage(mockDb, 'day');
 
 			expect(usage.byAgent).toEqual([]);
+			expect(usage.byMode).toEqual([]);
+			expect(usage.effectiveness).toEqual(emptyProxyEffectiveness());
 			expect(usage.totals).toEqual({
 				requests: 0,
 				compressRequests: 0,
@@ -496,17 +615,12 @@ describe('proxy-requests', () => {
 				sentTokens: 0,
 				tokensSaved: 0,
 				avgAddedLatencyMs: 0,
-				provider: {
-					requests: 0,
-					inputTokens: 0,
-					cacheReadTokens: 0,
-					cacheWriteTokens: 0,
-					outputTokens: 0,
-				},
+				timedRequests: 0,
+				provider: none,
 			});
 		});
 
-		it('reads from the start of the range', () => {
+		it('reads every part of one answer from the start of the range', () => {
 			vi.useFakeTimers();
 			vi.setSystemTime(new Date('2026-10-11T12:00:00Z'));
 			try {
@@ -515,6 +629,11 @@ describe('proxy-requests', () => {
 				const midnight = new Date(Date.now());
 				midnight.setHours(0, 0, 0, 0);
 				expect(mockStatement.all).toHaveBeenCalledWith(midnight.getTime());
+				// The totals and each scan of the effectiveness cover the same range.
+				expect(mockStatement.all.mock.calls.length).toBeGreaterThan(1);
+				for (const call of mockStatement.all.mock.calls) {
+					expect(call).toEqual([midnight.getTime()]);
+				}
 			} finally {
 				vi.useRealTimers();
 			}

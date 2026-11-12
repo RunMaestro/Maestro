@@ -8,15 +8,19 @@
  */
 
 import type Database from 'better-sqlite3';
+import { asTokenProxyRequestMode } from '../../shared/local-models/token-proxy';
 import type {
 	ProxyAgentTotals,
 	ProxyCompressedBlock,
 	ProxyCompressionEntry,
+	ProxyEffectiveMode,
+	ProxyModeTotals,
 	ProxyRequest,
 	ProxyRequestTotals,
 	ProxyRequestUsage,
 	StatsTimeRange,
 } from '../../shared/stats-types';
+import { getProxyEffectiveness } from './proxy-effectiveness';
 import { ADD_PROXY_REQUEST_TELEMETRY_COLUMNS } from './schema';
 import { generateId, getTimeRangeStart, LOG_CONTEXT, StatementCache } from './utils';
 import { logger } from '../utils/logger';
@@ -139,13 +143,15 @@ export function recordProxyRequest(
 	return id;
 }
 
-interface AgentTotalsRow {
-	agent_id: string | null;
+/** The sums behind a {@link ProxyRequestTotals}: one group of rows, or several rolled together. */
+interface TotalsRow {
 	requests: number;
 	compress_requests: number;
 	original_tokens: number;
 	sent_tokens: number;
 	added_latency_ms: number;
+	/** Requests that carry a processing time: the divisor of the mean, which a missing time must not lower. */
+	timed_requests: number;
 	provider_requests: number;
 	provider_input_tokens: number;
 	provider_cache_read_tokens: number;
@@ -153,7 +159,27 @@ interface AgentTotalsRow {
 	provider_output_tokens: number;
 }
 
-type TotalsRow = Omit<AgentTotalsRow, 'agent_id'>;
+/** What one scan returns: the totals of one agent under one stored effective mode. */
+interface GroupRow extends TotalsRow {
+	agent_id: string | null;
+	effective_mode: string | null;
+}
+
+function emptyTotals(): TotalsRow {
+	return {
+		requests: 0,
+		compress_requests: 0,
+		original_tokens: 0,
+		sent_tokens: 0,
+		added_latency_ms: 0,
+		timed_requests: 0,
+		provider_requests: 0,
+		provider_input_tokens: 0,
+		provider_cache_read_tokens: 0,
+		provider_cache_write_tokens: 0,
+		provider_output_tokens: 0,
+	};
+}
 
 function toTotals(row: TotalsRow): ProxyRequestTotals {
 	return {
@@ -163,7 +189,8 @@ function toTotals(row: TotalsRow): ProxyRequestTotals {
 		sentTokens: row.sent_tokens,
 		tokensSaved: row.original_tokens - row.sent_tokens,
 		avgAddedLatencyMs:
-			row.compress_requests > 0 ? Math.round(row.added_latency_ms / row.compress_requests) : 0,
+			row.timed_requests > 0 ? Math.round(row.added_latency_ms / row.timed_requests) : 0,
+		timedRequests: row.timed_requests,
 		provider: {
 			requests: row.provider_requests,
 			inputTokens: row.provider_input_tokens,
@@ -174,25 +201,62 @@ function toTotals(row: TotalsRow): ProxyRequestTotals {
 	};
 }
 
+/** The groups' sums rolled up by one key. Every group lands in exactly one bucket, so the buckets add up to the whole. */
+function rollUp<K>(rows: GroupRow[], keyOf: (row: GroupRow) => K): Map<K, TotalsRow> {
+	const buckets = new Map<K, TotalsRow>();
+	for (const row of rows) {
+		const key = keyOf(row);
+		let bucket = buckets.get(key);
+		if (!bucket) {
+			bucket = emptyTotals();
+			buckets.set(key, bucket);
+		}
+		for (const field of Object.keys(bucket) as Array<keyof TotalsRow>) {
+			// node:sqlite and better-sqlite3 disagree on integer types for an aggregate.
+			bucket[field] += Number(row[field]);
+		}
+	}
+	return buckets;
+}
+
+/** The order of modes among equals: the policies as they escalate, then the rows that do not say. */
+const MODE_ORDER: ReadonlyArray<ProxyEffectiveMode | null> = [
+	'passthrough',
+	'compress',
+	'compress-early',
+	null,
+];
+
 /**
- * What the proxy carried within the time range, in total and per agent. Tokens
- * and latency cover only the requests whose body the proxy read: a passthrough
- * request counts as a request and nothing else.
+ * What the proxy carried within the time range: in total, per agent, per
+ * effective mode, and its effectiveness (blocks, skips, timing, algorithms,
+ * provider classes, the days). Tokens and latency cover only the requests whose
+ * body the proxy read: a passthrough request counts as a request and nothing
+ * else.
+ *
+ * One scan sums every (agent, stored mode) group and the three cuts are rolled
+ * up from it, so the agents, the modes and the total are one partition of the
+ * same rows. The mode of a row that does not state one (it predates
+ * `effective_mode`) stays unknown, passthrough rows included: a mode is never
+ * inferred from the stored `mode` or from an agent's setting.
  */
 export function getProxyRequestUsage(
 	db: Database.Database,
 	range: StatsTimeRange
 ): ProxyRequestUsage {
+	const startTime = getTimeRangeStart(range);
 	const stmt = stmtCache.get(
 		db,
 		`
       SELECT
         agent_id,
+        effective_mode,
         COUNT(*) AS requests,
         SUM(CASE WHEN original_tokens IS NOT NULL THEN 1 ELSE 0 END) AS compress_requests,
         COALESCE(SUM(original_tokens), 0) AS original_tokens,
         COALESCE(SUM(sent_tokens), 0) AS sent_tokens,
         COALESCE(SUM(added_latency_ms), 0) AS added_latency_ms,
+        COUNT(added_latency_ms) AS timed_requests,
         SUM(CASE WHEN provider_input_tokens IS NOT NULL THEN 1 ELSE 0 END) AS provider_requests,
         COALESCE(SUM(provider_input_tokens), 0) AS provider_input_tokens,
         COALESCE(SUM(provider_cache_read_tokens), 0) AS provider_cache_read_tokens,
@@ -200,28 +264,33 @@ export function getProxyRequestUsage(
         COALESCE(SUM(provider_output_tokens), 0) AS provider_output_tokens
       FROM proxy_requests
       WHERE started_at >= ?
-      GROUP BY agent_id
-      ORDER BY requests DESC
+      GROUP BY agent_id, effective_mode
     `
 	);
-	const rows = stmt.all(getTimeRangeStart(range)) as AgentTotalsRow[];
-	const sum: TotalsRow = {
-		requests: 0,
-		compress_requests: 0,
-		original_tokens: 0,
-		sent_tokens: 0,
-		added_latency_ms: 0,
-		provider_requests: 0,
-		provider_input_tokens: 0,
-		provider_cache_read_tokens: 0,
-		provider_cache_write_tokens: 0,
-		provider_output_tokens: 0,
+	const rows = stmt.all(startTime) as GroupRow[];
+
+	const byAgent: ProxyAgentTotals[] = [...rollUp(rows, (row) => row.agent_id)]
+		.map(([agentId, sums]) => ({ agentId, ...toTotals(sums) }))
+		.sort((a, b) => b.requests - a.requests || (a.agentId ?? '').localeCompare(b.agentId ?? ''));
+	// A stored text that names no known mode is one more row that does not say.
+	const byMode: ProxyModeTotals[] = [
+		...rollUp(rows, (row) => asTokenProxyRequestMode(row.effective_mode)),
+	]
+		.map(([effectiveMode, sums]) => ({ effectiveMode, ...toTotals(sums) }))
+		.sort(
+			(a, b) =>
+				b.requests - a.requests ||
+				MODE_ORDER.indexOf(a.effectiveMode) - MODE_ORDER.indexOf(b.effectiveMode)
+		);
+	const totals = [...rollUp(rows, () => 'all').values()][0] ?? emptyTotals();
+
+	return {
+		range,
+		totals: toTotals(totals),
+		byAgent,
+		byMode,
+		effectiveness: getProxyEffectiveness(db, startTime),
 	};
-	const byAgent: ProxyAgentTotals[] = rows.map((row) => {
-		for (const key of Object.keys(sum) as Array<keyof TotalsRow>) sum[key] += row[key];
-		return { agentId: row.agent_id, ...toTotals(row) };
-	});
-	return { range, totals: toTotals(sum), byAgent };
 }
 
 function isCompressedBlock(value: unknown): value is ProxyCompressedBlock {

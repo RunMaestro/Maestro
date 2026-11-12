@@ -473,6 +473,33 @@ A figure drawn from rows is one of three kinds (`ProxyEvidenceKind`): `measured`
 
 Reads of a compressed block's original are not row facts. `TokenProxyRecoveryObservations` counts them in memory for the life of the process, split by caller: the reads the MCP handler made for `retrieve_compressed_original`, and every other read (actor unknown). Do not store them in a row or add them to a range total.
 
+### Token Proxy Effectiveness (one range)
+
+`getProxyRequestUsage(db, range)` in `src/main/stats/proxy-requests.ts` answers the totals and the per-agent totals as before, and adds `byMode` and `effectiveness` (`ProxyRequestUsage`). Both are optional on the wire, because an older desktop does not send them. One call feeds the Settings Gateway section (`TokenProxyReport.usage`), the Usage Dashboard (`ModelUsage.proxy`) and the CLI, so a new surface reads these fields and never runs a query of its own.
+
+| Field                           | Holds                                                                                                                                                                         |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `byMode`                        | The totals per effective mode. Requests whose row states no mode are one group with `effectiveMode: null`.                                                                    |
+| `effectiveness.traffic`         | `carried`, `read`, `skipped`, `shortened` requests and `blocksShortened`. Counts of rows, so never unknown.                                                                   |
+| `effectiveness.blocks`          | `coverage` (requests with counts, out of the requests read) and `counts` (the nine block counts summed, plus `shortened`, `verdictReuse`, `requestsWithCandidates`), or null. |
+| `effectiveness.skips`           | Requests forwarded without the compressor's result, by `TOKEN_PROXY_SKIP_REASONS`; `unrecognized` for a reason another build wrote.                                           |
+| `effectiveness.latency`         | `timed` and `untimed` requests, and the `DurationPercentiles` of the timed ones once there are `PROXY_LATENCY_MIN_SAMPLES`; else a reason.                                    |
+| `effectiveness.algorithms`      | Blocks and requests per algorithm, with `uniqueBlocks`.                                                                                                                       |
+| `effectiveness.providerClasses` | Per provider class: the measured `tokens` (a `ProxyFigure`) and the requests by `ProxyProviderClassReading`.                                                                  |
+| `effectiveness.trend`           | Per local calendar day that has a request: requests, requests read, token estimates, blocks shortened.                                                                        |
+
+Rules a reader of these fields needs:
+
+- **One scan for the cuts.** The per-agent totals, `byMode` and the grand total are rolled up from one `GROUP BY agent_id, effective_mode` scan, so each cut adds up to the total. `getProxyEffectiveness(db, startTime)` in `src/main/stats/proxy-effectiveness.ts` reads one scan grouped by skip reason (traffic, counts, skips and provider readings) and three more for what a roll-up cannot give: the algorithms (each distinct JSON cell is parsed once), the timings (percentiles need the values) and the days. Add a column to a scan before you add a scan.
+- **A historical mode stays unknown.** A row from before v22 has no `effective_mode`, and it is `effectiveMode: null`, a stored passthrough row included. The stored `mode` is not a fallback (a stored `compress` is either compress mode) and neither is the agent's setting today. A mode text this build does not know reads the same way (`asTokenProxyRequestMode()`).
+- **Counts have coverage.** `blocks.coverage.counted` is `COUNT(blocks_candidates)`, the requests the compressor ran on since v22, out of the requests read. `counts` is null when none is counted, and then the counts are unknown, not zero. Every number in `counts` covers the counted requests only, so `candidates = belowThreshold + storeFailed + kept + shortened` holds for the sums. A request read before v22 is in `traffic` and `blocksShortened`, and not in `counts`.
+- **Verdict reuse is not the provider's cache.** `blocks.counts.verdictReuse` is Maestro's compression cache. `providerClasses.cacheRead` is the provider's prompt cache. They are different facts: never add them.
+- **Provider classes are summed where measured.** A class's `tokens` sums the requests whose reading is `reported` or `derived`, and is unknown when none is. `rows` counts every reading, and the six add up to the requests. `totals.provider` still adds the stored numbers for compatibility: it includes default zeros and legacy numbers, so it is not a measured total.
+- **Algorithms overlap.** A block that several algorithms shortened is listed under each of them. The `blocks` of `algorithms.algorithms` add up to more than `uniqueBlocks` then. Never add them to get blocks.
+- **Latency needs samples, and a mean says how many.** The distribution is `percentilesFromSorted()` over the requests with a processing time. It is withheld below `PROXY_LATENCY_MIN_SAMPLES` (`insufficient-samples`), a display policy: 30 samples do not make p95 or p99 stable. A request that was read and has no time is `untimed` and is left out. `avgAddedLatencyMs` divides by the timed requests and is 0 when none is, which reads the same as a measured 0 ms. `timedRequests` on the total, each agent and each mode is the sample of its mean, so 0 there means "no time", not "0 ms". The `latency` block speaks for the whole range. A reader that shows a mean must show it against `timedRequests`.
+- **Days are local.** `trend` uses SQLite `localtime`, the boundary of every per-day stat, and lists only the days that have a request. The first day of a rolling range (week, month) is partial.
+- **The reader needs the v22 columns**, as the writer does. A database whose v22 migration failed cannot be read until the next start applies it.
+
 ## IPC Handlers
 
 Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollectionEnabled` in settings before recording data.
@@ -528,20 +555,22 @@ the Usage Dashboard's **Models** tab, `maestro-cli stats models`, and the WS mes
 with `isStatsTimeRange()` (no range reads the week) and hands the aggregation the names only the app
 knows: the saved endpoints, the OpenJev URL and agent names. The record has six blocks:
 
-| Block       | Reads                                                | Holds                                                                  |
-| ----------- | ---------------------------------------------------- | ---------------------------------------------------------------------- |
-| `totals`    | the other blocks                                     | requests, tokens, errors, and the on-this-machine share                |
-| `sources`   | `local_model_runs`, `query_events`, `proxy_requests` | one row per source: kind, location, units, tokens, errors, latency     |
-| `byTask`    | `local_model_runs`                                   | per task, with where each ran                                          |
-| `byAgent`   | `local_model_runs`, `query_events`                   | any agent that used another model; the tab shows `turns > 0` as Run on |
-| `systemOne` | `s1_decisions`, `query_events`                       | outcome split per task and engine, Auto's `routedTiers`, `coversRange` |
-| `proxy`     | `proxy_requests`                                     | requests, tokens saved and added latency, marked as an estimate        |
+| Block       | Reads                                                | Holds                                                                                |
+| ----------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `totals`    | the other blocks                                     | requests, tokens, errors, and the on-this-machine share                              |
+| `sources`   | `local_model_runs`, `query_events`, `proxy_requests` | one row per source: kind, location, units, tokens, errors, latency                   |
+| `byTask`    | `local_model_runs`                                   | per task, with where each ran                                                        |
+| `byAgent`   | `local_model_runs`, `query_events`                   | any agent that used another model; the tab shows `turns > 0` as Run on               |
+| `systemOne` | `s1_decisions`, `query_events`                       | outcome split per task and engine, Auto's `routedTiers`, `coversRange`               |
+| `proxy`     | `proxy_requests`                                     | totals, `byMode` and `effectiveness` from `getProxyRequestUsage()`, estimates marked |
 
 Rules a new reader of the record needs:
 
 - **Each table is scanned once.** SQLite has no percentile function, so each scan is `ORDER BY` its duration
   column and every distribution (per source, task, agent and System One task) is sliced from that one pass
-  with `percentilesFromSorted()`. Do not add a second query for a new percentile.
+  with `percentilesFromSorted()`. Do not add a second query for a new percentile. `proxy_requests` is the
+  exception: `getProxyRequestUsage()` reads it in a few scans of its own (see "Token Proxy Effectiveness")
+  besides the routed-request scan.
 - **Three units, kept apart.** A source counts `runs` (one model call), `turns` (one agent turn) and `routed`
   (one background request the proxy sent to a Local Models target). `requests` is their sum, so never
   divide tokens by it. `modelUsageSourceLatency()` names the unit a latency is in: a request when the source

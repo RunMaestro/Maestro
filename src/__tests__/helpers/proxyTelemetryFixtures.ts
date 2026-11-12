@@ -18,7 +18,13 @@
  * or passes overrides.
  */
 
-import type { ProxyBlockCounts, ProxyRequest } from '../../shared/stats-types';
+import {
+	PROXY_PROVIDER_USAGE_CLASSES,
+	type ProxyBlockCounts,
+	type ProxyEffectiveness,
+	type ProxyProviderCoverage,
+	type ProxyRequest,
+} from '../../shared/stats-types';
 import type { TokenProxySkipReason } from '../../shared/local-models/token-proxy';
 
 /** A row as the recorder takes it: everything but the generated id. */
@@ -120,6 +126,39 @@ export function skippedProxyRow(
 		effectiveMode: 'compress-early',
 		skipReason: reason,
 		...overrides,
+	};
+}
+
+/**
+ * What the effectiveness aggregation answers for a range with no request, written
+ * out in full on purpose: every block present, every count 0 and every unknown
+ * stated as one. A fresh object each call, so a test may change it.
+ */
+export function emptyProxyEffectiveness(): ProxyEffectiveness {
+	const providerClasses = Object.fromEntries(
+		PROXY_PROVIDER_USAGE_CLASSES.map((usageClass) => [
+			usageClass,
+			{
+				tokens: { kind: 'measured', unit: 'tokens', value: null, unknown: 'not-observed' },
+				rows: {
+					reported: 0,
+					derived: 0,
+					'not-applicable': 0,
+					unreported: 0,
+					legacy: 0,
+					absent: 0,
+				},
+			},
+		])
+	) as ProxyProviderCoverage;
+	return {
+		traffic: { carried: 0, read: 0, skipped: 0, shortened: 0, blocksShortened: 0 },
+		blocks: { coverage: { scope: 'range', counted: 0, of: 0 }, counts: null },
+		skips: [],
+		latency: { timed: 0, untimed: 0, distribution: null, unknown: 'not-read' },
+		algorithms: { uniqueBlocks: 0, algorithms: [] },
+		providerClasses,
+		trend: [],
 	};
 }
 

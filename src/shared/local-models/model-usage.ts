@@ -19,7 +19,13 @@
 
 import { getAgentDisplayName } from '../agentMetadata';
 import type { DurationPercentiles } from '../percentiles';
-import type { ProxyAgentTotals, ProxyRequestTotals, StatsTimeRange } from '../stats-types';
+import type {
+	ProxyAgentTotals,
+	ProxyEffectiveness,
+	ProxyModeTotals,
+	ProxyRequestTotals,
+	StatsTimeRange,
+} from '../stats-types';
 import type { ModelTier } from '../tierLevels';
 import { isLoopbackEndpointUrl, type LocalModelEndpoint } from './endpoints';
 import { MODEL_SERVER_ENDPOINT_ID, MODEL_SERVER_NAME } from './model-server';
@@ -397,6 +403,14 @@ export interface ModelUsageProxy {
 	routedRequests: number;
 	/** Most requests first. */
 	byAgent: ModelUsageProxyAgent[];
+	/**
+	 * The same totals by effective mode, and what the proxy did with the requests
+	 * (blocks, skips, timing, algorithms, provider classes, the days). Both are
+	 * `getProxyRequestUsage()`'s own answer, so the Settings Gateway section and
+	 * the CLI show the same figures. Absent from an older desktop.
+	 */
+	byMode?: ProxyModeTotals[];
+	effectiveness?: ProxyEffectiveness;
 }
 
 export interface ModelUsage {

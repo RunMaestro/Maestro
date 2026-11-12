@@ -3213,6 +3213,18 @@ Stats migration v16 adds one table. `proxyRequestFromLog()` in
    a passthrough request, a request answered by a background target and a request forwarded as it
    arrived (including one whose compressor returned and was followed by a failure) leave them NULL.
    A request forwarded as it arrived credits no reduction anywhere in its row.
+8. **A range is read by one aggregation.** `getProxyRequestUsage()` in
+   `src/main/stats/proxy-requests.ts` answers the totals per agent, per effective mode and in all,
+   rolled up from one scan so that each cut adds up to the total, and adds the range's
+   `effectiveness` from `getProxyEffectiveness()` in `src/main/stats/proxy-effectiveness.ts`. The
+   Gateway section, the Models tab (`ModelUsage.proxy`) and the CLI all read that answer. Its figures
+   keep the rules of the row: block counts are summed over the requests that carry them and come with
+   their coverage (none counted is unknown, not zero); a provider class is summed only over the
+   requests where it was reported or derived; the mode of a row from before v22 is unknown, a stored
+   passthrough row included; the algorithms overlap and do not add up to the blocks shortened; the
+   compression cache's verdict reuse is not the provider's cache read; a latency distribution is
+   withheld below `PROXY_LATENCY_MIN_SAMPLES` timed requests, a display policy; and each mean added
+   latency is read against its `timedRequests`, because a mean over none reads as 0 ms.
 
 `readTokenProxyUsage()` returns the totals for the last 30 days (`getProxyRequestUsage`, in all
 and per agent, with the provider's counts summed in `provider`) and the 25 newest compressions

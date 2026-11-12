@@ -19,7 +19,11 @@ import {
 	clearLocalModelRunsCache,
 	recordLocalModelRun,
 } from '../../../main/stats/local-model-runs';
-import { clearProxyRequestsCache, recordProxyRequest } from '../../../main/stats/proxy-requests';
+import {
+	clearProxyRequestsCache,
+	getProxyRequestUsage,
+	recordProxyRequest,
+} from '../../../main/stats/proxy-requests';
 import { clearQueryEventCache, insertQueryEvent } from '../../../main/stats/query-events';
 import {
 	clearSystemOneDecisionsCache,
@@ -35,6 +39,12 @@ import type { SystemOneDecision } from '../../../shared/local-models/system-one-
 import { emptyPercentiles } from '../../../shared/percentiles';
 import type { LocalModelRun, ProxyRequest, QueryEvent } from '../../../shared/stats-types';
 import { canLoadNodeSqlite, nodeSqliteBetterSqlite3Mock } from '../../helpers/nodeSqlite';
+import {
+	currentProxyRow,
+	emptyProxyEffectiveness,
+	legacyProxyRow,
+	passthroughProxyRow,
+} from '../../helpers/proxyTelemetryFixtures';
 
 const DAY_MS = 86_400_000;
 const NOW = 1_800_000_000_000;
@@ -190,6 +200,7 @@ describe.skipIf(!canLoadNodeSqlite())('getModelUsage', () => {
 				sentTokens: 0,
 				tokensSaved: 0,
 				avgAddedLatencyMs: 0,
+				timedRequests: 0,
 				provider: {
 					requests: 0,
 					inputTokens: 0,
@@ -200,6 +211,8 @@ describe.skipIf(!canLoadNodeSqlite())('getModelUsage', () => {
 			},
 			routedRequests: 0,
 			byAgent: [],
+			byMode: [],
+			effectiveness: emptyProxyEffectiveness(),
 		});
 	});
 
@@ -708,6 +721,7 @@ describe.skipIf(!canLoadNodeSqlite())('getModelUsage', () => {
 			sentTokens: 3000,
 			tokensSaved: 1000,
 			avgAddedLatencyMs: 20,
+			timedRequests: 1,
 			provider: {
 				requests: 0,
 				inputTokens: 0,
@@ -724,6 +738,83 @@ describe.skipIf(!canLoadNodeSqlite())('getModelUsage', () => {
 			])
 		);
 		expect(proxy.byAgent[0].agentId).toBe('agent-a');
+		// A removed agent keeps its row with no name, and its requests stay in the total.
+		expect(proxy.byAgent.reduce((total, row) => total + row.requests, 0)).toBe(
+			proxy.totals.requests
+		);
+		// Rows that state no effective mode are one group, and the modes add up to the same total.
+		expect(proxy.byMode?.map((row) => [row.effectiveMode, row.requests])).toEqual([[null, 4]]);
+	});
+
+	describe('the proxy effectiveness', () => {
+		function seed(): void {
+			for (const row of [
+				currentProxyRow({ agentId: 'agent-a', effectiveMode: 'compress-early' }),
+				currentProxyRow({ agentId: 'agent-a', effectiveMode: 'compress' }),
+				legacyProxyRow({ agentId: 'agent-gone' }),
+				passthroughProxyRow({ agentId: undefined }),
+			]) {
+				recordProxyRequest(db, { ...row, startedAt: NOW - 1000 });
+			}
+		}
+
+		it('is the very answer getProxyRequestUsage gives, so Settings, the CLI and the dashboard agree', () => {
+			seed();
+
+			const { proxy } = getModelUsage(db, 'week', NAMES);
+			const direct = getProxyRequestUsage(db, 'week');
+
+			expect(proxy.effectiveness).toEqual(direct.effectiveness);
+			expect(proxy.byMode).toEqual(direct.byMode);
+			expect(proxy.totals).toEqual(direct.totals);
+			expect(proxy.effectiveness?.traffic).toEqual({
+				carried: 4,
+				read: 3,
+				skipped: 0,
+				shortened: 3,
+				blocksShortened: 9,
+			});
+		});
+
+		it('breaks the requests down by mode, and keeps the unrecorded mode of an old request unknown', () => {
+			seed();
+
+			const { proxy } = getModelUsage(db, 'week', NAMES);
+
+			expect(proxy.byMode?.map((row) => [row.effectiveMode, row.requests])).toEqual([
+				['passthrough', 1],
+				['compress', 1],
+				['compress-early', 1],
+				[null, 1],
+			]);
+			expect(proxy.byMode?.reduce((total, row) => total + row.requests, 0)).toBe(
+				proxy.totals.requests
+			);
+		});
+
+		it('names the agents that exist, leaves a removed one nameless, and counts every request', () => {
+			seed();
+
+			const { proxy } = getModelUsage(db, 'week', NAMES);
+
+			expect(proxy.byAgent.map((row) => [row.agentId, row.name, row.requests])).toEqual(
+				expect.arrayContaining([
+					['agent-a', 'Alpha', 2],
+					['agent-gone', null, 1],
+					[null, null, 1],
+				])
+			);
+			expect(proxy.byAgent.reduce((total, row) => total + row.requests, 0)).toBe(4);
+		});
+
+		it('reads the days of the range the caller asked for', () => {
+			recordProxyRequest(db, { ...passthroughProxyRow(), startedAt: NOW - 8 * DAY_MS });
+			recordProxyRequest(db, { ...passthroughProxyRow(), startedAt: NOW - 1000 });
+
+			expect(getModelUsage(db, 'week').proxy.effectiveness?.trend).toHaveLength(1);
+			expect(getModelUsage(db, 'month').proxy.effectiveness?.trend).toHaveLength(2);
+			expect(getModelUsage(db, 'month').proxy.effectiveness?.traffic.carried).toBe(2);
+		});
 	});
 
 	it('leaves out everything that started before the range', () => {

@@ -4,7 +4,11 @@
  * These types are shared between main process (stats/) and renderer (dashboard).
  */
 
-import type { TokenProxyRequestMode } from './local-models/token-proxy';
+import type {
+	ProxyProviderClassReading,
+	TokenProxyRequestMode,
+	TokenProxySkipReason,
+} from './local-models/token-proxy';
 import type { DurationPercentiles } from './percentiles';
 import type { ModelTier } from './tierLevels';
 import type { PromptCadence } from './promptCadence';
@@ -677,14 +681,33 @@ export interface ProxyProviderUsageTotals {
 /** What the proxy carried, summed. */
 export interface ProxyRequestTotals {
 	requests: number;
-	/** Requests whose body the proxy read (`compress` mode, not skipped). */
+	/**
+	 * Requests that carry token estimates: the rows with `originalTokens`. That is
+	 * every request the proxy read, a late fallback included (the compressor
+	 * returned and a later step failed, so the row keeps equal estimates and no
+	 * reduction). An estimate is not evidence that shortening was applied, and this
+	 * is not block-count coverage: see `effectiveness.blocks.coverage`.
+	 */
 	compressRequests: number;
 	/** Tokens of those requests as they arrived, and as they were sent. */
 	originalTokens: number;
 	sentTokens: number;
 	tokensSaved: number;
-	/** Mean time those requests were held. 0 when there were none. */
+	/**
+	 * Mean time the requests that carry a processing time were held. A request
+	 * with none is left out of both the sum and the count. It is 0 when no request
+	 * has one: `effectiveness.latency` tells that apart from a mean of zero.
+	 */
 	avgAddedLatencyMs: number;
+	/**
+	 * Requests that carry a processing time: the sample `avgAddedLatencyMs` is the
+	 * mean of. 0 means the mean is not a measurement, where the mean alone reads
+	 * the same as a measured 0 ms. Present for the total, each agent and each mode,
+	 * so a group's mean is read against its own sample; the range-wide view is
+	 * `effectiveness.latency`. Absent from an older desktop: the mean's coverage is
+	 * then unknown.
+	 */
+	timedRequests?: number;
 	/** What the provider counted, where its answer said. */
 	provider: ProxyProviderUsageTotals;
 }
@@ -694,11 +717,210 @@ export interface ProxyAgentTotals extends ProxyRequestTotals {
 	agentId: string | null;
 }
 
+/**
+ * {@link ProxyRequestTotals} for the requests carried under one effective mode.
+ * The token counts are estimates, as everywhere in the totals.
+ */
+export interface ProxyModeTotals extends ProxyRequestTotals {
+	/**
+	 * The mode the requests were carried as. Null for requests whose row does not
+	 * say: it predates `effective_mode`, or it names a mode this build does not
+	 * know. Those rows stay unknown, stored passthrough ones included. A mode is
+	 * never inferred from the stored `mode` (a stored `compress` is either compress
+	 * mode) or from an agent's setting, which may have changed since.
+	 */
+	effectiveMode: ProxyEffectiveMode | null;
+}
+
+/** {@link ProxyCoverage} for a time range: `counted` of the `of` requests supplied a value. */
+export type ProxyRangeCoverage = Extract<ProxyCoverage, { scope: 'range' }>;
+
+/**
+ * How the requests of a range were handled. Counts of rows, so none is unknown.
+ *
+ * `read` and `skipped` can overlap: a request that failed after the compressor
+ * returned is `skipped` (`failed`), and it keeps the equal token estimates and
+ * the time it was held, which is what makes it `read`. They are two views of the
+ * same requests, not parts of `carried`: do not add them.
+ */
+export interface ProxyTraffic {
+	/** Every request the proxy carried in the range. */
+	carried: number;
+	/**
+	 * Requests that carry token estimates: the proxy read the body
+	 * (`ProxyRequestTotals.compressRequests`). A late fallback is read, and applied
+	 * no reduction.
+	 */
+	read: number;
+	/** Requests forwarded without the compressor's result, by any reason (see `skips`). */
+	skipped: number;
+	/** Requests with at least one block shortened. */
+	shortened: number;
+	/** Blocks shortened over all requests, each counted once however many algorithms contributed. */
+	blocksShortened: number;
+}
+
+/**
+ * {@link ProxyBlockCounts} summed over the requests that carry them, with the
+ * facts of those same requests that the counts must be read against. Every
+ * number here covers the counted requests only, so
+ * `candidates = belowThreshold + storeFailed + kept + shortened` holds for the
+ * sums as it does for each request.
+ */
+export interface ProxyBlockTotals extends ProxyBlockCounts {
+	/** Blocks the same requests shortened (their `blocksCompressed`). */
+	shortened: number;
+	/**
+	 * Verdicts the same requests took from Maestro's compression cache (their
+	 * `cacheHits`): no compressor ran for them. This is verdict reuse. It is not
+	 * the provider's prompt cache, which is `ProxyProviderCoverage.cacheRead`.
+	 */
+	verdictReuse: number;
+	/** How many of the same requests had at least one candidate block. */
+	requestsWithCandidates: number;
+}
+
+/** The block counts of a range and how much of it they speak for. */
+export interface ProxyBlockReport {
+	/**
+	 * Requests that carry block counts (`counted`), out of the requests that carry
+	 * token estimates (`of`, {@link ProxyTraffic.read}). The two differ for a
+	 * request read before counts were recorded, and for a late fallback: its
+	 * estimates are equal and it has no counts. Estimate coverage is not count
+	 * coverage.
+	 */
+	coverage: ProxyRangeCoverage;
+	/**
+	 * Summed over the counted requests only. Null when no request is counted: the
+	 * counts are unknown, which is not zero. A request read before counts were
+	 * recorded, or forwarded unread, is not counted, and is not a zero in the sums.
+	 */
+	counts: ProxyBlockTotals | null;
+}
+
+/** Requests that were forwarded without the compressor's result, for one reason. */
+export interface ProxySkipCount {
+	/** A reason in `TOKEN_PROXY_SKIP_REASONS`, or `unrecognized` for a value another build wrote. */
+	reason: TokenProxySkipReason | 'unrecognized';
+	requests: number;
+}
+
+/**
+ * Time the proxy held requests to read and shorten them, in ms. Requests with no
+ * processing time recorded are unknown and are left out of the distribution. The
+ * distribution is withheld below `PROXY_LATENCY_MIN_SAMPLES` timed requests, a
+ * display policy that says nothing about how stable a tail is.
+ */
+export type ProxyLatency = {
+	/** Requests with a processing time. */
+	timed: number;
+	/** Requests the proxy read that carry none. */
+	untimed: number;
+} & (
+	| { distribution: DurationPercentiles }
+	| {
+			distribution: null;
+			/** `insufficient-samples`, `not-read` (nothing was read) or `not-recorded` (no read request is timed). */
+			unknown: ProxyUnknownReason;
+	  }
+);
+
+/** One algorithm's share of the shortening. */
+export interface ProxyAlgorithmCount {
+	/** The compressor's id as recorded ('json', 'logs', 'model', ...). Open text: a later build may add one. */
+	algorithm: string;
+	/** Blocks this algorithm contributed to. */
+	blocks: number;
+	/** Requests in which it contributed to a block. */
+	requests: number;
+}
+
+/**
+ * Which algorithms shortened the blocks. The counts overlap: a block that two
+ * algorithms shortened is listed under both, so the `blocks` of the algorithms
+ * add up to more than `uniqueBlocks` whenever that happens. Never add them to
+ * get a number of blocks.
+ */
+export interface ProxyAlgorithmBreakdown {
+	/** Blocks shortened in the requests that name their algorithms, each counted once. */
+	uniqueBlocks: number;
+	/** Most blocks first. */
+	algorithms: ProxyAlgorithmCount[];
+}
+
+/** One class of the provider's usage over a range. */
+export interface ProxyProviderClassTotals {
+	/**
+	 * Tokens summed over the requests where the class is `reported` or `derived`:
+	 * the only ones whose number says something. A default 0 (`unreported`), a
+	 * legacy number of unknown provenance and a class the provider does not have
+	 * add nothing. Unknown when no request qualifies; its coverage says how many did.
+	 */
+	tokens: ProxyFigure<'measured'>;
+	/**
+	 * The range's requests by how the class got its number
+	 * ({@link ProxyProviderClassReading}). Each request is in exactly one, so the
+	 * six add up to the requests. `legacy` and `absent` are unknown, as is
+	 * `unreported`; `not-applicable` is zero by definition and not a measurement.
+	 */
+	rows: Record<ProxyProviderClassReading, number>;
+}
+
+/** What the provider reported, class by class. Provider counts, not Maestro's estimates. */
+export type ProxyProviderCoverage = Record<ProxyProviderUsageClass, ProxyProviderClassTotals>;
+
+/** One local calendar day of the range. */
+export interface ProxyTrendDay {
+	/** `YYYY-MM-DD` in the local time zone, the day boundary every dashboard stat uses. */
+	date: string;
+	requests: number;
+	/** Requests that carry token estimates. */
+	compressRequests: number;
+	/** Estimates (characters / 4) over those requests. */
+	originalTokens: number;
+	sentTokens: number;
+	blocksShortened: number;
+}
+
+/**
+ * What the proxy did with the requests of a range, beyond the totals. Built in
+ * one place (`getProxyEffectiveness()`), so the Settings Gateway section, the
+ * Usage Dashboard and the CLI read the same figures.
+ *
+ * Three kinds of figure sit here and are never added to one another (see
+ * `ProxyEvidenceKind`): counts Maestro made on requests, estimates of tokens
+ * (characters / 4) and what the provider reported. An unknown is stated as one
+ * (a null, a coverage of zero, an `unknown` reason) and is never written as 0.
+ */
+export interface ProxyEffectiveness {
+	traffic: ProxyTraffic;
+	blocks: ProxyBlockReport;
+	/** Most requests first. */
+	skips: ProxySkipCount[];
+	latency: ProxyLatency;
+	algorithms: ProxyAlgorithmBreakdown;
+	providerClasses: ProxyProviderCoverage;
+	/**
+	 * By local calendar day, oldest first, for the days that have a request. The
+	 * first day of a rolling range (week, month) holds only the requests after the
+	 * range started.
+	 */
+	trend: ProxyTrendDay[];
+}
+
 export interface ProxyRequestUsage {
 	range: StatsTimeRange;
 	totals: ProxyRequestTotals;
 	/** Most requests first. */
 	byAgent: ProxyAgentTotals[];
+	/**
+	 * The same totals by effective mode, most requests first; requests whose mode
+	 * the row does not state are one group with a null mode. Absent from an older
+	 * desktop.
+	 */
+	byMode?: ProxyModeTotals[];
+	/** Absent from an older desktop. */
+	effectiveness?: ProxyEffectiveness;
 }
 
 /** One row of the "Recent compressions" list. */

@@ -11,8 +11,11 @@
 import { describe, it, expect } from 'vitest';
 import {
 	addProxyFigures,
+	asStoredTokenProxyMode,
+	asTokenProxyRequestMode,
 	asTokenProxySkipReason,
 	isCompressingTokenProxyMode,
+	PROXY_LATENCY_MIN_SAMPLES,
 	proxyBlockCountsProblem,
 	proxyFigure,
 	proxyProviderClassHasValue,
@@ -273,6 +276,34 @@ describe('skip reasons', () => {
 		expect(asTokenProxySkipReason('from-a-newer-build')).toBeNull();
 		expect(asTokenProxySkipReason(undefined)).toBeNull();
 		expect(asTokenProxySkipReason(3)).toBeNull();
+	});
+});
+
+describe('request modes', () => {
+	it('reads a stored string as a mode a request was carried as, or as none', () => {
+		for (const mode of ['passthrough', 'compress', 'compress-early'] as const) {
+			expect(asTokenProxyRequestMode(mode)).toBe(mode);
+		}
+		// `off` is an agent's setting, not a way a request was carried.
+		expect(asTokenProxyRequestMode('off')).toBeNull();
+		expect(asTokenProxyRequestMode('from-a-newer-build')).toBeNull();
+		expect(asTokenProxyRequestMode(null)).toBeNull();
+		expect(asTokenProxyRequestMode(undefined)).toBeNull();
+		expect(asTokenProxyRequestMode(3)).toBeNull();
+	});
+
+	it('never turns an unknown mode into a known one, as the stored-mode reader does', () => {
+		// The agent's stored mode defaults to passthrough, which is right for a setting and
+		// wrong for history: a request of unknown mode must stay unknown.
+		expect(asStoredTokenProxyMode('from-a-newer-build')).toBe('passthrough');
+		expect(asTokenProxyRequestMode('from-a-newer-build')).toBeNull();
+	});
+});
+
+describe('the latency distribution minimum', () => {
+	it('is a whole number of requests above one, so a single sample is never a distribution', () => {
+		expect(Number.isInteger(PROXY_LATENCY_MIN_SAMPLES)).toBe(true);
+		expect(PROXY_LATENCY_MIN_SAMPLES).toBeGreaterThan(1);
 	});
 });
 
