@@ -52,6 +52,7 @@ import {
 	SystemOneSection,
 } from './ModelUsageSections';
 import { summarizeModelUsage } from './modelUsageView';
+import { ProxyInspectionDetails } from './ProxyInspectionDetails';
 
 export interface ModelUsageStatsProps {
 	timeRange: StatsTimeRange;
@@ -120,24 +121,33 @@ export const ModelUsageStats = memo(function ModelUsageStats({
 
 	if (error) {
 		return (
-			<PanelErrorNote
-				theme={theme}
-				title="Failed to load model usage"
-				message={error}
-				onRetry={reload}
-				testId="model-usage-error"
-			/>
+			<div className="space-y-4">
+				<PanelErrorNote
+					theme={theme}
+					title="Failed to load model usage"
+					message={error}
+					onRetry={reload}
+					testId="model-usage-error"
+				/>
+				<ProxyInspectionDetails theme={theme} agent={activeAgent} />
+			</div>
 		);
 	}
 
 	if (!usage || isModelUsageEmpty(usage)) {
 		return (
-			<EmptyState
-				theme={theme}
-				title="No model usage in this range"
-				message={`This tab fills in when work runs on a model other than a provider's own: a housekeeping task on a local model, an agent with a Run on target, a System One decision, or a request through the token proxy. Set them up in ${MODELS_SETTINGS_LOCATION}.`}
-				action={{ label: `Open ${MODELS_SETTINGS_LOCATION}`, onClick: () => openModelsSettings() }}
-			/>
+			<div className="space-y-4">
+				<EmptyState
+					theme={theme}
+					title="No model usage in this range"
+					message={`This tab fills in when work runs on a model other than a provider's own: a housekeeping task on a local model, an agent with a Run on target, a System One decision, or a request through the token proxy. Set them up in ${MODELS_SETTINGS_LOCATION}.`}
+					action={{
+						label: `Open ${MODELS_SETTINGS_LOCATION}`,
+						onClick: () => openModelsSettings(),
+					}}
+				/>
+				<ProxyInspectionDetails theme={theme} agent={activeAgent} />
+			</div>
 		);
 	}
 
@@ -208,6 +218,7 @@ export const ModelUsageStats = memo(function ModelUsageStats({
 					since={usage.since}
 					loadedAt={loadedAt}
 					refreshing={loading}
+					inspection={<ProxyInspectionDetails theme={theme} agent={activeAgent} />}
 					onRefresh={reload}
 					colorBlindMode={colorBlindMode}
 					setupActions={[

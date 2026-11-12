@@ -63,13 +63,13 @@ import {
 } from '../../../../shared/local-models/token-proxy';
 import {
 	TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE,
+	TOKEN_PROXY_TOTALS_ONLY_NOTE,
 	TOKEN_PROXY_TREND_NOTE,
 	describeProviderUsage,
 	describeProviderUsageNote,
 	describeProxyAlgorithmCohort,
 	describeProxyHandling,
 	describeProxyLatency,
-	type ProxyReportLine,
 } from '../../../../shared/local-models/token-proxy-report';
 import type { DurationPercentiles } from '../../../../shared/percentiles';
 import type { ProxyTrendDay } from '../../../../shared/stats-types';
@@ -77,6 +77,7 @@ import { COLORBLIND_LINE_COLORS } from '../../../constants/colorblindPalettes';
 import { useTableSort } from '../../../hooks/ui/useTableSort';
 import type { Theme } from '../../../types';
 import { HeaderActionButton } from '../../ui/HeaderActionButton';
+import { ProxyReportLines } from '../../shared/ProxyReportLines';
 import { MiniBadge } from '../../ui/MiniBadge';
 import { SortableTh } from '../../ui/SortableTh';
 import { Spinner } from '../../ui/Spinner';
@@ -945,32 +946,6 @@ export const SystemOneSection = memo(function SystemOneSection({
 // Token proxy
 // ---------------------------------------------------------------------------
 
-/** The facts of one report as a definition list: what each is called, and what it says. */
-function ReportLines({
-	theme,
-	lines,
-	testId,
-}: {
-	theme: Theme;
-	lines: readonly ProxyReportLine[];
-	testId: string;
-}) {
-	return (
-		<dl
-			className="grid gap-x-4 gap-y-1.5 text-xs select-text"
-			style={{ gridTemplateColumns: 'max-content minmax(0, 1fr)' }}
-			data-testid={testId}
-		>
-			{lines.map((line) => (
-				<Fragment key={line.label}>
-					<dt style={{ color: theme.colors.textDim }}>{line.label}</dt>
-					<dd style={{ color: theme.colors.textMain }}>{line.text}</dd>
-				</Fragment>
-			))}
-		</dl>
-	);
-}
-
 /** The y axis and tooltip of the trend: whole tokens, compact (the middle tick is a half). */
 function formatTrendTokens(value: number): string {
 	return formatTokensCompact(Math.round(value));
@@ -1214,7 +1189,9 @@ function ProxyProviderUsage({ theme, proxy }: { theme: Theme; proxy: ModelUsageP
 	if (lines.length === 0) return null;
 	return (
 		<TitledBlock theme={theme} title="Provider usage" testId="model-usage-proxy-provider">
-			<ReportLines theme={theme} lines={lines} testId="model-usage-proxy-provider-lines" />
+			<div style={{ color: theme.colors.textMain }}>
+				<ProxyReportLines lines={lines} testId="model-usage-proxy-provider-lines" />
+			</div>
 			<SectionNote theme={theme} testId="model-usage-proxy-provider-note">
 				{describeProviderUsageNote(proxy)}
 			</SectionNote>
@@ -1231,6 +1208,7 @@ export const ProxySavingsSection = memo(function ProxySavingsSection({
 	onRefresh,
 	colorBlindMode = false,
 	setupActions,
+	inspection,
 }: {
 	theme: Theme;
 	proxy: ModelUsageProxy;
@@ -1243,6 +1221,7 @@ export const ProxySavingsSection = memo(function ProxySavingsSection({
 	onRefresh: () => void;
 	colorBlindMode?: boolean;
 	setupActions?: readonly ModelSetupAction[];
+	inspection?: ReactNode;
 }) {
 	const { effectiveness } = proxy;
 	const cards = useMemo(() => proxyHeadlineCards(proxy), [proxy]);
@@ -1258,6 +1237,7 @@ export const ProxySavingsSection = memo(function ProxySavingsSection({
 					No request went through the Maestro token proxy in this range. Turn it on for an agent in
 					Gateway settings.
 				</SectionEmpty>
+				{inspection}
 			</SectionCard>
 		);
 	}
@@ -1362,14 +1342,15 @@ export const ProxySavingsSection = memo(function ProxySavingsSection({
 						title="How the proxy handled these requests"
 						testId="model-usage-proxy-handling"
 					>
-						<ReportLines theme={theme} lines={handling} testId="model-usage-proxy-handling-lines" />
+						<div style={{ color: theme.colors.textMain }}>
+							<ProxyReportLines lines={handling} testId="model-usage-proxy-handling-lines" />
+						</div>
 					</TitledBlock>
 				)}
 			</div>
 			{!effectiveness && (
 				<SectionNote theme={theme} testId="model-usage-proxy-older">
-					This desktop sent only the totals. Block counts, skips, the trend by day and the
-					per-algorithm figures need a newer desktop.
+					{TOKEN_PROXY_TOTALS_ONLY_NOTE}
 				</SectionNote>
 			)}
 			{proxy.routedRequests > 0 && (
@@ -1387,6 +1368,7 @@ export const ProxySavingsSection = memo(function ProxySavingsSection({
 			<SectionNote theme={theme} testId="model-usage-proxy-not-evaluated">
 				{TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE}
 			</SectionNote>
+			{inspection}
 		</SectionCard>
 	);
 });

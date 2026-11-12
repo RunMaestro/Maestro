@@ -108,13 +108,15 @@ describe('who reaches the continuity digest', () => {
 		const MODAL = 'renderer/components/ContinuityPreviewModal.tsx';
 		const modalText = () => FILES.find((file) => file.relative === MODAL)?.text ?? '';
 
-		it('is opened only from the tab menu and the palette, each a click or a chosen command', () => {
+		it('is opened only from tab menus, the palette or Models inspection, each an explicit action', () => {
 			// A new opener (on a tab switch, on a send, on an event) fails here until
 			// someone decides it should exist. The tab menu and the tiled pane menu
-			// reach the first one through MainPanel; the palette is the second.
+			// reach MainPanel. Models inspection adds the same explicit, bound-tab
+			// action; its UI regression checks the selected identity and click.
 			expect(filesWhere((text) => /openModal\(\s*'continuityPreview'/.test(text))).toEqual([
 				'renderer/components/MainPanel/MainPanel.tsx',
 				'renderer/components/QuickActionsModal/commands/featureCommands.ts',
+				'renderer/components/UsageDashboard/ModelUsage/ProxyInspectionDetails.tsx',
 			]);
 		});
 

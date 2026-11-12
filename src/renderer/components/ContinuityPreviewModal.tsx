@@ -18,7 +18,7 @@
  *   - The only controls are Copy and Close. There is no send, no continue and no
  *     compact-with-this: the digest is evidence to read, never a prompt.
  *
- * Opened from the AI tab menu, the tiled pane menu and the command palette, each
+ * Opened from AI tab menus, the command palette and Models inspection, each
  * with `openModal('continuityPreview', { sessionId, tabId })`. It does not follow
  * the active tab: it previews the tab it was opened for.
  */

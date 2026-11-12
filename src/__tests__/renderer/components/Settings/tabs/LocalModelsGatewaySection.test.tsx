@@ -22,7 +22,7 @@ import {
 	TOKEN_PROXY_PROVIDER_USAGE_NOTE,
 	TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE,
 } from '../../../../../shared/local-models/token-proxy-report';
-import { emptyProxyEffectiveness } from '../../../../helpers/proxyTelemetryFixtures';
+import { emptyProxyEffectiveness, proxyReport } from '../../../../helpers/proxyTelemetryFixtures';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 
@@ -62,16 +62,6 @@ function row(agentId: string): HTMLElement {
 const PROXY_PORT = 48123;
 const proxyUrl = (path: string) => `http://127.0.0.1:${PROXY_PORT}${path}`;
 const blockHash = 'a'.repeat(64);
-
-function proxyReport(overrides: Partial<TokenProxyReport> = {}): TokenProxyReport {
-	return {
-		status: { port: null, running: false, agentIds: [], lastError: null, gatewayUrls: null },
-		agents: [],
-		usage: null,
-		recentCompressions: [],
-		...overrides,
-	};
-}
 
 /** A proxy that has a port and is listening for these agents. */
 function runningProxy(agentIds: string[], extra: Partial<TokenProxyReport> = {}): TokenProxyReport {

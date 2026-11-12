@@ -6,8 +6,8 @@
  * as a runtime test of every path:
  *
  * - It never feeds the realized compression counters. Nothing in the token
- *   proxy, the stats tables or the Models tab imports it, and it imports none
- *   of them, so an estimate cannot turn into a saving by accident.
+ *   proxy or the stats tables imports it. The Models tab's explicit inventory
+ *   display may format it, without feeding its numbers to the realized totals.
  * - It only reads. The collector's port has read methods, and no file of the
  *   audit names a way to write, remove or move a file.
  * - It runs when asked. No timer, watcher or schedule starts it, and the one
@@ -48,6 +48,8 @@ const SHARED = 'shared/contextFootprint.ts';
 const COLLECTOR = 'main/context-footprint.ts';
 const COMMAND = 'cli/commands/agent-footprint.ts';
 const SERVICE = 'main/context-footprint-service.ts';
+// A plain read-only inventory display. It neither computes nor records proxy totals.
+const AUDIT_VIEW = 'renderer/components/UsageDashboard/ModelUsage/ProxyInspectionDetails.tsx';
 
 const textOf = (relative: string): string => {
 	const file = FILES.find((candidate) => candidate.relative === relative);
@@ -77,7 +79,7 @@ function importsOf(relative: string): string[] {
 const COUNTER_FILES = FILES.map((file) => file.relative).filter(
 	(relative) =>
 		relative.startsWith('main/local-models/proxy/') ||
-		relative.startsWith('renderer/components/UsageDashboard/') ||
+		(relative.startsWith('renderer/components/UsageDashboard/') && relative !== AUDIT_VIEW) ||
 		[
 			'main/stats/proxy-requests.ts',
 			'main/stats/model-usage.ts',
@@ -89,7 +91,7 @@ const COUNTER_FILES = FILES.map((file) => file.relative).filter(
 
 describe('who reaches the context footprint audit', () => {
 	it('finds the files it is checking (a rename must not empty this test)', () => {
-		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE])
+		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE, AUDIT_VIEW])
 			expect(textOf(relative).length).toBeGreaterThan(0);
 		expect(COUNTER_FILES).toEqual(
 			expect.arrayContaining([
@@ -106,7 +108,14 @@ describe('who reaches the context footprint audit', () => {
 
 	it('has its rules imported only by the collector, verb and typed on-demand app boundary', () => {
 		expect(filesWhere(importing('contextFootprint'))).toEqual(
-			[COMMAND, COLLECTOR, SERVICE, 'main/preload/context.ts', 'renderer/global.d.ts'].sort()
+			[
+				COMMAND,
+				COLLECTOR,
+				SERVICE,
+				'main/preload/context.ts',
+				'renderer/global.d.ts',
+				AUDIT_VIEW,
+			].sort()
 		);
 	});
 
@@ -136,7 +145,7 @@ describe('who reaches the context footprint audit', () => {
 });
 
 describe('the audit and the realized compression counters stay apart', () => {
-	it('is imported by no counter, no proxy file and no part of the Models tab', () => {
+	it('is imported by no realized-counter owner or proxy file', () => {
 		const reachers = filesWhere(
 			(text) => importing('contextFootprint')(text) || importing('context-footprint')(text)
 		);
@@ -146,7 +155,7 @@ describe('the audit and the realized compression counters stay apart', () => {
 	it('imports nothing from the counters, the proxy or the stats tables', () => {
 		const banned =
 			/local-models\/proxy|local-models\/token-proxy|local-models\/model-usage|stats\/|request-stats|compression-cache|UsageDashboard/;
-		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE]) {
+		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE, AUDIT_VIEW]) {
 			expect(
 				importsOf(relative).filter((specifier) => banned.test(specifier)),
 				relative
@@ -167,7 +176,7 @@ describe('the audit and the realized compression counters stay apart', () => {
 			'model_usage',
 			'getStatsDB',
 		];
-		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE]) {
+		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE, AUDIT_VIEW]) {
 			for (const symbol of symbols) {
 				expect(naming(symbol)(textOf(relative)), `${relative} names ${symbol}`).toBe(false);
 			}
@@ -175,7 +184,7 @@ describe('the audit and the realized compression counters stay apart', () => {
 	});
 
 	it('never calls configured text known loaded and never offers a window total', () => {
-		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE]) {
+		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE, AUDIT_VIEW]) {
 			expect(textOf(relative), relative).not.toMatch(/known[ _-]?loaded/i);
 			expect(textOf(relative), relative).not.toMatch(/windowTotal|currentContext|currentWindow/i);
 		}
@@ -197,7 +206,7 @@ describe('the audit only reads', () => {
 		/\b(?:writeFile\w*|appendFile\w*|unlink\w*|rmdir\w*|rmSync|rm|rename\w*|mkdir\w*|symlink\w*|copyFile\w*|truncate\w*|createWriteStream|chmod\w*|chown\w*|utimes\w*|atomicWrite\w*|createExclusive|open(?:Sync)?|execFile\w*|exec|spawn\w*|fork)\s*\(/;
 
 	it('names no way to write, remove, move or run anything', () => {
-		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE]) {
+		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE, AUDIT_VIEW]) {
 			const match = textOf(relative).match(WRITES);
 			expect(match?.[0], `${relative} calls ${match?.[0]}`).toBeUndefined();
 		}
@@ -230,7 +239,7 @@ describe('the audit runs when asked', () => {
 	it('starts no timer, watcher, schedule or background task', () => {
 		const SCHEDULING =
 			/\b(?:setInterval|setTimeout|setImmediate|queueMicrotask|requestIdleCallback|requestAnimationFrame|chokidar|watchFile|fs\.watch|watch\(|node-cron|cron|schedule\w*|nohup|daemon)\b/;
-		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE]) {
+		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE, AUDIT_VIEW]) {
 			const match = textOf(relative).match(SCHEDULING);
 			expect(match?.[0], `${relative} uses ${match?.[0]}`).toBeUndefined();
 		}

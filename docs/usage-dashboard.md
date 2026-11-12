@@ -259,6 +259,16 @@ A few things to know when reading it:
 - **Provider usage** is what the provider counted, class by class, with the number of requests each class covers. It is separate from the estimates above and from Maestro's own cache: the verdicts reused under **How the proxy handled these requests** come from Maestro's compression cache, not the provider's prompt cache.
 - Net dollar savings and answer quality are not evaluated, and no grade is given.
 
+**Inspect opportunities, context inventory and continuity** opens a read-only detail view.
+Its proxy observations cover the app's lifetime across agents, independently of the dashboard
+date range. **Refresh observations** reads another snapshot. **Audit _agent_** reads that
+selected agent's file inventory and configured-text estimates on demand; it does not establish
+what a provider loaded or what is in its current context window. Switching agents clears the
+previous inventory. **Preview continuity for the selected AI tab** opens the existing evidence
+preview for that exact tab, including failure/pressure signals and unknowns. None of these
+controls applies a compression preview, changes routing or adds an estimate to savings. The
+inspection also remains available when range statistics are empty or cannot be read.
+
 Each section that has nothing in the range stays, says so, and links to where it is set up:
 
 | Section                 | Empty link                                                                                                    |

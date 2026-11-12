@@ -82,6 +82,16 @@ and the builders for the trend axis and the splits are `proxyTrendView()`,
 `proxyModeSlices()` and `proxyRouteSlices()` in `modelUsageView.ts`. Mode configuration stays
 in Settings > Models > Gateway: the section has no control that changes what the proxy does.
 
+`ProxyInspectionDetails.tsx` adds a closed-by-default inspection disclosure. Opening it
+mounts the existing `useTokenProxyReport()` owner once; closing it unmounts that owner.
+`TokenProxyObservations` is shared with Gateway and displays app-lifetime observations
+across agents, independent of the selected date range. An explicit Audit button calls
+`context.getFootprint()` with the selected stored agent ID and renders the canonical
+plain-text inventory, with configured/delivered/window evidence kept distinct. Changing
+agents discards the prior inventory and late replies. Continuity opens the existing
+`continuityPreview` modal for that agent's selected AI tab. No transformation is activated;
+the inspection remains available when range statistics are empty or fail.
+
 ### Backend Components
 
 ```
