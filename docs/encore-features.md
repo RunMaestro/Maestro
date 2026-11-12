@@ -18,6 +18,8 @@ Click a card to open its detail view, then use the **Enable** / **Disable** butt
 
 ![A plugin's detail view, with its own settings and permission list](./screenshots/plugin-detail.png)
 
+Features are switched on and off only in the desktop app, or with `maestro-cli encore enable <feature>` / `maestro-cli encore disable <feature>` on the computer running Maestro. The [web interface](./remote-control#what-stays-in-the-desktop-app) cannot change them.
+
 Narrow the catalog with the chips (**Encore**, then Automation, Agents, Insights, UI, Data, Dev Tools, Other), the search box, or the **Only installed** toggle. **Sort** switches between A-Z and newest-first.
 
 ### Encore vs Beta
@@ -37,23 +39,24 @@ Built-in features work with the community plugin subsystem switched off - that i
 
 ## Available features
 
-| Feature                                | Category   | Shortcut                               | Description                                                                                                                           |
-| -------------------------------------- | ---------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| [Usage & Stats](./usage-dashboard)     | Insights   | `Opt+Cmd+U` / `Alt+Ctrl+U`             | Records query and Auto Run activity, and unlocks the Usage Dashboard that reports on it                                               |
-| [Director's Notes](./director-notes)   | Insights   | `Cmd+Shift+O` / `Ctrl+Shift+O`         | Unified timeline of all agent activity with AI-generated synopses                                                                     |
-| [Maestro Cue](./maestro-cue)           | Automation | `Opt+Q` / `Alt+Q`                      | Event-driven automation: file changes, timers, agent chaining, GitHub polling, and task tracking                                      |
-| [Concerto](./concerto)                 | UI         | `Opt+Cmd+C` / `Alt+Ctrl+C`             | Agents answer with something you can look at and click: interactive views on the Concerto stage, plus always-on-top Cadenza HUD cards |
-| [Throughput Gauge](./throughput-gauge) | UI         | `Opt+Cmd+Shift+T` / `Alt+Ctrl+Shift+T` | A floating gauge with the live tokens-per-second your agents read and write, plus a peak mark                                         |
-| [Maestro Symphony](./symphony)         | Agents     | `Opt+Cmd+Y` / `Alt+Ctrl+Y`             | Contribute to open source by donating AI tokens                                                                                       |
-| [Quick Chat](./quick-chat)             | UI         | `Opt+Space` / `Alt+Space`              | A small floating chat with one agent, opened from any app by a system-wide hotkey                                                     |
-| [Groups+](./general-usage#groups)      | UI         | -                                      | Organize agent groups into folders, and personalize them with icons and label colors                                                  |
-| Pianola                                | Agents     | -                                      | An autonomous manager agent that watches your other agents and answers or escalates their prompts                                     |
-| Coworking                              | Agents     | -                                      | Lets an agent read terminal scrollback and inspect or drive browser tabs, through a per-agent MCP server                              |
-| OpenCode Server                        | Agents     | -                                      | Runs local OpenCode through a shared `opencode serve` process instead of spawning the CLI per prompt                                  |
-| [Computer History](./computer-history) | Data       | -                                      | Records what you read and type across your apps, locally, so any agent can recall it                                                  |
-| [MaestroRun](./maestro-run)            | Automation | -                                      | macOS only. Installs a signed launcher that holds one Full Disk Access grant for your scheduled scripts                               |
-| [A Cappella](./voice-mode)             | UI         | `Opt+Cmd+V` / `Win+Alt+V`              | Voice interface (Beta): speak a request, have it routed to an agent, and hear the reply read back                                     |
-| [Dataview](./dataview)                 | Data       | -                                      | Renders Obsidian Dataview queries as live tables, lists, and task lists in File Preview and the Auto Run preview                      |
+| Feature                                         | Category   | Shortcut                               | Description                                                                                                                           |
+| ----------------------------------------------- | ---------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| [Usage & Stats](./usage-dashboard)              | Insights   | `Opt+Cmd+U` / `Alt+Ctrl+U`             | Records query and Auto Run activity, and unlocks the Usage Dashboard that reports on it                                               |
+| [Director's Notes](./director-notes)            | Insights   | `Cmd+Shift+O` / `Ctrl+Shift+O`         | Unified timeline of all agent activity with AI-generated synopses                                                                     |
+| [Maestro Cue](./maestro-cue)                    | Automation | `Opt+Q` / `Alt+Q`                      | Event-driven automation: file changes, timers, agent chaining, GitHub polling, and task tracking                                      |
+| [Concerto](./concerto)                          | UI         | `Opt+Cmd+C` / `Alt+Ctrl+C`             | Agents answer with something you can look at and click: interactive views on the Concerto stage, plus always-on-top Cadenza HUD cards |
+| [Throughput Gauge](./throughput-gauge)          | UI         | `Opt+Cmd+Shift+T` / `Alt+Ctrl+Shift+T` | A floating gauge with the live tokens-per-second your agents read and write, plus a peak mark                                         |
+| [Maestro Symphony](./symphony)                  | Agents     | `Opt+Cmd+Y` / `Alt+Ctrl+Y`             | Contribute to open source by donating AI tokens                                                                                       |
+| [Quick Chat](./quick-chat)                      | UI         | `Opt+Space` / `Alt+Space`              | A small floating chat with one agent, opened from any app by a system-wide hotkey                                                     |
+| [Groups+](./general-usage#groups)               | UI         | -                                      | Organize agent groups into folders, and personalize them with icons and label colors                                                  |
+| Pianola                                         | Agents     | -                                      | An autonomous manager agent that watches your other agents and answers or escalates their prompts                                     |
+| Coworking                                       | Agents     | -                                      | Lets an agent read terminal scrollback and inspect or drive browser tabs, through a per-agent MCP server                              |
+| OpenCode Server                                 | Agents     | -                                      | Runs local OpenCode through a shared `opencode serve` process instead of spawning the CLI per prompt                                  |
+| [Computer History](./computer-history)          | Data       | -                                      | Records what you read and type across your apps, locally, so any agent can recall it                                                  |
+| [MaestroRun](./maestro-run)                     | Automation | -                                      | macOS only. Installs a signed launcher that holds one Full Disk Access grant for your scheduled scripts                               |
+| [A Cappella](./voice-mode)                      | UI         | `Opt+Cmd+V` / `Win+Alt+V`              | Voice interface (Beta): speak a request, have it routed to an agent, and hear the reply read back                                     |
+| [Dataview](./dataview)                          | Data       | -                                      | Renders Obsidian Dataview queries as live tables, lists, and task lists in File Preview and the Auto Run preview                      |
+| [Web Login](./remote-control#requiring-a-login) | UI         | -                                      | Requires a username and password on the web interface, and attributes every turn to the person who sent it                            |
 
 Features without a shortcut are not opened from the keyboard: they change how something you already use behaves, rather than putting a new surface on screen.
 

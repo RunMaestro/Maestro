@@ -1397,7 +1397,7 @@ An agent cannot interrupt itself from inside its own turn: the verb refuses the 
 
 ### Live Mode (`live`)
 
-Read or switch Live mode, the LIVE pill in the Left Bar that opens the web interface to other devices on the network, and Remote Control, the Cloudflare tunnel that opens it to the internet. It requires the desktop app to be running.
+Read or switch Live mode, the LIVE pill in the Left Bar that opens the web interface to other devices on the network, and Remote Control, the Cloudflare tunnel that opens it to the internet. It requires the desktop app to be running. See [Remote Control](./remote-control) for what the web interface can do and what [stays in the desktop app](./remote-control#what-stays-in-the-desktop-app).
 
 ```bash
 # On or off, the web interface URL, and Remote Control
@@ -1797,7 +1797,7 @@ maestro-cli encore enable symphony
 maestro-cli encore disable maestroCue
 ```
 
-Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `computerHistory`, `quickChat`, `aCappella` (the voice interface), and on macOS `maestroRun`. Friendly aliases are accepted (for example `cue` for `maestroCue`, `quick-chat` for `quickChat`, `voice` for `aCappella`). Group Chat is a core feature with no Encore flag, so `group-chat` is not an alias for `symphony`. Enabling `aCappella` opens nothing and downloads nothing: it only makes the voice surfaces available. The [`voice`](#voice) verbs are always listed; a verb that needs voice refuses while it is off and names the fix.
+Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `computerHistory`, `quickChat`, `aCappella` (the voice interface), `webLogin` (a login for the [web interface](./remote-control#requiring-a-login)), and on macOS `maestroRun`. Friendly aliases are accepted (for example `cue` for `maestroCue`, `quick-chat` for `quickChat`, `voice` for `aCappella`). Group Chat is a core feature with no Encore flag, so `group-chat` is not an alias for `symphony`. Enabling `aCappella` opens nothing and downloads nothing: it only makes the voice surfaces available. The [`voice`](#voice) verbs are always listed; a verb that needs voice refuses while it is off and names the fix.
 
 `autopilot`, `auto-pilot`, and `pilot` remain aliases for enabling Pianola. They do not grant automatic repair permission. `encore list --json` includes `pianola.mode` (`disabled`, `supervision`, or `automatic_repairs`), the saved `autoFixEnabled` permission, and `automaticMergeAvailable: false`.
 

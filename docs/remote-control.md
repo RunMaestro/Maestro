@@ -418,6 +418,8 @@ A few things act on the computer running Maestro itself, or manage its secrets, 
 2. The button changes to **LIVE** (pulsing) and a QR code overlay appears automatically
 3. Scan the QR code or copy the secure URL to access from your phone on the same network
 
+To have the web interface on every time Maestro starts, turn on **Turn on web interface at launch** in **Settings -> General -> Web Interface** (off by default; turning it on also starts the web interface now). From a terminal: `maestro-cli live on` now, and `maestro-cli settings set webInterfaceAutoStart true` for every launch. A browser cannot change this setting.
+
 <Note>
 The web interface uses your local IP address (e.g., `192.168.x.x`) for LAN accessibility. Both devices must be on the same network.
 </Note>
@@ -514,7 +516,9 @@ Native Lite also supervises its transport and renderer. SSH exits, temporary con
 
 ## Related
 
-- [Configuration](/configuration) - General settings including web interface options
+- [Configuration](/configuration) - the General tab, with **Turn on web interface at launch** and **Use system browser for links**
+- [Encore Features](/encore-features) - Web Login, and switching features on and off, which only the desktop app and `maestro-cli encore` can do
+- [CLI: Live Mode](/cli#live-mode-live) - `maestro-cli live status`, `live on`, `live off` and `live tunnel`
 - [SSH Remote Execution](/ssh-remote-execution) - Running Maestro on remote servers
 - [Voice Mode](/voice-mode) - A Cappella voice, desktop only, and pairing a phone as its microphone
 - [Local Models](/local-models#models) - the Models settings tab, which works in the browser and downloads to the computer running Maestro
