@@ -1685,6 +1685,18 @@ export class WebServer {
 
 			await this.server.listen({ port: this.port, host: bindHost });
 
+			// Fastify drops its own 'error' listener once listen() resolves, so from
+			// here a failed accept() (Windows reports `accept UNKNOWN`, any platform
+			// can report EMFILE) is an 'error' event nobody handles, and Node throws
+			// it into the uncaught-exception handler as a fatal crash (MAESTRO-19C).
+			// The server keeps listening after a failed accept; only that one
+			// connection is lost, so a log line is the whole response.
+			this.server.server.on('error', (error: NodeJS.ErrnoException) => {
+				logger.warn(`Web server connection error: ${error.message}`, LOG_CONTEXT, {
+					code: error.code,
+				});
+			});
+
 			// Get the actual port (important when using port 0 for random assignment)
 			const address = this.server.server.address();
 			if (address && typeof address === 'object') {
