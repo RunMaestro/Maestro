@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+	buildTemplateReplacements,
 	findCueUntrustedTemplateVariables,
 	cueEventCarriesUntrustedText,
 	TEMPLATE_VARIABLES,
@@ -1156,5 +1157,105 @@ describe('substituteTemplateTokens', () => {
 		expect(substituteTemplateTokens(template, { AGENT_NAME: 'cost $&' })).toBe(
 			'cost $& {{NOT_A_VARIABLE}}'
 		);
+	});
+});
+
+describe('buildTemplateReplacements', () => {
+	it('keys every value by its UPPERCASE variable name', () => {
+		const replacements = buildTemplateReplacements(createTestContext());
+
+		expect(Object.keys(replacements).every((key) => key === key.toUpperCase())).toBe(true);
+		expect(replacements.AGENT_NAME).toBe('Test Session');
+		expect(replacements.AGENT_ID).toBe('test-session-123');
+		expect(replacements.AGENT_PATH).toBe('/Users/test/project');
+		expect(replacements.TOOL_TYPE).toBe('claude-code');
+	});
+
+	it('has an entry for every documented built-in variable', () => {
+		const replacements = buildTemplateReplacements(createTestContext());
+
+		for (const { variable } of TEMPLATE_VARIABLES) {
+			expect(replacements, variable).toHaveProperty(variable.slice(2, -2));
+		}
+	});
+
+	it('takes the Auto Run folder from the context, then the session, then the project default', () => {
+		expect(
+			buildTemplateReplacements(
+				createTestContext({
+					autoRunFolder: '/runs/context',
+					session: createTestSession({ autoRunFolderPath: '/runs/session' }),
+				})
+			).AUTORUN_FOLDER
+		).toBe('/runs/context');
+		expect(
+			buildTemplateReplacements(
+				createTestContext({ session: createTestSession({ autoRunFolderPath: '/runs/session' }) })
+			).AUTORUN_FOLDER
+		).toBe('/runs/session');
+		expect(buildTemplateReplacements(createTestContext()).AUTORUN_FOLDER).toBe(
+			'/Users/test/project/.maestro/playbooks'
+		);
+	});
+
+	describe('the clock', () => {
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('is context.now, so a value can be rebuilt for the moment a run started', () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date('2030-12-31T23:00:00Z'));
+
+			const replacements = buildTemplateReplacements(
+				createTestContext({ now: new Date('2026-11-09T15:00:00Z') })
+			);
+
+			expect(replacements.DATE).toBe('2026-11-09');
+			expect(replacements.YEAR).toBe('2026');
+			expect(replacements.TIMESTAMP).toBe(String(new Date('2026-11-09T15:00:00Z').getTime()));
+		});
+
+		it('is the real time when the context gives none', () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date('2027-02-03T10:00:00Z'));
+
+			expect(buildTemplateReplacements(createTestContext()).DATE).toBe('2027-02-03');
+		});
+	});
+
+	it('adds the dynamic Cue output variables the event carries', () => {
+		const replacements = buildTemplateReplacements(
+			createTestContext({
+				cue: { output_BUILD: 'built', forwarded_REVIEW: 'ok', eventType: 'file.changed' } as never,
+			})
+		);
+
+		expect(replacements.CUE_OUTPUT_BUILD).toBe('built');
+		expect(replacements.CUE_FORWARDED_REVIEW).toBe('ok');
+		expect(replacements.CUE_EVENT_TYPE).toBe('file.changed');
+	});
+
+	it('is the map substituteTemplateVariables substitutes from', () => {
+		const context = createTestContext({
+			now: new Date('2026-11-09T15:00:00Z'),
+			groupName: 'Work',
+			autoRunFolder: '/runs/x',
+			loopNumber: 3,
+		});
+		const replacements = buildTemplateReplacements(context);
+
+		for (const name of ['AGENT_NAME', 'AGENT_GROUP', 'AUTORUN_FOLDER', 'DATE', 'LOOP_NUMBER']) {
+			expect(substituteTemplateVariables(`{{${name}}}`, context), name).toBe(replacements[name]);
+		}
+	});
+
+	it('does not change the context it is given', () => {
+		const context = createTestContext({ now: new Date('2026-11-09T15:00:00Z') });
+		const before = JSON.stringify(context);
+
+		buildTemplateReplacements(context);
+
+		expect(JSON.stringify(context)).toBe(before);
 	});
 });

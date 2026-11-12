@@ -23,17 +23,19 @@ import {
 	launchPlaybook,
 	notifyLaunchStarted,
 	PlaybookLaunchTargetError,
+	reopenPlaybookLaunch,
 	resolveLaunchTarget,
 	type LaunchTarget,
 	type PlaybookLaunchSubmission,
 } from '../../../renderer/services/playbookLaunch';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session } from '../../../renderer/types';
 import { buildNewAgentSession } from '../../../renderer/utils/newAgentSession';
 import { captureException } from '../../../renderer/utils/sentry';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
-import type { PlaybookLaunchSpec } from '../../../shared/marketplace-types';
+import type { MarketplacePlaybook, PlaybookLaunchSpec } from '../../../shared/marketplace-types';
 import { createMockSession, resetStores } from '../../helpers';
 
 const launch = vi.mocked(window.maestro.marketplace.launch);
@@ -724,6 +726,170 @@ describe('notifyLaunchStarted', () => {
 			message: '"Code Review" is running on the agent.',
 			project: undefined,
 			sessionId: 'deleted',
+		});
+	});
+});
+
+describe('reopenPlaybookLaunch', () => {
+	const getManifest = vi.mocked(window.maestro.marketplace.getManifest);
+
+	/** What the outro knows of the launch that ended. */
+	const ended = {
+		playbookId: 'development-code-review',
+		playbookTitle: 'Code Review',
+		values: resolvedValues,
+	};
+
+	/** The Exchange's entry for the playbook, with a launch block. */
+	const listed = {
+		id: 'development-code-review',
+		title: 'Code Review',
+		description: 'Reviews a pull request.',
+		category: 'Development',
+		author: 'Maestro Team',
+		lastUpdated: '2026-11-11',
+		path: 'Development/Code-Review',
+		documents: [],
+		loopEnabled: false,
+		prompt: null,
+		launch: spec,
+	} satisfies MarketplacePlaybook;
+
+	function exchangeHas(...playbooks: MarketplacePlaybook[]) {
+		getManifest.mockResolvedValue({
+			success: true,
+			manifest: { lastUpdated: '2026-11-11', playbooks },
+			fromCache: true,
+		});
+	}
+
+	function dialog() {
+		return useModalStore.getState().getData('playbookLaunch');
+	}
+
+	beforeEach(() => {
+		useModalStore.setState({ modals: new Map() });
+		getManifest.mockReset();
+		exchangeHas(listed);
+	});
+
+	describe('when the playbook can still be launched', () => {
+		it('opens the launch dialog on the playbook with the answers the run used', async () => {
+			expect(await reopenPlaybookLaunch(ended)).toBe(true);
+
+			expect(useModalStore.getState().isOpen('playbookLaunch')).toBe(true);
+			expect(dialog()).toEqual({ playbook: listed, initialValues: resolvedValues });
+			expect(notifyToast).not.toHaveBeenCalled();
+		});
+
+		it('draws the dialog from the Exchange as it is now, not from a copy kept with the launch', async () => {
+			const changed = {
+				...listed,
+				launch: {
+					...spec,
+					inputs: [...spec.inputs, { name: 'DRY_RUN', label: 'Dry run', type: 'boolean' }],
+				},
+			} as MarketplacePlaybook;
+			exchangeHas(changed);
+
+			await reopenPlaybookLaunch(ended);
+
+			expect(dialog()?.playbook).toBe(changed);
+		});
+
+		it('finds the playbook among the others in the Exchange', async () => {
+			exchangeHas({ ...listed, id: 'research-market' }, listed, {
+				...listed,
+				id: 'research-corpus',
+			});
+
+			await reopenPlaybookLaunch(ended);
+
+			expect(dialog()?.playbook.id).toBe('development-code-review');
+		});
+
+		it('only opens the dialog: nothing is launched until the person presses Launch', async () => {
+			await reopenPlaybookLaunch(ended);
+
+			expect(launch).not.toHaveBeenCalled();
+			expect(window.maestro.marketplace.importPlaybook).not.toHaveBeenCalled();
+			expect(storeIds()).toEqual(['current', 'other']);
+		});
+	});
+
+	describe('when it cannot be launched again', () => {
+		async function refusedWith(message: string) {
+			expect(await reopenPlaybookLaunch(ended)).toBe(false);
+			expect(useModalStore.getState().isOpen('playbookLaunch')).toBe(false);
+			expect(notifyToast).toHaveBeenCalledTimes(1);
+			expect(notifyToast).toHaveBeenCalledWith({
+				color: 'red',
+				title: 'Cannot run again',
+				message,
+			});
+		}
+
+		it('says so when the playbook has left the Exchange', async () => {
+			exchangeHas({ ...listed, id: 'research-market' });
+
+			await refusedWith(
+				'"Code Review" cannot be run again: it is no longer in the Playbook Exchange.'
+			);
+		});
+
+		it('says so when the Exchange lists no playbooks at all', async () => {
+			exchangeHas();
+
+			await refusedWith(
+				'"Code Review" cannot be run again: it is no longer in the Playbook Exchange.'
+			);
+		});
+
+		it('says so when the playbook no longer has a launch block', async () => {
+			const { launch: _dropped, ...downloadOnly } = listed;
+			exchangeHas(downloadOnly);
+
+			await refusedWith('"Code Review" cannot be run again: it no longer supports Launch.');
+		});
+
+		it('says so when the Exchange cannot be read, without the error class name', async () => {
+			getManifest.mockResolvedValue({ success: false, error: 'MarketplaceError: offline' });
+
+			await refusedWith(
+				'"Code Review" cannot be run again: the Playbook Exchange could not be read (offline).'
+			);
+			expect(captureException).not.toHaveBeenCalled();
+		});
+
+		it('names no reason when the Exchange gives none', async () => {
+			getManifest.mockResolvedValue({ success: false });
+
+			await refusedWith(
+				'"Code Review" cannot be run again: the Playbook Exchange could not be read (no reason given).'
+			);
+		});
+
+		it('reports a call that rejects to Sentry, never rejects itself, and tells the person', async () => {
+			const fault = new Error(
+				"Error invoking remote method 'marketplace:getManifest': Error: boom"
+			);
+			getManifest.mockRejectedValue(fault);
+
+			await refusedWith(
+				'"Code Review" cannot be run again: the Playbook Exchange could not be read (boom).'
+			);
+			expect(captureException).toHaveBeenCalledWith(fault, {
+				extra: { operation: 'playbookLaunch:reopen', playbookId: 'development-code-review' },
+			});
+		});
+
+		it('leaves a dialog that is already open alone', async () => {
+			useModalStore.getState().openModal('playbookLaunch', { playbook: listed });
+			exchangeHas();
+
+			expect(await reopenPlaybookLaunch(ended)).toBe(false);
+
+			expect(dialog()).toEqual({ playbook: listed });
 		});
 	});
 });

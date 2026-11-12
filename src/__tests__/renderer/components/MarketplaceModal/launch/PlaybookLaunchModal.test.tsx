@@ -371,6 +371,93 @@ describe('PlaybookLaunchModal', () => {
 		});
 	});
 
+	describe('starting answers (Run again)', () => {
+		it('starts the form on the answers of the earlier launch', () => {
+			renderModal(launchSpec(), {
+				initialValues: { PR_URL, BOT_REVIEWERS: 'greptile', MAX_FILE_LOC: 800 },
+			});
+
+			expect(field('PR_URL').getByRole('textbox')).toHaveValue(PR_URL);
+			expect(field('BOT_REVIEWERS').getByRole('textbox')).toHaveValue('greptile');
+			fireEvent.click(screen.getByTestId('launch-advanced-toggle'));
+			expect(field('MAX_FILE_LOC').getByRole('spinbutton')).toHaveValue(800);
+		});
+
+		it('lets the person launch at once, because the required answers are already in', () => {
+			renderModal(launchSpec(), { initialValues: { PR_URL } });
+
+			expect(launchButton()).toBeEnabled();
+			expect(status()).toBeEmptyDOMElement();
+		});
+
+		it('launches with the earlier answers, including the ones the person did not touch', async () => {
+			const { onLaunched } = renderModal(launchSpec(), {
+				initialValues: { PR_URL, BOT_REVIEWERS: 'greptile', MAX_FILE_LOC: 800 },
+			});
+
+			fireEvent.click(launchButton());
+
+			await waitFor(() => expect(onLaunched).toHaveBeenCalledTimes(1));
+			expect(window.maestro.marketplace.launch).toHaveBeenCalledWith(
+				expect.objectContaining({
+					values: { PR_URL, BOT_REVIEWERS: 'greptile', MAX_FILE_LOC: 800 },
+				})
+			);
+		});
+
+		it('starts a question the earlier launch has no answer for at its default', () => {
+			renderModal(launchSpec(), { initialValues: { PR_URL } });
+
+			expect(field('BOT_REVIEWERS').getByRole('textbox')).toHaveValue('coderabbitai,greptile');
+			expect(field('PR_URL').getByRole('textbox')).toHaveValue(PR_URL);
+		});
+
+		it('drops an earlier answer to a question the playbook no longer asks', async () => {
+			const { onLaunched } = renderModal(launchSpec(), {
+				initialValues: { PR_URL, REMOVED_INPUT: 'old' },
+			});
+
+			fireEvent.click(launchButton());
+
+			await waitFor(() => expect(onLaunched).toHaveBeenCalledTimes(1));
+			const sent = vi.mocked(window.maestro.marketplace.launch).mock.calls[0][0];
+			expect(sent.values).not.toHaveProperty('REMOVED_INPUT');
+		});
+
+		it('keeps Launch off for an earlier answer the playbook now refuses, without scolding it yet', () => {
+			renderModal(launchSpec(), { initialValues: { PR_URL: 'not a url' } });
+
+			expect(launchButton()).toBeDisabled();
+			expect(status()).toHaveTextContent('1 answer needs attention.');
+			expect(
+				field('PR_URL').queryByText('Enter a full http:// or https:// URL')
+			).not.toBeInTheDocument();
+		});
+
+		it('reads the earlier answers once, when the dialog opens', () => {
+			const view = renderModal(launchSpec(), { initialValues: { PR_URL } });
+			fireEvent.change(field('PR_URL').getByRole('textbox'), {
+				target: { value: 'https://github.com/acme/app/pull/9' },
+			});
+
+			view.rerender(
+				<LayerStackProvider>
+					<PlaybookLaunchModal
+						theme={mockTheme}
+						playbook={view.playbook}
+						initialValues={{ PR_URL }}
+						onClose={view.onClose}
+						onLaunched={view.onLaunched}
+					/>
+				</LayerStackProvider>
+			);
+
+			expect(field('PR_URL').getByRole('textbox')).toHaveValue(
+				'https://github.com/acme/app/pull/9'
+			);
+		});
+	});
+
 	describe('Advanced', () => {
 		it('is collapsed by default: its questions are not drawn', () => {
 			renderModal();

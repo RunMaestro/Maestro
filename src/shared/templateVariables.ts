@@ -705,9 +705,15 @@ export function availableTemplateVariables<T extends { encoreFlag?: string; cueO
 }
 
 /**
- * Substitute template variables in a string with actual values
+ * The value of every built-in `{{NAME}}` variable for one context, keyed by UPPERCASE name. This
+ * is the map {@link substituteTemplateVariables} substitutes from; take it directly when a caller
+ * needs the same values for something other than a template string, such as the built-ins a
+ * Playbook Launch outro is rendered with.
+ *
+ * `context.now` fixes the clock for the date and time variables, so a value can be rebuilt for the
+ * moment a run started rather than for the moment it is asked.
  */
-export function substituteTemplateVariables(template: string, context: TemplateContext): string {
+export function buildTemplateReplacements(context: TemplateContext): Record<string, string> {
 	const {
 		session,
 		gitBranch,
@@ -898,13 +904,21 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		}
 	}
 
-	return substituteTemplateTokens(template, replacements);
+	return replacements;
+}
+
+/**
+ * Substitute template variables in a string with actual values
+ */
+export function substituteTemplateVariables(template: string, context: TemplateContext): string {
+	return substituteTemplateTokens(template, buildTemplateReplacements(context));
 }
 
 /**
  * Replace each `{{NAME}}` in `template` with `replacements[NAME]`. This is the engine under
  * {@link substituteTemplateVariables}; call it directly when the values are already in hand and
- * there is no session to build a {@link TemplateContext} from (a Playbook Launch outro does).
+ * there is no session to build a {@link TemplateContext} from (a CLI printing a Playbook Launch
+ * outro has none). With a session, take the values from {@link buildTemplateReplacements}.
  *
  * Names are matched case-insensitively, so the keys of `replacements` must be UPPERCASE. A token
  * with no entry is left exactly as written, so a typo stays visible instead of vanishing.

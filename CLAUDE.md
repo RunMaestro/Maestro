@@ -200,6 +200,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Building or delivering the Maestro system prompt:** `assembleMaestroSystemPrompt()` in `src/shared/maestroSystemPrompt.ts`; `applySystemPromptDelivery()` in `src/main/utils/system-prompt-delivery.ts`; `buildMaestroSystemPromptForSession()` in `src/main/utils/maestro-system-prompt.ts`
 - **Expanding `{{INCLUDE:name}}` in a prompt:** `resolvePromptIncludes()`, `findPromptIncludeNames()` in `src/shared/promptIncludes.ts`
 - **Filling `{{TOKEN}}`s from a map of values (no session to build a context from):** `substituteTemplateTokens(template, replacements)` in `src/shared/templateVariables.ts`
+- **Every built-in `{{NAME}}` value for a session, as a map:** `buildTemplateReplacements(context)` in `src/shared/templateVariables.ts`
 - **The system-prompt envelope for a provider with no `--append-system-prompt`:** `embedSystemPromptInPrompt()`, `stripEmbeddedSystemPrompt()`, `hasEmbeddedSystemPrompt()` in `src/shared/embeddedSystemPrompt.ts` (a wire format; never template it inline)
 - **Who asked for this turn (interactive vs automation):** `QUERY_SOURCE_ENV_VAR`, `QuerySource`, `DEFAULT_QUERY_SOURCE` in `src/shared/querySource.ts` (`MAESTRO_QUERY_SOURCE`)
 - **Prefixing an agent's New Session Message:** `prependNewSessionMessageOnFirstTurn()`, `prependNewSessionMessage()` in `src/shared/newSessionMessage.ts`
@@ -374,12 +375,13 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Playbook Launch cleanup (deleting one launch folder, local or SSH):** `deleteLaunchFolder()` in `src/main/services/marketplace-service.ts`; `deleteDirectoryRemote()` in `src/main/utils/remote-fs.ts`; `MarketplaceLaunchCleanupError` in `src/shared/marketplace-types.ts`
 - **Starting a Playbook Launch (checks, import, record, Auto Run):** `launchMarketplacePlaybook(request, host)` in `src/main/services/marketplace-service.ts`; `configureAutoRunInRenderer()` in `src/main/web-server/callbacks/autoRunConfigCallbacks.ts`
 - **Ending and reading a Playbook Launch (cleanup, broadcast):** `completeMarketplaceLaunch(launchId, completion, host)`, `getMarketplaceLaunch()`, `listMarketplaceLaunches()` in `src/main/services/marketplace-service.ts`
-- **Submitting a Playbook Launch from a window (which agent, in what order):** `launchPlaybook(submission)`, `resolveLaunchTarget(target)`, `LaunchTarget`, `notifyLaunchStarted()` in `src/renderer/services/playbookLaunch.ts`
+- **Submitting a Playbook Launch from a window (which agent, in what order):** `launchPlaybook(submission)`, `resolveLaunchTarget(target)`, `LaunchTarget`, `notifyLaunchStarted()`, `reopenPlaybookLaunch()` in `src/renderer/services/playbookLaunch.ts`
 - **Reporting that a launched Auto Run ended (renderer to main):** `reportLaunchedRunCompletion(end)`, `LaunchedRunEnd` in `src/renderer/services/playbookLaunchCompletion.ts`
+- **The outro a launched run ends with (what it says, and the dialog):** `<PlaybookOutroModal>` in `src/renderer/components/MarketplaceModal/launch/PlaybookOutroModal.tsx`, over `buildLaunchOutro()` in `launchOutro.ts` and `useLaunchVerdict()`
 - **Drawing a playbook launch question (one field per input type):** `<LaunchInputField>`, `pathBrowseKind()`, `launchInputTestId()` in `src/renderer/components/MarketplaceModal/launch/LaunchInputField.tsx`
 - **The dialog that launches a playbook from the Exchange:** `<PlaybookLaunchModal>` in `src/renderer/components/MarketplaceModal/launch/PlaybookLaunchModal.tsx`, over `evaluateLaunchGate()`, `firstLaunchBlocker()` in `launchAgents.ts` and `useLaunchTarget()`
 - **Whether the Exchange offers Launch for a playbook:** `getLaunchOffer()`, `LaunchOffer` in `src/renderer/components/MarketplaceModal/launch/launchOffer.ts`
-- **Opening the launch dialog from the Exchange (and what a started launch closes):** `openPlaybookLaunch()` in `src/renderer/stores/modalStore.ts`, `<PlaybookLaunchModalHost>` in `src/renderer/components/MarketplaceModal/launch/PlaybookLaunchModalHost.tsx`
+- **Opening the launch dialog from the Exchange (and what a started launch closes):** `openPlaybookLaunch(playbook, initialValues?)` in `src/renderer/stores/modalStore.ts`, `<PlaybookLaunchModalHost>` in `src/renderer/components/MarketplaceModal/launch/PlaybookLaunchModalHost.tsx`
 - **Main's refusal of a launch's answers, read back as field errors:** `launchFieldErrorsFromMessage()` in `src/shared/marketplace-types.ts`
 - **Whether an untyped value is a task-selection mode:** `isTaskSelectionMode()` in `src/shared/types.ts`
 - **Auto Run steering notes (mid-run course correction):** `formatSteeringNotesBlock()` in `src/shared/autorunSteering.ts`; `submitSteeringNote()`, `recordSteeringResponse()`, `runRemoteSteeringCommand()` in `src/renderer/services/autoRunSteering.ts`; wire shape in `src/shared/autoRunSteeringCommands.ts`
@@ -481,6 +483,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 - **Render markdown:** `<Markdown preset="chat | document | release-notes">` from `src/renderer/components/Markdown/`; document map `createMarkdownComponents()` in `src/renderer/utils/markdownConfig.ts`
 - **Markdown to plain text (list rows, previews):** `stripMarkdown()`, `flattenMarkdownTables()` in `src/shared/markdown.ts`
+- **The first section of a markdown document that has text (a report's verdict):** `firstHeadingSection()` in `src/shared/markdown.ts`
 - **Clickable task checkboxes in rendered markdown:** `toggleTaskCheckboxAtLine()` in `src/renderer/utils/markdownTasks.ts`, `rehypeSourceLine` in `src/renderer/components/Markdown/rehypeSourceLine.ts`, `onTaskToggle` on `createMarkdownComponents()`
 - **A pane that reads and edits a markdown document:** the File Preview stack, never a bare `<textarea>`: `<Markdown preset="document">` to read, `<MarkdownEditor>` from `src/renderer/components/FilePreview/markdownEditor` to write (`MemoryViewer` is the reference)
 - **Jumping a markdown preview to a heading:** `scrollToHeadingSlug()`, `headingLevelColor()` in `src/renderer/components/FilePreview/shared/headings.ts`

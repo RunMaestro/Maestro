@@ -53,6 +53,25 @@ describe('modalPriorities', () => {
 			expect(sharing).toEqual([]);
 		});
 
+		it('MARKETPLACE_OUTRO should rank above the Exchange and the launch dialog (it opens when a run ends, over either)', () => {
+			// Escape closes the highest layer. The outro can appear while the Exchange or the launch
+			// dialog is open, and it is the newest thing on screen, so it closes first. Run again closes
+			// it before it opens the launch dialog, so it never has to rank below that one.
+			expect(MODAL_PRIORITIES.MARKETPLACE_OUTRO).toBeGreaterThan(MODAL_PRIORITIES.MARKETPLACE);
+			expect(MODAL_PRIORITIES.MARKETPLACE_OUTRO).toBeGreaterThan(
+				MODAL_PRIORITIES.MARKETPLACE_LAUNCH
+			);
+			expect(MODAL_PRIORITIES.NEW_INSTANCE).toBeGreaterThan(MODAL_PRIORITIES.MARKETPLACE_OUTRO);
+		});
+
+		it('MARKETPLACE_OUTRO should not share a priority with any other modal', () => {
+			const sharing = Object.entries(MODAL_PRIORITIES).filter(
+				([name, priority]) =>
+					name !== 'MARKETPLACE_OUTRO' && priority === MODAL_PRIORITIES.MARKETPLACE_OUTRO
+			);
+			expect(sharing).toEqual([]);
+		});
+
 		it('AGENT_PROMPT_COMPOSER should have higher priority than BATCH_RUNNER (opens from within)', () => {
 			// AgentPromptComposerModal opens from BatchRunnerModal
 			expect(MODAL_PRIORITIES.AGENT_PROMPT_COMPOSER).toBeGreaterThan(MODAL_PRIORITIES.BATCH_RUNNER);

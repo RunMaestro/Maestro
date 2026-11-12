@@ -654,12 +654,13 @@ not tuned on.
 
 ## Template Variables (`src/shared/templateVariables.ts` - Both)
 
-| Function / Constant                              | Signature                                      | Purpose                                                                                                                       |
-| ------------------------------------------------ | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `TEMPLATE_VARIABLES`                             | `Array<{variable, description, autoRunOnly?}>` | All available template variables with docs.                                                                                   |
-| `TEMPLATE_VARIABLES_GENERAL`                     | Same array filtered                            | Excludes Auto Run-only variables.                                                                                             |
-| `substituteTemplateVariables(template, context)` | `(string, TemplateContext) => string`          | Case-insensitive replacement of `{{VAR}}` placeholders. Handles agent, path, date/time, git, context variables.               |
-| `substituteTemplateTokens(template, values)`     | `(string, Record<string, string>) => string`   | The replace step under it, for values already in hand (no `TemplateContext`). UPPERCASE keys; unknown tokens stay as written. |
+| Function / Constant                              | Signature                                      | Purpose                                                                                                                                                |
+| ------------------------------------------------ | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `TEMPLATE_VARIABLES`                             | `Array<{variable, description, autoRunOnly?}>` | All available template variables with docs.                                                                                                            |
+| `TEMPLATE_VARIABLES_GENERAL`                     | Same array filtered                            | Excludes Auto Run-only variables.                                                                                                                      |
+| `substituteTemplateVariables(template, context)` | `(string, TemplateContext) => string`          | Case-insensitive replacement of `{{VAR}}` placeholders. Handles agent, path, date/time, git, context variables.                                        |
+| `substituteTemplateTokens(template, values)`     | `(string, Record<string, string>) => string`   | The replace step under it, for values already in hand (no `TemplateContext`). UPPERCASE keys; unknown tokens stay as written.                          |
+| `buildTemplateReplacements(context)`             | `(TemplateContext) => Record<string, string>`  | The map `substituteTemplateVariables` substitutes from, for a caller that needs the values (the Playbook Launch outro). `context.now` fixes the clock. |
 
 ---
 

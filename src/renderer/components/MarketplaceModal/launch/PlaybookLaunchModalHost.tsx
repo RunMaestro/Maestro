@@ -1,11 +1,11 @@
 /**
  * PlaybookLaunchModalHost - mounts the Playbook Launch dialog from the modal store.
  *
- * The Exchange's Launch button opens the dialog with `openPlaybookLaunch(playbook)`; the host
- * draws it and decides what the two ways out do. Cancel closes only the dialog, so the person is
- * back on the playbook's detail view. A launch that started closes the dialog AND the Exchange
- * (the person's next look is the agent running the playbook) and raises a toast that names the
- * agent and goes to it when clicked.
+ * The Exchange's Launch button opens the dialog with `openPlaybookLaunch(playbook)` (the outro's
+ * Run again adds the earlier answers); the host draws it and decides what the two ways out do.
+ * Cancel closes only the dialog, so the person is back on the playbook's detail view. A launch
+ * that started closes the dialog AND the Exchange (the person's next look is the agent running
+ * the playbook) and raises a toast that names the agent and goes to it when clicked.
  *
  * It self-subscribes, like the other hosts mounted in `AppStandaloneModals`, so that component
  * carries no launch props. It draws nothing until a playbook is set.
@@ -22,7 +22,8 @@ export interface PlaybookLaunchModalHostProps {
 }
 
 export function PlaybookLaunchModalHost({ theme }: PlaybookLaunchModalHostProps) {
-	const playbook = useModalStore(selectModalData('playbookLaunch'))?.playbook;
+	const data = useModalStore(selectModalData('playbookLaunch'));
+	const playbook = data?.playbook;
 
 	const handleClose = useCallback(() => getModalActions().closePlaybookLaunch(), []);
 
@@ -42,6 +43,7 @@ export function PlaybookLaunchModalHost({ theme }: PlaybookLaunchModalHostProps)
 		<PlaybookLaunchModal
 			theme={theme}
 			playbook={playbook}
+			initialValues={data.initialValues}
 			onClose={handleClose}
 			onLaunched={handleLaunched}
 		/>

@@ -225,6 +225,13 @@ export const MODAL_PRIORITIES = {
 	 */
 	MARKETPLACE_LAUNCH: 736,
 
+	/**
+	 * Playbook Launch outro. It opens when a launched run ends, which can be while the Exchange or
+	 * the launch dialog is open, so it ranks above both: Escape closes the outro first. Run again
+	 * closes the outro before it opens the launch dialog, so the two never stack.
+	 */
+	MARKETPLACE_OUTRO: 737,
+
 	/** Symphony modal - browse and contribute to open source projects */
 	SYMPHONY: 710,
 

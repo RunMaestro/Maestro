@@ -1197,6 +1197,36 @@ describe('modalStore', () => {
 			expect(state.getData('playbookLaunch')?.playbook).toBe(playbook);
 		});
 
+		it('openPlaybookLaunch carries no starting answers unless Run again gives them', () => {
+			getModalActions().openPlaybookLaunch(playbook);
+
+			expect(useModalStore.getState().getData('playbookLaunch')).toEqual({ playbook });
+			expect(useModalStore.getState().getData('playbookLaunch')).not.toHaveProperty(
+				'initialValues'
+			);
+		});
+
+		it('openPlaybookLaunch carries the answers of an earlier launch for the form to start on', () => {
+			const earlier = { PR_URL: 'https://github.com/acme/app/pull/7', DRY_RUN: false };
+
+			getModalActions().openPlaybookLaunch(playbook, earlier);
+
+			const data = useModalStore.getState().getData('playbookLaunch');
+			expect(data?.playbook).toBe(playbook);
+			expect(data?.initialValues).toEqual(earlier);
+		});
+
+		it('openPlaybookLaunch replaces the playbook and answers of a dialog that is already open', () => {
+			const other = { ...playbook, id: 'research-market' } as MarketplacePlaybook;
+			getModalActions().openPlaybookLaunch(playbook, { PR_URL: 'a' });
+
+			getModalActions().openPlaybookLaunch(other);
+
+			const data = useModalStore.getState().getData('playbookLaunch');
+			expect(data?.playbook).toBe(other);
+			expect(data).not.toHaveProperty('initialValues');
+		});
+
 		it('closePlaybookLaunch closes the dialog and clears the playbook', () => {
 			const actions = getModalActions();
 

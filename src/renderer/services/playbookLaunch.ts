@@ -9,12 +9,16 @@
  * agent behind. A launch that fails after it created its agent keeps the agent
  * and says so. Main does the rest (`launchMarketplacePlaybook()` in
  * `src/main/services/marketplace-service.ts`): it imports the playbook into a
- * launch folder, records the launch and starts the Auto Run.
+ * launch folder, records the launch and starts the Auto Run. The way back in is
+ * here too: `reopenPlaybookLaunch()` opens the dialog again with the answers of a
+ * launch that ended, for the outro's Run again.
  */
 
 import type { NewAgentDraft } from '../components/NewInstanceModal/types';
 import {
 	launchFieldErrorsFromMessage,
+	type MarketplacePlaybook,
+	type PlaybookLaunchRecord,
 	type PlaybookLaunchRequest,
 	type PlaybookLaunchSpec,
 } from '../../shared/marketplace-types';
@@ -24,6 +28,7 @@ import {
 	type PlaybookLaunchAnswers,
 } from '../../shared/playbookLaunch';
 import { definedOnly } from '../../shared/objectUtils';
+import { getModalActions } from '../stores/modalStore';
 import { notifyToast } from '../stores/notificationStore';
 import { selectActiveSession, selectSessionById, useSessionStore } from '../stores/sessionStore';
 import type { Session } from '../types';
@@ -299,4 +304,58 @@ export function notifyLaunchStarted(
 		project: name,
 		sessionId,
 	});
+}
+
+/** What {@link reopenPlaybookLaunch} needs of an ended launch. */
+export type ReopenableLaunch = Pick<
+	PlaybookLaunchRecord,
+	'playbookId' | 'playbookTitle' | 'values'
+>;
+
+/**
+ * The playbook as the Exchange lists it now, when it can still be launched; else why not, as the
+ * end of a sentence. A rejected call is a fault and goes to Sentry.
+ */
+async function findLaunchablePlaybook(
+	playbookId: string
+): Promise<{ playbook: MarketplacePlaybook } | { problem: string }> {
+	const unreadable = (error: string) => ({
+		problem: `the Playbook Exchange could not be read (${error}).`,
+	});
+	try {
+		const result = await window.maestro.marketplace.getManifest();
+		if (!result.success) return unreadable(ipcResultErrorMessage(result.error, 'no reason given'));
+		const playbook = result.manifest?.playbooks.find((entry) => entry.id === playbookId);
+		if (!playbook) return { problem: 'it is no longer in the Playbook Exchange.' };
+		if (!playbook.launch) return { problem: 'it no longer supports Launch.' };
+		return { playbook };
+	} catch (thrown) {
+		captureException(thrown, { extra: { operation: 'playbookLaunch:reopen', playbookId } });
+		return unreadable(ipcErrorMessage(thrown));
+	}
+}
+
+/**
+ * Open the launch dialog again for a launch that ended, with the answers it ran with: the outro's
+ * Run again. The dialog is drawn from the playbook as the Exchange lists it now, not from the
+ * launch's copy of the `launch` block, because main launches from the current manifest and refuses
+ * answers the current block does not accept. An input the block no longer has is dropped, and one
+ * it added starts at its default.
+ *
+ * Resolves `true` when the dialog opened. Otherwise the person is told why with a toast and it
+ * resolves `false`, so the caller can leave the outro up. It never rejects.
+ */
+export async function reopenPlaybookLaunch(launch: ReopenableLaunch): Promise<boolean> {
+	const found = await findLaunchablePlaybook(launch.playbookId);
+	if ('problem' in found) {
+		logger.warn(`Launch of ${launch.playbookId} was not reopened: ${found.problem}`, LOG_CONTEXT);
+		notifyToast({
+			color: 'red',
+			title: 'Cannot run again',
+			message: `"${launch.playbookTitle}" cannot be run again: ${found.problem}`,
+		});
+		return false;
+	}
+	getModalActions().openPlaybookLaunch(found.playbook, launch.values);
+	return true;
 }

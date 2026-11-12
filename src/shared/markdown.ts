@@ -5,6 +5,8 @@
  * from main-process code paths like Cue history recording.
  */
 
+import { forEachMarkdownLine } from './markdownTaskScan';
+
 // A table row is a line wrapped in pipes (| col | col |); a separator is a
 // pipe/dash/colon-only line (|---|:--:|). Shared by stripMarkdown(), which
 // drops both, and flattenMarkdownTables(), which keeps the rows' cell text, so
@@ -106,3 +108,49 @@ export const stripMarkdown = (text: string, options: StripMarkdownOptions = {}):
 			.replace(/^[\s]*(\d+)\.\s+/gm, '$1. ')
 	);
 };
+
+/** A markdown heading and the text directly under it. See {@link firstHeadingSection}. */
+export interface MarkdownHeadingSection {
+	/** The heading's text, without its `#` marks. */
+	heading: string;
+	/** The heading's level, 1 to 6. */
+	level: number;
+	/** The text under the heading up to the next heading of any level, trimmed. Never empty. */
+	body: string;
+}
+
+// An ATX heading: up to three spaces, one to six `#`, a space or tab, the text, and an optional
+// closing run of `#` (`## Title ##`). `#hashtag` has no space after the marks, so it is not one.
+const ATX_HEADING_LINE = /^ {0,3}(#{1,6})[ \t]+(\S.*?)(?:[ \t]+#+)?[ \t]*$/;
+
+/**
+ * The first section of a document that has text under its heading: the heading, and the lines
+ * below it up to the next heading of any level. A heading with nothing under it, such as a title
+ * that runs straight into `## Status`, is passed over for the section after it, because a bare
+ * title says nothing. `null` when no heading has text under it.
+ *
+ * Only ATX headings (`# Title`) count, and a `#` line inside a fenced code block is not a heading.
+ * The body keeps everything under the heading verbatim, fenced code included, so a report's verdict
+ * table or code sample reads as written. Strip front matter first when the document may have it.
+ */
+export function firstHeadingSection(content: string): MarkdownHeadingSection | null {
+	const headings: Array<{ index: number; level: number; text: string }> = [];
+	forEachMarkdownLine(content, (line, index) => {
+		const match = ATX_HEADING_LINE.exec(line);
+		if (match) headings.push({ index, level: match[1].length, text: match[2] });
+	});
+	if (headings.length === 0) return null;
+
+	// The same line split `forEachMarkdownLine` indexes into.
+	const lines = content.replace(/\r\n?/g, '\n').split('\n');
+	for (let i = 0; i < headings.length; i++) {
+		const { index, level, text } = headings[i];
+		const end = i + 1 < headings.length ? headings[i + 1].index : lines.length;
+		const body = lines
+			.slice(index + 1, end)
+			.join('\n')
+			.trim();
+		if (body !== '') return { heading: text, level, body };
+	}
+	return null;
+}

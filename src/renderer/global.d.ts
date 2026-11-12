@@ -20,6 +20,7 @@ import type {
 	PlaybookLaunchListOptions,
 	PlaybookLaunchRecord,
 	PlaybookLaunchRequest,
+	PlaybookLaunchSpec,
 	PlaybookLaunchValues,
 } from '../shared/types';
 /* eslint-disable @typescript-eslint/no-unused-vars */
@@ -3266,6 +3267,8 @@ interface MaestroAPI {
 					maxLoops?: number | null;
 					prompt: string | null;
 					source?: 'official' | 'local';
+					/** The Launch block, when the playbook has a valid one. */
+					launch?: PlaybookLaunchSpec;
 				}>;
 			};
 			fromCache?: boolean;
@@ -3295,6 +3298,8 @@ interface MaestroAPI {
 					maxLoops?: number | null;
 					prompt: string | null;
 					source?: 'official' | 'local';
+					/** The Launch block, when the playbook has a valid one. */
+					launch?: PlaybookLaunchSpec;
 				}>;
 			};
 			fromCache?: boolean;

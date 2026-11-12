@@ -33,6 +33,7 @@ import type {
 	MarketplacePlaybook,
 	PlaybookLaunchInput,
 	PlaybookLaunchSpec,
+	PlaybookLaunchValues,
 } from '../../../../shared/marketplace-types';
 import { resolveLaunchValues, validateLaunchValues } from '../../../../shared/playbookLaunch';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
@@ -48,7 +49,7 @@ import type { NewAgentDraft } from '../../NewInstanceModal/types';
 import { Modal, ModalFooter } from '../../ui/Modal';
 import { LaunchCheckbox } from './LaunchCheckbox';
 import { LaunchInputField, type LaunchFieldValue } from './LaunchInputField';
-import { LaunchIntro } from './LaunchIntro';
+import { LaunchMarkdown } from './LaunchMarkdown';
 import { LaunchPreconditions } from './LaunchPreconditions';
 import { LaunchRunOn } from './LaunchRunOn';
 import { evaluateLaunchGate, firstLaunchBlocker, initialNewAgentDraft } from './launchAgents';
@@ -76,6 +77,12 @@ export interface PlaybookLaunchModalProps {
 	theme: Theme;
 	/** The Exchange playbook to launch. A playbook without a `launch` block draws nothing. */
 	playbook: MarketplacePlaybook;
+	/**
+	 * Answers the form starts with, keyed by input name: the values of an earlier launch, for Run
+	 * again. An input the playbook no longer has is ignored, and an input with no entry starts at
+	 * its default. Read once, when the dialog opens.
+	 */
+	initialValues?: PlaybookLaunchValues;
 	/** Cancel, the close button or Escape. Not offered while a launch is starting. */
 	onClose: () => void;
 	/**
@@ -92,11 +99,20 @@ interface LaunchDialogProps extends PlaybookLaunchModalProps {
 	spec: PlaybookLaunchSpec;
 }
 
-function LaunchDialog({ theme, playbook, spec, onClose, onLaunched }: LaunchDialogProps) {
+function LaunchDialog({
+	theme,
+	playbook,
+	spec,
+	initialValues,
+	onClose,
+	onLaunched,
+}: LaunchDialogProps) {
 	const sessions = useSessionStore((state) => state.sessions);
 	const choice = useLaunchTarget();
 
-	const [answers, setAnswers] = useState<Answers>(() => ({ ...resolveLaunchValues(spec) }));
+	const [answers, setAnswers] = useState<Answers>(() => ({
+		...resolveLaunchValues(spec, initialValues),
+	}));
 	const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set());
 	const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
 	const [confirmed, setConfirmed] = useState(false);
@@ -339,7 +355,9 @@ function LaunchDialog({ theme, playbook, spec, onClose, onLaunched }: LaunchDial
 						</p>
 					</header>
 
-					{spec.intro && <LaunchIntro theme={theme} content={spec.intro} />}
+					{spec.intro && (
+						<LaunchMarkdown theme={theme} content={spec.intro} testId="launch-intro" />
+					)}
 
 					<LaunchPreconditions
 						theme={theme}

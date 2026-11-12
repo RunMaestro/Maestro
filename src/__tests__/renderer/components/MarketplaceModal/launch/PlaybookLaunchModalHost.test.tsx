@@ -101,6 +101,24 @@ describe('PlaybookLaunchModalHost', () => {
 		expect(dialog.props?.theme).toBe(mockTheme);
 	});
 
+	it('gives the dialog no starting answers when the Exchange opens it', () => {
+		render(<PlaybookLaunchModalHost theme={mockTheme} />);
+
+		act(() => getModalActions().openPlaybookLaunch(playbook));
+
+		expect(dialog.props?.initialValues).toBeUndefined();
+	});
+
+	it('gives the dialog the answers of an earlier launch when Run again opens it', () => {
+		render(<PlaybookLaunchModalHost theme={mockTheme} />);
+		const earlier = { PR_URL: 'https://github.com/acme/app/pull/7', DRY_RUN: true, TIERS: ['A'] };
+
+		act(() => getModalActions().openPlaybookLaunch(playbook, earlier));
+
+		expect(dialog.props?.playbook).toBe(playbook);
+		expect(dialog.props?.initialValues).toEqual(earlier);
+	});
+
 	it('goes away when the store closes the dialog', () => {
 		render(<PlaybookLaunchModalHost theme={mockTheme} />);
 		act(() => getModalActions().openPlaybookLaunch(playbook));

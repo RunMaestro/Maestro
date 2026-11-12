@@ -17,7 +17,7 @@
 import { create } from 'zustand';
 import type { Session, SettingsTab, AgentError } from '../types';
 import type { GitStreamingOperation } from '../../shared/gitUtils';
-import type { MarketplacePlaybook } from '../../shared/marketplace-types';
+import type { MarketplacePlaybook, PlaybookLaunchValues } from '../../shared/marketplace-types';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
 import { UI_SURFACES } from '../../shared/uiSurfaces';
@@ -371,6 +371,8 @@ export interface BatchRunnerModalData {
  */
 export interface PlaybookLaunchModalData {
 	playbook: MarketplacePlaybook;
+	/** The answers the form starts with: an earlier launch's values, when the outro runs it again. */
+	initialValues?: PlaybookLaunchValues;
 }
 
 // ============================================================================
@@ -1156,10 +1158,11 @@ export function getModalActions() {
 		setMarketplaceModalOpen: (open: boolean) =>
 			open ? openModal('marketplace') : closeModal('marketplace'),
 
-		// Playbook Launch dialog (opened from the Exchange's detail view). Not a destination:
-		// it layers on the Exchange and leaves it open beneath.
-		openPlaybookLaunch: (playbook: MarketplacePlaybook) =>
-			openModal('playbookLaunch', { playbook }),
+		// Playbook Launch dialog (opened from the Exchange's detail view, or by the outro's Run
+		// again with the earlier answers). Not a destination: it layers on the Exchange and leaves
+		// it open beneath.
+		openPlaybookLaunch: (playbook: MarketplacePlaybook, initialValues?: PlaybookLaunchValues) =>
+			openModal('playbookLaunch', initialValues ? { playbook, initialValues } : { playbook }),
 		closePlaybookLaunch: () => closeModal('playbookLaunch'),
 
 		// Wizard Resume Modal
