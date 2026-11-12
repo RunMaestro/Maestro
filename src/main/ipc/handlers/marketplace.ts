@@ -18,6 +18,7 @@ import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { createSafeSend } from '../../utils/safe-send';
 import { SshRemoteConfig } from '../../../shared/types';
+import type { PlaybookLaunchValues } from '../../../shared/marketplace-types';
 import type { MaestroSettings } from './persistence';
 import {
 	getMarketplaceManifest,
@@ -117,7 +118,8 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 		})
 	);
 
-	// marketplace:importPlaybook - Import a playbook (local or remote via SSH)
+	// marketplace:importPlaybook - Import a playbook (local or remote via SSH). Launch passes
+	// launchValues, which fill the saved prompt's configuration lines; Download omits them.
 	ipcMain.handle(
 		'marketplace:importPlaybook',
 		createIpcHandler(
@@ -127,7 +129,8 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 				targetFolderName: string,
 				autoRunFolderPath: string,
 				sessionId: string,
-				sshRemoteId?: string
+				sshRemoteId?: string,
+				launchValues?: PlaybookLaunchValues
 			) => {
 				const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 				// Fail loudly when the user opted into SSH but the remote
@@ -144,6 +147,7 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 					autoRunFolderPath,
 					sessionId,
 					sshConfig,
+					launchValues,
 				});
 				return { ...result };
 			}

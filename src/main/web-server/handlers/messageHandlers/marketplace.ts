@@ -6,6 +6,8 @@
  */
 
 import { captureException } from '../../../utils/sentry';
+import type { PlaybookLaunchValues } from '../../../../shared/marketplace-types';
+import { isLaunchValuesObject } from '../../../../shared/playbookLaunch';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -328,7 +330,8 @@ export function handleMarketplaceGetReadme(
  * Handle marketplace_import_playbook - import a playbook into the
  * session's Auto Run folder. The server resolves both the folder path
  * and SSH config from the session, so the mobile client doesn't need
- * to send them - and can't lie about them.
+ * to send them - and can't lie about them. An optional `launchValues`
+ * object (answers keyed by input name) makes the import a Launch.
  */
 export function handleMarketplaceImportPlaybook(
 	ctx: MessageHandlerContext,
@@ -395,6 +398,21 @@ export function handleMarketplaceImportPlaybook(
 		);
 		return;
 	}
+	// Only the shape is checked here. The service resolves the answers
+	// against the playbook's launch spec and validates every value
+	// before anything touches the disk.
+	const launchValues = message.launchValues ?? undefined;
+	if (launchValues !== undefined && !isLaunchValuesObject(launchValues)) {
+		sendMarketplaceFailure(
+			ctx,
+			client,
+			'marketplace_import_playbook_result',
+			'launchValues must be an object keyed by input name',
+			message,
+			{ sessionId }
+		);
+		return;
+	}
 
 	if (!ctx.callbacks.importMarketplacePlaybook) {
 		sendMarketplaceFailure(
@@ -409,7 +427,12 @@ export function handleMarketplaceImportPlaybook(
 	}
 
 	ctx.callbacks
-		.importMarketplacePlaybook(sessionId, playbookId, trimmedFolder)
+		.importMarketplacePlaybook(
+			sessionId,
+			playbookId,
+			trimmedFolder,
+			launchValues as PlaybookLaunchValues | undefined
+		)
 		.then((result) => {
 			ctx.send(client, {
 				type: 'marketplace_import_playbook_result',

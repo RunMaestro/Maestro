@@ -1671,10 +1671,14 @@ export type GenerateDirectorNotesSynopsisCallback = (
 // Marketplace (Playbook Exchange) Types
 // =============================================================================
 
-import type { MarketplaceManifest, MarketplacePlaybook } from '../../shared/marketplace-types';
+import type {
+	MarketplaceManifest,
+	MarketplacePlaybook,
+	PlaybookLaunchValues,
+} from '../../shared/marketplace-types';
 
 /** Re-export for convenience so handlers don't pull from two places. */
-export type { MarketplaceManifest, MarketplacePlaybook };
+export type { MarketplaceManifest, MarketplacePlaybook, PlaybookLaunchValues };
 
 /** Result from the marketplace get-manifest callback. */
 export interface MarketplaceManifestResult {
@@ -1714,8 +1718,10 @@ export type GetMarketplaceReadmeCallback = (
 	playbookPath: string
 ) => Promise<{ content: string | null }>;
 
+/** `launchValues` (answers keyed by input name) make the import a Launch; without them it is a Download. */
 export type ImportMarketplacePlaybookCallback = (
 	sessionId: string,
 	playbookId: string,
-	targetFolderName: string
+	targetFolderName: string,
+	launchValues?: PlaybookLaunchValues
 ) => Promise<MarketplaceImportResult>;

@@ -472,6 +472,7 @@ describe('Autorun Preload API', () => {
 					'my-playbook',
 					'/project/.maestro',
 					'session-123',
+					undefined,
 					undefined
 				);
 			});
@@ -493,7 +494,32 @@ describe('Autorun Preload API', () => {
 					'my-playbook',
 					'/project/.maestro',
 					'session-123',
-					'ssh-remote-1'
+					'ssh-remote-1',
+					undefined
+				);
+			});
+
+			it('should invoke with launch values (Launch)', async () => {
+				mockInvoke.mockResolvedValue({ success: true });
+				const launchValues = { PR_URL: 'https://github.com/acme/app/pull/7', MAX_ROUNDS: 5 };
+
+				await api.importPlaybook(
+					'mp-1',
+					'my-playbook',
+					'/project/.maestro',
+					'session-123',
+					undefined,
+					launchValues
+				);
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'marketplace:importPlaybook',
+					'mp-1',
+					'my-playbook',
+					'/project/.maestro',
+					'session-123',
+					undefined,
+					launchValues
 				);
 			});
 		});

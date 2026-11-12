@@ -1747,11 +1747,13 @@ export class WebServer {
 				this.callbackRegistry.getMarketplaceDocument(playbookPath, filename),
 			getMarketplaceReadme: async (playbookPath: string) =>
 				this.callbackRegistry.getMarketplaceReadme(playbookPath),
-			importMarketplacePlaybook: async (
-				sessionId: string,
-				playbookId: string,
-				targetFolderName: string
-			) => this.callbackRegistry.importMarketplacePlaybook(sessionId, playbookId, targetFolderName),
+			importMarketplacePlaybook: async (sessionId, playbookId, targetFolderName, launchValues) =>
+				this.callbackRegistry.importMarketplacePlaybook(
+					sessionId,
+					playbookId,
+					targetFolderName,
+					launchValues
+				),
 			listDesktopSessions: () => this.callbackRegistry.listDesktopSessions(),
 			getSessionHistory: (tabId, options) =>
 				this.callbackRegistry.getSessionHistory(tabId, options),

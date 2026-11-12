@@ -599,6 +599,15 @@ export function parseLaunchSpec(raw: unknown): ParsedLaunchSpec {
 // ============================================================================
 
 /**
+ * Whether `value` can hold launch values: an object keyed by input name, not `null` and not a
+ * list. Values that cross IPC, the web bridge or the CLI are checked with this before
+ * {@link resolveLaunchValues} reads them. Each value is then checked by {@link validateLaunchValues}.
+ */
+export function isLaunchValuesObject(value: unknown): value is Readonly<Record<string, unknown>> {
+	return isRecord(value);
+}
+
+/**
  * Turn the answers a user gave into the values to launch with: each declared input takes its
  * answer, else its default, else stays absent. An optional input with neither is simply missing
  * from the result, which leaves its configuration line as shipped.

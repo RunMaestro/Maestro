@@ -8,7 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { PlaybookStatus } from '../../shared/types';
+import type { PlaybookLaunchValues, PlaybookStatus } from '../../shared/types';
 import { AUTORUN_DELEGATION_CHANNEL } from '../../shared/autoRunDelegation';
 
 /**
@@ -217,12 +217,14 @@ export function createMarketplaceApi() {
 
 		getReadme: (playbookPath: string) => ipcRenderer.invoke('marketplace:getReadme', playbookPath),
 
+		/** Launch passes `launchValues` (answers keyed by input name); Download omits them. */
 		importPlaybook: (
 			playbookId: string,
 			targetFolderName: string,
 			autoRunFolderPath: string,
 			sessionId: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			launchValues?: PlaybookLaunchValues
 		) =>
 			ipcRenderer.invoke(
 				'marketplace:importPlaybook',
@@ -230,7 +232,8 @@ export function createMarketplaceApi() {
 				targetFolderName,
 				autoRunFolderPath,
 				sessionId,
-				sshRemoteId
+				sshRemoteId,
+				launchValues
 			),
 
 		onManifestChanged: (handler: () => void) => {

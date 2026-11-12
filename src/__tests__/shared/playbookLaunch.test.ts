@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	applyLaunchInputs,
 	isLaunchAvailable,
+	isLaunchValuesObject,
 	parseLaunchSpec,
 	renderLaunchOutro,
 	resolveLaunchValues,
@@ -600,6 +601,28 @@ describe('parseLaunchSpec: rejected blocks', () => {
 			'outro.summary is required',
 		]);
 	});
+});
+
+// ----------------------------------------------------------------------------
+// isLaunchValuesObject
+// ----------------------------------------------------------------------------
+
+describe('isLaunchValuesObject', () => {
+	it('accepts an object keyed by input name, empty or not, whatever its values hold', () => {
+		expect(isLaunchValuesObject({})).toBe(true);
+		expect(isLaunchValuesObject({ PR_URL: 'https://github.com/acme/app/pull/7', ROUNDS: 3 })).toBe(
+			true
+		);
+		// Only the shape is checked here; validateLaunchValues checks each value.
+		expect(isLaunchValuesObject({ PR_URL: { nested: true } })).toBe(true);
+	});
+
+	it.each([[null], [undefined], [['PR_URL']], ['PR_URL=x'], [42], [true]])(
+		'rejects %j',
+		(value) => {
+			expect(isLaunchValuesObject(value)).toBe(false);
+		}
+	);
 });
 
 // ----------------------------------------------------------------------------

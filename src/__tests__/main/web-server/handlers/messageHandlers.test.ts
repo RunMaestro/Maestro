@@ -5236,10 +5236,12 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
+				// No launch values: a Download.
 				expect(callbacks.importMarketplacePlaybook).toHaveBeenCalledWith(
 					'session-1',
 					'pb-1',
-					'my-folder'
+					'my-folder',
+					undefined
 				);
 			});
 
@@ -5248,6 +5250,72 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.success).toBe(true);
 			expect(response.sessionId).toBe('session-1');
 		});
+
+		it('passes launch values through on marketplace_import_playbook (Launch)', async () => {
+			const launchValues = { PR_URL: 'https://github.com/acme/app/pull/7', MAX_ROUNDS: 5 };
+			handler.handleMessage(client, {
+				type: 'marketplace_import_playbook',
+				sessionId: 'session-1',
+				playbookId: 'pb-1',
+				targetFolderName: 'my-folder',
+				launchValues,
+				requestId: 'req-6b',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.importMarketplacePlaybook).toHaveBeenCalledWith(
+					'session-1',
+					'pb-1',
+					'my-folder',
+					launchValues
+				);
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('marketplace_import_playbook_result');
+			expect(response.success).toBe(true);
+		});
+
+		it('treats null launch values on marketplace_import_playbook as a Download', async () => {
+			handler.handleMessage(client, {
+				type: 'marketplace_import_playbook',
+				sessionId: 'session-1',
+				playbookId: 'pb-1',
+				targetFolderName: 'my-folder',
+				launchValues: null,
+				requestId: 'req-6c',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.importMarketplacePlaybook).toHaveBeenCalledWith(
+					'session-1',
+					'pb-1',
+					'my-folder',
+					undefined
+				);
+			});
+		});
+
+		it.each([['PR_URL=https://github.com/acme/app/pull/7'], [['PR_URL']], [7]])(
+			'rejects marketplace_import_playbook whose launchValues is not an object (%j)',
+			(launchValues) => {
+				handler.handleMessage(client, {
+					type: 'marketplace_import_playbook',
+					sessionId: 'session-1',
+					playbookId: 'pb-1',
+					targetFolderName: 'my-folder',
+					launchValues,
+					requestId: 'req-6d',
+				});
+
+				expect(callbacks.importMarketplacePlaybook).not.toHaveBeenCalled();
+				const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+				expect(response.type).toBe('marketplace_import_playbook_result');
+				expect(response.success).toBe(false);
+				expect(response.error).toBe('launchValues must be an object keyed by input name');
+				expect(response.sessionId).toBe('session-1');
+				expect(response.requestId).toBe('req-6d');
+			}
+		);
 
 		it('rejects marketplace_import_playbook missing required fields via typed result', () => {
 			handler.handleMessage(client, {

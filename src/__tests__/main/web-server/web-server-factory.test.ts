@@ -242,7 +242,12 @@ import { buildWebSettingsSnapshot } from '../../../main/web-server/web-settings-
 import { getThemeById } from '../../../main/themes';
 import { getHistoryManager } from '../../../main/history-manager';
 import { logger } from '../../../main/utils/logger';
+import { captureException } from '../../../main/utils/sentry';
 import { importMarketplacePlaybook } from '../../../main/services/marketplace-service';
+import {
+	MarketplaceLaunchValuesError,
+	type PlaybookLaunchValues,
+} from '../../../shared/marketplace-types';
 import {
 	applyMovementHtmlPayload,
 	clearConcertoHtmlDocumentsForTests,
@@ -1652,9 +1657,12 @@ describe('web-server/web-server-factory', () => {
 			return setImport.mock.calls[0][0] as (
 				sessionId: string,
 				playbookId: string,
-				targetFolderName: string
+				targetFolderName: string,
+				launchValues?: PlaybookLaunchValues
 			) => Promise<{ success: boolean; error?: string }>;
 		};
+
+		const localSession = { id: 'session-1', autoRunFolderPath: '/auto-run' };
 
 		it('should fail loudly when sessionSshRemoteConfig.enabled but remoteId points at no entry', async () => {
 			// Mirrors the desktop IPC test: a session with SSH explicitly
@@ -1748,6 +1756,54 @@ describe('web-server/web-server-factory', () => {
 			expect(importMarketplacePlaybook).toHaveBeenCalledWith(
 				expect.objectContaining({ sshConfig: undefined })
 			);
+		});
+
+		it('passes launch values through to the import service', async () => {
+			vi.mocked(importMarketplacePlaybook).mockResolvedValueOnce({
+				playbook: { id: 'pb-1', name: 'pb', createdAt: 0, updatedAt: 0, documents: [] } as any,
+				importedDocs: [],
+				importedAssets: [],
+			});
+			const callback = setupImportCallback([localSession], []);
+			const launchValues = { PR_URL: 'https://github.com/acme/app/pull/7' };
+
+			const result = await callback('session-1', 'pb', 'dest', launchValues);
+
+			expect(result.success).toBe(true);
+			expect(importMarketplacePlaybook).toHaveBeenCalledWith(
+				expect.objectContaining({
+					playbookId: 'pb',
+					targetFolderName: 'dest',
+					autoRunFolderPath: '/auto-run',
+					sessionId: 'session-1',
+					launchValues,
+				})
+			);
+		});
+
+		it('returns invalid launch values as a typed failure without a Sentry report', async () => {
+			vi.mocked(importMarketplacePlaybook).mockRejectedValueOnce(
+				new MarketplaceLaunchValuesError({ PR_URL: 'This field is required' })
+			);
+			const callback = setupImportCallback([localSession], []);
+
+			const result = await callback('session-1', 'pb', 'dest', {});
+
+			expect(result).toEqual({
+				success: false,
+				error: 'Launch values are not valid: PR_URL: This field is required',
+			});
+			expect(captureException).not.toHaveBeenCalled();
+		});
+
+		it('still reports any other import failure to Sentry', async () => {
+			vi.mocked(importMarketplacePlaybook).mockRejectedValueOnce(new Error('disk full'));
+			const callback = setupImportCallback([localSession], []);
+
+			const result = await callback('session-1', 'pb', 'dest', {});
+
+			expect(result).toEqual({ success: false, error: 'disk full' });
+			expect(captureException).toHaveBeenCalledTimes(1);
 		});
 	});
 

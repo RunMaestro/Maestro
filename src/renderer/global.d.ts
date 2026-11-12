@@ -13,7 +13,11 @@ import type { NativeSessionLaunch } from '../main/process-manager/types';
 import type { ProcessSpawnAttempt } from '../main/preload/process/core';
 import type { GrokCommandDiscoveryResult } from '../main/agents/grok-skills';
 import type { GrokSpawnSelectionFingerprint } from '../shared/grokSpawnSelection';
-import type { AgentDiscoveryRequest, AgentDiscoveryResult } from '../shared/types';
+import type {
+	AgentDiscoveryRequest,
+	AgentDiscoveryResult,
+	PlaybookLaunchValues,
+} from '../shared/types';
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * Global type declarations for the renderer process.
@@ -3305,12 +3309,14 @@ interface MaestroAPI {
 			content?: string | null;
 			error?: string;
 		}>;
+		/** Launch passes `launchValues` (answers keyed by input name); Download omits them. */
 		importPlaybook: (
 			playbookId: string,
 			targetFolderName: string,
 			autoRunFolderPath: string,
 			sessionId: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			launchValues?: PlaybookLaunchValues
 		) => Promise<{
 			success: boolean;
 			playbook?: {

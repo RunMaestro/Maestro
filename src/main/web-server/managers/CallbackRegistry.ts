@@ -170,6 +170,7 @@ import type {
 	ImportMarketplacePlaybookCallback,
 	MarketplaceManifestResult,
 	MarketplaceImportResult,
+	PlaybookLaunchValues,
 	ListDesktopSessionsCallback,
 	GetSessionHistoryCallback,
 	GetSessionHistoryOptions,
@@ -1287,12 +1288,18 @@ export class CallbackRegistry {
 	async importMarketplacePlaybook(
 		sessionId: string,
 		playbookId: string,
-		targetFolderName: string
+		targetFolderName: string,
+		launchValues?: PlaybookLaunchValues
 	): Promise<MarketplaceImportResult> {
 		if (!this.callbacks.importMarketplacePlaybook) {
 			return { success: false, error: 'Marketplace import not configured' };
 		}
-		return this.callbacks.importMarketplacePlaybook(sessionId, playbookId, targetFolderName);
+		return this.callbacks.importMarketplacePlaybook(
+			sessionId,
+			playbookId,
+			targetFolderName,
+			launchValues
+		);
 	}
 
 	listDesktopSessions(): ReturnType<ListDesktopSessionsCallback> | null {

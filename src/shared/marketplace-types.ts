@@ -338,6 +338,23 @@ export class MarketplaceImportError extends Error {
 	}
 }
 
+/**
+ * Launch values that failed `validateLaunchValues` (`src/shared/playbookLaunch.ts`). It is an import
+ * error, so a caller that handles `MarketplaceImportError` keeps working. `fieldErrors` holds the
+ * message for each failing input, keyed by input name. The error message lists them too, so a
+ * caller that shows only `message` (IPC, the web bridge, the CLI) still names every field.
+ */
+export class MarketplaceLaunchValuesError extends MarketplaceImportError {
+	constructor(public readonly fieldErrors: Readonly<Record<string, string>>) {
+		super(
+			`Launch values are not valid: ${Object.entries(fieldErrors)
+				.map(([name, message]) => `${name}: ${message}`)
+				.join('; ')}`
+		);
+		this.name = 'MarketplaceLaunchValuesError';
+	}
+}
+
 // ============================================================================
 // API Response Types
 // ============================================================================

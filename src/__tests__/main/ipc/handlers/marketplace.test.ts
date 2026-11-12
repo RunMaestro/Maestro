@@ -20,7 +20,14 @@ import {
 	MarketplaceHandlerDependencies,
 } from '../../../../main/ipc/handlers/marketplace';
 import { rebaseAssetReferences } from '../../../../main/services/marketplace-service';
-import type { MarketplaceManifest, MarketplaceCache } from '../../../../shared/marketplace-types';
+import { logger } from '../../../../main/utils/logger';
+import { parseLaunchSpec } from '../../../../shared/playbookLaunch';
+import type {
+	MarketplaceManifest,
+	MarketplaceCache,
+	MarketplacePlaybook,
+	PlaybookLaunchSpec,
+} from '../../../../shared/marketplace-types';
 import type { SshRemoteConfig } from '../../../../shared/types';
 
 // Mock electron's ipcMain
@@ -152,6 +159,49 @@ describe('marketplace IPC handlers', () => {
 			},
 		],
 	};
+
+	// A playbook with a launch block. Answers reach it only through the configuration lines of its
+	// prompt. Its first document repeats one of those lines, which no import may rewrite.
+	const launchPrompt = [
+		'Review the pull request.',
+		'',
+		'<!-- CONFIGURE -->',
+		'**PR_URL:** `<UNSET PR_URL>`',
+		'**FOCUS:** `<UNSET FOCUS>`',
+		'**BOT_REVIEWERS:** `coderabbitai,greptile`',
+		'**MAX_ROUNDS:** `3`',
+		'<!-- /CONFIGURE -->',
+		'',
+		'Work through every thread on [PR_URL].',
+	].join('\n');
+	const launchSpec: PlaybookLaunchSpec = {
+		inputs: [
+			{ name: 'PR_URL', label: 'Pull request', type: 'url', required: true },
+			{ name: 'FOCUS', label: 'Focus', type: 'text' },
+			{ name: 'BOT_REVIEWERS', label: 'Bots', type: 'text', default: 'coderabbitai,greptile' },
+			{ name: 'MAX_ROUNDS', label: 'Rounds', type: 'number', default: 3, min: 1 },
+		],
+		outro: { summary: 'Reviewed {{PR_URL}}.', nextSteps: ['Merge when the checks pass.'] },
+	};
+	const launchPlaybook: MarketplacePlaybook = {
+		id: 'launch-playbook',
+		title: 'Launch Playbook',
+		description: 'A playbook with a launch block',
+		category: 'Development',
+		author: 'Test Author',
+		lastUpdated: '2024-01-15',
+		path: 'playbooks/launch-playbook',
+		documents: [
+			{ filename: '1_REVIEW', resetOnCompletion: false },
+			{ filename: '2_FIX', resetOnCompletion: true },
+		],
+		loopEnabled: false,
+		maxLoops: null,
+		prompt: launchPrompt,
+		launch: launchSpec,
+	};
+	const reviewDoc = '# Review\n\n**PR_URL:** `<UNSET PR_URL>`\n\n- [ ] Read [PR_URL]\n';
+	const fixDoc = '# Fix\n\n- [ ] Fix every open thread\n';
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -1915,6 +1965,204 @@ describe('marketplace IPC handlers', () => {
 				expect(mockFetch).not.toHaveBeenCalled();
 			});
 		});
+
+		describe('launch values', () => {
+			const manifestWith = (playbook: MarketplacePlaybook) =>
+				JSON.stringify({
+					fetchedAt: Date.now(),
+					manifest: { lastUpdated: '2024-01-15', playbooks: [playbook] },
+				});
+
+			// Queues exactly what an import that reaches the disk reads, so nothing leaks into the next
+			// test: the cache, the (absent) local manifest, both documents, the (absent) playbooks file.
+			const mockImportReads = (playbook: MarketplacePlaybook = launchPlaybook) => {
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(manifestWith(playbook))
+					.mockRejectedValueOnce({ code: 'ENOENT' })
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				mockFetch
+					.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(reviewDoc) })
+					.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(fixDoc) });
+			};
+
+			// A rejected launch stops after the manifest lookup: only the cache and local manifest are read.
+			const mockRejectedImportReads = () => {
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(manifestWith(launchPlaybook))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+			};
+
+			const importLaunchPlaybook = (launchValues?: unknown) =>
+				handlers.get('marketplace:importPlaybook')!(
+					{} as any,
+					'launch-playbook',
+					'Launched',
+					'/autorun',
+					'session-123',
+					undefined,
+					launchValues
+				);
+
+			const savedPrompt = () => {
+				const write = vi
+					.mocked(fs.writeFile)
+					.mock.calls.find(([file]) => String(file).endsWith('session-123.json'));
+				return JSON.parse(String(write![1])).playbooks[0].prompt;
+			};
+
+			const expectDocumentsAsFetched = () => {
+				expect(fs.writeFile).toHaveBeenCalledWith(
+					path.join('/autorun', 'Launched', '1_REVIEW.md'),
+					reviewDoc,
+					'utf-8'
+				);
+				expect(fs.writeFile).toHaveBeenCalledWith(
+					path.join('/autorun', 'Launched', '2_FIX.md'),
+					fixDoc,
+					'utf-8'
+				);
+			};
+
+			it('imports a launch-enabled playbook exactly as before without answers (Download)', async () => {
+				mockImportReads();
+
+				const result = await importLaunchPlaybook();
+
+				expect(result.success).toBe(true);
+				expectDocumentsAsFetched();
+				expect(result.playbook.prompt).toBe(launchPrompt);
+				expect(savedPrompt()).toBe(launchPrompt);
+				expect(result.importedDocs).toEqual(['1_REVIEW', '2_FIX']);
+				expect(logger.warn).not.toHaveBeenCalled();
+			});
+
+			it('writes the answers into the prompt only and leaves every document as fetched', async () => {
+				mockImportReads();
+
+				const result = await importLaunchPlaybook({
+					PR_URL: '  https://github.com/acme/app/pull/7  ',
+					MAX_ROUNDS: 5,
+				});
+
+				expect(result.success).toBe(true);
+				// The first document repeats a configuration line; it is still written as fetched.
+				expectDocumentsAsFetched();
+				const expected = [
+					'Review the pull request.',
+					'',
+					'<!-- CONFIGURE -->',
+					'**PR_URL:** `https://github.com/acme/app/pull/7`',
+					// An optional input left empty keeps the placeholder the playbook halts on.
+					'**FOCUS:** `<UNSET FOCUS>`',
+					// An input not answered gets its default, which is the shipped value.
+					'**BOT_REVIEWERS:** `coderabbitai,greptile`',
+					'**MAX_ROUNDS:** `5`',
+					'<!-- /CONFIGURE -->',
+					'',
+					'Work through every thread on [PR_URL].',
+				].join('\n');
+				// The prompt saved with the playbook is the one handed back to the caller.
+				expect(result.playbook.prompt).toBe(expected);
+				expect(savedPrompt()).toBe(expected);
+				expect(result.playbook.documents).toEqual([
+					{ filename: 'Launched/1_REVIEW', resetOnCompletion: false },
+					{ filename: 'Launched/2_FIX', resetOnCompletion: true },
+				]);
+			});
+
+			it('rejects answers that fail validation, naming every field, before touching the disk', async () => {
+				mockRejectedImportReads();
+
+				const result = await importLaunchPlaybook({
+					BOT_REVIEWERS: 'coderabbitai`',
+					MAX_ROUNDS: 0,
+				});
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain(
+					'Launch values are not valid: PR_URL: This field is required; ' +
+						'BOT_REVIEWERS: Cannot contain a backtick; MAX_ROUNDS: Must be at least 1'
+				);
+				expect(fs.mkdir).not.toHaveBeenCalled();
+				expect(fs.writeFile).not.toHaveBeenCalled();
+				expect(mockFetch).not.toHaveBeenCalled();
+			});
+
+			it.each([['PR_URL=https://github.com/acme/app/pull/7'], [['PR_URL']], [42]])(
+				'rejects launch values that are not an object keyed by input name (%j)',
+				async (launchValues) => {
+					mockRejectedImportReads();
+
+					const result = await importLaunchPlaybook(launchValues);
+
+					expect(result.success).toBe(false);
+					expect(result.error).toContain('launchValues must be an object keyed by input name');
+					expect(fs.mkdir).not.toHaveBeenCalled();
+					expect(fs.writeFile).not.toHaveBeenCalled();
+				}
+			);
+
+			it('treats null launch values as a Download', async () => {
+				mockImportReads();
+
+				const result = await importLaunchPlaybook(null);
+
+				expect(result.success).toBe(true);
+				expect(result.playbook.prompt).toBe(launchPrompt);
+			});
+
+			it('ignores answers for a playbook without a launch block', async () => {
+				mockImportReads({ ...launchPlaybook, launch: undefined });
+
+				const result = await importLaunchPlaybook({
+					PR_URL: 'https://github.com/acme/app/pull/7',
+				});
+
+				expect(result.success).toBe(true);
+				expectDocumentsAsFetched();
+				expect(result.playbook.prompt).toBe(launchPrompt);
+			});
+
+			it('writes the answers before rebasing asset references, so every default saves what Download saves', async () => {
+				const assetPlaybook: MarketplacePlaybook = {
+					...launchPlaybook,
+					prompt:
+						'**KB_FILE:** `{{AUTORUN_FOLDER}}/assets/kb.yaml`\n' +
+						'**OUTPUT_FOLDER:** `{{AUTORUN_FOLDER}}/vault`',
+					launch: {
+						inputs: [
+							{
+								name: 'KB_FILE',
+								label: 'Knowledge base',
+								type: 'path',
+								default: '{{AUTORUN_FOLDER}}/assets/kb.yaml',
+							},
+							{
+								name: 'OUTPUT_FOLDER',
+								label: 'Output folder',
+								type: 'path',
+								default: '{{AUTORUN_FOLDER}}/vault',
+							},
+						],
+						outro: { summary: 'Done.', nextSteps: [] },
+					},
+				};
+				// Built-ins stay for the Auto Run engine; only the asset reference moves into the folder.
+				const expected =
+					'**KB_FILE:** `{{AUTORUN_FOLDER}}/Launched/assets/kb.yaml`\n' +
+					'**OUTPUT_FOLDER:** `{{AUTORUN_FOLDER}}/vault`';
+
+				mockImportReads(assetPlaybook);
+				const download = await importLaunchPlaybook();
+				mockImportReads(assetPlaybook);
+				const launch = await importLaunchPlaybook({});
+
+				expect(download.playbook.prompt).toBe(expected);
+				expect(launch.playbook.prompt).toBe(expected);
+			});
+		});
 	});
 
 	describe('path traversal protection', () => {
@@ -2253,6 +2501,113 @@ describe('marketplace IPC handlers', () => {
 					expect(playbook.source).toBe('official');
 				}
 			}
+		});
+	});
+
+	describe('launch blocks in the merged manifest', () => {
+		const getManifest = () => handlers.get('marketplace:getManifest')!({} as any);
+		const cacheOf = (playbooks: unknown[]) =>
+			JSON.stringify({ fetchedAt: Date.now(), manifest: { lastUpdated: '2024-01-15', playbooks } });
+
+		it('keeps a valid launch block in the normalized form parseLaunchSpec returns', async () => {
+			// Someone else's JSON: a multiselect default written as one string, and a field this
+			// build does not know.
+			const rawLaunch = {
+				...launchSpec,
+				futureField: 'ignored',
+				inputs: [
+					...launchSpec.inputs,
+					{
+						name: 'SEVERITY',
+						label: 'Severity',
+						type: 'multiselect',
+						options: [{ value: 'HIGH' }, { value: 'LOW' }],
+						default: 'HIGH',
+					},
+				],
+			};
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(cacheOf([{ ...launchPlaybook, launch: rawLaunch }]))
+				.mockRejectedValueOnce({ code: 'ENOENT' });
+
+			const result = await getManifest();
+
+			const launch = result.manifest.playbooks[0].launch;
+			expect(launch).toEqual(parseLaunchSpec(rawLaunch).spec);
+			expect(launch).not.toHaveProperty('futureField');
+			expect(launch.inputs[4].default).toEqual(['HIGH']);
+			expect(logger.warn).not.toHaveBeenCalled();
+		});
+
+		it('drops an invalid launch block with a warning naming the playbook, and keeps the entry', async () => {
+			const badLaunch = {
+				inputs: [{ name: 'DATE', label: 'Date', type: 'text' }],
+				outro: { nextSteps: [] },
+			};
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(
+					cacheOf([
+						{ ...launchPlaybook, launch: badLaunch },
+						{ ...sampleManifest.playbooks[1], launch: null },
+					])
+				)
+				.mockRejectedValueOnce({ code: 'ENOENT' });
+
+			const result = await getManifest();
+
+			const [broken, noBlock] = result.manifest.playbooks;
+			// Still listed and downloadable, with no Launch.
+			expect(broken).toMatchObject({
+				id: 'launch-playbook',
+				title: 'Launch Playbook',
+				prompt: launchPrompt,
+				source: 'official',
+			});
+			expect(broken).not.toHaveProperty('launch');
+			// `launch: null` means "no block": dropped without a warning.
+			expect(noBlock).toMatchObject({ id: 'test-playbook-2', source: 'official' });
+			expect(noBlock).not.toHaveProperty('launch');
+			expect(logger.warn).toHaveBeenCalledTimes(1);
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Playbook "launch-playbook" has an invalid launch block, so it stays download-only',
+				'[Marketplace]',
+				{
+					errors: [
+						'input DATE: collides with a built-in template variable',
+						'outro.summary is required',
+					],
+				}
+			);
+		});
+
+		it('checks the launch blocks of local manifest entries the same way', async () => {
+			const localManifest = {
+				lastUpdated: '2024-01-20',
+				playbooks: [
+					{
+						...launchPlaybook,
+						id: 'local-launch',
+						path: 'custom/local-launch',
+						launch: { inputs: 'none', outro: { summary: 'Done.', nextSteps: [] } },
+					},
+				],
+			};
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(cacheOf([launchPlaybook]))
+				.mockResolvedValueOnce(JSON.stringify(localManifest));
+
+			const result = await getManifest();
+
+			const official = result.manifest.playbooks.find((p: any) => p.id === 'launch-playbook');
+			const local = result.manifest.playbooks.find((p: any) => p.id === 'local-launch');
+			expect(official.launch).toEqual(parseLaunchSpec(launchSpec).spec);
+			expect(local).toMatchObject({ title: 'Launch Playbook', source: 'local' });
+			expect(local).not.toHaveProperty('launch');
+			expect(logger.warn).toHaveBeenCalledWith(
+				'Playbook "local-launch" has an invalid launch block, so it stays download-only',
+				'[Marketplace]',
+				{ errors: ['inputs must be a list (it may be empty)'] }
+			);
 		});
 	});
 });

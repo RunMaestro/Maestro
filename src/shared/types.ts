@@ -1093,6 +1093,7 @@ export {
 	MarketplaceFetchError,
 	MarketplaceCacheError,
 	MarketplaceImportError,
+	MarketplaceLaunchValuesError,
 } from './marketplace-types';
 
 // ============================================================================

@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import type { StoredSession } from '../../stores/types';
 import type { SshRemoteConfig } from '../../../shared/types';
+import { MarketplaceLaunchValuesError } from '../../../shared/marketplace-types';
 import {
 	getMarketplaceManifest,
 	refreshMarketplaceManifest,
@@ -78,60 +79,67 @@ export function registerMarketplaceCallbacks(
 		return getMarketplaceReadme(playbookPath);
 	});
 
-	server.setImportMarketplacePlaybookCallback(async (sessionId, playbookId, targetFolderName) => {
-		const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
-		const session = sessions.find((s) => s.id === sessionId);
-		if (!session) {
-			return { success: false, error: `Session not found: ${sessionId}` };
-		}
-		const autoRunFolderPath: string | undefined = session.autoRunFolderPath;
-		if (!autoRunFolderPath) {
-			return {
-				success: false,
-				error: 'Session has no Auto Run folder configured',
-			};
-		}
-		// Resolve SSH up front so an unresolvable remote on an SSH-enabled
-		// session returns a typed failure instead of silently importing
-		// locally. Errors here aren't exceptional bugs - they're user
-		// misconfiguration - so we don't route them through the
-		// captureException catch below.
-		let sshConfig: SshRemoteConfig | undefined;
-		try {
-			sshConfig = resolveSessionSshConfig(session);
-		} catch (err) {
-			return {
-				success: false,
-				error: err instanceof Error ? err.message : 'SSH remote not found or disabled',
-			};
-		}
-		try {
-			const result = await importMarketplacePlaybook({
-				app: electronApp,
-				playbookId,
-				targetFolderName,
-				autoRunFolderPath,
-				sessionId,
-				sshConfig,
-			});
-			return {
-				success: true,
-				playbook: result.playbook,
-				importedDocs: result.importedDocs,
-				importedAssets: result.importedAssets,
-			};
-		} catch (err) {
-			const errorMsg = err instanceof Error ? err.message : String(err);
-			captureException(err instanceof Error ? err : new Error(errorMsg), {
-				extra: {
-					operation: 'webServerFactory:importMarketplacePlaybook',
-					sessionId,
+	server.setImportMarketplacePlaybookCallback(
+		async (sessionId, playbookId, targetFolderName, launchValues) => {
+			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const session = sessions.find((s) => s.id === sessionId);
+			if (!session) {
+				return { success: false, error: `Session not found: ${sessionId}` };
+			}
+			const autoRunFolderPath: string | undefined = session.autoRunFolderPath;
+			if (!autoRunFolderPath) {
+				return {
+					success: false,
+					error: 'Session has no Auto Run folder configured',
+				};
+			}
+			// Resolve SSH up front so an unresolvable remote on an SSH-enabled
+			// session returns a typed failure instead of silently importing
+			// locally. Errors here aren't exceptional bugs - they're user
+			// misconfiguration - so we don't route them through the
+			// captureException catch below.
+			let sshConfig: SshRemoteConfig | undefined;
+			try {
+				sshConfig = resolveSessionSshConfig(session);
+			} catch (err) {
+				return {
+					success: false,
+					error: err instanceof Error ? err.message : 'SSH remote not found or disabled',
+				};
+			}
+			try {
+				const result = await importMarketplacePlaybook({
+					app: electronApp,
 					playbookId,
 					targetFolderName,
-				},
-			});
-			logger.error(`Marketplace import failed for ${playbookId}: ${errorMsg}`, 'WebServer');
-			return { success: false, error: errorMsg };
+					autoRunFolderPath,
+					sessionId,
+					sshConfig,
+					launchValues,
+				});
+				return {
+					success: true,
+					playbook: result.playbook,
+					importedDocs: result.importedDocs,
+					importedAssets: result.importedAssets,
+				};
+			} catch (err) {
+				// Answers that fail validation are the client's input, not a fault: no Sentry report.
+				if (err instanceof MarketplaceLaunchValuesError) {
+					return { success: false, error: err.message };
+				}
+				const errorMsg = err instanceof Error ? err.message : String(err);
+				captureException(err instanceof Error ? err : new Error(errorMsg), {
+					extra: {
+						operation: 'webServerFactory:importMarketplacePlaybook',
+						sessionId,
+						playbookId,
+						targetFolderName,
+					},
+				});
+				logger.error(`Marketplace import failed for ${playbookId}: ${errorMsg}`, 'WebServer');
+				return { success: false, error: errorMsg };
+			}
 		}
-	});
+	);
 }

@@ -23,9 +23,22 @@ import type {
 	MarketplaceManifest,
 	MarketplaceCache,
 	MarketplacePlaybook,
+	PlaybookLaunchSpec,
+	PlaybookLaunchValues,
 } from '../../shared/marketplace-types';
-import { MarketplaceFetchError, MarketplaceImportError } from '../../shared/marketplace-types';
+import {
+	MarketplaceFetchError,
+	MarketplaceImportError,
+	MarketplaceLaunchValuesError,
+} from '../../shared/marketplace-types';
 import { isCompatible } from '../../shared/marketplace-compatibility';
+import {
+	applyLaunchInputs,
+	isLaunchValuesObject,
+	parseLaunchSpec,
+	resolveLaunchValues,
+	validateLaunchValues,
+} from '../../shared/playbookLaunch';
 import { isTaskSelectionMode, SshRemoteConfig, type TaskSelectionMode } from '../../shared/types';
 import { writeFileRemote, mkdirRemote } from '../utils/remote-fs';
 import { captureException } from '../utils/sentry';
@@ -159,6 +172,30 @@ function withExtensionlessDocuments(playbook: MarketplacePlaybook): MarketplaceP
 	};
 }
 
+/**
+ * A manifest entry's `launch` block is someone else's JSON, so only the normalized spec that
+ * `parseLaunchSpec` returns is kept. An invalid block is dropped with a warning and the entry
+ * stays, download-only: one bad block never breaks the manifest or hides the playbook.
+ */
+function withParsedLaunchSpec(playbook: MarketplacePlaybook): MarketplacePlaybook {
+	const { launch, ...withoutLaunch } = playbook;
+	// Absent, or `null` (how this manifest says "none", as with `prompt: null`): no block, no warning.
+	if (launch === undefined || launch === null) return withoutLaunch;
+	const { spec, errors } = parseLaunchSpec(launch);
+	if (spec) return { ...withoutLaunch, launch: spec };
+	logger.warn(
+		`Playbook "${playbook.id}" has an invalid launch block, so it stays download-only`,
+		LOG_CONTEXT,
+		{ errors }
+	);
+	return withoutLaunch;
+}
+
+/** Every entry of either manifest passes through here before anything reads it. */
+function normalizeManifestEntry(playbook: MarketplacePlaybook): MarketplacePlaybook {
+	return withParsedLaunchSpec(withExtensionlessDocuments(playbook));
+}
+
 function mergeManifests(
 	official: MarketplaceManifest | null,
 	local: MarketplaceManifest | null
@@ -170,7 +207,7 @@ function mergeManifests(
 		return {
 			...official,
 			playbooks: official.playbooks.map((p) => ({
-				...withExtensionlessDocuments(p),
+				...normalizeManifestEntry(p),
 				source: 'official' as const,
 			})),
 		};
@@ -179,7 +216,7 @@ function mergeManifests(
 		return {
 			...local,
 			playbooks: local.playbooks.map((p) => ({
-				...withExtensionlessDocuments(p),
+				...normalizeManifestEntry(p),
 				source: 'local' as const,
 			})),
 		};
@@ -198,7 +235,7 @@ function mergeManifests(
 			logger.warn(`Local playbook "${playbook.id}" missing required fields, skipping`, LOG_CONTEXT);
 			continue;
 		}
-		localMap.set(playbook.id, { ...withExtensionlessDocuments(playbook), source: 'local' });
+		localMap.set(playbook.id, { ...normalizeManifestEntry(playbook), source: 'local' });
 	}
 	const mergedPlaybooks = officialPlaybooks.map((official) => {
 		const localOverride = localMap.get(official.id);
@@ -206,7 +243,7 @@ function mergeManifests(
 			logger.info(`Local playbook "${official.id}" overrides official version`, LOG_CONTEXT);
 			return localOverride;
 		}
-		return { ...withExtensionlessDocuments(official), source: 'official' as const };
+		return { ...normalizeManifestEntry(official), source: 'official' as const };
 	});
 	const officialIds = new Set(officialPlaybooks.map((p) => p.id));
 	const localOnlyPlaybooks = Array.from(localMap.values()).filter(
@@ -467,6 +504,12 @@ export interface ImportPlaybookOptions {
 	sessionId: string;
 	/** Resolved SSH config - caller is responsible for looking it up. */
 	sshConfig?: SshRemoteConfig;
+	/**
+	 * Launch answers, keyed by input name. When given and the playbook has a launch spec, they are
+	 * written into the saved prompt's configuration lines; task documents are written as a
+	 * Download writes them. Absent (Download), the import is unchanged.
+	 */
+	launchValues?: PlaybookLaunchValues;
 }
 
 export interface ImportPlaybookServiceResult {
@@ -486,13 +529,56 @@ export interface ImportPlaybookServiceResult {
 }
 
 /**
+ * The values a launch writes: the answers resolved against the spec (a default fills what was
+ * left empty), then checked. Throws `MarketplaceLaunchValuesError` naming every failing input.
+ */
+function resolveValidLaunchValues(
+	spec: PlaybookLaunchSpec,
+	answers: PlaybookLaunchValues
+): PlaybookLaunchValues {
+	const values = resolveLaunchValues(spec, answers);
+	const fieldErrors = validateLaunchValues(spec, values);
+	if (Object.keys(fieldErrors).length > 0) throw new MarketplaceLaunchValuesError(fieldErrors);
+	return values;
+}
+
+/**
+ * The prompt an import saves, before its asset references are rebased. A Download (no
+ * `launchValues`, or a playbook without a launch spec) saves the shipped prompt; a launch saves it
+ * with the answers on its configuration lines. The answers go in before the rebase, so a launch
+ * with every default saves exactly what a Download saves. `launchValues` may come from IPC or the
+ * web bridge, so its shape is checked too.
+ */
+function importedPromptFor(
+	playbook: MarketplacePlaybook,
+	launchValues: PlaybookLaunchValues | undefined
+): string {
+	const shipped = playbook.prompt ?? '';
+	if (launchValues === undefined || launchValues === null) return shipped;
+	if (!isLaunchValuesObject(launchValues)) {
+		throw new MarketplaceImportError('launchValues must be an object keyed by input name');
+	}
+	const spec = playbook.launch;
+	if (!spec) return shipped;
+	return applyLaunchInputs(shipped, spec, resolveValidLaunchValues(spec, launchValues));
+}
+
+/**
  * Import a playbook to the Auto Run folder (local or remote via SSH).
  * Mirrors the IPC handler import flow exactly.
  */
 export async function importMarketplacePlaybook(
 	opts: ImportPlaybookOptions
 ): Promise<ImportPlaybookServiceResult> {
-	const { app, playbookId, targetFolderName, autoRunFolderPath, sessionId, sshConfig } = opts;
+	const {
+		app,
+		playbookId,
+		targetFolderName,
+		autoRunFolderPath,
+		sessionId,
+		sshConfig,
+		launchValues,
+	} = opts;
 	const isRemote = !!sshConfig;
 
 	assertSafeTargetFolderName(targetFolderName);
@@ -552,6 +638,13 @@ export async function importMarketplacePlaybook(
 				`you have ${runningVersion}. Update Maestro and try again.`
 		);
 	}
+
+	// Built before anything touches the disk: a launch whose answers fail validation throws here
+	// and leaves no folder behind.
+	const prompt = rebaseAssetReferences(
+		importedPromptFor(marketplacePlaybook, launchValues),
+		targetFolderName
+	);
 
 	const targetPath = isRemote
 		? autoRunFolderPath.endsWith('/')
@@ -684,7 +777,7 @@ export async function importMarketplacePlaybook(
 			})),
 		loopEnabled: marketplacePlaybook.loopEnabled,
 		maxLoops: marketplacePlaybook.maxLoops,
-		prompt: rebaseAssetReferences(marketplacePlaybook.prompt ?? '', targetFolderName),
+		prompt,
 		// The manifest is someone else's JSON: only a value Auto Run knows is kept. Absent means
 		// per task, so a playbook that never declared one imports exactly as it always has.
 		...(isTaskSelectionMode(marketplacePlaybook.taskSelectionMode) && {
