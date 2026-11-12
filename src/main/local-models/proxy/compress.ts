@@ -77,6 +77,7 @@ import { estimateTokenCount, getBasename, isAbsolutePath } from '../../../shared
 import { serializedJsonByteLength } from '../../../shared/jsonUtils';
 import type { TokenProxyRequestKind } from '../../../shared/local-models/token-proxy';
 import { TOKEN_PROXY_RETRIEVE_TOOL_NAME } from '../../../shared/local-models/token-proxy-retrieve-tool';
+import { describeToolActivityStatus } from '../../../shared/toolActivityLabel';
 import { getPrompt } from '../../prompt-manager';
 import { logger } from '../../utils/logger';
 import { shellEscape } from '../../utils/shell-escape';
@@ -496,6 +497,38 @@ function isModelItem(body: string, item: JsonSpan): boolean {
 	return type === 'reasoning' || type.endsWith('_call');
 }
 
+/**
+ * Responses shell results can carry their exit code inside a JSON output string,
+ * without `is_error` on the result item. Only the known output/metadata envelope
+ * and an unambiguous integer code supply failure evidence. This only vetoes;
+ * zero does not turn otherwise unknown results into a success claim.
+ */
+function hasFailedShellEnvelope(body: string, output: JsonSpan | undefined): boolean {
+	const text = stringValue(body, output);
+	if (!text || !text.trimStart().startsWith('{')) return false;
+	const root = parseJsonSpans(text);
+	if (
+		root?.kind !== 'object' ||
+		root.members.filter((member) => member.key === 'metadata').length !== 1 ||
+		root.members.filter((member) => member.key === 'output').length !== 1 ||
+		memberOf(root, 'output')?.kind !== 'string'
+	)
+		return false;
+	const metadata = memberOf(root, 'metadata');
+	if (
+		metadata?.kind !== 'object' ||
+		metadata.members.filter((member) => member.key === 'exit_code').length !== 1
+	)
+		return false;
+	const code = memberOf(metadata, 'exit_code');
+	if (code?.kind !== 'scalar') return false;
+	const exitCode = Number(text.slice(code.start, code.end));
+	return (
+		Number.isSafeInteger(exitCode) &&
+		describeToolActivityStatus({ exit_code: exitCode }) === 'failed'
+	);
+}
+
 function responsesToolResults(
 	body: string,
 	root: JsonSpan,
@@ -513,15 +546,18 @@ function responsesToolResults(
 		const type = field(body, item, 'type');
 		if (type === 'function_call' || type === 'custom_tool_call') calls.push(item);
 		if (!RESPONSES_OUTPUT_TYPES.has(field(body, item, 'type') ?? '')) continue;
-		out.push(
-			describeToolResult(
-				body,
-				item,
-				memberOf(item, 'output'),
-				index < end && (early || !hasCacheControl(body, item)),
-				early
-			)
+		const output = memberOf(item, 'output');
+		const descriptor = describeToolResult(
+			body,
+			item,
+			output,
+			index < end && (early || !hasCacheControl(body, item)),
+			early
 		);
+		if (descriptor.failureStatus !== 'failed' && hasFailedShellEnvelope(body, output)) {
+			descriptor.failureStatus = 'failed';
+		}
+		out.push(descriptor);
 	}
 	return out;
 }

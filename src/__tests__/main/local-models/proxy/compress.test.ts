@@ -1230,6 +1230,96 @@ describe('compressRequestBody: OpenAI Responses', () => {
 		expect(result.blocks[0].compressors).toEqual(['json', 'logs']);
 	});
 
+	it.each([1, -1, 127])(
+		'protects a structured exit code %i before a frozen verdict in both modes',
+		async (exitCode) => {
+			const shellResult = JSON.stringify({ output: LOG, metadata: { exit_code: exitCode } });
+			for (const early of [false, true]) {
+				const cache = newCache();
+				const seeded = await compressRequestBody(
+					'anthropic-messages',
+					anthropicBody(shellResult),
+					options({ cache, early })
+				);
+				expect(seeded.stats.compressed).toBe(1);
+				const frozen = await cache.read(verdictKey(shellResult, requestProfile({ early })));
+				expect(frozen).not.toBeNull();
+				const read = vi.spyOn(cache, 'read');
+				const write = vi.spyOn(cache, 'write');
+				const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'skipped' }));
+				const body = JSON.stringify({
+					input: [
+						{ type: 'function_call_output', call_id: 'c1', output: shellResult },
+						{ type: 'message', role: 'assistant', content: [] },
+					],
+				}).replace('{', '{ "exact":9007199254740993,');
+				const guarded = await compressRequestBody(
+					'openai-responses',
+					body,
+					options({ cache, early, summarize, modelMinTokens: 1 })
+				);
+				expect(guarded).toMatchObject({
+					body,
+					changed: false,
+					blocks: [],
+					stats: { candidates: 0, cacheHits: 0, eligibilityVetoes: { failed: 1 } },
+				});
+				expect(read).not.toHaveBeenCalled();
+				expect(write).not.toHaveBeenCalled();
+				expect(summarize).not.toHaveBeenCalled();
+				read.mockRestore();
+				write.mockRestore();
+				expect(await cache.read(verdictKey(shellResult, requestProfile({ early })))).toEqual(
+					frozen
+				);
+			}
+		}
+	);
+
+	it.each([
+		['{"output":"ok","metadata":{"exit_code":1}}', 'failed'],
+		['{"output":"ok","metadata":{"exit_code":0}}', 'unknown'],
+		['{"output":"ok","metadata":{"exit_code":"1"}}', 'unknown'],
+		['{"output":"ok","metadata":{"exit_code":true}}', 'unknown'],
+		['{"output":"ok","metadata":{"exit_code":null}}', 'unknown'],
+		['{"output":"ok","metadata":{"exit_code":1.5}}', 'unknown'],
+		['{"output":"ok","metadata":{"exit_code":1e999}}', 'unknown'],
+		['{"output":"ok","metadata":{"exit_code":1,"exit_code":0}}', 'unknown'],
+		['{"output":"ok","metadata":{"exit_code":0,"exit_code":1}}', 'unknown'],
+		['{"output":"ok","metadata":{"exit_code":1},"metadata":{"exit_code":0}}', 'unknown'],
+		['{"output":"ok","output":"other","metadata":{"exit_code":1}}', 'unknown'],
+		['{"metadata":{"exit_code":1}}', 'unknown'],
+		['[{"output":"ok","metadata":{"exit_code":1}}]', 'unknown'],
+		['{"output":"ok","metadata":{"exit_code":1}', 'unknown'],
+		['ERROR: exit code 1', 'unknown'],
+	])('classifies only unambiguous structured exit evidence: %s', (output, status) => {
+		const body = JSON.stringify({
+			input: [{ type: 'function_call_output', call_id: 'c1', output }],
+		});
+		expect(
+			findToolResultDescriptors('openai-responses', body, parseJsonSpans(body)!)[0].failureStatus
+		).toBe(status);
+	});
+
+	it.each([
+		[false, 1],
+		[true, 0],
+	])('preserves failure when is_error=%s and exit_code=%i disagree', (is_error, exit_code) => {
+		const body = JSON.stringify({
+			input: [
+				{
+					type: 'function_call_output',
+					call_id: 'c1',
+					is_error,
+					output: JSON.stringify({ output: 'ok', metadata: { exit_code } }),
+				},
+			],
+		});
+		expect(
+			findToolResultDescriptors('openai-responses', body, parseJsonSpans(body)!)[0].failureStatus
+		).toBe('failed');
+	});
+
 	it('leaves a request whose input is one string alone', async () => {
 		const body = JSON.stringify({ model: 'gpt-5', input: LOG });
 		const result = await compressRequestBody('openai-responses', body, options());
