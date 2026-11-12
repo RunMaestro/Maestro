@@ -415,7 +415,7 @@ Manages agents and groups with CRUD operations.
 
 **Key methods:**
 
-- `createNewSession(agentId, workingDir, name)` - Creates new agent with dual processes
+- `createNewSession(draft)` - Creates the agent a `NewAgentDraft` describes and resolves its id (`null` when no agent was created)
 - `deleteSession(id, showConfirmation)` - Delete agent with confirmation
 - `toggleInputMode()` - Switch between AI and terminal mode
 - `updateScratchPad(content)` - Update session scratchpad
