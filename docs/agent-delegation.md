@@ -17,6 +17,8 @@ The feature has four parts. Each has its own section below.
 | [Consultation budget](#the-consultation-budget) | The most agent turns one of your messages can set in motion        | **Settings > General**                                                |
 | [Delegation Graph](#the-delegation-graph)       | Every roster drawn as one picture, which you can also edit by hand | The hamburger menu, Quick Actions, or an agent or group's right-click |
 
+Agent Delegation is part of every install. It is not an [Encore Feature](./encore-features), so there is nothing to switch on, and it works the same in the [web interface](./remote-control).
+
 ## Why It Exists
 
 A backend agent that needs to know what the API consumer expects can ask the frontend agent itself. A release agent can hand a changelog to the docs agent and carry on. Without a roster, every one of those hand-offs waits for you to notice and type the mention.
@@ -71,6 +73,19 @@ Open **Edit Agent** (right-click an agent in the Left Bar, or `Cmd+K` then "Edit
 
 The **note** on an explicit row is the hint the agent reads for when to reach that peer ("owns the billing schema, ask before changing a migration"). It is guidance, not a change to the access rule. Write notes the way you would brief a new teammate.
 
+A row picks one agent from a filterable list, and each agent can have only one row. **Add Peer** is disabled when there is nobody left to add: its tooltip reads "There are no other agents yet" or "Every other agent already has a row". The trash button on a row is **Remove peer**. Two row states carry a warning under the row:
+
+- A row for an agent that was deleted shows "Agent no longer exists" in the picker, and the warning "This agent no longer exists - the row grants nothing. Remove it or pick another agent."
+- A row with neither square lit shows "No access selected - this row excludes the agent, even when a group or worktree grant covers it." See [Precedence and Exclusions](#precedence-and-exclusions).
+
+### How peers see this agent
+
+The Peers tab also has the field **How peers see this agent**. Here an agent describes its own specialty and when to call on it, for example "Owns API design and backend services. Consult for endpoint contracts, data models, and service debugging." The text is shared with every agent that can reach this one as a peer, including group and worktree peers. It shows in their prompt as the **Specialty** column (see [What the Agent Sees](#what-the-agent-sees)).
+
+A note and a specialty answer different questions. The note is written on the roster of the agent that reaches out, about one peer. The specialty is written once on the peer itself, and every agent that can reach it reads the same text. Neither one changes who may reach whom.
+
+The field is in Edit Agent and the New Agent dialog. It is not in Group Settings, because it describes one agent, not a group. From the CLI, set it with `maestro-cli update-agent <agent> --peer-description "<text>"`, and pass an empty string to clear it. `maestro-cli show agent <agent>` prints it as **Peer description**.
+
 ### Groups and worktrees are resolved live
 
 The group and worktree checkboxes do not copy a list of agents. They store a grant, and Maestro works out who it covers **each time the agent starts a turn**. So:
@@ -106,11 +121,13 @@ The roster is rendered into the agent's system prompt as a `## Peer Agents` sect
 ```markdown
 ## Peer Agents
 
-| Agent    | Agent ID    | Access             | Notes                  |
-| -------- | ----------- | ------------------ | ---------------------- |
-| Frontend | `a1b2c3...` | Consult + Delegate | Owns the checkout flow |
-| Docs     | `d4e5f6...` | Delegate only      |                        |
+| Agent    | Agent ID    | Access             | Specialty                  | Notes                  |
+| -------- | ----------- | ------------------ | -------------------------- | ---------------------- |
+| Frontend | `a1b2c3...` | Consult + Delegate | Owns the React web client. | Owns the checkout flow |
+| Docs     | `d4e5f6...` | Delegate only      |                            |                        |
 ```
+
+The **Specialty** column appears only when at least one peer has a [specialty](#how-peers-see-this-agent), and the **Notes** column only when at least one row has a note. An agent with no reachable peer gets no `## Peer Agents` section at all.
 
 Below the table the prompt teaches only the commands the roster allows, so an agent whose peers are all consult only is never shown the delegate command. It also tells the agent to decide for itself, from the notes and what it knows of each peer's scope, whether a peer is the right one to reach, and to tell you which peer it reached and why.
 
@@ -133,7 +150,9 @@ Do not confuse this with the group grant itself. They answer two different quest
 
 So a group default of "Peers in my group: R" gives every new agent a live group grant, and that is usually the one line a team needs.
 
-Editing a group's defaults does not change the agents already in it, unless you [publish](./features#publishing-a-save-to-existing-agents) the save. A publish **replaces** each agent's explicit rows with the group's rows. It does not merge them, and the publish dialog names that before you confirm. A group Maestro made for a git worktree family has no Group Settings.
+Editing a group's defaults does not change the agents already in it, unless you [publish](./features#publishing-a-save-to-existing-agents) the save. A publish **replaces** each agent's explicit rows with the group's rows. It does not merge them, and the publish dialog names that before you confirm. The **Published to** toast is the undo: click it to put back what the publish changed. The undo does not survive a restart of Maestro. A group Maestro made for a git worktree family has no Group Settings.
+
+From the CLI, read a group's defaults with `maestro-cli group-settings <group-id>`, and set its roster with the [same flags](#from-the-cli) on `maestro-cli update-group-settings <group-id>`. Add `--publish --yes` to write the change into the agents already in the group. The CLI has no undo for a publish.
 
 ## Group Chats and Moderators Have No Peers
 
@@ -151,13 +170,25 @@ The **consultation budget** is one number: the most consults and delegations tha
 | `0`          | Peer consults and delegations are switched off entirely.            |
 | `1` to `500` | A tighter or looser bound. There is no unlimited.                   |
 
-Change it in **Settings > General > Consultation Budget**, or from the CLI:
+Change it in **Settings > General > Consultation Budget**, in the field **Peer consults and delegations per message**, or from the CLI:
 
 ```bash
 maestro-cli settings set maxConsultationsPerTurn 10
 ```
 
-The agent is told how much is left as each turn starts, so it can ration its consults instead of finding the ceiling by hitting it. When the budget is spent, the next `ask` or `dispatch` is **refused by name**, with the count and the setting that controls it, so the agent knows the peer was never reached and does not mistake a refusal for an empty answer.
+The field takes a whole number from 0 to 500. A value set from the CLI is rounded down and held to that range, and a value that is not a number counts as the default, `25`.
+
+The agent is told how much is left as each turn starts, so it can ration its consults instead of finding the ceiling by hitting it. Its prompt carries a **Budget** line that says how many of the consults and delegations this message allows are left, that all of them are spent, or that the budget is 0 and peer consults are switched off.
+
+When the budget is spent, the next `ask` or `dispatch` is **refused by name**, so the agent knows the peer was never reached and does not mistake a refusal for an empty answer. Nothing is sent to the peer. The refusal reads one of these:
+
+| Case                                 | Message starts with                                                                                                                                                       |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The budget is `0`                    | "Peer consults and delegations are switched off, so nothing was sent: the consultation budget is 0."                                                                      |
+| The chain has spent the whole budget | "Consultation budget exhausted, so nothing was sent: the agents working on this message have spent _N_ of _N_ consults and delegations." It tells the agent not to retry. |
+| Maestro could not read the count     | "Consultation budget unavailable, so nothing was sent."                                                                                                                   |
+
+The first two end by naming the `maxConsultationsPerTurn` setting and where to change it. The third adds the reason the count could not be read.
 
 ## The Delegation Graph
 
@@ -167,14 +198,16 @@ The graph reads the same three sources the Peers tab writes, and in Edit it writ
 
 ### Opening It
 
-| Where              | How                                                                      | Opens on              |
-| ------------------ | ------------------------------------------------------------------------ | --------------------- |
-| **Hamburger menu** | **Delegation Graph**                                                     | Every agent           |
-| **Quick Actions**  | `Cmd+K` / `Ctrl+K`, then **Delegation Graph**                            | Every agent           |
-| **Quick Actions**  | `Cmd+K` / `Ctrl+K`, then **Delegation Graph:** and a group name          | That group            |
-| **Left Bar**       | Right-click a group header, then **Delegation Graph**                    | That group            |
-| **Left Bar**       | Right-click a linked agent, then **Agent Tools > View Delegation Graph** | Its connected cluster |
-| **CLI**            | `maestro-cli open delegation-graph [--group <group-id>]`                 | Either of the two     |
+| Where              | How                                                                      | Opens on                |
+| ------------------ | ------------------------------------------------------------------------ | ----------------------- |
+| **Hamburger menu** | **Delegation Graph**                                                     | Every agent             |
+| **Quick Actions**  | `Cmd+K` / `Ctrl+K`, then **Delegation Graph**                            | Every agent             |
+| **Quick Actions**  | `Cmd+K` / `Ctrl+K`, then **Delegation Graph:** and a group name          | That group              |
+| **Left Bar**       | Right-click a group header, then **Delegation Graph**                    | That group              |
+| **Left Bar**       | Right-click a linked agent, then **Agent Tools > View Delegation Graph** | Its connected cluster   |
+| **CLI**            | `maestro-cli open delegation-graph [--group <group-id>]`                 | Every agent, or a group |
+
+The Quick Actions list has one **Delegation Graph:** entry for every group, hidden groups and worktree groups included. The CLI opens every agent or one group. It cannot open an agent's cluster; open the graph and pick the agent instead. The CLI also accepts `delegation`, `delegations`, `peer-graph`, and `peers-graph` in place of `delegation-graph`.
 
 The graph has no keyboard shortcut by default. You can give it one in **Settings > Shortcuts** (see [Keyboard Shortcuts](./keyboard-shortcuts)).
 
@@ -184,7 +217,7 @@ The first control in the toolbar picks the **scope**: **All agents**, one group,
 
 A group's graph draws the agents of that group, and also any agent outside the group that an arrow joins to one of them. It does not draw an arrow between two agents that are both outside the group. Switch to **All agents** to see those.
 
-An agent's cluster follows both incoming and outgoing arrows, including indirect connections and agents in other groups. From the global view, select a linked agent and choose **Show cluster**, or double-click a node in View. **Show all agents** returns to the fleet. If the cluster's anchor agent is deleted, the graph returns to all agents.
+An agent's cluster follows both incoming and outgoing arrows, including indirect connections and agents in other groups. From the global view, select a linked agent and choose **Show cluster**, or double-click or right-click a node in View. While you are on a cluster, the scope list shows it as **Cluster:** and the agent's name. **Show all agents** returns to the fleet. If the cluster's anchor agent is deleted, the graph returns to all agents.
 
 **Hide unconnected** hides agents with no incoming or outgoing arrows in the current scope, in both View and Edit. It defaults to off and remembers your choice across scopes and reopening. It changes only what is shown. Agents you add in Edit remain visible so you can connect them; switching to View hides them until they have a relationship. If every agent is hidden, turn the filter off to show them again.
 
@@ -214,17 +247,19 @@ To learn more about one relationship or one agent:
 
 - **Hover an arrow in Edit** to read it as a sentence ("Backend may consult Frontend"), with the source that produced it and the note on the row.
 - **Click an agent** to highlight its relationships. A panel lists who it **can reach** and who it is **reachable by**, and has an **Open Peers tab** button that takes you to that agent's settings.
-- **Legend** in the toolbar explains the lines and cluster navigation, and counts the agents, arrows, and mutual pairs on screen. In Edit it also explains node borders.
+- **Legend** in the toolbar explains the lines and cluster navigation, and counts the agents, arrows, and mutual pairs on screen. In Edit it also explains node borders. The legend is open the first time, and the graph remembers whether you closed it.
 
 ### Arranging the Graph
 
 The toolbar wraps to fit the window. Its layout menu offers **Hierarchical** (top-down rows), **Force**, **Radial**, **Mind Map**, and **Lobes**, and shows **Manual** after you drag an agent. Use arrow keys to move through the menu, Enter to apply a layout, or Escape to close it. The global view defaults to **Lobes**, which groups linked communities, including disconnected clusters. Group and agent-cluster views default to **Hierarchical**. The graph remembers a layout you choose for each scope. **Fit** brings the whole graph into view, and the minimap provides an overview.
 
-Press **Cmd+E** / **Ctrl+E** to toggle View and Edit. In either mode, press **L** to cycle layouts, **F** to fit the graph, **S** to switch the scroll wheel between zoom and pan, and **+ / -** to increase or decrease node spacing. Hold **Shift** while scrolling to use the other scroll action. The legend includes clickable shortcut hints. **O** opens the selected agent's Peers tab; **Space** shows its connected cluster. In View, use the arrow keys to select agents. Shortcuts leave text fields and open relationship or confirmation editors alone. Unmodified shortcuts leave selectors alone, and cycling away from Manual asks before replacing your placement.
+Press **Cmd+E** / **Ctrl+E** to toggle View and Edit. In either mode, press **L** to cycle layouts, **F** to fit the graph, **S** to switch the scroll wheel between zoom and pan, and **+ / -** to increase or decrease node spacing. Hold **Shift** while scrolling to use the other scroll action. The **Scroll: Zoom** / **Scroll: Pan** button in the toolbar does the same as **S**, and the graph remembers your choice. The legend includes clickable shortcut hints. **O** opens the selected agent's Peers tab; **Space** shows its connected cluster. In View, use the arrow keys to select agents. Shortcuts leave text fields and open relationship or confirmation editors alone. Unmodified shortcuts leave selectors alone, and cycling away from Manual asks before replacing your placement.
 
 Edit layouts keep disconnected teams in separate blocks and reserve room for the full agent cards. Mind Map and Lobes preserve their branches and communities when making room for cards. Apply a layout again to rearrange a saved graph with this spacing. Dense mutual relationships can still cross; select an agent to dim unrelated edges or show its connected cluster to reduce the graph's scope.
 
-You can drag any agent to a new place, in either mode. The scope is then marked **Manual**, and Maestro leaves every agent where you put it. Positions are saved for each scope separately and are still there after you restart the app. Manual placement hides the algorithm's cluster outlines. **Reset layout** forgets the arrangement and returns to Lobes globally, or Hierarchical for a group or agent cluster.
+You can drag any agent to a new place, in either mode. The scope is then marked **Manual**, and Maestro leaves every agent where you put it. Positions are saved for each scope separately and are still there after you restart the app. Manual placement hides the algorithm's cluster outlines. **Reset layout** forgets the arrangement and returns to Lobes globally, or Hierarchical for a group or agent cluster. It asks first, and it is disabled while the scope has nothing saved.
+
+The layouts and positions are kept in the `delegationGraphLayouts` setting, one entry per scope: `all`, `group:<group-id>`, or `agent:<agent-id>`. Read them with `maestro-cli settings get delegationGraphLayouts`, and reset one scope with `maestro-cli settings reset delegationGraphLayouts.<scope key>`. An open graph picks up the change.
 
 Moving a box changes where an agent is drawn. It never changes who the agent can reach.
 
@@ -279,7 +314,7 @@ Turning off both squares on an arrow that exists does the same thing. The button
 
 #### Adding an agent to a group's graph
 
-A group's graph leaves out every agent that no arrow joins to the group, so there is no box to draw an arrow to. In Edit, the **Add agent** control in the toolbar lists those agents under the group each one is in. Pick one and it appears on the canvas.
+A group's graph leaves out every agent that no arrow joins to the group, so there is no box to draw an arrow to. In Edit, the **Add agent** control in the toolbar lists those agents under the group each one is in. Pick one and it appears on the canvas. You can also drag an agent from the Left Bar onto the canvas: the drop point reads "Drop to add" and the agent's name, or says the agent is already on this graph and selects it.
 
 Adding an agent to the graph **does not move it into the group** and changes nothing about it. It is a way to get a box to connect to:
 
@@ -306,15 +341,26 @@ maestro-cli update-agent Backend --remove-peer Docs
 maestro-cli update-agent Backend --group-peers r --worktree-peers rw
 ```
 
-| Flag                               | Does                                                                                   |
-| ---------------------------------- | -------------------------------------------------------------------------------------- |
-| `--peer <agent>:<r\|w\|rw\|none>`  | Sets one explicit row. Repeatable.                                                     |
-| `--peer-note <agent>:<text>`       | Sets the note on a row. Repeatable. Needs a row, and empty text clears it.             |
-| `--remove-peer <agent>`            | Deletes a row, so the group and worktree grants apply to that agent again. Repeatable. |
-| `--group-peers <r\|w\|rw\|off>`    | Sets the group grant. `off` clears it.                                                 |
-| `--worktree-peers <r\|w\|rw\|off>` | Sets the worktree grant. `off` clears it.                                              |
+| Flag                               | Does                                                                                     |
+| ---------------------------------- | ---------------------------------------------------------------------------------------- |
+| `--peer <agent>:<r\|w\|rw\|none>`  | Sets one explicit row. Repeatable.                                                       |
+| `--peer-note <agent>:<text>`       | Sets the note on a row. Repeatable. Needs a row, and empty text clears it.               |
+| `--remove-peer <agent>`            | Deletes a row, so the group and worktree grants apply to that agent again. Repeatable.   |
+| `--group-peers <r\|w\|rw\|off>`    | Sets the group grant. `off` clears it.                                                   |
+| `--worktree-peers <r\|w\|rw\|off>` | Sets the worktree grant. `off` clears it.                                                |
+| `--peer-description <text>`        | Sets this agent's own [specialty](#how-peers-see-this-agent). An empty string clears it. |
 
-These flags are a **patch**: naming one peer leaves the other rows alone. The same flags work on `update-group-settings`, so a [group's defaults](#a-roster-for-new-agents) can be set the same way.
+These flags are a **patch**: naming one peer leaves the other rows alone. The roster flags (all but `--peer-description`) work on `update-group-settings` too, so a [group's defaults](#a-roster-for-new-agents) can be set the same way.
+
+`create-agent` takes `--peer`, `--peer-note`, `--group-peers`, and `--worktree-peers` for the roster a new agent starts with. With `--group <group-id>`, the new agent starts from that group's defaults, its peers included, and the flags you pass override them. Add `--no-group-defaults` to create a bare agent in the group instead. `create-agent` has no `--peer-description`; set the specialty with `update-agent` after the agent exists.
+
+An edit that cannot be applied is refused, and nothing is written. The refusal is one of these:
+
+- "An agent cannot be its own peer."
+- `Peer "<id>" is not an agent.`
+- `"<id>" is both given access and removed in one edit.`
+- `"<id>" has a note and is removed in one edit.`
+- `"<id>" has no peer row to carry a note. Give it access in the same edit.`
 
 The graph's gestures are these same flags. The CLI has no drawing mode and does not need one:
 
