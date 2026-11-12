@@ -207,7 +207,7 @@ Under the field, **If no model can answer** sets `gate_on_unavailable`: **Start 
 
 A trigger that fans out to several agents or commands is several subscriptions in `cue.yaml`. The Gate field and `maestro-cli cue gate` both set the gate on all of them, so every branch is gated together. A CLI trigger has no Gate field, because it only fires from a manual run and manual runs are not gated.
 
-**When the model cannot answer** (the task is off, the model is not downloaded, the server is down, the reply is not a yes or no), the default is to start the run anyway and warn you with a sticky notice, **Cue gate not checked** (or **Cue gate skipped a run** under `skip`), at most once per agent every 30 minutes. A missing gate model must not silently stop your automation. To skip instead, set the policy on the subscription:
+When the model cannot answer (the task is off, the model is not downloaded, the server is down, the reply is not a yes or no), the default is to start the run anyway and warn you with a sticky notice, **Cue gate not checked** (or **Cue gate skipped a run** under `skip`), at most once per agent every 30 minutes. A missing gate model must not silently stop your automation. To skip instead, set the policy on the subscription:
 
 ```yaml
 gate: the change touches the public API
