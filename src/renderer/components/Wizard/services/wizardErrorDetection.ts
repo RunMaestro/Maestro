@@ -168,7 +168,7 @@ export function detectWizardError(
 		return {
 			type: 'agent_not_installed',
 			title: ERROR_TITLES.agent_not_installed,
-			message: agentNotInstalledMessage(agentType, missingReason),
+			message: agentNotInstalledMessage(agentType, missingReason, getPlatform()),
 			recoveryHint: missingBinaryHint(agentType, missingReason),
 			canRetry: false,
 		};

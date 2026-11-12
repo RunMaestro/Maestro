@@ -95,6 +95,26 @@ describe('detectWizardError', () => {
 			}
 		});
 
+		it('names the platform install command in the message', () => {
+			const maestro = (window as unknown as { maestro?: { platform?: string } }).maestro;
+			const originalPlatform = maestro?.platform;
+			if (maestro) maestro.platform = 'win32';
+
+			try {
+				const error = detectWizardError('zsh: command not found: claude', 'claude-code', {
+					exitCode: 127,
+					stderr: 'zsh: command not found: claude',
+					command: 'claude',
+				});
+
+				expect(error?.type).toBe('agent_not_installed');
+				expect(error?.message).toContain('powershell -NoProfile');
+				expect(error?.recoveryHint).toContain('powershell -NoProfile');
+			} finally {
+				if (maestro) maestro.platform = originalPlatform;
+			}
+		});
+
 		it('leaves an SSH remote to the SSH error bank', () => {
 			const error = detectWizardError('bash: codex: command not found', 'codex', {
 				exitCode: 127,
