@@ -12,6 +12,7 @@ import type { GroupChatRightTab } from '../../components/GroupChatRightPanel';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import type { GroupChatQueueState } from '../../../shared/group-chat-types';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 import { useModalStore } from '../../stores/modalStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useBatchStore } from '../../stores/batchStore';
@@ -594,9 +595,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 				notifyToast({
 					type: 'error',
 					title: 'Group Chat',
-					message: isValidationError
-						? message.replace(/^Error invoking remote method '[^']+': /, '')
-						: 'Failed to create group chat',
+					message: isValidationError ? ipcErrorMessage(err) : 'Failed to create group chat',
 				});
 				if (!isValidationError) {
 					throw err; // Unexpected - let Sentry capture via unhandledrejection

@@ -66,7 +66,8 @@ describe('cueService - read methods', () => {
 				'error',
 				'Cue getSettings error:',
 				undefined,
-				expect.any(Error)
+				// The renderer logger flattens an Error so it survives IPC and JSON.
+				expect.objectContaining({ name: 'Error', message: 'fail' })
 			);
 		});
 	});

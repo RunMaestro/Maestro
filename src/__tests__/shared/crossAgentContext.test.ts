@@ -287,6 +287,12 @@ describe('deriveConsultSubject', () => {
 		expect(subject.length).toBe(10);
 	});
 
+	it('cuts at a word boundary rather than mid-word', () => {
+		expect(deriveConsultSubject('@rc which branch should I build on', 20)).toBe(
+			'which branch should…'
+		);
+	});
+
 	it('returns empty string when only a mention with no prose', () => {
 		expect(deriveConsultSubject('@rc')).toBe('');
 		expect(deriveConsultSubject('   @rc   ')).toBe('');

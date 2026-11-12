@@ -28,7 +28,11 @@ import { diagnoseApiUsageBilling } from './billing-mode';
 import { buildChildEnv } from './child-env';
 import { JsonEmitter, type EmitResultOptions } from './json-emitter';
 import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
-import { isSlashCommandPrompt, localCommandOutput } from './local-command-row';
+import {
+	isSlashCommandPrompt,
+	localCommandOutput,
+	unknownSlashCommandError,
+} from './local-command-row';
 import { extractExitPlanText } from './plan-mode';
 import { extractAskUserQuestionText } from './ask-user-question';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
@@ -807,6 +811,16 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// local-command-row.ts). The result carries the session id the row was
 		// written under: `/clear` rotates claude onto a new session.
 		if (slashCommandPrompt) {
+			// A command claude does not have is refused with an informational row
+			// and nothing else, so without this the turn rode out `--max-wait` and
+			// exited 3 as a crash. Exit 8 like a terminal API error: replaying the
+			// turn under `claude --print` gets the same refusal.
+			const unknownCommand = unknownSlashCommandError(e);
+			if (unknownCommand !== null) {
+				process.stderr.write(`maestro-p: claude refused the slash command: ${unknownCommand}\n`);
+				finalize({ isError: true, error: unknownCommand, exitCode: 8 });
+				return;
+			}
 			const commandOutput = localCommandOutput(e);
 			if (commandOutput !== null) {
 				if (graceTimer) clearTimeout(graceTimer);

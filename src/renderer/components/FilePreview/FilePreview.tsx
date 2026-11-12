@@ -95,6 +95,7 @@ import { ImageViewer } from './ImageViewer';
 import { ImageSaveModal } from './ImageSaveModal';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 import { getParentDir, getBasename } from '../../../shared/formatters';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 import { FilePreviewToc } from './FilePreviewToc';
 import { computeTocWidth } from '../Toc';
 import { HeadingPalette } from './HeadingPalette';
@@ -1301,7 +1302,7 @@ export const FilePreview = React.memo(
 				notifyToast({
 					type: 'error',
 					title: 'Save Failed',
-					message: err instanceof Error ? err.message : 'Could not save file.',
+					message: ipcErrorMessage(err, 'Could not save file.'),
 				});
 			} finally {
 				setIsSaving(false);

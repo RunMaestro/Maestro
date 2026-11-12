@@ -28,6 +28,7 @@
  */
 
 import {
+	CONSULT_SUMMARY_MAX_LENGTH,
 	deriveConsultSubject,
 	inferContextStrategy,
 	selectContextWindow,
@@ -394,7 +395,7 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 						entryId: ctx.newId(),
 						timestamp: now(),
 						sourceAgentName: sourceName,
-						subject: deriveConsultSubject(question),
+						subject: deriveConsultSubject(question, CONSULT_SUMMARY_MAX_LENGTH),
 						accumulated: chunk.chunk,
 						error: chunk.error,
 						canceled: chunk.canceled,

@@ -16,6 +16,8 @@ import type {
 	CrossAgentTranscriptEntry,
 } from '../../crossAgentTypes';
 import type { HistoryEntry } from '../../types';
+import { truncateAtWordBoundary } from '../../formatters';
+import { CONSULT_SUBJECT_MAX_LENGTH } from '../../crossAgentContext';
 
 /** Header prepended to a consult that forwards the source agent's transcript. */
 const CONSULT_HEADER =
@@ -207,7 +209,10 @@ export interface ConsultHistoryEntryInput {
 	timestamp: number;
 	/** Display name of the agent that did the consulting. */
 	sourceAgentName: string;
-	/** Short subject derived from the question; may be empty. */
+	/**
+	 * Subject derived from the question, up to `CONSULT_SUMMARY_MAX_LENGTH`;
+	 * may be empty. The summary carries it whole, the pill a short cut of it.
+	 */
 	subject: string;
 	/** Accumulated response text (empty on a consult that failed before answering). */
 	accumulated: string;
@@ -234,7 +239,7 @@ export function buildConsultHistoryEntry(opts: ConsultHistoryEntryInput): Histor
 		? `Consulted by ${opts.sourceAgentName}: ${opts.subject}`
 		: `Consulted by ${opts.sourceAgentName}`;
 	const sessionName = opts.subject
-		? `↩ ${opts.subject}`
+		? `↩ ${truncateAtWordBoundary(opts.subject, CONSULT_SUBJECT_MAX_LENGTH)}`
 		: (opts.consultTabName ?? opts.targetName ?? undefined) || undefined;
 
 	// A failed or stopped consult may accumulate nothing, so the raw text alone
