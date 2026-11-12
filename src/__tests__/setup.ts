@@ -597,7 +597,16 @@ const mockMaestro = {
 		getDocument: vi.fn().mockResolvedValue({ success: true, content: '' }),
 		getReadme: vi.fn().mockResolvedValue({ success: true, content: null }),
 		importPlaybook: vi.fn().mockResolvedValue({ success: true, playbook: {}, importedDocs: [] }),
+		launch: vi.fn().mockResolvedValue({
+			success: true,
+			launchId: 'launch-1',
+			folderRelativePath: 'playbook-launch-2026-01-01-00-00-00',
+		}),
+		completeLaunch: vi.fn().mockResolvedValue({ success: true }),
+		getLaunch: vi.fn().mockResolvedValue({ success: true }),
+		listLaunches: vi.fn().mockResolvedValue({ success: true, launches: [] }),
 		onManifestChanged: vi.fn().mockReturnValue(() => {}),
+		onLaunchChanged: vi.fn().mockReturnValue(() => {}),
 	},
 	live: {
 		toggle: vi.fn().mockResolvedValue({ live: false, url: null }),

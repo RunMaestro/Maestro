@@ -247,6 +247,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **The record a new agent starts as:** `buildNewAgentRecord(input)`, `newAgentClaudeInteractive(toolType)` in `src/shared/newAgentRecord.ts`
 - **The agent a New Agent draft describes (modal and `create_session`):** `buildNewAgentSession()`, `probeNewAgentGitState()` in `src/renderer/utils/newAgentSession.ts`; `NewAgentDraft` in `src/renderer/components/NewInstanceModal/types.ts`
 - **A new agent's settings without creating it:** `<NewInstanceModal mode="capture">` with `onCapture` and `initialDraft` in `src/renderer/components/NewInstanceModal/NewInstanceModal.tsx`
+- **Creating the agent a New Agent draft describes, outside App's hook tree:** `createAgentFromDraft(draft)`, `registerNewAgentCreator()` in `src/renderer/services/newAgentCreation.ts`
 - **What a duplicated agent inherits:** `buildDuplicateAgentInput(source, overrides?)`, `defaultDuplicateAgentName()`, `duplicateAgentBlocker()` in `src/shared/newAgentRecord.ts`
 - **Session lookup:** `selectActiveSession()`, `selectSessionById()` in `src/renderer/stores/sessionStore.ts`; `useActiveSession()` hook in `src/renderer/hooks/session/useActiveSession.ts`
 - **Session mutation:** `updateSessionWith()`, `updateAiTab()`, `updateFileTab()`, `updateBrowserTab()` in `src/renderer/stores/sessionStore.ts` (never `setSessions(prev => prev.map(...))` for one agent or tab)
@@ -373,6 +374,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Playbook Launch cleanup (deleting one launch folder, local or SSH):** `deleteLaunchFolder()` in `src/main/services/marketplace-service.ts`; `deleteDirectoryRemote()` in `src/main/utils/remote-fs.ts`; `MarketplaceLaunchCleanupError` in `src/shared/marketplace-types.ts`
 - **Starting a Playbook Launch (checks, import, record, Auto Run):** `launchMarketplacePlaybook(request, host)` in `src/main/services/marketplace-service.ts`; `configureAutoRunInRenderer()` in `src/main/web-server/callbacks/autoRunConfigCallbacks.ts`
 - **Ending and reading a Playbook Launch (cleanup, broadcast):** `completeMarketplaceLaunch(launchId, completion, host)`, `getMarketplaceLaunch()`, `listMarketplaceLaunches()` in `src/main/services/marketplace-service.ts`
+- **Submitting a Playbook Launch from a window (which agent, in what order):** `launchPlaybook(submission)`, `resolveLaunchTarget(target)`, `LaunchTarget` in `src/renderer/services/playbookLaunch.ts`
 - **Whether an untyped value is a task-selection mode:** `isTaskSelectionMode()` in `src/shared/types.ts`
 - **Auto Run steering notes (mid-run course correction):** `formatSteeringNotesBlock()` in `src/shared/autorunSteering.ts`; `submitSteeringNote()`, `recordSteeringResponse()`, `runRemoteSteeringCommand()` in `src/renderer/services/autoRunSteering.ts`; wire shape in `src/shared/autoRunSteeringCommands.ts`
 - **Auto Run delegation (a task hands work to another agent):** `formatDelegationResultsBlock()`, `applyAutoRunDelegationEvent()` in `src/shared/autoRunDelegation.ts`; `awaitDelegationsBeforeTurn()`, `settleDelegationsAtRunEnd()` in `src/renderer/services/autoRunDelegations.ts`
@@ -422,7 +424,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Loading an image for canvas compositing:** `loadImageElement(src)` in `src/renderer/utils/loadImage.ts`
 - **Pan and zoom a diagram or image:** `usePanZoom()` in `src/renderer/hooks/ui/usePanZoom.ts`; full-window viewer via `openZoomViewer(element)` in `src/renderer/components/ZoomViewer/zoomViewerStore.ts`
 - **Diagram content clipped at the SVG edge:** `expandSvgViewBoxToContent(svg, padding?)` in `src/renderer/utils/svgViewBox.ts`
-- **The message of a rejected IPC call:** `ipcErrorMessage(error)` in `src/renderer/utils/ipcErrorMessage.ts` (never show `error.message` raw)
+- **The message of a rejected or failed IPC call:** `ipcErrorMessage(error)`, `ipcResultErrorMessage(error, fallback)` in `src/renderer/utils/ipcErrorMessage.ts` (never show `error.message` raw)
 
 #### Keyboard and shortcuts
 

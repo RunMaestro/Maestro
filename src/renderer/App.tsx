@@ -177,6 +177,7 @@ import {
 } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
+import { registerNewAgentCreator } from './services/newAgentCreation';
 import { registerSessionPersistenceFlush } from './services/sessionPersistenceFlush';
 import { mergeQueuedItemIntoAbove, toggleQueuedItemPaused } from './services/queuedPrompt';
 import {
@@ -2646,6 +2647,13 @@ function MaestroConsoleInner() {
 		inputRef,
 		setCreateGroupModalOpen,
 	});
+
+	// Playbook Launch creates its new agent outside this hook tree, through the
+	// New Agent modal's own create path.
+	useEffect(() => {
+		registerNewAgentCreator(createNewSession);
+		return () => registerNewAgentCreator(null);
+	}, [createNewSession]);
 
 	const handleCloseGroupCreation = useCallback(() => {
 		clearPendingMoveToGroup();

@@ -66,6 +66,8 @@ export interface UseSessionCrudReturn {
 	 * input. Resolves the new agent's id, or `null` when no agent was created:
 	 * an unknown provider, a permission mode the provider cannot honor, or a
 	 * draft that fails validation (each reported to the user or the log).
+	 * App registers it with `registerNewAgentCreator()`
+	 * (`services/newAgentCreation.ts`) for callers outside this hook tree.
 	 */
 	createNewSession: (draft: NewAgentDraft) => Promise<string | null>;
 	/** Opens the delete agent confirmation modal */
