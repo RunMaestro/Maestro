@@ -71,7 +71,14 @@ import { autoRun } from './commands/auto-run';
 import { cueTrigger } from './commands/cue-trigger';
 import { cueList } from './commands/cue-list';
 import { cueEnable, cueDisable, cueActivity } from './commands/cue-control';
-import { marketplaceList, marketplaceShow, marketplaceImport } from './commands/marketplace';
+import {
+	marketplaceList,
+	marketplaceShow,
+	marketplaceImport,
+	marketplaceLaunch,
+	marketplaceLaunches,
+	marketplaceLaunchStatus,
+} from './commands/marketplace';
 import { cueSchedule } from './commands/cue-schedule';
 import { cueModel } from './commands/cue-model';
 import {
@@ -1371,7 +1378,9 @@ steerAutoRun
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program
 	.command('marketplace')
-	.description('Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)');
+	.description(
+		'Browse, import and launch Playbook Exchange playbooks (the modal: `open marketplace`)'
+	);
 
 marketplace
 	.command('list')
@@ -1395,6 +1404,45 @@ marketplace
 	.option('-f, --folder <name>', 'Folder name under the Auto Run folder (default: from the title)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(marketplaceImport);
+
+marketplace
+	.command('launch <playbook-id>')
+	.description(
+		'Launch a playbook: import it with your answers filled in, run it, clean up (see `marketplace show` for its inputs)'
+	)
+	.option(
+		'--input <KEY=VALUE>',
+		'Answer to one launch input (repeatable; a multiselect takes a comma list)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--input-file <path>', 'JSON object of answers keyed by input name (--input wins)')
+	.option('-a, --agent <id>', 'Agent that runs it (default: the calling agent)')
+	.option('--new-agent', 'Run it on a new agent (needs --provider and --cwd)')
+	.option('--provider <id>', `New agent provider (${CREATE_AGENT_TYPES.join(', ')})`)
+	.option('-d, --cwd <path>', 'New agent working directory')
+	.option('--name <name>', 'New agent name (default: the playbook title)')
+	.option('--model <model>', 'New agent model override')
+	.option('--effort <level>', 'New agent effort/reasoning level override')
+	.option('--ssh-remote <id>', 'New agent SSH remote ID')
+	.option('--keep-playbook', 'Keep the playbook as a reusable saved playbook (and its documents)')
+	.option('--confirm', 'Accept the playbook confirmation (required when it asks for one)')
+	.option('--wait', 'Wait for the run to end, then print the outro (exit 1 unless it completed)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(marketplaceLaunch);
+
+marketplace
+	.command('launches')
+	.description('List playbook launches, newest first')
+	.option('-a, --agent <id>', 'Only this agent')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(marketplaceLaunches);
+
+marketplace
+	.command('launch-status <launch-id>')
+	.description('Show a launch and, once it ends, its outro')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(marketplaceLaunchStatus);
 
 // Remove playbook command - delete a saved playbook from an agent
 program

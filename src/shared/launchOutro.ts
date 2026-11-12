@@ -10,13 +10,10 @@
  * manifest that changed since cannot change what a finished launch says.
  */
 
-import { formatCost, formatElapsedTime } from '../../../../shared/formatters';
-import type { PlaybookLaunchRecord } from '../../../../shared/marketplace-types';
-import { renderLaunchOutro } from '../../../../shared/playbookLaunch';
-import {
-	buildTemplateReplacements,
-	type TemplateSessionInfo,
-} from '../../../../shared/templateVariables';
+import { formatCost, formatElapsedTime } from './formatters';
+import type { PlaybookLaunchRecord } from './marketplace-types';
+import { renderLaunchOutro } from './playbookLaunch';
+import { buildTemplateReplacements, type TemplateSessionInfo } from './templateVariables';
 
 /** How a line reads: the color it takes in the dialog. */
 export type LaunchOutroTone = 'success' | 'warning' | 'error' | 'dim';

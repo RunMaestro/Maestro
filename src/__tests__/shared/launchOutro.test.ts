@@ -8,14 +8,10 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-	buildLaunchOutro,
-	launchBulletList,
-	launchOutroBuiltins,
-} from '../../../../../renderer/components/MarketplaceModal/launch/launchOutro';
-import type { PlaybookLaunchRecord } from '../../../../../shared/marketplace-types';
-import type { TemplateSessionInfo } from '../../../../../shared/templateVariables';
-import { createMockLaunchRecord } from '../../../../helpers';
+import { buildLaunchOutro, launchBulletList, launchOutroBuiltins } from '../../shared/launchOutro';
+import type { PlaybookLaunchRecord } from '../../shared/marketplace-types';
+import type { TemplateSessionInfo } from '../../shared/templateVariables';
+import { createMockLaunchRecord } from '../helpers';
 
 /** 2026-11-09 15:00 UTC: the same calendar day in every time zone the suite can run in. */
 const STARTED_AT = Date.UTC(2026, 10, 9, 15, 0, 0);

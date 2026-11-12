@@ -50,7 +50,11 @@ import { viewportModalSize } from '../../../utils/modalSizing';
 import { HeaderActionButton } from '../../ui/HeaderActionButton';
 import { Modal, ModalFooter } from '../../ui/Modal';
 import { LaunchMarkdown } from './LaunchMarkdown';
-import { buildLaunchOutro, launchBulletList, type LaunchOutroTone } from './launchOutro';
+import {
+	buildLaunchOutro,
+	launchBulletList,
+	type LaunchOutroTone,
+} from '../../../../shared/launchOutro';
 import { useLaunchVerdict } from './useLaunchVerdict';
 
 /**
