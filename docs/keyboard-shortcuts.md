@@ -505,6 +505,11 @@ on top of it.
 
 ## Usage Dashboard
 
+The dashboard's own keys, including the ones that move between its tabs (the
+**Models** tab among them), are in
+[Usage Dashboard Keyboard Navigation](./usage-dashboard#keyboard-navigation).
+The Models tab adds no keys of its own.
+
 The Agents and Groups tabs draw one tile per agent or group. The tile size is
 yours to set, and it is remembered across restarts. See
 [Usage Dashboard](./usage-dashboard).
