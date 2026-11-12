@@ -218,6 +218,8 @@ Speed is measured from Claude Code and Codex transcripts. Other providers do not
 
 One row per Codex account (`CODEX_HOME`), each with its plan badge, its email, and a bar per usage window: **Session (5h)**, **Weekly**, and any per-model limits the account reports, every one labelled with when it reopens.
 
+A signed-in account also shows an **Available credits** line: the extra ChatGPT/Codex usage credits the account reports. It reads **Unlimited** for an account with no cap, and **Not available** when the account does not report a balance. These credits are separate from the reset credits below and from OpenAI API funds.
+
 #### Usage resets
 
 OpenAI grants Codex accounts occasional **reset credits**. Redeeming one reopens that account's consumed usage windows straight away instead of waiting for the clock. Codex only exposes this inside its own terminal UI, so Maestro surfaces it here: any account holding credits grows a **Usage resets** block under its bars, listing each credit with its expiry and a **Reset now** button.
@@ -280,6 +282,7 @@ The Auto Run tab focuses specifically on automated playbook execution:
 - **Success Rate** - Percentage of tasks that completed successfully
 - **Avg Session** - Average duration of an Auto Run session
 - **Avg Task** - Average duration per individual task
+- **Total Auto Run Time** - Total run time, split under the figure into goal-driven runs (`/goal` and Goal Mode) and spec-driven runs (document checklists). Runs recorded before this split count as spec-driven
 
 **Tasks Completed Over Time:**
 A mini bar chart showing task completions by date (last 14 days). Hover over bars to see exact counts and success percentages for each day.

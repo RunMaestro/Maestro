@@ -20,62 +20,9 @@ Settings are organized into tabs:
 | **AI Commands**                 | View and edit slash commands, [Spec-Kit](./speckit-commands), [OpenSpec](./openspec-commands), and [BMAD](./bmad-commands) prompts                                                                                                                                                                   |
 | **Maestro Prompts**             | Browse and edit the 23 core system prompts (wizard, Auto Run, group chat, context, etc.). Changes take effect immediately; reset to bundled defaults at any time                                                                                                                                     |
 | **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                                                                                                                             |
-| **Environment**                 | Global environment variables that cascade to all agents and terminal sessions                                                                                                                                                                                                                        |
+| **Environment**                 | [Host media tools](#host-media-tools) and global environment variables that cascade to all agents and terminal sessions                                                                                                                                                                              |
 | **Plugins**                     | Enable or disable built-in [Encore Features](./encore-features) and community plugins, with per-plugin settings and permissions                                                                                                                                                                      |
 | **WakaTime** _(in Plugins tab)_ | WakaTime integration toggle, API key, detailed file tracking - under the **Usage & Stats** plugin's settings                                                                                                                                                                                         |
-
-## Typography
-
-**Settings → Display → Fonts.** Maestro does not have one font: it has a font per surface, so the places you read and the places you work can use different faces.
-
-![The Display tab's font controls, with a picker per surface](./screenshots/settings-fonts.png)
-
-Two surfaces are the roots that everything else can follow:
-
-- **Interface** - the whole app, and the proportional face other surfaces inherit.
-- **Terminal** - the command terminal, and the fixed-width face other surfaces inherit. A Nerd Font here gets you shell prompt glyphs.
-
-Four more surfaces each pick their own face, or inherit:
-
-| Surface            | What it covers                                                     |
-| ------------------ | ------------------------------------------------------------------ |
-| **AI Chat**        | The AI transcript, in the main panel and in tiled panes            |
-| **File Preview**   | A file being read                                                  |
-| **File Editor**    | A file being edited                                                |
-| **Document Graph** | Node titles and previews in the [Document Graph](./document-graph) |
-
-Each surface has its own size, which can also inherit. Press **Up** / **Down** on any picker to step through the installed faces and preview them live.
-
-### Presets
-
-**Factory Reset Fonts** sets every font and size at once:
-
-- **Default** - proportional to read, monospace to work. The interface, AI chat, and file preview are proportional; the terminal and file editor are monospace.
-- **Hacker** - monospace everywhere. The original Maestro look.
-
-Maestro tells you which preset is active, or that you have customized away from both.
-
-### Save and restore your own setup
-
-A preset overwrites every font and size, so **Save & Restore Customizations** keeps yours. Click **Save Customizations** once you like what you have, then try a preset or keep tinkering, and **Restore Customizations** puts your fonts back in one click.
-
-There is one slot, and saving again replaces it (Maestro asks first). Zoom is not part of a saved setup, so restoring one never changes how big everything is.
-
-### Custom fonts
-
-The pickers list fonts Maestro knows about. If you have a font installed that is not in the list, add its name once under **Manage Custom Fonts** and it becomes available in every picker.
-
-<Warning>
-Type the family name exactly as the system reports it. A name that is not installed cannot be resolved, and the surface falls back to the browser default rather than telling you it failed.
-</Warning>
-
-### Zoom
-
-**Zoom** scales every surface by the same amount, so the sizes you set relative to each other are preserved. `Cmd+=` / `Cmd+-` adjusts it and `Cmd+Shift+0` resets it.
-
-<Tip>
-You are offered the Default and Hacker presets once, on first run, so you do not have to find this screen to make Maestro readable. Nothing there is permanent - every choice is a setting you can change here later. See [First run](./getting-started#first-run).
-</Tip>
 
 ## Typography
 
@@ -356,6 +303,15 @@ Two more things that surprise people:
 
 - **A per-agent variable replaces the provider-level set, it does not merge with it.** An agent that sets only `ANTHROPIC_BASE_URL` stops receiving a provider-level `CLAUDE_CONFIG_DIR`. Set both on the agent if it needs both.
 - **Re-authenticating cannot fix a gateway.** When an agent runs against a base URL or an API key, a failure belongs to that operator or that key, so running the provider's login command produces a successful-looking flow that changes nothing. Maestro detects this and tells you which credential is actually in play instead of offering a login that would not help.
+
+## Host Media Tools
+
+**Settings → Environment → Host media tools** sets up the local speech recognition that plugins such as Relay use to transcribe audio on this computer. Changes apply without a restart.
+
+- **Whisper model directory** - the local folder that holds multilingual `ggml-<model>.bin` files, such as `ggml-base.bin`. This setting takes precedence over the `MAESTRO_MEDIA_MODEL_DIR` environment variable. Leave it empty to use that variable. Click **Save directory** to store it.
+- **Check status** - shows whether host media is ready, the available profiles and models, and any missing prerequisites (for example `ffmpeg`, `ffprobe`, or `whisper-cli`). **Model-directory** in the missing list means Maestro found no readable model file in the folder.
+
+A plugin must select a model that is listed. For example, `small` needs `ggml-small.bin` in the folder. This setting does not download tools or models. The status is available in the desktop app only.
 
 ## Checking for Updates
 

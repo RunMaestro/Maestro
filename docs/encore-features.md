@@ -14,7 +14,13 @@ Open **Settings** (`Cmd+,` / `Ctrl+,`) and go to the **Plugins** tab. Every buil
 
 ![The Plugins tab in Settings, listing every built-in Encore Feature](./screenshots/plugins-catalog.png)
 
-Click a card to open its detail view, then use the **Enable** / **Disable** button. Features that carry their own options show them on a **Settings** tab beneath that button, and the capabilities the feature is allowed to use are itemized under **Permissions**.
+Click a card to open its detail view. The **Enable** switch is at the top right, beside a **Help** button, and stays there however long the content below is. Under the description are three tabs:
+
+- **Help** - the feature's usage guide: what it does and how to reach it. A feature that is off opens on this tab. A community plugin without a guide says so.
+- **Settings** - the feature's own options, when it has any. A feature that is on opens on this tab.
+- **Permissions** - the capabilities the feature is allowed to use.
+
+Turning the switch on or off does not change the tab you are on.
 
 ![A plugin's detail view, with its own settings and permission list](./screenshots/plugin-detail.png)
 
