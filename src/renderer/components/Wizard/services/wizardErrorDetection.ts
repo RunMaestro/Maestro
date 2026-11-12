@@ -94,12 +94,19 @@ const RETRYABLE_TYPES: ReadonlySet<AgentErrorType> = new Set<AgentErrorType>([
  * per platform. When there is no command to name, the generic hint stands
  * rather than inventing one to type into a shell.
  */
+function missingBinaryHint(agentType: ToolType, reason: 'not-found' | 'runtime-missing'): string {
+	if (reason === 'runtime-missing') {
+		return 'Restore Node.js to PATH first (for example with `nvm use`), then start the wizard over. Reinstall the CLI only if it still does not start.';
+	}
+	const install = getAgentInstallCommand(agentType, getPlatform());
+	return install
+		? `Run "${install}" to install it, then start the wizard over.`
+		: (RECOVERY_HINTS.agent_not_installed ?? RECOVERY_HINTS.unknown);
+}
+
 function recoveryHintFor(type: AgentErrorType, agentType: ToolType): string {
 	const generic = RECOVERY_HINTS[type] ?? RECOVERY_HINTS.unknown;
-	if (type === 'agent_not_installed') {
-		const install = getAgentInstallCommand(agentType, getPlatform());
-		return install ? `Run "${install}" to install it, then start the wizard over.` : generic;
-	}
+	if (type === 'agent_not_installed') return missingBinaryHint(agentType, 'not-found');
 	if (type !== 'auth_expired') return generic;
 
 	const login = getAgentLoginCommand(agentType);
@@ -121,6 +128,11 @@ export interface WizardErrorDetectionOptions {
 	 */
 	stderr?: string;
 	/**
+	 * The executable the wizard launched, so a child command that failed inside
+	 * a working CLI is not mistaken for the provider itself being missing.
+	 */
+	command?: string;
+	/**
 	 * Whether the agent ran on this machine. A missing binary over SSH is the
 	 * remote host's problem, and the SSH error bank already owns it.
 	 */
@@ -132,7 +144,7 @@ export interface WizardErrorDetectionOptions {
  *
  * @param output - The raw output from the agent (stdout/stderr combined)
  * @param agentType - The agent that produced it, which selects the pattern bank
- * @param options - The exit code, separated stderr, and whether the agent is local
+ * @param options - The exit code, separated stderr, launched command, and locality
  * @returns Detected error or null if no provider error found
  */
 export function detectWizardError(
@@ -146,14 +158,18 @@ export function detectWizardError(
 	// it one. Classified first, on the local host only (see ExitHandler).
 	const missingReason =
 		(options.local ?? true)
-			? classifyMissingBinary({ exitCode: options.exitCode, stderr: options.stderr ?? output })
+			? classifyMissingBinary({
+					exitCode: options.exitCode,
+					stderr: options.stderr ?? '',
+					command: options.command,
+				})
 			: null;
 	if (missingReason) {
 		return {
 			type: 'agent_not_installed',
 			title: ERROR_TITLES.agent_not_installed,
 			message: agentNotInstalledMessage(agentType, missingReason),
-			recoveryHint: recoveryHintFor('agent_not_installed', agentType),
+			recoveryHint: missingBinaryHint(agentType, missingReason),
 			canRetry: false,
 		};
 	}

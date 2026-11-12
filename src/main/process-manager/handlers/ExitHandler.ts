@@ -252,16 +252,22 @@ export class ExitHandler {
 			const notInstalled = this.notInstalledError(sessionId, managedProcess, {
 				exitCode: code,
 				stderr: managedProcess.stderrBuffer || '',
+				command: managedProcess.command,
 			});
 			if (notInstalled) {
-				managedProcess.errorEmitted = true;
 				logger.info('[ProcessManager] Agent CLI could not be started', 'ProcessManager', {
 					sessionId,
 					toolType,
 					exitCode: code,
 					command: managedProcess.command,
 				});
-				this.emitter.emit('agent-error', sessionId, notInstalled);
+				emitAgentErrorAfterOutput(
+					this.emitter,
+					this.bufferManager,
+					sessionId,
+					managedProcess,
+					notInstalled
+				);
 			}
 		}
 
@@ -699,6 +705,7 @@ export class ExitHandler {
 			? this.notInstalledError(sessionId, managedProcess, {
 					errorCode: (error as NodeJS.ErrnoException).code,
 					stderr: error.message,
+					command: managedProcess.command,
 				})
 			: null;
 		if (managedProcess && !managedProcess.errorEmitted && notInstalled) {

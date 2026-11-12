@@ -95,8 +95,8 @@ function getRecoveryActionsForError(
 
 		case 'agent_not_installed':
 			// The CLI never started, so neither restarting the agent nor resending
-			// the same turn can work until it is installed. The error message names
-			// the install command to run; there is no in-app recovery to offer.
+			// the same turn can work until it is fixed. The error message says
+			// what to fix; there is no in-app recovery to offer.
 			break;
 
 		case 'token_exhaustion':

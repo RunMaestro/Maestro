@@ -479,7 +479,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 								: agentError.type === 'auth_expired'
 									? '- Re-authenticate with the provider (e.g., run `claude login` in terminal)'
 									: agentError.type === 'agent_not_installed'
-										? '- Install the provider CLI (the error message names the command), then resume'
+										? '- Fix the provider CLI as the error message describes, then resume'
 										: agentError.type === 'token_exhaustion'
 											? '- Start a new session to reset the context window'
 											: agentError.type === 'rate_limited'

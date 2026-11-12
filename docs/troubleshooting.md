@@ -112,11 +112,13 @@ Two details worth knowing:
 
 ### Provider CLI Not Installed
 
-If an agent's provider CLI is missing from your `PATH` (never installed, uninstalled, or installed under a Node.js version that is not active), every message to that agent fails before the provider sees it. Maestro reports this as **Provider CLI Not Installed** instead of a bare "exited with code N", and the error message prints the install command for your platform (for example `npm install -g @openai/codex` for Codex). Copy it into a terminal, run it, and send your message again. The dialog offers no restart or retry button, because neither can succeed until the CLI is there.
+For an agent running on this machine, if its provider CLI is missing from your `PATH` (never installed, uninstalled, or installed under a Node.js version that is not active), every message to that agent fails before the provider sees it. Maestro reports this as **Provider CLI Not Installed** instead of a bare "exited with code N", and the error message prints the install command for your platform (for example `npm install -g @openai/codex` for Codex). Copy it into a terminal, run it, and send your message again. The dialog offers no restart or retry button, because neither can succeed until the CLI is there.
+
+Agents running on an SSH remote are excluded from this classification. The binary lives on the remote host, the SSH error bank reports that case, and Maestro does not print a local install command for it.
 
 Providers with no verified one-line install (for example Antigravity or Grok CLI) still report the missing CLI; their message points at the provider's install guide instead of inventing a command.
 
-If the message says the runtime (Node.js) is missing, the CLI is on disk but the Node.js version it was installed under is not on your `PATH`. Reinstalling the CLI under your current Node.js fixes it.
+If the message says the runtime (Node.js) is missing, the CLI is on disk but the Node.js version it was installed under is not on your `PATH`. Restore Node.js to your `PATH` first (for example with `nvm use`), then send the message again. Reinstall the CLI under that Node.js only if it still does not start.
 
 ## Debug Package
 

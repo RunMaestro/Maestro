@@ -544,6 +544,7 @@ class ConversationManager {
 								? detectWizardError(errorText, this.session.agentType, {
 										exitCode: code,
 										stderr: stderrOutput,
+										command: agent.path || agent.command,
 										local: !this.session.sshRemoteConfig?.enabled,
 									})
 								: null;

@@ -143,6 +143,42 @@ export interface MissingBinaryEvidence {
 	exitCode?: number | null;
 	/** Everything the process wrote to stderr. Stdout is deliberately NOT read. */
 	stderr?: string;
+	/**
+	 * The executable Maestro actually launched, when the caller knows it. An
+	 * exit-status report can name a CHILD command ("sh: git: not found"), so the
+	 * name in stderr is compared with this before calling the provider missing.
+	 */
+	command?: string;
+}
+
+/** GNU `env` quotes the missing interpreter with ASCII or UTF-8 quotes. */
+const RUNTIME_MISSING_PATTERN =
+	/\benv:\s*['"‘’]?(node|bun|deno|python3?)['"‘’]?:\s*No such file or directory/i;
+
+function normalizeExecutableName(name: string): string {
+	const unquoted = name.trim().replace(/^['"‘’`]+|['"‘’`]+$/g, '');
+	const base = unquoted.split(/[\\/]/).pop() ?? unquoted;
+	return base.replace(/\.(cmd|exe|bat|ps1)$/i, '').toLowerCase();
+}
+
+/** The executable named by a shell's failure, or null when the wording is unknown. */
+function missingExecutableFromStderr(stderr: string): string | null {
+	const commandNotFound = stderr.match(/command not found:\s*([^\s:]+)/i);
+	if (commandNotFound) return commandNotFound[1];
+
+	const fish = stderr.match(/Unknown command:\s*([^\s]+)/i);
+	if (fish) return fish[1];
+
+	const posix = stderr.match(/(?:^|[\s:])([^\s:]+):\s*not found\b/i);
+	if (posix) return posix[1];
+
+	const windowsQuoted = stderr.match(/'([^']+)'\s+is not recognized as/i);
+	if (windowsQuoted) return windowsQuoted[1];
+
+	const windowsTerm = stderr.match(/^\s*([^\s:]+)\s*:\s*The term\s+'([^']+)'\s+is not recognized/i);
+	if (windowsTerm) return windowsTerm[2];
+
+	return null;
 }
 
 /**
@@ -154,10 +190,15 @@ export interface MissingBinaryEvidence {
  * - `runtime-missing`: the binary exists, but the interpreter its shebang names
  *   does not (`env: node: No such file or directory`). This is the nvm/volta
  *   case: an npm-installed CLI found in a Node version directory, run from a
- *   PATH where that Node is not. Reinstalling under the active Node fixes it.
+ *   PATH where that Node is not. Restoring Node.js to PATH fixes it.
  *
  * Only stderr is consulted. Stdout carries the agent's own transcript, which
  * can legitimately quote "command not found" from a tool call it ran.
+ *
+ * Exit-status evidence also requires `command`: a started CLI can propagate a
+ * 127 from a child it ran, so the missing name in stderr must match the binary
+ * Maestro launched. `ENOENT` is different, because it comes from the spawn of
+ * that binary rather than from output.
  */
 export function classifyMissingBinary(
 	evidence: MissingBinaryEvidence
@@ -165,28 +206,21 @@ export function classifyMissingBinary(
 	if (evidence.errorCode === 'ENOENT') return 'not-found';
 
 	const stderr = evidence.stderr ?? '';
-	// `/usr/bin/env node` with no node on PATH. Checked before the exit code so
-	// a 127 from env is reported as the runtime, not the CLI, being missing.
-	if (/\benv:\s*['"]?(node|bun|deno|python3?)['"]?:\s*No such file or directory/i.test(stderr)) {
+	// `/usr/bin/env` with no node on PATH. Only a shell reports this as a 127;
+	// a direct spawn of a script whose interpreter is missing is an ENOENT.
+	if (evidence.exitCode === 127 && RUNTIME_MISSING_PATTERN.test(stderr)) {
 		return 'runtime-missing';
 	}
-	// Exit 127 is the shell's "command not found", but a CLI that did start can
-	// also propagate a 127 from a child it ran. Require the shell's wording, the
-	// way the Windows branch does, so a provider exiting 127 for its own reasons
-	// is not mistaken for a missing install.
-	if (
-		evidence.exitCode === 127 &&
-		/(command not found|:\s*not found|unknown command)/i.test(stderr)
-	) {
-		return 'not-found';
+
+	if (evidence.exitCode !== 127 && evidence.exitCode !== 9009 && evidence.exitCode !== 1) {
+		return null;
 	}
-	if (
-		(evidence.exitCode === 9009 || evidence.exitCode === 1) &&
-		/is not recognized as (an internal or external command|the name of a cmdlet)/i.test(stderr)
-	) {
-		return 'not-found';
-	}
-	return null;
+
+	const missing = missingExecutableFromStderr(stderr);
+	if (!missing || !evidence.command) return null;
+	return normalizeExecutableName(missing) === normalizeExecutableName(evidence.command)
+		? 'not-found'
+		: null;
 }
 
 /**
@@ -207,12 +241,7 @@ export function agentNotInstalledMessage(
 	const docsUrl = getAgentInstallInfo(agentId)?.docsUrl;
 
 	if (reason === 'runtime-missing') {
-		const remedy = command
-			? `Reinstall ${name} under your current Node.js with: ${command}`
-			: docsUrl
-				? `Reinstall ${name} under your current Node.js, or follow ${docsUrl}.`
-				: `Reinstall ${name} under your current Node.js, or fix PATH, then retry.`;
-		return `${cli} is installed, but the runtime it needs (Node.js) is not on PATH. ${remedy}`;
+		return `${cli} is installed, but the runtime it needs (Node.js) is not on PATH. Restore Node.js to PATH first (for example with \`nvm use\`), then send the message again. Reinstall the CLI under that Node.js only if it still does not start.`;
 	}
 
 	const remedy = command

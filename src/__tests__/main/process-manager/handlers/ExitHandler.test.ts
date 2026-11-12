@@ -1140,6 +1140,7 @@ describe('ExitHandler', () => {
 				'test-session',
 				createMockProcess({
 					toolType: 'codex',
+					command: 'codex',
 					stderrBuffer: 'zsh: command not found: codex',
 					outputParser: createMockOutputParser({ detectErrorFromExit }),
 				})
@@ -1153,11 +1154,51 @@ describe('ExitHandler', () => {
 			expect(detectErrorFromExit).not.toHaveBeenCalled();
 		});
 
+		it('emits the not-installed error after flushing buffered output', async () => {
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					command: 'codex',
+					stderrBuffer: 'zsh: command not found: codex',
+				})
+			);
+			const order: string[] = [];
+			vi.spyOn(bufferManager, 'flushDataBuffer').mockImplementation(() => {
+				order.push('flush');
+			});
+			emitter.on('agent-error', () => order.push('error'));
+
+			await exitHandler.handleExit('test-session', 127);
+
+			expect(order.indexOf('flush')).toBeGreaterThanOrEqual(0);
+			expect(order.indexOf('flush')).toBeLessThan(order.indexOf('error'));
+		});
+
+		it('does not blame the provider when a child command is missing', async () => {
+			const detectErrorFromExit = vi.fn(() => null);
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					command: 'codex',
+					stderrBuffer: 'sh: 1: git: not found',
+					outputParser: createMockOutputParser({ detectErrorFromExit }),
+				})
+			);
+			const errors = collectErrors();
+
+			await exitHandler.handleExit('test-session', 127);
+
+			expect(errors.some((e) => e.type === 'agent_not_installed')).toBe(false);
+		});
+
 		it('reports the Windows "not recognized" wording as agent_not_installed', async () => {
 			processes.set(
 				'test-session',
 				createMockProcess({
 					toolType: 'codex',
+					command: 'codex.cmd',
 					stderrBuffer:
 						"'codex' is not recognized as an internal or external command, operable program or batch file.",
 				})
@@ -1176,6 +1217,7 @@ describe('ExitHandler', () => {
 				'test-session',
 				createMockProcess({
 					toolType: 'codex',
+					command: 'codex',
 					stderrBuffer: 'env: node: No such file or directory',
 				})
 			);

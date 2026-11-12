@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentErrorRecovery } from '../../../renderer/hooks';
 import type { AgentError } from '../../../shared/types';

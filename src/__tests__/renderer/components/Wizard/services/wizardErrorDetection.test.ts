@@ -84,6 +84,7 @@ describe('detectWizardError', () => {
 				const error = detectWizardError('zsh: command not found: codex', 'codex', {
 					exitCode: 127,
 					stderr: 'zsh: command not found: codex',
+					command: 'codex',
 				});
 
 				expect(error).toMatchObject({ type: 'agent_not_installed', canRetry: false });
@@ -111,6 +112,46 @@ describe('detectWizardError', () => {
 			});
 
 			expect(error?.type).not.toBe('agent_not_installed');
+		});
+
+		it('does not fall back to combined output when stderr is absent', () => {
+			const error = detectWizardError(
+				'Tool output: env: node: No such file or directory',
+				'codex',
+				{ exitCode: 127, command: 'codex' }
+			);
+
+			expect(error?.type).not.toBe('agent_not_installed');
+		});
+
+		it('does not blame the provider when a child command is missing', () => {
+			const error = detectWizardError('sh: 1: git: not found', 'codex', {
+				exitCode: 127,
+				stderr: 'sh: 1: git: not found',
+				command: 'codex',
+			});
+
+			expect(error?.type).not.toBe('agent_not_installed');
+		});
+
+		it('restores Node.js before suggesting a reinstall for a missing runtime', () => {
+			const maestro = (window as unknown as { maestro?: { platform?: string } }).maestro;
+			const originalPlatform = maestro?.platform;
+			if (maestro) maestro.platform = 'linux';
+
+			try {
+				const error = detectWizardError('env: node: No such file or directory', 'codex', {
+					exitCode: 127,
+					stderr: 'env: node: No such file or directory',
+					command: 'codex',
+				});
+
+				expect(error?.type).toBe('agent_not_installed');
+				expect(error?.recoveryHint).toContain('Restore Node.js to PATH');
+				expect(error?.recoveryHint).not.toContain('npm install');
+			} finally {
+				if (maestro) maestro.platform = originalPlatform;
+			}
 		});
 	});
 });
