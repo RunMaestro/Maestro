@@ -73,6 +73,46 @@ describe('detectWizardError', () => {
 			'claude login'
 		);
 	});
+
+	describe('provider CLI that could not be started', () => {
+		it('classifies a local exit 127 from stderr as agent_not_installed', () => {
+			const maestro = (window as unknown as { maestro?: { platform?: string } }).maestro;
+			const originalPlatform = maestro?.platform;
+			if (maestro) maestro.platform = 'linux';
+
+			try {
+				const error = detectWizardError('zsh: command not found: codex', 'codex', {
+					exitCode: 127,
+					stderr: 'zsh: command not found: codex',
+				});
+
+				expect(error).toMatchObject({ type: 'agent_not_installed', canRetry: false });
+				expect(error?.message).toMatch(/^Codex CLI not installed\./);
+				expect(error?.recoveryHint).toContain('npm install -g @openai/codex');
+			} finally {
+				if (maestro) maestro.platform = originalPlatform;
+			}
+		});
+
+		it('leaves an SSH remote to the SSH error bank', () => {
+			const error = detectWizardError('bash: codex: command not found', 'codex', {
+				exitCode: 127,
+				stderr: 'bash: codex: command not found',
+				local: false,
+			});
+
+			expect(error?.type).not.toBe('agent_not_installed');
+		});
+
+		it('does not classify a transcript that only quotes "command not found" on stdout', () => {
+			const error = detectWizardError('Lint output:\nzsh: command not found: codex', 'codex', {
+				exitCode: 1,
+				stderr: 'Error: the turn failed',
+			});
+
+			expect(error?.type).not.toBe('agent_not_installed');
+		});
+	});
 });
 
 describe('formatWizardError', () => {

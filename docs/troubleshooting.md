@@ -89,7 +89,7 @@ When an AI agent encounters an error, Maestro displays a modal with clear recove
 | **Rate Limit Exceeded**        | Too many API requests                   | Wait and retry, reduce request frequency       |
 | **Connection Error**           | Network connectivity issue              | Check internet, retry connection               |
 | **Agent Error**                | Agent process crashed unexpectedly      | Restart agent, start new session               |
-| **Provider CLI Not Installed** | The provider's CLI could not be started | Install it from the dialog, then retry         |
+| **Provider CLI Not Installed** | The provider's CLI could not be started | Copy the install command, run it, then retry   |
 | **Permission Denied**          | File or operation access denied         | Check permissions, run with appropriate access |
 
 Each error modal shows:
@@ -112,9 +112,9 @@ Two details worth knowing:
 
 ### Provider CLI Not Installed
 
-If an agent's provider CLI is missing from your `PATH` (never installed, uninstalled, or installed under a Node.js version that is not active), every message to that agent fails before the provider sees it. Maestro reports this as **Provider CLI Not Installed** instead of a bare "exited with code N", and the error dialog offers **Install <provider>**. That opens a terminal inside Maestro running the install command for your platform (for example `npm install -g @openai/codex` for Codex). When it finishes, click **Retry** to resend the message that failed.
+If an agent's provider CLI is missing from your `PATH` (never installed, uninstalled, or installed under a Node.js version that is not active), every message to that agent fails before the provider sees it. Maestro reports this as **Provider CLI Not Installed** instead of a bare "exited with code N", and the error message prints the install command for your platform (for example `npm install -g @openai/codex` for Codex). Copy it into a terminal, run it, and send your message again. The dialog offers no restart or retry button, because neither can succeed until the CLI is there.
 
-The same command is available to scripts and agents: `maestro-cli install-command codex` prints it for the current platform (`--platform win32` for another one, `--json` for the docs link too).
+Providers with no verified one-line install (for example Antigravity or Grok CLI) still report the missing CLI; their message points at the provider's install guide instead of inventing a command.
 
 If the message says the runtime (Node.js) is missing, the CLI is on disk but the Node.js version it was installed under is not on your `PATH`. Reinstalling the CLI under your current Node.js fixes it.
 

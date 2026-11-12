@@ -36,7 +36,6 @@ import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
 import { status } from './commands/status';
 import { version } from './commands/version';
-import { installCommand } from './commands/install-command';
 import {
 	groupChatList,
 	groupChatSend,
@@ -1310,19 +1309,6 @@ program
 	.description('Diagnose CLI connectivity, version skew, and configuration')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => doctor(cliVersion, options));
-
-// Install-command - print the install line for a provider CLI (the error dialog's Install action)
-program
-	.command('install-command <provider>')
-	.description(
-		'Print the command that installs a provider CLI (e.g. codex) on this platform, for an agent whose CLI is missing'
-	)
-	.option(
-		'--platform <platform>',
-		'Target platform: darwin, linux, or win32 (default: this machine)'
-	)
-	.option('--json', 'Output as JSON (for scripting)')
-	.action((provider: string, options) => installCommand(provider, options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program

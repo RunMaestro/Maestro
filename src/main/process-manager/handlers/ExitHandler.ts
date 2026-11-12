@@ -654,8 +654,8 @@ export class ExitHandler {
 	 * not be started at all, or null when it ran (and failed some other way).
 	 *
 	 * Local agents only. Over SSH the binary lives on the remote host, where a
-	 * missing CLI is already reported by the SSH error bank - and an install
-	 * offered from here would run on the wrong machine. Terminal shells are not
+	 * missing CLI is already reported by the SSH error bank - and the install
+	 * command named here would be for the wrong machine. Terminal shells are not
 	 * agents, so a 127 from a command typed into one is the user's business.
 	 */
 	private notInstalledError(
@@ -669,7 +669,7 @@ export class ExitHandler {
 		if (!reason) return null;
 		return {
 			type: 'agent_not_installed',
-			message: agentNotInstalledMessage(managedProcess.toolType, reason),
+			message: agentNotInstalledMessage(managedProcess.toolType, reason, process.platform),
 			recoverable: true,
 			agentId: managedProcess.toolType,
 			sessionId,

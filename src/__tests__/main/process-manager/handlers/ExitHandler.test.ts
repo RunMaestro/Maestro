@@ -1113,6 +1113,7 @@ describe('ExitHandler', () => {
 			expect(errors).toHaveLength(1);
 			expect(errors[0].type).toBe('agent_not_installed');
 			expect(errors[0].message).toMatch(/^Codex CLI not installed/);
+			expect(errors[0].message).toContain('npm install -g @openai/codex');
 			expect(errors[0].agentId).toBe('codex');
 		});
 
@@ -1150,6 +1151,24 @@ describe('ExitHandler', () => {
 			expect(errors).toHaveLength(1);
 			expect(errors[0].type).toBe('agent_not_installed');
 			expect(detectErrorFromExit).not.toHaveBeenCalled();
+		});
+
+		it('reports the Windows "not recognized" wording as agent_not_installed', async () => {
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					stderrBuffer:
+						"'codex' is not recognized as an internal or external command, operable program or batch file.",
+				})
+			);
+			const errors = collectErrors();
+
+			await exitHandler.handleExit('test-session', 9009);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].type).toBe('agent_not_installed');
+			expect(errors[0].message).toContain('npm install -g @openai/codex');
 		});
 
 		it('names the missing runtime when the shebang interpreter is not on PATH', async () => {

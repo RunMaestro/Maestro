@@ -36,6 +36,17 @@ describe('agentInstall', () => {
 			expect(getAgentInstallCommand('codex', 'browser')).toBeNull();
 			expect(getAgentInstallCommand('codex', '')).toBeNull();
 		});
+
+		it('keeps POSIX commands runnable in Fish as well as bash/zsh', () => {
+			for (const id of AGENT_IDS) {
+				for (const platform of ['darwin', 'linux'] as const) {
+					const command = getAgentInstallCommand(id, platform);
+					if (!command) continue;
+					// `exit $?` is bash-only; Fish spells the last status `$status`.
+					expect(command).not.toMatch(/\bexit\s+\$\?/);
+				}
+			}
+		});
 	});
 
 	it('gives every installable agent a docs URL and all three platforms', () => {
@@ -106,6 +117,27 @@ describe('agentInstall', () => {
 		it('says what is missing', () => {
 			expect(agentNotInstalledMessage('codex', 'not-found')).toMatch(/^Codex CLI not installed\./);
 			expect(agentNotInstalledMessage('codex', 'runtime-missing')).toMatch(/Node\.js/);
+		});
+
+		it('prints the platform install command for the user to copy', () => {
+			expect(agentNotInstalledMessage('codex', 'not-found', 'win32')).toContain(
+				'npm install -g @openai/codex'
+			);
+			expect(agentNotInstalledMessage('claude-code', 'not-found', 'linux')).toContain(
+				'curl -fsSL https://claude.ai/install.sh | bash'
+			);
+		});
+
+		it('points at the provider guide when there is no command for the platform', () => {
+			const message = agentNotInstalledMessage('codex', 'not-found');
+			expect(message).not.toContain('npm install');
+			expect(message).toContain('https://');
+		});
+
+		it('never invents a command for a provider with no install path', () => {
+			const message = agentNotInstalledMessage('grok', 'not-found', 'darwin');
+			expect(message).not.toContain('Install it with:');
+			expect(message).toMatch(/install guide/);
 		});
 	});
 });

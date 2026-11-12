@@ -6,10 +6,10 @@
  * `Agent exited with code 1` (or `spawn codex ENOENT`), which gives the user
  * nothing to act on: the fix lives entirely outside Maestro, in a terminal they
  * have to think of opening. Classifying the failure as `agent_not_installed`
- * lets the error dialog name the problem and offer the install command for the
- * platform the user is actually on.
+ * lets the error name the problem and print the install command for the
+ * platform the user is actually on, as text they can copy.
  *
- * Safe to import from the main process, the renderer, and the CLI.
+ * Safe to import from the main process and the renderer.
  */
 
 import type { AgentId } from './agentIds';
@@ -21,9 +21,10 @@ export type InstallPlatform = 'darwin' | 'linux' | 'win32';
 /**
  * How one provider CLI is installed.
  *
- * Commands are complete shell lines. Windows lines must run unchanged from both
- * PowerShell and cmd.exe, because the install shell is the user's default shell
- * and either can be configured - so a PowerShell-only installer is wrapped in
+ * Commands are complete shell lines the user pastes into a terminal, so they
+ * must parse in the common shells on each platform: a POSIX command must run in
+ * Fish as well as bash/zsh, and a Windows line must run unchanged from both
+ * PowerShell and cmd.exe. That is why a PowerShell-only installer is wrapped in
  * `powershell -Command` rather than written as a bare `irm ... | iex`.
  */
 export interface AgentInstallInfo {
@@ -94,7 +95,7 @@ const AGENT_INSTALL_INFO: Record<AgentId, AgentInstallInfo | null> = {
 		docsUrl: 'https://github.com/github/copilot-cli#installation',
 	},
 	// No verified one-line install yet. The error still says "not installed";
-	// it just offers no command, because a guessed install line runs in the
+	// it just names no command, because a guessed install line runs in the
 	// user's shell. Add an entry once the provider's install path is confirmed.
 	antigravity: null,
 	hermes: null,
@@ -181,19 +182,36 @@ export function classifyMissingBinary(
 
 /**
  * The user-facing message for an agent whose CLI cannot be started. Names the
- * provider and the concrete reason; the install command itself is offered by
- * the recovery action, not baked into the message.
+ * provider and the concrete reason, then the exact install command for the
+ * platform it was given, so the user can copy it into a terminal. When no
+ * command is known, the message points at the provider's install guide instead
+ * of inventing a line to run.
  */
 export function agentNotInstalledMessage(
 	agentId: AgentId | string,
-	reason: 'not-found' | 'runtime-missing'
+	reason: 'not-found' | 'runtime-missing',
+	platform?: InstallPlatform | string
 ): string {
 	const name = getAgentDisplayName(agentId);
 	const cli = agentCliLabel(agentId);
+	const command = platform ? getAgentInstallCommand(agentId, platform) : null;
+	const docsUrl = getAgentInstallInfo(agentId)?.docsUrl;
+
 	if (reason === 'runtime-missing') {
-		return `${cli} is installed, but the runtime it needs (Node.js) is not on PATH. Reinstall ${name} under your current Node.js, or fix PATH, then retry.`;
+		const remedy = command
+			? `Reinstall ${name} under your current Node.js with: ${command}`
+			: docsUrl
+				? `Reinstall ${name} under your current Node.js, or follow ${docsUrl}.`
+				: `Reinstall ${name} under your current Node.js, or fix PATH, then retry.`;
+		return `${cli} is installed, but the runtime it needs (Node.js) is not on PATH. ${remedy}`;
 	}
-	return `${cli} not installed. Maestro could not find the ${name} command on this machine's PATH.`;
+
+	const remedy = command
+		? `Install it with: ${command}`
+		: docsUrl
+			? `Install it from ${docsUrl}`
+			: `Follow the ${name} install guide.`;
+	return `${cli} not installed. Maestro could not find the ${name} command on this machine's PATH. ${remedy}`;
 }
 
 /**

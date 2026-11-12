@@ -19,7 +19,11 @@
 
 import { getErrorPatterns, matchErrorPattern } from '../../../../shared/agentErrorPatterns';
 import { formatAgentLoginCommand, getAgentLoginCommand } from '../../../../shared/agentMetadata';
-import { getAgentInstallCommand } from '../../../../shared/agentInstall';
+import {
+	agentNotInstalledMessage,
+	classifyMissingBinary,
+	getAgentInstallCommand,
+} from '../../../../shared/agentInstall';
 import { getPlatform } from '../../../utils/platformUtils';
 import type { AgentErrorType, ToolType } from '../../../types';
 
@@ -106,15 +110,53 @@ function recoveryHintFor(type: AgentErrorType, agentType: ToolType): string {
 	return `Run "${command}"${followUp} to sign in again, then start the wizard over.`;
 }
 
+/** What the exit told us, when the caller has it. */
+export interface WizardErrorDetectionOptions {
+	/** Exit code of the process that produced the output. */
+	exitCode?: number | null;
+	/**
+	 * Text the process wrote to stderr, when the caller can separate it from the
+	 * combined buffer. Only stderr is read for a missing binary: stdout is the
+	 * agent's own transcript, which can quote "command not found" from a tool.
+	 */
+	stderr?: string;
+	/**
+	 * Whether the agent ran on this machine. A missing binary over SSH is the
+	 * remote host's problem, and the SSH error bank already owns it.
+	 */
+	local?: boolean;
+}
+
 /**
  * Detect provider errors in agent output.
  *
  * @param output - The raw output from the agent (stdout/stderr combined)
  * @param agentType - The agent that produced it, which selects the pattern bank
+ * @param options - The exit code, separated stderr, and whether the agent is local
  * @returns Detected error or null if no provider error found
  */
-export function detectWizardError(output: string, agentType: ToolType): WizardError | null {
+export function detectWizardError(
+	output: string,
+	agentType: ToolType,
+	options: WizardErrorDetectionOptions = {}
+): WizardError | null {
 	if (!output) return null;
+
+	// A CLI that never started is not a crash, and the generic bank would call
+	// it one. Classified first, on the local host only (see ExitHandler).
+	const missingReason =
+		(options.local ?? true)
+			? classifyMissingBinary({ exitCode: options.exitCode, stderr: options.stderr ?? output })
+			: null;
+	if (missingReason) {
+		return {
+			type: 'agent_not_installed',
+			title: ERROR_TITLES.agent_not_installed,
+			message: agentNotInstalledMessage(agentType, missingReason),
+			recoveryHint: recoveryHintFor('agent_not_installed', agentType),
+			canRetry: false,
+		};
+	}
 
 	// minLength 0: the streaming guard exists for single-token chunks, and this
 	// is a whole finished output buffer.

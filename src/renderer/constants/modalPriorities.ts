@@ -42,9 +42,6 @@ export const MODAL_PRIORITIES = {
 	/** Quit confirmation modal - highest priority, blocks app quit */
 	QUIT_CONFIRM: 1020,
 
-	/** Provider CLI install terminal - above the agent error modal it replaces */
-	PROVIDER_INSTALL: 1016,
-
 	/** Provider re-authentication terminal - above the agent error modal it replaces */
 	REAUTH: 1015,
 
