@@ -1358,6 +1358,252 @@ describe('compressRequestBody: OpenAI Responses', () => {
 		).toBe('failed');
 	});
 
+	// Codex's `function_call_output` has no error field. The only evidence a
+	// Responses request carries that a call failed is the header the harness wrote
+	// as the first lines of the result, in the spellings of the tools it ships.
+	describe('result headers of Codex tools', () => {
+		/** `exec` (code mode): the header is its own first part, the printed output follows. */
+		const execParts = (ended: string, printed: string) => [
+			{ type: 'input_text', text: `Script ${ended}\nWall time 0.1234 seconds\nOutput:\n` },
+			{ type: 'input_text', text: printed },
+		];
+		/** `exec_command`: one string; `exit` is the whole `Process exited ...` line, or nothing while it runs. */
+		const unified = (exit: string, printed: string) =>
+			`Chunk ID: 1c9f3a\nWall time: 0.0000 seconds\n${exit}Original token count: 12\nOutput:\n${printed}`;
+		/** `shell_command`: one string. */
+		const legacy = (code: number, printed: string) =>
+			`Exit code: ${code}\nWall time: 1 seconds\nOutput:\n${printed}`;
+		const resultBody = (type: string, output: unknown): string =>
+			JSON.stringify({
+				input: [
+					{ type, call_id: 'c1', output },
+					{ type: 'message', role: 'assistant', content: [] },
+				],
+			});
+		const statusOf = (type: string, output: unknown) => {
+			const body = resultBody(type, output);
+			return findToolResultDescriptors('openai-responses', body, parseJsonSpans(body)!)[0]
+				.failureStatus;
+		};
+
+		it.each([
+			['a failed script', 'custom_tool_call_output', execParts('failed', 'boom'), 'failed'],
+			['a completed script', 'custom_tool_call_output', execParts('completed', 'ok'), 'unknown'],
+			[
+				'a script still running',
+				'custom_tool_call_output',
+				'Script running with cell ID 7\nWall time 1 seconds\n',
+				'unknown',
+			],
+			[
+				'a failed script given as one string',
+				'custom_tool_call_output',
+				'Script failed\nWall time 12 seconds\nOutput:\nboom',
+				'failed',
+			],
+			[
+				'a failed script header in a later part',
+				'custom_tool_call_output',
+				[...execParts('completed', 'ok'), ...execParts('failed', 'boom')],
+				'unknown',
+			],
+			[
+				'a failed script header that is not text',
+				'custom_tool_call_output',
+				[{ type: 'input_image', image_url: 'x' }, ...execParts('failed', 'boom')],
+				'unknown',
+			],
+			[
+				'a process that exited with 2',
+				'function_call_output',
+				unified('Process exited with code 2\n', 'boom'),
+				'failed',
+			],
+			[
+				'a process that exited with -1',
+				'function_call_output',
+				unified('Process exited with code -1\n', 'boom'),
+				'failed',
+			],
+			[
+				'a process that exited with 0',
+				'function_call_output',
+				unified('Process exited with code 0\n', 'ok'),
+				'unknown',
+			],
+			[
+				'a process still running',
+				'function_call_output',
+				unified('Process running with session ID 4\n', 'partial'),
+				'unknown',
+			],
+			[
+				'an exit header after other text',
+				'function_call_output',
+				`note\n${unified('Process exited with code 2\n', 'boom')}`,
+				'unknown',
+			],
+			[
+				'an exit header after a space',
+				'function_call_output',
+				` ${unified('Process exited with code 2\n', 'boom')}`,
+				'unknown',
+			],
+			[
+				'an exit header with a wall time that is not a number',
+				'function_call_output',
+				unified('Process exited with code 2\n', 'boom').replace('0.0000', 'soon'),
+				'unknown',
+			],
+			['a shell that exited with 1', 'function_call_output', legacy(1, 'boom'), 'failed'],
+			['a shell that exited with 0', 'function_call_output', legacy(0, 'ok'), 'unknown'],
+			[
+				'a failure the output only printed',
+				'function_call_output',
+				legacy(0, `${legacy(1, 'boom')}\n${unified('Process exited with code 2\n', 'boom')}`),
+				'unknown',
+			],
+		])('reads %s from the lines it opens with', (_name, type, output, status) => {
+			expect(statusOf(type, output)).toBe(status);
+		});
+
+		it('lets a failed header outvote is_error=false, and never turns a header into a success', () => {
+			const failed = JSON.stringify({
+				input: [
+					{
+						type: 'function_call_output',
+						call_id: 'c1',
+						is_error: false,
+						output: legacy(1, 'boom'),
+					},
+				],
+			});
+			const completed = JSON.stringify({
+				input: [{ type: 'function_call_output', call_id: 'c1', output: legacy(0, 'ok') }],
+			});
+			expect(
+				findToolResultDescriptors('openai-responses', failed, parseJsonSpans(failed)!)[0]
+					.failureStatus
+			).toBe('failed');
+			expect(
+				findToolResultDescriptors('openai-responses', completed, parseJsonSpans(completed)!)[0]
+					.failureStatus
+			).toBe('unknown');
+		});
+
+		const failedResults = [
+			{
+				name: 'exec script with a colon wall-time header',
+				type: 'custom_tool_call_output',
+				output: [
+					{ type: 'input_text', text: 'Script failed\nWall time: 0.0 seconds\nScript error:\n' },
+					{ type: 'input_text', text: LOG },
+				],
+				keyed: LOG,
+				vetoed: 2,
+			},
+			{
+				name: 'exec_command Windows signed exit status',
+				type: 'function_call_output',
+				output: unified('Process exited with code -1073741819\n', LOG),
+				keyed: unified('Process exited with code -1073741819\n', LOG),
+				vetoed: 1,
+			},
+			{
+				name: 'shell_command Windows unsigned exit status',
+				type: 'function_call_output',
+				output: legacy(3221225477, LOG),
+				keyed: legacy(3221225477, LOG),
+				vetoed: 1,
+			},
+			{
+				name: 'exec script',
+				type: 'custom_tool_call_output',
+				output: execParts('failed', LOG),
+				keyed: LOG,
+				vetoed: 2,
+			},
+			{
+				name: 'exec_command process',
+				type: 'function_call_output',
+				output: unified('Process exited with code 2\n', LOG),
+				keyed: unified('Process exited with code 2\n', LOG),
+				vetoed: 1,
+			},
+			{
+				name: 'shell_command',
+				type: 'function_call_output',
+				output: legacy(1, LOG),
+				keyed: legacy(1, LOG),
+				vetoed: 1,
+			},
+		];
+
+		it.each(failedResults)(
+			'protects a failed $name before a frozen verdict in both modes',
+			async ({ type, output, keyed, vetoed }) => {
+				for (const early of [false, true]) {
+					const cache = newCache();
+					// The same text, reported as a success by a client that has an error flag.
+					const seeded = await compressRequestBody(
+						'anthropic-messages',
+						anthropicBody(keyed),
+						options({ cache, early })
+					);
+					expect(seeded.stats.compressed).toBe(1);
+					const key = verdictKey(keyed, requestProfile({ early }));
+					const frozen = await cache.read(key);
+					expect(frozen).not.toBeNull();
+					const read = vi.spyOn(cache, 'read');
+					const write = vi.spyOn(cache, 'write');
+					const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'skipped' }));
+					const body = resultBody(type, output).replace('{', '{ "exact":9007199254740993,');
+					const guarded = await compressRequestBody(
+						'openai-responses',
+						body,
+						options({ cache, early, summarize, modelMinTokens: 1 })
+					);
+					expect(guarded).toMatchObject({
+						body,
+						changed: false,
+						blocks: [],
+						stats: { candidates: 0, cacheHits: 0, eligibilityVetoes: { failed: vetoed } },
+					});
+					expect(read).not.toHaveBeenCalled();
+					expect(write).not.toHaveBeenCalled();
+					expect(summarize).not.toHaveBeenCalled();
+					read.mockRestore();
+					write.mockRestore();
+					expect(await cache.read(key)).toEqual(frozen);
+				}
+			}
+		);
+
+		it.each([
+			['a completed script', 'custom_tool_call_output', execParts('completed', LOG)],
+			[
+				'a process that exited with 0',
+				'function_call_output',
+				unified('Process exited with code 0\n', LOG),
+			],
+			['a shell that exited with 0', 'function_call_output', legacy(0, LOG)],
+			[
+				'a failure the output only printed',
+				'function_call_output',
+				legacy(0, `${legacy(1, 'boom')}\n${LOG}`),
+			],
+		])('still shortens the output of %s', async (_name, type, output) => {
+			const result = await compressRequestBody(
+				'openai-responses',
+				resultBody(type, output),
+				options()
+			);
+			expect(result.changed).toBe(true);
+			expect(result.stats.compressed).toBeGreaterThan(0);
+			expect(result.stats.eligibilityVetoes).toBeUndefined();
+		});
+	});
+
 	it('leaves a request whose input is one string alone', async () => {
 		const body = JSON.stringify({ model: 'gpt-5', input: LOG });
 		const result = await compressRequestBody('openai-responses', body, options());

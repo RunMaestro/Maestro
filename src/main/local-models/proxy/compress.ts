@@ -539,6 +539,52 @@ function hasFailedShellEnvelope(body: string, output: JsonSpan | undefined): boo
 	);
 }
 
+// How Codex states that a call ended, in the first lines of the result it hands
+// back and before any output the call produced. A `function_call_output` has no
+// error field, so these lines are the only failure evidence a Responses request
+// carries. They are matched against the raw JSON literal, where a line break is
+// the two characters `\n`; the header is plain ASCII, so nothing is decoded.
+const WALL_TIME = String.raw`[0-9]+(?:\.[0-9]+)? seconds?`;
+/** `exec` (code mode): `Script failed`, as the first text part of the result. */
+const SCRIPT_FAILED_HEADER = new RegExp(String.raw`^"Script failed\\nWall time:? ${WALL_TIME}\\n`);
+/** `exec_command`: `Process exited with code N`, after the chunk and wall time lines. */
+const PROCESS_EXIT_HEADER = new RegExp(
+	String.raw`^"Chunk ID: [0-9a-f]+\\nWall time: ${WALL_TIME}\\nProcess exited with code (-?[0-9]{1,10})\\n`
+);
+/** `shell_command`: `Exit code: N`, then the wall time and `Output:`. */
+const SHELL_EXIT_HEADER = new RegExp(
+	String.raw`^"Exit code: (-?[0-9]{1,10})\\nWall time: ${WALL_TIME}\\nOutput:\\n`
+);
+/** The longest header above is under 120 characters. */
+const RESULT_HEADER_SCAN_CHARS = 192;
+
+/** The text a result opens with: its string, or the first part of its list when that is text. */
+function leadingText(body: string, output: JsonSpan | undefined): JsonSpan | undefined {
+	if (output?.kind === 'string') return output;
+	if (output?.kind !== 'array') return undefined;
+	const [part] = output.items;
+	if (!part || !TEXT_PART_TYPES.has(field(body, part, 'type') ?? '')) return undefined;
+	const text = memberOf(part, 'text');
+	return text?.kind === 'string' ? text : undefined;
+}
+
+/**
+ * Whether a Responses result opens with one of Codex's own failure headers. The
+ * header must lead the text: the same words later in the text, or in a later
+ * part, are output the call printed, not how it ended. Like
+ * {@link hasFailedShellEnvelope} this only vetoes: a zero code, a `Script
+ * completed`, a running call or an unrecognized spelling stays unknown, and a
+ * result a program forged to look failed is merely sent whole.
+ */
+function hasFailedResultHeader(body: string, output: JsonSpan | undefined): boolean {
+	const text = leadingText(body, output);
+	if (!text) return false;
+	const head = body.slice(text.start, Math.min(text.end, text.start + RESULT_HEADER_SCAN_CHARS));
+	if (SCRIPT_FAILED_HEADER.test(head)) return true;
+	const code = (PROCESS_EXIT_HEADER.exec(head) ?? SHELL_EXIT_HEADER.exec(head))?.[1];
+	return code !== undefined && describeToolActivityStatus({ exit_code: Number(code) }) === 'failed';
+}
+
 function responsesToolResults(
 	body: string,
 	root: JsonSpan,
@@ -564,7 +610,10 @@ function responsesToolResults(
 			index < end && (early || !hasCacheControl(body, item)),
 			early
 		);
-		if (descriptor.failureStatus !== 'failed' && hasFailedShellEnvelope(body, output)) {
+		if (
+			descriptor.failureStatus !== 'failed' &&
+			(hasFailedShellEnvelope(body, output) || hasFailedResultHeader(body, output))
+		) {
 			descriptor.failureStatus = 'failed';
 		}
 		out.push(descriptor);
