@@ -134,12 +134,51 @@ Each owner, for their branch only:
 - No em dashes or en dashes anywhere.
 - End with `**Full Changelog**: https://github.com/RunMaestro/Maestro/compare/<previous tag>...<this tag>`.
 
-**Stable layout:** `# X.Y.Z Highlights`, three to five highlight paragraphs
-(emoji, bold lead sentence, then the detail), then `## Also in X.Y.Z` bullets.
+### Voice: write the email someone forwards
 
-**RC layout:** `# Major X.ODD.x Additions`, a line saying the RC carries
-everything in the stable release with a link to that release, the rc-only
-headline features, then `## Other Changes in X.Y.Z` bullets.
+The notes feed the subscriber email, Discord, and X. Write every highlight so a
+reader could forward it to a friend with "you have to see this", and so the
+friend gets it without any background.
+
+- **The bold lead is a quotable promise in the user's words.** "Say 'the file
+  I just saved' and your agent knows which one", not "Agent timeline". Someone
+  should be able to repeat it out loud.
+- **Pain, then scene, then proof.** One sentence on what used to hurt, one on
+  what the reader now does, then the facts that make it believable (where it
+  lives, what it costs, what stays private). The reader who feels the pain is
+  the one who forwards it.
+- **Specific verbs, short sentences.** Excitement comes from concrete detail,
+  not adjectives. Never "game-changer", "supercharge", "seamless", "powerful",
+  "unleash", "revolutionary", "next level", or stacked exclamation marks.
+- **A highlight is three or four sentences.** The full mechanics live in the
+  docs; a paragraph that lists every flag, badge, and edge case loses the
+  reader before the payoff. Calibration: the 1.1.1-RC draft's Federation
+  paragraph ran past 350 words.
+- **`Also in` bullets are one sentence with a bold lead**, and the list is
+  curated, not accumulated: aim for 35 or fewer. Drafts grow all cycle; before
+  tagging, cut what main already shipped, fixes few users felt, and anything
+  only a developer would notice.
+- **The release title is a hook for the lead.** Two or three words that name
+  the payoff ("Right on Cue", "Press Run"), never an internal codename.
+  Calibration: 1.1.0-RC shipped as "Maestro Lib Refactor", and the 1.1.1-RC
+  draft carried the same title.
+- **Behavior a user must act on goes under `## Before you upgrade`**: a default
+  that changes what Maestro does on its own, a moved or removed control, or a
+  feature that now needs something installed. Trust is part of the pitch.
+
+**Stable layout:** `# X.Y.Z Highlights`, three to five highlight paragraphs
+(emoji, bold lead sentence, then the detail), then `## Before you upgrade` when
+it applies, then `## Also in X.Y.Z` bullets.
+
+**RC layout:** `# X.Y.Z-RC Highlights`, a line saying the RC carries
+everything in the current stable release with a link to that release, then the
+rc-only highlights that are new since the previous RC. Then `## Already in
+X.ODD`: one line per rc-only feature from earlier RCs, reworded so no line
+repeats the previous RC's notes (newcomers still see the whole line, returning
+readers are not sold the same thing twice). Then `## Before you upgrade` when
+it applies, then `## Also in X.Y.Z-RC` bullets. Calibration: the 1.1.1-RC draft
+reprinted 1.1.0-RC's seven banner paragraphs nearly word for word and still
+linked stable 1.0.0 after 1.0.3 shipped.
 
 ### Picking the headline
 
@@ -232,6 +271,12 @@ Start only after every release in scope verifies.
    among published features, even when the notes lead with something else, and
    report any change of lead. The email subject names the #1 in user words,
    never a flag name.
+   **Write it to be forwarded.** The "Voice" rules in Phase 1 apply to every
+   channel. Open on the reader's pain or the scene the lead changes, not on the
+   version number. Give the #1 a screenshot or a one-line demo the reader can
+   picture. End the email with a direct ask to pass it on to someone it fits
+   (for example, someone running several agents in several terminals), written
+   fresh for this release's lead.
 3. Discord: `--preview` first, then post one message to #announcements with
    `--everyone`. Report the message ID. CI no longer posts releases to Discord,
    so this is the only announcement.
