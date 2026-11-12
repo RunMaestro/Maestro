@@ -1133,20 +1133,23 @@ Notes:
 
 ### System One (`s1`)
 
-`s1` asks typed questions about a text and returns calibrated judgments, and it configures the engine that answers them. The concepts, the engines and the budget are in [System One](/local-models#system-one). Every verb needs the desktop app.
+`s1` asks typed questions about a text and returns calibrated judgments, and it configures the engine that answers them. The concepts, the engines and the budget are in [System One](/local-models#system-one). Every verb needs the desktop app except `s1 guide` and `s1 examples`, which work with Maestro closed. System One is not an Encore Feature.
 
-| To do this                           | Run                                                                                                             |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| Ask a yes or no question             | `s1 yes "<question>" --state "<text>"`, which exits `0` for yes and `1` for no                                  |
-| Pick one option, or rate on a rubric | `s1 pick "<question>" "a=desc,b=desc"`, `s1 rate "<question>" "low,mid,high"`                                   |
-| Ask several questions of one text    | `s1 ask --noul <id> "<question>" --choice <id> "<question>" <option>...`                                        |
-| Rank or filter many candidates       | `s1 rank --query "<query>" --candidates-file <file>`                                                            |
-| Ask the same of every row of a file  | `s1 batch --input <file> --noul <id> "<question>"`                                                              |
-| Know the price before a job          | `s1 cost --state-file <file> --questions <n>`                                                                   |
-| Read the playbook and recipes        | `s1 guide [<topic>]`, `s1 examples [<name>]`                                                                    |
-| See and change the engine            | `s1 status`, `s1 set engine\|timeout\|fail-policy\|keep-inputs\|agents\|budget`, `s1 key set\|clear`, `s1 test` |
-| See what it decided and what it cost | `s1 ledger [--task <task>] [--since 2h]`, `s1 usage [--agent <id>] [--since 7d]`                                |
-| Dry-run the model router             | `s1 route "<prompt>" [--agent <id>]`                                                                            |
+| To do this                           | Run                                                                                                                  |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| Ask a yes or no question             | `s1 yes "<question>" --state "<text>"`, which exits `0` for yes and `1` for no                                       |
+| Pick one option, or rate on a rubric | `s1 pick "<question>" "a=desc,b=desc"`, `s1 rate "<question>" "low,mid,high"`                                        |
+| Ask several questions of one text    | `s1 ask --noul <id> "<question>" --choice <id> "<question>" <option>...`                                             |
+| Rank or filter many candidates       | `s1 rank --query "<query>" --candidates-file <file>`                                                                 |
+| Ask the same of every row of a file  | `s1 batch --input <file> --noul <id> "<question>"`                                                                   |
+| Know the price before a job          | `s1 cost --state-file <file> --questions <n>`                                                                        |
+| Read the playbook and recipes        | `s1 guide [<topic>]`, `s1 examples [<name>]`                                                                         |
+| See and change the engine            | `s1 status`, `s1 set engine\|timeout\|fail-policy\|keep-inputs\|agents\|budget`, `s1 key set\|clear`, `s1 test`      |
+| Let agents ask, and cap their spend  | `s1 set agents on\|off`, `s1 set budget [<usd>] [--per-agent <usd\|none>]`                                           |
+| Keep one agent off System One        | `update-agent <agent-id> --system-one off` (`on` follows the global switch again)                                    |
+| Keep a group's new agents off it     | `update-group-settings <group-id> --system-one off`                                                                  |
+| See what it decided and what it cost | `s1 ledger [--task <task>] [--outcome <outcome>] [--since 2h] [--limit <n>]`, `s1 usage [--agent <id>] [--since 7d]` |
+| Dry-run the model router             | `s1 route "<prompt>" [--agent <id>]`                                                                                 |
 
 ```bash
 # A calibrated gut check in a shell condition
@@ -1163,7 +1166,7 @@ maestro-cli s1 test
 maestro-cli s1 usage --since 1d
 ```
 
-`s1 status` and `s1 test` exit non-zero when the engine cannot answer as set up. `s1 route` exits `6` when the router is off and `7` when it gave no decision, the same split `models run` uses. No verb prints a stored key.
+`s1 status` and `s1 test` exit non-zero when the engine cannot answer as set up. `s1 route` exits `6` when the router is off and `7` when it gave no decision, the same split `models run` uses. The asking verbs (`yes`, `pick`, `rate`, `ask`, `rank`, `batch`) exit `0` for yes or a confident answer, `1` for no, uncertain, or an answer under `--min-confidence`, `2` for a wrong command line, `3` to `5` when the desktop app is not running, too old, or not answering, `6` when System One is off or today's budget is spent, and `7` when the engine gave no answer or a `rank` or `batch` is incomplete. `s1 key set` reads the key from standard input only, and no verb prints a stored key.
 
 ### What the Other Models Did (`stats models`)
 
