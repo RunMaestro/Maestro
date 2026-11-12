@@ -303,10 +303,12 @@ When the Conductor is unsure it asks, for example _Which agent or tab should tak
 
 Both are system-wide, both ship bound, and both only register while A Cappella is on.
 
-| Hotkey                    | Default                    | What it does                                                                                  |
-| ------------------------- | -------------------------- | --------------------------------------------------------------------------------------------- |
-| **Talk to Maestro**       | `Cmd+Alt+V` / `Ctrl+Alt+V` | Opens a Conductor session **without stealing focus**, so you can talk while working elsewhere |
-| **Talk to Current Agent** | `Cmd+Alt+A` / `Ctrl+Alt+A` | Brings Maestro forward and opens a session bound to the agent you are looking at              |
+| Hotkey                    | Default                   | What it does                                                                                  |
+| ------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| **Talk to Maestro**       | `Opt+Cmd+V` / `Win+Alt+V` | Opens a Conductor session **without stealing focus**, so you can talk while working elsewhere |
+| **Talk to Current Agent** | `Opt+Cmd+A` / `Win+Alt+A` | Brings Maestro forward and opens a session bound to the agent you are looking at              |
+
+On Windows and Linux the defaults use the **Win** key; the **Shortcuts** tab writes it as `Ctrl`, but **Win** is the key the OS registers.
 
 Press a hotkey once to open a session, and press it again to close the microphone and end the session. Pressed while a reply is being spoken, it stops the reply and listens instead.
 
@@ -490,7 +492,7 @@ All of these are in **Settings -> Plugins -> A Cappella -> Settings**. Any of th
 | **Voice Controls**  | **Detection**                                                          | Trained model                  |
 | **Voice Controls**  | **Sensitivity**                                                        | 0.5                            |
 | **Voice Controls**  | **Stop word** / **Stop phrase**                                        | On / maestro stop              |
-| **Voice Controls**  | **Talk to Maestro** / **Talk to Current Agent** hotkeys                | `Cmd+Alt+V` / `Cmd+Alt+A`      |
+| **Voice Controls**  | **Talk to Maestro** / **Talk to Current Agent** hotkeys                | `Opt+Cmd+V` / `Opt+Cmd+A`      |
 | **Voice Controls**  | **Tap vs hold**                                                        | 300 ms                         |
 | **Voice Controls**  | **Talk it through first**                                              | Off                            |
 | **Voice Controls**  | **Wait for me to say send** / **Send after**                           | Off / 30 s                     |

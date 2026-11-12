@@ -294,7 +294,7 @@ Application access additionally requires a valid, non-revoked device credential.
 
 Lite checks up to 32 eligible online peers from its existing Tailscale network map,
 not an address range or an advertising directory. It checks only the fixed Maestro
-port and manifest path. The local daemon's node identity—not remote manifest text—is
+port and manifest path. The local daemon's node identity, not remote manifest text, is
 bound to the remembered device credential. A changed node or host identity refuses
 credential reuse and requires explicit verification/new pairing.
 
@@ -392,17 +392,17 @@ Everything else is the desktop app: the same agents, tabs, transcripts (includin
 
 A few things act on the computer running Maestro itself, or manage its secrets, so they work only in the desktop app. In the web interface they are missing or say so:
 
-| Feature                                                                        | In the web interface                                                                                                                        |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **A Cappella** (voice sessions, wake word, voice setup)                        | Not available. Use the desktop app, or pair a phone as the desktop's microphone.                                                            |
-| **System Log Viewer**                                                          | Not available. Read the logs in the desktop app.                                                                                            |
-| **Cue bundle import and export**                                               | Not available. Import and export bundles in the desktop app.                                                                                |
-| **API keys** (System One engine keys, the model server key, agent credentials) | Shown as set or not set, never entered or read. Set them in the desktop app or with `maestro-cli`.                                          |
-| **Reveal in Finder**, **Open in Finder**                                       | Not shown: there is no Finder on your device to show the host's folder in.                                                                  |
-| **Open in Default App**                                                        | Downloads the file to your device instead.                                                                                                  |
-| **Dictation**                                                                  | Records on your device's microphone. Needs HTTPS (Remote Control); over a plain `http://` address the microphone stays dimmed and says why. |
-| **Plugin install and permissions**, **DataviewJS trust**, **Computer History** | Desktop app only.                                                                                                                           |
-| **Quit, updates, windows, the web server and Remote Control switches**         | Desktop app only. Turning the web server off from a browser would disconnect that browser.                                                  |
+| Feature                                                                        | In the web interface                                                                                                                                          |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A Cappella** (voice sessions, wake word, voice setup, paired devices)        | Not available, and it cannot be switched on from a browser. Use the desktop app, or [pair a phone](./voice-mode#pairing-a-phone) as the desktop's microphone. |
+| **System Log Viewer**                                                          | Not available. Read the logs in the desktop app.                                                                                                              |
+| **Cue bundle import and export**                                               | Not available. Import and export bundles in the desktop app.                                                                                                  |
+| **API keys** (System One engine keys, the model server key, agent credentials) | Shown as set or not set, never entered or read. Set them in the desktop app or with `maestro-cli`.                                                            |
+| **Reveal in Finder**, **Open in Finder**                                       | Not shown: there is no Finder on your device to show the host's folder in.                                                                                    |
+| **Open in Default App**                                                        | Downloads the file to your device instead.                                                                                                                    |
+| **Dictation**                                                                  | Records on your device's microphone. Needs HTTPS (Remote Control); over a plain `http://` address the microphone stays dimmed and says why.                   |
+| **Plugin install and permissions**, **DataviewJS trust**, **Computer History** | Desktop app only.                                                                                                                                             |
+| **Quit, updates, windows, the web server and Remote Control switches**         | Desktop app only. Turning the web server off from a browser would disconnect that browser.                                                                    |
 
 ## Local Access (Same Network)
 
@@ -512,3 +512,4 @@ Native Lite also supervises its transport and renderer. SSH exits, temporary con
 
 - [Configuration](/configuration) - General settings including web interface options
 - [SSH Remote Execution](/ssh-remote-execution) - Running Maestro on remote servers
+- [Voice Mode](/voice-mode) - A Cappella voice, desktop only, and pairing a phone as its microphone
