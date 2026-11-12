@@ -52,13 +52,19 @@ import {
 	__setLocalTextEngine,
 	generateText,
 	isTextGenCancelled,
+	LOCAL_TEXT_CONTEXT_TOKENS,
 	LocalTextEngine,
+	localTextContextFor,
 	resolveInstalledTextModelPath,
 	type LocalTextOptions,
 } from '../../../main/local-models/text-gen';
 import { LocalModelError } from '../../../main/local-models/errors';
 import { LocalModelEndpointError } from '../../../main/local-models/errors';
-import { PARAKEET_TDT_V2_ID, QWEN3_1_7B_ID } from '../../../shared/local-models/model-catalog';
+import {
+	getLocalModel,
+	PARAKEET_TDT_V2_ID,
+	QWEN3_1_7B_ID,
+} from '../../../shared/local-models/model-catalog';
 
 // ---------------------------------------------------------------------------
 // A mocked node-llama-cpp
@@ -76,6 +82,11 @@ interface MockOptions {
 	loadError?: Error;
 	grammarError?: Error;
 	tokens?: { input: number; output: number };
+	/**
+	 * The most context that fits in memory: an exact `contextSize` past it
+	 * throws, and a `{ min, max }` range opens at it (llama.cpp's fitting).
+	 */
+	contextLimit?: number;
 }
 
 function mockLlama(options: MockOptions = {}) {
@@ -95,9 +106,21 @@ function mockLlama(options: MockOptions = {}) {
 				// Like node-llama-cpp's default context: ONE sequence, handed back only
 				// when it is disposed, and only once the async dispose has finished
 				// (the real one waits on the context lock).
-				createContext: async () => {
+				createContext: async (contextOptions: { contextSize?: unknown } = {}) => {
+					const requested = contextOptions.contextSize;
+					const limit = options.contextLimit ?? Number.POSITIVE_INFINITY;
+					let size: number;
+					if (typeof requested === 'number') {
+						if (requested > limit) throw new Error('Not enough memory for this context');
+						size = requested;
+					} else {
+						const range = requested as { min: number; max: number };
+						size = Math.max(range.min, Math.min(range.max, limit));
+					}
+					events.push(`context:${size}`);
 					let held = false;
 					return {
+						contextSize: size,
 						getSequence: () => {
 							if (held) throw new Error('No sequences left');
 							held = true;
@@ -238,6 +261,41 @@ describe('LocalTextEngine', () => {
 		});
 	});
 
+	it('opens the default context, and grows it when a turn asks for more', async () => {
+		const llama = mockLlama();
+		const engine = engineFor(llama);
+
+		await engine.generate(QWEN3_1_7B_ID, TURN);
+		await engine.generate(QWEN3_1_7B_ID, { ...TURN, contextTokens: 16_384 });
+		// A smaller ask reuses the larger context; it never shrinks while loaded.
+		await engine.generate(QWEN3_1_7B_ID, TURN);
+
+		expect(llama.events.filter((e) => e.startsWith('context:'))).toEqual([
+			`context:${LOCAL_TEXT_CONTEXT_TOKENS}`,
+			'context:16384',
+		]);
+		// The old context is freed before the larger one opens; the model stays loaded.
+		expect(llama.events.filter((e) => e.startsWith('load:'))).toHaveLength(1);
+		expect(llama.events.filter((e) => e.startsWith('dispose-context:'))).toHaveLength(1);
+	});
+
+	it('caps a context ask at what the model was trained for', async () => {
+		const trained = getLocalModel(QWEN3_1_7B_ID)!.contextLength!;
+		expect(localTextContextFor(QWEN3_1_7B_ID, trained * 4)).toBe(trained);
+		expect(localTextContextFor(QWEN3_1_7B_ID, 100)).toBe(LOCAL_TEXT_CONTEXT_TOKENS);
+		expect(localTextContextFor(QWEN3_1_7B_ID, undefined)).toBe(LOCAL_TEXT_CONTEXT_TOKENS);
+		// A model the catalog does not know gets no more than the default.
+		expect(localTextContextFor('not-in-catalog', 32_768)).toBe(LOCAL_TEXT_CONTEXT_TOKENS);
+	});
+
+	it('opens what fits in memory when the exact size does not', async () => {
+		const llama = mockLlama({ contextLimit: 12_000 });
+		await engineFor(llama).generate(QWEN3_1_7B_ID, { ...TURN, contextTokens: 16_384 });
+
+		expect(llama.events.filter((e) => e.startsWith('context:'))).toEqual(['context:12000']);
+		expect(llama.promptCalls).toHaveLength(1);
+	});
+
 	it('reports the token meter for the turn', async () => {
 		const llama = mockLlama({ tokens: { input: 40, output: 7 } });
 
@@ -304,9 +362,11 @@ describe('LocalTextEngine', () => {
 
 		expect(llama.events).toEqual([
 			'load:/models/m1.gguf',
+			`context:${LOCAL_TEXT_CONTEXT_TOKENS}`,
 			'dispose-context:/models/m1.gguf',
 			'dispose-model:/models/m1.gguf',
 			'load:/models/m2.gguf',
+			`context:${LOCAL_TEXT_CONTEXT_TOKENS}`,
 		]);
 		expect(engine.loadedModelId).toBe('m2');
 	});

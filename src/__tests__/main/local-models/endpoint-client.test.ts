@@ -442,6 +442,45 @@ describe('endpoint-client', () => {
 			expect(mock).toHaveBeenCalledTimes(2);
 		});
 
+		it('sends Ollama a call that names its context on the native route, with num_ctx', async () => {
+			const mock = routeFetch({
+				'/api/chat': jsonResponse(200, { message: { content: 'digest' } }),
+			});
+
+			const result = await endpointChat(endpoint('ollama'), {
+				model: 'qwen3:30b',
+				messages: [{ role: 'user', content: 'summarize' }],
+				maxTokens: 1200,
+				contextTokens: 32_768,
+				disableThinking: true,
+			});
+
+			expect(result.content).toBe('digest');
+			// Straight to /api/chat: the compat route ignores num_ctx and runs at Ollama's default.
+			expect(mock).toHaveBeenCalledTimes(1);
+			expect(requestBody(mock, 0)).toMatchObject({
+				think: false,
+				options: { num_predict: 1200, num_ctx: 32_768 },
+			});
+		});
+
+		it('never sends a context to a server that is not Ollama', async () => {
+			const mock = routeFetch({
+				'/v1/chat/completions': jsonResponse(200, { choices: [{ message: { content: 'x' } }] }),
+			});
+
+			await endpointChat(endpoint('lmstudio'), {
+				model: 'qwen3-30b',
+				messages: [{ role: 'user', content: 'summarize' }],
+				contextTokens: 32_768,
+			});
+
+			expect(mock).toHaveBeenCalledTimes(1);
+			const body = requestBody(mock, 0);
+			expect(body).not.toHaveProperty('contextTokens');
+			expect(body).not.toHaveProperty('num_ctx');
+		});
+
 		it('does not fall back for a non-Ollama 404, and names the status', async () => {
 			const mock = routeFetch({
 				'/v1/chat/completions': jsonResponse(404, { error: { message: 'model not loaded' } }),

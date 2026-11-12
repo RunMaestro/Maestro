@@ -37,9 +37,15 @@ vi.mock('../../../main/local-models/endpoint-service', () => ({
 }));
 
 import {
-	DIGEST_MAX_INPUT_CHARS,
+	DIGEST_CONTEXT_TOKENS,
+	LARGE_DIGEST_BUDGET,
+	SMALL_DIGEST_BUDGET,
 	createHistoryDigestWriter,
+	digestBudgetFor,
+	digestMaxInputChars,
 } from '../../../main/local-models/history-digests';
+import { QWEN3_1_7B_ID } from '../../../shared/local-models/model-catalog';
+import { MODEL_SERVER_ENDPOINT_ID } from '../../../shared/local-models/model-server';
 import {
 	UNTRUSTED_FENCE_BEGIN,
 	UNTRUSTED_FENCE_END,
@@ -149,7 +155,9 @@ describe('createHistoryDigestWriter: a 15-minute digest', () => {
 		expect(calls).toHaveLength(parts.length + 1);
 		expect(parts[0].prompt).toContain(`part 1 of ${parts.length}`);
 		// No piece is longer than the whole budget, and the notes get a smaller reply budget.
-		for (const part of parts) expect(part.prompt.length).toBeLessThan(DIGEST_MAX_INPUT_CHARS);
+		for (const part of parts) {
+			expect(part.prompt.length).toBeLessThan(digestMaxInputChars(SMALL_DIGEST_BUDGET));
+		}
 		expect(parts[0].maxTokens!).toBeLessThan(calls.at(-1)!.maxTokens!);
 		const merge = calls.at(-1)!;
 		expect(merge.prompt).toContain(`notes taken on ${parts.length} parts`);
@@ -374,5 +382,81 @@ describe('createHistoryDigestWriter: the previous digest', () => {
 		expect(result).toMatchObject({ success: true });
 		expect(calls[0].prompt).not.toContain('window before this one');
 		expect(sentry.captureException).not.toHaveBeenCalled();
+	});
+});
+
+describe('digest budgets', () => {
+	const endpoints = [
+		{ id: 'ollama-1', name: 'Ollama', kind: 'ollama' },
+		{ id: 'lms-1', name: 'LM Studio', kind: 'lmstudio' },
+	] as never;
+
+	it('is large where Maestro sets or knows the context, small otherwise', () => {
+		expect(digestBudgetFor({ type: 'local', modelId: QWEN3_1_7B_ID }, endpoints)).toBe(
+			LARGE_DIGEST_BUDGET
+		);
+		expect(
+			digestBudgetFor(
+				{ type: 'endpoint', endpointId: MODEL_SERVER_ENDPOINT_ID, model: 'm' },
+				endpoints
+			)
+		).toBe(LARGE_DIGEST_BUDGET);
+		expect(
+			digestBudgetFor({ type: 'endpoint', endpointId: 'ollama-1', model: 'm' }, endpoints)
+		).toBe(LARGE_DIGEST_BUDGET);
+		// A server that runs at the context it was started with, and a model the catalog does not know.
+		expect(digestBudgetFor({ type: 'endpoint', endpointId: 'lms-1', model: 'm' }, endpoints)).toBe(
+			SMALL_DIGEST_BUDGET
+		);
+		expect(digestBudgetFor({ type: 'local', modelId: 'unknown' }, endpoints)).toBe(
+			SMALL_DIGEST_BUDGET
+		);
+		expect(digestBudgetFor(null, endpoints)).toBe(SMALL_DIGEST_BUDGET);
+	});
+
+	it('fits a full piece, the reply, and the rest of the call inside its context', () => {
+		for (const budget of [LARGE_DIGEST_BUDGET, SMALL_DIGEST_BUDGET]) {
+			// A piece at 3 characters per token, the previous digest at 3, the reply,
+			// and 1,000 tokens for the system prompt and the instruction.
+			const worst =
+				Math.ceil((budget.pieceTokens * 4) / 3) +
+				Math.ceil(budget.previousChars / 3) +
+				budget.replyMaxTokens +
+				1000;
+			expect(worst).toBeLessThanOrEqual(budget.contextTokens);
+			// The notes of every piece fit the call that merges them.
+			expect(
+				budget.maxPieces * 2 * budget.notesMaxTokens + budget.replyMaxTokens + 1000
+			).toBeLessThanOrEqual(budget.contextTokens);
+		}
+		expect(LARGE_DIGEST_BUDGET.contextTokens).toBe(DIGEST_CONTEXT_TOKENS);
+	});
+
+	it('reads a busy window whole on a large context, and asks for that context', async () => {
+		const segmentPath = writeSegment(
+			Array.from({ length: 60 }, (_, i) => ({ text: `screen ${i} ${'word '.repeat(150)}` }))
+		);
+		const calls: LocalTaskInput[] = [];
+		const { write } = createHistoryDigestWriter({
+			readAssignments: () => ({ 'history-digests': { type: 'local', modelId: QWEN3_1_7B_ID } }),
+			runTask: async (input) => {
+				calls.push(input);
+				return ok('- the digest');
+			},
+		});
+		await write({ kind: '15m', segmentPath, ...WINDOW });
+
+		// The same window takes several pieces on the small budget (see above).
+		expect(calls).toHaveLength(1);
+		expect(calls[0].prompt).not.toContain('Take notes');
+		expect(calls[0].contextTokens).toBe(DIGEST_CONTEXT_TOKENS);
+		expect(calls[0].maxTokens).toBe(LARGE_DIGEST_BUDGET.replyMaxTokens);
+	});
+
+	it('asks for the small context on a source whose context it cannot set', async () => {
+		const segmentPath = writeSegment([{ text: 'invoice list' }]);
+		const { write, calls } = writer(() => ok('- x'));
+		await write({ kind: '15m', segmentPath, ...WINDOW });
+		expect(calls[0].contextTokens).toBe(SMALL_DIGEST_BUDGET.contextTokens);
 	});
 });

@@ -13,6 +13,7 @@ import {
 	MIN_DIGEST_EVENT_TEXT_CHARS,
 	buildLocalDigestInstruction,
 	renderDigestsForRollup,
+	renderAppTimeLine,
 	renderPreviousDigest,
 	renderSegmentForDigest,
 } from '../../../shared/computer-history/digestInput';
@@ -55,6 +56,7 @@ describe('renderSegmentForDigest', () => {
 			{ maxChars: 10_000 }
 		);
 		expect(text.split('\n')).toEqual([
+			'Time in front: Safari 3s',
 			'14:15:00 Safari: window "Invoices" (https://x.test/a)',
 			// Whitespace is folded, so an event is always one line.
 			'14:15:01 Safari: typed in "Search": overdue invoices',
@@ -76,6 +78,7 @@ describe('renderSegmentForDigest', () => {
 			{ maxChars: 10_000 }
 		);
 		expect(text.split('\n')).toEqual([
+			'Time in front: Safari 2s, Slack 1s',
 			'14:15:00 Safari: window "A"',
 			'14:15:00 Safari: on screen: one',
 			'14:15:01 Safari: on screen: two',
@@ -150,12 +153,72 @@ describe('renderSegmentForDigest', () => {
 		expect(lastClock >= '14:19:00').toBe(true);
 	});
 
+	it('keeps only the last version of a message typed with pauses', () => {
+		const field = {
+			window: { title: 'Re: model plan' },
+			element: { role: 'text_area' as const, label: 'Body' },
+		};
+		const { text } = renderSegmentForDigest(
+			[
+				event(0, { kind: 'text.committed', ...field, text: 'Initial release', reason: 'idle' }),
+				event(10, {
+					kind: 'text.committed',
+					...field,
+					text: 'Initial release is months away',
+					reason: 'idle',
+				}),
+				event(20, {
+					kind: 'text.committed',
+					...field,
+					text: 'Initial release is months away. Fireworks is best.',
+					reason: 'blur',
+				}),
+			],
+			{ maxChars: 10_000 }
+		);
+		expect(text.match(/typed/g)).toHaveLength(1);
+		expect(text).toContain('typed in "Body": Initial release is months away. Fireworks is best.');
+	});
+
 	it('an empty or text-free segment renders nothing', () => {
 		expect(renderSegmentForDigest([], { maxChars: 100 })).toEqual({ text: '', shown: 0, total: 0 });
 	});
 });
 
+describe('renderAppTimeLine', () => {
+	it('lists apps by time in front, longest first, and sums the tail as other apps', () => {
+		const apps = Array.from({ length: 8 }, (_, i) => ({ id: `app.${i}`, name: `App${i}`, pid: i }));
+		// App0 gets 80s, App1 70s, ... App7 10s: one event per app, then a closing event.
+		const events: StoredEvent[] = [];
+		let at = 0;
+		for (const [i, app] of apps.entries()) {
+			events.push(event(at, { kind: 'app.activated', app }));
+			at += (8 - i) * 10;
+		}
+		events.push(event(at, { kind: 'app.activated', app: SAFARI }));
+		expect(renderAppTimeLine(events)).toBe(
+			'Time in front: App0 1m, App1 1m, App2 1m, App3 50s, App4 40s, App5 30s, other apps 30s'
+		);
+	});
+
+	it('is empty for a window with no measurable time', () => {
+		expect(renderAppTimeLine([event(0, { text: 'x' })])).toBe('');
+	});
+});
+
 describe('renderDigestsForRollup', () => {
+	it('leaves out the provenance line and shares the budget so every window is in', () => {
+		const digest = (name: string, body: string) =>
+			`# 15-minute digest ${name}\n\nSegment: \`segments/x.jsonl\` (5 events). Written by local model \`m\`.\n\n${body}`;
+		const text = renderDigestsForRollup(
+			Array.from({ length: 10 }, (_, i) => digest(String(i), 'q'.repeat(5000))),
+			{ maxChars: 10_000 }
+		);
+		expect(text).not.toContain('Written by');
+		for (let i = 0; i < 10; i++) expect(text).toContain(`# 15-minute digest ${i}`);
+		expect(text.length).toBeLessThanOrEqual(10_000 + 10 * '...'.length);
+	});
+
 	it('joins the digests in order, drops empty ones, and cuts a runaway one', () => {
 		const text = renderDigestsForRollup([
 			'# 15-minute digest A\n\n- one\n',
@@ -163,7 +226,7 @@ describe('renderDigestsForRollup', () => {
 			`# 15-minute digest B\n\n${'z'.repeat(MAX_ROLLUP_DIGEST_CHARS * 2)}`,
 		]);
 		const [first, second] = text.split('\n\n# 15-minute digest B');
-		expect(first).toBe('# 15-minute digest A\n\n- one');
+		expect(first).toBe('# 15-minute digest A\n- one');
 		expect(second.length).toBeLessThan(MAX_ROLLUP_DIGEST_CHARS + 10);
 		expect(text.endsWith('...')).toBe(true);
 	});
@@ -180,6 +243,7 @@ describe('renderPreviousDigest', () => {
 			'',
 			'x'.repeat(MAX_PREVIOUS_DIGEST_CHARS * 2),
 		].join('\n');
+		expect(renderPreviousDigest(body, 50).length).toBe(50 + '...'.length);
 		const out = renderPreviousDigest(body);
 		expect(out.startsWith('**Release work**')).toBe(true);
 		expect(out).not.toContain('Written by');

@@ -78,6 +78,14 @@ export interface GenerateTextRequest {
 	 */
 	jsonSchema?: Record<string, unknown>;
 	signal?: AbortSignal;
+	/**
+	 * The context this call needs, in tokens: prompt, system prompt, and reply.
+	 * Without it a local model runs at {@link LOCAL_TEXT_CONTEXT_TOKENS}. With
+	 * it, the resident model's context grows to fit (up to what the model
+	 * supports), and an Ollama endpoint is sent it as `num_ctx`. Maestro's
+	 * model server and other servers run at the context they were started with.
+	 */
+	contextTokens?: number;
 }
 
 export interface GenerateTextResult {
@@ -122,6 +130,7 @@ export async function generateText(request: GenerateTextRequest): Promise<Genera
 		temperature,
 		...(request.jsonSchema ? { jsonSchema: request.jsonSchema } : {}),
 		...(request.signal ? { signal: request.signal } : {}),
+		...(request.contextTokens !== undefined ? { contextTokens: request.contextTokens } : {}),
 	};
 
 	let reply: LocalTextReply;
@@ -149,6 +158,7 @@ export async function generateText(request: GenerateTextRequest): Promise<Genera
 				temperature,
 				jsonSchema: request.jsonSchema,
 				signal: request.signal,
+				...(request.contextTokens !== undefined ? { contextTokens: request.contextTokens } : {}),
 			});
 		}
 	} else {
@@ -206,9 +216,24 @@ export const DEFAULT_IDLE_UNLOAD_MS = 5 * 60_000;
 /**
  * Small context: a roster, a tab transcript excerpt, one request. Never a
  * codebase. Exported for a caller that must refuse an input too long to fit
- * (the System One local judge) instead of handing it over.
+ * (the System One local judge) instead of handing it over. It is also the
+ * floor: a call that asks for more (`contextTokens`) grows the context, and a
+ * call never gets less.
  */
 export const LOCAL_TEXT_CONTEXT_TOKENS = 4096;
+
+/**
+ * The context to open for a call that asked for `requested` tokens on
+ * `modelId`: never under {@link LOCAL_TEXT_CONTEXT_TOKENS}, never past the
+ * context the model was trained for (the catalog's `contextLength`).
+ */
+export function localTextContextFor(modelId: string, requested: number | undefined): number {
+	if (requested === undefined || !(requested > LOCAL_TEXT_CONTEXT_TOKENS)) {
+		return LOCAL_TEXT_CONTEXT_TOKENS;
+	}
+	const limit = getLocalModel(modelId)?.contextLength ?? LOCAL_TEXT_CONTEXT_TOKENS;
+	return Math.max(LOCAL_TEXT_CONTEXT_TOKENS, Math.min(Math.floor(requested), limit));
+}
 
 /** Who the core names when a runtime failure reaches a caller. */
 const CONSUMER_ID = 'local-models:text-gen';
@@ -238,6 +263,8 @@ interface LlamaChatSessionInstance {
 }
 
 interface LlamaContextInstance {
+	/** The size it opened at; with a `{ min, max }` request, what fit in memory. */
+	readonly contextSize?: number;
 	getSequence(): unknown;
 	dispose?(): Promise<void> | void;
 }
@@ -264,6 +291,8 @@ interface LoadedModel {
 	modelId: string;
 	model: LlamaModelInstance;
 	context: LlamaContextInstance;
+	/** Tokens `context` holds. Grows when a call asks for more; never shrinks while loaded. */
+	contextSize: number;
 	ChatSession: LlamaModule['LlamaChatSession'];
 	/**
 	 * The model's chat format with reasoning switched off (see
@@ -289,6 +318,8 @@ export interface LocalTextOptions {
 	temperature: number;
 	jsonSchema?: Record<string, unknown>;
 	signal?: AbortSignal;
+	/** See {@link GenerateTextRequest.contextTokens}. */
+	contextTokens?: number;
 }
 
 export interface LocalTextReply {
@@ -375,7 +406,10 @@ export class LocalTextEngine {
 			this.useToken++;
 			this.clearIdleTimer();
 			try {
-				const loaded = await this.ensureLoaded(modelId);
+				const loaded = await this.ensureLoaded(
+					modelId,
+					localTextContextFor(modelId, options.contextTokens)
+				);
 				return await this.runTurn(loaded, options);
 			} finally {
 				// Restarted after every turn, not before: the clock runs from the last
@@ -400,8 +434,13 @@ export class LocalTextEngine {
 
 	// -- Internals -----------------------------------------------------------
 
-	private async ensureLoaded(modelId: string): Promise<LoadedModel> {
-		if (this.loaded?.modelId === modelId) return this.loaded;
+	private async ensureLoaded(modelId: string, contextTokens: number): Promise<LoadedModel> {
+		if (this.loaded?.modelId === modelId) {
+			if (this.loaded.contextSize < contextTokens) {
+				await this.growContext(this.loaded, contextTokens);
+			}
+			return this.loaded;
+		}
 		// One resident model: free the old one before opening the next, never after.
 		await this.disposeLoaded();
 
@@ -413,9 +452,9 @@ export class LocalTextEngine {
 		try {
 			const llama = await module.getLlama({ ...LLAMA_GET_OPTIONS });
 			const model = await llama.loadModel({ modelPath });
-			let context: LlamaContextInstance;
+			let opened: { context: LlamaContextInstance; size: number };
 			try {
-				context = await model.createContext({ contextSize: LOCAL_TEXT_CONTEXT_TOKENS });
+				opened = await openContext(model, contextTokens);
 			} catch (error) {
 				await safeDispose(() => model.dispose?.());
 				throw error;
@@ -423,7 +462,8 @@ export class LocalTextEngine {
 			this.loaded = {
 				modelId,
 				model,
-				context,
+				context: opened.context,
+				contextSize: opened.size,
 				ChatSession: module.LlamaChatSession,
 				chatWrapper: module.resolveChatWrapper?.(model, { ...LLAMA_CHAT_WRAPPER_OPTIONS }),
 				createGrammar: (schema) =>
@@ -443,6 +483,33 @@ export class LocalTextEngine {
 				consumerId: CONSUMER_ID,
 				cause: error,
 			});
+		}
+	}
+
+	/**
+	 * Replace the resident model's context with a larger one. A turn runs only
+	 * inside the engine queue, so nothing is using the old context. When the
+	 * larger one cannot be opened, the model is freed: the next call reloads it
+	 * at the size it asks for, instead of running on a context that is gone.
+	 */
+	private async growContext(loaded: LoadedModel, contextTokens: number): Promise<void> {
+		await safeDispose(() => loaded.context.dispose?.());
+		try {
+			const opened = await openContext(loaded.model, contextTokens);
+			loaded.context = opened.context;
+			loaded.contextSize = opened.size;
+		} catch (error) {
+			this.loaded = null;
+			await safeDispose(() => loaded.model.dispose?.());
+			throw new LocalModelError(
+				`${modelLabel(loaded.modelId)} could not open a ${contextTokens}-token context.`,
+				{
+					code: 'generation-failed',
+					recovery: 'Free some memory, or assign a smaller model to this task.',
+					consumerId: CONSUMER_ID,
+					cause: error,
+				}
+			);
 		}
 	}
 
@@ -555,6 +622,28 @@ export class LocalTextEngine {
 		if (!this.idleTimer) return;
 		clearTimeout(this.idleTimer);
 		this.idleTimer = null;
+	}
+}
+
+/**
+ * Open a context of `contextTokens` on `model`. A larger-than-default request
+ * that does not fit in memory at that exact size is retried as a range, which
+ * llama.cpp fills with the largest size that fits; the size it got is
+ * returned so the engine knows what it holds.
+ */
+async function openContext(
+	model: LlamaModelInstance,
+	contextTokens: number
+): Promise<{ context: LlamaContextInstance; size: number }> {
+	try {
+		const context = await model.createContext({ contextSize: contextTokens });
+		return { context, size: context.contextSize ?? contextTokens };
+	} catch (error) {
+		if (contextTokens <= LOCAL_TEXT_CONTEXT_TOKENS) throw error;
+		const context = await model.createContext({
+			contextSize: { min: LOCAL_TEXT_CONTEXT_TOKENS, max: contextTokens },
+		});
+		return { context, size: context.contextSize ?? LOCAL_TEXT_CONTEXT_TOKENS };
 	}
 }
 

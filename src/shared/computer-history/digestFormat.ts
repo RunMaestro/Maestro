@@ -44,6 +44,7 @@ export const DIGEST_SECTIONS = {
 export const DIGEST_ACCURACY_RULES = [
 	'Use only what the record shows. Do not guess, and do not add advice.',
 	'When the person typed or sent text, report what they wrote, not what the page around it said.',
+	'Several commits of the same field, each extending the one before, are drafts of one message: report only the last.',
 	'A name in a chat, message list, or email is a person or a conversation, not an app or a window.',
 	'Say an action finished only when the record shows it finished. A form that was filled in but not seen to submit is open, not done.',
 	'Never repeat a password, key, token, card number, one-time code, or anything that looks like one.',

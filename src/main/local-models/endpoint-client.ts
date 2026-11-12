@@ -141,6 +141,13 @@ export interface EndpointChatRequest extends EndpointCallOptions {
 	 * an empty answer. Sent only when set, since not every server knows the field.
 	 */
 	disableThinking?: boolean;
+	/**
+	 * The context the call needs. Only Ollama takes a context per request
+	 * (`num_ctx`, on its native route; the OpenAI-compatible route ignores it
+	 * and falls back to Ollama's small default). Other servers run at the
+	 * context they were started with, so it is not sent to them.
+	 */
+	contextTokens?: number;
 }
 
 export interface EndpointChatResult {
@@ -256,6 +263,9 @@ export async function endpointChat(
 	request: EndpointChatRequest
 ): Promise<EndpointChatResult> {
 	const call = { ...request, timeoutMs: request.timeoutMs ?? ENDPOINT_CHAT_TIMEOUT_MS };
+	if (endpoint.kind === 'ollama' && request.contextTokens !== undefined) {
+		return ollamaNativeChat(endpoint, request, call, request.contextTokens);
+	}
 	const body = {
 		model: request.model,
 		messages: request.messages,
