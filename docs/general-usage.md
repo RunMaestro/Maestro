@@ -522,7 +522,7 @@ That request travels with the command. When you ask for a follow-up, the model s
 
 - **The model only names the command; it never runs anything.** The request is answered with tools disabled and in read-only mode, so a task-shaped request ("clean up the build output") comes back as a command to look at rather than as work already done.
 - **It is the tab's own provider by default**, billed and configured like any other turn on that tab. The mode strip shows the model and effort it will use.
-- **You can move it to a local model or your own endpoint.** Assign the **AI command mode** task under **Settings → Local Models → Assignments** (see [Local Models](./local-models#the-tasks)). The mode strip then names that model instead, and the proposal adds one line saying what the command does. If the assigned model cannot run, the request fails with the reason. It does not fall back to the tab's provider. **Off** switches AI Command Mode off: a request is refused and tells you where the setting is.
+- **You can move it to a local model or your own endpoint.** Assign the **AI command mode** task under **Settings → Models → System Two** (see [Local Models](./local-models#the-tasks)), or run `maestro-cli models assign ai-command <source>`. The mode strip then names that model instead, and the proposal adds one line saying what the command does. If the assigned model cannot run, the request fails with the reason. It does not fall back to the tab's provider. **Off** switches AI Command Mode off: a request is refused and tells you where the setting is.
 - **The agent's conversation is untouched.** The request and the suggestion never enter the agent's context, the same as any other command-mode activity.
 - **The prompt is yours to change.** It is a core prompt (`ai-command`, or the shorter `ai-command-local` when a local model or endpoint is assigned), editable under **Settings → Maestro Prompts → Commands**, like every other Maestro prompt. See [Prompt Customization](/prompt-customization).
 
@@ -868,6 +868,21 @@ finds it again.
 Scripts use `maestro-cli tab pins` (`list`, `add`, `remove`, `rename`, `show`). See
 the [CLI docs](./cli#message-pins).
 
+## Deleting a Message
+
+Hover one of your messages and click the trash icon (**Delete message and response**)
+in its action bar. The icon turns into an inline **Delete?** with **Yes** and **No**.
+**Yes** removes your message and everything after it up to your next message, and
+removes the same exchange from the provider's session, so the agent no longer sees it.
+This works for agents on an SSH remote too: Maestro edits the session on the remote.
+
+If the provider refuses, nothing is removed and a toast says **Message was not
+deleted**: "It remains in the agent's context." followed by the reason. A tab with Grok
+history is never edited; the toast **Grok history deletion unavailable** tells you to
+manage that session in Grok CLI.
+
+There is no `maestro-cli` verb for deleting a message.
+
 ## Command Interpreter
 
 The command interpreter can be focused for a clean, terminal-only experience when you collapse the left panel.
@@ -976,7 +991,7 @@ If automation needs an instruction on every turn, put it in the New Session Mess
 
 ### Editing Agents
 
-Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. The modal has five tabs: **General** (name, group, working directory, additional directories, new session message, nudge message), **Provider** (provider, custom path and arguments, model, effort, context window, environment variables), **Models** (Run on target, tiers, gateway and token proxy, System One), **Peers** (which other agents this one may [consult or delegate to](./agent-delegation)), and **SSH** (remote execution). `Cmd+Shift+[` and `Cmd+Shift+]` (`Ctrl+Shift+[` and `Ctrl+Shift+]` on Windows and Linux) move between the tabs, a tab shows a dot when it holds a field with an error, and the modal is resizable and remembers its size. The same tabs make up the New Agent dialog and [Group Settings](./features#groups). Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar.
+Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. The modal has five tabs: **General** (name, group, working directory, additional directories, new session message, nudge message), **Provider** (provider, custom path and arguments, model, effort, context window, environment variables), **Models** (Run on target, tiers, gateway and token proxy, System One), **Peers** (which other agents this one may [consult or delegate to](./agent-delegation)), and **SSH** (remote execution). `Cmd+Shift+[` and `Cmd+Shift+]` (`Ctrl+Shift+[` and `Ctrl+Shift+]` on Windows and Linux) move between the tabs; in Edit Agent, `Cmd+[` and `Cmd+]` (`Ctrl+[` and `Ctrl+]`) do too. A tab shows a dot when it holds a field with an error, and the modal is resizable and remembers its size. The same tabs make up the New Agent dialog and [Group Settings](./features#groups). Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar. From the command line, `maestro-cli show agent <agent>` reads the same fields and `maestro-cli update-agent <agent>` writes them (see [Creating, Updating, and Removing Agents](./cli#creating-updating-and-removing-agents)).
 
 Changing the **Agent Provider** here is a plain switch by default. Tabs, transcripts, drafts, queued messages, and file previews are kept; each tab starts a new conversation on the new provider, and switching back resumes the old one. The provider's own settings (binary path, arguments, environment, model, effort) are parked per provider, so switching back restores them too.
 

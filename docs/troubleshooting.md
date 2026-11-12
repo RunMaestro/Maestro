@@ -107,7 +107,7 @@ Two details worth knowing:
 
 - **Agents on an SSH remote log in on that remote.** The embedded terminal is spawned exactly like a terminal tab, so the login runs on the host the agent actually runs on. Codex switches to `codex login --device-auth` there: its default browser login waits for a callback on the remote's localhost, which your browser cannot reach.
 - **Cue pipelines raise the same dialog.** Cue spawns its agents outside the normal streaming path, so a pipeline that fails on expired credentials used to fail silently in the background. Maestro now classifies the failed run and prompts once per provider. It stays quiet after that until a run for that provider succeeds again, so a busy board cannot bury you in dialogs.
-- **You can sign in before anything breaks.** Command K -> **Re-authenticate Provider** opens the same dialog for the current agent's provider, with nothing failed. Useful when you are switching accounts, or when you know a token is about to lapse and would rather not have it expire mid-run.
+- **You can sign in before anything breaks.** Command K -> **Re-authenticate Agent Default:** followed by the provider name (for example **Re-authenticate Agent Default: Claude Code**) opens the same dialog for the current agent's default provider, with nothing failed. Useful when you are switching accounts, or when you know a token is about to lapse and would rather not have it expire mid-run. The entry is hidden for an agent with no login of its own, such as the Terminal agent. There is no `maestro-cli` verb: the login is interactive, so from a shell run the provider's own login command (for example `claude` then `/login`, or `codex login`).
 
 ## Debug Package
 
