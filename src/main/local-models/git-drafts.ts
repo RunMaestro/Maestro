@@ -229,8 +229,8 @@ export async function draftPullRequest(
 				`${task.label} is off. Assign it a local model or an endpoint in ${ASSIGNMENT_LOCATION}.`
 			);
 		case 'use-utility-agent':
-			// The registry refuses this assignment for the task; a hand-edited
-			// settings file is the only way here. There is no agent path to keep.
+			// Unreachable: a task with no agent path resolves to `off` while the
+			// Utility source is the provider. There is no agent path to keep.
 			return fail(
 				'unavailable',
 				`${task.label} cannot run on the Utility Agent. Assign it a local model or an endpoint in ${ASSIGNMENT_LOCATION}.`

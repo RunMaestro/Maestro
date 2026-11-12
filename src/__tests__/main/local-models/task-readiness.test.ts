@@ -176,6 +176,27 @@ describe('resolveTaskReadiness', () => {
 		expect(isTaskRunnable(search)).toBe(false);
 	});
 
+	it('runs a model-only task on an inherited local Utility source', async () => {
+		settings.set('utilitySource', local(QWEN3_1_7B_ID));
+		const verdict = await resolveTaskReadiness('git-drafts', healthy());
+		expect(verdict).toMatchObject({ state: 'ready', assignment: local(QWEN3_1_7B_ID) });
+	});
+
+	it('names a provider Utility source as the reason a model-only task is off', async () => {
+		const verdict = await resolveTaskReadiness('git-drafts', healthy());
+		expect(verdict).toMatchObject({ state: 'off', assignment: { type: 'off' } });
+		expect(verdict.detail).toMatch(/uses the Utility source, which is a provider agent/);
+		expect(verdict.suggestedAction).toMatch(
+			/Set the Utility source to a local model or an endpoint/
+		);
+		expect(isTaskRunnable(verdict)).toBe(false);
+
+		const all = await resolveAllTaskReadiness(healthy());
+		expect(all.find((entry) => entry.taskId === 'token-proxy')?.detail).toMatch(
+			/uses the Utility source/
+		);
+	});
+
 	it('offers only a local model for an off task an endpoint cannot serve', async () => {
 		const screen = await resolveTaskReadiness('injection-screen', healthy());
 		expect(screen.state).toBe('off');

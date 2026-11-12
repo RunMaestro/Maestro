@@ -820,8 +820,8 @@ Result, 2026-10-10, darwin-arm64 (Apple Silicon), Prompt Guard 2 22M (quantized)
 
 A **task** is a named job (`tab-naming`, `git-drafts`, `semantic-search`, ...), never a model.
 `LOCAL_MODEL_TASKS` in `src/shared/local-models/tasks.ts` lists each one with the kind of model it
-`needs`, whether it has an existing agent path (`allowsUtilityAgent`), its `defaultAssignment`, and
-its `system`. The user's choice per task is a `LocalModelAssignment`:
+`needs`, whether it may inherit the Utility source (`allowsUtilityAgent`), whether its caller keeps
+a provider agent spawn (`hasAgentPath`), its `defaultAssignment`, and its `system`. The user's choice per task is a `LocalModelAssignment`:
 
 | Assignment                                | Meaning                                                                                                                                                                                       |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -834,9 +834,13 @@ its `system`. The user's choice per task is a `LocalModelAssignment`:
 The `localModelAssignments` setting is SPARSE: only tasks the user changed are stored, and
 `resolveLocalModelAssignment()` falls back to the registry default. Tab naming, summaries, and AI
 command mode default to `utility-agent`, inheriting the shared source. Existing installs retain
-their `utilityAgentId` / `utilityModelId` provider choice; every task new with Local Models defaults to `off`. The migration is
+their `utilityAgentId` / `utilityModelId` provider choice. The other System Two tasks (git drafts,
+spoken notices, token proxy, history digests) also default to `utility-agent` but have no agent
+path: while `utilitySource` is the provider, `resolveLocalModelAssignment()` resolves them to `off`,
+and readiness names that cause (`inheritsProviderWithoutAgentPath()`). System One tasks default to
+`off`. The migration is
 `parseLocalModelAssignments()`, run on every load: unknown tasks, malformed entries, and
-`utility-agent` on a task without an agent path are dropped back to the default. A model id the
+`utility-agent` on a task that does not accept it are dropped back to the default. A model id the
 catalog no longer knows is KEPT, so the router can name it as unavailable instead of the task
 quietly changing source. Save-time checks (catalog membership, matching kind) are
 `localModelAssignmentProblem()`.

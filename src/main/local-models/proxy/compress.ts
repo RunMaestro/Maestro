@@ -889,8 +889,8 @@ export async function summarizeToolResult(
 			signal,
 		});
 		switch (verdict.status) {
-			// The registry refuses the Utility Agent for this task; a hand-edited
-			// settings file is the only way to it, and there is no agent path.
+			// A provider Utility source resolves this task to `off`: there is no
+			// agent path, so `use-utility-agent` is unreachable.
 			case 'off':
 			case 'use-utility-agent':
 				return { status: 'skipped' };

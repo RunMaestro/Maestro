@@ -212,6 +212,8 @@ describe('LocalModelsAssignmentsSection', () => {
 		const tabNaming = optionLabels('Tab naming');
 		expect(tabNaming).toEqual(expect.arrayContaining(['Off', 'Utility source']));
 		expect(tabNaming).not.toContain(bgeName);
+		// A System Two task with no agent path still inherits the Utility source.
+		expect(optionLabels('Git drafts')).toEqual(expect.arrayContaining(['Off', 'Utility source']));
 
 		// Embeddings: no Utility Agent path, only the embedding model.
 		const semantic = optionLabels('Semantic search');

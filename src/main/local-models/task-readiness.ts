@@ -30,6 +30,7 @@ import {
 	isLocalModelTaskId,
 	LOCAL_MODEL_TASK_IDS,
 	LOCAL_MODEL_TASKS,
+	OFF_ASSIGNMENT,
 	resolveLocalModelAssignment,
 	taskAcceptsLocalKind,
 	taskLocalModelKinds,
@@ -67,7 +68,7 @@ import {
 import { runtimeSetupLocation } from './runtime/runtime-consumers';
 import { isServerEngineInstalled } from './server/engine-store';
 import { isServerModel } from './server/presets';
-import { readLocalModelAssignments } from './sources';
+import { readInheritsProviderWithoutAgentPath, readLocalModelAssignments } from './sources';
 import { getSystemOneReport } from './system-one/service';
 
 const NEED_LABELS: Record<LocalModelTaskDefinition['needs'], string> = {
@@ -107,6 +108,21 @@ export interface ResolveTaskReadinessOptions {
 	isServerEngineInstalled?: () => Promise<boolean>;
 	/** The System One engine in force, read from its settings. Defaults to the service's report. */
 	readSystemOne?: () => Promise<SystemOneEngineStanding>;
+	/**
+	 * Whether a task is off only because it inherits a provider Utility source
+	 * it has no path for. Defaults to the settings, unless `assignments` is
+	 * injected (a test), where it defaults to never.
+	 */
+	readInheritsProvider?: (taskId: LocalModelTaskId) => boolean;
+}
+
+function inheritsProviderReader(
+	options: ResolveTaskReadinessOptions
+): ((taskId: LocalModelTaskId) => boolean) | undefined {
+	return (
+		options.readInheritsProvider ??
+		(options.assignments ? undefined : readInheritsProviderWithoutAgentPath)
+	);
 }
 
 /** What readiness reads about System One: the engine, its name, and why it cannot answer. */
@@ -118,11 +134,19 @@ export async function resolveTaskReadiness(
 	options: ResolveTaskReadinessOptions = {}
 ): Promise<LocalModelTaskReadiness> {
 	const assignments = options.assignments ?? readLocalModelAssignments();
-	return resolveForAssignment(
-		LOCAL_MODEL_TASKS[taskId],
-		resolveLocalModelAssignment(assignments, taskId),
-		options
-	);
+	const task = LOCAL_MODEL_TASKS[taskId];
+	if (inheritsProviderReader(options)?.(taskId)) {
+		return {
+			taskId,
+			label: task.label,
+			needs: task.needs,
+			assignment: OFF_ASSIGNMENT,
+			state: 'off',
+			detail: `${task.label} uses the Utility source, which is a provider agent. ${task.label} runs only on a model, so it is off.`,
+			suggestedAction: `Set the Utility source to a local model or an endpoint in ${modelsSettingsLocation('system-two')}, or assign ${task.label} one in ${taskAssignmentLocation(task.id)}.`,
+		};
+	}
+	return resolveForAssignment(task, resolveLocalModelAssignment(assignments, taskId), options);
 }
 
 /**
@@ -140,6 +164,7 @@ export async function resolveAllTaskReadiness(
 	const shared: ResolveTaskReadinessOptions = {
 		...options,
 		assignments,
+		readInheritsProvider: inheritsProviderReader(options),
 		// One engine serves every task assigned to it, so it is read once.
 		readSystemOne: () => (systemOne ??= readSystemOne()),
 		listEndpointModels: (endpoint) => {

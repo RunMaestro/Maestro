@@ -7,10 +7,12 @@
 
 import {
 	formatLocalModelAssignmentSpec,
+	inheritsProviderWithoutAgentPath,
 	parseUtilitySource,
 	resolveLocalModelAssignments,
 	type LocalModelAssignment,
 	type LocalModelAssignments,
+	type LocalModelTaskId,
 } from '../../shared/local-models/tasks';
 import { getSettingsStore } from '../stores/getters';
 
@@ -48,6 +50,20 @@ export function readLocalModelAssignments(): LocalModelAssignments | undefined {
 	const settings = getSettingsStore();
 	return resolveLocalModelAssignments(
 		settings.get('localModelAssignments', {}) as LocalModelAssignments | undefined,
+		parseUtilitySource(settings.get('utilitySource'))
+	);
+}
+
+/**
+ * Whether a task is off only because it inherits a provider Utility source it
+ * cannot run on. Reads the STORED choice, which {@link readLocalModelAssignments}
+ * has already resolved away.
+ */
+export function readInheritsProviderWithoutAgentPath(taskId: LocalModelTaskId): boolean {
+	const settings = getSettingsStore();
+	return inheritsProviderWithoutAgentPath(
+		settings.get('localModelAssignments', {}) as LocalModelAssignments | undefined,
+		taskId,
 		parseUtilitySource(settings.get('utilitySource'))
 	);
 }

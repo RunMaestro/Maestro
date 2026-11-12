@@ -265,8 +265,8 @@ export function createHistoryDigestWriter(
 					`${label} has no model. Choose one in the Computer History settings or in ${ASSIGNMENT_LOCATION}.`
 				);
 			case 'use-utility-agent':
-				// The registry refuses this assignment for the task; a hand-edited
-				// settings file is the only way here.
+				// Unreachable: a task with no agent path resolves to `off` while the
+				// Utility source is the provider.
 				throw new DigestCallFailed(
 					`${label} cannot run on the Utility Agent. Assign it a local model or an endpoint in ${ASSIGNMENT_LOCATION}.`
 				);

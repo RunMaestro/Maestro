@@ -33,6 +33,8 @@ import {
 	tasksUsingLocalModel,
 	resolveLocalModelAssignment,
 	resolveLocalModelAssignments,
+	inheritsProviderWithoutAgentPath,
+	UTILITY_AGENT_ASSIGNMENT,
 	withLocalModelAssignment,
 	type LocalModelTaskId,
 	type SystemOneTaskId,
@@ -53,6 +55,13 @@ import { SETTINGS_METADATA } from '../../shared/settingsMetadata';
 import { SETTINGS_DEFAULTS } from '../../main/stores/defaults';
 
 const UTILITY_AGENT_TASKS: LocalModelTaskId[] = ['tab-naming', 'tab-summary', 'ai-command'];
+/** System Two tasks that inherit the Utility source but have no provider path of their own. */
+const MODEL_ONLY_UTILITY_TASKS: LocalModelTaskId[] = [
+	'git-drafts',
+	'spoken-notices',
+	'token-proxy',
+	'history-digests',
+];
 
 describe('LOCAL_MODEL_TASKS registry', () => {
 	it('has one entry per task id, keyed by its own id', () => {
@@ -141,21 +150,32 @@ describe('LOCAL_MODEL_TASKS registry', () => {
 		expect(judge.defaultAssignment).toEqual({ type: 'off' });
 		expect(judge.description).toMatch(/not calibrated/);
 		expect(localModelAssignmentProblem(LOCAL_JUDGE_TASK_ID, { type: 'utility-agent' })).toMatch(
-			/no Utility Agent path/
+			/cannot use the Utility source/
 		);
 	});
 
 	it('defaults the tasks that already run through an agent to that agent path', () => {
 		for (const id of UTILITY_AGENT_TASKS) {
 			expect(LOCAL_MODEL_TASKS[id].allowsUtilityAgent).toBe(true);
+			expect(LOCAL_MODEL_TASKS[id].hasAgentPath).toBe(true);
 			expect(LOCAL_MODEL_TASKS[id].defaultAssignment).toEqual({ type: 'utility-agent' });
 		}
 	});
 
-	it('defaults every new task to off, with no agent path to fall back to', () => {
+	it('defaults every other System Two task to the Utility source, with no agent path', () => {
+		for (const id of MODEL_ONLY_UTILITY_TASKS) {
+			expect(LOCAL_MODEL_TASKS[id].allowsUtilityAgent).toBe(true);
+			expect(LOCAL_MODEL_TASKS[id].hasAgentPath).toBe(false);
+			expect(LOCAL_MODEL_TASKS[id].defaultAssignment).toEqual({ type: 'utility-agent' });
+		}
+	});
+
+	it('defaults every System One task to off, with no Utility source', () => {
 		for (const id of LOCAL_MODEL_TASK_IDS) {
-			if (UTILITY_AGENT_TASKS.includes(id)) continue;
+			if (UTILITY_AGENT_TASKS.includes(id) || MODEL_ONLY_UTILITY_TASKS.includes(id)) continue;
+			expect(LOCAL_MODEL_TASKS[id].system).toBe('one');
 			expect(LOCAL_MODEL_TASKS[id].allowsUtilityAgent).toBe(false);
+			expect(LOCAL_MODEL_TASKS[id].hasAgentPath).toBe(false);
 			expect(LOCAL_MODEL_TASKS[id].defaultAssignment).toEqual({ type: 'off' });
 		}
 	});
@@ -183,8 +203,11 @@ describe('parseLocalModelAssignment', () => {
 		});
 	});
 
-	it('refuses the Utility Agent on a task that has no agent path', () => {
-		expect(parseLocalModelAssignment('git-drafts', { type: 'utility-agent' })).toBeNull();
+	it('refuses the Utility source on a task that does not accept it', () => {
+		expect(parseLocalModelAssignment('cue-gate', { type: 'utility-agent' })).toBeNull();
+		expect(parseLocalModelAssignment('git-drafts', { type: 'utility-agent' })).toEqual({
+			type: 'utility-agent',
+		});
 	});
 
 	it('refuses malformed records', () => {
@@ -225,13 +248,15 @@ describe('parseLocalModelAssignments (settings migration)', () => {
 		expect(
 			parseLocalModelAssignments({
 				'retired-task': { type: 'off' },
+				'cue-gate': { type: 'utility-agent' },
 				'git-drafts': { type: 'utility-agent' },
 				'tab-naming': { type: 'utility-agent' },
-				'cue-gate': { type: 'off' },
+				'token-proxy': { type: 'off' },
 				'ai-command': { type: 'off' },
 				'semantic-search': { type: 'endpoint', endpointId: 'ep', model: 'nomic-embed-text' },
 			})
 		).toEqual({
+			'token-proxy': { type: 'off' },
 			'ai-command': { type: 'off' },
 			'semantic-search': { type: 'endpoint', endpointId: 'ep', model: 'nomic-embed-text' },
 		});
@@ -243,8 +268,35 @@ describe('resolveLocalModelAssignment', () => {
 		expect(resolveLocalModelAssignment(undefined, 'tab-naming')).toEqual({ type: 'utility-agent' });
 		expect(resolveLocalModelAssignment({}, 'cue-gate')).toEqual({ type: 'off' });
 		expect(
-			resolveLocalModelAssignment({ 'git-drafts': { type: 'utility-agent' } }, 'git-drafts')
+			resolveLocalModelAssignment({ 'cue-gate': { type: 'utility-agent' } }, 'cue-gate')
 		).toEqual({ type: 'off' });
+		expect(resolveLocalModelAssignment(undefined, 'git-drafts')).toEqual({
+			type: 'utility-agent',
+		});
+	});
+
+	it('turns a model-only task off while the inherited Utility source is the provider', () => {
+		for (const id of MODEL_ONLY_UTILITY_TASKS) {
+			expect(resolveLocalModelAssignment(undefined, id, UTILITY_AGENT_ASSIGNMENT)).toEqual({
+				type: 'off',
+			});
+			expect(inheritsProviderWithoutAgentPath(undefined, id, UTILITY_AGENT_ASSIGNMENT)).toBe(true);
+		}
+		for (const id of UTILITY_AGENT_TASKS) {
+			expect(resolveLocalModelAssignment(undefined, id, UTILITY_AGENT_ASSIGNMENT)).toEqual({
+				type: 'utility-agent',
+			});
+			expect(inheritsProviderWithoutAgentPath(undefined, id, UTILITY_AGENT_ASSIGNMENT)).toBe(false);
+		}
+		const local = { type: 'local' as const, modelId: QWEN3_1_7B_ID };
+		expect(inheritsProviderWithoutAgentPath(undefined, 'git-drafts', local)).toBe(false);
+		expect(
+			inheritsProviderWithoutAgentPath(
+				{ 'git-drafts': local },
+				'git-drafts',
+				UTILITY_AGENT_ASSIGNMENT
+			)
+		).toBe(false);
 	});
 
 	it('returns the stored assignment', () => {
@@ -300,14 +352,15 @@ describe('localModelAssignmentProblem', () => {
 			})
 		).toMatch(/is a classifier model, but Model routing needs a text-gen or embedding model\./);
 		expect(localModelAssignmentProblem('model-routing', { type: 'utility-agent' })).toMatch(
-			/no Utility Agent path/
+			/cannot use the Utility source/
 		);
 	});
 
-	it('names the task when it has no Utility Agent path', () => {
-		expect(localModelAssignmentProblem('git-drafts', { type: 'utility-agent' })).toMatch(
-			/Git drafts has no Utility Agent path/
+	it('names the task when it cannot use the Utility source', () => {
+		expect(localModelAssignmentProblem('cue-gate', { type: 'utility-agent' })).toMatch(
+			/Cue gate cannot use the Utility source/
 		);
+		expect(localModelAssignmentProblem('git-drafts', { type: 'utility-agent' })).toBeNull();
 	});
 
 	it('refuses an unknown model and a model of the wrong kind', () => {
@@ -457,7 +510,7 @@ describe('shared utility source', () => {
 			expect(resolved['tab-naming']).toEqual({ type: 'off' });
 			expect(resolved['tab-summary']).toEqual(endpoint);
 			expect(resolved['ai-command']).toEqual(source);
-			expect(resolved['git-drafts']).toEqual({ type: 'off' });
+			expect(resolved['git-drafts']).toEqual(source);
 			expect(resolved['semantic-search']).toEqual({ type: 'off' });
 		}
 	);
@@ -562,14 +615,13 @@ describe('tasksForSystem', () => {
 		]);
 	});
 
-	it('Computer History digests is a text task with no Utility Agent path, off until a model is picked', () => {
+	it('Computer History digests is a text task that inherits the Utility source, with no agent path', () => {
 		const task = LOCAL_MODEL_TASKS['history-digests'];
-		expect(task.allowsUtilityAgent).toBe(false);
-		expect(task.defaultAssignment).toEqual({ type: 'off' });
+		expect(task.allowsUtilityAgent).toBe(true);
+		expect(task.hasAgentPath).toBe(false);
+		expect(task.defaultAssignment).toEqual({ type: 'utility-agent' });
 		// The other writer is the digest agent, which is not an assignment.
-		expect(localModelAssignmentProblem('history-digests', { type: 'utility-agent' })).toMatch(
-			/no Utility Agent path/
-		);
+		expect(localModelAssignmentProblem('history-digests', { type: 'utility-agent' })).toBeNull();
 		expect(localModelAssignmentProblem('history-digests', { type: 'system-one' })).toMatch(
 			/writes text/
 		);

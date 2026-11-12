@@ -50,8 +50,10 @@ export type LocalModelTaskNeed = Extract<
  *   or endpoint runs through the task router. The provider choice uses
  *   `utilityAgentId` / `utilityModelId`, or the session's provider when unset.
  *   The router never spawns a provider: it hands that path back to the caller.
- *   Only tasks that HAVE such a path accept it
- *   ({@link LocalModelTaskDefinition.allowsUtilityAgent}).
+ *   Every text task accepts it ({@link LocalModelTaskDefinition.allowsUtilityAgent});
+ *   a task with no provider path of its own
+ *   ({@link LocalModelTaskDefinition.hasAgentPath}) is off while the shared
+ *   source is the provider.
  * - `local`: a catalog model run on this machine.
  * - `endpoint`: a model served by one of the user's `localModelEndpoints`.
  * - `system-one`: the System One engine in force (Jev, an OpenJev server or the
@@ -212,8 +214,15 @@ export interface LocalModelTaskDefinition {
 	 * Text-to-Speech choice when it is local, the system voice otherwise).
 	 */
 	readonly alsoNeeds?: readonly LocalModelTaskNeed[];
-	/** Whether `utility-agent` is a valid assignment: only tasks with an existing agent path. */
+	/** Whether `utility-agent` (inherit the shared Utility source) is a valid assignment. */
 	readonly allowsUtilityAgent: boolean;
+	/**
+	 * Whether the task's caller keeps a provider agent spawn of its own, used
+	 * when the inherited Utility source is the provider. A task without one
+	 * inherits only a local model or an endpoint: while the Utility source is
+	 * the provider, it resolves to `off` ({@link resolveLocalModelAssignment}).
+	 */
+	readonly hasAgentPath: boolean;
 	/** The assignment a task has until the user picks one. */
 	readonly defaultAssignment: LocalModelAssignment;
 	/**
@@ -253,6 +262,9 @@ function defineTask(task: LocalModelTaskDefinition): LocalModelTaskDefinition {
 	if (task.defaultAssignment.type === 'utility-agent' && !task.allowsUtilityAgent) {
 		throw new Error(`Task "${task.id}" defaults to the Utility Agent but does not allow it.`);
 	}
+	if (task.hasAgentPath && !task.allowsUtilityAgent) {
+		throw new Error(`Task "${task.id}" has an agent path but does not allow the Utility Agent.`);
+	}
 	if (task.systemOneQuestions && task.system !== 'one') {
 		throw new Error(
 			`Task "${task.id}" declares System One questions but is not a System One task.`
@@ -271,10 +283,12 @@ function defineTask(task: LocalModelTaskDefinition): LocalModelTaskDefinition {
 }
 
 /**
- * Every task, keyed by id. Tasks that already run through an agent today
- * (tab naming, summaries, AI command mode) default to `utility-agent`, so
- * nothing changes until the user opts in to a local model; every task that is
- * new with Local Models defaults to `off`.
+ * Every task, keyed by id. Every System Two task defaults to `utility-agent`,
+ * the shared Utility source. Tasks that already ran through an agent (tab
+ * naming, summaries, AI command mode) keep that agent path, so nothing changes
+ * until the user picks a local model. The System Two tasks new with Local
+ * Models have no agent path, so they stay off until the Utility source is a
+ * local model or an endpoint. System One tasks default to `off`.
  */
 export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTaskDefinition>> =
 	Object.freeze({
@@ -285,6 +299,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			description: 'Names a new AI tab from the first message sent in it.',
 			needs: 'text-gen',
 			allowsUtilityAgent: true,
+			hasAgentPath: true,
 			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
 		}),
 		'tab-summary': defineTask({
@@ -295,6 +310,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 				'Writes context summaries for Summarize & Continue and the group chat participant summary.',
 			needs: 'text-gen',
 			allowsUtilityAgent: true,
+			hasAgentPath: true,
 			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
 		}),
 		'tab-cleanup': defineTask({
@@ -305,6 +321,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 				'Suggests tabs to close, snooze, or bring back from snooze. Every action still needs your confirmation.',
 			needs: 'text-gen',
 			allowsUtilityAgent: false,
+			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 			// No fail policy: a list of suggestions gates nothing, so a run with no
 			// answer is reported as that.
@@ -317,6 +334,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			description: 'Turns a plain-English request in command mode into a shell command.',
 			needs: 'text-gen',
 			allowsUtilityAgent: true,
+			hasAgentPath: true,
 			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
 			// Measured on 2026-10-11 and again, on eight requests, on 2026-10-12
 			// (`llama-housekeeping-e2e.test.ts`, recorded in
@@ -338,8 +356,9 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			description:
 				'Drafts a pull request title and description from the branch commits and changed files. Fills the fields, never submits.',
 			needs: 'text-gen',
-			allowsUtilityAgent: false,
-			defaultAssignment: OFF_ASSIGNMENT,
+			allowsUtilityAgent: true,
+			hasAgentPath: false,
+			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
 		}),
 		'semantic-search': defineTask({
 			id: 'semantic-search',
@@ -348,6 +367,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			description: 'Finds history, transcripts, and documents by meaning rather than exact words.',
 			needs: 'embedding',
 			allowsUtilityAgent: false,
+			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 		}),
 		'cue-gate': defineTask({
@@ -358,6 +378,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 				'Checks a Cue subscription gate condition against the event before an agent is started.',
 			needs: 'text-gen',
 			allowsUtilityAgent: false,
+			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 			// A model that is down must not silently stop automation the user
 			// depends on (the same default as `gate_on_unavailable`).
@@ -371,6 +392,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			description: 'Scores untrusted text for prompt injection before Cue passes it to an agent.',
 			needs: 'classifier',
 			allowsUtilityAgent: false,
+			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 			// The screen exists to keep unscreened text out of a run.
 			failPolicy: 'closed',
@@ -384,6 +406,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 				'Extra model coverage when scanning content for secrets before it is published. Pattern detection always runs.',
 			needs: 'classifier',
 			allowsUtilityAgent: false,
+			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 			// No fail policy: this pass is extra coverage, so it can neither stop a
 			// publish nor let one through. The pattern scan has already decided.
@@ -396,6 +419,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			description: 'Transcribes speech into any text box without starting a voice session.',
 			needs: 'stt',
 			allowsUtilityAgent: false,
+			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 		}),
 		'dictation-cleanup': defineTask({
@@ -406,6 +430,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 				'Corrects misheard agent names and custom vocabulary after speech recognition. Uses only dictionary replacements, keeps the original on failure, and adds a bounded pass before sending. Off preserves the recognizer output.',
 			needs: 'text-gen',
 			allowsUtilityAgent: false,
+			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 		}),
 		'spoken-notices': defineTask({
@@ -416,8 +441,9 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 				'Writes the short summary a spoken notice adds when an agent finishes a turn. Off speaks the agent name alone. Turn notices on in Settings > Notifications.',
 			needs: 'text-gen',
 			alsoNeeds: ['tts'],
-			allowsUtilityAgent: false,
-			defaultAssignment: OFF_ASSIGNMENT,
+			allowsUtilityAgent: true,
+			hasAgentPath: false,
+			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
 		}),
 		'voice-routing': defineTask({
 			id: 'voice-routing',
@@ -427,6 +453,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 				'Decides which agent and tab a spoken request is for. Off keeps the voice brain chosen in A Cappella settings. On System One the engine picks the agent and tab, and that voice brain still writes what is spoken.',
 			needs: 'text-gen',
 			allowsUtilityAgent: false,
+			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 			// No fail policy: a request with no route is refused out loud, by name.
 			systemOneQuestions: voiceRoutingSystemOneRequest,
@@ -452,6 +479,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			alsoAcceptsLocal: ['embedding'],
 			localFirst: true,
 			allowsUtilityAgent: false,
+			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 			// No fail policy: a turn with no decision runs at the agent's default
 			// tier, which is neither letting unchecked work through nor stopping it.
@@ -474,8 +502,9 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			label: 'Token proxy',
 			description: 'Summarizes large tool output for the token-conservation proxy.',
 			needs: 'text-gen',
-			allowsUtilityAgent: false,
-			defaultAssignment: OFF_ASSIGNMENT,
+			allowsUtilityAgent: true,
+			hasAgentPath: false,
+			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
 		}),
 		'history-digests': defineTask({
 			id: 'history-digests',
@@ -485,9 +514,11 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 				'Writes the 15-minute digests and 6-hour roll-ups of Computer History. Used while the digest source in the Computer History settings is the local model.',
 			needs: 'text-gen',
 			// The other writer is the digest AGENT, chosen in the Computer History
-			// settings (`digests.source`), not the Utility Agent.
-			allowsUtilityAgent: false,
-			defaultAssignment: OFF_ASSIGNMENT,
+			// settings (`digests.source`). The Utility source here only supplies
+			// the model the local writer runs on.
+			allowsUtilityAgent: true,
+			hasAgentPath: false,
+			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
 		}),
 		'local-judge': defineTask({
 			id: 'local-judge',
@@ -497,6 +528,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 				'The text model the System One local judge answers on: yes or no, pick one, or rate on a rubric. Its answers are not calibrated.',
 			needs: 'text-gen',
 			allowsUtilityAgent: false,
+			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 		}),
 	});
@@ -605,7 +637,7 @@ export function parseLocalModelAssignment(
  *   who set `utilityAgentId` / `utilityModelId` keeps exactly the behavior they
  *   configured: `utilitySource` defaults to the existing provider path.
  * - Unknown task ids (a task a later build dropped) and unusable entries (a
- *   malformed record, `utility-agent` on a task that has no agent path, or
+ *   malformed record, `utility-agent` on a task that does not accept it, or
  *   `system-one` on a task with no typed questions) are dropped, which leaves
  *   that task on its default.
  * - An entry equal to its task's default is dropped too, so the stored record
@@ -668,7 +700,9 @@ export function isSameLocalModelAssignment(
 }
 
 /** The stored task choice, else its default. Passing the shared utility source
- * resolves inheritance; omitting it preserves the choice shown by task pickers. */
+ * resolves inheritance; omitting it preserves the choice shown by task pickers.
+ * A task with no agent path resolves to `off` while the shared source is the
+ * provider ({@link inheritsProviderWithoutAgentPath}). */
 export function resolveLocalModelAssignment(
 	assignments: LocalModelAssignments | undefined,
 	taskId: LocalModelTaskId,
@@ -677,7 +711,28 @@ export function resolveLocalModelAssignment(
 	const stored = assignments?.[taskId];
 	const parsed = stored === undefined ? null : parseLocalModelAssignment(taskId, stored);
 	const assignment = parsed ?? LOCAL_MODEL_TASKS[taskId].defaultAssignment;
-	return assignment.type === 'utility-agent' ? (utilitySource ?? assignment) : assignment;
+	if (assignment.type !== 'utility-agent' || !utilitySource) return assignment;
+	if (utilitySource.type === 'utility-agent' && !LOCAL_MODEL_TASKS[taskId].hasAgentPath) {
+		return OFF_ASSIGNMENT;
+	}
+	return utilitySource;
+}
+
+/**
+ * Whether a task is off only because it inherits a Utility source that is the
+ * provider, and it has no provider path of its own. Readiness says so by name
+ * rather than reporting a plain `off` the picker does not show.
+ */
+export function inheritsProviderWithoutAgentPath(
+	assignments: LocalModelAssignments | undefined,
+	taskId: LocalModelTaskId,
+	utilitySource: UtilitySource
+): boolean {
+	return (
+		!LOCAL_MODEL_TASKS[taskId].hasAgentPath &&
+		utilitySource.type === 'utility-agent' &&
+		resolveLocalModelAssignment(assignments, taskId).type === 'utility-agent'
+	);
 }
 
 /** Every task's effective assignment, for a surface that lists them all. */
@@ -712,7 +767,7 @@ export function localModelAssignmentProblem(
 		const type =
 			typeof value === 'object' && value !== null ? (value as { type?: unknown }).type : undefined;
 		if (type === 'utility-agent') {
-			return `${task.label} has no Utility Agent path. Choose off, a local model, or an endpoint.`;
+			return `${task.label} cannot use the Utility source. Choose off, a local model, or an endpoint.`;
 		}
 		if (type === 'system-one') {
 			const why =
