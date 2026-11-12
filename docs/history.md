@@ -80,9 +80,11 @@ Press `Cmd+F` / `Ctrl+F` to open the search box, or click in the filter area to 
 
 ### By Meaning
 
-When [Semantic search](./local-models) is assigned a source and ready, a sparkle button appears beside the search box. Turn it on and describe what you are looking for: "the time the upload retry was fixed" finds the entry even if it never used those words. Results are this agent's entries ranked by how close they are, each with a percentage and the passage that matched. Press `Enter` in the box to open the best match, or arrow down into the list. The type filters still apply.
+When [Semantic search](./local-models#semantic-search) is assigned a source and ready, a sparkle button appears beside the search box. Turn it on and describe what you are looking for: "the time the upload retry was fixed" finds the entry even if it never used those words. Results are this agent's entries ranked by how close they are, at most 30, each with a percentage and the passage that matched. Press `Enter` in the box to open the best match, or arrow down into the list. The type filters still apply.
 
-The button is not shown while Semantic search is off or its model is not ready. While the index is still building, the result count says how far along it is.
+The button is not shown while Semantic search is off or its model is not ready. While the index is still building, the result count says how far along it is. When the search cannot run, the list shows the reason; it never falls back to matching text.
+
+From the command line, `maestro-cli search "<query>" --semantic --source history --agent <id>` runs the same search. Drop `--semantic` to match the exact text.
 
 ### By Time Range
 

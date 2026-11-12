@@ -780,13 +780,17 @@ Very broad queries are capped so a single character can't stall the UI: 100 matc
 per tab and 500 overall. When a search hits either limit the modal says so, and
 narrowing the query brings the rest into view.
 
-When [Semantic search](./local-models) is assigned a source and ready, the modal
-also shows a **Semantic** toggle. With it on you describe what you are looking for
-instead of typing exact words, and the results are this agent's conversation turns
-ranked by how close they are in meaning, each with a percentage and the passage
-that matched. `Enter` jumps to the turn. The Find bar is left alone, since a match
-by meaning has no text to step through. The toggle is not shown while Semantic
-search is off or its model is not ready.
+When [Semantic search](./local-models#semantic-search) is assigned a source and
+ready, the modal also shows a **Semantic** toggle. With it on you describe what you
+are looking for instead of typing exact words, and the results are the conversation
+turns in this agent's open tabs ranked by how close they are in meaning, at most 30,
+each with a percentage and the passage that matched. The regex toggle is hidden
+while it is on. A turn in a tab you closed since it was indexed is left out. `Enter`
+jumps to the turn. The Find bar is left alone, since a match by meaning has no text
+to step through. The toggle is not shown while Semantic search is off or its model
+is not ready. From the command line,
+`maestro-cli search "<query>" --semantic --source transcripts --agent <id>` runs the
+same search.
 
 <Note>
 	This search covers the AI tabs of the agent you're currently on, not your whole

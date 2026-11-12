@@ -304,7 +304,7 @@ maestro-cli settings reset utilityAgentId
 | AI command mode                 | Two    | Text generation                    | Utility source | Turns a plain-English request in command mode into a shell command. You review it before it runs.                                                       |
 | Tab cleanup suggestions         | One    | Text generation                    | Off            | Suggests tabs to close, snooze, or bring back. Every action still needs your confirmation.                                                              |
 | Git drafts                      | Two    | Text generation                    | Off            | Drafts a pull request title and description from the branch commits and changed files. Fills the fields, never submits.                                 |
-| Semantic search                 | One    | Embeddings                         | Off            | Finds history, transcripts, and documents by meaning rather than exact words.                                                                           |
+| Semantic search                 | One    | Embeddings                         | Off            | Finds history, transcripts, and documents by meaning rather than exact words. See [Semantic search](#semantic-search).                                  |
 | Cue gate                        | One    | Text generation                    | Off            | Checks a Cue subscription's gate condition against the event before an agent starts.                                                                    |
 | Prompt-injection screen         | One    | Classifier                         | Off            | Scores untrusted text for prompt injection before Cue passes it to an agent.                                                                            |
 | Secret screen                   | One    | Classifier                         | Off            | Adds model coverage when scanning content for secrets before it is published. Pattern detection always runs.                                            |
@@ -325,13 +325,79 @@ For AI command mode, **Utility source** follows the shared choice. When that cho
 
 **Tab cleanup suggestions** opens from the menu at the top of the Left Bar (**Tab Cleanup**) or the command palette (**Tab Cleanup Suggestions**). It has no shortcut until you bind one in **Settings -> Shortcuts**. While the task is off, the window says **Tab cleanup suggestions is off** and offers **Open Models Settings**. It gives the model one line about each open and snoozed tab across every agent (its name, when it was last active, how many messages it holds, and what was last asked in it) and lists the tabs the model would close, snooze, or bring back from snooze, each with a one-line reason. It is a list of suggestions and nothing else: every row starts unticked, and no tab changes until you tick the rows you agree with and press **Apply**. A tab that is busy, starred, or holding an unsent draft is never suggested, whatever the model says, and a tab that becomes busy while the list is open is greyed out. A closed tab can still be brought back with Reopen Closed Tab. Snoozed tabs in one batch share the wake time you pick beside the Apply button.
 
-**Semantic search** builds its index in the background once it is assigned a source. It reads History entries, Director's Notes, and the tab transcripts Maestro keeps, and it waits whenever another task is using the model. The **Semantic index** card under the Semantic search row on System One shows how much is indexed. Cue runs are most of History and mostly repeat, so they are left out unless you turn on **Index Cue runs** there. Setting the task back to Off stops indexing.
-
-Once the task is ready, two search boxes gain a **Semantic** toggle (a sparkle icon): the [History panel's filter](./history#by-meaning) and [Search Messages (All Agent Tabs)](./general-usage#searching-message-history). With it on, you describe what you are looking for and each result shows how close it is (a percentage) and the passage that matched. The toggle is not shown while the task is off or its model is not ready. From the command line, `maestro-cli search "<query>" --semantic` runs the same search across every agent.
-
 **A task never falls back.** If a task's assignment is not ready, the task does not run on some other source instead. It reports why, and the readiness line shows the same reason. A silent fallback would send your text somewhere you did not choose.
 
 Where it reports depends on the task. A task you started yourself shows the reason in place: AI command mode in its strip, Git drafts beside the button, Tab cleanup in its window, Summarize & Continue as an error. A task that runs in the background raises a yellow notice instead, titled with the task, for example **Tab naming skipped**, with the reason as its message. Tab naming, the group chat participant summary, Spoken notices, Token proxy, and Computer History digests do this. The notice shows once per task and agent, and again only after the task has run fine in between. Every skip is also written to the system log.
+
+### Semantic search
+
+**Semantic search** finds History entries, Director's Notes, and tab transcripts by meaning rather than exact words: "the time the upload retry was fixed" finds the entry even if it never used those words. Give it an embedding model from **Settings -> Models -> Library** (the **Search & Safety** section; **BGE Small (English)** is the small one) or an endpoint that serves embeddings, then assign it on **Settings -> Models -> System One**. It cannot run on the utility source or a System One engine. While it is off, a search by meaning says **Semantic search is off. Assign it a source in Settings > Models > System One.**
+
+```bash
+maestro-cli models assign semantic-search local:bge-small-en-v1.5
+maestro-cli models status semantic-search        # would it run, and if not, why
+```
+
+#### What is indexed
+
+The index builds in the background whenever the task has a source. It has no switch of its own: setting the task back to Off stops indexing, and nothing runs, reads a file, or loads a model until you assign it again.
+
+- **History entries**: the summary and the full response. Cue runs are most of History and mostly repeat, so they are left out unless you turn on **Index Cue runs** (below).
+- **Director's Notes**: each synopsis written while Semantic search has a source is kept for the index, the newest 100. A synopsis belongs to no agent, so a search limited to one agent leaves it out.
+- **Tab transcripts, one turn at a time**: a turn runs from one of your messages to the next. Only the conversation is read (your messages and the agent's replies), not tool cards. Maestro reads the transcript it saves for each tab, which holds the newest 100 entries, and never the provider's own session files. Background consult tabs are left out. A tab's newest turn is indexed once it has been quiet for 2 minutes.
+
+The first pass starts about a minute after launch. A pass also runs 5 seconds after you change the assignment, new History entries and synopses are indexed within a few seconds, and a full pass every 15 minutes picks up transcripts. A source that no longer exists drops out of the index at the next pass. Indexing waits whenever another task is using the model, and text that has not changed is never embedded twice. If you assign a different model, the next passes index everything again for it; the old model's entries stay on disk until you clear the index. If the model cannot run, indexing stops with the reason and never switches to another model.
+
+#### The Semantic index card
+
+The **Semantic index** card sits under the task table on **Settings -> Models -> System One** (`maestro-cli open settings --tab models --sub-tab system-one`). It shows:
+
+- The state: **Off**, **Up to date**, **Waiting for next pass**, **Indexing**, **Paused while another task uses the model**, or **Unavailable** with the reason.
+- How far along it is ("1,204 of 3,400 items indexed"), with a progress bar while it indexes.
+- The disk it uses ("12.4 MB on disk · 5,120 searchable chunks"). This counts the index for every model you have indexed with; model downloads are stored separately.
+
+Its buttons:
+
+- **Explore index** lists what is indexed. Pick an **Indexed model** (the one in use is marked **(active)**) and a **Source type**, and page through 20 sources at a time with **Previous** and **Next**. Each row shows the source, its agent, how many chunks it has, when it was indexed, and a passage, or **Original source is unavailable.** when the source is gone. **Refresh entries** reloads the list and **Hide index** closes it.
+- **Refresh storage** measures the disk use again.
+- **Clear index** removes the cached search vectors for every indexed model and gives back the disk space. Your History entries, Director's Notes, and transcripts are kept. Confirm in the **Clear semantic index** dialog. While Semantic search has a source, the next scheduled pass builds the index again.
+- **Index Cue runs** (off by default) adds Cue runs to the index. Turning it off removes them at the next pass.
+
+From the command line:
+
+```bash
+maestro-cli models index [--json]                # the state, and how many sources of each kind are indexed
+maestro-cli settings set semanticIndexCue true   # Index Cue runs (false turns it off)
+```
+
+`models index` exits with code 1 only when the index is **Unavailable**; Off is not a failure. **Explore index**, **Refresh storage**, and **Clear index** have no `maestro-cli` equivalent yet.
+
+#### Searching by meaning
+
+Once the task is ready, two search boxes gain a **Semantic** toggle (a sparkle icon). The toggle is not shown while the task is off or its model is not ready, and it appears without reopening the box once you assign a source.
+
+| Search box                                                                    | What it searches                       | From the command line                                                       |
+| ----------------------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------- |
+| [History panel filter](./history#by-meaning)                                  | This agent's History entries           | `maestro-cli search "<query>" --semantic --source history --agent <id>`     |
+| [Search Messages (All Agent Tabs)](./general-usage#searching-message-history) | The turns in this agent's open AI tabs | `maestro-cli search "<query>" --semantic --source transcripts --agent <id>` |
+
+With it on, describe what you are looking for. The search runs 300 ms after you stop typing and lists at most 30 results, best match first. Each result shows how close it is (a percentage) and the passage that matched, with your query's words highlighted. A search by meaning never falls back to matching text: when it cannot run, the list shows the reason instead. While the index is still building, the result count says so, for example **Index is still building: 120 of 400 sources.** or **The index has not finished its first pass yet.** When indexing has stopped, it says **The index is not being updated right now.**
+
+#### In the web interface
+
+From the [web interface](./remote-control), both **Semantic** toggles and the **Semantic index** card work as they do in the desktop app. The index and the model are on the computer running Maestro.
+
+#### Searching from the command line
+
+`maestro-cli search` finds past work across History entries, Director's Notes, and tab transcripts. Without `--semantic` it matches the exact text (case does not matter), newest first, and needs no model.
+
+```bash
+maestro-cli search "<query>"                     # exact text, newest first
+maestro-cli search "<query>" --semantic          # by meaning, best match first
+maestro-cli search "<query>" --source history,notes --agent <id> --limit 50 --json
+```
+
+`--source` takes `history`, `notes`, or `transcripts` (repeat it or separate with commas). `--agent` takes an id, an id prefix, or the exact name. `--limit` defaults to 20, at most 100. A query is cut at 1,000 characters. The desktop app must be running. The command exits with code 0 when the search ran, even with no results, and 1 when it could not. With Semantic search off, it adds the fix: `maestro-cli models assign semantic-search <source>`.
 
 ### Dictation
 
