@@ -26,6 +26,7 @@ import {
 	resolveTokenProxyMode,
 	resolveTokenProxyTarget,
 	TOKEN_PROXY_MODE_DESCRIPTIONS,
+	TOKEN_PROXY_ESTIMATE_NOTE,
 	TOKEN_PROXY_MODE_LABELS,
 	TOKEN_PROXY_MODES,
 	TOKEN_PROXY_OBSERVATION_SKIP_LABELS,
@@ -427,9 +428,22 @@ describe('resolveTokenProxyMode', () => {
 			expect(TOKEN_PROXY_MODE_LABELS[mode].length).toBeGreaterThan(0);
 			expect(TOKEN_PROXY_MODE_DESCRIPTIONS[mode].length).toBeGreaterThan(0);
 		}
-		// The two compress modes differ in what the MODEL sees; the words say so.
-		expect(TOKEN_PROXY_MODE_DESCRIPTIONS['compress-early']).toMatch(/before the model first reads/);
-		expect(TOKEN_PROXY_MODE_DESCRIPTIONS.compress).toMatch(/after the model has read/);
+		// The policy differs for recent results; it does not prove prior exposure.
+		expect(TOKEN_PROXY_MODE_DESCRIPTIONS['compress-early']).toMatch(
+			/recent tool-result text eligible/
+		);
+		expect(TOKEN_PROXY_MODE_DESCRIPTIONS.compress).toMatch(/protected recent part/);
+	});
+
+	it('does not turn payload estimates or eligibility policy into exposure or cost guarantees', () => {
+		expect(TOKEN_PROXY_ESTIMATE_NOTE).toContain('does not establish billed token or cost savings');
+		for (const mode of ['compress', 'compress-early'] as const) {
+			expect(TOKEN_PROXY_MODE_DESCRIPTIONS[mode]).not.toMatch(
+				/cheapest|costs more|costs less|the model sees everything|after the model has read/i
+			);
+		}
+		expect(TOKEN_PROXY_MODE_DESCRIPTIONS['compress-early']).toContain('not guaranteed');
+		expect(TOKEN_PROXY_MODE_DESCRIPTIONS.compress).toContain('depend on provider caching');
 	});
 });
 

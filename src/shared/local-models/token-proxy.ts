@@ -340,15 +340,9 @@ export const TOKEN_PROXY_MODE_LABELS: Record<TokenProxyMode, string> = {
 	'compress-early': 'Compress early',
 };
 
-/**
- * Said wherever a token figure from the proxy is shown. The proxy has no
- * tokenizer for the provider, so it counts 4 characters to a token. Against a
- * provider's own count that matched on a log of ordinary words and came out
- * about 1.9 times low on shell output full of paths and digits, so a saving
- * shown is an estimate that errs low, not a measurement.
- */
+/** Payload token estimates establish neither provider usage nor cost savings. */
 export const TOKEN_PROXY_ESTIMATE_NOTE =
-	'Token counts are estimates at 4 characters per token. On paths, digits and stack traces the real saving can be about twice the figure shown.';
+	'Token counts are estimates at 4 characters per token. A smaller outgoing payload does not establish billed token or cost savings.';
 
 /**
  * Tokens saved, with the share of what arrived: `10,000 (25%)`. A dash when
@@ -368,14 +362,14 @@ export function describeAddedLatency(totals: ProxyRequestTotals): string {
 	return totals.compressRequests === 0 ? '-' : `${formatCount(totals.avgAddedLatencyMs)} ms`;
 }
 
-/** One sentence per mode: what it does and what it costs. Shown under the picker. */
+/** Eligibility policy per mode, without a provider-exposure or cost guarantee. */
 export const TOKEN_PROXY_MODE_DESCRIPTIONS: Record<TokenProxyMode, string> = {
 	off: "This agent's requests do not go through the Maestro proxy.",
 	passthrough: 'Requests are forwarded unchanged and counted. Nothing is shortened.',
 	compress:
-		'A large tool result is shortened after the model has read it once in full. The model sees everything; the result is cached twice, so this costs more than Passthrough in a short session and less only in a long one.',
+		'Compresses eligible text outside the protected recent part of each request. Reuses cached verdicts. Cost savings depend on provider caching, retrieval and session history.',
 	'compress-early':
-		'A large tool result is shortened before the model first reads it. The cheapest mode, because nothing is cached in full. The model works from the shortened output.',
+		'Also makes recent tool-result text eligible for compression. The model can receive shortened output on its first exposure. Cost savings are not guaranteed.',
 };
 
 /** Whether a mode reads and shortens request bodies. */
