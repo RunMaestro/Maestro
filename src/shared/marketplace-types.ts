@@ -228,6 +228,19 @@ export interface PlaybookLaunchRecord {
 	 * folder and nothing else.
 	 */
 	folderRelativePath: string;
+	/**
+	 * The Auto Run folder the launch imported into, on this computer or on the agent's SSH remote.
+	 * Cleanup deletes `folderRelativePath` inside this folder, even if the agent's Auto Run folder
+	 * changed during the run.
+	 */
+	autoRunFolderPath: string;
+	/** The SSH remote the agent ran on. Absent for an agent on this computer. */
+	sshRemoteId?: string;
+	/**
+	 * The launch block as it was when the launch started. Cleanup and the outro follow it, so a
+	 * manifest that changes during the run cannot change what a finished launch does or says.
+	 */
+	spec: PlaybookLaunchSpec;
 	/** Id of the saved-playbook record the import created */
 	savedPlaybookId: string;
 	/** True when the user chose to save the playbook as reusable; cleanup then keeps the record */
@@ -235,6 +248,12 @@ export interface PlaybookLaunchRecord {
 	/** The answers the user gave */
 	values: PlaybookLaunchValues;
 	status: 'running' | 'completed' | 'stopped' | 'failed';
+	/**
+	 * Id of the app run (one main process, from start to quit) that started the launch. An Auto Run
+	 * does not survive a quit or a crash, so the store marks a `running` record from another app run
+	 * as `failed`. Absent on a record written without it, which the store leaves as it is.
+	 */
+	appRunId?: string;
 	/** Epoch milliseconds (Date.now()) when the launch started */
 	startedAt: number;
 	/** Epoch milliseconds (Date.now()) when the launch ended */
@@ -245,6 +264,36 @@ export interface PlaybookLaunchRecord {
 	 * ('kept'), or left it because the run was stopped ('skipped-stopped').
 	 */
 	cleanup?: 'done' | 'kept' | 'skipped-stopped';
+}
+
+/**
+ * What a caller asks for when it launches a marketplace playbook (the launch modal, the CLI).
+ * Main checks every field again, because the request crosses IPC or the web bridge.
+ */
+export interface PlaybookLaunchRequest {
+	/** Id of the marketplace playbook to launch */
+	playbookId: string;
+	/** The answers to the launch inputs, keyed by input name. A blank answer takes the default. */
+	values: PlaybookLaunchValues;
+	/** Id of the agent the Auto Run executes in */
+	sessionId: string;
+	/**
+	 * That agent's own Auto Run folder: the renderer runs the launched documents from the agent's
+	 * Auto Run folder, so the launch must import into the same one.
+	 */
+	autoRunFolderPath: string;
+	/** The agent's SSH remote. Absent for an agent on this computer. */
+	sshRemoteId?: string;
+	/** True when the user chose to save the playbook as reusable; cleanup then keeps the record */
+	keepSavedPlaybook: boolean;
+}
+
+/** A launch whose Auto Run started. */
+export interface PlaybookLaunchResult {
+	/** Id of the launch record */
+	launchId: string;
+	/** Name of the launch folder inside the agent's Auto Run folder */
+	folderRelativePath: string;
 }
 
 // ============================================================================

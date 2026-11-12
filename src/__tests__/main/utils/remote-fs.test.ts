@@ -2676,6 +2676,7 @@ finally:
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Permission denied');
+			expect(result).not.toHaveProperty('errorCode');
 		});
 
 		it('handles directory already exists', async () => {
@@ -2689,6 +2690,39 @@ finally:
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('already exists');
+		});
+
+		it.each([
+			["GNU mkdir's", "mkdir: cannot create directory '/home/user/run': File exists"],
+			["BSD mkdir's", 'mkdir: /home/user/run: File exists'],
+		])(
+			"marks %s report of something already at the path with errorCode 'exists'",
+			async (_mkdir, stderr) => {
+				const deps = createMockDeps({ stdout: '', stderr, exitCode: 1 });
+
+				const result = await mkdirRemote('/home/user/run', baseConfig, false, deps);
+
+				expect(result).toEqual({
+					success: false,
+					error: 'Directory already exists: /home/user/run',
+					errorCode: 'exists',
+				});
+			}
+		);
+
+		it('sets no error code for any other failure', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: "mkdir: cannot create directory '/home/user/a/b': No such file or directory",
+				exitCode: 1,
+			});
+
+			const result = await mkdirRemote('/home/user/a/b', baseConfig, false, deps);
+
+			expect(result).toEqual({
+				success: false,
+				error: "mkdir: cannot create directory '/home/user/a/b': No such file or directory",
+			});
 		});
 	});
 

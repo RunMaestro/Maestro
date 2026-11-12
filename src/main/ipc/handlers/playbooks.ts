@@ -7,6 +7,12 @@ import archiver from 'archiver';
 import { readZipArchive } from '../../utils/zip-archive';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
+import {
+	deleteSavedPlaybook,
+	getSavedPlaybooksFilePath,
+	readSavedPlaybooks,
+	writeSavedPlaybooks,
+} from '../../stores/savedPlaybooksStore';
 
 const LOG_CONTEXT = '[Playbooks]';
 
@@ -27,43 +33,6 @@ export interface PlaybooksHandlerDependencies {
 }
 
 /**
- * Get path to playbooks file for a session
- */
-function getPlaybooksFilePath(app: App, sessionId: string): string {
-	const userDataPath = app.getPath('userData');
-	return path.join(userDataPath, 'playbooks', `${sessionId}.json`);
-}
-
-/**
- * Read playbooks from file
- */
-async function readPlaybooks(app: App, sessionId: string): Promise<any[]> {
-	const filePath = getPlaybooksFilePath(app, sessionId);
-	try {
-		const content = await fs.readFile(filePath, 'utf-8');
-		const data = JSON.parse(content);
-		return Array.isArray(data.playbooks) ? data.playbooks : [];
-	} catch {
-		// File doesn't exist or is invalid, return empty array
-		return [];
-	}
-}
-
-/**
- * Write playbooks to file
- */
-async function writePlaybooks(app: App, sessionId: string, playbooks: any[]): Promise<void> {
-	const filePath = getPlaybooksFilePath(app, sessionId);
-	const dir = path.dirname(filePath);
-
-	// Ensure the playbooks directory exists
-	await fs.mkdir(dir, { recursive: true });
-
-	// Write the playbooks file
-	await fs.writeFile(filePath, JSON.stringify({ playbooks }, null, 2), 'utf-8');
-}
-
-/**
  * Register all Playbooks-related IPC handlers.
  *
  * These handlers provide playbook CRUD operations:
@@ -81,7 +50,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 	ipcMain.handle(
 		'playbooks:list',
 		createIpcHandler(handlerOpts('list'), async (sessionId: string) => {
-			const playbooks = await readPlaybooks(app, sessionId);
+			const playbooks = await readSavedPlaybooks(app, sessionId);
 			logger.info(`Listed ${playbooks.length} playbooks for session ${sessionId}`, LOG_CONTEXT);
 			return { playbooks };
 		})
@@ -108,7 +77,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 					};
 				}
 			) => {
-				const playbooks = await readPlaybooks(app, sessionId);
+				const playbooks = await readSavedPlaybooks(app, sessionId);
 
 				// Create new playbook with generated ID and timestamps
 				const now = Date.now();
@@ -146,7 +115,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 
 				// Add to list and save
 				playbooks.push(newPlaybook);
-				await writePlaybooks(app, sessionId, playbooks);
+				await writeSavedPlaybooks(app, sessionId, playbooks);
 
 				logger.info(`Created playbook "${playbook.name}" for session ${sessionId}`, LOG_CONTEXT);
 				return { playbook: newPlaybook };
@@ -177,7 +146,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 					};
 				}>
 			) => {
-				const playbooks = await readPlaybooks(app, sessionId);
+				const playbooks = await readSavedPlaybooks(app, sessionId);
 
 				// Find the playbook to update
 				const index = playbooks.findIndex((p: any) => p.id === playbookId);
@@ -193,7 +162,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 				};
 				playbooks[index] = updatedPlaybook;
 
-				await writePlaybooks(app, sessionId, playbooks);
+				await writeSavedPlaybooks(app, sessionId, playbooks);
 
 				logger.info(
 					`Updated playbook "${updatedPlaybook.name}" for session ${sessionId}`,
@@ -208,21 +177,12 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 	ipcMain.handle(
 		'playbooks:delete',
 		createIpcHandler(handlerOpts('delete'), async (sessionId: string, playbookId: string) => {
-			const playbooks = await readPlaybooks(app, sessionId);
-
-			// Find the playbook to delete
-			const index = playbooks.findIndex((p: any) => p.id === playbookId);
-			if (index === -1) {
+			const deleted = await deleteSavedPlaybook(app, sessionId, playbookId);
+			if (!deleted) {
 				throw new Error('Playbook not found');
 			}
 
-			const deletedName = playbooks[index].name;
-
-			// Remove from list and save
-			playbooks.splice(index, 1);
-			await writePlaybooks(app, sessionId, playbooks);
-
-			logger.info(`Deleted playbook "${deletedName}" from session ${sessionId}`, LOG_CONTEXT);
+			logger.info(`Deleted playbook "${deleted.name}" from session ${sessionId}`, LOG_CONTEXT);
 			return {};
 		})
 	);
@@ -231,7 +191,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 	ipcMain.handle(
 		'playbooks:deleteAll',
 		createIpcHandler(handlerOpts('deleteAll'), async (sessionId: string) => {
-			const filePath = getPlaybooksFilePath(app, sessionId);
+			const filePath = getSavedPlaybooksFilePath(app, sessionId);
 			try {
 				await fs.unlink(filePath);
 				logger.info(`Deleted all playbooks for session ${sessionId}`, LOG_CONTEXT);
@@ -251,7 +211,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 		createIpcHandler(
 			handlerOpts('export'),
 			async (sessionId: string, playbookId: string, autoRunFolderPath: string) => {
-				const playbooks = await readPlaybooks(app, sessionId);
+				const playbooks = await readSavedPlaybooks(app, sessionId);
 				const playbook = playbooks.find((p: any) => p.id === playbookId);
 
 				if (!playbook) {
@@ -431,7 +391,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 				}
 
 				// Create new playbook entry
-				const playbooks = await readPlaybooks(app, sessionId);
+				const playbooks = await readSavedPlaybooks(app, sessionId);
 				const now = Date.now();
 
 				const newPlaybook = {
@@ -449,7 +409,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 
 				// Add to list and save
 				playbooks.push(newPlaybook);
-				await writePlaybooks(app, sessionId, playbooks);
+				await writeSavedPlaybooks(app, sessionId, playbooks);
 
 				logger.info(
 					`Imported playbook "${manifest.name}" with ${importedDocs.length} documents and ${importedAssets.length} assets`,

@@ -29,7 +29,7 @@ import type {
 	ThroughputGaugeCommandRequest,
 	ThroughputGaugeCommandResult,
 } from '../../shared/throughputGaugeCommands';
-import type { AdditionalDirectory, UsageStats } from '../../shared/types';
+import type { AdditionalDirectory, TaskSelectionMode, UsageStats } from '../../shared/types';
 import type { CodexTransport } from '../../shared/codexTransport';
 import type { HarnessControlMode } from '../../shared/maestro-lib/providers/native-control';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
@@ -965,6 +965,11 @@ export type ConfigureAutoRunCallback = (
 		 */
 		model?: string;
 		effort?: string;
+		/**
+		 * `document` runs each document in one fresh agent session instead of one per
+		 * task. Absent means per task. A launched playbook passes the mode it declares.
+		 */
+		taskSelectionMode?: TaskSelectionMode;
 		worktree?: {
 			enabled: boolean;
 			path: string;

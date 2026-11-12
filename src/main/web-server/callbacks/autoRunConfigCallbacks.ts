@@ -1,10 +1,57 @@
 import { randomUUID } from 'crypto';
-import { ipcMain } from 'electron';
+import { ipcMain, type BrowserWindow } from 'electron';
 import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
+import type { ConfigureAutoRunCallback } from '../types';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
-import { createRemoteRequest } from './remoteRequest';
+import { createRemoteRequest, requestFromRenderer } from './remoteRequest';
+
+/** How long a `configure_auto_run` request waits for the renderer to answer. */
+const CONFIGURE_AUTO_RUN_TIMEOUT_MS = 10_000;
+
+type ConfigureAutoRunResult = Awaited<ReturnType<ConfigureAutoRunCallback>>;
+
+/**
+ * Hand a `configure_auto_run` request to the desktop renderer (its `maestro:configureAutoRun`
+ * listener) and wait for the answer. The one round trip behind the WS message (`maestro-cli
+ * auto-run`) and Playbook Launch. With `launch: true` the renderer answers once it has accepted
+ * the run, before the run starts, so a success means the run was handed over, not that it ended.
+ * Never rejects: no window, contents that are gone, and no answer within 10 seconds all resolve
+ * `{ success: false, error }`.
+ */
+export async function configureAutoRunInRenderer(
+	mainWindow: BrowserWindow | null,
+	sessionId: string,
+	config: Parameters<ConfigureAutoRunCallback>[1]
+): Promise<ConfigureAutoRunResult> {
+	if (!mainWindow) {
+		logger.warn('mainWindow is null for configureAutoRun', 'WebServer');
+		return { success: false, error: 'Main window not available' };
+	}
+	if (!isWebContentsAvailable(mainWindow)) {
+		logger.warn('webContents is not available for configureAutoRun', 'WebServer');
+		return { success: false, error: 'Web contents not available' };
+	}
+
+	// A fresh object per request, so a timeout is told apart from an answer by identity.
+	const timedOut: ConfigureAutoRunResult = { success: false, error: 'Timeout' };
+	const result = await requestFromRenderer<ConfigureAutoRunResult>(
+		mainWindow,
+		'remote:configureAutoRun',
+		{
+			fallback: timedOut,
+			parse: (raw) =>
+				(raw as ConfigureAutoRunResult | undefined) || { success: false, error: 'No response' },
+			timeoutMs: CONFIGURE_AUTO_RUN_TIMEOUT_MS,
+			args: [sessionId, config],
+		}
+	);
+	if (result === timedOut) {
+		logger.warn(`configureAutoRun callback timed out for session ${sessionId}`, 'WebServer');
+	}
+	return result;
+}
 
 export function registerAutoRunConfigCallbacks(
 	server: WebServer,
@@ -27,42 +74,9 @@ export function registerAutoRunConfigCallbacks(
 		return true;
 	});
 
-	server.setConfigureAutoRunCallback(async (sessionId: string, config: any) => {
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for configureAutoRun', 'WebServer');
-			return { success: false, error: 'Main window not available' };
-		}
-
-		return new Promise((resolve) => {
-			const responseChannel = `remote:configureAutoRun:response:${randomUUID()}`;
-			let resolved = false;
-
-			const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-				if (resolved) return;
-				resolved = true;
-				clearTimeout(timeoutId);
-				resolve(result || { success: false, error: 'No response' });
-			};
-
-			ipcMain.once(responseChannel, handleResponse);
-			if (!isWebContentsAvailable(mainWindow)) {
-				logger.warn('webContents is not available for configureAutoRun', 'WebServer');
-				ipcMain.removeListener(responseChannel, handleResponse);
-				resolve({ success: false, error: 'Web contents not available' });
-				return;
-			}
-			mainWindow.webContents.send('remote:configureAutoRun', sessionId, config, responseChannel);
-
-			const timeoutId = setTimeout(() => {
-				if (resolved) return;
-				resolved = true;
-				ipcMain.removeListener(responseChannel, handleResponse);
-				logger.warn(`configureAutoRun callback timed out for session ${sessionId}`, 'WebServer');
-				resolve({ success: false, error: 'Timeout' });
-			}, 10000);
-		});
-	});
+	server.setConfigureAutoRunCallback((sessionId, config) =>
+		configureAutoRunInRenderer(getMainWindow(), sessionId, config)
+	);
 
 	// Goal-Driven Auto Run launched from the CLI (`goal-run --visible`). Uses the
 	// shared remoteRequest round-trip rather than the hand-rolled listener dance

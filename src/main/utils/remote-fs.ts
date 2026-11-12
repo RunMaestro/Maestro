@@ -56,8 +56,9 @@ export interface RemoteFsResult<T> {
 	/** Error message (if success is false) */
 	error?: string;
 	/**
-	 * A bounded read rejected content exceeding its byte budget or invalid UTF-8, or
-	 * `deleteDirectoryRemote` refused a path that is a symbolic link or not a directory.
+	 * A bounded read rejected content exceeding its byte budget or invalid UTF-8,
+	 * `deleteDirectoryRemote` refused a path that is a symbolic link or not a directory, or
+	 * `mkdirRemote` found something already at the path.
 	 */
 	errorCode?:
 		| 'too-large'
@@ -65,7 +66,8 @@ export interface RemoteFsResult<T> {
 		| 'identity-unavailable'
 		| 'identity-mismatch'
 		| 'symlink'
-		| 'not-directory';
+		| 'not-directory'
+		| 'exists';
 	/** Descriptor ownership, independent of whether its content was readable. */
 	observedIdentity?: RemotePathIdentity;
 	/** The pinned descriptor changed size or timestamps while its bytes were read. */
@@ -1599,6 +1601,9 @@ export async function existsRemote(
 /**
  * Create a directory on a remote host via SSH.
  *
+ * Without `recursive`, `mkdir` creates the directory only when nothing is at the path yet, so it
+ * can claim a name: when something is there, the result has `errorCode: 'exists'`.
+ *
  * @param dirPath Directory path to create
  * @param sshRemote SSH remote configuration
  * @param recursive Whether to create parent directories (mkdir -p)
@@ -1619,14 +1624,13 @@ export async function mkdirRemote(
 
 	if (result.exitCode !== 0) {
 		const error = result.stderr || `Failed to create directory: ${dirPath}`;
-		return {
-			success: false,
-			error: error.includes('Permission denied')
-				? `Permission denied: ${dirPath}`
-				: error.includes('File exists')
-					? `Directory already exists: ${dirPath}`
-					: error,
-		};
+		if (error.includes('Permission denied')) {
+			return { success: false, error: `Permission denied: ${dirPath}` };
+		}
+		if (error.includes('File exists')) {
+			return { success: false, error: `Directory already exists: ${dirPath}`, errorCode: 'exists' };
+		}
+		return { success: false, error };
 	}
 
 	return { success: true };

@@ -23,18 +23,25 @@ import type {
 	MarketplaceManifest,
 	MarketplaceCache,
 	MarketplacePlaybook,
+	PlaybookLaunchRecord,
+	PlaybookLaunchRequest,
+	PlaybookLaunchResult,
 	PlaybookLaunchSpec,
 	PlaybookLaunchValues,
 } from '../../shared/marketplace-types';
 import {
 	MarketplaceFetchError,
 	MarketplaceImportError,
+	MarketplaceLaunchBusyError,
 	MarketplaceLaunchCleanupError,
 	MarketplaceLaunchValuesError,
 } from '../../shared/marketplace-types';
 import { isCompatible } from '../../shared/marketplace-compatibility';
+import { generateDefaultFolderName } from '../../shared/marketplaceFolderName';
+import { fileTimestampSlug } from '../../shared/formatters';
 import {
 	applyLaunchInputs,
+	isLaunchAvailable,
 	isLaunchValuesObject,
 	parseLaunchSpec,
 	resolveLaunchValues,
@@ -45,6 +52,9 @@ import { isPathAtOrUnderRoot, normalizeWorktreePath } from '../../shared/worktre
 import { writeFileRemote, mkdirRemote, deleteDirectoryRemote } from '../utils/remote-fs';
 import { captureException } from '../utils/sentry';
 import { getSshRemoteById } from '../stores/getters';
+import { getPlaybookLaunchStore } from '../stores/playbookLaunchStore';
+import { deleteSavedPlaybook, getSavedPlaybooksFilePath } from '../stores/savedPlaybooksStore';
+import { getAutoRunStateTracker } from '../autorun/autorun-state-tracker';
 
 const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main';
 const MANIFEST_URL = `${GITHUB_RAW_BASE}/manifest.json`;
@@ -567,30 +577,41 @@ function importedPromptFor(
 }
 
 /**
+ * `<autoRunFolderPath>/<folderName>` as an import writes it: joined for this computer, or with `/`
+ * for an SSH remote, whose path is never resolved here.
+ */
+function importTargetPath(autoRunFolderPath: string, folderName: string, remote: boolean): string {
+	if (!remote) return path.join(autoRunFolderPath, folderName);
+	return autoRunFolderPath.endsWith('/')
+		? `${autoRunFolderPath}${folderName}`
+		: `${autoRunFolderPath}/${folderName}`;
+}
+
+/**
  * Import a playbook to the Auto Run folder (local or remote via SSH).
  * Mirrors the IPC handler import flow exactly.
  */
 export async function importMarketplacePlaybook(
 	opts: ImportPlaybookOptions
 ): Promise<ImportPlaybookServiceResult> {
-	const {
-		app,
-		playbookId,
-		targetFolderName,
-		autoRunFolderPath,
-		sessionId,
-		sshConfig,
-		launchValues,
-	} = opts;
-	const isRemote = !!sshConfig;
+	const { app, playbookId, targetFolderName, sshConfig } = opts;
 
 	assertSafeTargetFolderName(targetFolderName);
 
 	logger.info(
-		`Importing playbook "${playbookId}" to "${targetFolderName}"${isRemote ? ' (remote via SSH)' : ''}`,
+		`Importing playbook "${playbookId}" to "${targetFolderName}"${sshConfig ? ' (remote via SSH)' : ''}`,
 		LOG_CONTEXT
 	);
 
+	return writeImportedPlaybook(await findImportablePlaybook(app, playbookId), opts);
+}
+
+/**
+ * The merged manifest entry an import writes, from a fresh, cache-aware read of the merged
+ * manifest, so local and official playbooks are both visible. Throws `MarketplaceImportError` for
+ * an unknown id or a playbook that needs a newer Maestro.
+ */
+async function findImportablePlaybook(app: App, playbookId: string): Promise<MarketplacePlaybook> {
 	// Re-resolve manifest (cache-aware) so local + official playbooks are visible
 	const cache = await readCache(app);
 	let officialManifest: MarketplaceManifest | null = null;
@@ -641,6 +662,19 @@ export async function importMarketplacePlaybook(
 				`you have ${runningVersion}. Update Maestro and try again.`
 		);
 	}
+	return marketplacePlaybook;
+}
+
+/**
+ * Write a resolved playbook into `<autoRunFolderPath>/<targetFolderName>` (local or remote via SSH)
+ * and add it to the agent's saved playbooks: everything an import does once it has the entry.
+ */
+async function writeImportedPlaybook(
+	marketplacePlaybook: MarketplacePlaybook,
+	opts: ImportPlaybookOptions
+): Promise<ImportPlaybookServiceResult> {
+	const { app, targetFolderName, autoRunFolderPath, sessionId, sshConfig, launchValues } = opts;
+	const isRemote = !!sshConfig;
 
 	// Built before anything touches the disk: a launch whose answers fail validation throws here
 	// and leaves no folder behind.
@@ -649,11 +683,7 @@ export async function importMarketplacePlaybook(
 		targetFolderName
 	);
 
-	const targetPath = isRemote
-		? autoRunFolderPath.endsWith('/')
-			? `${autoRunFolderPath}${targetFolderName}`
-			: `${autoRunFolderPath}/${targetFolderName}`
-		: path.join(autoRunFolderPath, targetFolderName);
+	const targetPath = importTargetPath(autoRunFolderPath, targetFolderName, isRemote);
 
 	if (isRemote) {
 		const mkdirResult = await mkdirRemote(targetPath, sshConfig!, true);
@@ -788,9 +818,8 @@ export async function importMarketplacePlaybook(
 		}),
 	};
 
-	const playbooksDir = path.join(app.getPath('userData'), 'playbooks');
-	await fs.mkdir(playbooksDir, { recursive: true });
-	const playbooksFilePath = path.join(playbooksDir, `${sessionId}.json`);
+	const playbooksFilePath = getSavedPlaybooksFilePath(app, sessionId);
+	await fs.mkdir(path.dirname(playbooksFilePath), { recursive: true });
 	let playbooks: any[] = [];
 	try {
 		const content = await fs.readFile(playbooksFilePath, 'utf-8');
@@ -847,6 +876,17 @@ function isRemoteRootPath(remotePath: string): boolean {
 }
 
 /**
+ * Whether an Auto Run folder can hold a launch folder that cleanup finds again: an absolute path
+ * on this computer, or on a remote an absolute path or one under the remote home.
+ */
+function isLaunchRoot(autoRunFolderPath: unknown, remote: boolean): autoRunFolderPath is string {
+	if (typeof autoRunFolderPath !== 'string') return false;
+	return remote
+		? isRemoteRootPath(normalizeWorktreePath(autoRunFolderPath, true))
+		: path.isAbsolute(autoRunFolderPath);
+}
+
+/**
  * The one path launch cleanup may delete, `<autoRunFolderPath>/<folder>`, where `folder` is one
  * plain folder name. Throws `MarketplaceLaunchCleanupError` for anything else. A local path is
  * resolved. A remote path is built as the import built it, with its slashes normalized and nothing
@@ -861,21 +901,23 @@ function launchFolderTarget(autoRunFolderPath: string, folder: string, remote: b
 		throw refuse('it is not a single folder name');
 	}
 
+	if (!isLaunchRoot(autoRunFolderPath, remote)) {
+		throw refuse(
+			remote
+				? 'the Auto Run folder is not an absolute path on the remote'
+				: 'the Auto Run folder is not an absolute path'
+		);
+	}
+
 	let target: string;
 	let rootKey: string;
 	let targetKey: string;
 	if (remote) {
 		const root = normalizeWorktreePath(autoRunFolderPath, true);
-		if (!isRemoteRootPath(root)) {
-			throw refuse('the Auto Run folder is not an absolute path on the remote');
-		}
 		target = root.endsWith('/') ? `${root}${folder}` : `${root}/${folder}`;
 		rootKey = normalizeWorktreePath(path.posix.normalize(root), true);
 		targetKey = normalizeWorktreePath(path.posix.normalize(target), true);
 	} else {
-		if (!path.isAbsolute(autoRunFolderPath)) {
-			throw refuse('the Auto Run folder is not an absolute path');
-		}
 		const root = path.resolve(autoRunFolderPath);
 		target = path.resolve(root, folder);
 		// Compared with `/` separators, which `isPathAtOrUnderRoot` expects.
@@ -957,6 +999,351 @@ export async function deleteLaunchFolder(
 		LOG_CONTEXT
 	);
 	return { targetPath, deleted };
+}
+
+/** How many names a launch tries for its folder: `<base>`, then `<base>-2`, up to `<base>-10`. */
+const LAUNCH_FOLDER_ATTEMPTS = 10;
+
+/**
+ * Agents with a launch in `launchMarketplacePlaybook` right now. A second launch on the same agent
+ * is refused at once instead of importing beside the first, because an import rewrites the agent's
+ * saved-playbooks file and two at once can lose an entry. Every launch runs in this main process.
+ */
+const launchesStarting = new Set<string>();
+
+/** What a launch asks the renderer to run: the launch form of a `configure_auto_run` request. */
+export interface LaunchAutoRunConfig {
+	/** Relative to the agent's Auto Run folder and without `.md`, as the saved playbook names them */
+	documents: Array<{ filename: string; resetOnCompletion: boolean }>;
+	prompt: string;
+	loopEnabled: boolean;
+	/** Absent means no limit */
+	maxLoops?: number;
+	taskSelectionMode?: TaskSelectionMode;
+	launch: true;
+}
+
+/**
+ * Starts a launched playbook's Auto Run on an agent and resolves whether the renderer accepted it.
+ * The desktop passes `configureAutoRunInRenderer`
+ * (`src/main/web-server/callbacks/autoRunConfigCallbacks.ts`), the round trip the
+ * `configure_auto_run` WS message uses.
+ */
+export type LaunchAutoRunStarter = (
+	sessionId: string,
+	config: LaunchAutoRunConfig
+) => Promise<{ success: boolean; error?: string }>;
+
+/** What `launchMarketplacePlaybook` needs from the app that runs it. */
+export interface MarketplaceLaunchHost {
+	app: App;
+	startAutoRun: LaunchAutoRunStarter;
+	/**
+	 * Whether `maestro-cli` is installed on this computer (`MaestroCliStatus.installed`, which the
+	 * launch modal shows too). Asked only for an agent on this computer, and only when the spec
+	 * declares `preconditions.maestroCli`.
+	 */
+	isMaestroCliInstalled: () => Promise<boolean>;
+}
+
+/**
+ * `<slug>-launch-<stamp>`: the folder name the Exchange proposes for the playbook's title (its id
+ * when the title has no letter or digit), then the local time to the second.
+ */
+function launchFolderBaseName(playbook: MarketplacePlaybook): string {
+	const slug =
+		generateDefaultFolderName(playbook.title) ||
+		generateDefaultFolderName(playbook.id) ||
+		'playbook';
+	return `${slug}-launch-${fileTimestampSlug()}`;
+}
+
+/**
+ * Create a launch folder inside the Auto Run folder and return its name: `baseName`, or
+ * `baseName-2` and on when that name is taken. The folder itself is created exclusively (`mkdir`
+ * without `-p`), so two launches never share one, even when they start in the same second in a
+ * shared Auto Run folder. Cleanup deletes the folder a record names, so a shared folder would take
+ * the other run's documents with it.
+ */
+async function createLaunchFolder(
+	autoRunFolderPath: string,
+	baseName: string,
+	sshConfig: SshRemoteConfig | undefined
+): Promise<string> {
+	if (sshConfig) {
+		const root = await mkdirRemote(autoRunFolderPath, sshConfig, true);
+		if (!root.success) {
+			throw new MarketplaceImportError(`Failed to create remote directory: ${root.error}`);
+		}
+	} else {
+		await fs.mkdir(autoRunFolderPath, { recursive: true });
+	}
+
+	for (let attempt = 1; attempt <= LAUNCH_FOLDER_ATTEMPTS; attempt++) {
+		const name = attempt === 1 ? baseName : `${baseName}-${attempt}`;
+		const target = importTargetPath(autoRunFolderPath, name, !!sshConfig);
+		if (sshConfig) {
+			const created = await mkdirRemote(target, sshConfig, false);
+			if (created.success) return name;
+			if (created.errorCode !== 'exists') {
+				throw new MarketplaceImportError(`Failed to create remote directory: ${created.error}`);
+			}
+		} else {
+			try {
+				await fs.mkdir(target);
+				return name;
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+			}
+		}
+	}
+	throw new MarketplaceImportError(
+		`Every launch folder name from ${baseName} to ${baseName}-${LAUNCH_FOLDER_ATTEMPTS} is taken`
+	);
+}
+
+/** What one launch put on disk, for `undoLaunchImport`. */
+interface LaunchImport {
+	app: App;
+	sessionId: string;
+	autoRunFolderPath: string;
+	folder: string;
+	sshRemoteId?: string;
+	/** Absent until the import has added the saved playbook */
+	savedPlaybookId?: string;
+}
+
+/**
+ * Take back a launch that will not run: delete its folder and the saved playbook its import added.
+ * A failure here is reported and logged but not thrown, so the caller can still throw the error
+ * that stopped the launch. Resolves whether the folder is gone.
+ */
+async function undoLaunchImport(launch: LaunchImport): Promise<boolean> {
+	let folderRemoved = false;
+	try {
+		await deleteLaunchFolder(launch.autoRunFolderPath, launch.folder, launch.sshRemoteId);
+		folderRemoved = true;
+	} catch (error) {
+		void captureException(error, { operation: 'marketplace:undoLaunch', folder: launch.folder });
+		logger.warn(`Could not remove the launch folder ${launch.folder}`, LOG_CONTEXT, { error });
+	}
+	if (launch.savedPlaybookId) {
+		try {
+			await deleteSavedPlaybook(launch.app, launch.sessionId, launch.savedPlaybookId);
+		} catch (error) {
+			void captureException(error, {
+				operation: 'marketplace:undoLaunch',
+				savedPlaybookId: launch.savedPlaybookId,
+			});
+			logger.warn(
+				`Could not remove the saved playbook ${launch.savedPlaybookId} of a launch`,
+				LOG_CONTEXT,
+				{ error }
+			);
+		}
+	}
+	return folderRemoved;
+}
+
+/**
+ * Launch a marketplace playbook: import it with the user's answers into a launch folder of its
+ * own, record the launch, and start its Auto Run on the agent. The launch modal (over IPC) and
+ * `maestro-cli` (over the web bridge) both launch through here.
+ *
+ * Before anything is written it checks: `values` is an object; the Auto Run folder is absolute, so
+ * cleanup can find the folder again; the SSH remote exists and is enabled (a launch never falls
+ * back to this computer); no other launch is starting on the agent; the agent runs no launch
+ * (`MarketplaceLaunchBusyError`) and no other Auto Run, which would make the renderer drop the new
+ * run without saying so; the playbook exists and this Maestro can import it; `isLaunchAvailable`
+ * passes for the agent; and the answers pass `validateLaunchValues` (else
+ * `MarketplaceLaunchValuesError` names each failing input).
+ *
+ * The import writes the task documents as a Download does; only the saved prompt carries the
+ * answers (with defaults filled in). The record keeps the folder, the Auto Run folder, the SSH
+ * remote and the spec, which is all completion and the outro need. The Auto Run gets the saved
+ * playbook's documents and prompt, its loop setting, `spec.maxLoops` when the spec sets one, and
+ * its task selection mode. Resolves once the renderer has accepted the run.
+ *
+ * A launch that fails after its folder exists takes everything back: the folder and the saved
+ * playbook are removed, even with `keepSavedPlaybook`, because a launch that never ran has nothing
+ * to keep. When the Auto Run does not start, the record stays, marked `failed`.
+ */
+export async function launchMarketplacePlaybook(
+	request: PlaybookLaunchRequest,
+	host: MarketplaceLaunchHost
+): Promise<PlaybookLaunchResult> {
+	const { values, sessionId, autoRunFolderPath } = request;
+	// An empty id means this computer, as everywhere else.
+	const sshRemoteId = request.sshRemoteId || undefined;
+	const remote = sshRemoteId !== undefined;
+
+	if (typeof sessionId !== 'string' || sessionId === '') {
+		throw new MarketplaceImportError('sessionId is required');
+	}
+	if (!isLaunchValuesObject(values)) {
+		throw new MarketplaceImportError('values must be an object keyed by input name');
+	}
+	if (!isLaunchRoot(autoRunFolderPath, remote)) {
+		throw new MarketplaceImportError(
+			`The Auto Run folder must be an absolute path${remote ? ' on the SSH remote' : ''}: ${autoRunFolderPath}`
+		);
+	}
+	let sshConfig: SshRemoteConfig | undefined;
+	if (sshRemoteId) {
+		sshConfig = getSshRemoteById(sshRemoteId);
+		if (!sshConfig?.enabled) {
+			throw new MarketplaceImportError(`SSH remote not found or disabled: ${sshRemoteId}`);
+		}
+	}
+
+	if (launchesStarting.has(sessionId)) {
+		throw new MarketplaceImportError(
+			'This agent is already starting a launch. Wait for it to finish, or stop it, then launch again.'
+		);
+	}
+	launchesStarting.add(sessionId);
+	try {
+		return await startLaunch({ ...request, sshRemoteId, sshConfig }, host);
+	} finally {
+		launchesStarting.delete(sessionId);
+	}
+}
+
+/** A launch request whose shape `launchMarketplacePlaybook` has checked, with its SSH remote. */
+interface CheckedLaunchRequest extends PlaybookLaunchRequest {
+	sshConfig: SshRemoteConfig | undefined;
+}
+
+/** `launchMarketplacePlaybook` from the busy checks on, while the agent is held for it. */
+async function startLaunch(
+	request: CheckedLaunchRequest,
+	host: MarketplaceLaunchHost
+): Promise<PlaybookLaunchResult> {
+	const { playbookId, values, sessionId, autoRunFolderPath, sshRemoteId, sshConfig } = request;
+	const remote = sshConfig !== undefined;
+	const keepSavedPlaybook = request.keepSavedPlaybook === true;
+	const { app } = host;
+
+	const store = getPlaybookLaunchStore(app);
+	const running = await store.findRunningLaunchForSession(sessionId);
+	if (running) throw new MarketplaceLaunchBusyError(running);
+	if (getAutoRunStateTracker().isRunning(sessionId)) {
+		throw new MarketplaceImportError(
+			'This agent is already running an Auto Run. Wait for it to finish, or stop it, then launch again.'
+		);
+	}
+
+	const playbook = await findImportablePlaybook(app, playbookId);
+	const spec = playbook.launch;
+	const needsMaestroCli = spec?.preconditions?.maestroCli !== undefined;
+	const availability = isLaunchAvailable(
+		playbook,
+		app.getVersion(),
+		process.platform,
+		needsMaestroCli
+			? { sshRemote: remote, maestroCliInstalled: !remote && (await host.isMaestroCliInstalled()) }
+			: undefined
+	);
+	if (!spec || !availability.available) {
+		throw new MarketplaceImportError(
+			availability.reason ?? 'This playbook does not support Launch.'
+		);
+	}
+	const launchValues = resolveValidLaunchValues(spec, values);
+
+	const folder = await createLaunchFolder(
+		autoRunFolderPath,
+		launchFolderBaseName(playbook),
+		sshConfig
+	);
+	const launchImport: LaunchImport = { app, sessionId, autoRunFolderPath, folder, sshRemoteId };
+
+	let imported: ImportPlaybookServiceResult;
+	try {
+		imported = await writeImportedPlaybook(playbook, {
+			app,
+			playbookId,
+			targetFolderName: folder,
+			autoRunFolderPath,
+			sessionId,
+			sshConfig,
+			launchValues,
+		});
+	} catch (error) {
+		await undoLaunchImport(launchImport);
+		throw error;
+	}
+	const saved = imported.playbook;
+	launchImport.savedPlaybookId = saved.id;
+
+	let record: PlaybookLaunchRecord;
+	try {
+		// Checks for a running launch again, in the same step as the write.
+		record = await store.createLaunch({
+			playbookId,
+			playbookTitle: playbook.title,
+			sessionId,
+			folderRelativePath: folder,
+			autoRunFolderPath,
+			sshRemoteId,
+			spec,
+			savedPlaybookId: saved.id,
+			keepSavedPlaybook,
+			values: launchValues,
+		});
+	} catch (error) {
+		await undoLaunchImport(launchImport);
+		throw error;
+	}
+
+	/** Take the launch back, and close its record as failed with what cleanup managed to do. */
+	const failLaunch = async (): Promise<void> => {
+		const folderRemoved = await undoLaunchImport(launchImport);
+		try {
+			await store.updateLaunch(record.launchId, {
+				status: 'failed',
+				finishedAt: Date.now(),
+				...(folderRemoved && { cleanup: 'done' as const }),
+			});
+		} catch (error) {
+			// The record stays `running` and holds the agent until Maestro restarts.
+			void captureException(error, {
+				operation: 'marketplace:launch',
+				launchId: record.launchId,
+			});
+			logger.warn(`Could not mark launch ${record.launchId} as failed`, LOG_CONTEXT, { error });
+		}
+	};
+
+	const maxLoops = spec.maxLoops !== undefined ? spec.maxLoops : saved.maxLoops;
+	let started: Awaited<ReturnType<LaunchAutoRunStarter>>;
+	try {
+		started = await host.startAutoRun(sessionId, {
+			documents: saved.documents,
+			prompt: saved.prompt,
+			loopEnabled: saved.loopEnabled,
+			// `null` is no limit, which an absent `maxLoops` already means to the renderer.
+			...(typeof maxLoops === 'number' && { maxLoops }),
+			...(saved.taskSelectionMode && { taskSelectionMode: saved.taskSelectionMode }),
+			launch: true,
+		});
+	} catch (error) {
+		await failLaunch();
+		throw error;
+	}
+	if (!started.success) {
+		await failLaunch();
+		throw new MarketplaceImportError(
+			`The Auto Run did not start: ${started.error || 'the desktop app gave no reason'}`
+		);
+	}
+
+	logger.info(
+		`Launched playbook "${playbook.title}" on agent ${sessionId} in "${folder}"${remote ? ' (remote via SSH)' : ''}`,
+		LOG_CONTEXT,
+		{ launchId: record.launchId }
+	);
+	return { launchId: record.launchId, folderRelativePath: folder };
 }
 
 /**

@@ -38,12 +38,19 @@ let filePath: string;
 let store: PlaybookLaunchStore;
 let nowSpy: MockInstance<() => number>;
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 function newLaunch(overrides: Partial<NewPlaybookLaunch> = {}): NewPlaybookLaunch {
 	return {
 		playbookId: 'research-market',
 		playbookTitle: 'Market Research',
 		sessionId: 'agent-1',
 		folderRelativePath: 'research-market-launch-20261111-090000',
+		autoRunFolderPath: '/projects/app/.maestro/playbooks',
+		spec: {
+			inputs: [{ name: 'MARKET_TOPIC', label: 'Market topic', type: 'text', required: true }],
+			outro: { summary: 'Mapped {{MARKET_TOPIC}}.', nextSteps: [] },
+		},
 		savedPlaybookId: 'saved-1',
 		keepSavedPlaybook: false,
 		values: { MARKET_TOPIC: 'EV chargers', DEPTH_BATCH: 3, SCOPE: ['us', 'eu'] },
@@ -103,18 +110,55 @@ afterEach(() => {
 });
 
 describe('createLaunch', () => {
-	it('records a running launch with a new id and the start time', async () => {
+	it('records a running launch with a new id, this app run and the start time', async () => {
 		const record = await createAt(5_000);
 
 		expect(record).toEqual({
 			...newLaunch(),
-			launchId: expect.stringMatching(
-				/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-			),
+			launchId: expect.stringMatching(UUID),
 			status: 'running',
+			appRunId: expect.stringMatching(UUID),
 			startedAt: 5_000,
 		});
 	});
+
+	it('stamps every launch of this app run with the same app run id', async () => {
+		const first = await store.createLaunch(newLaunch({ sessionId: 'agent-1' }));
+		const second = await createPlaybookLaunchStore(filePath).createLaunch(
+			newLaunch({ sessionId: 'agent-2' })
+		);
+
+		expect(second.appRunId).toBe(first.appRunId);
+	});
+
+	it('keeps the Auto Run folder, the SSH remote and the spec that cleanup and the outro need', async () => {
+		const spec = {
+			inputs: [],
+			cleanup: 'keep' as const,
+			outro: { summary: 'Done.', nextSteps: ['Read the report'], reportFile: 'REPORT.md' },
+		};
+
+		const record = await store.createLaunch(
+			newLaunch({ autoRunFolderPath: '~/playbooks', sshRemoteId: 'remote-1', spec })
+		);
+
+		expect(record).toMatchObject({
+			autoRunFolderPath: '~/playbooks',
+			sshRemoteId: 'remote-1',
+			spec,
+		});
+		expect(readStoredFile().launches).toEqual([record]);
+	});
+
+	it.each([[undefined], ['']])(
+		'writes no SSH remote for an agent on this computer (%j)',
+		async (sshRemoteId) => {
+			const record = await store.createLaunch(newLaunch({ sshRemoteId }));
+
+			expect(record).not.toHaveProperty('sshRemoteId');
+			expect(readStoredFile().launches[0]).not.toHaveProperty('sshRemoteId');
+		}
+	);
 
 	it('writes a versioned file and leaves no temp file behind', async () => {
 		const record = await store.createLaunch(newLaunch());
@@ -138,12 +182,13 @@ describe('createLaunch', () => {
 		expect(first.launchId).not.toBe(second.launchId);
 	});
 
-	it('sets the id, the status and the start time itself, whatever the caller passes', async () => {
+	it('sets the id, the status, the app run and the start time itself, whatever the caller passes', async () => {
 		nowSpy.mockReturnValue(7_000);
 		const smuggled = {
 			...newLaunch(),
 			launchId: 'chosen-by-caller',
 			status: 'completed',
+			appRunId: 'an-earlier-app-run',
 			startedAt: 1,
 			cleanup: 'done',
 		} as NewPlaybookLaunch;
@@ -152,6 +197,8 @@ describe('createLaunch', () => {
 
 		expect(record.launchId).not.toBe('chosen-by-caller');
 		expect(record.status).toBe('running');
+		expect(record.appRunId).toMatch(UUID);
+		expect(record.appRunId).not.toBe('an-earlier-app-run');
 		expect(record.startedAt).toBe(7_000);
 		expect(record).not.toHaveProperty('cleanup');
 		expect(readStoredFile().launches).toEqual([record]);
@@ -615,6 +662,64 @@ describe('reading a damaged file', () => {
 
 		await expect(store.listLaunches()).rejects.toMatchObject({ code: 'EISDIR' });
 		expect(mockCaptureException).not.toHaveBeenCalled();
+	});
+});
+
+describe('launches an earlier app run left running', () => {
+	/** A launch that was running when Maestro quit or crashed */
+	const interrupted = () =>
+		storedRecord({
+			launchId: 'interrupted',
+			status: 'running',
+			appRunId: 'an-earlier-app-run',
+			finishedAt: undefined,
+		});
+
+	it('marks it failed on the next operation, saves that, and leaves its end time unset', async () => {
+		seedFile([interrupted()]);
+
+		const read = await store.getLaunch('interrupted');
+
+		expect(read).toEqual({ ...interrupted(), status: 'failed' });
+		expect(read).not.toHaveProperty('finishedAt');
+		expect(readStoredFile().launches).toEqual([{ ...interrupted(), status: 'failed' }]);
+		expect(mockLogger.info).toHaveBeenCalledWith(
+			`${PLAYBOOK_LAUNCHES_FILE}: marked 1 launch(es) as failed, because Maestro quit or crashed while they ran`,
+			'PlaybookLaunchStore'
+		);
+	});
+
+	it('no longer holds its agent', async () => {
+		seedFile([interrupted()]);
+
+		await expect(store.findRunningLaunchForSession('agent-1')).resolves.toBeUndefined();
+		await expect(store.createLaunch(newLaunch())).resolves.toMatchObject({ status: 'running' });
+	});
+
+	it('leaves a running launch of this app run alone, for any store object', async () => {
+		const running = await store.createLaunch(newLaunch());
+
+		await expect(
+			createPlaybookLaunchStore(filePath).findRunningLaunchForSession('agent-1')
+		).resolves.toEqual(running);
+	});
+
+	it('leaves a running launch that names no app run alone', async () => {
+		const unnamed = storedRecord({ status: 'running', finishedAt: undefined });
+		seedFile([unnamed]);
+
+		await expect(store.findRunningLaunchForSession('agent-1')).resolves.toEqual(unnamed);
+	});
+
+	it('leaves finished launches of an earlier app run alone, and writes nothing when none was interrupted', async () => {
+		const finished = storedRecord({ appRunId: 'an-earlier-app-run' });
+		seedFile([finished]);
+		const before = fs.readFileSync(filePath, 'utf-8');
+
+		await expect(store.listLaunches()).resolves.toEqual([finished]);
+
+		expect(fs.readFileSync(filePath, 'utf-8')).toBe(before);
+		expect(mockLogger.info).not.toHaveBeenCalled();
 	});
 });
 

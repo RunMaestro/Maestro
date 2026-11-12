@@ -17,6 +17,11 @@
  * The file keeps at most `MAX_LAUNCH_RECORDS` records. When a new launch goes over the cap, the
  * finished records that started first are dropped first. A running record is never dropped,
  * because its completion and cleanup still need it.
+ *
+ * A launch's Auto Run runs in the renderer of the app run that started it, and a quit or a crash
+ * ends it. Each record names its app run (`appRunId`), and every operation first marks a record
+ * that an earlier app run left `running` as `failed`, so an interrupted launch never holds its
+ * agent or waits for a completion that cannot come.
  */
 
 import { randomUUID } from 'crypto';
@@ -46,9 +51,21 @@ const LAUNCH_STATUSES: ReadonlySet<unknown> = new Set<PlaybookLaunchRecord['stat
 	'failed',
 ]);
 
+let appRunId: string | undefined;
+
 /**
- * What a caller supplies when a launch starts. The store sets `launchId`, `status` (`running`)
- * and `startedAt`.
+ * The id of this app run. A record still `running` under any other app run's id was interrupted
+ * by a quit or a crash, because an Auto Run does not outlive the app run that started it. Made on
+ * first use, so importing this module has no side effect.
+ */
+function currentAppRunId(): string {
+	appRunId ??= randomUUID();
+	return appRunId;
+}
+
+/**
+ * What a caller supplies when a launch starts. The store sets `launchId`, `status` (`running`),
+ * `appRunId` and `startedAt`.
  */
 export type NewPlaybookLaunch = Pick<
 	PlaybookLaunchRecord,
@@ -56,6 +73,9 @@ export type NewPlaybookLaunch = Pick<
 	| 'playbookTitle'
 	| 'sessionId'
 	| 'folderRelativePath'
+	| 'autoRunFolderPath'
+	| 'sshRemoteId'
+	| 'spec'
 	| 'savedPlaybookId'
 	| 'keepSavedPlaybook'
 	| 'values'
@@ -156,6 +176,37 @@ function writeLaunches(filePath: string, launches: PlaybookLaunchRecord[]): Prom
 	return atomicWriteJson(filePath, file);
 }
 
+/** A record still `running` under an app run that has ended. A record without an app run is left alone. */
+function isInterrupted(launch: PlaybookLaunchRecord): boolean {
+	return (
+		launch.status === 'running' &&
+		launch.appRunId !== undefined &&
+		launch.appRunId !== currentAppRunId()
+	);
+}
+
+/**
+ * Mark every launch an earlier app run left `running` as `failed`, and save that. Its folder and
+ * saved playbook stay, because no cleanup ran, and `finishedAt` stays unset, because nobody saw the
+ * run end.
+ */
+async function settleInterruptedLaunches(
+	filePath: string,
+	launches: PlaybookLaunchRecord[]
+): Promise<PlaybookLaunchRecord[]> {
+	const interrupted = launches.filter(isInterrupted).length;
+	if (interrupted === 0) return launches;
+	const settled = launches.map((launch) =>
+		isInterrupted(launch) ? { ...launch, status: 'failed' as const } : launch
+	);
+	await writeLaunches(filePath, settled);
+	logger.info(
+		`${path.basename(filePath)}: marked ${interrupted} launch(es) as failed, because Maestro quit or crashed while they ran`,
+		LOG_CONTEXT
+	);
+	return settled;
+}
+
 /** Newest first by `startedAt`. For equal times, the record written later comes first. */
 function newestFirst(launches: readonly PlaybookLaunchRecord[]): PlaybookLaunchRecord[] {
 	return [...launches].reverse().sort((a, b) => b.startedAt - a.startedAt);
@@ -204,7 +255,9 @@ export function createPlaybookLaunchStore(launchesFilePath: string): PlaybookLau
 	// Resolved, so two spellings of one path still share a queue key.
 	const filePath = path.resolve(launchesFilePath);
 	const withLaunches = <T>(fn: (launches: PlaybookLaunchRecord[]) => T | Promise<T>): Promise<T> =>
-		fileQueue.enqueue(filePath, () => readLaunches(filePath).then(fn));
+		fileQueue.enqueue(filePath, async () =>
+			fn(await settleInterruptedLaunches(filePath, await readLaunches(filePath)))
+		);
 
 	return {
 		createLaunch: (launch) =>
@@ -217,10 +270,14 @@ export function createPlaybookLaunchStore(launchesFilePath: string): PlaybookLau
 					playbookTitle: launch.playbookTitle,
 					sessionId: launch.sessionId,
 					folderRelativePath: launch.folderRelativePath,
+					autoRunFolderPath: launch.autoRunFolderPath,
+					...(launch.sshRemoteId ? { sshRemoteId: launch.sshRemoteId } : {}),
+					spec: launch.spec,
 					savedPlaybookId: launch.savedPlaybookId,
 					keepSavedPlaybook: launch.keepSavedPlaybook,
 					values: launch.values,
 					status: 'running',
+					appRunId: currentAppRunId(),
 					startedAt: Date.now(),
 				};
 				await writeLaunches(filePath, capLaunches([...launches, record]));
