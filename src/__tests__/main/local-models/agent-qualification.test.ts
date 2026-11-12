@@ -11,7 +11,7 @@
  * The stream lines are cut down from real runs against gpt-oss 20B.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -346,9 +346,28 @@ describe('attempts', () => {
 
 describe('the qualification repo and launch recipes', () => {
 	let dir = '';
+	let gitHome = '';
 	afterEach(() => {
+		vi.unstubAllEnvs();
 		if (dir) rmSync(dir, { recursive: true, force: true });
+		if (gitHome) rmSync(gitHome, { recursive: true, force: true });
 		dir = '';
+		gitHome = '';
+	});
+
+	it('commits its scratch repo whatever commit signing the user has configured', () => {
+		// A user who signs every commit, with a signing program that cannot run here.
+		gitHome = mkdtempSync(path.join(os.tmpdir(), 'agent-qualification-git-'));
+		const config = path.join(gitHome, 'config');
+		writeFileSync(config, '[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = /nonexistent/gpg\n');
+		vi.stubEnv('GIT_CONFIG_GLOBAL', config);
+		vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1');
+		dir = mkdtempSync(path.join(os.tmpdir(), 'agent-qualification-'));
+
+		writeQualificationRepo(dir);
+
+		// The commit exists: the check reads the committed test.js back.
+		expect(checkQualificationRepo(dir).testFileChanged).toBe(false);
 	});
 
 	it('starts red, goes green with the one-character fix, and notices an edited test', () => {

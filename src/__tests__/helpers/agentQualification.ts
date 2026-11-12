@@ -71,11 +71,23 @@ export const QUALIFICATION_FILES: Readonly<Record<string, string>> = Object.free
 	].join('\n'),
 });
 
-/** A git command in `cwd` with a throwaway identity, so no user config is needed. */
+/**
+ * A git command in `cwd` with a throwaway identity and no commit signing, so no
+ * user config is needed: a user who signs every commit would otherwise have the
+ * scratch repo's commit ask for their key.
+ */
 function git(cwd: string, args: string[]): string {
 	return execFileSync(
 		'git',
-		['-c', 'user.name=Maestro e2e', '-c', 'user.email=e2e@example.invalid', ...args],
+		[
+			'-c',
+			'user.name=Maestro e2e',
+			'-c',
+			'user.email=e2e@example.invalid',
+			'-c',
+			'commit.gpgsign=false',
+			...args,
+		],
 		{ cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
 	);
 }
