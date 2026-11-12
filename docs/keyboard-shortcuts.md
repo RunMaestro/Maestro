@@ -466,6 +466,14 @@ they never fire while you are typing, so the find bar and the markdown editor
 keep those keys. The same steps are available from the zoom pill that rests in
 the top-right corner of the preview.
 
+`Cmd+Shift+\` / `Ctrl+Shift+\` opens and closes the
+[document chat](./general-usage#chatting-with-a-document) panel, the Shift twin
+of the Table of Contents chord. It is offered on any file with text in it, and
+the command palette has it as **File: Chat with Document**. In the panel,
+`Enter` sends and `Shift+Enter` starts a new line. `Esc` closes the panel;
+clicking outside it does not, so you can scroll and select in the document with
+the chat open.
+
 ### CSV Row Detail
 
 Available while previewing a `.csv` or `.tsv` file. See
