@@ -11,7 +11,22 @@ import { describe, it, expect } from 'vitest';
 import {
 	describeToolActivity,
 	describeToolActivityStatus,
+	normalizeToolName,
 } from '../../../renderer/utils/toolActivityLabel';
+
+describe('normalizeToolName', () => {
+	it('collapses every provider spelling of one tool to one key', () => {
+		for (const spelling of ['read_file', 'readFile', 'ReadFile', 'read-file', 'Read File']) {
+			expect(normalizeToolName(spelling)).toBe('readfile');
+		}
+		expect(normalizeToolName('Read')).toBe('read');
+	});
+
+	it('keeps other punctuation, so a namespaced MCP tool never collides with a core one', () => {
+		expect(normalizeToolName('mcp__files__read')).toBe('mcpfilesread');
+		expect(normalizeToolName('functions.read_file')).toBe('functions.readfile');
+	});
+});
 
 describe('describeToolActivity', () => {
 	// Shapes from live grok 1.0.41 and agy 1.2.16 runs. Before these were

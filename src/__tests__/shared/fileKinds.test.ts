@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { isTalkableDocumentPath } from '../../shared/fileKinds';
+import { isBinaryContent, isTalkableDocumentPath } from '../../shared/fileKinds';
 
 describe('isTalkableDocumentPath', () => {
 	it('accepts prose, code, and config - anything with text in it', () => {
@@ -42,5 +42,50 @@ describe('isTalkableDocumentPath', () => {
 
 	it('refuses an empty path rather than opening a session about nothing', () => {
 		expect(isTalkableDocumentPath('')).toBe(false);
+	});
+});
+
+describe('isBinaryContent', () => {
+	it('detects null bytes as binary', () => {
+		expect(isBinaryContent('hello\0world')).toBe(true);
+	});
+
+	it('finds a null byte past the sampled window', () => {
+		expect(isBinaryContent('a'.repeat(20_000) + '\0')).toBe(true);
+	});
+
+	it('returns false for normal text', () => {
+		expect(isBinaryContent('Hello, world!\nThis is text.')).toBe(false);
+	});
+
+	it('returns false for empty content', () => {
+		expect(isBinaryContent('')).toBe(false);
+	});
+
+	it('allows common whitespace (tab, newline, vertical tab, form feed, carriage return)', () => {
+		expect(isBinaryContent('hello\tworld\r\n\v\f')).toBe(false);
+	});
+
+	it('detects high non-printable ratio as binary', () => {
+		// More than 10% non-printable characters
+		const binary = String.fromCharCode(1).repeat(20) + 'a'.repeat(80);
+		expect(isBinaryContent(binary)).toBe(true);
+	});
+
+	it('counts DEL and the C1 controls as non-printable', () => {
+		expect(isBinaryContent(String.fromCharCode(127, 128, 159).repeat(10) + 'a'.repeat(30))).toBe(
+			true
+		);
+	});
+
+	it('allows low non-printable ratio as text', () => {
+		// Less than 10% non-printable
+		const almostText = String.fromCharCode(1).repeat(5) + 'a'.repeat(100);
+		expect(isBinaryContent(almostText)).toBe(false);
+	});
+
+	it('judges only the first 8192 characters for the ratio', () => {
+		const lateControls = 'a'.repeat(8192) + String.fromCharCode(1).repeat(8192);
+		expect(isBinaryContent(lateControls)).toBe(false);
 	});
 });

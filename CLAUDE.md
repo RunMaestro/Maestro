@@ -102,6 +102,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A bridge round trip in a CLI verb (send, read the reply, exit with the right code):** `sendBridgeCommand()`, `failCommand(message, json?, code?)` in `src/cli/services/session-command.ts` (never another private `fail()` / `send()`)
 - **An image file the user named on the CLI:** `readCliImageFile(input, maxBytes)` in `src/cli/utils/imageFiles.ts`
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
+- **Whether text content looks binary (a NUL, or many control characters):** `isBinaryContent()` in `src/shared/fileKinds.ts`, beside `isBinaryExtension()`
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
 - **Parsing a base64 data URL (an image payload):** `parseBase64DataUrl()`, `mediaSubtype()` in `src/shared/dataUrl.ts` (never a `base64,(.+)$` capture)
 - **Guarding a serialized JSON payload before it overwrites a file:** `assertSerializedJsonIsSafe(serialized, target)` in `src/shared/jsonUtils.ts`
@@ -260,6 +261,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which providers a user can pick:** `AGENT_PICKER_META`, `PICKABLE_AGENT_IDS`, `getAgentPickerMeta()`, `AGENT_AUTOSELECT_ORDER` in `src/shared/agentMetadata.ts`
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
 - **Whether a provider can read images:** `agentCanReadImages()`, `agentIdCanReadImages()` in `src/shared/maestro-lib/providers/capabilities.ts`
+- **Recognizing a tool across providers by its name:** `normalizeToolName()` in `src/shared/toolActivityLabel.ts` (`read_file`, `readFile` and `ReadFile` collapse to one key)
 - **Which provider account an agent runs as:** `resolveAgentProfile()`, `resolveAgentAccountKey()`, `effectiveAgentCustomEnvVars()`, `resolveAgentBillingCredential()` in `src/shared/providerProfiles.ts`; `useProviderProfiles()` in `src/renderer/hooks/stats/useProviderProfiles.ts`
 - **An agent's model list, and refreshing it:** `discoverAgentModels()` in `src/main/agents/model-discovery.ts`; `refreshModels()` on `useAgentModelEffortOptions()`; `MODELS_REFRESHED_CHANNEL` in `src/shared/agentModelsRefresh.ts`
 - **Which account dirs exist for a provider (main):** `getProviderAccountDirs(toolType, options?)` in `src/main/agents/provider-account-dirs.ts`
@@ -564,6 +566,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **The Maestro token proxy (address, routing, lifecycle):** `TOKEN_PROXY_ROUTES`, `resolveTokenProxyTarget()`, `tokenProxyGatewayUrl()`, `gatewayPointsAtTokenProxy()` in `src/shared/local-models/token-proxy.ts`; `createTokenProxyServer()` in `src/main/local-models/proxy/server.ts`; `syncTokenProxy()`
 - **Compressing tool results in a model request (token proxy):** `compressRequestBody(kind, body, options)`, `findToolResultSpans()`, `summarizeToolResult()`, `formatCompressionMarker()` / `parseCompressionMarker()` in `src/main/local-models/proxy/compress.ts`; `compressWithHeuristics()`, `compressJson()`
 - **The token proxy's retrieve tool:** `TOKEN_PROXY_RETRIEVE_TOOL_NAME`, `TOKEN_PROXY_RETRIEVE_TOOL_ID` in `src/shared/local-models/token-proxy-retrieve-tool.ts`; `coreBridgeToolsFor()`, `callTokenProxyRetrieveTool()` in `src/main/local-models/proxy/retrieve-tool.ts`
+- **Relating the file reads one request shows (observation only):** `readEventsFromDescriptors()`, `analyzeReadOpportunities()`, `READ_OPPORTUNITY_LIMITS` in `src/main/local-models/proxy/read-opportunities.ts`
 - **An agent's Maestro token proxy mode (`off | passthrough | compress | compress-early`):** `resolveTokenProxyMode()`, `asTokenProxyMode()`, `asStoredTokenProxyMode()`, `isCompressingTokenProxyMode()`, `TOKEN_PROXY_MODE_DESCRIPTIONS`, `tokenProxyRouteForAgent()`, `tokenProxyAgentGatewayUrl()`
 - **Applying the global proxy default to a new agent:** `applyDefaultAgentTokenProxy()` in `src/renderer/services/agentGateway.ts`
 - **What the token proxy carried, saved and shortened:** `recordTokenProxyRequest()`, `proxyRequestFromLog()`, `readTokenProxyUsage()` in `src/main/local-models/proxy/request-stats.ts`; `getTokenProxyReport()`, `readTokenProxyBlock()` in `proxy/service.ts`; table `proxy_requests` via `src/main/stats/proxy-requests.ts`

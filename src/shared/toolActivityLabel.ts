@@ -47,8 +47,9 @@ const MAX_TARGET_LENGTH = 72;
 /**
  * Normalize a provider tool name for matching: lowercase and strip separators so
  * `write_to_file`, `writeToFile`, and `WriteToFile` all collapse to one key.
+ * Exported for the other places that must recognize a tool across providers.
  */
-function normalizeToolName(toolName: string): string {
+export function normalizeToolName(toolName: string): string {
 	return toolName.toLowerCase().replace(/[-_\s]/g, '');
 }
 

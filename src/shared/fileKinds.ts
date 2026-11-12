@@ -2,8 +2,9 @@
  * What kind of thing a file path names, by extension alone.
  *
  * Extension-only on purpose: the surfaces that ask are menus and command
- * builders that hold a path and nothing else. The File Preview, which has the
- * bytes in hand, keeps sniffing content on top of this (`isBinaryContent`).
+ * builders that hold a path and nothing else. A caller that also has the text
+ * in hand (the File Preview, the token proxy's read analyzer) adds the content
+ * sniff, `isBinaryContent`, on top of this.
  *
  * Lives in `shared/` because the same questions are asked from the Files panel,
  * the command palette, and the preview toolbar, and a second copy of the
@@ -66,6 +67,32 @@ const BINARY_EXTENSIONS = new Set([
 export const isBinaryExtension = (filename: string): boolean => {
 	const ext = filename.split('.').pop()?.toLowerCase();
 	return BINARY_EXTENSIONS.has(ext || '');
+};
+
+/** How much of a text the binary sniff reads. A NUL byte is searched for past it. */
+const BINARY_SNIFF_CHARS = 8192;
+
+/**
+ * Check if text content appears to be binary: a NUL anywhere, or more than 10%
+ * non-printable characters (C0 controls other than tab, LF, VT, FF and CR, plus
+ * DEL and the C1 controls) in the first {@link BINARY_SNIFF_CHARS}. The companion of
+ * {@link isBinaryExtension} for a caller that holds the text itself.
+ */
+export const isBinaryContent = (content: string): boolean => {
+	if (content.includes('\0')) return true;
+
+	const sample = content.slice(0, BINARY_SNIFF_CHARS);
+	if (sample.length === 0) return false;
+
+	let nonPrintableCount = 0;
+	for (let i = 0; i < sample.length; i++) {
+		const code = sample.charCodeAt(i);
+		if (code < 9 || (code > 13 && code < 32) || (code >= 127 && code < 160)) {
+			nonPrintableCount++;
+		}
+	}
+
+	return nonPrintableCount / sample.length > 0.1;
 };
 
 /**

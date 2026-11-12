@@ -70,12 +70,11 @@ import { openFileUrl } from '../../utils/openFileUrl';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
 import { ParquetViewer, type ParquetViewerHandle } from '../ParquetViewer';
-import { isBinaryExtension } from '../../../shared/fileKinds';
+import { isBinaryContent, isBinaryExtension } from '../../../shared/fileKinds';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
 import type { FilePreviewProps, FilePreviewHandle, FileStats, TocEntry } from './types';
 import {
 	getLanguageFromFilename,
-	isBinaryContent,
 	isGistPublishableFile,
 	formatFileSize,
 	countMarkdownTasks,

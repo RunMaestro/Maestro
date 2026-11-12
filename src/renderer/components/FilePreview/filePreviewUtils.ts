@@ -1,5 +1,5 @@
 import { formatSize } from '../../../shared/formatters';
-import { isBinaryExtension } from '../../../shared/fileKinds';
+import { isBinaryContent, isBinaryExtension } from '../../../shared/fileKinds';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
@@ -310,30 +310,6 @@ export function isReadableTextPreview(filename: string): boolean {
 
 	return READABLE_TEXT_BASENAMES.has(lowerFilename);
 }
-
-// ─── Binary Detection ─────────────────────────────────────────────────────────
-//
-// The extension list moved to `shared/fileKinds.ts` when the Files panel and the
-// command palette needed the same answer. What stays here is the content sniff,
-// which only this component can run: it needs the bytes.
-
-/** Check if content appears to be binary (null bytes or high non-printable ratio) */
-export const isBinaryContent = (content: string): boolean => {
-	if (content.includes('\0')) return true;
-
-	const sample = content.slice(0, 8192);
-	if (sample.length === 0) return false;
-
-	let nonPrintableCount = 0;
-	for (let i = 0; i < sample.length; i++) {
-		const code = sample.charCodeAt(i);
-		if (code < 9 || (code > 13 && code < 32) || (code >= 127 && code < 160)) {
-			nonPrintableCount++;
-		}
-	}
-
-	return nonPrintableCount / sample.length > 0.1;
-};
 
 // ─── Gist Publishing ──────────────────────────────────────────────────────────
 
