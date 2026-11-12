@@ -357,6 +357,37 @@ describe('SummaryCards', () => {
 			expect(tabsCard).toBeInTheDocument();
 		});
 
+		it('counts browser and terminal tabs, and skips hidden AI tabs, like the tab strip', () => {
+			const sessions = [
+				{
+					id: 's1',
+					toolType: 'claude-code',
+					aiTabs: [{ id: 'tab1' }, { id: 'consult', hidden: true }],
+					filePreviewTabs: [{ id: 'file1' }],
+					browserTabs: [{ id: 'browser1' }],
+					terminalTabs: [{ id: 'term1' }, { id: 'term2' }],
+				},
+			] as unknown as Session[];
+			render(<SummaryCards data={mockData} theme={theme} sessions={sessions} />);
+			expect(screen.getByRole('group', { name: /Open Tabs: 5/i })).toBeInTheDocument();
+			expect(screen.getByTestId('open-tab-breakdown')).toHaveTextContent(
+				'1 AI · 1 file · 1 browser · 2 terminal'
+			);
+		});
+
+		it('leaves out a tab with no slot in the strip (#2008)', () => {
+			const sessions = [
+				{
+					id: 's1',
+					toolType: 'claude-code',
+					aiTabs: [{ id: 'open' }, { id: 'orphan' }],
+					unifiedTabOrder: [{ type: 'ai', id: 'open' }],
+				},
+			] as unknown as Session[];
+			render(<SummaryCards data={mockData} theme={theme} sessions={sessions} />);
+			expect(screen.getByRole('group', { name: /Open Tabs: 1/i })).toBeInTheDocument();
+		});
+
 		it('renders Open Tabs as 0 when no sessions provided', () => {
 			render(<SummaryCards data={mockData} theme={theme} />);
 

@@ -12,6 +12,11 @@ export interface DispatchOptions {
 	newTab?: boolean;
 	/** Tab id within the target agent. Mutually exclusive with --new-tab. */
 	tab?: string;
+	/**
+	 * Write into a tab that is itself mid-turn (two answers interleaving in one
+	 * conversation). Gated by `allowConcurrentSend`. An idle tab of a busy agent
+	 * needs no force: it runs its own turn in parallel.
+	 */
 	force?: boolean;
 	/**
 	 * Ask for background placement: the active agent and the active tab both stay
@@ -56,9 +61,9 @@ export interface DispatchResponse {
 	tabId?: string | null;
 	error?: string;
 	code?: string;
-	/** True when the prompt was queued (target busy); false when dispatched now.
-	 *  Set by the --queue path and by --new-tab, whose fresh tab inherits the
-	 *  agent's busy state and so queues behind the turn already running. */
+	/** True when the prompt was queued (target tab busy); false when dispatched
+	 *  now. Set by the --queue path. A desktop build older than this CLI may also
+	 *  report it for --new-tab at a busy agent. */
 	queued?: boolean;
 	/** 1-based position in the execution queue (only when queued). */
 	queuePosition?: number;
@@ -169,6 +174,17 @@ function buildCallbackFields(
 	};
 }
 
+/** A `command_result` refusal, carrying the desktop's reason and code. */
+class DispatchRefusedError extends Error {
+	constructor(
+		message: string,
+		readonly code: string
+	) {
+		super(message);
+		this.name = 'DispatchRefusedError';
+	}
+}
+
 function emitErrorJson(error: string, code: string): void {
 	console.log(JSON.stringify({ success: false, error, code }, null, 2));
 }
@@ -201,6 +217,10 @@ function callbackNotArmedResponse(agentId: string, tabId: string | null): Dispat
 function mapDispatchError(error: unknown, agentId: string): DispatchResponse {
 	if (error instanceof UnsupportedCommandError) {
 		return { success: false, error: error.message, code: 'UNSUPPORTED' };
+	}
+	// The desktop's own reason and code, passed through rather than re-sniffed.
+	if (error instanceof DispatchRefusedError) {
+		return { success: false, error: error.message, code: error.code };
 	}
 	const msg = error instanceof Error ? error.message : String(error);
 	// Checked before the substring sniffing below: this reason came from the
@@ -266,29 +286,31 @@ export async function runDispatch(
 		};
 	}
 
-	// `--new-tab --force` is meaningless - the new tab owns no turn to bypass,
-	// and a prompt that cannot start because the AGENT is mid-turn is queued for
-	// the new tab rather than rejected. Reject the combo rather than silently
-	// ignoring --force, which would mismatch the help text and confuse callers
-	// debugging why nothing is being bypassed.
+	// `--new-tab --force` is meaningless - a fresh tab is never mid-turn, so
+	// there is nothing to bypass; it runs now even while another tab of the
+	// agent is working. Reject the combo rather than silently ignoring --force,
+	// which would mismatch the help text and confuse callers debugging why
+	// nothing is being bypassed.
 	if (options.newTab && options.force) {
 		return {
 			success: false,
-			error: '--new-tab cannot be combined with --force (a new tab owns no turn to bypass)',
+			error:
+				'--new-tab cannot be combined with --force (a new tab is never mid-turn, so it already runs now)',
 			code: 'INVALID_OPTIONS',
 		};
 	}
 
 	// --queue is the safe counterpart to --force: instead of bypassing the busy
 	// guard, it respects it by waiting in line. Combining the two is
-	// contradictory. And --new-tab already does what --queue asks for - a prompt
-	// it cannot start now waits in the agent's queue - so the flag is redundant
-	// there; reject both combos rather than silently ignoring --queue.
+	// contradictory. And --queue waits for a busy TAB, which a fresh --new-tab
+	// never is, so the flag is meaningless there; reject both combos rather than
+	// silently ignoring --queue.
 	const queue = options.queue === true || options.wait === true;
 	if (queue && options.newTab) {
 		return {
 			success: false,
-			error: '--queue cannot be combined with --new-tab (--new-tab already queues a busy agent)',
+			error:
+				'--queue cannot be combined with --new-tab (a new tab is never busy, so there is no line to wait in)',
 			code: 'INVALID_OPTIONS',
 		};
 	}
@@ -302,7 +324,8 @@ export async function runDispatch(
 	}
 
 	// --force is gated by the `allowConcurrentSend` setting. It's off by default
-	// because concurrent writes can interleave responses in the target tab.
+	// because a second turn in a tab that is already mid-turn interleaves two
+	// responses in one conversation. An idle tab of a busy agent never needs it.
 	if (options.force) {
 		const stored = readSettingValue('allowConcurrentSend');
 		const allowConcurrentSend =
@@ -390,7 +413,13 @@ export async function runDispatch(
 					queued: result.queued === true,
 				};
 			}
-			const result = await client.sendCommand<{ tabId?: string; callbackId?: string }>(
+			const result = await client.sendCommand<{
+				success?: boolean;
+				tabId?: string;
+				callbackId?: string;
+				error?: string;
+				code?: string;
+			}>(
 				{
 					type: 'send_command',
 					sessionId: agentId,
@@ -410,6 +439,15 @@ export async function runDispatch(
 				},
 				'command_result'
 			);
+			// A refusal arrives as `command_result` with `success: false` (target
+			// tab mid-turn, tab gone, agent missing). Reporting it as a success told
+			// the caller its prompt was running when nothing had been delivered.
+			if (result.success === false) {
+				throw new DispatchRefusedError(
+					result.error || 'Maestro desktop refused the dispatch',
+					result.code || 'DISPATCH_REFUSED'
+				);
+			}
 			return { tabId: result.tabId, callbackId: result.callbackId, queued: false };
 		});
 		// `--tab <tabId>` is the authoritative target; the desktop handler

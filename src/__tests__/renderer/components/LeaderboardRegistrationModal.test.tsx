@@ -8,6 +8,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { LeaderboardRegistrationModal } from '../../../renderer/components/LeaderboardRegistrationModal';
 import type { Theme, AutoRunStats, LeaderboardRegistration } from '../../../renderer/types';
 import type { KeyboardMasteryStats } from '../../../shared/types';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 // Mock layer stack context
 const mockRegisterLayer = vi.fn(() => 'layer-leaderboard-123');
@@ -572,5 +573,167 @@ describe('LeaderboardRegistrationModal', () => {
 
 			expect(mockUnregisterLayer).toHaveBeenCalledWith('layer-leaderboard-123');
 		});
+	});
+});
+
+// Issue #2011: the server resolves auth-status by clientToken alone, so an
+// install that confirmed two emails got the OLD email's auth token back and
+// every submit and Pull Down for the new email returned 401.
+describe('LeaderboardRegistrationModal install binding (#2011)', () => {
+	const OLD_CLIENT_TOKEN = 'client-token-bound-to-old-email';
+
+	const baseRegistration = (): LeaderboardRegistration => ({
+		displayName: 'Maesbro',
+		email: 'new@example.com',
+		registeredAt: 1,
+		emailConfirmed: true,
+		clientToken: OLD_CLIENT_TOKEN,
+		authToken: 'old-email-token',
+	});
+
+	const renderModal = (existingRegistration: LeaderboardRegistration, onSave = vi.fn()) => {
+		useSettingsStore.setState({ leaderboardRegistration: existingRegistration });
+		render(
+			<LeaderboardRegistrationModal
+				theme={createTheme()}
+				autoRunStats={createAutoRunStats()}
+				keyboardMasteryStats={createKeyboardMasteryStats()}
+				existingRegistration={existingRegistration}
+				onClose={vi.fn()}
+				onSave={onSave}
+				onSyncStats={vi.fn()}
+			/>
+		);
+		return onSave;
+	};
+
+	afterEach(() => {
+		useSettingsStore.setState({ leaderboardRegistration: null });
+		vi.clearAllMocks();
+	});
+
+	it('starts a changed email on a fresh clientToken without the old auth token', async () => {
+		vi.mocked(window.maestro.leaderboard.submit).mockResolvedValueOnce({
+			success: true,
+			message: 'ok',
+			pendingEmailConfirmation: true,
+		});
+		vi.mocked(window.maestro.leaderboard.pollAuthStatus).mockResolvedValue({
+			status: 'pending',
+		});
+		renderModal({ ...baseRegistration(), email: 'old@example.com' });
+
+		const emailInput = screen.getByDisplayValue('old@example.com');
+		fireEvent.change(emailInput, { target: { value: 'new@example.com' } });
+		await act(async () => {
+			fireEvent.click(screen.getByText('Push Up'));
+		});
+
+		await waitFor(() => expect(window.maestro.leaderboard.submit).toHaveBeenCalled());
+		const sent = vi.mocked(window.maestro.leaderboard.submit).mock.calls[0][0];
+		expect(sent.email).toBe('new@example.com');
+		expect(sent.authToken).toBeUndefined();
+		expect(sent.clientToken).toBeTruthy();
+		expect(sent.clientToken).not.toBe(OLD_CLIENT_TOKEN);
+		expect(window.maestro.leaderboard.pollAuthStatus).toHaveBeenCalledWith(sent.clientToken);
+	});
+
+	it('keeps the clientToken and auth token when only the email case differs', async () => {
+		renderModal({ ...baseRegistration(), email: 'New@Example.com' });
+
+		await act(async () => {
+			fireEvent.click(screen.getByText('Push Up'));
+		});
+
+		await waitFor(() => expect(window.maestro.leaderboard.submit).toHaveBeenCalled());
+		const sent = vi.mocked(window.maestro.leaderboard.submit).mock.calls[0][0];
+		expect(sent.clientToken).toBe(OLD_CLIENT_TOKEN);
+		expect(sent.authToken).toBe('old-email-token');
+	});
+
+	it('rebinds instead of retrying when a 401 recovery returns another email token', async () => {
+		vi.mocked(window.maestro.leaderboard.submit).mockResolvedValueOnce({
+			success: false,
+			message: 'Authentication required',
+			error: 'Invalid auth token',
+			authTokenRequired: true,
+		});
+		vi.mocked(window.maestro.leaderboard.pollAuthStatus).mockResolvedValueOnce({
+			status: 'confirmed',
+			authToken: 'old-email-token',
+			email: 'old@example.com',
+		});
+		const onSave = renderModal(baseRegistration());
+
+		await act(async () => {
+			fireEvent.click(screen.getByText('Push Up'));
+		});
+
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /Resend Confirmation Email/ })).toBeInTheDocument()
+		);
+		// No retry with the wrong token.
+		expect(window.maestro.leaderboard.submit).toHaveBeenCalledTimes(1);
+		const saved = onSave.mock.calls.at(-1)?.[0] as LeaderboardRegistration;
+		expect(saved.authToken).toBeUndefined();
+		expect(saved.clientToken).toBeTruthy();
+		expect(saved.clientToken).not.toBe(OLD_CLIENT_TOKEN);
+
+		// Resend now binds the fresh clientToken to this email.
+		await act(async () => {
+			fireEvent.click(screen.getByRole('button', { name: /Resend Confirmation Email/ }));
+		});
+		expect(window.maestro.leaderboard.resendConfirmation).toHaveBeenCalledWith({
+			email: 'new@example.com',
+			clientToken: saved.clientToken,
+		});
+	});
+
+	it('does not store a polled token that belongs to another email', async () => {
+		vi.mocked(window.maestro.leaderboard.submit).mockResolvedValueOnce({
+			success: true,
+			message: 'ok',
+			pendingEmailConfirmation: true,
+		});
+		vi.mocked(window.maestro.leaderboard.pollAuthStatus).mockResolvedValueOnce({
+			status: 'confirmed',
+			authToken: 'old-email-token',
+			email: 'old@example.com',
+		});
+		const onSave = renderModal({ ...baseRegistration(), authToken: undefined });
+
+		await act(async () => {
+			fireEvent.click(screen.getByText('Push Up'));
+		});
+
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: /Resend Confirmation Email/ })).toBeInTheDocument()
+		);
+		expect(screen.queryByText(/Email confirmed!/)).not.toBeInTheDocument();
+		for (const [registration] of onSave.mock.calls) {
+			expect((registration as LeaderboardRegistration).authToken).not.toBe('old-email-token');
+		}
+	});
+
+	it('surfaces a Pull Down 401 and offers Resend Confirmation', async () => {
+		vi.mocked(window.maestro.leaderboard.sync).mockResolvedValueOnce({
+			success: false,
+			found: false,
+			error: 'Invalid auth token',
+			errorCode: 'INVALID_TOKEN',
+		});
+		const onSave = renderModal(baseRegistration());
+
+		await act(async () => {
+			fireEvent.click(screen.getByText('Pull Down'));
+		});
+
+		await waitFor(() =>
+			expect(screen.getByText(/did not accept this install's auth token/)).toBeInTheDocument()
+		);
+		expect(screen.getByRole('button', { name: /Resend Confirmation Email/ })).toBeInTheDocument();
+		const saved = onSave.mock.calls.at(-1)?.[0] as LeaderboardRegistration;
+		expect(saved.authToken).toBeUndefined();
+		expect(saved.clientToken).not.toBe(OLD_CLIENT_TOKEN);
 	});
 });

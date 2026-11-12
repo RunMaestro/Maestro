@@ -90,6 +90,13 @@ export default defineConfig(({ mode }) => ({
 		// strict about malformed CSS that esbuild's minifier silently passed
 		// through. esbuild here matches prior (Vite 5-7) behavior.
 		cssMinify: 'esbuild',
+		// Never inline a font as a data: URI. The renderer CSP is `font-src 'self'`
+		// (src/renderer/index.html), so an inlined font is blocked and its glyphs
+		// fall back silently. Vite inlines anything under 4 KB, which caught
+		// KaTeX_Size3.woff2 and broke size-3 math delimiters in packaged builds.
+		// Other assets keep Vite's default limit (undefined defers to it).
+		assetsInlineLimit: (filePath: string) =>
+			/\.(woff2?|ttf|otf|eot)$/i.test(filePath) ? false : undefined,
 		// Disable modulepreload polyfill - Electron loads from local filesystem
 		modulePreload: false,
 		rollupOptions: {

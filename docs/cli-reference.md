@@ -240,12 +240,12 @@ Remove playbooks for deleted sessions
 
 Send a message to an agent and get a JSON response
 
-| Option               | Description                                                                                                                                             | Default |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `-s, --session <id>` | Resume an existing agent session (for multi-turn conversations)                                                                                         | -       |
-| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)                                                                                                  | -       |
-| `-t, --tab`          | Open/focus the session tab in Maestro desktop                                                                                                           | -       |
-| `--no-system-prompt` | Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app. | -       |
+| Option               | Description                                                                                                                                                                                                                  | Default |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-s, --session <id>` | Resume a PROVIDER session id (the sessionId a previous send returned, or one from `list sessions`), not a Maestro tab id. Runs headless beside the desktop; to deliver into a live tab use `dispatch --tab <tab-id> --queue` | -       |
+| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)                                                                                                                                                                       | -       |
+| `-t, --tab`          | Open/focus the session tab in Maestro desktop                                                                                                                                                                                | -       |
+| `--no-system-prompt` | Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app.                                                                      | -       |
 
 ## `maestro-cli ask <agent-id> <question>`
 
@@ -282,12 +282,12 @@ Dispatch a prompt to an agent in the Maestro desktop app and return its tab/sess
 
 | Option                            | Description                                                                                                                                                                                                                                                                                                    | Default |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--new-tab`                       | Create a fresh AI tab and deliver the prompt into it. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).                                                                                             | -       |
+| `--new-tab`                       | Create a fresh AI tab and deliver the prompt into it. It runs now, even while another tab of the agent is working.                                                                                                                                                                                             | -       |
 | `--background`                    | Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)                                                                                                                                                                                                                     | -       |
 | `-t, --tab <id>`                  | Target an existing tab by its tab id (mutually exclusive with --new-tab)                                                                                                                                                                                                                                       | -       |
-| `-f, --force`                     | Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab, which queues instead)                                                                                                                                                                 | -       |
+| `-f, --force`                     | Write into a tab that is itself mid-turn (interleaves two answers); requires allowConcurrentSend. An idle tab of a busy agent needs no --force. Cannot be combined with --new-tab.                                                                                                                             | -       |
 | `--focus`                         | Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)                                                                                                                                                                                  | -       |
-| `--queue`                         | If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.                                            | -       |
+| `--queue`                         | If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target tab dispatches immediately, even while another tab of the agent is working. Cannot be combined with --new-tab or --force. Returns the queue position.                                      | -       |
 | `--wait`                          | Alias for --queue                                                                                                                                                                                                                                                                                              | -       |
 | `--notify-on-complete <agent-id>` | Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.                                                                    | -       |
 | `--callback-tab <id>`             | Specific tab of the --notify-on-complete agent to wake (default: its active AI tab)                                                                                                                                                                                                                            | -       |
@@ -427,9 +427,13 @@ Inspect open desktop tabs and their conversation history
 
 List open desktop AI tabs and their tab/session IDs
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option             | Description                                                                                            | Default |
+| ------------------ | ------------------------------------------------------------------------------------------------------ | ------- |
+| `--include-hidden` | Also list hidden tabs (consults) the tab bar does not show                                             | -       |
+| `--hidden`         | List only hidden tabs (consults and other tabs the tab bar does not show)                              | -       |
+| `--all`            | List every tab, visible, hidden, and orphaned (no tab-strip slot), with a visibility field             | -       |
+| `--type <kind>`    | Which tabs: ai (default), file, browser, terminal, or all. Non-AI tabs are listed under "tabs" in JSON | `ai`    |
+| `--json`           | Output as JSON (for scripting)                                                                         | -       |
 
 ## `maestro-cli session show <tab-id>`
 
@@ -492,6 +496,14 @@ Stop a group chat's moderator and participants
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat add <chat> <agent>`
+
+Add an agent (ID, ID prefix, or name) to a group chat without an @mention; linked by ID
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli group-chat archive <chat>`
 
 Archive a group chat (stops its moderator and participants); --restore brings it back
@@ -505,24 +517,24 @@ Archive a group chat (stops its moderator and participants); --restore brings it
 
 Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)
 
-| Option             | Description                                                                                   | Default |
-| ------------------ | --------------------------------------------------------------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)                            | -       |
-| `--background`     | Open the preview tab without changing anything currently rendered, on any agent               | -       |
-| `--focus`          | Switch to the file after opening it (default)                                                 | -       |
-| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                            | -       |
-| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback | -       |
-| `--json`           | Output as JSON (for scripting)                                                                | -       |
+| Option             | Description                                                                                               | Default |
+| ------------------ | --------------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent (defaults to the agent owning this shell or terminal tab, else the file path's owning agent) | -       |
+| `--background`     | Open the preview tab without changing anything currently rendered, on any agent                           | -       |
+| `--focus`          | Switch to the file after opening it (default)                                                             | -       |
+| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                                        | -       |
+| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback             | -       |
+| `--json`           | Output as JSON (for scripting)                                                                            | -       |
 
 ## `maestro-cli open-graph [paths]`
 
 Open the Document Graph over specific markdown files or a directory
 
-| Option             | Description                                                      | Default |
-| ------------------ | ---------------------------------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by path's owning agent)    | -       |
-| `--focus <path>`   | Center the graph on this document (default: the most-linked one) | -       |
-| `--json`           | Output as JSON (for scripting)                                   | -       |
+| Option             | Description                                                                                          | Default |
+| ------------------ | ---------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent (defaults to the agent owning this shell or terminal tab, else the path's owning agent) | -       |
+| `--focus <path>`   | Center the graph on this document (default: the most-linked one)                                     | -       |
+| `--json`           | Output as JSON (for scripting)                                                                       | -       |
 
 ## `maestro-cli open-browser <url>`
 
@@ -871,33 +883,35 @@ Show recent Cue runs, newest first
 
 Create a scheduled task (or --list / --cancel / --reschedule / --pause)
 
-| Option                     | Description                                                                                           | Default |
-| -------------------------- | ----------------------------------------------------------------------------------------------------- | ------- |
-| `--in <duration>`          | One-shot: fire after a relative delay (e.g. 30s, 20m, 2h, 1d)                                         | -       |
-| `--at <timestamp>`         | One-shot: fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local)                                    | -       |
-| `--daily-at <times>`       | Repeating: comma-separated HH:MM times (e.g. 09:00,17:30)                                             | -       |
-| `--days <days>`            | Limit --daily-at to these days (e.g. mon,tue,wed,thu,fri)                                             | -       |
-| `--every <duration>`       | Repeating: fire on an interval (e.g. 30m, 2h, 1d)                                                     | -       |
-| `--list`                   | List scheduled tasks across agents                                                                    | -       |
-| `--kind <kind>`            | Filter --list by kind: once, daily, interval, all (default: all)                                      | -       |
-| `--cancel <name>`          | Cancel a scheduled task by name                                                                       | -       |
-| `--reschedule <name>`      | Change when an existing task fires (pass the timing flag too)                                         | -       |
-| `--pause <name>`           | Disable a task without deleting it                                                                    | -       |
-| `--resume <name>`          | Re-enable a paused task                                                                               | -       |
-| `-a, --agent <id-or-name>` | Target agent (required when creating; scopes other modes)                                             | -       |
-| `-p, --prompt <text>`      | Prompt to send when the task fires                                                                    | -       |
-| `--notify`                 | Show a toast notification when the task fires                                                         | -       |
-| `--sticky`                 | Make the notify toast sticky (requires --notify)                                                      | -       |
-| `-m, --message <text>`     | Body for the notify toast (defaults to label/prompt)                                                  | -       |
-| `-n, --name <name>`        | Custom subscription name (auto-generated when omitted)                                                | -       |
-| `-l, --label <text>`       | Human-readable label (defaults to truncated prompt)                                                   | -       |
-| `--pipeline <name>`        | Pipeline name (default: Tasks)                                                                        | -       |
-| `--grace-minutes <n>`      | Override the default 360-minute grace window                                                          | -       |
-| `--tier <level>`           | Model tier for the prompt run: low, medium, high (mapped per provider)                                | -       |
-| `--model <id>`             | Exact model id for the prompt run (instead of --tier)                                                 | -       |
-| `--effort <level>`         | Effort for the prompt run: low, medium, high (mapped per provider)                                    | -       |
-| `--keep-on-failure`        | Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure) | -       |
-| `--json`                   | Output as JSON (for scripting)                                                                        | -       |
+| Option                     | Description                                                                                                                                                                  | Default |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--in <duration>`          | One-shot: fire after a relative delay (e.g. 30s, 20m, 2h, 1d)                                                                                                                | -       |
+| `--at <timestamp>`         | One-shot: fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local)                                                                                                           | -       |
+| `--daily-at <times>`       | Repeating: comma-separated HH:MM times (e.g. 09:00,17:30)                                                                                                                    | -       |
+| `--days <days>`            | Limit --daily-at to these days (e.g. mon,tue,wed,thu,fri)                                                                                                                    | -       |
+| `--every <duration>`       | Repeating: fire on an interval (e.g. 30m, 2h, 1d)                                                                                                                            | -       |
+| `--list`                   | List scheduled tasks across agents                                                                                                                                           | -       |
+| `--kind <kind>`            | Filter --list by kind: once, daily, interval, all (default: all)                                                                                                             | -       |
+| `--cancel <name>`          | Cancel a scheduled task by name                                                                                                                                              | -       |
+| `--reschedule <name>`      | Change when an existing task fires (pass the timing flag too)                                                                                                                | -       |
+| `--pause <name>`           | Disable a task without deleting it                                                                                                                                           | -       |
+| `--resume <name>`          | Re-enable a paused task                                                                                                                                                      | -       |
+| `-a, --agent <id-or-name>` | Target agent (required when creating; scopes other modes)                                                                                                                    | -       |
+| `-p, --prompt <text>`      | Prompt to send when the task fires                                                                                                                                           | -       |
+| `--tab <tab-id>`           | Deliver the prompt into this existing AI tab of --agent (waits behind a busy turn, marks the tab unread, never moves the view; a closed tab falls back to a new tab + toast) | -       |
+| `--here`                   | Like --tab, for the AI tab this command runs from (an agent scheduling its own follow-up); --agent defaults to that agent                                                    | -       |
+| `--notify`                 | Show a toast notification when the task fires                                                                                                                                | -       |
+| `--sticky`                 | Make the notify toast sticky (requires --notify)                                                                                                                             | -       |
+| `-m, --message <text>`     | Body for the notify toast (defaults to label/prompt)                                                                                                                         | -       |
+| `-n, --name <name>`        | Custom subscription name (auto-generated when omitted)                                                                                                                       | -       |
+| `-l, --label <text>`       | Human-readable label (defaults to truncated prompt)                                                                                                                          | -       |
+| `--pipeline <name>`        | Pipeline name (default: Tasks)                                                                                                                                               | -       |
+| `--grace-minutes <n>`      | Override the default 360-minute grace window                                                                                                                                 | -       |
+| `--tier <level>`           | Model tier for the prompt run: low, medium, high (mapped per provider)                                                                                                       | -       |
+| `--model <id>`             | Exact model id for the prompt run (instead of --tier)                                                                                                                        | -       |
+| `--effort <level>`         | Effort for the prompt run: low, medium, high (mapped per provider)                                                                                                           | -       |
+| `--keep-on-failure`        | Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)                                                                        | -       |
+| `--json`                   | Output as JSON (for scripting)                                                                                                                                               | -       |
 
 ## `maestro-cli cue pipeline`
 
@@ -1210,6 +1224,17 @@ Close a tab (owning agent is resolved automatically)
 | ------------------ | ---------------------------------------------- | ------- |
 | `-a, --agent <id>` | Whose active tab, when &lt;tab-id> is "active" | -       |
 | `--json`           | Output as JSON (for scripting)                 | -       |
+
+## `maestro-cli tab reopen`
+
+Reopen an agent's most recently closed tab (same as Cmd+Shift+T)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent ID                                          | -       |
+| `--background`     | Restore the tab without changing the agent's visible tab | -       |
+| `--focus`          | Make the reopened tab the visible one (default)          | -       |
+| `--json`           | Output as JSON (for scripting)                           | -       |
 
 ## `maestro-cli tab rename <tab-id> <new-name>`
 

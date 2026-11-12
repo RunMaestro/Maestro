@@ -14,7 +14,8 @@
 
 import * as path from 'path';
 import type { SessionInfo } from '../../shared/types';
-import { getSessionHistoryMtimeMs, readSessions } from '../services/storage';
+import { readShellOwnerAgentId } from '../../shared/agentDelegation';
+import { getSessionById, getSessionHistoryMtimeMs, readSessions } from '../services/storage';
 
 /**
  * True if `target` is `parent` itself or lives strictly inside it. Uses a
@@ -72,4 +73,44 @@ export function resolveOwningAgent(
 	if (owners.length === 1) return { agent: owners[0], others: [] };
 	const agent = pickMostRecentlyActive(owners);
 	return { agent, others: owners.filter((s) => s.id !== agent.id) };
+}
+
+/** Which agent a path-taking verb acts on, and why that one. */
+export type TargetAgentResolution =
+	| { agent: SessionInfo; others: SessionInfo[] }
+	| { error: string };
+
+/**
+ * The agent a path-taking verb (`open-file`, `open-graph`) acts on.
+ *
+ * In order: `--agent` (the caller asserting which agent it means), then the
+ * agent that owns the shell the CLI runs in (an agent's own turn, or a terminal
+ * tab's agent: see `readShellOwnerAgentId`), then the agent whose workspace
+ * holds the path. The shell owner beats the path because a path outside every
+ * workspace (`~/.bashrc`) is exactly what someone in a terminal tab opens, and
+ * the tab already says which agent they are in. A shell owner that no longer
+ * exists is ignored rather than fatal, so a stale env never blocks a command.
+ * `null` for `absolutePath` skips the path rule (a URL lives in no workspace).
+ */
+export function resolveTargetAgent(
+	absolutePath: string | null,
+	agentFlag: string | undefined,
+	env: Record<string, string | undefined> = process.env,
+	sessions: SessionInfo[] = readSessions()
+): TargetAgentResolution {
+	if (agentFlag) {
+		const session = getSessionById(agentFlag);
+		return session ? { agent: session, others: [] } : { error: `Agent not found: ${agentFlag}` };
+	}
+
+	const shellOwnerId = readShellOwnerAgentId(env);
+	const shellOwner = shellOwnerId ? sessions.find((s) => s.id === shellOwnerId) : undefined;
+	if (shellOwner) return { agent: shellOwner, others: [] };
+
+	const where = absolutePath ?? process.cwd();
+	const owned = resolveOwningAgent(where, sessions);
+	if (owned) return owned;
+	return {
+		error: `${absolutePath ?? 'the current directory'} is not inside any agent's working directory. Pick an agent with --agent <id>.`,
+	};
 }

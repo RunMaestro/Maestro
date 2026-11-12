@@ -3,7 +3,8 @@
 
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
 import { captureCliRun } from '../services/agent-run-capture';
-import { resolveAgentId, getSessionById } from '../services/storage';
+import { resolveAgentId, getSessionById, readStoredAiTabs } from '../services/storage';
+import { listDesktopTabs } from '../services/session-command';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
@@ -78,6 +79,58 @@ function buildResponse(
 	};
 }
 
+/**
+ * Why a `--session` value must not be resumed, or `null` when it may.
+ *
+ * `send` runs a headless provider process beside the desktop; it never writes
+ * into a desktop tab. Two values used to slip through and come back as an
+ * opaque `crashed` turn:
+ *   - a Maestro TAB id, which the provider cannot resume (it is not one of its
+ *     session ids), and
+ *   - the provider session of a tab that is mid-turn, which puts a second
+ *     writer on one conversation.
+ * Both are refused with a reason that names the verb that does what the caller
+ * meant (`dispatch --tab --queue`). The desktop's live tab list is asked first
+ * because only it knows which tab is busy; with the app down, the persisted
+ * tabs still catch the tab-id mistake.
+ */
+async function sessionResumeRefusal(
+	agentId: string,
+	sessionArg: string
+): Promise<{ error: string; code: string } | null> {
+	let tabs: { tabId: string; agentSessionId: string | null; state: string }[];
+	try {
+		tabs = (await listDesktopTabs()).filter((tab) => tab.agentId === agentId);
+	} catch {
+		tabs = readStoredAiTabs(agentId).map((tab) => ({
+			tabId: tab.id,
+			agentSessionId: tab.agentSessionId ?? null,
+			state: 'unknown',
+		}));
+	}
+	const queueHint = (tabId: string) =>
+		`To deliver into that tab instead, run: maestro-cli dispatch ${agentId} "<message>" --tab ${tabId} --queue`;
+
+	const byTabId = tabs.find((tab) => tab.tabId === sessionArg);
+	if (byTabId) {
+		const providerNote = byTabId.agentSessionId
+			? ` (that tab's provider session is ${byTabId.agentSessionId})`
+			: '';
+		return {
+			code: 'SESSION_IS_TAB_ID',
+			error: `"${sessionArg}" is a Maestro tab id; --session takes a provider session id${providerNote}. ${queueHint(sessionArg)}`,
+		};
+	}
+	const busyTab = tabs.find((tab) => tab.agentSessionId === sessionArg && tab.state === 'busy');
+	if (busyTab) {
+		return {
+			code: 'TAB_BUSY',
+			error: `Provider session ${sessionArg} is mid-turn in desktop tab ${busyTab.tabId}; resuming it now would put a second writer on one conversation. Wait for the turn to finish. ${queueHint(busyTab.tabId)}`,
+		};
+	}
+	return null;
+}
+
 export async function send(
 	agentIdArg: string,
 	message: string,
@@ -121,6 +174,14 @@ export async function send(
 	// Without -s, always create a fresh session to prevent session leakage
 	// when multiple callers (e.g. Discord threads) send concurrently.
 	const agentSessionId = options.session;
+	if (agentSessionId) {
+		const refusal = await sessionResumeRefusal(agentId, agentSessionId);
+		if (refusal) {
+			emitErrorJson(refusal.error, refusal.code);
+			console.error(`maestro-cli send refused: ${refusal.error}`);
+			process.exit(1);
+		}
+	}
 
 	// Build the Maestro system prompt unless the caller opted out with
 	// `--no-system-prompt`. Failure to build (template missing, fs error) is

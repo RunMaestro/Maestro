@@ -314,6 +314,25 @@ describe('ClaudePlanUsage - exhausted account', () => {
 
 		expect(screen.getByText('Week (Sonnet only)')).toBeInTheDocument();
 	});
+
+	// claude 2.1.317 paints no 5-hour window on /usage, so the snapshot has no
+	// `session`. The row must draw the two weekly bars, not a fake 0% session.
+	it('draws no session row when the snapshot carries no session window', () => {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-gmail',
+				weekAllModels: { percent: 18, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 0, resetsAt: '2026-05-22T00:00:00.000Z', label: 'Fable' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		expect(screen.queryByText('Session window')).toBeNull();
+		const values = screen.getAllByRole('progressbar').map((b) => b.getAttribute('aria-valuenow'));
+		expect(values).toEqual(['18', '0']);
+	});
 });
 
 describe('ClaudePlanUsage - unauthenticated row', () => {
@@ -461,6 +480,46 @@ describe('ClaudePlanUsage - refresh wiring', () => {
 		fireEvent.keyDown(window, { key: 'R', metaKey: true, shiftKey: true });
 
 		expect(refreshClaudeUsageSnapshotsMock).not.toHaveBeenCalled();
+	});
+
+	it('keeps sampling after the panel unmounts and fills the store in when done', async () => {
+		let finishSample!: (value: unknown) => void;
+		refreshClaudeUsageSnapshotsMock.mockReturnValue(
+			new Promise((resolve) => {
+				finishSample = resolve;
+			})
+		);
+		getClaudeUsageSnapshotsMock.mockResolvedValue({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T01:00:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				session: { percent: 11, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 2, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 1, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		const { unmount } = render(<ClaudePlanUsage theme={theme} />);
+		fireEvent.click(screen.getByTestId('claude-plan-refresh'));
+		await waitFor(() => expect(refreshClaudeUsageSnapshotsMock).toHaveBeenCalledTimes(1));
+
+		// Switching dashboard tabs unmounts the panel mid-sample.
+		unmount();
+
+		// Coming back while main is still sampling shows the run as busy, and a
+		// click joins it instead of starting a second sample.
+		render(<ClaudePlanUsage theme={theme} />);
+		const button = screen.getByTestId('claude-plan-refresh') as HTMLButtonElement;
+		expect(button.disabled).toBe(true);
+		expect(button.textContent).toContain('Sampling');
+		fireEvent.click(button);
+		expect(refreshClaudeUsageSnapshotsMock).toHaveBeenCalledTimes(1);
+
+		finishSample({ refreshed: 1 });
+		await waitFor(() => {
+			expect(screen.getByTestId('claude-plan-row-default')).toBeInTheDocument();
+		});
+		await waitFor(() => expect(button.disabled).toBe(false));
 	});
 
 	it('disables the refresh button while a refresh is in flight', () => {

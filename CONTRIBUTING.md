@@ -1084,7 +1084,9 @@ Place icons in `build/` directory:
 
 - `icon.icns` - macOS (512x512 or 1024x1024)
 - `icon.ico` - Windows (256x256)
-- `icon.png` - Linux (512x512 or larger). Also shipped as `<resources>/icon.png` and set as the window icon at runtime (`src/main/app-lifecycle/app-icon.ts`), since a Linux binary carries no embedded icon. `desktopName` in `package.json` must stay in sync with the `.desktop` entry so the desktop links running windows to it.
+- `icon.png` - Linux source image (512x512 or larger). Also shipped as `<resources>/icon.png` and set as the window icon at runtime (`src/main/app-lifecycle/app-icon.ts`), since a Linux binary carries no embedded icon. Linux packages also install the sizes in `build/icons/`. `desktopName` in `package.json` must stay in sync with the `.desktop` entry so the desktop links running windows to it.
+
+After you update `icon.png`, regenerate `build/icons/`. See [build/README.md](build/README.md#generate-the-icons).
 
 ### 2. Update Version
 

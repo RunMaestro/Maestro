@@ -248,6 +248,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Move an agent or a whole group to another window                         | `window move-agent`, `window move-group` (`--to new\|main\|<n>`); read: `window list`            |
 | Create a worktree agent                                                  | `create-worktree`                                                                                |
 | New / close / rename a tab                                               | `tab new`, `tab close`, `tab rename`                                                             |
+| Reopen the last closed tab (Cmd+Shift+T, palette)                        | `tab reopen -a <agent>` (`--background` keeps the visible tab); read: `session list`             |
 | Star a tab (Cmd+Shift+S)                                                 | `tab star` / `tab unstar`                                                                        |
 | Mark a tab unread                                                        | `tab unread` / `tab read`                                                                        |
 | Toggle Save to History                                                   | `tab save-to-history`                                                                            |
@@ -290,6 +291,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Usage Dashboard: Activity tab Prompts section (prompt cadence)           | `stats [-r <range>] [--json]` (JSON under `prompts`)                                             |
 | Usage-data scan progress (modal / corner card)                           | `stats-indexing [--wait] [--timeout <s>] [--json]` (Hide / background are view-only)             |
 | Left Bar: Archive / Unarchive a group chat                               | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)               |
+| Group chat: add an agent by @mention in a message                        | `group-chat add <chat> <agent>` (ID, ID prefix or name; read back with `group-chat status`)      |
 
 ## Open gaps
 
@@ -299,61 +301,58 @@ a design constraint; they are simply not built yet.
 1. **Interrupt a running turn.** Escape stops a busy agent in the UI. There is
    no CLI equivalent and no WS message behind one. This is the largest remaining
    gap: an agent that starts a runaway turn on another agent cannot stop it.
-2. **Reopen a closed tab.** `closedTabHistory` and `unifiedClosedTabHistory` are
-   runtime-only and never persisted, so the CLI cannot see the stack to restore
-   from it. Closing this means persisting that history first.
-3. **Duplicate an agent.** The context menu's "Duplicate..." opens a modal with
+2. **Duplicate an agent.** The context menu's "Duplicate..." opens a modal with
    options (what to copy). `create-agent` can approximate it, but there is no
    one-shot duplicate.
-4. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
+3. **Collapse / expand a group**, and reorder agents in the Left Bar. Pure
    presentation; low value for automation, which is why they are last.
-5. **Git actions** (View Git Log / Diff, Pull, Push, Change Branch, Create PR).
+4. **Git actions** (View Git Log / Diff, Pull, Push, Change Branch, Create PR).
    Deliberately not mirrored: these open modals over `useGitAgentActions`, and an
    agent already has `git` and `gh` in its shell, which is strictly more capable.
    Only the modal-opening is unavailable, not the capability.
-6. **Wizard and interactive pickers** (New Agent Wizard, Fuzzy File Search,
+5. **Wizard and interactive pickers** (New Agent Wizard, Fuzzy File Search,
    Tab Switcher, Search: Messages). These are interactive by definition; the
    underlying data is reachable through `list`, `session show`, and
    `director-notes history`.
-7. **Auto Run state in a CLI-built support package.** The desktop's Create
+6. **Auto Run state in a CLI-built support package.** The desktop's Create
    Debug Package hands main a snapshot of the renderer's in-memory batch store
    (`captureAutoRunSnapshots()`). `support-package` and
    `feedback submit --support-package` are built in main with no renderer round
    trip, so that section reads "unavailable". The Feedback modal's own support
    package checkbox has the same gap today. Closing it needs a main-to-renderer
    request with a response channel.
-8. **Context: Compact, Merge Into, Send to Agent.** The WS messages
+7. **Context: Compact, Merge Into, Send to Agent.** The WS messages
    (`summarize_context`, `merge_context`, `transfer_context`) and the preload
    listeners exist, but NO renderer code subscribes to
    `onRemoteSummarizeContext` / `onRemoteMergeContext` /
    `onRemoteTransferContext`, so every call times out. Closing it means wiring
    those listeners to the same hooks the tab overlay menu uses, then adding
    `tab compact / merge / transfer`. Do not wrap the dead messages.
-9. **Interrupt, precisely.** Beyond "no CLI verb": the only backend (REST
+8. **Interrupt, precisely.** Beyond "no CLI verb": the only backend (REST
    `POST /api/session/:id/interrupt` -> `remote:interrupt`) signals the
    legacy `${sessionId}-ai` process id, which misses per-tab processes
    (`${sessionId}-ai-${tabId}`). Fix the renderer handler to take a tab id,
    then add `interrupt <agent> [--tab]`.
-10. **Expand a diagram or image to the pan/zoom viewer.** The viewer opens on
-    an element already rendered in a transcript or document
-    (`openZoomViewer(element)`), and a transcript element has no address the
-    CLI can name. The capability is still reachable: `open-file <image>` opens
-    the file preview's `ImageViewer`, which shares the same `usePanZoom`, and
-    an agent can write a diagram to a `.mmd` file and `open-file` it. Pure
-    viewing; there is no result for an agent to read back.
-11. **Drag-resized pane sizes kept in renderer localStorage** (the Auto Run
+9. **Expand a diagram or image to the pan/zoom viewer.** The viewer opens on
+   an element already rendered in a transcript or document
+   (`openZoomViewer(element)`), and a transcript element has no address the
+   CLI can name. The capability is still reachable: `open-file <image>` opens
+   the file preview's `ImageViewer`, which shares the same `usePanZoom`, and
+   an agent can write a diagram to a `.mmd` file and `open-file` it. Pure
+   viewing; there is no result for an agent to read back.
+10. **Drag-resized pane sizes kept in renderer localStorage** (the Auto Run
     document dropdown's height via `useResizableDropdownHeight`, the Document
     Graph preview width via `usePersistedPanelWidth`). Pure view preferences
     with nothing for an agent to act on; the values never reach main, so a
     verb needs a renderer round trip. Double-click on the grip resets them.
-12. **Log in to a provider account** (Usage Dashboard quota row "Log in",
+11. **Log in to a provider account** (Usage Dashboard quota row "Log in",
     palette "Reauthenticate Provider"). The login is an interactive OAuth or
     device-code flow in a PTY, so there is nothing a non-interactive verb could
     complete. The capability is reachable from an agent's shell as
     `CODEX_HOME=<dir> codex login` / `CLAUDE_CONFIG_DIR=<dir> claude` then
     `/login`. There is no CLI read of the quota snapshots yet, so verifying the
     login from the CLI is part of this gap.
-13. **Pipeline Graph view selection** (the selector's pipeline / agent / All
+12. **Pipeline Graph view selection** (the selector's pipeline / agent / All
     Pipelines choice, and the dashboard's "View in Graph"). `open cue --tab
 pipeline` reaches the graph but cannot name what it shows. Pure view state
     on a read-only canvas, with nothing for an agent to read back; the data it
@@ -381,7 +380,7 @@ still missing. Grouped, highest value first:
   `closeTabGroup()` / `breakApartGroup()` so the CLI and the chip share one
   implementation.
 - **Playbooks:** update an existing one, export/import `.maestro-playbook.zip`.
-- **Group chat:** delete, rename, edit moderator/participants, export.
+- **Group chat:** delete, rename, edit moderator, remove a participant, export.
 - **History:** delete an entry, toggle validated, generate a synopsis now, search.
 - **Diagnostics:** Process Monitor kill (`process list/kill`), read/clear system
   logs (`logs`), reset stuck busy state, restart agent, retry, re-auth.

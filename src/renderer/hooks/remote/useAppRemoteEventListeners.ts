@@ -63,6 +63,19 @@ import {
 	type GroupUpdateRequest,
 } from '../../../shared/groupAppearance';
 
+/**
+ * True when `autorun:listDocs` failed because the folder itself is missing,
+ * not a folder, or not readable. The IPC wrapper flattens the error to a
+ * string (`Error: ENOENT: no such file or directory, stat '...'`), so match on
+ * the errno code and the handler's own "Path is not a directory".
+ */
+export function isUnreadableFolderError(error: string | undefined): boolean {
+	return (
+		typeof error === 'string' &&
+		/\b(?:ENOENT|ENOTDIR|EACCES|EPERM)\b|Path is not a directory/.test(error)
+	);
+}
+
 // ============================================================================
 // Group update helpers
 // ============================================================================
@@ -691,10 +704,15 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// silently repoint the session at an unreadable folder and the caller
 			// gets a false-positive `{ success: true }`.
 			if (!listResult?.success) {
-				captureMessage('AutoRun listDocs returned failure', {
-					level: 'error',
-					extra: { sessionId, folderPath, responseChannel, sshRemoteId, listResult },
-				});
+				// A folder the caller named that is missing, not a folder, or not
+				// readable is their input, and the error goes straight back to
+				// them below. Only report a failure we cannot explain (MAESTRO-15D).
+				if (!isUnreadableFolderError(listResult?.error)) {
+					captureMessage('AutoRun listDocs returned failure', {
+						level: 'error',
+						extra: { sessionId, folderPath, responseChannel, sshRemoteId, listResult },
+					});
+				}
 				window.maestro.process.sendRemoteSetAutoRunFolderResponse(responseChannel, {
 					success: false,
 					error: listResult?.error || `Could not read folder ${folderPath}`,

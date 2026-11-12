@@ -79,6 +79,52 @@ describe('dispatch command', () => {
 			expect(processExitSpy).not.toHaveBeenCalled();
 		});
 
+		it('reports a desktop refusal as a failure with its reason, not as success', async () => {
+			// The desktop answers a refusal (target tab mid-turn, tab gone) as a
+			// command_result with success: false. It used to be printed as
+			// success: true, telling the caller a prompt was running when none was.
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({
+				type: 'command_result',
+				success: false,
+				tabId: 'tab-busy',
+				error: 'Maestro declined the dispatch: the target tab is mid-turn',
+				code: 'DISPATCH_REFUSED',
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			await dispatch('agent-abc', 'Hello world', { tab: 'tab-busy' });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('DISPATCH_REFUSED');
+			expect(output.error).toContain('mid-turn');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('passes through the desktop code on a refusal (e.g. SESSION_NOT_FOUND)', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockResolvedValue({
+						type: 'command_result',
+						success: false,
+						error: 'Session not found: agent-abc-123',
+						code: 'SESSION_NOT_FOUND',
+					}),
+				};
+				return action(mockClient as never);
+			});
+
+			await dispatch('agent-abc', 'Hello world', {});
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output).toMatchObject({ success: false, code: 'SESSION_NOT_FOUND' });
+		});
+
 		it('returns null tab/session IDs when the desktop omits tabId (no active tab)', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
@@ -180,7 +226,7 @@ describe('dispatch command', () => {
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 
-		it('reports queued: true when --new-tab queued the prompt behind a running turn', async () => {
+		it('passes through queued: true from an older desktop that queued a --new-tab prompt', async () => {
 			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 			const mockSendCommand = vi.fn().mockResolvedValue({
 				type: 'new_ai_tab_with_prompt_result',

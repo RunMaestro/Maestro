@@ -4,7 +4,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { countClaudeTranscriptMessages } from '../../shared/claudeTranscriptMessages';
+import {
+	countClaudeTranscriptMessages,
+	createClaudeMessageCounter,
+} from '../../shared/claudeTranscriptMessages';
 
 const line = (entry: Record<string, unknown>) => JSON.stringify(entry);
 
@@ -52,5 +55,24 @@ describe('countClaudeTranscriptMessages', () => {
 	it('still counts a response that carries no id', () => {
 		const content = [line({ type: 'assistant' }), line({ type: 'assistant' })].join('\n');
 		expect(countClaudeTranscriptMessages(content)).toBe(2);
+	});
+});
+
+describe('createClaudeMessageCounter', () => {
+	it('counts a transcript fed line by line the same as the whole transcript', () => {
+		const response = (id: string) =>
+			line({ type: 'assistant', message: { id, content: [{ type: 'text' }] } });
+		const lines = [
+			line({ type: 'user', message: { role: 'user', content: 'Fix the bug' } }),
+			response('msg_1'),
+			response('msg_1'),
+			line({ type: 'user', isSidechain: true, message: { content: 'side' } }),
+			'not json',
+			response('msg_2'),
+		];
+		const counter = createClaudeMessageCounter();
+		for (const transcriptLine of lines) counter.addLine(transcriptLine);
+		expect(counter.count()).toBe(3);
+		expect(counter.count()).toBe(countClaudeTranscriptMessages(lines.join('\n')));
 	});
 });

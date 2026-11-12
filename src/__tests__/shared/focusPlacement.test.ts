@@ -28,6 +28,8 @@ const FOCUSING_TODAY: BackgroundCapableVerb[] = [
 	'open-terminal',
 	'open-browser',
 	'tab-new',
+	// Cmd+Shift+T makes the reopened tab the visible one; so does the verb.
+	'tab-reopen',
 	'dispatch',
 	'create-agent',
 	'create-worktree',

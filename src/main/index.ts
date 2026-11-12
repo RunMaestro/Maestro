@@ -141,6 +141,7 @@ import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
+import { addParticipantByAgentId } from './group-chat/group-chat-router';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import {
 	captureException,
@@ -348,6 +349,11 @@ const wakatimeManager = new WakaTimeManager(store, app.getVersion());
 // this instance's debounce and CLI-install state instead of making its own.
 setWakaTimeManager(wakatimeManager);
 const maestroCliManager = new MaestroCliManager();
+
+// Repair an AppImage-installed shim when an update renamed the AppImage, or
+// when an older build recorded a /tmp/.mount_* path that is gone. Fire and
+// forget: the shim is marker-guarded, and a failed repair must not block startup.
+void maestroCliManager.healAppImageShim();
 
 // Auto-install WakaTime CLI on startup if enabled
 if (store.get('wakatimeEnabled', false)) {
@@ -719,6 +725,33 @@ const createWebServer = createWebServerFactory({
 	getCueActivityLog: () => {
 		if (!cueEngine) return [];
 		return cueEngine.getActivityLog();
+	},
+	addGroupChatParticipant: async (chatId, agentId) => {
+		if (!processManager) return { success: false, error: 'Process manager not initialized' };
+		try {
+			const { participant, alreadyMember } = await addParticipantByAgentId(
+				chatId,
+				agentId,
+				processManager,
+				agentDetector ?? undefined
+			);
+			return { success: true, participantName: participant.name, alreadyMember };
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			// Expected refusals (unknown chat or agent, inactive moderator) go back
+			// to the caller as text. Anything else is a bug: report it as well.
+			const expected = [
+				'Group chat not found',
+				'No agent with ID',
+				'is a terminal agent',
+				'Moderator must be active',
+				'Agent list is not available',
+			].some((fragment) => message.includes(fragment));
+			if (!expected) {
+				void captureException(error, { operation: 'groupChat:addParticipantByAgentId', chatId });
+			}
+			return { success: false, error: message };
+		}
 	},
 });
 
@@ -1419,6 +1452,23 @@ app
 									templateContext,
 									timeoutMs,
 									onLog: cmdLog,
+									// The tab this message was scheduled into is gone, so it
+									// went to a new tab. Say where, so the move is not silent.
+									onTabFallback: ({ agentId, newTabId }) => {
+										emitCueNotifyToast(mainWindow, {
+											agentId,
+											title: subscriptionName,
+											color: newTabId ? 'yellow' : 'red',
+											message: newTabId
+												? 'The tab this task was scheduled into was closed, so it ran in a new tab.'
+												: 'The tab this task was scheduled into was closed, and a new tab could not be opened.',
+											clickAction: {
+												kind: 'jump-session',
+												sessionId: agentId,
+												...(newTabId ? { tabId: newTabId } : {}),
+											},
+										});
+									},
 									// CLI mode intentionally stays local: `maestro-cli send`
 									// targets the local Maestro daemon (routing messages to
 									// sessions managed by this app), so SSH wrapping would

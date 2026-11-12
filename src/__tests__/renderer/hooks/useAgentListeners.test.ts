@@ -2353,6 +2353,92 @@ describe('useAgentListeners', () => {
 			expect(updatedOrphan?.logs.some((l) => l.text === 'finish the refactor')).toBe(true);
 		});
 
+		it.each([
+			{ event: 'exit', remainingState: 'idle' },
+			{ event: 'error', remainingState: 'idle' },
+			{ event: 'exit', remainingState: 'busy' },
+			{ event: 'error', remainingState: 'busy' },
+			{ event: 'exit', remainingState: 'idle', pausedError: true },
+			{ event: 'error', remainingState: 'idle', pausedError: true },
+			{ event: 'exit', remainingState: 'idle', pausedError: true, keepPending: true },
+		] as const)(
+			'keeps state consistent on orphan $event with a $remainingState orphan remaining',
+			async (scenario) => {
+				const { event, remainingState } = scenario;
+				const pausedError = 'pausedError' in scenario;
+				const keepPending = 'keepPending' in scenario;
+				const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+				const deps = createMockDeps({ processQueuedItemRef: { current: processQueuedItem } });
+				const agentError: AgentError = {
+					type: 'unknown',
+					message: 'Live tab failed',
+					timestamp: Date.now(),
+					agentId: 'opencode',
+				};
+				const session = createMockSession({
+					id: 'sess-1',
+					state: pausedError ? 'error' : 'busy',
+					...(pausedError && { agentError, agentErrorPaused: true, agentErrorTabId: 'tab-fresh' }),
+					busySource: 'ai',
+					thinkingStartTime: 123,
+					aiTabs: [createMockTab({ id: 'tab-fresh', state: 'idle' })],
+					activeTabId: 'tab-fresh',
+					orphanedThinkingTabs: [
+						createMockTab({ id: 'tab-a', state: 'busy' }),
+						createMockTab({ id: 'tab-waiting', state: remainingState }),
+					],
+					executionQueue: [
+						{
+							id: 'held',
+							tabId: keepPending ? 'tab-a' : 'tab-waiting',
+							type: 'message',
+							text: 'held follow-up',
+							timestamp: Date.now(),
+							paused: true,
+						},
+						...(pausedError
+							? [
+									{
+										id: 'runnable',
+										tabId: 'tab-fresh',
+										type: 'message' as const,
+										text: 'must wait for error recovery',
+										timestamp: Date.now(),
+									},
+								]
+							: []),
+					],
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+				renderHook(() => useAgentListeners(deps));
+				if (event === 'exit') {
+					await onExitHandler?.('sess-1-ai-tab-a');
+				} else {
+					await onAgentErrorHandler?.('sess-1-ai-tab-a', {
+						type: 'unknown',
+						message: 'Turn failed',
+						timestamp: Date.now(),
+						agentId: 'opencode',
+					});
+				}
+				// Exit dispatches queued work on a timer; let it run before asserting no send.
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.state).toBe(pausedError ? 'error' : remainingState);
+				if (pausedError) {
+					expect(updated.agentError).toEqual(agentError);
+					expect(updated.agentErrorPaused).toBe(true);
+					expect(processQueuedItem).not.toHaveBeenCalled();
+				}
+				expect(updated.busySource).toBe(remainingState === 'busy' ? 'ai' : undefined);
+				expect(updated.thinkingStartTime).toBe(remainingState === 'busy' ? 123 : undefined);
+				expect(updated.orphanedThinkingTabs?.map((tab) => tab.id)).toEqual(
+					keepPending ? ['tab-a', 'tab-waiting'] : ['tab-waiting']
+				);
+				expect(updated.executionQueue).toEqual(session.executionQueue);
+			}
+		);
+
 		it('retires a closed orphan once its queue is empty', async () => {
 			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
 			const deps = createMockDeps({

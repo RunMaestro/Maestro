@@ -3,6 +3,7 @@ import type { WebServerFactoryDependencies } from '../web-server-factory';
 import type { StoredSession } from '../../stores/types';
 import { logger } from '../../utils/logger';
 import { getDefaultShell } from '../../stores/defaults';
+import { buildTerminalOwnerEnv } from '../../../shared/agentDelegation';
 
 export function registerTerminalCallbacks(
 	server: WebServer,
@@ -90,7 +91,7 @@ export function registerTerminalCallbacks(
 				cwd: config.cwd,
 				shell,
 				shellArgs,
-				shellEnvVars,
+				shellEnvVars: { ...shellEnvVars, ...buildTerminalOwnerEnv(sessionId) },
 				cols: config.cols,
 				rows: config.rows,
 			});

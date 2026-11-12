@@ -118,6 +118,12 @@ interface ConversationSession {
 	systemPrompt: string;
 	/** Accumulated output buffer for parsing */
 	outputBuffer: string;
+	/**
+	 * Accumulated stderr for the current turn. A CLI that rejects its argv
+	 * (or fails before it emits any JSON) explains why only here, so the
+	 * failure message and the debug log must read it (#1983).
+	 */
+	stderrBuffer: string;
 	/** Resolve function for pending message */
 	pendingResolve?: (result: SendMessageResult) => void;
 	/** Callbacks for the conversation */
@@ -126,6 +132,8 @@ interface ConversationSession {
 	dataListenerCleanup?: () => void;
 	/** Cleanup function for exit listener */
 	exitListenerCleanup?: () => void;
+	/** Cleanup function for stderr listener */
+	stderrListenerCleanup?: () => void;
 	/** Cleanup function for thinking chunk listener */
 	thinkingListenerCleanup?: () => void;
 	/** Cleanup function for tool execution listener */
@@ -193,6 +201,7 @@ class ConversationManager {
 			isActive: true,
 			systemPrompt,
 			outputBuffer: '',
+			stderrBuffer: '',
 			sshRemoteConfig: config.sshRemoteConfig,
 			claudeTokenSource: config.claudeTokenSource,
 		};
@@ -241,6 +250,7 @@ class ConversationManager {
 		// Update callbacks
 		this.session.callbacks = callbacks;
 		this.session.outputBuffer = '';
+		this.session.stderrBuffer = '';
 
 		// Log message send
 		wizardDebugLogger.log('info', 'Sending message to agent', {
@@ -449,6 +459,17 @@ class ConversationManager {
 				}
 			);
 
+			// Set up stderr listener. Not fed to the response parser; it is the
+			// only place a CLI that fails on startup says why.
+			this.session!.stderrListenerCleanup = window.maestro.process.onStderr(
+				(sessionId: string, data: string) => {
+					if (sessionId === this.session?.sessionId) {
+						this.session.stderrBuffer += data;
+						this.session.resetResponseTimeout?.();
+					}
+				}
+			);
+
 			// Set up thinking chunk listener - uses the dedicated event from process-manager
 			// This receives parsed thinking content (isPartial text) that's already extracted
 			if (this.session!.callbacks?.onThinkingChunk) {
@@ -514,8 +535,11 @@ class ConversationManager {
 						} else {
 							// Check for provider errors in the output
 							const rawOutput = this.session?.outputBuffer || '';
+							const stderrOutput = this.session?.stderrBuffer || '';
+							// stdout first, so a JSON error event still wins over a stderr line.
+							const errorText = stderrOutput ? `${rawOutput}\n${stderrOutput}` : rawOutput;
 							const detectedError = this.session
-								? detectWizardError(rawOutput, this.session.agentType)
+								? detectWizardError(errorText, this.session.agentType)
 								: null;
 
 							if (detectedError) {
@@ -532,6 +556,8 @@ class ConversationManager {
 									errorMessage: detectedError.message,
 									rawOutputLength: rawOutput.length,
 									rawOutputPreview: rawOutput.slice(-500),
+									stderrLength: stderrOutput.length,
+									stderrPreview: stderrOutput.slice(-1000),
 								});
 								resolve({
 									success: false,
@@ -564,13 +590,15 @@ class ConversationManager {
 									});
 								} else {
 									// No specific error detected, create generic message
-									const errorMessage = createGenericErrorMessage(rawOutput, code);
+									const errorMessage = createGenericErrorMessage(errorText, code);
 									wizardDebugLogger.log('exit', `Agent exited with error (code ${code})`, {
 										sessionId,
 										exitCode: code,
 										errorMessage,
 										rawOutputLength: rawOutput.length,
 										rawOutputPreview: rawOutput.slice(-500),
+										stderrLength: stderrOutput.length,
+										stderrPreview: stderrOutput.slice(-1000),
 									});
 									resolve({
 										success: false,
@@ -619,6 +647,10 @@ class ConversationManager {
 				agentPath: agent.path,
 				agentCommand: agent.command,
 				args: argsForSpawn,
+				// These are NOT the final argv. The main process adds the batch-mode
+				// subcommand (Codex `exec`, OpenCode `run`) and `-C <dir>` before it
+				// spawns, so running this list by hand is not the same command (#1983).
+				argsNote: 'pre-build args; main adds batchModePrefix and workingDirArgs',
 				cwd: this.session!.directoryPath,
 				hasRemoteSsh: !!this.session!.sshRemoteConfig?.enabled,
 				remoteId: this.session!.sshRemoteConfig?.remoteId || null,
@@ -911,6 +943,10 @@ class ConversationManager {
 		if (this.session?.exitListenerCleanup) {
 			this.session.exitListenerCleanup();
 			this.session.exitListenerCleanup = undefined;
+		}
+		if (this.session?.stderrListenerCleanup) {
+			this.session.stderrListenerCleanup();
+			this.session.stderrListenerCleanup = undefined;
 		}
 		if (this.session?.thinkingListenerCleanup) {
 			this.session.thinkingListenerCleanup();

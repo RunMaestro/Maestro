@@ -15,13 +15,21 @@ import path from 'path';
 import type { SessionInfo } from '../../../shared/types';
 
 // Mock storage
-vi.mock('../../../cli/services/storage', () => ({
-	resolveAgentId: vi.fn(),
-	getSessionById: vi.fn(),
-	readSessions: vi.fn().mockReturnValue([]),
-	readAgentConfig: vi.fn().mockReturnValue({}),
-	readSettings: vi.fn().mockReturnValue({}),
-}));
+vi.mock('../../../cli/services/storage', () => {
+	const readSessions = vi.fn().mockReturnValue([]);
+	return {
+		resolveAgentId: vi.fn(),
+		getSessionById: vi.fn(),
+		readSessions,
+		// The real reader is a lookup over readSessions(); keep it one here so the
+		// tests below can keep seeding tabs through the sessions mock.
+		readStoredAiTabs: (agentId: string) =>
+			(readSessions() as Array<{ id: string; aiTabs?: unknown[] }>).find((s) => s.id === agentId)
+				?.aiTabs ?? [],
+		readAgentConfig: vi.fn().mockReturnValue({}),
+		readSettings: vi.fn().mockReturnValue({}),
+	};
+});
 
 // Mock agent-sessions
 vi.mock('../../../cli/services/agent-sessions', () => ({

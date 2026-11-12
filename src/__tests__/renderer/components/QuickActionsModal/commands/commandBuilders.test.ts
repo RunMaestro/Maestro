@@ -29,6 +29,7 @@ import { createGroupFromTabRefs } from '../../../../../renderer/utils/panelLayou
 import { createMockAITab } from '../../../../helpers/mockTab';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
+import { useTabStore } from '../../../../../renderer/stores/tabStore';
 
 const noop = () => {};
 const setSessions = vi.fn();
@@ -346,6 +347,55 @@ describe('QuickActions command builders', () => {
 				setHistorySearchFilterOpen: vi.fn(),
 			}).map((a) => a.id)
 		).toEqual(['searchAgents', 'searchMessages', 'searchFiles', 'searchHistory']);
+	});
+
+	it('offers Reopen Closed Tab only while closed-tab history exists', () => {
+		const close = vi.fn();
+		const activeTabInfo = {
+			isTerminalMode: false,
+			hasActiveTab: true,
+			activeUnifiedIndex: 0,
+			unifiedTabCount: 1,
+			activeTabType: 'ai' as const,
+		};
+		const build = (session: ReturnType<typeof createMockSession>) =>
+			buildTabCommands({
+				activeSession: session,
+				isAiMode: true,
+				activeTabInfo,
+				enterToSendAI: true,
+				setQuickActionOpen: close,
+				shortcuts: {},
+				tabShortcuts: {
+					reopenClosedTab: { id: 'reopenClosedTab', label: 'Reopen', keys: ['Meta', 'Shift', 't'] },
+				},
+				toggleInputMode: vi.fn(),
+			});
+
+		const empty = createMockSession({ unifiedClosedTabHistory: [], closedTabHistory: [] });
+		expect(build(empty).map((a) => a.id)).not.toContain('reopenClosedTab');
+
+		const withHistory = createMockSession({
+			unifiedClosedTabHistory: [{ type: 'ai', tab: createMockAITab(), unifiedIndex: 0 }] as any,
+		});
+		const legacyOnly = createMockSession({
+			unifiedClosedTabHistory: [],
+			closedTabHistory: [{ tab: createMockAITab(), index: 0, closedAt: 1 }] as any,
+		});
+		expect(build(legacyOnly).map((a) => a.id)).toContain('reopenClosedTab');
+
+		const reopen = vi.fn(() => null);
+		const original = useTabStore.getState().reopenClosedTab;
+		useTabStore.setState({ reopenClosedTab: reopen });
+		try {
+			const entry = build(withHistory).find((a) => a.id === 'reopenClosedTab')!;
+			expect(entry.shortcut?.keys).toEqual(['Meta', 'Shift', 't']);
+			entry.action();
+			expect(reopen).toHaveBeenCalledTimes(1);
+			expect(close).toHaveBeenCalledWith(false);
+		} finally {
+			useTabStore.setState({ reopenClosedTab: original });
+		}
 	});
 
 	it('builds tab-type-aware Context / Buffer / Content commands', () => {

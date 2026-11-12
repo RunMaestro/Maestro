@@ -1337,7 +1337,7 @@ describe('queue durability across an outage', () => {
 		expect(hasPendingRetry('q5', 't1')).toBe(false); // recovered: queue drains
 	});
 
-	it('keeps the queue held after the user stops the retry', () => {
+	it('drops the held prompt but keeps the queue held after the user stops the retry', () => {
 		setupSession('q6', 't1', {
 			executionQueue: [queuedItem('item-2', 't1', '2')],
 			aiTabs: [createMockAITab({ id: 't1', agentError: quota() })],
@@ -1347,15 +1347,14 @@ describe('queue durability across an outage', () => {
 
 		cancelRetry('q6', 't1');
 
-		// Stopping hands the failure to the user; their prompt keeps its slot and
-		// the session enters the blocking error state, which every dispatch path
-		// already refuses to run in. Without that, removing the entry would
-		// release the hold and drain the whole queue into the wall they just
-		// stopped retrying against.
+		// Stop means "do not send that again": the parked copy of the failed
+		// prompt leaves the queue. The session enters the blocking error state,
+		// which every dispatch path already refuses to run in, so the work behind
+		// it does not drain into the wall the user just stopped retrying against.
 		const session = useSessionStore.getState().sessions[0];
 		expect(session.state).toBe('error');
 		expect(session.agentErrorTabId).toBe('t1');
-		expect(sessionQueue()).toEqual(['item-1', 'item-2']);
+		expect(sessionQueue()).toEqual(['item-2']);
 	});
 });
 

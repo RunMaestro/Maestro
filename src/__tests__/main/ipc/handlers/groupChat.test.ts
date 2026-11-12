@@ -1557,6 +1557,21 @@ describe('resolveParticipantSshRemoteConfig', () => {
 
 		expect(resolveParticipantSshRemoteConfig('Backend')).toBeUndefined();
 	});
+	it('resolves a linked participant by GUID after its agent is renamed', () => {
+		mockStoredSessions.push(
+			{ id: 'other', name: 'Backend' },
+			{
+				id: 's1',
+				name: 'Backend (renamed)',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+			}
+		);
+
+		expect(resolveParticipantSshRemoteConfig({ name: 'Backend', sourceSessionId: 's1' })).toEqual({
+			enabled: true,
+			remoteId: 'remote-1',
+		});
+	});
 });
 
 describe('resolveParticipantWorkspaceTrust', () => {
