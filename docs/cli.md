@@ -1094,6 +1094,8 @@ The verb only reads. To change an edge, use `update-agent <source> --peer <targe
 | Set tier defaults per harness                | `models tiers list\|options\|suggest\|set\|reset`                                                                                  |
 | See what the token proxy did                 | `models proxy status`, `models proxy block <hash>`                                                                                 |
 | Check the semantic index                     | `models index`                                                                                                                     |
+| Index Cue runs for Semantic search           | `settings set semanticIndexCue true\|false`                                                                                        |
+| Search past work by meaning                  | `search "<query>" --semantic` (see [Searching Past Work](#searching-past-work-search))                                             |
 | Change where model files come from           | `models config show`, `models config set download-base <url\|default>`                                                             |
 
 ```bash
@@ -1184,7 +1186,7 @@ maestro-cli search "retry backoff" --source history
 maestro-cli search "how we handled rate limits" --semantic --agent <agent-id> --limit 10
 ```
 
-`--source` takes `history`, `notes` or `transcripts` (repeatable, or comma-separated). `--limit` defaults to 20 and is capped at 100. Under `--json` the output is `{ "success": true, "query", "status", "mode", "hits", "durationMs" }`. A hit has `sourceType`, `sourceId`, `agentId`, `agentName`, `title`, `snippet`, `timestamp`, and `score` (semantic) or `matchCount` (text). `--semantic` never falls back to text matching: when the task is off or cannot run it says so and exits non-zero.
+Text matching ignores case, lists the newest first, and needs no model; a search by meaning lists the best match first. The desktop app must be running. `--source` takes `history`, `notes` or `transcripts` (repeatable, or comma-separated). `--agent` takes an id, an id prefix, or the exact name. `--limit` defaults to 20 and is capped at 100. A query is cut at 1,000 characters. The command exits 0 when the search ran, even with no results, and 1 when it could not. Under `--json` the output is `{ "success": true, "query", "status", "mode", "hits", "durationMs" }`. A hit has `sourceType`, `sourceId`, `agentId`, `agentName`, `title`, `snippet`, `timestamp`, and `score` (semantic) or `matchCount` (text). `--semantic` never falls back to text matching: when the task is off or cannot run it says so and exits non-zero. What is indexed, the **Semantic index** card, and the search boxes in the app are in [Semantic search](/local-models#semantic-search).
 
 ### Moving Agents and Groups Between Windows (`window`)
 
