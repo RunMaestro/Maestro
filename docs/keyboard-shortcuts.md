@@ -494,7 +494,7 @@ more images attached. See
 | Close               | `Esc`      | `Esc`         |
 
 The zoom keys are bare, like the ones in [File Preview](#file-preview), so the
-app-wide `Cmd+=` / `Cmd+-` in [Font Size](#font-size) keeps working while the
+app-wide `Cmd+=` / `Cmd+-` in [Font Zoom](#font-zoom) keeps working while the
 organizer is open. They stop firing while the lightbox or the annotator is open
 on top of it.
 
