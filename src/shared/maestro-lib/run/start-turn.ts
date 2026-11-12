@@ -9,6 +9,7 @@ import type { AgentOutputParser, ParsedEvent } from '../parsers/agent-output-par
 import { createOutputParser } from '../parsers/parser-factory';
 import { BufferedLineReader } from '../streaming/buffered-line-reader';
 import {
+	markProcessGroupLeader,
 	stopProcess,
 	trackProcessTree,
 	type StopHandle,
@@ -209,6 +210,18 @@ export interface StartTurnOptions {
 	 * its error message. `0` keeps none.
 	 */
 	stderrTailLimit?: number;
+	/**
+	 * POSIX only: start the process as the leader of its own process group, so
+	 * a stop also ends a tool the agent started just before it exited. Such a
+	 * tool is reparented the moment the agent dies, so the descendant record
+	 * cannot find it; the group can (#1689).
+	 *
+	 * The process also leaves the host's terminal session: Ctrl+C and a closed
+	 * terminal no longer reach it. Turn this on only for a host with no
+	 * terminal (the desktop app), or one that forwards those itself. Ignored on
+	 * Windows, where `taskkill /t` already ends the whole tree.
+	 */
+	processGroup?: boolean;
 	sessionId?: string;
 	label?: string;
 }
@@ -337,6 +350,8 @@ export function startTurn(
 	const hasStdin = spec.stdin !== undefined && spec.stdin !== '';
 	const stdinMode = hasStdin ? 'pipe' : (options.emptyStdin ?? 'pipe');
 
+	const processGroup = options.processGroup === true && !isWindows();
+
 	// Construct the parser before owning a file or child, so a constructor
 	// failure cannot leave either without a settlement handler.
 	const parser = options.parser ?? (options.agentId ? createOutputParser(options.agentId) : null);
@@ -377,6 +392,10 @@ export function startTurn(
 				env: spec.env,
 				shell: spec.shell ?? false,
 				stdio: [stdinMode, 'pipe', 'pipe'],
+				// On POSIX `detached` makes the child a session and group leader. It is
+				// not unref'd: the host still waits for it and reads its pipes. Left
+				// out entirely otherwise, so an ordinary spawn is unchanged.
+				...(processGroup ? { detached: true } : {}),
 			});
 		} catch (error) {
 			throw new TurnNotStartedError(error);
@@ -385,6 +404,7 @@ export function startTurn(
 		removeArtifact();
 		throw error;
 	}
+	if (processGroup && child.pid) markProcessGroupLeader(child);
 	const finishTracking = options.trackDescendants ? trackProcessTree(child) : undefined;
 
 	const tailLimit = options.stdoutTailLimit ?? DEFAULT_STDOUT_TAIL_LIMIT;

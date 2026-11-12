@@ -8,6 +8,7 @@ import { isWindows } from '../../platformDetection';
 import { killPty } from './pty-kill';
 import {
 	killProcessTreeNow,
+	killQuiet,
 	killSurvivors,
 	refreshProcessTree,
 	snapshotProcessTree,
@@ -111,6 +112,21 @@ const INERT_HANDLE: StopHandle = { stage: () => undefined, dispose: () => {} };
 // stacking a second set of timers beside it.
 const ladders = new WeakMap<object, Ladder>();
 
+// Pipe children started as the leader of their own process group (`startTurn`
+// with `processGroup`). Recorded by the launcher, because a stop is often sent
+// from somewhere else (the desktop's ProcessManager) holding only the child.
+const processGroupLeaders = new WeakSet<ChildProcess>();
+
+/**
+ * Record that `child` leads its own process group (POSIX `detached: true`), so
+ * a stop also signals the group once the child has exited. Only the code that
+ * spawned the child knows this; never call it for a child started otherwise,
+ * or the group signal would land on the host's own group.
+ */
+export function markProcessGroupLeader(child: ChildProcess): void {
+	processGroupLeaders.add(child);
+}
+
 interface TrackedProcessTree {
 	tree: ProcessTreeSnapshot;
 	/** Keep sweeping late observations after a stop; undefined cancels that policy. */
@@ -205,6 +221,10 @@ export function trackProcessTree(child: ChildProcess): (() => Promise<void>) | u
  * - Descendants are recorded before the first signal, re-read while the stop
  *   is pending, and swept once the process exits, because an agent that exits
  *   on a signal leaves its tools running.
+ * - A child that leads its own process group (`markProcessGroupLeader`) has
+ *   the group killed when it exits during a stop. That catches a tool started
+ *   too late for the record: once the agent is gone, the tool is reparented
+ *   and only its group still leads back to the agent.
  * - A tree is only killed when the pid is provably a running child of this
  *   process. Anything else gets the signal through its own handle and no more.
  */
@@ -227,6 +247,12 @@ export function stopProcess(target: StopTarget, options: StopOptions): StopHandl
 function createLadder(target: StopTarget, key: object): Ladder {
 	const pid = target.pid ?? target.child?.pid ?? target.pty?.pid;
 	const hasPid = typeof pid === 'number' && pid > 0;
+	const leadsGroup =
+		hasPid &&
+		!isWindows() &&
+		target.child !== undefined &&
+		target.child.pid === pid &&
+		processGroupLeaders.has(target.child);
 	const tracked =
 		target.child && pid === target.child.pid ? trackedTrees.get(target.child) : undefined;
 
@@ -273,10 +299,27 @@ function createLadder(target: StopTarget, key: object): Ladder {
 		tree = undefined;
 	};
 
+	// The agent has exited, so whatever is left in its group is a tool it
+	// started and abandoned, recorded or not. The group outlives its leader
+	// while any member runs, and its id cannot be handed to a new group until
+	// it is empty, so the signal reaches only those tools. Only for an exit seen
+	// during a stop (`stage` is set): a turn that had already ended before the
+	// stop was asked for keeps what it left running, as before.
+	const killAbandonedGroup = (): void => {
+		if (!leadsGroup || leaveDescendants || stage === undefined) return;
+		if (killQuiet(-pid, 'SIGKILL')) {
+			logger.debug('[Termination] Killed the process group the agent left behind', LOG_CONTEXT, {
+				...context,
+				pid,
+			});
+		}
+	};
+
 	const onExit = (): void => {
 		exited = true;
 		release();
 		sweep();
+		killAbandonedGroup();
 	};
 
 	// The first record is taken before anything is signalled. An agent that is
