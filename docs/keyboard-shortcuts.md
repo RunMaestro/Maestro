@@ -719,6 +719,29 @@ toggle in the Help panel, and it is remembered between visits.
 it to disk as a PNG. The shot is the graph area exactly as it is painted, so
 frame it first.
 
+## Delegation Graph
+
+The [Delegation Graph](./agent-delegation#the-delegation-graph) has no chord to
+open it by default. Give **Delegation Graph** one in **Settings** →
+**Shortcuts**, or open it from the menu, the command palette, or
+`maestro-cli open delegation-graph`. Inside the graph:
+
+| Action                                      | Key                |
+| ------------------------------------------- | ------------------ |
+| Switch between View and Edit                | `Cmd+E` / `Ctrl+E` |
+| Cycle layout                                | `L`                |
+| Fit the whole graph on screen               | `F`                |
+| Switch scroll between zoom and pan          | `S`                |
+| Increase / decrease node spacing            | `+` / `-`          |
+| Select the next agent (View)                | `Arrow Keys`       |
+| Open the selected agent's Peers tab         | `O`                |
+| Show the selected agent's connected cluster | `Space`            |
+| Close the graph                             | `Esc`              |
+
+The keys do nothing while you type in a field, while the layout menu or a
+confirmation is open, or while the edge editor waits for you. No key deletes
+an edge or an agent, in either mode.
+
 ## Customizing Shortcuts
 
 Most shortcuts can be remapped to fit your workflow:

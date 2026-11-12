@@ -732,8 +732,14 @@ maestro-cli update-agent <agent-id> --remove-peer docs-agent     # delete the ro
 maestro-cli update-agent <agent-id> --group-peers rw --worktree-peers r
 maestro-cli update-agent <agent-id> --group-peers off
 
-# Peers can be set when the agent is created, too
+# This agent's own specialty, shown to every agent that can reach it ("" clears)
+maestro-cli update-agent <agent-id> --peer-description "Owns API design and backend services"
+
+# Peers can be set when the agent is created, too (the specialty cannot: use update-agent)
 maestro-cli create-agent "Docs Worker" -d . --peer docs-agent:r --group-peers rw
+
+# How many consults and delegations the agents working on one of your messages may make (0 switches them off)
+maestro-cli settings set maxConsultationsPerTurn 10
 
 # Agent Resilience and the Codex reset credit (true | false | default)
 maestro-cli update-agent <agent-id> --retry-on-availability false --retry-on-token-exhaustion default
@@ -812,6 +818,7 @@ The rest of the Models tab, and the settings the Edit Agent form groups under Re
 | `--remove-peer <agent>`                 | Delete a peer row (repeatable). Not the same as `none`: a deleted row lets the group and worktree grants apply again                                                                            | -       |
 | `--group-peers <r\|w\|rw\|off>`         | Grant access to every other agent in the same group, resolved live. `off` clears                                                                                                                | -       |
 | `--worktree-peers <r\|w\|rw\|off>`      | Grant access to the agent's worktree family: parent, sibling and child worktrees, resolved live. `off` clears                                                                                   | -       |
+| `--peer-description <text>`             | This agent's own specialty, the **How peers see this agent** field of the Peers tab. Every agent that can reach it reads it. Empty text clears                                                  | -       |
 | `--bookmark <bool>`                     | Bookmark the agent in the Left Bar (`true` or `false`)                                                                                                                                          | -       |
 | `--retry-on-availability <bool>`        | Agent Resilience: resend a turn the provider refused as overloaded. `default` drops the choice, which is on                                                                                     | -       |
 | `--retry-on-token-exhaustion <bool>`    | Agent Resilience: resend a turn refused for a spent quota once it resets. `default` drops the choice, which is on                                                                               | -       |

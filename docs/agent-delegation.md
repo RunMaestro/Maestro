@@ -399,3 +399,4 @@ It prints one block per agent, with the arrows that leave it and the agents that
 - [Groups](./features#groups) - Group Settings, the defaults a new agent starts with, and publishing them
 - [Git Worktrees](./git-worktrees) - the worktree family a worktree grant covers
 - [CLI Reference](./cli-reference) - the full flag list for `update-agent`, `show agent`, and `delegation graph`
+- [Keyboard Shortcuts](./keyboard-shortcuts#delegation-graph) - the keys inside the Delegation Graph, and how to give it a chord
