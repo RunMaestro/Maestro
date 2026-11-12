@@ -199,7 +199,7 @@ synchronous at authority boundaries, so large plugin trees still have a main-thr
 cost. This change does not claim a general performance bound or remove fresh checks.
 
 The raw primitives above continue to make no protocol/read-only claim. Separately,
-[Host-executed Relay mail reads](relay-host-contract.md#host-executed-relay-mail-reads-1291)
+[Host-executed Relay mail reads](RELAY-HOST-CONTRACT.md#host-executed-relay-mail-reads-1291)
 compose them into six fixed, natively authenticated reads. That Host executor
 interprets the existing confirmed Relay policy and emits/project reads itself;
 it never delegates its privileged execution to plugin code.

@@ -41,6 +41,10 @@ A built-in card carries one of two badges, and the badge says where the feature 
 Built-in features work with the community plugin subsystem switched off - that is the default, and the banner at the top of the tab says so. **Enable plugins** turns on loading of third-party plugins as well. You do not need it to use anything below.
 </Note>
 
+<Note>
+**Agent Flow** is no longer bundled. When plugins are enabled, Maestro retires an unmodified Agent Flow 0.3.0 install: it moves the package to `retired-plugins/agent-flow-0.3.0-<id>/` in the Maestro data folder and removes its permissions, settings, and stored data. A copy you changed is left where it is. Maestro never deletes the moved package; remove it yourself when you no longer need it.
+</Note>
+
 ## Available features
 
 | Feature                                | Category   | Shortcut                               | Description                                                                                                                           |
@@ -75,3 +79,5 @@ Disabling a feature hides its surfaces; it does not delete what you already have
 Want to build a new Encore Feature? The architecture is designed for easy extension - add a flag, wire up the toggle, gate the access points, and your feature ships behind a clean opt-in. Ship it off by default while it proves itself; flip its entry in `DEFAULT_ENCORE_FEATURES` (`src/shared/encoreFeatures.ts`) when it graduates.
 
 See the [Encore Features contributor guide](https://github.com/RunMaestro/Maestro/blob/main/CONTRIBUTING.md#encore-features-feature-gating) for the full implementation checklist, architecture details, and the canonical reference implementation (Director's Notes).
+
+Building a community plugin? Start with the [plugin development guide](https://github.com/RunMaestro/Maestro/blob/main/docs/agent-guides/PLUGIN-DEVELOPMENT.md). It links the host contracts for settings cards, services, platform primitives, and Relay.
