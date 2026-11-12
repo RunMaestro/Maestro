@@ -364,7 +364,7 @@ Each limitation in a plan has one of three severities:
 
 ### Switching in Edit Agent
 
-Open **Edit Agent -> Provider** (`Alt+Cmd+,` / `Alt+Ctrl+,`) and pick a
+Open **Edit Agent -> Provider** (`Opt+Cmd+,` / `Alt+Ctrl+,`) and pick a
 provider. Changing it is a plain switch by default: tabs, transcripts, drafts,
 queue and file previews are kept, each tab that follows the agent starts a fresh
 conversation on the new provider, and switching back resumes the old one.
@@ -518,3 +518,12 @@ installation still works, but Notes report that local Git exclusions are
 unavailable. Older operations that stored knowledge under
 `.maestro/provider-knowledge` remain recoverable or reversible; new switches
 and launch bindings use the knowledge root for the provider host.
+
+## Related
+
+- [Provider Notes](./provider-notes#switching-providers-with-memory-and-session-carry) - the review-then-apply CLI flow and what a conversion covers
+- [Editing Agents](./general-usage#editing-agents) - the Edit Agent tabs, including **Provider**
+- [SSH Remote Execution](./ssh-remote-execution) - where an SSH agent's conversations and project knowledge live
+- [Remote Control](./remote-control) - the web interface, where Edit Agent conversion works the same way
+- [CLI Reference](./cli-reference) - the full flag list for `update-agent` and `tab show`
+- [Keyboard Shortcuts](./keyboard-shortcuts) - **Open Agent Settings**, the route into Edit Agent

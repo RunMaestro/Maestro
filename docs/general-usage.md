@@ -939,7 +939,7 @@ Right-click any agent in the left panel and select **Edit Agent...** to modify i
 
 Changing the **Agent Provider** here is a plain switch by default. Tabs, transcripts, drafts, queued messages, and file previews are kept; each tab starts a new conversation on the new provider, and switching back resumes the old one. The provider's own settings (binary path, arguments, environment, model, effort) are parked per provider, so switching back restores them too.
 
-Where a converter exists (marked **Carry Over**), you can also check **Convert memory and session history** to carry conversations and project memory across. Conversion is opt-in: it opens a native translation preflight that lists any limits, and saving accepts them. Native resume and round-trip conversion remain unverified until live acceptance checks pass. A running turn defers the migration until its final native events are recorded. If the conversion is blocked or fails, a notice says so and saving switches providers without converting.
+Where a converter exists (marked **Carry Over**), you can also check **Convert memory and session history** to carry conversations and project memory across. Conversion is opt-in: it opens a native translation preflight that lists any limits. When the plan has warnings, check **Allow experimental carry-over** beside **Save Changes**; the button stays disabled until you do. Native resume and round-trip conversion remain unverified until live acceptance checks pass. A running turn defers the migration until its final native events are recorded. If the conversion is blocked or fails, a notice says so and saving switches providers without converting.
 
 ### Deleting Agents
 
