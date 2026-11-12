@@ -593,6 +593,7 @@ export function getModelUsage(
 				name: row.agentId === null ? null : (names.agentName?.(row.agentId) ?? null),
 			})),
 			byMode: proxy.byMode,
+			byRoute: proxy.byRoute,
 			effectiveness: proxy.effectiveness,
 		},
 	};

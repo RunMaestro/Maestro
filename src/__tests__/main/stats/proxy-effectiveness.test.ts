@@ -137,6 +137,7 @@ describe.skipIf(!canLoadNodeSqlite())('the proxy usage aggregation on the real v
 
 			expect(result.effectiveness).toEqual(emptyProxyEffectiveness());
 			expect(result.byMode).toEqual([]);
+			expect(result.byRoute).toEqual([]);
 			expect(result.byAgent).toEqual([]);
 			expect(result.totals.requests).toBe(0);
 		});
@@ -897,6 +898,7 @@ describe.skipIf(!canLoadNodeSqlite())('the proxy usage aggregation on the real v
 			const cuts: Record<string, ProxyRequestTotals[]> = {
 				agents: result.byAgent,
 				modes: result.byMode!,
+				routes: result.byRoute!,
 			};
 			const fields = [
 				'requests',
@@ -927,6 +929,36 @@ describe.skipIf(!canLoadNodeSqlite())('the proxy usage aggregation on the real v
 			expect(result.byAgent.map((row) => row.agentId).sort()).toEqual(
 				[null, 'agent-a', 'agent-b', 'agent-gone'].sort()
 			);
+		});
+
+		it('partitions stored routes across agents and modes, preserving future routes and the range', () => {
+			add([
+				currentProxyRow({ agentId: 'agent-a', route: 'anthropic' }),
+				currentProxyRow({ agentId: 'agent-a', route: 'openai' }),
+				passthroughProxyRow({ agentId: 'agent-a', route: 'anthropic' }),
+				passthroughProxyRow({ route: 'chatgpt' }),
+				legacyProxyRow({ route: 'future-route' }),
+			]);
+			add(currentProxyRow({ route: 'outside-range' }), NOW - 40 * DAY_MS);
+
+			const result = usage('week');
+
+			expect(
+				result.byRoute?.map(({ route, requests, tokensSaved, timedRequests }) => ({
+					route,
+					requests,
+					tokensSaved,
+					timedRequests,
+				}))
+			).toEqual([
+				{ route: 'anthropic', requests: 2, tokensSaved: 2500, timedRequests: 1 },
+				{ route: 'chatgpt', requests: 1, tokensSaved: 0, timedRequests: 0 },
+				{ route: 'future-route', requests: 1, tokensSaved: 2500, timedRequests: 1 },
+				{ route: 'openai', requests: 1, tokensSaved: 2500, timedRequests: 1 },
+			]);
+			expect(result.byRoute?.reduce((sum, row) => sum + row.requests, 0)).toBe(5);
+			expect(result.byAgent.find(({ agentId }) => agentId === 'agent-a')?.requests).toBe(3);
+			expect(result.byMode?.reduce((sum, row) => sum + row.requests, 0)).toBe(5);
 		});
 
 		it('keeps the mode of an old row unknown, a stored passthrough row included', () => {

@@ -212,6 +212,7 @@ describe.skipIf(!canLoadNodeSqlite())('getModelUsage', () => {
 			routedRequests: 0,
 			byAgent: [],
 			byMode: [],
+			byRoute: [],
 			effectiveness: emptyProxyEffectiveness(),
 		});
 	});
@@ -750,7 +751,7 @@ describe.skipIf(!canLoadNodeSqlite())('getModelUsage', () => {
 		function seed(): void {
 			for (const row of [
 				currentProxyRow({ agentId: 'agent-a', effectiveMode: 'compress-early' }),
-				currentProxyRow({ agentId: 'agent-a', effectiveMode: 'compress' }),
+				currentProxyRow({ agentId: 'agent-a', effectiveMode: 'compress', route: 'openai' }),
 				legacyProxyRow({ agentId: 'agent-gone' }),
 				passthroughProxyRow({ agentId: undefined }),
 			]) {
@@ -766,6 +767,7 @@ describe.skipIf(!canLoadNodeSqlite())('getModelUsage', () => {
 
 			expect(proxy.effectiveness).toEqual(direct.effectiveness);
 			expect(proxy.byMode).toEqual(direct.byMode);
+			expect(proxy.byRoute).toEqual(direct.byRoute);
 			expect(proxy.totals).toEqual(direct.totals);
 			expect(proxy.effectiveness?.traffic).toEqual({
 				carried: 4,

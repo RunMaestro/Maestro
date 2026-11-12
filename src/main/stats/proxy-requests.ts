@@ -18,6 +18,7 @@ import type {
 	ProxyRequest,
 	ProxyRequestTotals,
 	ProxyRequestUsage,
+	ProxyRouteTotals,
 	StatsTimeRange,
 } from '../../shared/stats-types';
 import { getProxyEffectiveness } from './proxy-effectiveness';
@@ -159,10 +160,11 @@ interface TotalsRow {
 	provider_output_tokens: number;
 }
 
-/** What one scan returns: the totals of one agent under one stored effective mode. */
+/** What one scan returns: one agent, effective mode and stored provider route. */
 interface GroupRow extends TotalsRow {
 	agent_id: string | null;
 	effective_mode: string | null;
+	route: string;
 }
 
 function emptyTotals(): TotalsRow {
@@ -229,12 +231,12 @@ const MODE_ORDER: ReadonlyArray<ProxyEffectiveMode | null> = [
 
 /**
  * What the proxy carried within the time range: in total, per agent, per
- * effective mode, and its effectiveness (blocks, skips, timing, algorithms,
+ * effective mode, per route, and its effectiveness (blocks, skips, timing, algorithms,
  * provider classes, the days). Tokens and latency cover only the requests whose
  * body the proxy read: a passthrough request counts as a request and nothing
  * else.
  *
- * One scan sums every (agent, stored mode) group and the three cuts are rolled
+ * One scan sums every (agent, stored mode, route) group and the cuts are rolled
  * up from it, so the agents, the modes and the total are one partition of the
  * same rows. The mode of a row that does not state one (it predates
  * `effective_mode`) stays unknown, passthrough rows included: a mode is never
@@ -251,6 +253,7 @@ export function getProxyRequestUsage(
       SELECT
         agent_id,
         effective_mode,
+        route,
         COUNT(*) AS requests,
         SUM(CASE WHEN original_tokens IS NOT NULL THEN 1 ELSE 0 END) AS compress_requests,
         COALESCE(SUM(original_tokens), 0) AS original_tokens,
@@ -264,7 +267,7 @@ export function getProxyRequestUsage(
         COALESCE(SUM(provider_output_tokens), 0) AS provider_output_tokens
       FROM proxy_requests
       WHERE started_at >= ?
-      GROUP BY agent_id, effective_mode
+      GROUP BY agent_id, effective_mode, route
     `
 	);
 	const rows = stmt.all(startTime) as GroupRow[];
@@ -283,12 +286,16 @@ export function getProxyRequestUsage(
 				MODE_ORDER.indexOf(a.effectiveMode) - MODE_ORDER.indexOf(b.effectiveMode)
 		);
 	const totals = [...rollUp(rows, () => 'all').values()][0] ?? emptyTotals();
+	const byRoute: ProxyRouteTotals[] = [...rollUp(rows, (row) => row.route)]
+		.map(([route, sums]) => ({ route, ...toTotals(sums) }))
+		.sort((a, b) => b.requests - a.requests || a.route.localeCompare(b.route));
 
 	return {
 		range,
 		totals: toTotals(totals),
 		byAgent,
 		byMode,
+		byRoute,
 		effectiveness: getProxyEffectiveness(db, startTime),
 	};
 }

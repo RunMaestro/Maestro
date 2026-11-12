@@ -23,6 +23,7 @@ import type {
 	ProxyAgentTotals,
 	ProxyEffectiveness,
 	ProxyModeTotals,
+	ProxyRouteTotals,
 	ProxyRequestTotals,
 	StatsTimeRange,
 } from '../stats-types';
@@ -410,6 +411,8 @@ export interface ModelUsageProxy {
 	 * the CLI show the same figures. Absent from an older desktop.
 	 */
 	byMode?: ProxyModeTotals[];
+	/** The same request totals by stored provider route. Absent from an older desktop. */
+	byRoute?: ProxyRouteTotals[];
 	effectiveness?: ProxyEffectiveness;
 }
 

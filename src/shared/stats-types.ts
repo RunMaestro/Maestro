@@ -732,6 +732,11 @@ export interface ProxyModeTotals extends ProxyRequestTotals {
 	effectiveMode: ProxyEffectiveMode | null;
 }
 
+/** Totals for one stored provider-route prefix; unknown future route names stay intact. */
+export interface ProxyRouteTotals extends ProxyRequestTotals {
+	route: string;
+}
+
 /** {@link ProxyCoverage} for a time range: `counted` of the `of` requests supplied a value. */
 export type ProxyRangeCoverage = Extract<ProxyCoverage, { scope: 'range' }>;
 
@@ -919,6 +924,8 @@ export interface ProxyRequestUsage {
 	 * desktop.
 	 */
 	byMode?: ProxyModeTotals[];
+	/** The same totals by stored provider route, most requests first. Absent from an older desktop. */
+	byRoute?: ProxyRouteTotals[];
 	/** Absent from an older desktop. */
 	effectiveness?: ProxyEffectiveness;
 }

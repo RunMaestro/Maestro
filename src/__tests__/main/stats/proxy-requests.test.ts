@@ -411,6 +411,7 @@ describe('proxy-requests', () => {
 			return {
 				agent_id: null,
 				effective_mode: null,
+				route: 'anthropic',
 				requests: 0,
 				compress_requests: 0,
 				original_tokens: 0,
