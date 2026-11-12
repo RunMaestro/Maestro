@@ -1077,6 +1077,8 @@ The verb only reads. To change an edge, use `update-agent <source> --peer <targe
 | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | See which models are installed               | `models list [--kind text-gen\|embedding\|classifier\|stt\|tts\|wake-word] [--fit]`                                                |
 | Download, pause, cancel, verify, or drop one | `models install <id>`, `models pause <id>`, `models cancel <id>`, `models verify <id>`, `models remove <id> [--force]`             |
+| Resume a paused download                     | `models install <id>` (there is no separate resume verb)                                                                           |
+| Open the Models tab on one panel             | `open settings --tab models --sub-tab overview\|library\|library/<section>\|sources\|system-one\|system-two\|gateway`              |
 | Add a GGUF model from Hugging Face           | `models add-hf <repo> <file> [--dry-run]`, `models remove-hf <id>`                                                                 |
 | Install or update an engine                  | `models runtimes list`, `models runtimes install onnx\|llama`                                                                      |
 | Point a task at a model                      | `models assign <task> off\|utility-agent\|system-one\|local:<id>\|endpoint:<endpoint>:<model>`                                     |
@@ -2091,7 +2093,7 @@ maestro-cli open agent-settings --agent <agent-id> --tab peers
 | `--list`              | List every openable surface, its tabs, sub-tabs, and shortcut          |
 | `--json`              | Output as JSON (for scripting)                                         |
 
-Surfaces are addressed by id or alias (`usage`, `stats`, and `dashboard` all reach the Usage Dashboard). A `--tab` or `--sub-tab` value matches either the id (`scheduled`) or the label (`"Scheduled Tasks"`). A renamed tab keeps its old id as an alias: `--tab local-models` still opens Settings > Models. The Models tab has the sub-tabs `library`, `sources`, `system-one`, `system-two`, and `gateway`.
+Surfaces are addressed by id or alias (`usage`, `stats`, and `dashboard` all reach the Usage Dashboard). A `--tab` or `--sub-tab` value matches either the id (`scheduled`) or the label (`"Scheduled Tasks"`). A renamed tab keeps its old id as an alias: `--tab local-models` still opens Settings > Models. The Models tab has the sub-tabs `overview`, `library`, `sources`, `system-one`, `system-two`, and `gateway`, and each Library section is `library/<section>`: `library/engines`, `library/agents`, `library/housekeeping`, `library/speech`, `library/search`, and `library/custom`. A bare `library` keeps the section you last had open.
 
 `--group` applies to two surfaces. On the Delegation Graph it opens the graph on that group and the agents it reaches instead of on every agent; in the app the same thing is **Delegation Graph** in a group's right-click menu, or a "Delegation Graph: <group>" command in the command palette. On `group-settings` it is required, and opens the **Group Settings** dialog for that group; there is no global hotkey for it, because a chord has no group to act on. Find a group's id with `maestro-cli list groups`. Any other surface refuses `--group` and says so.
 

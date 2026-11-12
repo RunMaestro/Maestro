@@ -514,5 +514,6 @@ Native Lite also supervises its transport and renderer. SSH exits, temporary con
 - [Configuration](/configuration) - General settings including web interface options
 - [SSH Remote Execution](/ssh-remote-execution) - Running Maestro on remote servers
 - [Voice Mode](/voice-mode) - A Cappella voice, desktop only, and pairing a phone as its microphone
+- [Local Models](/local-models#models) - the Models settings tab, which works in the browser and downloads to the computer running Maestro
 - [Dictation](/local-models#dictation) - speech into any text box, which works in the browser over HTTPS
 - [Spoken notices](/local-models#spoken-notices) - a line spoken when an agent finishes, which plays on the computer running Maestro
