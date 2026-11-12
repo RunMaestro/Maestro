@@ -621,13 +621,15 @@ Do not confuse this with [System One and System Two](#system-one-and-system-two)
 
 System One is **off** until you choose an engine. Only a task that asks typed questions is offered System One: the six in [The tasks System One answers](#the-tasks-system-one-answers). Every other task keeps the sources in [Assignments](#assignments).
 
+Everything in this section is on **Settings -> Models -> System One** (`maestro-cli open settings --tab models --sub-tab system-one`), in this order: the **System One engine** card, the task list, **System One for agents**, and the **Decision ledger**. The command palette has no entry of its own: **Open Models Settings** opens the tab. There is no keyboard shortcut. Settings search finds **System One engine**, **Fail policy**, **System One tasks**, **System One for agents** and **Decision ledger**. System One is part of Local Models, not an Encore Feature.
+
 ### System One engines
 
-| Engine                   | What it is                                                                   | Calibrated | Named in the UI as                      |
-| ------------------------ | ---------------------------------------------------------------------------- | ---------- | --------------------------------------- |
-| **Jev (TypeSafe cloud)** | TypeSafe's hosted Jev, at `https://api.typesafe.ai`                          | Yes        | Jev (TypeSafe cloud)                    |
-| **OpenJev**              | An OpenJev server you run, at a URL you give, with an optional key           | Yes        | OpenJev at `<host>`                     |
-| **Local judge**          | A text model on this machine or on an endpoint, answering the same questions | No         | Local judge (`<model>`), not calibrated |
+| Engine                   | What it is                                                                   | Calibrated | Price                           | Named in the UI as                      |
+| ------------------------ | ---------------------------------------------------------------------------- | ---------- | ------------------------------- | --------------------------------------- |
+| **Jev (TypeSafe cloud)** | TypeSafe's hosted Jev, at `https://api.typesafe.ai`                          | Yes        | $0.042 per million input tokens | Jev (TypeSafe cloud)                    |
+| **OpenJev**              | An OpenJev server you run, at a URL you give, with an optional key           | Yes        | None                            | OpenJev at `<host>`                     |
+| **Local judge**          | A text model on this machine or on an endpoint, answering the same questions | No         | None                            | Local judge (`<model>`), not calibrated |
 
 **Calibrated** means that when Jev says 0.9, it is right about nine times in ten. A local judge does not claim that. It names a side and says how sure it is, and the number is not a measured probability. Every surface says which engine answered: the Test result, the Cue event's reason, the decision ledger, and `maestro-cli s1`. A local judge is never shown as Jev.
 
@@ -643,14 +645,15 @@ OpenJev needs a CUDA GPU, so on a Mac it is a server at another address, not `lo
 
 ### Choosing an engine
 
-Open **Settings -> Models -> System One**. The engine card is at the top.
+Open **Settings -> Models -> System One**. The **System One engine** card is at the top.
 
-- **Engine.** The picker, with one sentence under each choice that says where the text goes.
-- **Server URL** (OpenJev only). The address of your OpenJev server. You can choose OpenJev before you type it: the card then says the URL is missing, and a request is refused.
+- **Engine.** The picker: **Off** (the default), **Jev (TypeSafe cloud)**, **OpenJev**, or **Local judge, not calibrated**. One sentence under it says where the text goes. (`maestro-cli s1 set engine off|jev-cloud|openjev|local-judge`)
+- **OpenJev server URL** (OpenJev only). The address of your OpenJev server, saved with **Save**. A URL may not hold credentials: store a key for OpenJev instead. In the card you can choose OpenJev before you type the URL: the card then says the URL is missing, and a request is refused ("OpenJev has no URL. Set it in Settings > Models > System One."). From the command line, `s1 set engine openjev` needs `--url <url>` the first time.
 - **API key.** See [The key](#the-key).
-- **Model.** Optional. Jev's `jev-latest` moves to the newest version. If you tuned a threshold against one version, pin that version here. A pin belongs to one engine, so switching engines does not carry a wrong version over. The local judge has no pin: its model is the one assigned to the **Local judge** task.
-- **Timeout.** How long a request gets, 1,500 ms by default, from 100 ms to 60 seconds. It applies to Jev and OpenJev. The local judge keeps its own 30 second budget, because the first answer after an idle spell has to load the model.
-- **Test.** Asks one fixed question about one fixed sentence and shows the answer, the time it took, and the engine. It sends nothing of yours. If the engine answers "no" to a question whose right answer is "yes", the result says so.
+- **Pinned model (optional)** (Jev and OpenJev). Empty, Jev uses `jev-latest`, which moves to each new release, and OpenJev sends no model, so the server answers on the one it was started with. If you tuned a threshold against one version, pin that version here and press **Save**. A model name has no spaces. A pin belongs to one engine, so switching engines does not carry a wrong version over. (`maestro-cli s1 set engine jev-cloud --model <model>`; `--model default` removes the pin)
+- **Model** (local judge). The local judge has no pin: this row shows the model assigned to the **Local judge** task, or says none is assigned yet and points to the **Local judge** row below. A local judge with no model refuses every request by name.
+- **Timeout (ms)** (Jev and OpenJev). How long one request may take, 1500 by default, from 100 to 60000. With no answer in time, the task applies its [fail policy](#when-there-is-no-answer). The local judge keeps its own 30 second budget, because the first answer after an idle spell has to load the model. (`maestro-cli s1 set timeout <ms>`)
+- **Test.** Shown once an engine is chosen. It asks one fixed yes or no question about a fixed sentence ("The meeting was moved from Tuesday to Thursday at 3 pm.") and shows the answer, P(yes), the time it took, the model and the engine, for example "Jev (TypeSafe cloud) answered yes (P(yes) 0.97) in 180 ms on jev-latest." It sends nothing of yours. If the engine answers "no", the result adds "The right answer to the test question is yes." A failure shows the error. (`maestro-cli s1 test`, which exits non-zero when no answer came back)
 
 Every state and question is checked for secrets before it leaves your machine, whichever engine you chose. A removed span is noted on the result.
 
@@ -666,7 +669,16 @@ A key is write-only. Maestro stores it sealed with your operating system's key s
 | **`TYPESAFE_API_KEY`**           | Read from **Settings -> Environment**, then from the environment Maestro was started in. |
 | **`~/.config/typesafe/api_key`** | The file the `jev` command reads.                                                        |
 
-A key is set on the computer running Maestro. From the web interface the card shows where the key in force comes from, but has no field to paste one: keys never cross the web interface.
+The **API key** row (Jev and OpenJev) has a field to paste a key and **Save** (**Replace** once one is stored), and **Clear** to remove a stored key. From the command line the key is read from standard input, never from an argument, and a terminal with nothing piped is refused:
+
+```bash
+pbpaste | maestro-cli s1 key set [--engine jev-cloud|openjev]   # default: the engine in force
+maestro-cli s1 key clear [--engine jev-cloud|openjev]
+```
+
+`s1 key clear` says so when the engine still has a key from another source. A key is one line with no spaces. Jev with no key from any source refuses every request: "Jev (TypeSafe cloud) has no API key. Add one in Settings > Models > System One." OpenJev needs a key only when its server asks for one.
+
+A key is set on the computer running Maestro. From the web interface the card shows where the key in force comes from, but has no field to paste one: it says "Keys are stored on the computer running Maestro: set this one in its Settings, or there with `pbpaste | maestro-cli s1 key set`." Keys never cross the web interface. The rest of System One (the engine, **Test**, fail policies, budgets, the ledger and the spend table) works from a browser too.
 
 The last two are read-only fallbacks for Jev. An OpenJev server is only ever sent a key stored for it, so your TypeSafe key never goes to somebody else's machine. If a stored key cannot be opened (a reset key store, a file from another computer), Maestro says so and sends nothing. It does not fall through to another source. **Replace** or **Clear** is your call.
 
@@ -702,14 +714,16 @@ The readiness line reads **Ready** when the engine in force is set up, and names
 
 ### When there is no answer
 
-An engine can fail: no key, a timeout, a server that is down, a request that is too large, or no engine chosen. A task then applies its **fail policy**, shown in the **If no answer** column of the task list:
+An engine can fail: no key, a timeout, a server that is down, a request that is too large, or no engine chosen. A task then applies its **fail policy**, shown in the **If no answer** column of the task list. The column's picker offers **Fail open** and **Fail closed**, with the task's default marked **(default)**:
 
-| Policy     | What the task does             | Default for             |
-| ---------- | ------------------------------ | ----------------------- |
-| **Open**   | The work goes ahead, unchecked | Cue gate                |
-| **Closed** | The work stops                 | Prompt-injection screen |
+| Policy          | What the task does             | Default for             |
+| --------------- | ------------------------------ | ----------------------- |
+| **Fail open**   | The work goes ahead, unchecked | Cue gate                |
+| **Fail closed** | The work stops                 | Prompt-injection screen |
 
-A task with no default policy has none to apply: it reports "unavailable", and its caller decides what no answer means. Model routing is one: a turn with no decision runs at the agent's default. Change a policy in the column, or with `maestro-cli s1 set fail-policy`.
+A task with no default policy has none to apply: it reports "unavailable", and its caller decides what no answer means. Model routing is one: a turn with no decision runs at the agent's default. Change a policy in the column, or with `maestro-cli s1 set fail-policy <task-id> open|closed|default` (`default` goes back to the task's own).
+
+The ledger names why no answer came, as one of `auth`, `rate-limited`, `too-large`, `unavailable`, `timeout`, `invalid` or `cancelled`.
 
 Two rules hold for every task:
 
@@ -720,21 +734,29 @@ A gate answers **proceed** when the probability of yes is 0.5 or more. An event 
 
 ### The decision ledger
 
-Each run that reaches System One leaves one record, answered or not. The **Decision ledger** under the task list shows them, newest first, and filters by task and outcome. Each row shows its topic, a saved-question preview when inputs were kept, and the available agent, model, token, cache, and cost details. Expand it for the full saved details and question ids. Without a saved question, the row says that context is unavailable.
+Each run that reaches System One leaves one record, answered or not. The **Decision ledger** under the task list shows them, newest first. Filter by task (**All tasks**, or one task) and by outcome (**All outcomes**, or one below), and press **Refresh** to read again. Each row shows when it ran, its topic, the engine, the outcome, the decision and the time it took, a saved-question preview when inputs were kept, and the available agent, model, token, cache, and cost details. Expand it for **When**, **Model**, **Questions** (the question ids), **Why no answer**, **Tokens**, **Cost (est.)**, **Agent**, and the kept input. Without a saved question, the row says "Decision context unavailable: input was not kept."
 
-| Outcome           | What happened                                   |
-| ----------------- | ----------------------------------------------- |
-| **ok**            | The engine answered every question              |
-| **failed-open**   | No answer, and the policy let the work go ahead |
-| **failed-closed** | No answer, and the policy stopped the work      |
-| **unavailable**   | No answer, for a task with no policy of its own |
-| **cancelled**     | The caller stopped the request                  |
+| Outcome           | CLI id          | What happened                                   |
+| ----------------- | --------------- | ----------------------------------------------- |
+| **Answered**      | `ok`            | The engine answered every question              |
+| **Failed open**   | `failed-open`   | No answer, and the policy let the work go ahead |
+| **Failed closed** | `failed-closed` | No answer, and the policy stopped the work      |
+| **No answer**     | `unavailable`   | No answer, for a task with no policy of its own |
+| **Cancelled**     | `cancelled`     | The caller stopped the request                  |
 
-A timeout is not an outcome of its own: it is a failed run whose reason is `timeout`, so the record still says whether the work went ahead. **timeout** is a filter that matches that reason.
+A timeout is not an outcome of its own: it is a failed run whose reason is `timeout`, so the record still says whether the work went ahead. **Timed out** (`timeout`) is a filter that matches that reason.
 
-A record holds the task, the engine, the question ids and the typed answers. It holds **no text** unless you turn on **Keep inputs in the ledger**, which is off by default. When it is on, the state and the questions are kept with secrets removed, and cut at 20,000 characters. Turning it off later does not delete what was kept: those rows go with the rest after 30 days.
+A request from an agent is filed under the task **Agent: rank**, **Agent: yes** and so on, with the agent's name (`--task agent:rank` on the command line).
 
-The ledger is kept for 30 days. It is written only while usage statistics are on, and a read says so when they are off.
+A record holds the task, the engine, the question ids and the typed answers. It holds **no text** unless you turn on **Keep inputs in the ledger**, which is off by default (`maestro-cli s1 set keep-inputs on|off`). When it is on, the state and the questions are kept with secrets removed, and cut at 20,000 characters. Turning it off later does not delete what was kept: those rows go with the rest after 30 days.
+
+The ledger is kept for 30 days. It is written only while usage statistics are on, and a read says so when they are off: "Usage statistics are switched off, so new decisions are not kept." The panel shows at most the newest records it reads and says how to read the rest. From the command line:
+
+```bash
+maestro-cli s1 ledger [--task <task-id>] [--outcome <outcome>] [--since 2h] [--limit <n>] [--json]
+```
+
+`--limit` is 1 to 1000, 100 by default.
 
 ### System One for agents
 
@@ -774,7 +796,7 @@ The L0 section is there only while **all** of these hold. It is decided each tim
 | The day's budget, for all agents and for this agent if you set one, is not spent | `budget-day` or `budget-agent`                |
 | The agent runs on this computer                                                  | An SSH remote agent is never told (see below) |
 
-Changing the engine, its URL or its model makes the last Test stale. Press **Test** again, or run `maestro-cli s1 test`. An engine you set up before agents could ask needs one Test.
+Changing the engine, its URL, its model or its key makes the last Test stale. Press **Test** again, or run `maestro-cli s1 test`. An engine you set up before agents could ask needs one Test.
 
 #### The verbs
 
@@ -807,15 +829,15 @@ Exit codes let a shell test them:
 
 #### The budget
 
-The **daily budget** is a ceiling on what all agents spend on System One in a day. It is $1 by default. An optional **budget per agent** caps one agent inside it, with no cap by default.
+The **Daily budget (US dollars, all agents)** is a ceiling on what all agents spend on System One in a day. It is $1 by default, from 0 to 1000. An optional **Budget per agent (optional)** caps one agent inside it, with no cap by default (the field is empty).
 
-- A request is checked before it is sent. A request over budget is refused by name (exit 6) and the agent is told to continue without System One. The budget resets at midnight.
+- A request is checked before it is sent. A request over budget is refused by name (exit 6) and the agent is told to continue without System One. The day starts at local midnight.
 - A day can pass its budget by at most the requests already in flight, which is four requests of a few tenths of a cent each.
 - The count is kept in Maestro and seeded from the [decision ledger](#the-decision-ledger) once a day, so it survives a restart. While usage statistics are off the ledger keeps nothing new, and the count starts again when Maestro restarts.
 - OpenJev and the local judge cost nothing, so a dollar budget never stops them. A budget of 0 stops every agent.
 - Only agents' own requests count. A Cue gate's run is Maestro's spend, not an agent's, even when it names an agent.
 
-Spend is on **Settings -> Models -> System One -> System One for agents**: spent today against the budget, and a table of requests, cached requests, tokens, cost and average latency per agent, over Today, Last 7 days or Last 30 days. The same rows are in the decision ledger, labelled "Agent: rank" and so on, and `maestro-cli s1 usage` prints them.
+Spend is on **Settings -> Models -> System One -> System One for agents**. **Spent today** reads, for example, "$0.03 of $1.00 by all agents, $0.97 left." **Spend per agent** is a table of **Requests**, **Cached**, **Tokens in**, **Cost** and **Avg ms** per agent, with a **Total** row, over **Today**, **Last 7 days** or **Last 30 days**, and a **Refresh** button. The same rows are in the decision ledger, labelled "Agent: rank" and so on, and `maestro-cli s1 usage` prints them.
 
 A request is answered from a cache when the engine, the model, the state and the questions are the same as an earlier one in the last 7 days. It costs nothing and says "cached answer". `--no-cache` asks again.
 
@@ -829,13 +851,14 @@ The agent never holds the key. `maestro-cli` talks to the desktop over its local
 
 #### Turning it off
 
-| To switch off             | Where                                                                                                 |
-| ------------------------- | ----------------------------------------------------------------------------------------------------- |
-| System One for all agents | **Settings -> Models -> System One -> Let agents use System One**, or `maestro-cli s1 set agents off` |
-| System One for one agent  | **Edit Agent -> Models**, or `maestro-cli update-agent <agent> --system-one off`                      |
-| System One for everything | Set the engine to **Off**, or `maestro-cli s1 set engine off`                                         |
+| To switch off                        | Where                                                                                                            |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| System One for all agents            | **Settings -> Models -> System One -> Let agents use System One**, or `maestro-cli s1 set agents off`            |
+| System One for one agent             | The **System One** switch on **Edit Agent -> Models**, or `maestro-cli update-agent <agent> --system-one off`    |
+| System One for new agents in a group | The **System One** switch in **Group Settings**, or `maestro-cli update-group-settings <group> --system-one off` |
+| System One for everything            | Set the engine to **Off**, or `maestro-cli s1 set engine off`                                                    |
 
-Each takes effect on the next start of an agent, and the verbs refuse at once. A worktree agent inherits its parent's switch, so an agent you switched off does not start asking from a worktree of the same project. A new agent follows the global switch: switch it off after you create it, or with `update-agent`.
+Each takes effect on the next start of an agent, and the verbs refuse at once. The agent's switch says "This agent follows "Let agents use System One"." when on, and under it which engine answers its requests and what it has spent today. A worktree agent inherits its parent's switch, so an agent you switched off does not start asking from a worktree of the same project. A new agent follows the global switch, unless its group's **System One** switch is off: then it starts with System One switched off ("A new agent in this group starts with System One switched off."). The group switch does not change agents already in the group unless you [publish](./features#publishing-a-save-to-existing-agents) the save (`--publish` on `update-group-settings`).
 
 Set the budgets with the fields beside the switch, or `maestro-cli s1 set budget <usd>` and `maestro-cli s1 set budget --per-agent <usd|none>`. `maestro-cli s1 status` prints what agents may do and what in the setup stops them.
 
