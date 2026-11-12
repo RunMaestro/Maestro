@@ -5,9 +5,13 @@
  * What it decides is only WHO listens: the window that owns app-wide side effects, once, for as
  * long as it lives. What the broadcast then does is the service's job (`announceLaunchEnd`,
  * covered in playbookLaunchCompletion.test.ts), so the service is replaced here.
+ *
+ * The last block pins that App calls the hook at all: nothing else would notice if it did not.
  */
 
 import { renderHook } from '@testing-library/react';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 let mockIsLifecycleOwner = true;
@@ -73,5 +77,18 @@ describe('useLaunchEndAnnouncement', () => {
 		unmount();
 
 		expect(unsubscribe).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('App wiring', () => {
+	// App is too large to render in a test, so this reads its source, as the keyboard wiring check in
+	// shortcuts.test.ts does. A hook nothing calls shows the person nothing: the launch is ended and
+	// cleaned up in main, and no outro and no toast ever follows.
+	it('calls the hook once, so the end of a launch always reaches the person', () => {
+		const app = readFileSync(join(__dirname, '../../../renderer/App.tsx'), 'utf-8');
+
+		const calls = app.match(/^[ \t]*useLaunchEndAnnouncement\(\);[ \t]*$/gm) ?? [];
+
+		expect(calls, 'App must call useLaunchEndAnnouncement() exactly once').toHaveLength(1);
 	});
 });
