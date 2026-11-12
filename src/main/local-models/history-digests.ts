@@ -44,13 +44,14 @@ import {
 	LOCAL_MODEL_TASKS,
 	localModelAssignmentSourceLabel,
 	resolveLocalModelAssignment,
+	type LocalModelAssignment,
 	type LocalModelAssignments,
 } from '../../shared/local-models/tasks';
 import { getPrompt } from '../prompt-manager';
 import type { SafeSendFn } from '../utils/safe-send';
 import { captureException } from '../utils/sentry';
 import { getConfiguredLocalModelEndpoints } from './endpoint-service';
-import { readLocalModelAssignments, sourceForAssignment, type LocalModelSource } from './sources';
+import { readLocalModelAssignments, type LocalModelSource } from './sources';
 import { clearLocalTaskNotice, reportLocalTaskUnavailable } from './task-notices';
 import {
 	runLocalTask,
@@ -131,16 +132,16 @@ export function digestMaxInputChars(budget: DigestBudget): number {
 }
 
 /**
- * The budget for the source the task runs on. Large when the context is one
+ * The budget for the task's assignment. Large when the context is one
  * Maestro sets or knows: an in-process model trained for it (the engine opens
  * the context each call asks for), Maestro's model server (its catalog models
  * run at 40,960), or Ollama (sent `num_ctx` per call). Small otherwise.
  */
 export function digestBudgetFor(
-	source: LocalModelSource | null,
+	source: LocalModelAssignment,
 	endpoints: readonly LocalModelEndpoint[]
 ): DigestBudget {
-	if (!source) return SMALL_DIGEST_BUDGET;
+	if (source.type !== 'local' && source.type !== 'endpoint') return SMALL_DIGEST_BUDGET;
 	if (source.type === 'local') {
 		const trained = getLocalModel(source.modelId)?.contextLength ?? 0;
 		return trained >= DIGEST_CONTEXT_TOKENS ? LARGE_DIGEST_BUDGET : SMALL_DIGEST_BUDGET;
@@ -331,7 +332,7 @@ export function createHistoryDigestWriter(
 	const write = async (request: HistoryDigestRequest): Promise<HistoryDigestResult> => {
 		try {
 			const budget = digestBudgetFor(
-				sourceForAssignment(resolveLocalModelAssignment(readAssignments(), TASK_ID)),
+				resolveLocalModelAssignment(readAssignments(), TASK_ID),
 				getConfiguredLocalModelEndpoints()
 			);
 			let job: LocalDigestInstruction;
