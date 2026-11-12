@@ -42,6 +42,8 @@ vi.mock('../../../../main/local-models/proxy/compression-cache', async (importOr
 
 import {
 	analyzeReadOpportunities,
+	countFindings,
+	isReadToolName,
 	READ_OPPORTUNITY_LIMITS,
 	readEventsFromDescriptors,
 	withoutLineNumbers,
@@ -864,5 +866,58 @@ describe('read opportunities: withoutLineNumbers', () => {
 	it('returns the text unchanged when no line carries a number', () => {
 		expect(withoutLineNumbers('plain\ntext\n')).toBe('plain\ntext\n');
 		expect(withoutLineNumbers('')).toBe('');
+	});
+});
+
+describe('isReadToolName', () => {
+	it('recognizes the read tools in every provider spelling', () => {
+		for (const name of ['Read', 'read', 'read_file', 'readFile', 'ReadFile', 'READ_FILE']) {
+			expect(isReadToolName(name)).toBe(true);
+		}
+	});
+
+	it('is false for every other tool, a name that merely contains read included', () => {
+		for (const name of ['Bash', 'Write', 'Task', 'ReadMcpResource', 'cat', 'thread', '']) {
+			expect(isReadToolName(name)).toBe(false);
+		}
+	});
+});
+
+describe('countFindings', () => {
+	it("counts a report's findings the way the report counted them", () => {
+		const report = analyzeReadOpportunities([
+			event(0),
+			event(1),
+			event(2, { text: numbered(EDITED) }),
+			event(3, { path: `${ROOT}/src/b.ts`, offset: 1 }),
+		]);
+
+		expect(countFindings(report.findings)).toEqual(report.counts);
+	});
+
+	it('recounts a narrowed set, so a caller can report on part of a request', () => {
+		const report = analyzeReadOpportunities([
+			event(0),
+			event(1),
+			event(2, { text: numbered(EDITED) }),
+		]);
+		const newest = report.findings.filter((finding) => finding.read.order >= 2);
+
+		expect(countFindings(newest)).toEqual({
+			examined: 1,
+			first: 0,
+			identical: 0,
+			changed: 1,
+			unsupported: 0,
+			unsupportedByReason: {},
+		});
+		expect(countFindings([])).toEqual({
+			examined: 0,
+			first: 0,
+			identical: 0,
+			changed: 0,
+			unsupported: 0,
+			unsupportedByReason: {},
+		});
 	});
 });

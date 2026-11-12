@@ -51,6 +51,27 @@ vi.mock('../../../../main/utils/sentry', () => sentry);
 const taskNotices = vi.hoisted(() => ({ reportLocalTaskUnavailable: vi.fn() }));
 vi.mock('../../../../main/local-models/task-notices', () => taskNotices);
 
+// The read-opportunity observer is its own suite. Here it is the thing the service
+// hands a request to, asks for working directories, and asks for a snapshot.
+const observer = vi.hoisted(() => ({
+	instance: {
+		observe: vi.fn(),
+		snapshot: vi.fn(() => ({ marker: 'opportunities' })),
+		reset: vi.fn(),
+		idle: vi.fn(async () => {}),
+	},
+	deps: null as null | {
+		rootsFor: (agentId: string | null) => string[];
+		onFailure: (error: unknown) => void;
+	},
+}));
+vi.mock('../../../../main/local-models/proxy/opportunity-observer', () => ({
+	createOpportunityObserver: (deps: NonNullable<typeof observer.deps>) => {
+		observer.deps = deps;
+		return observer.instance;
+	},
+}));
+
 const cache = vi.hoisted(() => ({
 	read: vi.fn(),
 	write: vi.fn(),
@@ -1240,6 +1261,98 @@ describe('getTokenProxyReport', () => {
 		expect(report.status.port).toBeNull();
 		expect(report.agents).toEqual([]);
 		await expect(fs.access(stateFile())).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+});
+
+describe('read opportunities', () => {
+	it('are offered the requests the server read, as they were handed over', async () => {
+		const { options } = await startWithCapturedOptions();
+		const request = {
+			kind: 'anthropic-messages',
+			route: 'anthropic',
+			agentId: 'a1',
+			sent: '{"a":1}',
+			forwarded: '{"a":1}',
+		} as const;
+
+		options.observe?.(request);
+
+		expect(observer.instance.observe).toHaveBeenCalledTimes(1);
+		expect(observer.instance.observe).toHaveBeenCalledWith(request);
+	});
+
+	it("learn an agent's working directories from its stored record, every time", () => {
+		agents = [
+			{ id: 'a', projectRoot: '/work/app', cwd: '/work/app/sub' },
+			{ id: 'b', cwd: '/work/b' },
+			{ id: 'c', cwd: '', projectRoot: 42 },
+		];
+		configure();
+		const rootsFor = observer.deps!.rootsFor;
+
+		expect(rootsFor('a')).toEqual(['/work/app', '/work/app/sub']);
+		expect(rootsFor('b')).toEqual(['/work/b']);
+		// An empty or malformed field is no root, an unknown agent has none, and
+		// a request that named no agent has nowhere to place a file.
+		expect(rootsFor('c')).toEqual([]);
+		expect(rootsFor('gone')).toEqual([]);
+		expect(rootsFor(null)).toEqual([]);
+
+		agents = [{ id: 'a', cwd: '/moved' }];
+		expect(rootsFor('a')).toEqual(['/moved']);
+	});
+
+	it('report a failed pass to the log and to Sentry, wrapping anything that is not an error', () => {
+		const { onFailure } = observer.deps!;
+
+		const error = new Error('boom');
+		onFailure(error);
+		onFailure('plain text');
+
+		expect(logger.warn).toHaveBeenCalledWith(
+			'Read opportunity observation failed: Error: boom',
+			'[TokenProxy]'
+		);
+		expect(sentry.captureException).toHaveBeenNthCalledWith(1, error, {
+			operation: 'tokenProxy:observeReadOpportunities',
+		});
+		expect(sentry.captureException).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({ message: 'plain text' }),
+			{ operation: 'tokenProxy:observeReadOpportunities' }
+		);
+	});
+
+	it('sit in the report beside the usage, never inside it', async () => {
+		configure();
+		const usage = { range: 'month', totals: { requests: 3 }, byAgent: [] };
+		requestStats.readTokenProxyUsage.mockReturnValueOnce({
+			usage,
+			recentCompressions: [],
+		} as never);
+
+		const report = await getTokenProxyReport();
+
+		expect(report.readOpportunities).toEqual({ marker: 'opportunities' });
+		expect(report.usage).toBe(usage);
+		expect(Object.keys(report)).toEqual([
+			'status',
+			'agents',
+			'usage',
+			'recentCompressions',
+			'readOpportunities',
+		]);
+		expect(JSON.stringify(report.usage)).not.toContain('opportunities');
+	});
+
+	it('are forgotten with the rest of the state, after the pass in flight', async () => {
+		const order: string[] = [];
+		observer.instance.idle.mockImplementationOnce(async () => void order.push('idle'));
+		observer.instance.reset.mockImplementationOnce(() => void order.push('reset'));
+
+		await resetTokenProxyForTests();
+
+		expect(order).toEqual(['idle', 'reset']);
 	});
 });
 

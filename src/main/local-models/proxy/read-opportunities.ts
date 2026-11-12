@@ -245,6 +245,11 @@ export interface ReadOpportunityReport {
  */
 const READ_TOOLS: ReadonlySet<string> = new Set(['read', 'readfile']);
 
+/** Whether a tool name is one of the read tools above, in any provider spelling. */
+export function isReadToolName(name: string): boolean {
+	return READ_TOOLS.has(normalizeToolName(name));
+}
+
 const PATH_KEYS: readonly string[] = ['file_path', 'filePath', 'path', 'absolute_path'];
 const RANGE_KEYS: readonly string[] = ['offset', 'limit'];
 
@@ -416,7 +421,7 @@ export function readEventsFromDescriptors(input: ReadDescriptorInput): ReadEvent
 		if (descriptor.linkage === 'ambiguous') return skip(null, null, 'ambiguous-tool-id');
 		const tool = descriptor.toolName;
 		if (descriptor.linkage !== 'matched' || !tool) return;
-		if (!READ_TOOLS.has(normalizeToolName(tool))) return;
+		if (!isReadToolName(tool)) return;
 
 		if (reads++ >= limits.maxReads) {
 			complete = false;
@@ -527,7 +532,8 @@ function provablyDisjoint(a: ReadVersion, b: ReadVersion): boolean {
 	);
 }
 
-function countFindings(findings: readonly ReadFinding[]): ReadOpportunityCounts {
+/** The counts of a set of findings. A caller that narrows a report recounts with it. */
+export function countFindings(findings: readonly ReadFinding[]): ReadOpportunityCounts {
 	const counts: ReadOpportunityCounts = {
 		examined: findings.length,
 		first: 0,

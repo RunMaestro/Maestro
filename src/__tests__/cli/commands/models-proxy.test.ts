@@ -23,9 +23,14 @@ import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { ExitCode } from '../../../cli/exit-codes';
 import type {
 	TokenProxyBlockDetail,
+	TokenProxyReadOpportunities,
 	TokenProxyReport,
 } from '../../../shared/local-models/token-proxy';
-import { formatError } from '../../../cli/output/formatter';
+import {
+	TOKEN_PROXY_OPPORTUNITY_NOTE,
+	TOKEN_PROXY_UNAVAILABLE_IDENTITY,
+} from '../../../shared/local-models/token-proxy';
+import { formatError, formatTokenProxyOpportunities } from '../../../cli/output/formatter';
 
 function mockSend(reply: Record<string, unknown>) {
 	const captured: { payload?: Record<string, unknown>; responseType?: string } = {};
@@ -103,6 +108,95 @@ const RUNNING: TokenProxyReport = {
 			compressors: ['logs'],
 			agentId: 'agent-1',
 			at: Date.now() - 60_000,
+		},
+	],
+};
+
+const OPPORTUNITIES: TokenProxyReadOpportunities = {
+	version: 1,
+	mode: 'observation',
+	note: TOKEN_PROXY_OPPORTUNITY_NOTE,
+	realized: false,
+	tokenCountKind: 'character-estimate',
+	since: Date.now() - 3_600_000,
+	coverage: {
+		scope: 'process-lifetime',
+		attribution: 'newest-tool-results',
+		observed: 412,
+		withReads: 38,
+		incomplete: 0,
+		skipped: { busy: 2, 'too-large': 1, unreadable: 0, 'no-workspace': 0, failed: 0 },
+	},
+	identity: {
+		known: ['agent'],
+		unavailable: [...TOKEN_PROXY_UNAVAILABLE_IDENTITY],
+		note: 'The proxy knows an agent, not a tab.',
+	},
+	limits: {
+		bodyChars: 8388608,
+		readsPerRequest: 256,
+		previewPairs: 64,
+		outlineSources: 32,
+		recentPreviews: 25,
+		previewTextChars: 8192,
+	},
+	reads: {
+		examined: 41,
+		first: 20,
+		identical: 9,
+		changed: 4,
+		unsupported: 8,
+		unsupportedByReason: { 'partial-range': 3, 'outside-workspace': 5 },
+	},
+	previews: {
+		examined: 13,
+		unchanged: 9,
+		delta: 3,
+		unsupported: 1,
+		unsupportedByReason: { 'insufficient-reduction': 1 },
+		potentialChars: 16800,
+		potentialTokens: 4200,
+	},
+	outlines: {
+		examined: 13,
+		outlined: 11,
+		unsupported: 2,
+		unsupportedByReason: { 'parse-error': 2 },
+		potentialChars: 124000,
+		potentialTokens: 31000,
+	},
+	recent: [
+		{
+			kind: 'unchanged-read',
+			observedAt: Date.now() - 120_000,
+			agentId: 'agent-1',
+			route: 'anthropic',
+			requestKind: 'anthropic-messages',
+			tool: 'Read',
+			callId: 'toolu_02',
+			path: '/work/app/src/a.ts',
+			sourceHash: '3fa2c1d9e0b1',
+			baseline: { callId: 'toolu_01', hash: '3fa2c1d9e0b1' },
+			baselineBasis: 'same-request-delivered-whole',
+			delivery: 'whole',
+			potential: {
+				kind: 'potential-reduction',
+				realized: false,
+				basis: 'text-as-sent',
+				tokenCountKind: 'character-estimate',
+				fullChars: 4800,
+				fullTokens: 1200,
+				previewChars: 160,
+				previewTokens: 40,
+				reducibleChars: 4640,
+				reducibleTokens: 1160,
+			},
+			parser: null,
+			changes: null,
+			text: '[maestro-preview unchanged-read baseline=toolu_01 sha256=3fa2c1d9e0b1 lines=120]',
+			textChars: 80,
+			cut: false,
+			redacted: false,
 		},
 	],
 };
@@ -250,6 +344,98 @@ describe('models proxy status command', () => {
 		vi.mocked(withMaestroClient).mockRejectedValue(new Error('Maestro desktop app is not running'));
 		await expect(modelsProxyStatus({})).rejects.toThrow('__exit__');
 		expect(errorSpy).toHaveBeenCalledWith(formatError('Maestro desktop app is not running'));
+	});
+	describe('read opportunities', () => {
+		it('prints what the proxy could have shortened, apart from what it removed', async () => {
+			mockSend({ success: true, report: { ...RUNNING, readOpportunities: OPPORTUNITIES } });
+
+			await modelsProxyStatus({});
+
+			const output = logSpy.mock.calls[0][0] as string;
+			const [realized, potential] = output.split('Read opportunities');
+			// What the proxy removed is printed first, and the block that follows is not part of it.
+			expect(realized).toMatch(/10000 tokens saved \(25%\)/);
+			expect(potential).toContain('observation only: none of this was applied');
+			expect(potential).toMatch(/412 requests examined, 38 with a read among their newest results/);
+			expect(potential).toContain('Passthrough requests are not read.');
+			expect(potential).toContain(
+				'Not examined: 2 an earlier request was still being examined; 1 the body is past the examination limit'
+			);
+			expect(potential).toContain(
+				'Newest reads: 41 examined: 20 first, 9 identical re-reads, 4 changed re-reads, 8 not comparable (outside-workspace 5, partial-range 3)'
+			);
+			expect(potential).toContain(
+				'Re-read previews: 9 unchanged, 3 delta, 1 refused (insufficient-reduction 1); potential reduction 4,200 tokens'
+			);
+			expect(potential).toContain(
+				'Source outlines: 11 outlined, 2 refused (parse-error 2); potential reduction 31,000 tokens'
+			);
+			expect(potential).toContain(TOKEN_PROXY_OPPORTUNITY_NOTE);
+			expect(potential).toContain('Not available: tab, native-session, subagent, window.');
+			expect(potential).toMatch(
+				/Unchanged re-read\s+\/work\/app\/src\/a\.ts\s+sha 3fa2c1d9e0b1\s+1200 -> 40 tokens \(potential\)\s+whole, /
+			);
+			// No figure is labelled as a saving. Only the note names the phrase, to rule it out.
+			const figures = potential
+				.split('\n')
+				.filter((line) => !line.includes(TOKEN_PROXY_OPPORTUNITY_NOTE));
+			expect(figures.join('\n')).not.toMatch(/tokens saved/);
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('prints nothing about them for a desktop that predates them', async () => {
+			mockSend({ success: true, report: RUNNING });
+
+			await modelsProxyStatus({});
+
+			expect(logSpy.mock.calls[0][0] as string).not.toContain('Read opportunities');
+		});
+
+		it('prints nothing about them while the proxy has never been set up', async () => {
+			mockSend({ success: true, report: { ...NOT_SET_UP, readOpportunities: OPPORTUNITIES } });
+
+			await modelsProxyStatus({});
+
+			expect(logSpy.mock.calls[0][0] as string).not.toContain('Read opportunities');
+		});
+
+		it('keeps them whole in the JSON report, as a field apart from the usage', async () => {
+			mockSend({ success: true, report: { ...RUNNING, readOpportunities: OPPORTUNITIES } });
+
+			await modelsProxyStatus({ json: true });
+
+			const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+			expect(parsed.readOpportunities).toEqual(OPPORTUNITIES);
+			expect(parsed.readOpportunities).toMatchObject({ mode: 'observation', realized: false });
+			expect(parsed.usage.totals.tokensSaved).toBe(10000);
+			expect(JSON.stringify(parsed.usage)).not.toContain('potential');
+		});
+
+		it('says so when nothing was examined and nothing was skipped', () => {
+			const lines = formatTokenProxyOpportunities({
+				...OPPORTUNITIES,
+				coverage: {
+					...OPPORTUNITIES.coverage,
+					observed: 1,
+					withReads: 0,
+					skipped: { ...OPPORTUNITIES.coverage.skipped, busy: 0, 'too-large': 0 },
+				},
+				recent: [],
+			}).join('\n');
+
+			expect(lines).toMatch(/1 request examined, 0 with a read/);
+			expect(lines).not.toContain('Not examined');
+			expect(lines).not.toContain('Recent previews');
+		});
+
+		it('says when a work bound left older reads unexamined', () => {
+			const lines = formatTokenProxyOpportunities({
+				...OPPORTUNITIES,
+				coverage: { ...OPPORTUNITIES.coverage, incomplete: 2 },
+			}).join('\n');
+
+			expect(lines).toContain('2 requests hit a work bound; older reads went unexamined.');
+		});
 	});
 });
 

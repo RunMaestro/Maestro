@@ -96,6 +96,7 @@ import {
 	type CompressionCachePruneResult,
 	type CompressionCacheUsage,
 } from './compression-cache';
+import { createOpportunityObserver } from './opportunity-observer';
 import { readTokenProxyUsage, recordTokenProxyRequest } from './request-stats';
 import {
 	createTokenProxyServer,
@@ -181,6 +182,29 @@ export function getTokenProxyRecoveryObservations() {
 		),
 	};
 }
+
+/**
+ * Where an agent works, read from its stored record: the roots a file it reads
+ * must sit under for the opportunity analyzer to compare it with another read.
+ */
+function workspaceRoots(agentId: string | null): string[] {
+	const record = agentId === null ? undefined : agentRecord(agentId);
+	return [record?.projectRoot, record?.cwd].filter(
+		(root): root is string => typeof root === 'string' && root !== ''
+	);
+}
+
+// Read opportunities (phase 04), observed on the requests the proxy reads, off
+// the forwarding path. Fixed-size tallies; no request text outlives a pass.
+const opportunityObserver = createOpportunityObserver({
+	rootsFor: workspaceRoots,
+	onFailure: (error) => {
+		logger.warn(`Read opportunity observation failed: ${error}`, LOG_CONTEXT);
+		void captureException(error instanceof Error ? error : new Error(String(error)), {
+			operation: 'tokenProxy:observeReadOpportunities',
+		});
+	},
+});
 
 // Every start, stop and port choice runs on one chain: a stop requested while
 // a start is still binding must wait for it, not race it.
@@ -439,6 +463,7 @@ async function start(port: number): Promise<void> {
 				logRequest(entry);
 				recordTokenProxyRequest(entry);
 			},
+			observe: (request) => opportunityObserver.observe(request),
 			modeFor,
 			backgroundRouteFor,
 			recoveryFor: (target) => {
@@ -837,7 +862,8 @@ export async function getTokenProxyStatus(): Promise<TokenProxyStatus> {
 /**
  * The proxy's whole picture, for the Gateway section and `maestro-cli models
  * proxy status`: the listener, the agents on it with their mode, what it
- * carried lately, and the blocks it last shortened. Reads only.
+ * carried lately, the blocks it last shortened, and the read opportunities it
+ * observed. The last is potential only and separate from the others. Reads only.
  */
 export async function getTokenProxyReport(): Promise<TokenProxyReport> {
 	const status = await getTokenProxyStatus();
@@ -853,7 +879,12 @@ export async function getTokenProxyReport(): Promise<TokenProxyReport> {
 			gatewayUrl: String(record.gatewayUrl),
 		});
 	}
-	return { status, agents, ...readTokenProxyUsage() };
+	return {
+		status,
+		agents,
+		...readTokenProxyUsage(),
+		readOpportunities: opportunityObserver.snapshot(),
+	};
 }
 
 /**
@@ -921,4 +952,6 @@ export async function resetTokenProxyForTests(): Promise<void> {
 	for (const key of Object.keys(recoveryReadCounters) as Array<keyof typeof recoveryReadCounters>) {
 		recoveryReadCounters[key] = 0;
 	}
+	await opportunityObserver.idle();
+	opportunityObserver.reset();
 }

@@ -16,6 +16,7 @@ import {
 	asTokenProxyMode,
 	classifyTokenProxyPath,
 	defaultTokenProxyUpstreams,
+	describeOpportunityReasons,
 	gatewayPointsAtTokenProxy,
 	holdsTokenProxyFields,
 	isCompressingTokenProxyMode,
@@ -27,7 +28,11 @@ import {
 	TOKEN_PROXY_MODE_DESCRIPTIONS,
 	TOKEN_PROXY_MODE_LABELS,
 	TOKEN_PROXY_MODES,
+	TOKEN_PROXY_OBSERVATION_SKIP_LABELS,
+	TOKEN_PROXY_OPPORTUNITY_KIND_LABELS,
+	TOKEN_PROXY_OPPORTUNITY_NOTE,
 	TOKEN_PROXY_ROUTES,
+	TOKEN_PROXY_UNAVAILABLE_IDENTITY,
 	tokenProxyAgentGatewayUrl,
 	tokenProxyErrorBody,
 	tokenProxyGatewayUrl,
@@ -521,5 +526,58 @@ describe('OFF_TOKEN_PROXY_FIELDS', () => {
 		expect(holdsTokenProxyFields({ ...OFF_TOKEN_PROXY_FIELDS })).toBe(false);
 		expect(holdsTokenProxyFields({ tokenProxyRetrieval: true })).toBe(true);
 		expect(holdsTokenProxyFields({ tokenProxyMode: 'compress' })).toBe(true);
+	});
+});
+
+describe('read opportunities', () => {
+	it('names every kind of preview and every reason a request is not examined', () => {
+		expect(Object.keys(TOKEN_PROXY_OPPORTUNITY_KIND_LABELS).sort()).toEqual([
+			'code-outline',
+			'read-delta',
+			'unchanged-read',
+		]);
+		expect(Object.keys(TOKEN_PROXY_OBSERVATION_SKIP_LABELS).sort()).toEqual([
+			'busy',
+			'failed',
+			'no-workspace',
+			'too-large',
+			'unreadable',
+		]);
+		for (const label of [
+			...Object.values(TOKEN_PROXY_OPPORTUNITY_KIND_LABELS),
+			...Object.values(TOKEN_PROXY_OBSERVATION_SKIP_LABELS),
+		]) {
+			expect(label.length).toBeGreaterThan(0);
+		}
+	});
+
+	it('lists the identity the proxy cannot see, and says the figures are not savings', () => {
+		expect([...TOKEN_PROXY_UNAVAILABLE_IDENTITY]).toEqual([
+			'tab',
+			'native-session',
+			'subagent',
+			'window',
+		]);
+		expect(TOKEN_PROXY_OPPORTUNITY_NOTE).toMatch(/^Observation only\./);
+		expect(TOKEN_PROXY_OPPORTUNITY_NOTE).toContain('nothing was saved by them');
+		expect(TOKEN_PROXY_OPPORTUNITY_NOTE).toContain(
+			'Actual proxy compression is measured separately'
+		);
+		expect(TOKEN_PROXY_OPPORTUNITY_NOTE).not.toContain('The model saw exactly what the agent sent');
+		expect(TOKEN_PROXY_OPPORTUNITY_NOTE).toContain('alternatives, not a sum');
+	});
+
+	describe('describeOpportunityReasons', () => {
+		it('lists reasons most frequent first, ties by name, with grouped counts', () => {
+			expect(
+				describeOpportunityReasons({ 'partial-range': 3, 'outside-workspace': 1200, 'a-reason': 3 })
+			).toBe('outside-workspace 1,200, a-reason 3, partial-range 3');
+		});
+
+		it('leaves out a reason that was never counted, and is empty for none', () => {
+			expect(describeOpportunityReasons({ 'parse-error': 0, 'too-large': 2 })).toBe('too-large 2');
+			expect(describeOpportunityReasons({})).toBe('');
+			expect(describeOpportunityReasons({ x: 0 })).toBe('');
+		});
 	});
 });

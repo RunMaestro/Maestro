@@ -11,6 +11,11 @@
  * and a body that cannot be read, or a compressor that fails, goes out exactly
  * as it arrived.
  *
+ * Then observation: the hook that hands a read request to the read-opportunity
+ * observer runs after the body is on its way, never changes what is sent or
+ * answered, and is offered only requests the proxy read. With the real observer
+ * behind it, what it reports is potential and apart from what the proxy removed.
+ *
  * Then background routing: a side request on the provider's small model goes
  * to the agent's target with the target's key and model and nothing of the
  * provider's, every sign of a turn keeps a request on the provider byte for
@@ -19,6 +24,17 @@
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
+
+// The real observer reaches the analyzer, which reaches the compressor's imports.
+vi.mock('electron', () => ({ app: { getPath: () => '/tmp/token-proxy-server-unused' } }));
+vi.mock('../../../../main/utils/logger', () => ({
+	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock('../../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => `PROMPT:${id}`),
+}));
+vi.mock('../../../../main/local-models/task-router', () => ({ runLocalTask: vi.fn() }));
+
 import * as http from 'http';
 import * as zlib from 'zlib';
 import { randomBytes } from 'crypto';
@@ -36,6 +52,13 @@ import type {
 	CompressRequestResult,
 	LocalRecoveryCapability,
 } from '../../../../main/local-models/proxy/compress';
+import { createOpportunityObserver } from '../../../../main/local-models/proxy/opportunity-observer';
+import {
+	body as requestBody,
+	numbered,
+	read as readStep,
+	ROOT as WORKSPACE,
+} from '../../../helpers/proxyReadRequests';
 
 interface SeenRequest {
 	method: string;
@@ -102,7 +125,7 @@ async function startProxy(
 	upstreams: Record<string, string>,
 	extra: Pick<
 		TokenProxyServerOptions,
-		'modeFor' | 'compress' | 'backgroundRouteFor' | 'recoveryFor'
+		'modeFor' | 'compress' | 'backgroundRouteFor' | 'recoveryFor' | 'observe'
 	> = {}
 ): Promise<RunningProxy> {
 	const logs: TokenProxyRequestLog[] = [];
@@ -1386,6 +1409,255 @@ describe('token proxy server, compress mode', () => {
 		expect(JSON.parse(answer.body.toString()).error.code).toBe('upstream-unreachable');
 		await vi.waitFor(() => expect(logs).toHaveLength(1));
 		expect(logs[0].outcome).toBe('upstream-failed');
+	});
+
+	describe('observation', () => {
+		/** Let the turns the server defers to run. */
+		const flush = async (): Promise<void> => {
+			for (let turn = 0; turn < 3; turn++) await new Promise((resolve) => setImmediate(resolve));
+		};
+
+		it('offers a request as the agent sent it and as the proxy sent it on', async () => {
+			const upstream = await startUpstream((_req, res) => res.end('ok'));
+			const observe = vi.fn();
+			let changed = true;
+			const compress = vi.fn(async (_kind: string, text: string) =>
+				changed ? compressResult(shortened, true) : compressResult(text, false)
+			);
+			const { port } = await startProxy(
+				{ anthropic: upstream.origin },
+				{ modeFor: () => 'compress', compress, observe }
+			);
+			const body = Buffer.from(original, 'utf-8');
+			const post = () =>
+				send(port, {
+					path: '/agent/agent-1/anthropic/v1/messages',
+					headers: jsonHeaders(body),
+					body,
+				});
+
+			await post();
+			await vi.waitFor(() => expect(observe).toHaveBeenCalledTimes(1));
+			expect(observe).toHaveBeenLastCalledWith({
+				kind: 'anthropic-messages',
+				route: 'anthropic',
+				agentId: 'agent-1',
+				sent: original,
+				forwarded: shortened,
+			});
+
+			changed = false;
+			await post();
+			await vi.waitFor(() => expect(observe).toHaveBeenCalledTimes(2));
+			const second = observe.mock.calls[1][0];
+			expect(second.sent).toBe(original);
+			expect(second.forwarded).toBe(second.sent);
+		});
+
+		it('changes nothing about a request: same bytes, headers, answer and log, even from a hook that never returns', async () => {
+			const upstream = await startUpstream((_req, res) => res.end('ok'));
+			const compress = async () => compressResult(shortened, true);
+			const hung = vi.fn(() => new Promise<void>(() => {}) as unknown as void);
+			const plain = await startProxy(
+				{ anthropic: upstream.origin },
+				{ modeFor: () => 'compress', compress }
+			);
+			const observed = await startProxy(
+				{ anthropic: upstream.origin },
+				{ modeFor: () => 'compress', compress, observe: hung }
+			);
+			const body = Buffer.from(original, 'utf-8');
+			const post = (port: number) =>
+				send(port, {
+					path: '/agent/agent-1/anthropic/v1/messages?beta=true',
+					headers: jsonHeaders(body),
+					body,
+				});
+
+			const withoutHook = await post(plain.port);
+			const withHook = await post(observed.port);
+
+			expect(hung).toHaveBeenCalledTimes(1);
+			expect(withHook.status).toBe(withoutHook.status);
+			expect(withHook.body.equals(withoutHook.body)).toBe(true);
+			expect(upstream.seen[1].url).toBe(upstream.seen[0].url);
+			expect(upstream.seen[1].rawHeaders).toEqual(upstream.seen[0].rawHeaders);
+			expect(upstream.seen[1].body.equals(upstream.seen[0].body)).toBe(true);
+			await vi.waitFor(() => {
+				expect(plain.logs).toHaveLength(1);
+				expect(observed.logs).toHaveLength(1);
+			});
+			const strip = ({ startedAt, durationMs, compression, ...rest }: TokenProxyRequestLog) => ({
+				...rest,
+				compression: { ...compression, addedLatencyMs: 0 },
+			});
+			expect(strip(observed.logs[0])).toEqual(strip(plain.logs[0]));
+		});
+
+		it('runs the hook once the compressor has finished', async () => {
+			const upstream = await startUpstream((_req, res) => res.end('ok'));
+			const order: string[] = [];
+			const compress = async (_kind: string, text: string) => {
+				order.push('compress');
+				return compressResult(text, false);
+			};
+			const { port } = await startProxy(
+				{ anthropic: upstream.origin },
+				{ modeFor: () => 'compress', compress, observe: () => void order.push('observe') }
+			);
+			const body = Buffer.from(original, 'utf-8');
+
+			await send(port, {
+				path: '/agent/a/anthropic/v1/messages',
+				headers: jsonHeaders(body),
+				body,
+			});
+			await vi.waitFor(() => expect(order).toEqual(['compress', 'observe']));
+		});
+
+		it('offers nothing it did not read', async () => {
+			const upstream = await startUpstream((_req, res) => res.end('ok'));
+			const observe = vi.fn();
+			let mode: 'passthrough' | 'compress' = 'passthrough';
+			let fail = false;
+			const compress = vi.fn(async (_kind: string, text: string) => {
+				if (fail) throw new Error('cache directory is gone');
+				return compressResult(text, false);
+			});
+			const { port } = await startProxy(
+				{ anthropic: upstream.origin, openai: upstream.origin },
+				{ modeFor: () => mode, compress, observe }
+			);
+			const body = Buffer.from(original, 'utf-8');
+			const messages = (route = 'anthropic/v1/messages') => ({
+				path: `/agent/a/${route}`,
+				headers: jsonHeaders(body),
+				body,
+			});
+
+			// Passthrough streams the body unread.
+			await send(port, messages());
+			mode = 'compress';
+			// A path that holds no message list, and a route that does not exist.
+			await send(port, messages('anthropic/v1/messages/count_tokens'));
+			await send(port, messages('nowhere/v1/messages'));
+			// Bodies the proxy could not read.
+			for (const entry of [
+				{ headers: ['Content-Encoding', 'snappy'], body: randomBytes(256) },
+				{ headers: [], body: Buffer.from([0xff, 0xfe, 0x00, 0xc3]) },
+			]) {
+				await send(port, {
+					path: '/agent/a/openai/v1/responses',
+					headers: [...entry.headers, 'Content-Length', String(entry.body.length)],
+					body: entry.body,
+				});
+			}
+			// A compressor that failed: the request went out as it arrived.
+			fail = true;
+			await send(port, messages());
+			await flush();
+
+			expect(observe).not.toHaveBeenCalled();
+		});
+
+		describe('with the real observer', () => {
+			const lines = Array.from({ length: 60 }, (_, i) => `line ${i}: text that is long enough`);
+			const notes = () => readStep(numbered(lines), { file_path: `${WORKSPACE}/docs/notes.txt` });
+			const other = () => readStep(numbered(lines), { file_path: `${WORKSPACE}/docs/other.txt` });
+
+			async function proxyWithObserver(
+				compress: (kind: string, text: string) => Promise<CompressRequestResult>
+			) {
+				const upstream = await startUpstream((_req, res) => res.end('ok'));
+				const observer = createOpportunityObserver({ rootsFor: () => [WORKSPACE] });
+				const running = await startProxy(
+					{ anthropic: upstream.origin },
+					{
+						modeFor: () => 'compress',
+						compress,
+						observe: (request) => observer.observe(request),
+					}
+				);
+				const post = (text: string) => {
+					const buffer = Buffer.from(text, 'utf-8');
+					return send(running.port, {
+						path: '/agent/agent-1/anthropic/v1/messages',
+						headers: jsonHeaders(buffer),
+						body: buffer,
+					});
+				};
+				return { upstream, observer, post, ...running };
+			}
+
+			it('reports a re-read as potential and sends the request exactly as the agent sent it', async () => {
+				const { upstream, observer, post, logs } = await proxyWithObserver(async (_kind, text) =>
+					compressResult(text, false)
+				);
+				const text = requestBody('anthropic-messages', [notes(), notes()]);
+
+				const answer = await post(text);
+				await vi.waitFor(() => expect(observer.snapshot().coverage.observed).toBe(1));
+
+				expect(answer.body.toString()).toBe('ok');
+				expect(upstream.seen[0].body.equals(Buffer.from(text, 'utf-8'))).toBe(true);
+				const report = observer.snapshot();
+				expect(report.reads).toMatchObject({ examined: 1, identical: 1 });
+				expect(report.previews).toMatchObject({ unchanged: 1 });
+				expect(report.previews.potentialTokens).toBeGreaterThan(0);
+				expect(report.recent[0]).toMatchObject({
+					kind: 'unchanged-read',
+					agentId: 'agent-1',
+					potential: { realized: false },
+				});
+				// The proxy removed nothing, and its own record says so. The opportunity
+				// is not a field of it.
+				await vi.waitFor(() => expect(logs).toHaveLength(1));
+				expect(logs[0].compression).toMatchObject({ changed: false });
+				expect(logs[0].compression?.sentTokens).toBe(logs[0].compression?.originalTokens);
+				expect(JSON.stringify(logs[0])).not.toMatch(/potential|opportunit/i);
+			});
+
+			it('counts a read once: the next request carries it in its history', async () => {
+				const { observer, post } = await proxyWithObserver(async (_kind, text) =>
+					compressResult(text, false)
+				);
+				const history = [notes(), notes()];
+
+				await post(requestBody('anthropic-messages', history));
+				await vi.waitFor(() => expect(observer.snapshot().coverage.observed).toBe(1));
+				await post(requestBody('anthropic-messages', [...history, other()]));
+				await vi.waitFor(() => expect(observer.snapshot().coverage.observed).toBe(2));
+
+				const report = observer.snapshot();
+				expect(report.reads).toMatchObject({ examined: 2, first: 1, identical: 1 });
+				expect(report.recent).toHaveLength(1);
+			});
+
+			it('does not offer as an opportunity what the proxy already removed', async () => {
+				const text = requestBody('anthropic-messages', [notes(), notes()]);
+				const shortenedBaseline = text.replace(
+					JSON.stringify(numbered(lines)),
+					JSON.stringify('[shortened by the proxy]')
+				);
+				const { observer, post, logs } = await proxyWithObserver(async () =>
+					compressResult(shortenedBaseline, true)
+				);
+
+				await post(text);
+				await vi.waitFor(() => expect(observer.snapshot().coverage.observed).toBe(1));
+				await vi.waitFor(() => expect(logs).toHaveLength(1));
+
+				// Realized: the proxy sent fewer tokens than it received.
+				expect(logs[0].compression?.sentTokens).toBeLessThan(
+					logs[0].compression?.originalTokens ?? 0
+				);
+				// Potential: the shortened baseline leaves nothing to compare against.
+				const report = observer.snapshot();
+				expect(report.previews.unsupportedByReason).toEqual({ 'baseline-replaced': 1 });
+				expect(report.previews.potentialTokens).toBe(0);
+				expect(report.recent).toEqual([]);
+			});
+		});
 	});
 });
 

@@ -1444,7 +1444,7 @@ The proxy reaches the providers in the first table above: Claude Code, Codex, an
 maestro-cli update-agent <agent-id> --proxy-mode compress   # off | passthrough | compress | compress-early
 maestro-cli update-agent <agent-id> --proxy-retrieval on     # on | off; only while compressing
 maestro-cli show agent <agent-id> --json                    # tokenProxyMode, tokenProxyRetrieval
-maestro-cli models proxy status                             # the listener, agents, totals, recent compressions
+maestro-cli models proxy status                             # the listener, agents, totals, recent compressions, read opportunities
 maestro-cli models proxy block <hash>                       # a diff of one shortened block
 maestro-cli models proxy block <hash> --original --lines 10:30
 maestro-cli models proxy cache                              # entries, size, least recent use
@@ -1452,6 +1452,12 @@ maestro-cli models proxy cache prune --older-than 7d        # prune now (never b
 ```
 
 `--lines` selects inclusive, 1-based original lines, with a maximum of 1,000 lines and 256 KiB returned text. It requires `--original`. Standard output contains the exact selected text; standard error reports which lines were returned and whether the selection is complete. With `--json`, that metadata is in `block.originalRange`. A request past EOF can return fewer lines; a scan or byte limit fails explicitly. Token totals and the compressed side still describe the whole block. The marker names the archive by hash and carries no shell command; a model reads an original through the Retrieval tool, a person through `models proxy block`.
+
+**Read opportunities.** `maestro-cli models proxy status` also lists what the proxy could have shortened and did not. For an agent in a compress mode, the proxy looks at the file reads in the newest tool results of each request and finds three things: a file read again that is identical to the earlier read, a file read again with a few changed lines, and a source file (TypeScript, JavaScript or Python) that an outline of its imports and signatures could stand in for. It measures each against the text the agent sent. This is observation only. None of it is applied: no tool result is replaced because of these figures, what the model sees is decided by the agent's compress mode alone, and each figure is a potential reduction that is never part of "tokens saved". A re-read preview and an outline can describe the same result, so their figures are alternatives and are not added together.
+
+- **What it can and cannot see.** The proxy knows an agent from its gateway URL. It cannot see which tab, native session, subagent or context window a request belongs to, and the report lists those as not available. A read is compared only with an earlier read in the same request, and nothing is remembered between requests. A passthrough request is streamed unread, so it is never examined.
+- **Coverage is stated.** The tallies start when the app starts. The report counts the requests it did not examine (an earlier request was still being examined, the body was over the limit, the agent has no working directory) and gives a reason for every read it could not compare, such as `partial-range` or `outside-workspace`.
+- **Previews are redacted.** The recent previews hold lines of a file. Maestro replaces secret-shaped text and cuts each preview before it leaves the proxy.
 
 ### Background requests
 

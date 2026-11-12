@@ -3205,14 +3205,61 @@ sums under the table.
 | `maestro-cli models proxy cache [prune]` | `local_models_proxy_cache`                                          |
 
 Both pairs end in the same two service functions. `getTokenProxyReport()` returns the listener
-status, the agents on it with their mode, the usage and the recent compressions; it never chooses
-a port. `readTokenProxyBlock(hash)` returns both sides of one compressed block from the
+status, the agents on it with their mode, the usage, the recent compressions and the read
+opportunities (below); it never chooses a port. `readTokenProxyBlock(hash)` returns both sides of one compressed block from the
 content-addressed cache (`cache.read` for the replacement, `cache.readOriginal` for what the
 agent sent); it checks the hash with `isContentHash()` before the hash is used as a path, and
 answers `null` for a block that was kept or is gone. The Gateway section draws the two sides with
 `<TextDiff>` (`src/renderer/components/ui/TextDiff.tsx`), the same `react-diff-view` renderer the
 Git Diff viewer uses. The report is read on mount, on Refresh and after a mode change; nothing is
 pushed, because the proxy handles a request every few seconds while an agent works.
+
+### Read opportunities
+
+The report also says what the proxy could have shortened and did not: files read again, and source
+files that an outline could stand in for. Phase 04 of the token optimization work built three pure
+steps (`read-opportunities.ts`, `read-previews.ts`, `code-structure.ts`) and `opportunity-observer.ts`
+runs them for the report. It only observes. No request is edited and no cache is opened by it, so
+what the model is shown is decided by the compress mode alone.
+
+```mermaid
+flowchart LR
+	REQ["server: compress mode request<br/>body read, compressed, forwarded"] -->|"setImmediate, after the upstream write"| OBS["observe(request)"]
+	OBS -->|"a pass is running"| BUSY["counted: skipped busy"]
+	OBS --> PASS["newest results, analyze, previews, outlines<br/>a turn of the event loop between steps"]
+	PASS --> LEDGER[("fixed-size tallies<br/>25 recent previews<br/>process lifetime")]
+	LEDGER --> REPORT["getTokenProxyReport().readOpportunities"]
+```
+
+- **Only requests the proxy already reads.** That is an agent in a compress mode. A passthrough body
+  is streamed unread, and buffering it to look at it would change forwarding, so it is never examined.
+- **Off the forwarding path.** `TokenProxyServerOptions.observe` is called on a later turn of the
+  event loop, after the body went upstream, and is not awaited. A request that arrives while a pass
+  runs is counted (`busy`) and released, so one request's strings are held at a time. Measured on
+  synthetic Messages bodies with Node 24, a pass took 3 ms for 200 KB, 10 ms for 1.3 MB and 38 ms for
+  6 MB of history, almost all of it hashing and scanning that history. A body over 8 MiB is skipped
+  without being parsed.
+- **Only the newest results are counted.** Every request sends the whole history again, so counting
+  every read would count a read once for each later request. The newest results are the run of tool
+  results at the end of the message list: the final Messages message, the trailing `tool` messages,
+  the trailing output items of a Responses `input`. A request that ends in a new prompt adds none.
+  The older reads stay the source of baselines. The analysis window is the newest reads that fit the
+  analyzer's bounds (256 reads, 8 MiB), so the bounds fall on the oldest history and never on what a
+  request adds.
+- **No identity is invented.** The report lists `tab`, `native-session`, `subagent` and `window` as
+  unavailable and nothing is remembered between requests. The price: a client that resends a request
+  is observed twice, and a request skipped as busy loses its newest results.
+- **A baseline is visible on one basis.** It is in the same request and `resultDeliveries()` shows
+  that the model received it whole. A baseline the proxy shortened is `baseline-replaced`; one that
+  cannot be lined up is `baseline-unproven`. Age is never evidence.
+- **Potential only.** Every figure carries `realized: false` and no key is named as a saving.
+  `readOpportunities` sits beside `usage` in the report and is never added to it. Re-read previews
+  and outlines can describe the same result, so they keep separate tallies.
+- **Text leaves the process redacted.** A preview holds lines of the file. It goes through
+  `redactSecrets()` and is cut at a line break before it is kept, so the report that reaches Settings
+  or the CLI never carries the raw text.
+- **Nothing is persisted.** The tallies restart with the app. Stats rows, a migration and the Gateway
+  panel belong to phases 06 and 07.
 
 ### Lifecycle
 

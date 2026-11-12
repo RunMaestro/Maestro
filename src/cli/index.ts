@@ -4623,7 +4623,7 @@ const modelProxy = models
 modelProxy
 	.command('status')
 	.description(
-		'Whether the proxy is listening, the agents on it and their mode, tokens saved and added latency for the last 30 days, and recent compressions (requires the desktop app)'
+		'Whether the proxy is listening, the agents on it and their mode, tokens saved and added latency for the last 30 days, recent compressions, and the read opportunities it observed but did not apply (requires the desktop app)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsProxyStatus);

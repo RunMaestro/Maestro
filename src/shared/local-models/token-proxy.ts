@@ -540,6 +540,13 @@ export interface TokenProxyReport {
 	/** Null when usage statistics are off or the stats database is not ready. */
 	usage: ProxyRequestUsage | null;
 	recentCompressions: ProxyCompressionEntry[];
+	/**
+	 * What the proxy could have shortened and did not. Separate from `usage` on
+	 * purpose: `usage` is what was removed from requests, this is a measurement
+	 * of text that was never sent, and the two are never added. Absent from an
+	 * older desktop.
+	 */
+	readOpportunities?: TokenProxyReadOpportunities;
 }
 
 /** Inclusive, 1-based original lines. LF ends a line; a trailing LF adds no empty line. */
@@ -620,6 +627,203 @@ export interface TokenProxyProviderUsage {
 	cacheReadTokens: number;
 	cacheWriteTokens: number;
 	outputTokens: number;
+}
+
+// ---------------------------------------------------------------------------
+// Read opportunities: what the proxy could have shortened, and did not
+// ---------------------------------------------------------------------------
+
+/**
+ * What a preview could remove from the text it would stand in for. It measures
+ * text that was never sent, so `realized` is always false and no field is
+ * named as a saving.
+ */
+export interface TokenProxyPotentialReduction {
+	kind: 'potential-reduction';
+	/** Always false: nothing here changed a request or reached a model. */
+	realized: false;
+	/** The re-read exactly as the agent sent it, before any compression the proxy applies. */
+	basis: 'text-as-sent';
+	tokenCountKind: 'character-estimate';
+	fullChars: number;
+	fullTokens: number;
+	/** The whole preview text: its markers, hunk headers and lines. */
+	previewChars: number;
+	previewTokens: number;
+	reducibleChars: number;
+	reducibleTokens: number;
+}
+
+/**
+ * Said wherever a read-opportunity figure is shown. A re-read preview and a
+ * source outline can describe the same result, so their figures are
+ * alternatives and are never added to each other or to tokens saved.
+ */
+export const TOKEN_PROXY_OPPORTUNITY_NOTE =
+	'Observation only. Each figure compares the newest tool results the agent sent with a preview that was never applied. These previews changed no request and nothing was saved by them. Actual proxy compression is measured separately and may overlap these estimates. A re-read preview and a source outline can describe the same result: their figures are alternatives, not a sum. Token counts are estimates at 4 characters per token.';
+
+export type TokenProxyOpportunityKind = 'unchanged-read' | 'read-delta' | 'code-outline';
+
+export const TOKEN_PROXY_OPPORTUNITY_KIND_LABELS: Record<TokenProxyOpportunityKind, string> = {
+	'unchanged-read': 'Unchanged re-read',
+	'read-delta': 'Changed re-read',
+	'code-outline': 'Source outline',
+};
+
+/** Why a request the proxy read was not examined for opportunities. */
+export type TokenProxyObservationSkip =
+	| 'busy'
+	| 'too-large'
+	| 'unreadable'
+	| 'no-workspace'
+	| 'failed';
+
+export const TOKEN_PROXY_OBSERVATION_SKIP_LABELS: Record<TokenProxyObservationSkip, string> = {
+	busy: 'an earlier request was still being examined',
+	'too-large': 'the body is past the examination limit',
+	unreadable: 'the body is not a message list the proxy can read',
+	'no-workspace': 'the agent has no working directory to place a file under',
+	failed: 'the examination failed (reported; the request was not affected)',
+};
+
+/**
+ * Identity the proxy cannot see. It knows an agent from the gateway URL it was
+ * given and a request body, and neither names a tab, a native session, a
+ * subagent or a context window. Nothing is attributed or remembered by them.
+ */
+export const TOKEN_PROXY_UNAVAILABLE_IDENTITY = [
+	'tab',
+	'native-session',
+	'subagent',
+	'window',
+] as const;
+
+export type TokenProxyUnavailableIdentity = (typeof TOKEN_PROXY_UNAVAILABLE_IDENTITY)[number];
+
+/** One preview the proxy built and did not use. It holds lines of a file. */
+export interface TokenProxyOpportunity {
+	kind: TokenProxyOpportunityKind;
+	/** Epoch ms the request was examined. */
+	observedAt: number;
+	/** From the base URL the agent was given; null for a request that named no agent. */
+	agentId: string | null;
+	route: string;
+	requestKind: TokenProxyRequestKind;
+	tool: string | null;
+	/** The tool call whose result a stand-in would replace. */
+	callId: string | null;
+	path: string;
+	/** Leading hex of the SHA-256 of the exact text the agent sent. */
+	sourceHash: string;
+	/** The earlier read a re-read repeats. Null for an outline. */
+	baseline: { callId: string | null; hash: string } | null;
+	/** How the baseline counted as visible to the model. Null for an outline, which needs none. */
+	baselineBasis: 'same-request-delivered-whole' | null;
+	/** What the model was shown for the result itself. `replaced` means the proxy shortened it too, so the figures overlap. */
+	delivery: 'whole' | 'replaced' | 'unproven';
+	potential: TokenProxyPotentialReduction;
+	/** The grammar behind an outline. Null for a re-read. */
+	parser: { name: string; dialect: string | null } | null;
+	/** Lines a delta adds and removes. Null for any other kind. */
+	changes: { hunks: number; added: number; removed: number } | null;
+	/** What a stand-in would carry: secrets redacted, cut at a line break for display. */
+	text: string;
+	/** Length of the preview before redaction and cutting. */
+	textChars: number;
+	/** Whether `text` is shorter than the preview. */
+	cut: boolean;
+	/** Whether a secret-shaped span was replaced in `text`. */
+	redacted: boolean;
+}
+
+/** Reads among the newest tool results, as the analyzer related them. */
+export type TokenProxyOpportunityReads = {
+	examined: number;
+	first: number;
+	identical: number;
+	changed: number;
+	unsupported: number;
+	unsupportedByReason: Record<string, number>;
+};
+
+/** Re-reads that could stand as a one-line marker or a small delta. */
+export type TokenProxyOpportunityPreviews = {
+	examined: number;
+	unchanged: number;
+	delta: number;
+	unsupported: number;
+	unsupportedByReason: Record<string, number>;
+	potentialChars: number;
+	potentialTokens: number;
+};
+
+/** Source files that could stand as an outline. An alternative to a re-read preview for the same result. */
+export type TokenProxyOpportunityOutlines = {
+	examined: number;
+	outlined: number;
+	unsupported: number;
+	unsupportedByReason: Record<string, number>;
+	potentialChars: number;
+	potentialTokens: number;
+};
+
+/**
+ * The read opportunities the proxy observed since the app started: phase 04's
+ * analyzer, re-read previews and source outlines, run over requests the proxy
+ * already reads (an agent in a compressing mode) and kept as fixed-size
+ * tallies and a short list of recent previews. Nothing here is persisted,
+ * applied, or part of any realized figure.
+ */
+export interface TokenProxyReadOpportunities {
+	version: 1;
+	mode: 'observation';
+	note: typeof TOKEN_PROXY_OPPORTUNITY_NOTE;
+	/** Always false: every figure measures text that was not sent. */
+	realized: false;
+	tokenCountKind: 'character-estimate';
+	/** Epoch ms the tallies began: the app's start. */
+	since: number;
+	coverage: {
+		scope: 'process-lifetime';
+		/** Which results of a request are counted: those at its end, which it adds to the history. */
+		attribution: 'newest-tool-results';
+		/** Requests examined. A passthrough request is streamed unread and is never one. */
+		observed: number;
+		/** Examined requests with a read among their newest results. */
+		withReads: number;
+		/** Examined requests where a work bound left reads unexamined. */
+		incomplete: number;
+		/** Requests the proxy read but did not examine. */
+		skipped: Record<TokenProxyObservationSkip, number>;
+	};
+	identity: {
+		known: ['agent'];
+		unavailable: TokenProxyUnavailableIdentity[];
+		note: string;
+	};
+	/** The bounds in force, so a refusal or a skip can be explained. */
+	limits: {
+		bodyChars: number;
+		readsPerRequest: number;
+		previewPairs: number;
+		outlineSources: number;
+		recentPreviews: number;
+		previewTextChars: number;
+	};
+	reads: TokenProxyOpportunityReads;
+	previews: TokenProxyOpportunityPreviews;
+	outlines: TokenProxyOpportunityOutlines;
+	/** The newest previews, newest first. */
+	recent: TokenProxyOpportunity[];
+}
+
+/** `partial-range 3, outside-workspace 5`, most frequent first. Empty when there are none. */
+export function describeOpportunityReasons(reasons: Record<string, number>): string {
+	return Object.entries(reasons)
+		.filter(([, count]) => count > 0)
+		.sort(([a, countA], [b, countB]) => countB - countA || a.localeCompare(b))
+		.map(([reason, count]) => `${reason} ${formatCount(count)}`)
+		.join(', ');
 }
 
 /** What the compression cache directory holds (`maestro-cli models proxy cache`). */

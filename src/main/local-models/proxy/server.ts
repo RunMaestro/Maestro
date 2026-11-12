@@ -241,11 +241,36 @@ export interface TokenProxyRequestLog {
 	providerUsage?: TokenProxyProviderUsage;
 }
 
+/**
+ * A request the proxy read in `compress` mode and has already sent on. It is
+ * what the observation hook is given, as two immutable strings.
+ */
+export interface TokenProxyObservedRequest {
+	kind: TokenProxyRequestKind;
+	route: string;
+	/** The agent the base URL named, or null when it named none. */
+	agentId: string | null;
+	/** The decoded request text exactly as the agent sent it. */
+	sent: string;
+	/** The text the proxy sent on: `sent` itself when nothing changed. */
+	forwarded: string;
+}
+
 export interface TokenProxyServerOptions {
 	/** Route prefix -> upstream base URL. Defaults to the real providers. */
 	upstreams?: TokenProxyUpstreams;
 	/** Called once per request, when it has ended. */
 	onRequest?: (entry: TokenProxyRequestLog) => void;
+	/**
+	 * Called for a request whose body the proxy read and compressed (or left
+	 * whole), on a later turn of the event loop, after the body went upstream.
+	 * It is not awaited and cannot change, delay or fail the request: what was
+	 * sent and what comes back are decided before it is called. It must not
+	 * throw; a failure is its own to report. A request that was not read
+	 * (passthrough, too large, an encoding it cannot decode, a compressor that
+	 * failed) is never offered.
+	 */
+	observe?: (request: TokenProxyObservedRequest) => void;
 	/**
 	 * How one agent's requests are carried. Asked once per request, so a mode
 	 * the user changes applies to the next request. Defaults to `passthrough`.
@@ -804,6 +829,7 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 			const log: TokenProxyCompressionLog = { changed: false, addedLatencyMs: 0 };
 			let body = raw;
 			let headers = arrivedHeaders();
+			let observed: TokenProxyObservedRequest | null = null;
 			if ('skipped' in read) {
 				log.skipped = read.skipped;
 				if (read.error !== undefined) log.error = read.error;
@@ -834,6 +860,16 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 						log.changed = true;
 						log.sentTokens = estimateTokenCount(result.body);
 					}
+					// Last, so a request that failed above is never offered.
+					if (options.observe) {
+						observed = {
+							kind,
+							route: target.route,
+							agentId,
+							sent: read.text,
+							forwarded: result.body,
+						};
+					}
 				} catch (error) {
 					// The request goes out as it arrived. Nothing else is safe to send.
 					log.skipped = 'failed';
@@ -849,6 +885,13 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 			if (closed) return;
 			if (log.changed) sentBytes = body.length;
 			forward(upstream, headers).end(body);
+			// After the body is queued, so the hook does not extend the hold before
+			// sending. The hook still shares this process's CPU and event loop.
+			if (observed && options.observe) {
+				const request = observed;
+				const observe = options.observe;
+				setImmediate(() => observe(request));
+			}
 		};
 
 		const onBodyEnd = (): void => void readAndSend(Buffer.concat(received));

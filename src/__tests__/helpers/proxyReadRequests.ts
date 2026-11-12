@@ -33,8 +33,12 @@ export interface Step {
 	isError?: boolean;
 }
 
-/** A step, or the marker a provider writes where it replaced the history before it. */
-export type Item = Step | 'compaction';
+/**
+ * A step, several steps the model called in one turn (their results arrive
+ * together), or the marker a provider writes where it replaced the history
+ * before it.
+ */
+export type Item = Step | Step[] | 'compaction';
 
 export function read(
 	output: string,
@@ -45,6 +49,16 @@ export function read(
 }
 
 export function body(kind: ApiKind, items: Item[], extra: Record<string, unknown> = {}): string {
+	/** The steps of one turn with the id each answers under. */
+	const turn = (item: Step | Step[], index: number, prefix: string) => {
+		const steps = Array.isArray(item) ? item : [item];
+		return steps.map((step, at) => ({
+			step,
+			id: step.id ?? (Array.isArray(item) ? `${prefix}_${index}_${at}` : `${prefix}_${index}`),
+		}));
+	};
+	const args = (input: Step['input']) =>
+		typeof input === 'string' ? input : JSON.stringify(input);
 	if (kind === 'anthropic-messages') {
 		const messages: unknown[] = [{ role: 'user', content: 'Look at the file.' }];
 		items.forEach((item, index) => {
@@ -52,39 +66,44 @@ export function body(kind: ApiKind, items: Item[], extra: Record<string, unknown
 				messages.push({ role: 'assistant', content: [{ type: 'compaction', content: 'summary' }] });
 				return;
 			}
-			const id = item.id ?? `toolu_${index}`;
+			const calls = turn(item, index, 'toolu');
 			messages.push({
 				role: 'assistant',
-				content: [{ type: 'tool_use', id, name: item.tool, input: item.input }],
+				content: calls.map(({ step, id }) => ({
+					type: 'tool_use',
+					id,
+					name: step.tool,
+					input: step.input,
+				})),
 			});
 			messages.push({
 				role: 'user',
-				content: [
-					{
-						type: 'tool_result',
-						tool_use_id: id,
-						content: item.output,
-						...(item.isError ? { is_error: true } : {}),
-					},
-				],
+				content: calls.map(({ step, id }) => ({
+					type: 'tool_result',
+					tool_use_id: id,
+					content: step.output,
+					...(step.isError ? { is_error: true } : {}),
+				})),
 			});
 		});
 		return JSON.stringify({ model: 'claude-test', max_tokens: 64, messages, ...extra });
 	}
-	const args = (input: Step['input']) =>
-		typeof input === 'string' ? input : JSON.stringify(input);
 	if (kind === 'openai-chat-completions') {
 		const messages: unknown[] = [{ role: 'user', content: 'Look at the file.' }];
 		items.forEach((item, index) => {
 			if (item === 'compaction') return;
-			const id = item.id ?? `call_${index}`;
+			const calls = turn(item, index, 'call');
 			messages.push({
 				role: 'assistant',
-				tool_calls: [
-					{ id, type: 'function', function: { name: item.tool, arguments: args(item.input) } },
-				],
+				tool_calls: calls.map(({ step, id }) => ({
+					id,
+					type: 'function',
+					function: { name: step.tool, arguments: args(step.input) },
+				})),
 			});
-			messages.push({ role: 'tool', tool_call_id: id, content: item.output });
+			for (const { step, id } of calls) {
+				messages.push({ role: 'tool', tool_call_id: id, content: step.output });
+			}
 		});
 		return JSON.stringify({ model: 'gpt-test', messages, ...extra });
 	}
@@ -94,14 +113,18 @@ export function body(kind: ApiKind, items: Item[], extra: Record<string, unknown
 			input.push({ type: 'compaction', id: 'cmp_1', encrypted_content: 'opaque' });
 			return;
 		}
-		const id = item.id ?? `call_${index}`;
-		input.push({
-			type: 'function_call',
-			call_id: id,
-			name: item.tool,
-			arguments: args(item.input),
-		});
-		input.push({ type: 'function_call_output', call_id: id, output: item.output });
+		const calls = turn(item, index, 'call');
+		for (const { step, id } of calls) {
+			input.push({
+				type: 'function_call',
+				call_id: id,
+				name: step.tool,
+				arguments: args(step.input),
+			});
+		}
+		for (const { step, id } of calls) {
+			input.push({ type: 'function_call_output', call_id: id, output: step.output });
+		}
 	});
 	return JSON.stringify({ model: 'gpt-test', input, ...extra });
 }

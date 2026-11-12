@@ -54,6 +54,7 @@
 
 import { formatPatch, OMIT_HEADERS, structuredPatch } from 'diff';
 import { estimateTokenCount } from '../../../shared/formatters';
+import type { TokenProxyPotentialReduction } from '../../../shared/local-models/token-proxy';
 import { MIN_SAVING_RATIO, type ToolResultDescriptor } from './compress';
 import { contentHash } from './compression-cache';
 import { stringValue } from './json-spans';
@@ -147,22 +148,12 @@ export type ReadPreviewKind = 'unchanged' | 'delta';
 /** The only basis on which a baseline counts as visible. */
 export type BaselineBasis = 'same-request-delivered-whole';
 
-/** What a preview could remove from the re-read. It is a measurement, never a saving. */
-export interface PotentialReduction {
-	kind: 'potential-reduction';
-	/** Always false: nothing here changed a request or reached a model. */
-	realized: false;
-	/** The re-read exactly as the agent sent it, before any compression the proxy applies. */
-	basis: 'text-as-sent';
-	tokenCountKind: 'character-estimate';
-	fullChars: number;
-	fullTokens: number;
-	/** The whole preview text: its markers, hunk headers and lines. */
-	previewChars: number;
-	previewTokens: number;
-	reducibleChars: number;
-	reducibleTokens: number;
-}
+/**
+ * What a preview could remove from the re-read. It is a measurement, never a
+ * saving. Defined once in the shared token proxy module, because the report
+ * carries it to the Settings panel and the CLI.
+ */
+export type PotentialReduction = TokenProxyPotentialReduction;
 
 export interface ReadPreviewChanges {
 	hunks: number;
