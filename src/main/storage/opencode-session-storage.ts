@@ -1,3 +1,4 @@
+import { readCompletedReply } from './completed-opencode-reply';
 /**
  * OpenCode Session Storage Implementation
  *
@@ -285,6 +286,22 @@ function withOpenCodeDb<T>(fn: (db: Database.Database) => T): T | null {
 	if (!db) return null;
 	try {
 		return fn(db);
+	} finally {
+		db.close();
+	}
+}
+
+/** Recover only this invocation's completed reply, without executing another task. */
+export function readCompletedOpenCodeReply(
+	sessionId: string,
+	startedAt: number,
+	dbPath = OPENCODE_DB_PATH,
+	expectedMessageId?: string
+): { messageId: string; text: string } | null {
+	const db = openOpenCodeDb(dbPath);
+	if (!db) return null;
+	try {
+		return readCompletedReply(db, sessionId, startedAt, expectedMessageId);
 	} finally {
 		db.close();
 	}

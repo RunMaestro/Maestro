@@ -9,6 +9,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
+vi.mock('../../../../main/storage/opencode-session-storage', () => ({
+	readCompletedOpenCodeReply: vi.fn(() => null),
+}));
+import { readCompletedOpenCodeReply } from '../../../../main/storage/opencode-session-storage';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -161,6 +165,54 @@ describe('ExitHandler', () => {
 		vi.mocked(waitForCopilotShutdown).mockImplementation(actualWaitForCopilotShutdown);
 	});
 
+	it('recovers a completed OpenCode answer before exit reaches group history', async () => {
+		vi.mocked(readCompletedOpenCodeReply).mockReturnValue({
+			messageId: 'a',
+			text: 'COMPLETE ANSWER',
+		});
+		const proc = createMockProcess({
+			toolType: 'opencode',
+			agentSessionId: 'ses_test',
+			startTime: 100,
+			isStreamJsonMode: true,
+		});
+		processes.set('test', proc);
+		const dataSpy = vi.spyOn(bufferManager, 'emitDataBuffered');
+		const order: string[] = [];
+		emitter.on('data', () => order.push('data'));
+		emitter.on('exit', () => order.push('exit'));
+		await exitHandler.handleExit('test', 0);
+		expect(dataSpy).toHaveBeenCalledWith('test', 'COMPLETE ANSWER', proc);
+		expect(order).toEqual(['data', 'exit']);
+		vi.mocked(readCompletedOpenCodeReply).mockReset();
+	});
+	it('limits disk recovery to two reads and never resubmits a task', async () => {
+		vi.mocked(readCompletedOpenCodeReply).mockReset().mockReturnValue(null);
+		const proc = createMockProcess({
+			toolType: 'opencode',
+			agentSessionId: 'ses_test',
+			startTime: 100,
+			isStreamJsonMode: true,
+		});
+		processes.set('test', proc);
+		await exitHandler.handleExit('test', 0);
+		expect(readCompletedOpenCodeReply).toHaveBeenCalledTimes(2);
+	});
+	it.each([{ interrupted: true }, { sshRemoteId: 'remote' }])(
+		'never recovers a stopped or remote turn from the local database %j',
+		async (extra) => {
+			vi.mocked(readCompletedOpenCodeReply).mockReset();
+			const proc = createMockProcess({
+				toolType: 'opencode',
+				agentSessionId: 'ses_test',
+				isStreamJsonMode: true,
+				...extra,
+			});
+			processes.set('test', proc);
+			await exitHandler.handleExit('test', 0);
+			expect(readCompletedOpenCodeReply).not.toHaveBeenCalled();
+		}
+	);
 	describe('stream-json jsonBuffer processing at exit', () => {
 		it.each([
 			{ streamedText: '', resultEmitted: false },

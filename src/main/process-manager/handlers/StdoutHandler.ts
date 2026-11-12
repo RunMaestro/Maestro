@@ -672,6 +672,9 @@ export class StdoutHandler {
 		// Each step may have a text event. Only the final text (before reason:"stop") is the real result.
 		// Reset resultEmitted on each new step so the last text event wins instead of the first.
 		if (event.type === 'init' && managedProcess.toolType === 'opencode') {
+			managedProcess.openCodeMessageId = (
+				event.raw as { part?: { messageID?: string } }
+			)?.part?.messageID;
 			managedProcess.resultEmitted = false;
 			managedProcess.streamedText = '';
 		}
@@ -807,7 +810,11 @@ export class StdoutHandler {
 		// Codex can emit multiple agent_message results in a single turn:
 		// an interim "I'm checking..." message and then the final answer.
 		// Keep the latest result text and emit once at turn completion.
-		if (managedProcess.toolType === 'codex' && outputParser.isResultMessage(event) && event.text) {
+		if (
+			(managedProcess.toolType === 'codex' || managedProcess.toolType === 'opencode') &&
+			outputParser.isResultMessage(event) &&
+			event.text
+		) {
 			managedProcess.streamedText = event.text;
 		}
 
@@ -866,6 +873,7 @@ export class StdoutHandler {
 
 		if (
 			managedProcess.toolType !== 'codex' &&
+			managedProcess.toolType !== 'opencode' &&
 			outputParser.isResultMessage(event) &&
 			!managedProcess.resultEmitted &&
 			!copilotIntermediate
