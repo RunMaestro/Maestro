@@ -40,6 +40,7 @@ import {
 	CREATE_PROXY_REQUESTS_INDEXES_SQL,
 	ADD_PROXY_REQUEST_ROUTED_TO_COLUMN_SQL,
 	ADD_PROXY_REQUEST_PROVIDER_USAGE_COLUMNS,
+	ADD_PROXY_REQUEST_TELEMETRY_COLUMNS,
 	CREATE_S1_DECISIONS_SQL,
 	CREATE_S1_DECISIONS_INDEXES_SQL,
 	ADD_S1_DECISION_TAB_ID_COLUMN_SQL,
@@ -201,6 +202,16 @@ function getMigrations(): Migration[] {
 			isApplied: (db) =>
 				ADD_PROXY_REQUEST_PROVIDER_USAGE_COLUMNS.every((column) =>
 					hasColumn(db, 'proxy_requests', column)
+				),
+		},
+		{
+			version: 22,
+			description:
+				'Add effective mode, block counts and provider usage reportedness to proxy_requests',
+			up: (db) => migrateV22(db),
+			isApplied: (db) =>
+				ADD_PROXY_REQUEST_TELEMETRY_COLUMNS.every(({ name }) =>
+					hasColumn(db, 'proxy_requests', name)
 				),
 		},
 	];
@@ -583,6 +594,30 @@ function migrateV21(db: Database.Database): void {
 		db.prepare(`ALTER TABLE proxy_requests ADD COLUMN ${column} INTEGER`).run();
 	}
 	logger.debug('Added provider usage columns to proxy_requests', LOG_CONTEXT);
+}
+
+/**
+ * Migration v22: proxy_requests gains the telemetry facts of the `ProxyRequest`
+ * contract: the mode a request was carried as, what compress mode did with each
+ * block of tool-result text, and how each provider count got its number. See
+ * `ADD_PROXY_REQUEST_TELEMETRY_COLUMNS` for what each column holds.
+ *
+ * Every column is added bare: no DEFAULT, no CHECK, no index, and no backfill.
+ * That is the point of the migration. A row written before it stays NULL in all
+ * fourteen, which reads as unknown. In particular `effective_mode` is NOT filled
+ * from `mode` (a stored `compress` is `compress` or `compress-early`, and the
+ * row does not say) and NOT from the agent's setting today (it may have changed
+ * since the request). `mode` and its CHECK are untouched, so nothing is rebuilt
+ * and no row is rewritten. Each column is guarded, so a database that already
+ * has some of them takes only the rest, and `isApplied` is declared for a
+ * database another branch stamped past 22.
+ */
+function migrateV22(db: Database.Database): void {
+	for (const { name, type } of ADD_PROXY_REQUEST_TELEMETRY_COLUMNS) {
+		if (hasColumn(db, 'proxy_requests', name)) continue;
+		db.prepare(`ALTER TABLE proxy_requests ADD COLUMN ${name} ${type}`).run();
+	}
+	logger.debug('Added telemetry columns to proxy_requests', LOG_CONTEXT);
 }
 
 /**

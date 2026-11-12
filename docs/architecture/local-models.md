@@ -3161,6 +3161,12 @@ Stats migration v16 adds one table. `proxyRequestFromLog()` in
 | `skip_reason`                                           | Why a compress mode request went out unread                     |
 | `provider_input_tokens`, `provider_cache_read_tokens`   | What the provider counted (v21): uncached input, cache reads    |
 | `provider_cache_write_tokens`, `provider_output_tokens` | Cache writes and output, from the `usage` in its answer         |
+| `effective_mode`                                        | The mode in force, `compress-early` included (v22)              |
+| `blocks_protected`, `blocks_vetoed_*`                   | Blocks left out of compression, and why (v22)                   |
+| `blocks_candidates`, `blocks_below_threshold`           | Blocks eligible, and those under the size threshold (v22)       |
+| `blocks_kept`, `blocks_store_failed`                    | Eligible blocks kept whole; cache could not be used (v22)       |
+| `blocks_model_failed`                                   | Blocks whose model summary failed (v22)                         |
+| `provider_*_reportedness`                               | How each provider count got its number (v22)                    |
 
 1. **Only requests that hold a message list are recorded.** Token counting and model lists are
    forwarded and logged, not recorded: they have no tokens to save and would dilute the averages.
@@ -3188,6 +3194,15 @@ Stats migration v16 adds one table. `proxyRequestFromLog()` in
    own figures are characters / 4, and they cover passthrough requests the proxy never reads, so a
    passthrough week is the baseline a compress week is compared against. A cache write that grows
    on a request where nothing new arrived is the mark of a broken cached prefix.
+6. **Migration v22 adds fourteen columns that are unknown, not zero, for every older row.** They
+   are `effective_mode`, the nine `blocks_*` counts and the four `provider_*_reportedness`
+   columns, added bare: no default, no CHECK, no index and no backfill. `mode` and its CHECK are
+   untouched, so `compress-early` is stored as `compress` there and in `effective_mode` as itself.
+   `effective_mode` is not read off `mode` (a stored `compress` is `compress` or `compress-early`,
+   and the row does not say) or off the agent's setting now (it may have changed since). The counts
+   are written together or not at all; a counted request that found nothing holds 0, and `SUM`
+   over rows that hold none is NULL. A provider token with no `*_reportedness` was written before
+   it was tracked, and a class the answer never named reads as 0 in it.
 
 `readTokenProxyUsage()` returns the totals for the last 30 days (`getProxyRequestUsage`, in all
 and per agent, with the provider's counts summed in `provider`) and the 25 newest compressions

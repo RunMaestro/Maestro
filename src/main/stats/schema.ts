@@ -382,7 +382,9 @@ export const CREATE_LOCAL_MODEL_RUNS_AGENT_INDEX_SQL = `
  * request, so a block appears in one row however many later requests resend it.
  * `routed_to` (migration v17) is the Local Models target a background request
  * was sent to in place of the provider, and NULL for every other request. The
- * `provider_*` columns (migration v21) are what the provider counted.
+ * `provider_*_tokens` columns (migration v21) are what the provider counted.
+ * The last fourteen columns (migration v22) are the telemetry facts of the
+ * `ProxyRequest` contract: see `ADD_PROXY_REQUEST_TELEMETRY_COLUMNS`.
  */
 export const CREATE_PROXY_REQUESTS_SQL = `
   CREATE TABLE IF NOT EXISTS proxy_requests (
@@ -410,7 +412,21 @@ export const CREATE_PROXY_REQUESTS_SQL = `
     provider_input_tokens INTEGER,
     provider_cache_read_tokens INTEGER,
     provider_cache_write_tokens INTEGER,
-    provider_output_tokens INTEGER
+    provider_output_tokens INTEGER,
+    effective_mode TEXT,
+    blocks_protected INTEGER,
+    blocks_vetoed_failed INTEGER,
+    blocks_vetoed_recovery INTEGER,
+    blocks_vetoed_retrieval INTEGER,
+    blocks_candidates INTEGER,
+    blocks_below_threshold INTEGER,
+    blocks_kept INTEGER,
+    blocks_store_failed INTEGER,
+    blocks_model_failed INTEGER,
+    provider_input_reportedness TEXT,
+    provider_cache_read_reportedness TEXT,
+    provider_cache_write_reportedness TEXT,
+    provider_output_reportedness TEXT
   )
 `;
 
@@ -431,6 +447,54 @@ export const ADD_PROXY_REQUEST_PROVIDER_USAGE_COLUMNS = [
 	'provider_cache_read_tokens',
 	'provider_cache_write_tokens',
 	'provider_output_tokens',
+] as const;
+
+/**
+ * Migration v22: the telemetry facts a request's row can state (see
+ * `ProxyEffectiveMode`, `ProxyBlockCounts` and `ProxyProviderReportedness` in
+ * shared/stats-types.ts), in the order the table lists them. The v16 table
+ * definition above already holds them, so a new table has nothing for v22 to
+ * add; v22 adds them to a table an older build created.
+ *
+ * Every column is NULL for a row written before it, and NULL means UNKNOWN, never
+ * zero or a default:
+ *
+ *   - `effective_mode` is `passthrough`, `compress` or `compress-early`. `mode`
+ *     keeps its CHECK and cannot hold the last, so a row written before v22 does
+ *     not say which compress mode carried it. v22 does not guess: it is not
+ *     filled from `mode`, and not from the agent's current setting, which may
+ *     have changed since.
+ *   - The nine `blocks_*` columns are the `ProxyBlockCounts` of a request the
+ *     proxy read, written all together or not at all (a request forwarded unread
+ *     has none). The blocks shortened are the existing `blocks_compressed`. A
+ *     counted request that found nothing holds 0.
+ *   - The four `provider_*_reportedness` columns say how each of the
+ *     `provider_*_tokens` got its number: `reported`, `derived`, `not-applicable`
+ *     or `unreported`. A row with provider tokens and no reportedness was written
+ *     before it was tracked, and its tokens are legacy: a class the answer never
+ *     named reads as 0 in them.
+ *
+ * No CHECK and no index. A CHECK cannot be widened without the table rebuild v20
+ * needed, so the text columns are open like `skip_reason`: the writer stores
+ * only values of the contract, and a reader treats a value it does not
+ * recognize as unknown. A read filters on `started_at` and `agent_id`, which are
+ * indexed; a column with three or four values would not narrow it.
+ */
+export const ADD_PROXY_REQUEST_TELEMETRY_COLUMNS = [
+	{ name: 'effective_mode', type: 'TEXT' },
+	{ name: 'blocks_protected', type: 'INTEGER' },
+	{ name: 'blocks_vetoed_failed', type: 'INTEGER' },
+	{ name: 'blocks_vetoed_recovery', type: 'INTEGER' },
+	{ name: 'blocks_vetoed_retrieval', type: 'INTEGER' },
+	{ name: 'blocks_candidates', type: 'INTEGER' },
+	{ name: 'blocks_below_threshold', type: 'INTEGER' },
+	{ name: 'blocks_kept', type: 'INTEGER' },
+	{ name: 'blocks_store_failed', type: 'INTEGER' },
+	{ name: 'blocks_model_failed', type: 'INTEGER' },
+	{ name: 'provider_input_reportedness', type: 'TEXT' },
+	{ name: 'provider_cache_read_reportedness', type: 'TEXT' },
+	{ name: 'provider_cache_write_reportedness', type: 'TEXT' },
+	{ name: 'provider_output_reportedness', type: 'TEXT' },
 ] as const;
 
 export const CREATE_PROXY_REQUESTS_INDEXES_SQL = `

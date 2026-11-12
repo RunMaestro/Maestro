@@ -293,7 +293,7 @@ describe('StatsDB class (mocked)', () => {
 			const db = new StatsDB();
 			db.initialize();
 
-			// Migrations v1-v20: initial schema, is_remote column, session_lifecycle
+			// Migrations v1-v22: initial schema, is_remote column, session_lifecycle
 			// table, compound indexes, is_worktree column, image_annotations table,
 			// shortcut_usage_daily table, multi_window_usage_daily table,
 			// query_events token/cost columns, resilience_events table,
@@ -301,14 +301,15 @@ describe('StatsDB class (mocked)', () => {
 			// auto_run_sessions kind column, local_model_runs table, proxy_requests
 			// table, proxy_requests routed_to column, s1_decisions table,
 			// s1_decisions tab_id and cached columns, the local_model_runs rebuild
-			// with the query_events Run on and routed tier columns, and the proxy_requests
-			// provider usage columns.
-			expect(db.getTargetVersion()).toBe(21);
+			// with the query_events Run on and routed tier columns, the proxy_requests
+			// provider usage columns, and the proxy_requests telemetry columns (effective
+			// mode, block counts, provider reportedness).
+			expect(db.getTargetVersion()).toBe(22);
 		});
 
 		it('should return false from hasPendingMigrations() when up to date', async () => {
 			mockDb.pragma.mockImplementation((sql: string) => {
-				if (sql === 'user_version') return [{ user_version: 21 }];
+				if (sql === 'user_version') return [{ user_version: 22 }];
 				return undefined;
 			});
 
@@ -324,7 +325,7 @@ describe('StatsDB class (mocked)', () => {
 			// by checking current version < target version
 
 			// Simulate a database that's already at the target version
-			let currentVersion = 21;
+			let currentVersion = 22;
 			mockDb.pragma.mockImplementation((sql: string) => {
 				if (sql === 'user_version') return [{ user_version: currentVersion }];
 				// Handle version updates from migration
@@ -339,8 +340,8 @@ describe('StatsDB class (mocked)', () => {
 			db.initialize();
 
 			// At target version, no pending migrations
-			expect(db.getCurrentVersion()).toBe(21);
-			expect(db.getTargetVersion()).toBe(21);
+			expect(db.getCurrentVersion()).toBe(22);
+			expect(db.getTargetVersion()).toBe(22);
 			expect(db.hasPendingMigrations()).toBe(false);
 		});
 

@@ -203,6 +203,51 @@ throws on a mismatch, drops the old table, renames the new one into place and re
 inside the runner's one transaction. `CREATE_LOCAL_MODEL_RUNS_SQL` is the current shape, so a fresh database
 has nothing to rebuild.
 
+#### `proxy_requests` (Migration v16; `routed_to` v17, provider counts v21, telemetry v22)
+
+One row per model request the Maestro token proxy carried that held a message list. Written by
+`recordProxyRequest()` (`src/main/stats/proxy-requests.ts`) from `proxyRequestFromLog()`:
+
+| Column                                                                      | Type             | Description                                                                                      |
+| --------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------ |
+| `id`                                                                        | TEXT PK          | UUID                                                                                             |
+| `agent_id`                                                                  | TEXT             | Agent the base URL named, NULL for a launch outside the app                                      |
+| `route`, `kind`                                                             | TEXT NOT NULL    | Route prefix (`anthropic`, `openai`, `chatgpt`) and the API the request spoke                    |
+| `mode`                                                                      | TEXT NOT NULL    | `'passthrough'` or `'compress'` (CHECK). Both compress modes are stored as `compress`            |
+| `started_at`, `duration_ms`                                                 | INTEGER NOT NULL | Unix timestamp (ms) and end-to-end duration                                                      |
+| `status`                                                                    | INTEGER NOT NULL | HTTP status sent to the client, 0 when none was                                                  |
+| `outcome`                                                                   | TEXT NOT NULL    | `completed`, `client-aborted` or `upstream-failed`                                               |
+| `request_bytes`, `sent_bytes`, `response_bytes`                             | INTEGER NOT NULL | Body bytes received, sent on, and returned                                                       |
+| `original_tokens`, `sent_tokens`                                            | INTEGER          | Estimates (characters / 4). NULL unless the proxy read the body                                  |
+| `added_latency_ms`                                                          | INTEGER          | Time the request was held. NULL is unknown, left out of means and percentiles                    |
+| `blocks_compressed`, `cache_hits`                                           | INTEGER NOT NULL | Blocks sent shortened; verdicts reused from Maestro's cache (not provider prompt-cache use)      |
+| `compressor_counts`, `new_blocks`                                           | TEXT (JSON)      | Per-compressor counts; blocks shortened for the first time in this request                       |
+| `skip_reason`                                                               | TEXT             | Why a compress mode body went out unread. Open text; `TOKEN_PROXY_SKIP_REASONS` for this build   |
+| `routed_to`                                                                 | TEXT             | Local Models target a background request was sent to (v17)                                       |
+| `provider_input_tokens`, `provider_cache_read_tokens`                       | INTEGER          | What the provider counted (v21). NULL when the answer named none                                 |
+| `provider_cache_write_tokens`, `provider_output_tokens`                     | INTEGER          | A class the answer did not name is stored as 0; reportedness says which were given               |
+| `effective_mode`                                                            | TEXT             | The mode in force: `passthrough`, `compress` or `compress-early` (v22)                           |
+| `blocks_protected`                                                          | INTEGER          | Left out because the result is recent or carries the cache breakpoint (v22)                      |
+| `blocks_vetoed_failed`, `blocks_vetoed_recovery`, `blocks_vetoed_retrieval` | INTEGER          | Left out because the result failed, was a recovery command's output, or was retrieved text (v22) |
+| `blocks_candidates`, `blocks_below_threshold`                               | INTEGER          | Blocks eligible for a verdict; those under the size threshold (v22)                              |
+| `blocks_kept`, `blocks_store_failed`, `blocks_model_failed`                 | INTEGER          | Kept whole; left alone because the cache failed; model summary failed (v22)                      |
+| `provider_input_reportedness`, `provider_cache_read_reportedness`           | TEXT             | `reported`, `derived`, `not-applicable` or `unreported` for each provider count (v22)            |
+| `provider_cache_write_reportedness`, `provider_output_reportedness`         | TEXT             | The same, for cache writes and output (v22)                                                      |
+
+**Indexes**: `started_at`, compound `(agent_id, started_at)`
+
+The fourteen v22 columns are `ProxyRequest.effectiveMode`, `blockCounts` (one column per count, the
+three vetoes included) and `providerUsageReportedness` (one column per class). **NULL is unknown,
+never zero.** The migration adds them bare: no DEFAULT, no CHECK, no index and no backfill, so a row
+written before v22 is unknown in all fourteen. `effective_mode` is deliberately not filled from `mode`
+(a stored `compress` is `compress` or `compress-early`) or from the agent's current setting, which
+may have changed since the request. The nine counts are written together or not at all, so
+`COUNT(blocks_candidates)` is the number of requests with counts; a counted request that found
+nothing holds 0, and `SUM` over rows that hold none is NULL, not 0. The text columns are open like
+`skip_reason`: a reader treats a value it does not recognize as unknown. A provider token column with
+no `*_reportedness` was written before reportedness was tracked and reads as `legacy` through
+`proxyProviderClassReading()`.
+
 #### `_migrations`
 
 Migration tracking table:
@@ -274,12 +319,18 @@ Defined in `src/main/stats/migrations.ts`. Migrations are sequential and recorde
 | v18     | Add `s1_decisions` table for the System One decision ledger                                                          |
 | v19     | Add `tab_id` and `cached` columns to `s1_decisions`                                                                  |
 | v20     | Rebuild `local_model_runs` (wider `source_type`, `agent_id`); add Run on and `routed_tier` columns to `query_events` |
+| v21     | Add the provider's token counts (`provider_*_tokens`) to `proxy_requests`                                            |
+| v22     | Add `effective_mode`, block counts and provider reportedness to `proxy_requests`                                     |
 
 To add a new migration:
 
 1. Create a `migrateVN()` function in `migrations.ts`
 2. Add it to the `getMigrations()` array
 3. Update `STATS_DB_VERSION` in `src/shared/stats-types.ts`
+4. A column added to a table an earlier migration created goes into that table's `CREATE` statement in
+   `schema.ts` too, because a fresh database runs the old migration with the current definition. The new
+   body adds a column only when `hasColumn()` says it is missing, and the entry declares `isApplied`, so a
+   database another branch stamped past your version still gets it.
 
 ## Shared Types
 
@@ -382,6 +433,10 @@ interface StatsAggregation {
 | `skipReason`                | Why the body was forwarded unread. One of `TOKEN_PROXY_SKIP_REASONS`.                                                                                                                                                                                                                                            |
 | `cacheHits`                 | Verdict reuse from Maestro's compression cache. Not provider prompt-cache usage (`providerCacheReadTokens`).                                                                                                                                                                                                     |
 | `providerUsageReportedness` | How each provider count got its number: `reported`, `derived`, `not-applicable` or `unreported`, per class (`input`, `cacheRead`, `cacheWrite`, `output`). Absent on a row written before it was tracked: its provider numbers are `legacy` (unknown), not reported. Read it with `proxyProviderClassReading()`. |
+
+Stored by migration v22 (see the `proxy_requests` table above): `effectiveMode` is `effective_mode`, `blockCounts` is
+the nine `blocks_*` columns, and `providerUsageReportedness` is the four `provider_*_reportedness` columns. A row
+that predates v22 is NULL in all of them.
 
 A figure drawn from rows is one of three kinds (`ProxyEvidenceKind`): `measured`, `estimate` (characters / 4: `originalTokens`, `sentTokens`) or `opportunity` (never stored). The kinds are never added into one savings number. Build figures with `proxyFigure()` and total them only with `addProxyFigures()`; see "How sure a token proxy figure is" in [CANONICAL-UTILITIES.md](CANONICAL-UTILITIES.md).
 
