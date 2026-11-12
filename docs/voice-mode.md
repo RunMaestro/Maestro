@@ -538,4 +538,5 @@ Four cards at the end of the A Cappella settings are worth reaching for before f
 - [Local Models](./local-models) - the speech models, the neural voice, and the Voice routing task
 - [Dictation](./local-models#dictation) - speech into any text box without a voice session, on the same microphone
 - [Quick Chat](./quick-chat) - the Quick Chat window and its microphone
+- [Chatting with a document](./general-usage#chatting-with-a-document) - the file preview's chat panel, the same conversation a document voice session talks into
 - [CLI guide](./cli#voice) - every `maestro-cli voice` verb
