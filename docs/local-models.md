@@ -1332,9 +1332,11 @@ The router reads the request you are sending and the last user message and last 
 
 ## Gateway
 
-A gateway is an HTTP proxy that an agent's requests go through on the way to its provider. People run one to cut the tokens an agent sends ([Headroom](https://github.com/chopratejas/headroom) compresses large tool results), or to route and meter traffic ([LiteLLM](https://github.com/BerriAI/litellm)). The Gateway section lists agents with a configured gateway or proxy mode. Use **Add agent** to configure another, or its remove button to clear the configuration. The same gateway field is in each agent's **Edit Agent** dialog.
+A gateway is an HTTP proxy that an agent's requests go through on the way to its provider. People run one to cut the tokens an agent sends ([Headroom](https://github.com/chopratejas/headroom) compresses large tool results), or to route and meter traffic ([LiteLLM](https://github.com/BerriAI/litellm)).
 
-The gateway table is on **Models -> Gateway**. A gateway is set per agent and is off until you type a URL. When the agent next starts, Maestro points the provider's CLI at that URL:
+The gateway table is on **Settings -> Models -> Gateway** (`maestro-cli open settings --tab models --sub-tab gateway`). It lists the agents with a gateway URL or a Maestro proxy mode; terminals are never listed. Its columns are **Agent**, **Provider** (with the SSH remote for a remote agent), **Maestro proxy**, and **Gateway URL**. Use **Add agent** to put another agent in the table, then type its URL and press Enter or leave the field. Each row's **Remove gateway** button clears the URL, or sets the proxy mode Off when the row has only a mode.
+
+The same field is **Local Models Gateway** in each agent's **Edit Agent -> Models** and in the **New Agent** dialog, and a group can give it to new agents as a default in **Group Settings**. A gateway is set per agent and is off until you type a URL. When the agent next starts, Maestro points the provider's CLI at that URL:
 
 | Provider    | How it is pointed at the gateway                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1361,12 +1363,14 @@ Maestro maps a provider only after a test proves its CLI reads the setting: the 
 
 Maestro does not check a setting you make yourself in an agent's environment variables or a provider's config file.
 
-A gateway sends an agent's requests to its cloud provider by another route. To send them to a model on another server instead, use [Run on](#run-on). The two do not combine: while an agent's Run on target is a source, its gateway is not applied.
+A gateway sends an agent's requests to its cloud provider by another route. To send them to a model on another server instead, use [Run on](#run-on). The two do not combine: while an agent's Run on target is a source, its gateway is not applied, and the field says "Not applied while Run on is a source".
+
+Under the field a line says what happens at the next start: "Sets `<variable>` when this agent starts." for Claude Code and Codex, "Adds the gateway to `OPENCODE_CONFIG_CONTENT` when this agent starts." for OpenCode. A URL must be `http://` or `https://` with a host and no query or fragment; a trailing slash is removed. A blank field, or `none` on the command line, clears it. Setting a gateway URL of your own also clears the agent's Maestro proxy mode, Retrieval, and Background requests target.
 
 Four rules:
 
 - **Your own variable wins.** If the agent's environment variables already set the base-URL variable, Maestro leaves your value alone and the gateway is not applied. The field says so. The gateway does win over a value set for every agent in Settings -> Environment, because a gateway on one agent is the more specific choice.
-- **A gateway that cannot be used stops the agent.** The agent does not start, and the message names the gateway. Maestro never sends the turn to a different endpoint than the one you chose. If the proxy is not running, the agent's own connection error is what you see.
+- **A gateway that cannot be used stops the agent.** The agent does not start, and the message names the gateway. Maestro never sends the turn to a different endpoint than the one you chose. If a gateway you run yourself is not running, the agent's own connection error is what you see. If the gateway is the Maestro proxy and it cannot start, the message ends "The turn was not sent."
 - **A loopback gateway does not work for an SSH remote agent.** `http://127.0.0.1:8787` on this machine is a different machine from the remote host's point of view, so the agent is refused at launch. Give it a URL the remote host can reach.
 - **It covers the turns the agent runs.** Chat, Auto Run, Cue runs, `maestro-cli send`, the agent's turns as a Group Chat participant, and its answers to another agent's `@mention` or `maestro-cli ask` go through the gateway. Short jobs Maestro runs beside an agent (tab naming, context grooming, Director's Notes) and the Group Chat moderator do not: they reach the provider direct.
 
@@ -1379,21 +1383,32 @@ From the command line:
 ```bash
 maestro-cli update-agent <agent-id> --gateway-url http://127.0.0.1:8787
 maestro-cli update-agent <agent-id> --gateway-url none
+maestro-cli create-agent <name> --gateway-url http://127.0.0.1:8787   # at creation
+maestro-cli update-group-settings <group-id> --gateway-url http://127.0.0.1:8787   # default for the group's new agents
 maestro-cli show agent <agent-id> --json   # gatewayUrl
 ```
 
 ### The Maestro proxy
 
-Maestro has a proxy of its own, so you do not need to run one to save tokens. Each row of the Gateway table has a **Maestro proxy** control with four modes:
+Maestro has a proxy of its own, so you do not need to run one to save tokens. Each row of the Gateway table has a **Maestro proxy** control, and **Edit Agent -> Models** has the same control as **Maestro Token Proxy**, above the gateway field. It has four modes (this page calls the middle two Passthrough and Compress):
 
-| Mode               | What happens to the agent's requests                                       |
-| ------------------ | -------------------------------------------------------------------------- |
-| **Off**            | They do not go through Maestro's proxy. This is the default.               |
-| **Passthrough**    | They go through it unchanged. Maestro only counts them.                    |
-| **Compress**       | A large tool result is shortened after the model has read it once in full. |
-| **Compress early** | A large tool result is shortened before the model first reads it.          |
+| Mode                         | What happens to the agent's requests                                       |
+| ---------------------------- | -------------------------------------------------------------------------- |
+| **Off**                      | They do not go through Maestro's proxy. This is the default.               |
+| **Passthrough (count only)** | They go through it unchanged. Maestro only counts them.                    |
+| **Compress tool results**    | A large tool result is shortened after the model has read it once in full. |
+| **Compress early**           | A large tool result is shortened before the model first reads it.          |
 
-Choosing any mode but Off sets the agent's gateway URL to the proxy for you. Choosing Off clears it. The proxy listens on `127.0.0.1` only, starts when the first agent uses it, and stops when none do.
+A mode applies as soon as you choose it, from the agent's next request, even in the middle of a turn. Choosing any mode but Off sets the agent's gateway URL to the proxy for you. Choosing Off clears it, and leaves a gateway to another proxy alone. The **New Agent** dialog has no mode: choose it in Edit Agent once the agent exists. While a provider change in Edit Agent is unsaved, the control waits: "Save the provider change first: the proxy route depends on the provider."
+
+The proxy listens on `127.0.0.1` only, on one port for every provider. It starts when an agent that uses it launches (from the app, a Cue run, a Group Chat or a consult) and listens only while some local agent's gateway points at it. The port is chosen on first use and saved, and it never moves. If another program holds it, the proxy does not start and says so: "another program is using 127.0.0.1:`<port>`. Quit that program, or clear the gateway on the agents that point at this port". The proxy forwards headers and bodies unchanged and passes a provider's own errors back whole. An error the proxy raises itself is JSON with the type `maestro_token_proxy_error`; one of them refuses a WebSocket, because the proxy carries HTTP requests only.
+
+**A default for new agents.** Above the table, **Set Maestro proxy for all agents** has one button per mode: **All: Off**, **All: Passthrough (count only)**, **All: Compress tool results**, and **All: Compress early**. The current default is highlighted, and "Default for new agents:" names it. A button does two things:
+
+- It sets that mode on every existing local agent with gateway support. A compress or passthrough mode skips agents on an SSH remote, agents whose provider has no gateway, and agents whose Run on is a source; the status line counts them as skipped. Enabling replaces a gateway URL the agent already has. **All: Off** reaches every agent, and leaves gateways to other proxies alone.
+- It saves the mode as the default for agents you create later. A new agent gets it when it has no gateway URL, no proxy mode and no Run on target of its own, is not on an SSH remote, and has a provider with gateway support. A group's own proxy default wins over it. A worktree agent takes its parent's settings. If the default cannot be set on a new agent, a toast says **Proxy default was not applied** with the agent's name and the reason, and the agent stays off the proxy.
+
+From the command line, `maestro-cli settings set defaultTokenProxyMode <mode>` saves the default for new agents only; it does not change existing agents the way the buttons do. `maestro-cli update-group-settings <group-id> --proxy-mode <mode>` sets a group's default (it cannot be combined with `--gateway-url`).
 
 **Which compress mode to pick.** The note under the control says the same thing in one sentence.
 
@@ -1407,7 +1422,7 @@ Choosing any mode but Off sets the agent's gateway URL to the proxy for you. Cho
 - **The tool reaches only originals this machine still holds.** Originals unused for 30 days are pruned (see below). Asking for a pruned or unknown hash is a tool error that says so, and the model works from the shortened text.
 - **A retrieved original is never shortened again.**
 - **Which launches get it.** Claude Code (in both its `claude --print` and its interactive mode) and Codex agents on this machine, in the turns you send from the app. Maestro gives the tool through the same per-launch MCP server it uses for plugin tools, so it works with Plugins off and edits no global config. An OpenCode agent does not get it yet, because Maestro has not verified that server for OpenCode. Nor do an agent on an SSH remote, an Auto Run task, a Cue run, a Group Chat, a consult, or `maestro-cli send`. Those turns keep the lossless reductions.
-- **Applies from the agent's next turn.** Setting the proxy mode to Off, a gateway URL of your own, or another provider turns it off with the proxy. In Passthrough the switch is hidden and has no effect.
+- **Applies from the agent's next start.** Setting the proxy mode to Off, a gateway URL of your own, or another provider turns it off with the proxy. In Passthrough the switch is hidden and has no effect.
 
 What both compress modes do, and do not do:
 
@@ -1419,7 +1434,9 @@ What both compress modes do, and do not do:
 - **If shortening fails, the request is sent as it arrived.** You do not lose a turn to it.
 - **A local model is optional.** Rules handle JSON, repeated logs, protected diagnostic lines, and recognized Git, search, successful test/build, and warning-only lint output. Eligible scalar JSON rows use a labelled table that preserves key/value lexemes and distinguishes missing keys from null. Other JSON can still use lossy array sampling. Assign the **Token proxy** task a model on **Models -> System Two** to also summarize results that are still very large.
 
-Under the table, **Maestro token proxy** shows what it did in the last 30 days, in all and per agent: requests, tokens saved, and the average time a request was held to be shortened. Tokens saved is an estimate at 4 characters per token. On output full of paths, digits and stack traces the real saving can be about twice the figure shown. Below the table, **Provider counted** sums what your provider itself reported for each request, in every mode including Passthrough: uncached input, cache reads, cache writes, and output. Those are exact. Compare a Passthrough week with a Compress week to see what compression really saved. **Recent compressions** lists the blocks it last shortened. Select one to see a diff of what the agent sent against what was sent in its place.
+Under the table, the **Maestro token proxy** card (with **Refresh**) shows what it did. Its first line says where it listens: "Not set up. Choose Passthrough or Compress for an agent to turn it on.", "Listening on 127.0.0.1:`<port>` for `<n>` agents.", "Stopped. It starts on 127.0.0.1:`<port>` when an agent uses it.", or why it could not start. The **Last 30 days** table has a row for **All agents** and one per agent, with **Requests**, **Tokens saved (est.)**, and **Average added latency** (the time a request was held to be shortened). An agent with no compressed request shows a dash. A request from outside the app is listed as "No agent (started outside the app)". Tokens saved is an estimate at 4 characters per token. On output full of paths, digits and stack traces the real saving can be about twice the figure shown. Below the table, **Provider counted** sums what your provider itself reported for each request, in every mode including Passthrough: input, cache read, cache write, and output. Those are exact. Compare a Passthrough week with a Compress week to see what compression really saved. **Recent compressions** lists the last 25 blocks it shortened, each with its hash, its size before and after, the rules that shortened it (`json-table`, `json`, `git-status`, `git-log`, `search`, `test-output`, `build-output`, `lint-output`, `logs`, `long-lines`, or `model` for the local model), the agent and the time. **Show diff** compares what the agent sent with what was sent in its place; once the cache has pruned the original it says so.
+
+The card reads the usage statistics database: with usage statistics off it says "Usage statistics are not available.", and the proxy records nothing.
 
 The proxy reaches the providers in the first table above: Claude Code, Codex, and OpenCode (for an `anthropic/...` or `openai/...` model; any other model is refused when you pick a mode). It cannot be used by an agent on an SSH remote (the remote host cannot reach this machine's `127.0.0.1`) or by a provider in the second table. The control is disabled for those and says why. A turn started with `maestro-cli send` goes through the proxy unchanged and is counted without an agent name, because only the app tells the proxy which agent a request belongs to.
 
@@ -1440,7 +1457,7 @@ maestro-cli models proxy cache prune --older-than 7d        # prune now (never b
 
 Claude Code sends work that is not your conversation on its small model: a session title, and the summary of a web page the agent fetched. **Background requests** sends exactly those to a model on one of your [sources](#endpoints), while the agent's own turns keep going to the provider. It is off until you pick a target.
 
-It is on **Edit Agent -> Models**, under the Maestro proxy mode, and is shown only for a Claude Code agent whose proxy mode is not Off. The picker lists the models of the sources that serve the Anthropic Messages route: the [Maestro model server](#model-server), Ollama and LM Studio. An OpenAI-compatible source is not listed, because Maestro cannot tell that it serves that route. Like the mode above it, the choice applies at once, with no restart.
+It is on **Edit Agent -> Models**, under the Maestro proxy mode, and is shown only for a Claude Code agent whose proxy mode is not Off. The picker lists the models of the sources that serve the Anthropic Messages route: the [Maestro model server](#model-server), Ollama and LM Studio. An OpenAI-compatible source is not listed, because Maestro cannot tell that it serves that route. The first choice, **Off (send them to the provider)**, turns it off. Like the mode above it, the choice applies at once, with no restart. A group can give new agents a target as a default in **Group Settings** (**Background requests**).
 
 **What is routed.** The proxy decides per request. A request goes to the target only when it names the provider's small model and shows no sign of being a turn. Everything else reaches the provider exactly as it arrived.
 
@@ -1480,6 +1497,7 @@ A permission check on the small model was not seen in either session. The only s
 ```bash
 maestro-cli update-agent <agent-id> --proxy-mode passthrough --background-requests maestro-server:<model-id>
 maestro-cli update-agent <agent-id> --background-requests none
+maestro-cli update-group-settings <group-id> --background-requests <source-id>:<model>   # for new agents in the group
 maestro-cli show agent <agent-id> --json   # backgroundRequests, backgroundRequestsSpec, backgroundRequestsProblem
 ```
 
