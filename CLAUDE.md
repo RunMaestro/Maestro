@@ -260,6 +260,7 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **Keeping a floating menu on screen:** `useContextMenuPosition(menuRef, x, y)` in `src/renderer/hooks/ui/useContextMenuPosition.ts`, which `useAnchoredMenuPosition` also passes through.
 - **How a floating surface looks (popover, menu, hover card, tooltip):** `elevatedSurfaceStyle(theme)`, `getElevatedSurfaceColors(colors)` in `src/renderer/utils/elevatedSurface.ts`
 - **Dropdown/tooltip anchored to a header element:** `useAnchoredMenuPosition(menuRef, anchorRef)` in `src/renderer/hooks/ui/useAnchoredMenuPosition.ts`, rendered via `createPortal(..., document.body)`.
+- **A menu that opens on mouse hover AND on click:** `useHoverPopover({ triggerRef, contentRef, hoverEnabled? })` in `src/renderer/hooks/ui/useHoverPopover.ts`.
 - **Remembered textarea height:** `useResizableTextarea()` in `src/renderer/hooks/ui/useResizableTextarea.ts`.
 - **Auto-growing composer textarea:** `useAutosizeTextarea()` in `src/renderer/hooks/ui/useAutosizeTextarea.ts` (helpers in `src/renderer/utils/textareaSizing.ts`).
 - **Line numbers beside a `<textarea>`:** `<TextareaLineNumbers>` + `lineNumberGutterMetrics()` in `src/renderer/components/ui/TextareaLineNumbers.tsx`.
