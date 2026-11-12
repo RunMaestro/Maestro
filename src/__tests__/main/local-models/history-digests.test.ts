@@ -411,7 +411,8 @@ describe('digest budgets', () => {
 		expect(digestBudgetFor({ type: 'local', modelId: 'unknown' }, endpoints)).toBe(
 			SMALL_DIGEST_BUDGET
 		);
-		expect(digestBudgetFor(null, endpoints)).toBe(SMALL_DIGEST_BUDGET);
+		expect(digestBudgetFor({ type: 'off' }, endpoints)).toBe(SMALL_DIGEST_BUDGET);
+		expect(digestBudgetFor({ type: 'utility-agent' }, endpoints)).toBe(SMALL_DIGEST_BUDGET);
 	});
 
 	it('fits a full piece, the reply, and the rest of the call inside its context', () => {
