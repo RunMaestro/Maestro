@@ -7,8 +7,9 @@
  * Treat them as read-only. A test that needs a variation spreads one.
  */
 
-import type { ModelUsage } from '../../shared/local-models/model-usage';
+import type { ModelUsage, ModelUsageProxy } from '../../shared/local-models/model-usage';
 import { emptyPercentiles, type DurationPercentiles } from '../../shared/percentiles';
+import { busyProxyEffectiveness } from './proxyTelemetryFixtures';
 
 /** A distribution with the two figures the surfaces print, and plausible others. */
 export function modelUsageLatency(p50: number, p95: number, count = 10): DurationPercentiles {
@@ -267,3 +268,93 @@ export const BUSY_MODEL_USAGE: ModelUsage = {
 		],
 	},
 };
+
+/** Local noon on 2026-11-05: where the week of {@link currentProxyModelUsage} starts. */
+export const PROXY_RANGE_SINCE = new Date(2026, 10, 5, 12, 0).getTime();
+/** Local 09:41 on 2026-11-12: when that record was read. */
+export const PROXY_LOADED_AT = new Date(2026, 10, 12, 9, 41).getTime();
+
+/**
+ * The token proxy block a current desktop sends for a week of 120 requests,
+ * written out in full and consistent in the ways the contract demands: the modes
+ * and the routes each add up to the 120 requests, the agents' estimates add up to
+ * the totals, and the days add up to them as well (100 requests read, 100,000
+ * estimated tokens as they arrived and 82,000 as they were sent). The trend has
+ * real gaps: nothing on 11-05, 11-09 or 11-11, and a day of passthrough requests
+ * on 11-08 that the proxy never read. A fresh object each call, so a test may
+ * change it. The effectiveness is {@link busyProxyEffectiveness} (120 requests)
+ * with that trend and these totals.
+ */
+export function currentProxyUsage(): ModelUsageProxy {
+	const day = (
+		date: string,
+		requests: number,
+		read: number,
+		original: number,
+		sent: number,
+		blocks: number
+	) => ({
+		date,
+		requests,
+		compressRequests: read,
+		originalTokens: original,
+		sentTokens: sent,
+		blocksShortened: blocks,
+	});
+	const group = (
+		requests: number,
+		read: number,
+		original: number,
+		sent: number,
+		timed: number
+	) => ({
+		requests,
+		compressRequests: read,
+		originalTokens: original,
+		sentTokens: sent,
+		tokensSaved: original - sent,
+		avgAddedLatencyMs: 14,
+		timedRequests: timed,
+		provider: {
+			requests,
+			inputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			outputTokens: 0,
+		},
+	});
+	return {
+		totals: group(120, 100, 100_000, 82_000, 98),
+		routedRequests: 0,
+		byAgent: [
+			{ agentId: 'agent-alpha-0001', name: 'Alpha', ...group(90, 70, 70_000, 58_000, 69) },
+			{ agentId: 'agent-beta-0002', name: 'Beta', ...group(30, 30, 30_000, 24_000, 29) },
+		],
+		byMode: [
+			{ effectiveMode: 'compress-early', ...group(70, 70, 70_000, 56_000, 68) },
+			{ effectiveMode: 'compress', ...group(30, 30, 30_000, 26_000, 30) },
+			{ effectiveMode: 'passthrough', ...group(12, 0, 0, 0, 0) },
+			{ effectiveMode: null, ...group(8, 0, 0, 0, 0) },
+		],
+		byRoute: [
+			{ route: 'anthropic', ...group(80, 70, 70_000, 56_000, 68) },
+			{ route: 'openai', ...group(30, 30, 30_000, 26_000, 30) },
+			{ route: 'chatgpt', ...group(10, 0, 0, 0, 0) },
+		],
+		effectiveness: {
+			...busyProxyEffectiveness(),
+			trend: [
+				day('2026-11-06', 20, 20, 12_000, 10_000, 30),
+				day('2026-11-07', 30, 30, 20_000, 17_000, 50),
+				day('2026-11-08', 10, 0, 0, 0, 0),
+				day('2026-11-10', 25, 25, 28_000, 23_000, 60),
+				day('2026-11-12', 35, 25, 40_000, 32_000, 70),
+			],
+		},
+	};
+}
+
+/** The Models record of a week whose proxy block is {@link currentProxyUsage}. */
+export function currentProxyModelUsage(proxy: ModelUsageProxy = currentProxyUsage()): ModelUsage {
+	return { ...BUSY_MODEL_USAGE, range: 'week', since: PROXY_RANGE_SINCE, proxy };
+}

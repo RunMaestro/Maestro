@@ -77,7 +77,7 @@ export const ModelUsageStats = memo(function ModelUsageStats({
 	theme,
 	colorBlindMode = false,
 }: ModelUsageStatsProps) {
-	const { usage, loading, error, reload } = useModelUsage(timeRange);
+	const { usage, loadedAt, loading, error, reload } = useModelUsage(timeRange);
 	const activeAgent = useSessionStore(
 		useShallow((state) => {
 			const session = selectActiveSession(state);
@@ -205,6 +205,11 @@ export const ModelUsageStats = memo(function ModelUsageStats({
 				<ProxySavingsSection
 					theme={theme}
 					proxy={usage.proxy}
+					since={usage.since}
+					loadedAt={loadedAt}
+					refreshing={loading}
+					onRefresh={reload}
+					colorBlindMode={colorBlindMode}
 					setupActions={[
 						{
 							label: modelsSettingsLocation('gateway'),

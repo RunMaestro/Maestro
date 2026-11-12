@@ -32,7 +32,19 @@ const UPDATE_DEBOUNCE_MS = 1000;
 export interface UseModelUsageResult {
 	/** The record for `range`. Null until the first load of a range answers, and after a failure. */
 	usage: ModelUsage | null;
-	/** True while a range has no record yet. A background refresh does not set it. */
+	/**
+	 * When `usage` was last read, in epoch ms on this computer's clock: the moment
+	 * that read's answer arrived. This is the only freshness the record has.
+	 * `ModelUsage.since` is where the RANGE starts and says nothing about the age of
+	 * the data. Null whenever `usage` is, and a failed background refresh leaves
+	 * both as they were, so the time stays the last read that succeeded.
+	 */
+	loadedAt: number | null;
+	/**
+	 * True while a read the user is waiting for is in flight: the first load of a
+	 * range, or a `reload` (which keeps the last record on screen meanwhile). A
+	 * background refresh does not set it.
+	 */
 	loading: boolean;
 	/** Why the last load failed, unwrapped for display. Null otherwise. */
 	error: string | null;
@@ -42,6 +54,7 @@ export interface UseModelUsageResult {
 
 export function useModelUsage(range: StatsTimeRange): UseModelUsageResult {
 	const [usage, setUsage] = useState<ModelUsage | null>(null);
+	const [loadedAt, setLoadedAt] = useState<number | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	// The newest request. An answer that is not for it is stale and is dropped;
@@ -59,6 +72,7 @@ export function useModelUsage(range: StatsTimeRange): UseModelUsageResult {
 				const next = await window.maestro.stats.getModelUsage(range);
 				if (request !== requestRef.current) return;
 				setUsage(next);
+				setLoadedAt(Date.now());
 				setError(null);
 			} catch (err) {
 				if (request !== requestRef.current) return;
@@ -69,6 +83,7 @@ export function useModelUsage(range: StatsTimeRange): UseModelUsageResult {
 				// tab over one missed refresh is worse than a second of staleness.
 				if (!background) {
 					setUsage(null);
+					setLoadedAt(null);
 					setError(ipcErrorMessage(err));
 				}
 			} finally {
@@ -85,8 +100,10 @@ export function useModelUsage(range: StatsTimeRange): UseModelUsageResult {
 
 	useEffect(() => {
 		// A new range starts from nothing: the last range's record under this
-		// range's label would be a wrong answer, not a stale one.
+		// range's label would be a wrong answer, not a stale one, and so would its
+		// time of reading.
 		setUsage(null);
+		setLoadedAt(null);
 		void load(false);
 		const unsubscribe = window.maestro.stats.onStatsUpdate(refreshSoon);
 		return () => {
@@ -98,5 +115,5 @@ export function useModelUsage(range: StatsTimeRange): UseModelUsageResult {
 
 	const reload = useCallback(() => void load(false), [load]);
 
-	return { usage, loading, error, reload };
+	return { usage, loadedAt, loading, error, reload };
 }

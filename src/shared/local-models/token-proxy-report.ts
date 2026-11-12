@@ -198,19 +198,43 @@ function describeSkips(skips: ProxySkipCount[]): string {
 }
 
 /**
- * The unique blocks cover only the requests that recorded their algorithms, so
- * they are a subtotal and are said against the range's total. A block that two
- * algorithms shortened is listed under each, so the lists do not add up.
+ * What the unique blocks of an algorithm breakdown cover: only the requests that
+ * recorded their algorithms, so they are a subtotal, said against the range's
+ * total. A block that two algorithms shortened is listed under each, so the lists
+ * do not add up. A surface that draws the per-algorithm counts itself says this
+ * beside them.
  */
-function describeAlgorithms(
-	{ uniqueBlocks, algorithms }: ProxyAlgorithmBreakdown,
+export function describeProxyAlgorithmCohort(
+	{ uniqueBlocks }: ProxyAlgorithmBreakdown,
 	blocksShortened: number
 ): string {
-	const each = algorithms.map(
+	return `${formatCountNoun(uniqueBlocks, 'unique block')} in the requests that recorded their algorithms, out of ${formatCount(blocksShortened)} shortened in the range; a block that two algorithms shortened is listed under each, so the lists do not add up`;
+}
+
+function describeAlgorithms(breakdown: ProxyAlgorithmBreakdown, blocksShortened: number): string {
+	const each = breakdown.algorithms.map(
 		({ algorithm, blocks, requests }) =>
 			`${algorithm} ${formatCountNoun(blocks, 'block')} in ${formatCountNoun(requests, 'request')}`
 	);
-	return `${each.join('; ')}. ${formatCountNoun(uniqueBlocks, 'unique block')} in the requests that recorded their algorithms, out of ${formatCount(blocksShortened)} shortened in the range; a block that two algorithms shortened is listed under each, so the lists do not add up`;
+	return `${each.join('; ')}. ${describeProxyAlgorithmCohort(breakdown, blocksShortened)}`;
+}
+
+/**
+ * How the proxy handled the requests of a range: how many it carried, read and
+ * shortened, the blocks with the share of requests that were counted, what it set
+ * aside, and why some were forwarded unread. The first lines of
+ * {@link describeProxyEffectiveness}, for a surface that lays the processing time
+ * and the algorithms out elsewhere.
+ */
+export function describeProxyHandling(effectiveness: ProxyEffectiveness): ProxyReportLine[] {
+	const lines: ProxyReportLine[] = [
+		{ label: 'Requests', text: describeTraffic(effectiveness.traffic) },
+		...describeBlocks(effectiveness.blocks),
+	];
+	if (effectiveness.skips.length > 0) {
+		lines.push({ label: 'Skipped', text: describeSkips(effectiveness.skips) });
+	}
+	return lines;
 }
 
 /**
@@ -221,13 +245,7 @@ function describeAlgorithms(
  * is a token estimate.
  */
 export function describeProxyEffectiveness(effectiveness: ProxyEffectiveness): ProxyReportLine[] {
-	const lines: ProxyReportLine[] = [
-		{ label: 'Requests', text: describeTraffic(effectiveness.traffic) },
-		...describeBlocks(effectiveness.blocks),
-	];
-	if (effectiveness.skips.length > 0) {
-		lines.push({ label: 'Skipped', text: describeSkips(effectiveness.skips) });
-	}
+	const lines = describeProxyHandling(effectiveness);
 	lines.push({ label: 'Processing time', text: describeProxyLatency(effectiveness.latency) });
 	if (effectiveness.algorithms.algorithms.length > 0) {
 		lines.push({

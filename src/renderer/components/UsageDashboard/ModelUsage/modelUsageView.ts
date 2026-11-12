@@ -9,6 +9,7 @@
  */
 
 import { formatDurationDecimal } from '../../../../shared/duration';
+import { addLocalDays, toLocalYmd } from '../../../../shared/localDay';
 import {
 	modelUsageOnDeviceShare,
 	modelUsageSourceLatency,
@@ -19,6 +20,15 @@ import {
 	type ModelUsageTask,
 } from '../../../../shared/local-models/model-usage';
 import { SYSTEM_ONE_LEDGER_OUTCOME_LABELS } from '../../../../shared/local-models/system-one-ledger';
+import {
+	describeProxyMode,
+	describeProxyRoute,
+} from '../../../../shared/local-models/token-proxy-report';
+import type {
+	ProxyModeTotals,
+	ProxyRouteTotals,
+	ProxyTrendDay,
+} from '../../../../shared/stats-types';
 import { TIER_LEVELS, type ModelTier } from '../../../../shared/tierLevels';
 import {
 	COLORBLIND_AGENT_PALETTE,
@@ -26,6 +36,7 @@ import {
 } from '../../../constants/colorblindPalettes';
 import type { Theme } from '../../../types';
 import type { DonutSlice } from '../../widgets';
+import { getSeriesColor } from '../chartUtils';
 
 /** The sources the tab is about: every one that is not a provider's own cloud. */
 export function otherModelSources(sources: readonly ModelUsageSource[]): ModelUsageSource[] {
@@ -369,4 +380,175 @@ export function routedTierSlices(
 /** Turns Auto's router decided, over the three tiers. */
 export function routedTurnCount(tiers: Readonly<Record<ModelTier, number>>): number {
 	return TIER_LEVELS.reduce((total, tier) => total + tiers[tier], 0);
+}
+
+// ---------------------------------------------------------------------------
+// Token proxy
+// ---------------------------------------------------------------------------
+
+/**
+ * The most calendar days the trend chart lays out, one slot each. A longer span
+ * (a year of data is 366) means a row far outside the range, so the chart falls
+ * back to the days that hold a request and a stray row cannot make it thousands
+ * of slots wide.
+ */
+export const PROXY_TREND_MAX_AXIS_DAYS = 1100;
+
+/** Said under the trend: which line is which. The legend cannot show a dash. */
+export const PROXY_TREND_LINES_NOTE =
+	'The solid line is what arrived and the dashed line is what was sent.';
+
+/** Said under the trend: what a gap in either line is. */
+export const PROXY_TREND_GAP_NOTE =
+	'A gap is a day with no request the proxy read: its figures are unknown, not zero.';
+
+/**
+ * The most day labels the trend's axis shows. Each is a whole date, about 70px, so
+ * four keep clear of one another down to a phone-wide chart where six overlap.
+ */
+export const PROXY_TREND_AXIS_LABELS = 4;
+
+/** Said under the mode split: its scope, and what the group with no mode is. */
+export const PROXY_MODE_SCOPE_NOTE =
+	'Requests carried in this range, by the mode each was carried as. A request recorded before this measure has no mode on record, and none is inferred from the stored mode or from an agent setting.';
+
+/** Said under the route split: its scope. */
+export const PROXY_ROUTE_SCOPE_NOTE =
+	'Requests carried in this range, by the provider route each used.';
+
+/** The daily estimates of a range, laid out for a line chart. */
+export interface ProxyTrendView {
+	/** Local `YYYY-MM-DD`, oldest first, one per slot of the x axis. */
+	days: string[];
+	/** Estimated tokens as the requests arrived. Null on a day with no request body read. */
+	original: Array<number | null>;
+	/** The same requests as they were sent. */
+	sent: Array<number | null>;
+	/** Whether any day holds a figure to draw. */
+	hasData: boolean;
+}
+
+/** Every local day from `start` to `end`, or null when that is more than the chart lays out. */
+function localDaysBetween(start: string, end: string): string[] | null {
+	const days: string[] = [];
+	// `addLocalDays` returns a malformed day unchanged, so the length bound, and not
+	// the comparison, is what ends the loop for one.
+	for (let day = start; day <= end; day = addLocalDays(day, 1)) {
+		if (days.length >= PROXY_TREND_MAX_AXIS_DAYS) return null;
+		days.push(day);
+	}
+	return days;
+}
+
+/**
+ * The days of a range as one x axis: every local calendar day from the start of
+ * the range to the day the record was read, so the spacing is the calendar's and a
+ * quiet week reads as one. A day with no request body read is a gap (`null`), never
+ * a zero: the proxy did not see what arrived, so nothing collapsed.
+ *
+ * `since` is where the range starts (0 for all time, which starts at the first
+ * day with a request) and `through` is when the record was read (null starts and
+ * ends at the days that hold a request). Neither drops a day that holds data. The
+ * days are the series behind the range totals (`ProxyEffectiveness.trend`), so
+ * nothing is counted again here.
+ */
+export function proxyTrendView(
+	trend: readonly ProxyTrendDay[],
+	since: number,
+	through: number | null
+): ProxyTrendView {
+	const byDay = new Map(trend.map((day) => [day.date, day]));
+	// `YYYY-MM-DD` sorts as the calendar does.
+	const dataDays = [...byDay.keys()].sort();
+	if (dataDays.length === 0) return { days: [], original: [], sent: [], hasData: false };
+
+	const first = dataDays[0];
+	const last = dataDays[dataDays.length - 1];
+	const sinceDay = since > 0 ? toLocalYmd(since) : first;
+	const throughDay = through !== null ? toLocalYmd(through) : last;
+	const days =
+		localDaysBetween(sinceDay < first ? sinceDay : first, throughDay > last ? throughDay : last) ??
+		dataDays;
+
+	const read = days.map((date) => {
+		const day = byDay.get(date);
+		return day !== undefined && day.compressRequests > 0 ? day : null;
+	});
+	return {
+		days,
+		original: read.map((day) => day?.originalTokens ?? null),
+		sent: read.map((day) => day?.sentTokens ?? null),
+		hasData: read.some((day) => day !== null),
+	};
+}
+
+/**
+ * The order a split takes the dashboard's series colors in. The palette's third
+ * color is a violet and its last an indigo, and on a purple theme (Pedurple,
+ * Dracula) either reads as the accent beside it, so a split uses the greens, cyans
+ * and ambers first. The colorblind palette is made of distinct hues and keeps its own
+ * order.
+ */
+const SPLIT_COLOR_SLOTS = [0, 1, 4, 6, 7, 5, 3, 2, 8] as const;
+
+function splitColor(index: number, theme: Theme, colorBlindMode: boolean): string {
+	return getSeriesColor(
+		colorBlindMode ? index : SPLIT_COLOR_SLOTS[index % SPLIT_COLOR_SLOTS.length],
+		theme,
+		colorBlindMode
+	);
+}
+
+/** Requests of each group as donut slices, in the order the groups arrive (most requests first). */
+function requestSlices<T extends { requests: number }>(
+	groups: readonly T[],
+	label: (group: T) => string,
+	isUnknown: (group: T) => boolean,
+	theme: Theme,
+	colorBlindMode: boolean
+): DonutSlice[] {
+	return groups.map((group, index) => ({
+		label: label(group),
+		value: group.requests,
+		// What is not known reads as not known: the neutral color, never a series one.
+		color: isUnknown(group) ? theme.colors.textDim : splitColor(index, theme, colorBlindMode),
+	}));
+}
+
+/**
+ * The requests of a range by the mode they were carried as. Each request is in
+ * exactly one group, so the slices sum to the requests carried. Requests that
+ * predate the measure are their own `not recorded` slice.
+ */
+export function proxyModeSlices(
+	byMode: readonly ProxyModeTotals[],
+	theme: Theme,
+	colorBlindMode: boolean
+): DonutSlice[] {
+	return requestSlices(
+		byMode,
+		(group) => describeProxyMode(group.effectiveMode),
+		(group) => group.effectiveMode === null,
+		theme,
+		colorBlindMode
+	);
+}
+
+/**
+ * The requests of a range by the provider route they used. A route this build
+ * does not know keeps its stored name, and a request that stored none is `not
+ * recorded`.
+ */
+export function proxyRouteSlices(
+	byRoute: readonly ProxyRouteTotals[],
+	theme: Theme,
+	colorBlindMode: boolean
+): DonutSlice[] {
+	return requestSlices(
+		byRoute,
+		(group) => describeProxyRoute(group.route),
+		(group) => group.route === '',
+		theme,
+		colorBlindMode
+	);
 }

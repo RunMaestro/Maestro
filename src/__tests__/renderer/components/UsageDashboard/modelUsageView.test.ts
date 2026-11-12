@@ -1,11 +1,13 @@
 /**
  * Tests for what the Models tab derives from a `ModelUsage` record: the
  * headline numbers, the sort orders, the latency bar rows and scale, the Run on
- * agents, and the System One slices. No rendering.
+ * agents, the System One slices, and the token proxy's trend axis and splits.
+ * No rendering.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
+	PROXY_TREND_MAX_AXIS_DAYS,
 	defaultSortDirection,
 	describeAgentTargets,
 	formatLatency,
@@ -14,6 +16,9 @@ import {
 	latencyBarRows,
 	modelUsageAgentName,
 	otherModelSources,
+	proxyModeSlices,
+	proxyRouteSlices,
+	proxyTrendView,
 	routedTierSlices,
 	routedTurnCount,
 	runOnAgents,
@@ -23,11 +28,21 @@ import {
 	summarizeModelUsage,
 	systemOneOutcomeSlices,
 } from '../../../../renderer/components/UsageDashboard/ModelUsage/modelUsageView';
+import { getSeriesColor } from '../../../../renderer/components/UsageDashboard/chartUtils';
 import {
 	COLORBLIND_AGENT_PALETTE,
 	COLORBLIND_STATUS_COLORS,
 } from '../../../../renderer/constants/colorblindPalettes';
-import { BUSY_MODEL_USAGE, EMPTY_MODEL_USAGE } from '../../../helpers/modelUsageFixtures';
+import { addLocalDays } from '../../../../shared/localDay';
+import { TOKEN_PROXY_UNKNOWN_LABELS } from '../../../../shared/local-models/token-proxy';
+import type { ProxyTrendDay } from '../../../../shared/stats-types';
+import {
+	BUSY_MODEL_USAGE,
+	EMPTY_MODEL_USAGE,
+	PROXY_LOADED_AT,
+	PROXY_RANGE_SINCE,
+	currentProxyUsage,
+} from '../../../helpers/modelUsageFixtures';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 const labels = (rows: Array<{ label: string }>) => rows.map((row) => row.label);
@@ -249,5 +264,231 @@ describe('System One slices', () => {
 			COLORBLIND_AGENT_PALETTE.slice(0, 3)
 		);
 		expect(routedTurnCount(EMPTY_MODEL_USAGE.systemOne.routedTiers)).toBe(0);
+	});
+});
+
+describe('proxyTrendView', () => {
+	/** A day of requests the proxy read, with the estimates of what arrived and what was sent. */
+	const readDay = (date: string, original: number, sent: number): ProxyTrendDay => ({
+		date,
+		requests: 10,
+		compressRequests: 10,
+		originalTokens: original,
+		sentTokens: sent,
+		blocksShortened: 1,
+	});
+
+	it('has nothing to draw for a range with no day', () => {
+		expect(proxyTrendView([], PROXY_RANGE_SINCE, PROXY_LOADED_AT)).toEqual({
+			days: [],
+			original: [],
+			sent: [],
+			hasData: false,
+		});
+	});
+
+	it('lays the range out one slot per calendar day, with a gap where nothing was read', () => {
+		const { trend } = currentProxyUsage().effectiveness!;
+		const view = proxyTrendView(trend, PROXY_RANGE_SINCE, PROXY_LOADED_AT);
+
+		// From the day the range starts to the day the record was read, quiet days included.
+		expect(view.days).toEqual([
+			'2026-11-05',
+			'2026-11-06',
+			'2026-11-07',
+			'2026-11-08',
+			'2026-11-09',
+			'2026-11-10',
+			'2026-11-11',
+			'2026-11-12',
+		]);
+		// 11-05, 11-09 and 11-11 have no request at all, and 11-08 had requests the
+		// proxy never read (passthrough): all four are unknown, not a collapse to 0.
+		expect(view.original).toEqual([null, 12_000, 20_000, null, null, 28_000, null, 40_000]);
+		expect(view.sent).toEqual([null, 10_000, 17_000, null, null, 23_000, null, 32_000]);
+		expect(view.hasData).toBe(true);
+		// Nothing is counted twice: the figures of the days are the range's.
+		const total = (values: Array<number | null>) =>
+			values.reduce<number>((sum, value) => sum + (value ?? 0), 0);
+		expect(total(view.original)).toBe(100_000);
+		expect(total(view.sent)).toBe(82_000);
+	});
+
+	it('runs the axis on to the day the record was read when the latest request is older', () => {
+		const view = proxyTrendView(
+			[readDay('2026-11-10', 8, 6)],
+			PROXY_RANGE_SINCE,
+			new Date(2026, 10, 13, 9).getTime()
+		);
+
+		// Three quiet days at the end are three gaps: the range is not over when requests stop.
+		expect(view.days[0]).toBe('2026-11-05');
+		expect(view.days[view.days.length - 1]).toBe('2026-11-13');
+		expect(view.original).toEqual([null, null, null, null, null, 8, null, null, null]);
+		expect(view.sent).toEqual([null, null, null, null, null, 6, null, null, null]);
+	});
+
+	it('keeps a read day with no estimated text as a measured zero, apart from an unread day', () => {
+		const view = proxyTrendView(
+			[
+				{ ...readDay('2026-11-06', 0, 0), compressRequests: 3 },
+				{ ...readDay('2026-11-07', 0, 0), compressRequests: 0 },
+			],
+			0,
+			null
+		);
+
+		expect(view.original).toEqual([0, null]);
+		expect(view.sent).toEqual([0, null]);
+		// A day of passthrough requests alone has nothing to draw.
+		expect(
+			proxyTrendView([{ ...readDay('2026-11-07', 0, 0), compressRequests: 0 }], 0, null).hasData
+		).toBe(false);
+	});
+
+	it('starts all time at the first day with a request and ends at the last without a read time', () => {
+		const view = proxyTrendView(
+			[readDay('2026-03-04', 5, 4), readDay('2026-03-02', 9, 7)],
+			0,
+			null
+		);
+
+		// Out of order in, calendar order out, and the quiet day between them is a gap.
+		expect(view.days).toEqual(['2026-03-02', '2026-03-03', '2026-03-04']);
+		expect(view.original).toEqual([9, null, 5]);
+	});
+
+	it('never drops a day that holds data, whatever the range start or read time say', () => {
+		const view = proxyTrendView(
+			[readDay('2026-11-06', 5, 4), readDay('2026-11-12', 6, 5)],
+			// The range starts after the first day, and the record was read before the last.
+			new Date(2026, 10, 9, 8).getTime(),
+			new Date(2026, 10, 10, 8).getTime()
+		);
+
+		expect(view.days[0]).toBe('2026-11-06');
+		expect(view.days[view.days.length - 1]).toBe('2026-11-12');
+		expect(view.original[0]).toBe(5);
+		expect(view.original[view.original.length - 1]).toBe(6);
+	});
+
+	it('counts calendar days across a clock change, never 24-hour steps', () => {
+		for (const [from, to] of [
+			['2026-03-06', '2026-03-10'],
+			['2026-10-30', '2026-11-03'],
+		] as const) {
+			const view = proxyTrendView([readDay(from, 1, 1), readDay(to, 1, 1)], 0, null);
+			expect(view.days).toEqual(
+				Array.from({ length: view.days.length }, (_, index) => addLocalDays(from, index))
+			);
+			expect(view.days).toHaveLength(5);
+			expect(new Set(view.days).size).toBe(5);
+		}
+	});
+
+	it('draws one slot per day up to the bound, and only the days with a request past it', () => {
+		const first = '2026-01-01';
+		const atBound = addLocalDays(first, PROXY_TREND_MAX_AXIS_DAYS - 1);
+		const pastBound = addLocalDays(first, PROXY_TREND_MAX_AXIS_DAYS);
+
+		const full = proxyTrendView([readDay(first, 1, 1), readDay(atBound, 2, 1)], 0, null);
+		expect(full.days).toHaveLength(PROXY_TREND_MAX_AXIS_DAYS);
+		expect(full.original[PROXY_TREND_MAX_AXIS_DAYS - 1]).toBe(2);
+
+		// A row that far out must not make the chart thousands of slots wide, and it
+		// must not be dropped either.
+		const sparse = proxyTrendView([readDay(first, 1, 1), readDay(pastBound, 2, 1)], 0, null);
+		expect(sparse.days).toEqual([first, pastBound]);
+		expect(sparse.original).toEqual([1, 2]);
+	});
+
+	it('ends on a day it cannot step past, instead of looping on it', () => {
+		// `addLocalDays` hands a malformed day back unchanged, so only the bound ends this walk.
+		const view = proxyTrendView([readDay('0000-bad', 1, 1), readDay('2026-11-06', 2, 1)], 0, null);
+
+		expect(view.days).toEqual(['0000-bad', '2026-11-06']);
+		expect(view.original).toEqual([1, 2]);
+	});
+});
+
+describe('proxy request splits', () => {
+	const { byMode, byRoute } = currentProxyUsage();
+
+	it('splits the requests by mode, and keeps the requests that predate the measure as their own slice', () => {
+		const slices = proxyModeSlices(byMode!, mockTheme, false);
+
+		expect(slices.map((slice) => [slice.label, slice.value])).toEqual([
+			['Compress early', 70],
+			['Compress tool results', 30],
+			['Passthrough (count only)', 12],
+			[TOKEN_PROXY_UNKNOWN_LABELS['not-recorded'], 8],
+		]);
+		// A partition: the slices are the requests carried, none dropped and none inferred.
+		expect(slices.reduce((total, slice) => total + slice.value, 0)).toBe(120);
+		// What is not known has the neutral color, not a series color.
+		expect(slices[3].color).toBe(mockTheme.colors.textDim);
+		expect(slices[0].color).toBe(mockTheme.colors.accent);
+		expect(new Set(slices.map((slice) => slice.color)).size).toBe(4);
+	});
+
+	it('takes the series colors in an order that keeps the violet and the indigo for last', () => {
+		const groups = Array.from({ length: 9 }, (_, index) => ({
+			...byRoute![0],
+			route: `route-${index}`,
+			requests: 9 - index,
+		}));
+		const colors = proxyRouteSlices(groups, mockTheme, false).map((slice) => slice.color);
+
+		// Those two read as the accent beside it on a purple theme, so a split uses
+		// the greens, cyans and ambers first and still has nine distinct colors.
+		expect(colors.slice(0, 3)).toEqual([
+			getSeriesColor(0, mockTheme),
+			getSeriesColor(1, mockTheme),
+			getSeriesColor(4, mockTheme),
+		]);
+		expect(colors.slice(0, 7)).not.toContain(getSeriesColor(2, mockTheme));
+		expect(colors.slice(0, 8)).not.toContain(getSeriesColor(8, mockTheme));
+		expect(new Set(colors).size).toBe(9);
+	});
+
+	it('uses the colorblind palette for the modes that are known', () => {
+		const slices = proxyModeSlices(byMode!, mockTheme, true);
+
+		expect(slices.slice(0, 3).map((slice) => slice.color)).toEqual(
+			COLORBLIND_AGENT_PALETTE.slice(0, 3)
+		);
+		expect(slices[3].color).toBe(mockTheme.colors.textDim);
+	});
+
+	it('splits the requests by provider route, naming a route this build does not know as stored', () => {
+		const slices = proxyRouteSlices(
+			[
+				...byRoute!,
+				{ ...byRoute![0], route: 'a-newer-route', requests: 2 },
+				// An inherited object name is a stored route like any other.
+				{ ...byRoute![0], route: 'constructor', requests: 1 },
+				{ ...byRoute![0], route: '', requests: 3 },
+			],
+			mockTheme,
+			false
+		);
+
+		expect(slices.map((slice) => [slice.label, slice.value])).toEqual([
+			['Claude Code', 80],
+			['Codex with an OpenAI API key', 30],
+			['Codex with a ChatGPT login', 10],
+			['a-newer-route', 2],
+			['constructor', 1],
+			[TOKEN_PROXY_UNKNOWN_LABELS['not-recorded'], 3],
+		]);
+		expect(slices[5].color).toBe(mockTheme.colors.textDim);
+		expect(slices.slice(0, 5).every((slice) => slice.color !== mockTheme.colors.textDim)).toBe(
+			true
+		);
+	});
+
+	it('has no slice for a split that holds no group', () => {
+		expect(proxyModeSlices([], mockTheme, false)).toEqual([]);
+		expect(proxyRouteSlices([], mockTheme, false)).toEqual([]);
 	});
 });

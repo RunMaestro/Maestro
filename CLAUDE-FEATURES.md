@@ -55,15 +55,32 @@ src/renderer/components/UsageDashboard/
 
 `ModelUsage/ModelUsageStats.tsx` supplies setup actions to the empty sections in
 `ModelUsageSections.tsx`. Tasks links open System One or System Two, the System One
-link opens its own panel, and Token Proxy Savings opens Gateway. Use
-`modelsSettingsLocation()` for labels and `modelsSettingsSubTab()` with
-`getModalActions().openSettings()` for navigation; opening Settings closes the dashboard.
+link opens its own panel, and Token Proxy Savings opens Gateway (from its empty line,
+and from a toolbar button once it has data). Use `modelsSettingsLocation()` for labels
+and `modelsSettingsSubTab()` with `getModalActions().openSettings()` for navigation;
+opening Settings closes the dashboard.
 
 The Run On Agents shortcut opens the active non-terminal agent's Models settings
 through `openAgentSettings()`, keeping the dashboard open underneath. Read the live
 session by ID when clicked so the form receives current values. Hide the shortcut
 when there is no active agent or the active session is a terminal.
 `Sparkline`, `ChartErrorBoundary`, and `ChartTooltip` live in the widget library (`src/renderer/components/widgets/output/`); the files here are one-line shims kept for the old import path. Import from `components/widgets` in new code.
+
+### Token Proxy Savings (the Models tab's effectiveness section)
+
+`ProxySavingsSection` in `ModelUsage/ModelUsageSections.tsx` draws the shared token proxy
+report for the selected range, summary first: three `StatCardGrid` figures (the estimated
+reduction with what it is a share of, request coverage, processing time with its sample), a
+`MultiLineChart` of the daily original and sent estimates, the mode and route splits
+(`TypeBreakdown`), the algorithm bars (`AgentActivityBars`), the provider's own usage, the
+per-agent table and the handling lines. It has one fetch owner, `useModelUsage()`: Refresh is
+its `reload`, and "Loaded" is its `loadedAt`, the last successful read. `ModelUsage.since` is
+where the range starts and is never shown as a freshness. The section starts no timer and
+makes no request of its own. Every figure is said through the shared report functions (see
+"Saying the Token Proxy Report" in [STATS-ANALYTICS.md](docs/agent-guides/STATS-ANALYTICS.md)),
+and the builders for the trend axis and the splits are `proxyTrendView()`,
+`proxyModeSlices()` and `proxyRouteSlices()` in `modelUsageView.ts`. Mode configuration stays
+in Settings > Models > Gateway: the section has no control that changes what the proxy does.
 
 ### Backend Components
 

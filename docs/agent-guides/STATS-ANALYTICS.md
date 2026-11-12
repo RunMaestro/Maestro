@@ -498,7 +498,7 @@ Rules a reader of these fields needs:
 - **Provider classes are summed where measured.** A class's `tokens` sums the requests whose reading is `reported` or `derived`, and is unknown when none is. `rows` counts every reading, and the six add up to the requests. `totals.provider` still adds the stored numbers for compatibility: it includes default zeros and legacy numbers, so it is not a measured total.
 - **Algorithms overlap.** A block that several algorithms shortened is listed under each of them. The `blocks` of `algorithms.algorithms` add up to more than `uniqueBlocks` then. Never add them to get blocks.
 - **Latency needs samples, and a mean says how many.** The distribution is `percentilesFromSorted()` over the requests with a processing time. It is withheld below `PROXY_LATENCY_MIN_SAMPLES` (`insufficient-samples`), a display policy: 30 samples do not make p95 or p99 stable. A request that was read and has no time is `untimed` and is left out. `avgAddedLatencyMs` divides by the timed requests and is 0 when none is, which reads the same as a measured 0 ms. `timedRequests` on the total, each agent and each mode is the sample of its mean, so 0 there means "no time", not "0 ms". The `latency` block speaks for the whole range. A reader that shows a mean must show it against `timedRequests`.
-- **Days are local.** `trend` uses SQLite `localtime`, the boundary of every per-day stat, and lists only the days that have a request. The first day of a rolling range (week, month) is partial.
+- **Days are local.** `trend` uses SQLite `localtime`, the boundary of every per-day stat, and lists only the days that have a request. The first day of a rolling range (week, month) is partial. A chart that wants one slot per day lays the days out itself (`proxyTrendView()` in `ModelUsage/modelUsageView.ts`), with a gap, never a 0, for a day with no request body read.
 - **The reader needs the v22 columns**, as the writer does. A database whose v22 migration failed cannot be read until the next start applies it.
 
 ### Saying the Token Proxy Report
@@ -509,6 +509,7 @@ A surface does not word `ProxyRequestUsage` itself. `src/shared/local-models/tok
 - **Unknown is a word, not a 0.** A mean added latency is read against `timedRequests` (`describeAddedLatency()`): no timed request is `unknown`, a measured zero is `0 ms`, and an older desktop's mean without its sample is `(sample unknown)`. A mode a row never stated is `not recorded`. A provider class nobody reported is `unknown`, with the other requests named by reading.
 - **The old provider sums are not classes.** `totals.provider` adds stored numbers, defaults included. Without `effectiveness` it is printed as `Stored sums` of unknown provenance under its own note; it is never called reported or derived.
 - **Days are the series behind the totals.** `describeProxyTrend()` says each day with the same `describeTokensSaved()` as the totals, lists the latest `PROXY_TREND_TEXT_DAYS` (7) and leaves the rest to `effectiveness.trend` in the JSON. The first day of a rolling range is partial, and `TOKEN_PROXY_TREND_NOTE` says so.
+- **A widget does not word a number.** The Usage Dashboard draws the range with widgets (`StatCardGrid`, `MultiLineChart`, `TypeBreakdown`, `AgentActivityBars`) and says each figure through the functions above: the reduction by `describeTokensSaved()`, the mean by `describeAddedLatency()` with the sentence of `describeProxyLatency()` under it, the first lines of the report by `describeProxyHandling()`, the provider's classes by `describeProviderUsage()` under `describeProviderUsageNote()`, and the algorithm cohort by `describeProxyAlgorithmCohort()`. A figure keeps its denominator on screen, and counts that overlap are never drawn as shares.
 - **Recovery is not a range.** `TokenProxyReport.recovery` is a count of the app's life (`getTokenProxyRecoveryObservations()`). It is printed in its own section, never inside a range, and never subtracted from the tokens saved. The retrieve tool is apart from other reads (actor unknown), receipt by a model is unknown, and no net saving is stated.
 - **No money, no quality.** No dollar basis or quality check exists. `TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE` is said wherever a saving is shown.
 
@@ -562,6 +563,11 @@ the Usage Dashboard's **Models** tab, `maestro-cli stats models`, and the WS mes
 | IPC / WS    | `stats:get-model-usage`, `window.maestro.stats.getModelUsage(range)`, `get_model_usage` answered as `model_usage`                                           |
 | CLI         | `maestro-cli stats models [--range day\|week\|month\|quarter\|year\|all] [--json]`                                                                          |
 | Renderer    | `useModelUsage(range)` in `src/renderer/hooks/stats/useModelUsage.ts`, drawn by `<ModelUsageStats>` in `src/renderer/components/UsageDashboard/ModelUsage/` |
+
+`useModelUsage` is the tab's one fetch owner: it returns `usage`, `loadedAt`, `loading`, `error` and `reload`.
+`loadedAt` is the moment the last successful read answered, and it is the only freshness the record has
+(`ModelUsage.since` is where the range starts). A failed background refresh keeps the record and its time, a
+failed foreground read or a range change clears both, and `reload` keeps both on screen until the new answer lands.
 
 `readModelUsage` is the one function the IPC channel and the WS message both call. It checks the range
 with `isStatsTimeRange()` (no range reads the week) and hands the aggregation the names only the app

@@ -7,7 +7,8 @@
  *   - `ModelTasksTable`      - what ran where, by task (sortable);
  *   - `RunOnAgentTiles`      - the agents that launched turns on another model;
  *   - `SystemOneSection`     - how decisions ended, and Auto's tier split;
- *   - `ProxySavingsSection`  - what the token proxy saved, as an estimate.
+ *   - `ProxySavingsSection`  - what the token proxy saved, as an estimate, and how well
+ *                              the range is covered by what it read.
  *
  * Every block is presentational: it takes a slice of one `ModelUsage` record
  * and draws it. `ModelUsageStats` owns the fetch and the loading, error and
@@ -21,15 +22,25 @@ import {
 	Activity,
 	Bot,
 	Coins,
+	Eye,
 	HardDrive,
 	ListChecks,
 	Minimize2,
+	RefreshCw,
 	Scale,
 	Server,
+	Settings,
 	Timer,
 } from 'lucide-react';
 import { getAgentDisplayName } from '../../../../shared/agentMetadata';
-import { formatCount, formatNumber, formatTokensCompact } from '../../../../shared/formatters';
+import {
+	formatCalendarDay,
+	formatCount,
+	formatCountNoun,
+	formatNumber,
+	formatTimestamp,
+	formatTokensCompact,
+} from '../../../../shared/formatters';
 import {
 	MODEL_USAGE_SOURCE_KIND_LABELS,
 	describeModelUsageRequestSplit,
@@ -45,27 +56,59 @@ import { SYSTEM_ONE_LEDGER_OUTCOME_LABELS } from '../../../../shared/local-model
 import { formatSystemOneCost } from '../../../../shared/local-models/system-one-spend';
 import {
 	TOKEN_PROXY_ESTIMATE_NOTE,
+	TOKEN_PROXY_EVIDENCE_SEPARATION_NOTE,
+	TOKEN_PROXY_UNKNOWN_LABELS,
 	describeAddedLatency,
 	describeTokensSaved,
 } from '../../../../shared/local-models/token-proxy';
-import { TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE } from '../../../../shared/local-models/token-proxy-report';
+import {
+	TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE,
+	TOKEN_PROXY_TREND_NOTE,
+	describeProviderUsage,
+	describeProviderUsageNote,
+	describeProxyAlgorithmCohort,
+	describeProxyHandling,
+	describeProxyLatency,
+	type ProxyReportLine,
+} from '../../../../shared/local-models/token-proxy-report';
 import type { DurationPercentiles } from '../../../../shared/percentiles';
+import type { ProxyTrendDay } from '../../../../shared/stats-types';
+import { COLORBLIND_LINE_COLORS } from '../../../constants/colorblindPalettes';
 import { useTableSort } from '../../../hooks/ui/useTableSort';
 import type { Theme } from '../../../types';
+import { HeaderActionButton } from '../../ui/HeaderActionButton';
 import { MiniBadge } from '../../ui/MiniBadge';
 import { SortableTh } from '../../ui/SortableTh';
-import { SectionCard, TypeBreakdown } from '../../widgets';
+import { Spinner } from '../../ui/Spinner';
+import {
+	AgentActivityBars,
+	MultiLineChart,
+	SectionCard,
+	StatCardGrid,
+	TypeBreakdown,
+	type BarDatum,
+	type LineSeries,
+	type StatCardDatum,
+} from '../../widgets';
 import { EntityTile, type EntityTileStat } from '../EntityTile';
 import { MetricCard } from '../MetricCard';
 import { AGENT_TILE_MIN_WIDTH, tileGridColumns } from '../tileScale';
 import { LatencyBars } from './LatencyBars';
 import {
+	PROXY_MODE_SCOPE_NOTE,
+	PROXY_ROUTE_SCOPE_NOTE,
+	PROXY_TREND_AXIS_LABELS,
+	PROXY_TREND_GAP_NOTE,
+	PROXY_TREND_LINES_NOTE,
 	defaultSortDirection,
 	describeAgentTargets,
 	formatLatency,
 	formatShare,
 	latencyBarRows,
 	modelUsageAgentName,
+	proxyModeSlices,
+	proxyRouteSlices,
+	proxyTrendView,
 	routedTierSlices,
 	routedTurnCount,
 	runOnAgents,
@@ -698,7 +741,7 @@ export const RunOnAgentTiles = memo(function RunOnAgentTiles({
 // System One
 // ---------------------------------------------------------------------------
 
-function DonutBlock({
+function TitledBlock({
 	theme,
 	title,
 	children,
@@ -764,7 +807,7 @@ export const SystemOneSection = memo(function SystemOneSection({
 	return (
 		<SectionCard theme={theme} title="System One" icon={Scale}>
 			<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-				<DonutBlock theme={theme} title="How decisions ended" testId="model-usage-outcomes">
+				<TitledBlock theme={theme} title="How decisions ended" testId="model-usage-outcomes">
 					{systemOne.decisions > 0 ? (
 						<>
 							<TypeBreakdown theme={theme} slices={outcomeSlices} />
@@ -777,8 +820,8 @@ export const SystemOneSection = memo(function SystemOneSection({
 					) : (
 						<SectionEmpty theme={theme}>No decision in this range.</SectionEmpty>
 					)}
-				</DonutBlock>
-				<DonutBlock theme={theme} title="Auto routing, by tier" testId="model-usage-tiers">
+				</TitledBlock>
+				<TitledBlock theme={theme} title="Auto routing, by tier" testId="model-usage-tiers">
 					{routedTurns > 0 ? (
 						<>
 							<TypeBreakdown theme={theme} slices={tierSlices} />
@@ -789,7 +832,7 @@ export const SystemOneSection = memo(function SystemOneSection({
 					) : (
 						<SectionEmpty theme={theme}>No turn was sent on the Auto model.</SectionEmpty>
 					)}
-				</DonutBlock>
+				</TitledBlock>
 			</div>
 
 			{systemOne.byTask.length > 0 && (
@@ -902,15 +945,312 @@ export const SystemOneSection = memo(function SystemOneSection({
 // Token proxy
 // ---------------------------------------------------------------------------
 
+/** The facts of one report as a definition list: what each is called, and what it says. */
+function ReportLines({
+	theme,
+	lines,
+	testId,
+}: {
+	theme: Theme;
+	lines: readonly ProxyReportLine[];
+	testId: string;
+}) {
+	return (
+		<dl
+			className="grid gap-x-4 gap-y-1.5 text-xs select-text"
+			style={{ gridTemplateColumns: 'max-content minmax(0, 1fr)' }}
+			data-testid={testId}
+		>
+			{lines.map((line) => (
+				<Fragment key={line.label}>
+					<dt style={{ color: theme.colors.textDim }}>{line.label}</dt>
+					<dd style={{ color: theme.colors.textMain }}>{line.text}</dd>
+				</Fragment>
+			))}
+		</dl>
+	);
+}
+
+/** The y axis and tooltip of the trend: whole tokens, compact (the middle tick is a half). */
+function formatTrendTokens(value: number): string {
+	return formatTokensCompact(Math.round(value));
+}
+
+/**
+ * The three figures to read first: the estimated reduction with what it is a share
+ * of, how many of the carried requests the proxy read, and what reading them cost.
+ * Each is said by the same description the table below uses, and says what it is
+ * out of. A figure the proxy did not measure is `-` or `unknown`, never 0.
+ */
+function proxyHeadlineCards({ totals, effectiveness }: ModelUsageProxy): StatCardDatum[] {
+	const read = totals.compressRequests;
+	return [
+		{
+			label: 'Payload reduction (est.)',
+			icon: Minimize2,
+			value: totals.tokensSaved,
+			displayValue: describeTokensSaved(totals),
+			caption:
+				read > 0
+					? `of ${formatTokensCompact(totals.originalTokens)} estimated tokens in ${formatCountNoun(read, 'read request')}`
+					: TOKEN_PROXY_UNKNOWN_LABELS['not-read'],
+		},
+		{
+			label: 'Request coverage',
+			icon: Eye,
+			value: read,
+			displayValue: `${formatCount(read)} / ${formatCount(totals.requests)}`,
+			caption: 'requests the proxy read, of those it carried',
+		},
+		{
+			label: 'Processing time (mean)',
+			icon: Timer,
+			value: totals.avgAddedLatencyMs,
+			displayValue: describeAddedLatency(totals),
+			caption: effectiveness ? describeProxyLatency(effectiveness.latency) : undefined,
+		},
+	];
+}
+
+/**
+ * When the record was read, and the two things a reader does about it: read the
+ * range again, and open Gateway to change what the proxy does. The time is the
+ * fetch owner's own (`useModelUsage`), shown as read and never recomputed on a
+ * timer.
+ */
+function ProxyToolbar({
+	theme,
+	loadedAt,
+	refreshing,
+	onRefresh,
+	setupActions,
+}: {
+	theme: Theme;
+	loadedAt: number | null;
+	refreshing: boolean;
+	onRefresh: () => void;
+	setupActions?: readonly ModelSetupAction[];
+}) {
+	return (
+		<div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+			<p
+				className="text-xs select-text"
+				style={{ color: theme.colors.textDim }}
+				data-testid="model-usage-proxy-loaded"
+			>
+				{loadedAt === null ? 'Not read yet' : `Loaded ${formatTimestamp(loadedAt)}`}
+			</p>
+			<div className="flex flex-wrap items-center gap-1">
+				<HeaderActionButton
+					theme={theme}
+					variant="ghost"
+					icon={refreshing ? <Spinner size={14} icon={RefreshCw} decorative /> : <RefreshCw />}
+					onClick={onRefresh}
+					disabled={refreshing}
+					title="Read this range again"
+					testId="model-usage-proxy-refresh"
+				>
+					{refreshing ? 'Refreshing' : 'Refresh'}
+				</HeaderActionButton>
+				{setupActions?.map((action) => (
+					<HeaderActionButton
+						key={action.label}
+						theme={theme}
+						variant="ghost"
+						icon={<Settings />}
+						onClick={action.onClick}
+					>
+						{action.label}
+					</HeaderActionButton>
+				))}
+			</div>
+		</div>
+	);
+}
+
+/**
+ * The estimated tokens of each day, as the requests arrived and as they were sent.
+ * The two overlap (sent is the same text after shortening), so they are lines on
+ * one axis and never stacked. A day with no request body read is a gap.
+ */
+function ProxyTrendChart({
+	theme,
+	trend,
+	since,
+	loadedAt,
+	colorBlindMode,
+}: {
+	theme: Theme;
+	trend: readonly ProxyTrendDay[];
+	since: number;
+	loadedAt: number | null;
+	colorBlindMode: boolean;
+}) {
+	const view = useMemo(() => proxyTrendView(trend, since, loadedAt), [trend, since, loadedAt]);
+	const labels = useMemo(() => view.days.map(formatCalendarDay), [view.days]);
+	const series = useMemo<LineSeries[]>(
+		() => [
+			{
+				key: 'original',
+				label: 'Original (est.)',
+				color: colorBlindMode ? COLORBLIND_LINE_COLORS.secondary : theme.colors.textDim,
+				values: view.original,
+			},
+			{
+				key: 'sent',
+				label: 'Sent (est.)',
+				color: colorBlindMode ? COLORBLIND_LINE_COLORS.primary : theme.colors.accent,
+				values: view.sent,
+				dashed: true,
+			},
+		],
+		[view, theme, colorBlindMode]
+	);
+
+	if (!view.hasData) {
+		return (
+			<SectionEmpty theme={theme} testId="model-usage-proxy-trend-empty">
+				No day in this range has a request the proxy read, so there is nothing to draw by day.
+			</SectionEmpty>
+		);
+	}
+	return (
+		<>
+			<MultiLineChart
+				theme={theme}
+				xLabels={labels}
+				series={series}
+				formatValue={formatTrendTokens}
+				maxXLabels={PROXY_TREND_AXIS_LABELS}
+				ariaLabel="Estimated tokens in the requests the proxy read, by day, as they arrived and as they were sent"
+				testId="model-usage-proxy-trend"
+			/>
+			<SectionNote theme={theme} testId="model-usage-proxy-trend-note">
+				{PROXY_TREND_LINES_NOTE} {TOKEN_PROXY_TREND_NOTE} {PROXY_TREND_GAP_NOTE}
+			</SectionNote>
+		</>
+	);
+}
+
+/**
+ * How the range's requests split by mode and by provider route (each a partition of
+ * the requests carried, so a donut), and which algorithms shortened the blocks
+ * (counts that overlap, so bars with their own cohort note and never a share). A
+ * split an older desktop did not send is left out.
+ */
+function ProxyBreakdowns({
+	theme,
+	proxy,
+	colorBlindMode,
+}: {
+	theme: Theme;
+	proxy: ModelUsageProxy;
+	colorBlindMode: boolean;
+}) {
+	const { byMode, byRoute, effectiveness } = proxy;
+	const modeSlices = useMemo(
+		() => (byMode ? proxyModeSlices(byMode, theme, colorBlindMode) : []),
+		[byMode, theme, colorBlindMode]
+	);
+	const routeSlices = useMemo(
+		() => (byRoute ? proxyRouteSlices(byRoute, theme, colorBlindMode) : []),
+		[byRoute, theme, colorBlindMode]
+	);
+	const algorithms = effectiveness?.algorithms;
+	const algorithmBars = useMemo<BarDatum[]>(
+		() =>
+			(algorithms?.algorithms ?? []).map(({ algorithm, blocks }) => ({
+				label: algorithm,
+				value: blocks,
+			})),
+		[algorithms]
+	);
+
+	if (modeSlices.length === 0 && routeSlices.length === 0 && algorithmBars.length === 0) {
+		return null;
+	}
+	return (
+		<div
+			className="grid gap-6"
+			style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}
+		>
+			{modeSlices.length > 0 && (
+				<TitledBlock theme={theme} title="Request mode" testId="model-usage-proxy-modes">
+					<TypeBreakdown theme={theme} slices={modeSlices} />
+					<SectionNote theme={theme}>{PROXY_MODE_SCOPE_NOTE}</SectionNote>
+				</TitledBlock>
+			)}
+			{routeSlices.length > 0 && (
+				<TitledBlock theme={theme} title="Provider route" testId="model-usage-proxy-routes">
+					<TypeBreakdown theme={theme} slices={routeSlices} />
+					<SectionNote theme={theme}>{PROXY_ROUTE_SCOPE_NOTE}</SectionNote>
+				</TitledBlock>
+			)}
+			{algorithms && effectiveness && algorithmBars.length > 0 && (
+				<TitledBlock
+					theme={theme}
+					title="Algorithm contributions"
+					testId="model-usage-proxy-algorithms"
+				>
+					{/* Every algorithm is a bar: the widget's "+N more" row would add counts that overlap. */}
+					<AgentActivityBars
+						theme={theme}
+						data={algorithmBars}
+						topN={algorithmBars.length}
+						unitLabel="blocks shortened, per algorithm"
+					/>
+					<SectionNote theme={theme} testId="model-usage-proxy-algorithm-cohort">
+						{describeProxyAlgorithmCohort(algorithms, effectiveness.traffic.blocksShortened)}
+					</SectionNote>
+				</TitledBlock>
+			)}
+		</div>
+	);
+}
+
+/** What the provider counted, class by class, with the requests each class covers. */
+function ProxyProviderUsage({ theme, proxy }: { theme: Theme; proxy: ModelUsageProxy }) {
+	const lines = useMemo(() => describeProviderUsage(proxy), [proxy]);
+	if (lines.length === 0) return null;
+	return (
+		<TitledBlock theme={theme} title="Provider usage" testId="model-usage-proxy-provider">
+			<ReportLines theme={theme} lines={lines} testId="model-usage-proxy-provider-lines" />
+			<SectionNote theme={theme} testId="model-usage-proxy-provider-note">
+				{describeProviderUsageNote(proxy)}
+			</SectionNote>
+		</TitledBlock>
+	);
+}
+
 export const ProxySavingsSection = memo(function ProxySavingsSection({
 	theme,
 	proxy,
+	since,
+	loadedAt,
+	refreshing,
+	onRefresh,
+	colorBlindMode = false,
 	setupActions,
 }: {
 	theme: Theme;
 	proxy: ModelUsageProxy;
+	/** Where the range starts (`ModelUsage.since`; 0 for all time). It bounds the trend's axis. It is not a freshness. */
+	since: number;
+	/** When the record was last read successfully (`useModelUsage`). Null before a read answers. */
+	loadedAt: number | null;
+	/** Whether a manual refresh is in flight. */
+	refreshing: boolean;
+	onRefresh: () => void;
+	colorBlindMode?: boolean;
 	setupActions?: readonly ModelSetupAction[];
 }) {
+	const { effectiveness } = proxy;
+	const cards = useMemo(() => proxyHeadlineCards(proxy), [proxy]);
+	const handling = useMemo(
+		() => (effectiveness ? describeProxyHandling(effectiveness) : []),
+		[effectiveness]
+	);
+
 	if (proxy.totals.requests === 0) {
 		return (
 			<SectionCard theme={theme} title="Token Proxy Savings" icon={Minimize2}>
@@ -929,65 +1269,109 @@ export const ProxySavingsSection = memo(function ProxySavingsSection({
 			icon={Minimize2}
 			action={<MiniBadge label="Estimate" theme={theme} title={TOKEN_PROXY_ESTIMATE_NOTE} />}
 		>
-			<div className="overflow-x-auto">
-				<table
-					className="w-full text-sm select-text"
-					style={{ borderCollapse: 'separate', borderSpacing: 0 }}
-					data-testid="model-usage-proxy"
-				>
-					<thead>
-						<tr>
-							<PlainTh theme={theme}>Agent</PlainTh>
-							<PlainTh theme={theme} align="right">
-								Requests
-							</PlainTh>
-							<PlainTh theme={theme} align="right" title={TOKEN_PROXY_ESTIMATE_NOTE}>
-								Tokens saved (est.)
-							</PlainTh>
-							<PlainTh theme={theme} align="right">
-								Average added latency
-							</PlainTh>
-						</tr>
-					</thead>
-					<tbody>
-						<tr data-testid="model-usage-proxy-total">
-							<td className={`${TD_CLASS} font-medium`} style={{ color: theme.colors.textMain }}>
-								All agents
-							</td>
-							<td className={TD_NUMBER_CLASS} style={{ color: theme.colors.textMain }}>
-								{formatCount(proxy.totals.requests)}
-							</td>
-							<td className={TD_NUMBER_CLASS} style={{ color: theme.colors.textMain }}>
-								{describeTokensSaved(proxy.totals)}
-							</td>
-							<td className={TD_NUMBER_CLASS} style={{ color: theme.colors.textDim }}>
-								{describeAddedLatency(proxy.totals)}
-							</td>
-						</tr>
-						{proxy.byAgent.map((row, index) => (
-							<tr
-								key={row.agentId ?? 'no-agent'}
-								style={{ backgroundColor: zebra(theme, index + 1) }}
-								data-testid="model-usage-proxy-agent"
-								data-agent-id={row.agentId ?? ''}
-							>
-								<td className={TD_CLASS} style={{ color: theme.colors.textMain }}>
-									{modelUsageAgentName(row)}
+			<ProxyToolbar
+				theme={theme}
+				loadedAt={loadedAt}
+				refreshing={refreshing}
+				onRefresh={onRefresh}
+				setupActions={setupActions}
+			/>
+			<div className="space-y-5">
+				<div data-testid="model-usage-proxy-headline">
+					<StatCardGrid theme={theme} cards={cards} minColumnWidth={220} />
+				</div>
+				{effectiveness && (
+					<TitledBlock
+						theme={theme}
+						title="Provider-bound text estimates, by day"
+						testId="model-usage-proxy-trend-block"
+					>
+						<ProxyTrendChart
+							theme={theme}
+							trend={effectiveness.trend}
+							since={since}
+							loadedAt={loadedAt}
+							colorBlindMode={colorBlindMode}
+						/>
+					</TitledBlock>
+				)}
+				<ProxyBreakdowns theme={theme} proxy={proxy} colorBlindMode={colorBlindMode} />
+				<ProxyProviderUsage theme={theme} proxy={proxy} />
+				<div className="overflow-x-auto">
+					<table
+						className="w-full text-sm select-text"
+						style={{ borderCollapse: 'separate', borderSpacing: 0 }}
+						data-testid="model-usage-proxy"
+					>
+						<thead>
+							<tr>
+								<PlainTh theme={theme}>Agent</PlainTh>
+								<PlainTh theme={theme} align="right">
+									Requests
+								</PlainTh>
+								<PlainTh theme={theme} align="right" title={TOKEN_PROXY_ESTIMATE_NOTE}>
+									Tokens saved (est.)
+								</PlainTh>
+								<PlainTh theme={theme} align="right">
+									Average added latency
+								</PlainTh>
+							</tr>
+						</thead>
+						<tbody>
+							<tr data-testid="model-usage-proxy-total">
+								<td className={`${TD_CLASS} font-medium`} style={{ color: theme.colors.textMain }}>
+									All agents
+								</td>
+								<td className={TD_NUMBER_CLASS} style={{ color: theme.colors.textMain }}>
+									{formatCount(proxy.totals.requests)}
+								</td>
+								<td className={TD_NUMBER_CLASS} style={{ color: theme.colors.textMain }}>
+									{describeTokensSaved(proxy.totals)}
 								</td>
 								<td className={TD_NUMBER_CLASS} style={{ color: theme.colors.textDim }}>
-									{formatCount(row.requests)}
-								</td>
-								<td className={TD_NUMBER_CLASS} style={{ color: theme.colors.textDim }}>
-									{describeTokensSaved(row)}
-								</td>
-								<td className={TD_NUMBER_CLASS} style={{ color: theme.colors.textDim }}>
-									{describeAddedLatency(row)}
+									{describeAddedLatency(proxy.totals)}
 								</td>
 							</tr>
-						))}
-					</tbody>
-				</table>
+							{proxy.byAgent.map((row, index) => (
+								<tr
+									key={row.agentId ?? 'no-agent'}
+									style={{ backgroundColor: zebra(theme, index + 1) }}
+									data-testid="model-usage-proxy-agent"
+									data-agent-id={row.agentId ?? ''}
+								>
+									<td className={TD_CLASS} style={{ color: theme.colors.textMain }}>
+										{modelUsageAgentName(row)}
+									</td>
+									<td className={TD_NUMBER_CLASS} style={{ color: theme.colors.textDim }}>
+										{formatCount(row.requests)}
+									</td>
+									<td className={TD_NUMBER_CLASS} style={{ color: theme.colors.textDim }}>
+										{describeTokensSaved(row)}
+									</td>
+									<td className={TD_NUMBER_CLASS} style={{ color: theme.colors.textDim }}>
+										{describeAddedLatency(row)}
+									</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+				{handling.length > 0 && (
+					<TitledBlock
+						theme={theme}
+						title="How the proxy handled these requests"
+						testId="model-usage-proxy-handling"
+					>
+						<ReportLines theme={theme} lines={handling} testId="model-usage-proxy-handling-lines" />
+					</TitledBlock>
+				)}
 			</div>
+			{!effectiveness && (
+				<SectionNote theme={theme} testId="model-usage-proxy-older">
+					This desktop sent only the totals. Block counts, skips, the trend by day and the
+					per-algorithm figures need a newer desktop.
+				</SectionNote>
+			)}
 			{proxy.routedRequests > 0 && (
 				<SectionNote theme={theme} testId="model-usage-proxy-routed">
 					{plural(proxy.routedRequests, 'background request')} sent to a Local Models target in
@@ -996,6 +1380,9 @@ export const ProxySavingsSection = memo(function ProxySavingsSection({
 			)}
 			<SectionNote theme={theme} testId="model-usage-proxy-estimate">
 				{TOKEN_PROXY_ESTIMATE_NOTE}
+			</SectionNote>
+			<SectionNote theme={theme} testId="model-usage-proxy-separation">
+				{TOKEN_PROXY_EVIDENCE_SEPARATION_NOTE}
 			</SectionNote>
 			<SectionNote theme={theme} testId="model-usage-proxy-not-evaluated">
 				{TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE}

@@ -20,7 +20,9 @@ import {
 import {
 	describeProviderUsage,
 	describeProviderUsageNote,
+	describeProxyAlgorithmCohort,
 	describeProxyEffectiveness,
+	describeProxyHandling,
 	describeProxyLatency,
 	describeProxyMode,
 	describeProxyRecovery,
@@ -350,6 +352,64 @@ describe('describeProxyEffectiveness', () => {
 		};
 		expect(textOf(describeProxyEffectiveness(effectiveness), 'Processing time')).toBe(
 			'too few samples to report (12 timed requests, 30 needed)'
+		);
+	});
+});
+
+describe('describeProxyHandling and describeProxyAlgorithmCohort', () => {
+	it('is the first part of the effectiveness lines, for a surface that lays the rest out itself', () => {
+		const effectiveness = busyProxyEffectiveness();
+		const handling = describeProxyHandling(effectiveness);
+
+		// Neither the processing time nor the algorithms: a surface draws those
+		// from the same words (`describeProxyLatency`, the cohort) beside its widgets.
+		expect(handling.map((line) => line.label)).toEqual([
+			'Requests',
+			'Blocks',
+			'Set aside',
+			'Skipped',
+		]);
+		// One set of words: the full report is these lines, then the other two.
+		expect(describeProxyEffectiveness(effectiveness)).toEqual([
+			...handling,
+			{ label: 'Processing time', text: describeProxyLatency(effectiveness.latency) },
+			{
+				label: 'Algorithms',
+				text: expect.stringContaining(
+					describeProxyAlgorithmCohort(
+						effectiveness.algorithms,
+						effectiveness.traffic.blocksShortened
+					)
+				),
+			},
+		]);
+	});
+
+	it('says an empty range as the empty report does, with no line about skips', () => {
+		expect(describeProxyHandling(emptyProxyEffectiveness()).map((line) => line.label)).toEqual([
+			'Requests',
+			'Blocks',
+		]);
+	});
+
+	it('says the unique blocks as a cohort of the range total, and that the lists overlap', () => {
+		expect(
+			describeProxyAlgorithmCohort(
+				{
+					uniqueBlocks: 3,
+					algorithms: [
+						{ algorithm: 'logs', blocks: 2, requests: 1 },
+						{ algorithm: 'json', blocks: 2, requests: 1 },
+					],
+				},
+				6
+			)
+		).toBe(
+			'3 unique blocks in the requests that recorded their algorithms, out of 6 shortened in the range; a block that two algorithms shortened is listed under each, so the lists do not add up'
+		);
+		// The noun agrees with one block.
+		expect(describeProxyAlgorithmCohort({ uniqueBlocks: 1, algorithms: [] }, 1)).toMatch(
+			/^1 unique block in the requests/
 		);
 	});
 });
