@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	MarketplaceImportError,
 	MarketplaceLaunchBusyError,
+	MarketplaceLaunchCleanupError,
 	MarketplaceLaunchValuesError,
 } from '../../shared/marketplace-types';
 
@@ -53,5 +54,23 @@ describe('MarketplaceLaunchBusyError', () => {
 		expect(error).toBeInstanceOf(Error);
 		expect(error.type).toBe('import');
 		expect(error.name).toBe('MarketplaceLaunchBusyError');
+	});
+});
+
+describe('MarketplaceLaunchCleanupError', () => {
+	it('names the refused folder and the reason', () => {
+		const error = new MarketplaceLaunchCleanupError('../outside', 'it is not a single folder name');
+		expect(error.folderRelativePath).toBe('../outside');
+		expect(error.message).toBe(
+			'Refusing to delete the launch folder "../outside": it is not a single folder name'
+		);
+	});
+
+	it('is an import error, so callers that handle MarketplaceImportError keep working', () => {
+		const error = new MarketplaceLaunchCleanupError('launch-1', 'it is a symbolic link');
+		expect(error).toBeInstanceOf(MarketplaceImportError);
+		expect(error).toBeInstanceOf(Error);
+		expect(error.type).toBe('import');
+		expect(error.name).toBe('MarketplaceLaunchCleanupError');
 	});
 });

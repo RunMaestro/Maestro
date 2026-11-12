@@ -55,8 +55,17 @@ export interface RemoteFsResult<T> {
 	data?: T;
 	/** Error message (if success is false) */
 	error?: string;
-	/** A bounded read rejected content exceeding its byte budget or invalid UTF-8. */
-	errorCode?: 'too-large' | 'invalid-encoding' | 'identity-unavailable' | 'identity-mismatch';
+	/**
+	 * A bounded read rejected content exceeding its byte budget or invalid UTF-8, or
+	 * `deleteDirectoryRemote` refused a path that is a symbolic link or not a directory.
+	 */
+	errorCode?:
+		| 'too-large'
+		| 'invalid-encoding'
+		| 'identity-unavailable'
+		| 'identity-mismatch'
+		| 'symlink'
+		| 'not-directory';
 	/** Descriptor ownership, independent of whether its content was readable. */
 	observedIdentity?: RemotePathIdentity;
 	/** The pinned descriptor changed size or timestamps while its bytes were read. */
@@ -1800,6 +1809,65 @@ export async function deleteManyRemote(
 	}
 
 	return results;
+}
+
+/** Exit codes of the {@link deleteDirectoryRemote} script, past the ones `sh` and ssh use for themselves. */
+const DELETE_DIRECTORY_EXIT = { missing: 3, symlink: 4, notDirectory: 5 } as const;
+
+/**
+ * Delete a REAL directory on a remote host via SSH, in one round trip. A symbolic link at the path
+ * (to a directory or not) is refused with `errorCode: 'symlink'`, and anything else that is not a
+ * directory with `errorCode: 'not-directory'`; nothing is deleted then. A path with nothing at it
+ * succeeds with `data: false`; a deleted directory succeeds with `data: true`.
+ *
+ * The checks run in the same remote command as the `rm -rf`, and the path is passed without a
+ * trailing slash, so `rm` removes a link swapped in after the check instead of following it. Links
+ * inside the directory are removed, never followed. {@link deleteRemote} deletes whatever is at a
+ * path; use this one when a link there must not be touched.
+ *
+ * @param dirPath Absolute or home-relative path of the directory to delete
+ * @param sshRemote SSH remote configuration
+ * @param deps Optional dependencies for testing
+ */
+export async function deleteDirectoryRemote(
+	dirPath: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<boolean>> {
+	// A trailing slash makes `[ -L ]` and `rm` resolve a link at the path, so it is dropped.
+	const target = dirPath.replace(/\/+$/, '');
+	if (target === '') {
+		return { success: false, error: 'Refusing to delete the root directory' };
+	}
+	const dirArg = shellEscapeRemotePath(target);
+	const { missing, symlink, notDirectory } = DELETE_DIRECTORY_EXIT;
+	const remoteCommand =
+		`[ -L ${dirArg} ] && exit ${symlink}; ` +
+		`[ -e ${dirArg} ] || exit ${missing}; ` +
+		`[ -d ${dirArg} ] || exit ${notDirectory}; ` +
+		`rm -rf -- ${dirArg}`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+	switch (result.exitCode) {
+		case 0:
+			return { success: true, data: true };
+		case missing:
+			return { success: true, data: false };
+		case symlink:
+			return {
+				success: false,
+				errorCode: 'symlink',
+				error: `Path is a symbolic link: ${target}`,
+			};
+		case notDirectory:
+			return {
+				success: false,
+				errorCode: 'not-directory',
+				error: `Path is not a directory: ${target}`,
+			};
+		default:
+			return { success: false, error: result.stderr || `Failed to delete: ${target}` };
+	}
 }
 
 /**

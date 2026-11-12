@@ -371,6 +371,24 @@ export class MarketplaceLaunchBusyError extends MarketplaceImportError {
 	}
 }
 
+/**
+ * Launch cleanup that refused to delete a launch folder. Cleanup deletes one folder,
+ * `<autoRunFolderPath>/<folderRelativePath>`, and refuses everything else: a name that is not one
+ * plain folder name, a path that is not directly inside the Auto Run folder, a symbolic link,
+ * something that is not a folder, and an SSH remote it cannot resolve (the same path on this
+ * computer is a different folder). Nothing was deleted. `folderRelativePath` is the name that was
+ * refused. It is an import error, so a caller that handles `MarketplaceImportError` keeps working.
+ */
+export class MarketplaceLaunchCleanupError extends MarketplaceImportError {
+	constructor(
+		public readonly folderRelativePath: string,
+		reason: string
+	) {
+		super(`Refusing to delete the launch folder "${folderRelativePath}": ${reason}`);
+		this.name = 'MarketplaceLaunchCleanupError';
+	}
+}
+
 // ============================================================================
 // API Response Types
 // ============================================================================

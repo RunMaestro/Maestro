@@ -29,6 +29,7 @@ import type {
 import {
 	MarketplaceFetchError,
 	MarketplaceImportError,
+	MarketplaceLaunchCleanupError,
 	MarketplaceLaunchValuesError,
 } from '../../shared/marketplace-types';
 import { isCompatible } from '../../shared/marketplace-compatibility';
@@ -40,8 +41,10 @@ import {
 	validateLaunchValues,
 } from '../../shared/playbookLaunch';
 import { isTaskSelectionMode, SshRemoteConfig, type TaskSelectionMode } from '../../shared/types';
-import { writeFileRemote, mkdirRemote } from '../utils/remote-fs';
+import { isPathAtOrUnderRoot, normalizeWorktreePath } from '../../shared/worktreePaths';
+import { writeFileRemote, mkdirRemote, deleteDirectoryRemote } from '../utils/remote-fs';
 import { captureException } from '../utils/sentry';
+import { getSshRemoteById } from '../stores/getters';
 
 const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main';
 const MANIFEST_URL = `${GITHUB_RAW_BASE}/manifest.json`;
@@ -815,6 +818,145 @@ export async function importMarketplacePlaybook(
 	);
 
 	return { playbook: newPlaybook, importedDocs, importedAssets };
+}
+
+/** What `deleteLaunchFolder` did. */
+export interface DeleteLaunchFolderResult {
+	/** The launch folder's path, on the SSH remote for a remote agent */
+	targetPath: string;
+	/** False when nothing was at `targetPath`, so there was nothing to delete */
+	deleted: boolean;
+}
+
+/**
+ * Windows drops a trailing dot or space from a name (`<root>\. ` is the root itself, and `foo.` is
+ * `foo`) and reads a colon as a drive or a data stream, so such a name does not name the folder it
+ * spells there. Launch folder names never hold one.
+ */
+const WINDOWS_ALIASED_NAME = /:|[.\s]$/;
+
+/** An absolute remote path, or one under the remote home: the forms `shellEscapeRemotePath` expands. */
+function isRemoteRootPath(remotePath: string): boolean {
+	return (
+		remotePath.startsWith('/') ||
+		remotePath === '~' ||
+		remotePath.startsWith('~/') ||
+		remotePath === '$HOME' ||
+		remotePath.startsWith('$HOME/')
+	);
+}
+
+/**
+ * The one path launch cleanup may delete, `<autoRunFolderPath>/<folder>`, where `folder` is one
+ * plain folder name. Throws `MarketplaceLaunchCleanupError` for anything else. A local path is
+ * resolved. A remote path is built as the import built it, with its slashes normalized and nothing
+ * resolved, because the remote resolves it; only the checks normalize `.` segments.
+ */
+function launchFolderTarget(autoRunFolderPath: string, folder: string, remote: boolean): string {
+	const refuse = (reason: string) => new MarketplaceLaunchCleanupError(folder, reason);
+	try {
+		assertSafeTargetFolderName(folder);
+	} catch (error) {
+		if (!(error instanceof MarketplaceImportError)) throw error;
+		throw refuse('it is not a single folder name');
+	}
+
+	let target: string;
+	let rootKey: string;
+	let targetKey: string;
+	if (remote) {
+		const root = normalizeWorktreePath(autoRunFolderPath, true);
+		if (!isRemoteRootPath(root)) {
+			throw refuse('the Auto Run folder is not an absolute path on the remote');
+		}
+		target = root.endsWith('/') ? `${root}${folder}` : `${root}/${folder}`;
+		rootKey = normalizeWorktreePath(path.posix.normalize(root), true);
+		targetKey = normalizeWorktreePath(path.posix.normalize(target), true);
+	} else {
+		if (!path.isAbsolute(autoRunFolderPath)) {
+			throw refuse('the Auto Run folder is not an absolute path');
+		}
+		const root = path.resolve(autoRunFolderPath);
+		target = path.resolve(root, folder);
+		// Compared with `/` separators, which `isPathAtOrUnderRoot` expects.
+		rootKey = normalizeWorktreePath(root);
+		targetKey = normalizeWorktreePath(target);
+	}
+
+	if (targetKey === rootKey) throw refuse('it names the Auto Run folder itself');
+	if (!isPathAtOrUnderRoot(targetKey, rootKey)) {
+		throw refuse('it resolves outside the Auto Run folder');
+	}
+	const rootPrefix = rootKey.endsWith('/') ? rootKey : `${rootKey}/`;
+	if (targetKey !== `${rootPrefix}${folder}`) {
+		throw refuse('it is not a folder directly inside the Auto Run folder');
+	}
+	if (WINDOWS_ALIASED_NAME.test(folder)) {
+		throw refuse('a trailing dot or space, or a colon, makes Windows read it as another path');
+	}
+	return target;
+}
+
+/**
+ * Delete one launch folder, `<autoRunFolderPath>/<folderRelativePath>`, and nothing else: the only
+ * delete Launch cleanup makes. Pass the folder the launch record names, the Auto Run folder of the
+ * agent the launch ran on, and that agent's SSH remote id when it runs on one.
+ *
+ * Refuses with `MarketplaceLaunchCleanupError`, deleting nothing: a folder that fails
+ * `assertSafeTargetFolderName`, names the Auto Run folder itself, does not resolve directly inside
+ * it, or is a name Windows reads as another path; a relative Auto Run folder; a symbolic link; a
+ * file; and an SSH remote that is missing or disabled (it never falls back to this computer, where
+ * the same path is a different folder). Nothing at the path resolves with `deleted: false`. On a
+ * remote the checks and the delete run in one SSH command (`deleteDirectoryRemote`). Any other
+ * failure, such as a permission error or a lost connection, is thrown as it is.
+ */
+export async function deleteLaunchFolder(
+	autoRunFolderPath: string,
+	folderRelativePath: string,
+	sshRemoteId?: string
+): Promise<DeleteLaunchFolderResult> {
+	const targetPath = launchFolderTarget(autoRunFolderPath, folderRelativePath, !!sshRemoteId);
+	const refuse = (reason: string) => new MarketplaceLaunchCleanupError(folderRelativePath, reason);
+
+	let deleted: boolean;
+	if (sshRemoteId) {
+		const sshRemote = getSshRemoteById(sshRemoteId);
+		if (!sshRemote?.enabled) {
+			throw refuse(
+				`SSH remote "${sshRemoteId}" is missing or disabled, and the same path on this computer is a different folder`
+			);
+		}
+		const result = await deleteDirectoryRemote(targetPath, sshRemote);
+		if (result.errorCode === 'symlink') throw refuse('it is a symbolic link');
+		if (result.errorCode === 'not-directory') throw refuse('it is not a folder');
+		if (!result.success) {
+			throw new Error(
+				`Failed to delete the launch folder ${targetPath} on SSH remote "${sshRemoteId}": ${result.error}`
+			);
+		}
+		deleted = result.data === true;
+	} else {
+		const stats = await fs.lstat(targetPath).catch((error: NodeJS.ErrnoException) => {
+			if (error.code === 'ENOENT') return undefined;
+			throw error;
+		});
+		if (stats) {
+			if (stats.isSymbolicLink()) throw refuse('it is a symbolic link');
+			if (!stats.isDirectory()) throw refuse('it is not a folder');
+			// `fs.rm` removes links inside the folder without following them. The retries ride out
+			// a file Windows still holds open just after the run.
+			await fs.rm(targetPath, { recursive: true, force: true, maxRetries: 3 });
+		}
+		deleted = stats !== undefined;
+	}
+
+	logger.info(
+		deleted
+			? `Deleted launch folder ${targetPath}${sshRemoteId ? ' (remote via SSH)' : ''}`
+			: `Launch folder ${targetPath} was already gone`,
+		LOG_CONTEXT
+	);
+	return { targetPath, deleted };
 }
 
 /**

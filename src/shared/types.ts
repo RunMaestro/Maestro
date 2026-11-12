@@ -1095,6 +1095,7 @@ export {
 	MarketplaceImportError,
 	MarketplaceLaunchValuesError,
 	MarketplaceLaunchBusyError,
+	MarketplaceLaunchCleanupError,
 } from './marketplace-types';
 
 // ============================================================================

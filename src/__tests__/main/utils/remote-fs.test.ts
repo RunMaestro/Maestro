@@ -24,6 +24,7 @@ import {
 	bulkStatFileInSubdirsRemote,
 	listTreeRemote,
 	deleteManyRemote,
+	deleteDirectoryRemote,
 	__resetHostLimitersForTest,
 	type RemoteFsDeps,
 } from '../../../main/utils/remote-fs';
@@ -3026,6 +3027,156 @@ finally:
 			expect(await deleteManyRemote([], baseConfig, true, deps)).toEqual([]);
 			expect(deps.execSsh).not.toHaveBeenCalled();
 		});
+	});
+
+	describe('deleteDirectoryRemote', () => {
+		const DIR = '/remote/autorun/launch-1';
+		const sentCommand = (deps: RemoteFsDeps): string =>
+			(deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(-1);
+
+		it('checks and deletes the directory in one SSH command', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			expect(await deleteDirectoryRemote(DIR, baseConfig, deps)).toEqual({
+				success: true,
+				data: true,
+			});
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			expect(sentCommand(deps)).toBe(
+				"[ -L '/remote/autorun/launch-1' ] && exit 4; " +
+					"[ -e '/remote/autorun/launch-1' ] || exit 3; " +
+					"[ -d '/remote/autorun/launch-1' ] || exit 5; " +
+					"rm -rf -- '/remote/autorun/launch-1'"
+			);
+		});
+
+		it('reports a path with nothing at it as nothing deleted', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 3 });
+
+			expect(await deleteDirectoryRemote(DIR, baseConfig, deps)).toEqual({
+				success: true,
+				data: false,
+			});
+		});
+
+		it('refuses a symbolic link', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 4 });
+
+			expect(await deleteDirectoryRemote(DIR, baseConfig, deps)).toEqual({
+				success: false,
+				errorCode: 'symlink',
+				error: 'Path is a symbolic link: /remote/autorun/launch-1',
+			});
+		});
+
+		it('refuses a path that is not a directory', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 5 });
+
+			expect(await deleteDirectoryRemote(DIR, baseConfig, deps)).toEqual({
+				success: false,
+				errorCode: 'not-directory',
+				error: 'Path is not a directory: /remote/autorun/launch-1',
+			});
+		});
+
+		it('reports any other failure with the remote error text and no refusal code', async () => {
+			const stderr = "rm: cannot remove '/remote/autorun/launch-1/a.md': Permission denied";
+			const deps = createMockDeps({ stdout: '', stderr, exitCode: 1 });
+
+			expect(await deleteDirectoryRemote(DIR, baseConfig, deps)).toEqual({
+				success: false,
+				error: stderr,
+			});
+		});
+
+		it('drops a trailing slash, which would make the checks and rm follow a link', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			await deleteDirectoryRemote(`${DIR}//`, baseConfig, deps);
+
+			expect(sentCommand(deps)).not.toContain(`${DIR}/'`);
+			expect(sentCommand(deps)).toContain(`rm -rf -- '${DIR}'`);
+		});
+
+		it('refuses the root directory without opening a connection', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			for (const root of ['/', '///']) {
+				expect(await deleteDirectoryRemote(root, baseConfig, deps)).toEqual({
+					success: false,
+					error: 'Refusing to delete the root directory',
+				});
+			}
+			expect(deps.execSsh).not.toHaveBeenCalled();
+		});
+
+		it('keeps a home-relative path expandable on the remote', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			await deleteDirectoryRemote('~/autorun/launch-1', baseConfig, deps);
+
+			expect(sentCommand(deps)).toBe(
+				'[ -L "$HOME/autorun/launch-1" ] && exit 4; ' +
+					'[ -e "$HOME/autorun/launch-1" ] || exit 3; ' +
+					'[ -d "$HOME/autorun/launch-1" ] || exit 5; ' +
+					'rm -rf -- "$HOME/autorun/launch-1"'
+			);
+		});
+
+		it('escapes a hostile path so it cannot break out of the command', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			await deleteDirectoryRemote("/remote/it's; rm -rf ~", baseConfig, deps);
+
+			expect(sentCommand(deps)).toBe(
+				"[ -L '/remote/it'\\''s; rm -rf ~' ] && exit 4; " +
+					"[ -e '/remote/it'\\''s; rm -rf ~' ] || exit 3; " +
+					"[ -d '/remote/it'\\''s; rm -rf ~' ] || exit 5; " +
+					"rm -rf -- '/remote/it'\\''s; rm -rf ~'"
+			);
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			'under a real shell, deletes a real directory and refuses a link or a file',
+			async () => {
+				const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'remote-delete-dir-')));
+				try {
+					const root = path.join(base, 'autorun');
+					const outside = path.join(base, 'outside');
+					fs.mkdirSync(path.join(root, 'launch', 'assets'), { recursive: true });
+					fs.mkdirSync(outside);
+					fs.writeFileSync(path.join(root, 'launch', 'task.md'), '- [ ] task');
+					fs.writeFileSync(path.join(root, 'launch', 'assets', 'helper.sh'), 'echo hi');
+					fs.writeFileSync(path.join(root, 'notes.md'), 'a file');
+					fs.writeFileSync(path.join(outside, 'keep.md'), 'keep');
+					// A link inside the folder, and a link where a folder should be.
+					fs.symlinkSync(outside, path.join(root, 'launch', 'outputs'));
+					fs.symlinkSync(outside, path.join(root, 'link'));
+
+					// The generated command, run by the local shell as the remote would run it.
+					const run = async (dirPath: string) => {
+						const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+						await deleteDirectoryRemote(dirPath, baseConfig, deps);
+						return spawnSync('sh', ['-c', sentCommand(deps)], { encoding: 'utf8' }).status;
+					};
+
+					expect(await run(path.join(root, 'link'))).toBe(4);
+					expect(await run(`${path.join(root, 'link')}/`)).toBe(4);
+					expect(fs.lstatSync(path.join(root, 'link')).isSymbolicLink()).toBe(true);
+					expect(await run(path.join(root, 'notes.md'))).toBe(5);
+					expect(fs.readFileSync(path.join(root, 'notes.md'), 'utf8')).toBe('a file');
+					expect(await run(path.join(root, 'missing'))).toBe(3);
+
+					expect(await run(path.join(root, 'launch'))).toBe(0);
+					expect(fs.existsSync(path.join(root, 'launch'))).toBe(false);
+					// The link inside was removed, not followed.
+					expect(fs.readFileSync(path.join(outside, 'keep.md'), 'utf8')).toBe('keep');
+					expect(fs.existsSync(path.join(root, 'notes.md'))).toBe(true);
+				} finally {
+					fs.rmSync(base, { recursive: true, force: true });
+				}
+			}
+		);
 	});
 
 	describe('readFileInRootRemote', () => {
