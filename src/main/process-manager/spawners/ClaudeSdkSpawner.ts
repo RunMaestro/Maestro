@@ -20,7 +20,7 @@ import { harnessInteractionBroker } from '../../harness-control/integration';
 import type { HarnessControlCapabilities } from '../../../shared/harness-control/types';
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
 import { parseQuestionRequest } from '../../permission-relay/question-request';
-import { encodeQuestionAnswer } from '../../../renderer/components/PermissionPrompt/questionAnswer';
+import { encodeQuestionAnswer } from '../../../shared/questionAnswer';
 import { isClaudeReadOnlyTool } from '../../../shared/maestro-lib/providers/claude-permissions';
 import { parseBase64DataUrl } from '../../../shared/dataUrl';
 

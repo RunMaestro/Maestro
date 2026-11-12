@@ -4,7 +4,7 @@ import {
 	hasAnswer,
 	type QuestionForAnswer,
 	type QuestionSelection,
-} from '../../../../renderer/components/PermissionPrompt/questionAnswer';
+} from '../../shared/questionAnswer';
 
 describe('questionAnswer.hasAnswer', () => {
 	it('is true when a label is selected', () => {

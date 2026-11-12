@@ -14,7 +14,11 @@ import { useMemo, useState } from 'react';
 import { Check, Send } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { ParsedQuestionUI } from '../../stores/permissionRequestStore';
-import { encodeQuestionAnswer, hasAnswer, type QuestionSelection } from './questionAnswer';
+import {
+	encodeQuestionAnswer,
+	hasAnswer,
+	type QuestionSelection,
+} from '../../../shared/questionAnswer';
 
 interface QuestionPromptProps {
 	theme: Theme;
