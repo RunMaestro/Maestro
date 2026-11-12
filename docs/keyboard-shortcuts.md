@@ -425,6 +425,11 @@ switches to that tab, scrolls to the message, flashes it, and seeds that tab's
 Find bar with the same query positioned on the match you picked. It is also in
 the command palette as "Search: Messages (All Agent Tabs)".
 
+When [Semantic search](./local-models#semantic-search) has a source, cross-tab
+search and the History filter box (`Cmd+F` / `Ctrl+F` in the History tab) gain
+a **Semantic** toggle that searches by meaning. It has no shortcut of its own,
+and regex is not offered while it is on.
+
 See [Searching Message History](./general-usage#searching-message-history) for
 the full walkthrough.
 
