@@ -28,6 +28,7 @@ import type {
 } from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import type { WizardStep } from '../Wizard/WizardContext';
+import type { NewAgentDraft } from '../NewInstanceModal/types';
 import type { GroomingProgress, MergeResult } from '../../types/contextMerge';
 import type { PRDetails } from '../CreatePRModal';
 import type { FlatFileItem } from '../FileSearchModal';
@@ -99,29 +100,7 @@ export interface AppModalsProps {
 
 	// --- AppSessionModals props ---
 	onCloseNewInstanceModal: () => void;
-	onCreateSession: (
-		agentId: string,
-		workingDir: string,
-		name: string,
-		nudgeMessage?: string,
-		newSessionMessage?: string,
-		customPath?: string,
-		customArgs?: string,
-		customEnvVars?: Record<string, string>,
-		customModel?: string,
-		customContextWindow?: number,
-		customProviderPath?: string,
-		sessionSshRemoteConfig?: {
-			enabled: boolean;
-			remoteId: string | null;
-			workingDirOverride?: string;
-		},
-		customEffort?: string,
-		groupId?: string,
-		enableMaestroP?: boolean,
-		maestroPPath?: string,
-		maestroPMode?: 'interactive' | 'dynamic'
-	) => void;
+	onCreateSession: (draft: NewAgentDraft) => void;
 	duplicatingSessionId?: string | null; // Session ID to duplicate from
 	newInstancePresetGroupId?: string | null; // Group to place the new agent in
 	newInstancePresetWorkingDir?: string | null; // Working directory to seed the new agent with

@@ -16,8 +16,10 @@ import { newEmptyTranscript } from './sessionTranscript';
  * path to get one.
  *
  * Caller-specific fields (git probe results, custom path/args/env/model, SSH,
- * resilience flags) are spread on top by each caller. Runtime-agnostic: no
- * renderer, main, or Electron imports, so the CLI can load it.
+ * resilience flags) go on top: the first two callers share one builder for
+ * them, `buildNewAgentSession()` (`src/renderer/utils/newAgentSession.ts`), and
+ * the Cue bundle importer spreads its own. Runtime-agnostic: no renderer, main,
+ * or Electron imports, so the CLI can load it.
  */
 
 import { PLAYBOOKS_DIR } from './maestro-paths';
@@ -177,9 +179,10 @@ export interface DuplicateAgentOverrides {
 }
 
 /**
- * Everything the create path takes for a duplicate: the arguments of
- * `createNewSession()` and the `create_session` config, resolved exactly as an
- * untouched New Agent modal submit resolves them.
+ * Everything the create path takes for a duplicate: the fields of the New
+ * Agent draft `createNewSession()` takes (`toolType` and `cwd` are its
+ * `agentId` and `workingDir`) and the `create_session` config, resolved
+ * exactly as an untouched New Agent modal submit resolves them.
  */
 export interface DuplicateAgentInput {
 	toolType: string;

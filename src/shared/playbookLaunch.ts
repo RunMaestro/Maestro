@@ -29,6 +29,7 @@ import type {
 	PlaybookLaunchSpec,
 	PlaybookLaunchValues,
 } from './marketplace-types';
+import { definedOnly } from './objectUtils';
 import { substituteTemplateTokens, TEMPLATE_VARIABLES } from './templateVariables';
 
 type LaunchInputType = PlaybookLaunchInput['type'];
@@ -139,11 +140,6 @@ function isInputType(value: unknown): value is LaunchInputType {
 
 function isLaunchPlatform(value: unknown): value is LaunchPlatform {
 	return PLATFORMS.includes(value as LaunchPlatform);
-}
-
-/** Drop keys whose value is `undefined`, so a parsed object carries only what the block set. */
-function definedOnly<T extends object>(value: T): T {
-	return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 function readOwn<T>(source: Readonly<Record<string, T>>, key: string): T | undefined {

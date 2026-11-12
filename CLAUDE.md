@@ -101,6 +101,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Guarding a serialized JSON payload before it overwrites a file:** `assertSerializedJsonIsSafe(serialized, target)` in `src/shared/jsonUtils.ts`
 - **UTF-8 size of a JSON payload (a message size cap):** `serializedJsonByteLength(value)` in `src/shared/jsonUtils.ts`
 - **Deterministic JSON (same value, same text):** `canonicalJson(value)` in `src/shared/canonicalJson.ts` (never hash or compare `JSON.stringify` output)
+- **Dropping the `undefined` keys of an object:** `definedOnly(value)` in `src/shared/objectUtils.ts`
 - **Redacting secrets from text you persist or show:** `redactSecrets(text, opts?)`, `passesLuhn()` in `src/shared/redactSecrets.ts`
 - **Strip ANSI / collapse progress overwrites:** `stripAnsiCodes()`, `processCarriageReturns()` in `src/shared/stringUtils.ts`
 - **Lines added and removed by a save:** `countLineChanges(before, after)` in `src/shared/lineChanges.ts`
@@ -244,6 +245,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Bridge transport errors and readiness:** `BridgeTransportError`, `isBridgeTransportError()`, `isExpectedBridgeError()`, `isBridgeTransportReady()`, `WEB_BRIDGE_STATE_EVENT` in `src/shared/bridgeError.ts`
 - **Rebasing unsaved session changes during recovery:** `rebasePendingSessionChanges()`, `SESSION_PERSISTENCE_BASELINE_EVENT`, `SessionPersistenceBaseline` in `src/renderer/hooks/utils/useDebouncedPersistence.ts`
 - **The record a new agent starts as:** `buildNewAgentRecord(input)`, `newAgentClaudeInteractive(toolType)` in `src/shared/newAgentRecord.ts`
+- **The agent a New Agent draft describes (modal and `create_session`):** `buildNewAgentSession()`, `probeNewAgentGitState()` in `src/renderer/utils/newAgentSession.ts`; `NewAgentDraft` in `src/renderer/components/NewInstanceModal/types.ts`
 - **What a duplicated agent inherits:** `buildDuplicateAgentInput(source, overrides?)`, `defaultDuplicateAgentName()`, `duplicateAgentBlocker()` in `src/shared/newAgentRecord.ts`
 - **Session lookup:** `selectActiveSession()`, `selectSessionById()` in `src/renderer/stores/sessionStore.ts`; `useActiveSession()` hook in `src/renderer/hooks/session/useActiveSession.ts`
 - **Session mutation:** `updateSessionWith()`, `updateAiTab()`, `updateFileTab()`, `updateBrowserTab()` in `src/renderer/stores/sessionStore.ts` (never `setSessions(prev => prev.map(...))` for one agent or tab)

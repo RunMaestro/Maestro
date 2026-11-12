@@ -4,11 +4,14 @@
  *
  * `duplicate-agent` sends the New Agent modal's remaining fields through this
  * one create path; they must land on the agent the way createNewSession()
- * stores them, or a scripted copy differs from a Duplicate... copy.
+ * stores them, or a scripted copy differs from a Duplicate... copy. Both paths
+ * build through `buildNewAgentSession()`.
  */
 import { renderHook, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { useAppRemoteEventListeners } from '../../../../renderer/hooks/remote/useAppRemoteEventListeners';
+import { buildNewAgentSession } from '../../../../renderer/utils/newAgentSession';
+import { gitService } from '../../../../renderer/services/git';
 import type { Session } from '../../../../renderer/types';
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
@@ -135,5 +138,94 @@ describe('maestro:remoteCreateSession', () => {
 		});
 		expect('codexAutoResetOnExhaustion' in defaults).toBe(false);
 		expect('codexTransport' in defaults).toBe(false);
+	});
+
+	it('builds the agent the shared builder builds from the same draft', async () => {
+		const ssh = { enabled: true, remoteId: 'remote-1', workingDirOverride: '/srv/p' };
+		const agent = await create('codex', {
+			nudgeMessage: 'Be terse',
+			customEnvVars: { DEBUG: '1' },
+			customEffort: 'high',
+			sessionSshRemoteConfig: ssh,
+			enableMaestroP: false,
+			retryOnTokenExhaustion: false,
+			codexTransport: 'app-server',
+		});
+
+		const expected = buildNewAgentSession(
+			{
+				agentId: 'codex',
+				workingDir: '/p',
+				name: 'Copy',
+				nudgeMessage: 'Be terse',
+				customEnvVars: { DEBUG: '1' },
+				customEffort: 'high',
+				sessionSshRemoteConfig: ssh,
+				enableMaestroP: false,
+				retryOnTokenExhaustion: false,
+				codexTransport: 'app-server',
+			},
+			{ id: 'new-id', git: { isGitRepo: false } }
+		);
+		// The creation time and the port are fresh on each build.
+		const timeless = (session: Session) => ({
+			...session,
+			createdAt: 0,
+			port: 0,
+			shellLogs: session.shellLogs.map((log) => ({ ...log, timestamp: 0 })),
+			aiTabs: session.aiTabs.map((tab) => ({ ...tab, createdAt: 0 })),
+		});
+		expect(timeless(agent)).toStrictEqual(timeless(expected));
+	});
+
+	it('treats a blank string and a zero context window as unset', async () => {
+		const agent = await create('claude-code', {
+			nudgeMessage: '',
+			newSessionMessage: '',
+			customModel: '',
+			customEffort: '',
+			customContextWindow: 0,
+			maestroPPath: '',
+		});
+
+		for (const field of [
+			'nudgeMessage',
+			'newSessionMessage',
+			'customModel',
+			'customEffort',
+			'customContextWindow',
+			'maestroPPath',
+		]) {
+			expect(field in agent, field).toBe(false);
+		}
+	});
+
+	it('keeps the fields only a script sets on top of the shared build', async () => {
+		const scripted = await create('claude-code', {
+			customContextWindow: 64000,
+			contextWindowSource: 'user-edited',
+			autoRunFolderPath: '/runs/docs',
+		});
+		expect(scripted).toMatchObject({
+			customContextWindow: 64000,
+			contextWindowSource: 'user-edited',
+			autoRunFolderPath: '/runs/docs',
+		});
+
+		ack.mockClear();
+		const plain = await create('claude-code', {});
+		expect('contextWindowSource' in plain).toBe(false);
+		expect(plain.autoRunFolderPath).toBe('/p/.maestro/playbooks');
+	});
+
+	it('probes git only for a local agent', async () => {
+		await create('claude-code', {
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
+		expect(gitService.isRepo).not.toHaveBeenCalled();
+
+		ack.mockClear();
+		await create('claude-code', {});
+		expect(gitService.isRepo).toHaveBeenCalledWith('/p');
 	});
 });

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Folder, AlertTriangle } from 'lucide-react';
-import type { AdditionalDirectory, AgentConfig, AITab, Session, ToolType } from '../../types';
+import type { AdditionalDirectory, AgentConfig, Session, ToolType } from '../../types';
 import type {
 	SshRemoteConfig,
 	AgentSshRemoteConfig,
@@ -19,7 +19,7 @@ import { SshRemoteSelector } from '../shared/SshRemoteSelector';
 import { ThemedSelect } from '../shared/ThemedSelect';
 import { useSessionStore } from '../../stores/sessionStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
-import type { AgentDebugInfo, NewInstanceModalProps } from './types';
+import type { AgentDebugInfo, NewAgentDraft, NewInstanceModalProps } from './types';
 import { SUPPORTED_AGENTS, NEW_SESSION_MESSAGE_MAX_LENGTH } from './types';
 import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidation';
 import { NudgeMessageField } from './NudgeMessageField';
@@ -774,41 +774,34 @@ export function NewInstanceModal({
 				)
 			: undefined;
 
-		// Trailing optional arguments: only the ones that are set, so an ordinary
-		// create keeps its argument list.
-		const nativeControl: HarnessControlMode | undefined =
-			harnessControlModeByAgent[selectedAgent] === 'native' ? 'native' : undefined;
-		const trailingArgs: [HarnessControlMode?, AITab['permissionMode']?] =
-			permissionMode !== undefined
-				? [nativeControl, permissionMode]
-				: nativeControl
-					? [nativeControl]
-					: [];
-		onCreate(
-			selectedAgent,
-			effectiveWorkingDir,
+		const draft: NewAgentDraft = {
+			agentId: selectedAgent,
+			workingDir: effectiveWorkingDir,
 			name,
-			nudgeMessage.trim() || undefined,
-			newSessionMessage.trim() || undefined,
-			agentCustomPath,
-			agentCustomArgs,
-			agentCustomEnvVars,
-			agentCustomModel,
-			agentCustomContextWindow,
-			agentCustomProviderPath,
+			nudgeMessage: nudgeMessage.trim() || undefined,
+			newSessionMessage: newSessionMessage.trim() || undefined,
+			customPath: agentCustomPath,
+			customArgs: agentCustomArgs,
+			customEnvVars: agentCustomEnvVars,
+			customModel: agentCustomModel,
+			customContextWindow: agentCustomContextWindow,
+			customProviderPath: agentCustomProviderPath,
 			sessionSshRemoteConfig,
-			agentCustomEffort,
-			targetGroupId ?? undefined,
-			agentEnableMaestroP,
-			agentMaestroPPath,
-			agentMaestroPMode,
-			retryAvailabilityByAgent[selectedAgent] ?? true,
-			retryTokenByAgent[selectedAgent] ?? true,
-			normalizeAdditionalDirectories(additionalDirectories, homeDir),
-			codexAutoResetByAgent[selectedAgent] ?? false,
-			codexTransportByAgent[selectedAgent] ?? 'exec',
-			...trailingArgs
-		);
+			customEffort: agentCustomEffort,
+			groupId: targetGroupId,
+			enableMaestroP: agentEnableMaestroP,
+			maestroPPath: agentMaestroPPath,
+			maestroPMode: agentMaestroPMode,
+			retryOnAvailabilityErrors: retryAvailabilityByAgent[selectedAgent] ?? true,
+			retryOnTokenExhaustion: retryTokenByAgent[selectedAgent] ?? true,
+			additionalDirectories: normalizeAdditionalDirectories(additionalDirectories, homeDir),
+			codexAutoResetOnExhaustion: codexAutoResetByAgent[selectedAgent] ?? false,
+			codexTransport: codexTransportByAgent[selectedAgent] ?? 'exec',
+			harnessControlMode:
+				harnessControlModeByAgent[selectedAgent] === 'native' ? 'native' : undefined,
+			permissionMode,
+		};
+		onCreate(draft);
 		onClose();
 
 		// Reset

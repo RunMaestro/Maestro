@@ -13,6 +13,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Theme, Session } from '../../../renderer/types';
 import type { AgentConfig } from '../../../renderer/types';
 import type { AgentDiscoveryResult } from '../../../shared/types';
+import type { NewAgentDraft } from '../../../renderer/components/NewInstanceModal/types';
 import { buildDuplicateAgentInput } from '../../../shared/newAgentRecord';
 import { getAgentDefinition } from '../../../shared/maestro-lib/providers/definitions';
 import { getAgentCapabilities } from '../../../shared/maestro-lib/providers/capabilities';
@@ -78,6 +79,37 @@ const showAllProviders = async (): Promise<void> => {
 	const toggle = await screen.findByRole('switch', { name: 'Show all supported providers' });
 	fireEvent.click(toggle);
 };
+
+/**
+ * The draft an untouched Claude Code submit hands to `onCreate`, with what a
+ * test changed on top. `toHaveBeenCalledWith` reads a missing key as
+ * `undefined`, so each `undefined` here asserts the field is unset.
+ */
+const expectedDraft = (overrides: Partial<NewAgentDraft>) => ({
+	agentId: 'claude-code',
+	nudgeMessage: undefined,
+	newSessionMessage: undefined,
+	customPath: undefined,
+	customArgs: undefined,
+	customEnvVars: undefined,
+	customModel: undefined,
+	customContextWindow: undefined,
+	customProviderPath: undefined,
+	sessionSshRemoteConfig: expect.objectContaining({ enabled: false, remoteId: null }),
+	customEffort: undefined,
+	groupId: undefined,
+	enableMaestroP: undefined, // unset: API is the default for Claude Code (Adaptive Mode off)
+	maestroPPath: undefined,
+	maestroPMode: undefined, // unset until the user opts into TUI/Dynamic
+	retryOnAvailabilityErrors: true,
+	retryOnTokenExhaustion: true,
+	additionalDirectories: undefined,
+	codexAutoResetOnExhaustion: false, // off by default
+	codexTransport: 'exec', // Standard by default
+	harnessControlMode: undefined,
+	permissionMode: undefined, // a fresh agent copies no tab's mode
+	...overrides,
+});
 
 describe('NewInstanceModal', () => {
 	let theme: Theme;
@@ -864,28 +896,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			expect(onCreate).toHaveBeenCalledWith(
-				'claude-code',
-				'/home/testuser/projects',
-				'My Session',
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				expect.objectContaining({ enabled: false, remoteId: null }),
-				undefined,
-				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
-				undefined, // maestroPPath
-				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
-				true, // retryOnAvailabilityErrors
-				true, // retryOnTokenExhaustion
-				undefined, // additionalDirectories
-				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				expectedDraft({ workingDir: '/home/testuser/projects', name: 'My Session' })
 			);
 		});
 
@@ -921,28 +932,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			expect(onCreate).toHaveBeenCalledWith(
-				'claude-code',
-				'/home/testuser',
-				'Home Session',
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				expect.objectContaining({ enabled: false, remoteId: null }),
-				undefined,
-				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
-				undefined, // maestroPPath
-				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
-				true, // retryOnAvailabilityErrors
-				true, // retryOnTokenExhaustion
-				undefined, // additionalDirectories
-				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				expectedDraft({ workingDir: '/home/testuser', name: 'Home Session' })
 			);
 		});
 
@@ -978,28 +968,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			expect(onCreate).toHaveBeenCalledWith(
-				'claude-code',
-				'/path/with~tilde',
-				'Tilde Test',
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				expect.objectContaining({ enabled: false, remoteId: null }),
-				undefined,
-				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
-				undefined, // maestroPPath
-				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
-				true, // retryOnAvailabilityErrors
-				true, // retryOnTokenExhaustion
-				undefined, // additionalDirectories
-				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				expectedDraft({ workingDir: '/path/with~tilde', name: 'Tilde Test' })
 			);
 		});
 	});
@@ -1036,28 +1005,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			expect(onCreate).toHaveBeenCalledWith(
-				'claude-code',
-				'/my/project',
-				'My Session',
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				expect.objectContaining({ enabled: false, remoteId: null }),
-				undefined,
-				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
-				undefined, // maestroPPath
-				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
-				true, // retryOnAvailabilityErrors
-				true, // retryOnTokenExhaustion
-				undefined, // additionalDirectories
-				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				expectedDraft({ workingDir: '/my/project', name: 'My Session' })
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1592,28 +1540,11 @@ describe('NewInstanceModal', () => {
 
 			// Custom path should be passed to onCreate
 			expect(onCreate).toHaveBeenCalledWith(
-				'claude-code',
-				'/my/project',
-				'My Session',
-				undefined,
-				undefined,
-				'/custom/path/to/claude',
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				expect.objectContaining({ enabled: false, remoteId: null }),
-				undefined,
-				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
-				undefined, // maestroPPath
-				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
-				true, // retryOnAvailabilityErrors
-				true, // retryOnTokenExhaustion
-				undefined, // additionalDirectories
-				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				expectedDraft({
+					workingDir: '/my/project',
+					name: 'My Session',
+					customPath: '/custom/path/to/claude',
+				})
 			);
 		});
 
@@ -1749,28 +1680,11 @@ describe('NewInstanceModal', () => {
 
 			// Should pass custom path to onCreate
 			expect(onCreate).toHaveBeenCalledWith(
-				'claude-code',
-				'/my/project',
-				'Custom Path Agent',
-				undefined,
-				undefined,
-				'/custom/bin/claude',
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				expect.objectContaining({ enabled: false, remoteId: null }),
-				undefined,
-				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
-				undefined, // maestroPPath
-				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
-				true, // retryOnAvailabilityErrors
-				true, // retryOnTokenExhaustion
-				undefined, // additionalDirectories
-				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				expectedDraft({
+					workingDir: '/my/project',
+					name: 'Custom Path Agent',
+					customPath: '/custom/bin/claude',
+				})
 			);
 		});
 	});
@@ -2241,32 +2155,36 @@ describe('NewInstanceModal', () => {
 					draft.customEffort ?? ''
 				);
 				fireEvent.click(screen.getByRole('button', { name: 'Create Agent' }));
-				expect(onCreate).toHaveBeenCalledExactlyOnceWith(
-					'grok',
-					'/home/testuser/project',
-					'Grok A (Copy)',
-					undefined,
-					undefined,
-					'/synthetic/bin/grok',
-					'--max-turns 2',
-					env,
-					draft.customModel,
-					undefined,
-					undefined,
-					{ enabled: false, remoteId: null, shareHistoryToProjectDir: undefined },
-					draft.customEffort,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					true,
-					true,
-					undefined,
-					false,
-					'exec',
-					undefined, // harnessControlMode
-					expected
-				);
+				expect(onCreate).toHaveBeenCalledExactlyOnceWith({
+					agentId: 'grok',
+					workingDir: '/home/testuser/project',
+					name: 'Grok A (Copy)',
+					nudgeMessage: undefined,
+					newSessionMessage: undefined,
+					customPath: '/synthetic/bin/grok',
+					customArgs: '--max-turns 2',
+					customEnvVars: env,
+					customModel: draft.customModel,
+					customContextWindow: undefined,
+					customProviderPath: undefined,
+					sessionSshRemoteConfig: {
+						enabled: false,
+						remoteId: null,
+						shareHistoryToProjectDir: undefined,
+					},
+					customEffort: draft.customEffort,
+					groupId: undefined,
+					enableMaestroP: undefined,
+					maestroPPath: undefined,
+					maestroPMode: undefined,
+					retryOnAvailabilityErrors: true,
+					retryOnTokenExhaustion: true,
+					additionalDirectories: undefined,
+					codexAutoResetOnExhaustion: false,
+					codexTransport: 'exec',
+					harnessControlMode: undefined,
+					permissionMode: expected,
+				});
 				expect({ draft, defaults }).toEqual(before);
 				expect(window.maestro.agents.setConfig).not.toHaveBeenCalled();
 				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
@@ -2325,13 +2243,12 @@ describe('NewInstanceModal', () => {
 				);
 				if (action === 'create') {
 					expect(onCreate).toHaveBeenCalledOnce();
-					expect(onCreate.mock.calls[0].slice(5, 9)).toEqual([
-						'/synthetic/edited-grok',
-						undefined,
-						{},
-						'grok-4.5',
-					]);
-					expect(onCreate.mock.calls[0][12]).toBe('high');
+					const [submitted] = onCreate.mock.calls[0];
+					expect(submitted.customPath).toBe('/synthetic/edited-grok');
+					expect(submitted.customArgs).toBeUndefined();
+					expect(submitted.customEnvVars).toEqual({});
+					expect(submitted.customModel).toBe('grok-4.5');
+					expect(submitted.customEffort).toBe('high');
 				} else expect(onCreate).not.toHaveBeenCalled();
 				expect({ source, defaults }).toEqual(before);
 				expect(window.maestro.agents.setConfig).not.toHaveBeenCalled();
@@ -2387,15 +2304,16 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByRole('button', { name: 'Create Agent' })).toBeEnabled();
 				fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true });
 				expect(onCreate).toHaveBeenCalledOnce();
-				expect(onCreate.mock.calls[0].slice(0, 6)).toEqual([
-					'grok',
-					'/synthetic/project',
-					'Custom Grok',
-					undefined,
-					undefined,
-					'/synthetic/unverified-grok',
-				]);
-				expect(onCreate.mock.calls[0][22]).toBeUndefined();
+				const [submitted] = onCreate.mock.calls[0];
+				expect(submitted).toMatchObject({
+					agentId: 'grok',
+					workingDir: '/synthetic/project',
+					name: 'Custom Grok',
+					customPath: '/synthetic/unverified-grok',
+				});
+				expect(submitted.nudgeMessage).toBeUndefined();
+				expect(submitted.newSessionMessage).toBeUndefined();
+				expect(submitted.harnessControlMode).toBeUndefined();
 				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			}
 		);
@@ -2524,9 +2442,10 @@ describe('NewInstanceModal', () => {
 				});
 				fireEvent.click(screen.getByRole('button', { name: 'Create Agent' }));
 				expect(onCreate).toHaveBeenCalledOnce();
-				expect(onCreate.mock.calls[0][7]).toEqual(env);
-				expect(onCreate.mock.calls[0][8]).toBe('manual-model');
-				expect(onCreate.mock.calls[0][12]).toBe('manual-effort');
+				const [submitted] = onCreate.mock.calls[0];
+				expect(submitted.customEnvVars).toEqual(env);
+				expect(submitted.customModel).toBe('manual-model');
+				expect(submitted.customEffort).toBe('manual-effort');
 			} else {
 				expect(window.maestro.agents.detect).toHaveBeenCalledWith(draft.sshRemoteId);
 			}
@@ -3144,32 +3063,14 @@ describe('NewInstanceModal', () => {
 				fireEvent.click(screen.getByText('Create Agent'));
 			});
 
-			expect(onCreate).toHaveBeenCalledWith(
-				expected.toolType,
-				expected.cwd,
-				expected.name,
-				expected.nudgeMessage,
-				expected.newSessionMessage,
-				expected.customPath,
-				expected.customArgs,
-				expected.customEnvVars,
-				expected.customModel,
-				expected.customContextWindow,
-				expected.customProviderPath,
-				expect.objectContaining(expected.sessionSshRemoteConfig),
-				expected.customEffort,
-				expected.groupId,
-				expected.enableMaestroP,
-				expected.maestroPPath,
-				expected.maestroPMode,
-				expected.retryOnAvailabilityErrors,
-				expected.retryOnTokenExhaustion,
-				expected.additionalDirectories,
-				expected.codexAutoResetOnExhaustion,
-				expected.codexTransport,
-				expected.harnessControlMode,
-				'full' // permissionMode: the source's active tab, copied
-			);
+			const { toolType, cwd, sessionSshRemoteConfig, ...settings } = expected;
+			expect(onCreate).toHaveBeenCalledWith({
+				...settings,
+				agentId: toolType,
+				workingDir: cwd,
+				sessionSshRemoteConfig: expect.objectContaining(sessionSshRemoteConfig),
+				permissionMode: 'full', // the source's active tab, copied
+			});
 		});
 
 		it('should pre-fill all fields when sourceSession is provided', async () => {
@@ -3433,10 +3334,10 @@ describe('NewInstanceModal', () => {
 				fireEvent.click(screen.getByText('Create Agent'));
 			});
 
-			// 13th positional arg is customEffort. assert it's 'xhigh', not undefined.
+			// The draft's customEffort must be 'xhigh', not undefined.
 			expect(onCreate).toHaveBeenCalled();
-			const args = onCreate.mock.calls[0];
-			expect(args[12]).toBe('xhigh');
+			const [submitted] = onCreate.mock.calls[0];
+			expect(submitted.customEffort).toBe('xhigh');
 		});
 
 		it('forwards source.groupId through to onCreate so duplicates inherit the group (issue #827)', async () => {
@@ -3492,11 +3393,11 @@ describe('NewInstanceModal', () => {
 				fireEvent.click(screen.getByText('Create Agent'));
 			});
 
-			// 14th positional arg (index 13) is groupId; must equal source.groupId so
-			// the duplicate lands in the same group as the original.
+			// The draft's groupId must equal source.groupId so the duplicate lands
+			// in the same group as the original.
 			expect(onCreate).toHaveBeenCalled();
-			const args = onCreate.mock.calls[0];
-			expect(args[13]).toBe('group-abc');
+			const [submitted] = onCreate.mock.calls[0];
+			expect(submitted.groupId).toBe('group-abc');
 		});
 
 		it('does not clobber the user-typed name when sourceSession reference changes (issue #827)', async () => {
@@ -3724,33 +3625,17 @@ describe('NewInstanceModal', () => {
 			// workingDirOverride should be the working directory path since SSH is enabled
 			// (the Working Directory field contains a remote path when SSH is on).
 			expect(onCreate).toHaveBeenCalledWith(
-				'opencode',
-				'/test/path',
-				'SSH Test',
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				expect.objectContaining({
-					enabled: true,
-					remoteId: 'remote-1',
-					syncHistory: false,
-					workingDirOverride: '/test/path',
-				}),
-				undefined,
-				undefined,
-				undefined, // enableMaestroP
-				undefined, // maestroPPath
-				undefined, // maestroPMode
-				true, // retryOnAvailabilityErrors
-				true, // retryOnTokenExhaustion
-				undefined, // additionalDirectories
-				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				expectedDraft({
+					agentId: 'opencode',
+					workingDir: '/test/path',
+					name: 'SSH Test',
+					sessionSshRemoteConfig: expect.objectContaining({
+						enabled: true,
+						remoteId: 'remote-1',
+						syncHistory: false,
+						workingDirOverride: '/test/path',
+					}),
+				})
 			);
 		});
 
@@ -3959,32 +3844,15 @@ describe('NewInstanceModal', () => {
 
 			// The critical assertion: workingDirOverride MUST match the remote path
 			expect(onCreate).toHaveBeenCalledWith(
-				'claude-code',
-				'/home/devuser/my-project',
-				'Remote Agent',
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				expect.objectContaining({
-					enabled: true,
-					remoteId: 'remote-1',
-					workingDirOverride: '/home/devuser/my-project',
-				}),
-				undefined,
-				undefined,
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
-				undefined, // maestroPPath
-				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
-				true, // retryOnAvailabilityErrors
-				true, // retryOnTokenExhaustion
-				undefined, // additionalDirectories
-				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				expectedDraft({
+					workingDir: '/home/devuser/my-project',
+					name: 'Remote Agent',
+					sessionSshRemoteConfig: expect.objectContaining({
+						enabled: true,
+						remoteId: 'remote-1',
+						workingDirOverride: '/home/devuser/my-project',
+					}),
+				})
 			);
 		});
 
@@ -4058,7 +3926,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			expect(onCreate).toHaveBeenCalledTimes(1);
-			const [, cwd, , , , , , , , , , sshConfig] = onCreate.mock.calls[0];
+			const [{ workingDir: cwd, sessionSshRemoteConfig: sshConfig }] = onCreate.mock.calls[0];
 			expect(cwd).toBe('~/git-projects');
 			expect(sshConfig).toEqual(
 				expect.objectContaining({
@@ -4165,7 +4033,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			expect(onCreate).toHaveBeenCalledTimes(1);
-			const [, cwd, , , , , , , , , , sshConfig] = onCreate.mock.calls[0];
+			const [{ workingDir: cwd, sessionSshRemoteConfig: sshConfig }] = onCreate.mock.calls[0];
 			expect(cwd).toBe('/home/devuser/new-project');
 			expect(sshConfig).toEqual(
 				expect.objectContaining({
@@ -4266,40 +4134,23 @@ describe('NewInstanceModal', () => {
 			});
 
 			// The explicit workingDirOverride from the source session should be preserved
+			// The source's token source is unset, so the duplicate falls through to the
+			// same default path as a fresh agent: `undefined ?? (isAdaptiveModeDefaultOn() ||
+			// undefined)`. On rc Adaptive Mode defaults OFF, so `enableMaestroP` stays unset
+			// rather than pinning a falsy default as an explicit "API" choice. Matches the
+			// fresh-agent SSH case above.
 			expect(onCreate).toHaveBeenCalledWith(
-				expect.any(String),
-				expect.any(String),
-				expect.any(String),
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				undefined,
-				expect.objectContaining({
-					enabled: true,
-					remoteId: 'remote-1',
-					workingDirOverride: '/explicit/override/path',
-				}),
-				undefined,
-				undefined,
-				// The source's token source is unset, so the duplicate falls through to the
-				// same default path as a fresh agent: `undefined ?? (isAdaptiveModeDefaultOn() ||
-				// undefined)`. On rc Adaptive Mode defaults OFF, so this stays unset rather than
-				// pinning a falsy default as an explicit "API" choice. Matches the fresh-agent
-				// SSH case above.
-				undefined, // enableMaestroP unset: API is the default for Claude Code (Adaptive Mode off)
-				undefined, // maestroPPath
-				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
-				true, // retryOnAvailabilityErrors
-				true, // retryOnTokenExhaustion
-				undefined, // additionalDirectories
-				false, // codexAutoResetOnExhaustion: off by default
-				'exec', // codexTransport: Standard by default
-				undefined, // harnessControlMode
-				'full' // permissionMode: source has no read-only override
+				expectedDraft({
+					agentId: expect.any(String),
+					workingDir: expect.any(String),
+					name: expect.any(String),
+					sessionSshRemoteConfig: expect.objectContaining({
+						enabled: true,
+						remoteId: 'remote-1',
+						workingDirOverride: '/explicit/override/path',
+					}),
+					permissionMode: 'full', // source has no read-only override
+				})
 			);
 		});
 
@@ -4438,8 +4289,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			expect(onCreate).toHaveBeenCalled();
-			// 14th positional arg (index 13) is groupId.
-			expect(onCreate.mock.calls[0][13]).toBe('group-beta');
+			expect(onCreate.mock.calls[0][0].groupId).toBe('group-beta');
 		});
 
 		it('seeds the dropdown from presetGroupId so the caller-supplied group is preselected', async () => {

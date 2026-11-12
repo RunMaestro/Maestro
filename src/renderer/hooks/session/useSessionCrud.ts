@@ -15,7 +15,8 @@
  */
 
 import { useCallback, useState } from 'react';
-import type { AdditionalDirectory, AITab, ToolType, Session } from '../../types';
+import type { ToolType } from '../../types';
+import type { NewAgentDraft } from '../../components/NewInstanceModal/types';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -25,16 +26,16 @@ import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
-import { gitService } from '../../services/git';
-import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../../shared/newAgentRecord';
-import type { CodexTransport } from '../../../shared/codexTransport';
-import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
+import {
+	buildNewAgentSession,
+	isRemoteNewAgent,
+	probeNewAgentGitState,
+} from '../../utils/newAgentSession';
 import { logger } from '../../utils/logger';
 import { killAgentAiProcesses } from '../../services/process';
 import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
 import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
 import { getAgentDisplayName, getPermissionModeLabel } from '../../../shared/agentMetadata';
-import { permissionModeFields } from '../../utils/tabHelpers/focusFields';
 
 // ============================================================================
 // Dependencies interface
@@ -60,40 +61,13 @@ export interface UseSessionCrudDeps {
 export interface UseSessionCrudReturn {
 	/** Opens the new instance modal */
 	addNewSession: () => void;
-	/** Core session creation logic */
-	createNewSession: (
-		agentId: string,
-		workingDir: string,
-		name: string,
-		nudgeMessage?: string,
-		newSessionMessage?: string,
-		customPath?: string,
-		customArgs?: string,
-		customEnvVars?: Record<string, string>,
-		customModel?: string,
-		customContextWindow?: number,
-		customProviderPath?: string,
-		sessionSshRemoteConfig?: {
-			enabled: boolean;
-			remoteId: string | null;
-			workingDirOverride?: string;
-		},
-		customEffort?: string,
-		groupId?: string,
-		enableMaestroP?: boolean,
-		maestroPPath?: string,
-		maestroPMode?: 'interactive' | 'dynamic',
-		retryOnAvailabilityErrors?: boolean,
-		retryOnTokenExhaustion?: boolean,
-		additionalDirectories?: AdditionalDirectory[],
-		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean,
-		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport,
-		harnessControlMode?: HarnessControlMode,
-		/** Permission mode for the fresh initial tab; omitted for ordinary new agents. */
-		permissionMode?: AITab['permissionMode']
-	) => Promise<void>;
+	/**
+	 * Create the agent a New Agent draft describes, select it and focus its
+	 * input. Resolves the new agent's id, or `null` when no agent was created:
+	 * an unknown provider, a permission mode the provider cannot honor, or a
+	 * draft that fails validation (each reported to the user or the log).
+	 */
+	createNewSession: (draft: NewAgentDraft) => Promise<string | null>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
 	/** Deletes entire worktree group and all its agents */
@@ -161,44 +135,16 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	// createNewSession - core session creation logic
 	// ========================================================================
 	const createNewSession = useCallback(
-		async (
-			agentId: string,
-			workingDir: string,
-			name: string,
-			nudgeMessage?: string,
-			newSessionMessage?: string,
-			customPath?: string,
-			customArgs?: string,
-			customEnvVars?: Record<string, string>,
-			customModel?: string,
-			customContextWindow?: number,
-			customProviderPath?: string,
-			sessionSshRemoteConfig?: {
-				enabled: boolean;
-				remoteId: string | null;
-				workingDirOverride?: string;
-			},
-			customEffort?: string,
-			groupId?: string,
-			enableMaestroP?: boolean,
-			maestroPPath?: string,
-			maestroPMode?: 'interactive' | 'dynamic',
-			retryOnAvailabilityErrors?: boolean,
-			retryOnTokenExhaustion?: boolean,
-			additionalDirectories?: AdditionalDirectory[],
-			/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-			codexAutoResetOnExhaustion?: boolean,
-			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-			codexTransport?: CodexTransport,
-			harnessControlMode?: HarnessControlMode,
-			permissionMode?: AITab['permissionMode']
-		) => {
+		async (draft: NewAgentDraft): Promise<string | null> => {
+			const { agentId, workingDir, name, sessionSshRemoteConfig, permissionMode } = draft;
+			// Set once the agent is in the store: from then on it exists, whatever fails after.
+			let createdId: string | null = null;
 			try {
 				// Get agent definition to get correct command
 				const agent = await (window as any).maestro.agents.get(agentId);
 				if (!agent) {
 					logger.error(`Agent not found: ${agentId}`);
-					return;
+					return null;
 				}
 				// Duplication must not turn an unsupported restricted mode into full access.
 				if (
@@ -210,7 +156,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 						title: 'Agent Creation Failed',
 						message: `${getAgentDisplayName(agentId)} does not support ${getPermissionModeLabel(permissionMode, agentId)} permissions in Maestro. Choose a supported permission mode before creating this agent.`,
 					});
-					return;
+					return null;
 				}
 				const currentSessions = useSessionStore.getState().sessions;
 				const validation = validateNewSession(
@@ -227,86 +173,26 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 						title: 'Agent Creation Failed',
 						message: validation.error || 'Cannot create duplicate agent',
 					});
-					return;
+					return null;
 				}
 
 				const newId = generateId();
-				const aiPid = 0;
-
-				// For SSH sessions, defer git check until onSshRemote fires
-				const isRemoteSession = sessionSshRemoteConfig?.enabled && sessionSshRemoteConfig.remoteId;
-				let isGitRepo = false;
-				let gitBranches: string[] | undefined;
-				let gitTags: string[] | undefined;
-				let gitRefsCacheTime: number | undefined;
-
-				if (!isRemoteSession) {
-					isGitRepo = await gitService.isRepo(workingDir);
-					if (isGitRepo) {
-						[gitBranches, gitTags] = await Promise.all([
-							gitService.getBranches(workingDir),
-							gitService.getTags(workingDir),
-						]);
-						gitRefsCacheTime = Date.now();
-					}
-				}
-
+				const isRemoteSession = isRemoteNewAgent(draft);
+				const git = await probeNewAgentGitState(draft);
 				const currentDefaults = useSettingsStore.getState();
-				const newSession: Session = {
-					...buildNewAgentRecord(
-						{
-							id: newId,
-							name,
-							toolType: agentId,
-							cwd: workingDir,
-							groupId,
-							saveToHistory: currentDefaults.defaultSaveToHistory,
-							showThinking: currentDefaults.defaultShowThinking,
-						},
-						{ generateId }
-					),
-					toolType: agentId as ToolType,
-					additionalDirectories,
-					isGitRepo,
-					gitBranches,
-					gitTags,
-					gitRefsCacheTime,
-					aiPid,
-					nudgeMessage,
-					newSessionMessage,
-					customPath,
-					customArgs,
-					customEnvVars,
-					customModel,
-					customContextWindow,
-					customProviderPath,
-					customEffort: customEffort?.trim() || undefined,
-					sessionSshRemoteConfig,
-					enableMaestroP,
-					maestroPPath,
-					maestroPMode,
-					// Agent Resilience: only persist an explicit OFF; leaving these
-					// undefined reads as ON via `resilienceEnabled`, so the default
-					// behavior needs no stored value.
-					retryOnAvailabilityErrors,
-					retryOnTokenExhaustion,
-					// Only persist an explicit opt-IN. The default is off, so an absent
-					// value already means off and storing `false` on every non-Codex
-					// agent would be noise in every session record.
-					codexAutoResetOnExhaustion: codexAutoResetOnExhaustion === true ? true : undefined,
-					// Same rule: `exec` is the default, so only the opt-in is stored.
-					codexTransport: codexTransport === 'app-server' ? 'app-server' : undefined,
-					harnessControlMode: harnessControlMode === 'native' ? 'native' : undefined,
-					claudeInteractive: newAgentClaudeInteractive(agentId),
-				};
-				if (permissionMode !== undefined) {
-					newSession.aiTabs = newSession.aiTabs.map((tab) => ({
-						...tab,
-						...permissionModeFields(permissionMode),
-					}));
-				}
+				const newSession = buildNewAgentSession(
+					// A blank effort means the agent's default.
+					{ ...draft, customEffort: draft.customEffort?.trim() || undefined },
+					{
+						id: newId,
+						git,
+						saveToHistory: currentDefaults.defaultSaveToHistory,
+						showThinking: currentDefaults.defaultShowThinking,
+					}
+				);
 
 				setSessions((prev) => [...prev, newSession]);
+				createdId = newId;
 				setActiveSessionId(newId);
 				// The first spawn reads its routing (Codex transport, Claude token mode)
 				// from the persisted record, so do not leave the new agent sitting in a
@@ -324,14 +210,16 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					agentType: agentId,
 					projectPath: workingDir,
 					createdAt: Date.now(),
-					isRemote: !!isRemoteSession,
+					isRemote: isRemoteSession,
 					isWorktree: false,
 				});
 
 				setActiveFocus('main');
 				setTimeout(() => inputRef.current?.focus(), 50);
+				return newId;
 			} catch (error) {
 				logger.error('Failed to create session:', undefined, error);
+				return createdId;
 			}
 		},
 		[

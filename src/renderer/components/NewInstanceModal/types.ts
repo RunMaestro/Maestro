@@ -44,38 +44,51 @@ export interface SessionSshRemoteConfig {
 	shareHistoryToProjectDir?: boolean;
 }
 
+/**
+ * The settings of one new agent, as the New Agent modal hands them over.
+ *
+ * `createNewSession()` (`useSessionCrud.ts`) creates the agent from a draft,
+ * and the CLI / web `create_session` handler turns its request into one, so
+ * both build the agent with `buildNewAgentSession()`
+ * (`utils/newAgentSession.ts`). Values arrive resolved: trimmed, defaults
+ * applied, an unset field `undefined`.
+ */
+export interface NewAgentDraft {
+	/** Provider id; the agent's `toolType`. */
+	agentId: string;
+	/** The agent's `cwd`. With SSH on, a path on the remote host. */
+	workingDir: string;
+	name: string;
+	nudgeMessage?: string;
+	newSessionMessage?: string;
+	customPath?: string;
+	customArgs?: string;
+	customEnvVars?: Record<string, string>;
+	customModel?: string;
+	customContextWindow?: number;
+	customProviderPath?: string;
+	sessionSshRemoteConfig?: SessionSshRemoteConfig;
+	customEffort?: string;
+	groupId?: string;
+	enableMaestroP?: boolean;
+	maestroPPath?: string;
+	maestroPMode?: 'interactive' | 'dynamic';
+	retryOnAvailabilityErrors?: boolean;
+	retryOnTokenExhaustion?: boolean;
+	additionalDirectories?: AdditionalDirectory[];
+	/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
+	codexAutoResetOnExhaustion?: boolean;
+	/** Codex only: which transport chat turns use. `undefined` means `exec`. */
+	codexTransport?: CodexTransport;
+	harnessControlMode?: HarnessControlMode;
+	/** Permission mode for the fresh initial tab; omitted for ordinary new agents. */
+	permissionMode?: AITab['permissionMode'];
+}
+
 export interface NewInstanceModalProps {
 	isOpen: boolean;
 	onClose: () => void;
-	onCreate: (
-		agentId: string,
-		workingDir: string,
-		name: string,
-		nudgeMessage?: string,
-		newSessionMessage?: string,
-		customPath?: string,
-		customArgs?: string,
-		customEnvVars?: Record<string, string>,
-		customModel?: string,
-		customContextWindow?: number,
-		customProviderPath?: string,
-		sessionSshRemoteConfig?: SessionSshRemoteConfig,
-		customEffort?: string,
-		groupId?: string,
-		enableMaestroP?: boolean,
-		maestroPPath?: string,
-		maestroPMode?: 'interactive' | 'dynamic',
-		retryOnAvailabilityErrors?: boolean,
-		retryOnTokenExhaustion?: boolean,
-		additionalDirectories?: AdditionalDirectory[],
-		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean,
-		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport,
-		harnessControlMode?: HarnessControlMode,
-		/** Permission mode for the fresh initial tab; omitted for ordinary new agents. */
-		permissionMode?: AITab['permissionMode']
-	) => void;
+	onCreate: (draft: NewAgentDraft) => void;
 	theme: Theme;
 	existingSessions: Session[];
 	sourceSession?: Session; // Optional session to duplicate from

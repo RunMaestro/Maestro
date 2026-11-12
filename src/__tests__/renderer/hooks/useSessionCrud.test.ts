@@ -63,6 +63,8 @@ import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { gitService } from '../../../renderer/services/git';
 import { validateNewSession } from '../../../renderer/utils/sessionValidation';
 import type { AITab, Session } from '../../../renderer/types';
+import type { NewAgentDraft } from '../../../renderer/components/NewInstanceModal/types';
+import { buildNewAgentSession } from '../../../renderer/utils/newAgentSession';
 import { getAgentDefinition } from '../../../shared/maestro-lib/providers/definitions';
 import { getAgentCapabilities } from '../../../shared/maestro-lib/providers/capabilities';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
@@ -152,6 +154,16 @@ function createSession(overrides: Partial<Session> = {}): Session {
 		autoRunFolderPath: '/test/project/.maestro/playbooks',
 		...overrides,
 	} as Session;
+}
+
+/** A New Agent draft for `createNewSession()`, with the settings a test sets on top. */
+function newAgentDraft(
+	agentId: string,
+	workingDir: string,
+	name: string,
+	settings: Partial<NewAgentDraft> = {}
+): NewAgentDraft {
+	return { agentId, workingDir, name, ...settings };
 }
 
 function createDeps(overrides: Partial<UseSessionCrudDeps> = {}): UseSessionCrudDeps {
@@ -260,7 +272,9 @@ describe('useSessionCrud', () => {
 			try {
 				await act(async () => {
 					view.result.current.flush([existing]);
-					await view.result.current.createNewSession('omp', '/test/project', 'Remote OMP');
+					await view.result.current.createNewSession(
+						newAgentDraft('omp', '/test/project', 'Remote OMP')
+					);
 					releaseWrite();
 				});
 				for (let tick = 0; tick < 10; tick++) {
@@ -291,7 +305,9 @@ describe('useSessionCrud', () => {
 			const { result } = renderHook(() => useSessionCrud(deps));
 
 			await act(async () => {
-				await result.current.createNewSession('claude-code', '/test/project', 'My Session');
+				await result.current.createNewSession(
+					newAgentDraft('claude-code', '/test/project', 'My Session')
+				);
 			});
 
 			const sessions = useSessionStore.getState().sessions;
@@ -309,7 +325,7 @@ describe('useSessionCrud', () => {
 			const { result } = renderHook(() => useSessionCrud(deps));
 
 			await act(async () => {
-				await result.current.createNewSession('codex', '/test/project', 'Codex');
+				await result.current.createNewSession(newAgentDraft('codex', '/test/project', 'Codex'));
 			});
 			vi.runAllTimers();
 			vi.useRealTimers();
@@ -322,7 +338,9 @@ describe('useSessionCrud', () => {
 			const { result } = renderHook(() => useSessionCrud(deps));
 
 			await act(async () => {
-				await result.current.createNewSession('claude-code', '/test/project', 'My Session');
+				await result.current.createNewSession(
+					newAgentDraft('claude-code', '/test/project', 'My Session')
+				);
 			});
 
 			const { activeSessionId, sessions } = useSessionStore.getState();
@@ -334,7 +352,9 @@ describe('useSessionCrud', () => {
 			const { result } = renderHook(() => useSessionCrud(deps));
 
 			await act(async () => {
-				await result.current.createNewSession('claude-code', '/test/project', 'My Session');
+				await result.current.createNewSession(
+					newAgentDraft('claude-code', '/test/project', 'My Session')
+				);
 			});
 
 			expect(mockMaestro.stats.recordSessionCreated).toHaveBeenCalledWith(
@@ -355,7 +375,9 @@ describe('useSessionCrud', () => {
 			const { result } = renderHook(() => useSessionCrud(deps));
 
 			await act(async () => {
-				await result.current.createNewSession('claude-code', '/test/project', 'Git Session');
+				await result.current.createNewSession(
+					newAgentDraft('claude-code', '/test/project', 'Git Session')
+				);
 			});
 
 			expect(gitService.isRepo).toHaveBeenCalledWith('/test/project');
@@ -372,18 +394,9 @@ describe('useSessionCrud', () => {
 
 			await act(async () => {
 				await result.current.createNewSession(
-					'claude-code',
-					'/test/project',
-					'Remote Session',
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					{ enabled: true, remoteId: 'remote-1' }
+					newAgentDraft('claude-code', '/test/project', 'Remote Session', {
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					})
 				);
 			});
 
@@ -402,18 +415,9 @@ describe('useSessionCrud', () => {
 
 			await act(async () => {
 				await result.current.createNewSession(
-					'claude-code',
-					'/test/project',
-					'Remote Session',
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					{ enabled: true, remoteId: 'remote-1' }
+					newAgentDraft('claude-code', '/test/project', 'Remote Session', {
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					})
 				);
 			});
 
@@ -432,7 +436,9 @@ describe('useSessionCrud', () => {
 			const { result } = renderHook(() => useSessionCrud(deps));
 
 			await act(async () => {
-				await result.current.createNewSession('claude-code', '/test/project', 'Duplicate');
+				await result.current.createNewSession(
+					newAgentDraft('claude-code', '/test/project', 'Duplicate')
+				);
 			});
 
 			expect(useSessionStore.getState().sessions).toHaveLength(0);
@@ -452,7 +458,9 @@ describe('useSessionCrud', () => {
 			const { result } = renderHook(() => useSessionCrud(deps));
 
 			await act(async () => {
-				await result.current.createNewSession('unknown-agent', '/test/project', 'Bad Agent');
+				await result.current.createNewSession(
+					newAgentDraft('unknown-agent', '/test/project', 'Bad Agent')
+				);
 			});
 
 			expect(useSessionStore.getState().sessions).toHaveLength(0);
@@ -466,19 +474,17 @@ describe('useSessionCrud', () => {
 
 			await act(async () => {
 				await result.current.createNewSession(
-					'claude-code',
-					'/test/project',
-					'Custom Session',
-					'Do X first',
-					'Init instructions',
-					'/custom/path',
-					'--flag',
-					{ API_KEY: 'secret' },
-					'gpt-4',
-					8192,
-					'/custom/provider',
-					undefined,
-					'high'
+					newAgentDraft('claude-code', '/test/project', 'Custom Session', {
+						nudgeMessage: 'Do X first',
+						newSessionMessage: 'Init instructions',
+						customPath: '/custom/path',
+						customArgs: '--flag',
+						customEnvVars: { API_KEY: 'secret' },
+						customModel: 'gpt-4',
+						customContextWindow: 8192,
+						customProviderPath: '/custom/provider',
+						customEffort: 'high',
+					})
 				);
 			});
 
@@ -500,20 +506,9 @@ describe('useSessionCrud', () => {
 
 			await act(async () => {
 				await result.current.createNewSession(
-					'claude-code',
-					'/test/project',
-					'Duplicated Agent',
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					undefined,
-					'group-abc'
+					newAgentDraft('claude-code', '/test/project', 'Duplicated Agent', {
+						groupId: 'group-abc',
+					})
 				);
 			});
 
@@ -526,7 +521,9 @@ describe('useSessionCrud', () => {
 			const { result } = renderHook(() => useSessionCrud(deps));
 
 			await act(async () => {
-				await result.current.createNewSession('terminal', '/test/project', 'Terminal Session');
+				await result.current.createNewSession(
+					newAgentDraft('terminal', '/test/project', 'Terminal Session')
+				);
 			});
 
 			expect(useSessionStore.getState().sessions[0].inputMode).toBe('terminal');
@@ -543,9 +540,7 @@ describe('useSessionCrud', () => {
 
 			await act(async () => {
 				await result.current.createNewSession(
-					'claude-code',
-					'/test/project',
-					'Session With Defaults'
+					newAgentDraft('claude-code', '/test/project', 'Session With Defaults')
 				);
 			});
 
@@ -561,7 +556,9 @@ describe('useSessionCrud', () => {
 			const { result } = renderHook(() => useSessionCrud(deps));
 
 			await act(async () => {
-				await result.current.createNewSession('claude-code', '/test/project', 'Auto Run Session');
+				await result.current.createNewSession(
+					newAgentDraft('claude-code', '/test/project', 'Auto Run Session')
+				);
 			});
 
 			expect(useSessionStore.getState().sessions[0].autoRunFolderPath).toBe(
@@ -578,7 +575,9 @@ describe('useSessionCrud', () => {
 			const { result } = renderHook(() => useSessionCrud(deps));
 
 			await act(async () => {
-				await result.current.createNewSession('claude-code', '/test/project', 'Focus Test');
+				await result.current.createNewSession(
+					newAgentDraft('claude-code', '/test/project', 'Focus Test')
+				);
 			});
 
 			act(() => {
@@ -594,7 +593,9 @@ describe('useSessionCrud', () => {
 			const { result } = renderHook(() => useSessionCrud(deps));
 
 			await act(async () => {
-				await result.current.createNewSession('claude-code', '/test/project', 'Focus Session');
+				await result.current.createNewSession(
+					newAgentDraft('claude-code', '/test/project', 'Focus Session')
+				);
 			});
 
 			expect(useUIStore.getState().activeFocus).toBe('main');
@@ -606,9 +607,7 @@ describe('useSessionCrud', () => {
 
 			await act(async () => {
 				await result.current.createNewSession(
-					'claude-code',
-					'/test/project',
-					'Unified Tab Session'
+					newAgentDraft('claude-code', '/test/project', 'Unified Tab Session')
 				);
 			});
 
@@ -692,19 +691,16 @@ describe('useSessionCrud', () => {
 					const { result } = renderHook(() => useSessionCrud(deps));
 					await act(async () => {
 						await result.current.createNewSession(
-							'grok',
-							cwd,
-							`Grok ${account}`,
-							'Project guidance',
-							'Start here',
-							'/synthetic/Grok CLI/grok',
-							'--max-turns 2',
-							env,
-							model,
-							undefined,
-							undefined,
-							ssh,
-							effort
+							newAgentDraft('grok', cwd, `Grok ${account}`, {
+								nudgeMessage: 'Project guidance',
+								newSessionMessage: 'Start here',
+								customPath: '/synthetic/Grok CLI/grok',
+								customArgs: '--max-turns 2',
+								customEnvVars: env,
+								customModel: model,
+								sessionSshRemoteConfig: ssh,
+								customEffort: effort,
+							})
 						);
 						vi.runAllTimers();
 					});
@@ -861,24 +857,17 @@ describe('useSessionCrud', () => {
 					const deps = createDeps();
 					const { result } = renderHook(() => useSessionCrud(deps));
 					// The dialog suite proves the handoff; exercise its actual consumer here.
-					const args: Parameters<typeof result.current.createNewSession> = [
-						'grok',
-						source.cwd,
-						'Grok copy',
-						undefined,
-						undefined,
-						source.customPath,
-						source.customArgs,
-						source.customEnvVars,
-						source.customModel,
-						undefined,
-						undefined,
-						source.sessionSshRemoteConfig,
-						source.customEffort,
-					];
-					args[23] = resolveTabPermissionMode(source.aiTabs[0]);
+					const draft = newAgentDraft('grok', source.cwd, 'Grok copy', {
+						customPath: source.customPath,
+						customArgs: source.customArgs,
+						customEnvVars: source.customEnvVars,
+						customModel: source.customModel,
+						sessionSshRemoteConfig: source.sessionSshRemoteConfig,
+						customEffort: source.customEffort,
+						permissionMode: resolveTabPermissionMode(source.aiTabs[0]),
+					});
 					await act(async () => {
-						await result.current.createNewSession(...args);
+						await result.current.createNewSession(draft);
 						vi.runAllTimers();
 					});
 
@@ -957,17 +946,17 @@ describe('useSessionCrud', () => {
 					useUIStore.setState({ activeFocus: 'sidebar' });
 					const deps = createDeps();
 					const { result } = renderHook(() => useSessionCrud(deps));
-					const args: Parameters<typeof result.current.createNewSession> = [
-						'grok',
-						source.cwd,
-						'Refused copy',
-					];
-					args[23] = resolveTabPermissionMode(source.aiTabs[0]);
+					let createdId: string | null | undefined;
 					await act(async () => {
-						await result.current.createNewSession(...args);
+						createdId = await result.current.createNewSession(
+							newAgentDraft('grok', source.cwd, 'Refused copy', {
+								permissionMode: resolveTabPermissionMode(source.aiTabs[0]),
+							})
+						);
 						vi.runAllTimers();
 					});
 
+					expect(createdId).toBeNull();
 					expect(useSessionStore.getState().sessions).toEqual([before]);
 					expect(source).toEqual(before);
 					expect(useSessionStore.getState().activeSessionId).toBe(source.id);
@@ -995,14 +984,10 @@ describe('useSessionCrud', () => {
 					capabilities: getAgentCapabilities('grok'),
 				});
 				const { result } = renderHook(() => useSessionCrud(createDeps()));
-				const args: Parameters<typeof result.current.createNewSession> = [
-					'grok',
-					'/test/project',
-					'Standard Grok',
-				];
-				args[23] = 'standard';
 				await act(async () => {
-					await result.current.createNewSession(...args);
+					await result.current.createNewSession(
+						newAgentDraft('grok', '/test/project', 'Standard Grok', { permissionMode: 'standard' })
+					);
 					vi.runAllTimers();
 				});
 				expect(notifyToast).not.toHaveBeenCalled();
@@ -1020,14 +1005,12 @@ describe('useSessionCrud', () => {
 					capabilities: getAgentCapabilities('claude-code'),
 				});
 				const { result } = renderHook(() => useSessionCrud(createDeps()));
-				const args: Parameters<typeof result.current.createNewSession> = [
-					'claude-code',
-					'/test/project',
-					'Standard Claude',
-				];
-				args[23] = 'standard';
 				await act(async () => {
-					await result.current.createNewSession(...args);
+					await result.current.createNewSession(
+						newAgentDraft('claude-code', '/test/project', 'Standard Claude', {
+							permissionMode: 'standard',
+						})
+					);
 					vi.runAllTimers();
 				});
 				expect(useSessionStore.getState().sessions).toHaveLength(1);
@@ -1055,16 +1038,163 @@ describe('useSessionCrud', () => {
 			const deps = createDeps();
 			const { result } = renderHook(() => useSessionCrud(deps));
 
-			// codexTransport is the 22nd positional argument; everything between
-			// the name and it is left at its default.
-			const args: unknown[] = ['codex', '/test/project', 'Codex Session'];
-			args[21] = chosen;
-			const create = result.current.createNewSession as (...a: unknown[]) => Promise<void>;
 			await act(async () => {
-				await create(...args);
+				await result.current.createNewSession(
+					newAgentDraft('codex', '/test/project', 'Codex Session', { codexTransport: chosen })
+				);
 			});
 
 			expect(useSessionStore.getState().sessions[0].codexTransport).toBe(stored);
+		});
+
+		describe('the id it resolves', () => {
+			let loggerError: ReturnType<typeof vi.spyOn>;
+			beforeEach(() => {
+				loggerError = vi.spyOn(logger, 'error').mockImplementation(() => {});
+			});
+			afterEach(() => {
+				loggerError.mockRestore();
+			});
+
+			it('resolves the new agent id, the one now in the store and selected', async () => {
+				const { result } = renderHook(() => useSessionCrud(createDeps()));
+
+				let createdId: string | null | undefined;
+				await act(async () => {
+					createdId = await result.current.createNewSession(
+						newAgentDraft('claude-code', '/test/project', 'Returned Id')
+					);
+				});
+
+				const { sessions, activeSessionId } = useSessionStore.getState();
+				expect(sessions).toHaveLength(1);
+				expect(createdId).toBe(sessions[0].id);
+				expect(activeSessionId).toBe(createdId);
+			});
+
+			it('resolves null when the provider is unknown', async () => {
+				mockMaestro.agents.get.mockResolvedValueOnce(null);
+				const { result } = renderHook(() => useSessionCrud(createDeps()));
+
+				let createdId: string | null | undefined;
+				await act(async () => {
+					createdId = await result.current.createNewSession(
+						newAgentDraft('unknown-agent', '/test/project', 'No Agent')
+					);
+				});
+
+				expect(createdId).toBeNull();
+				expect(useSessionStore.getState().sessions).toHaveLength(0);
+			});
+
+			it('resolves null when the draft fails validation', async () => {
+				(validateNewSession as any).mockReturnValueOnce({ valid: false, error: 'Duplicate' });
+				const { result } = renderHook(() => useSessionCrud(createDeps()));
+
+				let createdId: string | null | undefined;
+				await act(async () => {
+					createdId = await result.current.createNewSession(
+						newAgentDraft('claude-code', '/test/project', 'Duplicate')
+					);
+				});
+
+				expect(createdId).toBeNull();
+				expect(useSessionStore.getState().sessions).toHaveLength(0);
+			});
+
+			it('still resolves the id when a step after the agent was added fails', async () => {
+				// The agent is in the store by then, so it exists and the caller must
+				// be able to find it, not be told nothing was created.
+				mockMaestro.stats.recordSessionCreated.mockImplementationOnce(() => {
+					throw new Error('stats unavailable');
+				});
+				const { result } = renderHook(() => useSessionCrud(createDeps()));
+
+				let createdId: string | null | undefined;
+				await act(async () => {
+					createdId = await result.current.createNewSession(
+						newAgentDraft('claude-code', '/test/project', 'Half Done')
+					);
+				});
+
+				const { sessions } = useSessionStore.getState();
+				expect(sessions).toHaveLength(1);
+				expect(createdId).toBe(sessions[0].id);
+				expect(loggerError).toHaveBeenCalledWith(
+					'Failed to create session:',
+					undefined,
+					expect.any(Error)
+				);
+			});
+
+			it('resolves null when it fails before the agent was added', async () => {
+				mockMaestro.agents.get.mockRejectedValueOnce(new Error('IPC down'));
+				const { result } = renderHook(() => useSessionCrud(createDeps()));
+
+				let createdId: string | null | undefined;
+				await act(async () => {
+					createdId = await result.current.createNewSession(
+						newAgentDraft('claude-code', '/test/project', 'Never Added')
+					);
+				});
+
+				expect(createdId).toBeNull();
+				expect(useSessionStore.getState().sessions).toHaveLength(0);
+			});
+		});
+
+		it('builds the same record the shared builder builds from the draft', async () => {
+			// One builder for both create paths: the modal's agent is the CLI's agent.
+			(gitService.isRepo as any).mockResolvedValueOnce(true);
+			(gitService.getBranches as any).mockResolvedValueOnce(['main']);
+			(gitService.getTags as any).mockResolvedValueOnce(['v1']);
+			useSettingsStore.setState({ defaultSaveToHistory: true, defaultShowThinking: 'on' } as any);
+			const draft = newAgentDraft('codex', '/test/project', 'Parity', {
+				nudgeMessage: 'Be terse',
+				customEnvVars: { DEBUG: '1' },
+				customEffort: ' high ',
+				groupId: 'group-1',
+				enableMaestroP: false,
+				retryOnAvailabilityErrors: false,
+				retryOnTokenExhaustion: true,
+				additionalDirectories: [{ path: '/shared', read: true, write: false }],
+				codexAutoResetOnExhaustion: true,
+				codexTransport: 'app-server',
+				permissionMode: 'readonly',
+			});
+			const { result } = renderHook(() => useSessionCrud(createDeps()));
+
+			await act(async () => {
+				await result.current.createNewSession(draft);
+			});
+
+			const created = useSessionStore.getState().sessions[0];
+			const expected = buildNewAgentSession(
+				// createNewSession resolves a padded effort before it builds.
+				{ ...draft, customEffort: 'high' },
+				{
+					id: created.id,
+					git: {
+						isGitRepo: true,
+						gitBranches: ['main'],
+						gitTags: ['v1'],
+						gitRefsCacheTime: created.gitRefsCacheTime,
+					},
+					saveToHistory: true,
+					showThinking: 'on',
+				}
+			);
+			// Tab and log ids, the creation time and the port are fresh on each build.
+			const comparable = (session: Session) => ({
+				...session,
+				createdAt: 0,
+				port: 0,
+				shellLogs: session.shellLogs.map((log) => ({ ...log, id: '', timestamp: 0 })),
+				aiTabs: session.aiTabs.map((tab) => ({ ...tab, id: '', createdAt: 0 })),
+				activeTabId: '',
+				unifiedTabOrder: session.unifiedTabOrder.map((ref) => ({ ...ref, id: '' })),
+			});
+			expect(comparable(created)).toStrictEqual(comparable(expected));
 		});
 	});
 

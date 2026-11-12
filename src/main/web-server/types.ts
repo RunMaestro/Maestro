@@ -1292,7 +1292,9 @@ export type MoveSessionToGroupCallback = (
 ) => Promise<boolean>;
 /**
  * Optional configuration fields for session creation via CLI/web.
- * These map 1:1 to the optional params of createNewSession in useSessionCrud.ts.
+ * Each is the same-named optional field of the New Agent draft that
+ * createNewSession() in useSessionCrud.ts takes, except `contextWindowSource`
+ * and `autoRunFolderPath`, which only a script sets.
  */
 export interface CreateSessionConfig {
 	nudgeMessage?: string;

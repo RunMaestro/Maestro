@@ -16,7 +16,8 @@ import { useEventListener } from '../utils/useEventListener';
 import { generateId } from '../../utils/ids';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../../shared/newAgentRecord';
+import { buildNewAgentSession, probeNewAgentGitState } from '../../utils/newAgentSession';
+import type { NewAgentDraft } from '../../components/NewInstanceModal/types';
 import { asThinkingMode } from '../../../shared/types';
 import { resolveAutoRunDocumentNames } from '../../../shared/autoRunDocumentPaths';
 import {
@@ -52,7 +53,6 @@ import {
 } from '../../components/TerminalView';
 import { captureException, captureMessage } from '../../utils/sentry';
 import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
-import { gitService } from '../../services/git';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { resolveAutoRunDispatchTarget } from '../../services/autoRunDispatchTarget';
 import { notifyToast } from '../../stores/notificationStore';
@@ -1524,99 +1524,72 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			const currentDefaults = useSettingsStore.getState();
 			const newId = generateId();
 
-			// Probe git repo state for the cwd so the header badge shows the branch
-			// instead of "LOCAL". Mirrors the GUI's useSessionCrud flow. For SSH
-			// sessions, defer the check until onSshRemote fires (see useAgentListeners).
-			// gitService methods route through createIpcMethod with a defaultValue,
-			// so they swallow IPC errors (and report to Sentry) rather than throwing.
-			const sshConfig = config?.sessionSshRemoteConfig as
-				| { enabled?: boolean; remoteId?: string | null }
-				| undefined;
-			const isRemoteSession = !!(sshConfig?.enabled && sshConfig.remoteId);
-			let isGitRepo = false;
-			let gitBranches: string[] | undefined;
-			let gitTags: string[] | undefined;
-			let gitRefsCacheTime: number | undefined;
-			if (!isRemoteSession) {
-				isGitRepo = await gitService.isRepo(cwd);
-				if (isGitRepo) {
-					[gitBranches, gitTags] = await Promise.all([
-						gitService.getBranches(cwd),
-						gitService.getTags(cwd),
-					]);
-					gitRefsCacheTime = Date.now();
-				}
-			}
-
+			// The request as a New Agent draft, so the agent is built exactly as the
+			// modal builds it (`duplicate-agent` sends the modal's remaining fields).
+			// A blank string or a zero window is unset; a boolean counts only as a
+			// boolean, because an explicit `false` is a choice (Adaptive Mode off,
+			// resilience opted out); the maestro-p refinements travel only with
+			// Adaptive Mode on.
+			const draft: NewAgentDraft = {
+				agentId: toolType,
+				workingDir: cwd,
+				name,
+				groupId: groupId || undefined,
+				nudgeMessage: config?.nudgeMessage || undefined,
+				newSessionMessage: config?.newSessionMessage || undefined,
+				customPath: config?.customPath || undefined,
+				customArgs: config?.customArgs || undefined,
+				customEnvVars: config?.customEnvVars || undefined,
+				customModel: config?.customModel || undefined,
+				customEffort: config?.customEffort || undefined,
+				customContextWindow: config?.customContextWindow || undefined,
+				customProviderPath: config?.customProviderPath || undefined,
+				sessionSshRemoteConfig: config?.sessionSshRemoteConfig || undefined,
+				additionalDirectories: Array.isArray(config?.additionalDirectories)
+					? (config.additionalDirectories as AdditionalDirectory[])
+					: undefined,
+				enableMaestroP:
+					typeof config?.enableMaestroP === 'boolean' ? config.enableMaestroP : undefined,
+				maestroPMode:
+					config?.enableMaestroP === true &&
+					(config.maestroPMode === 'interactive' || config.maestroPMode === 'dynamic')
+						? config.maestroPMode
+						: undefined,
+				maestroPPath:
+					config?.enableMaestroP === true &&
+					typeof config.maestroPPath === 'string' &&
+					config.maestroPPath
+						? config.maestroPPath
+						: undefined,
+				retryOnAvailabilityErrors:
+					typeof config?.retryOnAvailabilityErrors === 'boolean'
+						? config.retryOnAvailabilityErrors
+						: undefined,
+				retryOnTokenExhaustion:
+					typeof config?.retryOnTokenExhaustion === 'boolean'
+						? config.retryOnTokenExhaustion
+						: undefined,
+				// The builder stores only the opt-ins of these three.
+				codexAutoResetOnExhaustion: config?.codexAutoResetOnExhaustion,
+				codexTransport: config?.codexTransport,
+				harnessControlMode: config?.harnessControlMode,
+			};
+			const git = await probeNewAgentGitState(draft);
 			const newSession: Session = {
-				...buildNewAgentRecord(
-					{
-						id: newId,
-						name,
-						toolType,
-						cwd,
-						groupId: groupId || undefined,
-						saveToHistory: currentDefaults.defaultSaveToHistory,
-						showThinking: currentDefaults.defaultShowThinking,
-					},
-					{ generateId }
-				),
-				toolType: toolType as ToolType,
-				isGitRepo,
-				...(gitBranches !== undefined && { gitBranches }),
-				...(gitTags !== undefined && { gitTags }),
-				...(gitRefsCacheTime !== undefined && { gitRefsCacheTime }),
-				// Apply optional config fields from CLI/web
-				...(config?.nudgeMessage && { nudgeMessage: config.nudgeMessage as string }),
-				...(config?.newSessionMessage && { newSessionMessage: config.newSessionMessage as string }),
-				...(config?.customPath && { customPath: config.customPath as string }),
-				...(config?.customArgs && { customArgs: config.customArgs as string }),
-				...(config?.customEnvVars && {
-					customEnvVars: config.customEnvVars as Record<string, string>,
+				...buildNewAgentSession(draft, {
+					id: newId,
+					git,
+					saveToHistory: currentDefaults.defaultSaveToHistory,
+					showThinking: currentDefaults.defaultShowThinking,
 				}),
-				...(config?.customModel && { customModel: config.customModel as string }),
-				...(config?.customEffort && { customEffort: config.customEffort as string }),
-				...(config?.customContextWindow && {
-					customContextWindow: config.customContextWindow as number,
-				}),
+				// Two fields only a script sets: a context window the user typed
+				// (`--context-window`, finding AD1) and its own Auto Run folder.
 				...(config?.contextWindowSource === 'user-edited' && {
 					contextWindowSource: 'user-edited' as const,
-				}),
-				...(config?.customProviderPath && {
-					customProviderPath: config.customProviderPath as string,
-				}),
-				...(config?.sessionSshRemoteConfig && {
-					sessionSshRemoteConfig:
-						config.sessionSshRemoteConfig as Session['sessionSshRemoteConfig'],
 				}),
 				...(config?.autoRunFolderPath && {
 					autoRunFolderPath: config.autoRunFolderPath as string,
 				}),
-				// The remaining New Agent modal fields (`duplicate-agent` sends them),
-				// stored the way createNewSession() stores them.
-				...(Array.isArray(config?.additionalDirectories) && {
-					additionalDirectories: config.additionalDirectories as AdditionalDirectory[],
-				}),
-				...(typeof config?.enableMaestroP === 'boolean' && {
-					enableMaestroP: config.enableMaestroP,
-				}),
-				...(config?.enableMaestroP === true &&
-					(config.maestroPMode === 'interactive' || config.maestroPMode === 'dynamic') && {
-						maestroPMode: config.maestroPMode,
-					}),
-				...(config?.enableMaestroP === true &&
-					typeof config.maestroPPath === 'string' &&
-					config.maestroPPath && { maestroPPath: config.maestroPPath }),
-				...(typeof config?.retryOnAvailabilityErrors === 'boolean' && {
-					retryOnAvailabilityErrors: config.retryOnAvailabilityErrors,
-				}),
-				...(typeof config?.retryOnTokenExhaustion === 'boolean' && {
-					retryOnTokenExhaustion: config.retryOnTokenExhaustion,
-				}),
-				...(config?.codexAutoResetOnExhaustion === true && { codexAutoResetOnExhaustion: true }),
-				...(config?.codexTransport === 'app-server' && { codexTransport: 'app-server' as const }),
-				...(config?.harnessControlMode === 'native' && { harnessControlMode: 'native' as const }),
-				claudeInteractive: newAgentClaudeInteractive(toolType),
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);
