@@ -294,14 +294,13 @@ export function tokenProxyAgentGatewayUrl(
  * - `off`: the agent's gateway is not the Maestro proxy (it has none, or it
  *   points somewhere else).
  * - `passthrough`: requests are forwarded unchanged and counted.
- * - `compress`: a large tool result is shortened once the model has read it in
- *   full (`src/main/local-models/proxy/compress.ts`). The model's work is
- *   unchanged; the result is written to the provider's prompt cache twice, in
- *   full and then shortened, so a short session costs slightly more and a long
- *   one less.
- * - `compress-early`: a large tool result is shortened BEFORE the model first
- *   reads it. Nothing is cached twice, so it is the cheapest in every session.
- *   The model works from the shortened output, which is the trade.
+ * - `compress`: a large tool result outside the protected recent part of a
+ *   request is shortened (`src/main/local-models/proxy/compress.ts`). Recent
+ *   results stay unchanged. Actual provider exposure and cache history are not
+ *   tracked; cost effects depend on provider caching, retrieval and session history.
+ * - `compress-early`: recent tool results are also eligible for shortening.
+ *   Without retrieval it uses only the complete profile. Neither prior provider
+ *   exposure nor a cost saving is guaranteed.
  */
 export type TokenProxyMode = 'off' | 'passthrough' | 'compress' | 'compress-early';
 

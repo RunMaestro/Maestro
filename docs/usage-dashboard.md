@@ -247,7 +247,7 @@ A few things to know when reading it:
 - **Unknown is not remote.** A source that was removed from Settings, or an OpenJev engine with no address, cannot be placed, so it says Unknown and is left out of the On This Machine share.
 - **A timeout is not its own outcome.** It is why a decision failed, so it is counted in the failed slices and also shown on its own.
 - **System One reads a 30-day ledger.** On a quarter, year or all-time range the tab says the decision outcomes reach back only that far. The Auto routing split and the request counts in Sources go back the whole range.
-- **Token savings are estimates.** The proxy counts at 4 characters per token. On paths, digits and stack traces the real saving can be about twice the figure shown. **Tokens saved** reads `-` for an agent whose requests only passed through.
+- **Token savings are estimates.** The proxy counts at 4 characters per token. A smaller outgoing payload does not establish billed token or cost savings. **Tokens saved** reads `-` for an agent whose requests only passed through.
 - **Cue runs and headless `maestro-cli send` are not in Run On Agents.** They write no turn record, so a Run on target used there does not appear.
 
 **Token Proxy Savings, top to bottom:**

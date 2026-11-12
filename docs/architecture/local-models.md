@@ -3419,12 +3419,12 @@ takes about 6 ms on the same text), because a string is skipped with `indexOf`.
 | OpenAI Chat Completions | A `tool` role message's content                                            |
 | OpenAI Responses        | The `output` of a `function_call_output` or `custom_tool_call_output` item |
 
-#### What is never touched
+#### Protected regions in Compress mode
 
 1. **Anything that is not a tool result.** The system prompt, the tool definitions and every user
    and assistant message are walked around, not read.
-2. **The most recent user message, and tool results the model has not answered yet.** The model
-   reads every tool result in full once. In an Anthropic request fresh tool results ARE the last
+2. **The most recent user message, and tool results after the last assistant/model item.** These
+   are structural protections, not evidence of actual provider exposure. In an Anthropic request fresh tool results ARE the last
    `user` message, so that message goes out whole. In the OpenAI formats a tool result is not a
    user message, so the same rule is applied by position: a `tool` message after the last
    `assistant` message, and a Responses output after the last model item (`role: assistant`,
@@ -3596,8 +3596,10 @@ Limits of this phase:
 
 ### Retrieval: the model asks for an original
 
-`compress-early` is the only proxy mode that saves money under prompt caching, because it shortens
-a tool result before the provider writes it to its cache. A model in early mode never reads the
+`compress-early` is the only proxy mode that shortens a tool result before the provider writes it
+to its cache, so no full copy of a result it shortens is written first. Whether that lowers a bill
+depends on provider caching, retrieval and session history (one dated measurement is under
+"Measured afterwards"). A model in early mode never reads the
 original, so without a way to ask for it early mode may use only reductions that leave nothing
 out (the `complete` profile, cache rule 6). Retrieval gives the model that way: a tool the agent
 itself calls, `retrieve_compressed_original`, that returns the original lines of a compressed
@@ -3945,10 +3947,9 @@ same. `proxy_requests.mode` records
 an early request as `compress`, since that column says whether the body was shortened; the agent's
 mode is read from its record.
 
-Why `compress` was not simply retimed instead: shortening a block later costs more, not less.
-Changing bytes early in a cached prefix makes the provider re-write everything after them, so the
-request right after a result is fresh (when only a short tail follows it) is already the cheapest
-moment `compress` has.
+Why retain separate timing modes: changing bytes can invalidate a provider's cached prefix, and
+later changes can affect a longer prefix. The cost depends on provider behavior and request
+history; neither timing mode is universally cheaper.
 
 **Measured afterwards** (`token-proxy-real-e2e.test.ts`, opt-in, Claude Code 2.1.296 on `haiku`,
 the real server and compressor on a loopback port, no app). One session per mode, the same four
@@ -3972,11 +3973,12 @@ requests and ran the same commands. Each cell is cache write / cache read, in th
 Prompt cost units are write x 1.25 + read x 0.1 + uncached input, Anthropic's published cache
 multipliers, in units of one uncached input token. Output is left out.
 
-- `compress-early` was the cheapest of the three in a four-turn session, and its context ended
-  about 5000 tokens smaller than passthrough's. Nothing was written twice.
+- `compress-early` had the lowest recorded prompt cost of the three in this four-turn sample,
+  and its context ended about 5000 tokens smaller than passthrough's. These aggregate counts do
+  not identify which exact blocks the provider cached.
 - `compress` cost 36% more than passthrough here (2% to 8% in the earlier run, whose log folded
-  further). Requests 3 and 5 show why: each rewrites about 12700 and 7300 tokens of cache when a
-  result is shortened for the first time.
+  further). Requests 3 and 5 reported cache writes of about 12700 and 7300 tokens. This sample
+  does not establish the cost of a different session history.
 - A result of 8835 tokens went out as 7376 in early mode, 17% shorter. The proxy's own estimate
   for that block (1458 tokens saved, at 4 characters per token) matched the provider's count
   (1459). On this log the removed text is ordinary words; on the earlier log (paths, digits) the

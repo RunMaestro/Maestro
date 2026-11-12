@@ -9,13 +9,38 @@ Build independent implementations of the useful techniques on Maestro's existing
 
 The executable scope has two levels. Deterministic output compression, explicit original recovery, accounting, and dashboard improvements become available through existing explicitly selected compression modes. Session-dependent read deltas, skeletons, duplicate suppression, continuity digests, and behavioral advice begin as observation or preview features. They do not alter model context or user settings in this run. That boundary is deliberate: the proxy currently knows an agent identity, which is not sufficient to establish which tab, native session, subagent, or compacted context retains a baseline. Preparing and exposing opportunities brings these techniques into the product without silently guessing context ownership.
 
-The user will schedule the saved playbook. Authoring this plan does not launch it, enable any agent's proxy, execute tests, publish a build, commit, or push.
+The user scheduled the saved playbook. Authoring this plan did not launch it, enable any agent's proxy, execute tests, publish a build, commit, or push. That was the authoring-time scope: the 2026-11-11 completion run was authorized separately to execute tests, commit and push. What was delivered is under "Delivery status" below.
+
+## Delivery status (2026-11-12)
+
+The work is delivered on `acappella`. The evidence is in `docs/research/token-optimization-progress.md`; its section "08.3: Final accounting and publication" holds the full matrix, the commands and results, the source commit IDs, the entry points and the limits. This section states the outcome and where it differs from the design in the rest of this report.
+
+| Outcome                     | IDs                                                    | Meaning                                                                                                                                                                                                                                                     |
+| --------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Implemented                 | T01 to T08, T17 (direct metrics), T18 (read only), T20 | Behavior that changes a request or reports a measurement: conservative compression, failure and recovery vetoes, the exact-original cache with line-range recovery, accounting and the shared report, the read-only inventory, and the evaluation fixtures. |
+| Observation or preview only | T09 to T16, T19                                        | Reread and delta previews, code outlines, identical-output previews, repeated-call signals, the continuity digest and its advice, and the routing description. None of them changes a request, a prompt or a setting.                                       |
+| Excluded on purpose         | T21, T22                                               | No custom or executable filters, no keep-warm request, no new timer or service.                                                                                                                                                                             |
+
+Where delivery differs from the design:
+
+- **Recovery (T06, T07).** The design allowed a shell recovery hint on a proven local route. No shell hint was ever emitted, because the proof of the launch's tool shell never succeeded. The model asks for an original through the scoped MCP tool `retrieve_compressed_original`, served on the per-launch bridge that Maestro already injects. The playbook tasks for the shell hint (03.4b3b and 03.4b3c) were superseded and not implemented.
+- **Failure vetoes (T02).** A Responses tool call carries no error field. Explicit failure therefore also covers a structured exit code and three leading Codex result-header spellings. Unknown status stays unknown.
+- **Validation (T20).** The plan said no tests would run. The completion run executed them. The final stable full suite passed (84,069 passed, 0 failed, 212 skipped, 3,328 files) with lint, docs checks and the build. A loopback end-to-end test and three real-provider protocol smokes were run as well.
+- **Accounting.** Migration v22 stores the mode in force, the block counts and how the provider reported each usage class, from then on only. Rows written earlier stay unknown.
+
+Three measures stay apart. A result for one is not a result for another:
+
+1. **Estimated payload reduction** is characters divided by 4 on the request text the proxy read. It is not what the provider counted or billed.
+2. **Provider usage classes** are displayed with their reported, derived or unknown coverage. No dollar saving is computed or stored, and these counts alone do not establish a counterfactual cost.
+3. **Task quality** was not evaluated. The tests show that the transformations keep the protected facts in synthetic and recorded fixtures. They do not show that answers stay as good. The dated cost samples (one per mode) show cost moving either way.
+
+The limits that remain are listed in the ledger. They include no CI run on this push, the `sqlite-vec-linux-arm64` clean-install lock entry, no retrieval for OpenCode or SSH remote agents, and previews that stay previews because context identity cannot be proven.
 
 ## Evidence and limits
 
 The source ledger is `.interceptor-research/token-optimizer-acappella/SOURCE-INDEX.md`; `source-manifest.json` records URLs, HTTP status and saved files. It contains 34 successful source captures and four explicit unavailable guessed paths. Thirty-two successful captures are pinned project sources, and two are independent official provider documents. Sources from the project are one provenance, not independent confirmations of effectiveness.
 
-Confidence labels in this report mean: **Observed** is present in the captured implementation; **Reported** is a maintainer's benchmark or claim not reproduced here; **Design** is an independently specified Maestro behavior. No upstream or Maestro tests, model calls, or benchmark workloads were run for this research. Tool discovery exposed no LSP interface in this session; the implementation playbook requires discovering and using it when available before TypeScript edits, with TypeScript lint as the available static fallback.
+Confidence labels in this report mean: **Observed** is present in the captured implementation; **Reported** is a maintainer's benchmark or claim not reproduced here; **Design** is an independently specified Maestro behavior. No upstream or Maestro tests, model calls, or benchmark workloads were run for this research (2026-11-05). The tests executed for the delivered work are in the ledger and summarized under "Delivery status". Tool discovery exposed no LSP interface in this session; the implementation playbook requires discovering and using it when available before TypeScript edits, with TypeScript lint as the available static fallback.
 
 ## Existing Maestro foundation
 
@@ -39,7 +64,7 @@ Document Graph currently watches and graphs Markdown links; it is not a code AST
 
 ## Technique catalogue
 
-Source IDs resolve through the ledger. Links below point to the frozen snapshot where practical.
+Source IDs resolve through the ledger. Links below point to the frozen snapshot where practical. The Maestro disposition column is the design as of 2026-11-05; what shipped for each ID is under "Delivery status".
 
 | ID  | Technique and observed mechanics                                                                                                                                                                                              | Benefit and failure modes                                                                                                                                                                                                        | Maestro disposition                                                                                                                                                                                                                                             |
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -85,7 +110,7 @@ There must be a clear separation between two computations:
 
 Failure/recovery guards execute before cache lookup. A previously compressed text that is now an explicitly failed result must go out whole. This can change bytes relative to an earlier successful occurrence and is an intentional safety override, not permission to recompute the frozen verdict. Mark it in telemetry.
 
-Keep exact original bytes in the existing cache and do not treat it as a redacted analytics store. Newly persisted command/path/digest descriptions use existing redaction and avoid storing unnecessary raw user/tool text. If archive scope cannot be proven, emit a recovery hint only on a proven local capable route. Remote SSH agents and unrecognized CLI paths must not receive unusable local recovery instructions. Do not broaden archive access or create cross-agent lookup-by-search from a globally shared cache.
+Keep exact original bytes in the existing cache and do not treat it as a redacted analytics store. Newly persisted command/path/digest descriptions use existing redaction and avoid storing unnecessary raw user/tool text. This design planned a recovery hint on a proven local route. It shipped as a scoped MCP tool instead (`retrieve_compressed_original`), because proving the launch's tool shell never succeeded, and no shell hint was emitted. Remote SSH agents and unrecognized CLI paths receive no recovery capability. Archive access is not broadened: the tool reads one exact hash, with no search or list, for the agent that a run proof names.
 
 ## Dashboard placement and mock options
 
@@ -120,24 +145,24 @@ Work is bounded by the existing 262,144-code-unit input scan limit, 2,000 rows, 
 
 ## Delivery sequence and acceptance boundaries
 
-| Phase | Focus                                | Result                                                                                                  |
-| ----- | ------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| 01    | Inventory and tool descriptors       | API-linked metadata, explicit error/recovery guards, frozen-cache contract.                             |
-| 02    | Pure output filters                  | Diagnostic retention, successful command/search summaries, reversible structured compression.           |
-| 03    | Original recovery                    | Validated range retrieval, route capability checks, no recompression of recovery output.                |
-| 04    | Read/context opportunity library     | Bounded reread/delta/dedup/skeleton previews; all context-changing experiments remain observation-only. |
-| 05    | Continuity and context audit         | Existing-service digest preview and read-only audit/advisory evidence.                                  |
-| 06    | Accounting and aggregation           | Effective mode going forward, failures/coverage/trends/recovery observations and CLI parity.            |
-| 07    | Existing dashboard integration       | O1 layout built from shared widgets and aggregation, with honest empty/unknown states.                  |
-| 08    | Integration review and static checks | Updated regression coverage, lint/docs/build evidence and explicit unrun evaluation inventory.          |
+| Phase | Focus                             | Result                                                                                                                                             |
+| ----- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 01    | Inventory and tool descriptors    | API-linked metadata, explicit error/recovery guards, frozen-cache contract.                                                                        |
+| 02    | Pure output filters               | Diagnostic retention, successful command/search summaries, reversible structured compression.                                                      |
+| 03    | Original recovery                 | Validated range retrieval, route capability checks, no recompression of recovery output.                                                           |
+| 04    | Read/context opportunity library  | Bounded reread/delta/dedup/skeleton previews; all context-changing experiments remain observation-only.                                            |
+| 05    | Continuity and context audit      | Existing-service digest preview and read-only audit/advisory evidence.                                                                             |
+| 06    | Accounting and aggregation        | Effective mode going forward, failures/coverage/trends/recovery observations and CLI parity.                                                       |
+| 07    | Existing dashboard integration    | O1 layout built from shared widgets and aggregation, with honest empty/unknown states.                                                             |
+| 08    | Integration review and final gate | Integrated review, loopback end-to-end test, full-suite, lint, docs and build gate, final documentation and push. Paid paired trials were not run. |
 
-Every implementation task updates meaningful regression tests without executing them, checks targeted lint/formatting, records the result and keeps work directly on `acappella`. The final phase runs non-test checks only. No broad source refactor, upstream package installation, native transcript rewrite, global hook edit, model change, scheduling, build publication or automatic proxy enablement is in scope.
+Every implementation task updated meaningful regression tests, checked targeted lint and formatting, recorded the result and kept the work directly on `acappella`. This paragraph first said the tests were not to be executed and that the final phase ran non-test checks only. The 2026-11-11 completion run replaced that: tests were executed, and the final phase ran the full suite, lint, the docs checks and the build (see "Delivery status"). No broad source refactor, upstream package installation, native transcript rewrite, global hook edit, model change, scheduling, build publication or automatic proxy enablement was in scope or done.
 
 ## Evaluation protocol prepared for later authorization
 
 Author synthetic fixtures for unique middle-of-output errors, identifiers, custom Git formats, spaced and Unicode paths, quoting, test failures, minified JSON, exact integers, null/missing/empty-string cells, embedded newlines, large arrays, native persisted stubs, partial reads, changed file ranges, context reset, duplicate IDs, recovery recursion and archive write failure. Each fixture needs a must-preserve set, omitted-data declaration, size threshold and an identity/eligibility expectation. New fixture inputs and expectations are authored independently.
 
-Later, when explicitly authorized to execute tests, run the relevant unit and integration cases first. Paid paired provider trials require separate explicit authorization. Such trials hold task/model/work equal, alternate ordering, record cache state and token classes, count retrieval costs and output tokens, and score task completion/comprehension. Group related sessions when comparing outcomes. Never remove failed outcome runs from the denominator to improve the savings result; report noncomparable runs separately with their reason. No pass-rate or net-cost claim is made by authoring the protocol.
+Later, when explicitly authorized to execute tests, run the relevant unit and integration cases first. Paid paired provider trials require separate explicit authorization. Such trials hold task/model/work equal, alternate ordering, record cache state and token classes, count retrieval costs and output tokens, and score task completion/comprehension. Group related sessions when comparing outcomes. Never remove failed outcome runs from the denominator to improve the savings result; report noncomparable runs separately with their reason. No pass-rate or net-cost claim is made by authoring the protocol. Status 2026-11-12: the unit, integration and loopback cases have run (see "Delivery status"). Paid paired trials have not, so no pass-rate or net-cost claim is established.
 
 ## Source pointers
 

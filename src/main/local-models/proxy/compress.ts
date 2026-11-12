@@ -17,12 +17,12 @@
  *   - OpenAI Responses: the `output` of a `function_call_output` (or
  *     `custom_tool_call_output`) item.
  *
- * ## What is never touched
+ * ## Protected regions in Compress mode
  *
  *   - Anything that is not a tool result (so: the system prompt, tool
  *     definitions, every user and assistant message).
- *   - **The most recent user message, and tool results the model has not
- *     answered yet.** The model reads every tool result in full once. In an
+ *   - **The most recent user message, and tool results after the last
+ *     assistant/model item.** This does not establish provider exposure. In an
  *     Anthropic request fresh tool results ARE the last user message. In the
  *     OpenAI formats they are the tool outputs after the last assistant item,
  *     so those are held back the same way.
@@ -31,18 +31,16 @@
  *
  * ## Early mode (`options.early`, the agent's `compress-early` proxy mode)
  *
- * The two middle rules above are what make `compress` cost more than
- * passthrough in a short session: a result is written to the provider's prompt
- * cache in full, then written again shortened one request later (measured:
- * 2% to 8% more over 4 to 5 requests). Early mode lifts exactly those two
- * rules. A fresh tool result, and the block carrying the `cache_control`
- * breakpoint, are shortened before the model first reads them, so nothing is
- * ever cached in full. It is still only tool results: the user's words in the
- * same message are not read. What changes is what the model sees, which is why
- * it is a mode the user picks and not the default.
+ * Retaining a result in full and later shortening it can affect provider cache
+ * costs (one dated measurement: 2% to 8% more over 4 to 5 requests, an observation
+ * and not a rule). Early mode lifts exactly those two structural protections:
+ * recent tool results and blocks carrying a `cache_control` breakpoint become
+ * eligible too. Actual prior provider exposure and cache history are unknown.
+ * Only tool results remain eligible; the user's words in the same message are
+ * not read. The timing policy is a mode the user picks, not the default.
  *
- * Because the model never reads the original in early mode, early mode keeps
- * every line of content: it uses the `complete` heuristic profile (no array
+ * Without retrieval, early mode keeps every line of content: it uses the
+ * `complete` heuristic profile (no array
  * sampling, no line cuts, no record sampling) and never the local model, under
  * its own cache key ({@link verdictKey}). The one exception is a request whose
  * launch was given the retrieve tool ({@link RetrieveToolCapability}): that
