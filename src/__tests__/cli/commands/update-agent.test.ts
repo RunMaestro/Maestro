@@ -547,7 +547,8 @@ describe('update-agent command', () => {
 		}
 
 		const sentPatch = (sendCommand: ReturnType<typeof vi.fn>) =>
-			sendCommand.mock.calls[0][0].configPatch;
+			sendCommand.mock.calls.find(([request]) => request.type === 'update_session_config')?.[0]
+				.configPatch;
 
 		/**
 		 * Run a call that must be refused. The suite's `process.exit` stub returns,
@@ -610,11 +611,30 @@ describe('update-agent command', () => {
 
 			await updateAgent('agent-1', { runOn: 'ep-ollama:qwen3:latest', nudge: 'be brief' });
 
-			expect(sendCommand).toHaveBeenCalledTimes(1);
+			expect(sendCommand).toHaveBeenCalledTimes(2);
+			expect(sendCommand).toHaveBeenNthCalledWith(
+				1,
+				{ type: 'local_models_endpoint_models', endpoint: 'ep-ollama' },
+				'local_models_endpoint_models_result'
+			);
 			expect(sentPatch(sendCommand)).toEqual({
 				nudgeMessage: 'be brief',
 				runOn: { ...QWEN, contextTokens: 40_960 },
 			});
+		});
+
+		it('uses a source-reported default after the edit passes validation', async () => {
+			const sendCommand = mockAgent();
+			sendCommand.mockImplementation(async (request) =>
+				request.type === 'local_models_endpoint_models'
+					? {
+							success: true,
+							result: { ok: true, models: [{ id: 'qwen3:latest', contextTokens: 131_072 }] },
+						}
+					: { success: true }
+			);
+			await updateAgent('agent-1', { runOn: 'ep-ollama:qwen3:latest' });
+			expect(sentPatch(sendCommand)).toEqual({ runOn: { ...QWEN, contextTokens: 131_072 } });
 		});
 
 		it('reports the target in JSON, the form show agent reads back', async () => {

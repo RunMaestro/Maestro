@@ -213,7 +213,9 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		if (!session) {
 			failCommand(`Agent "${sessionId}" could not be read from the agent store.`, options.json);
 		}
-		const runOnEdit = readRunOnFlags(options, session, await reportedRunOnFlagContext(options));
+		// Validate the edit before asking a source for optional default metadata.
+		// Unknown sources, unsupported providers and conflicting flags must not probe.
+		const runOnEdit = readRunOnFlags(options, session);
 		if (runOnEdit.kind === 'refused') failCommand(runOnEdit.error, options.json);
 		if (runOnEdit.kind === 'set') {
 			configPatch = { ...configPatch, runOn: runOnEdit.target ?? null };
@@ -372,6 +374,17 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 	}
 
 	const resolvedCwd = options.cwd !== undefined ? resolveAgentCwdArg(options.cwd) : undefined;
+
+	if (runOnFlagsPresent && session) {
+		const reportedContext = await reportedRunOnFlagContext(options);
+		if (reportedContext !== undefined) {
+			const runOnEdit = readRunOnFlags(options, session, reportedContext);
+			if (runOnEdit.kind === 'refused') failCommand(runOnEdit.error, options.json);
+			if (runOnEdit.kind === 'set') {
+				configPatch = { ...configPatch, runOn: runOnEdit.target ?? null };
+			}
+		}
+	}
 
 	const applied: {
 		group?: string | null;
