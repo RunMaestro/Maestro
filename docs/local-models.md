@@ -249,12 +249,51 @@ Assignments choose what each task runs on. There is one row per task, each with 
 The picker only offers sources that can do the job:
 
 - **Off**: the feature does not use a model.
-- **Utility source**: inherit the shared source on **System Two**, which can be a provider, an installed text model, or an endpoint. Each task can override it. The default keeps using each session's provider. The General tab keeps only the switch for automatic tab naming, with a link to System Two for the model choice.
+- **Utility source**: inherit the shared source on **System Two** (see [Utility source](#utility-source)). Only Tab naming, Summaries, and AI command mode offer it. The General tab keeps only the switch for automatic tab naming, with a link to System Two for the model choice.
 - **An installed model** of the kind the task needs.
 - **A model on an enabled endpoint**, for tasks an endpoint can serve (text generation, embeddings, and speech-to-text).
 - **System One**, for a task that asks typed questions, while an [engine](#system-one-engines) is chosen. See [System One](#system-one).
 
-The readiness line shows a green **Ready**, or names what is wrong and offers the fix: **Download** or **Resume** for a missing model, **Enable** for a switched-off endpoint, or **Check again** when a server did not answer. Some fixes are outside Maestro (for example, starting Ollama), and the line tells you what to do.
+A pick the picker no longer offers stays selected and is marked, for example "(not installed)", "(endpoint removed)", "(disabled)", or "(not recommended)". A pick the task cannot use is refused with a red line under the row that says why and what to choose instead. A model that is offered but a poor fit for the task shows a caution above the row.
+
+The readiness line under each row has one of four headlines:
+
+| Headline           | What it means                                                                                                                                                                                                                                                                       |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Ready**          | The source is set up. The line names it.                                                                                                                                                                                                                                            |
+| **Utility source** | The task runs on the Utility Agent.                                                                                                                                                                                                                                                 |
+| **Off**            | The task does not use a model.                                                                                                                                                                                                                                                      |
+| **Unavailable**    | The source cannot run. The line says why and what to do, and offers the fix when Maestro can make it: **Download**, **Resume**, or **Re-download** a model (a model that failed verification), **Enable** a switched-off endpoint, or **Check again** when a server did not answer. |
+
+Some fixes are outside Maestro (for example, starting Ollama), and the line tells you what to do. From the command line:
+
+```bash
+maestro-cli models tasks                          # every task, its assignment, and readiness
+maestro-cli models assign <task-id> <source>      # off, utility-agent, system-one, local:<model-id>, or endpoint:<endpoint>:<model>
+maestro-cli models status <task-id>               # would it run; exits 0 only when ready or on the Utility source
+```
+
+`models assign` works with Maestro closed. It prints the same caution the row shows, and tells you when the endpoint you named is disabled.
+
+### Utility source
+
+The **Utility source** card at the top of **Models -> System Two** sets the source for every task left on **Utility source**. Its **Source** picker offers:
+
+- **Default (same as session)**: each task uses the provider of the agent it works for. This is the default.
+- A provider under **Providers**: every such task runs on that provider. A **Model override** field takes a model name for it (leave it empty for the provider's default model).
+- An installed text model, or a model on an enabled endpoint.
+
+On a local model or an endpoint, context grooming and transfer still use the session's provider, because they need tools. If the provider you picked is no longer installed, the card says so and those tasks fail until you pick another one or return to **Default (same as session)**.
+
+The card has no `models` verb. It is three settings:
+
+```bash
+maestro-cli settings set utilitySource --raw '{"type":"local","modelId":"<model-id>"}'
+maestro-cli settings set utilitySource --raw '{"type":"utility-agent"}'   # a provider, or Default (same as session)
+maestro-cli settings set utilityAgentId claude-code                       # the provider; reset it for Default (same as session)
+maestro-cli settings set utilityModelId haiku                             # the Model override
+maestro-cli settings reset utilityAgentId
+```
 
 ### The tasks
 
@@ -278,17 +317,21 @@ The readiness line shows a green **Ready**, or names what is wrong and offers th
 | Computer History digests        | Two    | Text generation                    | Off            | Writes the 15-minute digests and 6-hour roll-ups of [Computer History](./computer-history#digests-optional) while its digest source is the local model. |
 | Local judge                     | One    | Text generation                    | Off            | The text model the System One local judge answers on: yes or no, pick one, or rate on a rubric. Its answers are not calibrated.                         |
 
-For AI command mode, **Utility source** follows the shared choice. When that choice is **Default (same as session)**, it uses the tab's provider at its current model and effort. On a local model or an endpoint, the [AI Command Mode](./general-usage#ai-command-mode) strip names that model, and the proposed command comes with one line that says what it does. Context grooming and transfer need tools, so they stay on the session's provider when the shared source is a local model or endpoint.
+**Off** keeps the behavior a feature had before it could use a model. For Summaries that means Summarize & Continue still runs through an agent, as it did before; only the group chat participant summary is not written.
 
-**Git drafts** adds a **Draft with local model** button to the Create Pull Request form once it is assigned a source. It reads the branch's commit subjects and the list of changed files (not the diff itself), and fills the title and description for you to edit. It never creates the pull request: that is still the Create PR button. While the task is off the button is not shown, and when the assigned model or endpoint is not ready the button is disabled with the reason beside it.
+For AI command mode, **Utility source** follows the shared choice. When that choice is **Default (same as session)**, it uses the tab's provider at its current model and effort. On a local model or an endpoint, the [AI Command Mode](./general-usage#ai-command-mode) strip names that model, and the proposed command comes with one line that says what it does.
 
-**Tab cleanup suggestions** opens from the menu at the top of the Left Bar (**Tab Cleanup**) or the command palette (**Tab Cleanup Suggestions**) once it is assigned a source. It gives the model one line about each open and snoozed tab across every agent (its name, when it was last active, how many messages it holds, and what was last asked in it) and lists the tabs the model would close, snooze, or bring back from snooze, each with a one-line reason. It is a list of suggestions and nothing else: every row starts unticked, and no tab changes until you tick the rows you agree with and press **Apply**. A tab that is busy, starred, or holding an unsent draft is never suggested, whatever the model says, and a tab that becomes busy while the list is open is greyed out. A closed tab can still be brought back with Reopen Closed Tab. Snoozed tabs in one batch share the wake time you pick beside the Apply button.
+**Git drafts** adds a **Draft with local model** button to the Create Pull Request form once it is assigned a source. It reads the branch's commit subjects and the list of changed files (not the diff itself), and fills the title and description for you to edit. It never creates the pull request: that is still the Create PR button. While the task is off the button is not shown, and when the assigned model or endpoint is not ready the button is disabled with the reason beside it. A draft adds a note naming the model that wrote it; review it before you create the pull request. The draft reads the local checkout, so it does not work for an agent on an SSH remote. From the command line, `maestro-cli models run git-drafts --cwd <repo> [--base <branch>]` prints the title, a blank line, and the body, and pushes nothing. Without `--base` it compares against `main`, then `master`.
+
+**Tab cleanup suggestions** opens from the menu at the top of the Left Bar (**Tab Cleanup**) or the command palette (**Tab Cleanup Suggestions**). It has no shortcut until you bind one in **Settings -> Shortcuts**. While the task is off, the window says **Tab cleanup suggestions is off** and offers **Open Models Settings**. It gives the model one line about each open and snoozed tab across every agent (its name, when it was last active, how many messages it holds, and what was last asked in it) and lists the tabs the model would close, snooze, or bring back from snooze, each with a one-line reason. It is a list of suggestions and nothing else: every row starts unticked, and no tab changes until you tick the rows you agree with and press **Apply**. A tab that is busy, starred, or holding an unsent draft is never suggested, whatever the model says, and a tab that becomes busy while the list is open is greyed out. A closed tab can still be brought back with Reopen Closed Tab. Snoozed tabs in one batch share the wake time you pick beside the Apply button.
 
 **Semantic search** builds its index in the background once it is assigned a source. It reads History entries, Director's Notes, and the tab transcripts Maestro keeps, and it waits whenever another task is using the model. The **Semantic index** card under the Semantic search row on System One shows how much is indexed. Cue runs are most of History and mostly repeat, so they are left out unless you turn on **Index Cue runs** there. Setting the task back to Off stops indexing.
 
 Once the task is ready, two search boxes gain a **Semantic** toggle (a sparkle icon): the [History panel's filter](./history#by-meaning) and [Search Messages (All Agent Tabs)](./general-usage#searching-message-history). With it on, you describe what you are looking for and each result shows how close it is (a percentage) and the passage that matched. The toggle is not shown while the task is off or its model is not ready. From the command line, `maestro-cli search "<query>" --semantic` runs the same search across every agent.
 
 **A task never falls back.** If a task's assignment is not ready, the task does not run on some other source instead. It reports why, and the readiness line shows the same reason. A silent fallback would send your text somewhere you did not choose.
+
+Where it reports depends on the task. A task you started yourself shows the reason in place: AI command mode in its strip, Git drafts beside the button, Tab cleanup in its window, Summarize & Continue as an error. A task that runs in the background raises a yellow notice instead, titled with the task, for example **Tab naming skipped**, with the reason as its message. Tab naming, the group chat participant summary, Spoken notices, Token proxy, and Computer History digests do this. The notice shows once per task and agent, and again only after the task has run fine in between. Every skip is also written to the system log.
 
 ### Dictation
 
@@ -463,13 +506,19 @@ The text may be at most 600 characters. Empty or longer text exits with code 2. 
 
 ### Voice routing
 
-**Voice routing** is the Conductor Brain of [A Cappella](./voice-mode): the model that decides which agent and tab a spoken request is for. Assign it a model on one of your [endpoints](#endpoints) and that model routes. It is the same choice as the **Conductor Brain** picker in **Settings > Plugins > A Cappella > Voice Providers**: picking an endpoint model there assigns it here, and an assignment made here shows there. There is one setting, not two.
+**Voice routing** is the Conductor Brain of [A Cappella](./voice-mode): the model that decides which agent and tab a spoken request is for. Assign it a model on this machine or on one of your [endpoints](#endpoints) and that model routes. Assign it **System One** and the [System One engine](#the-tasks-system-one-answers) picks the agent and tab, while the Brain chosen in A Cappella still writes what is spoken. Picking a model is the same choice as the **Conductor Brain** picker in **Settings > Plugins > A Cappella > Voice Providers**: picking an endpoint model there assigns it here, and an assignment made here shows there. There is one setting, not two.
 
 **Off** (the default) means the Brain is the one chosen in A Cappella: the built-in keyword router, or a hosted model. Picking one of those in the Conductor Brain picker sets this task back to Off.
 
 Your transcripts are sent to the endpoint you assign, and the line at the top of Voice Providers names it ("Audio stays on this machine. Text is sent to Ollama."). Audio is not sent there.
 
 If the assigned model cannot answer (the server is down, the model is not loaded), the voice session says so by name and does not route on another Brain. A turn is given 30 seconds, because the first one can include the server loading the model.
+
+```bash
+maestro-cli models assign voice-routing endpoint:<endpoint>:<model>
+maestro-cli models assign voice-routing system-one
+maestro-cli models assign voice-routing off    # back to the Brain chosen in A Cappella
+```
 
 <Note>
 	A model run on this machine can be the Conductor Brain too. Qwen3.5 4B is offered for it: in
@@ -484,7 +533,7 @@ Maestro checks content for credentials before it publishes that content for you.
 
 The check looks for known token shapes (AWS access keys, GitHub tokens, Anthropic and OpenAI keys, Slack tokens, private key blocks), for `api_key = <random value>` style assignments, and for the values of the secret-named environment variables you have set in Maestro. This part needs no model and is always on.
 
-When it finds something, nothing is sent. A dialog lists what it found, with each value masked, and offers **Publish anyway** or **Cancel**. From the command line there is no dialog: the command stops, prints the masked list, and exits with an error. Pass `--allow-secrets` to send the content as it is.
+When it finds something, nothing is sent. A **Possible Secrets Found** dialog lists what it found, with each value masked, and offers **Publish anyway** (**Create anyway** for a debug package) or **Cancel**. From the command line there is no dialog: the command stops, prints the masked list, and exits with an error. Pass `--allow-secrets` to `maestro-cli gist create`, `support-package`, `feedback submit`, or `feedback subscribe` to send the content as it is.
 
 The **Secret screen** task adds a model pass on top of the pattern check. It is off by default. If you assign it a classifier, the content is also scored by that model, and a flag from the model is listed with the model's name and score. A model that cannot run does not block publishing and does not hide a pattern finding: the dialog says that only patterns ran. The catalog's classifiers are trained to detect prompt injection, not credentials, so treat a model flag as a reason to look, not as proof.
 
