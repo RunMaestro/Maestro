@@ -111,23 +111,37 @@ markdown file is open in preview.
 
 The chat button in the **bottom-left** of the preview (`Cmd+Shift+\` /
 `Ctrl+Shift+\`) opens a small chat about the file you are reading, mirroring the
-Table of Contents on the other side. The panel sits above the button, which stays
-visible while the chat is open. Ask a question and the agent whose
-workspace the file lives in reads it and answers there. It is not limited to the
+Table of Contents on the other side. The command palette (`Cmd+K` / `Ctrl+K`)
+has the same action as **File: Chat with Document** while a file preview is the
+active tab. Ask a question and the agent answers in the panel: the agent that
+owns the preview, or the agent you are looking at. It is not limited to the
 file: it reads whatever else it needs and uses its tools normally. It just
 starts from your document rather than from nothing.
+
+The panel sits above the button, which stays visible while the chat is open.
+While the panel is closed, a dot on the button shows the chat has messages, and
+the dot pulses while the agent is working. The header names the file (hover for
+the full path). Press `Escape`, the shortcut again, or the button to close it.
+Clicking the document does not close it, so you can scroll and select text with
+the chat open. Drag the top or right edge to resize the panel; double-click an
+edge to reset it. Its size is remembered, and it grows with the conversation up
+to the size of the preview.
 
 Type into the box, or use the microphone beside Send:
 
 - **Type.** `Enter` sends, `Shift+Enter` breaks a line.
-- **With A Cappella off**, the microphone dictates into the box, so you can
-  fix the words before sending. Nothing is spoken back.
-- **With [A Cappella](./voice-mode) on**, the microphone starts a voice session
-  about this document and the reply is spoken back.
+- **With A Cappella off**, the microphone dictates into the box with the
+  browser's speech recognizer, so you can fix the words before sending. Nothing
+  is spoken back. A build with no speech recognizer shows no microphone.
+- **With [A Cappella](./voice-mode#talking-to-a-document) on**, the microphone
+  starts a voice session about this document and the reply is spoken back.
 
 The microphone works as a hold or as a tap: hold it for one sentence, or tap
-once to leave it running and tap again to stop. Releasing a hold sends the utterance
-and keeps the voice session. Closing the panel ends its document voice session.
+once to leave it running and tap again to stop. How long a press must last to
+count as a hold is **Tap vs hold** in A Cappella's
+[Voice Controls](./voice-mode#the-two-hotkeys) (300 ms by default). Releasing a
+hold sends the utterance and keeps the voice session. Closing the panel ends its
+document voice session.
 
 All inputs land in the **same conversation**, so you can ask something out loud,
 type the follow-up, and read both in the chat. The conversation is an ordinary
@@ -135,17 +149,44 @@ AI tab that Maestro keeps out of your tab strip until you want it, which means:
 
 - **It survives a restart.** Come back to the file tomorrow, open the chat, and
   the whole conversation is still there.
+- **Each agent has its own chat** about the same file.
+- **It writes no History entries.** Open the conversation in a tab to work with
+  it like any other.
 - **Open in tab** in the panel header reveals the conversation in the tab strip
-  and switches to it.
-- **History** restores an earlier conversation about this file. **New chat**
-  starts a fresh session and keeps the previous thread in that history.
+  and switches to it. It is available once the chat has started.
+- **Recent chats** lists every conversation about this file with this agent,
+  newest first, and restores the one you pick. Type to search the messages.
+  **New chat** keeps the current thread in that list and starts a fresh session
+  with your next message. Nothing is deleted.
 
-Attach, paste, or drop images into the composer. **Stop** interrupts this
-document's reply and withdraws its queued messages. The chat's text size is
-remembered when you close and reopen it.
+The first message hands the agent the file's path and asks it to read the file
+first. If the agent is busy, your message is queued and shows as queued in the
+chat until the agent takes it. The status line under the messages reads
+_Ready_, the elapsed time while the agent works, _Waiting for your answer_ or
+_Waiting for permission_ when the agent has asked you something, or
+_Queued · waiting for the agent_, plus a count of queued messages.
 
-The button is offered on any file with text in it, and not on images, media, or
-compiled binaries, which give the agent nothing to read.
+Attach, paste, or drop images into the composer; images sent with no text ask
+_What can you tell me about these images?_ **Stop** interrupts this document's
+reply and withdraws its queued messages, and leaves the agent's other tabs
+alone. The text size control beside the box sets the chat's text size, which is
+remembered.
+
+With no agent open, a **No agent to chat with** notice says _Open an agent
+before chatting about_ the file, and your draft stays in the box.
+
+The button is offered on any file with text in it. Images (SVG included),
+audio and video, Parquet tables, archives, and compiled binaries give the agent
+nothing to read, so they do not offer it.
+
+Document chat works the same in the [web interface](./remote-control), except
+for voice: A Cappella stays in the desktop app.
+
+From the command line, `maestro-cli open-file <path>` opens the file preview,
+and `maestro-cli voice start --document <path> --agent <id>` starts a voice
+session about the file (see [Talking to a document](./voice-mode#talking-to-a-document)).
+There is no `maestro-cli` verb yet that opens the chat panel or sends a typed
+message to it.
 
 ### CSV and TSV Tables
 

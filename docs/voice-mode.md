@@ -349,7 +349,7 @@ Starting a document session opens the file preview and its chat panel before rec
 
 The conversation is held with the agent whose workspace the file is in. Spoken turns use the same document conversation as the preview's chat panel, creating one (a tab named after the file) when needed. The document is handed over as the core context. The agent reads whatever else it needs and uses its tools normally.
 
-The panel names the **file** and owns its microphone and transcript. Document sessions do not show a separate voice HUD. With no agent to talk to, a notice says _Open an agent before talking about_ the file.
+The panel names the **file** and owns its microphone and transcript. Document sessions do not show a separate voice HUD. If the session fails, the panel shows the error in red. With no agent to talk to, a **No agent to talk to** notice says _Open an agent before talking about_ the file.
 
 From the command line: `maestro-cli voice start --document <path> --agent <id>`. A document session takes no `--tab`.
 
@@ -358,7 +358,8 @@ A document conversation is an ordinary AI tab, tagged with the file it is about,
 <Note>
 	Talk with Document is offered only when A Cappella is on and the file has text to read.
 	With A Cappella off, the chat microphone dictates with the browser's speech recognizer, when the build has one. Images (SVG included),
-	audio and video, compiled binaries, and archives do not offer document chat.
+	audio and video, Parquet tables, archives, and compiled binaries do not offer document chat.
+	A Cappella stays in the desktop app, so the [web interface](./remote-control#what-stays-in-the-desktop-app) has no document voice sessions.
 </Note>
 
 ## While a session is running
