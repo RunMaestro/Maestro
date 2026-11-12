@@ -88,6 +88,7 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **Screenshotting a surface exactly as it is painted:** `window.maestro.shell.capturePage(rect?)` (preload in `src/main/preload/system.ts`, handler `window:capturePage` in `src/main/ipc/handlers/system.ts`).
 - **An Error in a log entry or JSON payload:** `serializeError()`, `toLoggableData()` in `src/shared/serializeError.ts`, with `ipcErrorMessage(err, fallback?)` beside them for the text to SHOW from a rejected `window.maestro.*` call.
 - **An ssh run that never reached the host (exit 255):** `isSshConnectionFailure()`, `describeSshUnreachable(remote, stderr)` in `src/shared/sshConnection.ts`, applied to every remote file op by `execRemoteCommand()` in `src/main/utils/remote-fs.ts`.
+- **An SSH remote went down (one dialog per remote):** `noteSshExit()`, `checkSshRemote()` in `src/main/ssh-reachability.ts`; run one-shot remote commands with `execSshCommand()` in `src/main/utils/ssh-command-builder.ts`.
 - **Strip ANSI / collapse progress overwrites:** `stripAnsiCodes()`, `processCarriageReturns()` in `src/shared/stringUtils.ts`
 - **Reading what a TUI painted from a raw capture:** `replayTerminalScreen()`, `capturedAlternateScreen()` in `src/maestro-p/screen-replay.ts`
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`

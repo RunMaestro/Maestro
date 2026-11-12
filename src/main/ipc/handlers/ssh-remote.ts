@@ -15,6 +15,8 @@ import Store from 'electron-store';
 import * as crypto from 'crypto';
 import { SshRemoteConfig, SshRemoteTestResult } from '../../../shared/types';
 import { sshRemoteManager } from '../../ssh-remote-manager';
+import { checkSshRemote, getUnreachableSshRemotes, noteSshExit } from '../../ssh-reachability';
+import type { SshReachabilityEvent } from '../../../shared/sshConnection';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { logger } from '../../utils/logger';
 import { MaestroSettings } from './persistence';
@@ -277,6 +279,8 @@ export function registerSshRemoteHandlers(deps: SshRemoteHandlerDependencies): v
 				const result = await sshRemoteManager.testConnection(config, agentCommand);
 
 				if (result.success) {
+					// A passing test proves the saved remote is back; close its outage.
+					if (typeof configOrId === 'string') noteSshExit(configOrId, 0);
 					logger.info(
 						`SSH connection test successful: ${result.remoteInfo?.hostname || 'unknown host'}`,
 						LOG_CONTEXT
@@ -286,6 +290,37 @@ export function registerSshRemoteHandlers(deps: SshRemoteHandlerDependencies): v
 				}
 
 				return { result };
+			}
+		)
+	);
+
+	/**
+	 * Every remote currently confirmed unreachable. A window or web client that
+	 * starts while a host is down reads this, since it missed the push.
+	 */
+	ipcMain.handle(
+		'ssh-remote:getReachability',
+		createIpcHandler(
+			handlerOpts('getReachability', false),
+			async (): Promise<{ unreachable: SshReachabilityEvent[] }> => ({
+				unreachable: getUnreachableSshRemotes(),
+			})
+		)
+	);
+
+	/**
+	 * Probe one remote now ("Check Now" in the dialog, `maestro-cli ssh-remote
+	 * check`). Settles the remote's state and pushes the change, so an open
+	 * dialog closes itself when the host answers.
+	 */
+	ipcMain.handle(
+		'ssh-remote:checkReachability',
+		createIpcHandler(
+			handlerOpts('checkReachability'),
+			async (remoteId: string): Promise<{ reachable: boolean; event?: SshReachabilityEvent }> => {
+				const reachable = await checkSshRemote(remoteId);
+				const event = getUnreachableSshRemotes().find((e) => e.remoteId === remoteId);
+				return { reachable, event };
 			}
 		)
 	);

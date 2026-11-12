@@ -1442,6 +1442,22 @@ surfacing later as an agent that will not start. Works with the desktop closed.
 | `--timeout <seconds>`   | Give up after this many seconds                      | `60`    |
 | `--json`                | Output as JSON (for scripting)                       | -       |
 
+## `maestro-cli ssh-remote-status`
+
+List SSH remotes the running app holds as unreachable, or re-check one (the dialog's "Check Now")
+
+When a remote stops answering, the desktop shows one "Can't reach ... over SSH"
+dialog for it and probes it every 30 seconds until it returns. This reads that
+state from the running app. `--check` probes the remote now; when the host
+answers, the dialog closes in every window. Exits 2 when the checked remote is
+still unreachable. Needs the desktop running; use `test-ssh-remote` when it is
+not.
+
+| Option                | Description                                               | Default |
+| --------------------- | --------------------------------------------------------- | ------- |
+| `--check <remote-id>` | Probe this remote now; exits 2 if it is still unreachable | -       |
+| `--json`              | Output as JSON (for scripting)                            | -       |
+
 ## `maestro-cli display`
 
 View and manage typography (fonts, sizes, zoom)

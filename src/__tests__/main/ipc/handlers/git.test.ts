@@ -37,7 +37,9 @@ vi.mock('../../../../main/utils/execFile', () => ({
 }));
 
 // Mock the SSH command builder (used by the streaming git:runCommand path)
-vi.mock('../../../../main/utils/ssh-command-builder', () => ({
+vi.mock('../../../../main/utils/ssh-command-builder', async (importOriginal) => ({
+	// The real execSshCommand runs the mocked execFileNoThrow.
+	...(await importOriginal<typeof import('../../../../main/utils/ssh-command-builder')>()),
 	buildSshCommand: vi.fn().mockResolvedValue({ command: 'ssh', args: ['host', 'git push'] }),
 }));
 

@@ -264,6 +264,14 @@ When a session is running via SSH remote, you can easily identify it:
 - Connection state reflects SSH connectivity
 - Errors are detected and displayed with SSH-specific context
 
+### When a Remote Stops Answering
+
+If a remote host goes down, or the tunnel to it breaks, Maestro shows one **Can't reach "&lt;remote&gt;" over SSH** dialog for that remote. It does not matter which action failed first: an agent turn, a file save, the file tree, git status, a shell command, or a Cue run. The dialog shows ssh's own error and lists the agents on that remote.
+
+Maestro tests the connection again before it shows the dialog, so one dropped connection does not open it. While the remote is down, Maestro checks it every 30 seconds. When the remote answers, the dialog closes and a "SSH connection restored" toast appears. **Check Now** runs the check at once. **Dismiss** hides the dialog until the next outage.
+
+From the CLI, `maestro-cli ssh-remote-status` lists the remotes that are down. `maestro-cli ssh-remote-status --check <remote-id>` does the same as **Check Now**.
+
 ## Full Remote Capabilities
 
 Remote agents support all the features you'd expect from local agents:

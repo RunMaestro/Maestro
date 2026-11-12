@@ -14,6 +14,8 @@ import { logger } from './logger';
 import { resolveSshPath } from './cliDetection';
 import { buildSshOptionArgs } from '../../shared/sshOptions';
 import { parseDataUrl, buildImagePromptPrefix } from '../process-manager/utils/imageUtils';
+import { execFileNoThrow, type ExecOptions, type ExecResult } from './execFile';
+import { noteSshExit } from '../ssh-reachability';
 
 /**
  * Base PATH directories that are always added to the remote PATH.
@@ -688,4 +690,25 @@ export async function buildSshCommand(
 		// without the cd/env prefix or the bash PATH bootstrap wrapper.
 		remoteCommandLine: buildShellCommand(remoteOptions.command, remoteOptions.args),
 	};
+}
+
+/**
+ * Run a command `buildSshCommand()` built, and report how ssh exited to the
+ * reachability tracker (`src/main/ssh-reachability.ts`).
+ *
+ * Use this instead of `execFileNoThrow(sshCommand.command, sshCommand.args)`
+ * for every one-shot remote command, so a host that went down is noticed by
+ * whichever background job reaches it first (git polls, agent detection, model
+ * discovery) and the user gets one dialog about it rather than silence.
+ */
+export async function execSshCommand(
+	config: SshRemoteConfig,
+	sshCommand: SshCommandResult,
+	options?: ExecOptions
+): Promise<ExecResult> {
+	const result = options
+		? await execFileNoThrow(sshCommand.command, sshCommand.args, undefined, options)
+		: await execFileNoThrow(sshCommand.command, sshCommand.args);
+	noteSshExit(config, result.exitCode);
+	return result;
 }

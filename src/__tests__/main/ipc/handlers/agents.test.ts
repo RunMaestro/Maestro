@@ -91,7 +91,9 @@ vi.mock('fs', () => ({
 }));
 
 // Mock ssh-command-builder for remote model discovery tests
-vi.mock('../../../../main/utils/ssh-command-builder', () => ({
+vi.mock('../../../../main/utils/ssh-command-builder', async (importOriginal) => ({
+	// The real execSshCommand runs the mocked execFileNoThrow.
+	...(await importOriginal<typeof import('../../../../main/utils/ssh-command-builder')>()),
 	buildSshCommand: vi.fn().mockResolvedValue({ command: 'ssh', args: ['mock'] }),
 	buildSshCommandWithStdin: vi.fn(),
 }));

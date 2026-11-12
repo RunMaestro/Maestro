@@ -142,6 +142,7 @@ import { useSidebarNavStore } from './stores/sidebarNavStore';
 import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
+import { useSshReachability } from './hooks/remote/useSshReachability';
 import { installFeedbackLiveStateHook } from './services/feedbackLiveState';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
@@ -1753,6 +1754,9 @@ function MaestroConsoleInner() {
 		registerBatchResumer(resumeAutoRunAfterError);
 		return () => registerBatchResumer(null);
 	}, [resumeAutoRunAfterError]);
+
+	// One dialog per unreachable SSH remote (SshUnreachableModal reads the store).
+	useSshReachability();
 
 	// --- AGENT IPC LISTENERS ---
 	// Extracted hook for all window.maestro.process.onXxx listeners

@@ -242,6 +242,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Change working directory                                                 | `update-agent --cwd`                                                                             |
 | SSH remote execution config                                              | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                     |
 | Edit an SSH remote, incl. its `ssh -o` list                              | `update-ssh-remote --ssh-option / --clear-ssh-options`                                           |
+| SSH outage dialog: which remotes are down, "Check Now"                   | `ssh-remote-status`, `ssh-remote-status --check <remote-id>` (Dismiss is per-window view state)  |
 | Focus an agent, switch AI/Shell mode                                     | `focus-agent`, `switch-mode`                                                                     |
 | Create / rename / remove a group                                         | `create-group`, `rename-group`, `remove-group`                                                   |
 | Group icon, color, and nesting                                           | `create-group --icon/--color/--parent`, `update-group`                                           |
