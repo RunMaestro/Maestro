@@ -355,6 +355,22 @@ export class MarketplaceLaunchValuesError extends MarketplaceImportError {
 	}
 }
 
+/**
+ * A launch refused because the agent already runs one. An Auto Run reports its completion by agent,
+ * not by launch, so an agent runs at most one launch at a time. `runningLaunchId` names the launch
+ * in the way. It is an import error, so a caller that handles `MarketplaceImportError` keeps working.
+ */
+export class MarketplaceLaunchBusyError extends MarketplaceImportError {
+	readonly runningLaunchId: string;
+	constructor(running: Pick<PlaybookLaunchRecord, 'launchId' | 'playbookTitle'>) {
+		super(
+			`This agent is already running the "${running.playbookTitle}" launch (${running.launchId}). Wait for it to finish, or stop it, then launch again.`
+		);
+		this.name = 'MarketplaceLaunchBusyError';
+		this.runningLaunchId = running.launchId;
+	}
+}
+
 // ============================================================================
 // API Response Types
 // ============================================================================

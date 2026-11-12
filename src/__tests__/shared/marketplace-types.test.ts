@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	MarketplaceImportError,
+	MarketplaceLaunchBusyError,
 	MarketplaceLaunchValuesError,
 } from '../../shared/marketplace-types';
 
@@ -30,5 +31,27 @@ describe('MarketplaceLaunchValuesError', () => {
 		expect(error).toBeInstanceOf(Error);
 		expect(error.type).toBe('import');
 		expect(error.name).toBe('MarketplaceLaunchValuesError');
+	});
+});
+
+describe('MarketplaceLaunchBusyError', () => {
+	const running = { launchId: 'launch-7', playbookTitle: 'Market Research' };
+
+	it('names the launch in the way', () => {
+		expect(new MarketplaceLaunchBusyError(running).runningLaunchId).toBe('launch-7');
+	});
+
+	it('says which playbook the agent runs and what to do', () => {
+		expect(new MarketplaceLaunchBusyError(running).message).toBe(
+			'This agent is already running the "Market Research" launch (launch-7). Wait for it to finish, or stop it, then launch again.'
+		);
+	});
+
+	it('is an import error, so callers that handle MarketplaceImportError keep working', () => {
+		const error = new MarketplaceLaunchBusyError(running);
+		expect(error).toBeInstanceOf(MarketplaceImportError);
+		expect(error).toBeInstanceOf(Error);
+		expect(error.type).toBe('import');
+		expect(error.name).toBe('MarketplaceLaunchBusyError');
 	});
 });
