@@ -476,6 +476,7 @@ Manages compacting a single conversation context to reduce context window usage.
 - `canSummarize(contextUsage, logs?)` - Triple-fallback eligibility check (context %, token estimate, log count)
 - `cancelSummarization()` - Calls `window.maestro.context.cancelGrooming()`
 - `formatCompactedTabName(originalName)` - Generates "Name Compacted YYYY-MM-DD"
+- `buildContinuityDigest(logs, options?)` - Evidence digest of a tab's logs (objective, the user's constraints, pending work, verified results, unresolved failures, unknowns, source references), built without a model by `buildContextDigest()` in `src/shared/contextDigest.ts`. Pure: starts no turn and is sent nowhere by this method
 
 **Chunked summarization:**
 Large contexts (>50k tokens) are split into chunks, each summarized separately, then combined. If the combined result exceeds `TARGET_COMPACTED_TOKENS`, up to 3 consolidation passes aggressively reduce it.

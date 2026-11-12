@@ -44,6 +44,21 @@ export interface ToolActivityLabel {
 /** Max characters of `target` shown on the single line. */
 const MAX_TARGET_LENGTH = 72;
 
+// The verbs the callers below key off. `describeToolActivity` is the one place
+// that decides what a provider's tool name means, so "is this a shell call" and
+// "did this edit a file" are answered from the verb it chose, never from a second
+// copy of its tool-name lists.
+const VERB_RAN = 'Ran';
+const VERB_WROTE = 'Wrote';
+const VERB_EDITED = 'Edited';
+const VERB_EDITED_NOTEBOOK = 'Edited notebook';
+const VERB_TASK_LIST = 'Updated the task list';
+const FILE_EDIT_VERBS: ReadonlySet<string> = new Set([
+	VERB_WROTE,
+	VERB_EDITED,
+	VERB_EDITED_NOTEBOOK,
+]);
+
 /**
  * Normalize a provider tool name for matching: lowercase and strip separators so
  * `write_to_file`, `writeToFile`, and `WriteToFile` all collapse to one key.
@@ -79,13 +94,15 @@ function commandString(value: unknown): string | undefined {
  * Mirrors the in-chat summary so the two surfaces agree on wording.
  */
 function todoSummary(value: unknown): string | undefined {
-	if (!Array.isArray(value) || value.length === 0) return undefined;
-	const todos = value as Array<{
+	if (!Array.isArray(value)) return undefined;
+	// A provider's malformed step (null, a string) is skipped, not a crash.
+	const todos = value.filter((t) => t && typeof t === 'object') as Array<{
 		content?: string;
 		status?: string;
 		activeForm?: string;
 		step?: string;
 	}>;
+	if (todos.length === 0) return undefined;
 	const completed = todos.filter((t) => t.status === 'completed').length;
 	const current = todos.find((t) => t.status === 'in_progress');
 	const label =
@@ -106,6 +123,34 @@ function mcpLabel(toolName: string): ToolActivityLabel | null {
 }
 
 /**
+ * A tool input as its field record, plus the raw string for providers that send
+ * the payload itself (a patch body, a command) instead of an object. The raw
+ * string stands in for whatever key the object form would have used.
+ */
+function splitToolInput(input: unknown): {
+	record: Record<string, unknown>;
+	rawInput: string | undefined;
+} {
+	return {
+		record:
+			input && typeof input === 'object' && !Array.isArray(input)
+				? (input as Record<string, unknown>)
+				: {},
+		rawInput: typeof input === 'string' ? input.trim() : undefined,
+	};
+}
+
+/** The command a tool input carries, in any provider's spelling, untruncated. */
+function inputCommand(
+	record: Record<string, unknown>,
+	rawInput: string | undefined
+): string | undefined {
+	return (
+		commandString(record.command ?? record.cmd ?? record.script ?? record.CommandLine) ?? rawInput
+	);
+}
+
+/**
  * Describe a tool call as a single plain-language line.
  *
  * @param toolName - Raw provider tool name (e.g. `Bash`, `apply_patch`).
@@ -114,13 +159,7 @@ function mcpLabel(toolName: string): ToolActivityLabel | null {
  */
 export function describeToolActivity(toolName: string, input: unknown): ToolActivityLabel {
 	const name = (toolName || '').trim();
-	const record: Record<string, unknown> =
-		input && typeof input === 'object' && !Array.isArray(input)
-			? (input as Record<string, unknown>)
-			: {};
-	// A raw-string input is the payload itself (a patch body, a command), so it
-	// stands in for whatever key the object form would have used.
-	const rawInput = typeof input === 'string' ? input.trim() : undefined;
+	const { record, rawInput } = splitToolInput(input);
 
 	const filePath = firstString(record, [
 		'file_path',
@@ -137,8 +176,7 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		'SearchPath',
 		'SearchDirectory',
 	]);
-	const command =
-		commandString(record.command ?? record.cmd ?? record.script ?? record.CommandLine) ?? rawInput;
+	const command = inputCommand(record, rawInput);
 	const pattern = firstString(record, ['pattern', 'regex', 'query', 'search', 'Query', 'Pattern']);
 	const url = firstString(record, ['url', 'uri', 'Url']);
 
@@ -165,7 +203,7 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		case 'writetofile':
 		case 'createfile':
 		case 'create':
-			return { verb: 'Wrote', target: shorten(filePath, true), targetIsCode: true };
+			return { verb: VERB_WROTE, target: shorten(filePath, true), targetIsCode: true };
 
 		case 'edit':
 		case 'multiedit':
@@ -181,13 +219,13 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 			// Codex sends apply_patch as one raw diff string with no path field;
 			// fall back to the patch body so the line is not left bare.
 			return {
-				verb: 'Edited',
+				verb: VERB_EDITED,
 				target: shorten(filePath ?? rawInput, !!filePath),
 				targetIsCode: true,
 			};
 
 		case 'notebookedit':
-			return { verb: 'Edited notebook', target: shorten(filePath, true), targetIsCode: true };
+			return { verb: VERB_EDITED_NOTEBOOK, target: shorten(filePath, true), targetIsCode: true };
 
 		case 'bash':
 		case 'shell':
@@ -198,7 +236,7 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		case 'terminal':
 		case 'runterminalcmd':
 		case 'runterminalcommand':
-			return { verb: 'Ran', target: shorten(command, false), targetIsCode: true };
+			return { verb: VERB_RAN, target: shorten(command, false), targetIsCode: true };
 
 		case 'bashoutput':
 			return { verb: 'Checked background output', target: '', targetIsCode: false };
@@ -251,7 +289,7 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		case 'updateplan':
 		case 'todoread':
 			return {
-				verb: 'Updated the task list',
+				verb: VERB_TASK_LIST,
 				target: shorten(todoSummary(record.todos ?? record.plan ?? record.steps), false),
 				targetIsCode: false,
 			};
@@ -274,6 +312,59 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 			};
 		}
 	}
+}
+
+/**
+ * The full shell command a tool call carries, in any provider's spelling, or
+ * undefined when the call is not a shell call.
+ *
+ * `describeToolActivity` shows the same command shortened to one line; a caller
+ * that compares or classifies commands needs the whole string. Codex sends an
+ * argv array (joined here), Claude Code a string.
+ */
+export function describeToolCommand(toolName: string, input: unknown): string | undefined {
+	if (describeToolActivity(toolName, input).verb !== VERB_RAN) return undefined;
+	const { record, rawInput } = splitToolInput(input);
+	return inputCommand(record, rawInput);
+}
+
+/** One step of a task list a provider keeps (TodoWrite, update_plan). */
+export interface ToolTaskItem {
+	label: string;
+	status: 'completed' | 'in_progress' | 'pending';
+}
+
+/**
+ * The steps of a task-list call (Claude Code `TodoWrite`, Codex `update_plan`),
+ * or undefined when the call is not one. Both providers send the WHOLE list on
+ * every call, so the newest call is the current list and an empty array means
+ * the list was cleared. A step with no readable label is skipped; any status
+ * other than completed or in progress reads as pending.
+ */
+export function describeToolTaskList(toolName: string, input: unknown): ToolTaskItem[] | undefined {
+	if (describeToolActivity(toolName, input).verb !== VERB_TASK_LIST) return undefined;
+	const { record } = splitToolInput(input);
+	const steps = record.todos ?? record.plan ?? record.steps;
+	if (!Array.isArray(steps)) return undefined;
+	const items: ToolTaskItem[] = [];
+	for (const step of steps) {
+		if (!step || typeof step !== 'object') continue;
+		const { content, step: planStep, activeForm, status } = step as Record<string, unknown>;
+		const label = [content, planStep, activeForm].find(
+			(value): value is string => typeof value === 'string' && value.trim() !== ''
+		);
+		if (!label) continue;
+		items.push({
+			label: label.trim(),
+			status: status === 'completed' || status === 'in_progress' ? status : 'pending',
+		});
+	}
+	return items;
+}
+
+/** Whether a tool call writes or edits a file (Edit, Write, apply_patch, NotebookEdit, ...). */
+export function describesFileEdit(toolName: string, input: unknown): boolean {
+	return FILE_EDIT_VERBS.has(describeToolActivity(toolName, input).verb);
 }
 
 /**

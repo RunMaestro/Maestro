@@ -203,6 +203,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a working directory can be spawned into:** `unusableCwdReason(cwd)`, `unusableDirectoryReason(dir, label)` in `src/main/process-manager/utils/spawnCwd.ts`
 - **Whether an agent is working right now (main process):** `isAgentBusy()`, `isAiTabProcessActive()` in `src/main/utils/agent-busy.ts` (never the persisted `state`)
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`
+- **Reading one shell command, without running it:** `readLiteralCommand()`, `literalCommandTokens()` in `src/shared/literalCommand.ts` (null for a pipe, `;`, a redirect, an expansion or a comment)
 - **Resuming a provider session a background synopsis may still hold:** `awaitSynopsisWriters()` in `src/main/process-manager/utils/synopsisWriterGate.ts` (already called by `process:spawn`; no per-send-path busy check)
 - **A path handed to a REMOTE shell (`cd`, `ls`, `stat` over SSH):** `shellEscapeRemotePath()` in `src/main/utils/shell-escape.ts` (`shellEscape()` stops `~` from expanding)
 - **SSH connection options (`ssh -o`):** `resolveSshOptions()`, `buildSshOptionArgs()`, `validateSshOption()` in `src/shared/sshOptions.ts`
@@ -261,7 +262,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which providers a user can pick:** `AGENT_PICKER_META`, `PICKABLE_AGENT_IDS`, `getAgentPickerMeta()`, `AGENT_AUTOSELECT_ORDER` in `src/shared/agentMetadata.ts`
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
 - **Whether a provider can read images:** `agentCanReadImages()`, `agentIdCanReadImages()` in `src/shared/maestro-lib/providers/capabilities.ts`
-- **Recognizing a tool across providers by its name:** `normalizeToolName()` in `src/shared/toolActivityLabel.ts` (`read_file`, `readFile` and `ReadFile` collapse to one key)
+- **Recognizing a tool across providers by its name:** `normalizeToolName()`, `describeToolCommand()`, `describeToolTaskList()`, `describesFileEdit()` in `src/shared/toolActivityLabel.ts` (`read_file`, `readFile` and `ReadFile` collapse to one key)
 - **Which provider account an agent runs as:** `resolveAgentProfile()`, `resolveAgentAccountKey()`, `effectiveAgentCustomEnvVars()`, `resolveAgentBillingCredential()` in `src/shared/providerProfiles.ts`; `useProviderProfiles()` in `src/renderer/hooks/stats/useProviderProfiles.ts`
 - **An agent's model list, and refreshing it:** `discoverAgentModels()` in `src/main/agents/model-discovery.ts`; `refreshModels()` on `useAgentModelEffortOptions()`; `MODELS_REFRESHED_CHANNEL` in `src/shared/agentModelsRefresh.ts`
 - **Which account dirs exist for a provider (main):** `getProviderAccountDirs(toolType, options?)` in `src/main/agents/provider-account-dirs.ts`
@@ -372,6 +373,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a queued item's tab is still mid-turn:** `isQueuedItemTargetBusy(session, item)` in `src/renderer/utils/tabHelpers` (every queue drain path asks it before dequeuing)
 - **Editing the newest queued message:** `requestEditLastQueuedMessage()` in `src/renderer/services/editQueuedMessage.ts`
 - **Recovering a turn refused on the context limit:** `getContextCompactCommand()` in `src/shared/contextCompaction.ts`; `compactTabContext()`, `recordContextCompaction()` in `src/renderer/services/contextCompaction.ts`; driven by `scheduleRetryForError()` in `src/renderer/stores/retryStore.ts`
+- **Evidence digest of a conversation, for a continuation:** `buildContextDigest()`, `DEFAULT_DIGEST_CHARS` in `src/shared/contextDigest.ts`; `buildContinuityDigest()` on `contextSummarizationService` in `src/renderer/services/contextSummarizer.ts`
 - **Whether a Force Send control exists at all:** `shouldOfferForceSend()`, `getForceSendEligibility()`, `getForceSendTitle()` in `src/renderer/utils/executionQueue.ts`
 - **Model/effort badges on a finished turn:** `<TurnSettingPills>` in `src/renderer/components/ui/TurnSettingPills.tsx`; settings are stamped at SEND by `codifyTurnSettings()` in `src/renderer/utils/providerTabSessions.ts`
 - **Thinking mode (`'off' | 'on' | 'sticky'`):** `THINKING_MODES`, `nextThinkingMode()`, `asThinkingMode()` in `src/shared/types.ts`

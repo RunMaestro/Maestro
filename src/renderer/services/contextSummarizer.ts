@@ -27,6 +27,11 @@
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  */
 
+import {
+	buildContextDigest,
+	type ContextDigest,
+	type ContextDigestInput,
+} from '../../shared/contextDigest';
 import type { ToolType } from '../../shared/types';
 import type { SummarizeRequest, SummarizeProgress } from '../types/contextMerge';
 import type { LogEntry } from '../types';
@@ -495,6 +500,25 @@ Please provide a comprehensive but compacted summary of the above conversation, 
 		}
 
 		return false;
+	}
+
+	/**
+	 * Build the evidence digest of a tab's logs: the first and latest request,
+	 * the user's constraints, pending work, verified results and unresolved
+	 * failures, each tagged with the entry it came from, and what is unknown.
+	 *
+	 * Built from the logs alone, without a model, so it starts no turn, spawns no
+	 * process and is not sent anywhere by this method. A caller shows it beside a
+	 * summary so the two can be compared; `synopses` adds earlier History
+	 * responses as optional excerpts. The rules it keeps (user words first, exit
+	 * status alone is not verification, tool text is data) are documented on
+	 * `buildContextDigest`.
+	 */
+	buildContinuityDigest(
+		logs: LogEntry[],
+		options: Omit<ContextDigestInput, 'entries'> = {}
+	): ContextDigest {
+		return buildContextDigest({ ...options, entries: logs });
 	}
 
 	/**

@@ -11,6 +11,9 @@ import { describe, it, expect } from 'vitest';
 import {
 	describeToolActivity,
 	describeToolActivityStatus,
+	describeToolCommand,
+	describeToolTaskList,
+	describesFileEdit,
 	normalizeToolName,
 } from '../../../renderer/utils/toolActivityLabel';
 
@@ -373,5 +376,120 @@ describe('describeToolActivityStatus', () => {
 		expect(describeToolActivityStatus(null)).toBe('running');
 		expect(describeToolActivityStatus('completed')).toBe('running');
 		expect(describeToolActivityStatus({ exitCode: Number.NaN })).toBe('running');
+	});
+});
+
+describe('describeToolCommand', () => {
+	it('returns the whole command, where the label shortens it', () => {
+		const command = `npx vitest run ${'src/__tests__/some/very/long/path/'.repeat(4)}a.test.ts`;
+		expect(describeToolCommand('Bash', { command })).toBe(command);
+		expect(describeToolActivity('Bash', { command }).target.length).toBeLessThan(command.length);
+	});
+
+	it('reads every provider spelling of a shell call', () => {
+		expect(describeToolCommand('shell', { command: ['npm', 'run', 'lint'] })).toBe('npm run lint');
+		expect(describeToolCommand('local_shell', { cmd: 'git status' })).toBe('git status');
+		expect(describeToolCommand('run_terminal_cmd', { script: 'make test' })).toBe('make test');
+		expect(describeToolCommand('exec_command', 'ls -la')).toBe('ls -la');
+	});
+
+	it('is undefined for a call that is not a shell call, even if its input names a command', () => {
+		expect(describeToolCommand('Read', { file_path: '/p/a.ts' })).toBeUndefined();
+		expect(describeToolCommand('Edit', { command: 'rm -rf /' })).toBeUndefined();
+		expect(describeToolCommand('mcp__shell__bash', { command: 'ls' })).toBeUndefined();
+	});
+
+	it('is undefined for a shell call with no command', () => {
+		expect(describeToolCommand('Bash', {})).toBeUndefined();
+		expect(describeToolCommand('Bash', undefined)).toBeUndefined();
+	});
+});
+
+describe('describeToolActivity on a malformed task list', () => {
+	it('labels a list with a null or non-object step instead of throwing', () => {
+		expect(() =>
+			describeToolActivity('TodoWrite', { todos: [null, 'text', { content: 'Real step' }] })
+		).not.toThrow();
+		expect(
+			describeToolActivity('TodoWrite', {
+				todos: [null, { content: 'Real step', status: 'pending' }],
+			}).target
+		).toBe('Real step (0/1)');
+		expect(describeToolActivity('TodoWrite', { todos: [null, 7] }).target).toBe('');
+	});
+});
+
+describe('describeToolTaskList', () => {
+	it('reads a Claude Code TodoWrite list', () => {
+		expect(
+			describeToolTaskList('TodoWrite', {
+				todos: [
+					{ content: 'Write tests', status: 'in_progress', activeForm: 'Writing tests' },
+					{ content: 'Update docs', status: 'pending' },
+					{ content: 'Add the flag', status: 'completed' },
+				],
+			})
+		).toEqual([
+			{ label: 'Write tests', status: 'in_progress' },
+			{ label: 'Update docs', status: 'pending' },
+			{ label: 'Add the flag', status: 'completed' },
+		]);
+	});
+
+	it('reads a Codex update_plan list', () => {
+		expect(
+			describeToolTaskList('update_plan', {
+				plan: [
+					{ step: 'Wire the flag', status: 'completed' },
+					{ step: 'Ship it', status: 'pending' },
+				],
+			})
+		).toEqual([
+			{ label: 'Wire the flag', status: 'completed' },
+			{ label: 'Ship it', status: 'pending' },
+		]);
+	});
+
+	it('reads an unknown status as pending, falls back to the active form, and skips unlabeled steps', () => {
+		expect(
+			describeToolTaskList('TodoWrite', {
+				todos: [
+					{ activeForm: 'Doing a thing', status: 'blocked' },
+					{ status: 'pending' },
+					'not a step',
+					null,
+				],
+			})
+		).toEqual([{ label: 'Doing a thing', status: 'pending' }]);
+	});
+
+	it('returns an empty list when the list was cleared, and undefined when it is not a task list', () => {
+		expect(describeToolTaskList('TodoWrite', { todos: [] })).toEqual([]);
+		expect(describeToolTaskList('TodoRead', {})).toBeUndefined();
+		expect(describeToolTaskList('TodoWrite', { todos: 'nope' })).toBeUndefined();
+		expect(describeToolTaskList('Bash', { todos: [{ content: 'x' }] })).toBeUndefined();
+	});
+});
+
+describe('describesFileEdit', () => {
+	it('is true for every kind of write or edit a provider sends', () => {
+		for (const name of [
+			'Edit',
+			'MultiEdit',
+			'Write',
+			'NotebookEdit',
+			'apply_patch',
+			'str_replace_editor',
+			'write_to_file',
+		]) {
+			expect(describesFileEdit(name, { file_path: '/p/a.ts' })).toBe(true);
+		}
+	});
+
+	it('is false for reads, searches, shell calls and task lists', () => {
+		expect(describesFileEdit('Read', { file_path: '/p/a.ts' })).toBe(false);
+		expect(describesFileEdit('Grep', { pattern: 'x' })).toBe(false);
+		expect(describesFileEdit('Bash', { command: 'sed -i s/a/b/ a.ts' })).toBe(false);
+		expect(describesFileEdit('TodoWrite', { todos: [] })).toBe(false);
 	});
 });

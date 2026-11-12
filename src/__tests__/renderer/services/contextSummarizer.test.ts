@@ -434,6 +434,56 @@ Continue with implementation.`);
 		});
 	});
 
+	describe('buildContinuityDigest', () => {
+		const logs: LogEntry[] = [
+			createMockLog({ id: 'u1', source: 'user', text: 'Ship the exporter. Never touch the CLI.' }),
+			createMockLog({
+				id: 't1',
+				source: 'tool',
+				text: 'Bash',
+				metadata: {
+					toolState: {
+						status: 'failed',
+						input: { command: 'npm test' },
+						output: 'FAIL src/a.test.ts',
+					},
+				},
+			}),
+		];
+
+		it('digests the tab logs it is handed, with the source of each line', () => {
+			const digest = service.buildContinuityDigest(logs);
+
+			expect(digest.objective?.text).toBe('Ship the exporter. Never touch the CLI.');
+			expect(digest.constraints.map((item) => item.text)).toEqual(['Never touch the CLI.']);
+			expect(digest.unresolvedFailures[0]).toMatchObject({ text: 'npm test', origin: 'tool' });
+			expect(digest.references.map((ref) => ref.entryId)).toEqual(['u1', 't1']);
+		});
+
+		it('passes synopses and the budget through to the builder', () => {
+			const digest = service.buildContinuityDigest(logs, {
+				synopses: [{ id: 'h-1', response: '**Summary:** Earlier work' }],
+				maxChars: 0,
+			});
+
+			expect(digest.excerpts).toEqual([]);
+			expect(digest.omitted.excerpts).toBe(1);
+		});
+
+		it('starts no turn: it reads the logs and calls nothing', () => {
+			service.buildContinuityDigest(logs);
+
+			expect(mockGroomContext).not.toHaveBeenCalled();
+			expect(mockCancelGrooming).not.toHaveBeenCalled();
+		});
+
+		it('does not change the logs it reads', () => {
+			const before = JSON.stringify(logs);
+			service.buildContinuityDigest(logs);
+			expect(JSON.stringify(logs)).toBe(before);
+		});
+	});
+
 	describe('singleton instance', () => {
 		it('should export a default singleton instance', () => {
 			expect(contextSummarizationService).toBeInstanceOf(ContextSummarizationService);

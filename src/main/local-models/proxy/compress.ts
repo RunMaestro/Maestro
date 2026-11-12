@@ -75,6 +75,7 @@
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { estimateTokenCount, getBasename, isAbsolutePath } from '../../../shared/formatters';
 import { serializedJsonByteLength } from '../../../shared/jsonUtils';
+import { literalCommandTokens } from '../../../shared/literalCommand';
 import type { TokenProxyRequestKind } from '../../../shared/local-models/token-proxy';
 import { TOKEN_PROXY_RETRIEVE_TOOL_NAME } from '../../../shared/local-models/token-proxy-retrieve-tool';
 import { describeToolActivityStatus } from '../../../shared/toolActivityLabel';
@@ -694,58 +695,6 @@ export function findToolResultSpans(
 	return findToolResultDescriptors(kind, body, root, options).flatMap(
 		(result) => result.eligibleSpans
 	);
-}
-
-/**
- * Read a single literal shell invocation, never evaluate it. Custom-args
- * splitters accept incomplete quotes/operators, so they cannot establish this
- * evidence. Expansions, compound commands and unsupported syntax stay unknown.
- */
-function literalCommandTokens(command: string, assignments: Set<number>): string[] | null {
-	if (/[\r\n\0]/.test(command)) return null;
-	const tokens: string[] = [];
-	let token = '';
-	let started = false;
-	let quote = '';
-	for (let at = 0; at < command.length; at++) {
-		const char = command[at];
-		// Quoting/escaping the name or '=' makes a word, not a shell assignment.
-		if (!started && /^[A-Za-z_][A-Za-z0-9_]*=/.test(command.slice(at))) {
-			assignments.add(tokens.length);
-		}
-		if (char === quote) {
-			quote = '';
-			continue;
-		}
-		if (quote === "'") {
-			token += char;
-			continue;
-		}
-		if (char === '\\') {
-			const next = command[++at];
-			if (next === undefined) return null;
-			token += quote === '"' && !'\\"$`'.includes(next) ? `\\${next}` : next;
-			started = true;
-			continue;
-		}
-		if (char === '$' || char === '`') return null;
-		if (!quote && (char === '"' || char === "'")) {
-			quote = char;
-			started = true;
-		} else if (!quote && /[;&|<>()#*?\[\]{}~]/.test(char)) {
-			return null;
-		} else if (!quote && (char === ' ' || char === '\t')) {
-			if (started) tokens.push(token);
-			token = '';
-			started = false;
-		} else {
-			token += char;
-			started = true;
-		}
-	}
-	if (quote) return null;
-	if (started) tokens.push(token);
-	return tokens;
 }
 
 /**
