@@ -1080,7 +1080,7 @@ Take back a note no task has read yet (accepts a unique id prefix)
 
 ## `maestro-cli marketplace`
 
-Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)
+Browse, import and launch Playbook Exchange playbooks (the modal: `open marketplace`)
 
 ## `maestro-cli marketplace list`
 
@@ -1110,6 +1110,44 @@ Install a playbook into an agent's Auto Run folder
 | `-a, --agent <id>`    | Target agent ID                                                 | -       |
 | `-f, --folder <name>` | Folder name under the Auto Run folder (default: from the title) | -       |
 | `--json`              | Output as JSON (for scripting)                                  | -       |
+
+## `maestro-cli marketplace launch <playbook-id>`
+
+Launch a playbook: import it with your answers filled in, run it, clean up (see `marketplace show` for its inputs)
+
+| Option                | Description                                                                                                                                | Default |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `--input <KEY=VALUE>` | Answer to one launch input (repeatable; a multiselect takes a comma list)                                                                  | -       |
+| `--input-file <path>` | JSON object of answers keyed by input name (--input wins)                                                                                  | -       |
+| `-a, --agent <id>`    | Agent that runs it (default: the calling agent)                                                                                            | -       |
+| `--new-agent`         | Run it on a new agent (needs --provider and --cwd)                                                                                         | -       |
+| `--provider <id>`     | New agent provider (claude-code, codex, gemini-cli, antigravity, qwen3-coder, opencode, factory-droid, hermes, pi, copilot-cli, omp, grok) | -       |
+| `-d, --cwd <path>`    | New agent working directory                                                                                                                | -       |
+| `--name <name>`       | New agent name (default: the playbook title)                                                                                               | -       |
+| `--model <model>`     | New agent model override                                                                                                                   | -       |
+| `--effort <level>`    | New agent effort/reasoning level override                                                                                                  | -       |
+| `--ssh-remote <id>`   | New agent SSH remote ID                                                                                                                    | -       |
+| `--keep-playbook`     | Keep the playbook as a reusable saved playbook (and its documents)                                                                         | -       |
+| `--confirm`           | Accept the playbook confirmation (required when it asks for one)                                                                           | -       |
+| `--wait`              | Wait for the run to end, then print the outro (exit 1 unless it completed)                                                                 | -       |
+| `--json`              | Output as JSON (for scripting)                                                                                                             | -       |
+
+## `maestro-cli marketplace launches`
+
+List playbook launches, newest first
+
+| Option             | Description                    | Default |
+| ------------------ | ------------------------------ | ------- |
+| `-a, --agent <id>` | Only this agent                | -       |
+| `--json`           | Output as JSON (for scripting) | -       |
+
+## `maestro-cli marketplace launch-status <launch-id>`
+
+Show a launch and, once it ends, its outro
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli remove-playbook <agent-id> <playbook-id>`
 

@@ -54,7 +54,7 @@ Clicking a playbook tile (or pressing `Enter`) opens the detail view where you c
 
 1. Open the detail view for a playbook
 2. Optionally edit the **Import to folder** field (defaults to `category/title` slug, e.g., `development/code-review`)
-3. Click **Import Playbook**
+3. Click **Import Playbook** (on a playbook that supports Launch, the button is **Download**)
 
 The import creates:
 
@@ -72,6 +72,67 @@ A playbook does not have to be run as-is. Importing one pulls it down locally, s
 <Note>
 For SSH remote sessions, playbooks can be imported directly to the remote host. The folder browse button is disabled for remote sessions - enter the target path manually instead.
 </Note>
+
+## Launching a playbook
+
+A playbook that supports Launch shows a **Launch** button on its tile and in the detail view, next to **Download**. Playbooks without launch support show Download only.
+
+| Action       | What it does                                                                                                                                |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Download** | Imports the playbook exactly as described in [Importing a Playbook](#importing-a-playbook). You configure and run it yourself.              |
+| **Launch**   | Asks the playbook's questions, imports it with your answers filled in, starts the Auto Run, cleans up when it finishes, and shows an outro. |
+
+### The launch dialog
+
+1. **Questions** - The playbook's own inputs (text, paths, numbers, yes/no, choices). Required fields are checked before Launch turns on. Rarely changed inputs sit in a collapsed **Advanced** section.
+2. **Requirements** - Anything the playbook needs, such as a platform or a logged-in tool. A playbook that asks for confirmation shows a checkbox you must tick first. If the playbook calls `maestro-cli`, the dialog shows whether it is installed and offers to install it. A remote agent cannot use `maestro-cli`, so a playbook that requires it cannot launch on one.
+3. **Run on** - The current agent (the default), another existing agent, or a new agent. A new agent is set up with the same form as **New Agent** (provider, folder, model) and is created only when you press Launch. Existing agents are shown read-only; the dialog never edits them.
+4. **Save as a reusable playbook** - Keeps the saved playbook and its documents after the run. Off by default.
+
+### Cleanup and outro
+
+Launch imports the playbook into its own folder inside the agent's Auto Run folder, named `<playbook>-launch-<timestamp>`, so repeated launches never collide. When the run finishes, Maestro removes that folder and the saved playbook it created, unless you chose to keep them or the playbook asks to keep its documents. Files the playbook wrote elsewhere (reports, vaults, code) are never touched. If you stop the run, the folder stays so you can resume.
+
+When the run ends, an outro explains what was done and what to do next. It lists the tasks completed, the time and cost, a verdict from the playbook's report file when it has one, and buttons to open the files the playbook produced. If you are working in another agent when the run ends, a toast opens the outro.
+
+### From the CLI
+
+Everything the dialog does is available in `maestro-cli`:
+
+```bash
+# See the questions a playbook asks
+maestro-cli marketplace show <playbook-id>
+
+# Launch it on an agent, answering the questions
+maestro-cli marketplace launch <playbook-id> --agent <agent-id> \
+  --input PR_URL=https://github.com/acme/app/pull/12 \
+  --input AUTO_FIX_SEVERITY=CRITICAL,HIGH --wait
+
+# Launch on a new agent
+maestro-cli marketplace launch <playbook-id> --new-agent --provider claude-code --cwd ~/Projects/app
+
+# Read back what happened
+maestro-cli marketplace launches --agent <agent-id>
+maestro-cli marketplace launch-status <launch-id>
+```
+
+`--agent` defaults to the agent running the command. Use `--input-file <json>` to pass answers as a JSON object, `--confirm` for a playbook that asks for confirmation, `--keep-playbook` to keep the saved playbook, and `--wait` to block until the run ends and print the outro. See the [CLI reference](./cli-reference#maestro-cli-marketplace-launch-playbook-id).
+
+## Authoring launch support
+
+A playbook opts in with an optional `launch` block in its manifest entry. Maestro versions without the launch flow ignore the block, so Download keeps working everywhere.
+
+The block holds:
+
+- `intro` - Markdown shown at the top of the dialog.
+- `preconditions` - `platforms`, a `requires` list, a `confirm` checkbox text, and `maestroCli` (`required` or `optional`).
+- `inputs` - The typed questions: `text`, `textarea`, `url`, `path`, `number`, `boolean`, `select` and `multiselect`, each with a `name`, `label`, optional `default`, `required`, `help`, `options`, and limits.
+- `maxLoops` and `cleanup` (`remove-docs` or `keep`).
+- `outro` - A `summary`, `nextSteps`, and optional `files` and `reportFile`.
+
+**How answers are applied.** Each input's `name` matches a line in the manifest `prompt` written as `**NAME:** `value``. Launch rewrites only the value between the backticks on that line. The task documents are never changed, and keep reading `[NAME]`from the prompt. An optional input you leave empty keeps the value the playbook shipped with. Launching with every default writes the same prompt that Download ships. Built-in variables such as`{{AUTORUN_FOLDER}}`inside a value are expanded at run time.`{{INPUT_NAME}}`tokens work only in the`outro` text and paths.
+
+The full schema, the serialization rules for each input type, and the validator are documented under [Launch Support](https://github.com/RunMaestro/Maestro-Playbooks/blob/main/CONTRIBUTING.md#launch-support) in the Maestro-Playbooks `CONTRIBUTING.md`. To try a launch block before you publish, add it to a [local manifest](./local-manifest#testing-a-launch-block).
 
 ## Exchange Data
 

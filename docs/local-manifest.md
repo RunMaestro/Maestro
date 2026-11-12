@@ -88,6 +88,7 @@ Each playbook entry must include:
 - `tags` - Searchable keyword array
 - `maxLoops` - Maximum loop iterations (null for unlimited)
 - `taskSelectionMode` - `"task"` (default) for a fresh agent session per unchecked task, or `"document"` for one session per document that works all of its tasks. Any other value runs per task
+- `launch` - One-click launch support (questions, preconditions, outro). Works in local entries exactly as in the official manifest. See [Testing a launch block](#testing-a-launch-block)
 - `assets` - Asset files from `assets/` subfolder. Reference them in documents as `{{AUTORUN_FOLDER}}/assets/<file>`; the import points that path at the playbook's own folder
 
 ## Creating a Local Playbook
@@ -204,6 +205,10 @@ Local playbooks are visually distinguished in the Playbook Exchange with a blue 
 4. Refine documents and prompts
 5. When ready, submit a PR to [Maestro-Playbooks](https://github.com/RunMaestro/Maestro-Playbooks)
 6. Remove from local manifest once published
+
+### Testing a Launch Block
+
+A `launch` block works in a local entry, and a local manifest is the way to test one before you publish it. Add the block to your entry, save the file (the Exchange reloads it), and click **Launch** on the playbook's tile. Check that each question appears, that the answers land in the `**NAME:** `value``lines of the imported prompt, that cleanup removes only the launch folder, and that the outro reads correctly. The same flow runs from the CLI:`maestro-cli marketplace show <id>`prints the questions and`maestro-cli marketplace launch <id> --agent <agent-id> --wait`runs it. A launch block that fails validation is dropped with a logged warning and the playbook stays download-only. The schema is under [Launch Support](https://github.com/RunMaestro/Maestro-Playbooks/blob/main/CONTRIBUTING.md#launch-support) in the Maestro-Playbooks`CONTRIBUTING.md`.
 
 ### Overriding Official Playbooks
 
